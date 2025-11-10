@@ -5,6 +5,8 @@ use bincode::{Decode, Encode};
 use serde::{Deserialize, Serialize};
 use std::fmt;
 
+use crate::StorageKey;
+
 /// Type-safe wrapper for live query identifiers in system.live_queries table.
 ///
 /// Ensures live query IDs cannot be accidentally used where other identifier types
@@ -68,6 +70,12 @@ impl AsRef<[u8]> for LiveQueryId {
 // Ensure Send and Sync are implemented
 unsafe impl Send for LiveQueryId {}
 unsafe impl Sync for LiveQueryId {}
+
+impl StorageKey for LiveQueryId {
+    fn storage_key(&self) -> Vec<u8> {
+        self.0.as_bytes().to_vec()
+    }
+}
 
 #[cfg(test)]
 mod tests {

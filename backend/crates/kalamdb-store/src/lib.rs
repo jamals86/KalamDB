@@ -45,6 +45,9 @@ pub use sharding::{
 };
 pub use storage_trait::{Operation, Partition, StorageBackend, StorageError};
 
+// Re-export StorageKey from kalamdb-commons to avoid import inconsistency
+pub use kalamdb_commons::StorageKey;
+
 // Phase 14: Export new type-safe EntityStore traits
 pub use entity_store::{
     CrossUserTableStore,

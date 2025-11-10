@@ -16,11 +16,7 @@
 //! - **audit**: Audit logging (future)
 
 use crate::error::KalamDbError;
-use datafusion::execution::context::SessionContext;
 use kalamdb_sql::statement_classifier::SqlStatement;
-
-// Core types relocated to executor/models in v3
-pub mod authorization;
 
 // Typed handlers organized by category
 pub mod namespace;
@@ -86,17 +82,18 @@ pub trait StatementHandler: Send + Sync {
     /// Execute a SQL statement with full context
     ///
     /// # Arguments
-    /// * `session` - DataFusion session context for query execution
     /// * `statement` - Parsed SQL statement (from kalamdb_sql)
     /// * `params` - Parameter values for prepared statements (? placeholders)
-    /// * `context` - Execution context (user, role, namespace, audit info)
+    /// * `context` - Execution context (user, role, namespace, audit info, session)
     ///
     /// # Returns
     /// * `Ok(ExecutionResult)` - Successful execution result
     /// * `Err(KalamDbError)` - Execution error
+    ///
+    /// # Note
+    /// SessionContext is available via `context.session` - no need to pass separately
     async fn execute(
         &self,
-        session: &SessionContext,
         statement: SqlStatement,
         params: Vec<ScalarValue>,
         context: &ExecutionContext,

@@ -16,7 +16,6 @@ pub mod user_repo;
 // Re-export commonly used types
 pub use context::AuthenticatedUser;
 pub use error::AuthError;
-#[allow(deprecated)]
-pub use extractor::{extract_auth, extract_auth_with_repo, AuthenticatedRequest};
+pub use extractor::{extract_auth_with_repo, AuthenticatedRequest};
 // pub use service::AuthService; // Temporarily disabled - needs refactoring
 pub use user_repo::UserRepository;

@@ -141,17 +141,23 @@ impl TestServer {
             .expect("Failed to create storage base directory for tests");
 
         // Initialize RocksDB with all system tables
-        let db_init = kalamdb_store::RocksDbInit::new(&db_path);
+        let db_init = kalamdb_store::RocksDbInit::with_defaults(&db_path);
         let db = db_init.open().expect("Failed to open RocksDB");
 
         // Initialize StorageBackend
         let backend: Arc<dyn StorageBackend> = Arc::new(RocksDBBackend::new(db.clone()));
 
-        // Initialize AppContext with Phase 10 pattern (3 parameters)
+        // Create minimal test config
+        let mut test_config = kalamdb_commons::config::ServerConfig::default();
+        test_config.server.node_id = "test-node".to_string();
+        test_config.storage.default_storage_path = storage_base_path.to_str().unwrap().to_string();
+
+        // Initialize AppContext with config (4 parameters)
         let app_context = AppContext::init(
             backend.clone(),
             NodeId::new("test-node".to_string()),
             storage_base_path.to_str().unwrap().to_string(),
+            test_config,
         );
 
         // Get session context from AppContext
@@ -211,6 +217,15 @@ impl TestServer {
             app_context.clone(),
             false, // disable password complexity enforcement in tests
         ));
+
+        // Start background job processing loop so queued jobs (e.g., FLUSH TABLE) run in tests
+        {
+            let jm = app_context.job_manager();
+            tokio::spawn(async move {
+                // Best-effort: run until test process exits
+                let _ = jm.run_loop(2).await; // small concurrency is fine for tests
+            });
+        }
 
         Self {
             temp_dir: Arc::new(temp_dir),
@@ -312,12 +327,13 @@ impl TestServer {
     use kalamdb_core::sql::executor::models::ExecutionContext;
         use kalamdb_commons::Role;
         
+        let session = self.app_context.base_session_context();
         let exec_ctx = match &user_id_obj {
-            Some(user_id) => ExecutionContext::new(user_id.clone(), Role::System),
-            None => ExecutionContext::new(UserId::system(), Role::System),
+            Some(user_id) => ExecutionContext::new(user_id.clone(), Role::System, session.clone()),
+            None => ExecutionContext::new(UserId::system(), Role::System, session),
         };
         
-    match self.sql_executor.execute(&*self.session_context, sql, &exec_ctx, Vec::new()).await {
+    match self.sql_executor.execute(sql, &exec_ctx, Vec::new()).await {
         Ok(result) => {
             use kalamdb_core::sql::ExecutionResult;
             match result {

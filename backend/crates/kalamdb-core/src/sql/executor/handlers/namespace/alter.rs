@@ -4,7 +4,6 @@ use crate::app_context::AppContext;
 use crate::error::KalamDbError;
 use crate::sql::executor::handlers::typed::TypedStatementHandler;
 use crate::sql::executor::models::{ExecutionContext, ExecutionResult, ScalarValue};
-use datafusion::execution::context::SessionContext;
 use kalamdb_commons::models::NamespaceId;
 use kalamdb_sql::ddl::AlterNamespaceStatement;
 use std::sync::Arc;
@@ -24,7 +23,6 @@ impl AlterNamespaceHandler {
 impl TypedStatementHandler<AlterNamespaceStatement> for AlterNamespaceHandler {
     async fn execute(
         &self,
-        _session: &SessionContext,
         statement: AlterNamespaceStatement,
         _params: Vec<ScalarValue>,
         _context: &ExecutionContext,
@@ -84,11 +82,13 @@ impl TypedStatementHandler<AlterNamespaceStatement> for AlterNamespaceHandler {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use kalamdb_commons::Role;
+    use crate::test_helpers::create_test_session;
+    use datafusion::prelude::SessionContext;
     use kalamdb_commons::models::UserId;
+    use kalamdb_commons::Role;
 
     fn create_test_context() -> ExecutionContext {
-        ExecutionContext::new(UserId::new("test_user"), Role::Dba)
+        ExecutionContext::new(UserId::new("test_user"), Role::Dba, create_test_session())
     }
 
     #[tokio::test]
@@ -101,7 +101,7 @@ mod tests {
         };
         
         // Test with non-admin user
-        let ctx = ExecutionContext::new(UserId::new("user"), Role::User);
+        let ctx = ExecutionContext::new(UserId::new("user"), Role::User, create_test_session());
         let result = handler.check_authorization(&stmt, &ctx).await;
         
         assert!(result.is_err());
@@ -123,7 +123,7 @@ mod tests {
         let session = SessionContext::new();
 
         // Note: This test would need proper setup of test namespace
-        let result = handler.execute(&session, stmt, vec![], &ctx).await;
+        let result = handler.execute(stmt, vec![], &ctx).await;
         
         // Would verify result or error based on test setup
         assert!(result.is_ok() || result.is_err());

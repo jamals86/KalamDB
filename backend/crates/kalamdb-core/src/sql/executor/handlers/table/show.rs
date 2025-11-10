@@ -5,8 +5,6 @@ use crate::error::KalamDbError;
 use crate::sql::executor::handlers::typed::TypedStatementHandler;
 use crate::sql::executor::models::{ExecutionContext, ExecutionResult, ScalarValue};
 use datafusion::arrow::array::{ArrayRef, Int32Array, RecordBatch, StringBuilder, TimestampMillisecondArray};
-use datafusion::execution::context::SessionContext;
-use kalamdb_commons::models::NamespaceId;
 use kalamdb_commons::schemas::TableDefinition;
 use kalamdb_sql::ddl::ShowTablesStatement;
 use std::sync::Arc;
@@ -26,7 +24,6 @@ impl ShowTablesHandler {
 impl TypedStatementHandler<ShowTablesStatement> for ShowTablesHandler {
     async fn execute(
         &self,
-        _session: &SessionContext,
         statement: ShowTablesStatement,
         _params: Vec<ScalarValue>,
         _context: &ExecutionContext,
@@ -63,7 +60,7 @@ impl TypedStatementHandler<ShowTablesStatement> for ShowTablesHandler {
 
 /// Build a RecordBatch for system.tables-like view from definitions
 fn build_tables_batch(tables: Vec<TableDefinition>) -> Result<RecordBatch, KalamDbError> {
-    use datafusion::arrow::array::StringArray;
+    
 
     let mut table_ids = StringBuilder::new();
     let mut table_names = StringBuilder::new();
@@ -108,7 +105,7 @@ fn build_tables_batch(tables: Vec<TableDefinition>) -> Result<RecordBatch, Kalam
 
 /// Fetch system.tables schema from provider to ensure column order/types match
 fn self_tables_provider_schema() -> datafusion::arrow::datatypes::SchemaRef {
-    use std::sync::Arc as StdArc;
+    
     use crate::app_context::AppContext;
     use datafusion::datasource::TableProvider;
     let app = AppContext::get();

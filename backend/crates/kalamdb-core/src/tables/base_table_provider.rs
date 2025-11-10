@@ -189,6 +189,24 @@ impl UserTableShared {
         })
     }
 
+    /// Attach a LiveQueryManager after construction (used during table creation & bootstrap)
+    ///
+    /// This avoids needing a different constructor signature while allowing late binding
+    /// when AppContext.live_query_manager() is available.
+    pub fn attach_live_query_manager(&mut self, manager: Arc<LiveQueryManager>) {
+        let store = self.store.clone();
+        self.insert_handler = Arc::new(
+            UserTableInsertHandler::new(store.clone()).with_live_query_manager(Arc::clone(&manager)),
+        );
+        self.update_handler = Arc::new(
+            UserTableUpdateHandler::new(store.clone()).with_live_query_manager(Arc::clone(&manager)),
+        );
+        self.delete_handler = Arc::new(
+            UserTableDeleteHandler::new(store.clone()).with_live_query_manager(Arc::clone(&manager)),
+        );
+        self.live_query_manager = Some(manager);
+    }
+
     /// Build default column map for INSERT operations.
     ///
     /// Currently injects SNOWFLAKE_ID default for auto-generated `id` columns.

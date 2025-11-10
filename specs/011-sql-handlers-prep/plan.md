@@ -1,108 +1,37 @@
-# Implementation Plan: SQL Handlers Prep
+# Implementation Plan: [FEATURE]
 
-**Branch**: `011-sql-handlers-prep` | **Date**: 2025-11-07 | **Spec**: [spec.md](./spec.md)
-**Input**: Feature specification from `/specs/011-sql-handlers-prep/spec.md`
+**Branch**: `[###-feature-name]` | **Date**: [DATE] | **Spec**: [link]
+**Input**: Feature specification from `/specs/[###-feature-name]/spec.md`
 
 **Note**: This template is filled in by the `/speckit.plan` command. See `.specify/templates/commands/plan.md` for the execution workflow.
 
 ## Summary
 
-Prepare the repository for comprehensive SQL handler implementation by:
-1. Refactoring execution models into modular structure (ExecutionContext, ExecutionResult, ExecutionMetadata)
-2. Moving handler utilities to standardized locations (sql/executor/helpers)
-3. Implementing DataFusion parameter binding with PostgreSQL-style placeholders ($1, $2)
-4. Creating typed handler architecture with HandlerRegistry and zero-boilerplate registration
-5. Implementing all 28 SQL statement handlers (excluding SELECT which uses DataFusion directly)
-6. Establishing structured error format with machine-readable codes
-7. Configurable execution timeouts and parameter size limits
+[Extract from feature spec: primary requirement + technical approach from research]
 
 ## Technical Context
 
-**Language/Version**: Rust 1.90+ (edition 2021)
-**Primary Dependencies**: DataFusion 40.0, Apache Arrow 52.0, Apache Parquet 52.0, Actix-Web 4.4, sqlparser-rs (via DataFusion), tokio 1.48, serde 1.0
-**Storage**: RocksDB 0.24 (write path), Parquet files (flushed segments)
-**Testing**: cargo test (unit + integration), criterion (benchmarks)
-**Target Platform**: Linux/macOS server, WASM (future SDK)
-**Project Type**: Backend library + REST API (workspace structure)
-**Performance Goals**: 
-  - SELECT execution: <1 second for simple queries (SC-002)
-  - Handler dispatch: <2μs overhead vs direct match
-  - Parameter validation: <10μs for 50 parameters
-  - Schema lookup via SchemaRegistry: 1-2μs (50-100× faster than SQL queries)
-**Constraints**: 
-  - Parameter limits: max 50 parameters, 512KB per parameter
-  - Handler timeout: 30 seconds default (configurable via config.toml)
-  - Zero-boilerplate handler registration pattern
-  - Last-write-wins for concurrent DML (no locking)
-  - **Row count semantics**: All operations return `row_count` (SELECT/SHOW) or `rows_affected` (DML/DDL) following MySQL conventions
-**Scale/Scope**: 
-  - 28 SQL statement handlers (excluding SELECT)
-  - 7 handler categories: DDL (14), DML (3), Flush (2), Jobs (2), Subscription (1), User (3), Transaction (3)
-  - Structured error responses with machine-readable codes
+<!--
+  ACTION REQUIRED: Replace the content in this section with the technical details
+  for the project. The structure here is presented in advisory capacity to guide
+  the iteration process.
+-->
 
----
-
-## Row Count Behavior
-
-All handler responses MUST include a row count field following MySQL semantics:
-
-### DML Operations
-- **INSERT**: `rows_affected` = Number of rows inserted (e.g., multi-value INSERT returns count)
-- **UPDATE**: `rows_affected` = Number of rows with **actual changes** (not rows matched by WHERE)
-- **DELETE**: `rows_affected` = Number of rows removed
-- **SELECT**: `row_count` = Number of rows returned in result set
-
-### DDL Operations (always return 1)
-- **CREATE/DROP NAMESPACE**: `rows_affected = 1` (single namespace created/dropped)
-- **CREATE/ALTER/DROP TABLE**: `rows_affected = 1` (single table created/altered/dropped)
-- **CREATE/ALTER/DROP STORAGE**: `rows_affected = 1` (single storage created/altered/dropped)
-
-### User Management (always return 1)
-- **CREATE/ALTER/DROP USER**: `rows_affected = 1` (single user created/altered/dropped)
-
-### Job Operations (always return 1)
-- **KILL JOB**: `rows_affected = 1` (single job killed)
-- **KILL LIVE QUERY**: `rows_affected = 1` (single subscription cancelled)
-
-### Flush Operations
-- **FLUSH TABLE**: `rows_affected = 1` (single table flushed)
-- **FLUSH ALL TABLES**: `rows_affected = N` (N = number of tables flushed)
-
-### Query Operations (return count of result rows)
-- **SHOW NAMESPACES**: `row_count = N` (N = number of namespaces)
-- **SHOW TABLES**: `row_count = N` (N = number of tables)
-- **SHOW STORAGES**: `row_count = N` (N = number of storages)
-- **DESCRIBE TABLE**: `row_count = N` (N = number of columns)
-
-### Special Cases
-- **CREATE IF NOT EXISTS**: Return `rows_affected = 0` if entity already exists (with warning message), `rows_affected = 1` if created
-- **UPDATE with no changes**: Return `rows_affected = 0` if WHERE matches rows but values are identical
-
-**Implementation Pattern**:
-```rust
-// DML via DataFusion
-let batches = execute_via_datafusion(ctx, &sql, params).await?;
-let rows_affected: usize = batches.iter().map(|b| b.num_rows()).sum();
-
-// DDL operations
-let rows_affected = 1; // Single entity created/modified/dropped
-
-// SHOW/DESCRIBE operations
-let row_count = result_batches.iter().map(|b| b.num_rows()).sum();
-```
+**Language/Version**: [e.g., Python 3.11, Swift 5.9, Rust 1.75 or NEEDS CLARIFICATION]  
+**Primary Dependencies**: [e.g., FastAPI, UIKit, LLVM or NEEDS CLARIFICATION]  
+**Storage**: [if applicable, e.g., PostgreSQL, CoreData, files or N/A]  
+**Testing**: [e.g., pytest, XCTest, cargo test or NEEDS CLARIFICATION]  
+**Target Platform**: [e.g., Linux server, iOS 15+, WASM or NEEDS CLARIFICATION]
+**Project Type**: [single/web/mobile - determines source structure]  
+**Performance Goals**: [domain-specific, e.g., 1000 req/s, 10k lines/sec, 60 fps or NEEDS CLARIFICATION]  
+**Constraints**: [domain-specific, e.g., <200ms p95, <100MB memory, offline-capable or NEEDS CLARIFICATION]  
+**Scale/Scope**: [domain-specific, e.g., 10k users, 1M LOC, 50 screens or NEEDS CLARIFICATION]
 
 ## Constitution Check
 
 *GATE: Must pass before Phase 0 research. Re-check after Phase 1 design.*
 
-**Status**: Constitution template is empty/not ratified for this project. Proceeding with standard best practices:
-- ✅ Modular architecture (handlers in separate files)
-- ✅ Test coverage required (unit tests per handler, integration tests per category)
-- ✅ Zero-boilerplate patterns (generic TypedHandlerAdapter)
-- ✅ Clear error handling (structured ErrorResponse with codes)
-- ✅ Performance constraints documented (timeouts, parameter limits)
-
-**No violations** - Feature aligns with Rust best practices and existing KalamDB architecture patterns.
+[Gates determined based on constitution file]
 
 ## Project Structure
 
@@ -119,91 +48,57 @@ specs/[###-feature]/
 ```
 
 ### Source Code (repository root)
+<!--
+  ACTION REQUIRED: Replace the placeholder tree below with the concrete layout
+  for this feature. Delete unused options and expand the chosen structure with
+  real paths (e.g., apps/admin, packages/something). The delivered plan must
+  not include Option labels.
+-->
 
 ```text
-backend/crates/kalamdb-core/src/
-├── sql/
-│   └── executor/
-│       ├── models/              # NEW: Execution models (one per file)
-│       │   ├── context.rs       # ExecutionContext
-│       │   ├── result.rs        # ExecutionResult
-│       │   └── metadata.rs      # ExecutionMetadata
-│       ├── helpers/             # MOVED: From handlers/
-│       │   ├── audit.rs         # Audit logging helpers
-│       │   └── helpers.rs       # Shared utilities
-│       ├── handlers/            # Handler implementations
-│       │   ├── ddl/             # DDL handlers (14 files)
-│       │   │   ├── mod.rs
-│       │   │   ├── create_namespace.rs  # ✅ COMPLETE
-│       │   │   ├── alter_namespace.rs
-│       │   │   ├── drop_namespace.rs
-│       │   │   ├── show_namespaces.rs
-│       │   │   ├── create_storage.rs
-│       │   │   ├── alter_storage.rs
-│       │   │   ├── drop_storage.rs
-│       │   │   ├── show_storages.rs
-│       │   │   ├── create_table.rs
-│       │   │   ├── alter_table.rs
-│       │   │   ├── drop_table.rs
-│       │   │   ├── show_tables.rs
-│       │   │   ├── describe_table.rs
-│       │   │   └── show_stats.rs
-│       │   ├── dml/             # DML handlers (3 files)
-│       │   │   ├── mod.rs
-│       │   │   ├── insert.rs
-│       │   │   ├── update.rs
-│       │   │   └── delete.rs
-│       │   ├── flush/           # Flush handlers (2 files)
-│       │   │   ├── mod.rs
-│       │   │   ├── flush_table.rs
-│       │   │   └── flush_all_tables.rs
-│       │   ├── jobs/            # Job handlers (2 files)
-│       │   │   ├── mod.rs
-│       │   │   ├── kill_job.rs
-│       │   │   └── kill_live_query.rs
-│       │   ├── subscription/    # Subscription handler (1 file)
-│       │   │   ├── mod.rs
-│       │   │   └── subscribe.rs
-│       │   ├── user/            # User handlers (3 files)
-│       │   │   ├── mod.rs
-│       │   │   ├── create_user.rs
-│       │   │   ├── alter_user.rs
-│       │   │   └── drop_user.rs
-│       │   ├── transaction/     # Transaction handlers (3 files)
-│       │   │   ├── mod.rs
-│       │   │   ├── begin.rs
-│       │   │   ├── commit.rs
-│       │   │   └── rollback.rs
-│       │   ├── typed.rs         # TypedStatementHandler trait
-│       │   ├── handler_adapter.rs   # Generic adapter
-│       │   ├── handler_registry.rs  # Handler registry
-│       │   └── mod.rs
-│       └── mod.rs               # SqlExecutor (refactored)
-├── app_context.rs              # AppContext singleton
-├── schema_registry/            # Schema cache + Arrow memoization
-└── jobs/                       # UnifiedJobManager
-
-backend/crates/kalamdb-api/src/
-└── routes/                     # REST API routes (ExecutionContext construction)
+# [REMOVE IF UNUSED] Option 1: Single project (DEFAULT)
+src/
+├── models/
+├── services/
+├── cli/
+└── lib/
 
 tests/
+├── contract/
 ├── integration/
-│   ├── test_ddl_handlers.rs    # DDL category tests
-│   ├── test_dml_handlers.rs    # DML category tests
-│   ├── test_handler_params.rs  # Parameter binding tests
-│   └── test_handler_errors.rs  # Error format tests
 └── unit/
-    └── handlers/               # Per-handler unit tests
+
+# [REMOVE IF UNUSED] Option 2: Web application (when "frontend" + "backend" detected)
+backend/
+├── src/
+│   ├── models/
+│   ├── services/
+│   └── api/
+└── tests/
+
+frontend/
+├── src/
+│   ├── components/
+│   ├── pages/
+│   └── services/
+└── tests/
+
+# [REMOVE IF UNUSED] Option 3: Mobile + API (when "iOS/Android" detected)
+api/
+└── [same as backend above]
+
+ios/ or android/
+└── [platform-specific structure: feature modules, UI flows, platform tests]
 ```
 
-**Structure Decision**: Backend library structure with handlers organized by category (DDL, DML, Flush, Jobs, Subscription, User, Transaction). Each handler in its own file following single-responsibility principle. Generic adapter eliminates boilerplate.
+**Structure Decision**: [Document the selected structure and reference the real
+directories captured above]
 
 ## Complexity Tracking
 
-**No violations** - This feature simplifies the codebase:
-- Reduces handler boilerplate by 89% (900 lines → 150 lines via generic adapter)
-- Consolidates execution models into single location (sql/executor/models/)
-- Eliminates duplicate handler registration code
-- Standardizes error handling across all statement types
+> **Fill ONLY if Constitution Check has violations that must be justified**
 
-This feature is a refactoring/architecture improvement with no added complexity.
+| Violation | Why Needed | Simpler Alternative Rejected Because |
+|-----------|------------|-------------------------------------|
+| [e.g., 4th project] | [current need] | [why 3 projects insufficient] |
+| [e.g., Repository pattern] | [specific problem] | [why direct DB access insufficient] |

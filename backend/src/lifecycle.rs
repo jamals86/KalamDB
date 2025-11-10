@@ -34,13 +34,16 @@ pub struct ApplicationComponents {
 
 /// Initialize RocksDB, DataFusion, services, rate limiter, and flush scheduler.
 pub async fn bootstrap(config: &ServerConfig) -> Result<(ApplicationComponents, Arc<kalamdb_core::app_context::AppContext>)> {
+    let bootstrap_start = std::time::Instant::now();
+    
     // Initialize RocksDB
+    let phase_start = std::time::Instant::now();
     let db_path = std::path::PathBuf::from(&config.storage.rocksdb_path);
     std::fs::create_dir_all(&db_path)?;
 
-    let db_init = RocksDbInit::new(db_path.to_str().unwrap());
+    let db_init = RocksDbInit::new(db_path.to_str().unwrap(), config.storage.rocksdb.clone());
     let db = db_init.open()?;
-    info!("RocksDB initialized at {}", db_path.display());
+    info!("RocksDB initialized at {} ({:.2}ms)", db_path.display(), phase_start.elapsed().as_secs_f64() * 1000.0);
 
     // Initialize RocksDB backend for all components (single StorageBackend trait)
     let backend = Arc::new(RocksDBBackend::new(db.clone()));
@@ -48,16 +51,19 @@ pub async fn bootstrap(config: &ServerConfig) -> Result<(ApplicationComponents, 
     // Initialize core stores from generic backend (uses kalamdb_store::StorageBackend)
     // Phase 5: AppContext now creates all dependencies internally!
     // Uses constants from kalamdb_commons for table prefixes
+    let phase_start = std::time::Instant::now();
     let app_context = kalamdb_core::app_context::AppContext::init(
         backend.clone(),
         kalamdb_commons::NodeId::new(config.server.node_id.clone()),
         config.storage.default_storage_path.clone(),
+        config.clone(), // Pass ServerConfig to AppContext for centralized access
     );
-    info!("AppContext initialized with all stores, managers, registries, and providers");
+    info!("AppContext initialized with all stores, managers, registries, and providers ({:.2}ms)", phase_start.elapsed().as_secs_f64() * 1000.0);
 
     // Initialize system tables and verify schema version (Phase 10 Phase 7, T075-T079)
+    let phase_start = std::time::Instant::now();
     kalamdb_core::tables::system::initialize_system_tables(backend.clone()).await?;
-    info!("System tables initialized with schema version tracking");
+    info!("System tables initialized with schema version tracking ({:.2}ms)", phase_start.elapsed().as_secs_f64() * 1000.0);
 
     // Start JobsManager run loop (Phase 9, T163)
     let job_manager = app_context.job_manager();
@@ -68,9 +74,10 @@ pub async fn bootstrap(config: &ServerConfig) -> Result<(ApplicationComponents, 
             log::error!("JobsManager run loop failed: {}", e);
         }
     });
-    info!("UnifiedJoJobsManagerbsManager background task spawned");
+    info!("JobsManager background task spawned");
 
     // Seed default storage if necessary (using SystemTablesRegistry)
+    let phase_start = std::time::Instant::now();
     let storages_provider = app_context.system_tables().storages();
     let existing_storages = storages_provider.scan_all_storages()?;
     let storage_count = existing_storages.num_rows();
@@ -96,6 +103,7 @@ pub async fn bootstrap(config: &ServerConfig) -> Result<(ApplicationComponents, 
     } else {
         info!("Found {} existing storage(s)", storage_count);
     }
+    info!("Storage initialization completed ({:.2}ms)", phase_start.elapsed().as_secs_f64() * 1000.0);
 
     // Get references from AppContext for services that need them
     let live_query_manager = app_context.live_query_manager();
@@ -108,6 +116,7 @@ pub async fn bootstrap(config: &ServerConfig) -> Result<(ApplicationComponents, 
         Arc::new(kalamdb_api::repositories::CoreUsersRepo::new(users_provider));
     
     // SqlExecutor now uses AppContext directly
+    let phase_start = std::time::Instant::now();
     let sql_executor = Arc::new(SqlExecutor::new(
         app_context.clone(),
         config.auth.enforce_password_complexity,
@@ -117,9 +126,8 @@ pub async fn bootstrap(config: &ServerConfig) -> Result<(ApplicationComponents, 
         "SqlExecutor initialized with DROP TABLE support, storage registry, job manager, and table registration"
     );
 
-    let default_user_id = UserId::from("system");
-    sql_executor.load_existing_tables(default_user_id).await?;
-    info!("Existing tables loaded and registered with DataFusion");
+    sql_executor.load_existing_tables().await?;
+    info!("Existing tables loaded and registered with DataFusion ({:.2}ms)", phase_start.elapsed().as_secs_f64() * 1000.0);
 
     // JWT authentication
     use jsonwebtoken::Algorithm;
@@ -150,6 +158,7 @@ pub async fn bootstrap(config: &ServerConfig) -> Result<(ApplicationComponents, 
     info!("Job management delegated to JobsManager (already running in background)");
 
     // Get users provider for system user initialization
+    let phase_start = std::time::Instant::now();
     let users_provider_for_init = app_context.system_tables().users();
 
     // T125-T127: Create default system user on first startup
@@ -157,6 +166,7 @@ pub async fn bootstrap(config: &ServerConfig) -> Result<(ApplicationComponents, 
 
     // Security warning: Check if remote access is enabled with empty root password
     check_remote_access_security(config, users_provider_for_init).await?;
+    info!("User initialization completed ({:.2}ms)", phase_start.elapsed().as_secs_f64() * 1000.0);
 
     let components = ApplicationComponents {
         session_factory,
@@ -166,6 +176,8 @@ pub async fn bootstrap(config: &ServerConfig) -> Result<(ApplicationComponents, 
         live_query_manager,
         user_repo,
     };
+
+    info!("🚀 Server bootstrap completed in {:.2}ms", bootstrap_start.elapsed().as_secs_f64() * 1000.0);
 
     Ok((components, app_context))
 }
@@ -191,10 +203,12 @@ pub async fn run(
     let live_query_manager = components.live_query_manager.clone();
     let user_repo = components.user_repo.clone();
 
+    let app_context_for_handler = app_context.clone();
     let server = HttpServer::new(move || {
         App::new()
             .wrap(middleware::request_logger())
             .wrap(middleware::build_cors())
+            .app_data(web::Data::new(app_context_for_handler.clone()))
             .app_data(web::Data::new(session_factory.clone()))
             .app_data(web::Data::new(sql_executor.clone()))
             .app_data(web::Data::new(jwt_auth.clone()))

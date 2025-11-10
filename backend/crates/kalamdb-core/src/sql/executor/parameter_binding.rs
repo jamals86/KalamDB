@@ -8,9 +8,7 @@
 use crate::error::KalamDbError;
 use arrow::array::Array;
 use datafusion::scalar::ScalarValue;
-use datafusion::logical_expr::{Expr, LogicalPlan};
-use datafusion::common::tree_node::TreeNodeRewriter;
-use datafusion::common::Result as DataFusionResult;
+use datafusion::logical_expr::LogicalPlan;
 
 /// Maximum number of parameters allowed per statement
 const MAX_PARAMS: usize = 50;
@@ -94,46 +92,50 @@ fn estimate_scalar_value_size(value: &ScalarValue) -> usize {
 
 /// Replace placeholders ($1, $2, ...) in LogicalPlan with ScalarValue literals
 ///
-/// Note: This is a placeholder implementation. Full implementation requires:
-/// 1. Traverse LogicalPlan recursively
-/// 2. Find all Expr::Placeholder nodes
-/// 3. Replace with Expr::Literal(params[placeholder_id - 1])
-/// 4. Validate placeholder count matches params.len()
+/// **Status**: Infrastructure complete, full implementation pending DataFusion API research
 ///
-/// See DataFusion's PreparedStatement implementation for reference.
+/// # Arguments
+/// * `plan` - LogicalPlan to process
+/// * `params` - Parameter values indexed from 0 (placeholder $1 = params[0])
+///
+/// # Returns
+/// * `Ok(LogicalPlan)` - Plan with all placeholders replaced
+/// * `Err(KalamDbError)` - If placeholder index is out of bounds or not yet implemented
+///
+/// # Implementation Note
+/// DataFusion's LogicalPlan API for expression transformation varies across versions.
+/// The correct approach is to use `LogicalPlan::with_exprs()` or a custom visitor pattern.
+/// This will be completed when DataFusion's stable API is determined.
+///
+/// # Example
+/// ```ignore
+/// use datafusion::prelude::*;
+/// use datafusion::scalar::ScalarValue;
+///
+/// let plan = ctx.sql("SELECT * FROM users WHERE id = $1").await?.into_optimized_plan()?;
+/// let params = vec![ScalarValue::Int64(Some(42))];
+/// let bound_plan = replace_placeholders_in_plan(plan, &params)?;
+/// ```
 pub fn replace_placeholders_in_plan(
     _plan: LogicalPlan,
     params: &[ScalarValue],
 ) -> Result<LogicalPlan, KalamDbError> {
-    // TODO: Implement LogicalPlan traversal and placeholder replacement
-    // For now, return error indicating feature is not yet implemented
-    if !params.is_empty() {
-        return Err(KalamDbError::NotImplemented {
-            feature: "Parameter binding via LogicalPlan rewrite".to_string(),
-            message: "Parameter binding will be implemented in Phase 4 (US2)".to_string(),
-        });
-    }
-
     // If no params, return plan unchanged
-    todo!("Implement placeholder replacement using TreeNode::rewrite and ExprRewriter")
-}
-
-/// Placeholder rewriter implementation
-struct PlaceholderRewriter<'a> {
-    params: &'a [ScalarValue],
-}
-
-impl<'a> TreeNodeRewriter for PlaceholderRewriter<'a> {
-    type Node = Expr;
-
-    fn f_down(&mut self, node: Self::Node) -> DataFusionResult<datafusion::common::tree_node::Transformed<Self::Node>> {
-        // TODO: Implement actual rewrite logic
-        // if let Expr::Placeholder { id, .. } = node {
-        //     let param_idx = id.parse::<usize>()? - 1;
-        //     return Ok(Transformed::yes(Expr::Literal(self.params[param_idx].clone())));
-        // }
-        Ok(datafusion::common::tree_node::Transformed::no(node))
+    if params.is_empty() {
+        return Ok(_plan);
     }
+
+    // TODO: Implement LogicalPlan expression traversal
+    // Research needed: DataFusion 40.0 API for recursive expression replacement
+    // Options:
+    // 1. LogicalPlan::with_exprs() + custom ExprRewriter
+    // 2. LogicalPlan visitor pattern with mutable state
+    // 3. DataFrame API with parameter binding support (if available)
+    
+    Err(KalamDbError::NotImplemented {
+        feature: "Parameter binding via LogicalPlan rewrite".to_string(),
+        message: "validate_params() works, placeholder replacement pending DataFusion API research".to_string(),
+    })
 }
 
 #[cfg(test)]
@@ -180,3 +182,4 @@ mod tests {
         assert_eq!(estimate_scalar_value_size(&ScalarValue::Null), 0);
     }
 }
+

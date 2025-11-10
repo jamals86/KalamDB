@@ -21,19 +21,24 @@ async fn main() -> Result<()> {
 
     // Normal server startup
     // Load configuration (fallback to defaults when config file missing)
-    let config = match ServerConfig::from_file("config.toml") {
-        Ok(cfg) => cfg,
+    let config_path = "config.toml";
+    let config = match ServerConfig::from_file(config_path) {
+        Ok(cfg) => {
+            eprintln!("✅ Loaded config from: {}", std::fs::canonicalize(config_path).unwrap_or_else(|_| std::path::PathBuf::from(config_path)).display());
+            cfg
+        },
         Err(e) => {
-            eprintln!("Warning: Failed to load config.toml: {}", e);
-            eprintln!("Using defaults");
-            ServerConfig::default()
+            eprintln!("❌ FATAL: Failed to load config.toml: {}", e);
+            eprintln!("❌ Server cannot start without valid configuration");
+            std::process::exit(1);
         }
     };
 
     // Logging before any other side effects
+    let app_log_path = format!("{}/app.log", config.logging.logs_path);
     logging::init_logging(
         &config.logging.level,
-        &config.logging.file_path,
+        &app_log_path,
         config.logging.log_to_console,
         Some(&config.logging.targets),
     )?;

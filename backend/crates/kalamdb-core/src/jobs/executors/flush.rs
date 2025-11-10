@@ -93,17 +93,27 @@ impl JobExecutor for FlushExecutor {
 
         let namespace_id_str = params_obj["namespace_id"].as_str().unwrap();
         let table_name_str = params_obj["table_name"].as_str().unwrap();
-        let table_type = params_obj["table_type"].as_str().unwrap();
+        // Normalize table_type (handle lowercase stored values like "user")
+        let table_type_raw = params_obj["table_type"].as_str().unwrap();
+        let table_type = match kalamdb_commons::schemas::TableType::from_str(table_type_raw) {
+            Some(tt) => tt, // use enum for matching
+            None => {
+                return Err(KalamDbError::InvalidOperation(format!(
+                    "Unknown table type: {}",
+                    table_type_raw
+                )));
+            }
+        };
 
         ctx.log_info(&format!(
             "Flushing {}.{} (type: {})",
-            namespace_id_str, table_name_str, table_type
+            namespace_id_str, table_name_str, table_type.as_str()
         ));
 
         // Get dependencies from AppContext
         let app_ctx = &ctx.app_ctx;
-        let schema_cache = app_ctx.schema_cache();
-        let schema_registry = app_ctx.schema_registry();
+    let schema_cache = app_ctx.schema_cache();
+    let schema_registry = app_ctx.schema_registry();
         let live_query_manager = app_ctx.live_query_manager();
 
         let namespace_id = NamespaceId::new(namespace_id_str.to_string());
@@ -122,9 +132,28 @@ impl JobExecutor for FlushExecutor {
 
         // Execute flush based on table type
         let result = match table_type {
-            "User" => {
+            kalamdb_commons::schemas::TableType::User => {
                 ctx.log_info("Executing UserTableFlushJob");
-                let store = app_ctx.user_table_store();
+
+                // IMPORTANT: Use the per-table UserTableStore (created at table registration)
+                // instead of the generic prefix-only user_table_store() created in AppContext.
+                // The generic store points to partition "user_" (no namespace/table suffix) and
+                // cannot see actual row data stored under per-table partitions like
+                // "user_<namespace>:<table>". Using it caused runtime errors:
+                //   Not found: user_
+                // Retrieve the UserTableProvider instance to access the correct store.
+                let provider_arc = schema_registry.get_provider(&table_id)
+                    .ok_or_else(|| KalamDbError::NotFound(format!(
+                        "User table provider not registered for {}.{} (id={})",
+                        namespace_id_str, table_name_str, table_id
+                    )))?;
+                
+                // Downcast to UserTableProvider to access shared state
+                let provider = provider_arc.as_any().downcast_ref::<crate::tables::user_tables::UserTableProvider>()
+                    .ok_or_else(|| KalamDbError::InvalidOperation("Cached provider type mismatch for user table".into()))?;
+                
+                let store = provider.shared().store().clone();
+
                 let flush_job = UserTableFlushJob::new(
                     table_id.clone(),
                     store,
@@ -135,12 +164,23 @@ impl JobExecutor for FlushExecutor {
                 )
                 .with_live_query_manager(live_query_manager);
 
-                flush_job.execute()
+                flush_job
+                    .execute()
                     .map_err(|e| KalamDbError::Other(format!("User table flush failed: {}", e)))?
             }
-            "Shared" => {
+            kalamdb_commons::schemas::TableType::Shared => {
                 ctx.log_info("Executing SharedTableFlushJob");
-                let store = app_ctx.shared_table_store();
+
+                // Use a per-table SharedTableStore for the specific <namespace, table>
+                // to ensure we read the correct partition ("shared_<ns>:<table>").
+                let store = Arc::new(
+                    crate::tables::shared_tables::shared_table_store::new_shared_table_store(
+                        app_ctx.storage_backend(),
+                        &namespace_id,
+                        &table_name,
+                    ),
+                );
+
                 let flush_job = SharedTableFlushJob::new(
                     table_id.clone(),
                     store,
@@ -151,24 +191,22 @@ impl JobExecutor for FlushExecutor {
                 )
                 .with_live_query_manager(live_query_manager);
 
-                flush_job.execute()
+                flush_job
+                    .execute()
                     .map_err(|e| KalamDbError::Other(format!("Shared table flush failed: {}", e)))?
             }
-            "Stream" => {
+            kalamdb_commons::schemas::TableType::Stream => {
                 ctx.log_info("Stream table flush not yet implemented");
-                // TODO: Implement StreamTableFlushJob when stream tables support flush
+                // Streams: return Completed (no-op) for idempotency and clarity
                 return Ok(JobDecision::Completed {
                     message: Some(format!(
-                        "Stream flush not yet implemented for {}.{}",
+                        "Stream flush skipped (not implemented) for {}.{}",
                         namespace_id_str, table_name_str
                     )),
                 });
             }
-            _ => {
-                return Err(KalamDbError::InvalidOperation(format!(
-                    "Unknown table type: {}",
-                    table_type
-                )));
+            kalamdb_commons::schemas::TableType::System => {
+                return Err(KalamDbError::InvalidOperation("Cannot flush SYSTEM tables".to_string()));
             }
         };
 

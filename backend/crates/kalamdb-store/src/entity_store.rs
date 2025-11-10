@@ -22,7 +22,7 @@
 //!
 //! ```rust,ignore
 //! use kalamdb_store::{EntityStore, StorageBackend};
-//! use kalamdb_commons::models::{UserId, User};
+//! use kalamdb_commons::{StorageKey, UserId, User};
 //! use std::sync::Arc;
 //!
 //! struct UserStore {
@@ -46,6 +46,7 @@
 //! let retrieved = store.get(&user_id).unwrap().unwrap();
 //! ```
 
+use kalamdb_commons::StorageKey;
 use crate::storage_trait::{Partition, Result, StorageBackend, StorageError};
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
@@ -54,10 +55,10 @@ use std::sync::Arc;
 ///
 /// This trait provides strongly-typed CRUD operations with compile-time key safety.
 /// Unlike the old `EntityStore<T>` which used string keys, this version uses
-/// generic key types (K) that implement `AsRef<[u8]>`.
+/// generic key types (K) that implement `StorageKey`.
 ///
 /// ## Type Parameters
-/// - `K`: Key type that can be converted to bytes (UserId, RowId, TableId, etc.)
+/// - `K`: Key type that implements StorageKey (UserId, RowId, TableId, etc.)
 /// - `V`: Value/entity type that must be Serialize + Deserialize
 ///
 /// ## Required Methods
@@ -85,7 +86,7 @@ use std::sync::Arc;
 /// ```
 pub trait EntityStore<K, V>
 where
-    K: AsRef<[u8]> + Clone + Send + Sync,
+    K: StorageKey,
     V: Serialize + for<'de> Deserialize<'de> + Send + Sync,
 {
     /// Returns a reference to the storage backend.
@@ -135,7 +136,7 @@ where
     fn put(&self, key: &K, entity: &V) -> Result<()> {
         let partition = Partition::new(self.partition());
         let value = self.serialize(entity)?;
-        self.backend().put(&partition, key.as_ref(), &value)
+        self.backend().put(&partition, &key.storage_key(), &value)
     }
 
     /// Stores multiple entities atomically in a batch.
@@ -168,7 +169,7 @@ where
                 let value = self.serialize(entity)?;
                 Ok(Operation::Put {
                     partition: partition.clone(),
-                    key: key.as_ref().to_vec(),
+                    key: key.storage_key(),
                     value,
                 })
             })
@@ -191,7 +192,7 @@ where
     /// ```
     fn get(&self, key: &K) -> Result<Option<V>> {
         let partition = Partition::new(self.partition());
-        match self.backend().get(&partition, key.as_ref())? {
+        match self.backend().get(&partition, &key.storage_key())? {
             Some(bytes) => Ok(Some(self.deserialize(&bytes)?)),
             None => Ok(None),
         }
@@ -209,7 +210,7 @@ where
     /// ```
     fn delete(&self, key: &K) -> Result<()> {
         let partition = Partition::new(self.partition());
-        self.backend().delete(&partition, key.as_ref())
+        self.backend().delete(&partition, &key.storage_key())
     }
 
     /// Scans entities with keys matching the given prefix.
@@ -232,7 +233,7 @@ where
         let partition = Partition::new(self.partition());
         let iter = self
             .backend()
-            .scan(&partition, Some(prefix.as_ref()), None)?;
+            .scan(&partition, Some(&prefix.storage_key()), None)?;
 
         let mut results = Vec::new();
         for (key_bytes, value_bytes) in iter {
@@ -276,6 +277,46 @@ where
 
         Ok(results)
     }
+
+    /// Scans entities with an overall limit and optional prefix, returning at most `limit` entities.
+    ///
+    /// This method streams from the underlying backend and stops early once the requested
+    /// number of results is reached. Prefer this over `scan_all()` for large datasets.
+    ///
+    /// - When `prefix` is `None`, scans from the beginning of the partition.
+    /// - When `prefix` is provided, scans keys beginning with the given byte prefix.
+    ///
+    /// Note: Keys are returned as raw bytes. Higher-level stores may provide typed wrappers.
+    fn scan_limited_with_prefix_bytes(
+        &self,
+        prefix: Option<&[u8]>,
+        limit: usize,
+    ) -> Result<Vec<(Vec<u8>, V)>> {
+        let partition = Partition::new(self.partition());
+        let iter = self
+            .backend()
+            .scan(&partition, prefix, Some(limit))?;
+
+        let mut results = Vec::with_capacity(limit);
+        for (key_bytes, value_bytes) in iter {
+            let entity = self.deserialize(&value_bytes)?;
+            results.push((key_bytes, entity));
+            if results.len() >= limit {
+                break;
+            }
+        }
+        Ok(results)
+    }
+
+    /// Scans entities limited to `limit` results (no prefix).
+    fn scan_limited(&self, limit: usize) -> Result<Vec<(Vec<u8>, V)>> {
+        self.scan_limited_with_prefix_bytes(None, limit)
+    }
+
+    /// Scans entities with a byte prefix limited to `limit` results.
+    fn scan_prefix_limited_bytes(&self, prefix: &[u8], limit: usize) -> Result<Vec<(Vec<u8>, V)>> {
+        self.scan_limited_with_prefix_bytes(Some(prefix), limit)
+    }
 }
 
 /// Trait for cross-user table stores with access control.
@@ -308,7 +349,7 @@ where
 /// ```
 pub trait CrossUserTableStore<K, V>: EntityStore<K, V>
 where
-    K: AsRef<[u8]> + Clone + Send + Sync,
+    K: StorageKey,
     V: Serialize + for<'de> Deserialize<'de> + Send + Sync,
 {
     /// Returns the table access level, if any.

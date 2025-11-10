@@ -3,6 +3,7 @@
 //! This module provides utilities for setting up AppContext in unit tests.
 
 use crate::app_context::AppContext;
+use datafusion::prelude::SessionContext;
 use kalamdb_commons::models::{NodeId, StorageId};
 use kalamdb_store::test_utils::TestDb;
 use kalamdb_store::{RocksDBBackend, StorageBackend};
@@ -16,7 +17,7 @@ static STORAGE_INIT: Once = Once::new();
 
 /// Initialize AppContext with minimal test dependencies
 ///
-/// Uses AppContext::init() with 3 parameters - simple and clean!
+/// Uses AppContext::init() with 4 parameters including test config.
 /// Thread-safe: uses Once to ensure single initialization.
 ///
 /// # Example
@@ -53,12 +54,20 @@ pub fn init_test_app_context() -> Arc<TestDb> {
 
         let storage_backend: Arc<dyn StorageBackend> = Arc::new(RocksDBBackend::new(test_db.db.clone()));
 
-        // Phase 5: Simple 3-parameter initialization!
+        // Create minimal test config using Default + overrides
+        let mut test_config = kalamdb_commons::config::ServerConfig::default();
+        test_config.server.node_id = "test-node".to_string();
+        test_config.storage.default_storage_path = "data/storage".to_string();
+        test_config.execution.max_parameters = 50;
+        test_config.execution.max_parameter_size_bytes = 512 * 1024;
+
+        // Phase 5: Simple 4-parameter initialization with config!
         // Uses constants from kalamdb_commons for table prefixes
         AppContext::init(
             storage_backend,
             NodeId::new("test-node".to_string()),
             "data/storage".to_string(),
+            test_config,
         );
     });
 
@@ -112,3 +121,23 @@ pub fn create_test_job_registry() -> crate::jobs::JobRegistry {
     
     registry
 }
+
+/// Create a test SessionContext
+///
+/// Returns an Arc<SessionContext> for use in tests.
+/// Each call creates a new session, but they share the same DataFusion config.
+///
+/// # Example
+/// ```no_run
+/// use kalamdb_core::test_helpers::create_test_session;
+///
+/// #[test]
+/// fn my_test() {
+///     let session = create_test_session();
+///     // Use session in ExecutionContext::new(user_id, role, session)
+/// }
+/// ```
+pub fn create_test_session() -> Arc<SessionContext> {
+    Arc::new(SessionContext::new())
+}
+

@@ -5,6 +5,8 @@ use std::fmt;
 #[cfg(feature = "serde")]
 use serde::{Deserialize, Serialize};
 
+use crate::StorageKey;
+
 /// Type-safe wrapper for user identifiers.
 ///
 /// Ensures user IDs cannot be accidentally used where namespace IDs or table names
@@ -63,5 +65,11 @@ impl AsRef<str> for UserId {
 impl AsRef<[u8]> for UserId {
     fn as_ref(&self) -> &[u8] {
         self.0.as_bytes()
+    }
+}
+
+impl StorageKey for UserId {
+    fn storage_key(&self) -> Vec<u8> {
+        self.0.as_bytes().to_vec()
     }
 }

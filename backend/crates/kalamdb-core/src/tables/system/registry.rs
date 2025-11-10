@@ -96,7 +96,7 @@ impl SystemTablesRegistry {
         *self.information_schema_tables.write().unwrap() = Some(tables_provider);
 
         // Initialize information_schema.columns using VirtualView pattern
-        let columns_provider = create_information_schema_columns_provider(schema_registry);
+        let columns_provider = create_information_schema_columns_provider(self.tables.clone());
         *self.information_schema_columns.write().unwrap() = Some(columns_provider);
     }
     

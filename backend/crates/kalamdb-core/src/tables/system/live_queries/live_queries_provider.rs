@@ -16,7 +16,7 @@ use datafusion::error::{DataFusionError, Result as DataFusionResult};
 use datafusion::logical_expr::Expr;
 use datafusion::physical_plan::ExecutionPlan;
 use kalamdb_commons::system::LiveQuery;
-use kalamdb_commons::LiveQueryId;
+use kalamdb_commons::{LiveQueryId, TableId, UserId};
 use kalamdb_store::EntityStoreV2;
 use kalamdb_store::StorageBackend;
 use std::any::Any;
@@ -107,20 +107,20 @@ impl LiveQueriesTableProvider {
     }
 
     /// Get live queries by user ID
-    pub fn get_by_user_id(&self, user_id: &str) -> Result<Vec<LiveQuery>, KalamDbError> {
+    pub fn get_by_user_id(&self, user_id: &UserId) -> Result<Vec<LiveQuery>, KalamDbError> {
         let all_queries = self.list_live_queries()?;
         Ok(all_queries
             .into_iter()
-            .filter(|lq| lq.user_id.as_str() == user_id)
+            .filter(|lq| lq.user_id == *user_id)
             .collect())
     }
 
-    /// Get live queries by table name
-    pub fn get_by_table_name(&self, table_name: &str) -> Result<Vec<LiveQuery>, KalamDbError> {
+    /// Get live queries by table ID
+    pub fn get_by_table_id(&self, table_id: &TableId) -> Result<Vec<LiveQuery>, KalamDbError> {
         let all_queries = self.list_live_queries()?;
         Ok(all_queries
             .into_iter()
-            .filter(|lq| lq.table_name.as_str() == table_name)
+            .filter(|lq| lq.table_name == *table_id.table_name() && lq.namespace_id == *table_id.namespace_id())
             .collect())
     }
 

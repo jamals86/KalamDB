@@ -83,10 +83,13 @@ impl TokenBucket {
         let now = Instant::now();
         let elapsed = now.duration_since(self.last_refill);
 
-        if elapsed >= self.window {
-            let windows_elapsed = elapsed.as_secs_f64() / self.window.as_secs_f64();
-            let tokens_to_add = (self.refill_rate as f64 * windows_elapsed) as u32;
+        // Refill tokens continuously based on elapsed time (not just when window expires)
+        // Example: 100 tokens/sec, elapsed 0.1s → refill 10 tokens
+        let elapsed_secs = elapsed.as_secs_f64();
+        let tokens_per_sec = self.refill_rate as f64 / self.window.as_secs_f64();
+        let tokens_to_add = (tokens_per_sec * elapsed_secs) as u32;
 
+        if tokens_to_add > 0 {
             self.tokens = self.capacity.min(self.tokens + tokens_to_add);
             self.last_refill = now;
         }

@@ -16,7 +16,7 @@ use crate::tables::system::registry::SystemTablesRegistry;
 use crate::tables::{SharedTableStore, StreamTableStore, UserTableStore};
 use datafusion::catalog::SchemaProvider;
 use datafusion::prelude::SessionContext;
-use kalamdb_commons::{NodeId, constants::ColumnFamilyNames};
+use kalamdb_commons::{NodeId, ServerConfig, constants::ColumnFamilyNames};
 use kalamdb_store::StorageBackend;
 use std::sync::{Arc, OnceLock};
 
@@ -34,6 +34,10 @@ pub struct AppContext {
     /// Node identifier loaded once from config.toml (Phase 10, US0, FR-000)
     /// Wrapped in Arc for zero-copy sharing across all components
     node_id: Arc<NodeId>,
+
+    /// Server configuration loaded once at startup (Phase 11, T062-T064)
+    /// Provides access to all config settings (execution, limits, storage, etc.)
+    config: Arc<ServerConfig>,
 
     // ===== Caches =====
     schema_registry: Arc<SchemaRegistry>,
@@ -59,6 +63,9 @@ pub struct AppContext {
     
     // ===== System Tables Registry =====
     system_tables: Arc<SystemTablesRegistry>,
+    
+    // ===== Slow Query Logger =====
+    slow_query_logger: Arc<crate::slow_query_logger::SlowQueryLogger>,
 }
 
 impl std::fmt::Debug for AppContext {
@@ -76,6 +83,7 @@ impl std::fmt::Debug for AppContext {
             .field("session_factory", &"Arc<DataFusionSessionFactory>")
             .field("base_session_context", &"Arc<SessionContext>")
             .field("system_tables", &"Arc<SystemTablesRegistry>")
+            .field("slow_query_logger", &"Arc<SlowQueryLogger>")
             .finish()
     }
 }
@@ -103,18 +111,22 @@ impl AppContext {
     ///
     /// let backend: Arc<dyn StorageBackend> = todo!();
     /// let node_id = NodeId::new("prod-node-1".to_string()); // From config.toml
+    /// let config = ServerConfig::from_file("config.toml").unwrap();
     /// AppContext::init(
     ///     backend,
     ///     node_id,
     ///     "data/storage".to_string(),
+    ///     config,
     /// );
     /// ```
     pub fn init(
         storage_backend: Arc<dyn StorageBackend>,
         node_id: NodeId,
         storage_base_path: String,
+        config: ServerConfig,
     ) -> Arc<AppContext> {
         let node_id = Arc::new(node_id); // Wrap NodeId in Arc for zero-copy sharing (FR-000)
+        let config = Arc::new(config); // Wrap config in Arc for zero-copy sharing
         APP_CONTEXT
             .get_or_init(|| {
                 // Create stores using constants from kalamdb_commons
@@ -150,6 +162,9 @@ impl AppContext {
                     .expect("Failed to create DataFusion session factory"));
                 let base_session_context = Arc::new(session_factory.create_session());
 
+                // Wire up SchemaRegistry with base_session_context for automatic table registration
+                schema_cache.set_base_session_context(Arc::clone(&base_session_context));
+
                 // Register system schema
                 let system_schema = Arc::new(datafusion::catalog::memory::MemorySchemaProvider::new());
                 let catalog_name = base_session_context
@@ -170,7 +185,15 @@ impl AppContext {
                         .expect("Failed to register system table");
                 }
 
-                // Register information_schema
+                // SchemaRegistry is just an alias for SchemaCache (Phase 5 complete)
+                // No separate schema_store needed - persistence methods use AppContext to access TablesTableProvider
+                let schema_registry = schema_cache.clone();
+
+                // NOW wire up information_schema providers with schema_registry
+                // This must happen BEFORE registering them with DataFusion
+                system_tables.set_information_schema_dependencies(schema_registry.clone());
+
+                // Register information_schema AFTER set_information_schema_dependencies()
                 let info_schema = Arc::new(datafusion::catalog::memory::MemorySchemaProvider::new());
                 base_session_context
                     .catalog(&catalog_name)
@@ -183,13 +206,6 @@ impl AppContext {
                         .register_table(table_name.to_string(), provider)
                         .expect("Failed to register information_schema table");
                 }
-
-                // SchemaRegistry is just an alias for SchemaCache (Phase 5 complete)
-                // No separate schema_store needed - persistence methods use AppContext to access TablesTableProvider
-                let schema_registry = schema_cache.clone();
-
-                // NOW wire up information_schema providers with schema_registry
-                system_tables.set_information_schema_dependencies(schema_registry.clone());
 
                 // Create job registry and register all 8 executors (Phase 9, T154)
                 let job_registry = Arc::new(JobRegistry::new());
@@ -219,8 +235,16 @@ impl AppContext {
                     Some(stream_table_store.clone()),
                 ));
 
+                // Create slow query logger (Phase 11)
+                let slow_log_path = format!("{}/slow.log", config.logging.logs_path);
+                let slow_query_logger = crate::slow_query_logger::SlowQueryLogger::new(
+                    slow_log_path,
+                    config.logging.slow_query_threshold_ms,
+                );
+
                 Arc::new(AppContext {
                     node_id,
+                    config,
                     schema_registry,
                     user_table_store,
                     shared_table_store,
@@ -232,6 +256,7 @@ impl AppContext {
                     system_tables,
                     session_factory,
                     base_session_context,
+                    slow_query_logger,
                 })
             })
             .clone()
@@ -251,6 +276,14 @@ impl AppContext {
     }
 
     // ===== Getters =====
+    
+    /// Get the server configuration
+    ///
+    /// Returns an Arc reference for zero-copy sharing. This config is loaded
+    /// once during AppContext::init() and shared across all components.
+    pub fn config(&self) -> &Arc<ServerConfig> {
+        &self.config
+    }
     
     pub fn schema_cache(&self) -> Arc<SchemaRegistry> {
         self.schema_registry.clone()
@@ -304,12 +337,16 @@ impl AppContext {
         self.base_session_context.clone()
     }
     
-    pub fn create_session(&self) -> Arc<SessionContext> {
-        Arc::new(self.session_factory.create_session())
-    }
-    
     pub fn system_tables(&self) -> Arc<SystemTablesRegistry> {
         self.system_tables.clone()
+    }
+    
+    /// Get the slow query logger
+    ///
+    /// Returns an Arc reference to the lightweight slow query logger that writes
+    /// to a separate slow.log file for queries exceeding the configured threshold.
+    pub fn slow_query_logger(&self) -> Arc<crate::slow_query_logger::SlowQueryLogger> {
+        self.slow_query_logger.clone()
     }
     
     // ===== Convenience methods for backward compatibility =====

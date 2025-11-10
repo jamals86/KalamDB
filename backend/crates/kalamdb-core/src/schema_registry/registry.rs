@@ -23,7 +23,7 @@ use kalamdb_commons::models::schemas::TableDefinition;
 use kalamdb_commons::models::{NamespaceId, StorageId, TableId, TableName, UserId};
 use kalamdb_commons::schemas::TableType;
 use std::sync::atomic::{AtomicU64, Ordering};
-use std::sync::{Arc, RwLock};
+use std::sync::{Arc, OnceLock, RwLock};
 
 /// Cached table data containing all metadata and schema information
 ///
@@ -139,8 +139,8 @@ pub struct SchemaRegistry {
     /// Cached DataFusion providers per table (shared/stream safe to reuse)
     providers: DashMap<TableId, Arc<dyn TableProvider + Send + Sync>>,
 
-    /// Cached UserTableShared instances per table (Phase 3C: handler consolidation)
-    user_table_shared: DashMap<TableId, Arc<crate::tables::base_table_provider::UserTableShared>>,
+    /// DataFusion base session context for table registration (set once during init)
+    base_session_context: OnceLock<Arc<datafusion::prelude::SessionContext>>,
 
     /// Maximum number of entries before LRU eviction
     max_size: usize,
@@ -160,7 +160,6 @@ impl std::fmt::Debug for SchemaRegistry {
         f.debug_struct("SchemaRegistry")
             .field("cache_entries", &self.cache.len())
             .field("provider_entries", &self.providers.len())
-            .field("user_table_shared_entries", &self.user_table_shared.len())
             .field("max_size", &self.max_size)
             .field("hits", &self.hits.load(Ordering::Relaxed))
             .field("misses", &self.misses.load(Ordering::Relaxed))
@@ -189,12 +188,20 @@ impl SchemaRegistry {
             cache: DashMap::new(),
             lru_timestamps: DashMap::new(),
             providers: DashMap::new(),
-            user_table_shared: DashMap::new(),
+            base_session_context: OnceLock::new(),
             max_size,
             storage_registry,
             hits: AtomicU64::new(0),
             misses: AtomicU64::new(0),
         }
+    }
+
+    /// Set the DataFusion base session context for table registration
+    ///
+    /// This must be called during AppContext initialization, after the base session is created.
+    /// Can only be called once - subsequent calls are ignored.
+    pub fn set_base_session_context(&self, session: Arc<datafusion::prelude::SessionContext>) {
+        let _ = self.base_session_context.set(session);
     }
 
     /// Get current Unix timestamp in milliseconds
@@ -324,7 +331,6 @@ impl SchemaRegistry {
         self.cache.remove(table_id);
         self.lru_timestamps.remove(table_id);
         self.providers.remove(table_id);
-        self.user_table_shared.remove(table_id);
     }
 
     /// Evict least-recently-used entry from cache
@@ -442,7 +448,6 @@ impl SchemaRegistry {
         self.cache.clear();
         self.lru_timestamps.clear();
         self.providers.clear();
-        self.user_table_shared.clear();
         self.hits.store(0, Ordering::Relaxed);
         self.misses.store(0, Ordering::Relaxed);
     }
@@ -458,12 +463,100 @@ impl SchemaRegistry {
     }
 
     /// Insert a DataFusion provider into the cache for a table
+    ///
+    /// Automatically registers the table with DataFusion's catalog if base_session_context is set.
+    /// Creates the namespace schema if it doesn't exist.
+    ///
+    /// # Arguments
+    /// * `table_id` - Table identifier (contains namespace and table name)
+    /// * `provider` - TableProvider implementation to register
+    ///
+    /// # Errors
+    /// Returns error if DataFusion registration fails (e.g., duplicate table name)
     pub fn insert_provider(
         &self,
         table_id: TableId,
         provider: Arc<dyn TableProvider + Send + Sync>,
-    ) {
-        self.providers.insert(table_id, provider);
+    ) -> Result<(), KalamDbError> {
+        // Store in our cache
+        self.providers.insert(table_id.clone(), provider.clone());
+
+        // Also register with DataFusion's catalog if available
+        if let Some(base_session) = self.base_session_context.get() {
+            let catalog_name = base_session
+                .catalog_names()
+                .first()
+                .ok_or_else(|| KalamDbError::InvalidOperation("No catalogs available".to_string()))?
+                .clone();
+            
+            let catalog = base_session
+                .catalog(&catalog_name)
+                .ok_or_else(|| KalamDbError::InvalidOperation(format!("Catalog '{}' not found", catalog_name)))?;
+            
+            // Get or create namespace schema
+            let schema = catalog
+                .schema(table_id.namespace_id().as_str())
+                .unwrap_or_else(|| {
+                    // Create namespace schema if it doesn't exist
+                    let new_schema = Arc::new(datafusion::catalog::memory::MemorySchemaProvider::new());
+                    catalog.register_schema(table_id.namespace_id().as_str(), new_schema.clone())
+                        .expect("Failed to register namespace schema");
+                    new_schema
+                });
+            
+            // Register table with DataFusion
+            schema
+                .register_table(table_id.table_name().as_str().to_string(), provider)
+                .map_err(|e| KalamDbError::InvalidOperation(format!("Failed to register table with DataFusion: {}", e)))?;
+        }
+
+        Ok(())
+    }
+
+    /// Remove a cached DataFusion provider for a table and unregister from DataFusion
+    ///
+    /// Removes from internal cache and DataFusion's catalog.
+    /// Used during DROP TABLE operations.
+    ///
+    /// # Arguments
+    /// * `table_id` - Table identifier
+    ///
+    /// # Returns
+    /// Ok on success, error if unregistration fails
+    pub fn remove_provider(&self, table_id: &TableId) -> Result<(), KalamDbError> {
+        // Remove from internal cache
+        let _ = self.providers.remove(table_id);
+
+        // Unregister from DataFusion if base_session_context is set
+        if let Some(base_session) = self.base_session_context.get() {
+            let catalog_name = base_session
+                .state()
+                .config()
+                .options()
+                .catalog
+                .default_catalog
+                .clone();
+            
+            let catalog = base_session
+                .catalog(&catalog_name)
+                .ok_or_else(|| KalamDbError::InvalidOperation(format!("Catalog '{}' not found", catalog_name)))?;
+            
+            // Get namespace schema
+            if let Some(schema) = catalog.schema(table_id.namespace_id().as_str()) {
+                // Deregister table from DataFusion
+                schema
+                    .deregister_table(table_id.table_name().as_str())
+                    .map_err(|e| KalamDbError::InvalidOperation(format!("Failed to deregister table from DataFusion: {}", e)))?;
+                
+                log::debug!(
+                    "Unregistered table {}.{} from DataFusion catalog",
+                    table_id.namespace_id().as_str(),
+                    table_id.table_name().as_str()
+                );
+            }
+        }
+
+        Ok(())
     }
 
     /// Get a cached DataFusion provider for a table
@@ -472,28 +565,6 @@ impl SchemaRegistry {
         table_id: &TableId,
     ) -> Option<Arc<dyn TableProvider + Send + Sync>> {
         self.providers.get(table_id).map(|e| Arc::clone(e.value()))
-    }
-
-    /// Insert a UserTableShared instance into the cache for a table (Phase 3C)
-    ///
-    /// UserTableShared contains all table-level shared state (handlers, defaults, core)
-    /// and is created once per table at registration time.
-    pub fn insert_user_table_shared(
-        &self,
-        table_id: TableId,
-        shared: Arc<crate::tables::base_table_provider::UserTableShared>,
-    ) {
-        self.user_table_shared.insert(table_id, shared);
-    }
-
-    /// Get a cached UserTableShared instance for a table (Phase 3C)
-    ///
-    /// Returns the shared table-level state that can be wrapped in per-request UserTableAccess.
-    pub fn get_user_table_shared(
-        &self,
-        table_id: &TableId,
-    ) -> Option<Arc<crate::tables::base_table_provider::UserTableShared>> {
-        self.user_table_shared.get(table_id).map(|e| Arc::clone(e.value()))
     }
 
     /// Resolve partial storage path template for a table
@@ -559,15 +630,19 @@ impl SchemaRegistry {
             .replace("{tableName}", table_name.as_str());
 
         // Build full path: <base_directory>/<partial_template>/
-        let full_path = if storage_config.base_directory.is_empty() {
-            format!("/{}/", partial_path.trim_matches('/'))
+        // If storage.base_directory is empty, fall back to server-level default_storage_path
+        let base_dir = if storage_config.base_directory.is_empty() {
+            // Use configured default from StorageRegistry (e.g., ./data/storage)
+            registry.default_storage_path().trim_end_matches('/').to_string()
         } else {
-            format!(
-                "{}/{}/",
-                storage_config.base_directory.trim_end_matches('/'),
-                partial_path.trim_matches('/')
-            )
+            storage_config.base_directory.trim_end_matches('/').to_string()
         };
+
+        let full_path = format!(
+            "{}/{}/",
+            base_dir,
+            partial_path.trim_matches('/')
+        );
 
         Ok(full_path)
     }
@@ -652,6 +727,23 @@ impl SchemaRegistry {
 
         Ok(())
     }
+
+    /// Scan all table definitions from persistence layer
+    ///
+    /// Returns all table definitions from TablesTableProvider.
+    /// Used during server startup to load existing tables.
+    ///
+    /// # Returns
+    /// Vec of all table definitions
+    pub fn scan_all_table_definitions(&self) -> Result<Vec<TableDefinition>, KalamDbError> {
+        // Get tables provider via AppContext
+        let app_ctx = crate::app_context::AppContext::get();
+        let tables_provider = app_ctx.system_tables().tables();
+        
+        // Scan all tables from storage
+        tables_provider.scan_all()
+    }
+
 
     /// Check if table exists in persistence layer
     ///
@@ -836,9 +928,15 @@ mod tests {
     fn test_storage_path_resolution() {
         let cache = SchemaRegistry::new(1000, None);
         let table_id = TableId::new(NamespaceId::new("my_ns"), TableName::new("messages"));
-        let data = create_test_data(table_id.clone());
+        
+        // Create test data with properly set storage_path_template
+        let schema = create_test_schema();
+        let mut data = CachedTableData::new(schema);
+        data.storage_path_template = "/data/{namespace}/{tableName}/{userId}/{shard}/".to_string()
+            .replace("{namespace}", "my_ns")
+            .replace("{tableName}", "messages");
 
-        cache.insert(table_id.clone(), data);
+        cache.insert(table_id.clone(), Arc::new(data));
 
         let path = cache
             .get_storage_path(&table_id, Some(&UserId::new("alice")), Some(0))

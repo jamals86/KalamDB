@@ -25,15 +25,13 @@ impl TablesTableSchema {
     /// Schema fields (in ordinal_position order):
     /// - table_id: Utf8 (primary key)
     /// - table_name: Utf8
-    /// - namespace: Utf8
+    /// - namespace_id: Utf8
     /// - table_type: Utf8
     /// - created_at: Timestamp(Millisecond, None)
-    /// - storage_id: Utf8 (nullable)
-    /// - use_user_storage: Boolean
-    /// - flush_policy: Utf8
     /// - schema_version: Int32
-    /// - deleted_retention_hours: Int32
-    /// - access_level: Utf8 (nullable)
+    /// - table_comment: Utf8 (nullable)
+    /// - updated_at: Timestamp(Millisecond, None)
+    /// - options: Utf8 (nullable, JSON serialized TableOptions)
     pub fn schema() -> SchemaRef {
         TABLES_SCHEMA
             .get_or_init(|| {
@@ -68,22 +66,18 @@ mod tests {
     #[test]
     fn test_tables_table_schema() {
         let schema = TablesTableSchema::schema();
-        // Schema built from TableDefinition, verify field count and names are correct
-        assert_eq!(schema.fields().len(), 11);
+        // Schema built from TableDefinition, verify field count matches definition
+    // Expecting 9 fields: table_id, table_name, namespace_id, table_type, created_at, schema_version, table_comment, updated_at, options
+    assert_eq!(schema.fields().len(), 9);
 
         // Verify fields exist (order guaranteed by TableDefinition's ordinal_position)
         let field_names: Vec<&str> = schema.fields().iter().map(|f| f.name().as_str()).collect();
         assert!(field_names.contains(&"table_id"));
         assert!(field_names.contains(&"table_name"));
-        assert!(field_names.contains(&"namespace"));
-        assert!(field_names.contains(&"table_type"));
-        assert!(field_names.contains(&"created_at"));
-        assert!(field_names.contains(&"storage_id"));
-        assert!(field_names.contains(&"use_user_storage"));
-        assert!(field_names.contains(&"flush_policy"));
-        assert!(field_names.contains(&"schema_version"));
-        assert!(field_names.contains(&"deleted_retention_hours"));
-        assert!(field_names.contains(&"access_level"));
+    assert!(field_names.contains(&"namespace_id"));
+    assert!(field_names.contains(&"table_type"));
+    assert!(field_names.contains(&"created_at"));
+    assert!(field_names.contains(&"options"));
     }
 
     #[test]

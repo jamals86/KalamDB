@@ -7,7 +7,6 @@ use crate::error::KalamDbError;
 use crate::sql::executor::handler_registry::SqlStatementHandler;
 use crate::sql::executor::handlers::typed::TypedStatementHandler;
 use crate::sql::executor::models::{ExecutionContext, ExecutionResult, ScalarValue};
-use datafusion::execution::context::SessionContext;
 use kalamdb_sql::statement_classifier::SqlStatement;
 use kalamdb_sql::DdlAst;
 use std::marker::PhantomData;
@@ -69,7 +68,6 @@ where
 {
     async fn execute(
         &self,
-        session: &SessionContext,
         statement: SqlStatement,
         params: Vec<ScalarValue>,
         context: &ExecutionContext,
@@ -81,7 +79,7 @@ where
             ))
         })?;
 
-        self.handler.execute(session, stmt, params, context).await
+        self.handler.execute(stmt, params, context).await
     }
 
     async fn check_authorization(
@@ -137,12 +135,11 @@ where
 {
     async fn execute(
         &self,
-        session: &SessionContext,
         statement: SqlStatement,
         params: Vec<ScalarValue>,
         context: &ExecutionContext,
     ) -> Result<ExecutionResult, KalamDbError> {
-        self.handler.execute(session, statement, params, context).await
+        self.handler.execute(statement, params, context).await
     }
 
     async fn check_authorization(
@@ -175,7 +172,8 @@ mod tests {
     use super::*;
     use crate::app_context::AppContext;
     use crate::sql::executor::handlers::namespace::CreateNamespaceHandler;
-    use crate::test_helpers::init_test_app_context;
+    use crate::test_helpers::{create_test_session, init_test_app_context};
+    use datafusion::prelude::SessionContext;
     use kalamdb_commons::models::{NamespaceId, UserId};
     use kalamdb_commons::Role;
     use kalamdb_sql::ddl::CreateNamespaceStatement;
@@ -192,7 +190,7 @@ mod tests {
         });
 
         let session = SessionContext::new();
-        let ctx = ExecutionContext::new(UserId::from("test_user"), Role::Dba);
+        let ctx = ExecutionContext::new(UserId::from("test_user"), Role::Dba, create_test_session());
 
         let stmt = kalamdb_sql::statement_classifier::SqlStatement::new(
             "CREATE NAMESPACE test_adapter_ns".to_string(),
@@ -203,7 +201,7 @@ mod tests {
         );
 
         let result = adapter
-            .execute(&session, stmt, vec![], &ctx)
+            .execute(stmt, vec![], &ctx)
             .await;
         assert!(result.is_ok());
     }
@@ -220,7 +218,7 @@ mod tests {
         });
 
         let session = SessionContext::new();
-        let ctx = ExecutionContext::new(UserId::from("test_user"), Role::Dba);
+        let ctx = ExecutionContext::new(UserId::from("test_user"), Role::Dba, create_test_session());
 
         // Pass wrong statement type (ShowNamespaces instead of CreateNamespace)
         let stmt = kalamdb_sql::statement_classifier::SqlStatement::new(
@@ -228,7 +226,7 @@ mod tests {
             kalamdb_sql::statement_classifier::SqlStatementKind::ShowNamespaces(kalamdb_sql::ddl::ShowNamespacesStatement),
         );
 
-        let result = adapter.execute(&session, stmt, vec![], &ctx).await;
+        let result = adapter.execute(stmt, vec![], &ctx).await;
         assert!(result.is_err());
         match result {
             Err(KalamDbError::InvalidOperation(msg)) => {

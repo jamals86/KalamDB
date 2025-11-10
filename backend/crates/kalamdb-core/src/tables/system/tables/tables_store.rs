@@ -34,14 +34,14 @@ impl TablesStore {
         let prefix_bytes = prefix.as_bytes();
 
         // Use backend's scan method with prefix
-        let partition = Partition::new(self.partition());
-        let iter = self.backend().scan(&partition, Some(prefix_bytes), None)?;
+        let partition = Partition::new(EntityStoreV2::partition(self));
+        let iter = EntityStoreV2::backend(self).scan(&partition, Some(prefix_bytes), None)?;
 
         // Parse TableId from key bytes and deserialize TableDefinition
         let mut result = Vec::new();
         for (key_bytes, value_bytes) in iter {
             if let Some(table_id) = TableId::from_storage_key(&key_bytes) {
-                if let Ok(table_def) = self.deserialize(&value_bytes) {
+                if let Ok(table_def) = EntityStoreV2::deserialize(self, &value_bytes) {
                     result.push((table_id, table_def));
                 }
             }

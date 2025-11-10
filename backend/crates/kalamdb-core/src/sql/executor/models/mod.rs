@@ -17,6 +17,7 @@ mod execution_metadata;
 mod error_response;
 
 pub use execution_context::ExecutionContext;
+pub use execution_context::SessionUserContext;  // Export for TableProviders to read user_id and role
 pub use execution_result::ExecutionResult;
 pub use execution_metadata::ExecutionMetadata;
 pub use error_response::ErrorResponse;

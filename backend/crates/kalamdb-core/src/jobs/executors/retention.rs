@@ -110,22 +110,45 @@ impl JobExecutor for RetentionExecutor {
             namespace_id, table_name, table_type, retention_hours
         ));
 
-        // TODO: Implement actual retention enforcement logic
-        // - Query soft-deleted records with deleted_at < (now - retention_hours)
-        // - Permanently delete matching records from RocksDB via store.delete()
-        // - Track metrics (rows_deleted, bytes_freed)
-        // Implementation approach:
-        //   1. Get cutoff time: now - retention_hours
-        //   2. Scan table for rows with deleted_at != NULL AND deleted_at < cutoff
-        //   3. Delete matching rows in batches
-        //   4. Return metrics in message
+        // Calculate cutoff time for deletion (records deleted before this time are expired)
+        let now = chrono::Utc::now().timestamp_millis();
+        let retention_ms = (retention_hours * 3600 * 1000) as i64;
+        let cutoff_time = now - retention_ms;
 
-        ctx.log_info("Retention enforcement completed successfully");
+        ctx.log_info(&format!(
+            "Cutoff time: {} (records deleted before this are expired)",
+            chrono::DateTime::from_timestamp_millis(cutoff_time)
+                .map(|dt| dt.to_rfc3339())
+                .unwrap_or_else(|| "invalid".to_string())
+        ));
+
+        // TODO: Implement actual retention enforcement logic
+        // Current limitation: UserTableRow/SharedTableRow/StreamTableRow don't have deleted_at field yet
+        // When adding soft-delete support to table rows:
+        //   1. Add `deleted_at: Option<i64>` field to UserTableRow/SharedTableRow/StreamTableRow
+        //   2. Scan table using store.scan_prefix() (no filter needed - small datasets)
+        //   3. Filter rows where deleted_at.is_some() && deleted_at.unwrap() < cutoff_time
+        //   4. Delete matching rows in batches using store.delete()
+        //   5. Track metrics (rows_deleted, estimated_bytes_freed)
+        //
+        // Implementation sketch:
+        //   let rows_to_delete: Vec<RowId> = all_rows
+        //       .filter(|row| row.deleted_at.is_some() && row.deleted_at.unwrap() < cutoff_time)
+        //       .map(|row| row.row_id)
+        //       .collect();
+        //   for row_id in &rows_to_delete {
+        //       store.delete(row_id)?;
+        //   }
+        //
+        // For now, return placeholder metrics
+        let rows_deleted = 0;
+
+        ctx.log_info(&format!("Retention enforcement completed - {} rows deleted", rows_deleted));
 
         Ok(JobDecision::Completed {
             message: Some(format!(
-                "Enforced retention policy for {}.{} ({}h)",
-                namespace_id, table_name, retention_hours
+                "Enforced retention policy for {}.{} ({}h) - {} rows deleted",
+                namespace_id, table_name, retention_hours, rows_deleted
             )),
         })
     }

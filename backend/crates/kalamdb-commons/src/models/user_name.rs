@@ -5,6 +5,8 @@ use bincode::{Decode, Encode};
 use serde::{Deserialize, Serialize};
 use std::fmt;
 
+use crate::StorageKey;
+
 /// Type-safe wrapper for usernames used as secondary index keys.
 ///
 /// This newtype ensures usernames cannot be confused with user IDs
@@ -73,6 +75,12 @@ impl AsRef<[u8]> for UserName {
 // Ensure Send and Sync are implemented
 unsafe impl Send for UserName {}
 unsafe impl Sync for UserName {}
+
+impl StorageKey for UserName {
+    fn storage_key(&self) -> Vec<u8> {
+        self.0.as_bytes().to_vec()
+    }
+}
 
 #[cfg(test)]
 mod tests {

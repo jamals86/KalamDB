@@ -5,7 +5,7 @@
 
 use crate::error::KalamDbError;
 use crate::live_query::connection_registry::{
-    ConnectionId, LiveId, LiveQuery, LiveQueryOptions, LiveQueryRegistry, NodeId,
+    ConnectionId, LiveId, LiveQueryOptions, LiveQueryRegistry, NodeId,
 };
 use crate::live_query::filter::FilterCache;
 use crate::live_query::initial_data::{InitialDataFetcher, InitialDataOptions, InitialDataResult};
@@ -83,8 +83,10 @@ impl LiveQueryManager {
     ) -> Result<ConnectionId, KalamDbError> {
         let connection_id = ConnectionId::new(user_id.as_str().to_string(), unique_conn_id);
 
-        let mut registry = self.registry.write().await;
-        registry.register_connection(user_id, connection_id.clone(), notification_tx);
+        if let Some(tx) = notification_tx {
+            let registry = self.registry.read().await;
+            registry.register_connection(connection_id.clone(), tx);
+        }
 
         Ok(connection_id)
     }
@@ -196,15 +198,16 @@ impl LiveQueryManager {
 
         // Add to in-memory registry
         let user_id = UserId::new(connection_id.user_id().to_string());
-        let live_query = LiveQuery {
-            live_id: live_id.clone(),
-            query,
+        
+        // Register subscription in in-memory registry
+        let registry = self.registry.read().await;
+        registry.register_subscription(
+            user_id.clone(),
+            table_id.clone(),
+            live_id.clone(),
+            connection_id.clone(),
             options,
-            changes: 0,
-        };
-
-        let mut registry = self.registry.write().await;
-        registry.register_subscription(&user_id, live_query)?;
+        )?;
 
         Ok(live_id)
     }
@@ -297,18 +300,11 @@ impl LiveQueryManager {
         })
     }
 
-    /// Determine whether any active subscriptions reference the specified table.
-    pub async fn has_active_subscriptions_for(&self, table_ref: &str) -> bool {
-        let registry = self.registry.read().await;
-        registry.users.values().any(|connections| {
-            connections.sockets.values().any(|socket| {
-                socket
-                    .live_queries
-                    .values()
-                    .any(|live_query| live_query.live_id.table_name() == table_ref)
-            })
-        })
-    }
+    // /// Determine whether any active subscriptions reference the specified table.
+    // pub async fn has_active_subscriptions_for(&self, table_ref: &str) -> bool {
+    //     let registry = self.registry.read().await;
+    //     registry.has_subscriptions_for_table(table_ref)
+    // }
 
     /// Extract table name from SQL query
     ///
@@ -366,13 +362,13 @@ impl LiveQueryManager {
     /// 4. Cleans up cached filters
     pub async fn unregister_connection(
         &self,
-        user_id: &UserId,
+        _user_id: &UserId,
         connection_id: &ConnectionId,
     ) -> Result<Vec<LiveId>, KalamDbError> {
         // Remove from in-memory registry and get all live_ids
         let live_ids = {
-            let mut registry = self.registry.write().await;
-            registry.unregister_connection(user_id, connection_id)
+            let registry = self.registry.read().await;
+            registry.unregister_connection(connection_id)
         };
 
         // Remove cached filters for all live queries
@@ -405,7 +401,7 @@ impl LiveQueryManager {
 
         // Remove from in-memory registry
         let connection_id = {
-            let mut registry = self.registry.write().await;
+            let registry = self.registry.write().await;
             registry.unregister_subscription(live_id)
         };
 
@@ -426,41 +422,16 @@ impl LiveQueryManager {
     /// Increment the changes counter for a live query
     ///
     /// This should be called each time a notification is sent.
+    /// MEMORY FIX: Only updates system.live_queries (persistent storage), not in-memory registry
     pub async fn increment_changes(&self, live_id: &LiveId) -> Result<(), KalamDbError> {
         let timestamp = Self::current_timestamp_ms();
         self.live_queries_provider
             .increment_changes(&live_id.to_string(), timestamp)?;
 
-        // Also update in-memory counter
-        let user_id = UserId::new(live_id.user_id().to_string());
-        let mut registry = self.registry.write().await;
-
-        if let Some(user_connections) = registry.users.get_mut(&user_id) {
-            if let Some(socket) = user_connections.get_socket_mut(&live_id.connection_id) {
-                if let Some(live_query) = socket.live_queries.get_mut(live_id) {
-                    live_query.changes += 1;
-                }
-            }
-        }
+        // Removed in-memory counter update (no longer exists in LiveQuery struct)
+        // Changes are tracked only in system.live_queries now
 
         Ok(())
-    }
-
-    /// Get all subscriptions for a specific table and user
-    ///
-    /// This is used during change detection to find which subscriptions
-    /// need to be notified when data changes in a table.
-    pub async fn get_subscriptions_for_table(
-        &self,
-        user_id: &UserId,
-        table_name: &kalamdb_commons::TableName,
-    ) -> Vec<LiveId> {
-        let registry = self.registry.read().await;
-        registry
-            .get_subscriptions_for_table(user_id, table_name)
-            .into_iter()
-            .map(|lq| lq.live_id.clone())
-            .collect()
     }
 
     /// Get all subscriptions for a user
@@ -468,15 +439,7 @@ impl LiveQueryManager {
         &self,
         user_id: &UserId,
     ) -> Result<Vec<SystemLiveQuery>, KalamDbError> {
-        self.live_queries_provider.get_by_user_id(user_id.as_str())
-    }
-
-    /// Get all subscriptions for a table
-    pub async fn get_table_subscriptions(
-        &self,
-        table_name: &TableName,
-    ) -> Result<Vec<SystemLiveQuery>, KalamDbError> {
-        self.live_queries_provider.get_by_table_name(table_name.as_str())
+        self.live_queries_provider.get_by_user_id(user_id)
     }
 
     /// Get a specific live query
@@ -517,154 +480,222 @@ impl LiveQueryManager {
     /// # Note
     /// This is a simplified implementation for Phase 12 T154.
     /// Full filtering and WebSocket delivery will be implemented in Phase 14.
+    
+    /// Notify subscribers about a table change (fire-and-forget async)
+    ///
+    /// **PRIMARY ENTRY POINT**: Use this method from all DML/flush operations.
+    /// Handles tokio::spawn internally to eliminate code duplication.
+    ///
+    /// # Arguments
+    /// * `user_id` - User ID whose subscriptions should be notified (for O(1) lookup)
+    /// * `table_id` - Composite key (NamespaceId, TableName) for O(1) subscription lookup
+    /// * `notification` - Change notification to send to subscribers
+    ///
+    /// # Design Pattern
+    /// - **Fire-and-forget**: Spawns async task, doesn't block caller
+    /// - **Error isolation**: Logs errors, never propagates to caller
+    /// - **Future-proof**: Single place to add batching/buffering later
+    /// - **Optimization**: Checks for subscriptions before spawning thread (avoids unnecessary spawns)
+    ///
+    /// # Performance
+    /// Uses composite key `(UserId, TableId)` for O(1) lookup instead of O(n) iteration.
+    /// Pre-check prevents spawning threads when no subscribers exist (zero-cost in no-subscriber case).
+    ///
+    /// # Example
+    /// ```rust,ignore
+    /// // Before (10 lines per call site):
+    /// let mgr = Arc::clone(manager);
+    /// let user_id_copy = user_id.clone();
+    /// let table_id = TableId::new(namespace_id.clone(), table_name.clone());
+    /// tokio::spawn(async move {
+    ///     if let Err(e) = mgr.notify_table_change(&user_id_copy, &table_id, notification).await {
+    ///         log::warn!("Failed to notify: {}", e);
+    ///     }
+    /// });
+    ///
+    /// // After (1 line):
+    /// manager.notify_table_change_async(user_id, table_id, notification);
+    /// ```
+    pub fn notify_table_change_async(
+        self: &Arc<Self>,
+        user_id: UserId,
+        table_id: TableId,
+        notification: ChangeNotification,
+    ) {
+        // Check if there are any subscriptions for this user_id and table_id
+        // This avoids spawning unnecessary threads when no subscribers exist
+        let has_subscriptions = {
+            // Use try_read() to avoid blocking (returns None if lock is held)
+            // If we can't acquire the lock immediately, conservatively assume subscriptions exist
+            if let Ok(registry) = self.registry.try_read() {
+                let subscriptions = registry.get_subscriptions_for_table(&user_id, &table_id);
+                !subscriptions.is_empty()
+            } else {
+                // Lock is held, conservatively assume subscriptions exist
+                true
+            }
+        };
+
+        // Only spawn thread if there are subscribers (or if we couldn't check)
+        if has_subscriptions {
+            let manager = Arc::clone(self);
+            tokio::spawn(async move {
+                if let Err(e) = manager.notify_table_change(&user_id, &table_id, notification).await {
+                    log::warn!(
+                        "Failed to notify subscribers for table {}.{}: {}",
+                        table_id.namespace_id().as_str(),
+                        table_id.table_name().as_str(),
+                        e
+                    );
+                }
+            });
+        }
+    }
+    
     /// Notify live query subscribers of a table change
+    ///
+    /// **INTERNAL METHOD**: Called by notify_table_change_async().
+    /// Direct callers should use notify_table_change_async() instead for fire-and-forget behavior.
     ///
     /// This method is called by change detectors when a row is inserted, updated, or deleted.
     /// It applies filters and only notifies subscribers whose WHERE clause matches the changed row.
     ///
     /// # Arguments
-    /// * `table_name` - Name of the table that changed
+    /// * `user_id` - The user who owns the table (for USER tables) or None (for SHARED/STREAM tables)
+    /// * `table_id` - The TableId of the table that changed
     /// * `change_notification` - Details about the change (type, row data)
     ///
     /// # Returns
     /// Number of subscribers notified (after filtering)
     pub async fn notify_table_change(
         &self,
-        table_name: &str,
+        user_id: &UserId,
+        table_id: &TableId,
         change_notification: ChangeNotification,
     ) -> Result<usize, KalamDbError> {
+        let table_name = format!("{}.{}", table_id.namespace_id().as_str(), table_id.table_name().as_str());
+        
         log::info!(
-            "📢 notify_table_change called for table: '{}', change_type: {:?}",
+            "📢 notify_table_change called for table: '{}', user: '{}', change_type: {:?}",
             table_name,
+            user_id.as_str(),
             change_notification.change_type
         );
 
         // Get filter cache for matching
         let filter_cache = self.filter_cache.read().await;
 
-        // Collect live_ids that need to be notified
+        // Direct O(1) lookup by (UserId, TableId) - no iteration!
         let live_ids_to_notify: Vec<LiveId> = {
             let registry = self.registry.read().await;
-            log::info!("📢 Registry has {} users", registry.users.len());
+            let user_subscriptions = registry.get_subscriptions_for_table(user_id, table_id);
+            
+            log::info!(
+                "📢 Found {} subscriptions for user={}, table={}",
+                user_subscriptions.len(),
+                user_id.as_str(),
+                table_name
+            );
+            
             let mut ids = Vec::new();
 
-            // Iterate through all users
-            for (user_id, user_connections) in registry.users.iter() {
+            // Iterate only through subscriptions for this specific (user, table) - O(k) where k = subscriptions per table
+            for handle in user_subscriptions {
                 log::info!(
-                    "📢 User {} has {} connections",
-                    user_id.as_str(),
-                    user_connections.sockets.len()
+                    "📢 Evaluating subscription live_id={}",
+                    handle.live_id
                 );
-                // Iterate through all connections for this user
-                for (conn_id, socket) in user_connections.sockets.iter() {
+                
+                // FLUSH notifications are metadata events (not row-level changes)
+                // Skip filter evaluation for FLUSH - notify all subscribers
+                if matches!(change_notification.change_type, ChangeType::Flush) {
                     log::info!(
-                        "📢 Connection {} has {} live queries",
-                        conn_id,
-                        socket.live_queries.len()
+                        "📢 FLUSH notification - skipping filter evaluation for live_id={}",
+                        handle.live_id
                     );
-                    // Iterate through all live queries on this connection
-                    for (live_id, _live_query) in socket.live_queries.iter() {
-                        log::info!(
-                            "📢 Checking live_id.table_name='{}' against target table='{}'",
-                            live_id.table_name(),
-                            table_name
-                        );
-                        // Check if this subscription is for the changed table
-                        if live_id.table_name() == table_name {
-                            log::info!(
-                                "📢 ✓ Table name MATCHED for live_id={}",
-                                live_id
-                            );
-                            // Check filter if one exists
-                            if let Some(filter) = filter_cache.get(&live_id.to_string()) {
-                                // Apply filter to row data
-                                match filter.matches(&change_notification.row_data) {
-                                    Ok(true) => {
-                                        // Filter matched, include this subscriber
-                                        ids.push(live_id.clone());
-                                    }
-                                    Ok(false) => {
-                                        // Filter didn't match, skip this subscriber
-                                        log::trace!("Filter didn't match for live_id={}, skipping notification", live_id);
-                                    }
-                                    Err(e) => {
-                                        // Filter evaluation error, log and skip
-                                        log::error!(
-                                            "Filter evaluation error for live_id={}: {}",
-                                            live_id,
-                                            e
-                                        );
-                                    }
-                                }
-                            } else {
-                                // No filter, notify all subscribers
-                                log::info!(
-                                    "📢 No filter - adding subscriber live_id={}",
-                                    live_id
-                                );
-                                ids.push(live_id.clone());
-                            }
-                        } else {
-                            log::info!(
-                                "📢 ✗ Table name MISMATCH: live_id.table='{}' != target='{}'",
-                                live_id.table_name(),
-                                table_name
+                    ids.push(handle.live_id.clone());
+                    continue;
+                }
+                
+                // Check filter if one exists (for INSERT/UPDATE/DELETE only)
+                if let Some(filter) = filter_cache.get(&handle.live_id.to_string()) {
+                    // Apply filter to row data
+                    match filter.matches(&change_notification.row_data) {
+                        Ok(true) => {
+                            // Filter matched, include this subscriber
+                            ids.push(handle.live_id.clone());
+                        }
+                        Ok(false) => {
+                            // Filter didn't match, skip this subscriber
+                            log::trace!("Filter didn't match for live_id={}, skipping notification", handle.live_id);
+                        }
+                        Err(e) => {
+                            // Filter evaluation error, log and skip
+                            log::error!(
+                                "Filter evaluation error for live_id={}: {}",
+                                handle.live_id,
+                                e
                             );
                         }
                     }
+                } else {
+                    // No filter, notify all subscribers
+                    log::info!(
+                        "📢 No filter - adding subscriber live_id={}",
+                        handle.live_id
+                    );
+                    ids.push(handle.live_id.clone());
                 }
             }
 
             ids
         }; // registry read lock is dropped here
 
-        log::debug!(
-            "📢 Found {} subscribers to notify",
-            live_ids_to_notify.len()
-        );
-
         // Drop filter cache read lock before acquiring write locks
         drop(filter_cache);
+
+        // MEMORY FIX: Build notification data ONCE, not per subscriber
+        // Old code cloned row_data for every subscriber (N × row_size memory)
+        // New code: Convert once, reference for all subscribers (1 × row_size memory)
+        let row_map = if let Some(obj) = change_notification.row_data.as_object() {
+            obj.iter().map(|(k, v)| (k.clone(), v.clone())).collect()
+        } else {
+            std::collections::HashMap::new()
+        };
+        
+        let old_map = if let Some(old_data) = &change_notification.old_data {
+            if let Some(obj) = old_data.as_object() {
+                obj.iter().map(|(k, v)| (k.clone(), v.clone())).collect()
+            } else {
+                std::collections::HashMap::new()
+            }
+        } else {
+            std::collections::HashMap::new()
+        };
 
         // Now send notifications and increment changes for each live_id
         let notification_count = live_ids_to_notify.len();
         for live_id in live_ids_to_notify.iter() {
             // Send notification to WebSocket client
             if let Some(tx) = self.get_notification_sender(live_id).await {
-                // Convert row data from serde_json::Value to HashMap
-                let row_map = if let Some(obj) = change_notification.row_data.as_object() {
-                    obj.iter().map(|(k, v)| (k.clone(), v.clone())).collect()
-                } else {
-                    std::collections::HashMap::new()
-                };
-
-                // Build the typed notification
+                // Build the typed notification (cheap - just wraps references)
                 let notification = match change_notification.change_type {
                     ChangeType::Insert => {
-                        kalamdb_commons::Notification::insert(live_id.to_string(), vec![row_map])
+                        kalamdb_commons::Notification::insert(live_id.to_string(), vec![row_map.clone()])
                     }
                     ChangeType::Update => {
-                        let old_map = if let Some(old_data) = &change_notification.old_data {
-                            if let Some(obj) = old_data.as_object() {
-                                obj.iter().map(|(k, v)| (k.clone(), v.clone())).collect()
-                            } else {
-                                std::collections::HashMap::new()
-                            }
-                        } else {
-                            std::collections::HashMap::new()
-                        };
                         kalamdb_commons::Notification::update(
                             live_id.to_string(),
-                            vec![row_map],
-                            vec![old_map],
+                            vec![row_map.clone()],
+                            vec![old_map.clone()],
                         )
                     }
                     ChangeType::Delete => {
-                        kalamdb_commons::Notification::delete(live_id.to_string(), vec![row_map])
+                        kalamdb_commons::Notification::delete(live_id.to_string(), vec![row_map.clone()])
                     }
                     ChangeType::Flush => {
                         // For flush, we use insert type with flush metadata
-                        kalamdb_commons::Notification::insert(live_id.to_string(), vec![row_map])
+                        kalamdb_commons::Notification::insert(live_id.to_string(), vec![row_map.clone()])
                     }
                 };
 
@@ -708,15 +739,9 @@ impl LiveQueryManager {
         live_id: &LiveId,
     ) -> Option<crate::live_query::connection_registry::NotificationSender> {
         let registry = self.registry.read().await;
-        let user_id = UserId::new(live_id.user_id().to_string());
-
-        if let Some(user_connections) = registry.users.get(&user_id) {
-            if let Some(socket) = user_connections.get_socket(&live_id.connection_id) {
-                return socket.notification_tx.clone();
-            }
-        }
-
-        None
+        registry
+            .get_notification_sender(&live_id.connection_id)
+            .map(|arc| (*arc).clone())
     }
 }
 
@@ -828,6 +853,7 @@ mod tests {
     use crate::schema_registry::SchemaRegistry;
     use crate::tables::system::LiveQueriesTableProvider;
     use crate::tables::{new_shared_table_store, new_stream_table_store, new_user_table_store};
+    use crate::test_helpers::init_test_app_context;
     use kalamdb_commons::datatypes::KalamDataType;
     use kalamdb_commons::models::TableId;
     use kalamdb_commons::schemas::{ColumnDefinition, TableDefinition, TableOptions, TableType};
@@ -836,8 +862,9 @@ mod tests {
     use tempfile::TempDir;
 
     async fn create_test_manager() -> (LiveQueryManager, TempDir) {
+        init_test_app_context();
         let temp_dir = TempDir::new().unwrap();
-        let init = RocksDbInit::new(temp_dir.path().to_str().unwrap());
+        let init = RocksDbInit::with_defaults(temp_dir.path().to_str().unwrap());
         let db = Arc::new(init.open().unwrap());
         let backend: Arc<dyn kalamdb_store::StorageBackend> =
             Arc::new(kalamdb_store::RocksDBBackend::new(Arc::clone(&db)));
@@ -1046,17 +1073,17 @@ mod tests {
             .await
             .unwrap();
 
-        let messages_subs = manager
-            .get_subscriptions_for_table(&user_id, &kalamdb_commons::TableName::new("user1.messages"))
-            .await;
+        // Get subscriptions from registry
+        let registry = manager.registry.read().await;
+        let table_id1 = TableId::from_strings("user1", "messages");
+        let messages_subs = registry.get_subscriptions_for_table(&user_id, &table_id1);
         assert_eq!(messages_subs.len(), 1);
-        assert_eq!(messages_subs[0].table_name(), "user1.messages");
+        assert_eq!(messages_subs[0].live_id.table_name(), "user1.messages");
 
-        let notif_subs = manager
-            .get_subscriptions_for_table(&user_id, &kalamdb_commons::TableName::new("user1.notifications"))
-            .await;
+        let table_id2 = TableId::from_strings("user1", "notifications");
+        let notif_subs = registry.get_subscriptions_for_table(&user_id, &table_id2);
         assert_eq!(notif_subs.len(), 1);
-        assert_eq!(notif_subs[0].table_name(), "user1.notifications");
+        assert_eq!(notif_subs[0].live_id.table_name(), "user1.notifications");
     }
 
     #[tokio::test]
@@ -1209,14 +1236,13 @@ mod tests {
         assert_eq!(stats.total_subscriptions, 3);
 
         // Verify all subscriptions are tracked
-        let messages_subs = manager
-            .get_subscriptions_for_table(&user_id, &kalamdb_commons::TableName::new("user1.messages"))
-            .await;
+        let registry = manager.registry.read().await;
+        let table_id1 = TableId::from_strings("user1", "messages");
+        let messages_subs = registry.get_subscriptions_for_table(&user_id, &table_id1);
         assert_eq!(messages_subs.len(), 2); // messages_query and messages_query2
 
-        let notif_subs = manager
-            .get_subscriptions_for_table(&user_id, &kalamdb_commons::TableName::new("user1.notifications"))
-            .await;
+        let table_id2 = TableId::from_strings("user1", "notifications");
+        let notif_subs = registry.get_subscriptions_for_table(&user_id, &table_id2);
         assert_eq!(notif_subs.len(), 1);
 
         // Verify each has unique live_id
@@ -1286,8 +1312,9 @@ mod tests {
             serde_json::json!({"user_id": "user1", "text": "Hello"}),
         );
 
+        let table_id = TableId::from_strings("user1", "messages");
         let notified = manager
-            .notify_table_change("user1.messages", matching_change)
+            .notify_table_change(&user_id, &table_id, matching_change)
             .await
             .unwrap();
         assert_eq!(notified, 1); // Should notify
@@ -1299,7 +1326,7 @@ mod tests {
         );
 
         let notified = manager
-            .notify_table_change("user1.messages", non_matching_change)
+            .notify_table_change(&user_id, &table_id, non_matching_change)
             .await
             .unwrap();
         assert_eq!(notified, 0); // Should NOT notify (filter didn't match)

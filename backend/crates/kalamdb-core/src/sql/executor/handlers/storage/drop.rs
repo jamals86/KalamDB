@@ -4,8 +4,6 @@ use crate::app_context::AppContext;
 use crate::error::KalamDbError;
 use crate::sql::executor::handlers::typed::TypedStatementHandler;
 use crate::sql::executor::models::{ExecutionContext, ExecutionResult, ScalarValue};
-use datafusion::execution::context::SessionContext;
-use kalamdb_commons::models::StorageId;
 use kalamdb_sql::ddl::DropStorageStatement;
 use std::sync::Arc;
 
@@ -24,7 +22,6 @@ impl DropStorageHandler {
 impl TypedStatementHandler<DropStorageStatement> for DropStorageHandler {
     async fn execute(
         &self,
-        _session: &SessionContext,
         statement: DropStorageStatement,
         _params: Vec<ScalarValue>,
         _context: &ExecutionContext,
@@ -103,11 +100,13 @@ impl TypedStatementHandler<DropStorageStatement> for DropStorageHandler {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use kalamdb_commons::Role;
+    use crate::test_helpers::create_test_session;
+    use datafusion::prelude::SessionContext;
     use kalamdb_commons::models::UserId;
+    use kalamdb_commons::{Role, StorageId};
 
     fn create_test_context(role: Role) -> ExecutionContext {
-        ExecutionContext::new(UserId::new("test_user"), role)
+        ExecutionContext::new(UserId::new("test_user"), role, create_test_session())
     }
 
     #[tokio::test]
@@ -158,7 +157,7 @@ mod tests {
         let ctx = create_test_context(Role::System);
         let session = SessionContext::new();
 
-        let result = handler.execute(&session, stmt, vec![], &ctx).await;
+        let result = handler.execute(stmt, vec![], &ctx).await;
         
         assert!(result.is_ok());
         if let Ok(ExecutionResult::Success { message }) = result {
@@ -180,7 +179,7 @@ mod tests {
         let ctx = create_test_context(Role::System);
         let session = SessionContext::new();
 
-        let result = handler.execute(&session, stmt, vec![], &ctx).await;
+        let result = handler.execute(stmt, vec![], &ctx).await;
         
         assert!(result.is_err());
     }

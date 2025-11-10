@@ -6,15 +6,38 @@ use actix_web::{post, web, HttpMessage, HttpRequest, HttpResponse, Responder};
 use kalamdb_auth::{extract_auth_with_repo, AuthenticatedUser, UserRepository};
 use kalamdb_commons::models::UserId;
 use kalamdb_core::sql::ExecutionResult;
-use kalamdb_core::sql::datafusion_session::DataFusionSessionFactory;
 use kalamdb_core::sql::executor::{ExecutorMetadataAlias, SqlExecutor};
-use kalamdb_core::sql::executor::models::ExecutionContext;
+use kalamdb_core::sql::executor::models::{ExecutionContext, ScalarValue};
 use log::warn;
+use serde_json::Value as JsonValue;
 use std::sync::Arc;
 use std::time::Instant;
 
 use crate::models::{QueryResult, SqlRequest, SqlResponse};
 use crate::rate_limiter::RateLimiter;
+
+/// Convert JSON value to DataFusion ScalarValue
+///
+/// Supports common JSON types: null, bool, number (int/float), string
+/// Date/timestamp parsing will be added when needed
+fn json_to_scalar_value(value: &JsonValue) -> Result<ScalarValue, String> {
+    match value {
+        JsonValue::Null => Ok(ScalarValue::Utf8(None)),
+        JsonValue::Bool(b) => Ok(ScalarValue::Boolean(Some(*b))),
+        JsonValue::Number(n) => {
+            if let Some(i) = n.as_i64() {
+                Ok(ScalarValue::Int64(Some(i)))
+            } else if let Some(f) = n.as_f64() {
+                Ok(ScalarValue::Float64(Some(f)))
+            } else {
+                Err(format!("Unsupported number format: {}", n))
+            }
+        }
+        JsonValue::String(s) => Ok(ScalarValue::Utf8(Some(s.clone()))),
+        JsonValue::Array(_) => Err("Array parameters not yet supported".to_string()),
+        JsonValue::Object(_) => Err("Object parameters not yet supported".to_string()),
+    }
+}
 
 /// POST /v1/api/sql - Execute SQL statement(s)
 ///
@@ -63,7 +86,7 @@ use crate::rate_limiter::RateLimiter;
 pub async fn execute_sql_v1(
     http_req: HttpRequest,
     req: web::Json<SqlRequest>,
-    session_factory: web::Data<Arc<DataFusionSessionFactory>>,
+    app_context: web::Data<Arc<kalamdb_core::app_context::AppContext>>,
     user_repo: web::Data<Arc<dyn UserRepository>>,
     rate_limiter: Option<web::Data<Arc<RateLimiter>>>,
 ) -> impl Responder {
@@ -107,6 +130,28 @@ pub async fn execute_sql_v1(
         }
     }
 
+    // Parse parameters if provided (T040: JSON → ScalarValue deserialization)
+    let params = match &req.params {
+        Some(json_params) => {
+            let mut scalar_params = Vec::new();
+            for (idx, json_val) in json_params.iter().enumerate() {
+                match json_to_scalar_value(json_val) {
+                    Ok(scalar) => scalar_params.push(scalar),
+                    Err(err) => {
+                        let took_ms = start_time.elapsed().as_millis() as u64;
+                        return HttpResponse::BadRequest().json(SqlResponse::error(
+                            "INVALID_PARAMETER",
+                            &format!("Parameter ${} invalid: {}", idx + 1, err),
+                            took_ms,
+                        ));
+                    }
+                }
+            }
+            scalar_params
+        }
+        None => Vec::new(),
+    };
+
     let statements = match kalamdb_sql::split_statements(&req.sql) {
         Ok(stmts) => stmts,
         Err(err) => {
@@ -124,6 +169,16 @@ pub async fn execute_sql_v1(
         return HttpResponse::BadRequest().json(SqlResponse::error(
             "EMPTY_SQL",
             "No SQL statements provided",
+            took_ms,
+        ));
+    }
+
+    // Reject multi-statement batches with parameters (simplifies implementation)
+    if params.len() > 0 && statements.len() > 1 {
+        let took_ms = start_time.elapsed().as_millis() as u64;
+        return HttpResponse::BadRequest().json(SqlResponse::error(
+            "PARAMS_WITH_BATCH",
+            "Parameters not supported with multi-statement batches",
             took_ms,
         ));
     }
@@ -161,18 +216,35 @@ pub async fn execute_sql_v1(
         });
     
     for (idx, sql) in statements.iter().enumerate() {
+        let stmt_start = std::time::Instant::now();
         match execute_single_statement(
             sql,
-            session_factory.get_ref(),
+            app_context.get_ref(),
             sql_executor,
             &auth_result,
             request_id.as_deref(),
             resolved_ip.as_deref(),
             None,
+            params.clone(), // Pass parameters to each statement
         )
         .await
         {
-            Ok(result) => results.push(result),
+            Ok(result) => {
+                // Log slow query if threshold exceeded
+                let stmt_duration_secs = stmt_start.elapsed().as_secs_f64();
+                let row_count = result.rows.as_ref().map(|r| r.len()).unwrap_or(0);
+                
+                app_context.slow_query_logger().log_if_slow(
+                    sql.to_string(),
+                    stmt_duration_secs,
+                    row_count,
+                    auth_result.user_id.clone(),
+                    kalamdb_core::slow_query_logger::TableType::User, // Default to User
+                    None, // Table name could be extracted from SQL parsing
+                );
+                
+                results.push(result);
+            }
             Err(err) => {
                 let took_ms = start_time.elapsed().as_millis() as u64;
                 return HttpResponse::BadRequest().json(SqlResponse::error_with_details(
@@ -191,20 +263,21 @@ pub async fn execute_sql_v1(
 
 /// Execute a single SQL statement
 /// Uses SqlExecutor for all SQL (custom DDL and standard DataFusion SQL)
-/// Falls back to DataFusionSessionFactory for testing if SqlExecutor is not available
 async fn execute_single_statement(
     sql: &str,
-    session_factory: &Arc<DataFusionSessionFactory>,
+    app_context: &Arc<kalamdb_core::app_context::AppContext>,
     sql_executor: Option<&Arc<SqlExecutor>>,
     auth: &kalamdb_auth::AuthenticatedRequest,
     request_id: Option<&str>,
     ip_address: Option<&str>,
     metadata: Option<&ExecutorMetadataAlias>,
+    params: Vec<ScalarValue>, // T040: Accept parameters
 ) -> Result<QueryResult, Box<dyn std::error::Error>> {
-    // Phase 3 (T033): Construct ExecutionContext with user identity, request tracking, and DataFusion session
-    let session = Arc::new(session_factory.create_session());
-    let mut exec_ctx = ExecutionContext::new(auth.user_id.clone(), auth.role)
-        .with_session(session.clone());
+    // Phase 3 (T033): Construct ExecutionContext with user identity, request tracking, and base SessionContext
+    // Get base SessionContext from AppContext (tables already registered)
+    // ExecutionContext will extract SessionState and inject user_id for per-user filtering
+    let base_session = app_context.base_session_context();
+    let mut exec_ctx = ExecutionContext::new(auth.user_id.clone(), auth.role, Arc::clone(&base_session));
     
     // Add request_id and ip_address if available
     if let Some(rid) = request_id {
@@ -217,14 +290,15 @@ async fn execute_single_statement(
     // If sql_executor is available, use it (production path)
     if let Some(sql_executor) = sql_executor {
         // Execute through SqlExecutor (handles both custom DDL and DataFusion)
+        // Note: session parameter is not used anymore - exec_ctx creates per-request session
         match sql_executor
-            .execute_with_metadata(&session, sql, &exec_ctx, metadata, Vec::new())
+            .execute_with_metadata(sql, &exec_ctx, metadata, params) // Pass parameters
             .await
         {
-            Ok(result) => {
+            Ok(exec_result) => {
                 // Convert ExecutionResult to QueryResult
                 // Phase 3 (T036-T038): Use new ExecutionResult struct variants with row counts
-                match result {
+                match exec_result {
                     ExecutionResult::Success { message } => Ok(QueryResult::with_message(message)),
                     ExecutionResult::Rows { batches, row_count: _ } => {
                         record_batch_to_query_result(batches, Some(&auth.user_id))
@@ -273,12 +347,16 @@ async fn execute_single_statement(
             }
             Err(e) => Err(Box::new(e)),
         }
-    } else {
-        // Fallback for testing: use DataFusion directly for simple queries
-        let session = session_factory.create_session();
-        let df = session.sql(sql).await?;
-        let batches = df.collect().await?;
-        record_batch_to_query_result(batches, None)
+    }
+    else {
+        // // Fallback for testing: use shared session from AppContext (avoid memory leak)
+        // let session = app_context.session();
+        // let df = session.sql(sql).await?;
+        // let batches = df.collect().await?;
+        // record_batch_to_query_result(batches, None)
+
+        //Throw error if SqlExecutor is not available
+        Err("SqlExecutor not available".into())
     }
 }
 
@@ -355,6 +433,7 @@ mod tests {
     use super::*;
     use crate::rate_limiter::RateLimiter;
     use actix_web::{test, App};
+    use kalamdb_core::sql::DataFusionSessionFactory;
 
     // NOTE: These unit tests are disabled because they require full KalamDB setup
     // including RocksDB, SqlExecutor, and authentication middleware.
@@ -377,6 +456,7 @@ mod tests {
 
         let req_body = SqlRequest {
             sql: "SELECT 1 as id, 'Alice' as name".to_string(),
+            params: None,
         };
 
         let req = test::TestRequest::post()
@@ -411,6 +491,7 @@ mod tests {
 
         let req_body = SqlRequest {
             sql: "".to_string(),
+            params: None,
         };
 
         let req = test::TestRequest::post()
@@ -439,6 +520,7 @@ mod tests {
 
         let req_body = SqlRequest {
             sql: "SELECT 1 as id; SELECT 2 as id".to_string(),
+            params: None,
         };
 
         let req = test::TestRequest::post()

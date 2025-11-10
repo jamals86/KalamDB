@@ -47,8 +47,9 @@ use crate::tables::system::JobsTableProvider;
 use kalamdb_commons::system::{Job, JobFilter, JobOptions};
 use kalamdb_commons::{JobId, JobStatus, JobType, NamespaceId, NodeId};
 use std::sync::Arc;
+use sysinfo::System;
 use tokio::sync::RwLock;
-use tokio::time::{sleep, Duration};
+use tokio::time::{sleep, Duration, Instant};
 
 /// Unified Job Manager
 ///
@@ -129,13 +130,19 @@ impl JobsManager {
         // Generate job ID with type-specific prefix
         let job_id = self.generate_job_id(&job_type);
 
+        // Extract optional table_name from parameters (if provided)
+        let table_name_from_params: Option<kalamdb_commons::models::TableName> = parameters
+            .get("table_name")
+            .and_then(|v| v.as_str())
+            .map(|s| kalamdb_commons::models::TableName::new(s.to_string()));
+
         // Create job with Queued status
         let now_ms = chrono::Utc::now().timestamp_millis();
         let mut job = Job {
             job_id: job_id.clone(),
             job_type,
             namespace_id,
-            table_name: None,
+            table_name: table_name_from_params,
             status: JobStatus::Queued,
             parameters: Some(parameters.to_string()),
             message: None,
@@ -359,11 +366,23 @@ impl JobsManager {
         // Perform crash recovery on startup
         self.recover_incomplete_jobs().await?;
 
+        // Health monitoring interval (log every 30 seconds)
+        let health_check_interval = Duration::from_secs(30);
+        let mut last_health_check = Instant::now();
+
         loop {
             // Check for shutdown signal
             if *self.shutdown.read().await {
                 log::info!("Shutdown signal received, stopping job loop");
                 break;
+            }
+
+            // Periodic health metrics logging
+            if last_health_check.elapsed() >= health_check_interval {
+                if let Err(e) = self.log_health_metrics().await {
+                    log::warn!("Failed to log health metrics: {}", e);
+                }
+                last_health_check = Instant::now();
             }
 
             // Poll for next job
@@ -425,8 +444,31 @@ impl JobsManager {
         let app_ctx = AppContext::get();
     let ctx = JobContext::new(app_ctx, job_id.as_str().to_string());
 
-        // Execute job
-        let decision = executor.execute(&ctx, &job).await?;
+        // Execute job with robust error handling (do not tear down run loop on executor error)
+        let decision = match executor.execute(&ctx, &job).await {
+            Ok(d) => d,
+            Err(e) => {
+                // Mark job as failed and continue processing other jobs
+                let now_ms = chrono::Utc::now().timestamp_millis();
+                job.status = JobStatus::Failed;
+                job.message = Some(format!("Executor error: {}", e));
+                job.exception_trace = None;
+                job.updated_at = now_ms;
+                job.finished_at = Some(now_ms);
+
+                self.jobs_provider
+                    .update_job(job.clone())
+                    .map_err(|err| crate::error::KalamDbError::IoError(format!(
+                        "Failed to fail job after executor error: {}",
+                        err
+                    )))?;
+
+                self.log_job_event(&job_id, "error", &format!("Job failed with executor error: {}", e));
+
+                // Return Ok to keep the run loop alive
+                return Ok(());
+            }
+        };
 
         // Handle execution result
         match decision {
@@ -588,6 +630,59 @@ impl JobsManager {
             "error" => log::error!("[{}] {}", job_id, message),
             _ => log::debug!("[{}] {}", job_id, message),
         }
+    }
+
+    /// Log system health metrics for monitoring
+    ///
+    /// Logs memory usage, CPU usage, thread count, and active job statistics.
+    /// Should be called periodically from the run_loop.
+    async fn log_health_metrics(&self) -> Result<(), crate::error::KalamDbError> {
+        let mut sys = System::new_all();
+        sys.refresh_all();
+
+        // Get process info
+        let pid = sysinfo::get_current_pid().unwrap();
+        let process = sys.process(pid);
+
+        // Get job statistics
+        let all_jobs = self.list_jobs(JobFilter::default()).await?;
+        let running_count = all_jobs.iter().filter(|j| j.status == JobStatus::Running).count();
+        let queued_count = all_jobs.iter().filter(|j| j.status == JobStatus::Queued).count();
+        let failed_count = all_jobs.iter().filter(|j| j.status == JobStatus::Failed).count();
+
+        if let Some(proc) = process {
+            // Memory usage in MB
+            let memory_mb = proc.memory() / 1024 / 1024;
+            let virtual_memory_mb = proc.virtual_memory() / 1024 / 1024;
+            
+            // CPU usage percentage
+            let cpu_usage = proc.cpu_usage();
+
+            // Get total number of processes (as proxy for system load)
+            let total_processes = sys.processes().len();
+
+            log::debug!(
+                "Health metrics: Memory: {} MB (Virtual: {} MB) | CPU: {:.2}% | Total Processes: {} | Jobs: {} running, {} queued, {} failed (total: {})",
+                memory_mb,
+                virtual_memory_mb,
+                cpu_usage,
+                total_processes,
+                running_count,
+                queued_count,
+                failed_count,
+                all_jobs.len()
+            );
+        } else {
+            log::debug!(
+                "Health metrics: Jobs: {} running, {} queued, {} failed (total: {})",
+                running_count,
+                queued_count,
+                failed_count,
+                all_jobs.len()
+            );
+        }
+
+        Ok(())
     }
 
     /// Request graceful shutdown

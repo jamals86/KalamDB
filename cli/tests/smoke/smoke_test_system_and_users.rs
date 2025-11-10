@@ -63,7 +63,8 @@ fn smoke_system_tables_and_user_lifecycle() {
 
     // 4) FLUSH ALL TABLES should enqueue jobs and complete successfully
     // Create a test namespace and user table first
-    let test_ns = "smoke_test_flush";
+    // Use a unique namespace per run to avoid cross-test collisions when tests run in parallel
+    let test_ns = generate_unique_namespace("smoke_test_flush");
     let _ = execute_sql_as_root_via_cli(&format!("CREATE NAMESPACE IF NOT EXISTS {}", test_ns));
     
     // Create a user table to flush (unique per run to avoid collisions)

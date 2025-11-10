@@ -548,6 +548,111 @@ Functional Requirements:
 - FR-026: DDL handlers must use `SchemaRegistry` for 50-100× faster lookups (no SQL queries via KalamSql).
 - FR-027: DML handlers must delegate to DataFusion using `ScalarValue` for parameter binding. DataFusion's native parser (wrapping sqlparser-rs) recognizes `$1`, `$2` placeholders as `Expr::Placeholder` in LogicalPlan. Implement placeholder replacement by traversing the LogicalPlan and substituting placeholders with `Expr::Literal` values from `params: Vec<ScalarValue>`.
 - FR-028: Job-related handlers must use `UnifiedJobManager` with typed JobIds and idempotency enforcement (Phase 9 patterns).
+
+### Job Executors Requirements (Phase 8.5)
+
+**Critical for System Tests**: Job executor implementations are REQUIRED for smoke tests and system tests to pass. Current status has most executors with TODO placeholders.
+
+**Reference Architecture**: See `specs/009-core-architecture/PHASE9_EXECUTOR_IMPLEMENTATIONS.md` for detailed implementation patterns, retry logic, and status transitions.
+
+**Executor Infrastructure** (Already Complete from Phase 9):
+- UnifiedJobManager with retry logic (3× default, configurable via config.toml)
+- JobRegistry with all 8 executors registered in AppContext
+- Typed JobIds: FL-* (Flush), CL-* (Cleanup), RT-* (Retention), SE-* (StreamEviction), UC-* (UserCleanup), CO-* (Compact), BK-* (Backup), RS-* (Restore)
+- Job status state machine: New → Queued → Running → Completed/Failed/Retrying/Cancelled
+- Idempotency enforcement (prevents duplicate jobs with same key)
+- Crash recovery (Running jobs marked as Failed on server restart)
+- Exponential backoff for retries (1s → 2s → 4s → 8s configurable)
+
+**Implementation Requirements**:
+
+- FR-029: **FlushExecutor** - ✅ COMPLETE (100% functional, calls existing UserTableFlushJob/SharedTableFlushJob/StreamTableFlushJob)
+  - Returns metrics: rows_flushed, parquet_files count
+  - Handles User/Shared/Stream table types
+  - Cannot be cancelled (flush must complete to maintain consistency)
+
+- FR-030: **CleanupExecutor** - ⚠️ SIGNATURE ONLY (requires DDL refactoring)
+  - Must call refactored DDL cleanup methods: `cleanup_table_data_internal()`, `cleanup_parquet_files_internal()`, `cleanup_metadata_internal()`
+  - Validates parameters: table_id, table_type, operation ("drop_table")
+  - Cannot be cancelled (ensures complete cleanup)
+  - Returns metrics: tables_deleted, rows_deleted, bytes_freed
+
+- FR-031: **RetentionExecutor** - ⚠️ SIGNATURE ONLY (requires store.scan_iter implementation)
+  - Enforces `deleted_retention_hours` policy for soft-deleted records
+  - Validates parameters: namespace_id, table_name, table_type, retention_hours
+  - Implements batched deletion (1000 records per batch)
+  - Can be cancelled (partial retention enforcement acceptable)
+  - Returns JobDecision::Retry if more records remain (with backoff_ms)
+  - Returns metrics: records_deleted, batches_processed
+
+- FR-032: **StreamEvictionExecutor** - ⚠️ SIGNATURE ONLY (requires stream_table_store.scan_iter)
+  - Enforces TTL policy based on `created_at` timestamp
+  - Validates parameters: namespace_id, table_name, table_type ("Stream"), ttl_seconds, batch_size (default 10000)
+  - Implements batched deletion with continuation support
+  - Can be cancelled (partial eviction acceptable)
+  - Returns JobDecision::Retry if batch_size records deleted (more may remain)
+  - Returns metrics: records_evicted, batches_processed
+
+- FR-033: **UserCleanupExecutor** - ⚠️ SIGNATURE ONLY (requires system table provider usage)
+  - Permanently deletes soft-deleted user accounts
+  - Validates parameters: user_id, username, cascade (boolean)
+  - Implements cascade logic: delete user's tables (via cleanup jobs), remove from ACLs, delete live queries
+  - Cannot be cancelled (ensures complete cleanup)
+  - Returns metrics: user_deleted, tables_deleted, acl_entries_removed, live_queries_deleted
+
+- FR-034: **CompactExecutor** - PLACEHOLDER (returns NotImplemented)
+  - Future Phase: Merge multiple small Parquet files → single large file
+  - Validates parameters: namespace_id, table_name, table_type, min_files (trigger threshold)
+  - Returns metrics: files_before, files_after, bytes_saved
+
+- FR-035: **BackupExecutor** - PLACEHOLDER (returns NotImplemented)
+  - Future Phase: Create Parquet snapshots + metadata JSON
+  - Validates parameters: namespace_id, table_name, backup_path, backend ("s3" | "filesystem")
+  - Returns metrics: snapshot_size_bytes, backup_path, duration_ms
+
+- FR-036: **RestoreExecutor** - PLACEHOLDER (returns NotImplemented)
+  - Future Phase: Recreate table from Parquet snapshots
+  - Validates parameters: namespace_id, table_name, backup_path, backend, overwrite (boolean)
+  - Implements schema compatibility checks
+  - Returns metrics: rows_restored, restore_path, duration_ms
+
+**Retry Logic Requirements** (from specs/009-core-architecture/spec.md):
+
+- FR-037: All executors must return `Result<JobDecision, KalamDbError>` from execute() method
+- FR-038: JobDecision variants:
+  - `Completed { message: Option<String> }` - Job succeeded, status → Completed
+  - `Retry { message: String, exception_trace: Option<String>, backoff_ms: u64 }` - Temporary failure, retry with backoff
+  - `Cancelled` - Job was cancelled, status → Cancelled
+- FR-039: JobDecision::Retry triggers automatic retry up to max_retries (default 3, configurable)
+- FR-040: Retry backoff must use exponential strategy: 1s × 2^(retry_count-1) (1s → 2s → 4s → 8s)
+- FR-041: After max_retries exhausted, job status → Failed permanently (no more retries)
+- FR-042: Job cancellation (via KILL JOB command) must call executor.cancel() method before transition to Cancelled status
+
+**Status Transitions** (from specs/009-core-architecture/spec.md):
+
+- FR-043: New → Queued: Job created with idempotency key, persisted to system.jobs
+- FR-044: Queued → Running: JobManager.run_loop() picks job from queue, updates status, logs "[JobId] INFO - Job started"
+- FR-045: Running → Completed: JobDecision::Completed returned, result stored, logs "[JobId] INFO - Job completed: {message}"
+- FR-046: Running → Retrying: JobDecision::Retry returned, retry_count increments, logs "[JobId] WARN - Job failed, retrying in {backoff_ms}ms (attempt {retry_count}/{max_retries})"
+- FR-047: Running → Failed: JobDecision::Retry returned but retry_count ≥ max_retries, logs "[JobId] ERROR - Job failed permanently: {message}"
+- FR-048: Running → Cancelled: KILL JOB command received, executor.cancel() called, logs "[JobId] INFO - Job cancelled by user"
+- FR-049: Retrying → Running: After backoff_ms delay, job re-queued for execution
+- FR-050: Server restart: All Running jobs marked as Failed with message "Server restarted during execution"
+
+**Idempotency Requirements** (from specs/009-core-architecture/spec.md):
+
+- FR-051: Idempotency key format: `{job_type}:{namespace}:{table_name}:{date}` (e.g., "flush:default:events:20251104")
+- FR-052: has_active_job_with_key() checks for Running, Queued, Retrying statuses (Completed and Failed jobs do NOT block)
+- FR-053: Duplicate job creation returns error: "Job already running: {job_id} (status: {status}, created: {timestamp})"
+
+**Testing Requirements**:
+
+- FR-054: Unit tests for each executor: success scenario, error handling, parameter validation
+- FR-055: Integration tests for retry logic: force failure → verify 3× retry → verify backoff timing
+- FR-056: Integration tests for cancellation: start long-running job → KILL JOB → verify cleanup
+- FR-057: Smoke tests must verify FlushExecutor works end-to-end: FLUSH TABLE → job created → execution → metrics returned
+- FR-058: System tests for RetentionExecutor: create soft-deleted records → wait → verify cleanup
+- FR-059: System tests for StreamEvictionExecutor: create TTL records → wait → verify eviction
 - FR-029: Transaction handlers must integrate with future transaction manager (placeholder implementations for Phase 11). Until transaction manager is implemented, BEGIN/COMMIT/ROLLBACK handlers must return `KalamDbError::NotImplemented` with explicit message: "Transaction support planned for Phase 11".
 - FR-030: All handlers must return `Result<ExecutionResult, KalamDbError>` with appropriate success messages and error context.
 - FR-030a: Error responses MUST use structured format with machine-readable error codes, human-readable messages, and contextual details. Format: `{"code": "ERROR_CODE", "message": "description", "details": {...}}`. Common codes: `PARAM_COUNT_MISMATCH`, `PARAM_SIZE_EXCEEDED`, `PARAM_TYPE_MISMATCH`, `TIMEOUT`, `AUTHORIZATION_FAILED`, `NOT_IMPLEMENTED`.

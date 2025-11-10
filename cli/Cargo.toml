@@ -62,6 +62,7 @@ term_size = { workspace = true }
 
 # Date/time formatting
 chrono = { workspace = true }
+rand.workspace = true
 
 [build-dependencies]
 chrono = { workspace = true }
@@ -71,3 +72,6 @@ assert_cmd = { workspace = true }
 predicates = { workspace = true }
 tempfile = { workspace = true }
 reqwest = { workspace = true }
+base64 = { workspace = true }
+tokio-tungstenite = { workspace = true }
+futures-util = { workspace = true }

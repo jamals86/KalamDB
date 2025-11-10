@@ -25,7 +25,7 @@ fn smoke_shared_table_crud() {
     // 1) Create shared table
     let create_sql = format!(
         r#"CREATE SHARED TABLE {} (
-            id INT AUTO_INCREMENT,
+            id BIGINT AUTO_INCREMENT,
             name VARCHAR NOT NULL,
             status VARCHAR,
             created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
@@ -46,20 +46,47 @@ fn smoke_shared_table_crud() {
     assert!(out.contains("alpha"), "expected 'alpha' in results: {}", out);
     assert!(out.contains("beta"), "expected 'beta' in results: {}", out);
 
-    // 4) DELETE one row
-    let del = format!("DELETE FROM {} WHERE name='alpha'", full);
+    // 4) Retrieve ids for rows we will mutate (backend requires primary key equality for UPDATE/DELETE)
+    let id_sel = format!("SELECT id, name FROM {} WHERE name IN ('alpha','beta') ORDER BY name", full);
+    let id_out = execute_sql_as_root_via_cli(&id_sel).expect("id select should succeed");
+    
+    let mut alpha_id: Option<String> = None;
+    let mut beta_id: Option<String> = None;
+    for line in id_out.lines() {
+        if line.contains("alpha") || line.contains("beta") {
+            // Parse id allowing negative numbers: split on non-digit-or-minus, take first numeric segment
+            let parts: Vec<&str> = line.split('│').collect();
+            if parts.len() >= 2 {
+                let id_part = parts[1].trim();
+                // Try to parse as i64 to validate it's a number
+                if let Ok(_) = id_part.parse::<i64>() {
+                    if line.contains("alpha") { 
+                        alpha_id = Some(id_part.to_string()); 
+                    }
+                    if line.contains("beta") { 
+                        beta_id = Some(id_part.to_string()); 
+                    }
+                }
+            }
+        }
+    }
+    let alpha_id = alpha_id.expect("alpha id parsed");
+    let beta_id = beta_id.expect("beta id parsed");
+
+    // 5) DELETE one row via id
+    let del = format!("DELETE FROM {} WHERE id = {}", full, alpha_id);
     execute_sql_as_root_via_cli(&del).expect("delete should succeed");
 
-    // 5) UPDATE one row
-    let upd = format!("UPDATE {} SET status='done' WHERE name='beta'", full);
+    // 6) UPDATE one row via id
+    let upd = format!("UPDATE {} SET status='done' WHERE id = {}", full, beta_id);
     execute_sql_as_root_via_cli(&upd).expect("update should succeed");
 
-    // 6) SELECT non-deleted rows and verify contents reflect changes
+    // 7) SELECT non-deleted rows and verify contents reflect changes
     let out2 = execute_sql_as_root_via_cli(&sel_all).expect("second select should succeed");
     assert!(out2.contains("beta"), "expected 'beta' to remain: {}", out2);
     assert!(out2.contains("done"), "expected updated status 'done': {}", out2);
 
-    // 7) DROP TABLE and verify selecting fails
+    // 8) DROP TABLE and verify selecting fails
     let drop_sql = format!("DROP TABLE {}", full);
     execute_sql_as_root_via_cli(&drop_sql).expect("drop table should succeed");
 

@@ -16,14 +16,11 @@ Future:
 18) Move all code which deals with live subscriptions into kalamdb-live module, like these codes in here: backend/crates/kalamdb-core/src/live_query
 19) investigate the timestamp datatype how its being stored in rocksdb does it a string representation or binary representation? and how about the precision? is it milliseconds or nanoseconds?
 20) For flushing tests first create a storage and direct all the storage into a temporary directory so we can remove it after each flush test to not leave with un-needed temporary data
-21) support deleting rows while they are in the parquet files and have been flushed, also the update should be supported on flushed rows
 22) For storing inside rocksdb as bytearray we should use protobuf instead of json
 23) Add https://docs.rs/object_store/latest/object_store/ to support any object storage out there easily
-24) Check if we cna replace rocksdb with this one: https://github.com/foyer-rs/foyer, it already support objectstore so we can also store the non-flushed tables into s3 directly, and not forcing flushing when server goes down, even whenever we use the filesystem we can rely on the same logic inside foyer as well
+24) Check if we can replace rocksdb with this one: https://github.com/foyer-rs/foyer, it already support objectstore so we can also store the non-flushed tables into s3 directly, and not forcing flushing when server goes down, even whenever we use the filesystem we can rely on the same logic inside foyer as well
 
 26) Low Priority - Maybe instead of _updated we can use _seq which is a snowflake id for better syncing ability accross distributed nodes
-28) ✅ DONE (2025-10-27) - Namespace struct duplication - YES, was duplicated between kalamdb-core/catalog and kalamdb-commons/system. Now consolidated into single source of truth at `kalamdb-commons/src/models/system.rs`. Removed `kalamdb-core/src/catalog/namespace.rs`. All validation logic (validate_name, can_delete, increment/decrement_table_count) moved to the commons version.
-
 31) SHOW STATS FOR TABLE app.messages; maybe this is better be implemented with information_Schemas tasks
 32) Do we have counter per userId per buffered rows? this will help us tune the select from user table to check if we even need to query the buffer in first place
 33) Add option for a specific user to download all his data this is done with an endpoint in rest api which will create a zip file with all his tables data in parquet format and then provide a link to download it
@@ -106,18 +103,6 @@ If the user already specified primary key then we dont do that, the _id we add a
 104) backend\crates\kalamdb-core\src\tables\system\tables_v2 is not needed anymore we have schemas which stores the tables/columns, all should be located in the new folder: backend\crates\kalamdb-core\src\tables\system\schemas
 105) when we have Waiting up to 300s for active flush jobs to complete... and the user click CTRL+C again it will force the stopping and mark those jobs as failed with the right error
 
-106) IMPORTANT - Why are we creating a separate provider for each user? couldn't we have one provider which is shared for all user's per table? which we store once in the cache as well and use it and pass it the current UserId each time? (Check also stream tables)
-            // Create provider with the CURRENT user_id (critical for data isolation)
-            let mut provider = UserTableProvider::new(
-                table_id,
-                metadata,
-                schema,
-                table_store,
-                user_id.clone(),
-                user_role,
-                vec![], // parquet_paths - empty for now
-            );
-
 107) Check if we can here combine this with our main cache: backend\crates\kalamdb-core\src\sql\registry.rs, or if this needed anymore?
 108) Prevent creating namespace with names like: sys/system/root/kalamdb/kalam/main/default/sql and name these as SYSTEM_RESERVED_NAMES, also add function to Namespaceid.isSystem() to check if the namespace is a system one
 109) why do we need backend/crates/kalamdb-auth/src/user_repo.rs anymore? we have kalamdb-core/src/auth/user_repo.rs
@@ -137,6 +122,22 @@ and things like this:
         let namespace_id = NamespaceId::new(name);
 117) Make the link client send a X-Request-ID header with a unique id per request for better tracing and debugging
 118) Add to kalamdb-link client the ability to set custom headers for each request
+120) Now configs are centralized inside AppContext and accessible everywhere easily, we need to check:
+  - All places where we read config from file directly and change them to read from AppContext
+  - Remove any duplicate config models which is a dto and use only the configs instead of mirroring it to different structs
+
+122) in impl JobExecutor for FlushExecutor add generic to the model instead of having json parameters we can have T: DeserializeOwned + Send + Sync + 'static and then we can deserialize into the right struct directly instead of having to parse json each time
+
+123) Query users table doesnt return _deleted columns only the deleted_at date
+
+126) Combine the 2 shared/user tables flushing and querying using a shared hybrid service which is used in both cases to reduce code duplication and maintenance burden
+both of them read from a path and from a store but user table filter the store which is the hot storage based on user id as well
+
+
+128) IMPORTANT - Insert a row as a system/service user to a different user_id this will be used for users to send messages to others as well or an ai send to different user or publish to different user's stream table
+INSERT INTO <namespace>.<table>
+   [AS USER '<user_id>']
+   VALUES (...);
 
 
 
@@ -153,9 +154,18 @@ Here’s the updated 5-line spec with embedding storage inside Parquet and manag
 IMPORTANT:
 1) Done - Schema information_schema
 2) Done - Datatypes for columns
-3) Parametrized Queries
+3) Done - Parametrized Queries
+4) Add manifest file for each user table, that will help us locate which parquet files we need to read in each query, and if in fact we need to read parquet files at all, since sometimes the data will be only inside rocksdb and no need for file io
 4) Support update/deleted as a separate join table per user by MAX(_updated)
 5) Storage files compaction
+6) AS USER support for DML statements - to be able to insert/update/delete as a specific user_id (Only service/admin roles can do that)
+7) Vector Search + HNSW indexing with deletes support
+8) Now configs are centralized inside AppContext and accessible everywhere easily, we need to check:
+  - All places where we read config from file directly and change them to read from AppContext
+  - Remove any duplicate config models which is a dto and use only the configs instead of mirroring it to different structs
+
+9) in impl JobExecutor for FlushExecutor add generic to the model instead of having json parameters we can have T: DeserializeOwned + Send + Sync + 'static and then we can deserialize into the right struct directly instead of having to parse json each time
+
 
 
 Key Findings

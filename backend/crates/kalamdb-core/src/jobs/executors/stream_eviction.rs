@@ -135,24 +135,50 @@ impl JobExecutor for StreamEvictionExecutor {
             namespace_id, table_name, ttl_seconds, batch_size
         ));
 
-        // TODO: Implement actual stream eviction logic
-        // - Query records with created_at < (now - ttl_seconds)
-        // - Delete in batches of batch_size via stream_table_store.delete()
-        // - If more records remain, return JobDecision::Retry with backoff
-        // - Track metrics (rows_evicted, bytes_freed)
-        // Implementation approach:
-        //   1. Get cutoff time: now - ttl_seconds
-        //   2. Scan stream table for rows with created_at < cutoff
-        //   3. Collect up to batch_size row IDs
-        //   4. Delete batch via store
-        //   5. If batch full, return Retry to process more
+        // Calculate cutoff time for eviction (records created before this time are expired)
+        let now = chrono::Utc::now().timestamp_millis();
+        let ttl_ms = (ttl_seconds * 1000) as i64;
+        let cutoff_time = now - ttl_ms;
 
-        ctx.log_info("Stream eviction completed successfully");
+        ctx.log_info(&format!(
+            "Cutoff time: {} (records created before this are expired)",
+            chrono::DateTime::from_timestamp_millis(cutoff_time)
+                .map(|dt| dt.to_rfc3339())
+                .unwrap_or_else(|| "invalid".to_string())
+        ));
+
+        // TODO: Implement actual stream eviction logic
+        // Current limitation: StreamTableRow doesn't have created_at field yet
+        // When adding TTL support to stream tables:
+        //   1. Add `created_at: i64` field to StreamTableRow (required for TTL)
+        //   2. Scan table using stream_table_store.scan_prefix()
+        //   3. Filter rows where created_at < cutoff_time
+        //   4. Delete in batches up to batch_size using store.delete()
+        //   5. If batch full (== batch_size), return JobDecision::Retry with 5000ms backoff
+        //   6. Track metrics (rows_evicted, estimated_bytes_freed)
+        //
+        // Implementation sketch:
+        //   let expired_rows: Vec<RowId> = all_rows
+        //       .filter(|row| row.created_at < cutoff_time)
+        //       .take(batch_size as usize)
+        //       .map(|row| row.row_id)
+        //       .collect();
+        //   for row_id in &expired_rows {
+        //       store.delete(row_id)?;
+        //   }
+        //   if expired_rows.len() == batch_size as usize {
+        //       return Ok(JobDecision::Retry { backoff_ms: 5000 });
+        //   }
+        //
+        // For now, return placeholder metrics
+        let rows_evicted = 0;
+
+        ctx.log_info(&format!("Stream eviction completed - {} rows evicted", rows_evicted));
 
         Ok(JobDecision::Completed {
             message: Some(format!(
-                "Evicted expired records from {}.{} (ttl: {}s)",
-                namespace_id, table_name, ttl_seconds
+                "Evicted {} expired records from {}.{} (ttl: {}s)",
+                rows_evicted, namespace_id, table_name, ttl_seconds
             )),
         })
     }

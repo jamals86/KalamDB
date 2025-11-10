@@ -4,6 +4,7 @@
 
 use crate::tables::system::system_table_store::SystemTableStore;
 use kalamdb_commons::models::{NamespaceId, TableName, UserId};
+use kalamdb_commons::StorageKey;
 use kalamdb_store::StorageBackend;
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
@@ -55,6 +56,12 @@ impl UserTableRowId {
 impl AsRef<[u8]> for UserTableRowId {
     fn as_ref(&self) -> &[u8] {
         self.key.as_bytes()
+    }
+}
+
+impl StorageKey for UserTableRowId {
+    fn storage_key(&self) -> Vec<u8> {
+        self.key.as_bytes().to_vec()
     }
 }
 

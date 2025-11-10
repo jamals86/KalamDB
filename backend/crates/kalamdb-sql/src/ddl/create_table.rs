@@ -163,6 +163,24 @@ impl CreateTableStatement {
             .replace("STREAM TABLE", "TABLE")
             .replace(['\n', '\r'], " ");
 
+        // WORKAROUND: sqlparser-rs doesn't support function calls in DEFAULT clauses
+        // Replace DEFAULT FUNC() with DEFAULT '__KALAMDB_DEFAULT_FUNC_N__' temporarily
+        // where N is a sequential number to track which function belongs to which column
+        // We'll restore the function calls after parsing
+        let default_func_re = regex::Regex::new(r"DEFAULT\s+(\w+)\s*\(\s*\)").unwrap();
+        let mut default_functions = Vec::new();
+        let mut func_index = 0;
+        normalized_sql = default_func_re.replace_all(&normalized_sql, |caps: &regex::Captures| {
+            if let Some(func_name) = caps.get(1) {
+                default_functions.push(func_name.as_str().to_string());
+                let placeholder = format!("DEFAULT '__KALAMDB_DEFAULT_FUNC_{}__'", func_index);
+                func_index += 1;
+                placeholder
+            } else {
+                caps[0].to_string()
+            }
+        }).into_owned();
+
         // Remove KalamDB-specific clauses using pre-compiled regexes
         normalized_sql = FLUSH_RE.replace_all(&normalized_sql, "").into_owned();
         normalized_sql = TABLE_TYPE_RE.replace_all(&normalized_sql, "").into_owned();
@@ -189,7 +207,27 @@ impl CreateTableStatement {
         }
 
         let stmt = &statements[0];
-        Self::parse_statement(stmt, current_namespace, sql, table_type)
+        let mut parsed = Self::parse_statement(stmt, current_namespace, sql, table_type)?;
+
+        // WORKAROUND: Restore function calls in DEFAULT clauses
+        // Replace literal '__KALAMDB_DEFAULT_FUNC_N__' with FunctionCall
+        // where N is the index into the default_functions array
+        for (_col_name, default_value) in &mut parsed.column_defaults {
+            if let ColumnDefault::Literal(serde_json::Value::String(s)) = default_value {
+                // Check if this is a placeholder (format: __KALAMDB_DEFAULT_FUNC_N__)
+                if s.starts_with("__KALAMDB_DEFAULT_FUNC_") && s.ends_with("__") {
+                    // Extract the index from the placeholder
+                    let index_str = &s["__KALAMDB_DEFAULT_FUNC_".len()..s.len()-2];
+                    if let Ok(idx) = index_str.parse::<usize>() {
+                        if idx < default_functions.len() {
+                            *default_value = ColumnDefault::function(default_functions[idx].clone(), vec![]);
+                        }
+                    }
+                }
+            }
+        }
+
+        Ok(parsed)
     }
 
     /// Detect table type from SQL keywords (optimized with minimal allocations)

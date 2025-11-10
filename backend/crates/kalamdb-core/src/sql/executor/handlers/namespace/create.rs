@@ -7,7 +7,6 @@ use crate::app_context::AppContext;
 use crate::error::KalamDbError;
 use crate::sql::executor::handlers::typed::TypedStatementHandler;
 use crate::sql::executor::models::{ExecutionContext, ExecutionResult, ScalarValue};
-use datafusion::execution::context::SessionContext;
 use kalamdb_commons::models::NamespaceId;
 use kalamdb_commons::system::Namespace;
 use kalamdb_sql::ddl::CreateNamespaceStatement;
@@ -28,7 +27,6 @@ impl CreateNamespaceHandler {
 impl TypedStatementHandler<CreateNamespaceStatement> for CreateNamespaceHandler {
     async fn execute(
         &self,
-        _session: &SessionContext,
         statement: CreateNamespaceStatement,
         _params: Vec<ScalarValue>,
         _context: &ExecutionContext,
@@ -84,12 +82,13 @@ impl TypedStatementHandler<CreateNamespaceStatement> for CreateNamespaceHandler 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use kalamdb_commons::Role;
+    use crate::test_helpers::{create_test_session, init_test_app_context};
+    use datafusion::prelude::SessionContext;
     use kalamdb_commons::models::UserId;
-    use crate::test_helpers::init_test_app_context;
+    use kalamdb_commons::Role;
 
     fn test_context() -> ExecutionContext {
-        ExecutionContext::new(UserId::from("test_user"), Role::Dba)
+        ExecutionContext::new(UserId::from("test_user"), Role::Dba, create_test_session())
     }
 
     #[tokio::test]
@@ -106,7 +105,7 @@ mod tests {
         };
 
         let result = handler
-            .execute(&session, stmt, vec![], &ctx)
+            .execute(stmt, vec![], &ctx)
             .await;
         assert!(result.is_ok());
 
@@ -134,13 +133,13 @@ mod tests {
 
         // First creation should succeed
         let result1 = handler
-            .execute(&session, stmt.clone(), vec![], &ctx)
+            .execute(stmt.clone(), vec![], &ctx)
             .await;
         assert!(result1.is_ok());
 
         // Second creation with IF NOT EXISTS should also succeed
         let result2 = handler
-            .execute(&session, stmt, vec![], &ctx)
+            .execute(stmt, vec![], &ctx)
             .await;
         assert!(result2.is_ok());
 
@@ -155,7 +154,7 @@ mod tests {
         init_test_app_context();
         let app_ctx = AppContext::get();
         let handler = CreateNamespaceHandler::new(app_ctx);
-        let user_ctx = ExecutionContext::new(UserId::from("regular_user"), Role::User);
+        let user_ctx = ExecutionContext::new(UserId::from("regular_user"), Role::User, create_test_session());
 
         let stmt = CreateNamespaceStatement {
             name: NamespaceId::new("unauthorized_ns"),

@@ -4,7 +4,6 @@ use crate::app_context::AppContext;
 use crate::error::KalamDbError;
 use crate::sql::executor::handlers::typed::TypedStatementHandler;
 use crate::sql::executor::models::{ExecutionContext, ExecutionResult, ScalarValue};
-use datafusion::execution::context::SessionContext;
 use kalamdb_sql::ddl::ShowNamespacesStatement;
 use std::sync::Arc;
 
@@ -23,7 +22,6 @@ impl ShowNamespacesHandler {
 impl TypedStatementHandler<ShowNamespacesStatement> for ShowNamespacesHandler {
     async fn execute(
         &self,
-        _session: &SessionContext,
         _statement: ShowNamespacesStatement,
         _params: Vec<ScalarValue>,
         _context: &ExecutionContext,
@@ -54,11 +52,13 @@ impl TypedStatementHandler<ShowNamespacesStatement> for ShowNamespacesHandler {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use kalamdb_commons::Role;
+    use crate::test_helpers::create_test_session;
+    use datafusion::prelude::SessionContext;
     use kalamdb_commons::models::UserId;
+    use kalamdb_commons::Role;
 
     fn create_test_context() -> ExecutionContext {
-        ExecutionContext::new(UserId::new("test_user"), Role::User)
+        ExecutionContext::new(UserId::new("test_user"), Role::User, create_test_session())
     }
 
     #[tokio::test]
@@ -82,7 +82,7 @@ mod tests {
         let ctx = create_test_context();
         let session = SessionContext::new();
 
-        let result = handler.execute(&session, stmt, vec![], &ctx).await;
+        let result = handler.execute(stmt, vec![], &ctx).await;
         
         // Should return batches
         assert!(result.is_ok());

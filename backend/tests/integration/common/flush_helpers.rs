@@ -66,12 +66,34 @@ pub async fn execute_flush_synchronously(
 
     // Table metadata scan not needed for flush execution
 
-    // Get stores and registry from AppContext
-    let user_table_store = server.app_context.user_table_store();
+    // Get store and registry from AppContext (use per-table store)
     let unified_cache = server.app_context.schema_registry();
-    
     let table_id_arc = Arc::new(table_id.clone());
-    
+
+    // Get the registered UserTableProvider and access its store; fallback to constructing a new per-table store
+    let user_table_store = if let Some(provider_arc) = server
+        .app_context
+        .schema_registry()
+        .get_provider(&table_id)
+    {
+        if let Some(provider) = provider_arc.as_any().downcast_ref::<kalamdb_core::tables::user_tables::UserTableProvider>() {
+            provider.shared().store().clone()
+        } else {
+            // Fallback if wrong provider type
+            Arc::new(kalamdb_core::tables::new_user_table_store(
+                server.app_context.storage_backend(),
+                &namespace_id,
+                &table_name_id,
+            ))
+        }
+    } else {
+        Arc::new(kalamdb_core::tables::new_user_table_store(
+            server.app_context.storage_backend(),
+            &namespace_id,
+            &table_name_id,
+        ))
+    };;
+
     let flush_job = UserTableFlushJob::new(
         table_id_arc,
         user_table_store,
@@ -120,10 +142,16 @@ pub async fn execute_shared_flush_synchronously(
         )
         .map_err(|e| format!("Failed to parse Arrow schema: {}", e))?;
 
-    // Get stores and registry from AppContext
-    let shared_table_store = server.app_context.shared_table_store();
+    // Get per-table SharedTableStore and registry from AppContext
     let unified_cache = server.app_context.schema_registry();
-    
+    let shared_table_store = Arc::new(
+        kalamdb_core::tables::new_shared_table_store(
+            server.app_context.storage_backend(),
+            &namespace_id,
+            &table_name_id,
+        ),
+    );
+
     let namespace_id = NamespaceId::new(namespace);
     let table_name_id = TableName::new(table_name);
     let table_id = Arc::new(TableId::new(namespace_id.clone(), table_name_id.clone()));
@@ -198,10 +226,20 @@ pub async fn wait_for_flush_job_completion(
                     .unwrap_or("unknown");
 
                 match status {
+                    // Transitional states: keep waiting
+                    "new" | "queued" | "retrying" | "running" => {
+                        // Continue waiting for completion
+                        sleep(check_interval).await;
+                        continue;
+                    }
                     "completed" => {
                         // Verify took_ms is calculated (not 0)
                         let started_at = job.get("started_at").and_then(|v| v.as_i64());
-                        let completed_at = job.get("completed_at").and_then(|v| v.as_i64());
+                        // Some providers use finished_at; fall back if completed_at is missing
+                        let completed_at = job
+                            .get("completed_at")
+                            .and_then(|v| v.as_i64())
+                            .or_else(|| job.get("finished_at").and_then(|v| v.as_i64()));
 
                         if let (Some(start), Some(end)) = (started_at, completed_at) {
                             let took_ms = end - start;
@@ -232,16 +270,13 @@ pub async fn wait_for_flush_job_completion(
                             .unwrap_or("Unknown error");
                         return Err(format!("Job {} failed: {}", job_id, error));
                     }
-                    "running" => {
-                        // Continue waiting
-                        sleep(check_interval).await;
-                        continue;
-                    }
                     "cancelled" => {
                         return Err(format!("Job {} was cancelled", job_id));
                     }
                     _ => {
-                        return Err(format!("Job {} has unexpected status: {}", job_id, status));
+                        // Unknown status: wait a bit more rather than failing fast
+                        sleep(check_interval).await;
+                        continue;
                     }
                 }
             }
@@ -424,13 +459,15 @@ fn resolve_user_table_storage_path(
         .expect("Local storage configuration missing");
 
     let user_id_value = user_id.unwrap_or("");
+    // Support both {user_id} and {userId} placeholder variants (historical inconsistency)
     let mut relative = storage
         .user_tables_template
         .replace("{namespace}", namespace)
         .replace("{tableName}", table_name)
+        .replace("{user_id}", user_id_value)
         .replace("{userId}", user_id_value)
-        .replace("{shard}", "")
-        .replace("${user_id}", user_id_value);
+        .replace("${user_id}", user_id_value)
+        .replace("{shard}", "");
 
     if relative.starts_with('/') {
         relative = relative.trim_start_matches('/').to_string();

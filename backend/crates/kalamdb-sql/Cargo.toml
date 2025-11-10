@@ -28,6 +28,9 @@ once_cell = { workspace = true }
 # Error handling
 anyhow = { workspace = true }
 
+# Logging
+log = { workspace = true }
+
 # Time handling
 chrono = { workspace = true }
 

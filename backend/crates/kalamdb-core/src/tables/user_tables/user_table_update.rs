@@ -11,7 +11,7 @@ use crate::error::KalamDbError;
 use crate::live_query::manager::{ChangeNotification, LiveQueryManager};
 use crate::tables::system::system_table_store::UserTableStoreExt;
 use crate::tables::UserTableStore;
-
+use kalamdb_commons::models::TableId;
 use serde_json::Value as JsonValue;
 use std::sync::Arc;
 
@@ -154,16 +154,8 @@ impl UserTableUpdateHandler {
                 serde_json::to_value(notification_data).unwrap(),
             );
 
-            let mgr = Arc::clone(manager);
-            tokio::spawn(async move {
-                // ✅ REQUIREMENT 2: Log errors, don't propagate
-                if let Err(e) = mgr
-                    .notify_table_change(&qualified_table_name, notification)
-                    .await
-                {
-                    log::warn!("Failed to notify subscribers for UPDATE: {}", e);
-                }
-            });
+            let table_id = TableId::new(namespace_id.clone(), table_name.clone());
+            manager.notify_table_change_async(user_id.clone(), table_id, notification);
         }
 
         Ok(row_id.to_string())

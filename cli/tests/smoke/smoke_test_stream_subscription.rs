@@ -22,14 +22,14 @@ fn smoke_stream_table_subscription() {
     let ns_sql = format!("CREATE NAMESPACE IF NOT EXISTS {}", namespace);
     execute_sql_as_root_via_cli(&ns_sql).expect("create namespace should succeed");
 
-    // 2) Create stream table with small TTL
+    // 2) Create stream table with 30-second TTL
     let create_sql = format!(
         r#"CREATE STREAM TABLE {} (
             event_id TEXT NOT NULL,
             event_type TEXT,
             payload TEXT,
             timestamp TIMESTAMP
-        ) TTL 10"#,
+        ) TTL 30"#,
         full
     );
     execute_sql_as_root_via_cli(&create_sql).expect("create stream table should succeed");
@@ -40,29 +40,55 @@ fn smoke_stream_table_subscription() {
 
     // 4) Insert a stream event and expect subscription output
     let ev_val = "smoke_stream_event";
-    let ins = format!(
-        "INSERT INTO {} (event_id, event_type, payload) VALUES ('e1', 'info', '{}')",
-        full, ev_val
-    );
-    execute_sql_as_root_via_cli(&ins).expect("insert stream event should succeed");
-
-    // Wait up to 5s for any non-empty subscription line
     let mut got_any = false;
-    let start = std::time::Instant::now();
-    while start.elapsed() < std::time::Duration::from_secs(5) {
-        match listener.try_read_line(std::time::Duration::from_millis(250)) {
-            Ok(Some(line)) => {
-                if !line.trim().is_empty() {
-                    got_any = true;
-                    break;
+    let mut attempt = 0;
+    while attempt < 5 && !got_any {
+        attempt += 1;
+        let event_id = format!("e{}", attempt);
+        let ins = format!(
+            "INSERT INTO {} (event_id, event_type, payload) VALUES ('{}', 'info', '{}')",
+            full, event_id, ev_val
+        );
+        execute_sql_as_root_via_cli(&ins).expect("insert stream event should succeed");
+
+        // After each insert, poll for up to 1s for a subscription line
+        let per_attempt_deadline = std::time::Instant::now() + std::time::Duration::from_secs(1);
+        while std::time::Instant::now() < per_attempt_deadline {
+            match listener.try_read_line(std::time::Duration::from_millis(250)) {
+                Ok(Some(line)) => {
+                    if !line.trim().is_empty() {
+                        got_any = true;
+                        break;
+                    }
                 }
+                Ok(None) => break,
+                Err(_) => continue,
             }
-            Ok(None) => break,
-            Err(_) => continue,
         }
     }
-    assert!(got_any, "expected to receive some subscription output within 5s");
+    assert!(got_any, "expected to receive some subscription output within retry window");
 
     // Stop subscription
     listener.stop().ok();
+
+    // 5) Verify data is present via regular SELECT immediately after insert
+    let select_sql = format!("SELECT * FROM {}", full);
+    let select_output = execute_sql_as_root_via_cli(&select_sql).expect("select should succeed");
+    assert!(
+        select_output.contains(ev_val),
+        "expected to find inserted event '{}' in SELECT output immediately after insert",
+        ev_val
+    );
+
+    // 6) Wait 31 seconds for TTL eviction
+    println!("Waiting 31 seconds for TTL eviction...");
+    std::thread::sleep(std::time::Duration::from_secs(31));
+
+    // 7) Verify data has been evicted via regular SELECT
+    let select_after_ttl = execute_sql_as_root_via_cli(&select_sql).expect("select after TTL should succeed");
+    assert!(
+        !select_after_ttl.contains(ev_val),
+        "expected event '{}' to be evicted after 31 seconds (TTL=30s)",
+        ev_val
+    );
 }

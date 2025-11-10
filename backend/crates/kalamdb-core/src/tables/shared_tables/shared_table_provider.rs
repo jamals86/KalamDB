@@ -110,6 +110,13 @@ impl SharedTableProvider {
     /// - _updated: Current timestamp (milliseconds)
     /// - _deleted: false
     pub fn insert(&self, row_id: &str, mut row_data: JsonValue) -> Result<(), KalamDbError> {
+        log::debug!(
+            "SharedTableProvider::insert called - table_id: {}, row_id: {}, store partition: {}",
+            self.core.table_id(),
+            row_id,
+            self.store.partition()
+        );
+        
         // Inject system columns (as RFC3339 string for _updated to match SharedTableRow format)
         let now_rfc3339 = chrono::Utc::now().to_rfc3339();
         if let Some(obj) = row_data.as_object_mut() {
@@ -131,6 +138,12 @@ impl SharedTableProvider {
         self.store
             .put(&key, &entity)
             .map_err(|e| KalamDbError::Other(e.to_string()))?;
+
+        log::debug!(
+            "SharedTableProvider::insert completed - row_id: {}, partition: {}",
+            row_id,
+            self.store.partition()
+        );
 
         Ok(())
     }
@@ -181,6 +194,101 @@ impl SharedTableProvider {
         validate_insert_rows(&self.core.schema_ref(), rows)
     }
 
+    /// Scan Parquet files and return RecordBatches
+    ///
+    /// Reads all Parquet files for this shared table from the storage directory
+    /// and returns them as Arrow RecordBatches for merging with RocksDB data.
+    async fn scan_parquet_files(&self, _schema: &datafusion::arrow::datatypes::SchemaRef) -> DataFusionResult<Vec<datafusion::arrow::record_batch::RecordBatch>> {
+        use datafusion::parquet::arrow::arrow_reader::ParquetRecordBatchReaderBuilder;
+        use std::fs;
+        use std::path::Path;
+
+        // Resolve storage path from SchemaRegistry
+        let storage_path = self
+            .core
+            .cache()
+            .get(self.core.table_id())
+            .map(|cached_data| cached_data.storage_path_template.clone())
+            .unwrap_or_else(|| String::new());
+
+        if storage_path.is_empty() {
+            log::debug!(
+                "Storage path resolution returned empty string for shared table {}.{}, skipping Parquet scan",
+                self.core.table_id().namespace_id().as_str(),
+                self.core.table_id().table_name().as_str()
+            );
+            return Ok(Vec::new());
+        }
+
+        let storage_dir = Path::new(&storage_path);
+        log::debug!(
+            "Scanning Parquet files in: {} (exists: {})",
+            storage_path,
+            storage_dir.exists()
+        );
+
+        if !storage_dir.exists() {
+            log::debug!("Storage directory does not exist, returning empty result");
+            return Ok(Vec::new());
+        }
+
+        let parquet_files: Vec<_> = fs::read_dir(storage_dir)
+            .map_err(|e| {
+                DataFusionError::Execution(format!("Failed to read storage directory: {}", e))
+            })?
+            .filter_map(|entry| entry.ok())
+            .filter(|entry| entry.path().extension().and_then(|s| s.to_str()) == Some("parquet"))
+            .map(|entry| entry.path())
+            .collect();
+
+        log::debug!("Found {} Parquet files for shared table", parquet_files.len());
+
+        if parquet_files.is_empty() {
+            return Ok(Vec::new());
+        }
+
+        let mut all_batches = Vec::new();
+
+        for parquet_file in parquet_files {
+            log::debug!("Reading Parquet file: {:?}", parquet_file);
+
+            let file = fs::File::open(&parquet_file).map_err(|e| {
+                DataFusionError::Execution(format!(
+                    "Failed to open Parquet file {:?}: {}",
+                    parquet_file, e
+                ))
+            })?;
+
+            let builder = ParquetRecordBatchReaderBuilder::try_new(file).map_err(|e| {
+                DataFusionError::Execution(format!(
+                    "Failed to create Parquet reader for {:?}: {}",
+                    parquet_file, e
+                ))
+            })?;
+
+            let reader = builder.build().map_err(|e| {
+                DataFusionError::Execution(format!(
+                    "Failed to build Parquet reader for {:?}: {}",
+                    parquet_file, e
+                ))
+            })?;
+
+            for batch_result in reader {
+                let batch = batch_result.map_err(|e| {
+                    DataFusionError::Execution(format!(
+                        "Failed to read batch from {:?}: {}",
+                        parquet_file, e
+                    ))
+                })?;
+
+                all_batches.push(batch);
+            }
+        }
+
+        log::debug!("Total batches from Parquet files: {}", all_batches.len());
+        Ok(all_batches)
+    }
+
     /// DELETE operation (soft delete)
     ///
     /// Sets _deleted=true and updates _updated timestamp.
@@ -217,6 +325,95 @@ impl SharedTableProvider {
 
         Ok(())
     }
+
+    /// DELETE by logical `id` field (helper for SQL layer)
+    ///
+    /// Finds the row whose JSON field `id` equals `id_value` and performs a soft delete.
+    /// This bridges the mismatch between external primary key semantics (id column)
+    /// and internal storage key (row_id).
+    pub fn delete_by_id_field(&self, id_value: &str) -> Result<(), KalamDbError> {
+        let rows = self
+            .store
+            .scan_all()
+            .map_err(|e| KalamDbError::Other(e.to_string()))?;
+
+        log::debug!("delete_by_id_field: Looking for id={} among {} rows", id_value, rows.len());
+
+        // Match either numeric or string representations
+        let mut target_row_id: Option<String> = None;
+        for (_k, row) in rows.iter() {
+            if let Some(v) = row.fields.get("id") {
+                log::debug!("delete_by_id_field: Found row with id field: {:?}", v);
+                let is_match = match v {
+                    JsonValue::Number(n) => {
+                        let n_str = n.to_string();
+                        log::debug!("delete_by_id_field: Comparing number {} with {}", n_str, id_value);
+                        n_str == id_value
+                    }
+                    JsonValue::String(s) => {
+                        log::debug!("delete_by_id_field: Comparing string {} with {}", s, id_value);
+                        s == id_value
+                    }
+                    _ => {
+                        log::debug!("delete_by_id_field: id field is neither number nor string: {:?}", v);
+                        false
+                    }
+                };
+                if is_match {
+                    log::debug!("delete_by_id_field: Match found! row_id={}", row.row_id);
+                    target_row_id = Some(row.row_id.clone());
+                    break;
+                }
+            } else {
+                log::debug!("delete_by_id_field: Row has no id field");
+            }
+        }
+
+        let row_id = target_row_id
+            .ok_or_else(|| {
+                log::error!("delete_by_id_field: No row found with id={}", id_value);
+                KalamDbError::NotFound(format!("Row with id={} not found", id_value))
+            })?;
+        self.delete_soft(&row_id)
+    }
+
+    /// UPDATE by logical `id` field (helper for SQL layer)
+    ///
+    /// Finds the row whose JSON field `id` equals `id_value` and performs an update.
+    /// This bridges the mismatch between external primary key semantics (id column)
+    /// and internal storage key (row_id).
+    pub fn update_by_id_field(&self, id_value: &str, updates: serde_json::Value) -> Result<(), KalamDbError> {
+        let rows = self
+            .store
+            .scan_all()
+            .map_err(|e| KalamDbError::Other(e.to_string()))?;
+
+        log::debug!("update_by_id_field: Looking for id={} among {} rows", id_value, rows.len());
+
+        // Match either numeric or string representations
+        let mut target_row_id: Option<String> = None;
+        for (_k, row) in rows.iter() {
+            if let Some(v) = row.fields.get("id") {
+                let is_match = match v {
+                    JsonValue::Number(n) => n.to_string() == id_value,
+                    JsonValue::String(s) => s == id_value,
+                    _ => false,
+                };
+                if is_match {
+                    log::debug!("update_by_id_field: Match found! row_id={}", row.row_id);
+                    target_row_id = Some(row.row_id.clone());
+                    break;
+                }
+            }
+        }
+
+        let row_id = target_row_id
+            .ok_or_else(|| {
+                log::error!("update_by_id_field: No row found with id={}", id_value);
+                KalamDbError::NotFound(format!("Row with id={} not found", id_value))
+            })?;
+        self.update(&row_id, updates)
+    }
 }
 
 impl BaseTableProvider for SharedTableProvider {
@@ -243,8 +440,22 @@ impl TableProvider for SharedTableProvider {
     fn schema(&self) -> SchemaRef {
         // Phase 10, US1, FR-006: Use memoized Arrow schema (50-100× speedup)
         // Add system columns to the schema if they don't already exist
-        let base_schema = self.core.arrow_schema()
-            .expect("Schema must be valid for shared table");
+        let base_schema = match self.core.arrow_schema() {
+            Ok(s) => s,
+            Err(e) => {
+                // If schema is missing (e.g., table was dropped concurrently), avoid panicking
+                // and return a minimal schema with system columns so DataFusion can handle the query
+                log::warn!("SharedTableProvider.schema(): missing schema for table {:?}: {}. Returning minimal system-only schema.", self.core.table_id(), e);
+                let mut sys_fields: Vec<Arc<Field>> = Vec::new();
+                sys_fields.push(Arc::new(Field::new(
+                    "_updated",
+                    DataType::Timestamp(TimeUnit::Millisecond, None),
+                    false,
+                )));
+                sys_fields.push(Arc::new(Field::new("_deleted", DataType::Boolean, false)));
+                return Arc::new(Schema::new(sys_fields));
+            }
+        };
         let mut fields = base_schema.fields().to_vec();
 
         // Check if _updated already exists
@@ -281,17 +492,41 @@ impl TableProvider for SharedTableProvider {
         _filters: &[Expr],
         limit: Option<usize>,
     ) -> DataFusionResult<Arc<dyn ExecutionPlan>> {
+        log::debug!(
+            "SharedTableProvider::scan called - table_id: {}, store partition: {}",
+            self.core.table_id(),
+            self.store.partition()
+        );
         // Get the full schema with system columns
         let full_schema = self.schema();
 
-        // Read all rows from the store
-        let rows = self
-            .store
-            .scan_all()
-            .map_err(|e| DataFusionError::Execution(format!("Failed to scan table: {}", e)))?;
+        // **STEP 1: RocksDB limited scan (early-limit)**
+        let (rocks_rows_raw, scanned_count) = if let Some(lim) = limit {
+            // Use new EntityStore helper via underlying store (no prefix for shared tables)
+            let limited = self
+                .store
+                .scan_limited(lim)
+                .map_err(|e| DataFusionError::Execution(format!("Failed limited scan: {}", e)))?;
+            let scanned = limited.len();
+            (limited, scanned)
+        } else {
+            let all = self
+                .store
+                .scan_all()
+                .map_err(|e| DataFusionError::Execution(format!("Failed full scan: {}", e)))?;
+            let scanned = all.len();
+            (all, scanned)
+        };
 
-        // Convert SharedTableRow to Arrow RecordBatch (includes system columns now)
-        let rows_with_ids: Vec<(SharedTableRowId, SharedTableRow)> = rows
+        log::debug!(
+            "SharedTableProvider::scan - RocksDB scanned={} (limit={:?}) partition={}",
+            scanned_count,
+            limit,
+            self.store.partition()
+        );
+
+        // Convert to Arrow batch
+        let rows_with_ids: Vec<(SharedTableRowId, SharedTableRow)> = rocks_rows_raw
             .iter()
             .map(|(key, row)| {
                 (
@@ -300,73 +535,96 @@ impl TableProvider for SharedTableProvider {
                 )
             })
             .collect();
-        let batch =
-            shared_rows_to_arrow_batch(&rows_with_ids, &full_schema, limit).map_err(|e| {
-                DataFusionError::Execution(format!("Failed to convert rows to Arrow: {}", e))
-            })?;
 
-        // Apply projection if specified
-        let (final_batch, final_schema) = if let Some(proj_indices) = projection {
-            // Handle empty projection (e.g., for COUNT(*))
-            if proj_indices.is_empty() {
-                // For COUNT(*), we need a batch with correct row count but no columns
-                // Use RecordBatch with a dummy null column to preserve row count
-                use datafusion::arrow::array::new_null_array;
-                use datafusion::arrow::datatypes::DataType;
-
-                //TODO: What is thus dummy column for?
-                // RecordBatch with 0 columns but preserving row count
-                // We need at least one column to preserve row count, so add a dummy null column
-                let dummy_field = Arc::new(Field::new("__dummy", DataType::Null, true));
-                let projected_schema = Arc::new(datafusion::arrow::datatypes::Schema::new(vec![
-                    dummy_field.clone(),
-                ]));
-                let null_array = new_null_array(&DataType::Null, batch.num_rows());
-
-                let projected_batch = datafusion::arrow::record_batch::RecordBatch::try_new(
-                    projected_schema.clone(),
-                    vec![null_array],
-                )
-                .map_err(|e| {
-                    DataFusionError::Execution(format!("Failed to create temp batch: {}", e))
-                })?;
-
-                (projected_batch, projected_schema)
-            } else {
-                let projected_columns: Vec<_> = proj_indices
-                    .iter()
-                    .map(|&i| batch.column(i).clone())
-                    .collect();
-
-                let projected_fields: Vec<_> = proj_indices
-                    .iter()
-                    .map(|&i| full_schema.field(i).clone())
-                    .collect();
-
-                let projected_schema =
-                    Arc::new(datafusion::arrow::datatypes::Schema::new(projected_fields));
-
-                let projected_batch = datafusion::arrow::record_batch::RecordBatch::try_new(
-                    projected_schema.clone(),
-                    projected_columns,
-                )
-                .map_err(|e| {
-                    DataFusionError::Execution(format!("Failed to project batch: {}", e))
-                })?;
-
-                (projected_batch, projected_schema)
-            }
+        let rocksdb_batch = if rows_with_ids.is_empty() {
+            use datafusion::arrow::array::new_null_array;
+            use datafusion::arrow::datatypes::DataType;
+            let dummy_field = Arc::new(Field::new("__dummy", DataType::Null, true));
+            let temp_schema = Arc::new(datafusion::arrow::datatypes::Schema::new(vec![dummy_field.clone()]));
+            let null_array = new_null_array(&DataType::Null, 0);
+            datafusion::arrow::record_batch::RecordBatch::try_new(temp_schema, vec![null_array])
+                .map_err(|e| DataFusionError::Execution(format!("Failed empty batch: {}", e)))?
         } else {
-            // Use full_schema (with system columns) instead of self.schema
-            (batch, full_schema.clone())
+            // Apply limit protection again (defensive) when converting
+            shared_rows_to_arrow_batch(&rows_with_ids, &full_schema, limit).map_err(|e| {
+                DataFusionError::Execution(format!("Failed rows→Arrow: {}", e))
+            })?
         };
 
-        // Create an in-memory table and return its scan plan
+        log::debug!(
+            "SharedTableProvider::scan - RocksDB batch rows={} (post-limit)",
+            rocksdb_batch.num_rows()
+        );
+
+        // **STEP 2: Parquet cold storage** (only fetch if we have remaining budget)
+        let mut parquet_batches: Vec<datafusion::arrow::record_batch::RecordBatch> = Vec::new();
+        if limit.map(|l| rocksdb_batch.num_rows() < l).unwrap_or(true) {
+            parquet_batches = self.scan_parquet_files(&full_schema).await?;
+            log::debug!(
+                "SharedTableProvider::scan - Parquet batches fetched={}, rows={} (approx)",
+                parquet_batches.len(),
+                parquet_batches.iter().map(|b| b.num_rows()).sum::<usize>()
+            );
+        } else {
+            log::debug!("SharedTableProvider::scan - skipping Parquet (limit satisfied by RocksDB)");
+        }
+
+        // **STEP 3: Merge respecting limit**
+        let mut merged_batches: Vec<datafusion::arrow::record_batch::RecordBatch> = Vec::new();
+        // Start with RocksDB batch
+        if rocksdb_batch.num_rows() > 0 { merged_batches.push(rocksdb_batch); }
+
+        if !parquet_batches.is_empty() {
+            if let Some(lim) = limit {
+                let current = merged_batches.iter().map(|b| b.num_rows()).sum::<usize>();
+                if current < lim {
+                    let mut remaining = lim - current;
+                    for b in parquet_batches.into_iter() {
+                        if remaining == 0 { break; }
+                        if b.num_rows() <= remaining {
+                            remaining -= b.num_rows();
+                            merged_batches.push(b);
+                        } else {
+                            // Slice batch to remaining rows
+                            use datafusion::arrow::record_batch::RecordBatch;
+                            // Manual slice (cheap) by taking first `remaining` rows via RecordBatch::slice
+                            let limited: RecordBatch = b.slice(0, remaining);
+                            merged_batches.push(limited);
+                            remaining = 0;
+                        }
+                    }
+                }
+            } else {
+                merged_batches.extend(parquet_batches);
+            }
+        }
+
+        // Concatenate if more than one batch
+        let final_batch = if merged_batches.is_empty() {
+            use datafusion::arrow::array::new_null_array;
+            use datafusion::arrow::datatypes::DataType;
+            let dummy_field = Arc::new(Field::new("__dummy", DataType::Null, true));
+            let temp_schema = Arc::new(datafusion::arrow::datatypes::Schema::new(vec![dummy_field.clone()]));
+            let null_array = new_null_array(&DataType::Null, 0);
+            datafusion::arrow::record_batch::RecordBatch::try_new(temp_schema, vec![null_array])
+                .map_err(|e| DataFusionError::Execution(format!("Failed empty final batch: {}", e)))?
+        } else if merged_batches.len() == 1 {
+            merged_batches.pop().unwrap()
+        } else {
+            use datafusion::arrow::compute::concat_batches;
+            concat_batches(&full_schema, &merged_batches).map_err(|e| DataFusionError::Execution(format!("Failed concat: {}", e)))?
+        };
+
+        log::debug!(
+            "SharedTableProvider::scan - final batch rows={}",
+            final_batch.num_rows()
+        );
+
+        // DataFusion MemTable for projection
         use datafusion::datasource::MemTable;
         let partitions = vec![vec![final_batch]];
-        let table = MemTable::try_new(final_schema, partitions)
-            .map_err(|e| DataFusionError::Execution(format!("Failed to create MemTable: {}", e)))?;
-
+        let table = MemTable::try_new(full_schema, partitions)
+            .map_err(|e| DataFusionError::Execution(format!("Failed MemTable: {}", e)))?;
         table.scan(_state, projection, &[], limit).await
     }
 

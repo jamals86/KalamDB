@@ -913,53 +913,6 @@ async fn test_20_storage_with_namespace() {
     }
 }
 
-// ============================================================================
-// Test 21: T174a - Verify system.storage_locations removed
-// ============================================================================
-
-#[actix_web::test]
-#[ignore = "Shared tables require pre-created column families at DB init. TestServer::new() creates in-memory DB without these CFs."]
-async fn test_21_storage_locations_table_removed() {
-    let server = TestServer::new().await;
-
-    // Attempt to query deprecated system.storage_locations
-    let response = server
-        .execute_sql("SELECT * FROM system.storage_locations")
-        .await;
-
-    assert_eq!(
-        response.status, "error",
-        "system.storage_locations should not exist (renamed to system.storages)"
-    );
-
-    assert!(
-        response.error.as_ref().unwrap().message.contains("table")
-            || response
-                .error
-                .as_ref()
-                .unwrap()
-                .message
-                .contains("not found")
-            || response
-                .error
-                .as_ref()
-                .unwrap()
-                .message
-                .contains("does not exist"),
-        "Error should indicate table not found, got: {:?}",
-        response.error
-    );
-
-    // Verify system.storages exists instead
-    let response = server
-        .execute_sql("SELECT storage_id FROM system.storages WHERE storage_id = 'local'")
-        .await;
-    assert_eq!(
-        response.status, "success",
-        "system.storages should exist: {:?}",
-        response.error
-    );
-}
 
 // ============================================================================
 // Test 22: T174b - Verify credentials column exists

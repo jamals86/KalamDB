@@ -263,46 +263,24 @@ impl SqlStatement {
                 }))
             }
 
-            // Storage operations - require admin
-            ["CREATE", "STORAGE", ..] => {
-                if !is_admin {
-                    return Err("Admin privileges (DBA or System role) required for storage operations".to_string());
-                }
-                Ok(Self::wrap(sql, || {
-                    CreateStorageStatement::parse(sql).ok().map(SqlStatementKind::CreateStorage)
-                }))
-            }
-            ["ALTER", "STORAGE", ..] => {
-                if !is_admin {
-                    return Err("Admin privileges (DBA or System role) required for storage operations".to_string());
-                }
-                Ok(Self::wrap(sql, || {
-                    AlterStorageStatement::parse(sql).ok().map(SqlStatementKind::AlterStorage)
-                }))
-            }
-            ["DROP", "STORAGE", ..] => {
-                if !is_admin {
-                    return Err("Admin privileges (DBA or System role) required for storage operations".to_string());
-                }
-                Ok(Self::wrap(sql, || {
-                    DropStorageStatement::parse(sql).ok().map(SqlStatementKind::DropStorage)
-                }))
-            }
-            ["SHOW", "STORAGES", ..] => {
-                // Read-only, allowed for all users
-                Ok(Self::wrap(sql, || {
-                    ShowStoragesStatement::parse(sql).ok().map(SqlStatementKind::ShowStorages)
-                }))
-            }
-
             // Table operations - authorization deferred to table ownership checks
             ["CREATE", "USER", "TABLE", ..]
             | ["CREATE", "SHARED", "TABLE", ..]
             | ["CREATE", "STREAM", "TABLE", ..]
             | ["CREATE", "TABLE", ..] => {
-                Ok(Self::wrap(sql, || {
-                    CreateTableStatement::parse(sql, default_namespace).ok().map(SqlStatementKind::CreateTable)
-                }))
+                // Parse CREATE TABLE statement with detailed error logging
+                match CreateTableStatement::parse(sql, default_namespace) {
+                    Ok(stmt) => Ok(Self::new(sql.to_string(), SqlStatementKind::CreateTable(stmt))),
+                    Err(e) => {
+                        log::error!(
+                            target: "sql::parse",
+                            "❌ CREATE TABLE parsing failed | sql='{}' | error='{}'",
+                            sql,
+                            e
+                        );
+                        Ok(Self::new(sql.to_string(), SqlStatementKind::Unknown))
+                    }
+                }
             }
             ["ALTER", "TABLE", ..]
             | ["ALTER", "USER", "TABLE", ..]

@@ -709,12 +709,13 @@ pub fn live_queries_table_definition() -> TableDefinition {
 /// Schema (flattened view of TableDefinition):
 /// - table_id TEXT PRIMARY KEY (composite: namespace_id:table_name)
 /// - table_name TEXT NOT NULL
-/// - namespace TEXT NOT NULL
+/// - namespace_id TEXT NOT NULL
 /// - table_type TEXT NOT NULL
 /// - created_at TIMESTAMP NOT NULL
 /// - schema_version INT NOT NULL
 /// - table_comment TEXT (nullable)
 /// - updated_at TIMESTAMP NOT NULL
+/// - options TEXT (nullable, serialized TableOptions JSON)
 pub fn tables_table_definition() -> TableDefinition {
     let columns = vec![
         ColumnDefinition::new(
@@ -738,7 +739,7 @@ pub fn tables_table_definition() -> TableDefinition {
             Some("Table name within namespace".to_string()),
         ),
         ColumnDefinition::new(
-            "namespace",
+            "namespace_id",
             3,
             KalamDataType::Text,
             false,
@@ -796,6 +797,17 @@ pub fn tables_table_definition() -> TableDefinition {
             false,
             ColumnDefault::None,
             Some("Last modification timestamp".to_string()),
+        ),
+        // New in Phase 11: expose serialized TableOptions for visibility via SELECT * FROM system.tables
+        ColumnDefinition::new(
+            "options",
+            9,
+            KalamDataType::Text, // Stored as JSON string (variant-aware)
+            true, // NULLABLE for forward compatibility (older rows may not have it)
+            false,
+            false,
+            ColumnDefault::None,
+            Some("Serialized table options (JSON)".to_string()),
         ),
     ];
 

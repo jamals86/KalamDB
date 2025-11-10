@@ -177,6 +177,7 @@ pub async fn persist_audit_entry(_entry: &AuditLogEntry) -> Result<(), KalamDbEr
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::test_helpers::create_test_session;
     use kalamdb_commons::{UserId, Role};
 
     #[test]
@@ -187,6 +188,7 @@ mod tests {
             None,
             Some("req-123".to_string()),
             Some("192.168.1.1".to_string()),
+            create_test_session(),
         );
 
         let entry = create_audit_entry(
@@ -205,7 +207,7 @@ mod tests {
 
     #[test]
     fn test_log_ddl_operation() {
-        let ctx = ExecutionContext::new(UserId::from("bob"), Role::Dba);
+        let ctx = ExecutionContext::new(UserId::from("bob"), Role::Dba, create_test_session());
 
         let entry = log_ddl_operation(
             &ctx,
@@ -222,7 +224,7 @@ mod tests {
 
     #[test]
     fn test_log_dml_operation() {
-        let ctx = ExecutionContext::new(UserId::from("charlie"), Role::User);
+        let ctx = ExecutionContext::new(UserId::from("charlie"), Role::User, create_test_session());
 
         let entry = log_dml_operation(&ctx, "INSERT", "default.logs", 1000);
 
@@ -233,7 +235,7 @@ mod tests {
 
     #[test]
     fn test_log_query_operation() {
-        let ctx = ExecutionContext::new(UserId::from("dave"), Role::User);
+        let ctx = ExecutionContext::new(UserId::from("dave"), Role::User, create_test_session());
 
         let entry = log_query_operation(&ctx, "SELECT", "default.users", 150);
 

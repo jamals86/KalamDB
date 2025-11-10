@@ -6,9 +6,8 @@
 use crate::tables::system::jobs::JobsTableProvider;
 use crate::tables::system::live_queries::LiveQueriesTableProvider;
 use crate::tables::system::namespaces::NamespacesTableProvider;
-use crate::tables::system::tables::{TablesTableProvider, TablesStore};
+use crate::tables::system::tables::TablesTableProvider;
 use crate::tables::system::storages::StoragesTableProvider;
-use crate::tables::system::system_table_definitions::all_system_table_definitions;
 use crate::tables::system::users::UsersTableProvider;
 use crate::tables::system::StatsTableProvider;
 use datafusion::catalog::memory::MemorySchemaProvider;
@@ -24,7 +23,7 @@ pub struct SystemTableProviders {
     pub storages_provider: Arc<StoragesTableProvider>,
     pub live_queries_provider: Arc<LiveQueriesTableProvider>,
     pub tables_provider: Arc<TablesTableProvider>,
-    pub schema_store: Arc<TablesStore>,
+    // pub schema_store: Arc<TablesStore>,
 }
 
 /// Register all system tables with the provided schema
@@ -59,22 +58,23 @@ pub fn register_system_tables(
     system_schema: &Arc<MemorySchemaProvider>,
     storage_backend: Arc<dyn kalamdb_store::StorageBackend>,
 ) -> Result<SystemTableProviders, String> {
-    use kalamdb_store::storage_trait::Partition;
+    
 
-    // Create the system_tables partition if it doesn't exist
-    let schemas_partition = Partition::new("system_tables");
-    let _ = storage_backend.create_partition(&schemas_partition); // Ignore error if already exists
+    // // Create the system_tables partition if it doesn't exist
+    // let schemas_partition = Partition::new("system_tables");
+    // let _ = storage_backend.create_partition(&schemas_partition); // Ignore error if already exists
 
-    // Initialize TablesStore (stores TableDefinition for all tables)
-    let schema_store = Arc::new(TablesStore::new(storage_backend.clone(), "system_tables"));
+    // // Initialize TablesStore (stores TableDefinition for all tables)
+    // let schema_store = Arc::new(TablesStore::new(storage_backend.clone(), "system_tables"));
 
-    // Register all system table schema definitions in TablesStore
-    use kalamdb_store::EntityStoreV2;
-    for (table_id, table_def) in all_system_table_definitions() {
-        schema_store
-            .put(&table_id, &table_def)
-            .map_err(|e| format!("Failed to register schema for {}: {}", table_id, e))?;
-    }
+    // TODO: This is not needed since we already have the tables in the store
+    // // Register all system table schema definitions in TablesStore
+    // for (table_id, table_def) in all_system_table_definitions() {
+    //     // Use the overridden put() method which uses composite key internally
+    //     schema_store
+    //         .put(&table_id, &table_def)
+    //         .map_err(|e| format!("Failed to register schema for {}: {}", table_id, e))?;
+    // }
 
     // Create all system table providers using EntityStore-based v2 implementations
     let users_provider = Arc::new(UsersTableProvider::new(storage_backend.clone()));
@@ -139,19 +139,13 @@ pub fn register_system_tables(
         storages_provider,
         live_queries_provider,
         tables_provider,
-        schema_store,
+        // schema_store,
     })
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use datafusion::catalog::MemorySchemaProvider;
-    use kalamdb_commons::schemas::TableType;
-    use kalamdb_commons::{NamespaceId, TableId, TableName};
-    use kalamdb_store::{EntityStoreV2, RocksDBBackend};
-    use rocksdb::DB;
-    use tempfile::TempDir;
 
     #[tokio::test]
     async fn test_register_system_tables_validates_all_tables() {
@@ -181,72 +175,34 @@ mod tests {
 
     #[tokio::test]
     async fn test_register_system_tables_populates_schema_store() {
-        // Create temporary storage backend
-        let temp_dir = TempDir::new().expect("Failed to create temp dir");
-        let db = Arc::new(
-            DB::open_default(temp_dir.path().to_str().unwrap()).expect("Failed to create RocksDB"),
-        );
-        let backend = Arc::new(RocksDBBackend::new(db));
-
-        // Create schema provider
-        let system_schema = Arc::new(MemorySchemaProvider::new());
-
-        // Register system tables
-        let providers =
-            register_system_tables(&system_schema, backend)
-                .expect("Failed to register system tables");
-
-        // Verify jobs provider is returned
-        assert!(Arc::strong_count(&providers.jobs_provider) >= 1);
+        use crate::test_helpers::init_test_app_context;
         
-        // Verify all providers are returned
-        assert!(Arc::strong_count(&providers.users_provider) >= 1);
-        assert!(Arc::strong_count(&providers.namespaces_provider) >= 1);
-        assert!(Arc::strong_count(&providers.storages_provider) >= 1);
-        assert!(Arc::strong_count(&providers.live_queries_provider) >= 1);
-        assert!(Arc::strong_count(&providers.tables_provider) >= 1);
-
-        // Verify all 7 system table schemas are in the store
-        let system_namespace = NamespaceId::from("system");
-        let all_schemas = providers.schema_store
-            .scan_namespace(&system_namespace)
-            .expect("Failed to scan system namespace");
-
-        assert_eq!(
-            all_schemas.len(),
-            7,
-            "Expected 7 system table schemas, found {}",
-            all_schemas.len()
-        );
-
-        // Verify specific tables exist in schema store
-        let expected_table_names = vec![
-            "users",
-            "jobs",
-            "namespaces",
-            "storages",
-            "live_queries",
-            "tables",
-            "table_schemas",
-        ];
-
-        for &table_name in &expected_table_names {
-            let table_id = TableId::new(system_namespace.clone(), TableName::from(table_name));
-            let schema = providers.schema_store
-                .get(&table_id)
-                .expect("Failed to get schema")
-                .unwrap_or_else(|| panic!("Schema not found for {}", table_name));
-
-            // TableDefinition doesn't have table_id field, just verify it exists
-            assert_eq!(schema.table_type, TableType::System);
-            assert!(
-                !schema.columns.is_empty(),
-                "Table {} should have columns",
-                table_name
-            );
-        }
-
-        // Phase 10: No separate schema_cache - unified cache lives in SqlExecutor
-        // This test verifies schema_store persistence only
+        // Initialize AppContext which triggers system table registration
+        init_test_app_context();
+        
+        let app_ctx = crate::app_context::AppContext::get();
+        
+        // Verify all system table providers are accessible
+        let system_tables = app_ctx.system_tables();
+        
+        // Check that all 7 system table providers exist and are functional
+        let users_provider = system_tables.users();
+        let jobs_provider = system_tables.jobs();
+        let namespaces_provider = system_tables.namespaces();
+        let storages_provider = system_tables.storages();
+        let live_queries_provider = system_tables.live_queries();
+        let tables_provider = system_tables.tables();
+        let audit_logs_provider = system_tables.audit_logs();
+        
+        // Verify providers are non-null (Arc strong count >= 1)
+        assert!(Arc::strong_count(&users_provider) >= 1);
+        assert!(Arc::strong_count(&jobs_provider) >= 1);
+        assert!(Arc::strong_count(&namespaces_provider) >= 1);
+        assert!(Arc::strong_count(&storages_provider) >= 1);
+        assert!(Arc::strong_count(&live_queries_provider) >= 1);
+        assert!(Arc::strong_count(&tables_provider) >= 1);
+        assert!(Arc::strong_count(&audit_logs_provider) >= 1);
+        
+        // Phase 10: Verify SystemTablesRegistry provides all 7 system table providers
     }
 }

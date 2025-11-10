@@ -17,6 +17,7 @@ kalamdb-auth = { path = "../kalamdb-auth" }
 # Apache Arrow ecosystem
 arrow = { workspace = true }
 datafusion = { workspace = true }
+datafusion-common = { workspace = true }
 
 # SQL parsing (for native DML handlers)
 sqlparser = { workspace = true }
@@ -43,6 +44,9 @@ chrono = { workspace = true }
 # Logging
 log = { workspace = true }
 
+# System monitoring
+sysinfo = { workspace = true }
+
 # Metrics
 metrics = { workspace = true }
 
@@ -65,8 +69,12 @@ regex = { workspace = true }
 base64 = { workspace = true }
 hex = { workspace = true }
 
+# NOTE: RocksDB is NOT a production dependency for kalamdb-core!
+# All RocksDB access goes through kalamdb-store abstractions (StorageBackend trait).
+# RocksDB is only needed in [dev-dependencies] for test utilities (TestDb).
+
 [dev-dependencies]
 # Testing utilities
 tempfile = { workspace = true }
 tokio = { workspace = true, features = ["test-util"] }
-rocksdb = { workspace = true }
+rocksdb = { workspace = true }  # Only for TestDb in tests

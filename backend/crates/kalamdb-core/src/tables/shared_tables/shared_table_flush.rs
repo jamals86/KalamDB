@@ -9,7 +9,7 @@
 //! - Uses `FlushExecutor::execute_with_tracking()` for common workflow
 //! - Only implements unique logic: single-file flush for all rows
 
-use crate::schema_registry::{NamespaceId, TableName};
+use crate::schema_registry::{NamespaceId, TableName, UserId};
 use crate::schema_registry::SchemaRegistry; // Phase 10: Use unified cache instead of old TableCache
 use crate::error::KalamDbError;
 use crate::live_query::manager::{ChangeNotification, LiveQueryManager};
@@ -19,10 +19,10 @@ use crate::tables::system::system_table_store::SharedTableStoreExt;
 use crate::tables::base_flush::{FlushExecutor, FlushJobResult, TableFlush};
 use crate::tables::shared_tables::shared_table_store::SharedTableRow;
 use crate::tables::SharedTableStore;
+use kalamdb_commons::models::TableId; // Phase 10: Arc<TableId> optimization
 use chrono::Utc;
 use datafusion::arrow::datatypes::SchemaRef;
 use datafusion::arrow::record_batch::RecordBatch;
-use kalamdb_commons::models::TableId; // Phase 10: Arc<TableId> optimization
 use serde_json::Value as JsonValue;
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -319,16 +319,10 @@ impl TableFlush for SharedTableFlushJob {
             let notification =
                 ChangeNotification::flush(table_name.clone(), rows_count, parquet_files.clone());
 
-            let manager = Arc::clone(manager);
-            tokio::spawn(async move {
-                if let Err(e) = manager.notify_table_change(&table_name, notification).await {
-                    log::warn!(
-                        "Failed to send flush notification for {}: {}",
-                        table_name,
-                        e
-                    );
-                }
-            });
+            let table_id = TableId::new(self.namespace_id.clone(), self.table_name.clone());
+            // For shared table flush, use system user (shared tables accessible to all users)
+            let system_user = UserId::new("__system__".to_string());
+            manager.notify_table_change_async(system_user, table_id, notification);
         }
 
         Ok(FlushJobResult {

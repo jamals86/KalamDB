@@ -51,6 +51,8 @@ use serde::{Deserialize, Serialize};
 pub struct LiveQuery {
     pub live_id: LiveQueryId, // Format: {user_id}-{unique_conn_id}-{table_name}-{query_id}
     pub connection_id: String,
+
+    //TODO: Use TableId type INSTEAD OF BOTH table_name AND namespace_id
     pub namespace_id: NamespaceId,
     pub table_name: TableName,
     pub query_id: String,

@@ -15,6 +15,9 @@ dashmap = { workspace = true }
 once_cell = { workspace = true }
 hex = { workspace = true }
 thiserror = { workspace = true }
+toml = { workspace = true }
+anyhow = { workspace = true }
+num_cpus = { workspace = true }
 # Optional dependencies - only enabled via features
 serde = { workspace = true, optional = true }
 serde_json = { workspace = true, optional = true }

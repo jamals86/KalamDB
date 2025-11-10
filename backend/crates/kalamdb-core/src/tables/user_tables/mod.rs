@@ -15,10 +15,6 @@ pub mod user_table_update;
 pub use user_table_delete::UserTableDeleteHandler;
 pub use user_table_flush::UserTableFlushJob;
 pub use user_table_insert::UserTableInsertHandler;
-pub use user_table_provider::UserTableAccess;
 pub use user_table_store::{new_user_table_store, UserTableRow, UserTableRowId, UserTableStore};
 pub use user_table_update::UserTableUpdateHandler;
-
-// Backward compatibility alias (deprecated - use UserTableAccess)
-#[deprecated(since = "0.1.0", note = "Use UserTableAccess instead")]
-pub use user_table_provider::UserTableAccess as UserTableProvider;
+pub use user_table_provider::UserTableProvider;

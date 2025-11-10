@@ -4,7 +4,6 @@ use crate::app_context::AppContext;
 use crate::error::KalamDbError;
 use crate::sql::executor::handlers::typed::TypedStatementHandler;
 use crate::sql::executor::models::{ExecutionContext, ExecutionResult, ScalarValue};
-use datafusion::execution::context::SessionContext;
 use kalamdb_sql::ddl::CreateTableStatement;
 use std::sync::Arc;
 
@@ -23,7 +22,6 @@ impl CreateTableHandler {
 impl TypedStatementHandler<CreateTableStatement> for CreateTableHandler {
     async fn execute(
         &self,
-        _session: &SessionContext,
         statement: CreateTableStatement,
         _params: Vec<ScalarValue>,
         context: &ExecutionContext,
@@ -64,13 +62,15 @@ impl TypedStatementHandler<CreateTableStatement> for CreateTableHandler {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use kalamdb_commons::models::{NamespaceId, UserId};
-    use kalamdb_commons::Role;
-    use kalamdb_commons::schemas::TableType;
+    use crate::test_helpers::{create_test_session, init_test_app_context};
     use arrow::datatypes::{DataType, Field, Schema};
+    use datafusion::prelude::SessionContext;
+    use kalamdb_commons::models::{NamespaceId, UserId};
+    use kalamdb_commons::schemas::TableType;
+    use kalamdb_commons::Role;
 
     fn create_test_context(role: Role) -> ExecutionContext {
-        ExecutionContext::new(UserId::new("test_user"), role)
+        ExecutionContext::new(UserId::new("test_user"), role, create_test_session())
     }
 
     fn create_test_statement(table_type: TableType) -> CreateTableStatement {
@@ -102,6 +102,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_create_table_authorization_user() {
+        init_test_app_context();
         let app_ctx = AppContext::get();
         let handler = CreateTableHandler::new(app_ctx);
         let stmt = create_test_statement(TableType::User);
@@ -114,6 +115,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_create_table_authorization_shared_denied() {
+        init_test_app_context();
         let app_ctx = AppContext::get();
         let handler = CreateTableHandler::new(app_ctx);
         let stmt = create_test_statement(TableType::Shared);
@@ -126,6 +128,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_create_table_authorization_stream_dba() {
+        init_test_app_context();
         let app_ctx = AppContext::get();
         let handler = CreateTableHandler::new(app_ctx);
         let stmt = create_test_statement(TableType::Stream);
@@ -138,6 +141,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_create_user_table_success() {
+        init_test_app_context();
         let app_ctx = AppContext::get();
         
         // Ensure default namespace exists
@@ -159,7 +163,7 @@ mod tests {
         let ctx = create_test_context(Role::User);
         let session = SessionContext::new();
 
-        let result = handler.execute(&session, stmt, vec![], &ctx).await;
+        let result = handler.execute(stmt, vec![], &ctx).await;
         
         assert!(result.is_ok());
         if let Ok(ExecutionResult::Success { message }) = result {
@@ -194,17 +198,17 @@ mod tests {
         let session = SessionContext::new();
 
         // First creation should succeed
-        let result1 = handler.execute(&session, stmt.clone(), vec![], &ctx).await;
+        let result1 = handler.execute(stmt.clone(), vec![], &ctx).await;
         assert!(result1.is_ok());
 
         // Second creation without IF NOT EXISTS should fail
-        let result2 = handler.execute(&session, stmt.clone(), vec![], &ctx).await;
+        let result2 = handler.execute(stmt.clone(), vec![], &ctx).await;
         assert!(result2.is_err());
 
         // Third creation with IF NOT EXISTS should succeed with message
         let mut stmt_ine = stmt.clone();
         stmt_ine.if_not_exists = true;
-        let result3 = handler.execute(&session, stmt_ine, vec![], &ctx).await;
+        let result3 = handler.execute(stmt_ine, vec![], &ctx).await;
         assert!(result3.is_ok());
         if let Ok(ExecutionResult::Success { message }) = result3 {
             assert!(message.contains("already exists"));
