@@ -91,7 +91,6 @@ impl StatementHandler for DeleteHandler {
         use kalamdb_commons::Role;
         match context.user_role {
             Role::System | Role::Dba | Role::Service | Role::User => Ok(()),
-            _ => Err(KalamDbError::PermissionDenied("DELETE requires User role or higher".to_string())),
         }
     }
 }

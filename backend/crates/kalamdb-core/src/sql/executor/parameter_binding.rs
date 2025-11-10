@@ -8,9 +8,7 @@
 use crate::error::KalamDbError;
 use arrow::array::Array;
 use datafusion::scalar::ScalarValue;
-use datafusion::logical_expr::{Expr, LogicalPlan};
-use datafusion::common::tree_node::TreeNodeRewriter;
-use datafusion::common::Result as DataFusionResult;
+use datafusion::logical_expr::LogicalPlan;
 
 /// Maximum number of parameters allowed per statement
 const MAX_PARAMS: usize = 50;

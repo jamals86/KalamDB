@@ -174,12 +174,12 @@ impl UserTableChangeDetector {
 
         // Spawn async notification task (non-blocking)
         tokio::spawn(async move {
-            if let Err(e) = manager
+            if let Err(_e) = manager
                 .notify_table_change(&table_name_copy, notification)
                 .await
             {
                 #[cfg(debug_assertions)]
-                eprintln!("Failed to notify subscribers: {}", e);
+                eprintln!("Failed to notify subscribers: {}", _e);
             }
         });
 
@@ -249,12 +249,12 @@ impl UserTableChangeDetector {
     let table_name_copy = table_name.as_str().to_string();
 
         tokio::spawn(async move {
-            if let Err(e) = manager
+            if let Err(_e) = manager
                 .notify_table_change(&table_name_copy, notification)
                 .await
             {
                 #[cfg(debug_assertions)]
-                eprintln!("Failed to notify subscribers: {}", e);
+                eprintln!("Failed to notify subscribers: {}", _e);
             }
         });
 
@@ -359,12 +359,12 @@ impl SharedTableChangeDetector {
     let table_name_copy = table_name.as_str().to_string();
 
         tokio::spawn(async move {
-            if let Err(e) = manager
+            if let Err(_e) = manager
                 .notify_table_change(&table_name_copy, notification)
                 .await
             {
                 #[cfg(debug_assertions)]
-                eprintln!("Failed to notify subscribers: {}", e);
+                eprintln!("Failed to notify subscribers: {}", _e);
             }
         });
 
@@ -422,12 +422,12 @@ impl SharedTableChangeDetector {
     let table_name_copy = table_name.as_str().to_string();
 
         tokio::spawn(async move {
-            if let Err(e) = manager
+            if let Err(_e) = manager
                 .notify_table_change(&table_name_copy, notification)
                 .await
             {
                 #[cfg(debug_assertions)]
-                eprintln!("Failed to notify subscribers: {}", e);
+                eprintln!("Failed to notify subscribers: {}", _e);
             }
         });
 

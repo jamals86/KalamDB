@@ -103,18 +103,6 @@ If the user already specified primary key then we dont do that, the _id we add a
 104) backend\crates\kalamdb-core\src\tables\system\tables_v2 is not needed anymore we have schemas which stores the tables/columns, all should be located in the new folder: backend\crates\kalamdb-core\src\tables\system\schemas
 105) when we have Waiting up to 300s for active flush jobs to complete... and the user click CTRL+C again it will force the stopping and mark those jobs as failed with the right error
 
-106) IMPORTANT - Why are we creating a separate provider for each user? couldn't we have one provider which is shared for all user's per table? which we store once in the cache as well and use it and pass it the current UserId each time? (Check also stream tables)
-            // Create provider with the CURRENT user_id (critical for data isolation)
-            let mut provider = UserTableProvider::new(
-                table_id,
-                metadata,
-                schema,
-                table_store,
-                user_id.clone(),
-                user_role,
-                vec![], // parquet_paths - empty for now
-            );
-
 107) Check if we can here combine this with our main cache: backend\crates\kalamdb-core\src\sql\registry.rs, or if this needed anymore?
 108) Prevent creating namespace with names like: sys/system/root/kalamdb/kalam/main/default/sql and name these as SYSTEM_RESERVED_NAMES, also add function to Namespaceid.isSystem() to check if the namespace is a system one
 109) why do we need backend/crates/kalamdb-auth/src/user_repo.rs anymore? we have kalamdb-core/src/auth/user_repo.rs
@@ -134,21 +122,13 @@ and things like this:
         let namespace_id = NamespaceId::new(name);
 117) Make the link client send a X-Request-ID header with a unique id per request for better tracing and debugging
 118) Add to kalamdb-link client the ability to set custom headers for each request
-119) ✅ **DONE** - Session lifecycle optimized: ONE SessionContext created at server startup in AppContext, shared via Arc across all requests (8 bytes per request, not 500KB-1MB). Eliminated wasteful SessionContext allocations (~500MB-1GB/s savings at 1000 req/s). ExecutionContext constructors now require session parameter.
 120) Now configs are centralized inside AppContext and accessible everywhere easily, we need to check:
   - All places where we read config from file directly and change them to read from AppContext
   - Remove any duplicate config models which is a dto and use only the configs instead of mirroring it to different structs
 
-121) IMPORTANT - Make sure the registry or user/shared/stream tables are done from one place we just insert table definition and all logic is done one place currently there is many places this is done, i want the registry to have all the logic for this, so that whenever we alter/create start the system will use the same register from schema registry and not have different places doing the same logic
-
 122) in impl JobExecutor for FlushExecutor add generic to the model instead of having json parameters we can have T: DeserializeOwned + Send + Sync + 'static and then we can deserialize into the right struct directly instead of having to parse json each time
 
 123) Query users table doesnt return _deleted columns only the deleted_at date
-
-124) [2025-11-08 17:46:01.150] [ERROR] - actix-rt|system:0|arbiter:5 - sql::plan:140 - ❌ SQL planning failed | sql='SELECT table_name, column_name FROM system.columns ORDER BY table_name, ordinal_position' | user='sys_root' | role='System' | tables=[("system", "columns")] | error='Error during planning: table 'kalam.system.columns' not found'
-
-125) Add an option in config.toml to log every sql query executed with its duration time for better tracing and debugging slow queries, this should be logged into a separate statements.log file
-
 
 126) Combine the 2 shared/user tables flushing and querying using a shared hybrid service which is used in both cases to reduce code duplication and maintenance burden
 both of them read from a path and from a store but user table filter the store which is the hot storage based on user id as well
@@ -177,9 +157,12 @@ Here’s the updated 5-line spec with embedding storage inside Parquet and manag
 IMPORTANT:
 1) Done - Schema information_schema
 2) Done - Datatypes for columns
-3) Parametrized Queries
+3) Done - Parametrized Queries
+4) Add manifest file for each user table, that will help us locate which parquet files we need to read in each query, and if in fact we need to read parquet files at all, since sometimes the data will be only inside rocksdb and no need for file io
 4) Support update/deleted as a separate join table per user by MAX(_updated)
 5) Storage files compaction
+6) AS USER support for DML statements - to be able to insert/update/delete as a specific user_id (Only service/admin roles can do that)
+7) Vector Search + HNSW indexing with deletes support
 
 
 Key Findings

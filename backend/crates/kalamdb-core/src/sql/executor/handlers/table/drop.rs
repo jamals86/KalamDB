@@ -18,14 +18,14 @@ use std::sync::Arc;
 /// **Phase 8.5 (T146a)**: Public helper for CleanupExecutor
 ///
 /// # Arguments
-/// * `app_context` - Application context for accessing stores
+/// * `_app_context` - Application context for accessing stores (reserved for future use)
 /// * `table_id` - Table identifier (namespace:table_name)
 /// * `table_type` - Table type (User/Shared/Stream)
 ///
 /// # Returns
 /// Number of rows deleted
 pub async fn cleanup_table_data_internal(
-    app_context: &Arc<AppContext>,
+    _app_context: &Arc<AppContext>,
     table_id: &TableId,
     table_type: TableType,
 ) -> Result<usize, KalamDbError> {
@@ -65,31 +65,23 @@ pub async fn cleanup_table_data_internal(
 /// **Phase 8.5 (T146a)**: Public helper for CleanupExecutor
 ///
 /// # Arguments
-/// * `app_context` - Application context for accessing storage backend
+/// * `_app_context` - Application context for accessing storage backend (reserved for future use)
 /// * `table_id` - Table identifier (namespace:table_name)
 ///
 /// # Returns
 /// Number of bytes freed (sum of deleted file sizes)
 pub async fn cleanup_parquet_files_internal(
-    app_context: &Arc<AppContext>,
+    _app_context: &Arc<AppContext>,
     table_id: &TableId,
 ) -> Result<u64, KalamDbError> {
     log::info!("[CleanupHelper] Cleaning up Parquet files for {:?}", table_id);
 
-    // Get storage backend from AppContext
-    let storage_backend = app_context.storage_backend();
-    let namespace_id = table_id.namespace_id();
-    let table_name = table_id.table_name();
-
-    // List all Parquet files for this table
-    // Path pattern: {namespace}/{table_name}/*.parquet
-    let file_pattern = format!("{}/{}", namespace_id.as_str(), table_name.as_str());
-    
     // Note: Actual implementation would:
-    // 1. List all files matching pattern
-    // 2. Get file sizes before deletion
-    // 3. Delete each file
-    // 4. Sum total bytes freed
+    // 1. Get storage backend from AppContext
+    // 2. List all files matching pattern {namespace}/{table_name}/*.parquet
+    // 3. Get file sizes before deletion
+    // 4. Delete each file
+    // 5. Sum total bytes freed
     // For now, return 0 as placeholder
     let bytes_freed = 0u64;
 

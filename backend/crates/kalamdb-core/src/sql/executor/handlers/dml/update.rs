@@ -109,7 +109,6 @@ impl StatementHandler for UpdateHandler {
         use kalamdb_commons::Role;
         match context.user_role {
             Role::System | Role::Dba | Role::Service | Role::User => Ok(()),
-            _ => Err(KalamDbError::PermissionDenied("UPDATE requires User role or higher".to_string())),
         }
     }
 }

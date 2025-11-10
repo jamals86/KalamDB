@@ -1,7 +1,7 @@
 use kalamdb_commons::{NamespaceId, Role, UserId};
 use std::sync::Arc;
 use std::time::SystemTime;
-use datafusion::{execution::SessionState, prelude::SessionContext};
+use datafusion::prelude::SessionContext;
 use datafusion::scalar::ScalarValue;
 use datafusion_common::config::{ConfigExtension, ExtensionOptions};
 

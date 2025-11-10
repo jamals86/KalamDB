@@ -17,7 +17,6 @@ pub mod default_evaluator;
 use crate::error::KalamDbError;
 use crate::sql::executor::handler_registry::HandlerRegistry;
 use crate::sql::executor::models::{ExecutionContext, ExecutionMetadata, ExecutionResult};
-use datafusion::prelude::SessionContext;
 use datafusion::scalar::ScalarValue;
 use kalamdb_commons::NamespaceId;
 use kalamdb_sql::statement_classifier::SqlStatement;
@@ -263,43 +262,44 @@ impl SqlExecutor {
         Ok(())
     }
 
-    /// Register a table with DataFusion's catalog system
-    ///
-    /// Creates the namespace schema if it doesn't exist, then registers the provider.
-    pub(crate) fn register_table_with_datafusion(
-        base_session: &Arc<SessionContext>,
-        namespace_id: &NamespaceId,
-        table_name: &kalamdb_commons::models::TableName,
-        provider: Arc<dyn datafusion::datasource::TableProvider>,
-    ) -> Result<(), KalamDbError> {
-        let catalog_name = base_session
-            .catalog_names()
-            .first()
-            .ok_or_else(|| KalamDbError::InvalidOperation("No catalogs available".to_string()))?
-            .clone();
+    // /// Register a table with DataFusion's catalog system
+    // ///
+    // /// Creates the namespace schema if it doesn't exist, then registers the provider.
+    // #[allow(dead_code)]
+    // pub(crate) fn register_table_with_datafusion(
+    //     base_session: &Arc<SessionContext>,
+    //     namespace_id: &NamespaceId,
+    //     table_name: &kalamdb_commons::models::TableName,
+    //     provider: Arc<dyn datafusion::datasource::TableProvider>,
+    // ) -> Result<(), KalamDbError> {
+    //     let catalog_name = base_session
+    //         .catalog_names()
+    //         .first()
+    //         .ok_or_else(|| KalamDbError::InvalidOperation("No catalogs available".to_string()))?
+    //         .clone();
         
-        let catalog = base_session
-            .catalog(&catalog_name)
-            .ok_or_else(|| KalamDbError::InvalidOperation(format!("Catalog '{}' not found", catalog_name)))?;
+    //     let catalog = base_session
+    //         .catalog(&catalog_name)
+    //         .ok_or_else(|| KalamDbError::InvalidOperation(format!("Catalog '{}' not found", catalog_name)))?;
         
-        // Get or create namespace schema
-        let schema = catalog
-            .schema(namespace_id.as_str())
-            .unwrap_or_else(|| {
-                // Create namespace schema if it doesn't exist
-                let new_schema = Arc::new(datafusion::catalog::memory::MemorySchemaProvider::new());
-                catalog.register_schema(namespace_id.as_str(), new_schema.clone())
-                    .expect("Failed to register namespace schema");
-                new_schema
-            });
+    //     // Get or create namespace schema
+    //     let schema = catalog
+    //         .schema(namespace_id.as_str())
+    //         .unwrap_or_else(|| {
+    //             // Create namespace schema if it doesn't exist
+    //             let new_schema = Arc::new(datafusion::catalog::memory::MemorySchemaProvider::new());
+    //             catalog.register_schema(namespace_id.as_str(), new_schema.clone())
+    //                 .expect("Failed to register namespace schema");
+    //             new_schema
+    //         });
         
-        // Register table
-        schema
-            .register_table(table_name.as_str().to_string(), provider)
-            .map_err(|e| KalamDbError::InvalidOperation(format!("Failed to register table with DataFusion: {}", e)))?;
+    //     // Register table
+    //     schema
+    //         .register_table(table_name.as_str().to_string(), provider)
+    //         .map_err(|e| KalamDbError::InvalidOperation(format!("Failed to register table with DataFusion: {}", e)))?;
         
-        Ok(())
-    }
+    //     Ok(())
+    // }
 
     /// Expose the shared `AppContext` for upcoming migrations.
     pub fn app_context(&self) -> &Arc<crate::app_context::AppContext> {

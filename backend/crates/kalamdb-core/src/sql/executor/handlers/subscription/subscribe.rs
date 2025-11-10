@@ -10,12 +10,12 @@ use uuid::Uuid;
 
 /// Handler for SUBSCRIBE TO (Live Query)
 pub struct SubscribeHandler {
-    app_context: Arc<AppContext>,
+    _app_context: Arc<AppContext>, // Reserved for future use
 }
 
 impl SubscribeHandler {
     pub fn new(app_context: Arc<AppContext>) -> Self {
-        Self { app_context }
+        Self { _app_context: app_context }
     }
 }
 

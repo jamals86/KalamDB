@@ -140,13 +140,13 @@ impl StatementHandler for InsertHandler {
         use kalamdb_commons::Role;
         match context.user_role {
             Role::System | Role::Dba | Role::Service | Role::User => Ok(()),
-            _ => Err(KalamDbError::PermissionDenied("INSERT requires User role or higher".to_string())),
         }
     }
 }
 
 impl InsertHandler {
     /// Parse table name from sqlparser TableObject
+    #[allow(dead_code)]
     fn parse_table_object(
         table_ref: &sqlparser::ast::TableObject,
     ) -> Result<(NamespaceId, TableName), KalamDbError> {
@@ -177,6 +177,7 @@ impl InsertHandler {
     }
 
     /// Parse table name from sqlparser ObjectName (legacy method, kept for compatibility)
+    #[allow(dead_code)]
     fn parse_table_name(
         table_ref: &sqlparser::ast::ObjectName,
     ) -> Result<(NamespaceId, TableName), KalamDbError> {
@@ -356,9 +357,9 @@ impl InsertHandler {
                 
                 if let Some(shared_provider) = provider_arc.as_any().downcast_ref::<crate::tables::shared_tables::SharedTableProvider>() {
                     let mut inserted = 0usize;
-                    // Use a single Snowflake generator instance to avoid millisecond collision overwrites
-                    use kalamdb_commons::ids::SnowflakeGenerator;
-                    let snowflake_gen = SnowflakeGenerator::new(0);
+                    // TODO: Use Snowflake generator for unique IDs when implementing row IDs
+                    // use kalamdb_commons::ids::SnowflakeGenerator;
+                    // let _snowflake_gen = SnowflakeGenerator::new(0);
                     
                     log::debug!(
                         "INSERT INTO SHARED TABLE {}.{} - inserting {} rows",
