@@ -525,13 +525,18 @@ impl LiveQueryManager {
         // Check if there are any subscriptions for this user_id and table_id
         // This avoids spawning unnecessary threads when no subscribers exist
         let has_subscriptions = {
-            // This is a fast read-only check (no allocation, just lock + lookup)
-            let registry = self.registry.blocking_read();
-            let subscriptions = registry.get_subscriptions_for_table(&user_id, &table_id);
-            !subscriptions.is_empty()
+            // Use try_read() to avoid blocking (returns None if lock is held)
+            // If we can't acquire the lock immediately, conservatively assume subscriptions exist
+            if let Ok(registry) = self.registry.try_read() {
+                let subscriptions = registry.get_subscriptions_for_table(&user_id, &table_id);
+                !subscriptions.is_empty()
+            } else {
+                // Lock is held, conservatively assume subscriptions exist
+                true
+            }
         };
 
-        // Only spawn thread if there are subscribers
+        // Only spawn thread if there are subscribers (or if we couldn't check)
         if has_subscriptions {
             let manager = Arc::clone(self);
             tokio::spawn(async move {

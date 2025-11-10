@@ -208,6 +208,62 @@ impl TypedStatementHandler<DropTableStatement> for DropTableHandler {
             );
         }
 
+        // Cancel any active flush jobs for this table before dropping
+        let job_manager = self.app_context.job_manager();
+        let flush_filter = kalamdb_commons::system::JobFilter {
+            job_type: Some(kalamdb_commons::JobType::Flush),
+            status: None, // Check all non-completed statuses
+            namespace_id: Some(statement.namespace_id.clone()),
+            table_name: Some(statement.table_name.clone()),
+            idempotency_key: None,
+            limit: None,
+            created_after: None,
+            created_before: None,
+        };
+        
+        let flush_jobs = job_manager.list_jobs(flush_filter).await?;
+        let mut cancelled_count = 0;
+        
+        for job in flush_jobs {
+            // Only cancel jobs that are not already completed/failed/cancelled
+            if matches!(
+                job.status,
+                kalamdb_commons::JobStatus::New 
+                | kalamdb_commons::JobStatus::Queued 
+                | kalamdb_commons::JobStatus::Running
+            ) {
+                match job_manager.cancel_job(&job.job_id).await {
+                    Ok(_) => {
+                        log::info!(
+                            "🛑 Cancelled flush job {} for table {}.{} before DROP",
+                            job.job_id,
+                            statement.namespace_id.as_str(),
+                            statement.table_name.as_str()
+                        );
+                        cancelled_count += 1;
+                    }
+                    Err(e) => {
+                        log::warn!(
+                            "⚠️  Failed to cancel flush job {} for table {}.{}: {}",
+                            job.job_id,
+                            statement.namespace_id.as_str(),
+                            statement.table_name.as_str(),
+                            e
+                        );
+                    }
+                }
+            }
+        }
+        
+        if cancelled_count > 0 {
+            log::info!(
+                "🛑 Cancelled {} active flush job(s) for table {}.{}",
+                cancelled_count,
+                statement.namespace_id.as_str(),
+                statement.table_name.as_str()
+            );
+        }
+
         // TODO: Check active live queries/subscriptions before dropping (Phase 9 integration)
 
         // Unregister provider from SchemaRegistry (auto-unregisters from DataFusion)
