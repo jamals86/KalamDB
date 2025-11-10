@@ -4,22 +4,29 @@
 //! system column families present.
 
 use anyhow::Result;
-use kalamdb_commons::{StoragePartition, SystemTable};
-use rocksdb::{ColumnFamilyDescriptor, Options, DB};
+use kalamdb_commons::{config::RocksDbSettings, StoragePartition, SystemTable};
+use rocksdb::{BlockBasedOptions, Cache, ColumnFamilyDescriptor, Options, DB};
 use std::path::Path;
 use std::sync::Arc;
 
 /// RocksDB initializer for creating/opening a database with system CFs.
 pub struct RocksDbInit {
     db_path: String,
+    settings: RocksDbSettings,
 }
 
 impl RocksDbInit {
-    /// Create a new initializer for the given path.
-    pub fn new(db_path: impl Into<String>) -> Self {
+    /// Create a new initializer for the given path with custom settings.
+    pub fn new(db_path: impl Into<String>, settings: RocksDbSettings) -> Self {
         Self {
             db_path: db_path.into(),
+            settings,
         }
+    }
+
+    /// Create a new initializer with default settings.
+    pub fn with_defaults(db_path: impl Into<String>) -> Self {
+        Self::new(db_path, RocksDbSettings::default())
     }
 
     /// Open or create the RocksDB database and ensure system CFs exist.
@@ -29,6 +36,17 @@ impl RocksDbInit {
         let mut db_opts = Options::default();
         db_opts.create_if_missing(true);
         db_opts.create_missing_column_families(true);
+        
+        // Memory optimization: Use configured settings instead of hardcoded values
+        db_opts.set_write_buffer_size(self.settings.write_buffer_size);
+        db_opts.set_max_write_buffer_number(self.settings.max_write_buffers);
+        db_opts.set_max_background_jobs(self.settings.max_background_jobs);
+        
+        // Block cache: Shared across all CFs to control total memory
+        let cache = Cache::new_lru_cache(self.settings.block_cache_size);
+        let mut block_opts = BlockBasedOptions::default();
+        block_opts.set_block_cache(&cache);
+        db_opts.set_block_based_table_factory(&block_opts);
 
         // Determine existing CFs (or default if DB missing)
         let mut existing = match DB::list_cf(&db_opts, path) {
@@ -61,10 +79,16 @@ impl RocksDbInit {
             }
         }
 
-        // Build CF descriptors
+        // Build CF descriptors with memory-optimized options
         let cf_descriptors: Vec<_> = existing
             .iter()
-            .map(|name| ColumnFamilyDescriptor::new(name, Options::default()))
+            .map(|name| {
+                let mut cf_opts = Options::default();
+                // Use configured settings for each CF
+                cf_opts.set_write_buffer_size(self.settings.write_buffer_size);
+                cf_opts.set_max_write_buffer_number(self.settings.max_write_buffers);
+                ColumnFamilyDescriptor::new(name, cf_opts)
+            })
             .collect();
 
         let db = DB::open_cf_descriptors(&db_opts, path, cf_descriptors)?;

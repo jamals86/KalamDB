@@ -345,7 +345,7 @@ mod tests {
             .expect("Temp dir mutex poisoned")
             .push(temp_dir);
 
-        let db_init = RocksDbInit::new(db_path_string);
+        let db_init = RocksDbInit::with_defaults(db_path_string);
         let db = db_init
             .open()
             .expect("Failed to open RocksDB for storage registry tests");

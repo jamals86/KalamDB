@@ -65,7 +65,7 @@ pub async fn initialize_system_tables(
     let default_partition = Partition::new("default");
 
     // Read stored version from RocksDB
-    let stored_version = match storage_backend.get(&default_partition, version_key)? {
+    let stored_version_opt = match storage_backend.get(&default_partition, version_key)? {
         Some(bytes) => {
             if bytes.len() != 4 {
                 return Err(KalamDbError::InvalidOperation(format!(
@@ -75,66 +75,68 @@ pub async fn initialize_system_tables(
             }
             let mut version_bytes = [0u8; 4];
             version_bytes.copy_from_slice(&bytes);
-            u32::from_be_bytes(version_bytes)
+            Some(u32::from_be_bytes(version_bytes))
         }
-        None => {
-            // First initialization - no version stored yet
-            log::info!(
-                "System schema version not found - initializing at v{}",
-                current_version
-            );
-            0 // Treat as version 0 (before versioning existed)
-        }
+        None => None, // First initialization - no version stored yet
     };
 
-    // Version comparison and upgrade logic
-    if stored_version < current_version {
-        log::info!(
-            "System schema upgrade detected: v{} -> v{}",
-            stored_version,
-            current_version
-        );
+    // Version comparison and upgrade/initialization logic
+    match stored_version_opt {
+        None => {
+            // First-time initialization
+            log::info!(
+                "Initializing system schema at v{} (first startup)",
+                current_version
+            );
+            
+            // All 7 system tables created on first access by EntityStore providers
+            // No explicit migration needed
+        }
+        Some(stored_version) if stored_version < current_version => {
+            // Upgrade from older version
+            log::info!(
+                "System schema upgrade detected: v{} -> v{}",
+                stored_version,
+                current_version
+            );
 
-        // Future migration logic goes here
-        match stored_version {
-            0 => {
-                // v0 -> v1: Initial schema already created by EntityStore providers
-                // No migration needed - all 7 system tables created on first access
-                log::info!("Creating initial system schema (v1) with 7 system tables");
-            }
-            // Future versions:
-            // 1 => {
-            //     // v1 -> v2 migration: add new system table X
-            //     log::info!("Migrating v1 -> v2: adding system.X table");
-            //     // Create new system table provider, initialize storage
-            // }
-            _ => {
-                log::warn!(
-                    "Unknown stored schema version {} - proceeding with v{}",
-                    stored_version,
-                    current_version
-                );
+            // Migration logic based on stored version
+            match stored_version {
+                1 => {
+                    // Future: v1 -> v2 migration
+                    // Example: add new system table
+                    log::info!("Migrating v1 -> v2: adding new system tables");
+                }
+                _ => {
+                    log::warn!(
+                        "Unknown stored schema version {} - upgrading to v{}",
+                        stored_version,
+                        current_version
+                    );
+                }
             }
         }
-
-        // Store current version
-        let version_bytes = current_version.to_be_bytes();
-        storage_backend.put(&default_partition, version_key, &version_bytes)?;
-        log::info!("System schema version updated to v{}", current_version);
-    } else if stored_version == current_version {
-        log::debug!("System schema version v{} up-to-date", current_version);
-    } else {
-        // stored_version > current_version - downgrade detected
-        log::error!(
-            "System schema downgrade detected: v{} -> v{} (stored > current)",
-            stored_version,
-            current_version
-        );
-        return Err(KalamDbError::InvalidOperation(format!(
-            "Cannot downgrade system schema from v{} to v{}",
-            stored_version, current_version
-        )));
+        Some(stored_version) if stored_version == current_version => {
+            // Already at current version - no action needed
+            log::debug!(
+                "System schema version v{} is current",
+                current_version
+            );
+        }
+        Some(stored_version) => {
+            // Stored version is NEWER than current (downgrade not supported)
+            return Err(KalamDbError::InvalidOperation(format!(
+                "Schema downgrade not supported: stored v{} > current v{}. \
+                 Please upgrade to a newer server version.",
+                stored_version,
+                current_version
+            )));
+        }
     }
+
+    // Store/update current version in RocksDB
+    let version_bytes = current_version.to_be_bytes();
+    storage_backend.put(&default_partition, version_key, &version_bytes)?;
 
     Ok(())
 }
@@ -148,7 +150,7 @@ mod tests {
     /// Helper to create temporary RocksDB backend for testing
     fn create_test_backend() -> (Arc<dyn StorageBackend>, TempDir) {
         let temp_dir = TempDir::new().expect("Failed to create temp dir");
-        let init = RocksDbInit::new(temp_dir.path().to_str().unwrap());
+        let init = RocksDbInit::with_defaults(temp_dir.path().to_str().unwrap());
         let db = init.open().expect("Failed to open RocksDB");
         let backend = RocksDBBackend::new(db);
         (Arc::new(backend), temp_dir)

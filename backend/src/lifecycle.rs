@@ -38,7 +38,7 @@ pub async fn bootstrap(config: &ServerConfig) -> Result<(ApplicationComponents, 
     let db_path = std::path::PathBuf::from(&config.storage.rocksdb_path);
     std::fs::create_dir_all(&db_path)?;
 
-    let db_init = RocksDbInit::new(db_path.to_str().unwrap());
+    let db_init = RocksDbInit::new(db_path.to_str().unwrap(), config.storage.rocksdb.clone());
     let db = db_init.open()?;
     info!("RocksDB initialized at {}", db_path.display());
 

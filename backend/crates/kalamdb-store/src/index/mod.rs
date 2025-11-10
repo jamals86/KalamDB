@@ -487,7 +487,7 @@ mod tests {
 
     fn create_test_backend() -> (Arc<dyn StorageBackend>, TempDir) {
         let temp_dir = TempDir::new().unwrap();
-        let init = RocksDbInit::new(temp_dir.path().to_str().unwrap());
+        let init = RocksDbInit::with_defaults(temp_dir.path().to_str().unwrap());
         let db = init.open().unwrap();
         let backend = Arc::new(RocksDBBackend::new(db));
         (backend, temp_dir)

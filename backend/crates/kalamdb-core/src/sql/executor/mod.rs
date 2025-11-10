@@ -107,12 +107,17 @@ impl SqlExecutor {
         params: Vec<ScalarValue>,
         exec_ctx: &ExecutionContext,
     ) -> Result<ExecutionResult, KalamDbError> {
-        // TODO: Implement parameter binding once we have the full query handler
-        // DataFusion supports params via LogicalPlan manipulation, not DataFrame.with_params()
+        use crate::sql::executor::parameter_binding::validate_params;
+
+        // Validate parameters if present (binding will be added in future iteration)
         if !params.is_empty() {
-            return Err(KalamDbError::InvalidOperation(
-                "Parameter binding not yet implemented (will be added with query handler)".to_string()
-            ));
+            validate_params(&params)?;
+            // TODO: Implement actual parameter binding via LogicalPlan traversal
+            // For now, reject queries with parameters
+            return Err(KalamDbError::NotImplemented {
+                feature: "Parameter binding".to_string(),
+                message: "Parameter validation is implemented, binding will be added in next iteration".to_string(),
+            });
         }
 
         // Create per-request SessionContext with user_id injected

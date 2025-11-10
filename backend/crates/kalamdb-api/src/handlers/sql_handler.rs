@@ -6,15 +6,38 @@ use actix_web::{post, web, HttpMessage, HttpRequest, HttpResponse, Responder};
 use kalamdb_auth::{extract_auth_with_repo, AuthenticatedUser, UserRepository};
 use kalamdb_commons::models::UserId;
 use kalamdb_core::sql::ExecutionResult;
-use kalamdb_core::sql::datafusion_session::DataFusionSessionFactory;
 use kalamdb_core::sql::executor::{ExecutorMetadataAlias, SqlExecutor};
-use kalamdb_core::sql::executor::models::ExecutionContext;
+use kalamdb_core::sql::executor::models::{ExecutionContext, ScalarValue};
 use log::warn;
+use serde_json::Value as JsonValue;
 use std::sync::Arc;
 use std::time::Instant;
 
 use crate::models::{QueryResult, SqlRequest, SqlResponse};
 use crate::rate_limiter::RateLimiter;
+
+/// Convert JSON value to DataFusion ScalarValue
+///
+/// Supports common JSON types: null, bool, number (int/float), string
+/// Date/timestamp parsing will be added when needed
+fn json_to_scalar_value(value: &JsonValue) -> Result<ScalarValue, String> {
+    match value {
+        JsonValue::Null => Ok(ScalarValue::Utf8(None)),
+        JsonValue::Bool(b) => Ok(ScalarValue::Boolean(Some(*b))),
+        JsonValue::Number(n) => {
+            if let Some(i) = n.as_i64() {
+                Ok(ScalarValue::Int64(Some(i)))
+            } else if let Some(f) = n.as_f64() {
+                Ok(ScalarValue::Float64(Some(f)))
+            } else {
+                Err(format!("Unsupported number format: {}", n))
+            }
+        }
+        JsonValue::String(s) => Ok(ScalarValue::Utf8(Some(s.clone()))),
+        JsonValue::Array(_) => Err("Array parameters not yet supported".to_string()),
+        JsonValue::Object(_) => Err("Object parameters not yet supported".to_string()),
+    }
+}
 
 /// POST /v1/api/sql - Execute SQL statement(s)
 ///
@@ -107,6 +130,28 @@ pub async fn execute_sql_v1(
         }
     }
 
+    // Parse parameters if provided (T040: JSON → ScalarValue deserialization)
+    let params = match &req.params {
+        Some(json_params) => {
+            let mut scalar_params = Vec::new();
+            for (idx, json_val) in json_params.iter().enumerate() {
+                match json_to_scalar_value(json_val) {
+                    Ok(scalar) => scalar_params.push(scalar),
+                    Err(err) => {
+                        let took_ms = start_time.elapsed().as_millis() as u64;
+                        return HttpResponse::BadRequest().json(SqlResponse::error(
+                            "INVALID_PARAMETER",
+                            &format!("Parameter ${} invalid: {}", idx + 1, err),
+                            took_ms,
+                        ));
+                    }
+                }
+            }
+            scalar_params
+        }
+        None => Vec::new(),
+    };
+
     let statements = match kalamdb_sql::split_statements(&req.sql) {
         Ok(stmts) => stmts,
         Err(err) => {
@@ -124,6 +169,16 @@ pub async fn execute_sql_v1(
         return HttpResponse::BadRequest().json(SqlResponse::error(
             "EMPTY_SQL",
             "No SQL statements provided",
+            took_ms,
+        ));
+    }
+
+    // Reject multi-statement batches with parameters (simplifies implementation)
+    if params.len() > 0 && statements.len() > 1 {
+        let took_ms = start_time.elapsed().as_millis() as u64;
+        return HttpResponse::BadRequest().json(SqlResponse::error(
+            "PARAMS_WITH_BATCH",
+            "Parameters not supported with multi-statement batches",
             took_ms,
         ));
     }
@@ -169,6 +224,7 @@ pub async fn execute_sql_v1(
             request_id.as_deref(),
             resolved_ip.as_deref(),
             None,
+            params.clone(), // Pass parameters to each statement
         )
         .await
         {
@@ -199,6 +255,7 @@ async fn execute_single_statement(
     request_id: Option<&str>,
     ip_address: Option<&str>,
     metadata: Option<&ExecutorMetadataAlias>,
+    params: Vec<ScalarValue>, // T040: Accept parameters
 ) -> Result<QueryResult, Box<dyn std::error::Error>> {
     // Phase 3 (T033): Construct ExecutionContext with user identity, request tracking, and base SessionContext
     // Get base SessionContext from AppContext (tables already registered)
@@ -219,7 +276,7 @@ async fn execute_single_statement(
         // Execute through SqlExecutor (handles both custom DDL and DataFusion)
         // Note: session parameter is not used anymore - exec_ctx creates per-request session
         match sql_executor
-            .execute_with_metadata(sql, &exec_ctx, metadata, Vec::new())
+            .execute_with_metadata(sql, &exec_ctx, metadata, params) // Pass parameters
             .await
         {
             Ok(result) => {
@@ -360,6 +417,7 @@ mod tests {
     use super::*;
     use crate::rate_limiter::RateLimiter;
     use actix_web::{test, App};
+    use kalamdb_core::sql::DataFusionSessionFactory;
 
     // NOTE: These unit tests are disabled because they require full KalamDB setup
     // including RocksDB, SqlExecutor, and authentication middleware.
@@ -382,6 +440,7 @@ mod tests {
 
         let req_body = SqlRequest {
             sql: "SELECT 1 as id, 'Alice' as name".to_string(),
+            params: None,
         };
 
         let req = test::TestRequest::post()
@@ -416,6 +475,7 @@ mod tests {
 
         let req_body = SqlRequest {
             sql: "".to_string(),
+            params: None,
         };
 
         let req = test::TestRequest::post()
@@ -444,6 +504,7 @@ mod tests {
 
         let req_body = SqlRequest {
             sql: "SELECT 1 as id; SELECT 2 as id".to_string(),
+            params: None,
         };
 
         let req = test::TestRequest::post()

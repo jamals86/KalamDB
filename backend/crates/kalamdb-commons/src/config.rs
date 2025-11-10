@@ -705,17 +705,17 @@ fn default_oauth_provider_enabled() -> bool {
     false // Individual providers disabled by default
 }
 
-// RocksDB defaults
+// RocksDB defaults (memory-optimized for many column families)
 fn default_rocksdb_write_buffer_size() -> usize {
-    64 * 1024 * 1024 // 64MB
+    8 * 1024 * 1024 // 8MB (reduced from 64MB to handle many CFs)
 }
 
 fn default_rocksdb_max_write_buffers() -> i32 {
-    3
+    2 // Reduced from 3 to save memory
 }
 
 fn default_rocksdb_block_cache_size() -> usize {
-    256 * 1024 * 1024 // 256MB
+    32 * 1024 * 1024 // 32MB shared cache (reduced from 256MB)
 }
 
 fn default_rocksdb_max_background_jobs() -> i32 {

@@ -458,7 +458,7 @@ mod tests {
     async fn create_test_detector() -> (UserTableChangeDetector, TempDir) {
         init_test_app_context();
         let temp_dir = TempDir::new().unwrap();
-        let init = RocksDbInit::new(temp_dir.path().to_str().unwrap());
+        let init = RocksDbInit::with_defaults(temp_dir.path().to_str().unwrap());
         let db = init.open().unwrap();
 
         let backend: Arc<dyn kalamdb_store::StorageBackend> =

@@ -13,7 +13,7 @@ async fn setup_executor(enforce_complexity: bool) -> (SqlExecutor, TempDir, Arc<
     let temp_dir = TempDir::new().expect("Failed to create temp directory");
     let db_path = temp_dir.path().to_str().unwrap();
 
-    let db_init = RocksDbInit::new(db_path);
+    let db_init = RocksDbInit::with_defaults(db_path);
     let db = db_init.open().expect("Failed to open RocksDB");
 
     let backend: Arc<dyn StorageBackend> = Arc::new(RocksDBBackend::new(db.clone()));
