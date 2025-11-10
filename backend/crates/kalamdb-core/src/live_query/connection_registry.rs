@@ -12,7 +12,6 @@ use std::sync::Arc;
 pub use kalamdb_commons::models::UserId;
 pub use kalamdb_commons::models::{ConnectionId, LiveId, TableId};
 pub use kalamdb_commons::NodeId;
-use kalamdb_commons::TableName;
 
 /// Type alias for sending live query notifications to WebSocket clients
 ///
@@ -68,16 +67,6 @@ pub struct SubscriptionHandle {
     /// Shared notification channel (Arc for zero-copy)
     pub notification_tx: Arc<NotificationSender>,
 }
-
-/// Legacy alias for compatibility (deprecated, use SubscriptionHandle)
-///
-/// This exists temporarily while manager.rs is being refactored.
-/// TODO: Remove after manager.rs migration
-#[deprecated(
-    since = "0.1.0",
-    note = "Use SubscriptionHandle directly instead of LiveQuery"
-)]
-pub type LiveQuery = SubscriptionHandle;
 
 /// In-memory registry for WebSocket connections and subscriptions
 ///
@@ -290,110 +279,6 @@ impl LiveQueryRegistry {
                 handle.live_id.table_name().contains(table_ref)
             })
         })
-    }
-
-    // ========== Backward Compatibility Methods (Deprecated) ==========
-    //
-    // These methods exist for compatibility with existing manager.rs code.
-    // New code should use the optimized methods above.
-
-    /// Register connection (deprecated - old 3-arg signature)
-    ///
-    /// This wraps the new API for compatibility with existing code.
-    #[deprecated(
-        since = "0.1.0",
-        note = "Use register_connection(ConnectionId, NotificationSender) instead"
-    )]
-    pub fn register_connection_compat(
-        &self,
-        _user_id: UserId,
-        connection_id: ConnectionId,
-        notification_tx: Option<NotificationSender>,
-    ) {
-        if let Some(tx) = notification_tx {
-            self.register_connection(connection_id, tx);
-        }
-    }
-
-    /// Register subscription (deprecated - old LiveQuery-based signature)
-    ///
-    /// This wraps the new API for compatibility with existing code.
-    #[deprecated(
-        since = "0.1.0",
-        note = "Use register_subscription(UserId, TableId, LiveId, ConnectionId, LiveQueryOptions) instead"
-    )]
-    #[allow(deprecated)]
-    pub fn register_subscription_compat(
-        &self,
-        _user_id: &UserId,
-        live_query: LiveQuery,
-    ) -> Result<(), KalamDbError> {
-        // Extract table_id from live_id table_name
-        let table_name_str = live_query.live_id.table_name();
-        
-        // Parse namespace.table format
-        let parts: Vec<&str> = table_name_str.split('.').collect();
-        let (namespace, table) = if parts.len() == 2 {
-            (parts[0], parts[1])
-        } else {
-            // Fallback: assume default namespace
-            ("default", table_name_str)
-        };
-
-        let table_id = TableId::from_strings(namespace, table);
-
-        self.register_subscription(
-            live_query.user_id,
-            table_id,
-            live_query.live_id,
-            live_query.connection_id,
-            live_query.options,
-        )
-    }
-
-    /// Get subscriptions for table (deprecated - old TableName-based signature)
-    ///
-    /// This wraps the new API for compatibility with existing code.
-    #[deprecated(
-        since = "0.1.0",
-        note = "Use get_subscriptions_for_table(UserId, TableId) instead"
-    )]
-    #[allow(deprecated)]
-    pub fn get_subscriptions_for_table_compat(
-        &self,
-        user_id: &UserId,
-        table_name: &TableName,
-    ) -> Vec<LiveQuery> {
-        // Find all subscriptions matching this user and table name
-        // This is less efficient than the new API, but maintains compatibility
-        self.subscriptions
-            .iter()
-            .filter_map(|entry| {
-                let (key_user, _key_table) = entry.key();
-                if key_user == user_id {
-                    Some(entry.value().clone())
-                } else {
-                    None
-                }
-            })
-            .flatten()
-            .filter(|handle| {
-                // Extract table name from live_id and compare
-                let table_str = handle.live_id.table_name();
-                table_str.ends_with(table_name.as_str())
-            })
-            .collect()
-    }
-
-    /// Unregister connection (deprecated - old signature returns LiveId vec)
-    ///
-    /// New code is compatible, just renamed for clarity.
-    pub fn unregister_connection_compat(
-        &self,
-        _user_id: &UserId,
-        connection_id: &ConnectionId,
-    ) -> Vec<LiveId> {
-        self.unregister_connection(connection_id)
     }
 }
 

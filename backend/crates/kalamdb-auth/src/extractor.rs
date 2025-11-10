@@ -23,25 +23,6 @@ pub struct AuthenticatedRequest {
     pub username: String,
 }
 
-/// Extract and validate authentication from HTTP request
-///
-/// DEPRECATED: Use `extract_auth_with_repo` instead.
-/// This function is kept for backward compatibility but should not be used in new code.
-///
-/// # Arguments
-/// * `req` - The HTTP request
-/// * `repo` - User repository for user lookup
-///
-/// # Returns
-/// Authenticated user information if valid, error otherwise
-#[deprecated(since = "0.1.0", note = "Use extract_auth_with_repo instead")]
-pub async fn extract_auth(
-    req: &HttpRequest,
-    repo: &Arc<dyn UserRepository>,
-) -> AuthResult<AuthenticatedRequest> {
-    extract_auth_with_repo(req, repo).await
-}
-
 /// Extract and validate authentication from HTTP request using a repository abstraction
 ///
 /// Preferred path for provider-based storage. Mirrors `extract_auth` but avoids direct

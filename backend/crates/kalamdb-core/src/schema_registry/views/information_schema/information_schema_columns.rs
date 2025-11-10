@@ -143,7 +143,3 @@ pub fn create_information_schema_columns_provider(
     let view = Arc::new(InformationSchemaColumnsView::new(tables_provider));
     Arc::new(ViewTableProvider::new(view))
 }
-
-// Keep old name for backward compatibility (deprecated)
-#[deprecated(note = "Use InformationSchemaColumnsView instead")]
-pub type InformationSchemaColumnsProvider = InformationSchemaColumnsView;

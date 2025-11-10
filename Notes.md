@@ -134,9 +134,6 @@ and things like this:
 both of them read from a path and from a store but user table filter the store which is the hot storage based on user id as well
 
 
-127) IMPORTANT - Optimize by indexing subscriptions by table_id for faster lookup during notify_table_change
-
-
 128) IMPORTANT - Insert a row as a system/service user to a different user_id this will be used for users to send messages to others as well or an ai send to different user or publish to different user's stream table
 INSERT INTO <namespace>.<table>
    [AS USER '<user_id>']
@@ -163,6 +160,12 @@ IMPORTANT:
 5) Storage files compaction
 6) AS USER support for DML statements - to be able to insert/update/delete as a specific user_id (Only service/admin roles can do that)
 7) Vector Search + HNSW indexing with deletes support
+8) Now configs are centralized inside AppContext and accessible everywhere easily, we need to check:
+  - All places where we read config from file directly and change them to read from AppContext
+  - Remove any duplicate config models which is a dto and use only the configs instead of mirroring it to different structs
+
+9) in impl JobExecutor for FlushExecutor add generic to the model instead of having json parameters we can have T: DeserializeOwned + Send + Sync + 'static and then we can deserialize into the right struct directly instead of having to parse json each time
+
 
 
 Key Findings

@@ -9,7 +9,7 @@ pub mod initial_data;
 pub mod manager;
 
 pub use connection_registry::{
-    ConnectionId, LiveId, LiveQuery, LiveQueryOptions, LiveQueryRegistry, NodeId,
+    ConnectionId, LiveId, LiveQueryOptions, LiveQueryRegistry, NodeId,
     SubscriptionHandle, UserId,
 };
 pub use filter::{FilterCache, FilterPredicate};

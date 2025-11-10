@@ -5,10 +5,11 @@
 
 use crate::error::KalamDbError;
 use crate::live_query::connection_registry::{
-    ConnectionId, LiveId, LiveQuery, LiveQueryOptions, LiveQueryRegistry, NodeId,
+    ConnectionId, LiveId, LiveQueryOptions, LiveQueryRegistry, NodeId,
 };
 use crate::live_query::filter::FilterCache;
 use crate::live_query::initial_data::{InitialDataFetcher, InitialDataOptions, InitialDataResult};
+use crate::sql::executor::handlers::user;
 use crate::tables::system::LiveQueriesTableProvider;
 use crate::tables::{SharedTableStore, StreamTableStore, UserTableStore};
 use kalamdb_commons::models::{NamespaceId, TableId, TableName, UserId};
@@ -83,10 +84,10 @@ impl LiveQueryManager {
     ) -> Result<ConnectionId, KalamDbError> {
         let connection_id = ConnectionId::new(user_id.as_str().to_string(), unique_conn_id);
 
-        #[allow(deprecated)]
-        let registry = self.registry.read().await;
-        #[allow(deprecated)]
-        registry.register_connection_compat(user_id, connection_id.clone(), notification_tx);
+        if let Some(tx) = notification_tx {
+            let registry = self.registry.read().await;
+            registry.register_connection(connection_id.clone(), tx);
+        }
 
         Ok(connection_id)
     }
@@ -199,28 +200,15 @@ impl LiveQueryManager {
         // Add to in-memory registry
         let user_id = UserId::new(connection_id.user_id().to_string());
         
-        // Get notification channel from connection registry
+        // Register subscription in in-memory registry
         let registry = self.registry.read().await;
-        let notification_tx = registry
-            .get_notification_sender(&connection_id)
-            .ok_or_else(|| {
-                KalamDbError::NotFound(format!("Connection not found: {}", connection_id))
-            })?;
-        drop(registry);
-
-        #[allow(deprecated)]
-        let live_query = LiveQuery {
-            live_id: live_id.clone(),
-            user_id: user_id.clone(),
-            table_id: table_id.clone(),
-            connection_id: connection_id.clone(),
+        registry.register_subscription(
+            user_id.clone(),
+            table_id.clone(),
+            live_id.clone(),
+            connection_id.clone(),
             options,
-            notification_tx,
-        };
-
-        let registry = self.registry.read().await;
-        #[allow(deprecated)]
-        registry.register_subscription_compat(&user_id, live_query)?;
+        )?;
 
         Ok(live_id)
     }
@@ -313,11 +301,11 @@ impl LiveQueryManager {
         })
     }
 
-    /// Determine whether any active subscriptions reference the specified table.
-    pub async fn has_active_subscriptions_for(&self, table_ref: &str) -> bool {
-        let registry = self.registry.read().await;
-        registry.has_subscriptions_for_table(table_ref)
-    }
+    // /// Determine whether any active subscriptions reference the specified table.
+    // pub async fn has_active_subscriptions_for(&self, table_ref: &str) -> bool {
+    //     let registry = self.registry.read().await;
+    //     registry.has_subscriptions_for_table(table_ref)
+    // }
 
     /// Extract table name from SQL query
     ///
@@ -375,14 +363,13 @@ impl LiveQueryManager {
     /// 4. Cleans up cached filters
     pub async fn unregister_connection(
         &self,
-        user_id: &UserId,
+        _user_id: &UserId,
         connection_id: &ConnectionId,
     ) -> Result<Vec<LiveId>, KalamDbError> {
         // Remove from in-memory registry and get all live_ids
         let live_ids = {
             let registry = self.registry.read().await;
-            #[allow(deprecated)]
-            registry.unregister_connection_compat(user_id, connection_id)
+            registry.unregister_connection(connection_id)
         };
 
         // Remove cached filters for all live queries
@@ -415,7 +402,7 @@ impl LiveQueryManager {
 
         // Remove from in-memory registry
         let connection_id = {
-            let mut registry = self.registry.write().await;
+            let registry = self.registry.write().await;
             registry.unregister_subscription(live_id)
         };
 
@@ -448,38 +435,12 @@ impl LiveQueryManager {
         Ok(())
     }
 
-    /// Get all subscriptions for a specific table and user
-    ///
-    /// This is used during change detection to find which subscriptions
-    /// need to be notified when data changes in a table.
-    pub async fn get_subscriptions_for_table(
-        &self,
-        user_id: &UserId,
-        table_name: &kalamdb_commons::TableName,
-    ) -> Vec<LiveId> {
-        let registry = self.registry.read().await;
-        #[allow(deprecated)]
-        registry
-            .get_subscriptions_for_table_compat(user_id, table_name)
-            .into_iter()
-            .map(|lq| lq.live_id.clone())
-            .collect()
-    }
-
     /// Get all subscriptions for a user
     pub async fn get_user_subscriptions(
         &self,
         user_id: &UserId,
     ) -> Result<Vec<SystemLiveQuery>, KalamDbError> {
         self.live_queries_provider.get_by_user_id(user_id.as_str())
-    }
-
-    /// Get all subscriptions for a table
-    pub async fn get_table_subscriptions(
-        &self,
-        table_name: &TableName,
-    ) -> Result<Vec<SystemLiveQuery>, KalamDbError> {
-        self.live_queries_provider.get_by_table_name(table_name.as_str())
     }
 
     /// Get a specific live query
@@ -1099,17 +1060,17 @@ mod tests {
             .await
             .unwrap();
 
-        let messages_subs = manager
-            .get_subscriptions_for_table(&user_id, &kalamdb_commons::TableName::new("user1.messages"))
-            .await;
+        // Get subscriptions from registry
+        let registry = manager.registry.read().await;
+        let table_id1 = TableId::from_strings("user1", "messages");
+        let messages_subs = registry.get_subscriptions_for_table(&user_id, &table_id1);
         assert_eq!(messages_subs.len(), 1);
-        assert_eq!(messages_subs[0].table_name(), "user1.messages");
+        assert_eq!(messages_subs[0].live_id.table_name(), "user1.messages");
 
-        let notif_subs = manager
-            .get_subscriptions_for_table(&user_id, &kalamdb_commons::TableName::new("user1.notifications"))
-            .await;
+        let table_id2 = TableId::from_strings("user1", "notifications");
+        let notif_subs = registry.get_subscriptions_for_table(&user_id, &table_id2);
         assert_eq!(notif_subs.len(), 1);
-        assert_eq!(notif_subs[0].table_name(), "user1.notifications");
+        assert_eq!(notif_subs[0].live_id.table_name(), "user1.notifications");
     }
 
     #[tokio::test]
@@ -1262,14 +1223,13 @@ mod tests {
         assert_eq!(stats.total_subscriptions, 3);
 
         // Verify all subscriptions are tracked
-        let messages_subs = manager
-            .get_subscriptions_for_table(&user_id, &kalamdb_commons::TableName::new("user1.messages"))
-            .await;
+        let registry = manager.registry.read().await;
+        let table_id1 = TableId::from_strings("user1", "messages");
+        let messages_subs = registry.get_subscriptions_for_table(&user_id, &table_id1);
         assert_eq!(messages_subs.len(), 2); // messages_query and messages_query2
 
-        let notif_subs = manager
-            .get_subscriptions_for_table(&user_id, &kalamdb_commons::TableName::new("user1.notifications"))
-            .await;
+        let table_id2 = TableId::from_strings("user1", "notifications");
+        let notif_subs = registry.get_subscriptions_for_table(&user_id, &table_id2);
         assert_eq!(notif_subs.len(), 1);
 
         // Verify each has unique live_id
