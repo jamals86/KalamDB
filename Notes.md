@@ -92,11 +92,6 @@ display what active jobs we are waiting on
 If the user already specified primary key then we dont do that, the _id we add also should check if the id is indeed unique as well
 99) We are still using NodeId::from(format!("node-{}", std::process::id())) in multiple places we should use the same nodeId from config or context everywhere
 100) JobId need to be shorter its now using timestamp and uuid which is too long, we can use namespace-table-timestamp or even a snowflake id
-101) [2025-11-03 00:11:52.004] [ERROR] - actix-rt|system:0|arbiter:8 - kalamdb_core::tables::user_tables::user_table_flush:490 - Failed to flush 3 rows for user sys_root: Table not found in cache: smoke_ns_1762121503280.user_smoke_1762121503280. Rows kept in buffer.
-[2025-11-03 00:11:52.004] [ERROR] - actix-rt|system:0|arbiter:8 - kalamdb_core::tables::user_tables::user_table_flush:504 - ❌ User table flush failed: table=smoke_ns_1762121503280.user_smoke_1762121503280 — One or more user partitions failed to flush (1 errors). Rows flushed before failure: 0. First error: Failed to flush 3 rows for user sys_root: Table not found in cache: smoke_ns_1762121503280.user_smoke_1762121503280
-[2025-11-03 00:11:52.004] [ERROR] - actix-rt|system:0|arbiter:8 - kalamdb_core::tables::base_flush:348 - ❌ Flush failed: job_id=flush-smoke_ns_1762121503280-user_smoke_1762121503280-1762121512003, table=smoke_ns_1762121503280.user_smoke_1762121503280, duration_ms=0, error=One or more user partitions failed to flush (1 errors). Rows flushed before failure: 0. First error: Failed to flush 3 rows for user sys_root: Table not found in cache: smoke_ns_1762121503280.user_smoke_1762121503280
-[2025-11-03 00:11:52.004] [ERROR] - actix-rt|system:0|arbiter:8 - kalamdb_core::sql::executor:2161 - Flush job failed: job_id=flush-user_smoke_1762121503280-1762121512003-11e214e9-6b12-4115-9a8f-f378eed85f43, error=One or more user partitions failed to flush (1 errors). Rows flushed before failure: 0. First error: Failed to flush 3 rows for user sys_root: Table not found in cache: smoke_ns_1762121503280.user_smoke_1762121503280
-
 
 102) CLI Tests common - Verify that we have a timeout set while we wait for the subscription changes/notifications
 103) Check to see any libraries/dependencies not needed and rmeove them, check each one of the dependencies
