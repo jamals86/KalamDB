@@ -290,3 +290,255 @@ impl UserTableShared {
         self.storage_registry.as_ref()
     }
 }
+
+// ============================================================================
+// Phase 3 (US1): Unified Scan Helpers - Version Resolution + Deletion Filter
+// ============================================================================
+
+/// Unified scan pipeline for tables with version resolution and deletion filtering
+///
+/// This helper consolidates the common scan logic used by both UserTableProvider and SharedTableProvider:
+/// 1. Combine RocksDB (fast storage) + Parquet (long-term storage) batches
+/// 2. Apply version resolution (select MAX(_updated) per row_id with tie-breaker)
+/// 3. Filter out soft-deleted records (_deleted = false)
+/// 4. Apply limit (post-resolution)
+///
+/// # Arguments
+/// * `fast_batch` - RecordBatch from RocksDB (FastStorage, priority=2)
+/// * `long_batch` - RecordBatch from Parquet files (LongStorage, priority=1)
+/// * `schema` - Full schema including system columns (_updated, _deleted)
+/// * `limit` - Optional row limit to apply after filtering
+///
+/// # Returns
+/// Final RecordBatch with latest versions of non-deleted records
+///
+/// # Performance
+/// - Version resolution: O(n) with HashMap grouping + Arrow take() kernel
+/// - Deletion filter: O(n) with Arrow compute kernels (vectorized operations)
+pub async fn scan_with_version_resolution_and_filter(
+    fast_batch: datafusion::arrow::record_batch::RecordBatch,
+    long_batch: datafusion::arrow::record_batch::RecordBatch,
+    schema: Arc<datafusion::arrow::datatypes::Schema>,
+    limit: Option<usize>,
+) -> Result<datafusion::arrow::record_batch::RecordBatch, datafusion::error::DataFusionError> {
+    use crate::tables::version_resolution::resolve_latest_version;
+    use datafusion::arrow::array::BooleanArray;
+    use datafusion::arrow::compute::filter_record_batch;
+
+    // STEP 1: Version Resolution (select MAX(_updated) per row_id)
+    log::debug!(
+        "Version resolution: fast={} rows, long={} rows",
+        fast_batch.num_rows(),
+        long_batch.num_rows()
+    );
+    
+    let resolved_batch = resolve_latest_version(fast_batch, long_batch, schema.clone())
+        .await
+        .map_err(|e| datafusion::error::DataFusionError::Execution(format!("Version resolution failed: {}", e)))?;
+    
+    log::debug!("After version resolution: {} rows", resolved_batch.num_rows());
+
+    // STEP 2: Apply deletion filter (_deleted = false)
+    let deleted_col_idx = schema.fields().iter()
+        .position(|f| f.name() == "_deleted")
+        .ok_or_else(|| datafusion::error::DataFusionError::Execution("Missing _deleted column".to_string()))?;
+    
+    let deleted_array = resolved_batch.column(deleted_col_idx)
+        .as_any()
+        .downcast_ref::<BooleanArray>()
+        .ok_or_else(|| datafusion::error::DataFusionError::Execution("_deleted column is not BooleanArray".to_string()))?;
+    
+    // Create filter: NOT _deleted (invert boolean array)
+    let keep_mask = datafusion::arrow::compute::not(deleted_array)
+        .map_err(|e| datafusion::error::DataFusionError::Execution(format!("Failed to invert _deleted mask: {}", e)))?;
+    
+    let filtered_batch = filter_record_batch(&resolved_batch, &keep_mask)
+        .map_err(|e| datafusion::error::DataFusionError::Execution(format!("Failed to filter deleted rows: {}", e)))?;
+    
+    log::debug!("After deletion filter: {} rows", filtered_batch.num_rows());
+
+    // STEP 3: Apply limit (post-resolution limit)
+    let final_batch = if let Some(limit_value) = limit {
+        let batch_limit = std::cmp::min(limit_value, filtered_batch.num_rows());
+        filtered_batch.slice(0, batch_limit)
+    } else {
+        filtered_batch
+    };
+
+    log::debug!("Final batch: {} rows", final_batch.num_rows());
+    Ok(final_batch)
+}
+
+/// Create empty RecordBatch with system columns (_updated, _deleted)
+///
+/// Helper to create schema with system columns added to base schema.
+/// Used by both UserTableProvider and SharedTableProvider.
+///
+/// # Arguments
+/// * `base_schema` - Base table schema (user-defined columns only)
+///
+/// # Returns
+/// SchemaRef with _updated (Utf8) and _deleted (Boolean) columns appended
+pub fn schema_with_system_columns(
+    base_schema: &SchemaRef,
+) -> SchemaRef {
+    use datafusion::arrow::datatypes::{DataType, Field, Schema};
+    
+    let mut fields = base_schema.fields().to_vec();
+    
+    // Add system columns: _updated (String RFC3339) and _deleted (Boolean)
+    fields.push(Arc::new(Field::new(
+        "_updated",
+        DataType::Utf8, // RFC3339 string for version resolution compatibility
+        false, // NOT NULL
+    )));
+    fields.push(Arc::new(Field::new(
+        "_deleted",
+        DataType::Boolean,
+        false, // NOT NULL
+    )));
+    
+    Arc::new(Schema::new(fields))
+}
+
+// ============================================================================
+// Parquet Scanning Helpers (Phase 3, US1: Eliminate Duplication)
+// ============================================================================
+
+/// Create empty RecordBatch with correct schema
+///
+/// Generic helper used by both UserTableProvider and SharedTableProvider
+/// when no data is found (empty RocksDB scan or no Parquet files).
+///
+/// # Arguments
+/// * `schema` - Full schema including system columns
+///
+/// # Returns
+/// Empty RecordBatch with 0 rows but correct schema
+pub fn create_empty_batch(
+    schema: &SchemaRef,
+) -> Result<datafusion::arrow::record_batch::RecordBatch, datafusion::error::DataFusionError> {
+    use datafusion::arrow::array::new_null_array;
+    
+    let arrays: Vec<datafusion::arrow::array::ArrayRef> = schema
+        .fields()
+        .iter()
+        .map(|f| new_null_array(f.data_type(), 0))
+        .collect();
+    
+    datafusion::arrow::record_batch::RecordBatch::try_new(schema.clone(), arrays)
+        .map_err(|e| datafusion::error::DataFusionError::Execution(format!("Empty batch creation failed: {}", e)))
+}
+
+/// Scan Parquet files from storage directory and return concatenated RecordBatch
+///
+/// Generic Parquet scanning logic shared by UserTableProvider and SharedTableProvider.
+/// Handles:
+/// - Directory scanning for .parquet files
+/// - Parquet file reading with ParquetRecordBatchReaderBuilder
+/// - Batch concatenation
+/// - Empty results
+///
+/// # Arguments
+/// * `storage_path` - Full path to storage directory (already resolved with user_id if applicable)
+/// * `schema` - Full schema including system columns
+/// * `table_identifier` - Human-readable table identifier for logging (e.g., "app.users")
+///
+/// # Returns
+/// Concatenated RecordBatch from all Parquet files, or empty batch if no files found
+///
+/// # RLS Note
+/// Caller is responsible for ensuring storage_path includes proper user_id isolation.
+/// This function does NOT enforce RLS - it scans whatever directory is provided.
+pub async fn scan_parquet_files_as_batch(
+    storage_path: &str,
+    schema: &SchemaRef,
+    table_identifier: &str,
+) -> Result<datafusion::arrow::record_batch::RecordBatch, datafusion::error::DataFusionError> {
+    use datafusion::parquet::arrow::arrow_reader::ParquetRecordBatchReaderBuilder;
+    use std::fs;
+    use std::path::Path;
+
+    if storage_path.is_empty() {
+        log::debug!(
+            "Storage path is empty for table {}, returning empty batch",
+            table_identifier
+        );
+        return create_empty_batch(schema);
+    }
+
+    let storage_dir = Path::new(storage_path);
+    log::debug!(
+        "Scanning Parquet files in: {} (exists: {})",
+        storage_path,
+        storage_dir.exists()
+    );
+
+    if !storage_dir.exists() {
+        log::debug!("Storage directory does not exist, returning empty result");
+        return create_empty_batch(schema);
+    }
+
+    let parquet_files: Vec<_> = fs::read_dir(storage_dir)
+        .map_err(|e| {
+            datafusion::error::DataFusionError::Execution(format!("Failed to read storage directory: {}", e))
+        })?
+        .filter_map(|entry| entry.ok())
+        .filter(|entry| entry.path().extension().and_then(|s| s.to_str()) == Some("parquet"))
+        .map(|entry| entry.path())
+        .collect();
+
+    log::debug!("Found {} Parquet files for {}", parquet_files.len(), table_identifier);
+
+    if parquet_files.is_empty() {
+        return create_empty_batch(schema);
+    }
+
+    let mut all_batches = Vec::new();
+
+    for parquet_file in parquet_files {
+        log::debug!("Reading Parquet file: {:?}", parquet_file);
+
+        let file = fs::File::open(&parquet_file).map_err(|e| {
+            datafusion::error::DataFusionError::Execution(format!(
+                "Failed to open Parquet file {:?}: {}",
+                parquet_file, e
+            ))
+        })?;
+
+        let builder = ParquetRecordBatchReaderBuilder::try_new(file).map_err(|e| {
+            datafusion::error::DataFusionError::Execution(format!(
+                "Failed to create Parquet reader for {:?}: {}",
+                parquet_file, e
+            ))
+        })?;
+
+        let reader = builder.build().map_err(|e| {
+            datafusion::error::DataFusionError::Execution(format!(
+                "Failed to build Parquet reader for {:?}: {}",
+                parquet_file, e
+            ))
+        })?;
+
+        for batch_result in reader {
+            let batch = batch_result.map_err(|e| {
+                datafusion::error::DataFusionError::Execution(format!(
+                    "Failed to read batch from {:?}: {}",
+                    parquet_file, e
+                ))
+            })?;
+
+            all_batches.push(batch);
+        }
+    }
+
+    log::debug!("Total batches from Parquet files: {}", all_batches.len());
+
+    // Concatenate all batches
+    if all_batches.is_empty() {
+        create_empty_batch(schema)
+    } else {
+        datafusion::arrow::compute::concat_batches(schema, &all_batches)
+            .map_err(|e| datafusion::error::DataFusionError::Execution(format!("Failed to concatenate batches: {}", e)))
+    }
+}

@@ -70,7 +70,7 @@ pub async fn resolve_latest_version(
 
     let indices_array = Arc::new(UInt64Array::from(keep_indices.iter().map(|&i| i as u64).collect::<Vec<_>>()));
     let result_columns: Result<Vec<ArrayRef>, _> = combined.columns().iter()
-        .map(|col| compute::take(col.as_ref(), &indices_array, None)
+        .map(|col| compute::take(col.as_ref(), indices_array.as_ref(), None)
             .map_err(|e| KalamDbError::Other(format!("take: {}", e))))
         .collect();
     let result_batch = RecordBatch::try_new(combined_schema.clone(), result_columns?)
