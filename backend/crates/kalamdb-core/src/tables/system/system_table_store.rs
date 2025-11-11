@@ -5,10 +5,11 @@
 //! `crate::stores::system_table::*` remains valid via re-exports.
 
 use crate::error::KalamDbError;
-use crate::tables::shared_tables::shared_table_store::{SharedTableRow, SharedTableRowId};
+use crate::tables::shared_tables::shared_table_store::SharedTableRow;
 use crate::tables::stream_tables::stream_table_store::{StreamTableRow, StreamTableRowId};
 use crate::tables::system::SystemTableProviderExt;
-use crate::tables::user_tables::user_table_store::{UserTableRow, UserTableRowId};
+use crate::tables::user_tables::user_table_store::UserTableRow;
+use kalamdb_commons::ids::{SharedTableRowId, UserTableRowId};
 use kalamdb_store::{
     entity_store::{CrossUserTableStore, EntityStore},
     StorageBackend, StorageKey,
@@ -233,7 +234,7 @@ impl SharedTableStoreExt<SharedTableRowId, SharedTableRow> for SystemTableStore<
         Ok(Box::new(iter))
     }
     fn delete_batch_by_keys(&self, _namespace_id: &str, _table_name: &str, keys: &[String]) -> std::result::Result<(), KalamDbError> {
-        for key_str in keys { let key = SharedTableRowId::new(key_str); EntityStore::delete(self, &key)?; } Ok(())
+        for key_str in keys { let snowflake_id = key_str.parse::<i64>().map_err(|e| KalamDbError::Other(format!("Invalid row id: {}", e)))?; let key = SharedTableRowId::new(snowflake_id); EntityStore::delete(self, &key)?; } Ok(())
     }
 }
 

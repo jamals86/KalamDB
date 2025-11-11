@@ -114,6 +114,15 @@ impl TableProviderCore {
     pub fn cache(&self) -> &SchemaRegistry {
         &self.unified_cache
     }
+
+    /// Get SystemColumnsService from AppContext
+    ///
+    /// **Note**: This method requires the provider to have access to AppContext.
+    /// For providers that need SystemColumnsService, they should store AppContext directly.
+    pub fn system_columns_service(&self) -> Arc<crate::system_columns::SystemColumnsService> {
+        // This is a placeholder - providers should access AppContext directly
+        unimplemented!("TableProviderCore::system_columns_service() requires AppContext access. Use provider.app_context.system_columns_service() instead.")
+    }
 }
 
 /// Shared state for all UserTableProvider instances accessing the same table

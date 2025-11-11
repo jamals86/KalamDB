@@ -15,6 +15,9 @@ pub mod user_table_update;
 pub use user_table_delete::UserTableDeleteHandler;
 pub use user_table_flush::UserTableFlushJob;
 pub use user_table_insert::UserTableInsertHandler;
-pub use user_table_store::{new_user_table_store, UserTableRow, UserTableRowId, UserTableStore};
+pub use user_table_store::{new_user_table_store, UserTableRow, UserTableStore};
 pub use user_table_update::UserTableUpdateHandler;
 pub use user_table_provider::UserTableProvider;
+
+// Re-export UserTableRowId from commons for convenience
+pub use kalamdb_commons::ids::UserTableRowId;

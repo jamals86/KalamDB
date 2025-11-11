@@ -1,52 +1,30 @@
 //! Shared table store implementation using EntityStore pattern
 //!
 //! This module provides a SystemTableStore-based implementation for cross-user shared tables.
+//!
+//! **MVCC Architecture (Phase 12, User Story 5)**:
+//! - SharedTableRowId: SeqId directly (from kalamdb_commons)
+//! - SharedTableRow: Minimal structure with _seq, _deleted, fields (JSON)
+//! - Storage key format: {_seq} (big-endian bytes)
+//! - NO access_level field (cached in schema definition, not per-row)
 
 use crate::tables::system::system_table_store::SystemTableStore;
+use kalamdb_commons::ids::{SeqId, SharedTableRowId};
 use kalamdb_commons::models::{NamespaceId, TableName};
-use kalamdb_commons::TableAccess;
-use kalamdb_store::{StorageBackend, StorageKey};
+use kalamdb_store::StorageBackend;
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 
-/// Shared table row ID (simple string)
-#[derive(Debug, Clone, PartialEq, Eq, Hash)]
-pub struct SharedTableRowId(String);
-
-impl SharedTableRowId {
-    pub fn new(id: impl Into<String>) -> Self {
-        Self(id.into())
-    }
-
-    pub fn from_bytes(bytes: &[u8]) -> Self {
-        Self(String::from_utf8_lossy(bytes).to_string())
-    }
-
-    pub fn as_str(&self) -> &str {
-        &self.0
-    }
-}
-
-impl AsRef<[u8]> for SharedTableRowId {
-    fn as_ref(&self) -> &[u8] {
-        self.0.as_bytes()
-    }
-}
-
-impl StorageKey for SharedTableRowId {
-    fn storage_key(&self) -> Vec<u8> {
-        self.0.as_bytes().to_vec()
-    }
-}
-
 /// Shared table row data
+///
+/// **MVCC Architecture (Phase 12, User Story 5)**:
+/// - Removed: row_id (redundant with _seq), _updated (replaced by _seq timestamp), access_level (moved to schema definition)
+/// - Kept: _seq (version identifier), _deleted (tombstone), fields (all shared table columns including PK)
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct SharedTableRow {
-    pub row_id: String,
-    pub fields: serde_json::Value,
-    pub _updated: String,
+    pub _seq: SeqId,
     pub _deleted: bool,
-    pub access_level: TableAccess,
+    pub fields: serde_json::Value, // All user-defined columns including PK
 }
 
 /// Type alias for shared table store (extends SystemTableStore)
@@ -98,13 +76,11 @@ mod tests {
     #[test]
     fn test_shared_table_store_put_get() {
         let store = create_test_store();
-        let key = SharedTableRowId::new("row1");
+        let key = SeqId::new(100);
         let row = SharedTableRow {
-            row_id: "row1".to_string(),
-            fields: serde_json::json!({"name": "Public Data"}),
-            _updated: "2025-01-01T00:00:00Z".to_string(),
+            _seq: SeqId::new(100),
+            fields: serde_json::json!({"name": "Public Data", "id": 1}),
             _deleted: false,
-            access_level: TableAccess::Public,
         };
 
         // Put and get
@@ -116,13 +92,11 @@ mod tests {
     #[test]
     fn test_shared_table_store_delete() {
         let store = create_test_store();
-        let key = SharedTableRowId::new("row1");
+        let key = SeqId::new(200);
         let row = SharedTableRow {
-            row_id: "row1".to_string(),
-            fields: serde_json::json!({"data": "test"}),
-            _updated: "2025-01-01T00:00:00Z".to_string(),
+            _seq: SeqId::new(200),
+            fields: serde_json::json!({"data": "test", "id": 2}),
             _deleted: false,
-            access_level: TableAccess::Private,
         };
 
         // Put, delete, verify
@@ -135,20 +109,13 @@ mod tests {
     fn test_shared_table_store_scan_all() {
         let store = create_test_store();
 
-        // Insert multiple rows with different access levels
+        // Insert multiple rows
         for i in 1..=5 {
-            let key = SharedTableRowId::new(format!("row{}", i));
-            let access = if i % 2 == 0 {
-                TableAccess::Public
-            } else {
-                TableAccess::Private
-            };
+            let key = SeqId::new(i as i64 * 100);
             let row = SharedTableRow {
-                row_id: format!("row{}", i),
+                _seq: SeqId::new(i as i64 * 100),
                 fields: serde_json::json!({"id": i}),
-                _updated: "2025-01-01T00:00:00Z".to_string(),
                 _deleted: false,
-                access_level: access,
             };
             store.put(&key, &row).unwrap();
         }
@@ -156,12 +123,5 @@ mod tests {
         // Scan all
         let all_rows = store.scan_all().unwrap();
         assert_eq!(all_rows.len(), 5);
-
-        // Filter by access level
-        let public_rows: Vec<_> = all_rows
-            .iter()
-            .filter(|(_, row)| row.access_level == TableAccess::Public)
-            .collect();
-        assert_eq!(public_rows.len(), 2);
     }
 }

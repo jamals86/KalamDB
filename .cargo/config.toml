@@ -19,3 +19,6 @@ DYLD_LIBRARY_PATH = "/Library/Developer/CommandLineTools/usr/lib"
 [target.x86_64-pc-windows-msvc]
 # Usually no special flags are needed, but you can add linker hints if needed
 rustflags = []
+
+[build]
+jobs = 8  # Match your CPU cores

@@ -1,8 +1,103 @@
-# Tasks: Full DML Support
+# Tasks: Full DML Support (MVCC Architecture)
 
 **Feature**: Full DML Support  
 **Branch**: `012-full-dml-support`  
-**Generated**: 2025-11-11
+**Generated**: 2025-11-11  
+**Updated**: 2025-11-11 (MVCC Architecture Redesign)
+
+## ⚠️ CRITICAL ARCHITECTURE CHANGE (2025-11-11)
+
+**Original Phase 2 (User Story 5)**: SystemColumnsService with `_id`/`_updated`/`_deleted` management
+
+**New Phase 2 (User Story 5 - MVCC)**: Multi-Version Concurrency Control with `_seq` versioning and unified DML
+
+### MVCC Architecture Overview:
+
+```
+┌─────────────────────────────────────────────────────────────────────┐
+│                        MVCC Storage Layer                            │
+├─────────────────────────────────────────────────────────────────────┤
+│  Storage Keys:                                                       │
+│  - UserTableRowId: {user_id}:{_seq} (composite struct with UserId  │
+│    and SeqId fields, implements StorageKey trait like TableId)     │
+│  - SharedTableRowId: {_seq} (SeqId directly, no wrapper)           │
+│                                                                      │
+│  Note: table_id NOT in key (already in column family name)         │
+├─────────────────────────────────────────────────────────────────────┤
+│  Row Structures:                                                     │
+│                                                                      │
+│  UserTableRow:                                                       │
+│    - user_id: UserId (identifies row owner, all users in same store)│
+│    - _seq: SeqId (Snowflake ID wrapper with timestamp extraction)  │
+│    - _deleted: bool                                                 │
+│    - fields: JsonValue (user PK + all user columns)                │
+│                                                                      │
+│  SharedTableRow:                                                     │
+│    - _seq: SeqId                                                    │
+│    - _deleted: bool                                                 │
+│    - fields: JsonValue (all shared table columns)                  │
+│    - NO access_level (cached in schema definition, not per-row)    │
+├─────────────────────────────────────────────────────────────────────┤
+│  SeqId Type:                                                         │
+│  - Wraps Snowflake ID (i64)                                         │
+│  - Provides timestamp_millis() for extraction                       │
+│  - Implements Ord for range queries                                 │
+│  - Serializes as i64, displays as string                           │
+├─────────────────────────────────────────────────────────────────────┤
+│  Operations:                                                         │
+│  - INSERT: Generate SeqId, append to hot storage                   │
+│  - UPDATE: Generate new SeqId, append new version (never modify)   │
+│  - DELETE: Generate new SeqId, set _deleted=true, append           │
+│  - SELECT: MAX(_seq) per PK, filter _deleted=false                 │
+│  - FLUSH: Snapshot → deduplicate via MAX(_seq) → write Parquet    │
+│  - SCAN BY USER: RocksDB prefix scan on {user_id}:                │
+│  - SYNC QUERY: RocksDB range scan where _seq > threshold           │
+├─────────────────────────────────────────────────────────────────────┤
+│  Unified DML Functions:                                             │
+│  - append_version(): Used by INSERT/UPDATE/DELETE                  │
+│  - resolve_latest_version(): Used by SELECT                        │
+│  - validate_primary_key(): Used by INSERT                          │
+│  - generate_storage_key(): Used by all DML                         │
+└─────────────────────────────────────────────────────────────────────┘
+```
+
+### Code Consolidation Impact:
+
+**Before (Current Architecture)**:
+- `user_table_insert.rs` - User table INSERT logic
+- `user_table_update.rs` - User table UPDATE logic
+- `user_table_delete.rs` - User table DELETE logic
+- `shared_table_insert.rs` - Shared table INSERT logic (duplicate)
+- `shared_table_update.rs` - Shared table UPDATE logic (duplicate)
+- `shared_table_delete.rs` - Shared table DELETE logic (duplicate)
+- **Row structures**: 
+  - UserTableRow (row_id, user_id, fields, _updated, _deleted)
+  - SharedTableRow (row_id, fields, _updated, _deleted, access_level)
+- **Total**: ~1200 lines of DML code with 50%+ duplication
+
+**After (MVCC Architecture)**:
+- `unified_dml/mod.rs` - Single module with 4 core functions
+  - append_version() - Used by ALL INSERT/UPDATE/DELETE operations
+  - resolve_latest_version() - Used by ALL SELECT operations
+  - validate_primary_key() - Used by ALL INSERT operations
+  - generate_storage_key() - Used by ALL DML operations
+- `user_table_dml.rs` - Thin wrapper calling unified_dml (150 lines)
+- `shared_table_dml.rs` - Thin wrapper calling unified_dml (150 lines)
+- **Row structures**: 
+  - UserTableRow: `user_id: UserId`, `_seq: SeqId`, `_deleted: bool`, `fields: JsonValue`
+  - SharedTableRow: `_seq: SeqId`, `_deleted: bool`, `fields: JsonValue` (no access_level)
+- **Storage keys**: 
+  - UserTableRowId: Composite struct with `user_id: UserId` and `_seq: SeqId` fields, implements StorageKey trait with storage_key() method
+  - SharedTableRowId: `SeqId` directly (no wrapper)
+- **Total**: ~600 lines of DML code (50% reduction, zero duplication, minimal per-row overhead)
+
+### Migration Strategy:
+
+1. **Phase 2 (New)**: Implement MVCC architecture with unified DML
+2. **Phase 3 (Deprecated)**: Old UPDATE/DELETE tasks consolidated into Phase 2
+3. **Phases 4-10**: Continue with manifest caching, Bloom filters, etc. (unchanged)
+
+**Story Execution Order**: US5 (P1 - MVCC) → US6 (P1 - Manifest Cache) → US2 (P2 - Manifest Optimization) → US3 (P2 - Bloom Filters) → US4 (P2 - AS USER) → US7 (P3 - Config) → US8 (P3 - Job Params)
 
 ## Overview
 
@@ -43,112 +138,173 @@ This task list breaks down the Full DML Support feature into incremental, testab
 
 ---
 
-## Phase 2: User Story 5 - System Column Management (Priority: P1)
+## Phase 2: User Story 5 - MVCC Storage Architecture with System Columns (Priority: P1)
 
-**Goal**: Centralize all system column logic (`_id`, `_updated`, `_deleted`) in SystemColumnsService.
+**Goal**: Implement Multi-Version Concurrency Control (MVCC) with `_seq` versioning and unified DML functions for user/shared tables.
 
-**Independent Test**: Create SystemColumnsService, migrate all system column operations, run full test suite, grep codebase for zero scattered references.
+**Independent Test**: Create table with user-defined PK, insert rows (auto-generate `_seq`), update/delete (append new versions), query (verify MAX(`_seq`) resolution), flush (verify Parquet deduplication). Confirm user/shared tables use same code paths.
 
-### Foundational Infrastructure
+### Foundational Infrastructure (MVCC Core)
 
-- [X] T008 [P] [US5] ~~Create~~ **REUSE existing** SnowflakeGenerator struct from backend/crates/kalamdb-commons/src/ids/snowflake.rs
-- [X] T009 [P] [US5] ~~Implement~~ **VERIFIED** Snowflake ID generation: timestamp (41 bits) + node_id_hash (10 bits) + sequence (12 bits)
-- [X] T010 [P] [US5] ~~Add~~ **VERIFIED** monotonic timestamp enforcement with +1ms bump on collision in SnowflakeGenerator
-- [X] T011 [P] [US5] ~~Implement~~ **VERIFIED** node_id (worker_id) support (0-1023) in SnowflakeGenerator  
-- [X] T012 [US5] ~~Add~~ **VERIFIED** unit tests for SnowflakeGenerator: uniqueness, ordering, collision handling, clock skew
+- [X] T008 [P] [US5] Create SeqId type in backend/crates/kalamdb-commons/src/ids/seq_id.rs wrapping Snowflake ID with timestamp extraction
+- [X] T009 [P] [US5] Implement SeqId methods: new(), as_i64(), timestamp_millis(), timestamp(), to_string(), from_string(), to_bytes(), from_bytes()
+- [X] T010 [P] [US5] Add SeqId trait implementations: Display, From<i64>, Into<i64>, Ord, PartialOrd, Serialize, Deserialize
+- [X] T011 [P] [US5] Update CREATE TABLE parser to REQUIRE user-specified primary key column (reject tables without PK)
+- [X] T012 [P] [US5] Add automatic `_seq: SeqId` column injection to all user/shared table schemas during CREATE TABLE
+- [X] T013 [P] [US5] Add automatic `_deleted: bool` column injection to all user/shared table schemas during CREATE TABLE
+- [ ] T014 [P] [US5] Update CachedTableData to include Arrow schema with `_seq` and `_deleted` columns (cache at table creation, never recompute)
+- [X] T015 [US5] Refactor UserTableRow struct: Remove row_id, _updated; Keep user_id: UserId; Add _seq: SeqId, _deleted: bool, fields: JsonValue
+- [X] T016 [US5] Refactor SharedTableRow struct: Remove row_id, _updated, access_level; Add _seq: SeqId, _deleted: bool, fields: JsonValue
+- [X] T017 [US5] Refactor UserTableRowId to composite struct with user_id: UserId and _seq: SeqId fields, implement StorageKey trait with storage_key() method (similar to TableId pattern)
+- [X] T018 [US5] Replace SharedTableRowId struct with SeqId directly (no wrapper needed)
 
-### SystemColumnsService Core
+### Unified DML Functions Module
 
-- [X] T013 [US5] Create SystemColumnsService struct in backend/crates/kalamdb-core/src/system_columns/mod.rs
-- [X] T014 [US5] Implement SystemColumnsService::new(worker_id) constructor with SnowflakeGenerator initialization
-- [X] T015 [US5] Implement add_system_columns() method: inject `_id BIGINT PRIMARY KEY`, `_updated TIMESTAMP`, `_deleted BOOLEAN` to TableDefinition
-- [X] T016 [US5] Implement generate_id() method: call SnowflakeGenerator, return i64
-- [X] T017 [US5] Implement handle_insert() method: generate `_id` if not provided, set `_updated` to now, `_deleted = false`
-- [X] T018 [US5] Implement handle_update() method: preserve `_id`, update `_updated` to now with +1ns monotonicity check
-- [X] T019 [US5] Implement handle_delete() method: preserve `_id`, set `_deleted = true`, update `_updated` to now
-- [X] T020 [US5] Implement apply_deletion_filter() method: inject `WHERE _deleted = false` predicate into query AST
-- [X] T021 [US5] Add validation: reject manual `_id` assignments in INSERT with KalamDbError::SystemColumnViolation
+- [X] T019 [P] [US5] Create unified_dml module in backend/crates/kalamdb-core/src/tables/unified_dml/mod.rs
+- [X] T020 [P] [US5] Implement append_version() function: generate SeqId via SnowflakeGenerator, create storage key, append to RocksDB (used by INSERT/UPDATE/DELETE)
+- [X] T021 [P] [US5] Implement resolve_latest_version() function: group by PK from fields JSON, apply MAX(`_seq`), filter `_deleted = false` (used by query planning)
+- [X] T022 [US5] Implement validate_primary_key() function: extract PK from fields JSON, check uniqueness, enforce NOT NULL constraints (used by INSERT)
+- [X] T023 [US5] Implement generate_storage_key() function: create UserTableRowId with user_id and _seq, call storage_key() method for user tables; use SeqId directly for shared tables (used by all DML)
+- [X] T024 [US5] Implement extract_user_pk_value() function: parse user-defined PK column value from fields JSON (used by INSERT/UPDATE)
+- [X] T025 [US5] Add comprehensive unit tests for unified_dml module (append, resolve, validate, key generation)
+- [X] T026 [US5] Add SeqId ordering tests: verify SeqId comparison works correctly for MAX() operations and range scans
 
-### Integration with DDL/DML/Query Layers
+### INSERT Handler Integration
 
-- [X] T022 [US5] Integrate add_system_columns() into CREATE TABLE handler in backend/crates/kalamdb-core/src/sql/executor/handlers/ddl.rs
-- [X] T023 [US5] Integrate handle_insert() into INSERT handler - Modified UserTableInsertHandler to use SystemColumnsService.handle_insert() for generating Snowflake IDs
-- [X] T026 [US5] Integrate apply_deletion_filter() - **ALREADY IMPLEMENTED** at scan level in user_table_provider.rs lines 757, 779 (more efficient than SQL-level filtering)
-- [X] T027 [US5] Add SystemColumnsService to AppContext in backend/crates/kalamdb-core/src/app_context.rs
-- [X] T028 [US5] Initialize SystemColumnsService in AppContext::init() in backend/src/lifecycle.rs
+- [ ] T027 [US5] Refactor UserTableInsertHandler to call unified_dml::append_version() with fields JSON (all user columns including PK)
+- [ ] T028 [US5] Refactor SharedTableInsertHandler to call unified_dml::append_version() with fields JSON (same function as user tables)
+- [ ] T029 [US5] Update INSERT handlers to call validate_primary_key() before append_version()
+- [ ] T030 [US5] Ensure INSERT handlers generate SeqId via SystemColumnsService and set `_deleted = false`
+- [ ] T031 [US5] Remove duplicate INSERT logic from user_table_insert.rs and shared_table_insert.rs (consolidate to unified_dml)
 
-### Migration & Validation
+### UPDATE Handler Integration
 
-- [ ] T029 [US5] Remove scattered system column logic from table creation code (grep search: `_updated`, `_deleted` assignment)
-- [ ] T030 [US5] Remove scattered system column logic from DML handlers (grep search: direct timestamp generation)
-- [ ] T031 [US5] Remove scattered system column logic from query planning (grep search: manual deletion filters)
-- [X] T032 [US5] Add unit tests for SystemColumnsService - **COMPLETE**: 7 tests passing (add_system_columns, generate_id, handle_insert/update/delete, apply_deletion_filter)
-- [X] T033 [US5] Add integration test: CREATE TABLE → verify `_id`, `_updated`, `_deleted` columns - **VERIFIED** via smoke tests
-- [X] T034 [US5] Add integration test: INSERT without `_id` → verify Snowflake ID generated - **VERIFIED** via smoke tests  
-- [X] T035 [US5] Add integration test: INSERT with manual `_id` → verify rejection - **VERIFIED** via test_handle_insert_rejects_manual_id
-- [ ] T036 [US5] Run grep validation: `rg "_updated\s*=" backend/crates/kalamdb-core --type rust` - **IN PROGRESS**: 4 remaining (stream_table_store.rs, user_table_update.rs, shared_table_provider.rs×2) - Will be removed in Phase 3
-- [X] T037 [US5] Run full test suite - **COMPLETE**: 15 unit tests passing, 10 smoke tests passing, 0 errors
+- [ ] T032 [US5] Refactor UserTableUpdateHandler to call unified_dml::append_version() with modified fields JSON (append new version, never in-place update)
+- [ ] T033 [US5] Refactor SharedTableUpdateHandler to call unified_dml::append_version() with modified fields JSON (same function as user tables)
+- [ ] T034 [US5] Update UPDATE handlers to fetch existing row, modify fields JSON, generate new SeqId, and append new version
+- [ ] T035 [US5] Remove duplicate UPDATE logic from user_table_update.rs and shared_table_update.rs (consolidate to unified_dml)
 
-**Phase 2 Summary**: SystemColumnsService fully operational with Snowflake ID generation, centralized system column management, and comprehensive testing. Remaining scattered logic (4 instances) will be migrated in Phase 3 during UPDATE/DELETE refactoring.
+### DELETE Handler Integration
 
----
+- [ ] T036 [US5] Refactor UserTableDeleteHandler to call unified_dml::append_version() with `_deleted = true` in new version (append new version, never in-place delete)
+- [ ] T037 [US5] Refactor SharedTableDeleteHandler to call unified_dml::append_version() with `_deleted = true` (same function as user tables)
+- [ ] T038 [US5] Update DELETE handlers to fetch existing row, set `_deleted = true`, generate new SeqId, and append new version
+- [ ] T039 [US5] Remove duplicate DELETE logic from user_table_delete.rs and shared_table_delete.rs (consolidate to unified_dml)
 
-## Phase 3: User Story 1 - UPDATE/DELETE on Persisted Records (Priority: P1)
+### Query Planning Integration (Version Resolution)
 
-**Goal**: Implement append-only UPDATE/DELETE with version resolution across fast and long-term storage.
+- [ ] T040 [US5] Integrate unified_dml::resolve_latest_version() into UserTableProvider.scan() method
+- [ ] T041 [US5] Integrate unified_dml::resolve_latest_version() into SharedTableProvider.scan() method (same function as user tables)
+- [ ] T042 [US5] Add MAX(`_seq`) grouping logic per PK in version resolution (extract PK from fields JSON, ensure only latest version returned)
+- [ ] T043 [US5] Add `WHERE _deleted = false` filtering after version resolution in scan() methods
+- [ ] T044 [US5] Implement RocksDB prefix scan for UserTableStore using `{user_id}:` prefix for efficient user-specific queries
+- [ ] T045 [US5] Implement RocksDB range scan for both stores using SeqId ordering for efficient `WHERE _seq > threshold` queries
 
-**Independent Test**: Create table, insert records, flush to Parquet, execute UPDATE/DELETE, query and verify latest version returned.
+### Flush Integration (Snapshot Deduplication)
 
-### SQL Parser Extensions
-
-- [X] T038 [P] [US1] Extend SQL grammar in backend/crates/kalamdb-sql to parse UPDATE statement - **COMPLETE**: UpdateStatement marker exists in ddl.rs, parsing handled in UpdateHandler
-- [X] T039 [P] [US1] Extend SQL grammar in backend/crates/kalamdb-sql to parse DELETE statement - **COMPLETE**: DeleteStatement marker exists in ddl.rs, parsing handled in DeleteHandler
-- [X] T040 [P] [US1] Add UpdateStatement AST node with table, set_clauses, where_clause fields - **COMPLETE**: Parsing logic in UpdateHandler.simple_parse_update()
-- [X] T041 [P] [US1] Add DeleteStatement AST node with table, where_clause fields - **COMPLETE**: Parsing logic in DeleteHandler.simple_parse_delete()
-
-### UPDATE Handler Implementation
-
-- [X] T042 [US1] Create UpdateHandler in backend/crates/kalamdb-core/src/sql/executor/handlers/dml.rs - **COMPLETE**: UpdateHandler structure exists in user_table_update.rs
-- [X] T043 [US1] Implement execute_update(): parse WHERE clause, fetch matching records from fast storage - **COMPLETE**: update_row() implements WHERE clause parsing via simple_parse_update()
-- [X] T044 [US1] Implement in-place update path: if record exists only in fast storage, update columns + call SystemColumnsService.handle_update() - **COMPLETE**: Lines 99-120 in user_table_update.rs integrate SystemColumnsService
-- [ ] T045 [US1] Implement append-only update path: if record exists in long-term storage, create new version in fast storage with updated `_updated` - **DEFERRED**: Requires version resolution (T052-T057)
-- [X] T046 [US1] Add nanosecond precision enforcement: ensure new `_updated` > previous MAX(`_updated`) by at least 1ns - **COMPLETE**: handle_update() enforces monotonic timestamps with +1ns guarantee
-- [X] T047 [US1] Integrate UpdateHandler with SqlExecutor routing in backend/crates/kalamdb-core/src/sql/executor/mod.rs - **COMPLETE**: SqlExecutor already routes UPDATE to UpdateHandler
-- [X] T024 [US1] Integrate SystemColumnsService.handle_update() into UpdateHandler (deferred from Phase 2) - **COMPLETE**: user_table_update.rs lines 99-120
-
-### DELETE Handler Implementation
-
-- [X] T048 [US1] Create DeleteHandler in backend/crates/kalamdb-core/src/sql/executor/handlers/dml.rs - **COMPLETE**: DeleteHandler structure exists in user_table_delete.rs
-- [X] T049 [US1] Implement execute_delete(): parse WHERE clause, fetch matching records - **COMPLETE**: delete_row() modified to fetch existing row, parse _updated, call SystemColumnsService.handle_delete()
-- [X] T050 [US1] Call SystemColumnsService.handle_delete(): set `_deleted = true`, update `_updated` in fast storage - **COMPLETE**: Lines 95-120 in user_table_delete.rs integrate SystemColumnsService with monotonic _updated
-- [X] T051 [US1] Integrate DeleteHandler with SqlExecutor routing in backend/crates/kalamdb-core/src/sql/executor/mod.rs - **COMPLETE**: SqlExecutor already routes DELETE to DeleteHandler
-- [X] T025 [US1] Integrate SystemColumnsService.handle_delete() into DeleteHandler (deferred from Phase 2) - **COMPLETE**: user_table_delete.rs lines 95-120
-
-### Version Resolution in Query Layer
-
-- [X] T052 [US1] Implement VersionResolution logic in backend/crates/kalamdb-core/src/tables/version_resolution.rs - **COMPLETE**: Created module with resolve_latest_version(), VersionSource enum, and comprehensive tests
-- [X] T053 [US1] Implement resolve_latest_version(): join fast storage + Parquet layers, select MAX(`_updated`) per `_id` - **COMPLETE**: HashMap-based group-by with MAX(_updated) selection per row_id (6/6 tests passing)
-- [X] T054 [US1] Add tie-breaker: FastStorage > Parquet when `_updated` timestamps identical - **COMPLETE**: VersionSource.priority() method (FastStorage=2, Parquet=1)
-- [X] T055 [US1] Integrate VersionResolution into UserTableProvider scan() method - **COMPLETE**: Refactored scan() to use scan_rocksdb_as_batch() + scan_parquet_as_batch() → resolve_latest_version() → deletion filter
-- [X] T056 [US1] Integrate VersionResolution into SharedTableProvider scan() method - **COMPLETE**: Refactored scan() to use unified helpers from base_table_provider (scan_parquet_files_as_batch, create_empty_batch). Eliminated ~200 lines of duplicate Parquet scanning logic across both providers.
-- [X] T057 [US1] Ensure SystemColumnsService.apply_deletion_filter() applied after version resolution - **COMPLETE**: Deletion filter (_deleted = false) applied after version resolution in UserTableProvider.scan()
-
-### Flush Integration
-
-- [X] T058 [US1] Update FlushExecutor to persist new record versions to separate batch files in backend/crates/kalamdb-core/src/jobs/executors/flush.rs - **COMPLETE**: generate_batch_filename() creates timestamped files (%Y-%m-%dT%H-%M-%S.parquet), each flush creates new file
-- [X] T059 [US1] Ensure old versions in long-term storage remain unchanged during flush - **COMPLETE**: Flush writes to new timestamped files only, never modifies existing Parquet files
+- [ ] T046 [US5] Update FlushExecutor to call unified_dml::resolve_latest_version() on hot storage snapshot before writing Parquet
+- [ ] T047 [US5] Ensure Parquet files contain only latest versions (MAX(`_seq`) per PK extracted from fields JSON) with `_deleted = false` filtering
+- [ ] T048 [US5] Add logging: rows_before_deduplication, rows_after_deduplication, deduplication_ratio
+- [ ] T049 [US5] Verify hot storage retains ALL versions after flush (flush is snapshot operation, not destructive)
 
 ### Testing & Validation
 
-- [X] T060 [US1] Add unit test: UPDATE record in fast storage → verify in-place update with `_updated` increment - **COMPLETE**: test_update_in_fast_storage() created in test_update_delete_version_resolution.rs
-- [X] T061 [US1] Add unit test: UPDATE record in Parquet → verify new version created in fast storage - **COMPLETE**: test_update_in_parquet() created
-- [X] T062 [US1] Add integration test: INSERT → FLUSH → UPDATE → query returns latest version - **COMPLETE**: test_full_workflow_insert_flush_update() created
-- [X] T063 [US1] Add integration test: record updated 3 times → all versions flushed → query returns MAX(`_updated`) - **COMPLETE**: test_multi_version_query() created
-- [X] T064 [US1] Add integration test: DELETE → `_deleted = true` set → query excludes record - **COMPLETE**: test_delete_excludes_record() created
-- [X] T065 [US1] Add integration test: DELETE record in Parquet → new version with `_deleted = true` in fast storage - **COMPLETE**: test_delete_in_parquet() created
-- [X] T066 [US1] Add concurrent update test: 10 threads UPDATE same record → all updates succeed, final query returns latest - **COMPLETE**: test_concurrent_updates() created with tokio::task::JoinSet
-- [X] T067 [US1] Add nanosecond collision test: rapid updates → verify +1ns increment prevents timestamp ties - **COMPLETE**: test_nanosecond_collision_handling() created with 20 rapid updates
-- [ ] T068 [US1] Run performance regression test: query latency with 1/10/100 versions ≤ 2× baseline (FR-102, FR-103) - **READY**: test_query_performance_with_multiple_versions() created, needs execution
+- [ ] T050 [US5] Add unit test: SeqId creation, timestamp extraction, ordering, serialization
+- [ ] T051 [US5] Add unit test: CREATE TABLE without PK → rejected with error
+- [ ] T052 [US5] Add unit test: CREATE TABLE with user PK → `_seq: SeqId` and `_deleted: bool` auto-added to schema
+- [ ] T053 [US5] Add integration test: INSERT → verify storage key format UserTableRowId.storage_key() returns `{user_id}:{_seq}` bytes for user tables, SeqId for shared tables
+- [ ] T054 [US5] Add integration test: INSERT → verify UserTableRow has user_id, _seq, _deleted, fields (no row_id, _updated)
+- [ ] T055 [US5] Add integration test: INSERT to shared table → verify SharedTableRow has only _seq, _deleted, fields (no access_level)
+- [ ] T056 [US5] Add integration test: UPDATE → verify new version appended with new SeqId (original version unchanged)
+- [ ] T057 [US5] Add integration test: DELETE → verify new version appended with `_deleted = true` and new SeqId (original version unchanged)
+- [ ] T058 [US5] Add integration test: SELECT after UPDATE → verify MAX(`_seq`) resolution returns latest version only
+- [ ] T059 [US5] Add integration test: SELECT after DELETE → verify `_deleted = true` row excluded from results
+- [ ] T060 [US5] Add integration test: INSERT duplicate PK → rejected with uniqueness error
+- [ ] T061 [US5] Add integration test: FLUSH → verify Parquet contains deduplicated rows (MAX(`_seq`) per PK from fields JSON)
+- [ ] T062 [US5] Add integration test: incremental sync `WHERE _seq > X` → returns all versions after SeqId threshold
+- [ ] T063 [US5] Add integration test: RocksDB prefix scan `{user_id}:` → efficiently returns only that user's rows
+- [ ] T064 [US5] Add integration test: RocksDB range scan `_seq > threshold` → efficiently skips older versions
+- [ ] T065 [US5] Add code analysis test: verify user/shared INSERT handlers call identical unified_dml::append_version()
+- [ ] T066 [US5] Add code analysis test: verify user/shared UPDATE handlers call identical unified_dml::append_version()
+- [ ] T067 [US5] Add code analysis test: verify user/shared DELETE handlers call identical unified_dml::append_version()
+- [ ] T068 [US5] Add code analysis test: measure code reduction in user_table_*.rs and shared_table_*.rs (target: 50%+ reduction)
+- [ ] T069 [US5] Run performance test: INSERT throughput with SeqId generation (target: >10K ops/sec per core)
+- [ ] T070 [US5] Run performance test: UPDATE/DELETE append latency (target: <5ms per operation)
+- [ ] T071 [US5] Run performance test: MAX(`_seq`) query resolution with 10+ versions per PK (target: <2x baseline latency)
+- [ ] T072 [US5] Run performance test: SeqId timestamp extraction overhead (target: <1μs per extraction)
+
+**Phase 2 Summary**: MVCC architecture with SeqId versioning, minimal row structures (UserTableRow/SharedTableRow with only _seq, _deleted, fields), efficient storage keys ({user_id}:{_seq} and {_seq}), unified DML functions eliminating 50%+ duplicate code, append-only hot storage with prefix/range scan support, and snapshot deduplication on flush.
+
+---
+
+## Phase 2.5: Provider Consolidation (User/Shared Table DRY Refactoring)
+
+**Goal**: Eliminate duplicate logic between UserTableProvider and SharedTableProvider by extracting shared helpers to base_table_provider module.
+
+**Rationale**: Both providers share ~80% of their implementation logic. The only differences are:
+1. Storage path resolution (per-user vs shared directory)
+2. RocksDB scan filtering (user_id prefix vs full table)
+3. User context extraction (SessionState vs none)
+
+By extracting shared helpers with strategy parameters, we can reduce code duplication by 60-70% while maintaining type safety.
+
+### Shared Helper Extraction
+
+- [ ] T073a [P] [US5] Extract `validate_insert_rows()` from UserTableProvider to base_table_provider as public helper
+- [ ] T073b [US5] Update SharedTableProvider to use extracted validate_insert_rows() helper
+- [ ] T074a [P] [US5] Create generic `scan_rocksdb_with_filter<K, V>()` helper in base_table_provider accepting filter closure
+- [ ] T074b [US5] Refactor UserTableProvider.scan_rocksdb_as_batch() to call generic helper with user_id prefix filter
+- [ ] T074c [US5] Refactor SharedTableProvider.scan_rocksdb_as_batch() to call generic helper with no filter (full scan)
+- [ ] T075a [P] [US5] Create generic `scan_parquet_with_path<K, V>()` helper in base_table_provider accepting path resolver closure
+- [ ] T075b [US5] Refactor UserTableProvider.scan_parquet_as_batch() to call generic helper with per-user path resolver
+- [ ] T075c [US5] Refactor SharedTableProvider.scan_parquet_as_batch() to call generic helper with shared path resolver
+- [ ] T076a [P] [US5] Extract `find_row_by_id_field()` helper to base_table_provider for delete_by_id_field/update_by_id_field logic
+- [ ] T076b [US5] Refactor UserTableProvider.delete_by_id_field() to use find_row_by_id_field() helper
+- [ ] T076c [US5] Refactor SharedTableProvider.delete_by_id_field() to use find_row_by_id_field() helper
+- [ ] T076d [US5] Refactor UserTableProvider.update_by_id_field() to use find_row_by_id_field() helper
+- [ ] T076e [US5] Refactor SharedTableProvider.update_by_id_field() to use find_row_by_id_field() helper
+
+### Trait-Based Abstraction (Alternative Approach)
+
+- [ ] T077a [US5] Create `TableProviderDML` trait in base_table_provider with default implementations for shared DML operations
+- [ ] T077b [US5] Add trait methods: validate_schema(), scan_with_strategy(), delete_by_logical_id(), update_by_logical_id()
+- [ ] T077c [US5] Implement TableProviderDML for UserTableProvider with user-specific overrides (path resolver, scan filter)
+- [ ] T077d [US5] Implement TableProviderDML for SharedTableProvider with shared-specific overrides (no filter, single path)
+- [ ] T077e [US5] Add comprehensive unit tests for TableProviderDML default implementations
+
+### Code Consolidation Validation
+
+- [ ] T078 [US5] Run code analysis: measure LOC reduction in UserTableProvider (target: 200+ lines removed)
+- [ ] T079 [US5] Run code analysis: measure LOC reduction in SharedTableProvider (target: 150+ lines removed)
+- [ ] T080 [US5] Verify all UserTableProvider tests still pass after consolidation
+- [ ] T081 [US5] Verify all SharedTableProvider tests still pass after consolidation
+- [ ] T082 [US5] Add integration test: verify UserTableProvider and SharedTableProvider behavior unchanged after refactoring
+
+**Phase 2.5 Summary**: Extract 5-7 shared helpers to base_table_provider, eliminating 350+ lines of duplicate code (60-70% reduction in provider files) while maintaining full type safety and test coverage.
+
+---
+
+## Phase 3: User Story 1 - Consolidated with Phase 2 (MVCC Architecture)
+
+**Note**: This phase has been consolidated into Phase 2 (User Story 5). The MVCC architecture with `_seq` versioning replaces the original append-only UPDATE/DELETE design. All tasks from Phase 3 are now covered by Phase 2's unified DML implementation.
+
+**Original Goal**: Implement append-only UPDATE/DELETE with version resolution across fast and long-term storage.
+
+**New Approach (Phase 2)**: 
+- All DML operations (INSERT/UPDATE/DELETE) use unified `append_version()` function
+- Version resolution uses MAX(`_seq`) per PK instead of MAX(`_updated`) with storage layer prioritization
+- User and shared tables share identical code paths (50%+ code reduction)
+- Hot storage is always append-only (zero in-place updates)
+- Flush deduplicates using MAX(`_seq`) per PK before writing Parquet
+
+**Tasks Covered in Phase 2**:
+- T038-T041: SQL parser extensions → Now part of unified DML parsing
+- T042-T051: UPDATE/DELETE handlers → Replaced by unified append_version() function (T026-T033 in Phase 2)
+- T052-T057: Version resolution → Replaced by unified resolve_latest_version() function (T016, T034-T037 in Phase 2)
+- T058-T059: Flush integration → Covered by snapshot deduplication (T038-T041 in Phase 2)
+- T060-T068: Testing → Covered by MVCC integration tests (T042-T058 in Phase 2)
+
+**See Phase 2 for complete MVCC implementation details.**
 
 ---
 
@@ -529,9 +685,25 @@ US1, US2, US3, US6 (all independent of) ──> US8 (Job Params)
 
 ## Task Summary
 
-**Total Tasks**: 238  
+**Total Tasks**: 253 (was 238 + 15 provider consolidation tasks)
 **User Story Breakdown**:
 - Setup: 7 tasks
+- **US5 (MVCC + Provider Consolidation)**: 87 tasks (was 72 + 15 provider tasks)
+  - Phase 2: MVCC Architecture - 72 tasks
+  - Phase 2.5: Provider Consolidation (NEW) - 15 tasks
+- US1 (UPDATE/DELETE): Consolidated into Phase 2 (MVCC)
+- US6 (Manifest Cache): 33 tasks
+- US2 (Manifest Optimization): 27 tasks
+- US3 (Bloom Filters): 16 tasks
+- US4 (AS USER): 26 tasks
+- US7 (Config): 12 tasks
+- US8 (Job Params): 19 tasks
+- Polish: 31 tasks
+
+**Code Consolidation Targets**:
+- **Phase 2 (MVCC)**: ~1200 lines → ~600 lines (50% reduction via unified DML functions)
+- **Phase 2.5 (Providers)**: ~800 lines → ~450 lines (60-70% reduction via shared helpers)
+- **Total Expected Reduction**: ~550 lines of duplicate code eliminated
 - US5 (System Columns): 30 tasks
 - US1 (UPDATE/DELETE): 31 tasks
 - US6 (Manifest Cache): 33 tasks
@@ -542,9 +714,9 @@ US1, US2, US3, US6 (all independent of) ──> US8 (Job Params)
 - US8 (Job Params): 19 tasks
 - Polish: 31 tasks
 
-**Parallel Opportunities**: ~60 tasks marked [P] (25% parallelizable)
+**Parallel Opportunities**: ~65 tasks marked [P] (26% parallelizable, includes provider consolidation parallelism)
 
-**MVP Scope**: Phase 2 (US5) + Phase 3 (US1) = 68 tasks (28.6% of total)
+**MVP Scope**: Phase 2 (US5 MVCC + Provider Consolidation) = 87 tasks (34.4% of total)
 
 **Estimated Complexity**:
 - High: US1 (version resolution), US2 (manifest service), US6 (cache lifecycle)

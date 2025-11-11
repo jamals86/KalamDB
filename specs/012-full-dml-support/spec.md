@@ -1,9 +1,54 @@
-# Feature Specification: Full DML Support
+# Feature Specification: Full DML Support (MVCC Architecture)
 
 **Feature Branch**: `012-full-dml-support`  
 **Created**: 2025-11-10  
+**Updated**: 2025-11-11 (MVCC Architecture Redesign)  
 **Status**: Draft  
-**Input**: User description: "Support Update/Delete of flushed tables with manifest files, AS USER support for DML statements, centralized config usage via AppContext, and generic JobExecutor parameters"
+
+## ⚠️ CRITICAL ARCHITECTURE CHANGE (2025-11-11)
+
+**Original Design**: Append-only storage with `_updated` timestamps and storage layer prioritization (fast storage > Parquet)
+
+**New Design (MVCC)**: Multi-Version Concurrency Control with `_seq` Snowflake IDs and unified DML functions
+
+### Key Changes:
+
+1. **Mandatory Primary Key**: Users MUST supply a primary key column (any name: `id`, `email`, `order_id`, etc.) when creating tables
+2. **SeqId Type**: New `SeqId` wrapper around Snowflake ID with timestamp extraction capabilities (replaces raw i64 `_seq`)
+3. **System Columns**: KalamDB auto-adds `_seq: SeqId` (Snowflake ID for versioning) and `_deleted: bool` (soft delete flag)
+4. **Storage Key Formats**:
+   - **UserTableRowId**: `{user_id}:{_seq}` (no table_id - already in column family name)
+   - **SharedTableRowId**: Just `{_seq}` (SeqId directly, no wrapper needed)
+5. **Row Structures**:
+   - **UserTableRow**: `user_id: UserId`, `_seq: SeqId`, `_deleted: bool`, `fields: JsonValue` (user PK + data in fields)
+   - **SharedTableRow**: `_seq: SeqId`, `_deleted: bool`, `fields: JsonValue` (no access_level per row - cached in schema)
+6. **Append-Only Writes**: INSERT/UPDATE/DELETE ALL append new versions with incremented `_seq` - ZERO in-place updates in hot storage
+7. **Version Resolution**: SELECT queries use MAX(`_seq`) per PK with `_deleted = false` filtering
+8. **Snapshot Deduplication**: FLUSH operations write only latest versions (MAX(`_seq`) per PK) to Parquet files
+9. **Unified DML**: User tables and shared tables use IDENTICAL insertion/update/deletion functions (50%+ code reduction, zero duplicate logic)
+10. **Incremental Sync**: `SELECT * WHERE _seq > {last_synced}` retrieves all changes after specified version threshold
+
+### Benefits:
+
+- **Zero-locking concurrency**: Writers never block readers (true append-only architecture)
+- **Simplified flush logic**: Snapshot deduplication uses simple MAX(`_seq`) grouping
+- **Code consolidation**: User/shared tables share all DML functions (eliminates duplicate code paths)
+- **Point-in-time queries**: Foundation for future time-travel queries via `_seq` ranges
+- **Efficient sync**: Incremental sync via `_seq > X` without complex timestamp handling
+- **Type-safe SeqId**: Wrapper prevents mixing raw i64s with sequence IDs, provides timestamp extraction
+- **Efficient scans**: RocksDB prefix scanning by `user_id:` or range scanning by `_seq` threshold
+- **Minimal row overhead**: UserTableRow/SharedTableRow contain only essential fields (_seq, _deleted, fields)
+
+### Migration Impact:
+
+- **Existing tables**: Migration strategy required (add `_seq: SeqId` column, rewrite storage keys to `{user_id}:{_seq}` format)
+- **Existing code**: UserTableRow/SharedTableRow structures must change:
+  - Remove: `row_id: String`, `user_id: String`, `_updated: String`, `access_level: TableAccess`
+  - Add: `_seq: SeqId`, `_deleted: bool`, `fields: JsonValue` (minimal structure)
+- **Storage keys**: UserTableRowId becomes `{user_id}:{_seq}`, SharedTableRowId becomes just `SeqId` (no wrapper)
+- **Phase 2 tasks**: SeqId type creation, unified DML module, storage key refactoring, query resolution changes
+
+**Input**: User description: "Support Update/Delete of flushed tables with manifest files, AS USER support for DML statements, centralized config usage via AppContext, and generic JobExecutor parameters" + **MVCC architecture redesign with `_seq` versioning and unified DML functions**
 
 ## User Scenarios & Testing *(mandatory)*
 
@@ -78,24 +123,42 @@ A service account or admin needs to insert, update, or delete records on behalf 
 
 ---
 
-### User Story 5 - System Column Management Consolidation (Priority: P1)
+### User Story 5 - MVCC Storage Architecture with System Columns (Priority: P1)
 
-Developers need a single centralized component managing all system columns (`_id`, `_updated`, `_deleted`) to eliminate scattered logic, ensure consistency, and simplify maintenance. The system must automatically add `_id` as primary key with Snowflake ID generation by default, preventing users from manually setting IDs.
+Developers and database administrators need a clean Multi-Version Concurrency Control (MVCC) architecture where:
+1. Users must supply a primary key (any column name) when creating user/shared tables
+2. KalamDB automatically adds two system columns: `_seq` (Snowflake ID versioning) and `_deleted` (soft delete flag)
+3. The Arrow schema is cached with `_seq` and `_deleted` to avoid repeated schema manipulation
+4. INSERT operations store rows with key format: `{table_id}:{user_id}:{_seq}` where `_seq` is a unique Snowflake ID per version
+5. UPDATE/DELETE operations append new versions to the same store (never in-place updates) with incremented `_seq`
+6. Queries use MAX(`_seq`) with `_deleted = false` filtering to retrieve the latest visible version
+7. All DML operations (user/shared tables) use unified, reusable functions - no separate logic paths
 
-**Why this priority**: CRITICAL for data integrity and code maintainability - currently system column logic is scattered across multiple modules (table creation, DML handlers, query planning, flush operations). This creates bugs, inconsistencies, and makes adding new system columns error-prone. Without consolidation, the new `_id` column and versioning features would duplicate this scattered pattern. Must be completed BEFORE implementing UPDATE/DELETE to avoid technical debt.
+**Why this priority**: CRITICAL for data integrity, query correctness, and code maintainability. MVCC enables:
+- **Zero-locking concurrency**: Writers never block readers (append-only storage)
+- **Point-in-time queries**: Retrieve data as of specific `_seq` (future feature)
+- **Simplified flush logic**: Snapshot uses MAX(`_seq`) per row to get latest version for Parquet
+- **Unified codebase**: User and Shared tables use identical storage patterns (eliminates 50%+ duplicate code)
 
-**Independent Test**: Can be fully tested by creating a SystemColumnsService component, migrating all system column logic to it, then running full test suite. Success is verified by: (1) all tests passing, (2) grep search showing zero direct system column manipulation outside SystemColumnsService, (3) new tables automatically have `_id` primary key with Snowflake IDs.
+Without this foundation, UPDATE/DELETE implementations would be scattered, inconsistent, and impossible to optimize for high-concurrency workloads.
+
+**Independent Test**: Create table with user-defined PK, insert rows (auto-generate `_seq`), update/delete (append new versions), query (verify MAX(`_seq`) resolution), flush (verify Parquet contains deduplicated latest versions). Verify user/shared tables use same code paths.
 
 **Acceptance Scenarios**:
 
-1. **Given** a user creates a new table without specifying `id` column, **When** table creation executes, **Then** the system automatically adds `_id BIGINT PRIMARY KEY DEFAULT snowflake_id()` as first column
-2. **Given** a user attempts to create a table with `id` column (user-defined), **When** table creation executes, **Then** the system adds `_id` as separate column and allows user's `id` column (both coexist)
-3. **Given** any table creation, **When** table is created, **Then** the system automatically adds `_id`, `_updated`, and `_deleted` columns via single SystemColumnsService.add_system_columns() call
-4. **Given** an INSERT operation, **When** user doesn't provide `_id` value, **Then** the system generates Snowflake ID automatically (timestamp + node_id + sequence)
-5. **Given** an UPDATE operation, **When** record is updated, **Then** SystemColumnsService.handle_update() manages `_updated` timestamp and version logic in one place
-6. **Given** a DELETE operation, **When** record is deleted, **Then** SystemColumnsService.handle_delete() sets `_deleted = true` and updates `_updated` in one place
-7. **Given** a query execution, **When** filtering records, **Then** SystemColumnsService.apply_deletion_filter() adds `WHERE _deleted = false` automatically
-8. **Given** codebase analysis, **When** searching for system column logic, **Then** all operations are centralized in SystemColumnsService (zero scattered references)
+1. **Given** a user creates a table, **When** CREATE TABLE executes, **Then** user MUST supply a primary key column (any name like `id`, `email`, `order_id`) and system auto-adds `_seq BIGINT` and `_deleted BOOLEAN` columns
+2. **Given** table creation, **When** Arrow schema is constructed, **Then** `_seq` and `_deleted` are cached in CachedTableData.arrow_schema (never recomputed per-query)
+3. **Given** an INSERT operation to user table, **When** user provides PK value (or system generates UUID), **Then** system generates SeqId for `_seq`, sets `_deleted = false`, stores user_id in UserTableRow.user_id field, stores user PK + data in `fields` JSON, and uses storage key `{user_id}:{_seq}` via UserTableRowId.storage_key() method
+4. **Given** an UPDATE operation, **When** user modifies a row, **Then** system appends a NEW version with new SeqId `_seq` and updated `fields` JSON (original version unchanged in hot storage)
+5. **Given** a DELETE operation, **When** user deletes a row, **Then** system appends a NEW version with `_deleted = true` and new SeqId `_seq` (original version unchanged)
+6. **Given** a SELECT query, **When** scanning data, **Then** DataFusion applies MAX(`_seq`) grouping per PK and filters WHERE `_deleted = false` to return only latest visible versions
+7. **Given** a FLUSH operation, **When** writing to Parquet, **Then** system snapshots data, deduplicates using MAX(`_seq`) per PK, and writes only latest versions to disk (hot storage keeps all versions until next flush)
+8. **Given** hot storage (RocksDB), **When** any DML operation executes, **Then** system ALWAYS appends (never updates keys in-place) ensuring lock-free writes
+9. **Given** user tables and shared tables, **When** any DML operation executes, **Then** BOTH table types use the same unified insertion/update/deletion functions (zero duplicate logic)
+10. **Given** sync operations (SELECT since `_seq > last_synced`), **When** client requests changes, **Then** system efficiently returns all versions after specified SeqId threshold for incremental sync
+11. **Given** shared table creation, **When** table is created, **Then** SharedTableRow contains only `_seq`, `_deleted`, and `fields` (no access_level per row - cached in schema definition)
+12. **Given** user table scan by user, **When** querying specific user's data, **Then** RocksDB uses prefix scan on `{user_id}:` to efficiently retrieve only that user's rows
+13. **Given** incremental sync query, **When** scanning for `_seq > threshold`, **Then** RocksDB range scan efficiently skips older versions using SeqId ordering
 
 ---
 
@@ -205,23 +268,34 @@ Developers implementing job executors need type-safe parameter handling instead 
 
 ### Functional Requirements
 
-#### Append-Only Update/Delete (FR-001 to FR-015)
+#### MVCC Storage Architecture (FR-001 to FR-025)
 
-- **FR-001**: System MUST include `_updated` timestamp column (with nanosecond precision) in all user and shared tables for version tracking
-- **FR-002**: System MUST include `_deleted` boolean column in all user and shared tables for soft deletion tracking
-- **FR-003**: System MUST set `_deleted = false` for all new records by default
-- **FR-004**: System MUST check fast storage first when processing UPDATE operations to determine if record exists there
-- **FR-005**: System MUST update records in-place when they exist only in fast storage, setting `_updated` to current timestamp with nanosecond precision
-- **FR-006**: System MUST create new record versions in fast storage when updating records that have been persisted to long-term storage
-- **FR-007**: System MUST preserve old versions in long-term storage unchanged when creating new versions in fast storage
-- **FR-008**: System MUST persist new versions to long-term storage during the next flush operation as separate batch files
-- **FR-009**: System MUST join data from all storage layers during queries and return only the version with MAX(_updated) for each record ID
-- **FR-010**: System MUST support DELETE operations by setting `_deleted = true` and updating `_updated` timestamp in fast storage
-- **FR-011**: System MUST filter out records where `_deleted = true` from query results (implicit WHERE _deleted = false)
-- **FR-012**: System MUST handle multiple updates to the same record (e.g., 3 updates) by maintaining correct version ordering via `_updated` timestamps
-- **FR-013**: System MUST ensure `_updated` timestamps are monotonically increasing to guarantee correct version resolution
-- **FR-014**: System MUST validate all user and shared tables have the required `_updated` and `_deleted` columns during table creation
-- **FR-015**: System MUST update `_updated` timestamp when DELETE operation sets `_deleted = true` to track deletion time
+- **FR-001**: System MUST require users to supply a primary key column (any name) when creating user/shared tables via CREATE TABLE statement
+- **FR-002**: System MUST create SeqId type wrapping Snowflake ID (i64) with timestamp extraction methods
+- **FR-003**: System MUST automatically add `_seq: SeqId` column to all user and shared tables for MVCC version tracking
+- **FR-004**: System MUST automatically add `_deleted: bool` column to all user and shared tables for soft deletion tracking
+- **FR-005**: System MUST cache Arrow schema with `_seq` and `_deleted` columns in CachedTableData.arrow_schema during table creation (zero per-query recomputation)
+- **FR-006**: System MUST generate unique SeqId (via Snowflake ID) for `_seq` on every INSERT/UPDATE/DELETE operation (timestamp + node_id + sequence)
+**FR-007**: System MUST use storage key format `{user_id}:{_seq}` for UserTableRowId (composite key with UserId and SeqId components, implements StorageKey trait like TableId)
+**FR-008**: System MUST use SeqId directly as storage key for SharedTableRowId (no wrapper struct needed)
+- **FR-009**: System MUST set `_deleted = false` for INSERT operations by default
+- **FR-010**: System MUST store user_id in UserTableRow.user_id field to identify which user owns the row (since all users stored in same RocksDB store)
+- **FR-011**: System MUST store user-provided PK value + all user columns in `fields: JsonValue` within UserTableRow
+- **FR-011**: System MUST store all shared table columns in `fields: JsonValue` within SharedTableRow (no access_level per row)
+- **FR-012**: System MUST append new versions with new SeqId for UPDATE operations (NEVER modify existing keys in hot storage)
+- **FR-013**: System MUST append new versions with `_deleted = true` and new SeqId for DELETE operations (NEVER modify existing keys)
+- **FR-014**: System MUST maintain all historical versions in hot storage (RocksDB) until flush operation executes
+- **FR-015**: System MUST apply MAX(`_seq`) grouping per primary key during SELECT queries to retrieve latest version of each row
+- **FR-016**: System MUST filter WHERE `_deleted = false` during SELECT queries to exclude soft-deleted rows
+- **FR-017**: System MUST use the same unified DML functions for both user tables and shared tables (zero duplicate code paths)
+- **FR-018**: System MUST support incremental sync queries via `SELECT * WHERE _seq > {last_synced}` to retrieve all changes after specified SeqId
+- **FR-019**: System MUST deduplicate rows using MAX(`_seq`) per PK during FLUSH operations before writing to Parquet (only latest version persisted)
+- **FR-020**: System MUST keep all versions in hot storage after flush (flush creates Parquet snapshot, does NOT delete hot storage versions)
+- **FR-021**: System MUST ensure SeqId values are globally unique and monotonically increasing across all operations (Snowflake ID guarantees)
+- **FR-022**: System MUST validate that user-provided PK values are unique per table (reject duplicate PK inserts with error)
+- **FR-023**: System MUST allow NULL PK values only if PK column is nullable in schema (enforce NOT NULL PK constraint otherwise)
+- **FR-024**: System MUST support RocksDB prefix scans using `{user_id}:` for efficient user-specific queries in UserTableStore
+- **FR-025**: System MUST support RocksDB range scans using SeqId ordering for efficient `WHERE _seq > threshold` queries
 
 #### Manifest File for Query Optimization (FR-016 to FR-030)
 
@@ -292,20 +366,16 @@ Developers implementing job executors need type-safe parameter handling instead 
 - **FR-068**: System MUST audit AS USER operations with both the authenticated user (actor) and target user (subject)
 - **FR-069**: System MUST reject AS USER operations on Shared tables with clear error message
 
-#### System Column Management (FR-070 to FR-081)
+#### Unified DML Functions (FR-070 to FR-077)
 
-- **FR-070**: System MUST create a centralized SystemColumnsService component managing all `_id`, `_updated`, and `_deleted` column operations
-- **FR-071**: System MUST automatically add `_id BIGINT PRIMARY KEY` as first column in all user and shared tables during table creation
-- **FR-072**: System MUST use Snowflake ID algorithm for `_id` default value (timestamp + node_id + sequence for global uniqueness)
-- **FR-073**: System MUST allow user-defined `id` columns to coexist with system `_id` column (both can exist in same table)
-- **FR-074**: System MUST generate `_id` value automatically when INSERT operation doesn't provide it
-- **FR-075**: System MUST reject INSERT operations that attempt to manually set `_id` value (system-managed only)
-- **FR-076**: System MUST implement SystemColumnsService.add_system_columns() method called during table creation to inject `_id`, `_updated`, `_deleted`
-- **FR-077**: System MUST implement SystemColumnsService.handle_update() method managing `_updated` timestamp and version logic for UPDATE operations
-- **FR-078**: System MUST implement SystemColumnsService.handle_delete() method managing `_deleted` flag and `_updated` timestamp for DELETE operations
-- **FR-079**: System MUST implement SystemColumnsService.apply_deletion_filter() method automatically adding `WHERE _deleted = false` to queries
-- **FR-080**: System MUST eliminate all scattered system column logic outside SystemColumnsService (zero direct manipulation in DML handlers, query planning, flush operations)
-- **FR-081**: System MUST validate via code analysis that all system column operations route through SystemColumnsService
+- **FR-070**: System MUST create a centralized DML module with unified functions for INSERT/UPDATE/DELETE operations
+- **FR-071**: System MUST implement unified `append_version()` function used by INSERT, UPDATE, and DELETE handlers for both user/shared tables
+- **FR-072**: System MUST implement unified `resolve_latest_version()` function used by query planning for both user/shared tables
+- **FR-073**: System MUST implement unified `validate_primary_key()` function enforcing uniqueness and NOT NULL constraints for both user/shared tables
+- **FR-074**: System MUST implement unified `generate_storage_key()` function creating `{table_id}:{user_id}:{_seq}` keys for both user/shared tables
+- **FR-075**: System MUST eliminate duplicate INSERT/UPDATE/DELETE logic between user_table_*.rs and shared_table_*.rs files (target: 50%+ code reduction)
+- **FR-076**: System MUST use same Arrow schema manipulation functions for both user/shared tables (zero per-table-type schema logic)
+- **FR-077**: System MUST validate via code analysis that user/shared DML handlers call identical unified functions (zero divergence)
 
 #### Centralized Configuration (FR-082 to FR-087)
 
@@ -347,9 +417,14 @@ Developers implementing job executors need type-safe parameter handling instead 
 
 ### Key Entities
 
-- **RecordVersion**: A versioned instance of a record containing all column values plus `_updated` timestamp (nanosecond precision) for version ordering and `_deleted` boolean flag for soft deletion
-- **VersionResolution**: Query-time logic that joins all storage layers and selects the version with MAX(_updated) for each record ID, filtering out records where `_deleted = true`
-- **StorageLayer**: Either fast storage (RocksDB/in-memory) or long-term storage (batch Parquet files), both participating in version resolution
+- **SeqId**: Type-safe wrapper around Snowflake ID (i64) with timestamp extraction, ordering, and serialization capabilities
+- **RecordVersion**: A versioned instance of a record containing `user_id: UserId`, `_seq: SeqId`, `_deleted: bool`, and `fields: JsonValue` (user PK + data) for UserTableRow
+- **VersionResolution**: Query-time logic that groups rows by PK and selects version with MAX(`_seq`), filtering WHERE `_deleted = false`
+- **UserTableRowId**: Composite key struct containing `user_id: UserId` and `_seq: SeqId`, implements StorageKey trait with storage_key() method returning `{user_id}:{_seq}` bytes (similar to TableId pattern)
+- **SharedTableRowId**: Just `SeqId` directly (no wrapper struct, simplest possible key)
+- **AppendOnlyStorage**: Architecture where UPDATE/DELETE operations append new versions with new SeqId instead of modifying existing keys
+- **SnapshotDeduplication**: Flush operation logic that applies MAX(`_seq`) per PK to write only latest versions to Parquet files
+- **IncrementalSync**: Query pattern `SELECT * WHERE _seq > {last_synced}` retrieving all row versions after specified SeqId threshold
 - **ManifestFile**: JSON file (manifest.json) per table tracking batch file metadata including max_batch counter, file paths, min/max column values, row counts, sizes, and schema versions
 - **BatchFileEntry**: Manifest entry for a single batch file containing: file path (batch-{number}.parquet), min_updated/max_updated timestamps, min/max values for all columns, row_count, size_bytes, schema_version, status
 - **ManifestCache CF**: Dedicated RocksDB column family storing cached manifest entries with key format `{namespace}:{table}:{user_id}`
@@ -360,7 +435,9 @@ Developers implementing job executors need type-safe parameter handling instead 
 - **BloomFilter**: Probabilistic data structure embedded in Parquet file metadata for `id`, `_updated`, and indexed columns enabling efficient point lookup elimination
 - **ImpersonationContext**: Execution context holding both authenticated user (actor) and target user (subject) for audit trail and authorization enforcement in AS USER operations (User/Stream tables only)
 - **SystemColumnsService**: Centralized service managing all system column operations (`_id` generation with Snowflake IDs, `_updated` timestamp management, `_deleted` flag handling) ensuring single source of truth and preventing scattered logic
-- **SnowflakeId**: 64-bit unique identifier combining timestamp (41 bits), node_id (10 bits), and sequence (12 bits) for globally unique, time-ordered primary keys
+- **SnowflakeId**: 64-bit unique identifier combining timestamp (41 bits), node_id (10 bits), and sequence (12 bits) for globally unique, monotonically increasing IDs
+- **UnifiedDMLModule**: Centralized module containing reusable INSERT/UPDATE/DELETE/query functions eliminating duplicate logic between user/shared tables
+- **JsonValue**: serde_json::Value storing all user-defined columns (PK + data) within UserTableRow/SharedTableRow.fields
 - **ManifestService**: Centralized service component responsible for all manifest file operations (create, update, rebuild, validate) ensuring single source of truth for batch file metadata management
 - **TypedJobParameters**: Structured parameter container enabling validation and type checking for job-specific configurations
 
@@ -625,23 +702,31 @@ let manifest = manifest_cache.get_or_load(namespace, table, user_id).await?;
 
 ### Measurable Outcomes
 
-- **SC-001**: UPDATE operations on persisted records complete without reading long-term storage files (append-only write to fast storage with nanosecond-precision `_updated`)
-- **SC-002**: DELETE operations execute in under 50ms by setting `_deleted = true` and updating `_updated` in fast storage only
-- **SC-003**: Queries returning latest versions correctly resolve MAX(_updated) across all storage layers within 2x baseline query time
-- **SC-004**: System handles records with 10+ versions without degradation in query performance
+- **SC-001**: INSERT operations append new versions to hot storage with unique SeqId completing in <5ms (append-only write, zero reads required)
+- **SC-002**: UPDATE operations append new versions without reading Parquet files (append-only write to hot storage with new SeqId)
+- **SC-003**: DELETE operations execute in under 10ms by appending new version with `_deleted = true` and new SeqId (append-only write, zero destructive operations)
+- **SC-004**: Queries returning latest versions correctly resolve MAX(`_seq`) per PK across hot storage within 2x baseline query time
+- **SC-005**: User tables and shared tables use identical DML functions with zero duplicate code paths (verified by code analysis showing 50%+ code reduction)
+- **SC-006**: Arrow schemas with `_seq: SeqId` and `_deleted: bool` are cached in CachedTableData, never recomputed per-query (verified by profiling showing zero to_arrow_schema() calls in hot path)
 - **SC-005**: Manifest-based query optimization reduces unnecessary batch file scans by 80%+ for queries with timestamp range predicates
 - **SC-006**: Bloom filter optimization reduces I/O by 90%+ for point queries (WHERE id = X) on tables with 100+ batch files
-- **SC-007**: Flush operations correctly increment max_batch counter and generate sequential batch file names (batch-0001.parquet, batch-0002.parquet, etc.)
-- **SC-008**: Manifest files are atomically updated after flush completion with zero data loss on crash during manifest write
-- **SC-009**: Impersonated operations are audited with both actor and subject user IDs in 100% of executions
-- **SC-010**: Impersonation permission checks reject unauthorized users in under 10ms
+- **SC-007**: FLUSH operations deduplicate using MAX(`_seq`) per PK and write only latest versions to Parquet (verified by comparing hot storage row count vs Parquet row count after flush)
+- **SC-008**: Incremental sync queries `WHERE _seq > X` return all row versions after SeqId threshold completing in <50ms for 10K changed rows
+- **SC-009**: Primary key uniqueness is enforced with clear error messages rejecting duplicate PK inserts within 5ms (index lookup + validation)
+- **SC-010**: UserTableRowId implements StorageKey trait with storage_key() method returning `{user_id}:{_seq}` bytes, following same pattern as TableId (verified by code inspection showing struct with user_id and _seq fields)
+- **SC-011**: SharedTableRowId uses SeqId directly (no wrapper overhead) with zero serialization overhead (verified by profiling)
+- **SC-012**: SeqId timestamp extraction works correctly returning milliseconds since epoch (verified by unit tests with known Snowflake IDs)
+- **SC-013**: UserTableRow contains user_id field to identify row ownership plus essential fields (_seq, _deleted, fields) with zero redundant per-row overhead
+- **SC-014**: SharedTableRow contains only essential fields (_seq, _deleted, fields) with zero per-row overhead (no access_level, verified by struct inspection)
 - **SC-011**: Centralized configuration access eliminates all direct configuration file reads outside initialization code
 - **SC-012**: Job parameter validation failures provide actionable error messages identifying expected structure within 100ms
 - **SC-013**: Type-safe job parameter implementation reduces parameter handling code by 50%+ lines per job type
-- **SC-014**: All system column operations (`_id`, `_updated`, `_deleted`) are centralized in SystemColumnsService with zero scattered references (verified by code analysis)
-- **SC-015**: Snowflake ID generation produces globally unique, time-ordered `_id` values with 1M+ IDs/sec throughput per node
-- **SC-016**: SystemColumnsService migration completes with 100% test pass rate and zero system column logic outside service component
-- **SC-017**: Test suite achieves 100% coverage for post-flush updates, multi-version records, and _deleted flag handling
-- **SC-018**: Performance regression tests confirm query latency remains within 2x baseline when resolving 10+ versions (acceptable degradation for versioned queries)
+- **SC-014**: Test suite achieves 100% coverage for MVCC append-only writes, MAX(`_seq`) resolution, and unified DML functions
+- **SC-015**: Performance regression tests confirm SeqId-based version resolution remains within 2x baseline when resolving 10+ versions per PK
+- **SC-016**: Code analysis confirms user/shared table DML handlers call identical unified functions (zero divergence, 50%+ code reduction)
+- **SC-017**: Snowflake ID generation (via SeqId) produces globally unique, monotonically increasing values with 1M+ IDs/sec throughput per node
+- **SC-018**: Hot storage (RocksDB) performs zero in-place key updates (100% append-only writes verified by operation logging)
+- **SC-019**: RocksDB prefix scans using `{user_id}:` efficiently retrieve user-specific data completing in <10ms for 10K user rows
+- **SC-020**: RocksDB range scans using SeqId ordering efficiently implement `WHERE _seq > threshold` completing in <20ms for 100K total rows
 - **SC-019**: Manifest-based file skipping achieves <5ms evaluation time per query and eliminates 90%+ of irrelevant batch file scans
 - **SC-020**: Bloom filter optimization achieves <1ms overhead per batch file and reduces I/O by 90%+ for point queries on large tables (100+ batch files)

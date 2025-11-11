@@ -12,6 +12,7 @@ pub mod base_flush;
 pub mod shared_tables;
 pub mod stream_tables;
 pub mod system;
+pub mod unified_dml; // Phase 12: Unified DML functions for MVCC
 pub mod user_tables;
 pub mod version_resolution; // T052: Version resolution across storage layers
 
@@ -35,4 +36,10 @@ pub use stream_tables::{
 pub use user_tables::{
     new_user_table_store, UserTableDeleteHandler, UserTableInsertHandler,
     UserTableProvider, UserTableRow, UserTableRowId, UserTableStore, UserTableUpdateHandler,
+};
+
+// Re-export unified DML functions
+pub use unified_dml::{
+    append_version, extract_user_pk_value, generate_storage_key, resolve_latest_version,
+    validate_primary_key,
 };

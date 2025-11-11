@@ -11,6 +11,7 @@ use crate::error::KalamDbError;
 use crate::live_query::manager::{ChangeNotification, LiveQueryManager};
 use crate::tables::system::system_table_store::UserTableStoreExt;
 use crate::tables::UserTableStore;
+use kalamdb_commons::ids::SeqId;
 use kalamdb_commons::models::TableId;
 use serde_json::Value as JsonValue;
 use std::sync::Arc;
@@ -114,27 +115,20 @@ impl UserTableUpdateHandler {
             }
         }
 
-        // T044-T046: Use SystemColumnsService for monotonic _updated timestamp
-        // Parse existing _updated timestamp to nanoseconds
-        let previous_updated_ns = Self::parse_timestamp_to_nanos(&existing_row._updated)?;
+        // T044-T046: Use SystemColumnsService for MVCC append-only UPDATE
+        // In MVCC, UPDATE creates a new version with a new SeqId
         
         // Get AppContext and SystemColumnsService (T024, T042)
         use crate::app_context::AppContext;
         let app_context = AppContext::get();
         let sys_cols = app_context.system_columns_service();
         
-        // Snowflake ID is stored in row_id as String, parse to i64
-        let record_id = updated_row.row_id.parse::<i64>()
-            .map_err(|_| KalamDbError::InvalidOperation(
-                format!("Invalid row_id format: {}", updated_row.row_id)
-            ))?;
+        // Get new SeqId for this UPDATE operation (new version)
+        let (new_seq, _is_new) = sys_cols.handle_update()?;
         
-        // Get new _updated timestamp (monotonic, >= previous + 1ns)
-        let (new_updated_ns, _deleted) = sys_cols.handle_update(record_id, previous_updated_ns)?;
-        
-        // Convert nanosecond timestamp to RFC3339 string for storage
-        updated_row._updated = Self::format_nanos_to_timestamp(new_updated_ns);
-        updated_row._deleted = _deleted; // Should remain false for UPDATE
+        // Create new version with updated fields
+        updated_row._seq = new_seq;
+        // _deleted remains the same (false for active records)
 
         // Write updated row back
         UserTableStoreExt::put(
@@ -291,18 +285,18 @@ mod tests {
         // Insert initial row
         let initial_data = serde_json::json!({"name": "Alice", "age": 30});
         let row = UserTableRow {
-            row_id: row_id.to_string(),
-            user_id: user_id.as_str().to_string(),
-            fields: initial_data,
-            _updated: "2025-01-01T00:00:00Z".to_string(),
+            user_id: user_id.clone(),
+            _seq: SeqId::new(1),
             _deleted: false,
+            fields: initial_data,
         };
+        let row_id = row._seq.as_i64().to_string();
         UserTableStoreExt::put(
             store.as_ref(),
             namespace_id.as_str(),
             table_name.as_str(),
             user_id.as_str(),
-            row_id,
+            &row_id,
             &row,
         )
         .unwrap();
@@ -310,7 +304,7 @@ mod tests {
         // Update the row
         let updates = serde_json::json!({"age": 31, "city": "NYC"});
         let updated_row_id = handler
-            .update_row(&namespace_id, &table_name, &user_id, row_id, updates)
+            .update_row(&namespace_id, &table_name, &user_id, &row_id, updates)
             .unwrap();
 
         assert_eq!(updated_row_id, row_id);
@@ -321,7 +315,7 @@ mod tests {
             namespace_id.as_str(),
             table_name.as_str(),
             user_id.as_str(),
-            row_id,
+            &row_id,
         )
         .unwrap()
         .expect("Row should exist");
@@ -329,7 +323,7 @@ mod tests {
         assert_eq!(stored.fields["age"], 31); // Updated
         assert_eq!(stored.fields["city"], "NYC"); // New field
         assert_eq!(stored._deleted, false); // Unchanged
-        assert!(stored._updated != "2025-01-01T00:00:00Z"); // Updated timestamp
+        assert!(stored._seq.as_i64() > 1); // New version created
     }
 
     #[test]
@@ -360,46 +354,42 @@ mod tests {
         let user_id = UserId::new("user123".to_string());
 
         // Insert initial rows
-        
         let row1 = UserTableRow {
-            row_id: "row1".to_string(),
-            user_id: user_id.as_str().to_string(),
-            fields: serde_json::json!({"name": "Alice", "age": 30}),
-            _updated: "2025-01-01T00:00:00Z".to_string(),
+            user_id: user_id.clone(),
+            _seq: SeqId::new(1),
             _deleted: false,
+            fields: serde_json::json!({"name": "Alice", "age": 30}),
         };
         UserTableStoreExt::put(
             store.as_ref(),
             namespace_id.as_str(),
             table_name.as_str(),
             user_id.as_str(),
-            "row1",
+            "1",
             &row1,
         )
         .unwrap();
 
-        
         let row2 = UserTableRow {
-            row_id: "row2".to_string(),
-            user_id: user_id.as_str().to_string(),
-            fields: serde_json::json!({"name": "Bob", "age": 25}),
-            _updated: "2025-01-01T00:00:00Z".to_string(),
+            user_id: user_id.clone(),
+            _seq: SeqId::new(2),
             _deleted: false,
+            fields: serde_json::json!({"name": "Bob", "age": 25}),
         };
         UserTableStoreExt::put(
             store.as_ref(),
             namespace_id.as_str(),
             table_name.as_str(),
             user_id.as_str(),
-            "row2",
+            "2",
             &row2,
         )
         .unwrap();
 
         // Update batch
         let row_updates = vec![
-            ("row1".to_string(), serde_json::json!({"age": 31})),
-            ("row2".to_string(), serde_json::json!({"age": 26})),
+            ("1".to_string(), serde_json::json!({"age": 31})),
+            ("2".to_string(), serde_json::json!({"age": 26})),
         ];
 
         let updated_ids = handler
@@ -414,7 +404,7 @@ mod tests {
             namespace_id.as_str(),
             table_name.as_str(),
             user_id.as_str(),
-            "row1",
+            "1",
         )
         .unwrap()
         .expect("Row1 should exist");
@@ -425,7 +415,7 @@ mod tests {
             namespace_id.as_str(),
             table_name.as_str(),
             user_id.as_str(),
-            "row2",
+            "2",
         )
         .unwrap()
         .expect("Row2 should exist");
@@ -438,23 +428,21 @@ mod tests {
         let namespace_id = NamespaceId::new("test_ns".to_string());
         let table_name = TableName::new("test_table".to_string());
         let user_id = UserId::new("user123".to_string());
-        let row_id = "row1";
 
         // Insert initial row
-        
         let row = UserTableRow {
-            row_id: row_id.to_string(),
-            user_id: user_id.as_str().to_string(),
-            fields: serde_json::json!({"name": "Alice"}),
-            _updated: "2025-01-01T00:00:00Z".to_string(),
+            user_id: user_id.clone(),
+            _seq: SeqId::new(1),
             _deleted: false,
+            fields: serde_json::json!({"name": "Alice"}),
         };
+        let row_id = row._seq.as_i64().to_string();
         UserTableStoreExt::put(
             store.as_ref(),
             namespace_id.as_str(),
             table_name.as_str(),
             user_id.as_str(),
-            row_id,
+            &row_id,
             &row,
         )
         .unwrap();
@@ -462,12 +450,12 @@ mod tests {
         // Try to update system columns
         let updates = serde_json::json!({
             "name": "Bob",
-            "_updated": 9999, // Should be ignored
+            "_seq": 9999, // Should be ignored
             "_deleted": true  // Should be ignored
         });
 
         handler
-            .update_row(&namespace_id, &table_name, &user_id, row_id, updates)
+            .update_row(&namespace_id, &table_name, &user_id, &row_id, updates)
             .unwrap();
 
         // Verify system columns were NOT modified by updates
@@ -476,13 +464,13 @@ mod tests {
             namespace_id.as_str(),
             table_name.as_str(),
             user_id.as_str(),
-            row_id,
+            &row_id,
         )
         .unwrap()
         .expect("Row should exist");
         assert_eq!(stored.fields["name"], "Bob"); // User field updated
         assert_eq!(stored._deleted, false); // System column unchanged
-        assert!(stored._updated != "2025-01-01T00:00:00Z"); // Timestamp auto-updated (not 9999)
+        assert!(stored._seq.as_i64() > 1); // New version created (not 9999)
     }
 
     #[test]
@@ -494,38 +482,34 @@ mod tests {
         let user2 = UserId::new("user2".to_string());
 
         // Insert rows for different users
-        
         let row1 = UserTableRow {
-            row_id: "row1".to_string(),
-            user_id: user1.as_str().to_string(),
-            fields: serde_json::json!({"name": "Alice"}),
-            _updated: "2025-01-01T00:00:00Z".to_string(),
+            user_id: user1.clone(),
+            _seq: SeqId::new(1),
             _deleted: false,
+            fields: serde_json::json!({"name": "Alice"}),
         };
         UserTableStoreExt::put(
             store.as_ref(),
             namespace_id.as_str(),
             table_name.as_str(),
             user1.as_str(),
-            "row1",
+            "1",
             &row1,
         )
         .unwrap();
 
-        
         let row2 = UserTableRow {
-            row_id: "row1".to_string(),
-            user_id: user2.as_str().to_string(),
-            fields: serde_json::json!({"name": "Bob"}),
-            _updated: "2025-01-01T00:00:00Z".to_string(),
+            user_id: user2.clone(),
+            _seq: SeqId::new(1),
             _deleted: false,
+            fields: serde_json::json!({"name": "Bob"}),
         };
         UserTableStoreExt::put(
             store.as_ref(),
             namespace_id.as_str(),
             table_name.as_str(),
             user2.as_str(),
-            "row1",
+            "1",
             &row2,
         )
         .unwrap();
@@ -536,7 +520,7 @@ mod tests {
                 &namespace_id,
                 &table_name,
                 &user1,
-                "row1",
+                "1",
                 serde_json::json!({"name": "Alice Updated"}),
             )
             .unwrap();
@@ -547,7 +531,7 @@ mod tests {
             namespace_id.as_str(),
             table_name.as_str(),
             user2.as_str(),
-            "row1",
+            "1",
         )
         .unwrap()
         .expect("User2's row should exist");
@@ -562,27 +546,26 @@ mod tests {
         let user_id = UserId::new("user123".to_string());
 
         // Insert initial row
-        
         let row = UserTableRow {
-            row_id: "row1".to_string(),
-            user_id: user_id.as_str().to_string(),
-            fields: serde_json::json!({"name": "Alice"}),
-            _updated: "2025-01-01T00:00:00Z".to_string(),
+            user_id: user_id.clone(),
+            _seq: SeqId::new(1),
             _deleted: false,
+            fields: serde_json::json!({"name": "Alice"}),
         };
+        let row_id = row._seq.as_i64().to_string();
         UserTableStoreExt::put(
             store.as_ref(),
             namespace_id.as_str(),
             table_name.as_str(),
             user_id.as_str(),
-            "row1",
+            &row_id,
             &row,
         )
         .unwrap();
 
         // Try to update with non-object
         let updates = serde_json::json!(["not", "an", "object"]);
-        let result = handler.update_row(&namespace_id, &table_name, &user_id, "row1", updates);
+        let result = handler.update_row(&namespace_id, &table_name, &user_id, &row_id, updates);
 
         assert!(result.is_err());
         match result {

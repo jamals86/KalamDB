@@ -4,31 +4,12 @@
 //! Designed for minimal performance overhead using async file I/O.
 
 use kalamdb_commons::models::{TableName, UserId};
+use kalamdb_commons::models::schemas::table_type::TableType;
 use std::fs::OpenOptions;
 use std::io::Write;
 use std::path::Path;
 use std::sync::Arc;
 use tokio::sync::mpsc;
-
-/// Table type for logging purposes
-#[derive(Debug, Clone, Copy)]
-pub enum TableType {
-    User,
-    Shared,
-    Stream,
-    System,
-}
-
-impl std::fmt::Display for TableType {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            TableType::User => write!(f, "user"),
-            TableType::Shared => write!(f, "shared"),
-            TableType::Stream => write!(f, "stream"),
-            TableType::System => write!(f, "system"),
-        }
-    }
-}
 
 /// Slow query log entry
 #[derive(Debug, Clone)]
@@ -37,7 +18,7 @@ pub struct SlowQueryEntry {
     pub duration_secs: f64,
     pub row_count: usize,
     pub user_id: UserId,
-    pub table_type: TableType,
+    pub table_type: TableType, //use backend/crates/kalamdb-commons/src/models/schemas/table_type.rs
     pub table_name: Option<TableName>,
     pub timestamp: i64,
 }

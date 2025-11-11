@@ -204,14 +204,11 @@ impl TableFlush for SharedTableFlushJob {
                 continue;
             }
 
-            // Build JSON object with metadata fields
+            // Build JSON object with metadata fields (MVCC - Phase 12)
             let mut json_obj = row.fields.clone();
             if let Some(obj) = json_obj.as_object_mut() {
-                obj.insert(
-                    "access_level".to_string(),
-                    JsonValue::String(row.access_level.as_str().to_string()),
-                );
-                obj.insert("_updated".to_string(), JsonValue::String(row._updated));
+                // Add system columns to JSON for Parquet storage
+                obj.insert("_seq".to_string(), JsonValue::Number(row._seq.as_i64().into()));
                 obj.insert("_deleted".to_string(), JsonValue::Bool(false));
             }
 

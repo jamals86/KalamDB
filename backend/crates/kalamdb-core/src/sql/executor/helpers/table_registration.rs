@@ -130,6 +130,7 @@ pub fn register_shared_table_provider(
     // Create and register provider
     let provider = SharedTableProvider::new(
         Arc::new(table_id.clone()),
+        app_context.clone(),
         app_context.schema_registry(),
         arrow_schema,
         shared_store,

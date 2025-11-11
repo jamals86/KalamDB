@@ -12,6 +12,7 @@ use crate::error::KalamDbError;
 use crate::live_query::manager::{ChangeNotification, LiveQueryManager};
 use crate::tables::system::system_table_store::UserTableStoreExt;
 use crate::tables::UserTableStore;
+use kalamdb_commons::ids::SeqId;
 use kalamdb_commons::models::TableId;
 use std::sync::Arc;
 
@@ -95,27 +96,20 @@ impl UserTableDeleteHandler {
         let row_data_before = existing_row.clone();
 
         // T049-T050: Use SystemColumnsService for soft delete with monotonic _updated
-        // Parse existing _updated timestamp to nanoseconds
-        let previous_updated_ns = Self::parse_timestamp_to_nanos(&existing_row._updated)?;
+        // _seq contains embedded timestamp, no need to parse _updated field (removed in MVCC)
         
         // Get AppContext and SystemColumnsService (T025, T048)
         use crate::app_context::AppContext;
         let app_context = AppContext::get();
         let sys_cols = app_context.system_columns_service();
         
-        // Snowflake ID is stored in row_id as String, parse to i64
-        let record_id = existing_row.row_id.parse::<i64>()
-            .map_err(|_| KalamDbError::InvalidOperation(
-                format!("Invalid row_id format: {}", existing_row.row_id)
-            ))?;
-        
-        // Get new _updated timestamp and _deleted=true (monotonic, >= previous + 1ns)
-        let (new_updated_ns, deleted) = sys_cols.handle_delete(record_id, previous_updated_ns)?;
+        // Get new SeqId for this DELETE operation (tombstone marker)
+        let (new_seq, _is_new) = sys_cols.handle_delete()?;
         
         // Create updated row with soft delete markers
         let mut deleted_row = existing_row;
-        deleted_row._updated = Self::format_nanos_to_timestamp(new_updated_ns);
-        deleted_row._deleted = deleted; // Should be true for DELETE
+        deleted_row._seq = new_seq;
+        deleted_row._deleted = true;
 
         // Write updated row back to storage (soft delete)
         UserTableStoreExt::put(
@@ -303,10 +297,9 @@ mod tests {
 
         // Insert initial row
         let entity = UserTableRow {
-            row_id: row_id.to_string(),
-            user_id: user_id.as_str().to_string(),
+            user_id: user_id.clone(),
+            _seq: SeqId::new(1),
             fields: json!({"name": "Alice", "age": 30}),
-            _updated: chrono::Utc::now().to_rfc3339(),
             _deleted: false,
         };
         UserTableStoreExt::put(
@@ -314,7 +307,7 @@ mod tests {
             namespace_id.as_str(),
             table_name.as_str(),
             user_id.as_str(),
-            row_id,
+            &entity._seq.as_i64().to_string(),
             &entity,
         )
         .unwrap();
@@ -372,12 +365,11 @@ mod tests {
             namespace_id.as_str(),
             table_name.as_str(),
             user_id.as_str(),
-            "row1",
+            "1",
             &UserTableRow {
-                row_id: "row1".to_string(),
-                user_id: user_id.as_str().to_string(),
+                user_id: user_id.clone(),
+                _seq: SeqId::new(1),
                 fields: serde_json::json!({"name": "Alice"}),
-                _updated: chrono::Utc::now().to_rfc3339(),
                 _deleted: false,
             },
         )
@@ -387,12 +379,11 @@ mod tests {
             namespace_id.as_str(),
             table_name.as_str(),
             user_id.as_str(),
-            "row2",
+            "2",
             &UserTableRow {
-                row_id: "row2".to_string(),
-                user_id: user_id.as_str().to_string(),
+                user_id: user_id.clone(),
+                _seq: SeqId::new(2),
                 fields: serde_json::json!({"name": "Bob"}),
-                _updated: chrono::Utc::now().to_rfc3339(),
                 _deleted: false,
             },
         )
@@ -402,12 +393,11 @@ mod tests {
             namespace_id.as_str(),
             table_name.as_str(),
             user_id.as_str(),
-            "row3",
+            "3",
             &UserTableRow {
-                row_id: "row3".to_string(),
-                user_id: user_id.as_str().to_string(),
+                user_id: user_id.clone(),
+                _seq: SeqId::new(3),
                 fields: serde_json::json!({"name": "Charlie"}),
-                _updated: chrono::Utc::now().to_rfc3339(),
                 _deleted: false,
             },
         )
@@ -451,12 +441,11 @@ mod tests {
             namespace_id.as_str(),
             table_name.as_str(),
             user1.as_str(),
-            "row1",
+            "1",
             &UserTableRow {
-                row_id: "row1".to_string(),
-                user_id: user1.as_str().to_string(),
+                user_id: user1.clone(),
+                _seq: SeqId::new(1),
                 fields: serde_json::json!({"name": "Alice"}),
-                _updated: chrono::Utc::now().to_rfc3339(),
                 _deleted: false,
             },
         )
@@ -466,12 +455,11 @@ mod tests {
             namespace_id.as_str(),
             table_name.as_str(),
             user2.as_str(),
-            "row1",
+            "1",
             &UserTableRow {
-                row_id: "row1".to_string(),
-                user_id: user2.as_str().to_string(),
+                user_id: user2.clone(),
+                _seq: SeqId::new(1),
                 fields: serde_json::json!({"name": "Bob"}),
-                _updated: chrono::Utc::now().to_rfc3339(),
                 _deleted: false,
             },
         )
@@ -479,7 +467,7 @@ mod tests {
 
         // Delete user1's row
         handler
-            .delete_row(&namespace_id, &table_name, &user1, "row1")
+            .delete_row(&namespace_id, &table_name, &user1, "1")
             .unwrap();
 
         // Verify user1's row is soft-deleted (not returned)
@@ -488,7 +476,7 @@ mod tests {
             namespace_id.as_str(),
             table_name.as_str(),
             user1.as_str(),
-            "row1",
+            "1",
         )
         .unwrap();
         assert!(result1.is_none(), "user1's row should be soft-deleted");
@@ -499,7 +487,7 @@ mod tests {
             namespace_id.as_str(),
             table_name.as_str(),
             user2.as_str(),
-            "row1",
+            "1",
         )
         .unwrap();
         assert!(result2.is_some(), "user2's row should still exist");
@@ -521,12 +509,11 @@ mod tests {
             namespace_id.as_str(),
             table_name.as_str(),
             user_id.as_str(),
-            "row1",
+            "1",
             &UserTableRow {
-                row_id: "row1".to_string(),
-                user_id: user_id.as_str().to_string(),
+                user_id: user_id.clone(),
+                _seq: SeqId::new(1),
                 fields: serde_json::json!({"name": "Alice"}),
-                _updated: chrono::Utc::now().to_rfc3339(),
                 _deleted: false,
             },
         )
@@ -534,7 +521,7 @@ mod tests {
 
         // Hard delete the row
         handler
-            .hard_delete_row(&namespace_id, &table_name, &user_id, "row1")
+            .hard_delete_row(&namespace_id, &table_name, &user_id, "1")
             .unwrap();
 
         // Verify the row is completely removed
@@ -543,7 +530,7 @@ mod tests {
             namespace_id.as_str(),
             table_name.as_str(),
             user_id.as_str(),
-            "row1",
+            "1",
         )
         .unwrap();
 
@@ -564,12 +551,11 @@ mod tests {
             namespace_id.as_str(),
             table_name.as_str(),
             user_id.as_str(),
-            "row1",
+            "1",
             &UserTableRow {
-                row_id: "row1".to_string(),
-                user_id: user_id.as_str().to_string(),
+                user_id: user_id.clone(),
+                _seq: SeqId::new(1),
                 fields: serde_json::json!({"name": "Alice"}),
-                _updated: chrono::Utc::now().to_rfc3339(),
                 _deleted: false,
             },
         )
@@ -577,10 +563,10 @@ mod tests {
 
         // Delete twice
         handler
-            .delete_row(&namespace_id, &table_name, &user_id, "row1")
+            .delete_row(&namespace_id, &table_name, &user_id, "1")
             .unwrap();
 
-        let result2 = handler.delete_row(&namespace_id, &table_name, &user_id, "row1");
+        let result2 = handler.delete_row(&namespace_id, &table_name, &user_id, "1");
 
         // Second delete should succeed (idempotent)
         assert!(result2.is_ok());
@@ -591,7 +577,7 @@ mod tests {
             namespace_id.as_str(),
             table_name.as_str(),
             user_id.as_str(),
-            "row1",
+            "1",
         )
         .unwrap();
         assert!(result.is_none(), "Row should remain soft-deleted");

@@ -12,9 +12,8 @@ use crate::tables::base_table_provider::{BaseTableProvider, TableProviderCore};
 use crate::tables::arrow_json_conversion::{
     arrow_batch_to_json, json_rows_to_arrow_batch, validate_insert_rows,
 };
-use crate::tables::shared_tables::shared_table_store::{
-    SharedTableRow, SharedTableRowId, SharedTableStore,
-};
+use crate::tables::shared_tables::shared_table_store::{SharedTableRow, SharedTableStore};
+use kalamdb_commons::ids::{SeqId, SharedTableRowId};
 use async_trait::async_trait;
 use datafusion::arrow::array::ArrayRef;
 use datafusion::arrow::datatypes::{DataType, Field, Schema, SchemaRef, TimeUnit};
@@ -34,7 +33,7 @@ use std::sync::Arc;
 /// Provides SQL query access to shared tables with:
 /// - INSERT/UPDATE/DELETE operations
 /// - System columns (_updated, _deleted)
-/// - Soft delete support
+/// - RocksDB buffer with Parquet persistence
 /// - Flush to Parquet
 ///
 /// **Key Difference from User Tables**: Single storage location (no ${user_id} templating)
@@ -44,6 +43,9 @@ use std::sync::Arc;
 pub struct SharedTableProvider {
     /// Core provider fields (table_id, schema, cache, etc.)
     core: TableProviderCore,
+
+    /// Application context for SystemColumnsService access
+    app_context: Arc<crate::app_context::AppContext>,
 
     /// SharedTableStore for data operations
     store: Arc<SharedTableStore>,
@@ -64,11 +66,13 @@ impl SharedTableProvider {
     ///
     /// # Arguments
     /// * `table_id` - Arc<TableId> created once at registration (Phase 10: zero-allocation cache lookups)
+    /// * `app_context` - Application context for SystemColumnsService access
     /// * `unified_cache` - Reference to unified SchemaCache for metadata lookups
     /// * `schema` - Arrow schema for the table (with system columns)
     /// * `store` - SharedTableStore for data operations
     pub fn new(
         table_id: Arc<TableId>,
+        app_context: Arc<crate::app_context::AppContext>,
         unified_cache: Arc<SchemaRegistry>,
         _schema: SchemaRef,
         store: Arc<SharedTableStore>,
@@ -79,7 +83,7 @@ impl SharedTableProvider {
             None, // storage_id - will be fetched from cache when needed
             unified_cache,
         );
-        Self { core, store }
+        Self { core, app_context, store }
     }
 
     /// Get the column family name for this shared table
@@ -107,33 +111,39 @@ impl SharedTableProvider {
     /// * `row_id` - Unique row identifier
     /// * `row_data` - Row data as JSON object (system columns will be injected)
     ///
-    /// # System Column Injection
-    /// - _updated: Current timestamp (milliseconds)
-    /// - _deleted: false
-    pub fn insert(&self, row_id: &str, mut row_data: JsonValue) -> Result<(), KalamDbError> {
+    /// INSERT operation for shared tables
+    ///
+    /// # Arguments
+    /// * `row_id` - DEPRECATED: Use SeqId from SystemColumnsService instead
+    /// * `row_data` - Row data as JSON object
+    ///
+    /// # Returns
+    /// Ok(()) on success
+    ///
+    /// # MVCC Architecture (Phase 12)
+    /// - Uses SystemColumnsService to generate SeqId (Snowflake ID)
+    /// - Creates SharedTableRow with (_seq, _deleted, fields)
+    /// - Storage key is SeqId directly (8 bytes big-endian)
+    pub fn insert(&self, _row_id: &str, row_data: JsonValue) -> Result<(), KalamDbError> {
         log::debug!(
-            "SharedTableProvider::insert called - table_id: {}, row_id: {}, store partition: {}",
+            "SharedTableProvider::insert called - table_id: {}, store partition: {}",
             self.core.table_id(),
-            row_id,
             self.store.partition()
         );
         
-        // Inject system columns (as RFC3339 string for _updated to match SharedTableRow format)
-        let now_rfc3339 = chrono::Utc::now().to_rfc3339();
-        if let Some(obj) = row_data.as_object_mut() {
-            // Use insert() which overwrites existing keys
-            obj.insert("_updated".to_string(), serde_json::json!(now_rfc3339));
-            obj.insert("_deleted".to_string(), serde_json::json!(false));
-        }
+        // Get SeqId from SystemColumnsService (MVCC - Phase 12)
+        let sys_cols = self.app_context.system_columns_service();
+        let (seq_id, deleted) = sys_cols.handle_insert()?;
 
-        let key = SharedTableRowId::new(row_id);
+        // Create SharedTableRow entity (MVCC structure)
         let entity = SharedTableRow {
-            row_id: row_id.to_string(),
+            _seq: seq_id,
+            _deleted: deleted,
             fields: row_data,
-            _updated: now_rfc3339,
-            _deleted: false,
-            access_level: kalamdb_commons::TableAccess::Public,
         };
+
+        // Storage key is SeqId directly
+        let key = seq_id;
 
         // Store in SharedTableStore
         self.store
@@ -141,25 +151,18 @@ impl SharedTableProvider {
             .map_err(|e| KalamDbError::Other(e.to_string()))?;
 
         log::debug!(
-            "SharedTableProvider::insert completed - row_id: {}, partition: {}",
-            row_id,
+            "SharedTableProvider::insert completed - seq: {}, partition: {}",
+            seq_id,
             self.store.partition()
         );
 
         Ok(())
     }
 
-    /// UPDATE operation
-    ///
-    /// # Arguments
-    /// * `row_id` - Row identifier to update
-    /// * `updates` - Fields to update (partial update)
-    ///
-    /// # System Column Updates
-    /// - _updated: Updated to current timestamp
-    /// - _deleted: Preserved unless explicitly set
     pub fn update(&self, row_id: &str, updates: JsonValue) -> Result<(), KalamDbError> {
-        let key = SharedTableRowId::new(row_id);
+        let seq_id_int = row_id.parse::<i64>()
+            .map_err(|_| KalamDbError::InvalidOperation(format!("Invalid row_id format: {}", row_id)))?;
+        let key = SharedTableRowId::new(seq_id_int);
         let mut row_data = self
             .store
             .get(&key)
@@ -175,12 +178,14 @@ impl SharedTableProvider {
             }
         }
 
-        // Update system columns
-        row_data._updated = chrono::Utc::now().to_rfc3339();
+        // Update system columns - create new version with MVCC
+        let sys_cols = self.app_context.system_columns_service();
+        let (new_seq, _deleted) = sys_cols.handle_update()?;
+        row_data._seq = new_seq;
 
         // Store updated row
         self.store
-            .put(&key, &row_data)
+            .put(&new_seq, &row_data)
             .map_err(|e| KalamDbError::Other(e.to_string()))?;
 
         Ok(())
@@ -339,7 +344,7 @@ impl SharedTableProvider {
     ///
     /// Finds the row whose JSON field `id` equals `id_value` and performs a soft delete.
     /// This bridges the mismatch between external primary key semantics (id column)
-    /// and internal storage key (row_id).
+    /// and internal storage key (_seq in MVCC).
     pub fn delete_by_id_field(&self, id_value: &str) -> Result<(), KalamDbError> {
         let rows = self
             .store
@@ -349,7 +354,7 @@ impl SharedTableProvider {
         log::debug!("delete_by_id_field: Looking for id={} among {} rows", id_value, rows.len());
 
         // Match either numeric or string representations
-        let mut target_row_id: Option<String> = None;
+        let mut target_seq: Option<kalamdb_commons::ids::SeqId> = None;
         for (_k, row) in rows.iter() {
             if let Some(v) = row.fields.get("id") {
                 log::debug!("delete_by_id_field: Found row with id field: {:?}", v);
@@ -369,8 +374,8 @@ impl SharedTableProvider {
                     }
                 };
                 if is_match {
-                    log::debug!("delete_by_id_field: Match found! row_id={}", row.row_id);
-                    target_row_id = Some(row.row_id.clone());
+                    log::debug!("delete_by_id_field: Match found! seq={}", row._seq);
+                    target_seq = Some(row._seq);
                     break;
                 }
             } else {
@@ -378,19 +383,21 @@ impl SharedTableProvider {
             }
         }
 
-        let row_id = target_row_id
+        let seq = target_seq
             .ok_or_else(|| {
                 log::error!("delete_by_id_field: No row found with id={}", id_value);
                 KalamDbError::NotFound(format!("Row with id={} not found", id_value))
             })?;
-        self.delete_soft(&row_id)
+        
+        // Use SeqId directly as the row_id for delete_soft
+        self.delete_soft(&seq.to_string())
     }
 
     /// UPDATE by logical `id` field (helper for SQL layer)
     ///
     /// Finds the row whose JSON field `id` equals `id_value` and performs an update.
     /// This bridges the mismatch between external primary key semantics (id column)
-    /// and internal storage key (row_id).
+    /// and internal storage key (_seq in MVCC).
     pub fn update_by_id_field(&self, id_value: &str, updates: serde_json::Value) -> Result<(), KalamDbError> {
         let rows = self
             .store
@@ -400,7 +407,7 @@ impl SharedTableProvider {
         log::debug!("update_by_id_field: Looking for id={} among {} rows", id_value, rows.len());
 
         // Match either numeric or string representations
-        let mut target_row_id: Option<String> = None;
+        let mut target_seq: Option<kalamdb_commons::ids::SeqId> = None;
         for (_k, row) in rows.iter() {
             if let Some(v) = row.fields.get("id") {
                 let is_match = match v {
@@ -409,19 +416,21 @@ impl SharedTableProvider {
                     _ => false,
                 };
                 if is_match {
-                    log::debug!("update_by_id_field: Match found! row_id={}", row.row_id);
-                    target_row_id = Some(row.row_id.clone());
+                    log::debug!("update_by_id_field: Match found! seq={}", row._seq);
+                    target_seq = Some(row._seq);
                     break;
                 }
             }
         }
 
-        let row_id = target_row_id
+        let seq = target_seq
             .ok_or_else(|| {
                 log::error!("update_by_id_field: No row found with id={}", id_value);
                 KalamDbError::NotFound(format!("Row with id={} not found", id_value))
             })?;
-        self.update(&row_id, updates)
+        
+        // Use SeqId directly as the row_id for update
+        self.update(&seq.to_string(), updates)
     }
 }
 
@@ -760,7 +769,11 @@ mod tests {
                 &table_id.table_name(),
             ),
         );
-        let provider = SharedTableProvider::new(create_test_table_id(), unified_cache, schema, store);
+
+        // Create test AppContext
+        let app_context = Arc::new(crate::app_context::AppContext::new_test());
+
+        let provider = SharedTableProvider::new(create_test_table_id(), app_context, unified_cache, schema, store);
 
         (provider, test_db)
     }

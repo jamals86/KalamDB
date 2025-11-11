@@ -11,6 +11,7 @@ pub mod shared_table_store;
 
 pub use shared_table_flush::SharedTableFlushJob;
 pub use shared_table_provider::SharedTableProvider;
-pub use shared_table_store::{
-    new_shared_table_store, SharedTableRow, SharedTableRowId, SharedTableStore,
-};
+pub use shared_table_store::{new_shared_table_store, SharedTableRow, SharedTableStore};
+
+// Re-export SharedTableRowId from commons for convenience
+pub use kalamdb_commons::ids::SharedTableRowId;

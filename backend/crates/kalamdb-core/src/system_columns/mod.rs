@@ -1,17 +1,22 @@
 //! System Column Management Service
 //!
-//! Centralizes all system column logic (`_id`, `_updated`, `_deleted`) for KalamDB tables.
+//! **Phase 12, User Story 5 - MVCC Architecture**:
+//! Centralizes all system column logic (`_seq`, `_deleted`) for KalamDB tables.
 //! 
 //! ## Responsibilities
-//! - Generate unique Snowflake IDs for `_id` column
-//! - Manage `_updated` timestamps with nanosecond monotonicity
+//! - Generate unique Snowflake-based SeqIds for `_seq` column (version identifier)
 //! - Handle `_deleted` soft delete flags
 //! - Inject system columns into table schemas
 //! - Apply deletion filters to queries
 //!
+//! ## MVCC Architecture Changes
+//! - **Removed**: `_id` (replaced by user-defined PK), `_updated` (replaced by _seq.timestamp_millis())
+//! - **Added**: `_seq: SeqId` - Snowflake ID for version tracking with embedded timestamp
+//! - **Kept**: `_deleted: bool` - Soft delete flag
+//!
 //! ## Architecture
 //! - **SnowflakeGenerator**: Generates time-ordered unique IDs (41-bit timestamp + 10-bit worker + 12-bit sequence)
-//! - **Monotonic Timestamps**: Ensures `_updated` never decreases, +1ns bump on collision
+//! - **SeqId Wrapper**: Wraps Snowflake ID with timestamp extraction methods
 //! - **Soft Deletes**: Records marked `_deleted=true` are filtered from queries unless explicitly requested
 //!
 //! ## Usage
@@ -22,31 +27,31 @@
 //! let app_ctx = AppContext::get();
 //! let sys_cols = SystemColumnsService::new(app_ctx);
 //!
-//! // Generate unique ID
-//! let id = sys_cols.generate_id()?;
+//! // Generate unique SeqId
+//! let seq = sys_cols.generate_seq_id()?;
 //!
 //! // Handle INSERT operation
-//! let (record_id, updated_ts, deleted_flag) = sys_cols.handle_insert(None)?;
+//! let (seq_id, deleted_flag) = sys_cols.handle_insert()?;
 //!
 //! // Handle UPDATE operation  
-//! let (updated_ts, deleted_flag) = sys_cols.handle_update(existing_id, previous_updated)?;
+//! let (new_seq_id, deleted_flag) = sys_cols.handle_update()?;
 //!
 //! // Handle DELETE operation
-//! let (updated_ts, deleted_flag) = sys_cols.handle_delete(existing_id, previous_updated)?;
+//! let (new_seq_id, deleted_flag) = sys_cols.handle_delete()?;
 //! ```
 
 use kalamdb_commons::ids::snowflake::SnowflakeGenerator;
+use kalamdb_commons::ids::SeqId;
 use kalamdb_commons::models::schemas::{ColumnDefinition, ColumnDefault, TableDefinition};
 use crate::error::KalamDbError;
 use std::sync::Arc;
-use std::time::{SystemTime, UNIX_EPOCH};
 
 /// System Columns Service
 ///
-/// Manages all system column operations: `_id`, `_updated`, `_deleted`.
+/// **MVCC Architecture**: Manages system columns `_seq` and `_deleted`.
 /// Thread-safe via interior mutability in SnowflakeGenerator.
 pub struct SystemColumnsService {
-    /// Snowflake ID generator for `_id` column
+    /// Snowflake ID generator for `_seq` column
     snowflake_gen: Arc<SnowflakeGenerator>,
 
     /// Worker ID from AppContext config (for logging/debugging)
@@ -54,10 +59,15 @@ pub struct SystemColumnsService {
 }
 
 impl SystemColumnsService {
-    /// System column names
-    pub const COL_ID: &'static str = "_id";
-    pub const COL_UPDATED: &'static str = "_updated";
+    /// System column names (MVCC Architecture)
+    pub const COL_SEQ: &'static str = "_seq";
     pub const COL_DELETED: &'static str = "_deleted";
+
+    /// Legacy column names (deprecated, for migration reference)
+    #[deprecated(note = "Use COL_SEQ instead - _id removed in MVCC architecture")]
+    pub const COL_ID: &'static str = "_id";
+    #[deprecated(note = "Use _seq.timestamp_millis() instead - _updated removed in MVCC architecture")]
+    pub const COL_UPDATED: &'static str = "_updated";
 
     /// Create a new SystemColumnsService
     ///
@@ -75,25 +85,28 @@ impl SystemColumnsService {
         }
     }
 
-    /// Generate a unique Snowflake ID for `_id` column
+    /// Generate a unique SeqId for `_seq` column
+    ///
+    /// **MVCC Architecture**: SeqId wraps Snowflake ID for version tracking.
     ///
     /// # Returns
-    /// A 64-bit signed integer (i64) containing:
+    /// A SeqId containing a 64-bit Snowflake ID:
     /// - 41 bits: timestamp in milliseconds since 2024-01-01
     /// - 10 bits: worker/node ID
     /// - 12 bits: sequence number
     ///
     /// # Errors
     /// Returns `KalamDbError::SystemColumnViolation` if clock moves backwards
-    pub fn generate_id(&self) -> Result<i64, KalamDbError> {
-        self.snowflake_gen
+    pub fn generate_seq_id(&self) -> Result<SeqId, KalamDbError> {
+        let id = self.snowflake_gen
             .next_id()
-            .map_err(|e| KalamDbError::SystemColumnViolation(format!("Snowflake ID generation failed: {}", e)))
+            .map_err(|e| KalamDbError::SystemColumnViolation(format!("SeqId generation failed: {}", e)))?;
+        Ok(SeqId::new(id))
     }
 
     /// Add system columns to a table definition
     ///
-    /// Injects `_id BIGINT PRIMARY KEY`, `_updated TIMESTAMP`, `_deleted BOOLEAN` columns
+    /// **MVCC Architecture**: Injects `_seq BIGINT` and `_deleted BOOLEAN` columns
     /// if they don't already exist.
     ///
     /// # Arguments
@@ -104,10 +117,7 @@ impl SystemColumnsService {
     pub fn add_system_columns(&self, table_def: &mut TableDefinition) -> Result<(), KalamDbError> {
         // Check for conflicts
         for col in &table_def.columns {
-            if col.column_name == Self::COL_ID
-                || col.column_name == Self::COL_UPDATED
-                || col.column_name == Self::COL_DELETED
-            {
+            if col.column_name == Self::COL_SEQ || col.column_name == Self::COL_DELETED {
                 return Err(KalamDbError::SystemColumnViolation(format!(
                     "Column name '{}' is reserved for system columns",
                     col.column_name
@@ -117,34 +127,23 @@ impl SystemColumnsService {
 
         let next_ordinal = table_def.columns.len() as u32 + 1;
 
-        // Add _id column (BIGINT, PRIMARY KEY, NOT NULL)
+        // Add _seq column (BIGINT, NOT NULL)
+        // Note: _seq is NOT a primary key - user must define their own PK
         table_def.columns.push(ColumnDefinition {
-            column_name: Self::COL_ID.to_string(),
+            column_name: Self::COL_SEQ.to_string(),
             ordinal_position: next_ordinal,
             data_type: kalamdb_commons::models::datatypes::KalamDataType::BigInt,
             is_nullable: false,
-            is_primary_key: true,
+            is_primary_key: false, // User-defined PK required separately
             is_partition_key: false,
             default_value: ColumnDefault::None,
-            column_comment: Some("System-generated Snowflake ID (auto-assigned on INSERT)".to_string()),
-        });
-
-        // Add _updated column (TIMESTAMP, NOT NULL)
-        table_def.columns.push(ColumnDefinition {
-            column_name: Self::COL_UPDATED.to_string(),
-            ordinal_position: next_ordinal + 1,
-            data_type: kalamdb_commons::models::datatypes::KalamDataType::Timestamp,
-            is_nullable: false,
-            is_primary_key: false,
-            is_partition_key: false,
-            default_value: ColumnDefault::None,
-            column_comment: Some("Nanosecond timestamp of last modification (auto-updated)".to_string()),
+            column_comment: Some("System-generated Snowflake-based version ID (MVCC)".to_string()),
         });
 
         // Add _deleted column (BOOLEAN, NOT NULL, DEFAULT FALSE)
         table_def.columns.push(ColumnDefinition {
             column_name: Self::COL_DELETED.to_string(),
-            ordinal_position: next_ordinal + 2,
+            ordinal_position: next_ordinal + 1,
             data_type: kalamdb_commons::models::datatypes::KalamDataType::Boolean,
             is_nullable: false,
             is_primary_key: false,
@@ -158,85 +157,58 @@ impl SystemColumnsService {
 
     /// Handle INSERT operation - generate system column values
     ///
-    /// # Arguments
-    /// * `user_provided_id` - Optional user-provided `_id` (MUST be None, manual assignment forbidden)
+    /// **MVCC Architecture**: Returns new SeqId and _deleted=false.
     ///
     /// # Returns
-    /// Tuple of (`_id`, `_updated` nanosecond timestamp, `_deleted` = false)
+    /// Tuple of (`_seq`, `_deleted` = false)
     ///
     /// # Errors
-    /// - `SystemColumnViolation` if user tries to manually assign `_id`
-    /// - `SystemColumnViolation` if Snowflake ID generation fails
-    pub fn handle_insert(&self, user_provided_id: Option<i64>) -> Result<(i64, i64, bool), KalamDbError> {
-        // Reject manual _id assignments (FR-071)
-        if user_provided_id.is_some() {
-            return Err(KalamDbError::SystemColumnViolation(
-                "Manual assignment of '_id' column is forbidden. System auto-generates Snowflake IDs.".to_string(),
-            ));
-        }
-
-        // Generate unique ID
-        let id = self.generate_id()?;
-
-        // Current timestamp in nanoseconds
-        let updated = Self::current_timestamp_nanos();
+    /// - `SystemColumnViolation` if SeqId generation fails
+    pub fn handle_insert(&self) -> Result<(SeqId, bool), KalamDbError> {
+        // Generate unique SeqId
+        let seq = self.generate_seq_id()?;
 
         // New records are not deleted
         let deleted = false;
 
-        Ok((id, updated, deleted))
+        Ok((seq, deleted))
     }
 
-    /// Handle UPDATE operation - update `_updated` timestamp with monotonicity check
+    /// Handle UPDATE operation - generate new version
     ///
-    /// # Arguments
-    /// * `record_id` - Existing record `_id` (preserved, not changed)
-    /// * `previous_updated` - Previous `_updated` timestamp in nanoseconds
+    /// **MVCC Architecture**: Appends new version with new SeqId, _deleted=false.
     ///
     /// # Returns
-    /// Tuple of (new `_updated` nanosecond timestamp, `_deleted` = false)
+    /// Tuple of (new `_seq`, `_deleted` = false)
     ///
     /// # Details
-    /// Ensures `new_updated > previous_updated` by at least 1 nanosecond.
-    /// If wall clock time hasn't advanced, bumps timestamp by +1ns.
-    pub fn handle_update(&self, _record_id: i64, previous_updated: i64) -> Result<(i64, bool), KalamDbError> {
-        let mut new_updated = Self::current_timestamp_nanos();
-
-        // Enforce monotonicity: new_updated > previous_updated
-        if new_updated <= previous_updated {
-            new_updated = previous_updated + 1;
-        }
+    /// UPDATE creates a new version with a new SeqId (append-only).
+    pub fn handle_update(&self) -> Result<(SeqId, bool), KalamDbError> {
+        let new_seq = self.generate_seq_id()?;
 
         // UPDATE preserves _deleted=false (use DELETE to mark deleted)
         let deleted = false;
 
-        Ok((new_updated, deleted))
+        Ok((new_seq, deleted))
     }
 
-    /// Handle DELETE operation - set `_deleted = true` and update timestamp
+    /// Handle DELETE operation - set `_deleted = true` with new version
     ///
-    /// # Arguments
-    /// * `record_id` - Existing record `_id` (preserved, not changed)
-    /// * `previous_updated` - Previous `_updated` timestamp in nanoseconds
+    /// **MVCC Architecture**: Appends tombstone version with new SeqId, _deleted=true.
     ///
     /// # Returns
-    /// Tuple of (new `_updated` nanosecond timestamp, `_deleted` = true)
+    /// Tuple of (new `_seq`, `_deleted` = true)
     ///
     /// # Details
     /// Soft delete: record remains in storage with `_deleted=true`.
     /// Queries filter deleted records unless `include_deleted=true`.
-    pub fn handle_delete(&self, _record_id: i64, previous_updated: i64) -> Result<(i64, bool), KalamDbError> {
-        let mut new_updated = Self::current_timestamp_nanos();
-
-        // Enforce monotonicity
-        if new_updated <= previous_updated {
-            new_updated = previous_updated + 1;
-        }
+    pub fn handle_delete(&self) -> Result<(SeqId, bool), KalamDbError> {
+        let new_seq = self.generate_seq_id()?;
 
         // Soft delete
         let deleted = true;
 
-        Ok((new_updated, deleted))
+        Ok((new_seq, deleted))
     }
 
     /// Apply deletion filter to query
@@ -256,17 +228,6 @@ impl SystemColumnsService {
         }
     }
 
-    /// Get current timestamp in nanoseconds since Unix epoch
-    ///
-    /// # Returns
-    /// Timestamp in nanoseconds (i64)
-    fn current_timestamp_nanos() -> i64 {
-        SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .expect("System clock before Unix epoch")
-            .as_nanos() as i64
-    }
-
     /// Get worker ID (for debugging/logging)
     pub fn worker_id(&self) -> u16 {
         self.worker_id
@@ -278,13 +239,13 @@ mod tests {
     use super::*;
 
     #[test]
-    fn test_generate_id() {
+    fn test_generate_seq_id() {
         let svc = SystemColumnsService::new(1);
-        let id1 = svc.generate_id().unwrap();
-        let id2 = svc.generate_id().unwrap();
+        let seq1 = svc.generate_seq_id().unwrap();
+        let seq2 = svc.generate_seq_id().unwrap();
 
-        assert!(id1 > 0);
-        assert!(id2 > id1, "IDs should be strictly increasing");
+        assert!(seq1.as_i64() > 0);
+        assert!(seq2 > seq1, "SeqIds should be strictly increasing");
     }
 
     #[test]
@@ -305,54 +266,37 @@ mod tests {
 
         svc.add_system_columns(&mut table_def).unwrap();
 
-        assert_eq!(table_def.columns.len(), 3);
-        assert_eq!(table_def.columns[0].column_name, "_id");
-        assert_eq!(table_def.columns[1].column_name, "_updated");
-        assert_eq!(table_def.columns[2].column_name, "_deleted");
-    }
-
-    #[test]
-    fn test_handle_insert_rejects_manual_id() {
-        let svc = SystemColumnsService::new(1);
-        let result = svc.handle_insert(Some(12345));
-
-        assert!(result.is_err());
-        assert!(result
-            .unwrap_err()
-            .to_string()
-            .contains("Manual assignment"));
+        assert_eq!(table_def.columns.len(), 2); // _seq and _deleted
+        assert_eq!(table_def.columns[0].column_name, "_seq");
+        assert_eq!(table_def.columns[1].column_name, "_deleted");
     }
 
     #[test]
     fn test_handle_insert_success() {
         let svc = SystemColumnsService::new(1);
-        let (id, updated, deleted) = svc.handle_insert(None).unwrap();
+        let (seq, deleted) = svc.handle_insert().unwrap();
 
-        assert!(id > 0);
-        assert!(updated > 0);
+        assert!(seq.as_i64() > 0);
         assert!(!deleted);
     }
 
     #[test]
-    fn test_handle_update_monotonicity() {
+    fn test_handle_update_new_seq() {
         let svc = SystemColumnsService::new(1);
-        let previous_updated = SystemColumnsService::current_timestamp_nanos();
 
-        // Fast execution might have same timestamp
-        let (new_updated, deleted) = svc.handle_update(123, previous_updated).unwrap();
+        let (new_seq, deleted) = svc.handle_update().unwrap();
 
-        assert!(new_updated > previous_updated, "Timestamp should increment");
+        assert!(new_seq.as_i64() > 0);
         assert!(!deleted);
     }
 
     #[test]
     fn test_handle_delete() {
         let svc = SystemColumnsService::new(1);
-        let previous_updated = SystemColumnsService::current_timestamp_nanos();
 
-        let (new_updated, deleted) = svc.handle_delete(123, previous_updated).unwrap();
+        let (new_seq, deleted) = svc.handle_delete().unwrap();
 
-        assert!(new_updated > previous_updated);
+        assert!(new_seq.as_i64() > 0);
         assert!(deleted);
     }
 

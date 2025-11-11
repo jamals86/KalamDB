@@ -1,8 +1,10 @@
 //! User table INSERT operations
 //!
 //! This module handles INSERT operations for user tables with:
-//! - UserId-scoped key format: {UserId}:{row_id}
-//! - Automatic system column injection (_updated = NOW(), _deleted = false)
+//! - MVCC append-only architecture with SeqId versioning
+//! - UserId-scoped key format: {UserId}:{_seq}
+//! - Automatic system column injection (_seq, _deleted) via SystemColumnsService
+//! - Unified DML via unified_dml::append_version()
 //! - DEFAULT function evaluation (T534-T539)
 //! - NOT NULL constraint enforcement (T554-T559)
 //! - kalamdb-store for RocksDB operations
@@ -11,14 +13,16 @@
 use crate::schema_registry::{NamespaceId, TableName, UserId};
 use crate::error::KalamDbError;
 use crate::live_query::manager::{ChangeNotification, LiveQueryManager};
-use crate::tables::system::system_table_store::UserTableStoreExt;
-use crate::tables::user_tables::user_table_store::{UserTableRow, UserTableRowId};
+use crate::tables::user_tables::user_table_store::UserTableRow;
 use crate::tables::UserTableStore;
 use crate::app_context::AppContext;
 use arrow::datatypes::Schema;
 use chrono::Utc;
+use kalamdb_commons::ids::UserTableRowId;
 use kalamdb_commons::models::TableId;
+use kalamdb_commons::models::schemas::TableType;
 use kalamdb_commons::schemas::ColumnDefault;
+use kalamdb_store::entity_store::EntityStore as EntityStoreV2;
 use serde_json::{json, Value as JsonValue};
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -71,13 +75,12 @@ impl UserTableInsertHandler {
     /// * `row_data` - Row data as JSON object
     ///
     /// # Returns
-    /// The generated row ID
+    /// The generated SeqId as a string
     ///
-    /// # Key Format
-    /// RocksDB key format: `{UserId}:{row_id}` (handled by UserTableStore)
-    ///
-    /// # System Columns
-    /// System columns (_updated, _deleted) are automatically injected by UserTableStore
+    /// # MVCC Architecture
+    /// - Uses SystemColumnsService to generate SeqId (Snowflake ID)
+    /// - Creates UserTableRow with (_seq, _deleted, fields)
+    /// - Storage key format: {user_id_len}{user_id}{_seq_bytes}
     pub fn insert_row(
         &self,
         namespace_id: &NamespaceId,
@@ -92,41 +95,33 @@ impl UserTableInsertHandler {
             ));
         }
 
-        // Get system column values from SystemColumnsService (Phase 12, US5, T023)
-        // The Snowflake ID becomes the row_id (no separate _id field)
+        // Get system column values from SystemColumnsService (MVCC - Phase 12)
+        // handle_insert() now returns (SeqId, bool) with no arguments
         let sys_cols = self.app_context.system_columns_service();
-        let (snowflake_id, updated_ns, deleted) = sys_cols.handle_insert(None)?;
-        
-        // Use Snowflake ID as the row identifier
-        let row_id = snowflake_id.to_string();
+        let (seq_id, deleted) = sys_cols.handle_insert()?;
 
-        // Create the key and entity for storage
+        // Create the UserTableRow entity (MVCC structure)
         let entity = UserTableRow {
-            row_id: row_id.clone(),
-            user_id: user_id.as_str().to_string(),
-            fields: row_data.clone(),
-            _updated: Self::format_nanos_to_rfc3339(updated_ns),
+            user_id: user_id.clone(),
+            _seq: seq_id,
             _deleted: deleted,
+            fields: row_data.clone(),
         };
 
-        // Delegate to UserTableStore
-        // Store the entity
-        UserTableStoreExt::put(
-            self.store.as_ref(),
-            namespace_id.as_str(),
-            table_name.as_str(),
-            user_id.as_str(),
-            &row_id,
-            &entity,
-        )
-        .map_err(|e| KalamDbError::InvalidOperation(format!("Failed to insert row: {}", e)))?;
+        // Create composite key for storage
+        let row_key = UserTableRowId::new(user_id.clone(), seq_id);
+
+        // Store the entity using SystemTableStore
+        self.store
+            .put(&row_key, &entity)
+            .map_err(|e| KalamDbError::InvalidOperation(format!("Failed to insert row: {}", e)))?;
 
         log::debug!(
-            "Inserted row into {}.{} for user {} with row_id {}",
+            "Inserted row into {}.{} for user {} with _seq {}",
             namespace_id.as_str(),
             table_name.as_str(),
             user_id.as_str(),
-            row_id
+            seq_id
         );
 
         // ✅ REQUIREMENT 2: Notification AFTER storage success
@@ -159,7 +154,8 @@ impl UserTableInsertHandler {
             );
         }
 
-        Ok(row_id)
+        // Return the SeqId as a string (for compatibility with existing API)
+        Ok(seq_id.to_string())
     }
 
     /// Insert multiple rows in batch
@@ -171,7 +167,7 @@ impl UserTableInsertHandler {
     /// * `rows` - Vector of row data as JSON objects
     ///
     /// # Returns
-    /// Vector of generated row IDs
+    /// Vector of generated SeqIds as strings
     pub fn insert_batch(
         &self,
         namespace_id: &NamespaceId,
@@ -190,9 +186,9 @@ impl UserTableInsertHandler {
             self.live_query_manager.is_some()
         );
 
-        let mut row_ids = Vec::with_capacity(rows.len());
+        let mut seq_ids = Vec::with_capacity(rows.len());
 
-        // Insert each row individually (UserTableStore doesn't have batch insert yet)
+        // Insert each row individually
         for row_data in rows {
             // Validate row data is an object
             if !row_data.is_object() {
@@ -201,40 +197,33 @@ impl UserTableInsertHandler {
                 ));
             }
 
-            // Get system column values from SystemColumnsService (Phase 12, US5, T023)
-            // The Snowflake ID becomes the row_id (no separate _id field)
+            // Get system column values from SystemColumnsService (MVCC - Phase 12)
             let sys_cols = self.app_context.system_columns_service();
-            let (snowflake_id, updated_ns, deleted) = sys_cols.handle_insert(None)?;
-            
-            // Use Snowflake ID as the row identifier
-            let row_id = snowflake_id.to_string();
+            let (seq_id, deleted) = sys_cols.handle_insert()?;
 
-            // Create the entity for storage
+            // Create the UserTableRow entity (MVCC structure)
             let entity = UserTableRow {
-                row_id: row_id.clone(),
-                user_id: user_id.as_str().to_string(),
-                fields: row_data.clone(),
-                _updated: Self::format_nanos_to_rfc3339(updated_ns),
+                user_id: user_id.clone(),
+                _seq: seq_id,
                 _deleted: deleted,
+                fields: row_data.clone(),
             };
+
+            // Create composite key for storage
+            let row_key = UserTableRowId::new(user_id.clone(), seq_id);
             
             // DEBUG: Log first insert for each user
             if let Some(message) = row_data.get("message") {
                 if row_data.get("id").and_then(|v| v.as_i64()) == Some(0) {
-                    eprintln!("DEBUG INSERT: user={}, row_id={}, message={}", user_id.as_str(), row_id, message);
+                    eprintln!("DEBUG INSERT: user={}, seq={}, message={}", user_id.as_str(), seq_id, message);
                 }
             }
 
-            // Delegate to UserTableStore
-            UserTableStoreExt::put(
-                self.store.as_ref(),
-                namespace_id.as_str(),
-                table_name.as_str(),
-                user_id.as_str(),
-                &row_id,
-                &entity,
-            )
-            .map_err(|e| KalamDbError::Other(format!("Failed to insert row in batch: {}", e)))?;
+            // Store the entity using SystemTableStore
+            self.store
+                .put(&row_key, &entity)
+                .map_err(|e| KalamDbError::Other(format!("Failed to insert row in batch: {}", e)))?;
+
             if let Some(manager) = &self.live_query_manager {
                 // CRITICAL: Use fully qualified table name (namespace.table_name) for notification matching
                 let qualified_table_name =
@@ -255,18 +244,18 @@ impl UserTableInsertHandler {
                 log::warn!("⚠️  No LiveQueryManager in batch insert!");
             }
 
-            row_ids.push(row_id);
+            seq_ids.push(seq_id.to_string());
         }
 
         log::debug!(
             "Inserted {} rows into {}.{} for user {}",
-            row_ids.len(),
+            seq_ids.len(),
             namespace_id.as_str(),
             table_name.as_str(),
             user_id.as_str()
         );
 
-        Ok(row_ids)
+        Ok(seq_ids)
     }
 
     /// Apply DEFAULT functions and validate NOT NULL constraints (T534-T539, T554-T559)
@@ -411,28 +400,6 @@ impl UserTableInsertHandler {
                 // No default - return NULL
                 Ok(JsonValue::Null)
             }
-        }
-    }
-
-    /// Format nanoseconds since epoch to RFC3339 timestamp string
-    ///
-    /// # Arguments
-    /// * `nanos` - Nanoseconds since Unix epoch
-    ///
-    /// # Returns
-    /// RFC3339 formatted timestamp string (e.g., "2025-01-15T10:30:00Z")
-    fn format_nanos_to_rfc3339(nanos: i64) -> String {
-        use chrono::{DateTime, Utc};
-        
-        // Convert nanoseconds to DateTime
-        let secs = nanos / 1_000_000_000;
-        let nsecs = (nanos % 1_000_000_000) as u32;
-        
-        if let Some(dt) = DateTime::from_timestamp(secs, nsecs) {
-            dt.to_rfc3339()
-        } else {
-            // Fallback to current time if conversion fails
-            Utc::now().to_rfc3339()
         }
     }
 }
