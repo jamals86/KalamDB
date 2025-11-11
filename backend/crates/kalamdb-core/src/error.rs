@@ -55,6 +55,9 @@ pub enum KalamDbError {
     #[error("Invalid schema evolution: {0}")]
     InvalidSchemaEvolution(String),
 
+    #[error("System column violation: {0}")]
+    SystemColumnViolation(String),
+
     #[error("Conflict: {0}")]
     Conflict(String),
 

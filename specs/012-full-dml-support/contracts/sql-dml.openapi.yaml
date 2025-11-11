@@ -1,0 +1,142 @@
+openapi: 3.1.0
+info:
+  title: KalamDB Full DML Support API
+  version: 0.1.0
+  description: >-
+    Extensions to the KalamDB HTTP API enabling append-only UPDATE/DELETE,
+    AS USER impersonation, manifest cache inspection, and typed job parameter submissions.
+servers:
+  - url: https://{host}/api
+    variables:
+      host:
+        default: localhost:8080
+paths:
+  /v1/sql:
+    post:
+      summary: Execute SQL statement
+      description: >-
+        Accepts SQL statements including new capabilities defined in the Full DML Support spec
+        (append-only UPDATE/DELETE, AS USER clause, SHOW MANIFEST CACHE).
+      operationId: executeSql
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+                - query
+              properties:
+                query:
+                  type: string
+                  description: SQL string. Examples include `UPDATE namespace.tbl SET col = 1 WHERE _id = 42`, `DELETE FROM namespace.tbl AS USER 'svc-user' WHERE id = 10`, or `SHOW MANIFEST CACHE`.
+                parameters:
+                  type: object
+                  additionalProperties: true
+                  description: Named bind parameters for prepared statements.
+                impersonationContext:
+                  type: object
+                  description: Optional explicit impersonation context when using AS USER via API wrappers.
+                  properties:
+                    subjectUserId:
+                      type: string
+                    subjectRole:
+                      type: string
+      responses:
+        '200':
+          description: Statement executed successfully
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  columns:
+                    type: array
+                    items:
+                      type: string
+                  rows:
+                    type: array
+                    items:
+                      type: array
+                      items: {}
+                  stats:
+                    type: object
+                    properties:
+                      executionTimeMs:
+                        type: number
+                      scannedBatches:
+                        type: integer
+                      manifestCacheHit:
+                        type: boolean
+        '400':
+          description: Validation error (e.g., unauthorized AS USER, malformed DML)
+        '403':
+          description: Permission denied
+
+  /v1/jobs:
+    post:
+      summary: Submit background job
+      description: Accepts typed job executor parameters serialized as JSON.
+      operationId: createJob
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+                - job_type
+                - params
+              properties:
+                job_type:
+                  type: string
+                  description: e.g., `flush`, `manifest_eviction`.
+                params:
+                  oneOf:
+                    - $ref: '#/components/schemas/FlushJobParams'
+                    - $ref: '#/components/schemas/ManifestEvictionJobParams'
+                idempotency_key:
+                  type: string
+      responses:
+        '202':
+          description: Job accepted
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  job_id:
+                    type: string
+                  status:
+                    type: string
+        '400':
+          description: Parameter validation failure
+components:
+  schemas:
+    FlushJobParams:
+      type: object
+      required:
+        - namespace
+        - table
+      properties:
+        namespace:
+          type: string
+        table:
+          type: string
+        batch_size:
+          type: integer
+          minimum: 1
+          description: Optional row batch size override; defaults to server config.
+    ManifestEvictionJobParams:
+      type: object
+      properties:
+        namespace_filter:
+          type: string
+        max_entries:
+          type: integer
+          minimum: 1
+        ttl_seconds:
+          type: integer
+          minimum: 1
+        dry_run:
+          type: boolean

@@ -53,9 +53,9 @@ Query performance on large batch files needs row-level filtering before reading 
 
 **Acceptance Scenarios**:
 
-1. **Given** a flush operation writing a new batch file, **When** Parquet file is created, **Then** the system automatically generates Bloom filters for `id` column and `_updated` column by default
-2. **Given** a table with indexed columns defined in schema, **When** batch file is written, **Then** the system creates Bloom filters for all indexed columns in addition to default `id` and `_updated` filters
-3. **Given** a batch file with Bloom filters, **When** query includes `WHERE id = 12345`, **Then** the system tests Bloom filter before reading column data, skipping files where filter returns "definitely not present"
+1. **Given** a flush operation writing a new batch file, **When** Parquet file is created, **Then** the system automatically generates Bloom filters for `_id` column and `_updated` column by default
+2. **Given** a table with indexed columns defined in schema, **When** batch file is written, **Then** the system creates Bloom filters for all indexed columns in addition to default `_id` and `_updated` filters
+3. **Given** a batch file with Bloom filters, **When** query includes `WHERE _id = 12345`, **Then** the system tests Bloom filter before reading column data, skipping files where filter returns "definitely not present"
 4. **Given** a query with `WHERE indexed_column = value`, **When** indexed_column has a Bloom filter, **Then** the system uses the filter to eliminate batch files, reducing I/O by 90%+ for point lookups
 5. **Given** Bloom filter false positive rate configuration, **When** batch file is written, **Then** the system tunes filter size to achieve target false positive rate (default 1%) balancing space vs accuracy
 
@@ -272,7 +272,7 @@ Developers implementing job executors need type-safe parameter handling instead 
 
 #### Bloom Filter Optimization (FR-054 to FR-061)
 
-- **FR-054**: System MUST generate Bloom filters for `id` and `_updated` columns by default when writing batch files
+- **FR-054**: System MUST generate Bloom filters for `_id` and `_updated` columns by default when writing batch files
 - **FR-055**: System MUST generate Bloom filters for all indexed columns defined in table schema
 - **FR-056**: System MUST embed Bloom filters in Parquet file metadata for efficient access without reading column data
 - **FR-057**: System MUST test Bloom filters during query execution before reading column data from batch files

@@ -161,6 +161,7 @@ IMPORTANT:
 
 9) in impl JobExecutor for FlushExecutor add generic to the model instead of having json parameters we can have T: DeserializeOwned + Send + Sync + 'static and then we can deserialize into the right struct directly instead of having to parse json each time
 
+10) use hashbrown instead of hashmap for better performance where possible
 
 
 Key Findings
