@@ -25,7 +25,7 @@ A database administrator needs to update or delete specific records from a user 
 
 ---
 
-### User Story 2 - Metadata Index for Query Optimization (Priority: P2)
+### User Story 2 - Manifest Files for Query Optimization (Priority: P2)
 
 System administrators need efficient query execution on tables with many persisted storage files. A manifest file per table tracks batch file metadata including min/max values for all columns (especially `_updated`), enabling the query planner to skip unnecessary file scans based on timestamp ranges and column predicates.
 
@@ -78,12 +78,33 @@ A service account or admin needs to insert, update, or delete records on behalf 
 
 ---
 
+### User Story 5 - System Column Management Consolidation (Priority: P1)
+
+Developers need a single centralized component managing all system columns (`_id`, `_updated`, `_deleted`) to eliminate scattered logic, ensure consistency, and simplify maintenance. The system must automatically add `_id` as primary key with Snowflake ID generation by default, preventing users from manually setting IDs.
+
+**Why this priority**: CRITICAL for data integrity and code maintainability - currently system column logic is scattered across multiple modules (table creation, DML handlers, query planning, flush operations). This creates bugs, inconsistencies, and makes adding new system columns error-prone. Without consolidation, the new `_id` column and versioning features would duplicate this scattered pattern. Must be completed BEFORE implementing UPDATE/DELETE to avoid technical debt.
+
+**Independent Test**: Can be fully tested by creating a SystemColumnsService component, migrating all system column logic to it, then running full test suite. Success is verified by: (1) all tests passing, (2) grep search showing zero direct system column manipulation outside SystemColumnsService, (3) new tables automatically have `_id` primary key with Snowflake IDs.
+
+**Acceptance Scenarios**:
+
+1. **Given** a user creates a new table without specifying `id` column, **When** table creation executes, **Then** the system automatically adds `_id BIGINT PRIMARY KEY DEFAULT snowflake_id()` as first column
+2. **Given** a user attempts to create a table with `id` column (user-defined), **When** table creation executes, **Then** the system adds `_id` as separate column and allows user's `id` column (both coexist)
+3. **Given** any table creation, **When** table is created, **Then** the system automatically adds `_id`, `_updated`, and `_deleted` columns via single SystemColumnsService.add_system_columns() call
+4. **Given** an INSERT operation, **When** user doesn't provide `_id` value, **Then** the system generates Snowflake ID automatically (timestamp + node_id + sequence)
+5. **Given** an UPDATE operation, **When** record is updated, **Then** SystemColumnsService.handle_update() manages `_updated` timestamp and version logic in one place
+6. **Given** a DELETE operation, **When** record is deleted, **Then** SystemColumnsService.handle_delete() sets `_deleted = true` and updates `_updated` in one place
+7. **Given** a query execution, **When** filtering records, **Then** SystemColumnsService.apply_deletion_filter() adds `WHERE _deleted = false` automatically
+8. **Given** codebase analysis, **When** searching for system column logic, **Then** all operations are centralized in SystemColumnsService (zero scattered references)
+
+---
+
 ### User Story 6 - Centralized Configuration Access (Priority: P3)
 5. **Given** authenticated as service role, **When** attempting `INSERT INTO shared_table AS USER 'user123' VALUES (...)`, **Then** the system rejects the operation with "AS USER clause not supported for Shared tables"
 
 ---
 
-### User Story 5 - Centralized Configuration Access (Priority: P3)
+### User Story 6 - Centralized Configuration Access (Priority: P3)
 
 Developers need a single consistent way to access all application configuration across the codebase, eliminating duplicate config models and file I/O scattered throughout modules.
 
@@ -137,6 +158,11 @@ Developers implementing job executors need type-safe parameter handling instead 
 - What happens when a job receives parameters that fail validation against the expected structure?
 - How does the system handle backward compatibility when changing job parameter schemas?
 - What happens when AS USER is attempted on a Shared table (should be rejected)?
+- What happens when user attempts to manually set `_id` value in INSERT statement?
+- How does Snowflake ID generation handle clock skew or node_id collisions across distributed nodes?
+- What happens when existing tables (created before this feature) are migrated to include `_id` column?
+- How does the system handle user-defined `id` column that conflicts with system `_id` column naming?
+- What happens if SystemColumnsService is bypassed and system columns are modified directly?
 
 ## Requirements *(mandatory)*
 
@@ -200,31 +226,46 @@ Developers implementing job executors need type-safe parameter handling instead 
 - **FR-045**: System MUST audit AS USER operations with both the authenticated user (actor) and target user (subject)
 - **FR-046**: System MUST reject AS USER operations on Shared tables with clear error message
 
-#### Centralized Configuration (FR-047 to FR-052)
+#### System Column Management (FR-047 to FR-058)
 
-- **FR-047**: System MUST provide all configuration through AppContext.config() instead of direct file reads
-- **FR-048**: System MUST eliminate duplicate config DTOs and use single source of truth from AppContext
-- **FR-049**: System MUST load configuration once during AppContext initialization and share via Arc reference
-- **FR-050**: System MUST provide type-safe access to configuration sections (database, server, jobs, auth, etc.)
-- **FR-051**: System MUST validate configuration completeness at startup and fail fast with clear errors
-- **FR-052**: System MUST document all configuration migration points in code comments for future reference
+- **FR-047**: System MUST create a centralized SystemColumnsService component managing all `_id`, `_updated`, and `_deleted` column operations
+- **FR-048**: System MUST automatically add `_id BIGINT PRIMARY KEY` as first column in all user and shared tables during table creation
+- **FR-049**: System MUST use Snowflake ID algorithm for `_id` default value (timestamp + node_id + sequence for global uniqueness)
+- **FR-050**: System MUST allow user-defined `id` columns to coexist with system `_id` column (both can exist in same table)
+- **FR-051**: System MUST generate `_id` value automatically when INSERT operation doesn't provide it
+- **FR-052**: System MUST reject INSERT operations that attempt to manually set `_id` value (system-managed only)
+- **FR-053**: System MUST implement SystemColumnsService.add_system_columns() method called during table creation to inject `_id`, `_updated`, `_deleted`
+- **FR-054**: System MUST implement SystemColumnsService.handle_update() method managing `_updated` timestamp and version logic for UPDATE operations
+- **FR-055**: System MUST implement SystemColumnsService.handle_delete() method managing `_deleted` flag and `_updated` timestamp for DELETE operations
+- **FR-056**: System MUST implement SystemColumnsService.apply_deletion_filter() method automatically adding `WHERE _deleted = false` to queries
+- **FR-057**: System MUST eliminate all scattered system column logic outside SystemColumnsService (zero direct manipulation in DML handlers, query planning, flush operations)
+- **FR-058**: System MUST validate via code analysis that all system column operations route through SystemColumnsService
 
-#### Generic Job Executor (FR-053 to FR-057)
+#### Centralized Configuration (FR-059 to FR-064)
 
-- **FR-053**: Job execution framework MUST support type-specific parameter definitions for each job type
-- **FR-054**: System MUST automatically validate and convert job parameters to job-specific structures at execution time
-- **FR-055**: System MUST provide early validation of job parameter correctness before job execution
-- **FR-056**: System MUST maintain compatibility with existing job storage format
-- **FR-057**: System MUST handle parameter validation errors with clear messages identifying expected parameter structure
+- **FR-059**: System MUST provide all configuration through AppContext.config() instead of direct file reads
+- **FR-060**: System MUST eliminate duplicate config DTOs and use single source of truth from AppContext
+- **FR-061**: System MUST load configuration once during AppContext initialization and share via Arc reference
+- **FR-062**: System MUST provide type-safe access to configuration sections (database, server, jobs, auth, etc.)
+- **FR-063**: System MUST validate configuration completeness at startup and fail fast with clear errors
+- **FR-064**: System MUST document all configuration migration points in code comments for future reference
 
-#### Test Coverage Requirements (FR-058 to FR-063)
+#### Generic Job Executor (FR-065 to FR-069)
 
-- **FR-058**: System MUST include tests for updating records after they have been flushed to long-term storage
-- **FR-059**: System MUST include tests for records updated 3 times (original + 2 updates, all flushed)
-- **FR-060**: System MUST include tests verifying deleted records (_deleted = true) are not returned in query results
-- **FR-061**: System MUST include tests verifying MAX(_updated) correctly resolves latest version across storage tiers
-- **FR-062**: System MUST include tests for concurrent updates to the same record
-- **FR-063**: System MUST include tests for querying records with _deleted flag at different storage layers
+- **FR-065**: Job execution framework MUST support type-specific parameter definitions for each job type
+- **FR-066**: System MUST automatically validate and convert job parameters to job-specific structures at execution time
+- **FR-067**: System MUST provide early validation of job parameter correctness before job execution
+- **FR-068**: System MUST maintain compatibility with existing job storage format
+- **FR-069**: System MUST handle parameter validation errors with clear messages identifying expected parameter structure
+
+#### Test Coverage Requirements (FR-070 to FR-075)
+
+- **FR-070**: System MUST include tests for updating records after they have been flushed to long-term storage
+- **FR-071**: System MUST include tests for records updated 3 times (original + 2 updates, all flushed)
+- **FR-072**: System MUST include tests verifying deleted records (_deleted = true) are not returned in query results
+- **FR-073**: System MUST include tests verifying MAX(_updated) correctly resolves latest version across storage tiers
+- **FR-074**: System MUST include tests for concurrent updates to the same record
+- **FR-075**: System MUST include tests for querying records with _deleted flag at different storage layers
 
 ### Key Entities
 
@@ -235,6 +276,8 @@ Developers implementing job executors need type-safe parameter handling instead 
 - **BatchFileEntry**: Manifest entry for a single batch file containing: file path (batch-{number}.parquet), min_updated/max_updated timestamps, min/max values for all columns, row_count, size_bytes, schema_version, status
 - **BloomFilter**: Probabilistic data structure embedded in Parquet file metadata for `id`, `_updated`, and indexed columns enabling efficient point lookup elimination
 - **ImpersonationContext**: Execution context holding both authenticated user (actor) and target user (subject) for audit trail and authorization enforcement in AS USER operations (User/Stream tables only)
+- **SystemColumnsService**: Centralized service managing all system column operations (`_id` generation with Snowflake IDs, `_updated` timestamp management, `_deleted` flag handling) ensuring single source of truth and preventing scattered logic
+- **SnowflakeId**: 64-bit unique identifier combining timestamp (41 bits), node_id (10 bits), and sequence (12 bits) for globally unique, time-ordered primary keys
 - **ManifestService**: Centralized service component responsible for all manifest file operations (create, update, rebuild, validate) ensuring single source of truth for batch file metadata management
 - **TypedJobParameters**: Structured parameter container enabling validation and type checking for job-specific configurations
 
@@ -372,4 +415,7 @@ Instead of real-time subscription connections, use materialized stream tables:
 - **SC-011**: Centralized configuration access eliminates all direct configuration file reads outside initialization code
 - **SC-012**: Job parameter validation failures provide actionable error messages identifying expected structure within 100ms
 - **SC-013**: Type-safe job parameter implementation reduces parameter handling code by 50%+ lines per job type
-- **SC-014**: Test suite achieves 100% coverage for post-flush updates, multi-version records, and _deleted flag handling
+- **SC-014**: All system column operations (`_id`, `_updated`, `_deleted`) are centralized in SystemColumnsService with zero scattered references (verified by code analysis)
+- **SC-015**: Snowflake ID generation produces globally unique, time-ordered `_id` values with 1M+ IDs/sec throughput per node
+- **SC-016**: SystemColumnsService migration completes with 100% test pass rate and zero system column logic outside service component
+- **SC-017**: Test suite achieves 100% coverage for post-flush updates, multi-version records, and _deleted flag handling
