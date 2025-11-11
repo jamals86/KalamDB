@@ -22,9 +22,6 @@ jsonwebtoken = { workspace = true }
 # Password hashing
 bcrypt = { workspace = true }
 
-# Random password generation
-rand = { workspace = true }
-
 # DataFusion for system schema registration
 datafusion = { workspace = true }
 
@@ -159,7 +156,6 @@ kalamdb-commons = { path = "crates/kalamdb-commons" }
 # External dependencies
 tempfile = { workspace = true }
 serde_json = { workspace = true }
-actix-http = { workspace = true }
 actix-web = { workspace = true }
 tokio-tungstenite = { workspace = true }
 futures-util = { workspace = true }
@@ -169,6 +165,5 @@ base64 = { workspace = true }
 bcrypt = { workspace = true }
 datafusion = { workspace = true }
 libc = { workspace = true }
-parquet = { workspace = true }
 arrow = { workspace = true }
 hex = { workspace = true }

@@ -53,18 +53,15 @@ rocksdb = { version = "0.24.0", default-features = false, features = ["snappy"] 
 # Apache Arrow ecosystem
 arrow = { version = "56.2.0", features = ["prettyprint"] }
 arrow-schema = { version = "56.2.0" }
-parquet = { version = "56.2.0", features = ["arrow", "async"] }
 datafusion = { version = "50.3.0" }
 datafusion-common = { version = "50.3.0" }
 sqlparser = { version = "0.58.0" }
 
 # Web framework
 actix-web = "4.9"
-actix-rt = "2.10"
 actix-web-actors = "4.3.0"
 actix = "0.13"
 actix-cors = "0.7"
-actix-http = "3.9"
 
 # UUID generation
 uuid = { version = "1.11", features = ["v4", "v7", "serde"] }
@@ -110,7 +107,6 @@ futures-util = { version = "0.3", default-features = false }
 base64 = "0.22"
 bincode = { version = "2.0.1", features = ["serde"] }
 async-trait = "0.1.74"
-metrics = "0.24"
 once_cell = "1.20"
 regex = "1.11"
 dashmap = "6.1"
@@ -118,9 +114,8 @@ hex = "0.4"
 moka = { version = "0.12", features = ["future"] }
 wasm-bindgen = { version = "0.2.105" }
 wasm-bindgen-futures = { version = "0.4" }
-wasm-bindgen-test = "0.3"
 js-sys = { version = "0.3" }
 libc = "0.2"
 web-sys = { version = "0.3" }
 getrandom = { version = "0.2.16", features = ["js"] }
-bigdecimal = "0.4"
+

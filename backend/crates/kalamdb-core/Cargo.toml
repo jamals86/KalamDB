@@ -47,9 +47,6 @@ log = { workspace = true }
 # System monitoring
 sysinfo = { workspace = true }
 
-# Metrics
-metrics = { workspace = true }
-
 # UUID generation
 uuid = { workspace = true }
 
