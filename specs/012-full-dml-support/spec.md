@@ -283,6 +283,17 @@ Developers implementing job executors need type-safe parameter handling instead 
 
 ## Clarifications
 
+### Session 2025-11-10
+
+- Q: How are concurrent updates handled when a record is being flushed to long-term storage? → A: Flush operations work on a snapshot of fast storage while live fast storage continues accepting writes
+- Q: What happens if two versions of the same record have identical `_updated` timestamps (nanosecond precision collision)? → A: Use storage layer priority tie-breaker (fast storage > long-term storage) plus +1ns increment prevention
+- Q: How does the system recover from manifest.json corruption or inconsistencies with batch files? → A: Centralized ManifestService performs scan-and-rebuild with degraded mode fallback
+- Q: Should AS USER operations work with soft-deleted user accounts? → A: Rejected as non-existent with generic error message
+
+### Session 2025-11-11
+
+- Q: How are node_id values assigned to database instances for Snowflake ID generation? → A: Static configuration from config.toml (range 0-1023) with startup validation
+
 ### Concurrent Update Conflict Resolution (added 2025-11-10)
 
 **Question**: How are concurrent updates handled when a record is being flushed to long-term storage?
@@ -380,6 +391,26 @@ Instead of real-time subscription connections, use materialized stream tables:
 4. Determine resource limits and quotas
 
 **Impact**: User Story 5 (Service-Level Subscriptions) removed from this spec pending design completion. Will be addressed in separate feature specification.
+
+### Snowflake ID Node Assignment Strategy (added 2025-11-11)
+
+**Question**: How are node_id values assigned to database instances for Snowflake ID generation?
+
+**Answer**: Static configuration from config.toml with startup validation (Option A):
+
+1. **Configuration**: Each database instance has `node_id` field in config.toml (range: 0-1023, 10-bit value)
+2. **Validation**: On startup, AppContext initialization validates node_id is within valid range (0-1023)
+3. **Uniqueness**: Cluster deployment requires manual coordination to ensure no two instances share same node_id (documented in deployment guide)
+4. **Collision Detection**: If duplicate node_ids exist in cluster, Snowflake IDs may collide - operator responsibility to prevent via configuration management
+5. **Integration**: Reuses existing AppContext.node_id pattern (already loaded once from config.toml per Phase 10 architecture)
+
+Example config.toml:
+```toml
+[server]
+node_id = 42  # Unique identifier for this instance (0-1023)
+```
+
+**Rationale**: Aligns with existing KalamDB architecture where NodeId is allocated once from config.toml (SC-000, SC-007 from AGENTS.md). Simple, explicit, no external coordinator dependencies.
 
 ---
 
