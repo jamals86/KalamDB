@@ -405,14 +405,19 @@ impl UserTableProvider {
     /// and performs an update. This bridges the mismatch between external primary
     /// key semantics (id column) and internal storage key (row_id).
     ///
+    /// **Phase 3, US1, T061**: Now supports UPDATE on flushed records via version resolution
+    ///
     /// # Arguments
     /// * `user_id` - User ID for data isolation
     /// * `id_value` - Value of the logical id field to match
     /// * `updates` - JSON object with field updates
     pub fn update_by_id_field(&self, user_id: &UserId, id_value: &str, updates: serde_json::Value) -> Result<(), KalamDbError> {
-        let rows = self.scan_current_user_rows(user_id)?;
+        // Use version resolution scan to find record in BOTH RocksDB and Parquet
+        let rows = tokio::runtime::Handle::current().block_on(async {
+            self.scan_current_user_rows_with_version_resolution(user_id).await
+        })?;
 
-        log::debug!("update_by_id_field: Looking for id={} among {} user rows", id_value, rows.len());
+        log::debug!("update_by_id_field: Looking for id={} among {} user rows (with version resolution)", id_value, rows.len());
 
         // Match either numeric or string representations
         let mut target_row_id: Option<String> = None;
@@ -469,6 +474,94 @@ impl UserTableProvider {
         )
     }
 
+    /// Scan all rows for the specified user WITH VERSION RESOLUTION (includes Parquet)
+    ///
+    /// This comprehensive scan:
+    /// 1. Scans RocksDB (fast storage)
+    /// 2. Scans Parquet files (flushed storage)
+    /// 3. Applies version resolution (latest _updated wins)
+    /// 4. Filters out deleted records (_deleted = true)
+    /// 5. Converts back to UserTableRow structs
+    ///
+    /// **Phase 3, US1, T061-T065**: Support UPDATE/DELETE on flushed records
+    ///
+    /// # Arguments
+    /// * `user_id` - User ID for data isolation
+    ///
+    /// # Returns
+    /// Vector of (row_id, UserTableRow) tuples representing latest version of each record
+    async fn scan_current_user_rows_with_version_resolution(
+        &self,
+        user_id: &UserId,
+    ) -> Result<Vec<(String, UserTableRow)>, KalamDbError> {
+        use crate::tables::base_table_provider::{scan_with_version_resolution_to_kvs, arrow_value_to_json};
+        use datafusion::arrow::array::AsArray;
+        use serde_json::{Map, Value as JsonValue};
+
+        let schema = self.shared.core().arrow_schema();
+        let user_id_clone = user_id.clone();
+
+        // Define row converter closure
+        let row_converter = move |batch: &datafusion::arrow::record_batch::RecordBatch, row_idx: usize| {
+            // Extract _id (Snowflake ID)
+            let id_col = batch
+                .column_by_name("_id")
+                .ok_or_else(|| datafusion::error::DataFusionError::Execution("Missing _id column".to_string()))?;
+            let id_array = id_col.as_primitive::<datafusion::arrow::datatypes::Int64Type>();
+            let snowflake_id = id_array.value(row_idx);
+            let row_id = snowflake_id.to_string();
+
+            // Extract _updated (RFC3339 timestamp string)
+            let updated_col = batch
+                .column_by_name("_updated")
+                .ok_or_else(|| datafusion::error::DataFusionError::Execution("Missing _updated column".to_string()))?;
+            let updated_array = updated_col.as_string::<i32>();
+            let updated_str = updated_array.value(row_idx).to_string();
+
+            // Extract _deleted (boolean)
+            let deleted_col = batch
+                .column_by_name("_deleted")
+                .ok_or_else(|| datafusion::error::DataFusionError::Execution("Missing _deleted column".to_string()))?;
+            let deleted_array = deleted_col.as_boolean();
+            let deleted = deleted_array.value(row_idx);
+
+            // Extract user-defined fields into JSON object
+            let mut fields_map = Map::new();
+            for (field_name, column) in batch.schema().fields().iter().zip(batch.columns().iter()) {
+                // Skip system columns
+                if field_name.name() == "_id" || field_name.name() == "_updated" || field_name.name() == "_deleted" {
+                    continue;
+                }
+
+                // Convert Arrow value to JSON
+                let json_value = arrow_value_to_json(column.as_ref(), row_idx)?;
+                fields_map.insert(field_name.name().clone(), json_value);
+            }
+
+            let user_table_row = UserTableRow {
+                row_id: row_id.clone(),
+                user_id: user_id_clone.as_str().to_string(),
+                fields: JsonValue::Object(fields_map),
+                _updated: updated_str,
+                _deleted: deleted,
+            };
+
+            Ok((row_id, user_table_row))
+        };
+
+        // Call the generic scan_with_version_resolution_to_kvs helper
+        let rows = scan_with_version_resolution_to_kvs(
+            schema.clone(),
+            self.scan_rocksdb_as_batch(user_id, &schema, None),
+            self.scan_parquet_as_batch(user_id, &schema),
+            row_converter,
+        )
+        .await
+        .map_err(|e| KalamDbError::Other(format!("Version resolution scan failed: {}", e)))?;
+
+        Ok(rows)
+    }
+
     /// Flatten stored `UserTableRow` into a JSON object matching the logical schema.
     fn flatten_row(&self, data: UserTableRow) -> JsonValue {
         let mut row = match data.fields {
@@ -486,6 +579,14 @@ impl UserTableProvider {
                 map
             }
         };
+
+        // Add system columns to flattened row
+        // _id: Parse row_id (Snowflake ID stored as String) to i64
+        if let Ok(snowflake_id) = data.row_id.parse::<i64>() {
+            row.insert("_id".to_string(), JsonValue::Number(snowflake_id.into()));
+        } else {
+            log::warn!("Failed to parse row_id as Snowflake ID: {}", data.row_id);
+        }
 
         row.insert(
             "_updated".to_string(),
@@ -657,169 +758,6 @@ impl UserTableProvider {
             &table_identifier,
         )
         .await
-    }
-
-    /// Scan Parquet files and return JSON rows
-    ///
-    /// Reads all Parquet files for the current user from the storage directory
-    /// and converts them to JSON for merging with RocksDB data.
-    ///
-    /// # Arguments
-    /// * `user_id` - User ID for directory-level RLS isolation
-    /// * `_schema` - Schema reference (unused, kept for compatibility)
-    async fn scan_parquet_files(&self, user_id: &UserId, _schema: &SchemaRef) -> DataFusionResult<Vec<JsonValue>> {
-        use datafusion::parquet::arrow::arrow_reader::ParquetRecordBatchReaderBuilder;
-        use std::fs;
-        use std::path::Path;
-
-        let resolve_template_fallback = || {
-            self.shared
-                .core()
-                .cache()
-                .get(self.shared.core().table_id())
-                .map(|cached_data| {
-                    cached_data
-                        .storage_path_template
-                        .replace("{userId}", user_id.as_str())
-                        .replace("{shard}", "")
-                })
-                .unwrap_or_else(|| String::new())
-        };
-
-        let storage_path = self
-            .shared
-            .core()
-            .cache()
-            .get_storage_path(
-                self.shared.core().table_id(),
-                Some(user_id),
-                None,
-            )
-            .unwrap_or_else(|err| {
-                log::warn!(
-                    "Failed to resolve storage path via cache for table {}.{}: {}",
-                    self.namespace_id().as_str(),
-                    self.table_name().as_str(),
-                    err
-                );
-                resolve_template_fallback()
-            });
-
-        if storage_path.is_empty() {
-            log::debug!(
-                "Storage path resolution returned empty string for table {}.{}, skipping Parquet scan",
-                self.namespace_id().as_str(),
-                self.table_name().as_str()
-            );
-            return Ok(Vec::new());
-        }
-
-        let storage_dir = Path::new(&storage_path);
-        log::debug!(
-            "🔍 RLS: Scanning Parquet files for user={} in path={} (exists={})",
-            user_id.as_str(),
-            storage_path,
-            storage_dir.exists()
-        );
-
-        // 🔒 CRITICAL RLS ASSERTION: Verify storage path contains user_id
-        // This ensures directory-level isolation is enforced (Parquet files are stored per-user)
-        if !storage_path.contains(user_id.as_str()) {
-            log::error!(
-                "🚨 RLS VIOLATION: Storage path does NOT contain user_id! user={}, path={}",
-                user_id.as_str(),
-                storage_path
-            );
-            return Err(DataFusionError::Execution(format!(
-                "RLS violation: storage path missing user_id isolation"
-            )));
-        }
-
-        if !storage_dir.exists() {
-            log::debug!("Storage directory does not exist, returning empty result");
-            return Ok(Vec::new());
-        }
-
-        let parquet_files: Vec<_> = fs::read_dir(storage_dir)
-            .map_err(|e| {
-                DataFusionError::Execution(format!("Failed to read storage directory: {}", e))
-            })?
-            .filter_map(|entry| entry.ok())
-            .filter(|entry| entry.path().extension().and_then(|s| s.to_str()) == Some("parquet"))
-            .map(|entry| entry.path())
-            .collect();
-
-        log::debug!("Found {} Parquet files", parquet_files.len());
-
-        if parquet_files.is_empty() {
-            return Ok(Vec::new());
-        }
-
-        let mut all_json_rows = Vec::new();
-
-        for parquet_file in parquet_files {
-            log::debug!("Reading Parquet file: {:?}", parquet_file);
-
-            let file = fs::File::open(&parquet_file).map_err(|e| {
-                DataFusionError::Execution(format!(
-                    "Failed to open Parquet file {:?}: {}",
-                    parquet_file, e
-                ))
-            })?;
-
-            let builder = ParquetRecordBatchReaderBuilder::try_new(file).map_err(|e| {
-                DataFusionError::Execution(format!(
-                    "Failed to create Parquet reader for {:?}: {}",
-                    parquet_file, e
-                ))
-            })?;
-
-            let reader = builder.build().map_err(|e| {
-                DataFusionError::Execution(format!(
-                    "Failed to build Parquet reader for {:?}: {}",
-                    parquet_file, e
-                ))
-            })?;
-
-            for batch_result in reader {
-                let batch = batch_result.map_err(|e| {
-                    DataFusionError::Execution(format!(
-                        "Failed to read batch from {:?}: {}",
-                        parquet_file, e
-                    ))
-                })?;
-
-                let json_rows = arrow_batch_to_json(&batch, true).map_err(|e| {
-                    DataFusionError::Execution(format!("Arrow to JSON conversion failed: {}", e))
-                })?;
-
-                for mut row in json_rows {
-                    // Add default system columns if missing
-                    if let Some(obj) = row.as_object_mut() {
-                        if !obj.contains_key("_deleted") {
-                            obj.insert("_deleted".to_string(), JsonValue::Bool(false));
-                        }
-
-                        if !obj.contains_key("_updated") {
-                            let now = chrono::Utc::now().to_rfc3339();
-                            obj.insert("_updated".to_string(), JsonValue::String(now));
-                        }
-                    }
-
-                    // Filter soft-deleted rows
-                    if let Some(deleted) = row.get("_deleted").and_then(|v| v.as_bool()) {
-                        if !deleted {
-                            all_json_rows.push(row);
-                        }
-                    } else {
-                        all_json_rows.push(row);
-                    }
-                }
-            }
-        }
-
-        log::debug!("Total rows from Parquet files: {}", all_json_rows.len());
-        Ok(all_json_rows)
     }
 }
 

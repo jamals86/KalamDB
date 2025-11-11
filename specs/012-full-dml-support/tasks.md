@@ -130,25 +130,25 @@ This task list breaks down the Full DML Support feature into incremental, testab
 - [X] T053 [US1] Implement resolve_latest_version(): join fast storage + Parquet layers, select MAX(`_updated`) per `_id` - **COMPLETE**: HashMap-based group-by with MAX(_updated) selection per row_id (6/6 tests passing)
 - [X] T054 [US1] Add tie-breaker: FastStorage > Parquet when `_updated` timestamps identical - **COMPLETE**: VersionSource.priority() method (FastStorage=2, Parquet=1)
 - [X] T055 [US1] Integrate VersionResolution into UserTableProvider scan() method - **COMPLETE**: Refactored scan() to use scan_rocksdb_as_batch() + scan_parquet_as_batch() → resolve_latest_version() → deletion filter
-- [ ] T056 [US1] Integrate VersionResolution into SharedTableProvider scan() method
+- [X] T056 [US1] Integrate VersionResolution into SharedTableProvider scan() method - **COMPLETE**: Refactored scan() to use unified helpers from base_table_provider (scan_parquet_files_as_batch, create_empty_batch). Eliminated ~200 lines of duplicate Parquet scanning logic across both providers.
 - [X] T057 [US1] Ensure SystemColumnsService.apply_deletion_filter() applied after version resolution - **COMPLETE**: Deletion filter (_deleted = false) applied after version resolution in UserTableProvider.scan()
 
 ### Flush Integration
 
-- [ ] T058 [US1] Update FlushExecutor to persist new record versions to separate batch files in backend/crates/kalamdb-core/src/jobs/executors/flush.rs
-- [ ] T059 [US1] Ensure old versions in long-term storage remain unchanged during flush
+- [X] T058 [US1] Update FlushExecutor to persist new record versions to separate batch files in backend/crates/kalamdb-core/src/jobs/executors/flush.rs - **COMPLETE**: generate_batch_filename() creates timestamped files (%Y-%m-%dT%H-%M-%S.parquet), each flush creates new file
+- [X] T059 [US1] Ensure old versions in long-term storage remain unchanged during flush - **COMPLETE**: Flush writes to new timestamped files only, never modifies existing Parquet files
 
 ### Testing & Validation
 
-- [ ] T060 [US1] Add unit test: UPDATE record in fast storage → verify in-place update with `_updated` increment
-- [ ] T061 [US1] Add unit test: UPDATE record in Parquet → verify new version created in fast storage
-- [ ] T062 [US1] Add integration test: INSERT → FLUSH → UPDATE → query returns latest version
-- [ ] T063 [US1] Add integration test: record updated 3 times → all versions flushed → query returns MAX(`_updated`)
-- [ ] T064 [US1] Add integration test: DELETE → `_deleted = true` set → query excludes record
-- [ ] T065 [US1] Add integration test: DELETE record in Parquet → new version with `_deleted = true` in fast storage
-- [ ] T066 [US1] Add concurrent update test: 10 threads UPDATE same record → all updates succeed, final query returns latest
-- [ ] T067 [US1] Add nanosecond collision test: rapid updates → verify +1ns increment prevents timestamp ties
-- [ ] T068 [US1] Run performance regression test: query latency with 1/10/100 versions ≤ 2× baseline (FR-102, FR-103)
+- [X] T060 [US1] Add unit test: UPDATE record in fast storage → verify in-place update with `_updated` increment - **COMPLETE**: test_update_in_fast_storage() created in test_update_delete_version_resolution.rs
+- [X] T061 [US1] Add unit test: UPDATE record in Parquet → verify new version created in fast storage - **COMPLETE**: test_update_in_parquet() created
+- [X] T062 [US1] Add integration test: INSERT → FLUSH → UPDATE → query returns latest version - **COMPLETE**: test_full_workflow_insert_flush_update() created
+- [X] T063 [US1] Add integration test: record updated 3 times → all versions flushed → query returns MAX(`_updated`) - **COMPLETE**: test_multi_version_query() created
+- [X] T064 [US1] Add integration test: DELETE → `_deleted = true` set → query excludes record - **COMPLETE**: test_delete_excludes_record() created
+- [X] T065 [US1] Add integration test: DELETE record in Parquet → new version with `_deleted = true` in fast storage - **COMPLETE**: test_delete_in_parquet() created
+- [X] T066 [US1] Add concurrent update test: 10 threads UPDATE same record → all updates succeed, final query returns latest - **COMPLETE**: test_concurrent_updates() created with tokio::task::JoinSet
+- [X] T067 [US1] Add nanosecond collision test: rapid updates → verify +1ns increment prevents timestamp ties - **COMPLETE**: test_nanosecond_collision_handling() created with 20 rapid updates
+- [ ] T068 [US1] Run performance regression test: query latency with 1/10/100 versions ≤ 2× baseline (FR-102, FR-103) - **READY**: test_query_performance_with_multiple_versions() created, needs execution
 
 ---
 

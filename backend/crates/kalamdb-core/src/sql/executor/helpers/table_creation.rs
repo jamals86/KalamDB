@@ -74,7 +74,7 @@ pub fn create_user_table(
     stmt: CreateTableStatement,
     exec_ctx: &ExecutionContext,
 ) -> Result<String, KalamDbError> {
-    use super::tables::{inject_auto_increment_field, inject_system_columns, save_table_definition, validate_table_name};
+    use super::tables::{inject_auto_increment_field, save_table_definition, validate_table_name};
     use kalamdb_commons::schemas::ColumnDefault;
 
     // RBAC check
@@ -180,9 +180,10 @@ pub fn create_user_table(
     // Auto-increment field injection (id column)
     let schema = inject_auto_increment_field(stmt.schema.clone())?;
 
-    // System column injection (_updated, _deleted)
-    let schema = inject_system_columns(schema, TableType::User)?;
-
+    // REMOVED: inject_system_columns() call
+    // System columns (_id, _updated, _deleted) are now added by SystemColumnsService
+    // in save_table_definition() after TableDefinition creation (Phase 12, US5)
+    
     // Inject DEFAULT SNOWFLAKE_ID() for auto-injected id column
     let mut modified_stmt = stmt.clone();
     if !modified_stmt.column_defaults.contains_key("id") {
@@ -255,7 +256,7 @@ pub fn create_shared_table(
     stmt: CreateTableStatement,
     exec_ctx: &ExecutionContext,
 ) -> Result<String, KalamDbError> {
-    use super::tables::{inject_auto_increment_field, inject_system_columns, save_table_definition, validate_table_name};
+    use super::tables::{inject_auto_increment_field, save_table_definition, validate_table_name};
     use kalamdb_commons::schemas::ColumnDefault;
 
     // RBAC check
@@ -361,9 +362,10 @@ pub fn create_shared_table(
     // Auto-increment field injection (id column)
     let schema = inject_auto_increment_field(stmt.schema.clone())?;
 
-    // System column injection (_updated, _deleted)
-    let schema = inject_system_columns(schema, TableType::Shared)?;
-
+    // REMOVED: inject_system_columns() call
+    // System columns (_id, _updated, _deleted) are now added by SystemColumnsService
+    // in save_table_definition() after TableDefinition creation (Phase 12, US5)
+    
     // Inject DEFAULT SNOWFLAKE_ID() for auto-injected id column
     let mut modified_stmt = stmt.clone();
     if !modified_stmt.column_defaults.contains_key("id") {

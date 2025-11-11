@@ -105,7 +105,7 @@ impl UserTableInsertHandler {
             row_id: row_id.clone(),
             user_id: user_id.as_str().to_string(),
             fields: row_data.clone(),
-            _updated: format!("{}", updated_ns), // TODO: Migrate to i64 in Phase 12
+            _updated: Self::format_nanos_to_rfc3339(updated_ns),
             _deleted: deleted,
         };
 
@@ -214,7 +214,7 @@ impl UserTableInsertHandler {
                 row_id: row_id.clone(),
                 user_id: user_id.as_str().to_string(),
                 fields: row_data.clone(),
-                _updated: format!("{}", updated_ns), // TODO: Migrate to i64 in Phase 12
+                _updated: Self::format_nanos_to_rfc3339(updated_ns),
                 _deleted: deleted,
             };
             
@@ -411,6 +411,28 @@ impl UserTableInsertHandler {
                 // No default - return NULL
                 Ok(JsonValue::Null)
             }
+        }
+    }
+
+    /// Format nanoseconds since epoch to RFC3339 timestamp string
+    ///
+    /// # Arguments
+    /// * `nanos` - Nanoseconds since Unix epoch
+    ///
+    /// # Returns
+    /// RFC3339 formatted timestamp string (e.g., "2025-01-15T10:30:00Z")
+    fn format_nanos_to_rfc3339(nanos: i64) -> String {
+        use chrono::{DateTime, Utc};
+        
+        // Convert nanoseconds to DateTime
+        let secs = nanos / 1_000_000_000;
+        let nsecs = (nanos % 1_000_000_000) as u32;
+        
+        if let Some(dt) = DateTime::from_timestamp(secs, nsecs) {
+            dt.to_rfc3339()
+        } else {
+            // Fallback to current time if conversion fails
+            Utc::now().to_rfc3339()
         }
     }
 }
