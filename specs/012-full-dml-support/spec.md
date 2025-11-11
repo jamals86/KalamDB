@@ -99,12 +99,49 @@ Developers need a single centralized component managing all system columns (`_id
 
 ---
 
-### User Story 6 - Centralized Configuration Access (Priority: P3)
-5. **Given** authenticated as service role, **When** attempting `INSERT INTO shared_table AS USER 'user123' VALUES (...)`, **Then** the system rejects the operation with "AS USER clause not supported for Shared tables"
+### User Story 6 - Manifest Cache Lifecycle (Priority: P1)
+
+Database administrators and query planners need to minimize repeated reads of `manifest.json` from S3/local storage while ensuring cache and source remain in full sync, leveraging KalamDB's existing SchemaRegistry and EntityStore patterns.
+
+**Why this priority**: Performance optimization for manifest access - without caching, every query must read manifest.json from S3/local storage (10-50ms latency), multiplied across thousands of queries/sec. Manifest caching reduces this to sub-millisecond memory access while maintaining strict consistency. Essential for production workloads with high query rates on tables with many batch files.
+
+**Independent Test**: Can be fully tested by executing queries on a table with manifest.json in S3, measuring cache hit/miss rates, forcing flush operations, and verifying cache/storage synchronization. Success is verified by: (1) first query reads from S3, (2) subsequent queries use cache, (3) flush updates both cache and S3 atomically, (4) eviction removes stale entries based on TTL.
+
+**Acceptance Scenarios**:
+
+#### Manifest Read during Query (Priority: P1)
+
+1. **Given** a query targets a user table, **When** system checks ManifestCache CF via SchemaRegistry, **Then** if manifest entry exists and is fresh, it is used directly without S3 read
+2. **Given** no cache entry is found for a table, **When** query executes, **Then** manifest is read once from S3/local storage, then stored in both ManifestCache CF (RocksDB) and in-memory hot cache (for TTL-based reuse)
+3. **Given** a cached manifest exists, **When** query accesses it, **Then** queries after that reuse the manifest until TTL expiration or explicit invalidation
+4. **Given** cache and S3 manifest have mismatched ETags or modified times, **When** stale detection occurs, **Then** manifest is re-fetched from S3 and overwritten in cache
+5. **Given** a manifest is accessed from cache, **When** query completes, **Then** `last_accessed` timestamp is updated in-memory only (lightweight DashMap, not RocksDB) for eviction scheduling
+
+#### Manifest Write during Flush (Priority: P1)
+
+1. **Given** a flush operation completes successfully, **When** manifest update is triggered, **Then** system writes updated manifest.json to S3/local path (`/data/{namespace}/{table}/user_{id}/manifest.json`), ManifestCache CF (persistent cache), and in-memory cache entry (if present)
+2. **Given** flush writes manifest to cache and S3, **When** operation completes, **Then** system logs `manifest_cache_sync_success` or `manifest_cache_sync_failure` (on mismatch or write failure)
+3. **Given** flush updates manifest, **When** cache synchronization completes, **Then** cache and persisted manifest are guaranteed to represent the same file list and version post-flush
+
+#### Manifest Cache Management & Eviction (Priority: P2)
+
+1. **Given** an administrator needs to monitor cached manifests, **When** executing `SHOW MANIFEST CACHE;` SQL command, **Then** system returns columns: `namespace`, `table`, `user_id`, `etag`, `last_refreshed`, `last_accessed`, `ttl`, `source`, `sync_state`
+2. **Given** ManifestEvictionJob runs periodically, **When** eviction executes, **Then** system removes stale or unused manifest entries based on `ttl_seconds` and `last_accessed` (configurable in system.jobs)
+3. **Given** manifest cache eviction runs, **When** determining candidates, **Then** `last_accessed` values are stored in lightweight in-memory map (not RocksDB) ensuring small footprint and fast cleanup
+4. **Given** manifest cache configuration in config.toml, **When** server starts, **Then** system respects `ttl_seconds`, `eviction_interval_seconds`, `max_entries`, and `last_accessed_memory_window` settings
+
+**Configuration Example**:
+```toml
+[manifest_cache]
+ttl_seconds = 600                    # 10 minutes cache TTL
+eviction_interval_seconds = 300      # Evict every 5 minutes
+max_entries = 50000                  # Max cached manifests
+last_accessed_memory_window = 600    # Keep access timestamps for 10 minutes
+```
 
 ---
 
-### User Story 6 - Centralized Configuration Access (Priority: P3)
+### User Story 7 - Centralized Configuration Access (Priority: P3)
 
 Developers need a single consistent way to access all application configuration across the codebase, eliminating duplicate config models and file I/O scattered throughout modules.
 
@@ -121,7 +158,7 @@ Developers need a single consistent way to access all application configuration 
 
 ---
 
-### User Story 7 - Type-Safe Job Executor Parameters (Priority: P3)
+### User Story 8 - Type-Safe Job Executor Parameters (Priority: P3)
 
 Developers implementing job executors need type-safe parameter handling instead of manual JSON parsing, reducing boilerplate and preventing runtime errors from malformed parameters.
 
@@ -204,68 +241,109 @@ Developers implementing job executors need type-safe parameter handling instead 
 - **FR-029**: System MUST support manifest schema evolution (version field) for future enhancements
 - **FR-030**: System MUST mark batch files with status field in manifest (active, compacting, archived) for lifecycle management
 
-#### Bloom Filter Optimization (FR-031 to FR-038)
+#### Manifest Cache Lifecycle (FR-031 to FR-046)
 
-- **FR-031**: System MUST generate Bloom filters for `id` and `_updated` columns by default when writing batch files
-- **FR-032**: System MUST generate Bloom filters for all indexed columns defined in table schema
-- **FR-033**: System MUST embed Bloom filters in Parquet file metadata for efficient access without reading column data
-- **FR-034**: System MUST test Bloom filters during query execution before reading column data from batch files
-- **FR-035**: System MUST skip batch files where Bloom filter returns "definitely not present" for equality predicates
-- **FR-036**: System MUST configure Bloom filter false positive rate (default 1%) balancing space overhead vs accuracy
-- **FR-037**: System MUST handle Bloom filter false positives gracefully by reading actual column data for verification
-- **FR-038**: System MUST support disabling Bloom filters per column via table configuration for space-constrained scenarios
+- **FR-031**: System MUST create a dedicated RocksDB column family `manifest_cache` for cached manifest entries
+- **FR-032**: System MUST register ManifestCache CF as new EntityStore in SchemaRegistry (following existing patterns for schemas, users, tables, jobs)
+- **FR-033**: System MUST implement ManifestCacheStore with CRUD operations (get/put/delete) for cache entries
+- **FR-034**: System MUST implement ManifestCacheService with in-memory DashMap for hot cache + RocksDB fallback for persistence
+- **FR-035**: System MUST use cache key format `{namespace}:{table}:{user_id}` for manifest cache entries
+- **FR-036**: System MUST serialize ManifestCacheEntry as JSON (serde_json) for storage in RocksDB to keep entries human-readable and backward compatible
+- **FR-037**: System MUST check ManifestCache CF via SchemaRegistry during query planning before reading manifest from S3/local storage
+- **FR-038**: System MUST use cached manifest directly when entry exists and is fresh (within TTL)
+- **FR-039**: System MUST read manifest from S3/local storage on cache miss, then store in both ManifestCache CF and in-memory hot cache
+- **FR-040**: System MUST validate cache freshness using ETag or modified time comparison between cache and S3 source
+- **FR-041**: System MUST re-fetch manifest from S3 and overwrite cache when stale detection occurs (ETag/modified time mismatch)
+- **FR-042**: System MUST update `last_accessed` timestamp in-memory only (lightweight DashMap, not RocksDB) for eviction scheduling
+- **FR-043**: System MUST write updated manifest.json to both S3/local path AND ManifestCache CF when flush operation completes
+- **FR-044**: System MUST log `manifest_cache_sync_success` or `manifest_cache_sync_failure` after flush manifest update
+- **FR-045**: System MUST guarantee cache and S3 manifest represent same file list and version post-flush (atomic synchronization)
+- **FR-046**: System MUST support `SHOW MANIFEST CACHE;` SQL command returning: namespace, table, user_id, etag, last_refreshed, last_accessed, ttl, source, sync_state
 
-#### AS USER Syntax (FR-039 to FR-046)
+#### Manifest Cache Eviction (FR-047 to FR-053)
 
-- **FR-039**: System MUST support `AS USER 'user_id'` clause in INSERT statements for User and Stream tables
-- **FR-040**: System MUST support `AS USER 'user_id'` clause in UPDATE statements for User and Stream tables
-- **FR-041**: System MUST support `AS USER 'user_id'` clause in DELETE statements for User and Stream tables
-- **FR-042**: System MUST restrict AS USER clause to service and admin roles only
-- **FR-043**: System MUST validate that the target user_id exists before executing AS USER operations
-- **FR-044**: System MUST apply Row-Level Security (RLS) policies as if the specified user executed the operation
-- **FR-045**: System MUST audit AS USER operations with both the authenticated user (actor) and target user (subject)
-- **FR-046**: System MUST reject AS USER operations on Shared tables with clear error message
+- **FR-047**: System MUST implement ManifestEvictionJob as background job tracked in system.jobs
+- **FR-048**: System MUST run ManifestEvictionJob periodically based on `eviction_interval_seconds` configuration
+- **FR-049**: System MUST remove stale manifest entries based on `ttl_seconds` and `last_accessed` timestamp
+- **FR-050**: System MUST store `last_accessed` values in lightweight in-memory map (not RocksDB) for fast eviction decisions
+- **FR-051**: System MUST support manifest_cache configuration in config.toml with fields: ttl_seconds, eviction_interval_seconds, max_entries, last_accessed_memory_window
+- **FR-052**: System MUST restore manifest cache from RocksDB CF on server restart, revalidating TTL via stored `last_refreshed` timestamps before serving cached manifests
+- **FR-053**: System MUST repopulate in-memory hot cache on first query after server restart
 
-#### System Column Management (FR-047 to FR-058)
+#### Bloom Filter Optimization (FR-054 to FR-061)
 
-- **FR-047**: System MUST create a centralized SystemColumnsService component managing all `_id`, `_updated`, and `_deleted` column operations
-- **FR-048**: System MUST automatically add `_id BIGINT PRIMARY KEY` as first column in all user and shared tables during table creation
-- **FR-049**: System MUST use Snowflake ID algorithm for `_id` default value (timestamp + node_id + sequence for global uniqueness)
-- **FR-050**: System MUST allow user-defined `id` columns to coexist with system `_id` column (both can exist in same table)
-- **FR-051**: System MUST generate `_id` value automatically when INSERT operation doesn't provide it
-- **FR-052**: System MUST reject INSERT operations that attempt to manually set `_id` value (system-managed only)
-- **FR-053**: System MUST implement SystemColumnsService.add_system_columns() method called during table creation to inject `_id`, `_updated`, `_deleted`
-- **FR-054**: System MUST implement SystemColumnsService.handle_update() method managing `_updated` timestamp and version logic for UPDATE operations
-- **FR-055**: System MUST implement SystemColumnsService.handle_delete() method managing `_deleted` flag and `_updated` timestamp for DELETE operations
-- **FR-056**: System MUST implement SystemColumnsService.apply_deletion_filter() method automatically adding `WHERE _deleted = false` to queries
-- **FR-057**: System MUST eliminate all scattered system column logic outside SystemColumnsService (zero direct manipulation in DML handlers, query planning, flush operations)
-- **FR-058**: System MUST validate via code analysis that all system column operations route through SystemColumnsService
+- **FR-054**: System MUST generate Bloom filters for `id` and `_updated` columns by default when writing batch files
+- **FR-055**: System MUST generate Bloom filters for all indexed columns defined in table schema
+- **FR-056**: System MUST embed Bloom filters in Parquet file metadata for efficient access without reading column data
+- **FR-057**: System MUST test Bloom filters during query execution before reading column data from batch files
+- **FR-058**: System MUST skip batch files where Bloom filter returns "definitely not present" for equality predicates
+- **FR-059**: System MUST configure Bloom filter false positive rate (default 1%) balancing space overhead vs accuracy
+- **FR-060**: System MUST handle Bloom filter false positives gracefully by reading actual column data for verification
+- **FR-061**: System MUST support disabling Bloom filters per column via table configuration for space-constrained scenarios
 
-#### Centralized Configuration (FR-059 to FR-064)
+#### AS USER Syntax (FR-062 to FR-069)
 
-- **FR-059**: System MUST provide all configuration through AppContext.config() instead of direct file reads
-- **FR-060**: System MUST eliminate duplicate config DTOs and use single source of truth from AppContext
-- **FR-061**: System MUST load configuration once during AppContext initialization and share via Arc reference
-- **FR-062**: System MUST provide type-safe access to configuration sections (database, server, jobs, auth, etc.)
-- **FR-063**: System MUST validate configuration completeness at startup and fail fast with clear errors
-- **FR-064**: System MUST document all configuration migration points in code comments for future reference
+- **FR-062**: System MUST support `AS USER 'user_id'` clause in INSERT statements for User and Stream tables
+- **FR-063**: System MUST support `AS USER 'user_id'` clause in UPDATE statements for User and Stream tables
+- **FR-064**: System MUST support `AS USER 'user_id'` clause in DELETE statements for User and Stream tables
+- **FR-065**: System MUST restrict AS USER clause to service and admin roles only
+- **FR-066**: System MUST validate that the target user_id exists before executing AS USER operations
+- **FR-067**: System MUST apply Row-Level Security (RLS) policies as if the specified user executed the operation
+- **FR-068**: System MUST audit AS USER operations with both the authenticated user (actor) and target user (subject)
+- **FR-069**: System MUST reject AS USER operations on Shared tables with clear error message
 
-#### Generic Job Executor (FR-065 to FR-069)
+#### System Column Management (FR-070 to FR-081)
 
-- **FR-065**: Job execution framework MUST support type-specific parameter definitions for each job type
-- **FR-066**: System MUST automatically validate and convert job parameters to job-specific structures at execution time
-- **FR-067**: System MUST provide early validation of job parameter correctness before job execution
-- **FR-068**: System MUST maintain compatibility with existing job storage format
-- **FR-069**: System MUST handle parameter validation errors with clear messages identifying expected parameter structure
+- **FR-070**: System MUST create a centralized SystemColumnsService component managing all `_id`, `_updated`, and `_deleted` column operations
+- **FR-071**: System MUST automatically add `_id BIGINT PRIMARY KEY` as first column in all user and shared tables during table creation
+- **FR-072**: System MUST use Snowflake ID algorithm for `_id` default value (timestamp + node_id + sequence for global uniqueness)
+- **FR-073**: System MUST allow user-defined `id` columns to coexist with system `_id` column (both can exist in same table)
+- **FR-074**: System MUST generate `_id` value automatically when INSERT operation doesn't provide it
+- **FR-075**: System MUST reject INSERT operations that attempt to manually set `_id` value (system-managed only)
+- **FR-076**: System MUST implement SystemColumnsService.add_system_columns() method called during table creation to inject `_id`, `_updated`, `_deleted`
+- **FR-077**: System MUST implement SystemColumnsService.handle_update() method managing `_updated` timestamp and version logic for UPDATE operations
+- **FR-078**: System MUST implement SystemColumnsService.handle_delete() method managing `_deleted` flag and `_updated` timestamp for DELETE operations
+- **FR-079**: System MUST implement SystemColumnsService.apply_deletion_filter() method automatically adding `WHERE _deleted = false` to queries
+- **FR-080**: System MUST eliminate all scattered system column logic outside SystemColumnsService (zero direct manipulation in DML handlers, query planning, flush operations)
+- **FR-081**: System MUST validate via code analysis that all system column operations route through SystemColumnsService
 
-#### Test Coverage Requirements (FR-070 to FR-075)
+#### Centralized Configuration (FR-082 to FR-087)
 
-- **FR-070**: System MUST include tests for updating records after they have been flushed to long-term storage
-- **FR-071**: System MUST include tests for records updated 3 times (original + 2 updates, all flushed)
-- **FR-072**: System MUST include tests verifying deleted records (_deleted = true) are not returned in query results
-- **FR-073**: System MUST include tests verifying MAX(_updated) correctly resolves latest version across storage tiers
-- **FR-074**: System MUST include tests for concurrent updates to the same record
-- **FR-075**: System MUST include tests for querying records with _deleted flag at different storage layers
+- **FR-082**: System MUST provide all configuration through AppContext.config() instead of direct file reads
+- **FR-083**: System MUST eliminate duplicate config DTOs and use single source of truth from AppContext
+- **FR-084**: System MUST load configuration once during AppContext initialization and share via Arc reference
+- **FR-085**: System MUST provide type-safe access to configuration sections (database, server, jobs, auth, etc.)
+- **FR-086**: System MUST validate configuration completeness at startup and fail fast with clear errors
+- **FR-087**: System MUST document all configuration migration points in code comments for future reference
+
+#### Generic Job Executor (FR-088 to FR-093)
+
+- **FR-088**: Job execution framework MUST support type-specific parameter definitions for each job type
+- **FR-089**: System MUST automatically validate and convert job parameters to job-specific structures at execution time
+- **FR-090**: System MUST provide early validation of job parameter correctness before job execution
+- **FR-091**: System MUST maintain compatibility with existing job storage format (JSON serialization with serde)
+- **FR-092**: System MUST serialize job parameters as JSON strings in RocksDB (backward compatible with existing Job table schema)
+- **FR-093**: System MUST deserialize JSON parameters to typed structs (e.g., FlushParams, CleanupParams) using serde at execution time
+- **FR-094**: System MUST support parameter schema evolution via `Option<T>` fields and serde default attributes for backward compatibility
+- **FR-095**: System MUST handle parameter validation errors with clear messages identifying expected parameter structure
+
+#### Test Coverage Requirements (FR-096 to FR-101)
+
+- **FR-096**: System MUST include tests for updating records after they have been flushed to long-term storage
+- **FR-097**: System MUST include tests for records updated 3 times (original + 2 updates, all flushed)
+- **FR-098**: System MUST include tests verifying deleted records (_deleted = true) are not returned in query results
+- **FR-099**: System MUST include tests verifying MAX(_updated) correctly resolves latest version across storage tiers
+- **FR-100**: System MUST include tests for concurrent updates to the same record
+- **FR-101**: System MUST include tests for querying records with _deleted flag at different storage layers
+
+#### Performance Regression Tests (FR-102 to FR-107)
+
+- **FR-102**: System MUST include performance regression tests measuring query latency with increasing version counts (baseline: 1 version, test: 10 versions, 100 versions)
+- **FR-103**: System MUST enforce that query latency MUST NOT exceed 2x baseline when resolving 10+ versions of the same record across storage layers
+- **FR-104**: System MUST include performance tests measuring manifest-based file skipping efficiency (target: <5ms to eliminate 90% of batch files)
+- **FR-105**: System MUST include performance tests measuring Bloom filter lookup overhead (target: <1ms per batch file for point queries)
+- **FR-106**: System MUST include performance tests measuring UPDATE operation latency on persisted records (target: <10ms for append-only write to fast storage)
+- **FR-107**: System MUST include performance tests measuring concurrent UPDATE throughput degradation (target: <20% reduction with 10 concurrent updates to same record)
 
 ### Key Entities
 
@@ -274,6 +352,11 @@ Developers implementing job executors need type-safe parameter handling instead 
 - **StorageLayer**: Either fast storage (RocksDB/in-memory) or long-term storage (batch Parquet files), both participating in version resolution
 - **ManifestFile**: JSON file (manifest.json) per table tracking batch file metadata including max_batch counter, file paths, min/max column values, row counts, sizes, and schema versions
 - **BatchFileEntry**: Manifest entry for a single batch file containing: file path (batch-{number}.parquet), min_updated/max_updated timestamps, min/max values for all columns, row_count, size_bytes, schema_version, status
+- **ManifestCache CF**: Dedicated RocksDB column family storing cached manifest entries with key format `{namespace}:{table}:{user_id}`
+- **ManifestCacheEntry**: Cached manifest data including: manifest content (JSON), ETag, last_refreshed timestamp, source path, sync_state (in_sync/stale/error)
+- **ManifestCacheStore**: EntityStore implementation providing CRUD operations for manifest cache (get/put/delete) using RocksDB persistence
+- **ManifestCacheService**: High-level service component with dual-layer caching: in-memory DashMap for hot cache + RocksDB ManifestCacheStore for persistent cache
+- **ManifestEvictionJob**: Background job that periodically removes stale or unused manifest entries based on ttl_seconds and last_accessed timestamps
 - **BloomFilter**: Probabilistic data structure embedded in Parquet file metadata for `id`, `_updated`, and indexed columns enabling efficient point lookup elimination
 - **ImpersonationContext**: Execution context holding both authenticated user (actor) and target user (subject) for audit trail and authorization enforcement in AS USER operations (User/Stream tables only)
 - **SystemColumnsService**: Centralized service managing all system column operations (`_id` generation with Snowflake IDs, `_updated` timestamp management, `_deleted` flag handling) ensuring single source of truth and preventing scattered logic
@@ -414,6 +497,112 @@ node_id = "prod-db-01"  # String identifier for this instance, hashed to 10-bit 
 
 **Rationale**: Aligns with existing KalamDB architecture where NodeId is string type allocated once from config.toml (SC-000, SC-007 from AGENTS.md). Simple, explicit, no external coordinator dependencies.
 
+### Job Parameter Serialization Format (added 2025-11-11)
+
+**Question**: How are typed job parameters serialized for persistence while maintaining backward compatibility?
+
+**Answer**: JSON serialization with serde, bridging type safety and persistence:
+
+1. **Storage Format**: Job parameters stored as JSON strings in RocksDB `system.jobs` table (existing schema, no migration needed)
+2. **Serialization**: When creating job, executor-specific params struct (e.g., `FlushParams`, `CleanupParams`) serialized to JSON via `serde_json::to_string()`
+3. **Deserialization**: When executing job, JSON string deserialized to typed struct via `serde_json::from_str::<FlushParams>()`
+4. **Type Safety**: Each executor defines its own params struct with `#[derive(Serialize, Deserialize)]`
+5. **Backward Compatibility**: 
+   - Old jobs (created before type-safe params) continue working via fallback to generic JSON parsing
+   - New fields added via `Option<T>` with `#[serde(default)]` attribute (missing fields deserialize to None)
+   - Schema evolution: `FlushParamsV2` can deserialize `FlushParamsV1` JSON via serde's flexible parsing
+6. **Validation**: Serde deserialization errors caught early with clear messages like "Missing required field 'namespace_id' in FlushParams"
+
+Example parameter evolution:
+```rust
+// Version 1 (initial)
+#[derive(Serialize, Deserialize)]
+struct FlushParams {
+    namespace_id: String,
+    table_name: String,
+}
+
+// Version 2 (added optional batch_size)
+#[derive(Serialize, Deserialize)]
+struct FlushParams {
+    namespace_id: String,
+    table_name: String,
+    #[serde(default)]  // Old jobs without this field deserialize to None
+    batch_size: Option<usize>,
+}
+```
+
+**Performance**: JSON deserialization overhead <1ms per job execution (negligible compared to job execution time of seconds/minutes).
+
+**Alternative Considered**: Binary formats (bincode, protobuf) rejected due to schema evolution complexity and loss of human-readable job debugging.
+
+### Manifest Cache Architecture Integration (added 2025-11-11)
+
+**Question**: How does the manifest cache integrate with existing KalamDB architecture (SchemaRegistry, EntityStore patterns, Column Family separation)?
+
+**Answer**: Manifest cache follows established KalamDB patterns for consistency and maintainability:
+
+**Architecture Components**:
+
+| Component | Role | Pattern |
+|-----------|------|---------|
+| `manifest_cache` CF | Dedicated RocksDB column family for cached manifests | Follows CF separation pattern (same as `schemas`, `users`, `tables`, `jobs`) |
+| ManifestCacheStore | EntityStore implementation with CRUD operations (get/put/delete) | Implements same trait pattern as UserStore, JobStore, etc. |
+| SchemaRegistry | Registers ManifestCache as new EntityStore in global registry | Same registration pattern as existing system tables |
+| ManifestCacheService | High-level service with in-memory DashMap + RocksDB fallback | Dual-layer caching: hot (memory) + cold (RocksDB) |
+| FlushExecutor | Writes manifest to both cache and S3/local storage | Write-through pattern: update cache + source atomically |
+| QueryPlanner | Reads manifest via ManifestCacheService (cache-first) | Read-through pattern: check cache → fallback to S3 → populate cache |
+| ManifestEvictionJob | Background job for periodic eviction of stale entries | Same job framework as FlushJob, CleanupJob (UnifiedJobManager) |
+
+**Synchronization Rules**:
+
+| Operation | Cache Action | S3/Local Action | Consistency Guarantee |
+|-----------|--------------|-----------------|------------------------|
+| Query (cache miss) | Read from S3 → store in CF + memory | Read manifest.json | Cache populated for next query |
+| Query (cache hit) | Use cached manifest, update last_accessed | None | Sub-millisecond access |
+| Flush | Write to CF + memory (if present) | Write manifest.json | Atomic sync: both updated or flush fails |
+| Eviction Job | Remove expired entries from CF + memory | None | TTL-based cleanup |
+| Server Restart | Restore from CF → repopulate memory on first query | None | Persistent cache survives restarts |
+
+**Cache Key Format**: `{namespace}:{table}:{user_id}` (consistent with existing RocksDB key patterns)
+
+**Cache Entry Schema** (ManifestCacheEntry):
+```rust
+struct ManifestCacheEntry {
+    manifest_content: String,       // JSON manifest data
+    etag: Option<String>,            // S3 ETag for staleness detection
+    last_refreshed: i64,             // Unix timestamp (seconds)
+    source_path: String,             // /data/{namespace}/{table}/user_{id}/manifest.json
+    sync_state: SyncState,           // InSync | Stale | Error
+}
+
+enum SyncState {
+    InSync,    // Cache matches S3 source
+    Stale,     // ETag mismatch, needs refresh
+    Error,     // Sync failed, needs rebuild
+}
+```
+
+`last_refreshed` is persisted so that, on restart, ManifestCacheService can reapply TTL rules before serving cached manifests (entries older than `ttl_seconds` trigger an immediate refresh instead of returning stale data).
+
+**SchemaRegistry Integration**:
+```rust
+// AppContext initialization (following Phase 5 pattern)
+let manifest_cache_store = Arc::new(ManifestCacheStore::new(db.clone()));
+schema_registry.register_entity_store("manifest_cache", manifest_cache_store);
+
+// Usage in query planner
+let manifest_cache = app_context.schema_registry().get_manifest_cache();
+let manifest = manifest_cache.get_or_load(namespace, table, user_id).await?;
+```
+
+**Benefits of This Architecture**:
+- **Consistency**: Same patterns as existing system tables (zero new concepts)
+- **Performance**: Dual-layer cache (memory + RocksDB) balances speed and persistence
+- **Reliability**: Write-through ensures cache never diverges from source
+- **Observability**: `SHOW MANIFEST CACHE;` command provides visibility into cache state
+- **Maintainability**: Centralized in SchemaRegistry (single source of truth for all metadata)
+
 ---
 
 ## Assumptions *(optional)*
@@ -425,6 +614,7 @@ node_id = "prod-db-01"  # String identifier for this instance, hashed to 10-bit 
 - **Batch Numbering**: Batch files use sequential numbering controlled by manifest max_batch counter (not timestamps)
 - **User Isolation**: User tables are stored in per-user directories (/data/{namespace}/{table}/user_{id}/) enabling per-user manifest files
 - **Shared Table Layout**: Shared tables use single shared/ directory (/data/{namespace}/{table}/shared/) with single manifest file
+- **Manifest Cache Scope**: Manifest cache persistence (RocksDB + hot cache) is node-local; multi-node clusters rely on shared manifest.json sync via S3/local storage updates
 - **Role-Based Authorization**: System has existing role hierarchy (user < service < admin < system) for permission checks
 - **Configuration Format**: Single configuration file loaded at startup containing all system settings
 - **Job Framework**: Existing job execution system supports parameter passing and error handling
@@ -452,3 +642,6 @@ node_id = "prod-db-01"  # String identifier for this instance, hashed to 10-bit 
 - **SC-015**: Snowflake ID generation produces globally unique, time-ordered `_id` values with 1M+ IDs/sec throughput per node
 - **SC-016**: SystemColumnsService migration completes with 100% test pass rate and zero system column logic outside service component
 - **SC-017**: Test suite achieves 100% coverage for post-flush updates, multi-version records, and _deleted flag handling
+- **SC-018**: Performance regression tests confirm query latency remains within 2x baseline when resolving 10+ versions (acceptable degradation for versioned queries)
+- **SC-019**: Manifest-based file skipping achieves <5ms evaluation time per query and eliminates 90%+ of irrelevant batch file scans
+- **SC-020**: Bloom filter optimization achieves <1ms overhead per batch file and reduces I/O by 90%+ for point queries on large tables (100+ batch files)
