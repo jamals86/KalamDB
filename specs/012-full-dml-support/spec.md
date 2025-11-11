@@ -292,7 +292,7 @@ Developers implementing job executors need type-safe parameter handling instead 
 
 ### Session 2025-11-11
 
-- Q: How are node_id values assigned to database instances for Snowflake ID generation? → A: Static configuration from config.toml (range 0-1023) with startup validation
+- Q: How are node_id values assigned to database instances for Snowflake ID generation? → A: Static string configuration from config.toml, hashed to 10-bit integer (0-1023) for Snowflake ID generation
 
 ### Concurrent Update Conflict Resolution (added 2025-11-10)
 
@@ -398,19 +398,21 @@ Instead of real-time subscription connections, use materialized stream tables:
 
 **Answer**: Static configuration from config.toml with startup validation (Option A):
 
-1. **Configuration**: Each database instance has `node_id` field in config.toml (range: 0-1023, 10-bit value)
-2. **Validation**: On startup, AppContext initialization validates node_id is within valid range (0-1023)
-3. **Uniqueness**: Cluster deployment requires manual coordination to ensure no two instances share same node_id (documented in deployment guide)
-4. **Collision Detection**: If duplicate node_ids exist in cluster, Snowflake IDs may collide - operator responsibility to prevent via configuration management
+1. **Configuration**: Each database instance has `node_id` field in config.toml as a string value (e.g., "node-001", "prod-db-42")
+2. **Hash to 10-bit Integer**: System hashes the node_id string to derive 10-bit integer (0-1023) for Snowflake ID generation
+3. **Validation**: On startup, AppContext initialization validates node_id string exists and is non-empty
+4. **Collision Risk**: Hash collisions possible but rare (1024 possible values); operator responsibility to choose distinct node_id strings in cluster deployments
 5. **Integration**: Reuses existing AppContext.node_id pattern (already loaded once from config.toml per Phase 10 architecture)
 
 Example config.toml:
 ```toml
 [server]
-node_id = 42  # Unique identifier for this instance (0-1023)
+node_id = "prod-db-01"  # String identifier for this instance, hashed to 10-bit value for Snowflake IDs
 ```
 
-**Rationale**: Aligns with existing KalamDB architecture where NodeId is allocated once from config.toml (SC-000, SC-007 from AGENTS.md). Simple, explicit, no external coordinator dependencies.
+**Hashing Strategy**: Use stable hash function (e.g., CRC32 or FNV-1a) and take modulo 1024 to derive 10-bit integer consistently from same string.
+
+**Rationale**: Aligns with existing KalamDB architecture where NodeId is string type allocated once from config.toml (SC-000, SC-007 from AGENTS.md). Simple, explicit, no external coordinator dependencies.
 
 ---
 
