@@ -494,7 +494,10 @@ impl HandlerRegistry {
         handler.check_authorization(&statement, context).await?;
 
         // Step 4: Execute statement (session is in context, no need to pass separately)
-        handler.execute(statement, params, context).await
+        println!("[DEBUG HandlerRegistry] About to execute handler for statement: {}", statement.name());
+        let result = handler.execute(statement, params, context).await;
+        println!("[DEBUG HandlerRegistry] Handler returned: {:?}", result.as_ref().map(|r| format!("{:?}", r)).unwrap_or_else(|e| format!("Error: {}", e)));
+        result
     }
 
     /// Check if a handler is registered for a statement type

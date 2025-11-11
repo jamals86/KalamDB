@@ -123,12 +123,24 @@ impl JobExecutor for FlushExecutor {
         let table_id = Arc::new(TableId::new(namespace_id.clone(), table_name.clone()));
 
         // Get table definition and schema
-        let _table_def = schema_registry
+        let table_def = schema_registry
             .get_table_definition(&table_id)?
             .ok_or_else(|| KalamDbError::NotFound(format!("Table {}.{} not found", namespace_id_str, table_name_str)))?;
-        let schema = schema_registry
-            .get_arrow_schema(&table_id)
-            .map_err(|e| KalamDbError::NotFound(format!("Arrow schema not found for {}.{}: {}", namespace_id_str, table_name_str, e)))?;
+        // The authoritative Arrow schema should include system columns already
+        // because SystemColumnsService injected them into the TableDefinition.
+        // Use schema from schema_history if available to avoid stale cache.
+        let base_schema = if let Some(latest) = table_def.schema_history.last() {
+            crate::schema_registry::arrow_schema::ArrowSchemaWithOptions::from_json_string(&latest.arrow_schema_json)
+                .map_err(|e| KalamDbError::Other(format!("Failed to parse Arrow schema from history: {}", e)))?
+                .schema
+        } else {
+            schema_registry
+                .get_arrow_schema(&table_id)
+                .map_err(|e| KalamDbError::NotFound(format!("Arrow schema not found for {}.{}: {}", namespace_id_str, table_name_str, e)))?
+        };
+
+        // Ensure system columns are present or add if missing (idempotent)
+        let schema = crate::tables::base_table_provider::schema_with_system_columns(&base_schema);
 
         // Execute flush based on table type
         let result = match table_type {

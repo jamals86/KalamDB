@@ -149,6 +149,7 @@ async fn test_update_in_parquet() {
         response.error
     );
 
+    println!("[DEBUG TEST] UPDATE succeeded, now running SELECT to verify...");
     // Verify version resolution returns latest value
     let response = server
         .execute_sql_as_user(
@@ -157,6 +158,7 @@ async fn test_update_in_parquet() {
         )
         .await;
 
+    println!("[DEBUG TEST] SELECT response: status={}, error={:?}", response.status, response.error);
     assert_eq!(response.status, "success");
     if let Some(rows) = &response.results[0].rows {
         assert_eq!(rows.len(), 1, "Should return exactly 1 row (latest version)");

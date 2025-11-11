@@ -73,8 +73,17 @@ impl StatementHandler for UpdateHandler {
                     .ok_or_else(|| KalamDbError::InvalidOperation("User table provider not found".into()))?;
                 
                 if let Some(provider) = provider_arc.as_any().downcast_ref::<crate::tables::user_tables::UserTableProvider>() {
-                    provider.update_by_id_field(&context.user_id, &id_value, updates)?;
-                    Ok(ExecutionResult::Updated { rows_affected: 1 })
+                    println!("[DEBUG UpdateHandler] Calling provider.update_by_id_field for user={}, id={}", context.user_id.as_str(), id_value);
+                    match provider.update_by_id_field(&context.user_id, &id_value, updates).await {
+                        Ok(_) => {
+                            println!("[DEBUG UpdateHandler] update_by_id_field succeeded");
+                            Ok(ExecutionResult::Updated { rows_affected: 1 })
+                        }
+                        Err(e) => {
+                            println!("[DEBUG UpdateHandler] update_by_id_field failed: {}", e);
+                            Err(e)
+                        }
+                    }
                 } else {
                     Err(KalamDbError::InvalidOperation("Cached provider type mismatch for user table".into()))
                 }

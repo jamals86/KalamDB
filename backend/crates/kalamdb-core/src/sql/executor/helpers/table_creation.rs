@@ -193,19 +193,13 @@ pub fn create_user_table(
         );
     }
 
-    // Save complete table definition to information_schema.tables
+    // Save complete table definition to information_schema.tables (produces full Arrow schema with system columns)
     save_table_definition(&modified_stmt, &schema)?;
 
     // Insert into system.tables
     let table_def = schema_registry
         .get_table_definition(&table_id)?
-        .ok_or_else(|| {
-            KalamDbError::Other(format!(
-                "Failed to retrieve table definition for {}.{} after save",
-                stmt.namespace_id.as_str(),
-                stmt.table_name.as_str()
-            ))
-        })?;
+        .ok_or_else(|| KalamDbError::Other(format!("Failed to retrieve table definition for {}.{} after save", stmt.namespace_id.as_str(), stmt.table_name.as_str())))?;
 
     let tables_provider = app_context.system_tables().tables();
     tables_provider.create_table(&table_id, &table_def).map_err(|e| {
@@ -232,7 +226,11 @@ pub fn create_user_table(
     }
 
     // Register UserTableProvider for INSERT/UPDATE/DELETE/SELECT operations
-    register_user_table_provider(&app_context, &table_id, schema.clone())?;
+    // Use authoritative Arrow schema rebuilt from TableDefinition (includes system columns)
+    let provider_arrow_schema = table_def
+        .to_arrow_schema()
+        .map_err(|e| KalamDbError::SchemaError(format!("Failed to build provider Arrow schema: {}", e)))?;
+    register_user_table_provider(&app_context, &table_id, provider_arrow_schema)?;
 
     // Log detailed success with table options
     log::info!(

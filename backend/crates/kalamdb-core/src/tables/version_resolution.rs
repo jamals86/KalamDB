@@ -2,23 +2,31 @@
 //
 // Selects MAX(_updated) per row_id with tie-breaker: FastStorage (priority=2) > Parquet (priority=1)
 
-use datafusion::arrow::array::{ArrayRef, BooleanArray, Int32Array, RecordBatch, StringArray, UInt64Array};
+use datafusion::arrow::array::{Array, ArrayRef, BooleanArray, Int32Array, RecordBatch, StringArray, UInt64Array};
 use datafusion::arrow::datatypes::{DataType, Field, Schema};
 use datafusion::arrow::compute;
 use std::collections::HashMap;
 use std::sync::Arc;
 use crate::error::KalamDbError;
 
+
 pub async fn resolve_latest_version(
     fast_batch: RecordBatch,
     long_batch: RecordBatch,
     schema: Arc<Schema>,
 ) -> Result<RecordBatch, KalamDbError> {
+    // Handle empty batches - but still project to target schema for type conversions
     if fast_batch.num_rows() == 0 && long_batch.num_rows() == 0 {
         return create_empty_batch(&schema);
     }
-    if fast_batch.num_rows() == 0 { return Ok(long_batch); }
-    if long_batch.num_rows() == 0 { return Ok(fast_batch); }
+    
+    // If only one batch has data, still project it to ensure type conversions (e.g., String→Timestamp for _updated)
+    if fast_batch.num_rows() == 0 {
+        return project_to_target_schema(long_batch, schema);
+    }
+    if long_batch.num_rows() == 0 {
+        return project_to_target_schema(fast_batch, schema);
+    }
 
     let fast_with_priority = add_source_priority(fast_batch, 2)?;
     let long_with_priority = add_source_priority(long_batch, 1)?;
@@ -76,13 +84,59 @@ pub async fn resolve_latest_version(
     let result_batch = RecordBatch::try_new(combined_schema.clone(), result_columns?)
         .map_err(|e| KalamDbError::Other(format!("create batch: {}", e)))?;
 
-    let final_columns: Vec<ArrayRef> = schema.fields().iter()
-        .map(|field| {
-            let idx = result_batch.schema().fields().iter().position(|f| f.name() == field.name()).unwrap();
-            result_batch.column(idx).clone()
-        })
-        .collect();
-    RecordBatch::try_new(schema, final_columns).map_err(|e| KalamDbError::Other(format!("project: {}", e)))
+    // Project to target schema with type conversions
+    project_to_target_schema(result_batch, schema)
+}
+
+/// Project RecordBatch to target schema with type conversions
+///
+/// Handles type conversions needed after version resolution:
+/// - _updated: String (RFC3339) → Timestamp(Millisecond) if schema expects Timestamp
+/// - _deleted: Should already be Boolean, but verify and convert if needed
+fn project_to_target_schema(batch: RecordBatch, schema: Arc<Schema>) -> Result<RecordBatch, KalamDbError> {
+    let mut final_columns: Vec<ArrayRef> = Vec::new();
+    
+    for field in schema.fields().iter() {
+        let col = batch.column_by_name(field.name())
+            .ok_or_else(|| KalamDbError::Other(format!("Missing column {} in batch", field.name())))?;
+        
+        // Convert _updated from String back to Timestamp(Millisecond) if needed
+        if field.name() == "_updated" && field.data_type() == &DataType::Timestamp(datafusion::arrow::datatypes::TimeUnit::Millisecond, None) {
+            if let Some(string_array) = col.as_any().downcast_ref::<StringArray>() {
+                // Convert RFC3339 strings back to millisecond timestamps
+                use chrono::DateTime;
+                let millis: Vec<i64> = (0..string_array.len())
+                    .map(|i| {
+                        DateTime::parse_from_rfc3339(string_array.value(i))
+                            .map(|dt| dt.timestamp_millis())
+                            .unwrap_or(0)
+                    })
+                    .collect();
+                final_columns.push(Arc::new(datafusion::arrow::array::TimestampMillisecondArray::from(millis)) as ArrayRef);
+                continue;
+            }
+        }
+        
+        // Ensure _deleted remains Boolean (should already be, but verify)
+        if field.name() == "_deleted" && field.data_type() == &DataType::Boolean {
+            // _deleted should already be BooleanArray, but double-check
+            if col.as_any().downcast_ref::<BooleanArray>().is_none() {
+                log::warn!("_deleted column is not BooleanArray in projection, attempting conversion");
+                // Fallback: try to convert from other types if needed
+                if let Some(string_array) = col.as_any().downcast_ref::<StringArray>() {
+                    let bools: Vec<bool> = (0..string_array.len())
+                        .map(|i| string_array.value(i) == "true")
+                        .collect();
+                    final_columns.push(Arc::new(BooleanArray::from(bools)) as ArrayRef);
+                    continue;
+                }
+            }
+        }
+        
+        final_columns.push(col.clone());
+    }
+    
+    RecordBatch::try_new(schema, final_columns).map_err(|e| KalamDbError::Other(format!("project_to_target_schema: {}", e)))
 }
 
 fn add_source_priority(batch: RecordBatch, priority: u8) -> Result<RecordBatch, KalamDbError> {

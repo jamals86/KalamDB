@@ -126,7 +126,7 @@ pub fn inject_system_columns(
 /// Ok(()) on success, error on failure
 pub fn save_table_definition(
     stmt: &CreateTableStatement,
-    schema: &Arc<Schema>,
+    original_arrow_schema: &Arc<Schema>,
 ) -> Result<(), KalamDbError> {
     use crate::app_context::AppContext;
     use crate::schema_registry::arrow_schema::ArrowSchemaWithOptions;
@@ -136,8 +136,8 @@ pub fn save_table_definition(
         ColumnDefinition, SchemaVersion, TableDefinition, TableOptions,
     };
 
-    // Extract columns directly from Arrow schema
-    let columns: Vec<ColumnDefinition> = schema
+    // Extract columns directly from Arrow schema (user-provided columns only)
+    let columns: Vec<ColumnDefinition> = original_arrow_schema
         .fields()
         .iter()
         .enumerate()
@@ -166,7 +166,7 @@ pub fn save_table_definition(
         TableType::System => TableOptions::system(),
     };
 
-    // Create NEW TableDefinition directly
+    // Create NEW TableDefinition directly (WITHOUT system columns yet)
     let mut table_def = TableDefinition::new(
         stmt.namespace_id.clone(),
         stmt.table_name.clone(),
@@ -178,21 +178,22 @@ pub fn save_table_definition(
     .map_err(|e| KalamDbError::SchemaError(e))?;
 
     // Inject system columns via SystemColumnsService (Phase 12, US5, T022)
-    // This adds _id, _updated, _deleted to the TableDefinition
+    // This adds _id, _updated, _deleted to the TableDefinition (authoritative types)
     let app_ctx = AppContext::get();
     let sys_cols = app_ctx.system_columns_service();
     sys_cols.add_system_columns(&mut table_def)?;
 
-    // Initialize schema history with version 1 entry (Initial schema)
-    let schema_json = ArrowSchemaWithOptions::new(schema.clone())
-        .to_json_string()
-        .map_err(|e| {
-            KalamDbError::SchemaError(format!("Failed to serialize Arrow schema: {}", e))
-        })?;
+    // Build Arrow schema FROM the mutated TableDefinition (includes system columns)
+    let full_arrow_schema = table_def
+        .to_arrow_schema()
+        .map_err(|e| KalamDbError::SchemaError(format!("Failed to build Arrow schema after system columns injection: {}", e)))?;
 
-    table_def
-        .schema_history
-        .push(SchemaVersion::initial(schema_json));
+    // Initialize schema history with version 1 entry (Initial full schema WITH system columns)
+    let schema_json = ArrowSchemaWithOptions::new(full_arrow_schema.clone())
+        .to_json_string()
+        .map_err(|e| KalamDbError::SchemaError(format!("Failed to serialize Arrow schema: {}", e)))?;
+
+    table_def.schema_history.push(SchemaVersion::initial(schema_json));
 
     // Single atomic write to information_schema_tables via SchemaRegistry
     let ctx = AppContext::get();
@@ -207,7 +208,7 @@ pub fn save_table_definition(
             ))
         })?;
 
-    // Prime unified schema cache with freshly saved definition so providers can resolve Arrow schema immediately
+    // Prime unified schema cache with freshly saved definition (includes system columns)
     {
         use crate::schema_registry::CachedTableData;
         let cached = Arc::new(CachedTableData::new(Arc::new(table_def.clone())));

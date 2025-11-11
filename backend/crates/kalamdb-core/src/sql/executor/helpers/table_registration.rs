@@ -51,6 +51,15 @@ pub fn register_user_table_provider(
         app_context.clone(),
     );
 
+    // Ensure RocksDB partition exists for USER table
+    {
+        use crate::tables::system::system_table_store::UserTableStoreExt;
+        let _ = shared.store().create_column_family(
+            table_id.namespace_id().as_str(),
+            table_id.table_name().as_str(),
+        );
+    }
+
     // Attach LiveQueryManager for INSERT/UPDATE/DELETE notifications
     if let Some(shared_ref) = Arc::get_mut(&mut shared) {
         shared_ref.attach_live_query_manager(app_context.live_query_manager());

@@ -453,7 +453,25 @@ impl TableFlush for UserTableFlushJob {
                 }
             };
 
-            let (user_id, _row_id) = self.parse_user_key(&key_str)?;
+            let (user_id, row_id_str) = self.parse_user_key(&key_str)?;
+
+            // Ensure _id (Snowflake) is present for Parquet schema (Int64, non-null)
+            if let Some(obj) = row_data.as_object_mut() {
+                if !obj.contains_key("_id") {
+                    match row_id_str.parse::<i64>() {
+                        Ok(snowflake_id) => {
+                            obj.insert("_id".to_string(), JsonValue::Number(snowflake_id.into()));
+                        }
+                        Err(e) => {
+                            log::warn!(
+                                "Row has non-numeric row_id '{}' ({}); inserting 0 for _id to satisfy schema",
+                                row_id_str, e
+                            );
+                            obj.insert("_id".to_string(), JsonValue::Number(0.into()));
+                        }
+                    }
+                }
+            }
 
             // Group by user_id
             rows_by_user

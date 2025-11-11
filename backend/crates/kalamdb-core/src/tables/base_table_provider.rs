@@ -343,7 +343,10 @@ pub async fn scan_with_version_resolution_and_filter(
         .position(|f| f.name() == "_deleted")
         .ok_or_else(|| datafusion::error::DataFusionError::Execution("Missing _deleted column".to_string()))?;
     
-    let deleted_array = resolved_batch.column(deleted_col_idx)
+    let deleted_col = resolved_batch.column(deleted_col_idx);
+    log::debug!("_deleted column type: {:?}", deleted_col.data_type());
+    
+    let deleted_array = deleted_col
         .as_any()
         .downcast_ref::<BooleanArray>()
         .ok_or_else(|| datafusion::error::DataFusionError::Execution("_deleted column is not BooleanArray".to_string()))?;
@@ -386,17 +389,38 @@ pub fn schema_with_system_columns(
     
     let mut fields = base_schema.fields().to_vec();
     
-    // Add system columns: _updated (String RFC3339) and _deleted (Boolean)
-    fields.push(Arc::new(Field::new(
-        "_updated",
-        DataType::Utf8, // RFC3339 string for version resolution compatibility
-        false, // NOT NULL
-    )));
-    fields.push(Arc::new(Field::new(
-        "_deleted",
-        DataType::Boolean,
-        false, // NOT NULL
-    )));
+    // Check if system columns already exist (added by SystemColumnsService during CREATE TABLE)
+    let has_id = fields.iter().any(|f| f.name() == "_id");
+    let has_updated = fields.iter().any(|f| f.name() == "_updated");
+    let has_deleted = fields.iter().any(|f| f.name() == "_deleted");
+    
+    // Only add missing system columns
+    // Note: SystemColumnsService adds them as (BigInt, Timestamp, Boolean) to TableDefinition
+    // which becomes (Int64, Timestamp(Millisecond, None), Boolean) in Arrow schema
+    
+    if !has_id {
+        fields.push(Arc::new(Field::new(
+            "_id",
+            DataType::Int64,
+            false, // NOT NULL
+        )));
+    }
+    
+    if !has_updated {
+        fields.push(Arc::new(Field::new(
+            "_updated",
+            DataType::Timestamp(datafusion::arrow::datatypes::TimeUnit::Millisecond, None),
+            false, // NOT NULL
+        )));
+    }
+    
+    if !has_deleted {
+        fields.push(Arc::new(Field::new(
+            "_deleted",
+            DataType::Boolean,
+            false, // NOT NULL
+        )));
+    }
     
     Arc::new(Schema::new(fields))
 }
@@ -534,7 +558,7 @@ pub async fn scan_parquet_files_as_batch(
 
     log::debug!("Total batches from Parquet files: {}", all_batches.len());
 
-    // Concatenate all batches
+    // Concatenate all batches using passed schema
     if all_batches.is_empty() {
         create_empty_batch(schema)
     } else {
@@ -542,8 +566,6 @@ pub async fn scan_parquet_files_as_batch(
             .map_err(|e| datafusion::error::DataFusionError::Execution(format!("Failed to concatenate batches: {}", e)))
     }
 }
-
-/// Scan with version resolution and convert to key-value pairs
 ///
 /// This is a generic helper for UPDATE/DELETE operations that need to:
 /// 1. Scan both RocksDB (fast storage) and Parquet (flushed storage)

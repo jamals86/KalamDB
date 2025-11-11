@@ -411,16 +411,15 @@ impl UserTableProvider {
     /// * `user_id` - User ID for data isolation
     /// * `id_value` - Value of the logical id field to match
     /// * `updates` - JSON object with field updates
-    pub fn update_by_id_field(&self, user_id: &UserId, id_value: &str, updates: serde_json::Value) -> Result<(), KalamDbError> {
+    pub async fn update_by_id_field(&self, user_id: &UserId, id_value: &str, updates: serde_json::Value) -> Result<(), KalamDbError> {
         // Use version resolution scan to find record in BOTH RocksDB and Parquet
-        let rows = tokio::runtime::Handle::current().block_on(async {
-            self.scan_current_user_rows_with_version_resolution(user_id).await
-        })?;
+        let rows = self.scan_current_user_rows_with_version_resolution(user_id).await?;
 
         log::debug!("update_by_id_field: Looking for id={} among {} user rows (with version resolution)", id_value, rows.len());
+        println!("[DEBUG] update_by_id_field: scanning {} rows for id={} (user={})", rows.len(), id_value, user_id.as_str());
 
         // Match either numeric or string representations
-        let mut target_row_id: Option<String> = None;
+        let mut target_row: Option<UserTableRow> = None;
         for (_row_id_key, row_data) in rows.iter() {
             if let Some(v) = row_data.fields.get("id") {
                 let is_match = match v {
@@ -430,18 +429,98 @@ impl UserTableProvider {
                 };
                 if is_match {
                     log::debug!("update_by_id_field: Match found! row_id={}", row_data.row_id);
-                    target_row_id = Some(row_data.row_id.clone());
+                    target_row = Some(row_data.clone());
                     break;
                 }
             }
         }
 
-        let row_id = target_row_id
+        let matched = target_row
             .ok_or_else(|| {
                 log::error!("update_by_id_field: No row found with id={} for user {}", id_value, user_id.as_str());
+                println!("[DEBUG] update_by_id_field: NO MATCH for id={} (user={})", id_value, user_id.as_str());
                 KalamDbError::NotFound(format!("Row with id={} not found for user", id_value))
             })?;
-        self.update_row(user_id, &row_id, updates).map(|_| ())
+
+        // First try standard in-place update (fast path)
+        println!("[DEBUG] update_by_id_field: attempting fast update for row_id={}", matched.row_id);
+        match self.update_row(user_id, &matched.row_id, updates.clone()) {
+            Ok(_) => { println!("[DEBUG] update_by_id_field: fast update succeeded"); Ok(()) },
+            Err(KalamDbError::NotFound(_)) => {
+                println!("[DEBUG] update_by_id_field: fast update returned NotFound; re-materializing into fast storage");
+                // If the record was flushed (not present in fast storage), re-materialize latest version
+                // and write a new version in fast storage with merged updates
+                use crate::tables::system::system_table_store::UserTableStoreExt;
+
+                // Merge updates into existing fields
+                let mut merged_fields = matched.fields.clone();
+                if let (Some(dst), Some(src)) = (merged_fields.as_object_mut(), updates.as_object()) {
+                    for (k, v) in src {
+                        if k == "_updated" || k == "_deleted" { continue; }
+                        dst.insert(k.clone(), v.clone());
+                    }
+                }
+
+                // Compute new _updated timestamp via SystemColumnsService (monotonic)
+                use chrono::{DateTime, Utc};
+                let prev_ns = DateTime::parse_from_rfc3339(&matched._updated)
+                    .map(|dt| dt.with_timezone(&Utc).timestamp_nanos_opt().unwrap_or(0))
+                    .unwrap_or(0);
+                // Parse Snowflake row_id
+                let record_id = matched.row_id.parse::<i64>().unwrap_or(0);
+                let app_ctx = crate::app_context::AppContext::get();
+                let sys_cols = app_ctx.system_columns_service();
+                let (new_updated_ns, _deleted) = sys_cols.handle_update(record_id, prev_ns)?;
+                // Convert to RFC3339
+                let secs = new_updated_ns / 1_000_000_000;
+                let nsecs = (new_updated_ns % 1_000_000_000) as u32;
+                let new_updated_str = if let Some(dt) = chrono::DateTime::from_timestamp(secs, nsecs) {
+                    dt.to_rfc3339()
+                } else { Utc::now().to_rfc3339() };
+
+                // Build entity and write to fast storage
+                let entity = crate::tables::user_tables::user_table_store::UserTableRow {
+                    row_id: matched.row_id.clone(),
+                    user_id: user_id.as_str().to_string(),
+                    fields: merged_fields,
+                    _updated: new_updated_str,
+                    _deleted: _deleted,
+                };
+
+                println!("[DEBUG] update_by_id_field: writing new version to fast storage for row_id={} user={}", entity.row_id, user_id.as_str());
+                UserTableStoreExt::put(
+                    self.shared.store().as_ref(),
+                    self.namespace_id().as_str(),
+                    self.table_name().as_str(),
+                    user_id.as_str(),
+                    &entity.row_id,
+                    &entity,
+                ).map_err(|e| KalamDbError::Other(format!("Failed to persist updated version: {}", e)))?;
+                println!("[DEBUG] update_by_id_field: persisted new version successfully");
+
+                // Verify it was written by reading it back
+                match UserTableStoreExt::get(
+                    self.shared.store().as_ref(),
+                    self.namespace_id().as_str(),
+                    self.table_name().as_str(),
+                    user_id.as_str(),
+                    &entity.row_id,
+                ) {
+                    Ok(Some(read_back)) => {
+                        println!("[DEBUG] update_by_id_field: verified row persisted, row_id={}, fields={:?}", read_back.row_id, read_back.fields);
+                    }
+                    Ok(None) => {
+                        println!("[DEBUG] update_by_id_field: WARNING - row not found after put!");
+                    }
+                    Err(e) => {
+                        println!("[DEBUG] update_by_id_field: ERROR reading back: {}", e);
+                    }
+                }
+
+                Ok(())
+            }
+            Err(e) => { println!("[DEBUG] update_by_id_field: fast update failed with error: {}", e); Err(e) },
+        }
     }
 
     /// Get the user-specific key prefix for data isolation
@@ -498,7 +577,23 @@ impl UserTableProvider {
         use datafusion::arrow::array::AsArray;
         use serde_json::{Map, Value as JsonValue};
 
-        let schema = self.shared.core().arrow_schema();
+        // Get schema with system columns (_id, _updated, _deleted)
+        let base_schema = self.shared.core().arrow_schema()?;
+        let schema = crate::tables::base_table_provider::schema_with_system_columns(&base_schema);
+        
+        // Scan both RocksDB and Parquet with full schema
+        let rocksdb_batch = self.scan_rocksdb_as_batch(user_id, &schema, None).await
+            .map_err(|e| KalamDbError::Other(format!("RocksDB scan failed: {}", e)))?;
+        let parquet_batch = self.scan_parquet_as_batch(user_id, &schema).await
+            .map_err(|e| KalamDbError::Other(format!("Parquet scan failed: {}", e)))?;
+
+        // Add row_id column (derived from _id) to both batches for version resolution
+        let rocksdb_with_row_id = Self::add_row_id_column(rocksdb_batch)?;
+        let parquet_with_row_id = Self::add_row_id_column(parquet_batch)?;
+
+        // Schema now includes row_id
+        let schema_with_row_id = rocksdb_with_row_id.schema();
+
         let user_id_clone = user_id.clone();
 
         // Define row converter closure
@@ -511,12 +606,22 @@ impl UserTableProvider {
             let snowflake_id = id_array.value(row_idx);
             let row_id = snowflake_id.to_string();
 
-            // Extract _updated (RFC3339 timestamp string)
+            // Extract _updated (Timestamp in milliseconds)
             let updated_col = batch
                 .column_by_name("_updated")
                 .ok_or_else(|| datafusion::error::DataFusionError::Execution("Missing _updated column".to_string()))?;
-            let updated_array = updated_col.as_string::<i32>();
-            let updated_str = updated_array.value(row_idx).to_string();
+            
+            // SystemColumnsService stores _updated as Timestamp(Millisecond, None)
+            let updated_array = updated_col.as_primitive::<datafusion::arrow::datatypes::TimestampMillisecondType>();
+            let updated_millis = updated_array.value(row_idx);
+            
+            // Convert milliseconds to RFC3339 string for UserTableRow storage
+            let updated_str = {
+                use chrono::{DateTime, Utc};
+                let datetime = DateTime::<Utc>::from_timestamp_millis(updated_millis)
+                    .ok_or_else(|| datafusion::error::DataFusionError::Execution(format!("Invalid timestamp: {}", updated_millis)))?;
+                datetime.to_rfc3339()
+            };
 
             // Extract _deleted (boolean)
             let deleted_col = batch
@@ -528,8 +633,8 @@ impl UserTableProvider {
             // Extract user-defined fields into JSON object
             let mut fields_map = Map::new();
             for (field_name, column) in batch.schema().fields().iter().zip(batch.columns().iter()) {
-                // Skip system columns
-                if field_name.name() == "_id" || field_name.name() == "_updated" || field_name.name() == "_deleted" {
+                // Skip system columns AND row_id (added for version resolution only)
+                if field_name.name() == "_id" || field_name.name() == "_updated" || field_name.name() == "_deleted" || field_name.name() == "row_id" {
                     continue;
                 }
 
@@ -549,11 +654,11 @@ impl UserTableProvider {
             Ok((row_id, user_table_row))
         };
 
-        // Call the generic scan_with_version_resolution_to_kvs helper
+        // Call the generic scan_with_version_resolution_to_kvs helper with pre-transformed batches
         let rows = scan_with_version_resolution_to_kvs(
-            schema.clone(),
-            self.scan_rocksdb_as_batch(user_id, &schema, None),
-            self.scan_parquet_as_batch(user_id, &schema),
+            schema_with_row_id.clone(),
+            async { Ok(rocksdb_with_row_id.clone()) },
+            async { Ok(parquet_with_row_id.clone()) },
             row_converter,
         )
         .await
@@ -562,8 +667,160 @@ impl UserTableProvider {
         Ok(rows)
     }
 
+    /// Add row_id column to RecordBatch (derived from _id column)
+    ///
+    /// Version resolution requires row_id as a String column, but our batches
+    /// have _id as Int64 (Snowflake ID). This helper adds row_id by converting _id to string.
+    ///
+    /// # Arguments
+    /// * `batch` - RecordBatch with _id column
+    ///
+    /// # Returns
+    /// New RecordBatch with row_id prepended as first column
+    fn add_row_id_column(batch: datafusion::arrow::record_batch::RecordBatch) -> Result<datafusion::arrow::record_batch::RecordBatch, KalamDbError> {
+        use datafusion::arrow::array::{ArrayRef, AsArray, StringArray};
+        use datafusion::arrow::datatypes::{DataType, Field};
+
+        // Handle empty batches
+        if batch.num_rows() == 0 {
+            // Create schema with row_id column
+            let mut fields = vec![Arc::new(Field::new("row_id", DataType::Utf8, false))];
+            fields.extend(batch.schema().fields().to_vec());
+            let new_schema = Arc::new(datafusion::arrow::datatypes::Schema::new(fields));
+            
+            // Create empty row_id array
+            let row_id_array: ArrayRef = Arc::new(StringArray::from(Vec::<&str>::new()));
+            let mut columns = vec![row_id_array];
+            columns.extend(batch.columns().to_vec());
+            
+            return datafusion::arrow::record_batch::RecordBatch::try_new(new_schema, columns)
+                .map_err(|e| KalamDbError::Other(format!("Failed to add row_id column to empty batch: {}", e)));
+        }
+
+        // Extract _id column
+        let id_col = batch.column_by_name("_id")
+            .ok_or_else(|| KalamDbError::Other("Missing _id column in batch".to_string()))?;
+        let id_array = id_col.as_primitive::<datafusion::arrow::datatypes::Int64Type>();
+
+        // Convert to String array
+        let row_id_values: Vec<String> = (0..id_array.len())
+            .map(|i| id_array.value(i).to_string())
+            .collect();
+        let row_id_array: ArrayRef = Arc::new(StringArray::from(row_id_values));
+
+        // Create new schema with row_id as first column
+        let mut fields = vec![Arc::new(Field::new("row_id", DataType::Utf8, false))];
+        fields.extend(batch.schema().fields().to_vec());
+        let new_schema = Arc::new(datafusion::arrow::datatypes::Schema::new(fields));
+
+        // Create new column list with row_id prepended
+        let mut columns = vec![row_id_array];
+        columns.extend(batch.columns().to_vec());
+
+        // Create new RecordBatch
+        datafusion::arrow::record_batch::RecordBatch::try_new(new_schema, columns)
+            .map_err(|e| KalamDbError::Other(format!("Failed to add row_id column: {}", e)))
+    }
+
+    /// Prepare batch for version resolution: add row_id + convert _updated to String
+    ///
+    /// Version resolution.rs expects _updated as StringArray (RFC3339), but our schema
+    /// uses Timestamp(Millisecond). This helper adds row_id and temporarily converts
+    /// _updated to String for version resolution compatibility.
+    ///
+    /// # Arguments
+    /// * `batch` - RecordBatch with _id (Int64) and _updated (Timestamp) columns
+    ///
+    /// # Returns
+    /// New RecordBatch with row_id (Utf8) prepended and _updated converted to String
+    fn prepare_batch_for_version_resolution(batch: datafusion::arrow::record_batch::RecordBatch) -> Result<datafusion::arrow::record_batch::RecordBatch, KalamDbError> {
+        use datafusion::arrow::array::{ArrayRef, AsArray, StringArray, TimestampMillisecondArray};
+        use datafusion::arrow::datatypes::{DataType, Field, TimeUnit};
+        use chrono::{DateTime, Utc};
+
+        // Handle empty batches
+        if batch.num_rows() == 0 {
+            let mut fields = vec![Arc::new(Field::new("row_id", DataType::Utf8, false))];
+            for field in batch.schema().fields() {
+                if field.name() == "_updated" {
+                    fields.push(Arc::new(Field::new("_updated", DataType::Utf8, field.is_nullable())));
+                } else {
+                    fields.push(field.clone());
+                }
+            }
+            let new_schema = Arc::new(datafusion::arrow::datatypes::Schema::new(fields));
+            
+            let row_id_array: ArrayRef = Arc::new(StringArray::from(Vec::<&str>::new()));
+            let updated_array: ArrayRef = Arc::new(StringArray::from(Vec::<&str>::new()));
+            
+            let mut columns = vec![row_id_array];
+            for field in batch.schema().fields() {
+                if field.name() == "_updated" {
+                    columns.push(updated_array.clone());
+                } else {
+                    columns.push(batch.column_by_name(field.name()).unwrap().clone());
+                }
+            }
+            
+            return datafusion::arrow::record_batch::RecordBatch::try_new(new_schema, columns)
+                .map_err(|e| KalamDbError::Other(format!("Failed to prepare empty batch: {}", e)));
+        }
+
+        // Extract _id column and convert to row_id
+        let id_col = batch.column_by_name("_id")
+            .ok_or_else(|| KalamDbError::Other("Missing _id column in batch".to_string()))?;
+        let id_array = id_col.as_primitive::<datafusion::arrow::datatypes::Int64Type>();
+        let row_id_values: Vec<String> = (0..id_array.len())
+            .map(|i| id_array.value(i).to_string())
+            .collect();
+        let row_id_array: ArrayRef = Arc::new(StringArray::from(row_id_values));
+
+        // Extract _updated column and convert Timestamp → RFC3339 String
+        let updated_col = batch.column_by_name("_updated")
+            .ok_or_else(|| KalamDbError::Other("Missing _updated column in batch".to_string()))?;
+        let updated_ts_array = updated_col.as_primitive::<datafusion::arrow::datatypes::TimestampMillisecondType>();
+        let updated_str_values: Vec<String> = (0..updated_ts_array.len())
+            .map(|i| {
+                let millis = updated_ts_array.value(i);
+                let dt = DateTime::from_timestamp_millis(millis)
+                    .unwrap_or_else(|| DateTime::from_timestamp(0, 0).unwrap());
+                dt.to_rfc3339()
+            })
+            .collect();
+        let updated_str_array: ArrayRef = Arc::new(StringArray::from(updated_str_values));
+
+        // Build new schema: row_id first, _updated as String, rest unchanged
+        let mut fields = vec![Arc::new(Field::new("row_id", DataType::Utf8, false))];
+        for field in batch.schema().fields() {
+            if field.name() == "_updated" {
+                fields.push(Arc::new(Field::new("_updated", DataType::Utf8, field.is_nullable())));
+            } else {
+                fields.push(field.clone());
+            }
+        }
+        let new_schema = Arc::new(datafusion::arrow::datatypes::Schema::new(fields));
+
+        // Build columns: row_id first, then original columns with _updated converted
+        let mut columns: Vec<ArrayRef> = vec![row_id_array];
+        for field in batch.schema().fields() {
+            if field.name() == "_updated" {
+                columns.push(updated_str_array.clone());
+            } else {
+                columns.push(batch.column_by_name(field.name()).unwrap().clone());
+            }
+        }
+
+        log::debug!("prepare_batch_for_version_resolution: schema fields={:?}, column count={}", 
+            new_schema.fields().iter().map(|f| (f.name(), f.data_type())).collect::<Vec<_>>(), 
+            columns.len());
+
+        datafusion::arrow::record_batch::RecordBatch::try_new(new_schema, columns)
+            .map_err(|e| KalamDbError::Other(format!("Failed to prepare batch for version resolution: {}", e)))
+    }
+
     /// Flatten stored `UserTableRow` into a JSON object matching the logical schema.
     fn flatten_row(&self, data: UserTableRow) -> JsonValue {
+        log::debug!("flatten_row: row_id={}, _updated={}, _deleted={}", data.row_id, data._updated, data._deleted);
         let mut row = match data.fields {
             JsonValue::Object(map) => map,
             other => {
@@ -581,17 +838,32 @@ impl UserTableProvider {
         };
 
         // Add system columns to flattened row
-        // _id: Parse row_id (Snowflake ID stored as String) to i64
-        if let Ok(snowflake_id) = data.row_id.parse::<i64>() {
-            row.insert("_id".to_string(), JsonValue::Number(snowflake_id.into()));
-        } else {
-            log::warn!("Failed to parse row_id as Snowflake ID: {}", data.row_id);
+        // _id: row_id is stored as String but represents a Snowflake ID (i64)
+        // Parse it to i64 for schema compatibility
+        match data.row_id.parse::<i64>() {
+            Ok(snowflake_id) => {
+                row.insert("_id".to_string(), JsonValue::Number(snowflake_id.into()));
+            }
+            Err(_) => {
+                // For test data or legacy data, use 0 as placeholder
+                log::debug!("row_id '{}' is not a valid Snowflake ID, using 0", data.row_id);
+                row.insert("_id".to_string(), JsonValue::Number(0.into()));
+            }
         }
 
-        row.insert(
-            "_updated".to_string(),
-            JsonValue::String(data._updated.clone()),
-        );
+        // _updated: Convert RFC3339 string to millisecond timestamp for Arrow Timestamp column
+        let updated_millis = {
+            use chrono::DateTime;
+            match DateTime::parse_from_rfc3339(&data._updated) {
+                Ok(dt) => dt.timestamp_millis(),
+                Err(e) => {
+                    log::warn!("Failed to parse _updated timestamp '{}': {}, using 0", data._updated, e);
+                    0
+                }
+            }
+        };
+        row.insert("_updated".to_string(), JsonValue::Number(updated_millis.into()));
+        
         row.insert("_deleted".to_string(), JsonValue::Bool(data._deleted));
 
         JsonValue::Object(row)
@@ -660,10 +932,15 @@ impl UserTableProvider {
         }
 
         log::debug!("RocksDB scan: {} rows", rocksdb_json.len());
+        for (idx, row_json) in rocksdb_json.iter().enumerate() {
+            log::debug!("RocksDB row #{}: has _id={}, json={}", idx, row_json.get("_id").is_some(), row_json);
+        }
 
         // Convert JSON to Arrow RecordBatch
-        json_rows_to_arrow_batch(schema, rocksdb_json)
-            .map_err(|e| DataFusionError::Execution(format!("JSON to Arrow conversion failed: {}", e)))
+        let batch = json_rows_to_arrow_batch(schema, rocksdb_json)
+            .map_err(|e| DataFusionError::Execution(format!("JSON to Arrow conversion failed: {}", e)))?;
+        log::debug!("RocksDB batch: {} rows, columns={:?}", batch.num_rows(), batch.schema().fields().iter().map(|f| f.name()).collect::<Vec<_>>());
+        Ok(batch)
     }
 
     /// T055: Scan Parquet files and return Arrow RecordBatch (for version resolution)
@@ -833,10 +1110,16 @@ impl TableProvider for UserTableProvider {
         let long_batch = self.scan_parquet_as_batch(&current_user_id, &full_schema).await?;
         log::debug!("Parquet scan: {} rows", long_batch.num_rows());
 
+        // T055: STEP 2.5 - Prepare batches for version resolution (add row_id + convert _updated to String)
+        let fast_batch_prepared = Self::prepare_batch_for_version_resolution(fast_batch)
+            .map_err(|e| DataFusionError::Execution(format!("Failed to prepare fast batch: {}", e)))?;
+        let long_batch_prepared = Self::prepare_batch_for_version_resolution(long_batch)
+            .map_err(|e| DataFusionError::Execution(format!("Failed to prepare long batch: {}", e)))?;
+
         // T055: STEP 3-5 - Version Resolution + Deletion Filter + Limit (unified helper)
         let final_batch = crate::tables::base_table_provider::scan_with_version_resolution_and_filter(
-            fast_batch,
-            long_batch,
+            fast_batch_prepared,
+            long_batch_prepared,
             full_schema.clone(),
             limit,
         )

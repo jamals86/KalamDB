@@ -335,6 +335,7 @@ impl TestServer {
         
     match self.sql_executor.execute(sql, &exec_ctx, Vec::new()).await {
         Ok(result) => {
+            println!("[DEBUG TestServer] execute() succeeded, result variant: {:?}", std::mem::discriminant(&result));
             use kalamdb_core::sql::ExecutionResult;
             match result {
                 ExecutionResult::Success { message } => SqlResponse {
@@ -393,17 +394,20 @@ impl TestServer {
                 }
                 ExecutionResult::Inserted { rows_affected }
                 | ExecutionResult::Updated { rows_affected }
-                | ExecutionResult::Deleted { rows_affected } => SqlResponse {
-                    status: "success".to_string(),
-                    results: vec![QueryResult {
-                        rows: None,
-                        row_count: rows_affected,
-                        columns: vec![],
-                        message: Some(format!("{} row(s) affected", rows_affected)),
-                    }],
-                    took_ms: 0,
-                    error: None,
-                },
+                | ExecutionResult::Deleted { rows_affected } => {
+                    println!("[DEBUG TestServer] Matched DML variant with rows_affected={}", rows_affected);
+                    SqlResponse {
+                        status: "success".to_string(),
+                        results: vec![QueryResult {
+                            rows: None,
+                            row_count: rows_affected,
+                            columns: vec![],
+                            message: Some(format!("{} row(s) affected", rows_affected)),
+                        }],
+                        took_ms: 0,
+                        error: None,
+                    }
+                }
                 ExecutionResult::Flushed { tables, bytes_written } => SqlResponse {
                     status: "success".to_string(),
                     results: vec![QueryResult {
