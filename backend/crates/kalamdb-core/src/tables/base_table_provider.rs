@@ -12,6 +12,7 @@ use crate::schema_registry::{SchemaRegistry, TableType};
 use crate::live_query::manager::LiveQueryManager;
 use crate::tables::user_tables::{UserTableDeleteHandler, UserTableInsertHandler, UserTableUpdateHandler};
 use crate::tables::UserTableStore;
+use crate::app_context::AppContext;
 use datafusion::arrow::datatypes::SchemaRef;
 use kalamdb_commons::models::{NamespaceId, StorageId, TableId, TableName};
 use kalamdb_commons::schemas::ColumnDefault;
@@ -129,6 +130,9 @@ pub struct UserTableShared {
     /// Core provider fields (table_id, schema, cache)
     core: TableProviderCore,
 
+    /// Application context for SystemColumnsService and other dependencies
+    app_context: Arc<AppContext>,
+
     /// UserTableStore for DML operations (shared across all users)
     store: Arc<UserTableStore>,
 
@@ -156,16 +160,18 @@ impl UserTableShared {
     ///
     /// # Arguments
     /// * `table_id` - Arc<TableId> created once at registration (zero-allocation cache lookups)
-    /// * `unified_cache` - Reference to unified SchemaCache for metadata lookups
+    /// * `unified_cache` - SchemaRegistry for table metadata
     /// * `schema` - Arrow schema for the table
     /// * `store` - UserTableStore for DML operations
+    /// * `app_context` - Application context for SystemColumnsService and other dependencies
     pub fn new(
         table_id: Arc<TableId>,
         unified_cache: Arc<SchemaRegistry>,
         schema: SchemaRef,
         store: Arc<UserTableStore>,
+        app_context: Arc<AppContext>,
     ) -> Arc<Self> {
-        let insert_handler = Arc::new(UserTableInsertHandler::new(store.clone()));
+        let insert_handler = Arc::new(UserTableInsertHandler::new(app_context.clone(), store.clone()));
         let update_handler = Arc::new(UserTableUpdateHandler::new(store.clone()));
         let delete_handler = Arc::new(UserTableDeleteHandler::new(store.clone()));
         let column_defaults = Arc::new(Self::derive_column_defaults(&schema));
@@ -179,6 +185,7 @@ impl UserTableShared {
 
         Arc::new(Self {
             core,
+            app_context,
             store,
             insert_handler,
             update_handler,
@@ -195,8 +202,9 @@ impl UserTableShared {
     /// when AppContext.live_query_manager() is available.
     pub fn attach_live_query_manager(&mut self, manager: Arc<LiveQueryManager>) {
         let store = self.store.clone();
+        let app_context = self.app_context.clone();
         self.insert_handler = Arc::new(
-            UserTableInsertHandler::new(store.clone()).with_live_query_manager(Arc::clone(&manager)),
+            UserTableInsertHandler::new(app_context.clone(), store.clone()).with_live_query_manager(Arc::clone(&manager)),
         );
         self.update_handler = Arc::new(
             UserTableUpdateHandler::new(store.clone()).with_live_query_manager(Arc::clone(&manager)),
@@ -225,8 +233,9 @@ impl UserTableShared {
     pub fn with_live_query_manager(mut self, manager: Arc<LiveQueryManager>) -> Self {
         // Wire through to all handlers
         let store = self.store.clone();
+        let app_context = self.app_context.clone();
         self.insert_handler = Arc::new(
-            UserTableInsertHandler::new(store.clone())
+            UserTableInsertHandler::new(app_context.clone(), store.clone())
                 .with_live_query_manager(Arc::clone(&manager)),
         );
         self.update_handler = Arc::new(

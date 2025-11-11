@@ -134,7 +134,9 @@ INSERT INTO <namespace>.<table>
    [AS USER '<user_id>']
    VALUES (...);
 
+129) Its better to store the _updated as nanosecond since epoch for better precision and also to avoid collisions when we have multiple updates in the same millisecond
 
+130) We need to have describe table <namespace>.<table> to show the table schema in cli and server as well also to display: cold rows count, hot rows count, total rows count, storage id, primary key(s), indexes, etc
 
 
 Here’s the updated 5-line spec with embedding storage inside Parquet and managed HNSW indexing (with delete handling):
@@ -162,6 +164,7 @@ IMPORTANT:
 9) in impl JobExecutor for FlushExecutor add generic to the model instead of having json parameters we can have T: DeserializeOwned + Send + Sync + 'static and then we can deserialize into the right struct directly instead of having to parse json each time
 
 10) use hashbrown instead of hashmap for better performance where possible
+11) Investigate using vortex instead of parquet or as an option for the user to choose which format to use for storing flushed data
 
 
 Key Findings

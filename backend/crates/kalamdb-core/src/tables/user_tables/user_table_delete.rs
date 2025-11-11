@@ -73,35 +73,61 @@ impl UserTableDeleteHandler {
         user_id: &UserId,
         row_id: &str,
     ) -> Result<String, KalamDbError> {
-        // Fetch row data BEFORE deleting (for notification)
-        let row_to_delete = UserTableStoreExt::get(
+        // Fetch existing row to get current _updated timestamp
+        let existing_row = UserTableStoreExt::get(
             self.store.as_ref(),
             namespace_id.as_str(),
             table_name.as_str(),
             user_id.as_str(),
             row_id,
-        )?;
+        )?
+        .ok_or_else(|| {
+            KalamDbError::NotFound(format!(
+                "Row {} not found in {}.{} for user {}",
+                row_id,
+                namespace_id.as_str(),
+                table_name.as_str(),
+                user_id.as_str()
+            ))
+        })?;
 
-        // Soft delete via store (automatically updates _deleted and _updated)
-        UserTableStoreExt::delete(
+        // Clone for notification before modifying
+        let row_data_before = existing_row.clone();
+
+        // T049-T050: Use SystemColumnsService for soft delete with monotonic _updated
+        // Parse existing _updated timestamp to nanoseconds
+        let previous_updated_ns = Self::parse_timestamp_to_nanos(&existing_row._updated)?;
+        
+        // Get AppContext and SystemColumnsService (T025, T048)
+        use crate::app_context::AppContext;
+        let app_context = AppContext::get();
+        let sys_cols = app_context.system_columns_service();
+        
+        // Snowflake ID is stored in row_id as String, parse to i64
+        let record_id = existing_row.row_id.parse::<i64>()
+            .map_err(|_| KalamDbError::InvalidOperation(
+                format!("Invalid row_id format: {}", existing_row.row_id)
+            ))?;
+        
+        // Get new _updated timestamp and _deleted=true (monotonic, >= previous + 1ns)
+        let (new_updated_ns, deleted) = sys_cols.handle_delete(record_id, previous_updated_ns)?;
+        
+        // Create updated row with soft delete markers
+        let mut deleted_row = existing_row;
+        deleted_row._updated = Self::format_nanos_to_timestamp(new_updated_ns);
+        deleted_row._deleted = deleted; // Should be true for DELETE
+
+        // Write updated row back to storage (soft delete)
+        UserTableStoreExt::put(
             self.store.as_ref(),
             namespace_id.as_str(),
             table_name.as_str(),
             user_id.as_str(),
             row_id,
-            false,
+            &deleted_row,
         )
         .map_err(|e| {
-            // Check if it's a "not found" error
-            if e.to_string().contains("Column family not found") {
-                KalamDbError::NotFound(format!(
-                    "Column family not found for table: {}.{}",
-                    namespace_id.as_str(),
-                    table_name.as_str()
-                ))
-            } else {
-                KalamDbError::Other(format!("Failed to delete row: {}", e))
-            }
+            KalamDbError::Other(format!("Failed to soft delete row: {}", e))
         })?;
 
         log::debug!(
@@ -115,26 +141,24 @@ impl UserTableDeleteHandler {
         // ✅ REQUIREMENT 2: Notification AFTER storage success
         // ✅ REQUIREMENT 1 & 3: Async fire-and-forget pattern (handled by notify_table_change_async)
         if let Some(manager) = &self.live_query_manager {
-            if let Some(row_data) = row_to_delete {
-                // Convert UserTableRow to JsonValue for notification
-                let mut data =
-                    serde_json::to_value(&row_data.fields).unwrap_or(serde_json::json!({}));
+            // Convert UserTableRow to JsonValue for notification
+            let mut data =
+                serde_json::to_value(&row_data_before.fields).unwrap_or(serde_json::json!({}));
 
-                // CRITICAL: Use fully qualified table name (namespace.table_name) for notification matching
-                let qualified_table_name =
-                    format!("{}.{}", namespace_id.as_str(), table_name.as_str());
+            // CRITICAL: Use fully qualified table name (namespace.table_name) for notification matching
+            let qualified_table_name =
+                format!("{}.{}", namespace_id.as_str(), table_name.as_str());
 
-                // Add user_id to notification data for filter matching
-                if let Some(obj) = data.as_object_mut() {
-                    obj.insert("user_id".to_string(), serde_json::json!(user_id.as_str()));
-                }
-
-                let notification =
-                    ChangeNotification::delete_soft(qualified_table_name.clone(), data);
-
-                let table_id = TableId::new(namespace_id.clone(), table_name.clone());
-                manager.notify_table_change_async(user_id.clone(), table_id, notification);
+            // Add user_id to notification data for filter matching
+            if let Some(obj) = data.as_object_mut() {
+                obj.insert("user_id".to_string(), serde_json::json!(user_id.as_str()));
             }
+
+            let notification =
+                ChangeNotification::delete_soft(qualified_table_name.clone(), data);
+
+            let table_id = TableId::new(namespace_id.clone(), table_name.clone());
+            manager.notify_table_change_async(user_id.clone(), table_id, notification);
         }
 
         Ok(row_id.to_string())
@@ -226,6 +250,25 @@ impl UserTableDeleteHandler {
         );
 
         Ok(row_id.to_string())
+    }
+
+    /// Parse RFC3339 timestamp string to nanoseconds since epoch
+    /// T049: Timestamp conversion for SystemColumnsService integration
+    fn parse_timestamp_to_nanos(timestamp: &str) -> Result<i64, KalamDbError> {
+        use chrono::DateTime;
+        let dt = DateTime::parse_from_rfc3339(timestamp)
+            .map_err(|e| KalamDbError::InvalidOperation(format!("Invalid timestamp format: {}", e)))?;
+        Ok(dt.timestamp_nanos_opt().unwrap_or(0))
+    }
+
+    /// Format nanoseconds since epoch to RFC3339 timestamp string
+    /// T049: Timestamp conversion for SystemColumnsService integration
+    fn format_nanos_to_timestamp(nanos: i64) -> String {
+        use chrono::{DateTime, Utc};
+        let secs = nanos / 1_000_000_000;
+        let nsecs = (nanos % 1_000_000_000) as u32;
+        let dt = DateTime::from_timestamp(secs, nsecs).unwrap_or_else(|| Utc::now());
+        dt.to_rfc3339()
     }
 }
 

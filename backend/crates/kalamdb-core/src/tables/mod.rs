@@ -13,6 +13,7 @@ pub mod shared_tables;
 pub mod stream_tables;
 pub mod system;
 pub mod user_tables;
+pub mod version_resolution; // T052: Version resolution across storage layers
 
 // Re-export flush types
 pub use base_flush::{

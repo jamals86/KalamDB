@@ -66,9 +66,11 @@ impl StorageKey for UserTableRowId {
 }
 
 /// User table row data
+///
+/// **Phase 12, US5**: row_id now uses Snowflake ID or user-provided PK (no separate _id field)
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct UserTableRow {
-    pub row_id: String,  //TODO: use UserTableRowId?
+    pub row_id: String,  // Snowflake ID or user-provided PK (stored as string in UserTableRowId key)
     pub user_id: String, //TODO: use UserId?
     pub fields: serde_json::Value,
     pub _updated: String,

@@ -106,6 +106,22 @@ impl SlowQueryLogger {
         })
     }
 
+    /// Create a test logger that doesn't spawn background tasks
+    ///
+    /// This version is safe to use in unit tests that don't have a Tokio runtime.
+    /// It creates a channel but doesn't spawn the background task, so logs are
+    /// simply dropped (tests don't typically check slow query logs anyway).
+    #[cfg(test)]
+    pub fn new_test() -> Self {
+        let (sender, _receiver) = mpsc::unbounded_channel::<SlowQueryEntry>();
+        // Note: We drop the receiver immediately, so logs will just be discarded
+        // This is fine for tests since we don't need actual slow query logging
+        Self {
+            sender,
+            threshold_ms: 1000, // Default 1 second threshold
+        }
+    }
+
     /// Log a query if it exceeds the threshold
     ///
     /// This method is designed to be extremely lightweight:

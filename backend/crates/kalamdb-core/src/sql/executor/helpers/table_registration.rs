@@ -48,6 +48,7 @@ pub fn register_user_table_provider(
         app_context.schema_registry(),
         arrow_schema.clone(),
         user_table_store,
+        app_context.clone(),
     );
 
     // Attach LiveQueryManager for INSERT/UPDATE/DELETE notifications

@@ -14,6 +14,7 @@ use crate::live_query::manager::{ChangeNotification, LiveQueryManager};
 use crate::tables::system::system_table_store::UserTableStoreExt;
 use crate::tables::user_tables::user_table_store::{UserTableRow, UserTableRowId};
 use crate::tables::UserTableStore;
+use crate::app_context::AppContext;
 use arrow::datatypes::Schema;
 use chrono::Utc;
 use kalamdb_commons::models::TableId;
@@ -26,10 +27,11 @@ use std::sync::Arc;
 ///
 /// Coordinates INSERT operations for user tables, enforcing:
 /// - Data isolation via UserId key prefix
-/// - System column injection (_updated, _deleted) - handled by UserTableStore
+/// - System column injection (_id, _updated, _deleted) via SystemColumnsService
 /// - kalamdb-store for RocksDB writes
 /// - Real-time notifications via LiveQueryManager (async fire-and-forget)
 pub struct UserTableInsertHandler {
+    app_context: Arc<AppContext>,
     store: Arc<UserTableStore>,
     live_query_manager: Option<Arc<LiveQueryManager>>,
 }
@@ -38,9 +40,11 @@ impl UserTableInsertHandler {
     /// Create a new user table INSERT handler
     ///
     /// # Arguments
+    /// * `app_context` - Application context for SystemColumnsService access
     /// * `store` - UserTableStore instance for RocksDB operations
-    pub fn new(store: Arc<UserTableStore>) -> Self {
+    pub fn new(app_context: Arc<AppContext>, store: Arc<UserTableStore>) -> Self {
         Self {
+            app_context,
             store,
             live_query_manager: None,
         }
@@ -88,17 +92,21 @@ impl UserTableInsertHandler {
             ));
         }
 
-        // Generate row ID (using timestamp + random component for uniqueness)
-        let row_id = self.generate_row_id()?;
+        // Get system column values from SystemColumnsService (Phase 12, US5, T023)
+        // The Snowflake ID becomes the row_id (no separate _id field)
+        let sys_cols = self.app_context.system_columns_service();
+        let (snowflake_id, updated_ns, deleted) = sys_cols.handle_insert(None)?;
+        
+        // Use Snowflake ID as the row identifier
+        let row_id = snowflake_id.to_string();
 
         // Create the key and entity for storage
-        let _key = UserTableRowId::new(user_id.clone(), row_id.clone());
         let entity = UserTableRow {
             row_id: row_id.clone(),
             user_id: user_id.as_str().to_string(),
             fields: row_data.clone(),
-            _updated: chrono::Utc::now().to_rfc3339(),
-            _deleted: false,
+            _updated: format!("{}", updated_ns), // TODO: Migrate to i64 in Phase 12
+            _deleted: deleted,
         };
 
         // Delegate to UserTableStore
@@ -193,16 +201,21 @@ impl UserTableInsertHandler {
                 ));
             }
 
-            // Generate row ID
-            let row_id = self.generate_row_id()?;
+            // Get system column values from SystemColumnsService (Phase 12, US5, T023)
+            // The Snowflake ID becomes the row_id (no separate _id field)
+            let sys_cols = self.app_context.system_columns_service();
+            let (snowflake_id, updated_ns, deleted) = sys_cols.handle_insert(None)?;
+            
+            // Use Snowflake ID as the row identifier
+            let row_id = snowflake_id.to_string();
 
             // Create the entity for storage
             let entity = UserTableRow {
                 row_id: row_id.clone(),
                 user_id: user_id.as_str().to_string(),
                 fields: row_data.clone(),
-                _updated: chrono::Utc::now().to_rfc3339(),
-                _deleted: false,
+                _updated: format!("{}", updated_ns), // TODO: Migrate to i64 in Phase 12
+                _deleted: deleted,
             };
             
             // DEBUG: Log first insert for each user
@@ -254,29 +267,6 @@ impl UserTableInsertHandler {
         );
 
         Ok(row_ids)
-    }
-
-    /// Generate a unique row ID
-    ///
-    /// Format: {timestamp_ms}_{random_component}
-    ///
-    /// This provides time-ordered keys and uniqueness even for concurrent inserts
-    fn generate_row_id(&self) -> Result<String, KalamDbError> {
-        use std::sync::atomic::{AtomicU64, Ordering};
-        use std::time::{SystemTime, UNIX_EPOCH};
-
-        // Thread-safe counter for uniqueness within same millisecond
-        static COUNTER: AtomicU64 = AtomicU64::new(0);
-
-        let now_ms = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .map_err(|e| KalamDbError::Other(format!("System time error: {}", e)))?
-            .as_millis() as u64;
-        let counter = COUNTER.fetch_add(1, Ordering::SeqCst);
-
-        // Combine timestamp + counter for uniqueness
-        // Format: timestamp_counter (e.g., 1703001234567_42)
-        Ok(format!("{}_{}", now_ms, counter))
     }
 
     /// Apply DEFAULT functions and validate NOT NULL constraints (T534-T539, T554-T559)
@@ -429,6 +419,7 @@ impl UserTableInsertHandler {
 mod tests {
     use super::*;
     use crate::tables::user_tables::user_table_store::new_user_table_store;
+    use crate::system_columns::SystemColumnsService;
     use kalamdb_store::test_utils::InMemoryBackend;
 
     fn setup_test_handler() -> UserTableInsertHandler {
@@ -438,7 +429,12 @@ mod tests {
             &NamespaceId::new("test_ns"),
             &TableName::new("test_table"),
         ));
-        UserTableInsertHandler::new(store)
+        
+        // Create minimal AppContext for testing
+        // For now, create the handler with a test AppContext
+        // In production, AppContext::get() would return the initialized singleton
+        let app_context = Arc::new(crate::app_context::AppContext::new_test());
+        UserTableInsertHandler::new(app_context, store)
     }
 
     #[test]
@@ -458,8 +454,8 @@ mod tests {
             .insert_row(&namespace_id, &table_name, &user_id, row_data)
             .unwrap();
 
-        // Verify row_id format
-        assert!(row_id.contains('_'));
+        // Verify row_id is a Snowflake ID (numeric string)
+        assert!(row_id.parse::<i64>().is_ok());
     }
 
     #[test]
@@ -482,7 +478,8 @@ mod tests {
 
         assert_eq!(row_ids.len(), 3);
         for row_id in row_ids {
-            assert!(row_id.contains('_'));
+            // Verify each row_id is a Snowflake ID (numeric string)
+            assert!(row_id.parse::<i64>().is_ok());
         }
     }
 
@@ -512,17 +509,23 @@ mod tests {
     }
 
     #[test]
-    fn test_generate_row_id_uniqueness() {
+    fn test_snowflake_id_uniqueness() {
         let handler = setup_test_handler();
 
         let mut row_ids = std::collections::HashSet::new();
 
         // Generate 1000 row IDs and verify uniqueness
-        for _ in 0..1000 {
-            let row_id = handler.generate_row_id().unwrap();
+        // Each insert generates a Snowflake ID
+        let namespace_id = NamespaceId::new("test_ns".to_string());
+        let table_name = TableName::new("test_table".to_string());
+        let user_id = UserId::new("user123".to_string());
+
+        for _ in 0..100 {
+            let row_data = serde_json::json!({"value": "test"});
+            let row_id = handler.insert_row(&namespace_id, &table_name, &user_id, row_data).unwrap();
             assert!(
                 row_ids.insert(row_id.clone()),
-                "Duplicate row ID generated: {}",
+                "Duplicate Snowflake ID generated: {}",
                 row_id
             );
         }

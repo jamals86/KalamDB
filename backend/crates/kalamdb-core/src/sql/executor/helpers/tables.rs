@@ -68,8 +68,17 @@ pub fn inject_auto_increment_field(
 
 /// Inject system columns for user tables
 ///
+/// **DEPRECATED (Phase 12, US5)**: This function is being phased out in favor of
+/// `SystemColumnsService.add_system_columns()` which operates on TableDefinition.
+/// The new approach adds _id (Snowflake ID), _updated, and _deleted atomically.
+///
+/// This legacy function only adds _updated and _deleted to Arrow Schema.
+/// It's still called during CREATE TABLE for backward compatibility, but the
+/// actual system columns are now added by SystemColumnsService in save_table_definition().
+///
 /// Adds _updated (TIMESTAMP) and _deleted (BOOLEAN) columns.
 /// For stream tables, this should NOT be called (handled in stream table service).
+#[deprecated(since = "0.2.0", note = "Use SystemColumnsService.add_system_columns() instead")]
 pub fn inject_system_columns(
     schema: Arc<Schema>,
     table_type: TableType,
@@ -167,6 +176,12 @@ pub fn save_table_definition(
         None, // table_comment
     )
     .map_err(|e| KalamDbError::SchemaError(e))?;
+
+    // Inject system columns via SystemColumnsService (Phase 12, US5, T022)
+    // This adds _id, _updated, _deleted to the TableDefinition
+    let app_ctx = AppContext::get();
+    let sys_cols = app_ctx.system_columns_service();
+    sys_cols.add_system_columns(&mut table_def)?;
 
     // Initialize schema history with version 1 entry (Initial schema)
     let schema_json = ArrowSchemaWithOptions::new(schema.clone())

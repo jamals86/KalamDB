@@ -51,3 +51,4 @@ chrono = { workspace = true }
 # Testing utilities
 tempfile = { workspace = true }
 kalamdb-store = { path = "../kalamdb-store" }
+actix-rt = { workspace = true }

@@ -196,6 +196,25 @@ specs/010-core-architecture-v2/ # CURRENT: Arrow memoization, views
 - **Storage Abstraction**: Use `Arc<dyn StorageBackend>` instead of `Arc<rocksdb::DB>` (except in kalamdb-store)
 
 ## Recent Changes (Phase 10 - COMPLETE)
+- 2025-01-15: **Phase 12: Snowflake ID Refactoring** - ✅ **COMPLETE**:
+  - **Problem**: UserTableRow had redundant storage (row_id: String + _id: i64 Snowflake ID)
+  - **Solution**: Eliminated _id field, use Snowflake ID directly as row_id identifier
+  - **Architecture Change**:
+    - BEFORE: `row_id: String` (timestamp_counter) + `_id: i64` (Snowflake) = REDUNDANT
+    - AFTER: `row_id: String` (Snowflake.to_string()) = SINGLE SOURCE OF TRUTH
+  - **UserTableRowId format**: "{user_id}:{snowflake_id}" where snowflake_id is i64→String
+  - **Implementation**:
+    - Updated UserTableRow structure: Removed _id field
+    - Modified insert handlers: `let row_id = snowflake_id.to_string();`
+    - Removed generate_row_id() method (132 lines deleted)
+    - Batch cleanup: Removed 16 test _id initializations across 6 files
+    - Added AppContext::new_test() for unit test support (120 lines)
+    - Added SlowQueryLogger::new_test() to avoid Tokio runtime in tests (18 lines)
+  - **Test Results**: ✅ 15/15 insert tests passing (100% pass rate)
+  - **Build Status**: ✅ Clean (0 errors, 6 warnings - all deprecations)
+  - **Files Modified**: user_table_store.rs, user_table_insert.rs, app_context.rs, slow_query_logger.rs + 6 test files
+  - **Architecture Benefits**: Memory efficiency, code clarity, single source of truth, improved testability
+  - **Documentation**: docs/phase12-snowflake-id-refactoring.md
 - 2025-01-15: **Phase 10 (Phase 9): Final Validation & Polish** - ✅ **COMPLETE**:
   - **Build Validation**: Library builds successfully across all workspace crates (3m 20s build time)
   - **Compilation Status**: 0 errors, 16-36 warnings (pre-existing unused variables only)

@@ -14,6 +14,7 @@ use super::UserTableInsertHandler;
 use crate::schema_registry::{NamespaceId, TableName, UserId};
 use crate::tables::base_table_provider::{BaseTableProvider, UserTableShared};
 use crate::error::KalamDbError;
+use crate::app_context::AppContext;
 use kalamdb_commons::ids::SnowflakeGenerator;
 use crate::tables::system::system_table_store::UserTableStoreExt;
 use crate::tables::arrow_json_conversion::{
@@ -22,7 +23,7 @@ use crate::tables::arrow_json_conversion::{
 use crate::tables::user_tables::user_table_store::UserTableRow;
 use async_trait::async_trait;
 use chrono::Utc;
-use datafusion::arrow::datatypes::{DataType, Field, Schema, SchemaRef, TimeUnit};
+use datafusion::arrow::datatypes::{DataType, Field, Schema, SchemaRef};
 use datafusion::datasource::TableProvider;
 use datafusion::error::{DataFusionError, Result as DataFusionResult};
 use datafusion::logical_expr::dml::InsertOp;
@@ -495,6 +496,243 @@ impl UserTableProvider {
         JsonValue::Object(row)
     }
 
+    /// T055: Scan RocksDB and return Arrow RecordBatch (for version resolution)
+    ///
+    /// # Arguments
+    /// * `user_id` - User ID for RLS isolation
+    /// * `schema` - Full schema including system columns (_updated, _deleted)
+    /// * `limit` - Optional limit for early termination
+    ///
+    /// # Returns
+    /// RecordBatch from RocksDB with system columns
+    async fn scan_rocksdb_as_batch(
+        &self,
+        user_id: &UserId,
+        schema: &SchemaRef,
+        limit: Option<usize>,
+    ) -> DataFusionResult<datafusion::arrow::record_batch::RecordBatch> {
+        let mut rocksdb_json: Vec<JsonValue> = Vec::new();
+        let user_prefix = Self::user_key_prefix(user_id);
+
+        if let Some(limit_value) = limit {
+            log::debug!(
+                "🔍 RLS SCAN (RocksDB): table={}.{}, user_id={}, limit={}",
+                self.namespace_id().as_str(),
+                self.table_name().as_str(),
+                user_id.as_str(),
+                limit_value
+            );
+            
+            let raw = self
+                .shared
+                .store()
+                .scan_prefix_limited_bytes(&user_prefix, limit_value * 2)
+                .map_err(|e| DataFusionError::Execution(format!("Failed to scan user prefix: {}", e)))?;
+
+            for (_key_bytes, row) in raw.into_iter() {
+                // T055: Don't filter _deleted here - version resolution handles it
+                rocksdb_json.push(self.flatten_row(row));
+                if rocksdb_json.len() >= limit_value {
+                    break;
+                }
+            }
+        } else {
+            log::debug!(
+                "🔍 RLS SCAN (RocksDB, no limit): table={}.{}, user_id={}",
+                self.namespace_id().as_str(),
+                self.table_name().as_str(),
+                user_id.as_str()
+            );
+            
+            let raw_rows = self.shared.store()
+                .scan_user(
+                    self.namespace_id().as_str(),
+                    self.table_name().as_str(),
+                    user_id.as_str(),
+                )
+                .map_err(|e| DataFusionError::Execution(format!("Failed to scan user table: {}", e)))?;
+
+            rocksdb_json = raw_rows
+                .into_iter()
+                .map(|(_id, data)| self.flatten_row(data))
+                .collect();
+        }
+
+        log::debug!("RocksDB scan: {} rows", rocksdb_json.len());
+
+        // Convert JSON to Arrow RecordBatch
+        json_rows_to_arrow_batch(schema, rocksdb_json)
+            .map_err(|e| DataFusionError::Execution(format!("JSON to Arrow conversion failed: {}", e)))
+    }
+
+    /// T055: Scan Parquet files and return Arrow RecordBatch (for version resolution)
+    ///
+    /// # Arguments
+    /// * `user_id` - User ID for directory-level RLS isolation
+    /// * `schema` - Full schema including system columns
+    ///
+    /// # Returns
+    /// Concatenated RecordBatch from all Parquet files
+    async fn scan_parquet_as_batch(
+        &self,
+        user_id: &UserId,
+        schema: &SchemaRef,
+    ) -> DataFusionResult<datafusion::arrow::record_batch::RecordBatch> {
+        use datafusion::parquet::arrow::arrow_reader::ParquetRecordBatchReaderBuilder;
+        use std::fs;
+        use std::path::Path;
+
+        let resolve_template_fallback = || {
+            self.shared
+                .core()
+                .cache()
+                .get(self.shared.core().table_id())
+                .map(|cached_data| {
+                    cached_data
+                        .storage_path_template
+                        .replace("{userId}", user_id.as_str())
+                        .replace("{shard}", "")
+                })
+                .unwrap_or_else(|| String::new())
+        };
+
+        let storage_path = self
+            .shared
+            .core()
+            .cache()
+            .get_storage_path(
+                self.shared.core().table_id(),
+                Some(user_id),
+                None,
+            )
+            .unwrap_or_else(|err| {
+                log::warn!(
+                    "Failed to resolve storage path via cache for table {}.{}: {}",
+                    self.namespace_id().as_str(),
+                    self.table_name().as_str(),
+                    err
+                );
+                resolve_template_fallback()
+            });
+
+        if storage_path.is_empty() {
+            log::debug!(
+                "Storage path resolution returned empty string for table {}.{}, skipping Parquet scan",
+                self.namespace_id().as_str(),
+                self.table_name().as_str()
+            );
+            // Return empty RecordBatch
+            return Self::create_empty_batch(schema);
+        }
+
+        let storage_dir = Path::new(&storage_path);
+        log::debug!(
+            "🔍 RLS (Parquet): Scanning for user={} in path={} (exists={})",
+            user_id.as_str(),
+            storage_path,
+            storage_dir.exists()
+        );
+
+        // RLS assertion: Verify storage path contains user_id
+        if !storage_path.contains(user_id.as_str()) {
+            log::error!(
+                "🚨 RLS VIOLATION: Storage path does NOT contain user_id! user={}, path={}",
+                user_id.as_str(),
+                storage_path
+            );
+            return Err(DataFusionError::Execution(format!(
+                "RLS violation: storage path missing user_id isolation"
+            )));
+        }
+
+        if !storage_dir.exists() {
+            log::debug!("Storage directory does not exist, returning empty result");
+            return Self::create_empty_batch(schema);
+        }
+
+        let parquet_files: Vec<_> = fs::read_dir(storage_dir)
+            .map_err(|e| {
+                DataFusionError::Execution(format!("Failed to read storage directory: {}", e))
+            })?
+            .filter_map(|entry| entry.ok())
+            .filter(|entry| entry.path().extension().and_then(|s| s.to_str()) == Some("parquet"))
+            .map(|entry| entry.path())
+            .collect();
+
+        log::debug!("Found {} Parquet files", parquet_files.len());
+
+        if parquet_files.is_empty() {
+            return Self::create_empty_batch(schema);
+        }
+
+        let mut all_batches = Vec::new();
+
+        for parquet_file in parquet_files {
+            log::debug!("Reading Parquet file: {:?}", parquet_file);
+
+            let file = fs::File::open(&parquet_file).map_err(|e| {
+                DataFusionError::Execution(format!(
+                    "Failed to open Parquet file {:?}: {}",
+                    parquet_file, e
+                ))
+            })?;
+
+            let builder = ParquetRecordBatchReaderBuilder::try_new(file).map_err(|e| {
+                DataFusionError::Execution(format!(
+                    "Failed to create Parquet reader for {:?}: {}",
+                    parquet_file, e
+                ))
+            })?;
+
+            let reader = builder.build().map_err(|e| {
+                DataFusionError::Execution(format!(
+                    "Failed to build Parquet reader for {:?}: {}",
+                    parquet_file, e
+                ))
+            })?;
+
+            for batch_result in reader {
+                let batch = batch_result.map_err(|e| {
+                    DataFusionError::Execution(format!(
+                        "Failed to read batch from {:?}: {}",
+                        parquet_file, e
+                    ))
+                })?;
+
+                // T055: Don't filter _deleted here - version resolution handles it
+                all_batches.push(batch);
+            }
+        }
+
+        log::debug!("Total batches from Parquet files: {}", all_batches.len());
+
+        // Concatenate all batches
+        if all_batches.is_empty() {
+            Self::create_empty_batch(schema)
+        } else {
+            datafusion::arrow::compute::concat_batches(schema, &all_batches)
+                .map_err(|e| DataFusionError::Execution(format!("Failed to concatenate batches: {}", e)))
+        }
+    }
+
+    /// Helper: Create empty RecordBatch with correct schema
+    fn create_empty_batch(schema: &SchemaRef) -> DataFusionResult<datafusion::arrow::record_batch::RecordBatch> {
+        use datafusion::arrow::array::{ArrayRef, BooleanArray, Int64Array, StringArray};
+        
+        let empty_columns: Vec<ArrayRef> = schema.fields().iter().map(|field| {
+            match field.data_type() {
+                DataType::Utf8 => Arc::new(StringArray::from(Vec::<&str>::new())) as ArrayRef,
+                DataType::Int64 => Arc::new(Int64Array::from(Vec::<i64>::new())) as ArrayRef,
+                DataType::Boolean => Arc::new(BooleanArray::from(Vec::<bool>::new())) as ArrayRef,
+                DataType::Timestamp(_, _) => Arc::new(Int64Array::from(Vec::<i64>::new())) as ArrayRef,
+                _ => Arc::new(StringArray::from(Vec::<&str>::new())) as ArrayRef,
+            }
+        }).collect();
+        
+        datafusion::arrow::record_batch::RecordBatch::try_new(schema.clone(), empty_columns)
+            .map_err(|e| DataFusionError::Execution(format!("Failed to create empty batch: {}", e)))
+    }
+
     /// Scan Parquet files and return JSON rows
     ///
     /// Reads all Parquet files for the current user from the storage directory
@@ -713,10 +951,11 @@ impl TableProvider for UserTableProvider {
         // Get the base schema and add system columns for the scan result
         let mut fields = self.shared.core().schema_ref().fields().to_vec();
 
-        // Add system columns: _updated (timestamp) and _deleted (boolean)
+        // Add system columns: _updated (String RFC3339) and _deleted (Boolean)
+        // Note: Using Utf8 for _updated to match version_resolution expectations
         fields.push(Arc::new(Field::new(
             "_updated",
-            DataType::Timestamp(TimeUnit::Millisecond, None),
+            DataType::Utf8, // RFC3339 string for version resolution compatibility
             false, // NOT NULL
         )));
         fields.push(Arc::new(Field::new(
@@ -727,101 +966,70 @@ impl TableProvider for UserTableProvider {
 
         let full_schema = Arc::new(Schema::new(fields));
 
-        // **STEP 1: Scan RocksDB buffered data (prefix + seek, early-limit)**
-        // Always enforce per-user isolation by prefix on key (even for admin roles)
-        let mut rocksdb_json: Vec<JsonValue> = Vec::new();
-        let mut rocksdb_scanned: usize = 0;
-
-        // User-specific key prefix for RLS
-        let user_prefix = Self::user_key_prefix(&current_user_id);
-
-        if let Some(limit_value) = limit {
-            // Efficient streaming scan with prefix + limit via EntityStore helper
-            log::info!(
-                "🔍 RLS SCAN: table={}.{}, user_id={}, role={:?}, prefix={:?}",
-                self.namespace_id().as_str(),
-                self.table_name().as_str(),
-                current_user_id.as_str(),
-                access_role,
-                String::from_utf8_lossy(&user_prefix)
-            );
-            let raw = self
-                .shared
-                .store()
-                .scan_prefix_limited_bytes(&user_prefix, limit_value * 2)
-                .map_err(|e| DataFusionError::Execution(format!("Failed to scan user prefix: {}", e)))?;
-
-            for (_key_bytes, row) in raw.into_iter() {
-                rocksdb_scanned += 1;
-                if !row._deleted {
-                    rocksdb_json.push(self.flatten_row(row));
-                    if rocksdb_json.len() >= limit_value { break; }
-                }
-            }
-        } else {
-            // No limit pushdown → fall back to full user scan (compat mode)
-            log::info!(
-                "🔍 RLS SCAN (no limit): table={}.{}, user_id={}, role={:?}",
-                self.namespace_id().as_str(),
-                self.table_name().as_str(),
-                current_user_id.as_str(),
-                access_role
-            );
-            let raw_rows = self.shared.store()
-                .scan_user(
-                    self.namespace_id().as_str(),
-                    self.table_name().as_str(),
-                    current_user_id.as_str(),
-                )
-                .map_err(|e| DataFusionError::Execution(format!("Failed to scan user table: {}", e)))?;
-
-            let filtered_rows = raw_rows.into_iter().filter(|(_row_id, row_data)| !row_data._deleted);
-            rocksdb_json = filtered_rows.map(|(_id, data)| self.flatten_row(data)).collect();
-            rocksdb_scanned = rocksdb_json.len();
-        }
-
-        log::debug!(
-            "RocksDB scan: scanned={} returned={}",
-            rocksdb_scanned,
-            rocksdb_json.len()
+        // T055: STEP 1 - Scan RocksDB as Arrow RecordBatch (no _deleted filtering)
+        log::info!(
+            "🔍 RLS SCAN: table={}.{}, user_id={}, role={:?}",
+            self.namespace_id().as_str(),
+            self.table_name().as_str(),
+            current_user_id.as_str(),
+            access_role
         );
+        
+        let fast_batch = self.scan_rocksdb_as_batch(&current_user_id, &full_schema, limit).await?;
+        log::debug!("RocksDB scan: {} rows", fast_batch.num_rows());
 
-        // **STEP 2: Scan Parquet files**
-        let parquet_json = self.scan_parquet_files(&current_user_id, &full_schema).await?;
+        // T055: STEP 2 - Scan Parquet as Arrow RecordBatch (no _deleted filtering)
+        let long_batch = self.scan_parquet_as_batch(&current_user_id, &full_schema).await?;
+        log::debug!("Parquet scan: {} rows", long_batch.num_rows());
 
-        log::debug!("Parquet rows: {}", parquet_json.len());
+        // T055: STEP 3 - Version Resolution (select MAX(_updated) per row_id)
+        // Using DataFusion window functions for parallel, optimized deduplication
+        use crate::tables::version_resolution::resolve_latest_version;
+        let resolved_batch = resolve_latest_version(fast_batch, long_batch, full_schema.clone())
+            .await
+            .map_err(|e| DataFusionError::Execution(format!("Version resolution failed: {}", e)))?;
+        
+        log::debug!("After version resolution: {} rows", resolved_batch.num_rows());
 
-        // **STEP 3: Merge RocksDB + Parquet data** (respect remaining limit)
-        let mut all_rows: Vec<JsonValue> = Vec::with_capacity(rocksdb_json.len() + parquet_json.len());
-        all_rows.extend(rocksdb_json);
-        if let Some(limit_value) = limit {
-            if all_rows.len() < limit_value {
-                let needed = limit_value - all_rows.len();
-                all_rows.extend(parquet_json.into_iter().take(needed));
-            }
+        // T057: STEP 4 - Apply deletion filter (_deleted = false)
+        use datafusion::arrow::array::BooleanArray;
+        use datafusion::arrow::compute::filter_record_batch;
+        
+        let deleted_col_idx = full_schema.fields().iter()
+            .position(|f| f.name() == "_deleted")
+            .ok_or_else(|| DataFusionError::Execution("Missing _deleted column".to_string()))?;
+        
+        let deleted_array = resolved_batch.column(deleted_col_idx)
+            .as_any()
+            .downcast_ref::<BooleanArray>()
+            .ok_or_else(|| DataFusionError::Execution("_deleted column is not BooleanArray".to_string()))?;
+        
+        // Create filter: NOT _deleted (invert boolean array)
+        let keep_mask = datafusion::arrow::compute::not(deleted_array)
+            .map_err(|e| DataFusionError::Execution(format!("Failed to invert _deleted mask: {}", e)))?;
+        
+        let filtered_batch = filter_record_batch(&resolved_batch, &keep_mask)
+            .map_err(|e| DataFusionError::Execution(format!("Failed to filter deleted rows: {}", e)))?;
+        
+        log::debug!("After deletion filter: {} rows", filtered_batch.num_rows());
+
+        // Apply limit if specified (post-resolution limit)
+        let final_batch = if let Some(limit_value) = limit {
+            let batch_limit = std::cmp::min(limit_value, filtered_batch.num_rows());
+            filtered_batch.slice(0, batch_limit)
         } else {
-            all_rows.extend(parquet_json);
-        }
-
-        // Apply final limit if specified (safety)
-        let limited_rows: Vec<JsonValue> = if let Some(limit_value) = limit {
-            all_rows.into_iter().take(limit_value).collect()
-        } else {
-            all_rows
+            filtered_batch
         };
 
-        // Convert JSON rows to Arrow RecordBatch (includes system columns)
-        let batch = json_rows_to_arrow_batch(&full_schema, limited_rows).map_err(|e| {
-            DataFusionError::Execution(format!("JSON to Arrow conversion failed: {}", e))
-        })?;
+        log::debug!("Final batch: {} rows", final_batch.num_rows());
 
         // Create an in-memory table over the full schema and let DataFusion handle projection
         use datafusion::datasource::MemTable;
-        let partitions = vec![vec![batch]];
+        let partitions = vec![vec![final_batch]];
         let table = MemTable::try_new(full_schema, partitions)
             .map_err(|e| DataFusionError::Execution(format!("Failed to create MemTable: {}", e)))?;
 
-        table.scan(state, projection, &[], limit).await
+        table.scan(state, projection, &[], None).await
     }
 
     async fn insert_into(
@@ -973,8 +1181,9 @@ mod tests {
         let schema = create_test_schema();
         let unified_cache = create_test_metadata();
         let table_id = create_test_table_id();
+        let app_context = AppContext::get();
         
-        UserTableShared::new(table_id, unified_cache, schema, store)
+        UserTableShared::new(table_id, unified_cache, schema, store, app_context)
     }
 
     #[test]

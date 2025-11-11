@@ -98,7 +98,7 @@ impl UserTableUpdateHandler {
 
         // Clone for old_data before merging
         let old_data = existing_row.fields.clone();
-        let mut updated_row = existing_row;
+        let mut updated_row = existing_row.clone();
 
         // Merge updates into existing row
         if let Some(updated_obj) = updates.as_object() {
@@ -114,8 +114,27 @@ impl UserTableUpdateHandler {
             }
         }
 
-        // Update timestamp
-        updated_row._updated = chrono::Utc::now().to_rfc3339();
+        // T044-T046: Use SystemColumnsService for monotonic _updated timestamp
+        // Parse existing _updated timestamp to nanoseconds
+        let previous_updated_ns = Self::parse_timestamp_to_nanos(&existing_row._updated)?;
+        
+        // Get AppContext and SystemColumnsService (T024, T042)
+        use crate::app_context::AppContext;
+        let app_context = AppContext::get();
+        let sys_cols = app_context.system_columns_service();
+        
+        // Snowflake ID is stored in row_id as String, parse to i64
+        let record_id = updated_row.row_id.parse::<i64>()
+            .map_err(|_| KalamDbError::InvalidOperation(
+                format!("Invalid row_id format: {}", updated_row.row_id)
+            ))?;
+        
+        // Get new _updated timestamp (monotonic, >= previous + 1ns)
+        let (new_updated_ns, _deleted) = sys_cols.handle_update(record_id, previous_updated_ns)?;
+        
+        // Convert nanosecond timestamp to RFC3339 string for storage
+        updated_row._updated = Self::format_nanos_to_timestamp(new_updated_ns);
+        updated_row._deleted = _deleted; // Should remain false for UPDATE
 
         // Write updated row back
         UserTableStoreExt::put(
@@ -197,6 +216,47 @@ impl UserTableUpdateHandler {
         );
 
         Ok(updated_row_ids)
+    }
+
+    /// Parse RFC3339 timestamp string to nanoseconds since epoch
+    ///
+    /// # Arguments
+    /// * `timestamp_str` - RFC3339 formatted timestamp string
+    ///
+    /// # Returns
+    /// Nanoseconds since Unix epoch
+    fn parse_timestamp_to_nanos(timestamp_str: &str) -> Result<i64, KalamDbError> {
+        use chrono::{DateTime, Utc};
+        
+        let dt = DateTime::parse_from_rfc3339(timestamp_str)
+            .map_err(|e| KalamDbError::InvalidOperation(
+                format!("Failed to parse timestamp '{}': {}", timestamp_str, e)
+            ))?;
+        
+        let utc_dt: DateTime<Utc> = dt.with_timezone(&Utc);
+        Ok(utc_dt.timestamp_nanos_opt().unwrap_or(0))
+    }
+
+    /// Format nanoseconds since epoch to RFC3339 timestamp string
+    ///
+    /// # Arguments
+    /// * `nanos` - Nanoseconds since Unix epoch
+    ///
+    /// # Returns
+    /// RFC3339 formatted timestamp string
+    fn format_nanos_to_timestamp(nanos: i64) -> String {
+        use chrono::{DateTime, Utc};
+        
+        // Convert nanoseconds to DateTime
+        let secs = nanos / 1_000_000_000;
+        let nsecs = (nanos % 1_000_000_000) as u32;
+        
+        if let Some(dt) = DateTime::from_timestamp(secs, nsecs) {
+            dt.to_rfc3339()
+        } else {
+            // Fallback to current time if conversion fails
+            Utc::now().to_rfc3339()
+        }
     }
 }
 
