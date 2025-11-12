@@ -945,26 +945,69 @@ impl BaseTableProvider<StreamTableRowId, StreamTableRow> for StreamTableProvider
   - kalamdb-commons builds successfully ✅
   - StreamTableStore MVCC refactoring complete ✅
 
-#### Phase 13.3: UserTableProvider Implementation (8 tasks)
+#### Phase 13.3: Create New providers/ Module (8 tasks)
 
-- [ ] T211 Remove UserTableShared wrapper, move fields directly to UserTableProvider
-- [ ] T212 Remove TableProviderCore, merge fields (table_id, schema) into UserTableProvider
-- [ ] T213 Implement BaseTableProvider<UserTableRowId, UserTableRow> for UserTableProvider
-- [ ] T214 Implement core trait methods (table_id, schema_ref, table_type, store, app_context)
-- [ ] T215 Implement DML methods (insert, insert_batch, update, delete) with RocksDB+Parquet merging via scan_with_version_resolution_to_kvs()
-- [ ] T216 Implement scan_rows with RLS filtering (user_id scoping) and hot+cold storage merge
-- [ ] T217 Update all UserTableProvider call sites (remove UserTableShared references)
-- [ ] T218 Verify UserTableProvider builds successfully with 0 errors
+- [ ] T211 Create backend/crates/kalamdb-core/src/providers/ directory
+  - Fresh module structure (providers/ replaces tables/)
+  - Location: backend/crates/kalamdb-core/src/providers/ ✅
+- [ ] T212 Create providers/base.rs with BaseTableProvider trait + TableProviderCore
+  - BaseTableProvider<K, V> trait with all methods documented in phase13-trait-design.md
+  - TableProviderCore struct: {app_context, live_query_manager, storage_registry}
+  - Shared helper functions for common operations ✅
+- [ ] T213 Create providers/users.rs with UserTableProvider implementation
+  - Direct fields: table_id, schema, table_type, store, schema_registry, column_defaults
+  - Shared core: Arc<TableProviderCore> (app_context, live_query_manager, storage_registry)
+  - NO handlers - all DML logic inline
+  - Use unified_dml::append_version_sync() for appends
+  - Use version_resolution helpers for MAX(_seq) resolution
+  - Implements BaseTableProvider<UserTableRowId, UserTableRow> ✅
+- [ ] T214 Create providers/shared.rs with SharedTableProvider implementation
+  - Same structure as UserTableProvider (direct fields + Arc<TableProviderCore>)
+  - NO handlers - all DML logic inline
+  - No RLS (operates on all rows)
+  - Implements BaseTableProvider<SharedTableRowId, SharedTableRow> ✅
+- [ ] T215 Create providers/streams.rs with StreamTableProvider implementation
+  - Same structure as User/Shared providers (direct fields + Arc<TableProviderCore>)
+  - NO handlers - all DML logic inline
+  - Hot-only storage (no Parquet merging, TTL-based eviction)
+  - Implements BaseTableProvider<StreamTableRowId, StreamTableRow> ✅
+- [ ] T216 Create providers/mod.rs with module exports
+  - Export BaseTableProvider trait, TableProviderCore
+  - Export UserTableProvider, SharedTableProvider, StreamTableProvider
+  - Mark old tables/ module as deprecated ✅
+- [ ] T217 Update backend/crates/kalamdb-core/src/lib.rs to export providers module
+  - Add: pub use providers::{BaseTableProvider, TableProviderCore, UserTableProvider, SharedTableProvider, StreamTableProvider};
+  - Deprecation warning for old tables module ✅
+- [ ] T218 Verify new providers/ module builds successfully with 0 errors
+  - Run: cargo check -p kalamdb-core
+  - Expected: 0 errors (warnings for deprecated items OK) ✅
 
-#### Phase 13.4: SharedTableProvider Implementation (7 tasks)
+#### Phase 13.4: Migrate Call Sites to New providers/ Module (7 tasks)
 
-- [ ] T219 Remove TableProviderCore wrapper, move fields directly to SharedTableProvider
-- [ ] T220 Implement BaseTableProvider<SharedTableRowId, SharedTableRow> for SharedTableProvider
-- [ ] T221 Implement core trait methods (table_id, schema_ref, table_type, store, app_context)
-- [ ] T222 Implement DML methods (insert, update, delete) with RocksDB+Parquet merging via scan_with_version_resolution_to_kvs()
-- [ ] T223 Implement scan_rows without RLS filtering and hot+cold storage merge
-- [ ] T224 Update all SharedTableProvider call sites
-- [ ] T225 Verify SharedTableProvider builds successfully with 0 errors
+- [ ] T219 Update sql/executor/helpers/table_registration.rs to use providers::UserTableProvider
+  - Import from kalamdb_core::providers
+  - Update constructor call (no UserTableShared wrapper)
+  - Pass Arc<TableProviderCore> to constructor ✅
+- [ ] T220 Update sql/executor/handlers/ to use providers module
+  - Import BaseTableProvider trait from providers::base
+  - Update all provider references (User/Shared/Stream)
+  - Remove handler imports (DML logic now in providers) ✅
+- [ ] T221 Update system/system_table_store.rs to use providers module
+  - Update imports for provider types
+  - Fix any broken references ✅
+- [ ] T222 Update app_context.rs to export providers module
+  - Ensure providers are accessible from AppContext
+  - Update any provider factory methods ✅
+- [ ] T223 Update all test files to use providers module
+  - backend/tests/test_*.rs
+  - Update imports and constructor calls
+  - Fix any broken test assertions ✅
+- [ ] T224 Run cargo check --workspace to catch remaining issues
+  - Fix all compilation errors in batch
+  - Address deprecated item warnings ✅
+- [ ] T225 Verify all tests pass with new providers/ module
+  - Run: cargo test -p kalamdb-core
+  - Expected: 100% pass rate ✅
 
 #### Phase 13.5: StreamTableProvider Implementation (7 tasks)
 
