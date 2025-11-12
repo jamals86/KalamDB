@@ -824,14 +824,15 @@ pub trait BaseTableProvider<K: StorageKey, V>: Send + Sync + DataFusion::TablePr
     fn store(&self) -> &Arc<dyn EntityStore<K, V>>;
     fn app_context(&self) -> &Arc<AppContext>;
     
-    // DML operations (unified with hot/cold storage merging)
-    fn insert(&self, row_data: JsonValue) -> Result<K, KalamDbError>;
-    fn insert_batch(&self, rows: Vec<JsonValue>) -> Result<Vec<K>, KalamDbError>;
-    fn update(&self, key: &K, updates: JsonValue) -> Result<K, KalamDbError>;
-    fn delete(&self, key: &K) -> Result<(), KalamDbError>;
+    // DML operations (user_id passed per-operation for RLS)
+    fn insert(&self, user_id: &UserId, row_data: JsonValue) -> Result<K, KalamDbError>;
+    fn insert_batch(&self, user_id: &UserId, rows: Vec<JsonValue>) -> Result<Vec<K>, KalamDbError>;
+    fn update(&self, user_id: &UserId, key: &K, updates: JsonValue) -> Result<K, KalamDbError>;
+    fn delete(&self, user_id: &UserId, key: &K) -> Result<(), KalamDbError>;
     
-    // Scan operations with storage merging
-    fn scan_rows(&self, filter: Option<Expr>) -> Result<RecordBatch, KalamDbError>;
+    // Scan operations (extract user_id from SessionState for SQL, or pass directly for DML)
+    fn scan_rows(&self, state: &dyn Session, filter: Option<&Expr>) -> Result<RecordBatch, KalamDbError>;
+    fn scan_with_version_resolution_to_kvs(&self, user_id: &UserId, filter: Option<&Expr>) -> Result<Vec<(K, V)>, KalamDbError>;
 }
 
 // Concrete implementations (no type aliases, no UserTableShared wrapper)
@@ -845,12 +846,25 @@ pub struct UserTableProvider {
 
 impl BaseTableProvider<UserTableRowId, UserTableRow> for UserTableProvider {
     // DML methods scan RocksDB (hot) + Parquet (cold), merge via version resolution
-    fn update(&self, key: &UserTableRowId, updates: JsonValue) -> Result<UserTableRowId, KalamDbError> {
-        // 1. Scan RocksDB for current version
-        // 2. Scan Parquet files for older versions  
+    // user_id parameter used for RLS (per-user data isolation)
+    fn insert(&self, user_id: &UserId, row_data: JsonValue) -> Result<UserTableRowId, KalamDbError> {
+        // user_id used for storage key prefix and RLS
+        unified_dml::append_version_sync(user_id, row_data)
+    }
+    
+    fn update(&self, user_id: &UserId, key: &UserTableRowId, updates: JsonValue) -> Result<UserTableRowId, KalamDbError> {
+        // 1. Scan RocksDB for current version (user-scoped via key prefix)
+        // 2. Scan Parquet files for older versions (user-scoped)
         // 3. Apply version resolution (MAX(_seq) wins)
         // 4. Merge updates into latest version
-        // 5. Append new version via unified_dml::append_version_sync()
+        // 5. Append new version via unified_dml::append_version_sync(user_id, ...)
+    }
+    
+    fn scan_rows(&self, state: &dyn Session, filter: Option<&Expr>) -> Result<RecordBatch, KalamDbError> {
+        // Extract user_id from DataFusion SessionState for RLS
+        let (user_id, _role) = Self::extract_user_context(state)?;
+        // Apply RLS filtering using extracted user_id
+        scan_with_version_resolution(&user_id, filter)
     }
 }
 
@@ -881,7 +895,7 @@ impl BaseTableProvider<StreamTableRowId, StreamTableRow> for StreamTableProvider
 
 **Key Simplifications**:
 1. ❌ No UserTableShared wrapper (providers hold fields directly)
-2. ❌ No TableProviderCore (merge fields into providers)
+2. ✅ Shared TableProviderCore used (centralizes common services and reduces duplication)
 3. ❌ No type aliases (implement trait directly)
 4. ✅ UserId extracted from context, not passed as parameter
 5. ✅ Single trait, three implementations
@@ -915,14 +929,15 @@ impl BaseTableProvider<StreamTableRowId, StreamTableRow> for StreamTableProvider
   - All methods documented with usage examples ✅
 - [X] T203 Define DML trait methods (insert, insert_batch, update, delete with generic return types)
   - Added synchronous DML methods (no async overhead, no handlers)
-  - Added batch operation default implementations (iterate and collect)
-  - Added update_by_id_field() and delete_by_id_field() convenience methods
+  - All DML methods take user_id: &UserId parameter for RLS (User/Stream use it, Shared ignores it)
+  - Added batch operation default implementations (iterate and collect, pass user_id through)
+  - Added update_by_id_field() and delete_by_id_field() convenience methods (also take user_id)
   - Returns Result<K, KalamDbError> for insert/update, Result<(), KalamDbError> for delete ✅
 - [X] T204 Define scan trait methods (scan_rows with optional filter parameter, hot+cold merge for User/Shared, hot-only for Stream)
-  - scan_rows() for DataFusion integration (returns RecordBatch)
-  - scan_with_version_resolution_to_kvs() for internal DML use (returns Vec<(K, V)>)
+  - scan_rows(state: &dyn Session, filter) for DataFusion integration (extracts user_id from SessionState)
+  - scan_with_version_resolution_to_kvs(user_id: &UserId, filter) for internal DML use (explicit user_id)
   - extract_fields() for provider-specific field extraction
-  - Documentation emphasizes DataFusion-powered version resolution ✅
+  - Documentation emphasizes DataFusion SessionState extension for user context ✅
 
 #### Phase 13.2: StreamTableStore Refactoring (6 tasks)
 
@@ -958,17 +973,23 @@ impl BaseTableProvider<StreamTableRowId, StreamTableRow> for StreamTableProvider
   - Direct fields: table_id, schema, table_type, store, schema_registry, column_defaults
   - Shared core: Arc<TableProviderCore> (app_context, live_query_manager, storage_registry)
   - NO handlers - all DML logic inline
+  - DML methods: insert(user_id, row), update(user_id, key, updates), delete(user_id, key) - use user_id for RLS
+  - scan_rows(state, filter): extract user_id from SessionState.extensions for RLS filtering
   - Use unified_dml::append_version_sync() for appends
   - Use version_resolution helpers for MAX(_seq) resolution
   - Implements BaseTableProvider<UserTableRowId, UserTableRow> ✅
 - [ ] T214 Create providers/shared.rs with SharedTableProvider implementation
   - Same structure as UserTableProvider (direct fields + Arc<TableProviderCore>)
   - NO handlers - all DML logic inline
+  - DML methods: insert(_user_id, row), update(_user_id, key, updates), delete(_user_id, key) - IGNORE user_id parameter
+  - scan_rows(state, filter): NO user_id extraction, scan all rows (no RLS)
   - No RLS (operates on all rows)
   - Implements BaseTableProvider<SharedTableRowId, SharedTableRow> ✅
 - [ ] T215 Create providers/streams.rs with StreamTableProvider implementation
   - Same structure as User/Shared providers (direct fields + Arc<TableProviderCore>)
   - NO handlers - all DML logic inline
+  - DML methods: insert(user_id, row), update(user_id, key, updates), delete(user_id, key) - use user_id for RLS
+  - scan_rows(state, filter): extract user_id from SessionState.extensions for RLS + TTL filtering
   - Hot-only storage (no Parquet merging, TTL-based eviction)
   - Implements BaseTableProvider<StreamTableRowId, StreamTableRow> ✅
 - [ ] T216 Create providers/mod.rs with module exports
@@ -991,6 +1012,7 @@ impl BaseTableProvider<StreamTableRowId, StreamTableRow> for StreamTableProvider
 - [ ] T220 Update sql/executor/handlers/ to use providers module
   - Import BaseTableProvider trait from providers::base
   - Update all provider references (User/Shared/Stream)
+  - Update DML handler calls to pass user_id: provider.insert(&context.user_id, row_data)
   - Remove handler imports (DML logic now in providers) ✅
 - [ ] T221 Update system/system_table_store.rs to use providers module
   - Update imports for provider types
@@ -1011,18 +1033,23 @@ impl BaseTableProvider<StreamTableRowId, StreamTableRow> for StreamTableProvider
 
 #### Phase 13.5: StreamTableProvider Implementation (7 tasks)
 
-- [ ] T226 Remove TableProviderCore wrapper, move fields directly to StreamTableProvider
+- [ ] T226 Use TableProviderCore shared core within StreamTableProvider (confirm or implement)
 - [ ] T227 Implement BaseTableProvider<StreamTableRowId, StreamTableRow> for StreamTableProvider
 - [ ] T228 Implement core trait methods (table_id, schema_ref, table_type, store, app_context)
-- [ ] T229 Implement DML methods (insert, insert_batch) using ONLY RocksDB (hot storage), NO Parquet merging
-- [ ] T230 Implement scan_rows with TTL filtering (evict expired events) using ONLY RocksDB
+- [ ] T229 Implement DML methods with user_id parameter: insert(user_id, row), update(user_id, key, updates), delete(user_id, key)
+  - Use user_id for RLS (per-user event streams)
+  - ONLY RocksDB (hot storage), NO Parquet merging
+- [ ] T230 Implement scan_rows(state, filter) with user_id extraction from SessionState + TTL filtering
+  - Extract user_id from state.config().options().extensions for RLS
+  - Apply TTL filtering (evict expired events)
+  - ONLY RocksDB scan (ephemeral data)
 - [ ] T231 Update all StreamTableProvider call sites
 - [ ] T232 Verify StreamTableProvider builds successfully with 0 errors
 
 #### Phase 13.6: Cleanup & Testing (7 tasks)
 
 - [ ] T233 Delete UserTableShared struct and all references
-- [ ] T234 Delete TableProviderCore struct and all references
+- [ ] T234 [SKIP] TableProviderCore is KEPT - it's the shared core for common services (do not delete)
 - [ ] T235 Delete old BaseTableProvider trait (replace with new generic one)
 - [ ] T236 Run cargo check on entire workspace
 - [ ] T237 Fix all compilation errors in batch
@@ -1031,68 +1058,13 @@ impl BaseTableProvider<StreamTableRowId, StreamTableRow> for StreamTableProvider
 - [ ] T201e [US9] Update SchemaRegistry cache: `insert_user_table_shared` → `insert_user_table_commons`
 - [ ] T201f [US9] Update all test code to use new naming
 
-#### T202: Make BaseTableCommons Generic Over RowId and Store Types
-- [ ] T202a [US9] Add generic parameters to BaseTableCommons: `BaseTableCommons<RowId, Store>`
-- [ ] T202b [US9] Add trait bounds: `where RowId: StorageKey, Store: EntityStore<RowId, ...>`
-- [ ] T202c [US9] Update insert_handler/update_handler/delete_handler to use generic RowId type
-- [ ] T202d [US9] Create type aliases: UserTableCommons, SharedTableCommons, StreamTableCommons
-- [ ] T202e [US9] Update UserTableProvider to use UserTableCommons type alias
-- [ ] T202f [US9] Verify compilation with generic constraints (cargo check)
-
-#### T203: Enhance BaseTableProvider Trait with DML Methods
-- [ ] T203a [US9] Add insert() method signature to BaseTableProvider trait
-- [ ] T203b [US9] Add insert_batch() method signature to BaseTableProvider trait
-- [ ] T203c [US9] Add update() method signature to BaseTableProvider trait
-- [ ] T203d [US9] Add update_batch() method signature to BaseTableProvider trait
-- [ ] T203e [US9] Add delete() method signature to BaseTableProvider trait
-- [ ] T203f [US9] Add delete_batch() method signature to BaseTableProvider trait
-- [ ] T203g [US9] Add scan_rows() method signature to BaseTableProvider trait (provider-specific)
-- [ ] T203h [US9] Add optional user_id parameter to all DML methods for RLS support
-
-#### T204: Implement Generic DML Methods in BaseTableCommons
-- [ ] T204a [US9] Implement insert() in BaseTableCommons delegating to insert_handler
-- [ ] T204b [US9] Implement insert_batch() using insert() in loop (or batch handler if available)
-- [ ] T204c [US9] Implement update() delegating to update_handler with generic RowId
-- [ ] T204d [US9] Implement update_batch() using update() in loop
-- [ ] T204e [US9] Implement delete() delegating to delete_handler with generic RowId
-- [ ] T204f [US9] Implement delete_batch() using delete() in loop
-- [ ] T204g [US9] Add user_id scoping logic for UserTableCommons (key prefix filtering)
-- [ ] T204h [US9] Verify SharedTableCommons ignores user_id parameter (no RLS)
-
-#### T205: Migrate UserTableProvider to Use BaseTableProvider Trait Methods
-- [ ] T205a [US9] Replace UserTableProvider.insert_row() implementation with trait method call
-- [ ] T205b [US9] Replace UserTableProvider.insert_batch() implementation with trait method call
-- [ ] T205c [US9] Replace UserTableProvider.update_row() implementation with trait method call
-- [ ] T205d [US9] Replace UserTableProvider.update_batch() implementation with trait method call
-- [ ] T205e [US9] Replace UserTableProvider.delete_row() implementation with trait method call
-- [ ] T205f [US9] Replace UserTableProvider.delete_batch() implementation with trait method call
-- [ ] T205g [US9] Keep provider-specific methods: delete_by_id_field, update_by_id_field (not in base trait)
-- [ ] T205h [US9] Run user table tests to verify migration (15 INSERT tests + UPDATE/DELETE tests)
-
-#### T206: Migrate SharedTableProvider to Use BaseTableProvider Trait Methods
-- [ ] T206a [US9] Create SharedTableCommons instance (similar to UserTableCommons)
-- [ ] T206b [US9] Replace SharedTableProvider.insert() with BaseTableProvider.insert() trait call
-- [ ] T206c [US9] Replace SharedTableProvider.update() with BaseTableProvider.update() trait call
-- [ ] T206d [US9] Replace SharedTableProvider.delete_soft/delete_hard with unified delete() (controlled by _deleted flag)
-- [ ] T206e [US9] Keep provider-specific methods: delete_by_id_field, update_by_id_field
-- [ ] T206f [US9] Update SharedTableProvider to store Arc<SharedTableCommons> instead of individual fields
-- [ ] T206g [US9] Run shared table tests to verify migration (4 provider tests)
-
-#### T207: Migrate StreamTableProvider to Use BaseTableProvider Trait Methods
-- [ ] T207a [US9] Create StreamTableCommons instance with StreamRowId and StreamTableStore
-- [ ] T207b [US9] Replace StreamTableProvider.insert_event() with BaseTableProvider.insert() trait call
-- [ ] T207c [US9] Replace StreamTableProvider.insert_batch() with BaseTableProvider.insert_batch() trait call
-- [ ] T207d [US9] Keep stream-specific methods: evict_expired, count_events, get_event, scan_events (not in base trait)
-- [ ] T207e [US9] Add ephemeral mode logic to insert() implementation (check subscribers before storing)
-- [ ] T207f [US9] Update StreamTableProvider to store Arc<StreamTableCommons> instead of individual fields
-- [ ] T207g [US9] Run stream table tests to verify migration
+#### T202–T207: REMOVED - Legacy "BaseTableCommons" path
+The prior plan referenced an intermediate BaseTableCommons layer and related migrations. Phase 13 adopts a direct BaseTableProvider + providers/ approach with a shared TableProviderCore. All "Commons"-related tasks (T202–T207) are removed to prevent architectural drift and duplication.
 
 #### T208: Consolidate Metadata Access Methods
-- [ ] T208a [US9] Move namespace_id() implementation to TableProviderCore (already delegates to core)
-- [ ] T208b [US9] Move table_name() implementation to TableProviderCore (already delegates to core)
-- [ ] T208c [US9] Move column_family_name() to TableProviderCore with table_type switch logic
-- [ ] T208d [US9] Remove duplicate namespace_id/table_name implementations from all 3 providers
-- [ ] T208e [US9] Update all providers to use core.namespace(), core.table_name(), core.column_family_name()
+- [ ] T208a [US9] Use BaseTableProvider default implementations for namespace_id() and table_name(); remove duplicates in providers
+- [ ] T208b [US9] Ensure providers use BaseTableProvider::column_family_name() default; remove custom impls
+- [ ] T208c [US9] Keep TableProviderCore focused on shared services (AppContext/LiveQuery/StorageRegistry), not metadata helpers
 
 #### T209: Eliminate TableId Usage Where NamespaceId + TableName Suffice
 - [ ] T209a [US9] Audit all method signatures using (NamespaceId, TableName) separately
@@ -1112,20 +1084,22 @@ impl BaseTableProvider<StreamTableRowId, StreamTableRow> for StreamTableProvider
 
 #### T211: Performance & Integration Testing
 - [ ] T211a [US9] Run smoke tests to verify DML operations work across all 3 table types
-- [ ] T211b [US9] Verify RLS enforcement in UserTableProvider (user_id scoping still works)
-- [ ] T211c [US9] Verify shared tables ignore user_id parameter (no RLS leakage)
-- [ ] T211d [US9] Verify stream tables ephemeral mode + TTL eviction still work
-- [ ] T211e [US9] Run performance benchmarks: INSERT/UPDATE/DELETE throughput unchanged
-- [ ] T211f [US9] Verify LiveQueryManager notifications still fire for all 3 table types
+- [ ] T211b [US9] Verify RLS enforcement in UserTableProvider (user_id parameter used for scoping)
+- [ ] T211c [US9] Verify SharedTableProvider ignores user_id parameter (no RLS leakage)
+- [ ] T211d [US9] Verify StreamTableProvider uses user_id parameter for RLS + TTL eviction
+- [ ] T211e [US9] Test scan_rows() extracts user_id from SessionState correctly for User/Stream tables
+- [ ] T211f [US9] Test scan_rows() does NOT extract user_id for Shared tables (scans all rows)
+- [ ] T211g [US9] Run performance benchmarks: INSERT/UPDATE/DELETE throughput unchanged
+- [ ] T211h [US9] Verify LiveQueryManager notifications still fire for all 3 table types
 
 ### Summary
 
 - **Total Tasks**: 60 tasks (T200-T211)
 - **Expected Code Reduction**: 800-1000 lines (60-70% of DML handler code)
 - **Breaking Changes**: 
-  - UserTableShared → BaseTableCommons rename (type alias for compatibility)
-  - Handlers now generic over RowId type
-  - Providers use Arc<BaseTableCommons> instead of individual handler fields
+  - UserTableShared eliminated; providers implement BaseTableProvider directly
+  - Handler structs removed from providers; DML logic moved inline or via unified_dml helpers
+  - New providers/ module replaces tables/ with shared TableProviderCore
 - **Non-Breaking**:
   - Provider-specific methods preserved (evict_expired, delete_by_id_field, etc.)
   - All tests should pass without modification (except type alias updates)

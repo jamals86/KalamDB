@@ -99,7 +99,7 @@ impl SqlExecutor {
         }
     }
 
-    /// Execute SELECT/INSERT/DELETE via DataFusion with per-user session
+    /// Execute SELECT via DataFusion with per-user session
     async fn execute_via_datafusion(
         &self,
         sql: &str,

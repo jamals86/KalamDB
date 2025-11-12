@@ -25,9 +25,9 @@ Create a unified trait-based architecture that eliminates ~1200 lines of duplica
 - Created once per table, Arc-cloned per request
 - Adds indirection layer
 
-**TableProviderCore** (130 lines):
-- Common fields (table_id, cache, storage_id, created_at)
-- Shared by all provider types
+**TableProviderCore** (shared core):
+- Common fields and services (AppContext, optional LiveQueryManager, optional StorageRegistry)
+- Shared by all provider types to reduce memory and avoid per-provider duplication
 
 ## Simplified Design (Phase 13)
 
@@ -108,6 +108,10 @@ pub trait BaseTableProvider<K: StorageKey, V>: Send + Sync + TableProvider {
     /// Access to AppContext for SystemColumnsService, SnowflakeGenerator, etc.
     fn app_context(&self) -> &Arc<AppContext>;
     
+    /// Primary key field name from schema definition (e.g., "id", "email").
+    /// Implementors should source this from SchemaRegistry to avoid duplication.
+    fn primary_key_field_name(&self) -> &str;
+    
     // ===========================
     // DML Operations (Synchronous - No Handlers)
     // ===========================
@@ -117,43 +121,58 @@ pub trait BaseTableProvider<K: StorageKey, V>: Send + Sync + TableProvider {
     /// **Implementation**: Calls unified_dml::append_version_sync() directly
     ///
     /// # Arguments
+    /// * `user_id` - Subject user ID for RLS (User/Stream tables use this, Shared tables ignore it)
     /// * `row_data` - JSON object containing user-defined columns
     ///
     /// # Returns
     /// Generated storage key (UserTableRowId, SeqId, or StreamTableRowId)
-    fn insert(&self, row_data: JsonValue) -> Result<K, KalamDbError>;
-    
-    /// Insert multiple rows in a batch (optimized for bulk operations)
-    fn insert_batch(&self, rows: Vec<JsonValue>) -> Result<Vec<K>, KalamDbError>;
+    ///
+    /// # Architecture Note
+    /// The provider remains user-agnostic and stateless. The user_id is passed per-operation
+    /// by the SQL executor from ExecutionContext, enabling:
+    /// - AS USER impersonation (executor passes subject_user_id)
+    /// - Per-request user scoping without per-user provider instances
+    /// - Clean separation: executor handles auth/context, provider handles storage
+    fn insert(&self, user_id: &UserId, row_data: JsonValue) -> Result<K, KalamDbError>;    /// Insert multiple rows in a batch (optimized for bulk operations)
+    ///
+    /// # Arguments
+    /// * `user_id` - Subject user ID for RLS (User/Stream tables use this, Shared tables ignore it)
+    /// * `rows` - Vector of JSON objects containing user-defined columns
+    fn insert_batch(&self, user_id: &UserId, rows: Vec<JsonValue>) -> Result<Vec<K>, KalamDbError>;
     
     /// Update a row by key (appends new version with incremented _seq)
     ///
     /// **Implementation**: Uses version_resolution helpers + unified_dml::append_version_sync()
     ///
     /// # Arguments
+    /// * `user_id` - Subject user ID for RLS (User/Stream tables use this, Shared tables ignore it)
     /// * `key` - Storage key identifying the row
     /// * `updates` - JSON object with column updates
     ///
     /// # Returns
     /// New storage key (new SeqId for versioning)
-    fn update(&self, key: &K, updates: JsonValue) -> Result<K, KalamDbError>;
+    fn update(&self, user_id: &UserId, key: &K, updates: JsonValue) -> Result<K, KalamDbError>;
     
     /// Delete a row by key (appends tombstone with _deleted=true)
     ///
     /// **Implementation**: Uses version_resolution helpers + unified_dml::append_version_sync()
-    fn delete(&self, key: &K) -> Result<(), KalamDbError>;
+    ///
+    /// # Arguments
+    /// * `user_id` - Subject user ID for RLS (User/Stream tables use this, Shared tables ignore it)
+    /// * `key` - Storage key identifying the row
+    fn delete(&self, user_id: &UserId, key: &K) -> Result<(), KalamDbError>;
     
     /// Update multiple rows in a batch
-    fn update_batch(&self, updates: Vec<(K, JsonValue)>) -> Result<Vec<K>, KalamDbError> {
+    fn update_batch(&self, user_id: &UserId, updates: Vec<(K, JsonValue)>) -> Result<Vec<K>, KalamDbError> {
         updates.into_iter()
-            .map(|(key, update)| self.update(&key, update))
+            .map(|(key, update)| self.update(user_id, &key, update))
             .collect()
     }
     
     /// Delete multiple rows in a batch
-    fn delete_batch(&self, keys: Vec<K>) -> Result<Vec<()>, KalamDbError> {
+    fn delete_batch(&self, user_id: &UserId, keys: Vec<K>) -> Result<Vec<()>, KalamDbError> {
         keys.into_iter()
-            .map(|key| self.delete(&key))
+            .map(|key| self.delete(user_id, &key))
             .collect()
     }
     
@@ -167,12 +186,16 @@ pub trait BaseTableProvider<K: StorageKey, V>: Send + Sync + TableProvider {
     /// where `fields.id == id_value`. The returned key K already contains user_id
     /// for user/stream tables (embedded in UserTableRowId/StreamTableRowId).
     ///
+    /// # Arguments
+    /// * `user_id` - Subject user ID for RLS scoping (User/Stream tables filter by this, Shared tables scan all)
+    /// * `id_value` - Value to search for in the ID field
+    ///
     /// # Performance
-    /// - User tables: Can optimize with RocksDB prefix scan if provider extracts user_id from context
+    /// - User tables: RocksDB prefix scan on {user_id}: for efficient scoping
     /// - Shared tables: Full table scan (consider adding index for large tables)
-    fn find_row_key_by_id_field(&self, id_value: &str) -> Result<Option<K>, KalamDbError> {
-        // Default implementation: scan all rows with version resolution
-        let rows = self.scan_with_version_resolution_to_kvs(None)?;
+    fn find_row_key_by_id_field(&self, user_id: &UserId, id_value: &str) -> Result<Option<K>, KalamDbError> {
+        // Default implementation: scan rows with user scoping and version resolution
+        let rows = self.scan_with_version_resolution_to_kvs(user_id, None)?;
         
         for (key, row) in rows {
             if let Some(fields) = Self::extract_fields(&row) {
@@ -188,17 +211,17 @@ pub trait BaseTableProvider<K: StorageKey, V>: Send + Sync + TableProvider {
     }
     
     /// Update a row by searching for matching ID field value
-    fn update_by_id_field(&self, id_value: &str, updates: JsonValue) -> Result<K, KalamDbError> {
-        let key = self.find_row_key_by_id_field(id_value)?
+    fn update_by_id_field(&self, user_id: &UserId, id_value: &str, updates: JsonValue) -> Result<K, KalamDbError> {
+        let key = self.find_row_key_by_id_field(user_id, id_value)?
             .ok_or_else(|| KalamDbError::RowNotFound(format!("Row with id={} not found", id_value)))?;
-        self.update(&key, updates)
+        self.update(user_id, &key, updates)
     }
     
     /// Delete a row by searching for matching ID field value
-    fn delete_by_id_field(&self, id_value: &str) -> Result<(), KalamDbError> {
-        let key = self.find_row_key_by_id_field(id_value)?
+    fn delete_by_id_field(&self, user_id: &UserId, id_value: &str) -> Result<(), KalamDbError> {
+        let key = self.find_row_key_by_id_field(user_id, id_value)?
             .ok_or_else(|| KalamDbError::RowNotFound(format!("Row with id={} not found", id_value)))?;
-        self.delete(&key)
+        self.delete(user_id, &key)
     }
     
     // ===========================
@@ -207,31 +230,51 @@ pub trait BaseTableProvider<K: StorageKey, V>: Send + Sync + TableProvider {
     
     /// Scan rows with optional filter (merges hot + cold storage with version resolution)
     ///
+    /// **Called by DataFusion during query execution via TableProvider::scan()**
+    ///
+    /// The `state` parameter from DataFusion's scan() contains SessionUserContext in extensions,
+    /// which providers extract to apply RLS filtering.
+    ///
     /// **User/Shared Tables**:
-    /// 1. Scan RocksDB (hot storage) → fast_batch
-    /// 2. Scan Parquet files (cold storage) → cold_batch
-    /// 3. Apply version resolution (MAX(_seq) per primary key) via DataFusion
-    /// 4. Filter _deleted = false via DataFusion
-    /// 5. Apply user filter expression
+    /// 1. Extract user_id from SessionState.config().options().extensions
+    /// 2. Scan RocksDB (hot storage) → fast_batch
+    /// 3. Scan Parquet files (cold storage) → cold_batch
+    /// 4. Apply version resolution (MAX(_seq) per primary key) via DataFusion
+    /// 5. Filter _deleted = false via DataFusion
+    /// 6. Apply user filter expression
+    /// 7. For User tables: Apply RLS (user_id = subject)
     ///
     /// **Stream Tables**:
-    /// 1. Scan ONLY RocksDB (hot storage)
-    /// 2. Apply TTL filtering
-    /// 3. Filter _deleted = false
-    /// 4. Apply user filter expression
+    /// 1. Extract user_id from SessionState
+    /// 2. Scan ONLY RocksDB (hot storage)
+    /// 3. Apply TTL filtering
+    /// 4. Filter _deleted = false
+    /// 5. Apply user filter expression
+    /// 6. Apply RLS (user_id = subject)
     ///
     /// # Arguments
+    /// * `state` - DataFusion SessionState (contains SessionUserContext in extensions)
     /// * `filter` - Optional DataFusion expression for filtering
     ///
     /// # Returns
     /// RecordBatch with resolved, filtered rows
-    fn scan_rows(&self, filter: Option<&Expr>) -> Result<RecordBatch, KalamDbError>;
+    ///
+    /// # Note
+    /// This is called by DataFusion's TableProvider::scan() implementation.
+    /// For direct DML operations (not via SQL), use scan_with_version_resolution_to_kvs().
+    fn scan_rows(&self, state: &dyn datafusion::catalog::Session, filter: Option<&Expr>) -> Result<RecordBatch, KalamDbError>;
     
     /// Scan with version resolution returning key-value pairs (for internal DML use)
     ///
     /// Used by UPDATE/DELETE to find current version before appending new version.
+    /// Unlike scan_rows(), this is called directly by DML operations with user_id passed explicitly.
+    ///
+    /// # Arguments
+    /// * `user_id` - Subject user ID for RLS scoping (User/Stream tables filter by this, Shared tables scan all)
+    /// * `filter` - Optional DataFusion expression for filtering
     fn scan_with_version_resolution_to_kvs(
         &self,
+        user_id: &UserId,
         filter: Option<&Expr>,
     ) -> Result<Vec<(K, V)>, KalamDbError>;
     
@@ -328,24 +371,22 @@ impl BaseTableProvider<UserTableRowId, UserTableRow> for UserTableProvider {
     fn table_type(&self) -> TableType { self.table_type }
     fn store(&self) -> &Arc<dyn EntityStore<UserTableRowId, UserTableRow>> { &self.store }
     fn app_context(&self) -> &Arc<AppContext> { &self.app_context }
+    fn primary_key_field_name(&self) -> &str { self.cached_pk_name.as_str() }
     
-    async fn insert(&self, row_data: JsonValue) -> Result<UserTableRowId, KalamDbError> {
-        // Extract user_id from context (not parameter!)
-        let user_id = self.extract_user_id_from_context()?;
-        
-        // Call unified_dml module
+    fn insert(&self, user_id: &UserId, row_data: JsonValue) -> Result<UserTableRowId, KalamDbError> {
+        // Call unified_dml module with user_id for RLS
         unified_dml::insert_user_table_row(
             &self.store,
             &self.app_context,
             &self.table_id,
-            &user_id,
+            user_id,
             row_data,
-        ).await
+        )
     }
     
-    async fn update(&self, key: &UserTableRowId, updates: JsonValue) -> Result<UserTableRowId, KalamDbError> {
-        // 1. Scan RocksDB for hot versions
-        // 2. Scan Parquet for cold versions  
+    fn update(&self, user_id: &UserId, key: &UserTableRowId, updates: JsonValue) -> Result<UserTableRowId, KalamDbError> {
+        // 1. Scan RocksDB for hot versions (user-scoped via key prefix)
+        // 2. Scan Parquet for cold versions (user-scoped)
         // 3. Apply version resolution (MAX(_seq))
         // 4. Merge updates into latest version
         // 5. Append new version via unified_dml
@@ -353,22 +394,23 @@ impl BaseTableProvider<UserTableRowId, UserTableRow> for UserTableProvider {
             &self.store,
             &self.app_context,
             &self.table_id,
+            user_id,
             key,
             updates,
-        ).await
+        )
     }
     
-    async fn scan_rows(&self, filter: Option<Expr>) -> Result<RecordBatch, KalamDbError> {
-        // Extract user_id for RLS filtering
-        let user_id = self.extract_user_id_from_context()?;
+    fn scan_rows(&self, state: &dyn datafusion::catalog::Session, filter: Option<&Expr>) -> Result<RecordBatch, KalamDbError> {
+        // Extract user_id from DataFusion SessionState (injected by ExecutionContext)
+        let (user_id, _role) = Self::extract_user_context(state)?;
         
-        // Scan RocksDB + Parquet with version resolution
+        // Scan RocksDB + Parquet with version resolution and RLS filtering
         scan_with_version_resolution(
             &self.store,
             &self.table_id,
             &user_id,
             filter,
-        ).await
+        )
     }
 }
 ```
