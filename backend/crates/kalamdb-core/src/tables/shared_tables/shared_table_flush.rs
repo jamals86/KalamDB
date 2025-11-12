@@ -125,20 +125,22 @@ impl SharedTableFlushJob {
 
     /// Delete flushed rows from RocksDB after successful Parquet write
     fn delete_flushed_rows(&self, rows: &[(Vec<u8>, JsonValue)]) -> Result<(), KalamDbError> {
-        let keys: Vec<String> = rows
-            .iter()
-            .map(|(key_bytes, _)| String::from_utf8_lossy(key_bytes).to_string())
-            .collect();
+        let mut parsed_keys = Vec::new();
+        for (key_bytes, _) in rows {
+            let key = kalamdb_commons::ids::SharedTableRowId::from_bytes(key_bytes)
+                .map_err(|e| KalamDbError::InvalidOperation(format!("Invalid key bytes: {}", e)))?;
+            parsed_keys.push(key);
+        }
 
-        if keys.is_empty() {
+        if parsed_keys.is_empty() {
             return Ok(());
         }
 
         self.store
-            .delete_batch_by_keys(self.namespace_id.as_str(), self.table_name.as_str(), &keys)
+            .delete_batch_by_keys(&parsed_keys)
             .map_err(|e| KalamDbError::Other(format!("Failed to delete flushed rows: {}", e)))?;
 
-        log::debug!("Deleted {} flushed rows from storage", keys.len());
+        log::debug!("Deleted {} flushed rows from storage", parsed_keys.len());
         Ok(())
     }
 }
@@ -156,7 +158,7 @@ impl TableFlush for SharedTableFlushJob {
         // Stream snapshot-backed scan and collect active rows
         let iter = self
             .store
-            .scan_iter(self.namespace_id.as_str(), self.table_name.as_str())
+            .scan_iter()
             .map_err(|e| {
                 log::error!(
                     "❌ Failed to scan rows for shared table={}.{}: {}",

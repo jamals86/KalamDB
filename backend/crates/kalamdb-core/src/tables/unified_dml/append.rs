@@ -85,7 +85,7 @@ pub async fn append_version(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::test_helpers::AppContext;
+    use crate::app_context::AppContext;
     use kalamdb_commons::models::{NamespaceId, TableName};
 
     #[tokio::test]

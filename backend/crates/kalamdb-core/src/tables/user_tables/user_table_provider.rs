@@ -14,7 +14,7 @@ use super::UserTableInsertHandler;
 use crate::schema_registry::{NamespaceId, TableName, UserId};
 use crate::tables::base_table_provider::{BaseTableProvider, UserTableShared};
 use crate::error::KalamDbError;
-use kalamdb_commons::ids::{SeqId, SnowflakeGenerator};
+use kalamdb_commons::ids::{SeqId, SnowflakeGenerator, UserTableRowId};
 use crate::tables::system::system_table_store::UserTableStoreExt;
 use crate::tables::arrow_json_conversion::{
     arrow_batch_to_json, json_rows_to_arrow_batch, validate_insert_rows,
@@ -441,11 +441,16 @@ impl UserTableProvider {
     /// # Arguments
     /// * `user_id` - User ID for data isolation
     pub fn scan_current_user_rows(&self, user_id: &UserId) -> Result<Vec<(String, UserTableRow)>, KalamDbError> {
-        self.shared.store().scan_user(
-            self.namespace_id().as_str(),
-            self.table_name().as_str(),
-            user_id.as_str(),
-        )
+        // Create prefix key for scanning all rows for this user
+        let user_prefix = UserTableRowId::new(user_id.clone(), SeqId::new(0));
+        
+        let rows = self.shared.store().scan_user(&user_prefix)?;
+        
+        // Convert UserTableRowId keys to String format for compatibility
+        Ok(rows
+            .into_iter()
+            .map(|(key, row)| (key.seq().to_string(), row))
+            .collect())
     }
 
     /// Scan all rows for the specified user WITH VERSION RESOLUTION (includes Parquet)
@@ -795,12 +800,11 @@ impl UserTableProvider {
                 user_id.as_str()
             );
             
+            // Create prefix key for scanning all rows for this user
+            let user_prefix = UserTableRowId::new(user_id.clone(), SeqId::new(0));
+            
             let raw_rows = self.shared.store()
-                .scan_user(
-                    self.namespace_id().as_str(),
-                    self.table_name().as_str(),
-                    user_id.as_str(),
-                )
+                .scan_user(&user_prefix)
                 .map_err(|e| DataFusionError::Execution(format!("Failed to scan user table: {}", e)))?;
 
             rocksdb_json = raw_rows
@@ -1075,12 +1079,14 @@ impl TableProvider for UserTableProvider {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::app_context::AppContext;
     use crate::tables::UserTableStore;
     use datafusion::arrow::array::{
         BooleanArray, Int64Array, StringArray, TimestampMillisecondArray,
     };
     use datafusion::arrow::datatypes::{DataType, Field, Schema};
     use datafusion::execution::context::SessionContext;
+    use kalamdb_commons::ids::UserTableRowId;
     use kalamdb_commons::{TableId, TableType};
     use kalamdb_store::test_utils::TestDb;
     use serde_json::json;
@@ -1211,12 +1217,12 @@ mod tests {
             }),
         };
 
+        // Construct key for storage
+        let key = UserTableRowId::new(user_id.clone(), row._seq);
+        
         UserTableStoreExt::put(
             provider.shared.store().as_ref(),
-            provider.namespace_id().as_str(),
-            provider.table_name().as_str(),
-            user_id.as_str(),
-            &row._seq.as_i64().to_string(),
+            &key,
             &row,
         )
         .expect("should persist user row");

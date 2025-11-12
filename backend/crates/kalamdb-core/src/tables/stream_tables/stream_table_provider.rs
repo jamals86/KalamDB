@@ -298,12 +298,12 @@ impl StreamTableProvider {
     pub fn scan_events(&self) -> Result<Vec<(JsonValue, String)>, KalamDbError> {
         let rows = self
             .store
-            .scan(self.namespace_id().as_str(), self.table_name().as_str())
+            .scan()
             .map_err(|e| KalamDbError::Other(e.to_string()))?;
 
         Ok(rows
             .into_iter()
-            .map(|(row_id, row)| (row.fields, row_id))
+            .map(|(row_id, row)| (row.fields, row_id.to_string()))
             .collect())
     }
 
@@ -321,7 +321,7 @@ impl StreamTableProvider {
     /// Number of events deleted
     pub fn evict_expired(&self) -> Result<usize, KalamDbError> {
         self.store
-            .cleanup_expired_rows(self.core.namespace().as_str(), self.core.table_name().as_str())
+            .cleanup_expired_rows()
             .map_err(|e| KalamDbError::Other(e.to_string()))
     }
 }
@@ -378,10 +378,7 @@ impl TableProvider for StreamTableProvider {
         // Scan all events from the store
         let events = self
             .store
-            .scan(
-                self.core.namespace().as_str(),
-                self.core.table_name().as_str(),
-            )
+            .scan()
             .map_err(|e| {
                 DataFusionError::Execution(format!("Failed to scan stream table: {}", e))
             })?;

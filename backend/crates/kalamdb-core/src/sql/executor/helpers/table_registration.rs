@@ -54,10 +54,7 @@ pub fn register_user_table_provider(
     // Ensure RocksDB partition exists for USER table
     {
         use crate::tables::system::system_table_store::UserTableStoreExt;
-        let _ = shared.store().create_column_family(
-            table_id.namespace_id().as_str(),
-            table_id.table_name().as_str(),
-        );
+        let _ = shared.store().create_column_family();
     }
 
     // Attach LiveQueryManager for INSERT/UPDATE/DELETE notifications
@@ -122,10 +119,7 @@ pub fn register_shared_table_provider(
     ));
 
     // Ensure RocksDB partition exists
-    let _ = shared_store.create_column_family(
-        table_id.namespace_id().as_str(),
-        table_id.table_name().as_str(),
-    );
+    let _ = shared_store.create_column_family();
 
     // Create and register provider
     let provider = SharedTableProvider::new(

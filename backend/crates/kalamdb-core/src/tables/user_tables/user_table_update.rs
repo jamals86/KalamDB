@@ -11,7 +11,7 @@ use crate::error::KalamDbError;
 use crate::live_query::manager::{ChangeNotification, LiveQueryManager};
 use crate::tables::system::system_table_store::UserTableStoreExt;
 use crate::tables::UserTableStore;
-use kalamdb_commons::ids::SeqId;
+use kalamdb_commons::ids::{SeqId, UserTableRowId};
 use kalamdb_commons::models::TableId;
 use serde_json::Value as JsonValue;
 use std::sync::Arc;
@@ -79,13 +79,15 @@ impl UserTableUpdateHandler {
             ));
         }
 
+        // Parse row_id to SeqId and construct key
+        let seq_id = SeqId::from_string(row_id)
+            .map_err(|e| KalamDbError::InvalidOperation(format!("Invalid row_id: {}", e)))?;
+        let key = UserTableRowId::new(user_id.clone(), seq_id);
+
         // Read existing row from store
         let existing_row = UserTableStoreExt::get(
             self.store.as_ref(),
-            namespace_id.as_str(),
-            table_name.as_str(),
-            user_id.as_str(),
-            row_id,
+            &key,
         )
         .map_err(|e| KalamDbError::Other(format!("Failed to read row: {}", e)))?
         .ok_or_else(|| {
@@ -133,10 +135,7 @@ impl UserTableUpdateHandler {
         // Write updated row back
         UserTableStoreExt::put(
             self.store.as_ref(),
-            namespace_id.as_str(),
-            table_name.as_str(),
-            user_id.as_str(),
-            row_id,
+            &key,
             &updated_row,
         )
         .map_err(|e| KalamDbError::Other(format!("Failed to write updated row: {}", e)))?;

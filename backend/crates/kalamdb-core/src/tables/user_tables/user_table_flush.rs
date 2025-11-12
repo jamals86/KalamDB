@@ -345,17 +345,16 @@ impl UserTableFlushJob {
             return Ok(());
         }
 
-        let keys_as_strings: Vec<String> = keys
-            .iter()
-            .map(|k| String::from_utf8_lossy(k).to_string())
-            .collect();
+        // Parse keys from bytes to UserTableRowId
+        let mut parsed_keys = Vec::new();
+        for key_bytes in keys {
+            let key = kalamdb_commons::ids::UserTableRowId::from_bytes(key_bytes)
+                .map_err(|e| KalamDbError::InvalidOperation(format!("Invalid key bytes: {}", e)))?;
+            parsed_keys.push(key);
+        }
 
         self.store
-            .delete_batch_by_keys(
-                self.namespace_id.as_str(),
-                self.table_name.as_str(),
-                &keys_as_strings,
-            )
+            .delete_batch_by_keys(&parsed_keys)
             .map_err(|e| KalamDbError::Other(format!("Failed to delete flushed rows: {}", e)))?;
 
         log::debug!("Deleted {} flushed rows from storage", keys.len());
@@ -376,7 +375,7 @@ impl TableFlush for UserTableFlushJob {
         // Stream snapshot-backed scan
         let iter = self
             .store
-            .scan_iter(self.namespace_id.as_str(), self.table_name.as_str())
+            .scan_iter()
             .map_err(|e| {
                 log::error!(
                     "❌ Failed to scan table={}.{}: {}",

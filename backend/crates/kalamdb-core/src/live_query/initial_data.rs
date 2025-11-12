@@ -161,7 +161,7 @@ impl InitialDataFetcher {
                 // by the compiled predicate below. This ensures admins and broad
                 // subscriptions receive the correct initial snapshot.
                 let mut rows = Vec::new();
-                for (_key, row) in store.scan_all(&namespace, &table).map_err(|e| {
+                for (_key, row) in store.scan_all().map_err(|e| {
                     KalamDbError::Other(format!(
                         "Failed to scan user table {}.{}: {}",
                         namespace, table, e
@@ -200,7 +200,7 @@ impl InitialDataFetcher {
                 })?;
 
                 let mut rows = Vec::new();
-                for (_row_id, row) in store.scan(&namespace, &table).map_err(|e| {
+                for (_row_id, row) in store.scan().map_err(|e| {
                     KalamDbError::Other(format!(
                         "Failed to scan stream table {}.{}: {}",
                         namespace, table, e

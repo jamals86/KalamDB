@@ -250,11 +250,12 @@ impl SharedTableProvider {
         } else {
             let rows_with_ids: Vec<(SharedTableRowId, SharedTableRow)> = rocks_rows_raw
                 .iter()
-                .map(|(key, row)| {
-                    (
-                        SharedTableRowId::new(String::from_utf8_lossy(key).to_string()),
-                        row.clone(),
-                    )
+                .filter_map(|(key, row)| {
+                    // Parse key bytes to SharedTableRowId
+                    match SharedTableRowId::from_bytes(key) {
+                        Ok(row_id) => Some((row_id, row.clone())),
+                        Err(_) => None, // Skip invalid keys
+                    }
                 })
                 .collect();
 
@@ -305,19 +306,26 @@ impl SharedTableProvider {
 
     /// DELETE operation (soft delete)
     ///
-    /// Sets _deleted=true and updates _updated timestamp.
+    /// Sets _deleted=true and creates new version with new _seq.
     /// Row remains in RocksDB until flush or cleanup job removes it.
     pub fn delete_soft(&self, row_id: &str) -> Result<(), KalamDbError> {
-        let key = SharedTableRowId::new(row_id);
+        // Parse row_id string to i64
+        let row_id_int = row_id.parse::<i64>()
+            .map_err(|e| KalamDbError::InvalidOperation(format!("Invalid row_id: {}", e)))?;
+        let key = SharedTableRowId::new(row_id_int);
+        
         let mut row_data = self
             .store
             .get(&key)
             .map_err(|e| KalamDbError::Other(e.to_string()))?
             .ok_or_else(|| KalamDbError::NotFound(format!("Row not found: {}", row_id)))?;
 
+        // Generate new SeqId for MVCC versioning
+        let new_seq = self.app_context.system_columns_service().generate_seq_id()?;
+        
         // Update system columns
         row_data._deleted = true;
-        row_data._updated = chrono::Utc::now().to_rfc3339();
+        row_data._seq = new_seq;
 
         // Store updated row
         self.store
@@ -332,7 +340,11 @@ impl SharedTableProvider {
     /// Permanently removes row from RocksDB.
     /// Used by cleanup jobs for expired soft-deleted rows.
     pub fn delete_hard(&self, row_id: &str) -> Result<(), KalamDbError> {
-        let key = SharedTableRowId::new(row_id);
+        // Parse row_id string to i64
+        let row_id_int = row_id.parse::<i64>()
+            .map_err(|e| KalamDbError::InvalidOperation(format!("Invalid row_id: {}", e)))?;
+        let key = SharedTableRowId::new(row_id_int);
+        
         self.store
             .delete(&key)
             .map_err(|e| KalamDbError::Other(e.to_string()))?;
@@ -677,10 +689,9 @@ fn shared_rows_to_arrow_batch(
                 let values: Vec<Option<i64>> = rows_to_process
                     .iter()
                     .map(|(_, row_data)| {
-                        if field.name() == "_updated" {
-                            chrono::DateTime::parse_from_rfc3339(&row_data._updated)
-                                .ok()
-                                .map(|dt| dt.timestamp_millis())
+                        if field.name() == "_seq" {
+                            // _seq is a Snowflake ID (i64), return directly
+                            Some(row_data._seq.as_i64())
                         } else {
                             row_data.fields.get(field.name()).and_then(|v| {
                                 v.as_i64().or_else(|| {

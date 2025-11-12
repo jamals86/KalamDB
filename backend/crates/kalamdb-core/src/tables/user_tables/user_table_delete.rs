@@ -12,7 +12,7 @@ use crate::error::KalamDbError;
 use crate::live_query::manager::{ChangeNotification, LiveQueryManager};
 use crate::tables::system::system_table_store::UserTableStoreExt;
 use crate::tables::UserTableStore;
-use kalamdb_commons::ids::SeqId;
+use kalamdb_commons::ids::{SeqId, UserTableRowId};
 use kalamdb_commons::models::TableId;
 use std::sync::Arc;
 
@@ -74,13 +74,15 @@ impl UserTableDeleteHandler {
         user_id: &UserId,
         row_id: &str,
     ) -> Result<String, KalamDbError> {
+        // Parse row_id to SeqId and construct key
+        let seq_id = SeqId::from_string(row_id)
+            .map_err(|e| KalamDbError::InvalidOperation(format!("Invalid row_id: {}", e)))?;
+        let key = UserTableRowId::new(user_id.clone(), seq_id);
+        
         // Fetch existing row to get current _updated timestamp
         let existing_row = UserTableStoreExt::get(
             self.store.as_ref(),
-            namespace_id.as_str(),
-            table_name.as_str(),
-            user_id.as_str(),
-            row_id,
+            &key,
         )?
         .ok_or_else(|| {
             KalamDbError::NotFound(format!(
@@ -114,10 +116,7 @@ impl UserTableDeleteHandler {
         // Write updated row back to storage (soft delete)
         UserTableStoreExt::put(
             self.store.as_ref(),
-            namespace_id.as_str(),
-            table_name.as_str(),
-            user_id.as_str(),
-            row_id,
+            &key,
             &deleted_row,
         )
         .map_err(|e| {
@@ -214,13 +213,15 @@ impl UserTableDeleteHandler {
         user_id: &UserId,
         row_id: &str,
     ) -> Result<String, KalamDbError> {
+        // Parse row_id to SeqId and construct key
+        let seq_id = SeqId::from_string(row_id)
+            .map_err(|e| KalamDbError::InvalidOperation(format!("Invalid row_id: {}", e)))?;
+        let key = UserTableRowId::new(user_id.clone(), seq_id);
+        
         // Hard delete via store
         UserTableStoreExt::delete(
             self.store.as_ref(),
-            namespace_id.as_str(),
-            table_name.as_str(),
-            user_id.as_str(),
-            row_id,
+            &key,
             true,
         )
         .map_err(|e| {
@@ -302,12 +303,10 @@ mod tests {
             fields: json!({"name": "Alice", "age": 30}),
             _deleted: false,
         };
+        let key = kalamdb_commons::ids::UserTableRowId::new(user_id.clone(), entity._seq);
         UserTableStoreExt::put(
             store.as_ref(),
-            namespace_id.as_str(),
-            table_name.as_str(),
-            user_id.as_str(),
-            &entity._seq.as_i64().to_string(),
+            &key,
             &entity,
         )
         .unwrap();
@@ -320,12 +319,10 @@ mod tests {
         assert_eq!(deleted_row_id, row_id);
 
         // Verify the row is marked as deleted
+        let key = kalamdb_commons::ids::UserTableRowId::new(user_id.clone(), SeqId::from_string(row_id).unwrap());
         let stored = UserTableStoreExt::get(
             store.as_ref(),
-            namespace_id.as_str(),
-            table_name.as_str(),
-            user_id.as_str(),
-            row_id,
+            &key,
         )
         .unwrap();
 
