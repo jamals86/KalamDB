@@ -152,7 +152,9 @@ impl TestServer {
         test_config.server.node_id = "test-node".to_string();
         test_config.storage.default_storage_path = storage_base_path.to_str().unwrap().to_string();
 
-        // Initialize AppContext with config (4 parameters)
+        // Initialize AppContext using singleton pattern
+        // All tests in the same process will share this AppContext, but that's OK
+        // because they're using the same RocksDB instance anyway
         let app_context = AppContext::init(
             backend.clone(),
             NodeId::new("test-node".to_string()),

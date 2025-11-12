@@ -9,7 +9,7 @@
 mod common;
 
 use common::{fixtures, flush_helpers, TestServer};
-use std::sync::Arc;
+use kalamdb_store::entity_store::EntityStore;
 
 /// Create a user table with `FLUSH ROWS`, insert data, invoke a manual flush,
 /// and verify that Parquet files are created on disk.
@@ -114,7 +114,8 @@ async fn test_manual_flush_multiple_batches() {
             };
             use kalamdb_core::tables::system::system_table_store::UserTableStoreExt;
 
-            let backend = Arc::new(kalamdb_store::RocksDBBackend::new(server.db.clone()));
+            // Use the SAME backend as AppContext to ensure consistency
+            let backend = server.app_context.storage_backend();
             let model_namespace = ModelNamespaceId::new(namespace);
             let model_table = ModelTableName::new(table_name);
             let store =

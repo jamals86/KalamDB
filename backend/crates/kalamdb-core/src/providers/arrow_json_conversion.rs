@@ -257,30 +257,12 @@ pub fn schema_with_system_columns(
     let mut fields = base_schema.fields().to_vec();
     
     // Check if system columns already exist (added by SystemColumnsService during CREATE TABLE)
-    let has_id = fields.iter().any(|f| f.name() == "_id");
-    let has_updated = fields.iter().any(|f| f.name() == "_updated");
     let has_deleted = fields.iter().any(|f| f.name() == "_deleted");
     
     // Only add missing system columns
     // Note: SystemColumnsService adds them as (BigInt, Timestamp, Boolean) to TableDefinition
     // which becomes (Int64, Timestamp(Millisecond, None), Boolean) in Arrow schema
-    
-    if !has_id {
-        fields.push(Arc::new(Field::new(
-            "_id",
-            DataType::Int64,
-            false, // NOT NULL
-        )));
-    }
-    
-    if !has_updated {
-        fields.push(Arc::new(Field::new(
-            "_updated",
-            DataType::Timestamp(datafusion::arrow::datatypes::TimeUnit::Millisecond, None),
-            false, // NOT NULL
-        )));
-    }
-    
+
     if !has_deleted {
         fields.push(Arc::new(Field::new(
             "_deleted",

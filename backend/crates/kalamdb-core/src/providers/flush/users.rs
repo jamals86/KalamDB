@@ -15,6 +15,7 @@ use datafusion::arrow::datatypes::SchemaRef;
 use datafusion::arrow::record_batch::RecordBatch;
 use kalamdb_commons::models::{TableId, UserId};
 use kalamdb_commons::{NamespaceId, NodeId, TableName};
+use kalamdb_store::entity_store::EntityStore;
 use serde_json::Value as JsonValue;
 use std::collections::HashMap;
 use std::path::PathBuf;
@@ -257,8 +258,8 @@ impl UserTableFlushJob {
 
 impl TableFlush for UserTableFlushJob {
     fn execute(&self) -> Result<FlushJobResult, KalamDbError> {
-        log::debug!("🔄 Starting user table flush: table={}.{}", 
-                   self.namespace_id.as_str(), self.table_name.as_str());
+        log::debug!("🔄 Starting user table flush: table={}.{}, partition={}", 
+                   self.namespace_id.as_str(), self.table_name.as_str(), self.store.partition());
 
         // Stream snapshot-backed scan
         let iter = self.store.scan_iter()
@@ -309,17 +310,18 @@ impl TableFlush for UserTableFlushJob {
                 obj.insert("_deleted".to_string(), JsonValue::Bool(false));
             }
 
-            // Parse key to get user_id
-            let key_str = match String::from_utf8(key_bytes.clone()) {
-                Ok(s) => s,
+            // Parse binary key to get user_id (keys are NOT UTF-8 strings!)
+            // Key format: {user_id_len:1byte}{user_id:variable}{seq:8bytes}
+            let row_id = match kalamdb_commons::ids::UserTableRowId::from_bytes(&key_bytes) {
+                Ok(id) => id,
                 Err(e) => {
-                    log::warn!("Skipping row due to invalid UTF-8 key (table={}.{}): {}", 
+                    log::warn!("Skipping row due to invalid key format (table={}.{}): {}", 
                               self.namespace_id.as_str(), self.table_name.as_str(), e);
                     continue;
                 }
             };
 
-            let (user_id, _) = self.parse_user_key(&key_str)?;
+            let user_id = row_id.user_id().as_str().to_string();
             rows_by_user.entry(user_id).or_default().push((key_bytes, row_data));
 
             if rows_scanned % 1000 == 0 {

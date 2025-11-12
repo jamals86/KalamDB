@@ -160,6 +160,18 @@ INSERT INTO <namespace>.<table>
       - kalamdb-filestore  - All filesystem related code
 
 
+139) Instead of using JsonValue for the fields use arrow Array directly for better performance and less serdes overhead: HashMap<String, ScalarValue> should solve this issue completely.
+then we wont be needing: json_to_scalar_value
+SqlRequest will use the same thing as well
+ColumnDefault will use ScalarValue directly as well
+FilterPredicate will use ScalarValue directly as well
+json_rows_to_arrow_batch will be removed completely or less code since we will be using arrow arrays directly
+scalar_value_to_json will be removed completely as well
+ServerMessage will use arrow arrays directly as well
+
+
+
+
 Here’s the updated 5-line spec with embedding storage inside Parquet and managed HNSW indexing (with delete handling):
 	1.	Parquet Storage: All embeddings are stored as regular columns in the Parquet file alongside other table columns to keep data unified and versioned per batch.
 	2.	Temp Indexing: On each row insert/update, serialize embeddings into a temporary .hnsw file under /tmp/kalamdb/{namespace}/{table}/{column}-hot_index.hnsw for fast incremental indexing.
