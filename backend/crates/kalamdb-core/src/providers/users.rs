@@ -53,8 +53,8 @@ pub struct UserTableProvider {
     /// Logical table type
     table_type: TableType,
     
-    /// UserTableStore for DML operations
-    store: Arc<UserTableStore>,
+    /// UserTableStore for DML operations (public for flush jobs)
+    pub(crate) store: Arc<UserTableStore>,
     
     /// Cached primary key field name
     primary_key_field_name: String,

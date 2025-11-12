@@ -23,7 +23,6 @@ use datafusion::datasource::TableProvider;
 use datafusion::logical_expr::Expr;
 use kalamdb_commons::models::{NamespaceId, TableName, UserId};
 use kalamdb_commons::{StorageKey, TableId};
-use kalamdb_store::entity_store::EntityStore;
 use serde_json::Value as JsonValue;
 use std::sync::Arc;
 

@@ -22,6 +22,7 @@
 
 use crate::error::KalamDbError;
 use crate::jobs::executors::{JobContext, JobDecision, JobExecutor};
+use crate::providers::base::BaseTableProvider; // Phase 13.6: Access store() method
 use crate::tables::{SharedTableFlushJob, UserTableFlushJob};
 use crate::tables::base_flush::TableFlush;
 use async_trait::async_trait;
@@ -140,7 +141,7 @@ impl JobExecutor for FlushExecutor {
         };
 
         // Ensure system columns are present or add if missing (idempotent)
-        let schema = crate::tables::base_table_provider::schema_with_system_columns(&base_schema);
+        let schema = crate::tables::arrow_json_conversion::schema_with_system_columns(&base_schema);
 
         // Execute flush based on table type
         let result = match table_type {
@@ -160,11 +161,11 @@ impl JobExecutor for FlushExecutor {
                         namespace_id_str, table_name_str, table_id
                     )))?;
                 
-                // Downcast to UserTableProvider to access shared state
-                let provider = provider_arc.as_any().downcast_ref::<crate::tables::user_tables::UserTableProvider>()
+                // Downcast to UserTableProvider to access store
+                let provider = provider_arc.as_any().downcast_ref::<crate::providers::UserTableProvider>()
                     .ok_or_else(|| KalamDbError::InvalidOperation("Cached provider type mismatch for user table".into()))?;
                 
-                let store = provider.shared().store().clone();
+                let store = provider.store.clone();
 
                 let flush_job = UserTableFlushJob::new(
                     table_id.clone(),

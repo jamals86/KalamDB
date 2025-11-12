@@ -26,12 +26,23 @@ pub mod base;
 pub mod users;
 pub mod shared;
 pub mod streams;
+pub mod unified_dml; // Phase 13.6: Moved from tables/
+pub mod version_resolution; // Phase 13.6: Moved from tables/
 
 // Re-export key types for convenience
 pub use base::{BaseTableProvider, TableProviderCore};
 pub use users::UserTableProvider;
 pub use shared::SharedTableProvider;
 pub use streams::StreamTableProvider;
+
+// Re-export unified DML functions
+pub use unified_dml::{
+    append_version, append_version_sync, extract_user_pk_value, 
+    generate_storage_key, resolve_latest_version, validate_primary_key,
+};
+
+// Re-export version resolution helpers
+pub use version_resolution::{resolve_latest_version as resolve_latest_version_batch, scan_with_version_resolution_to_kvs};
 
 /// Provider consolidation summary
 ///

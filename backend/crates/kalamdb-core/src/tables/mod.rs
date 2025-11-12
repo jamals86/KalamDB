@@ -1,20 +1,25 @@
-//! Tables module for table types and providers
+//! Tables module - Data structures and stores
 //!
-//! This module contains implementations for different table types:
-//! - User tables: Per-user isolated tables (EntityStore-based)
-//! - Shared tables: Global tables accessible to all users (EntityStore-based)
-//! - Stream tables: Ephemeral event streaming tables (in-memory EntityStore)
-//! - System tables: Internal system metadata tables (EntityStore-based v2 providers)
+//! **Phase 13.6: Providers moved to crate::providers**
+//!
+//! This module now contains ONLY:
+//! - Store types (UserTableStore, SharedTableStore, StreamTableStore)
+//! - Row structures (UserTableRow, SharedTableRow, StreamTableRow)
+//! - Flush job types (UserTableFlushJob, SharedTableFlushJob)
+//! - Arrow/JSON conversion utilities
+//! - System tables (metadata views)
+//!
+//! **DEPRECATED**:
+//! - UserTableProvider, SharedTableProvider, StreamTableProvider → use crate::providers::*
+//! - UserTableInsertHandler, UpdateHandler, DeleteHandler → logic now in providers
+//! - unified_dml, version_resolution → moved to crate::providers::*
 
 pub mod arrow_json_conversion;
-pub mod base_table_provider;
 pub mod base_flush;
 pub mod shared_tables;
 pub mod stream_tables;
 pub mod system;
-pub mod unified_dml; // Phase 12: Unified DML functions for MVCC
 pub mod user_tables;
-pub mod version_resolution; // T052: Version resolution across storage layers
 
 // Re-export flush types
 pub use base_flush::{
@@ -23,23 +28,19 @@ pub use base_flush::{
 pub use shared_tables::SharedTableFlushJob;
 pub use user_tables::UserTableFlushJob;
 
-// Re-export base provider traits
-pub use base_table_provider::{BaseTableProvider, TableProviderCore};
+// NOTE: BaseTableProvider trait and TableProviderCore are now in crate::providers::base
+// The old tables/base_table_provider.rs has been deleted (Phase 13.6)
 
-// Re-export from consolidated modules
+// Re-export store types and row structures
 pub use shared_tables::{
-    new_shared_table_store, SharedTableProvider, SharedTableRow, SharedTableRowId, SharedTableStore,
+    new_shared_table_store, SharedTableRow, SharedTableRowId, SharedTableStore,
 };
 pub use stream_tables::{
     new_stream_table_store, StreamTableRow, StreamTableRowId, StreamTableStore,
 };
 pub use user_tables::{
-    new_user_table_store, UserTableDeleteHandler, UserTableInsertHandler,
-    UserTableProvider, UserTableRow, UserTableRowId, UserTableStore, UserTableUpdateHandler,
+    new_user_table_store, UserTableRow, UserTableRowId, UserTableStore,
 };
 
-// Re-export unified DML functions
-pub use unified_dml::{
-    append_version, extract_user_pk_value, generate_storage_key, resolve_latest_version,
-    validate_primary_key,
-};
+// Re-export helper functions
+pub use arrow_json_conversion::{arrow_value_to_json, schema_with_system_columns};

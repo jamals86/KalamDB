@@ -3,6 +3,7 @@
 //! Handles UPDATE statements with parameter binding support via DataFusion.
 
 use crate::error::KalamDbError;
+use crate::providers::base::BaseTableProvider; // Phase 13.6: Bring trait methods into scope
 use crate::sql::executor::handlers::StatementHandler;
 use crate::sql::executor::models::{ExecutionContext, ExecutionResult, ScalarValue};
 use crate::sql::executor::parameter_validation::{validate_parameters, ParameterLimits};
@@ -72,9 +73,9 @@ impl StatementHandler for UpdateHandler {
                 let provider_arc = schema_registry.get_provider(&table_id)
                     .ok_or_else(|| KalamDbError::InvalidOperation("User table provider not found".into()))?;
                 
-                if let Some(provider) = provider_arc.as_any().downcast_ref::<crate::tables::user_tables::UserTableProvider>() {
+                if let Some(provider) = provider_arc.as_any().downcast_ref::<crate::providers::UserTableProvider>() {
                     println!("[DEBUG UpdateHandler] Calling provider.update_by_id_field for user={}, id={}", context.user_id.as_str(), id_value);
-                    match provider.update_by_id_field(&context.user_id, &id_value, updates).await {
+                    match provider.update_by_id_field(&context.user_id, &id_value, updates) {
                         Ok(_) => {
                             println!("[DEBUG UpdateHandler] update_by_id_field succeeded");
                             Ok(ExecutionResult::Updated { rows_affected: 1 })
@@ -91,9 +92,10 @@ impl StatementHandler for UpdateHandler {
             kalamdb_commons::schemas::TableType::Shared => {
                 // MVP: If id present, update that row via SharedTableProvider; otherwise, return invalid operation (no predicate support yet)
                 let provider_arc = schema_registry.get_provider(&table_id).ok_or_else(|| KalamDbError::InvalidOperation("Shared table provider not found".into()))?;
-                if let Some(provider) = provider_arc.as_any().downcast_ref::<crate::tables::shared_tables::SharedTableProvider>() {
+                if let Some(provider) = provider_arc.as_any().downcast_ref::<crate::providers::SharedTableProvider>() {
                     if let Some(id_value) = row_id_opt {
-                        provider.update_by_id_field(&id_value, updates)?;
+                        // SharedTableProvider ignores user_id parameter (no RLS)
+                        provider.update_by_id_field(&context.user_id, &id_value, updates)?;
                         Ok(ExecutionResult::Updated { rows_affected: 1 })
                     } else {
                         Err(KalamDbError::InvalidOperation("UPDATE on SHARED tables requires WHERE id = <value> (predicate updates not yet supported)".into()))

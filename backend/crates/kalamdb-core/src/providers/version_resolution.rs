@@ -192,3 +192,82 @@ mod tests {
         assert_eq!(r.column(2).as_any().downcast_ref::<StringArray>().unwrap().value(0), "Fast");
     }
 }
+
+/// Generic helper for UPDATE/DELETE operations that need to scan hot+cold storage with version resolution
+///
+/// This is a generic helper for UPDATE/DELETE operations that need to:
+/// 1. Scan both RocksDB (fast storage) and Parquet (flushed storage)
+/// 2. Apply version resolution (latest _updated wins)
+/// 3. Filter out deleted records (_deleted = true)
+/// 4. Convert Arrow RecordBatch back to row structures
+///
+/// **Phase 3, US1, T061-T068**: Support UPDATE/DELETE on flushed records
+/// **Phase 13.6**: Moved from base_table_provider.rs during cleanup
+///
+/// # Type Parameters
+/// * `K` - Storage key type
+/// * `V` - Row value type
+/// * `F` - Function to scan RocksDB, returns RecordBatch
+/// * `G` - Function to scan Parquet, returns RecordBatch
+/// * `H` - Function to convert RecordBatch row to (key, value) pair
+///
+/// # Arguments
+/// * `schema` - Arrow schema with system columns
+/// * `scan_rocksdb` - Async function to scan RocksDB
+/// * `scan_parquet` - Async function to scan Parquet files
+/// * `row_converter` - Function to convert Arrow row to (key, value)
+///
+/// # Returns
+/// Vector of (key, value) pairs representing latest non-deleted records
+pub async fn scan_with_version_resolution_to_kvs<K, V, F, G, H>(
+    schema: Arc<datafusion::arrow::datatypes::Schema>,
+    scan_rocksdb: F,
+    scan_parquet: G,
+    row_converter: H,
+) -> Result<Vec<(K, V)>, datafusion::error::DataFusionError>
+where
+    K: Clone,
+    F: std::future::Future<Output = Result<datafusion::arrow::record_batch::RecordBatch, datafusion::error::DataFusionError>>,
+    G: std::future::Future<Output = Result<datafusion::arrow::record_batch::RecordBatch, datafusion::error::DataFusionError>>,
+    H: Fn(&datafusion::arrow::record_batch::RecordBatch, usize) -> Result<(K, V), datafusion::error::DataFusionError>,
+{
+    use datafusion::arrow::array::AsArray;
+    use datafusion::arrow::compute;
+
+    // Step 1: Scan RocksDB (fast storage)
+    let rocksdb_batch = scan_rocksdb.await?;
+
+    // Step 2: Scan Parquet files (flushed storage)
+    let parquet_batch = scan_parquet.await?;
+
+    // Step 3: Apply version resolution (latest _updated wins)
+    let resolved_batch = resolve_latest_version(rocksdb_batch, parquet_batch, schema.clone())
+        .await
+        .map_err(|e| datafusion::error::DataFusionError::Execution(format!("Version resolution failed: {}", e)))?;
+
+    // Step 4: Filter out deleted records (_deleted = true)
+    let filtered_batch = {
+        let deleted_col = resolved_batch
+            .column_by_name("_deleted")
+            .ok_or_else(|| datafusion::error::DataFusionError::Execution("Missing _deleted column".to_string()))?;
+        let deleted_array = deleted_col.as_boolean();
+
+        // Create filter: NOT deleted (keep rows where _deleted = false)
+        let filter_array = compute::not(deleted_array)
+            .map_err(|e| datafusion::error::DataFusionError::Execution(format!("Failed to compute NOT filter: {}", e)))?;
+
+        compute::filter_record_batch(&resolved_batch, &filter_array)
+            .map_err(|e| datafusion::error::DataFusionError::Execution(format!("Failed to filter deleted records: {}", e)))?
+    };
+
+    // Step 5: Convert Arrow RecordBatch to Vec<(K, V)>
+    let num_rows = filtered_batch.num_rows();
+    let mut results = Vec::with_capacity(num_rows);
+
+    for row_idx in 0..num_rows {
+        let (key, value) = row_converter(&filtered_batch, row_idx)?;
+        results.push((key, value));
+    }
+
+    Ok(results)
+}
