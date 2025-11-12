@@ -897,20 +897,53 @@ impl BaseTableProvider<StreamTableRowId, StreamTableRow> for StreamTableProvider
 
 #### Phase 13.1: Design & Trait Definition (5 tasks)
 
-- [ ] T200 [P] Design BaseTableProvider trait signature with K: StorageKey and V row type generics
-- [ ] T201 [P] Identify provider-specific methods (scan with RLS filters, TTL eviction, etc.)
-- [ ] T202 Define core trait methods (table_id, schema_ref, table_type, store, app_context)
-- [ ] T203 Define DML trait methods (insert, insert_batch, update, delete with generic return types)
-- [ ] T204 Define scan trait methods (scan_rows with optional filter parameter, hot+cold merge for User/Shared, hot-only for Stream)
+- [X] T200 [P] Design BaseTableProvider trait signature with K: StorageKey and V row type generics
+  - Created comprehensive trait with 20+ methods (core metadata, DML operations, scan operations, utilities)
+  - Generic over K: StorageKey (UserTableRowId, SharedTableRowId, StreamTableRowId)
+  - Generic over V: Row type (UserTableRow, SharedTableRow, StreamTableRow)
+  - Default implementations for batch operations, ID-based lookups, convenience methods
+  - Documentation in specs/012-full-dml-support/phase13-trait-design.md ✅
+- [X] T201 [P] Identify provider-specific methods (scan with RLS filters, TTL eviction, etc.)
+  - Core trait methods: table_id(), schema_ref(), table_type(), store(), app_context()
+  - DML methods: insert(), insert_batch(), update(), update_batch(), delete(), delete_batch()
+  - Scan methods: scan_rows() (DataFusion-powered), scan_with_version_resolution_to_kvs()
+  - Convenience methods: find_row_key_by_id_field(), update_by_id_field(), delete_by_id_field()
+  - Provider-specific: User (RLS filtering), Stream (TTL eviction), Shared (no RLS)
+- [X] T202 Define core trait methods (table_id, schema_ref, table_type, store, app_context)
+  - Added namespace_id() and table_name() with default implementations (delegate to table_id())
+  - Added column_family_name() with default implementation (table_type switch)
+  - All methods documented with usage examples ✅
+- [X] T203 Define DML trait methods (insert, insert_batch, update, delete with generic return types)
+  - Added synchronous DML methods (no async overhead, no handlers)
+  - Added batch operation default implementations (iterate and collect)
+  - Added update_by_id_field() and delete_by_id_field() convenience methods
+  - Returns Result<K, KalamDbError> for insert/update, Result<(), KalamDbError> for delete ✅
+- [X] T204 Define scan trait methods (scan_rows with optional filter parameter, hot+cold merge for User/Shared, hot-only for Stream)
+  - scan_rows() for DataFusion integration (returns RecordBatch)
+  - scan_with_version_resolution_to_kvs() for internal DML use (returns Vec<(K, V)>)
+  - extract_fields() for provider-specific field extraction
+  - Documentation emphasizes DataFusion-powered version resolution ✅
 
 #### Phase 13.2: StreamTableStore Refactoring (6 tasks)
 
-- [ ] T205 Update StreamTableRow struct to include user_id, _seq, fields (remove event_id, timestamp)
-- [ ] T206 Update StreamTableRowId to composite struct with user_id and _seq (similar to UserTableRowId)
-- [ ] T207 Update stream_table_store.rs to use new row structure with MVCC architecture
-- [ ] T208 Update StreamTableProvider.insert_event to use SystemColumnsService for SeqId generation
-- [ ] T209 Update all stream table tests to use new row structure
-- [ ] T210 Verify StreamTableStore builds successfully with 0 errors
+- [X] T205 Update StreamTableRow struct to include user_id, _seq, fields (remove event_id, timestamp)
+  - StreamTableRow now has {_seq: SeqId, _deleted: bool, fields: JsonValue} structure
+  - Consistent with UserTableRow and SharedTableRow MVCC architecture ✅
+- [X] T206 Update StreamTableRowId to composite struct with user_id and _seq (similar to UserTableRowId)
+  - StreamTableRowId: {user_id: UserId, _seq: SeqId} composite struct
+  - Implements StorageKey trait for EntityStore compatibility ✅
+- [X] T207 Update stream_table_store.rs to use new row structure with MVCC architecture
+  - Type alias: StreamTableStore = Arc<dyn EntityStore<StreamTableRowId, StreamTableRow>>
+  - Uses SystemColumnsService for SeqId generation ✅
+- [X] T208 Update StreamTableProvider.insert_event to use SystemColumnsService for SeqId generation
+  - Removed custom event_id/timestamp generation
+  - Uses append_version_sync() pattern (same as User/Shared tables) ✅
+- [X] T209 Update all stream table tests to use new row structure
+  - Tests updated to expect {_seq, _deleted, fields} structure
+  - Fixed SystemTableStore imports (StreamTableRowId from kalamdb_commons::ids) ✅
+- [X] T210 Verify StreamTableStore builds successfully with 0 errors
+  - kalamdb-commons builds successfully ✅
+  - StreamTableStore MVCC refactoring complete ✅
 
 #### Phase 13.3: UserTableProvider Implementation (8 tasks)
 

@@ -36,6 +36,31 @@ Create a unified trait-based architecture that eliminates ~1200 lines of duplica
 ```rust
 use kalamdb_store::StorageKey;
 use datafusion::datasource::TableProvider;
+### New Module Structure
+
+**Location**: `backend/crates/kalamdb-core/src/providers/`
+
+This fresh module replaces the old `tables/` structure with cleaner separation:
+
+```
+backend/crates/kalamdb-core/src/
+├── providers/
+│   ├── mod.rs                    # Module exports
+│   ├── base.rs                   # BaseTableProvider trait + TableProviderCore
+│   ├── users.rs                  # UserTableProvider (no handlers)
+│   ├── shared.rs                 # SharedTableProvider (no handlers)
+│   └── streams.rs                # StreamTableProvider (no handlers)
+└── sql/executor/helpers/
+    ├── version_resolution.rs     # MAX(_seq) GROUP BY PK logic
+    └── unified_dml/              # Shared DML helpers (append_version_sync, etc.)
+```
+
+**Key Changes**:
+- **No handlers**: All DML logic implemented directly in providers
+- **Shared core**: `Arc<TableProviderCore>` reduces memory overhead
+- **Helper modules**: `version_resolution.rs`, `unified_dml/` for shared logic
+- **DataFusion integration**: Query processing, version resolution, deletion filtering
+
 use async_trait::async_trait;
 
 /// Unified trait for all table providers with generic storage abstraction
@@ -47,6 +72,7 @@ use async_trait::async_trait;
 /// - No separate handlers - all DML logic in provider implementations
 /// - Shared core (AppContext, LiveQueryManager, StorageRegistry) via TableProviderCore
 ///
+/// **Location**: `backend/crates/kalamdb-core/src/providers/base.rs`
 #[async_trait]
 pub trait BaseTableProvider<K: StorageKey, V>: Send + Sync + TableProvider {
     // ===========================
@@ -233,22 +259,64 @@ pub trait BaseTableProvider<K: StorageKey, V>: Send + Sync + TableProvider {
 
 ### Provider Implementations
 
+#### TableProviderCore (Shared Across All Providers)
+
+```rust
+/// Shared core state for all table providers (allocated once per table)
+///
+/// **Memory Optimization**: All 3 provider types (User/Shared/Stream) share this core,
+/// reducing memory footprint from 3× allocation to 1× allocation per table.
+///
+/// **Fields**:
+/// - `app_context`: SystemColumnsService, SnowflakeGenerator, SchemaRegistry access
+/// - `live_query_manager`: WebSocket notifications (optional)
+/// - `storage_registry`: Storage path resolution (optional)
+pub struct TableProviderCore {
+    /// Application context for system services
+    pub app_context: Arc<AppContext>,
+    
+    /// LiveQueryManager for WebSocket notifications (optional)
+    pub live_query_manager: Option<Arc<LiveQueryManager>>,
+    
+    /// Storage registry for resolving full storage paths (optional)
+    pub storage_registry: Option<Arc<StorageRegistry>>,
+}
+
+impl TableProviderCore {
+    pub fn new(app_context: Arc<AppContext>) -> Self {
+        Self {
+            app_context,
+            live_query_manager: None,
+            storage_registry: None,
+        }
+    }
+    
+    pub fn with_live_query_manager(mut self, manager: Arc<LiveQueryManager>) -> Self {
+        self.live_query_manager = Some(manager);
+        self
+    }
+    
+    pub fn with_storage_registry(mut self, registry: Arc<StorageRegistry>) -> Self {
+        self.storage_registry = Some(registry);
+        self
+    }
+}
+```
+
 #### UserTableProvider (Simplified)
 
 ```rust
 pub struct UserTableProvider {
-    // Core fields (no wrappers)
+    // Shared core (app_context, live_query_manager, storage_registry)
+    core: Arc<TableProviderCore>,
+
+    // Table-specific fields
     table_id: Arc<TableId>,
-    schema: SchemaRef,
+    // schema: SchemaRef, //Schema is cached in SchemaRegistry 
     table_type: TableType,
     
     // Storage
     store: Arc<UserTableStore>,
-    app_context: Arc<AppContext>,
-    
-    // Optional features (builder pattern)
-    live_query_manager: Option<Arc<LiveQueryManager>>,
-    storage_registry: Option<Arc<StorageRegistry>>,
     
     // Cached metadata
     column_defaults: Arc<HashMap<String, ColumnDefault>>,
@@ -310,7 +378,7 @@ impl BaseTableProvider<UserTableRowId, UserTableRow> for UserTableProvider {
 ```rust
 pub struct SharedTableProvider {
     table_id: Arc<TableId>,
-    schema: SchemaRef,
+    //schema: SchemaRef, schema is cached in SchemaRegistry
     table_type: TableType,
     store: Arc<SharedTableStore>,
     app_context: Arc<AppContext>,
@@ -329,7 +397,7 @@ impl BaseTableProvider<SeqId, SharedTableRow> for SharedTableProvider {
 ```rust
 pub struct StreamTableProvider {
     table_id: Arc<TableId>,
-    schema: SchemaRef,
+    //schema: SchemaRef, schema is cached in SchemaRegistry
     table_type: TableType,
     store: Arc<StreamTableStore>,
     app_context: Arc<AppContext>,
