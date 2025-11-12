@@ -357,12 +357,10 @@ mod tests {
         let user_id = UserId::new("user123".to_string());
 
         // Insert initial rows
+        let row_id_1 = UserTableRowId::new(user_id.clone(), SeqId::new(1));
         UserTableStoreExt::put(
             store.as_ref(),
-            namespace_id.as_str(),
-            table_name.as_str(),
-            user_id.as_str(),
-            "1",
+            &row_id_1,
             &UserTableRow {
                 user_id: user_id.clone(),
                 _seq: SeqId::new(1),
@@ -371,12 +369,11 @@ mod tests {
             },
         )
         .unwrap();
+        
+        let row_id_2 = UserTableRowId::new(user_id.clone(), SeqId::new(2));
         UserTableStoreExt::put(
             store.as_ref(),
-            namespace_id.as_str(),
-            table_name.as_str(),
-            user_id.as_str(),
-            "2",
+            &row_id_2,
             &UserTableRow {
                 user_id: user_id.clone(),
                 _seq: SeqId::new(2),
@@ -385,12 +382,11 @@ mod tests {
             },
         )
         .unwrap();
+        
+        let row_id_3 = UserTableRowId::new(user_id.clone(), SeqId::new(3));
         UserTableStoreExt::put(
             store.as_ref(),
-            namespace_id.as_str(),
-            table_name.as_str(),
-            user_id.as_str(),
-            "3",
+            &row_id_3,
             &UserTableRow {
                 user_id: user_id.clone(),
                 _seq: SeqId::new(3),
@@ -410,16 +406,13 @@ mod tests {
         assert_eq!(deleted_ids.len(), 3);
 
         // Verify all rows are soft-deleted (not returned by get)
-        for row_id in &["row1", "row2", "row3"] {
+        for (idx, row_id) in [&row_id_1, &row_id_2, &row_id_3].iter().enumerate() {
             let result = UserTableStoreExt::get(
                 store.as_ref(),
-                namespace_id.as_str(),
-                table_name.as_str(),
-                user_id.as_str(),
                 row_id,
             )
             .unwrap();
-            assert!(result.is_none(), "Row {} should be soft-deleted", row_id);
+            assert!(result.is_none(), "Row {} should be soft-deleted", idx + 1);
         }
     }
 
@@ -433,12 +426,10 @@ mod tests {
         let user1 = UserId::new("user1".to_string());
         let user2 = UserId::new("user2".to_string());
 
+        let row_id_user1 = UserTableRowId::new(user1.clone(), SeqId::new(1));
         UserTableStoreExt::put(
             store.as_ref(),
-            namespace_id.as_str(),
-            table_name.as_str(),
-            user1.as_str(),
-            "1",
+            &row_id_user1,
             &UserTableRow {
                 user_id: user1.clone(),
                 _seq: SeqId::new(1),
@@ -447,12 +438,11 @@ mod tests {
             },
         )
         .unwrap();
+        
+        let row_id_user2 = UserTableRowId::new(user2.clone(), SeqId::new(1));
         UserTableStoreExt::put(
             store.as_ref(),
-            namespace_id.as_str(),
-            table_name.as_str(),
-            user2.as_str(),
-            "1",
+            &row_id_user2,
             &UserTableRow {
                 user_id: user2.clone(),
                 _seq: SeqId::new(1),
@@ -470,10 +460,7 @@ mod tests {
         // Verify user1's row is soft-deleted (not returned)
         let result1 = UserTableStoreExt::get(
             store.as_ref(),
-            namespace_id.as_str(),
-            table_name.as_str(),
-            user1.as_str(),
-            "1",
+            &row_id_user1,
         )
         .unwrap();
         assert!(result1.is_none(), "user1's row should be soft-deleted");
@@ -481,10 +468,7 @@ mod tests {
         // Verify user2's row is NOT deleted
         let result2 = UserTableStoreExt::get(
             store.as_ref(),
-            namespace_id.as_str(),
-            table_name.as_str(),
-            user2.as_str(),
-            "1",
+            &row_id_user2,
         )
         .unwrap();
         assert!(result2.is_some(), "user2's row should still exist");
@@ -501,12 +485,10 @@ mod tests {
         let table_name = TableName::new("test_table".to_string());
         let user_id = UserId::new("user123".to_string());
 
+        let row_id = UserTableRowId::new(user_id.clone(), SeqId::new(1));
         UserTableStoreExt::put(
             store.as_ref(),
-            namespace_id.as_str(),
-            table_name.as_str(),
-            user_id.as_str(),
-            "1",
+            &row_id,
             &UserTableRow {
                 user_id: user_id.clone(),
                 _seq: SeqId::new(1),
@@ -524,10 +506,7 @@ mod tests {
         // Verify the row is completely removed
         let result = UserTableStoreExt::get(
             store.as_ref(),
-            namespace_id.as_str(),
-            table_name.as_str(),
-            user_id.as_str(),
-            "1",
+            &row_id,
         )
         .unwrap();
 
@@ -543,12 +522,10 @@ mod tests {
         let table_name = TableName::new("test_table".to_string());
         let user_id = UserId::new("user123".to_string());
 
+        let row_id = UserTableRowId::new(user_id.clone(), SeqId::new(1));
         UserTableStoreExt::put(
             store.as_ref(),
-            namespace_id.as_str(),
-            table_name.as_str(),
-            user_id.as_str(),
-            "1",
+            &row_id,
             &UserTableRow {
                 user_id: user_id.clone(),
                 _seq: SeqId::new(1),
@@ -571,10 +548,7 @@ mod tests {
         // Verify row is still soft-deleted (returns None)
         let result = UserTableStoreExt::get(
             store.as_ref(),
-            namespace_id.as_str(),
-            table_name.as_str(),
-            user_id.as_str(),
-            "1",
+            &row_id,
         )
         .unwrap();
         assert!(result.is_none(), "Row should remain soft-deleted");

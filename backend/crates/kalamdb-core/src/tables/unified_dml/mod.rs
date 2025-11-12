@@ -11,7 +11,7 @@ mod resolve;
 mod validate;
 mod key_gen;
 
-pub use append::{append_version};
+pub use append::{append_version, append_version_sync};
 pub use resolve::resolve_latest_version;
 pub use validate::{validate_primary_key, extract_user_pk_value};
 pub use key_gen::generate_storage_key;

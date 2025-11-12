@@ -11,6 +11,8 @@ use crate::tables::system::system_table_store::{SharedTableStoreExt, UserTableSt
 use crate::tables::{StreamTableStore, UserTableStore};
 use chrono::DateTime;
 use kalamdb_commons::TableName;
+use kalamdb_commons::ids::{SeqId, UserTableRowId};
+use kalamdb_commons::models::UserId;
 use serde_json::Value as JsonValue;
 use std::sync::Arc;
 
@@ -19,7 +21,7 @@ use std::sync::Arc;
 pub struct InitialDataOptions {
     /// Fetch changes since this timestamp (milliseconds since Unix epoch)
     /// If None, returns last N rows instead
-    pub since_timestamp: Option<i64>,
+    pub since_timestamp: Option<i64>, //TODO: Use SeqId
 
     /// Maximum number of rows to return
     /// Default: 100
@@ -80,7 +82,7 @@ pub struct InitialDataResult {
 
     /// Timestamp of the most recent row in the result
     /// Can be used as the starting point for real-time notifications
-    pub latest_timestamp: Option<i64>,
+    pub latest_timestamp: Option<i64>,  //TODO: Use SeqId
 
     /// Total number of rows available (may exceed limit)
     pub total_available: usize,
@@ -395,16 +397,19 @@ mod tests {
         let tbl = TableName::new("items");
         let store = Arc::new(new_user_table_store(backend, &ns, &tbl));
 
+        let user_id = UserId::from("userA");
+        let seq = SeqId::new(1234567890);
+        let row_id = UserTableRowId::new(user_id.clone(), seq);
+        
         let row = UserTableRow {
-            row_id: "1".to_string(),
-            user_id: "userA".to_string(),
+            user_id: user_id.clone(),
+            _seq: seq,
             fields: serde_json::json!({"id": 1, "name": "Item One"}),
-            _updated: "2025-11-01T21:49:30.045Z".to_string(),
             _deleted: false,
         };
         
-        // Use UserTableStoreExt::put with explicit trait qualification
-        UserTableStoreExt::put(&*store, ns.as_str(), tbl.as_str(), "userA", "1", &row).expect("put row");
+        // Use UserTableStoreExt::put with new signature
+        UserTableStoreExt::put(&*store, &row_id, &row).expect("put row");
 
         // Build fetcher with user table store
         let fetcher = InitialDataFetcher::new(Some(store), None);

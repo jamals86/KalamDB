@@ -668,14 +668,19 @@ impl SchemaRegistry {
             return Ok(Some(Arc::clone(&cached.table)));
         }
 
-        // Slow path: query persistence layer via AppContext
-        let app_ctx = crate::app_context::AppContext::get();
-        let tables_provider = app_ctx.system_tables().tables();
-        
-        match tables_provider.get_table_by_id(table_id)? {
-            Some(table_def) => Ok(Some(Arc::new(table_def))),
-            None => Ok(None),
+        // Slow path: query persistence layer via AppContext (if available)
+        // Use try_get() to support test scenarios without singleton initialization
+        if let Some(app_ctx) = crate::app_context::AppContext::try_get() {
+            let tables_provider = app_ctx.system_tables().tables();
+            
+            match tables_provider.get_table_by_id(table_id)? {
+                Some(table_def) => return Ok(Some(Arc::new(table_def))),
+                None => {}
+            }
         }
+        
+        // AppContext not available (test scenario) or table not found
+        Ok(None)
     }
 
     /// Store table definition to persistence layer (write-through pattern)
@@ -1326,5 +1331,65 @@ mod tests {
         let retrieved = cache.get_provider(&table_id).expect("provider present");
 
         assert!(Arc::ptr_eq(&provider, &retrieved), "must return same Arc instance");
+    }
+
+    #[test]
+    fn test_cached_table_data_includes_system_columns() {
+        use crate::system_columns::SystemColumnsService;
+        use kalamdb_commons::models::schemas::{ColumnDefinition, TableOptions, TableType};
+        use kalamdb_commons::models::datatypes::KalamDataType;
+        use arrow::datatypes::DataType;
+
+        // Create a table definition with user columns
+        let user_col = ColumnDefinition::new(
+            "user_name".to_string(),
+            1,
+            KalamDataType::Text,
+            false,
+            true,
+            false,
+            kalamdb_commons::models::schemas::ColumnDefault::None,
+            None,
+        );
+
+        let mut table_def = kalamdb_commons::models::schemas::TableDefinition::new(
+            NamespaceId::new("test_ns"),
+            TableName::new("test_table"),
+            TableType::User,
+            vec![user_col],
+            TableOptions::user(),
+            None,
+        )
+        .unwrap();
+
+        // Add system columns using SystemColumnsService
+        let sys_cols = SystemColumnsService::new(1);
+        sys_cols.add_system_columns(&mut table_def).unwrap();
+
+        // Verify columns were added
+        assert_eq!(table_def.columns.len(), 3, "Should have 1 user column + 2 system columns");
+        assert_eq!(table_def.columns[0].column_name, "user_name");
+        assert_eq!(table_def.columns[1].column_name, "_seq");
+        assert_eq!(table_def.columns[2].column_name, "_deleted");
+
+        // Create CachedTableData
+        let cached_data = CachedTableData::new(Arc::new(table_def));
+
+        // Get Arrow schema (should include system columns)
+        let arrow_schema = cached_data.arrow_schema().expect("Arrow schema should be available");
+
+        // Verify Arrow schema has all columns including system columns
+        assert_eq!(arrow_schema.fields().len(), 3, "Arrow schema should have 3 columns");
+        assert_eq!(arrow_schema.field(0).name(), "user_name");
+        assert_eq!(arrow_schema.field(1).name(), "_seq");
+        assert_eq!(arrow_schema.field(2).name(), "_deleted");
+
+        // Verify column types
+        assert!(matches!(arrow_schema.field(1).data_type(), DataType::Int64), 
+                "_seq should be Int64 (BigInt)");
+        assert!(matches!(arrow_schema.field(2).data_type(), DataType::Boolean), 
+                "_deleted should be Boolean");
+
+        println!("✅ T014: CachedTableData Arrow schema includes _seq and _deleted system columns");
     }
 }

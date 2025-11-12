@@ -751,11 +751,6 @@ impl ServerConfig {
     /// Load configuration from a TOML file
     pub fn from_file<P: AsRef<Path>>(path: P) -> anyhow::Result<Self> {
         let path_ref = path.as_ref();
-        let absolute_path = std::fs::canonicalize(path_ref)
-            .unwrap_or_else(|_| path_ref.to_path_buf());
-        
-        //eprintln!("🔍 [CONFIG] Loading config from: {}", absolute_path.display());
-        
         let content = fs::read_to_string(path.as_ref())
             .map_err(|e| anyhow::anyhow!("Failed to read config file: {}", e))?;
 

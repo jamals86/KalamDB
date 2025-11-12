@@ -20,7 +20,6 @@ use arrow::datatypes::Schema;
 use chrono::Utc;
 use kalamdb_commons::ids::UserTableRowId;
 use kalamdb_commons::models::TableId;
-use kalamdb_commons::models::schemas::TableType;
 use kalamdb_commons::schemas::ColumnDefault;
 use kalamdb_store::entity_store::EntityStore as EntityStoreV2;
 use serde_json::{json, Value as JsonValue};
@@ -71,23 +70,29 @@ impl UserTableInsertHandler {
     /// # Arguments
     /// * `namespace_id` - Namespace containing the table
     /// * `table_name` - Name of the table
+    /// * `table_id` - Table identifier for unified_dml
     /// * `user_id` - User ID for data isolation
     /// * `row_data` - Row data as JSON object
     ///
     /// # Returns
     /// The generated SeqId as a string
     ///
-    /// # MVCC Architecture
-    /// - Uses SystemColumnsService to generate SeqId (Snowflake ID)
-    /// - Creates UserTableRow with (_seq, _deleted, fields)
-    /// - Storage key format: {user_id_len}{user_id}{_seq_bytes}
+    /// # MVCC Architecture (Phase 2 - T027)
+    /// - Delegates to unified_dml::append_version_sync() for core logic
+    /// - Uses append-only storage with SeqId versioning
+    /// - Enforces data isolation via UserId
+    /// - Validates primary key (T029)
     pub fn insert_row(
         &self,
-        namespace_id: &NamespaceId,
-        table_name: &TableName,
+        namespace_id: &NamespaceId, //TODO: Remove we have TableId
+        table_name: &TableName, //TODO: Remove we have TableId
+        table_id: &TableId,
         user_id: &UserId,
         row_data: JsonValue,
     ) -> Result<String, KalamDbError> {
+        use crate::tables::unified_dml::{append_version_sync, extract_user_pk_value};
+        use kalamdb_commons::models::schemas::TableType;
+
         // Validate row data is an object
         if !row_data.is_object() {
             return Err(KalamDbError::InvalidOperation(
@@ -95,26 +100,27 @@ impl UserTableInsertHandler {
             ));
         }
 
-        // Get system column values from SystemColumnsService (MVCC - Phase 12)
-        // handle_insert() now returns (SeqId, bool) with no arguments
-        let sys_cols = self.app_context.system_columns_service();
-        let (seq_id, deleted) = sys_cols.handle_insert()?;
+        // T029: Validate primary key exists and is not null
+        // Get table definition to find PK column
+        let schema_registry = self.app_context.schema_registry();
+        if let Ok(Some(table_def)) = schema_registry.get_table_definition(table_id) {
+            // Find the primary key column
+            if let Some(pk_col) = table_def.columns.iter().find(|c| c.is_primary_key) {
+                // Validate PK field exists and is not null
+                extract_user_pk_value(&row_data, &pk_col.column_name)?;
+            }
+            // Note: Full uniqueness checking (scanning existing PKs) deferred to T060
+        }
 
-        // Create the UserTableRow entity (MVCC structure)
-        let entity = UserTableRow {
-            user_id: user_id.clone(),
-            _seq: seq_id,
-            _deleted: deleted,
-            fields: row_data.clone(),
-        };
-
-        // Create composite key for storage
-        let row_key = UserTableRowId::new(user_id.clone(), seq_id);
-
-        // Store the entity using SystemTableStore
-        self.store
-            .put(&row_key, &entity)
-            .map_err(|e| KalamDbError::InvalidOperation(format!("Failed to insert row: {}", e)))?;
+        // Delegate to unified_dml::append_version_sync() (Phase 2 - T027)
+        let seq_id = append_version_sync(
+            Arc::clone(&self.app_context),
+            table_id,
+            TableType::User,
+            Some(user_id.clone()),
+            row_data.clone(),
+            false, // INSERT creates non-deleted version
+        )?;
 
         log::debug!(
             "Inserted row into {}.{} for user {} with _seq {}",
@@ -170,8 +176,8 @@ impl UserTableInsertHandler {
     /// Vector of generated SeqIds as strings
     pub fn insert_batch(
         &self,
-        namespace_id: &NamespaceId,
-        table_name: &TableName,
+        namespace_id: &NamespaceId, //TODO: Remove we have TableId
+        table_name: &TableName, //TODO: Remove and add TableId
         user_id: &UserId,
         rows: Vec<JsonValue>,
     ) -> Result<Vec<String>, KalamDbError> {
@@ -408,7 +414,6 @@ impl UserTableInsertHandler {
 mod tests {
     use super::*;
     use crate::tables::user_tables::user_table_store::new_user_table_store;
-    use crate::system_columns::SystemColumnsService;
     use kalamdb_store::test_utils::InMemoryBackend;
 
     fn setup_test_handler() -> UserTableInsertHandler {
@@ -432,6 +437,7 @@ mod tests {
 
         let namespace_id = NamespaceId::new("test_ns".to_string());
         let table_name = TableName::new("test_table".to_string());
+        let table_id = TableId::new(namespace_id.clone(), table_name.clone());
         let user_id = UserId::new("user123".to_string());
 
         let row_data = serde_json::json!({
@@ -440,7 +446,7 @@ mod tests {
         });
 
         let row_id = handler
-            .insert_row(&namespace_id, &table_name, &user_id, row_data)
+            .insert_row(&namespace_id, &table_name, &table_id, &user_id, row_data)
             .unwrap();
 
         // Verify row_id is a Snowflake ID (numeric string)
@@ -478,6 +484,7 @@ mod tests {
 
         let namespace_id = NamespaceId::new("test_ns".to_string());
         let table_name = TableName::new("test_table".to_string());
+        let table_id = TableId::new(namespace_id.clone(), table_name.clone());
         let user1 = UserId::new("user1".to_string());
         let user2 = UserId::new("user2".to_string());
 
@@ -485,12 +492,12 @@ mod tests {
 
         // Insert for user1
         let row_id1 = handler
-            .insert_row(&namespace_id, &table_name, &user1, row_data.clone())
+            .insert_row(&namespace_id, &table_name, &table_id, &user1, row_data.clone())
             .unwrap();
 
         // Insert for user2
         let row_id2 = handler
-            .insert_row(&namespace_id, &table_name, &user2, row_data.clone())
+            .insert_row(&namespace_id, &table_name, &table_id, &user2, row_data.clone())
             .unwrap();
 
         // Verify keys have different row IDs (user isolation handled by UserTableStore)
@@ -507,11 +514,12 @@ mod tests {
         // Each insert generates a Snowflake ID
         let namespace_id = NamespaceId::new("test_ns".to_string());
         let table_name = TableName::new("test_table".to_string());
+        let table_id = TableId::new(namespace_id.clone(), table_name.clone());
         let user_id = UserId::new("user123".to_string());
 
         for _ in 0..100 {
             let row_data = serde_json::json!({"value": "test"});
-            let row_id = handler.insert_row(&namespace_id, &table_name, &user_id, row_data).unwrap();
+            let row_id = handler.insert_row(&namespace_id, &table_name, &table_id, &user_id, row_data).unwrap();
             assert!(
                 row_ids.insert(row_id.clone()),
                 "Duplicate Snowflake ID generated: {}",
@@ -526,12 +534,13 @@ mod tests {
 
         let namespace_id = NamespaceId::new("test_ns".to_string());
         let table_name = TableName::new("test_table".to_string());
+        let table_id = TableId::new(namespace_id.clone(), table_name.clone());
         let user_id = UserId::new("user123".to_string());
 
         // Try to insert a non-object (array)
         let row_data = serde_json::json!(["not", "an", "object"]);
 
-        let result = handler.insert_row(&namespace_id, &table_name, &user_id, row_data);
+        let result = handler.insert_row(&namespace_id, &table_name, &table_id, &user_id, row_data);
 
         assert!(result.is_err());
         match result {

@@ -13,7 +13,7 @@ use crate::tables::arrow_json_conversion::{
     arrow_batch_to_json, json_rows_to_arrow_batch, validate_insert_rows,
 };
 use crate::tables::shared_tables::shared_table_store::{SharedTableRow, SharedTableStore};
-use kalamdb_commons::ids::{SeqId, SharedTableRowId};
+use kalamdb_commons::ids::SharedTableRowId;
 use async_trait::async_trait;
 use datafusion::arrow::array::ArrayRef;
 use datafusion::arrow::datatypes::{DataType, Field, Schema, SchemaRef, TimeUnit};
@@ -118,20 +118,34 @@ impl SharedTableProvider {
     /// * `row_data` - Row data as JSON object
     ///
     /// # Returns
-    /// Ok(()) on success
+    /// Ok(SeqId) - The sequence ID of the newly inserted row
     ///
-    /// # MVCC Architecture (Phase 12)
-    /// - Uses SystemColumnsService to generate SeqId (Snowflake ID)
+    /// # MVCC Architecture (Phase 2 - T028)
+    /// - Uses SystemColumnsService to generate SeqId
     /// - Creates SharedTableRow with (_seq, _deleted, fields)
-    /// - Storage key is SeqId directly (8 bytes big-endian)
-    pub fn insert(&self, _row_id: &str, row_data: JsonValue) -> Result<(), KalamDbError> {
-        log::debug!(
-            "SharedTableProvider::insert called - table_id: {}, store partition: {}",
-            self.core.table_id(),
-            self.store.partition()
-        );
-        
-        // Get SeqId from SystemColumnsService (MVCC - Phase 12)
+    /// - Stores via self.store for proper test isolation
+    /// - Validates primary key (T029)
+    ///
+    /// # Note
+    /// T031 deferred: Full unified_dml integration requires test infrastructure refactoring
+    /// to align AppContext.shared_table_store() with provider.store instance
+    pub fn insert(&self, _row_id: &str, row_data: JsonValue) -> Result<kalamdb_commons::ids::SeqId, KalamDbError> {
+        use kalamdb_commons::ids::SeqId;
+        use crate::tables::unified_dml::extract_user_pk_value;
+
+        // T029: Validate primary key exists and is not null
+        // Get table definition to find PK column
+        let schema_registry = self.app_context.schema_registry();
+        if let Ok(Some(table_def)) = schema_registry.get_table_definition(self.core.table_id()) {
+            // Find the primary key column
+            if let Some(pk_col) = table_def.columns.iter().find(|c| c.is_primary_key) {
+                // Validate PK field exists and is not null
+                extract_user_pk_value(&row_data, &pk_col.column_name)?;
+            }
+            // Note: Full uniqueness checking (scanning existing PKs) deferred to T060
+        }
+
+        // Generate SeqId via SystemColumnsService (Phase 2 - T028)
         let sys_cols = self.app_context.system_columns_service();
         let (seq_id, deleted) = sys_cols.handle_insert()?;
 
@@ -145,18 +159,18 @@ impl SharedTableProvider {
         // Storage key is SeqId directly
         let key = seq_id;
 
-        // Store in SharedTableStore
+        // Store in SharedTableStore (using self.store for test isolation)
         self.store
             .put(&key, &entity)
             .map_err(|e| KalamDbError::Other(e.to_string()))?;
 
         log::debug!(
-            "SharedTableProvider::insert completed - seq: {}, partition: {}",
-            seq_id,
-            self.store.partition()
+            "Inserted row into shared table {} with _seq {}",
+            self.core.table_id(),
+            seq_id
         );
 
-        Ok(())
+        Ok(seq_id)
     }
 
     pub fn update(&self, row_id: &str, updates: JsonValue) -> Result<(), KalamDbError> {
@@ -798,17 +812,17 @@ mod tests {
             "setting_value": "100"
         });
 
-        let result = provider.insert("setting_1", row_data);
-        assert!(result.is_ok());
+        let seq_id = provider.insert("setting_1", row_data).unwrap();
 
-        let key = SharedTableRowId::new("setting_1");
+        // Use the returned SeqId to fetch the row (MVCC - Phase 2)
+        let key = seq_id;
         let stored = provider.store.get(&key).unwrap();
         assert!(stored.is_some());
 
         let stored_data = stored.unwrap();
         assert_eq!(stored_data.fields["setting_key"], "max_connections");
         assert_eq!(stored_data._deleted, false);
-        assert!(!stored_data._updated.is_empty());
+        // _updated field removed in Phase 12 - replaced by _seq.timestamp()
     }
 
     #[test]
@@ -820,16 +834,17 @@ mod tests {
             "setting_key": "timeout",
             "setting_value": "30"
         });
-        provider.insert("setting_2", row_data).unwrap();
+        let seq_id = provider.insert("setting_2", row_data).unwrap();
 
         // Update
         let updates = serde_json::json!({
             "setting_value": "60"
         });
-        let result = provider.update("setting_2", updates);
+        let result = provider.update(&seq_id.to_string(), updates);
         assert!(result.is_ok());
 
-        let key = SharedTableRowId::new("setting_2");
+        // Use the SeqId from insert to fetch (MVCC - Phase 2)
+        let key = seq_id;
         let stored = provider.store.get(&key).unwrap().unwrap();
         assert_eq!(stored.fields["setting_value"], "60");
         assert_eq!(stored.fields["setting_key"], "timeout"); // Unchanged
@@ -847,7 +862,7 @@ mod tests {
         });
         provider.insert("setting_3", row_data).unwrap();
 
-        let key = SharedTableRowId::new("setting_3");
+        let key = SharedTableRowId::new(3); // Use i64 snowflake ID
         let before_delete = provider.store.get(&key).unwrap().unwrap();
         assert_eq!(before_delete._deleted, false);
 
@@ -879,13 +894,14 @@ mod tests {
             "setting_key": "temp",
             "setting_value": "value"
         });
-        provider.insert("setting_4", row_data).unwrap();
+        let seq_id = provider.insert("setting_4", row_data).unwrap();
 
         // Hard delete
-        let result = provider.delete_hard("setting_4");
+        let result = provider.delete_hard(&seq_id.to_string());
         assert!(result.is_ok());
 
-        let key = SharedTableRowId::new("setting_4");
+        // Use the SeqId from insert to verify deletion (MVCC - Phase 2)
+        let key = seq_id;
         let stored = provider.store.get(&key).unwrap();
         assert!(stored.is_none());
     }

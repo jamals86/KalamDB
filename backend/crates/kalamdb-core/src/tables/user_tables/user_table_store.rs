@@ -43,7 +43,7 @@ pub type UserTableStore = SystemTableStore<UserTableRowId, UserTableRow>;
 /// A new SystemTableStore instance configured for the user table
 pub fn new_user_table_store(
     backend: Arc<dyn StorageBackend>,
-    namespace_id: &NamespaceId,
+    namespace_id: &NamespaceId, //TODO: Use TableId instead of both namespace and table name
     table_name: &TableName,
 ) -> UserTableStore {
     //TODO: Use a template function inside: kalamdb_store::Partition::new_user_table_partition

@@ -181,7 +181,7 @@ impl UserTableShared {
         app_context: Arc<AppContext>,
     ) -> Arc<Self> {
         let insert_handler = Arc::new(UserTableInsertHandler::new(app_context.clone(), store.clone()));
-        let update_handler = Arc::new(UserTableUpdateHandler::new(store.clone()));
+        let update_handler = Arc::new(UserTableUpdateHandler::new(app_context.clone(), store.clone()));
         let delete_handler = Arc::new(UserTableDeleteHandler::new(store.clone()));
         let column_defaults = Arc::new(Self::derive_column_defaults(&schema));
 
@@ -216,7 +216,7 @@ impl UserTableShared {
             UserTableInsertHandler::new(app_context.clone(), store.clone()).with_live_query_manager(Arc::clone(&manager)),
         );
         self.update_handler = Arc::new(
-            UserTableUpdateHandler::new(store.clone()).with_live_query_manager(Arc::clone(&manager)),
+            UserTableUpdateHandler::new(app_context.clone(), store.clone()).with_live_query_manager(Arc::clone(&manager)),
         );
         self.delete_handler = Arc::new(
             UserTableDeleteHandler::new(store.clone()).with_live_query_manager(Arc::clone(&manager)),
@@ -248,7 +248,7 @@ impl UserTableShared {
                 .with_live_query_manager(Arc::clone(&manager)),
         );
         self.update_handler = Arc::new(
-            UserTableUpdateHandler::new(store.clone())
+            UserTableUpdateHandler::new(app_context.clone(), store.clone())
                 .with_live_query_manager(Arc::clone(&manager)),
         );
         self.delete_handler = Arc::new(

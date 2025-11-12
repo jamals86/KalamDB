@@ -79,20 +79,28 @@ pub async fn execute_flush_synchronously(
         if let Some(provider) = provider_arc.as_any().downcast_ref::<kalamdb_core::tables::user_tables::UserTableProvider>() {
             provider.shared().store().clone()
         } else {
-            // Fallback if wrong provider type
-            Arc::new(kalamdb_core::tables::new_user_table_store(
-                server.app_context.storage_backend(),
-                &namespace_id,
-                &table_name_id,
-            ))
+            // // Fallback if wrong provider type
+            // Arc::new(kalamdb_core::tables::new_user_table_store(
+            //     server.app_context.storage_backend(),
+            //     &namespace_id,
+            //     &table_name_id,
+            // ))
+            return Err(format!(
+                "Table {}.{} is not a user table",
+                namespace, table_name
+            ));
         }
     } else {
-        Arc::new(kalamdb_core::tables::new_user_table_store(
-            server.app_context.storage_backend(),
-            &namespace_id,
-            &table_name_id,
-        ))
-    };;
+        // Arc::new(kalamdb_core::tables::new_user_table_store(
+        //     server.app_context.storage_backend(),
+        //     &namespace_id,
+        //     &table_name_id,
+        // ))
+        return Err(format!(
+            "No provider found for table {}.{}",
+            namespace, table_name
+        ));
+    };
 
     let flush_job = UserTableFlushJob::new(
         table_id_arc,

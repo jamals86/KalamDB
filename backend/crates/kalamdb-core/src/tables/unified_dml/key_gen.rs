@@ -3,14 +3,10 @@
 //! This module implements generate_storage_key(), which creates the appropriate
 //! storage key format for user and shared tables.
 
-use crate::error::KalamDbError;
-use crate::tables::shared_tables::shared_table_store::SharedTableRow;
-use crate::tables::user_tables::user_table_store::UserTableRow;
 use kalamdb_commons::ids::{SeqId, SharedTableRowId, UserTableRowId};
 use kalamdb_commons::models::schemas::TableType;
 use kalamdb_commons::models::UserId;
 use kalamdb_commons::StorageKey;
-use std::sync::Arc;
 
 
 /// Storage key type enum

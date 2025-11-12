@@ -99,6 +99,88 @@ impl StorageKey for UserTableRowId {
 /// since they are accessible across all users.
 pub type SharedTableRowId = SeqId;
 
+/// Composite key for stream table rows: {user_id}:{_seq}
+///
+/// **MVCC Architecture (Phase 13.2)**: Stream tables now use the same MVCC
+/// architecture as user tables with composite keys for user isolation.
+///
+/// **Storage Format**: Same as UserTableRowId: `{user_id_len:1byte}{user_id:variable}{seq:8bytes}`
+///
+/// # Examples
+///
+/// ```ignore
+/// use kalamdb_commons::ids::{StreamTableRowId, SeqId};
+/// use kalamdb_commons::models::UserId;
+///
+/// let user_id = UserId::new("alice");
+/// let seq = SeqId::new(12345);
+/// let row_id = StreamTableRowId::new(user_id, seq);
+///
+/// // Serialize to storage key
+/// let key_bytes = row_id.storage_key();
+/// ```
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub struct StreamTableRowId {
+    pub user_id: UserId,
+    pub seq: SeqId,
+}
+
+impl StreamTableRowId {
+    /// Create a new stream table row ID
+    pub fn new(user_id: UserId, seq: SeqId) -> Self {
+        Self { user_id, seq }
+    }
+
+    /// Get the user_id component
+    pub fn user_id(&self) -> &UserId {
+        &self.user_id
+    }
+
+    /// Get the sequence ID component
+    pub fn seq(&self) -> SeqId {
+        self.seq
+    }
+
+    /// Parse from storage bytes (user_id_len:user_id:seq_bytes)
+    pub fn from_bytes(bytes: &[u8]) -> Result<Self, String> {
+        if bytes.len() < 9 {
+            return Err("Invalid byte length for StreamTableRowId".to_string());
+        }
+
+        let user_id_len = bytes[0] as usize;
+        if bytes.len() < 1 + user_id_len + 8 {
+            return Err("Invalid byte structure for StreamTableRowId".to_string());
+        }
+
+        // Extract user_id
+        let user_id_bytes = &bytes[1..1 + user_id_len];
+        let user_id_str = String::from_utf8(user_id_bytes.to_vec())
+            .map_err(|e| format!("Invalid UTF-8 in user_id: {}", e))?;
+        let user_id = UserId::new(user_id_str);
+
+        // Extract seq
+        let seq_bytes = &bytes[1 + user_id_len..1 + user_id_len + 8];
+        let seq = SeqId::from_bytes(seq_bytes)?;
+
+        Ok(Self::new(user_id, seq))
+    }
+}
+
+impl StorageKey for StreamTableRowId {
+    fn storage_key(&self) -> Vec<u8> {
+        // Same format as UserTableRowId
+        let user_id_bytes = self.user_id.as_str().as_bytes();
+        let user_id_len = user_id_bytes.len().min(255) as u8;
+        let seq_bytes = self.seq.to_bytes();
+
+        let mut key = Vec::with_capacity(1 + user_id_len as usize + 8);
+        key.push(user_id_len);
+        key.extend_from_slice(&user_id_bytes[..user_id_len as usize]);
+        key.extend_from_slice(&seq_bytes);
+        key
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -152,4 +234,36 @@ mod tests {
         let seq: SharedTableRowId = SeqId::new(12345);
         assert_eq!(seq.as_i64(), 12345);
     }
+
+    #[test]
+    fn test_stream_table_row_id_storage_key() {
+        let user_id = UserId::new("user1");
+        let seq = SeqId::new(67890);
+        let row_id = StreamTableRowId::new(user_id.clone(), seq);
+
+        // Verify storage key format (same as UserTableRowId)
+        let key_bytes = row_id.storage_key();
+        
+        assert_eq!(key_bytes[0], 5); // "user1" = 5 bytes
+        
+        // Parse back
+        let parsed = StreamTableRowId::from_bytes(&key_bytes).unwrap();
+        assert_eq!(parsed.user_id(), &user_id);
+        assert_eq!(parsed.seq(), seq);
+    }
+
+    #[test]
+    fn test_stream_table_row_id_round_trip() {
+        let user_id = UserId::new("bob");
+        let seq = SeqId::new(88888);
+        let row_id = StreamTableRowId::new(user_id.clone(), seq);
+
+        // Serialize and deserialize
+        let bytes = row_id.storage_key();
+        let parsed = StreamTableRowId::from_bytes(&bytes).unwrap();
+
+        assert_eq!(parsed.user_id, user_id);
+        assert_eq!(parsed.seq, seq);
+    }
 }
+

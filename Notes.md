@@ -138,6 +138,18 @@ INSERT INTO <namespace>.<table>
 
 130) We need to have describe table <namespace>.<table> to show the table schema in cli and server as well also to display: cold rows count, hot rows count, total rows count, storage id, primary key(s), indexes, etc
 
+131) InitialDataOptions and InitialDataResult should now have SeqId instead of timestamp we check by it now
+132) add_row_id_column should be removed and all the _updated, _id should be removed from everywhere even deprecation shouldnt be added remove the code completely
+133)  _row_id: &str shouldnt be there we now use SharedTableRowId or UserTableRowId in all places instead of string
+134) Instead of passing namespace/table_name and also tableid pass only TableId also places where there is both of NamespaceId and TableName pass TableId instead  
+    namespace_id: &NamespaceId, //TODO: Remove we have TableId
+    table_name: &TableName, //TODO: Remove we have TableId
+    table_id: &TableId,
+
+135) There is some places were we have self.app_context and we at the same time refetch the app_context again
+
+136) 
+
 
 Here’s the updated 5-line spec with embedding storage inside Parquet and managed HNSW indexing (with delete handling):
 	1.	Parquet Storage: All embeddings are stored as regular columns in the Parquet file alongside other table columns to keep data unified and versioned per batch.

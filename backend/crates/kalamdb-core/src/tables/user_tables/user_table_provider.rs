@@ -14,7 +14,7 @@ use super::UserTableInsertHandler;
 use crate::schema_registry::{NamespaceId, TableName, UserId};
 use crate::tables::base_table_provider::{BaseTableProvider, UserTableShared};
 use crate::error::KalamDbError;
-use kalamdb_commons::ids::{SeqId, SnowflakeGenerator, UserTableRowId};
+use kalamdb_commons::ids::{SeqId, UserTableRowId};
 use crate::tables::system::system_table_store::UserTableStoreExt;
 use crate::tables::arrow_json_conversion::{
     arrow_batch_to_json, json_rows_to_arrow_batch, validate_insert_rows,
@@ -29,7 +29,6 @@ use datafusion::logical_expr::dml::InsertOp;
 use datafusion::logical_expr::Expr;
 use datafusion::physical_plan::ExecutionPlan;
 use kalamdb_commons::Role;
-use once_cell::sync::Lazy;
 use serde_json::Value as JsonValue;
 use std::any::Any;
 use std::sync::Arc;
@@ -177,6 +176,7 @@ impl UserTableProvider {
         self.shared.insert_handler().insert_row(
             self.namespace_id(),
             self.table_name(),
+            self.shared.core().table_id(),
             user_id,
             finalized,
         )
@@ -277,11 +277,12 @@ impl UserTableProvider {
     /// * `updates` - Updated fields as JSON object
     ///
     /// # Returns
-    /// The row ID of the updated row
+    /// The NEW SeqId of the updated row (MVCC: UPDATE creates new version)
     pub fn update_row(&self, user_id: &UserId, row_id: &str, updates: JsonValue) -> Result<String, KalamDbError> {
         self.shared.update_handler().update_row(
             self.namespace_id(),
             self.table_name(),
+            self.table_id(),
             user_id,
             row_id,
             updates,
@@ -295,7 +296,7 @@ impl UserTableProvider {
     /// * `updates` - Vector of (row_id, updates) tuples
     ///
     /// # Returns
-    /// Vector of updated row IDs
+    /// Vector of NEW SeqIds (one per updated row)
     pub fn update_batch(
         &self,
         user_id: &UserId,
@@ -304,6 +305,7 @@ impl UserTableProvider {
         self.shared.update_handler().update_batch(
             self.namespace_id(),
             self.table_name(),
+            self.table_id(),
             user_id,
             updates,
         )
@@ -353,7 +355,7 @@ impl UserTableProvider {
     /// * `user_id` - User ID for data isolation
     /// * `id_value` - Value of the logical id field to match
     pub fn delete_by_id_field(&self, user_id: &UserId, id_value: &str) -> Result<String, KalamDbError> {
-        let rows = self.scan_current_user_rows(user_id)?;
+        let rows: Vec<(String, UserTableRow)> = self.scan_current_user_rows(user_id)?;
 
         log::debug!("delete_by_id_field: Looking for id={} among {} user rows", id_value, rows.len());
 
@@ -516,7 +518,7 @@ impl UserTableProvider {
             let updated_millis = updated_array.value(row_idx);
             
             // Convert milliseconds to RFC3339 string for UserTableRow storage
-            let updated_str = {
+            let _updated_str = {
                 use chrono::{DateTime, Utc};
                 let datetime = DateTime::<Utc>::from_timestamp_millis(updated_millis)
                     .ok_or_else(|| datafusion::error::DataFusionError::Execution(format!("Invalid timestamp: {}", updated_millis)))?;
@@ -633,9 +635,9 @@ impl UserTableProvider {
     /// # Returns
     /// New RecordBatch with row_id (Utf8) prepended and _updated converted to String
     fn prepare_batch_for_version_resolution(batch: datafusion::arrow::record_batch::RecordBatch) -> Result<datafusion::arrow::record_batch::RecordBatch, KalamDbError> {
-        use datafusion::arrow::array::{ArrayRef, AsArray, StringArray, TimestampMillisecondArray};
-        use datafusion::arrow::datatypes::{DataType, Field, TimeUnit};
-        use chrono::{DateTime, Utc};
+        use datafusion::arrow::array::{ArrayRef, AsArray, StringArray};
+        use datafusion::arrow::datatypes::{DataType, Field};
+        use chrono::DateTime;
 
         // Handle empty batches
         if batch.num_rows() == 0 {

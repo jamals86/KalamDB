@@ -20,9 +20,10 @@ use std::sync::Arc;
 ///
 /// Coordinates UPDATE operations for user tables, enforcing:
 /// - Data isolation via UserId key prefix
-/// - Automatic _updated timestamp refresh (handled by UserTableStore)
+/// - MVCC append-only updates via unified_dml::append_version_sync()
 /// - kalamdb-store for RocksDB operations
 pub struct UserTableUpdateHandler {
+    app_context: Arc<crate::app_context::AppContext>,
     store: Arc<UserTableStore>,
     live_query_manager: Option<Arc<LiveQueryManager>>,
 }
@@ -31,9 +32,11 @@ impl UserTableUpdateHandler {
     /// Create a new user table UPDATE handler
     ///
     /// # Arguments
+    /// * `app_context` - Application context for unified_dml access
     /// * `store` - UserTableStore instance for RocksDB operations
-    pub fn new(store: Arc<UserTableStore>) -> Self {
+    pub fn new(app_context: Arc<crate::app_context::AppContext>, store: Arc<UserTableStore>) -> Self {
         Self {
+            app_context,
             store,
             live_query_manager: None,
         }
@@ -53,25 +56,33 @@ impl UserTableUpdateHandler {
     /// # Arguments
     /// * `namespace_id` - Namespace containing the table
     /// * `table_name` - Name of the table
+    /// * `table_id` - Table identifier for unified_dml
     /// * `user_id` - User ID for data isolation
-    /// * `row_id` - Row ID to update
+    /// * `row_id` - Row ID to update (existing SeqId)
     /// * `updates` - Fields to update as JSON object (partial updates supported)
     ///
     /// # Returns
-    /// The row ID of the updated row
+    /// The NEW SeqId of the appended version (different from input row_id)
     ///
-    /// # System Columns
-    /// The `_updated` timestamp is automatically refreshed by UserTableStore.
-    /// The `_deleted` flag is NOT modified during UPDATE operations.
-    /// System column updates in `updates` parameter are ignored.
+    /// # MVCC Architecture (Phase 2 - T032)
+    /// - Fetches existing row by old SeqId
+    /// - Merges updates into existing fields
+    /// - Delegates to unified_dml::append_version_sync() to create new version
+    /// - Returns NEW SeqId (not the old row_id)
+    /// - System columns (_seq, _deleted) are managed by unified_dml
     pub fn update_row(
         &self,
         namespace_id: &NamespaceId,
         table_name: &TableName,
+        table_id: &TableId,
         user_id: &UserId,
         row_id: &str,
         updates: JsonValue,
     ) -> Result<String, KalamDbError> {
+        use crate::app_context::AppContext;
+        use crate::tables::unified_dml::append_version_sync;
+        use kalamdb_commons::models::schemas::TableType;
+
         // Validate updates is an object
         if !updates.is_object() {
             return Err(KalamDbError::InvalidOperation(
@@ -99,16 +110,16 @@ impl UserTableUpdateHandler {
             ))
         })?;
 
-        // Clone for old_data before merging
+        // Clone for old_data before merging (for notifications)
         let old_data = existing_row.fields.clone();
-        let mut updated_row = existing_row.clone();
 
-        // Merge updates into existing row
+        // Merge updates into existing fields
+        let mut updated_fields = existing_row.fields.clone();
         if let Some(updated_obj) = updates.as_object() {
-            if let Some(fields_obj) = updated_row.fields.as_object_mut() {
+            if let Some(fields_obj) = updated_fields.as_object_mut() {
                 for (key, value) in updated_obj {
                     // Prevent updates to system columns
-                    if key == "_updated" || key == "_deleted" {
+                    if key == "_seq" || key == "_deleted" {
                         log::warn!("Attempted to update system column '{}', ignored", key);
                         continue;
                     }
@@ -117,32 +128,20 @@ impl UserTableUpdateHandler {
             }
         }
 
-        // T044-T046: Use SystemColumnsService for MVCC append-only UPDATE
-        // In MVCC, UPDATE creates a new version with a new SeqId
-        
-        // Get AppContext and SystemColumnsService (T024, T042)
-        use crate::app_context::AppContext;
-        let app_context = AppContext::get();
-        let sys_cols = app_context.system_columns_service();
-        
-        // Get new SeqId for this UPDATE operation (new version)
-        let (new_seq, _is_new) = sys_cols.handle_update()?;
-        
-        // Create new version with updated fields
-        updated_row._seq = new_seq;
-        // _deleted remains the same (false for active records)
-
-        // Write updated row back
-        UserTableStoreExt::put(
-            self.store.as_ref(),
-            &key,
-            &updated_row,
-        )
-        .map_err(|e| KalamDbError::Other(format!("Failed to write updated row: {}", e)))?;
+        // Delegate to unified_dml::append_version_sync() (Phase 2 - T032)
+        let new_seq_id = append_version_sync(
+            Arc::clone(&self.app_context),
+            table_id,
+            TableType::User,
+            Some(user_id.clone()),
+            updated_fields.clone(),
+            false, // UPDATE maintains _deleted=false (use DELETE for soft delete)
+        )?;
 
         log::debug!(
-            "Updated row {} in {}.{} for user {}",
+            "Updated row {} → new version {} in {}.{} for user {}",
             row_id,
+            new_seq_id,
             namespace_id.as_str(),
             table_name.as_str(),
             user_id.as_str()
@@ -155,22 +154,22 @@ impl UserTableUpdateHandler {
             let qualified_table_name = format!("{}.{}", namespace_id.as_str(), table_name.as_str());
 
             // Add user_id to notification data for filter matching
-            let mut notification_data = updated_row;
-            if let Some(obj) = notification_data.fields.as_object_mut() {
+            let mut notification_data = updated_fields.clone();
+            if let Some(obj) = notification_data.as_object_mut() {
                 obj.insert("user_id".to_string(), serde_json::json!(user_id.as_str()));
             }
 
             let notification = ChangeNotification::update(
                 qualified_table_name.clone(),
                 old_data,
-                serde_json::to_value(notification_data).unwrap(),
+                notification_data,
             );
 
-            let table_id = TableId::new(namespace_id.clone(), table_name.clone());
-            manager.notify_table_change_async(user_id.clone(), table_id, notification);
+            manager.notify_table_change_async(user_id.clone(), table_id.clone(), notification);
         }
 
-        Ok(row_id.to_string())
+        // Return NEW SeqId (MVCC: each UPDATE creates a new version)
+        Ok(new_seq_id.to_string())
     }
 
     /// Update multiple rows in batch
@@ -178,15 +177,17 @@ impl UserTableUpdateHandler {
     /// # Arguments
     /// * `namespace_id` - Namespace containing the table
     /// * `table_name` - Name of the table
+    /// * `table_id` - Table identifier for unified_dml
     /// * `user_id` - User ID for data isolation
     /// * `row_updates` - Vector of (row_id, updates) pairs
     ///
     /// # Returns
-    /// Vector of updated row IDs
+    /// Vector of NEW SeqIds (one per updated row)
     pub fn update_batch(
         &self,
         namespace_id: &NamespaceId,
         table_name: &TableName,
+        table_id: &TableId,
         user_id: &UserId,
         row_updates: Vec<(String, JsonValue)>,
     ) -> Result<Vec<String>, KalamDbError> {
@@ -196,7 +197,7 @@ impl UserTableUpdateHandler {
         for (row_id, updates) in row_updates {
             // Call update_row for each row
             let updated_id =
-                self.update_row(namespace_id, table_name, user_id, &row_id, updates)?;
+                self.update_row(namespace_id, table_name, table_id, user_id, &row_id, updates)?;
             updated_row_ids.push(updated_id);
         }
 
@@ -269,7 +270,8 @@ mod tests {
             &NamespaceId::new("test_ns"),
             &TableName::new("test_table"),
         ));
-        let handler = UserTableUpdateHandler::new(store.clone());
+        let app_context = Arc::new(crate::app_context::AppContext::new_test());
+        let handler = UserTableUpdateHandler::new(app_context, store.clone());
         (handler, store)
     }
 
@@ -283,38 +285,36 @@ mod tests {
 
         // Insert initial row
         let initial_data = serde_json::json!({"name": "Alice", "age": 30});
+        let seq = SeqId::new(1);
         let row = UserTableRow {
             user_id: user_id.clone(),
-            _seq: SeqId::new(1),
+            _seq: seq,
             _deleted: false,
             fields: initial_data,
         };
-        let row_id = row._seq.as_i64().to_string();
+        let row_id_key = UserTableRowId::new(user_id.clone(), seq);
+        let row_id_str = seq.as_i64().to_string();
         UserTableStoreExt::put(
             store.as_ref(),
-            namespace_id.as_str(),
-            table_name.as_str(),
-            user_id.as_str(),
-            &row_id,
+            &row_id_key,
             &row,
         )
         .unwrap();
 
         // Update the row
+        let table_id = TableId::new(namespace_id.clone(), table_name.clone());
         let updates = serde_json::json!({"age": 31, "city": "NYC"});
         let updated_row_id = handler
-            .update_row(&namespace_id, &table_name, &user_id, &row_id, updates)
+            .update_row(&namespace_id, &table_name, &table_id, &user_id, &row_id_str, updates)
             .unwrap();
 
-        assert_eq!(updated_row_id, row_id);
+        // Verify NEW SeqId is returned (MVCC: UPDATE creates new version)
+        assert_ne!(updated_row_id, row_id_str, "UPDATE should return NEW SeqId");
 
         // Verify the update
         let stored = UserTableStoreExt::get(
             store.as_ref(),
-            namespace_id.as_str(),
-            table_name.as_str(),
-            user_id.as_str(),
-            &row_id,
+            &row_id_key,
         )
         .unwrap()
         .expect("Row should exist");
@@ -330,11 +330,12 @@ mod tests {
         let (handler, _store) = setup_test_handler();
         let namespace_id = NamespaceId::new("test_ns".to_string());
         let table_name = TableName::new("test_table".to_string());
+        let table_id = TableId::new(namespace_id.clone(), table_name.clone());
         let user_id = UserId::new("user123".to_string());
 
         let updates = serde_json::json!({"age": 31});
         let result =
-            handler.update_row(&namespace_id, &table_name, &user_id, "nonexistent", updates);
+            handler.update_row(&namespace_id, &table_name, &table_id, &user_id, "nonexistent", updates);
 
         assert!(result.is_err());
         match result {
@@ -359,12 +360,10 @@ mod tests {
             _deleted: false,
             fields: serde_json::json!({"name": "Alice", "age": 30}),
         };
+        let row_id_1 = UserTableRowId::new(user_id.clone(), SeqId::new(1));
         UserTableStoreExt::put(
             store.as_ref(),
-            namespace_id.as_str(),
-            table_name.as_str(),
-            user_id.as_str(),
-            "1",
+            &row_id_1,
             &row1,
         )
         .unwrap();
@@ -375,24 +374,23 @@ mod tests {
             _deleted: false,
             fields: serde_json::json!({"name": "Bob", "age": 25}),
         };
+        let row_id_2 = UserTableRowId::new(user_id.clone(), SeqId::new(2));
         UserTableStoreExt::put(
             store.as_ref(),
-            namespace_id.as_str(),
-            table_name.as_str(),
-            user_id.as_str(),
-            "2",
+            &row_id_2,
             &row2,
         )
         .unwrap();
 
         // Update batch
+        let table_id = TableId::new(namespace_id.clone(), table_name.clone());
         let row_updates = vec![
             ("1".to_string(), serde_json::json!({"age": 31})),
             ("2".to_string(), serde_json::json!({"age": 26})),
         ];
 
         let updated_ids = handler
-            .update_batch(&namespace_id, &table_name, &user_id, row_updates)
+            .update_batch(&namespace_id, &table_name, &table_id, &user_id, row_updates)
             .unwrap();
 
         assert_eq!(updated_ids.len(), 2);
@@ -400,10 +398,7 @@ mod tests {
         // Verify updates
         let stored1 = UserTableStoreExt::get(
             store.as_ref(),
-            namespace_id.as_str(),
-            table_name.as_str(),
-            user_id.as_str(),
-            "1",
+            &row_id_1,
         )
         .unwrap()
         .expect("Row1 should exist");
@@ -411,10 +406,7 @@ mod tests {
 
         let stored2 = UserTableStoreExt::get(
             store.as_ref(),
-            namespace_id.as_str(),
-            table_name.as_str(),
-            user_id.as_str(),
-            "2",
+            &row_id_2,
         )
         .unwrap()
         .expect("Row2 should exist");
@@ -429,24 +421,24 @@ mod tests {
         let user_id = UserId::new("user123".to_string());
 
         // Insert initial row
+        let seq = SeqId::new(1);
         let row = UserTableRow {
             user_id: user_id.clone(),
-            _seq: SeqId::new(1),
+            _seq: seq,
             _deleted: false,
             fields: serde_json::json!({"name": "Alice"}),
         };
-        let row_id = row._seq.as_i64().to_string();
+        let row_id_key = UserTableRowId::new(user_id.clone(), seq);
+        let row_id = seq.as_i64().to_string();
         UserTableStoreExt::put(
             store.as_ref(),
-            namespace_id.as_str(),
-            table_name.as_str(),
-            user_id.as_str(),
-            &row_id,
+            &row_id_key,
             &row,
         )
         .unwrap();
 
         // Try to update system columns
+        let table_id = TableId::new(namespace_id.clone(), table_name.clone());
         let updates = serde_json::json!({
             "name": "Bob",
             "_seq": 9999, // Should be ignored
@@ -454,16 +446,13 @@ mod tests {
         });
 
         handler
-            .update_row(&namespace_id, &table_name, &user_id, &row_id, updates)
+            .update_row(&namespace_id, &table_name, &table_id, &user_id, &row_id, updates)
             .unwrap();
 
         // Verify system columns were NOT modified by updates
         let stored = UserTableStoreExt::get(
             store.as_ref(),
-            namespace_id.as_str(),
-            table_name.as_str(),
-            user_id.as_str(),
-            &row_id,
+            &row_id_key,
         )
         .unwrap()
         .expect("Row should exist");
@@ -487,12 +476,10 @@ mod tests {
             _deleted: false,
             fields: serde_json::json!({"name": "Alice"}),
         };
+        let row_id_user1 = UserTableRowId::new(user1.clone(), SeqId::new(1));
         UserTableStoreExt::put(
             store.as_ref(),
-            namespace_id.as_str(),
-            table_name.as_str(),
-            user1.as_str(),
-            "1",
+            &row_id_user1,
             &row1,
         )
         .unwrap();
@@ -503,21 +490,21 @@ mod tests {
             _deleted: false,
             fields: serde_json::json!({"name": "Bob"}),
         };
+        let row_id_user2 = UserTableRowId::new(user2.clone(), SeqId::new(1));
         UserTableStoreExt::put(
             store.as_ref(),
-            namespace_id.as_str(),
-            table_name.as_str(),
-            user2.as_str(),
-            "1",
+            &row_id_user2,
             &row2,
         )
         .unwrap();
 
         // Update user1's row
+        let table_id = TableId::new(namespace_id.clone(), table_name.clone());
         handler
             .update_row(
                 &namespace_id,
                 &table_name,
+                &table_id,
                 &user1,
                 "1",
                 serde_json::json!({"name": "Alice Updated"}),
@@ -527,10 +514,7 @@ mod tests {
         // Verify user2's row is unchanged
         let stored2 = UserTableStoreExt::get(
             store.as_ref(),
-            namespace_id.as_str(),
-            table_name.as_str(),
-            user2.as_str(),
-            "1",
+            &row_id_user2,
         )
         .unwrap()
         .expect("User2's row should exist");
@@ -545,26 +529,26 @@ mod tests {
         let user_id = UserId::new("user123".to_string());
 
         // Insert initial row
+        let seq = SeqId::new(1);
         let row = UserTableRow {
             user_id: user_id.clone(),
-            _seq: SeqId::new(1),
+            _seq: seq,
             _deleted: false,
             fields: serde_json::json!({"name": "Alice"}),
         };
-        let row_id = row._seq.as_i64().to_string();
+        let row_id_key = UserTableRowId::new(user_id.clone(), seq);
+        let row_id = seq.as_i64().to_string();
         UserTableStoreExt::put(
             store.as_ref(),
-            namespace_id.as_str(),
-            table_name.as_str(),
-            user_id.as_str(),
-            &row_id,
+            &row_id_key,
             &row,
         )
         .unwrap();
 
         // Try to update with non-object
+        let table_id = TableId::new(namespace_id.clone(), table_name.clone());
         let updates = serde_json::json!(["not", "an", "object"]);
-        let result = handler.update_row(&namespace_id, &table_name, &user_id, &row_id, updates);
+        let result = handler.update_row(&namespace_id, &table_name, &table_id, &user_id, &row_id, updates);
 
         assert!(result.is_err());
         match result {

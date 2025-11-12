@@ -1,57 +1,31 @@
-//! Stream table store implementation using in-memory EntityStore pattern
+//! Stream table store implementation using EntityStore pattern
 //!
-//! This module provides a SystemTableStore-based in-memory implementation for ephemeral stream tables.
+//! **MVCC Architecture (Phase 13.2)**:
+//! - StreamTableRowId: Composite struct with user_id and _seq fields
+//! - StreamTableRow: Minimal structure with user_id, _seq, fields (JSON)
+//! - Storage key format: {user_id}:{_seq} (big-endian bytes)
 
 use crate::tables::system::system_table_store::SystemTableStore;
-use kalamdb_commons::models::{NamespaceId, TableName};
-use kalamdb_commons::StorageKey;
+use kalamdb_commons::ids::{SeqId, StreamTableRowId};
+use kalamdb_commons::models::{NamespaceId, TableName, UserId};
 use kalamdb_store::{test_utils::InMemoryBackend, StorageBackend};
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 
-/// Stream table row ID (simple string)
-#[derive(Debug, Clone, PartialEq, Eq, Hash)]
-pub struct StreamTableRowId(String);
-
-impl StreamTableRowId {
-    pub fn new(id: impl Into<String>) -> Self {
-        Self(id.into())
-    }
-
-    pub fn from_bytes(bytes: &[u8]) -> Self {
-        Self(String::from_utf8_lossy(bytes).to_string())
-    }
-
-    pub fn as_str(&self) -> &str {
-        &self.0
-    }
-}
-
-impl AsRef<[u8]> for StreamTableRowId {
-    fn as_ref(&self) -> &[u8] {
-        self.0.as_bytes()
-    }
-}
-
-impl StorageKey for StreamTableRowId {
-    fn storage_key(&self) -> Vec<u8> {
-        self.0.as_bytes().to_vec()
-    }
-}
-
 /// Stream table row data
+///
+/// **MVCC Architecture (Phase 13.2)**:
+/// - Removed: event_id (redundant with _seq), timestamp (use _seq.timestamp_millis()), row_id, inserted_at, _updated
+/// - Added: user_id (event owner), _seq (version identifier), fields (all event data)
+/// - Note: NO _deleted field (stream tables don't use soft deletes, only TTL eviction)
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct StreamTableRow {
-    pub row_id: String,
-    pub fields: serde_json::Value,
-    pub inserted_at: String,
-    pub _updated: String,
-    pub _deleted: bool,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub ttl_seconds: Option<u64>,
+    pub user_id: UserId,
+    pub _seq: SeqId,
+    pub fields: serde_json::Value, // All event data
 }
 
-/// Type alias for stream table store (extends SystemTableStore, in-memory only)
+/// Type alias for stream table store (in-memory only, ephemeral data)
 pub type StreamTableStore = SystemTableStore<StreamTableRowId, StreamTableRow>;
 
 /// Helper function to create a new stream table store (always in-memory)
@@ -72,7 +46,7 @@ pub fn new_stream_table_store(
         namespace_id.as_str(),
         table_name.as_str()
     );
-    // Always use in-memory backend for stream tables
+    // Always use in-memory backend for stream tables (ephemeral, no persistence)
     let backend: Arc<dyn StorageBackend> = Arc::new(InMemoryBackend::new());
     SystemTableStore::new(backend, partition_name)
 }
@@ -86,16 +60,14 @@ mod tests {
         new_stream_table_store(&NamespaceId::new("test_ns"), &TableName::new("test_stream"))
     }
 
-    fn create_test_row(row_id: &str, ttl: Option<u64>) -> StreamTableRow {
+    fn create_test_row(user_id: &str, seq: i64) -> StreamTableRow {
         StreamTableRow {
-            row_id: row_id.to_string(),
-            fields: serde_json::json!({"event": "click"}),
-            inserted_at: chrono::Utc::now().to_rfc3339(),
-            _updated: chrono::Utc::now().to_rfc3339(),
-            _deleted: false,
-            ttl_seconds: ttl,
+            user_id: UserId::new(user_id),
+            _seq: SeqId::new(seq),
+            fields: serde_json::json!({"event": "click", "data": 123}),
         }
     }
+
 
     #[test]
     fn test_stream_table_store_create() {
@@ -106,8 +78,8 @@ mod tests {
     #[test]
     fn test_stream_table_store_put_get() {
         let store = create_test_store();
-        let key = StreamTableRowId::new("row1");
-        let row = create_test_row("row1", Some(3600));
+        let key = StreamTableRowId::new(UserId::new("user1"), SeqId::new(100));
+        let row = create_test_row("user1", 100);
 
         // Put and get
         store.put(&key, &row).unwrap();
@@ -119,8 +91,8 @@ mod tests {
     #[test]
     fn test_stream_table_store_delete() {
         let store = create_test_store();
-        let key = StreamTableRowId::new("row1");
-        let row = create_test_row("row1", Some(3600));
+        let key = StreamTableRowId::new(UserId::new("user1"), SeqId::new(200));
+        let row = create_test_row("user1", 200);
 
         // Put, delete, verify
         store.put(&key, &row).unwrap();
@@ -132,58 +104,40 @@ mod tests {
     fn test_stream_table_store_scan_all() {
         let store = create_test_store();
 
-        // Insert multiple rows
-        for i in 1..=5 {
-            let key = StreamTableRowId::new(format!("row{}", i));
-            let row = create_test_row(&format!("row{}", i), Some(3600));
-            store.put(&key, &row).unwrap();
+        // Insert multiple rows for different users
+        for user_i in 1..=2 {
+            for seq_i in 1..=3 {
+                let key = StreamTableRowId::new(
+                    UserId::new(&format!("user{}", user_i)),
+                    SeqId::new((user_i * 1000 + seq_i) as i64),
+                );
+                let row = create_test_row(&format!("user{}", user_i), (user_i * 1000 + seq_i) as i64);
+                store.put(&key, &row).unwrap();
+            }
         }
 
         // Scan all
         let all_rows = store.scan_all().unwrap();
-        assert_eq!(all_rows.len(), 5);
+        assert_eq!(all_rows.len(), 6); // 2 users * 3 events
     }
 
     #[test]
-    fn test_stream_table_ttl_eviction() {
+    fn test_stream_table_user_isolation() {
         let store = create_test_store();
 
-        // Insert expired row (1 second ago with 0 second TTL)
-        let past = chrono::Utc::now() - chrono::Duration::seconds(1);
-        let expired_key = StreamTableRowId::new("expired");
-        let mut expired_row = create_test_row("expired", Some(0));
-        expired_row.inserted_at = past.to_rfc3339();
-        expired_row._updated = past.to_rfc3339();
-        store.put(&expired_key, &expired_row).unwrap();
+        // User1's event
+        let key1 = StreamTableRowId::new(UserId::new("user1"), SeqId::new(100));
+        let row1 = create_test_row("user1", 100);
+        store.put(&key1, &row1).unwrap();
 
-        // Insert non-expired row
-        let fresh_key = StreamTableRowId::new("fresh");
-        let fresh_row = create_test_row("fresh", Some(3600));
-        store.put(&fresh_key, &fresh_row).unwrap();
+        // User2's event with same seq
+        let key2 = StreamTableRowId::new(UserId::new("user2"), SeqId::new(100));
+        let row2 = create_test_row("user2", 100);
+        store.put(&key2, &row2).unwrap();
 
-        // Manual eviction logic (would be in a separate service)
-        let now = chrono::Utc::now();
-        let all_rows = store.scan_all().unwrap();
-        let mut evicted = 0;
-
-        for (_key, row) in all_rows {
-            if let Some(ttl) = row.ttl_seconds {
-                if let Ok(inserted) = chrono::DateTime::parse_from_rfc3339(&row.inserted_at) {
-                    let expiry = inserted + chrono::Duration::seconds(ttl as i64);
-                    if now > expiry {
-                        store.delete(&StreamTableRowId::new(&row.row_id)).unwrap();
-                        evicted += 1;
-                    }
-                }
-            }
-        }
-
-        assert_eq!(evicted, 1);
-
-        // Check remaining
-        let remaining = store.scan_all().unwrap();
-        assert_eq!(remaining.len(), 1);
-        assert_eq!(remaining[0].1.row_id, "fresh");
+        // Both exist independently
+        assert_eq!(store.get(&key1).unwrap().unwrap().user_id, UserId::new("user1"));
+        assert_eq!(store.get(&key2).unwrap().unwrap().user_id, UserId::new("user2"));
     }
 
     #[test]
@@ -193,11 +147,12 @@ mod tests {
         let store2 = create_test_store();
 
         // Store1 writes
-        let key = StreamTableRowId::new("row1");
-        let row = create_test_row("row1", Some(3600));
+        let key = StreamTableRowId::new(UserId::new("user1"), SeqId::new(100));
+        let row = create_test_row("user1", 100);
         store1.put(&key, &row).unwrap();
 
         // Store2 can't see it (different in-memory backend instances)
         assert!(store2.get(&key).unwrap().is_none());
     }
 }
+

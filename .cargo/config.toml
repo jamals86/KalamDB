@@ -22,3 +22,4 @@ rustflags = []
 
 [build]
 jobs = 8  # Match your CPU cores
+target = "x86_64-pc-windows-msvc"

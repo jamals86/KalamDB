@@ -397,16 +397,42 @@ Developers implementing job executors need type-safe parameter handling instead 
 - **FR-094**: System MUST support parameter schema evolution via `Option<T>` fields and serde default attributes for backward compatibility
 - **FR-095**: System MUST handle parameter validation errors with clear messages identifying expected parameter structure
 
-#### Test Coverage Requirements (FR-096 to FR-101)
+#### Provider Architecture Consolidation (FR-096 to FR-118)
 
-- **FR-096**: System MUST include tests for updating records after they have been flushed to long-term storage
-- **FR-097**: System MUST include tests for records updated 3 times (original + 2 updates, all flushed)
-- **FR-098**: System MUST include tests verifying deleted records (_deleted = true) are not returned in query results
-- **FR-099**: System MUST include tests verifying MAX(_updated) correctly resolves latest version across storage tiers
-- **FR-100**: System MUST include tests for concurrent updates to the same record
-- **FR-101**: System MUST include tests for querying records with _deleted flag at different storage layers
+- **FR-096**: System MUST define unified BaseTableProvider<K: StorageKey, V> trait with generic key and value types
+- **FR-097**: System MUST extend BaseTableProvider to implement datafusion::TableProvider trait (single struct serves both custom DML and DataFusion SQL)
+- **FR-098**: System MUST eliminate UserTableShared wrapper, moving all fields directly into UserTableProvider struct
+- **FR-099**: System MUST eliminate TableProviderCore wrapper, merging common fields (table_id, schema) into provider structs
+- **FR-100**: System MUST implement BaseTableProvider<UserTableRowId, UserTableRow> for UserTableProvider with RLS enforcement
+- **FR-101**: System MUST implement BaseTableProvider<SharedTableRowId, SharedTableRow> for SharedTableProvider without RLS
+- **FR-102**: System MUST implement BaseTableProvider<StreamTableRowId, StreamTableRow> for StreamTableProvider with TTL eviction
+- **FR-103**: System MUST define core trait methods: table_id(), schema_ref(), table_type(), store(), app_context()
+- **FR-104**: System MUST define DML trait methods: insert(), insert_batch(), update(), delete() returning generic key types
+- **FR-105**: System MUST define scan_rows() trait method accepting optional DataFusion Expr filter and returning RecordBatch
+- **FR-106**: System MUST implement update() for User/Shared tables to scan RocksDB (hot) AND Parquet (cold) storage, apply version resolution via MAX(_seq), merge updates, and append new version to hot storage
+- **FR-107**: System MUST implement delete() for User/Shared tables to scan both hot+cold storage, resolve latest version, and append tombstone (_deleted=true) with new SeqId
+- **FR-108**: System MUST implement insert() for User/Shared tables to append directly to hot storage via unified_dml::append_version_sync()
+- **FR-109**: System MUST implement insert() for Stream tables to write ONLY to RocksDB (hot storage) with NO Parquet merging (ephemeral data pattern)
+- **FR-110**: System MUST implement scan_rows() for User/Shared tables to merge RocksDB batches with Parquet batches via scan_with_version_resolution_and_filter()
+- **FR-111**: System MUST implement scan_rows() for Stream tables to read ONLY from RocksDB applying TTL-based filtering with NO Parquet involvement
+- **FR-112**: System MUST extract UserId from request context (session state) instead of passing as parameter to DML methods
+- **FR-113**: System MUST use scan_with_version_resolution_to_kvs() helper for UPDATE/DELETE operations needing (key, value) pairs from merged storage
+- **FR-114**: System MUST reuse existing scan helpers: scan_parquet_files_as_batch(), scan_with_version_resolution_and_filter(), create_empty_batch()
+- **FR-115**: System MUST measure code reduction after consolidation, targeting 800+ lines removed from DML duplication
+- **FR-116**: System MUST verify all existing provider tests pass after refactoring (user_table_tests, shared_table_tests, stream_table_tests)
+- **FR-117**: System MUST ensure same provider instance handles both custom DML operations (insert/update/delete) and DataFusion SQL queries (via TableProvider::scan)
+- **FR-118**: System MUST update StreamTableRow to include user_id: UserId, _seq: SeqId, fields: JsonValue (removing event_id, timestamp)
 
-#### Performance Regression Tests (FR-102 to FR-107)
+#### Test Coverage Requirements (FR-119 to FR-124)
+
+- **FR-119**: System MUST include tests for updating records after they have been flushed to long-term storage
+- **FR-120**: System MUST include tests for records updated 3 times (original + 2 updates, all flushed)
+- **FR-121**: System MUST include tests verifying deleted records (_deleted = true) are not returned in query results
+- **FR-122**: System MUST include tests verifying MAX(_updated) correctly resolves latest version across storage tiers
+- **FR-123**: System MUST include tests for concurrent updates to the same record
+- **FR-124**: System MUST include tests for querying records with _deleted flag at different storage layers
+
+#### Performance Regression Tests (FR-125 to FR-130)
 
 - **FR-102**: System MUST include performance regression tests measuring query latency with increasing version counts (baseline: 1 version, test: 10 versions, 100 versions)
 - **FR-103**: System MUST enforce that query latency MUST NOT exceed 2x baseline when resolving 10+ versions of the same record across storage layers
@@ -682,10 +708,33 @@ let manifest = manifest_cache.get_or_load(namespace, table, user_id).await?;
 
 ---
 
-## Assumptions *(optional)*
+---
 
-- **Append-Only Architecture**: System uses append-only writes where updates create new versions rather than modifying existing records in-place
-- **System Columns**: All user and shared tables already include `_updated` (timestamp with nanosecond precision) and `_deleted` (boolean) columns
+### User Story 9 - Provider Architecture Consolidation (Priority: P1)
+
+Developers maintaining the codebase need a unified table provider architecture that eliminates massive code duplication across User/Shared/Stream table implementations while serving both custom DML operations AND DataFusion SQL queries through the same provider instances.
+
+**Why this priority**: Core architecture refactoring that reduces ~1200 lines of duplicate code (60-70% of DML logic), improves maintainability, and enables consistent hot+cold storage merging across all table types. Blocks future provider enhancements due to triple maintenance burden.
+
+**Independent Test**: Can be fully tested by refactoring all three provider types to implement the unified trait, running full test suite, and measuring code reduction via `git diff --stat`. DataFusion integration verified by executing SQL queries through the same provider instances used for custom DML.
+
+**Acceptance Scenarios**:
+
+1. **Given** UserTableProvider, SharedTableProvider, and StreamTableProvider with duplicate DML methods, **When** refactored to implement unified BaseTableProvider<K, V> trait, **Then** all three providers share identical DML implementation reducing codebase by ~800 lines
+2. **Given** a user table UPDATE operation, **When** update() method executes, **Then** system scans RocksDB (hot storage) AND Parquet files (cold storage), applies version resolution via MAX(_seq), merges updates into latest version, and appends new version to hot storage
+3. **Given** a shared table DELETE operation, **When** delete() method executes, **Then** system scans both hot+cold storage, resolves latest version, and appends tombstone (_deleted=true) with new SeqId
+4. **Given** a stream table INSERT operation, **When** insert() method executes, **Then** system writes ONLY to RocksDB (hot storage) with NO Parquet merging (ephemeral data pattern)
+5. **Given** a DataFusion SQL query `SELECT * FROM user_table`, **When** query executes, **Then** the same UserTableProvider instance serves the query through TableProvider::scan() while also providing custom DML methods
+6. **Given** UserTableShared wrapper and TableProviderCore duplicating provider fields, **When** eliminated in favor of direct struct fields, **Then** provider code reduces by ~400 lines and memory overhead decreases by 83% (6 fields → 1 Arc)
+7. **Given** a scan operation on user/shared table, **When** scan_rows() executes, **Then** system merges RocksDB batches with Parquet batches via version resolution and deletion filtering
+8. **Given** a scan operation on stream table, **When** scan_rows() executes, **Then** system reads ONLY from RocksDB applying TTL-based filtering with NO Parquet merging
+
+---
+
+## Edge Cases
+
+- What happens when UPDATE creates a new version while the original is being persisted to long-term storage?
+- How does the system handle concurrent updates to the same record from different sessions?
 - **Storage Tiers**: System uses two-tier storage (fast storage for recent writes + long-term storage for persisted batch files)
 - **Flush Process**: Records are periodically moved from fast storage to long-term storage, with new versions flushed to batch-{number}.parquet files
 - **Batch Numbering**: Batch files use sequential numbering controlled by manifest max_batch counter (not timestamps)
@@ -730,3 +779,9 @@ let manifest = manifest_cache.get_or_load(namespace, table, user_id).await?;
 - **SC-020**: RocksDB range scans using SeqId ordering efficiently implement `WHERE _seq > threshold` completing in <20ms for 100K total rows
 - **SC-019**: Manifest-based file skipping achieves <5ms evaluation time per query and eliminates 90%+ of irrelevant batch file scans
 - **SC-020**: Bloom filter optimization achieves <1ms overhead per batch file and reduces I/O by 90%+ for point queries on large tables (100+ batch files)
+- **SC-021**: Provider architecture consolidation reduces codebase by 1200+ lines (800 DML duplication + 400 wrapper elimination)
+- **SC-022**: User/Shared table UPDATE operations scan both RocksDB and Parquet, applying version resolution within 2x baseline query time
+- **SC-023**: Stream table operations use ONLY RocksDB (hot storage) with zero Parquet reads, completing within baseline time
+- **SC-024**: Same provider instance serves both custom DML operations and DataFusion SQL queries (verified by code inspection showing single struct implementing both traits)
+- **SC-025**: StreamTableRow refactoring to MVCC architecture (user_id, _seq, fields) maintains 100% test coverage with zero functional regressions
+

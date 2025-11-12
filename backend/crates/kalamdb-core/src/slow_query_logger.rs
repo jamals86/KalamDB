@@ -4,7 +4,7 @@
 //! Designed for minimal performance overhead using async file I/O.
 
 use kalamdb_commons::models::{TableName, UserId};
-use kalamdb_commons::models::schemas::table_type::TableType;
+use crate::schema_registry::TableType;
 use std::fs::OpenOptions;
 use std::io::Write;
 use std::path::Path;
