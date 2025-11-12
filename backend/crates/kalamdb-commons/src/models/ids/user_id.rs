@@ -36,6 +36,10 @@ impl UserId {
     pub fn system() -> Self {
         Self("system".to_string())
     }
+
+    pub fn root() -> Self {
+        Self("root".to_string())
+    }
 }
 
 impl fmt::Display for UserId {

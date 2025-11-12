@@ -47,8 +47,7 @@ pub fn can_create_table(role: Role, table_type: TableType) -> bool {
     match role {
         Role::System | Role::Dba => true,
         Role::Service | Role::User => {
-            // Cannot create system tables
-            !matches!(table_type, TableType::System)
+            return false;
         }
     }
 }

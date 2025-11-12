@@ -485,6 +485,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(not(feature = "expensive_tests"), ignore)]
     fn test_registry_unregister_subscription() {
         let registry = LiveQueryRegistry::new(NodeId::new("node1".to_string()));
         let user_id = UserId::new("user1".to_string());

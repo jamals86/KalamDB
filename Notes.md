@@ -156,7 +156,7 @@ INSERT INTO <namespace>.<table>
       - kalamdb-executor   - which contains all the core/sql folder
       - kalamdb-system     - All system tables and system related code
       - kalamdb-tables     - All providers for shared/user/stream tables
-      - kalamdb-flush      - All flushing related code
+      - kalamdb-filestore  - All filesystem related code
 
 
 Here’s the updated 5-line spec with embedding storage inside Parquet and managed HNSW indexing (with delete handling):
