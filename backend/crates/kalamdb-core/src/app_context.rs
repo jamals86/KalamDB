@@ -74,7 +74,6 @@ pub struct AppContext {
 impl std::fmt::Debug for AppContext {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("AppContext")
-            .field("schema_cache", &"Arc<SchemaCache>")
             .field("schema_registry", &"Arc<SchemaRegistry>")
             .field("user_table_store", &"Arc<UserTableStore>")
             .field("shared_table_store", &"Arc<SharedTableStore>")
@@ -159,7 +158,7 @@ impl AppContext {
                 ));
 
                 // Create schema cache (Phase 10 unified cache)
-                let schema_cache = Arc::new(SchemaRegistry::new(10000, Some(storage_registry.clone())));
+                let schema_registry = Arc::new(SchemaRegistry::new(10000, Some(storage_registry.clone())));
 
                 // Register all system tables in DataFusion
                 let session_factory = Arc::new(DataFusionSessionFactory::new()
@@ -167,7 +166,7 @@ impl AppContext {
                 let base_session_context = Arc::new(session_factory.create_session());
 
                 // Wire up SchemaRegistry with base_session_context for automatic table registration
-                schema_cache.set_base_session_context(Arc::clone(&base_session_context));
+                schema_registry.set_base_session_context(Arc::clone(&base_session_context));
 
                 // Register system schema
                 let system_schema = Arc::new(datafusion::catalog::memory::MemorySchemaProvider::new());
@@ -188,10 +187,6 @@ impl AppContext {
                         .register_table(table_name.to_string(), provider)
                         .expect("Failed to register system table");
                 }
-
-                // SchemaRegistry is just an alias for SchemaCache (Phase 5 complete)
-                // No separate schema_store needed - persistence methods use AppContext to access TablesTableProvider
-                let schema_registry = schema_cache.clone();
 
                 // NOW wire up information_schema providers with schema_registry
                 // This must happen BEFORE registering them with DataFusion
@@ -413,10 +408,6 @@ impl AppContext {
     /// once during AppContext::init() and shared across all components.
     pub fn config(&self) -> &Arc<ServerConfig> {
         &self.config
-    }
-    
-    pub fn schema_cache(&self) -> Arc<SchemaRegistry> {
-        self.schema_registry.clone()
     }
     
     pub fn schema_registry(&self) -> Arc<SchemaRegistry> {

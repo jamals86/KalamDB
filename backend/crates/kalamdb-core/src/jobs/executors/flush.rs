@@ -21,10 +21,9 @@
 //! ```
 
 use crate::error::KalamDbError;
+use crate::providers::arrow_json_conversion; // For schema_with_system_columns
 use crate::jobs::executors::{JobContext, JobDecision, JobExecutor};
-use crate::providers::base::BaseTableProvider; // Phase 13.6: Access store() method
-use crate::tables::{SharedTableFlushJob, UserTableFlushJob};
-use crate::tables::base_flush::TableFlush;
+use crate::providers::flush::{SharedTableFlushJob, TableFlush, UserTableFlushJob};
 use async_trait::async_trait;
 use kalamdb_commons::{JobType, NamespaceId, TableName, TableId};
 use kalamdb_commons::system::Job;
@@ -113,8 +112,7 @@ impl JobExecutor for FlushExecutor {
 
         // Get dependencies from AppContext
         let app_ctx = &ctx.app_ctx;
-    let schema_cache = app_ctx.schema_cache();
-    let schema_registry = app_ctx.schema_registry();
+        let schema_registry = app_ctx.schema_registry();
         let live_query_manager = app_ctx.live_query_manager();
 
         let namespace_id = NamespaceId::new(namespace_id_str.to_string());
@@ -141,7 +139,7 @@ impl JobExecutor for FlushExecutor {
         };
 
         // Ensure system columns are present or add if missing (idempotent)
-        let schema = crate::tables::arrow_json_conversion::schema_with_system_columns(&base_schema);
+        let schema = arrow_json_conversion::schema_with_system_columns(&base_schema);
 
         // Execute flush based on table type
         let result = match table_type {
@@ -173,7 +171,7 @@ impl JobExecutor for FlushExecutor {
                     namespace_id.clone(),
                     table_name.clone(),
                     schema.clone(),
-                    schema_cache.clone(),
+                    schema_registry.clone(),
                 )
                 .with_live_query_manager(live_query_manager);
 
@@ -200,7 +198,7 @@ impl JobExecutor for FlushExecutor {
                     namespace_id.clone(),
                     table_name.clone(),
                     schema.clone(),
-                    schema_cache.clone(),
+                    schema_registry.clone(),
                 )
                 .with_live_query_manager(live_query_manager);
 

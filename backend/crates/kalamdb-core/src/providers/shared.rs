@@ -33,7 +33,7 @@ use std::any::Any;
 use std::sync::Arc;
 
 // Arrow <-> JSON helpers
-use crate::tables::arrow_json_conversion::json_rows_to_arrow_batch;
+use crate::providers::arrow_json_conversion::json_rows_to_arrow_batch;
 use serde_json::json;
 
 /// Shared table provider without RLS
@@ -140,64 +140,57 @@ impl BaseTableProvider<SharedTableRowId, SharedTableRow> for SharedTableProvider
         Ok(row_key)
     }
     
-    fn update(&self, _user_id: &UserId, _key: &SharedTableRowId, updates: JsonValue) -> Result<SharedTableRowId, KalamDbError> {
+    fn update(&self, _user_id: &UserId, key: &SharedTableRowId, updates: JsonValue) -> Result<SharedTableRowId, KalamDbError> {
         // IGNORE user_id parameter - no RLS for shared tables
-        
-        // TODO: Implement full UPDATE logic
-        // 1. Scan RocksDB + Parquet for all versions of this row (NO user filtering)
-        // 2. Apply version resolution (MAX(_seq))
-        // 3. Merge updates into latest version
-        
-        // Placeholder: Just append as new version (incomplete implementation)
+        // Merge updates onto latest resolved row by PK
+        let update_obj = updates.as_object().cloned().ok_or_else(|| {
+            KalamDbError::InvalidSql("UPDATE requires object of column assignments".to_string())
+        })?;
+
+        let pk_name = self.primary_key_field_name().to_string();
+        // Load referenced prior version to derive PK value if not present in updates
+        let prior = EntityStore::get(&*self.store, key)
+            .map_err(|e| KalamDbError::Other(format!("Failed to load prior version: {}", e)))?
+            .ok_or_else(|| KalamDbError::NotFound("Row not found for update".to_string()))?;
+        let pk_value = crate::providers::unified_dml::extract_user_pk_value(&prior.fields, &pk_name)?;
+        // Resolve latest per PK
+        let resolved = self.scan_with_version_resolution_to_kvs(&_user_id.clone(), None)?;
+
+        let mut latest_opt: Option<(SharedTableRowId, SharedTableRow)> = None;
+        for (k, r) in resolved.into_iter() {
+            if let Some(val) = r.fields.get(&pk_name) {
+                if val.to_string() == pk_value {
+                    latest_opt = Some((k, r));
+                    break;
+                }
+            }
+        }
+        let (_latest_key, latest_row) = latest_opt
+            .ok_or_else(|| KalamDbError::NotFound(format!("Row with {}={} not found", pk_name, pk_value)))?;
+
+        let mut merged = latest_row.fields.as_object().cloned().unwrap_or_default();
+        for (k, v) in update_obj.into_iter() { merged.insert(k, v); }
+        let new_fields = JsonValue::Object(merged);
+
         let sys_cols = self.core.app_context.system_columns_service();
         let seq_id = sys_cols.generate_seq_id()?;
-        
-        // Create new version with updates
-        let entity = SharedTableRow {
-            _seq: seq_id,
-            _deleted: false,
-            fields: updates,
-        };
-        
+        let entity = SharedTableRow { _seq: seq_id, _deleted: false, fields: new_fields };
         let row_key = seq_id;
-        
         self.store.put(&row_key, &entity).map_err(|e| {
-            KalamDbError::InvalidOperation(format!(
-                "Failed to update shared table row: {}",
-                e
-            ))
+            KalamDbError::InvalidOperation(format!("Failed to update shared table row: {}", e))
         })?;
-        
         Ok(row_key)
     }
     
     fn delete(&self, _user_id: &UserId, _key: &SharedTableRowId) -> Result<(), KalamDbError> {
         // IGNORE user_id parameter - no RLS for shared tables
-        
-        // TODO: Implement full DELETE logic
-        // 1. Scan RocksDB + Parquet for all versions of this row (NO user filtering)
-        // 2. Apply version resolution (MAX(_seq))
-        
-        // Placeholder: Append tombstone directly (incomplete implementation)
         let sys_cols = self.core.app_context.system_columns_service();
         let seq_id = sys_cols.generate_seq_id()?;
-        
-        // Create tombstone row
-        let entity = SharedTableRow {
-            _seq: seq_id,
-            _deleted: true,
-            fields: serde_json::json!({}), // Empty fields for tombstone
-        };
-        
+        let entity = SharedTableRow { _seq: seq_id, _deleted: true, fields: serde_json::json!({}) };
         let row_key = seq_id;
-        
         self.store.put(&row_key, &entity).map_err(|e| {
-            KalamDbError::InvalidOperation(format!(
-                "Failed to delete shared table row: {}",
-                e
-            ))
+            KalamDbError::InvalidOperation(format!("Failed to delete shared table row: {}", e))
         })?;
-        
         Ok(())
     }
     
@@ -243,7 +236,7 @@ impl BaseTableProvider<SharedTableRowId, SharedTableRow> for SharedTableProvider
 
         // TODO(phase 13.5): Merge cold storage (Parquet) snapshots as well
 
-        // Version resolution: MAX(_seq) per PK, exclude _deleted=true
+        // Version resolution: MAX(_seq) per PK; honor tombstones
         use std::collections::HashMap;
         let pk_name = self.primary_key_field_name().to_string();
         let mut best: HashMap<String, (SharedTableRowId, SharedTableRow)> = HashMap::new();
@@ -269,11 +262,6 @@ impl BaseTableProvider<SharedTableRowId, SharedTableRow> for SharedTableProvider
             };
             let pk_key = pk_val.to_string();
 
-            // Skip deleted rows from winning set
-            if row._deleted {
-                continue;
-            }
-
             match best.get(&pk_key) {
                 Some((_existing_key, existing_row)) => {
                     if row._seq > existing_row._seq {
@@ -286,8 +274,10 @@ impl BaseTableProvider<SharedTableRowId, SharedTableRow> for SharedTableProvider
             }
         }
 
-        // TODO(phase 13.6): Apply filter expression for simple predicates if provided
-        let result: Vec<(SharedTableRowId, SharedTableRow)> = best.into_values().collect();
+        let result: Vec<(SharedTableRowId, SharedTableRow)> = best
+            .into_values()
+            .filter(|(_k, r)| !r._deleted)
+            .collect();
         Ok(result)
     }
     

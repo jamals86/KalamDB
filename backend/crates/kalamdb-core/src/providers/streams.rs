@@ -34,7 +34,7 @@ use std::any::Any;
 use std::sync::Arc;
 
 // Arrow <-> JSON helpers
-use crate::tables::arrow_json_conversion::json_rows_to_arrow_batch;
+use crate::providers::arrow_json_conversion::json_rows_to_arrow_batch;
 use serde_json::json;
 
 /// Stream table provider with RLS and TTL filtering

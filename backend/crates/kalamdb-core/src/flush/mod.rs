@@ -1,17 +1,22 @@
-//! Flush module for flush policy management
+//! Flush module for flush policy management and utilities
 //!
 //! This module manages flush policies that determine when data is written
 //! from RocksDB to Parquet storage.
 //!
-//! **Phase 14 Step 11 Migration**: Flush job implementations moved to table modules:
-//! - SharedTableFlushJob: crate::tables::shared_tables::shared_table_flush
-//! - UserTableFlushJob: crate::tables::user_tables::user_table_flush
+//! Phase 13.7 Migration: All flush logic moved to providers/flush:
+//! - SharedTableFlushJob: crate::providers::flush::SharedTableFlushJob
+//! - UserTableFlushJob: crate::providers::flush::UserTableFlushJob
+//! - JsonBatchBuilder: crate::providers::flush::util::JsonBatchBuilder
 //!
-//! This module now re-exports from new locations for backward compatibility.
+//! This module now re-exports from providers/flush for backward compatibility.
 
-pub mod util;
+// Re-export from providers/flush (Phase 13.7)
+pub use crate::providers::flush::{
+    FlushExecutor, FlushJobResult, FlushMetadata, JsonBatchBuilder, SharedTableFlushJob,
+    SharedTableFlushMetadata, TableFlush, UserTableFlushJob, UserTableFlushMetadata,
+};
 
-// Re-export from new locations (Phase 14 Step 11)
-pub use crate::tables::base_flush::FlushJobResult;
-pub use crate::tables::shared_tables::SharedTableFlushJob;
-pub use crate::tables::user_tables::UserTableFlushJob;
+// Legacy re-export for backward compatibility
+pub mod util {
+    pub use crate::providers::flush::util::*;
+}

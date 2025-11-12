@@ -397,7 +397,7 @@ async fn test_cache_invalidation_on_alter_table() {
     .expect("Failed to create updated table definition");
 
     // 4. Invalidate cache (this is what ALTER TABLE would do)
-    schema_cache.invalidate(&test_table_id);
+    schema_registry.invalidate(&test_table_id);
 
     // 5. Update schema in store
     schema_store

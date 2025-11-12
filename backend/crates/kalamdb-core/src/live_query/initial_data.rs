@@ -11,8 +11,6 @@ use crate::tables::system::system_table_store::{SharedTableStoreExt, UserTableSt
 use crate::tables::{StreamTableStore, UserTableStore};
 use chrono::DateTime;
 use kalamdb_commons::TableName;
-use kalamdb_commons::ids::{SeqId, UserTableRowId};
-use kalamdb_commons::models::UserId;
 use serde_json::Value as JsonValue;
 use std::sync::Arc;
 
@@ -311,6 +309,8 @@ mod tests {
     use super::*;
     use crate::tables::system::system_table_store::UserTableStoreExt;
     use crate::tables::user_tables::user_table_store::{new_user_table_store, UserTableRow};
+    use kalamdb_commons::UserId;
+    use kalamdb_commons::ids::{SeqId, UserTableRowId};
     use kalamdb_commons::models::{NamespaceId, TableName};
     use kalamdb_commons::models::{ConnectionId as ConnId, LiveId as CommonsLiveId};
     use kalamdb_store::test_utils::InMemoryBackend;

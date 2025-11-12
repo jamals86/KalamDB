@@ -23,17 +23,23 @@
 //! deprecated and will be removed in Phase 13.6. Use providers/ instead.
 
 pub mod base;
-pub mod users;
+pub mod flush; // Phase 13.7: Consolidated flush logic from tables/
+pub mod arrow_json_conversion; // Shared Arrow<->JSON utilities used by providers and flush
 pub mod shared;
 pub mod streams;
 pub mod unified_dml; // Phase 13.6: Moved from tables/
+pub mod users;
 pub mod version_resolution; // Phase 13.6: Moved from tables/
 
 // Re-export key types for convenience
 pub use base::{BaseTableProvider, TableProviderCore};
-pub use users::UserTableProvider;
+pub use flush::{
+    FlushExecutor, FlushJobResult, FlushMetadata, SharedTableFlushJob, 
+    SharedTableFlushMetadata, TableFlush, UserTableFlushJob, UserTableFlushMetadata,
+};
 pub use shared::SharedTableProvider;
 pub use streams::StreamTableProvider;
+pub use users::UserTableProvider;
 
 // Re-export unified DML functions
 pub use unified_dml::{

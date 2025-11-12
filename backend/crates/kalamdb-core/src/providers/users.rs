@@ -33,7 +33,7 @@ use std::any::Any;
 use std::sync::Arc;
 
 // Arrow <-> JSON helpers
-use crate::tables::arrow_json_conversion::json_rows_to_arrow_batch;
+use crate::providers::arrow_json_conversion::json_rows_to_arrow_batch;
 use serde_json::json;
 
 /// User table provider with RLS
@@ -163,63 +163,67 @@ impl BaseTableProvider<UserTableRowId, UserTableRow> for UserTableProvider {
         Ok(row_key)
     }
     
-    fn update(&self, user_id: &UserId, _key: &UserTableRowId, updates: JsonValue) -> Result<UserTableRowId, KalamDbError> {
-        // TODO: Implement full UPDATE logic
-        // 1. Scan RocksDB + Parquet for all versions of this row (user-scoped)
-        // 2. Apply version resolution (MAX(_seq))
-        // 3. Merge updates into latest version
-        
-        // Placeholder: Just append as new version (incomplete implementation)
-        // Generate new SeqId
+    fn update(&self, user_id: &UserId, key: &UserTableRowId, updates: JsonValue) -> Result<UserTableRowId, KalamDbError> {
+        let update_obj = updates.as_object().cloned().ok_or_else(|| {
+            KalamDbError::InvalidSql("UPDATE requires object of column assignments".to_string())
+        })?;
+
+        // Load referenced version to extract PK
+        let prior = EntityStore::get(&*self.store, key)
+            .map_err(|e| KalamDbError::Other(format!("Failed to load prior version: {}", e)))?
+            .ok_or_else(|| KalamDbError::NotFound("Row not found for update".to_string()))?;
+
+        let pk_name = self.primary_key_field_name().to_string();
+        let pk_value = crate::providers::unified_dml::extract_user_pk_value(&prior.fields, &pk_name)?;
+
+        // Find latest resolved row for this PK under same user
+        let resolved = self.scan_with_version_resolution_to_kvs(user_id, None)?;
+        let mut latest_opt: Option<(UserTableRowId, UserTableRow)> = None;
+        for (k, r) in resolved.into_iter() {
+            if let Some(val) = r.fields.get(&pk_name) {
+                if val.to_string() == pk_value {
+                    latest_opt = Some((k, r));
+                    break;
+                }
+            }
+        }
+        let (_latest_key, latest_row) = latest_opt
+            .ok_or_else(|| KalamDbError::NotFound(format!("Row with {}={} not found", pk_name, pk_value)))?;
+
+        // Merge updates onto latest
+        let mut merged = latest_row
+            .fields
+            .as_object()
+            .cloned()
+            .unwrap_or_default();
+        for (k, v) in update_obj.into_iter() { merged.insert(k, v); }
+
+        let new_fields = JsonValue::Object(merged);
         let sys_cols = self.core.app_context.system_columns_service();
         let seq_id = sys_cols.generate_seq_id()?;
-        
-        // Create new version with updates
-        let entity = UserTableRow {
-            user_id: user_id.clone(),
-            _seq: seq_id,
-            _deleted: false,
-            fields: updates,
-        };
-        
+        let entity = UserTableRow { user_id: user_id.clone(), _seq: seq_id, _deleted: false, fields: new_fields };
         let row_key = UserTableRowId::new(user_id.clone(), seq_id);
-        
         self.store.put(&row_key, &entity).map_err(|e| {
-            KalamDbError::InvalidOperation(format!(
-                "Failed to update user table row: {}",
-                e
-            ))
+            KalamDbError::InvalidOperation(format!("Failed to update user table row: {}", e))
         })?;
-        
         Ok(row_key)
     }
     
-    fn delete(&self, user_id: &UserId, _key: &UserTableRowId) -> Result<(), KalamDbError> {
-        // TODO: Implement full DELETE logic
-        // 1. Scan RocksDB + Parquet for all versions of this row (user-scoped)
-        // 2. Apply version resolution (MAX(_seq))
-        
-        // Placeholder: Append tombstone directly (incomplete implementation)
+    fn delete(&self, user_id: &UserId, key: &UserTableRowId) -> Result<(), KalamDbError> {
+        // Load referenced version to extract PK (for validation; we append tombstone regardless)
+        let prior = EntityStore::get(&*self.store, key)
+            .map_err(|e| KalamDbError::Other(format!("Failed to load prior version: {}", e)))?
+            .ok_or_else(|| KalamDbError::NotFound("Row not found for delete".to_string()))?;
+        let pk_name = self.primary_key_field_name().to_string();
+        let _pk_value = crate::providers::unified_dml::extract_user_pk_value(&prior.fields, &pk_name)?;
+
         let sys_cols = self.core.app_context.system_columns_service();
         let seq_id = sys_cols.generate_seq_id()?;
-        
-        // Create tombstone row
-        let entity = UserTableRow {
-            user_id: user_id.clone(),
-            _seq: seq_id,
-            _deleted: true,
-            fields: serde_json::json!({}), // Empty fields for tombstone
-        };
-        
+        let entity = UserTableRow { user_id: user_id.clone(), _seq: seq_id, _deleted: true, fields: serde_json::json!({}) };
         let row_key = UserTableRowId::new(user_id.clone(), seq_id);
-        
         self.store.put(&row_key, &entity).map_err(|e| {
-            KalamDbError::InvalidOperation(format!(
-                "Failed to delete user table row: {}",
-                e
-            ))
+            KalamDbError::InvalidOperation(format!("Failed to delete user table row: {}", e))
         })?;
-        
         Ok(())
     }
     
@@ -285,7 +289,7 @@ impl BaseTableProvider<UserTableRowId, UserTableRow> for UserTableProvider {
 
         // TODO(phase 13.5): Merge cold storage (Parquet) snapshots as well
 
-        // 2) Version resolution: keep MAX(_seq) per primary key, exclude _deleted=true
+        // 2) Version resolution: keep MAX(_seq) per primary key; honor tombstones
         use std::collections::HashMap;
         let pk_name = self.primary_key_field_name().to_string();
         let mut best: HashMap<String, (UserTableRowId, UserTableRow)> = HashMap::new();
@@ -314,18 +318,6 @@ impl BaseTableProvider<UserTableRowId, UserTableRow> for UserTableProvider {
             // Use string key for grouping (stable across primitives)
             let pk_key = pk_val.to_string();
 
-            // Skip rows marked deleted
-            if row._deleted {
-                // Only skip if there's no newer non-deleted version; we'll handle by always preferring newer below.
-                // Continue here to avoid storing tombstones as winners when no non-deleted exists.
-                // If all versions are deleted, the entry simply won't appear.
-                // We still allow a newer non-deleted to overwrite later.
-                // Do not insert into map here.
-                // But if an older non-deleted already exists, keep it until a newer version appears.
-                // We'll implement by only inserting/overwriting on non-deleted rows.
-                continue;
-            }
-
             match best.get(&pk_key) {
                 Some((_existing_key, existing_row)) => {
                     if row._seq > existing_row._seq {
@@ -338,8 +330,11 @@ impl BaseTableProvider<UserTableRowId, UserTableRow> for UserTableProvider {
             }
         }
 
-        // TODO(phase 13.6): Apply filter expression for simple predicates if provided
-        let result: Vec<(UserTableRowId, UserTableRow)> = best.into_values().collect();
+        // Filter winners where latest version is not deleted
+        let result: Vec<(UserTableRowId, UserTableRow)> = best
+            .into_values()
+            .filter(|(_k, r)| !r._deleted)
+            .collect();
         Ok(result)
     }
     
