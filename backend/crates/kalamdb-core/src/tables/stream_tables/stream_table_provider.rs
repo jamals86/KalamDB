@@ -303,7 +303,7 @@ impl StreamTableProvider {
 
         Ok(rows
             .into_iter()
-            .map(|(row_id, row)| (row.fields, row_id.to_string()))
+            .map(|(row_id, row)| (row.fields, row_id.as_str().to_string()))
             .collect())
     }
 
