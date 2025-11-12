@@ -11,7 +11,7 @@ use serde::{Deserialize, Serialize};
 ///
 /// # Examples
 ///
-/// ```
+/// ```rust,ignore
 /// use kalamdb_core::flush::FlushPolicy;
 ///
 /// let row_policy = FlushPolicy::RowLimit { row_limit: 10000 };

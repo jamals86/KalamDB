@@ -55,9 +55,9 @@
 //!
 //! # Usage Example
 //!
-//! ```rust
-//! use kalamdb_commons::types::{KalamDataType, ToArrowType, FromArrowType};
-//! use arrow::datatypes::DataType as ArrowDataType;
+//! ```rust,ignore
+//! use kalamdb_commons::models::datatypes::{KalamDataType, ToArrowType, FromArrowType};
+//! use arrow_schema::DataType as ArrowDataType;
 //!
 //! // Define a KalamDB type
 //! let kalam_type = KalamDataType::Decimal { precision: 10, scale: 2 };

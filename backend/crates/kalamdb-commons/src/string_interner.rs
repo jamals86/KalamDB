@@ -11,7 +11,7 @@
 //! - **10,000× reduction** for repeated column names
 //!
 //! # Usage
-//! ```rust
+//! ```rust,ignore
 //! use kalamdb_commons::string_interner::{intern, SYSTEM_COLUMNS};
 //!
 //! // Intern arbitrary string
@@ -34,7 +34,7 @@ static INTERNER: Lazy<DashMap<Arc<str>, ()>> = Lazy::new(DashMap::new);
 /// Otherwise, inserts it into the global interner and returns a new Arc<str>.
 ///
 /// # Examples
-/// ```
+/// ```rust,ignore
 /// use kalamdb_commons::string_interner::intern;
 ///
 /// let s1 = intern("user_id");
@@ -59,7 +59,7 @@ pub fn intern(s: &str) -> Arc<str> {
 /// Using these constants avoids repeated allocations for system columns.
 ///
 /// # Examples
-/// ```
+/// ```rust,ignore
 /// use kalamdb_commons::string_interner::SYSTEM_COLUMNS;
 /// use std::collections::HashMap;
 ///

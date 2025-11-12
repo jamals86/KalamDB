@@ -148,7 +148,15 @@ INSERT INTO <namespace>.<table>
 
 135) There is some places were we have self.app_context and we at the same time refetch the app_context again
 
-136) 
+136) Cleanup old data from: backend/crates/kalamdb-commons/src/string_interner.rs and also remove everything have to do with old system columns: _row_id, _id, _updated
+
+137) SharedTableFlushJob AND UserTableFlushJob have so much code duplication we need to combine them into one flush job with some parameters to differ between user/shared table flushing
+
+138) Split into more crates:
+      - kalamdb-executor   - which contains all the core/sql folder
+      - kalamdb-system     - All system tables and system related code
+      - kalamdb-tables     - All providers for shared/user/stream tables
+      - kalamdb-flush      - All flushing related code
 
 
 Here’s the updated 5-line spec with embedding storage inside Parquet and managed HNSW indexing (with delete handling):

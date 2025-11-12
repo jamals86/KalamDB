@@ -26,10 +26,10 @@ pub struct UserTableFlushJob {
     table_id: Arc<TableId>,
     namespace_id: NamespaceId,
     table_name: TableName,
-    schema: SchemaRef,
-    unified_cache: Arc<SchemaRegistry>,
-    node_id: NodeId,
-    live_query_manager: Option<Arc<LiveQueryManager>>,
+    schema: SchemaRef, //TODO: needed?
+    unified_cache: Arc<SchemaRegistry>, //TODO: wE HAVE APPCONTEXT NOW
+    node_id: NodeId, //TODO: We can pass AppContext and has node_id there
+    live_query_manager: Option<Arc<LiveQueryManager>>, //TODO: We can pass AppContext and has live_query_manager there
 }
 
 impl UserTableFlushJob {
@@ -389,7 +389,7 @@ impl TableFlush for UserTableFlushJob {
             let table_name = format!("{}.{}", self.namespace_id.as_str(), self.table_name.as_str());
             let notification = ChangeNotification::flush(table_name.clone(), total_rows_flushed, parquet_files.clone());
             let table_id = TableId::new(self.namespace_id.clone(), self.table_name.clone());
-            let system_user = UserId::new("__system__".to_string());
+            let system_user = UserId::system();
             manager.notify_table_change_async(system_user, table_id, notification);
         }
 

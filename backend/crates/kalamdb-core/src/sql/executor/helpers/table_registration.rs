@@ -28,6 +28,7 @@ pub fn register_user_table_provider(
 ) -> Result<(), KalamDbError> {
     use crate::providers::{TableProviderCore, UserTableProvider};
     use crate::tables::user_tables::new_user_table_store;
+    use crate::tables::system::system_table_store::UserTableStoreExt;
 
     log::debug!(
         "📋 Registering USER table provider: {}.{}",
@@ -42,8 +43,21 @@ pub fn register_user_table_provider(
         table_id.table_name(),
     ));
 
-    // Create TableProviderCore and provider (new providers::users)
-    let core = Arc::new(TableProviderCore::new(app_context.clone()));
+    // Ensure partition exists for this table
+    if let Err(e) = user_table_store.create_column_family() {
+        return Err(KalamDbError::Other(format!(
+            "Failed to create user table partition for {}.{}: {}",
+            table_id.namespace_id().as_str(),
+            table_id.table_name().as_str(),
+            e
+        )));
+    }
+
+    // Create TableProviderCore and provider (wire LiveQueryManager for notifications)
+    let core = Arc::new(
+        TableProviderCore::new(app_context.clone())
+            .with_live_query_manager(app_context.live_query_manager()),
+    );
 
     // Determine primary key field name from TableDefinition
     let table_def = app_context
@@ -102,6 +116,7 @@ pub fn register_shared_table_provider(
 ) -> Result<(), KalamDbError> {
     use crate::providers::{SharedTableProvider, TableProviderCore};
     use crate::tables::shared_tables::shared_table_store::new_shared_table_store;
+    use crate::tables::system::system_table_store::SharedTableStoreExt;
 
     log::debug!(
         "📋 Registering SHARED table provider: {}.{}",
@@ -116,8 +131,21 @@ pub fn register_shared_table_provider(
         table_id.table_name(),
     ));
 
+    // Ensure partition exists for this table
+    if let Err(e) = shared_store.create_column_family() {
+        return Err(KalamDbError::Other(format!(
+            "Failed to create shared table partition for {}.{}: {}",
+            table_id.namespace_id().as_str(),
+            table_id.table_name().as_str(),
+            e
+        )));
+    }
+
     // Create and register new providers::SharedTableProvider
-    let core = Arc::new(TableProviderCore::new(app_context.clone()));
+    let core = Arc::new(
+        TableProviderCore::new(app_context.clone())
+            .with_live_query_manager(app_context.live_query_manager()),
+    );
 
     // Determine primary key field name
     let table_def = app_context
@@ -141,7 +169,7 @@ pub fn register_shared_table_provider(
         shared_store,
         pk_field,
     );
-
+    
     app_context
         .schema_registry()
         .insert_provider(table_id.clone(), Arc::new(provider))?;
@@ -175,6 +203,7 @@ pub fn register_stream_table_provider(
     ttl_seconds: Option<u64>,
 ) -> Result<(), KalamDbError> {
     use crate::tables::stream_tables::stream_table_store::new_stream_table_store;
+    use crate::tables::system::system_table_store::SharedTableStoreExt;
     use crate::providers::{StreamTableProvider, TableProviderCore};
 
     log::debug!(
@@ -190,8 +219,21 @@ pub fn register_stream_table_provider(
         table_id.table_name(),
     ));
 
+    // Ensure partition exists for this table
+    if let Err(e) = stream_store.create_column_family() {
+        return Err(KalamDbError::Other(format!(
+            "Failed to create stream table partition for {}.{}: {}",
+            table_id.namespace_id().as_str(),
+            table_id.table_name().as_str(),
+            e
+        )));
+    }
+
     // Create and register provider (new providers::streams implementation)
-    let core = Arc::new(TableProviderCore::new(app_context.clone()));
+    let core = Arc::new(
+        TableProviderCore::new(app_context.clone())
+            .with_live_query_manager(app_context.live_query_manager()),
+    );
     // For streams, we use a conventional primary key field name in JSON payload ("id")
     let provider = StreamTableProvider::new(
         core,

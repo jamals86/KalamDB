@@ -36,6 +36,7 @@ use std::sync::Arc;
 // Arrow <-> JSON helpers
 use crate::providers::arrow_json_conversion::json_rows_to_arrow_batch;
 use serde_json::json;
+use crate::live_query::manager::ChangeNotification;
 
 /// Stream table provider with RLS and TTL filtering
 ///
@@ -167,7 +168,30 @@ impl BaseTableProvider<StreamTableRowId, StreamTableRow> for StreamTableProvider
             user_id.as_str(),
             seq_id
         );
-        
+
+        // Fire live query notification (INSERT)
+        if let Some(manager) = &self.core.live_query_manager {
+            let table_id = (*self.table_id).clone();
+            let table_name = format!(
+                "{}.{}",
+                table_id.namespace_id().as_str(),
+                table_id.table_name().as_str()
+            );
+            
+            //TODO: Should we keep the user_id in the row JSON?
+            // Flatten event fields and include user_id
+            let mut obj = entity
+                .fields
+                .as_object()
+                .cloned()
+                .unwrap_or_default();
+            obj.insert("user_id".to_string(), json!(user_id.as_str()));
+            let row_json = JsonValue::Object(obj);
+
+            let notification = ChangeNotification::insert(table_name, row_json);
+            manager.notify_table_change_async(user_id.clone(), table_id, notification);
+        }
+
         Ok(row_key)
     }
     
@@ -182,7 +206,7 @@ impl BaseTableProvider<StreamTableRowId, StreamTableRow> for StreamTableProvider
         self.insert(user_id, updates)
     }
     
-    fn delete(&self, _user_id: &UserId, key: &StreamTableRowId) -> Result<(), KalamDbError> {
+    fn delete(&self, user_id: &UserId, key: &StreamTableRowId) -> Result<(), KalamDbError> {
         // TODO: Implement DELETE logic for stream tables
         // Stream tables may use hard delete or tombstone depending on requirements
         
@@ -193,7 +217,21 @@ impl BaseTableProvider<StreamTableRowId, StreamTableRow> for StreamTableProvider
                 e
             ))
         })?;
-        
+
+        // Fire live query notification (DELETE hard)
+        if let Some(manager) = &self.core.live_query_manager {
+            let table_id = (*self.table_id).clone();
+            let table_name = format!(
+                "{}.{}",
+                table_id.namespace_id().as_str(),
+                table_id.table_name().as_str()
+            );
+
+            let row_id_str = format!("{}:{}", key.user_id().as_str(), key.seq().as_i64());
+            let notification = ChangeNotification::delete_hard(table_name, row_id_str);
+            manager.notify_table_change_async(user_id.clone(), table_id, notification);
+        }
+
         Ok(())
     }
     

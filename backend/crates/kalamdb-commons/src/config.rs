@@ -977,6 +977,13 @@ impl ServerConfig {
 mod tests {
     use super::*;
     use std::env;
+    use std::sync::{Mutex, MutexGuard, OnceLock};
+
+    static ENV_MUTEX: OnceLock<Mutex<()>> = OnceLock::new();
+
+    fn acquire_env_lock() -> MutexGuard<'static, ()> {
+        ENV_MUTEX.get_or_init(|| Mutex::new(())).lock().unwrap()
+    }
 
     #[test]
     fn test_default_config_is_valid() {
@@ -1007,6 +1014,7 @@ mod tests {
 
     #[test]
     fn test_env_override_server_host() {
+        let _guard = acquire_env_lock();
         env::set_var("KALAMDB_SERVER_HOST", "0.0.0.0");
         let mut config = ServerConfig::default();
         config.apply_env_overrides().unwrap();
@@ -1016,6 +1024,7 @@ mod tests {
 
     #[test]
     fn test_env_override_server_port() {
+        let _guard = acquire_env_lock();
         env::set_var("KALAMDB_SERVER_PORT", "9090");
         let mut config = ServerConfig::default();
         config.apply_env_overrides().unwrap();
@@ -1025,6 +1034,7 @@ mod tests {
 
     #[test]
     fn test_env_override_log_level() {
+        let _guard = acquire_env_lock();
         env::set_var("KALAMDB_LOG_LEVEL", "debug");
         let mut config = ServerConfig::default();
         config.apply_env_overrides().unwrap();
@@ -1034,6 +1044,7 @@ mod tests {
 
     #[test]
     fn test_env_override_log_to_console() {
+        let _guard = acquire_env_lock();
         env::set_var("KALAMDB_LOG_TO_CONSOLE", "false");
         let mut config = ServerConfig::default();
         config.apply_env_overrides().unwrap();
@@ -1054,6 +1065,7 @@ mod tests {
 
     #[test]
     fn test_env_override_data_dir() {
+        let _guard = acquire_env_lock();
         env::set_var("KALAMDB_DATA_DIR", "/custom/data");
         let mut config = ServerConfig::default();
         config.apply_env_overrides().unwrap();
@@ -1087,6 +1099,7 @@ mod tests {
 
     #[test]
     fn test_new_env_vars_override_legacy() {
+        let _guard = acquire_env_lock();
         // Set both new and legacy vars - new should win
         env::set_var("KALAMDB_SERVER_HOST", "new.host");
         env::set_var("KALAMDB_HOST", "old.host");

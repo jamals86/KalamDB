@@ -26,10 +26,10 @@ pub struct SharedTableFlushJob {
     table_id: Arc<TableId>,
     namespace_id: NamespaceId,
     table_name: TableName,
-    schema: SchemaRef,
-    unified_cache: Arc<SchemaRegistry>,
-    node_id: NodeId,
-    live_query_manager: Option<Arc<LiveQueryManager>>,
+    schema: SchemaRef, //TODO: needed?
+    unified_cache: Arc<SchemaRegistry>, //TODO: We have AppContext now
+    node_id: NodeId, //TODO: We can pass AppContext and has node_id there
+    live_query_manager: Option<Arc<LiveQueryManager>>, //TODO: We can pass AppContext and has live_query_manager there
 }
 
 impl SharedTableFlushJob {
@@ -208,7 +208,7 @@ impl TableFlush for SharedTableFlushJob {
             let parquet_files = vec![parquet_path.clone()];
             let notification = ChangeNotification::flush(table_name.clone(), rows_count, parquet_files.clone());
             let table_id = TableId::new(self.namespace_id.clone(), self.table_name.clone());
-            let system_user = UserId::new("__system__".to_string());
+            let system_user = UserId::system();
             manager.notify_table_change_async(system_user, table_id, notification);
         }
 

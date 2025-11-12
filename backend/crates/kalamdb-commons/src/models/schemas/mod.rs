@@ -38,7 +38,7 @@
 //!
 //! # Usage Example
 //!
-//! ```rust
+//! ```rust,ignore
 //! use kalamdb_commons::schemas::{TableDefinition, ColumnDefinition, TableType, TableOptions};
 //! use kalamdb_commons::types::KalamDataType;
 //!

@@ -35,6 +35,7 @@ use std::sync::Arc;
 // Arrow <-> JSON helpers
 use crate::providers::arrow_json_conversion::json_rows_to_arrow_batch;
 use serde_json::json;
+use crate::live_query::manager::ChangeNotification;
 
 /// User table provider with RLS
 ///
@@ -159,6 +160,29 @@ impl BaseTableProvider<UserTableRowId, UserTableRow> for UserTableProvider {
             user_id.as_str(),
             seq_id
         );
+
+        // Fire live query notification (INSERT)
+        if let Some(manager) = &self.core.live_query_manager {
+            let table_id = (*self.table_id).clone();
+            let table_name = format!(
+                "{}.{}",
+                table_id.namespace_id().as_str(),
+                table_id.table_name().as_str()
+            );
+
+            //TODO: Should we keep the user_id in the row JSON?
+            // Flatten row fields and include user_id for filter matching
+            let mut obj = entity
+                .fields
+                .as_object()
+                .cloned()
+                .unwrap_or_default();
+            obj.insert("user_id".to_string(), json!(user_id.as_str()));
+            let row_json = JsonValue::Object(obj);
+
+            let notification = ChangeNotification::insert(table_name, row_json);
+            manager.notify_table_change_async(user_id.clone(), table_id, notification);
+        }
         
         Ok(row_key)
     }
@@ -206,6 +230,38 @@ impl BaseTableProvider<UserTableRowId, UserTableRow> for UserTableProvider {
         self.store.put(&row_key, &entity).map_err(|e| {
             KalamDbError::InvalidOperation(format!("Failed to update user table row: {}", e))
         })?;
+
+        // Fire live query notification (UPDATE)
+        if let Some(manager) = &self.core.live_query_manager {
+            let table_id = (*self.table_id).clone();
+            let table_name = format!(
+                "{}.{}",
+                table_id.namespace_id().as_str(),
+                table_id.table_name().as_str()
+            );
+
+            //TODO: Should we keep the user_id in the row JSON?
+            // Old data: latest prior resolved row
+            let mut old_obj = latest_row
+                .fields
+                .as_object()
+                .cloned()
+                .unwrap_or_default();
+            old_obj.insert("user_id".to_string(), json!(user_id.as_str()));
+            let old_json = JsonValue::Object(old_obj);
+
+            // New data: merged entity
+            let mut new_obj = entity
+                .fields
+                .as_object()
+                .cloned()
+                .unwrap_or_default();
+            new_obj.insert("user_id".to_string(), json!(user_id.as_str()));
+            let new_json = JsonValue::Object(new_obj);
+
+            let notification = ChangeNotification::update(table_name, old_json, new_json);
+            manager.notify_table_change_async(user_id.clone(), table_id, notification);
+        }
         Ok(row_key)
     }
     
@@ -224,6 +280,29 @@ impl BaseTableProvider<UserTableRowId, UserTableRow> for UserTableProvider {
         self.store.put(&row_key, &entity).map_err(|e| {
             KalamDbError::InvalidOperation(format!("Failed to delete user table row: {}", e))
         })?;
+
+        // Fire live query notification (DELETE soft)
+        if let Some(manager) = &self.core.live_query_manager {
+            let table_id = (*self.table_id).clone();
+            let table_name = format!(
+                "{}.{}",
+                table_id.namespace_id().as_str(),
+                table_id.table_name().as_str()
+            );
+
+                        //TODO: Should we keep the user_id in the row JSON?
+            // Provide prior fields for filter matching, include user_id
+            let mut obj = prior
+                .fields
+                .as_object()
+                .cloned()
+                .unwrap_or_default();
+            obj.insert("user_id".to_string(), json!(user_id.as_str()));
+            let row_json = JsonValue::Object(obj);
+
+            let notification = ChangeNotification::delete_soft(table_name, row_json);
+            manager.notify_table_change_async(user_id.clone(), table_id, notification);
+        }
         Ok(())
     }
     

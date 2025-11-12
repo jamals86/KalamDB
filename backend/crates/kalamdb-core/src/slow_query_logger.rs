@@ -41,45 +41,49 @@ impl SlowQueryLogger {
     pub fn new(log_path: String, threshold_ms: u64) -> Arc<Self> {
         let (sender, mut receiver) = mpsc::unbounded_channel::<SlowQueryEntry>();
 
-        // Spawn background task to write logs asynchronously (non-blocking)
-        tokio::spawn(async move {
-            // Create log directory if it doesn't exist
-            if let Some(parent) = Path::new(&log_path).parent() {
-                let _ = std::fs::create_dir_all(parent);
-            }
-
-            while let Some(entry) = receiver.recv().await {
-                // Open file in append mode (O_APPEND for atomic writes)
-                if let Ok(mut file) = OpenOptions::new()
-                    .create(true)
-                    .append(true)
-                    .open(&log_path)
-                {
-                    let timestamp = chrono::DateTime::from_timestamp_millis(entry.timestamp)
-                        .map(|dt| dt.format("%Y-%m-%d %H:%M:%S%.3f").to_string())
-                        .unwrap_or_else(|| "unknown".to_string());
-
-                    let table_info = entry
-                        .table_name
-                        .as_ref()
-                        .map(|t| format!("{}", t))
-                        .unwrap_or_else(|| "unknown".to_string());
-
-                    let log_line = format!(
-                        "[{}] SLOW QUERY - user={}, table={} ({}), duration={:.3}s, rows={}, query={}\n",
-                        timestamp,
-                        entry.user_id,
-                        table_info,
-                        entry.table_type,
-                        entry.duration_secs,
-                        entry.row_count,
-                        entry.query.replace('\n', " ").replace('\r', "")
-                    );
-
-                    let _ = file.write_all(log_line.as_bytes());
+        // Spawn background task only if a Tokio runtime is available.
+        // In unit tests without a runtime, we gracefully degrade by dropping logs.
+        if tokio::runtime::Handle::try_current().is_ok() {
+            tokio::spawn(async move {
+                if let Some(parent) = Path::new(&log_path).parent() {
+                    let _ = std::fs::create_dir_all(parent);
                 }
-            }
-        });
+
+                while let Some(entry) = receiver.recv().await {
+                    if let Ok(mut file) = OpenOptions::new()
+                        .create(true)
+                        .append(true)
+                        .open(&log_path)
+                    {
+                        let timestamp = chrono::DateTime::from_timestamp_millis(entry.timestamp)
+                            .map(|dt| dt.format("%Y-%m-%d %H:%M:%S%.3f").to_string())
+                            .unwrap_or_else(|| "unknown".to_string());
+
+                        let table_info = entry
+                            .table_name
+                            .as_ref()
+                            .map(|t| format!("{}", t))
+                            .unwrap_or_else(|| "unknown".to_string());
+
+                        let log_line = format!(
+                            "[{}] SLOW QUERY - user={}, table={} ({}), duration={:.3}s, rows={}, query={}\n",
+                            timestamp,
+                            entry.user_id,
+                            table_info,
+                            entry.table_type,
+                            entry.duration_secs,
+                            entry.row_count,
+                            entry.query.replace('\n', " ").replace('\r', "")
+                        );
+
+                        let _ = file.write_all(log_line.as_bytes());
+                    }
+                }
+            });
+        } else {
+            // No runtime available: drop receiver so sends are no-ops.
+            drop(receiver);
+        }
 
         Arc::new(Self {
             sender,
