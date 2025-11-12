@@ -31,7 +31,7 @@ pub use shared_tables::{
     new_shared_table_store, SharedTableProvider, SharedTableRow, SharedTableRowId, SharedTableStore,
 };
 pub use stream_tables::{
-    new_stream_table_store, StreamTableProvider, StreamTableRow, StreamTableRowId, StreamTableStore,
+    new_stream_table_store, StreamTableRow, StreamTableRowId, StreamTableStore,
 };
 pub use user_tables::{
     new_user_table_store, UserTableDeleteHandler, UserTableInsertHandler,

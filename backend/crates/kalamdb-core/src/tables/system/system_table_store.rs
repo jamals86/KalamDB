@@ -6,10 +6,10 @@
 
 use crate::error::KalamDbError;
 use crate::tables::shared_tables::shared_table_store::SharedTableRow;
-use crate::tables::stream_tables::stream_table_store::{StreamTableRow, StreamTableRowId};
+use crate::tables::stream_tables::stream_table_store::StreamTableRow;
 use crate::tables::system::SystemTableProviderExt;
 use crate::tables::user_tables::user_table_store::UserTableRow;
-use kalamdb_commons::ids::{SharedTableRowId, UserTableRowId};
+use kalamdb_commons::ids::{SharedTableRowId, UserTableRowId, StreamTableRowId};
 use kalamdb_store::{
     entity_store::{CrossUserTableStore, EntityStore},
     StorageBackend, StorageKey,
@@ -282,7 +282,8 @@ impl SharedTableStoreExt<StreamTableRowId, StreamTableRow> for SystemTableStore<
         let results = EntityStore::scan_all(self)?;
         let mut typed_results = Vec::new();
         for (key_bytes, row) in results {
-            let key = StreamTableRowId::from_bytes(&key_bytes);
+            let key = StreamTableRowId::from_bytes(&key_bytes)
+                .map_err(|e| KalamDbError::InvalidOperation(format!("Invalid key bytes: {}", e)))?;
             typed_results.push((key, row));
         }
         Ok(typed_results)
@@ -309,7 +310,8 @@ impl SharedTableStoreExt<StreamTableRowId, StreamTableRow> for SystemTableStore<
     fn drop_table(&self) -> std::result::Result<(), KalamDbError> {
         let all_results = EntityStore::scan_all(self)?;
         for (key_bytes, _) in all_results { 
-            let key = StreamTableRowId::from_bytes(&key_bytes); 
+            let key = StreamTableRowId::from_bytes(&key_bytes)
+                .map_err(|e| KalamDbError::InvalidOperation(format!("Invalid key bytes: {}", e)))?; 
             EntityStore::delete(self, &key)?; 
         }
         Ok(())
@@ -332,20 +334,10 @@ impl SharedTableStoreExt<StreamTableRowId, StreamTableRow> for SystemTableStore<
 
 impl SystemTableStore<StreamTableRowId, StreamTableRow> {
     pub fn cleanup_expired_rows(&self) -> std::result::Result<usize, KalamDbError> {
-        let all_rows = EntityStore::scan_all(self)?; 
-        let mut deleted_count = 0;
-        for (key_bytes, row) in all_rows {
-            if let Some(ttl) = row.ttl_seconds {
-                let inserted_at = chrono::DateTime::parse_from_rfc3339(&row.inserted_at)
-                    .map_err(|e| KalamDbError::Other(e.to_string()))?;
-                if chrono::Utc::now().timestamp() >= inserted_at.timestamp() + ttl as i64 {
-                    let key = StreamTableRowId::from_bytes(&key_bytes); 
-                    EntityStore::delete(self, &key)?; 
-                    deleted_count += 1;
-                }
-            }
-        }
-        Ok(deleted_count)
+        // StreamTableRow no longer contains inserted_at/ttl_seconds fields.
+        // TTL-based eviction is handled at the provider/executor level.
+        // No-op here to maintain compatibility.
+        Ok(0)
     }
 }
 

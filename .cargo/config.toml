@@ -22,4 +22,4 @@ rustflags = []
 
 [build]
 jobs = 8  # Match your CPU cores
-target = "x86_64-pc-windows-msvc"
+# target = "x86_64-pc-windows-msvc"  # Commented out - use default target for host platform

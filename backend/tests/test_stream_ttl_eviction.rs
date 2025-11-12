@@ -11,15 +11,16 @@ use datafusion::arrow::datatypes::{DataType, Field, Schema};
 use datafusion::datasource::TableProvider;
 use datafusion::execution::context::SessionState;
 use datafusion::prelude::*;
-use kalamdb_commons::models::{NamespaceId, TableName};
-use kalamdb_core::schema_registry::SchemaRegistry;
-use kalamdb_core::tables::stream_tables::{StreamTableProvider, StreamTableStore};
-use kalamdb_commons::models::TableId;
+use kalamdb_commons::models::{NamespaceId, TableName, TableId, UserId, Role};
+use kalamdb_core::providers::base::{TableProviderCore, BaseTableProvider};
+use kalamdb_core::providers::StreamTableProvider;
+use kalamdb_core::tables::stream_tables::StreamTableStore;
+use kalamdb_core::app_context::AppContext;
+use kalamdb_core::sql::executor::models::ExecutionContext;
 use kalamdb_store::test_utils::TestDb;
 use kalamdb_store::{RocksDBBackend, StorageBackend};
 use std::sync::Arc;
-use std::time::{Duration, SystemTime, UNIX_EPOCH};
-use chrono::Utc;
+use std::time::Duration;
 
 #[tokio::test]
 async fn test_stream_table_ttl_eviction_with_select() {
@@ -43,19 +44,23 @@ async fn test_stream_table_ttl_eviction_with_select() {
         NamespaceId::new("test"),
         TableName::new("test_events"),
     ));
-    let unified_cache = Arc::new(SchemaRegistry::new(0, None));
-    
+    // Initialize AppContext and TableProviderCore
+    let node_id = kalamdb_commons::NodeId::new("test-node".to_string());
+    let config = kalamdb_commons::ServerConfig::default();
+    let app_ctx = AppContext::init(backend.clone(), node_id, "/tmp/kalamdb-test".to_string(), config);
+    let core = Arc::new(TableProviderCore::new(app_ctx.clone()));
+
     let provider = Arc::new(StreamTableProvider::new(
-        table_id,
-        unified_cache.clone(),
+        core.clone(),
+        (*table_id).clone(),
         stream_store.clone(),
         Some(1), // 1-second TTL
-        false,
-        None,
+        "event_id".to_string(),
     ));
 
-    // Create DataFusion context and register table
-    let ctx = SessionContext::new();
+    // Create per-user SessionContext with user injected
+    let exec_ctx = ExecutionContext::new(UserId::new("u1"), Role::User, app_ctx.base_session_context());
+    let ctx = exec_ctx.create_session_with_user();
     ctx.register_table("test_events", provider.clone())
         .expect("Failed to register table");
 
@@ -76,15 +81,9 @@ async fn test_stream_table_ttl_eviction_with_select() {
         "value": 300
     });
 
-    provider
-        .insert_event("evt1", event1)
-        .expect("Failed to insert event1");
-    provider
-        .insert_event("evt2", event2)
-        .expect("Failed to insert event2");
-    provider
-        .insert_event("evt3", event3)
-        .expect("Failed to insert event3");
+    provider.insert(&UserId::new("u1"), event1).expect("Failed to insert event1");
+    provider.insert(&UserId::new("u1"), event2).expect("Failed to insert event2");
+    provider.insert(&UserId::new("u1"), event3).expect("Failed to insert event3");
 
     // STEP 1: Verify SELECT works - should return 3 rows
     let df = ctx
@@ -99,14 +98,8 @@ async fn test_stream_table_ttl_eviction_with_select() {
 
     println!("✅ SELECT returned 3 events before TTL expiration");
 
-    // STEP 2: Wait slightly over TTL and evict expired
+    // STEP 2: Wait slightly over TTL and rely on TTL filtering in scans
     tokio::time::sleep(Duration::from_millis(1200)).await;
-    let evicted_count = provider
-        .evict_expired()
-        .expect("Failed to evict expired events");
-
-    println!("✅ Evicted {} events", evicted_count);
-    assert_eq!(evicted_count, 3, "Expected all 3 events to be evicted");
 
     // STEP 3: Verify SELECT returns empty result set
     let df = ctx
@@ -144,19 +137,23 @@ async fn test_stream_table_select_with_projection() {
         NamespaceId::new("test"),
         TableName::new("events"),
     ));
-    let unified_cache = Arc::new(SchemaRegistry::new(0, None));
-    
+    // Initialize AppContext and TableProviderCore
+    let node_id = kalamdb_commons::NodeId::new("test-node".to_string());
+    let config = kalamdb_commons::ServerConfig::default();
+    let app_ctx = AppContext::init(backend.clone(), node_id, "/tmp/kalamdb-test".to_string(), config);
+    let core = Arc::new(TableProviderCore::new(app_ctx.clone()));
+
     let provider = Arc::new(StreamTableProvider::new(
-        table_id,
-        unified_cache.clone(),
+        core.clone(),
+        TableId::new(NamespaceId::new("test"), TableName::new("events")),
         stream_store.clone(),
         None, // No TTL for this test
-        false,
-        None,
+        "event_id".to_string(),
     ));
 
-    // Create DataFusion context and register table
-    let ctx = SessionContext::new();
+    // Create per-user SessionContext
+    let exec_ctx = ExecutionContext::new(UserId::new("u1"), Role::User, app_ctx.base_session_context());
+    let ctx = exec_ctx.create_session_with_user();
     ctx.register_table("events", provider.clone())
         .expect("Failed to register table");
 
@@ -168,7 +165,7 @@ async fn test_stream_table_select_with_projection() {
     });
 
     provider
-        .insert_event("evt1", event1)
+        .insert(&UserId::new("u1"), event1)
         .expect("Failed to insert event");
 
     // Test projection (SELECT specific columns)
@@ -207,19 +204,22 @@ async fn test_stream_table_select_with_limit() {
         NamespaceId::new("test"),
         TableName::new("events"),
     ));
-    let unified_cache = Arc::new(SchemaRegistry::new(0, None));
-    
+    // Initialize AppContext and TableProviderCore
+    let node_id = kalamdb_commons::NodeId::new("test-node".to_string());
+    let config = kalamdb_commons::ServerConfig::default();
+    let app_ctx = AppContext::init(backend.clone(), node_id, "/tmp/kalamdb-test".to_string(), config);
+    let core = Arc::new(TableProviderCore::new(app_ctx.clone()));
+
     let provider = Arc::new(StreamTableProvider::new(
-        table_id,
-        unified_cache.clone(),
+        core.clone(),
+        TableId::new(NamespaceId::new("test"), TableName::new("events")),
         stream_store.clone(),
         None,
-        false,
-        None,
+        "event_id".to_string(),
     ));
 
-    // Create DataFusion context and register table
-    let ctx = SessionContext::new();
+    let exec_ctx = ExecutionContext::new(UserId::new("u1"), Role::User, app_ctx.base_session_context());
+    let ctx = exec_ctx.create_session_with_user();
     ctx.register_table("events", provider.clone())
         .expect("Failed to register table");
 
@@ -230,7 +230,7 @@ async fn test_stream_table_select_with_limit() {
             "value": i * 100
         });
         provider
-            .insert_event(&format!("evt{}", i), event)
+            .insert(&UserId::new("u1"), event)
             .expect("Failed to insert event");
     }
 

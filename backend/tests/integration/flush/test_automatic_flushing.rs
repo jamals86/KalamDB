@@ -119,7 +119,7 @@ async fn test_manual_flush_multiple_batches() {
             let model_table = ModelTableName::new(table_name);
             let store =
                 kalamdb_core::tables::new_user_table_store(backend, &model_namespace, &model_table);
-            let buffered_rows = UserTableStoreExt::scan_all(&store, namespace, table_name)
+            let buffered_rows = UserTableStoreExt::scan_all(&store)
                 .expect("scan_all should succeed before flush");
             assert_eq!(
                 buffered_rows.len(),

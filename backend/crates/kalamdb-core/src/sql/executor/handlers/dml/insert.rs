@@ -19,6 +19,7 @@ use kalamdb_commons::models::{NamespaceId, TableName};
 use kalamdb_commons::schemas::TableType;
 use kalamdb_sql::statement_classifier::{SqlStatement, SqlStatementKind};
 use serde_json::Value as JsonValue;
+use crate::providers::base::BaseTableProvider; // bring trait into scope for insert_batch
 
 /// Handler for INSERT statements
 ///
@@ -321,7 +322,7 @@ impl InsertHandler {
 
         match table_type {
             TableType::User => {
-                // Get UserTableProvider from unified cache and downcast
+                // Get UserTableProvider (new providers module) and downcast
                 let provider_arc = schema_registry.get_provider(&table_id)
                     .ok_or_else(|| {
                         KalamDbError::InvalidOperation(format!(
@@ -330,8 +331,8 @@ impl InsertHandler {
                             table_name.as_str()
                         ))
                     })?;
-                
-                if let Some(provider) = provider_arc.as_any().downcast_ref::<crate::tables::user_tables::UserTableProvider>() {
+
+                if let Some(provider) = provider_arc.as_any().downcast_ref::<crate::providers::UserTableProvider>() {
                     let row_ids = provider.insert_batch(&user_id, rows)?;
                     Ok(row_ids.len())
                 } else {
@@ -339,7 +340,7 @@ impl InsertHandler {
                 }
             }
             TableType::Shared => {
-                // Downcast cached provider
+                // Downcast to new providers::SharedTableProvider and batch insert
                 let provider_arc = schema_registry.get_provider(&table_id).ok_or_else(|| {
                     KalamDbError::InvalidOperation(format!(
                         "Shared table provider not found for: {}.{}",
@@ -347,61 +348,10 @@ impl InsertHandler {
                         table_name.as_str()
                     ))
                 })?;
-                
-                log::debug!(
-                    "INSERT INTO SHARED TABLE {}.{} - provider found: {:p}",
-                    namespace.as_str(),
-                    table_name.as_str(),
-                    &*provider_arc
-                );
-                
-                if let Some(shared_provider) = provider_arc.as_any().downcast_ref::<crate::tables::shared_tables::SharedTableProvider>() {
-                    let mut inserted = 0usize;
-                    // TODO: Use Snowflake generator for unique IDs when implementing row IDs
-                    // use kalamdb_commons::ids::SnowflakeGenerator;
-                    // let _snowflake_gen = SnowflakeGenerator::new(0);
-                    
-                    log::debug!(
-                        "INSERT INTO SHARED TABLE {}.{} - inserting {} rows",
-                        namespace.as_str(),
-                        table_name.as_str(),
-                        rows.len()
-                    );
-                    
-                    for row in rows.into_iter() {
-                        // Generate globally unique row_id via UUID v7 (monotonic, collision-resistant)
-                        let row_id = {
-                            use uuid::Uuid;
-                            Uuid::now_v7().to_string()
-                        };
 
-                        // Ensure DEFAULT id (SNOWFLAKE_ID) applied if schema declares non-nullable 'id'
-                        let mut row = row; // make mutable
-                        if let Some(obj) = row.as_object_mut() {
-                            if !obj.contains_key("id") {
-                                // Generate snowflake id (worker 0 for now; AppContext.node_id() can be wired later)
-                                use kalamdb_commons::ids::SnowflakeGenerator;
-                                let generator = SnowflakeGenerator::new(0);
-                                match generator.next_id() {
-                                    Ok(id) => { obj.insert("id".to_string(), serde_json::json!(id)); },
-                                    Err(e) => return Err(KalamDbError::InvalidOperation(format!("Failed to generate snowflake ID: {}", e)))
-                                }
-                            }
-                        }
-
-                        // Insert row with defaults/system columns injected by provider
-                        shared_provider.insert(&row_id, row)?;
-                        inserted += 1;
-                    }
-                    
-                    log::debug!(
-                        "INSERT INTO SHARED TABLE {}.{} - successfully inserted {} rows",
-                        namespace.as_str(),
-                        table_name.as_str(),
-                        inserted
-                    );
-                    
-                    Ok(inserted)
+                if let Some(shared_provider) = provider_arc.as_any().downcast_ref::<crate::providers::SharedTableProvider>() {
+                    let row_ids = shared_provider.insert_batch(&user_id, rows)?;
+                    Ok(row_ids.len())
                 } else {
                     Err(KalamDbError::InvalidOperation(format!(
                         "Cached provider type mismatch for shared table {}.{}",
@@ -418,14 +368,11 @@ impl InsertHandler {
                         table_name.as_str()
                     ))
                 })?;
-                if let Some(stream_provider) = provider_arc.as_any().downcast_ref::<crate::tables::stream_tables::StreamTableProvider>() {
-                    let mut inserted = 0usize;
-                    for (idx, row) in rows.into_iter().enumerate() {
-                        let row_id = format!("{}_{}", chrono::Utc::now().timestamp_millis(), idx);
-                        stream_provider.insert_event(&row_id, row)?;
-                        inserted += 1;
-                    }
-                    Ok(inserted)
+
+                // New providers::StreamTableProvider supports batch insert with user_id
+                if let Some(stream_provider) = provider_arc.as_any().downcast_ref::<crate::providers::StreamTableProvider>() {
+                    let row_ids = stream_provider.insert_batch(&user_id, rows)?;
+                    Ok(row_ids.len())
                 } else {
                     Err(KalamDbError::InvalidOperation(format!(
                         "Cached provider type mismatch for stream table {}.{}",

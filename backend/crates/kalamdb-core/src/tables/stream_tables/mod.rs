@@ -5,10 +5,8 @@
 //! - MVCC architecture with user_id and _seq system columns
 //! - In-memory only (not persisted to disk, ephemeral data pattern)
 
-pub mod stream_table_provider;
 pub mod stream_table_store;
 
-pub use stream_table_provider::StreamTableProvider;
 pub use stream_table_store::{
     new_stream_table_store, StreamTableRow, StreamTableStore,
 };

@@ -1,0 +1,49 @@
+//! Providers module - Unified table providers with BaseTableProvider trait
+//!
+//! **Phase 13: Provider Consolidation**
+//!
+//! This module introduces the new providers/ architecture that eliminates ~1200 lines
+//! of duplicate code across User/Shared/Stream table providers.
+//!
+//! **Key Changes**:
+//! - BaseTableProvider<K, V> trait with generic storage abstraction
+//! - TableProviderCore shared structure for common services
+//! - UserTableProvider with RLS via user_id parameter
+//! - SharedTableProvider without RLS (ignores user_id)
+//! - StreamTableProvider with RLS + TTL filtering (hot-only storage)
+//! - No separate handlers - all DML logic inline in providers
+//!
+//! **Migration Path**:
+//! 1. Phase 13.3: Create providers/ module (this file) ✅
+//! 2. Phase 13.4: Migrate call sites to use new providers
+//! 3. Phase 13.6: Delete old tables/ module wrappers
+//!
+//! **Deprecation Notice**:
+//! The old `tables/` module with UserTableShared, handlers, and wrappers is
+//! deprecated and will be removed in Phase 13.6. Use providers/ instead.
+
+pub mod base;
+pub mod users;
+pub mod shared;
+pub mod streams;
+
+// Re-export key types for convenience
+pub use base::{BaseTableProvider, TableProviderCore};
+pub use users::UserTableProvider;
+pub use shared::SharedTableProvider;
+pub use streams::StreamTableProvider;
+
+/// Provider consolidation summary
+///
+/// **Code Reduction**: ~1200 lines eliminated
+/// - UserTableShared wrapper: ~200 lines
+/// - Duplicate DML methods: ~800 lines
+/// - Handler indirection: ~200 lines
+///
+/// **Architecture Benefits**:
+/// - Generic trait over storage key (K) and value (V) types
+/// - Shared core reduces memory overhead (Arc<TableProviderCore>)
+/// - Direct DML implementation (no handler layer)
+/// - Stateless providers with per-operation user_id passing
+/// - SessionState extraction for DataFusion integration
+pub const PROVIDER_CONSOLIDATION_VERSION: &str = "13.0.0";

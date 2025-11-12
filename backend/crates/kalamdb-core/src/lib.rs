@@ -17,6 +17,7 @@ pub mod storage;
 pub mod system_columns;
 pub mod system_table_registration;
 pub mod tables;
+pub mod providers; // Phase 13: New unified provider architecture
 pub mod test_helpers;
 
 // // Test helpers (only compiled in test mode)
