@@ -34,8 +34,8 @@ pub fn can_access_table_type(role: Role, table_type: TableType) -> bool {
 /// # Access Rules
 /// - **System role**: Can create any table type
 /// - **Dba role**: Can create any table type
-/// - **Service role**: Can create USER, SHARED, STREAM tables
-/// - **User role**: Can create USER, SHARED, STREAM tables
+/// - **Service role**: Cannot create tables (DML only)
+/// - **User role**: Cannot create tables (DML only)
 ///
 /// # Arguments
 /// * `role` - User's role
@@ -43,13 +43,8 @@ pub fn can_access_table_type(role: Role, table_type: TableType) -> bool {
 ///
 /// # Returns
 /// True if creation is allowed, false otherwise
-pub fn can_create_table(role: Role, table_type: TableType) -> bool {
-    match role {
-        Role::System | Role::Dba => true,
-        Role::Service | Role::User => {
-            return false;
-        }
-    }
+pub fn can_create_table(role: Role, _table_type: TableType) -> bool {
+    matches!(role, Role::System | Role::Dba)
 }
 
 /// Check if a role can manage users (create, update, delete).
@@ -74,8 +69,8 @@ pub fn can_manage_users(role: Role) -> bool {
 /// # Access Rules
 /// - **System role**: Can delete any table
 /// - **Dba role**: Can delete any table
-/// - **Service role**: Can delete USER, SHARED, STREAM tables
-/// - **User role**: Can delete own USER tables only
+/// - **Service role**: Cannot delete tables (DML only)
+/// - **User role**: Cannot delete tables (DML only)
 ///
 /// # Arguments
 /// * `role` - User's role
@@ -84,15 +79,8 @@ pub fn can_manage_users(role: Role) -> bool {
 ///
 /// # Returns
 /// True if deletion is allowed, false otherwise
-pub fn can_delete_table(role: Role, table_type: TableType, is_owner: bool) -> bool {
-    match role {
-        Role::System | Role::Dba => true,
-        Role::Service => !matches!(table_type, TableType::System),
-        Role::User => {
-            // Users can only delete their own user tables
-            matches!(table_type, TableType::User) && is_owner
-        }
-    }
+pub fn can_delete_table(role: Role, _table_type: TableType, _is_owner: bool) -> bool {
+    matches!(role, Role::System | Role::Dba)
 }
 
 /// Check if a role can modify table schema (ALTER TABLE).
@@ -100,8 +88,8 @@ pub fn can_delete_table(role: Role, table_type: TableType, is_owner: bool) -> bo
 /// # Access Rules
 /// - **System role**: Can modify any table
 /// - **Dba role**: Can modify any table
-/// - **Service role**: Can modify USER, SHARED, STREAM tables
-/// - **User role**: Can modify own USER tables only
+/// - **Service role**: Cannot alter tables (DML only)
+/// - **User role**: Cannot alter tables (DML only)
 ///
 /// # Arguments
 /// * `role` - User's role
@@ -110,15 +98,8 @@ pub fn can_delete_table(role: Role, table_type: TableType, is_owner: bool) -> bo
 ///
 /// # Returns
 /// True if modification is allowed, false otherwise
-pub fn can_alter_table(role: Role, table_type: TableType, is_owner: bool) -> bool {
-    match role {
-        Role::System | Role::Dba => true,
-        Role::Service => !matches!(table_type, TableType::System),
-        Role::User => {
-            // Users can only alter their own user tables
-            matches!(table_type, TableType::User) && is_owner
-        }
-    }
+pub fn can_alter_table(role: Role, _table_type: TableType, _is_owner: bool) -> bool {
+    matches!(role, Role::System | Role::Dba)
 }
 
 /// Check if a role can execute administrative operations.
@@ -221,10 +202,17 @@ mod tests {
 
     #[test]
     fn test_can_create_table() {
+        // Only System and Dba can create tables
         assert!(can_create_table(Role::System, TableType::System));
+        assert!(can_create_table(Role::System, TableType::User));
         assert!(can_create_table(Role::Dba, TableType::User));
+        assert!(can_create_table(Role::Dba, TableType::Shared));
+        
+        // Service and User cannot create any tables (DML only)
+        assert!(!can_create_table(Role::Service, TableType::User));
+        assert!(!can_create_table(Role::Service, TableType::Shared));
+        assert!(!can_create_table(Role::User, TableType::User));
         assert!(!can_create_table(Role::User, TableType::System));
-        assert!(can_create_table(Role::User, TableType::User));
     }
 
     #[test]
@@ -237,12 +225,15 @@ mod tests {
 
     #[test]
     fn test_can_delete_table() {
-        // Admins can delete anything
+        // Only System and Dba can delete tables
         assert!(can_delete_table(Role::System, TableType::System, false));
         assert!(can_delete_table(Role::Dba, TableType::User, false));
+        assert!(can_delete_table(Role::Dba, TableType::Shared, true));
 
-        // Users can only delete own user tables
-        assert!(can_delete_table(Role::User, TableType::User, true));
+        // Service and User cannot delete tables (DML only)
+        assert!(!can_delete_table(Role::Service, TableType::User, true));
+        assert!(!can_delete_table(Role::Service, TableType::Shared, false));
+        assert!(!can_delete_table(Role::User, TableType::User, true));
         assert!(!can_delete_table(Role::User, TableType::User, false));
         assert!(!can_delete_table(Role::User, TableType::System, true));
     }

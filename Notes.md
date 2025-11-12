@@ -153,6 +153,7 @@ INSERT INTO <namespace>.<table>
 137) SharedTableFlushJob AND UserTableFlushJob have so much code duplication we need to combine them into one flush job with some parameters to differ between user/shared table flushing
 
 138) Split into more crates:
+      - kalamdb-live       - which contains all live query related code
       - kalamdb-executor   - which contains all the core/sql folder
       - kalamdb-system     - All system tables and system related code
       - kalamdb-tables     - All providers for shared/user/stream tables

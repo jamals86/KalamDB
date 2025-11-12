@@ -131,9 +131,14 @@ mod tests {
         let handler = CreateTableHandler::new(app_ctx);
         let stmt = create_test_statement(TableType::User);
         
-        // User role can create USER tables
+        // User role CANNOT create tables (DML only)
         let user_ctx = create_test_context(Role::User);
         let result = handler.check_authorization(&stmt, &user_ctx).await;
+        assert!(result.is_err());
+        
+        // Dba role CAN create USER tables
+        let dba_ctx = create_test_context(Role::Dba);
+        let result = handler.check_authorization(&stmt, &dba_ctx).await;
         assert!(result.is_ok());
     }
 
@@ -185,8 +190,8 @@ mod tests {
 
         let handler = CreateTableHandler::new(app_ctx);
         let stmt = create_test_statement(TableType::User);
-        let ctx = create_test_context(Role::User);
-        let session = SessionContext::new();
+        let ctx = create_test_context(Role::Dba);
+        let _session = SessionContext::new();
 
         let result = handler.execute(stmt, vec![], &ctx).await;
         
@@ -224,8 +229,8 @@ mod tests {
         
         let mut stmt = create_test_statement(TableType::User);
         stmt.table_name = table_name.clone().into();
-        let ctx = create_test_context(Role::User);
-        let session = SessionContext::new();
+        let ctx = create_test_context(Role::Dba);
+        let _session = SessionContext::new();
 
         // First creation should succeed
         let result1 = handler.execute(stmt.clone(), vec![], &ctx).await;
