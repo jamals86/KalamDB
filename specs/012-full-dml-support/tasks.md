@@ -3,7 +3,30 @@
 **Feature**: Full DML Support  
 **Branch**: `012-full-dml-support`  
 **Generated**: 2025-11-11  
-**Updated**: 2025-11-11 (MVCC Architecture Redesign)
+**Updated**: 2025-11-12 (Phase 13 Provider Consolidation Added)
+
+---
+
+## ⚠️ PHASE DEPENDENCY CONFLICTS
+
+**CRITICAL**: Phase 13 (Provider Architecture Consolidation) conflicts with Phase 2.5 (Incremental Helper Extraction)
+
+| Phase | Tasks | Code Reduction | Status | Conflicts |
+|-------|-------|----------------|--------|-----------|
+| **Phase 2.5** | T073-T082 (40 tasks) | ~350 lines | ❌ **SKIP** | Superseded by Phase 13 |
+| **Phase 13 (US9)** | T200-T239 (40 tasks) | ~1200 lines | ✅ **ACTIVE** | Replaces Phase 2.5 entirely |
+
+**Decision**: Execute **Phase 13** (trait-based redesign) instead of Phase 2.5 (helper extraction)
+
+**Rationale**:
+- 3.4× more code reduction (1200 vs 350 lines)
+- Cleaner architecture (single trait vs scattered helpers)
+- DataFusion integration (same struct serves custom DML + SQL)
+- Eliminates both DML duplication AND wrapper overhead
+
+**Compatible Phases**: All other phases (1-12) work independently of provider architecture
+
+---
 
 ## ⚠️ CRITICAL ARCHITECTURE CHANGE (2025-11-11)
 
