@@ -24,12 +24,15 @@ use datafusion::datasource::memory::MemTable;
 use datafusion::error::{DataFusionError, Result as DataFusionResult};
 use datafusion::logical_expr::Expr;
 use datafusion::physical_plan::ExecutionPlan;
+use datafusion::parquet::arrow::arrow_reader::ParquetRecordBatchReaderBuilder;
 use kalamdb_commons::ids::UserTableRowId;
 use kalamdb_commons::models::UserId;
 use kalamdb_commons::{Role, TableId};
 use kalamdb_store::entity_store::EntityStore;
 use serde_json::Value as JsonValue;
 use std::any::Any;
+use std::fs;
+use std::path::PathBuf;
 use std::sync::Arc;
 
 // Arrow <-> JSON helpers
@@ -105,6 +108,85 @@ impl UserTableProvider {
             .ok_or_else(|| KalamDbError::InvalidOperation("SessionUserContext not found in extensions".to_string()))?;
         
         Ok((user_ctx.user_id.clone(), user_ctx.role.clone()))
+    }
+    
+    /// Scan Parquet files from cold storage for a specific user
+    ///
+    /// Lists all *.parquet files in the user's storage directory and merges them into a single RecordBatch.
+    /// Returns an empty batch if no Parquet files exist.
+    fn scan_parquet_files_as_batch(&self, user_id: &UserId) -> Result<RecordBatch, KalamDbError> {
+        // Resolve storage path for user
+        let storage_path = self.core.app_context.schema_registry()
+            .get_storage_path(&*self.table_id, Some(user_id), None)?;
+        
+        let storage_dir = PathBuf::from(&storage_path);
+        
+        // If directory doesn't exist, return empty batch
+        if !storage_dir.exists() {
+            log::debug!("No Parquet directory found for user {}: {}", user_id.as_str(), storage_path);
+            let schema = self.schema_ref();
+            return Ok(RecordBatch::new_empty(schema));
+        }
+        
+        // List all .parquet files in directory
+        let entries = fs::read_dir(&storage_dir)
+            .map_err(|e| KalamDbError::Io(e))?;
+        
+        let mut parquet_files = Vec::new();
+        for entry in entries {
+            let entry = entry.map_err(|e| KalamDbError::Io(e))?;
+            let path = entry.path();
+            if path.extension().and_then(|s| s.to_str()) == Some("parquet") {
+                parquet_files.push(path);
+            }
+        }
+        
+        if parquet_files.is_empty() {
+            log::debug!("No Parquet files found for user {} in {}", user_id.as_str(), storage_path);
+            let schema = self.schema_ref();
+            return Ok(RecordBatch::new_empty(schema));
+        }
+        
+        let parquet_count = parquet_files.len();
+        log::debug!("Found {} Parquet files for user {} in {}", parquet_count, user_id.as_str(), storage_path);
+        
+        // Read all Parquet files and merge batches
+        let mut all_batches = Vec::new();
+        let schema = self.schema_ref();
+        
+        for parquet_file in parquet_files {
+            log::debug!("Reading Parquet file: {}", parquet_file.display());
+            
+            let file = fs::File::open(&parquet_file)
+                .map_err(|e| KalamDbError::Io(e))?;
+            
+            let builder = ParquetRecordBatchReaderBuilder::try_new(file)
+                .map_err(|e| KalamDbError::Other(format!("Failed to create Parquet reader: {}", e)))?;
+            
+            let mut reader = builder.build()
+                .map_err(|e| KalamDbError::Other(format!("Failed to build Parquet reader: {}", e)))?;
+            
+            // Read all batches from this file
+            while let Some(batch_result) = reader.next() {
+                let batch = batch_result
+                    .map_err(|e| KalamDbError::Other(format!("Failed to read Parquet batch: {}", e)))?;
+                all_batches.push(batch);
+            }
+        }
+        
+        if all_batches.is_empty() {
+            log::debug!("All Parquet files were empty for user {}", user_id.as_str());
+            return Ok(RecordBatch::new_empty(schema));
+        }
+        
+        // Concatenate all batches
+        let combined = datafusion::arrow::compute::concat_batches(&schema, &all_batches)
+            .map_err(|e| KalamDbError::Other(format!("Failed to concatenate Parquet batches: {}", e)))?;
+        
+        log::debug!("Loaded {} total rows from {} Parquet files for user {}", 
+                   combined.num_rows(), parquet_count, user_id.as_str());
+        
+        Ok(combined)
     }
 }
 
@@ -366,13 +448,15 @@ impl BaseTableProvider<UserTableRowId, UserTableRow> for UserTableProvider {
                 e
             )))?;
 
-        // TODO(phase 13.5): Merge cold storage (Parquet) snapshots as well
+        // 2) Scan cold storage (Parquet files)
+        let parquet_batch = self.scan_parquet_files_as_batch(user_id)?;
 
-        // 2) Version resolution: keep MAX(_seq) per primary key; honor tombstones
+        // 3) Version resolution: keep MAX(_seq) per primary key; honor tombstones
         use std::collections::HashMap;
         let pk_name = self.primary_key_field_name().to_string();
         let mut best: HashMap<String, (UserTableRowId, UserTableRow)> = HashMap::new();
 
+        // Process RocksDB rows
         for (key_bytes, row) in raw.into_iter() {
             // Parse typed key from bytes
             let maybe_key = kalamdb_commons::ids::UserTableRowId::from_bytes(&key_bytes);
@@ -405,6 +489,102 @@ impl BaseTableProvider<UserTableRowId, UserTableRow> for UserTableProvider {
                 }
                 None => {
                     best.insert(pk_key, (key, row));
+                }
+            }
+        }
+
+        // Process Parquet rows (cold storage)
+        log::debug!("Processing {} Parquet rows for version resolution", parquet_batch.num_rows());
+        
+        // Convert RecordBatch to rows and merge with RocksDB data
+        if parquet_batch.num_rows() > 0 {
+            use crate::providers::arrow_json_conversion::arrow_value_to_json;
+            use datafusion::arrow::array::{Array, BooleanArray, Int64Array};
+            use serde_json::Map;
+            
+            // Extract column arrays
+            let schema = parquet_batch.schema();
+            
+            // Find _seq column index
+            let seq_idx = schema.fields().iter().position(|f| f.name() == "_seq")
+                .ok_or_else(|| KalamDbError::Other("Missing _seq column in Parquet batch".to_string()))?;
+            
+            // Find _deleted column index (optional)
+            let deleted_idx = schema.fields().iter().position(|f| f.name() == "_deleted");
+            
+            // Get _seq array
+            let seq_array = parquet_batch.column(seq_idx)
+                .as_any()
+                .downcast_ref::<Int64Array>()
+                .ok_or_else(|| KalamDbError::Other("_seq column is not Int64Array".to_string()))?;
+            
+            // Get _deleted array if exists
+            let deleted_array = deleted_idx.and_then(|idx| {
+                parquet_batch.column(idx)
+                    .as_any()
+                    .downcast_ref::<BooleanArray>()
+            });
+            
+            // Convert each row to UserTableRow
+            for row_idx in 0..parquet_batch.num_rows() {
+                let seq_val = seq_array.value(row_idx);
+                let seq_id = kalamdb_commons::ids::SeqId::from_i64(seq_val);
+                
+                let deleted = deleted_array
+                    .and_then(|arr| if !arr.is_null(row_idx) { Some(arr.value(row_idx)) } else { None })
+                    .unwrap_or(false);
+                
+                // Build JSON object from all columns
+                let mut json_row = Map::new();
+                for (col_idx, field) in schema.fields().iter().enumerate() {
+                    let col_name = field.name();
+                    // Skip system columns (_seq, _deleted) - they're stored separately
+                    if col_name == "_seq" || col_name == "_deleted" {
+                        continue;
+                    }
+                    
+                    let array = parquet_batch.column(col_idx);
+                    match arrow_value_to_json(array.as_ref(), row_idx) {
+                        Ok(val) => {
+                            json_row.insert(col_name.clone(), val);
+                        }
+                        Err(e) => {
+                            log::warn!("Failed to convert column {} for row {}: {}", col_name, row_idx, e);
+                        }
+                    }
+                }
+                
+                // Extract PK from JSON row
+                let pk_val = match json_row.get(&pk_name) {
+                    Some(v) => v,
+                    None => {
+                        log::warn!("Parquet row missing primary key field '{}', skipping", pk_name);
+                        continue;
+                    }
+                };
+                
+                let pk_key = pk_val.to_string();
+                
+                // Create UserTableRow
+                let row = UserTableRow {
+                    user_id: user_id.clone(),
+                    _seq: seq_id,
+                    _deleted: deleted,
+                    fields: JsonValue::Object(json_row),
+                };
+                
+                let key = UserTableRowId::new(user_id.clone(), seq_id);
+                
+                // Merge with existing data using MAX(_seq)
+                match best.get(&pk_key) {
+                    Some((_existing_key, existing_row)) => {
+                        if row._seq > existing_row._seq {
+                            best.insert(pk_key, (key, row));
+                        }
+                    }
+                    None => {
+                        best.insert(pk_key, (key, row));
+                    }
                 }
             }
         }
