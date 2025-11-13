@@ -655,18 +655,53 @@ impl SchemaRegistry {
         namespace: &NamespaceId,
         table_name: &TableName,
         table_type: TableType,
-        _storage_id: &StorageId,
+        storage_id: &StorageId,
     ) -> Result<String, KalamDbError> {
-        // Simplified implementation: Return a basic template
-        // Full implementation should query StorageRegistry and resolve templates
-        // For now, return a simple path structure that matches test expectations
-        let template = match table_type {
-            TableType::User => format!("users/{{userId}}/tables/{}/{}", namespace.as_str(), table_name.as_str()),
-            TableType::Shared => format!("shared/{}/{}", namespace.as_str(), table_name.as_str()),
-            TableType::Stream => format!("stream/{}/{}", namespace.as_str(), table_name.as_str()),
-            TableType::System => format!("system/{}", table_name.as_str()),
+        // Fetch storage configuration from system.storages
+        let app_ctx = crate::app_context::AppContext::get();
+        let storages_provider = app_ctx.system_tables().storages();
+        let storage = storages_provider
+            .get_storage(storage_id)
+            .map_err(|e| KalamDbError::Other(format!(
+                "Failed to load storage configuration '{}': {}",
+                storage_id.as_str(),
+                e
+            )))?
+            .ok_or_else(|| {
+                KalamDbError::InvalidOperation(format!(
+                    "Storage '{}' not found while resolving path template",
+                    storage_id.as_str()
+                ))
+            })?;
+
+        let raw_template = match table_type {
+            TableType::User => storage.user_tables_template,
+            TableType::Shared | TableType::Stream => storage.shared_tables_template,
+            TableType::System => "system/{namespace}/{tableName}".to_string(),
         };
-        Ok(template)
+
+        // Normalize legacy placeholder variants to canonical names
+        let canonical = Self::normalize_template_placeholders(&raw_template);
+
+        // Substitute static placeholders while leaving dynamic ones ({userId}, {shard}) for later
+        let resolved = canonical
+            .replace("{namespace}", namespace.as_str())
+            .replace("{tableName}", table_name.as_str());
+
+        Ok(resolved)
+    }
+
+    fn normalize_template_placeholders(template: &str) -> String {
+        template
+            .replace("{table_name}", "{tableName}")
+            .replace("{namespace_id}", "{namespace}")
+            .replace("{namespaceId}", "{namespace}")
+            .replace("{table-id}", "{tableName}")
+            .replace("{namespace-id}", "{namespace}")
+            .replace("{user_id}", "{userId}")
+            .replace("{user-id}", "{userId}")
+            .replace("{shard_id}", "{shard}")
+            .replace("{shard-id}", "{shard}")
     }
 
     // ===== Persistence Methods (Phase 5: SchemaRegistry Consolidation) =====

@@ -6,6 +6,7 @@
 use crate::error::KalamDbError;
 use arrow::datatypes::{DataType, Field, Schema, TimeUnit};
 use kalamdb_commons::schemas::{ColumnDefault, TableType};
+use kalamdb_commons::StorageId;
 use kalamdb_sql::ddl::CreateTableStatement;
 use std::sync::Arc;
 
@@ -176,6 +177,34 @@ pub fn save_table_definition(
         None, // table_comment
     )
     .map_err(|e| KalamDbError::SchemaError(e))?;
+
+    // Persist table-level options from DDL (storage, flush policy, ACL, TTL overrides)
+    match (&mut table_def.table_options, stmt.table_type) {
+        (TableOptions::User(opts), TableType::User) => {
+            let storage = stmt
+                .storage_id
+                .clone()
+                .unwrap_or_else(StorageId::local);
+            opts.storage_id = storage;
+            opts.use_user_storage = stmt.use_user_storage;
+            opts.flush_policy = stmt.flush_policy.clone();
+        }
+        (TableOptions::Shared(opts), TableType::Shared) => {
+            let storage = stmt
+                .storage_id
+                .clone()
+                .unwrap_or_else(StorageId::local);
+            opts.storage_id = storage;
+            opts.access_level = stmt.access_level.clone();
+            opts.flush_policy = stmt.flush_policy.clone();
+        }
+        (TableOptions::Stream(opts), TableType::Stream) => {
+            if let Some(ttl) = stmt.ttl_seconds {
+                opts.ttl_seconds = ttl;
+            }
+        }
+        _ => {}
+    }
 
     // Inject system columns via SystemColumnsService (Phase 12, US5, T022)
     // This adds _id, _updated, _deleted to the TableDefinition (authoritative types)

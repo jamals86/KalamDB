@@ -211,8 +211,7 @@ pub fn create_user_table(
         use crate::schema_registry::CachedTableData;
         use kalamdb_commons::schemas::TableType;
         let template = schema_registry
-            .resolve_storage_path_template(&table_id.namespace_id(), &table_id.table_name(), TableType::User, &storage_id)?
-            .replace("{user_id}", "{userId}"); // normalize placeholder variant
+            .resolve_storage_path_template(&table_id.namespace_id(), &table_id.table_name(), TableType::User, &storage_id)?;
         let mut data = CachedTableData::new(Arc::clone(&table_def));
         data.storage_id = Some(storage_id.clone());
         data.storage_path_template = template.clone();
