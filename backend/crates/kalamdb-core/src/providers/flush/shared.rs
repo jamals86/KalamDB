@@ -73,8 +73,21 @@ impl SharedTableFlushJob {
     /// Convert JSON rows to Arrow RecordBatch
     fn rows_to_record_batch(&self, rows: &[(Vec<u8>, JsonValue)]) -> Result<RecordBatch, KalamDbError> {
         let mut builder = super::util::JsonBatchBuilder::new(self.schema.clone())?;
-        for (_, row) in rows {
-            builder.push_object_row(row)?;
+        for (key_bytes, row) in rows {
+            // Ensure system columns are present in the row per schema expectations
+            // Parse SeqId from key bytes for _seq if missing
+            let mut patched = row.clone();
+            if let Some(obj) = patched.as_object_mut() {
+                if !obj.contains_key("_seq") || obj.get("_seq").map(|v| v.is_null()).unwrap_or(true) {
+                    if let Ok(seq_id) = kalamdb_commons::ids::SeqId::from_bytes(key_bytes) {
+                        obj.insert("_seq".to_string(), serde_json::json!(seq_id.as_i64()));
+                    }
+                }
+                if !obj.contains_key("_deleted") || obj.get("_deleted").map(|v| v.is_null()).unwrap_or(true) {
+                    obj.insert("_deleted".to_string(), serde_json::json!(false));
+                }
+            }
+            builder.push_object_row(&patched)?;
         }
         builder.finish()
     }

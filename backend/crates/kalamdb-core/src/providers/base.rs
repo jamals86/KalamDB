@@ -248,7 +248,23 @@ pub trait BaseTableProvider<K: StorageKey, V>: Send + Sync + TableProvider {
         for (key, row) in rows {
             if let Some(fields) = Self::extract_fields(&row) {
                 if let Some(id) = fields.get(self.primary_key_field_name()) {
-                    if id.as_str() == Some(id_value) {
+                    // Compare robustly: support numeric and string IDs
+                    let matches = match id {
+                        serde_json::Value::String(s) => s == id_value,
+                        serde_json::Value::Number(n) => {
+                            // Compare as exact string, and also as i64 if parseable
+                            let num_str = n.to_string();
+                            if num_str == id_value {
+                                true
+                            } else if let Ok(iv) = id_value.parse::<i64>() {
+                                n.as_i64().map(|x| x == iv).unwrap_or(false)
+                            } else {
+                                false
+                            }
+                        }
+                        _ => false,
+                    };
+                    if matches {
                         return Ok(Some(key));
                     }
                 }

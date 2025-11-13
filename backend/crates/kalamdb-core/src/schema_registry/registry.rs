@@ -498,6 +498,11 @@ impl SchemaRegistry {
         table_id: TableId,
         provider: Arc<dyn TableProvider + Send + Sync>,
     ) -> Result<(), KalamDbError> {
+        log::info!(
+            "[SchemaRegistry] Inserting provider for table {}.{}",
+            table_id.namespace_id().as_str(),
+            table_id.table_name().as_str()
+        );
         // Store in our cache
         self.providers.insert(table_id.clone(), provider.clone());
 
@@ -528,6 +533,12 @@ impl SchemaRegistry {
             schema
                 .register_table(table_id.table_name().as_str().to_string(), provider)
                 .map_err(|e| KalamDbError::InvalidOperation(format!("Failed to register table with DataFusion: {}", e)))?;
+            
+            log::info!(
+                "[SchemaRegistry] Registered table {}.{} with DataFusion catalog",
+                table_id.namespace_id().as_str(),
+                table_id.table_name().as_str()
+            );
         }
 
         Ok(())
@@ -584,7 +595,21 @@ impl SchemaRegistry {
         &self,
         table_id: &TableId,
     ) -> Option<Arc<dyn TableProvider + Send + Sync>> {
-        self.providers.get(table_id).map(|e| Arc::clone(e.value()))
+        let result = self.providers.get(table_id).map(|e| Arc::clone(e.value()));
+        if result.is_some() {
+            log::debug!(
+                "[SchemaRegistry] Retrieved provider for table {}.{}",
+                table_id.namespace_id().as_str(),
+                table_id.table_name().as_str()
+            );
+        } else {
+            log::warn!(
+                "[SchemaRegistry] Provider NOT FOUND for table {}.{}",
+                table_id.namespace_id().as_str(),
+                table_id.table_name().as_str()
+            );
+        }
+        result
     }
 
     /// Resolve partial storage path template for a table
@@ -1311,7 +1336,7 @@ mod tests {
         let table_id = TableId::new(NamespaceId::new("ns1"), TableName::new("stats"));
         let provider = Arc::new(StatsTableProvider::new(None)) as Arc<dyn TableProvider + Send + Sync>;
 
-        cache.insert_provider(table_id.clone(), Arc::clone(&provider));
+        cache.insert_provider(table_id.clone(), Arc::clone(&provider)).expect("insert failed");
         let retrieved = cache.get_provider(&table_id).expect("provider present");
 
         assert!(Arc::ptr_eq(&provider, &retrieved), "must return same Arc instance");

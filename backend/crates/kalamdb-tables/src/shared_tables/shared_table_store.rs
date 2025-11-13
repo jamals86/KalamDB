@@ -50,6 +50,10 @@ pub fn new_shared_table_store(
         namespace_id.as_str(),
         table_name.as_str()
     );
+    // Ensure the partition exists in RocksDB (mirror user table behavior)
+    let partition = kalamdb_store::Partition::new(partition_name.clone());
+    let _ = backend.create_partition(&partition); // Ignore error if already exists
+
     SystemTableStore::new(backend, partition_name)
 }
 

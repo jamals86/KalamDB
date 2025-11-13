@@ -439,16 +439,20 @@ impl BaseTableProvider<UserTableRowId, UserTableRow> for UserTableProvider {
         prefix.push(len);
         prefix.extend_from_slice(&user_bytes[..len as usize]);
 
-        // Use streaming-limited scan to avoid unbounded memory; default cap consistent with EntityStore::scan_all
-        let raw = self
+        // Prefer full partition scan then filter by user_id to avoid prefix-scan edge cases
+        let raw_all = self
             .store
-            .scan_limited_with_prefix_bytes(Some(&prefix), 100_000)
+            .scan_all()
             .map_err(|e| KalamDbError::InvalidOperation(format!(
                 "Failed to scan user table hot storage: {}",
                 e
             )))?;
+        let raw: Vec<(Vec<u8>, UserTableRow)> = raw_all
+            .into_iter()
+            .filter(|(_k, r)| &r.user_id == user_id)
+            .collect();
         log::info!(
-            "[UserProvider] Hot scan: {} rows for user {} (table={}.{})",
+            "[UserProvider] Hot scan (filtered): {} rows for user {} (table={}.{})",
             raw.len(),
             user_id.as_str(),
             self.table_id.namespace_id().as_str(),
@@ -475,12 +479,28 @@ impl BaseTableProvider<UserTableRowId, UserTableRow> for UserTableProvider {
                 }
             };
 
-            // Determine grouping key: prefer declared PK, else fall back to unique _seq
-            let pk_key = match row.fields.get(&pk_name) {
-                Some(v) => v.to_string(),
+            // Determine grouping key: prefer declared PK when present and non-null; else use unique _seq
+            let pk_key = match row.fields.get(&pk_name).filter(|v| !v.is_null()) {
+                Some(v) => {
+                    let key_str = v.to_string();
+                    log::debug!(
+                        "[UserProvider] Hot row _seq={}: PK({})={}",
+                        row._seq.as_i64(),
+                        pk_name,
+                        key_str
+                    );
+                    key_str
+                }
                 None => {
-                    // No declared PK in schema or missing in row: treat each version as unique by _seq
-                    format!("_seq:{}", row._seq.as_i64())
+                    // Missing or null PK in row: group by unique _seq to avoid collapsing
+                    let fallback = format!("_seq:{}", row._seq.as_i64());
+                    log::debug!(
+                        "[UserProvider] Hot row _seq={}: PK({}) missing/null, using fallback={}",
+                        row._seq.as_i64(),
+                        pk_name,
+                        fallback
+                    );
+                    fallback
                 }
             };
 
@@ -570,8 +590,8 @@ impl BaseTableProvider<UserTableRowId, UserTableRow> for UserTableProvider {
                     }
                 }
                 
-                // Determine grouping key: declared PK value or fallback to unique _seq
-                let pk_key = match json_row.get(&pk_name) {
+                // Determine grouping key: declared PK value (non-null) or fallback to unique _seq
+                let pk_key = match json_row.get(&pk_name).filter(|v| !v.is_null()) {
                     Some(v) => v.to_string(),
                     None => format!("_seq:{}", seq_val),
                 };
@@ -653,6 +673,11 @@ impl TableProvider for UserTableProvider {
         filters: &[Expr],
         limit: Option<usize>,
     ) -> DataFusionResult<Arc<dyn ExecutionPlan>> {
+        log::info!(
+            "[UserTableProvider::scan] INVOKED for table {}.{}",
+            self.table_id.namespace_id().as_str(),
+            self.table_id.table_name().as_str()
+        );
         // Build a single RecordBatch using our scan_rows(), then wrap in MemTable
         let batch = self
             .scan_rows(state, None)

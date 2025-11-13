@@ -343,8 +343,8 @@ impl BaseTableProvider<SharedTableRowId, SharedTableRow> for SharedTableProvider
             };
             let key: SharedTableRowId = seq;
 
-            // Determine grouping key: prefer declared PK, else fall back to unique _seq
-            let pk_key = match row.fields.get(&pk_name) {
+            // Determine grouping key: prefer declared PK when present and non-null; else fall back to unique _seq
+            let pk_key = match row.fields.get(&pk_name).filter(|v| !v.is_null()) {
                 Some(v) => v.to_string(),
                 None => format!("_seq:{}", row._seq.as_i64()),
             };
@@ -424,8 +424,8 @@ impl BaseTableProvider<SharedTableRowId, SharedTableRow> for SharedTableProvider
                     }
                 }
                 
-                // Determine grouping key: declared PK value or fallback to unique _seq
-                let pk_key = match json_row.get(&pk_name) {
+                // Determine grouping key: declared PK value (non-null) or fallback to unique _seq
+                let pk_key = match json_row.get(&pk_name).filter(|v| !v.is_null()) {
                     Some(v) => v.to_string(),
                     None => format!("_seq:{}", seq_val),
                 };

@@ -750,7 +750,6 @@ fn default_rocksdb_max_background_jobs() -> i32 {
 impl ServerConfig {
     /// Load configuration from a TOML file
     pub fn from_file<P: AsRef<Path>>(path: P) -> anyhow::Result<Self> {
-        let path_ref = path.as_ref();
         let content = fs::read_to_string(path.as_ref())
             .map_err(|e| anyhow::anyhow!("Failed to read config file: {}", e))?;
 

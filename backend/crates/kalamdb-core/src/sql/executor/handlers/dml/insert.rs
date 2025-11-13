@@ -102,7 +102,7 @@ impl StatementHandler for InsertHandler {
 
             // Apply DEFAULT values for missing columns
             use crate::sql::executor::default_evaluator::evaluate_default;
-            let node_id = 0u16; // Single-node deployment (can be wired from AppContext later)
+            let sys_cols = self.app_context.system_columns_service();
             
             for col_def in &table_def.columns {
                 let col_name = &col_def.column_name;
@@ -118,7 +118,7 @@ impl StatementHandler for InsertHandler {
                 }
                 
                 // Evaluate the default value
-                let default_value = evaluate_default(&col_def.default_value, &context.user_id, node_id)?;
+                let default_value = evaluate_default(&col_def.default_value, &context.user_id, Some(sys_cols.clone()))?;
                 obj.insert(col_name.clone(), default_value);
             }
 
