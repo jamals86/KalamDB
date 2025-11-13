@@ -1,46 +1,42 @@
 //! # kalamdb-tables
 //!
-//! Table providers for user, shared, and stream tables in KalamDB.
+//! Table storage layer for user, shared, and stream tables in KalamDB.
 //!
-//! This crate contains DataFusion TableProvider implementations for:
-//! - **UserTableProvider**: Per-user partitioned tables with RLS (Row-Level Security)
-//! - **SharedTableProvider**: Global tables accessible to all users
-//! - **StreamTableProvider**: Time-windowed streaming tables with TTL
+//! This crate contains the storage abstractions (stores) for:
+//! - **UserTableStore**: Per-user partitioned table storage with RocksDB backend
+//! - **SharedTableStore**: Global table storage accessible to all users
+//! - **StreamTableStore**: Time-windowed streaming table storage with TTL
+//!
+//! **Note**: DataFusion TableProvider implementations are in `kalamdb-core/providers/`,
+//! not in this crate. This crate provides only the storage layer.
 //!
 //! ## Architecture
 //!
-//! ### User Tables
+//! ### User Tables Storage
 //! - Data partitioned by `user_id` for efficient per-user queries
-//! - Automatic row-level security filtering
-//! - Hot storage (RocksDB) + cold storage (Parquet files)
-//! - Flush policy based on row count and time
+//! - Implements EntityStore trait for type-safe key-value operations
+//! - RocksDB backend with bincode serialization
 //!
-//! ### Shared Tables
-//! - Global tables with no user partitioning
+//! ### Shared Tables Storage
+//! - Global storage with no user partitioning
 //! - Shared across all users in a namespace
-//! - Same hot/cold storage architecture as user tables
+//! - Same EntityStore implementation as user tables
 //!
-//! ### Stream Tables
-//! - Time-series data with configurable TTL
-//! - Automatic eviction of old data
+//! ### Stream Tables Storage
+//! - Time-series data storage with configurable TTL
+//! - Automatic eviction of old data via background jobs
 //! - Optimized for append-only workloads
-//! - Window-based queries
 //!
 //! ## Example Usage
 //!
 //! ```rust,ignore
-//! use kalamdb_tables::{UserTableProvider, SharedTableProvider, StreamTableProvider};
+//! use kalamdb_tables::{UserTableStore, SharedTableStore, StreamTableStore};
+//! use kalamdb_store::EntityStore;
 //!
-//! // Create user table provider
-//! let user_provider = UserTableProvider::new(
-//!     table_id,
-//!     schema,
-//!     store,
-//!     filestore,
-//! )?;
-//!
-//! // Register with DataFusion
-//! session_state.register_table(table_name, Arc::new(user_provider))?;
+//! // Create and use user table store
+//! let store = UserTableStore::new(backend, "user_data");
+//! store.put(&key, &row)?;
+//! let row = store.get(&key)?;
 //! ```
 
 pub mod error;

@@ -11,7 +11,6 @@ pub mod slow_query_logger;
 pub mod app_context;
 pub mod sql;
 pub mod storage;
-pub mod tables;
 pub mod test_helpers;
 
 // Re-export modules that were moved to other crates

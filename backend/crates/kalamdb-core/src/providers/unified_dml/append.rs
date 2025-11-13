@@ -5,8 +5,7 @@
 
 use crate::app_context::AppContext;
 use crate::error::KalamDbError;
-use crate::tables::shared_tables::shared_table_store::SharedTableRow;
-use crate::tables::user_tables::user_table_store::UserTableRow;
+use kalamdb_tables::{SharedTableRow, UserTableRow};
 use kalamdb_commons::ids::{SeqId, UserTableRowId};
 use kalamdb_commons::models::schemas::TableType;
 use kalamdb_commons::models::{TableId, UserId};
@@ -56,7 +55,7 @@ pub fn append_version_sync(
     }
 
     // Generate new SeqId via SystemColumnsService
-    let sys_cols = system_columns;
+    let sys_cols = app_context.system_columns_service();
     let seq_id = sys_cols.generate_seq_id()?;
 
     match table_type {

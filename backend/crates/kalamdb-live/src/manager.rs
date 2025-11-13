@@ -80,7 +80,7 @@ impl LiveQueryManager {
         user_id: UserId,
         unique_conn_id: String,
         notification_tx: Option<crate::connection_registry::NotificationSender>,
-    ) -> Result<ConnectionId, String> {
+    ) -> Result<ConnectionId, KalamDbError> {
         let connection_id = ConnectionId::new(user_id.as_str().to_string(), unique_conn_id);
 
         let tx = if let Some(tx) = notification_tx {

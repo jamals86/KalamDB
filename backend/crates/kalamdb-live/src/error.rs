@@ -15,13 +15,46 @@ pub enum LiveError {
     Storage(String),
 
     #[error("Serialization error: {0}")]
-    Serialization(String),
+    SerializationError(String),
+    
+    #[error("Invalid SQL: {0}")]
+    InvalidSql(String),
 
     #[error("System error: {0}")]
     System(String),
 
     #[error("Other error: {0}")]
     Other(String),
+}
+
+impl From<serde_json::Error> for LiveError {
+    fn from(e: serde_json::Error) -> Self {
+        LiveError::SerializationError(e.to_string())
+    }
+}
+
+impl From<datafusion::error::DataFusionError> for LiveError {
+    fn from(e: datafusion::error::DataFusionError) -> Self {
+        LiveError::InvalidSql(e.to_string())
+    }
+}
+
+impl From<kalamdb_tables::TableError> for LiveError {
+    fn from(e: kalamdb_tables::TableError) -> Self {
+        LiveError::Storage(e.to_string())
+    }
+}
+
+impl From<kalamdb_system::SystemError> for LiveError {
+    fn from(e: kalamdb_system::SystemError) -> Self {
+        LiveError::System(e.to_string())
+    }
+}
+
+impl From<kalamdb_registry::RegistryError> for LiveError {
+    fn from(e: kalamdb_registry::RegistryError) -> Self {
+        LiveError::Storage(e.to_string())
+    }
 }
 
 /// Result type for live query operations

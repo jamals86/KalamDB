@@ -223,6 +223,21 @@ impl From<kalamdb_system::SystemError> for KalamDbError {
     }
 }
 
+// Convert kalamdb_live::LiveError to KalamDbError
+impl From<kalamdb_live::LiveError> for KalamDbError {
+    fn from(err: kalamdb_live::LiveError) -> Self {
+        match err {
+            kalamdb_live::LiveError::InvalidOperation(msg) => KalamDbError::InvalidOperation(msg),
+            kalamdb_live::LiveError::NotFound(msg) => KalamDbError::NotFound(msg),
+            kalamdb_live::LiveError::Storage(msg) => KalamDbError::Other(format!("Live query storage error: {}", msg)),
+            kalamdb_live::LiveError::SerializationError(msg) => KalamDbError::SerializationError(msg),
+            kalamdb_live::LiveError::InvalidSql(msg) => KalamDbError::InvalidSql(msg),
+            kalamdb_live::LiveError::System(msg) => KalamDbError::Other(format!("Live query system error: {}", msg)),
+            kalamdb_live::LiveError::Other(msg) => KalamDbError::Other(msg),
+        }
+    }
+}
+
 /// Storage-related errors
 #[derive(Error, Debug)]
 pub enum StorageError {

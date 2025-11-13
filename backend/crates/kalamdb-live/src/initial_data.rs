@@ -123,7 +123,7 @@ impl InitialDataFetcher {
         table_type: TableType,
         options: InitialDataOptions,
         filter: Option<Arc<FilterPredicate>>,
-    ) -> Result<InitialDataResult, String> {
+    ) -> Result<InitialDataResult, KalamDbError> {
         log::info!(
             "fetch_initial_data called: table={}, type={:?}, limit={}, since={:?}",
             table_name.as_str(),

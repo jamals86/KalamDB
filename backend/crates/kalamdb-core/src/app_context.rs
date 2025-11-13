@@ -12,8 +12,8 @@ use crate::jobs::executors::{
 use crate::live_query::LiveQueryManager;
 use crate::sql::datafusion_session::DataFusionSessionFactory;
 use crate::storage::storage_registry::StorageRegistry;
-use crate::tables::system::registry::SystemTablesRegistry;
-use crate::tables::{SharedTableStore, StreamTableStore, UserTableStore};
+use kalamdb_system::SystemTablesRegistry;
+use kalamdb_tables::{SharedTableStore, StreamTableStore, UserTableStore};
 use datafusion::catalog::SchemaProvider;
 use datafusion::prelude::SessionContext;
 use kalamdb_commons::{NodeId, ServerConfig, constants::ColumnFamilyNames};

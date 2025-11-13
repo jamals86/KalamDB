@@ -10,7 +10,7 @@
 use super::TestServer;
 use kalamdb_commons::models::{NamespaceId, StorageId, TableId, TableName};
 use kalamdb_core::flush::{FlushJobResult, SharedTableFlushJob, UserTableFlushJob};
-use kalamdb_core::tables::new_user_table_store;
+use kalamdb_tables::new_user_table_store;
 use kalamdb_commons::models::NamespaceId as _NsIdAlias; // keep imports grouped
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -129,7 +129,7 @@ pub async fn execute_shared_flush_synchronously(
     // Get per-table SharedTableStore and registry from AppContext
     let unified_cache = server.app_context.schema_registry();
     let shared_table_store = Arc::new(
-        kalamdb_core::tables::new_shared_table_store(
+        kalamdb_tables::new_shared_table_store(
             server.app_context.storage_backend(),
             &namespace_id,
             &table_name_id,

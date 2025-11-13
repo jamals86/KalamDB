@@ -14,7 +14,7 @@ use super::base::{BaseTableProvider, TableProviderCore};
 use crate::app_context::AppContext;
 use crate::error::KalamDbError;
 use crate::schema_registry::TableType;
-use crate::tables::user_tables::user_table_store::{UserTableRow, UserTableStore};
+use kalamdb_tables::{UserTableRow, UserTableStore};
 use async_trait::async_trait;
 use datafusion::arrow::datatypes::SchemaRef;
 use datafusion::arrow::record_batch::RecordBatch;
@@ -133,7 +133,7 @@ impl BaseTableProvider<UserTableRowId, UserTableRow> for UserTableProvider {
     
     fn insert(&self, user_id: &UserId, row_data: JsonValue) -> Result<UserTableRowId, KalamDbError> {
         // Generate new SeqId via SystemColumnsService
-        let sys_cols = self.core.system_columns;
+        let sys_cols = self.core.system_columns.clone();
         let seq_id = sys_cols.generate_seq_id()?;
         
         // Create UserTableRow directly
@@ -223,7 +223,7 @@ impl BaseTableProvider<UserTableRowId, UserTableRow> for UserTableProvider {
         for (k, v) in update_obj.into_iter() { merged.insert(k, v); }
 
         let new_fields = JsonValue::Object(merged);
-        let sys_cols = self.core.system_columns;
+        let sys_cols = self.core.system_columns.clone();
         let seq_id = sys_cols.generate_seq_id()?;
         let entity = UserTableRow { user_id: user_id.clone(), _seq: seq_id, _deleted: false, fields: new_fields };
         let row_key = UserTableRowId::new(user_id.clone(), seq_id);
@@ -273,7 +273,7 @@ impl BaseTableProvider<UserTableRowId, UserTableRow> for UserTableProvider {
         let pk_name = self.primary_key_field_name().to_string();
         let _pk_value = crate::providers::unified_dml::extract_user_pk_value(&prior.fields, &pk_name)?;
 
-        let sys_cols = self.core.system_columns;
+        let sys_cols = self.core.system_columns.clone();
         let seq_id = sys_cols.generate_seq_id()?;
         let entity = UserTableRow { user_id: user_id.clone(), _seq: seq_id, _deleted: true, fields: serde_json::json!({}) };
         let row_key = UserTableRowId::new(user_id.clone(), seq_id);

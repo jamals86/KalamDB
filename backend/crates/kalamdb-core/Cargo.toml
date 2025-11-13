@@ -17,6 +17,7 @@ kalamdb-store = { path = "../kalamdb-store" }
 kalamdb-auth = { path = "../kalamdb-auth" }
 kalamdb-system = { path = "../kalamdb-system" }
 kalamdb-tables = { path = "../kalamdb-tables" }
+kalamdb-live = { path = "../kalamdb-live" }
 
 # Apache Arrow ecosystem
 arrow = { workspace = true }
