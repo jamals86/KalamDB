@@ -7,7 +7,7 @@
 use crate::error::KalamDbError;
 use super::filter::FilterPredicate;
 use crate::schema_registry::TableType;
-use kalamdb_tables::{SharedTableStore, StreamTableStore, UserTableStore};
+// Removed unused store imports after provider-based snapshots for streams
 use chrono::DateTime;
 use kalamdb_commons::TableName;
 use serde_json::Value as JsonValue;
@@ -323,7 +323,6 @@ impl InitialDataFetcher {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use kalamdb_tables::UserTableStoreExt;
     use kalamdb_tables::user_tables::user_table_store::{new_user_table_store, UserTableRow};
     use kalamdb_store::entity_store::EntityStore;
     use kalamdb_commons::UserId;

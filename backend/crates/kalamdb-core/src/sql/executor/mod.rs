@@ -178,6 +178,16 @@ impl SqlExecutor {
         // Calculate total row count
         let row_count: usize = batches.iter().map(|b| b.num_rows()).sum();
 
+        // Informational log for debugging result sizes in tests
+        log::info!(
+            target: "sql::exec",
+            "✅ SQL executed | sql='{}' | user='{}' | role='{:?}' | rows={}",
+            sql,
+            exec_ctx.user_id.as_str(),
+            exec_ctx.user_role,
+            row_count
+        );
+
         // Return batches with row count
         Ok(ExecutionResult::Rows { batches, row_count })
     }

@@ -104,6 +104,14 @@ impl StreamTableProvider {
             .store
             .scan_all()
             .map_err(|e| KalamDbError::InvalidOperation(format!("Failed to scan stream store: {}", e)))?;
+        let count = rows.len();
+        log::debug!(
+            "[StreamProvider] snapshot_all_rows_json: table={}.{} rows={} ttl={:?}",
+            self.table_id.namespace_id().as_str(),
+            self.table_id.table_name().as_str(),
+            count,
+            self.ttl_seconds
+        );
         Ok(rows.into_iter().map(|(_k, r)| r.fields).collect())
     }
     
@@ -305,6 +313,21 @@ impl BaseTableProvider<StreamTableRowId, StreamTableRow> for StreamTableProvider
         prefix.push(len);
         prefix.extend_from_slice(&user_bytes[..len as usize]);
 
+        let ttl_ms = self.ttl_seconds.map(|s| s * 1000);
+        let now_ms = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map_err(|e| KalamDbError::InvalidOperation(format!("System time error: {}", e)))?
+            .as_millis() as u64;
+        log::debug!(
+            "[StreamProvider] prefix scan: table={}.{} user={} prefix_len={} ttl_ms={:?} now_ms={}",
+            self.table_id.namespace_id().as_str(),
+            self.table_id.table_name().as_str(),
+            user_id.as_str(),
+            prefix.len(),
+            ttl_ms,
+            now_ms
+        );
+
         let raw = self
             .store
             .scan_limited_with_prefix_bytes(Some(&prefix), 100_000)
@@ -320,11 +343,6 @@ impl BaseTableProvider<StreamTableRowId, StreamTableRow> for StreamTableProvider
         );
 
         // 2) TTL filtering (if configured)
-        let now_ms = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .map_err(|e| KalamDbError::InvalidOperation(format!("System time error: {}", e)))?
-            .as_millis() as u64;
-        let ttl_ms = self.ttl_seconds.map(|s| s * 1000);
 
         let mut results: Vec<(StreamTableRowId, StreamTableRow)> = Vec::new();
         for (key_bytes, row) in raw.into_iter() {
@@ -351,6 +369,14 @@ impl BaseTableProvider<StreamTableRowId, StreamTableRow> for StreamTableProvider
                 results.push((key, row));
             }
         }
+
+        log::debug!(
+            "[StreamProvider] ttl-filtered results: table={}.{} user={} kept={}",
+            self.table_id.namespace_id().as_str(),
+            self.table_id.table_name().as_str(),
+            user_id.as_str(),
+            results.len()
+        );
 
         // TODO(phase 13.6): Apply filter expression for simple predicates if provided
         Ok(results)
@@ -395,11 +421,25 @@ impl TableProvider for StreamTableProvider {
         filters: &[Expr],
         limit: Option<usize>,
     ) -> DataFusionResult<Arc<dyn ExecutionPlan>> {
+        log::debug!(
+            "[StreamProvider] scan start: table={}.{} projection={:?} filters={} limit={:?}",
+            self.table_id.namespace_id().as_str(),
+            self.table_id.table_name().as_str(),
+            projection,
+            filters.len(),
+            limit
+        );
         let batch = self
             .scan_rows(state, None)
             .map_err(|e| DataFusionError::Execution(format!("scan_rows failed: {}", e)))?;
 
         let mem = MemTable::try_new(self.schema_ref(), vec![vec![batch]])?;
-        mem.scan(state, projection, filters, limit).await
+        let plan = mem.scan(state, projection, filters, limit).await?;
+        log::debug!(
+            "[StreamProvider] scan planned: table={}.{}",
+            self.table_id.namespace_id().as_str(),
+            self.table_id.table_name().as_str()
+        );
+        Ok(plan)
     }
 }

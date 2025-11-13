@@ -412,14 +412,26 @@ impl SchemaRegistry {
 
         // Resolve base directory from storage configuration or default storage path
         let app_ctx = crate::app_context::AppContext::get();
+        let default_base = app_ctx
+            .storage_registry()
+            .default_storage_path()
+            .to_string();
+
         let base_dir = if let Some(storage_id) = data.storage_id.clone() {
             let storages = app_ctx.system_tables().storages();
             match storages.get_storage(&storage_id) {
-                Ok(Some(storage)) => storage.base_directory,
-                _ => app_ctx.storage_registry().default_storage_path().to_string(),
+                Ok(Some(storage)) => {
+                    let trimmed = storage.base_directory.trim();
+                    if trimmed.is_empty() {
+                        default_base.clone()
+                    } else {
+                        trimmed.to_string()
+                    }
+                }
+                _ => default_base.clone(),
             }
         } else {
-            app_ctx.storage_registry().default_storage_path().to_string()
+            default_base.clone()
         };
 
         // Join base directory with relative path (normalize leading slashes)
