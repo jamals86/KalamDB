@@ -9,7 +9,7 @@
 
 use super::TestServer;
 use kalamdb_commons::models::{NamespaceId, StorageId, TableId, TableName};
-use kalamdb_core::flush::{FlushJobResult, SharedTableFlushJob, UserTableFlushJob};
+use kalamdb_core::providers::flush::{FlushJobResult, SharedTableFlushJob, UserTableFlushJob};
 use kalamdb_tables::new_user_table_store;
 use kalamdb_commons::models::NamespaceId as _NsIdAlias; // keep imports grouped
 use std::path::{Path, PathBuf};

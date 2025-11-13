@@ -153,6 +153,7 @@ kalamdb-auth = { path = "crates/kalamdb-auth" }
 kalamdb-sql = { path = "crates/kalamdb-sql" }
 kalamdb-store = { path = "crates/kalamdb-store" }
 kalamdb-commons = { path = "crates/kalamdb-commons" }
+kalamdb-tables = { path = "crates/kalamdb-tables" }
 
 # External dependencies
 tempfile = { workspace = true }

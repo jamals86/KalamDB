@@ -51,7 +51,7 @@ async fn test_stream_table_ttl_eviction_with_select() {
     let node_id = kalamdb_commons::NodeId::new("test-node".to_string());
     let config = kalamdb_commons::ServerConfig::default();
     let app_ctx = AppContext::init(backend.clone(), node_id, "/tmp/kalamdb-test".to_string(), config);
-    let core = Arc::new(TableProviderCore::new(app_ctx.clone()));
+    let core = Arc::new(TableProviderCore::from_app_context(&app_ctx));
 
     // Prime SchemaRegistry with TableDefinition for this stream table (required by provider.schema_ref())
     let table_def = TableDefinition::new(
@@ -161,7 +161,7 @@ async fn test_stream_table_select_with_projection() {
     let node_id = kalamdb_commons::NodeId::new("test-node".to_string());
     let config = kalamdb_commons::ServerConfig::default();
     let app_ctx = AppContext::init(backend.clone(), node_id, "/tmp/kalamdb-test".to_string(), config);
-    let core = Arc::new(TableProviderCore::new(app_ctx.clone()));
+    let core = Arc::new(TableProviderCore::from_app_context(&app_ctx));
 
     // Prime SchemaRegistry with TableDefinition for this stream table
     let table_def = TableDefinition::new(
@@ -245,7 +245,7 @@ async fn test_stream_table_select_with_limit() {
     let node_id = kalamdb_commons::NodeId::new("test-node".to_string());
     let config = kalamdb_commons::ServerConfig::default();
     let app_ctx = AppContext::init(backend.clone(), node_id, "/tmp/kalamdb-test".to_string(), config);
-    let core = Arc::new(TableProviderCore::new(app_ctx.clone()));
+    let core = Arc::new(TableProviderCore::from_app_context(&app_ctx));
 
     // Prime SchemaRegistry with TableDefinition for this stream table
     let table_def = TableDefinition::new(

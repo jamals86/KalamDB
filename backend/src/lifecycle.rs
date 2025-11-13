@@ -299,7 +299,7 @@ pub async fn run(
 /// # Returns
 /// Result indicating success or failure
 async fn create_default_system_user(
-    users_provider: Arc<kalamdb_core::tables::system::UsersTableProvider>,
+    users_provider: Arc<kalamdb_system::UsersTableProvider>,
 ) -> Result<()> {
     use kalamdb_commons::constants::AuthConstants;
     use kalamdb_commons::system::User;
@@ -364,7 +364,7 @@ async fn create_default_system_user(
 /// Informs users about password requirements for remote access
 async fn check_remote_access_security(
     config: &ServerConfig,
-    users_provider: Arc<kalamdb_core::tables::system::UsersTableProvider>,
+    users_provider: Arc<kalamdb_system::UsersTableProvider>,
 ) -> Result<()> {
     use kalamdb_commons::constants::AuthConstants;
 

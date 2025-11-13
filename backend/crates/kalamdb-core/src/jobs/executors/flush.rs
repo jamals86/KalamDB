@@ -185,7 +185,7 @@ impl JobExecutor for FlushExecutor {
                 // Use a per-table SharedTableStore for the specific <namespace, table>
                 // to ensure we read the correct partition ("shared_<ns>:<table>").
                 let store = Arc::new(
-                    crate::tables::shared_tables::shared_table_store::new_shared_table_store(
+                    kalamdb_tables::new_shared_table_store(
                         app_ctx.storage_backend(),
                         &namespace_id,
                         &table_name,
