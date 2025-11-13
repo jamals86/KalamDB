@@ -10,7 +10,7 @@ use super::{
     AuditLogsTableProvider, JobsTableProvider, LiveQueriesTableProvider, NamespacesTableProvider, 
     StatsTableProvider, StoragesTableProvider, TablesTableProvider, UsersTableProvider,
 };
-use crate::schema_registry::SchemaRegistry;
+use kalamdb_registry::SchemaRegistry;
 use datafusion::datasource::TableProvider;
 use kalamdb_store::StorageBackend;
 use std::sync::{Arc, RwLock};
@@ -83,20 +83,23 @@ impl SystemTablesRegistry {
     ///
     /// This is called from AppContext::init() after schema_registry is available.
     pub fn set_information_schema_dependencies(&self, schema_registry: Arc<SchemaRegistry>) {
-        use crate::schema_registry::views::information_schema::{
+        use kalamdb_registry::views::information_schema::{
             create_information_schema_tables_provider,
             create_information_schema_columns_provider,
         };
         
         // Initialize information_schema.tables using VirtualView pattern
+        // Wrap Arc<TablesTableProvider> in Arc<dyn TableProvider> as expected by the functions
+        let tables_arc: Arc<dyn TableProvider> = self.tables.clone();
         let tables_provider = create_information_schema_tables_provider(
-            self.tables.clone(),
+            Arc::new(tables_arc),
             schema_registry.clone(),
         );
         *self.information_schema_tables.write().unwrap() = Some(tables_provider);
 
         // Initialize information_schema.columns using VirtualView pattern
-        let columns_provider = create_information_schema_columns_provider(self.tables.clone());
+        let columns_arc: Arc<dyn TableProvider> = self.tables.clone();
+        let columns_provider = create_information_schema_columns_provider(Arc::new(columns_arc));
         *self.information_schema_columns.write().unwrap() = Some(columns_provider);
     }
     

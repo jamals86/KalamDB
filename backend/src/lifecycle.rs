@@ -62,7 +62,7 @@ pub async fn bootstrap(config: &ServerConfig) -> Result<(ApplicationComponents, 
 
     // Initialize system tables and verify schema version (Phase 10 Phase 7, T075-T079)
     let phase_start = std::time::Instant::now();
-    kalamdb_core::tables::system::initialize_system_tables(backend.clone()).await?;
+    kalamdb_system::initialize_system_tables(backend.clone()).await?;
     info!("System tables initialized with schema version tracking ({:.2}ms)", phase_start.elapsed().as_secs_f64() * 1000.0);
 
     // Start JobsManager run loop (Phase 9, T163)

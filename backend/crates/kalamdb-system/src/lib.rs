@@ -36,14 +36,18 @@
 //! // SELECT * FROM system.users WHERE role = 'dba';
 //! ```
 
-pub mod providers;
 pub mod error;
+pub mod initialization;
+pub mod providers;
+pub mod registry;
 pub mod system_table_definitions;
 pub mod system_table_store;
 pub mod system_table_trait;
 
-// Re-export commonly used types
+// Re-export main types
 pub use error::{SystemError, Result};
+pub use initialization::initialize_system_tables;
+pub use registry::SystemTablesRegistry;
 pub use system_table_trait::SystemTableProviderExt;
 
 // Re-export all providers

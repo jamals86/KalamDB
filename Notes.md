@@ -164,7 +164,21 @@ scalar_value_to_json will be removed completely as well
 ServerMessage will use arrow arrays directly as well
 
 
+140) can we get rid of using EntityStore:: and directlky use the desired store? it will be more type safe
 
+
+
+Next:
+1) backend\crates\kalamdb-core\src\flush can be removed completely
+2) backend\crates\kalamdb-core\src\auth can be moved to auth crate
+3) backend\crates\kalamdb-core\src\live_query can be moved to kalamdb-live
+4) backend\crates\kalamdb-core\src\providers needs to be moved to kalamdb-tables
+5) backend\crates\kalamdb-core\src\schema_registry can be removed completely we can import where we need it
+6) backend\crates\kalamdb-core\src\system_columns.rs should be removed completely
+7) backend\crates\kalamdb-core\src\system_table_registration.rs can be moved to kalamdb-system also this one backend\crates\kalamdb-core\src\tables\system\initialization.rs both are doing something similar maybe you can combine the code or remove un-needed parts
+8) backend\crates\kalamdb-core\src\tables\system\stats.rs should be moved to kalamdb-registry
+9) We already have SchemaRegistry we we also have this: backend\crates\kalamdb-core\src\tables\system\registry.rs maybe its better to be moved to kalamdb-system
+10) 
 
 
 Here’s the updated 5-line spec with embedding storage inside Parquet and managed HNSW indexing (with delete handling):

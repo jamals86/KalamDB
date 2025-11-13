@@ -9,6 +9,8 @@ pub mod extractor;
 pub mod jwt_auth;
 pub mod oauth;
 pub mod password;
+pub mod rbac;
+pub mod roles;
 // TODO: service.rs needs refactoring to remove RocksDbAdapter dependencies
 // pub mod service;
 pub mod user_repo;

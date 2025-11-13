@@ -6,7 +6,6 @@ members = [
     "backend/crates/kalamdb-registry",
     "backend/crates/kalamdb-system",
     "backend/crates/kalamdb-tables",
-    "backend/crates/kalamdb-jobs",
     "backend/crates/kalamdb-core",
     "backend/crates/kalamdb-sql",
     "backend/crates/kalamdb-store",

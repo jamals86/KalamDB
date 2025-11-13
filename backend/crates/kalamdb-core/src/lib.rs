@@ -4,21 +4,33 @@
 // including namespace/table management, Arrow schema handling, RocksDB storage,
 // and live query subscriptions.
 
-pub mod auth;
 pub mod error;
-pub mod flush;
 pub mod jobs;
-pub mod live_query;
-pub mod schema_registry;
+pub mod providers;
 pub mod slow_query_logger;
 pub mod app_context;
 pub mod sql;
 pub mod storage;
-pub mod system_columns;
-pub mod system_table_registration;
 pub mod tables;
-pub mod providers; // Phase 13: New unified provider architecture
 pub mod test_helpers;
+
+// Re-export modules that were moved to other crates
+pub mod auth {
+    pub use kalamdb_auth::rbac;
+    pub use kalamdb_auth::roles;
+}
+
+pub mod live_query {
+    pub use kalamdb_live::*;
+}
+
+pub mod schema_registry {
+    pub use kalamdb_registry::*;
+}
+
+pub mod system_columns {
+    pub use kalamdb_registry::SystemColumnsService;
+}
 
 // // Test helpers (only compiled in test mode)
 // #[cfg(test)]

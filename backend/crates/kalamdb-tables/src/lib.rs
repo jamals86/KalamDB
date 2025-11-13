@@ -43,11 +43,11 @@
 //! session_state.register_table(table_name, Arc::new(user_provider))?;
 //! ```
 
-pub mod user_tables;
-pub mod shared_tables;
-pub mod stream_tables;
 pub mod error;
+pub mod shared_tables;
 pub mod store_ext;
+pub mod stream_tables;
+pub mod user_tables;
 
 // Re-export commonly used types
 pub use error::{TableError, Result};

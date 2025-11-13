@@ -1,14 +1,13 @@
-// backend/crates/kalamdb-core/src/live_query/initial_data.rs
+// backend/crates/kalamdb-live/src/initial_data.rs
 //
 // Initial data fetch for live query subscriptions.
 // Provides "changes since timestamp" functionality to populate client state
 // before real-time notifications begin.
 
 use crate::error::KalamDbError;
-use crate::live_query::filter::FilterPredicate;
-use crate::schema_registry::TableType;
-use kalamdb_tables::{SharedTableStoreExt, UserTableStoreExt};
-use crate::tables::{StreamTableStore, UserTableStore};
+use crate::filter::FilterPredicate;
+use kalamdb_registry::TableType;
+use kalamdb_tables::{SharedTableStoreExt, UserTableStoreExt, SharedTableStore, StreamTableStore, UserTableStore};
 use chrono::DateTime;
 use kalamdb_commons::TableName;
 use serde_json::Value as JsonValue;
@@ -119,12 +118,12 @@ impl InitialDataFetcher {
     /// InitialDataResult with rows and metadata
     pub async fn fetch_initial_data(
         &self,
-        _live_id: &crate::live_query::connection_registry::LiveId,
+        _live_id: &crate::connection_registry::LiveId,
         table_name: &TableName,
         table_type: TableType,
         options: InitialDataOptions,
         filter: Option<Arc<FilterPredicate>>,
-    ) -> Result<InitialDataResult, KalamDbError> {
+    ) -> Result<InitialDataResult, String> {
         log::info!(
             "fetch_initial_data called: table={}, type={:?}, limit={}, since={:?}",
             table_name.as_str(),
@@ -160,8 +159,9 @@ impl InitialDataFetcher {
                 // connection's user_id. Filtering by user (if present) is enforced
                 // by the compiled predicate below. This ensures admins and broad
                 // subscriptions receive the correct initial snapshot.
+                use kalamdb_store::entity_store::EntityStore;
                 let mut rows = Vec::new();
-                for (_key, row) in store.scan_all().map_err(|e| {
+                for (_key, row) in EntityStore::scan_all(store.as_ref()).map_err(|e| {
                     KalamDbError::Other(format!(
                         "Failed to scan user table {}.{}: {}",
                         namespace, table, e
@@ -199,8 +199,9 @@ impl InitialDataFetcher {
                     )
                 })?;
 
+                use kalamdb_store::entity_store::EntityStore;
                 let mut rows = Vec::new();
-                for (_row_id, row) in store.scan().map_err(|e| {
+                for (_row_id, row) in EntityStore::scan_all(store.as_ref()).map_err(|e| {
                     KalamDbError::Other(format!(
                         "Failed to scan stream table {}.{}: {}",
                         namespace, table, e

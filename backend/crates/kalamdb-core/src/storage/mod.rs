@@ -5,6 +5,7 @@
 //! pluggable backends (RocksDB, in-memory, etc.).
 //!
 //! Phase 13.8 Migration: ParquetWriter moved to kalamdb-filestore
+//! StorageRegistry remains here as it manages storage metadata/configuration
 
 pub mod storage_registry;
 

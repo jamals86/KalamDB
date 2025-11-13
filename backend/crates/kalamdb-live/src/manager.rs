@@ -4,15 +4,15 @@
 //! and real-time notifications to WebSocket clients.
 
 use crate::error::KalamDbError;
-use crate::live_query::connection_registry::{
+use crate::connection_registry::{
     ConnectionId, LiveId, LiveQueryOptions, LiveQueryRegistry, NodeId,
 };
-use crate::live_query::filter::FilterCache;
-use crate::live_query::initial_data::{InitialDataFetcher, InitialDataOptions, InitialDataResult};
-use crate::tables::system::LiveQueriesTableProvider;
-use crate::tables::{SharedTableStore, StreamTableStore, UserTableStore};
+use crate::filter::FilterCache;
+use crate::initial_data::{InitialDataFetcher, InitialDataOptions, InitialDataResult};
+use kalamdb_system::LiveQueriesTableProvider;
+use kalamdb_tables::{SharedTableStore, StreamTableStore, UserTableStore};
 use kalamdb_commons::models::{NamespaceId, TableId, TableName, UserId};
-use crate::schema_registry::SchemaRegistry;
+use kalamdb_registry::SchemaRegistry;
 use kalamdb_commons::schemas::TableType;
 use kalamdb_commons::system::LiveQuery as SystemLiveQuery;
 use kalamdb_commons::LiveQueryId;
@@ -79,8 +79,8 @@ impl LiveQueryManager {
         &self,
         user_id: UserId,
         unique_conn_id: String,
-        notification_tx: Option<crate::live_query::connection_registry::NotificationSender>,
-    ) -> Result<ConnectionId, KalamDbError> {
+        notification_tx: Option<crate::connection_registry::NotificationSender>,
+    ) -> Result<ConnectionId, String> {
         let connection_id = ConnectionId::new(user_id.as_str().to_string(), unique_conn_id);
 
         let tx = if let Some(tx) = notification_tx {
@@ -445,6 +445,7 @@ impl LiveQueryManager {
         user_id: &UserId,
     ) -> Result<Vec<SystemLiveQuery>, KalamDbError> {
         self.live_queries_provider.get_by_user_id(user_id)
+            .map_err(|e| KalamDbError::Other(format!("Failed to get user subscriptions: {}", e)))
     }
 
     /// Get a specific live query
@@ -453,6 +454,7 @@ impl LiveQueryManager {
         live_id: &str,
     ) -> Result<Option<SystemLiveQuery>, KalamDbError> {
         self.live_queries_provider.get_live_query(live_id)
+            .map_err(|e| KalamDbError::Other(format!("Failed to get live query: {}", e)))
     }
 
     /// Get registry statistics
@@ -754,7 +756,7 @@ impl LiveQueryManager {
     async fn get_notification_sender(
         &self,
         live_id: &LiveId,
-    ) -> Option<crate::live_query::connection_registry::NotificationSender> {
+    ) -> Option<crate::connection_registry::NotificationSender> {
         let registry = self.registry.read().await;
         registry
             .get_notification_sender(&live_id.connection_id)

@@ -33,10 +33,12 @@ tokio = { workspace = true }
 
 # Serialization
 bincode = { workspace = true }
-
-# Serialization
 serde = { workspace = true }
 serde_json = { workspace = true }
+
+# Encoding
+base64 = { workspace = true }
+hex = { workspace = true }
 
 # Error handling
 thiserror = { workspace = true }

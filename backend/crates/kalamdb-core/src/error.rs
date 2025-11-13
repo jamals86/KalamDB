@@ -153,6 +153,60 @@ impl From<kalamdb_filestore::FilestoreError> for KalamDbError {
     }
 }
 
+// Convert DataFusion errors
+impl From<datafusion::error::DataFusionError> for KalamDbError {
+    fn from(err: datafusion::error::DataFusionError) -> Self {
+        KalamDbError::Other(format!("DataFusion error: {}", err))
+    }
+}
+
+// Convert Arrow errors
+impl From<datafusion::arrow::error::ArrowError> for KalamDbError {
+    fn from(err: datafusion::arrow::error::ArrowError) -> Self {
+        KalamDbError::Other(format!("Arrow error: {}", err))
+    }
+}
+
+// Convert kalamdb_registry::RegistryError to KalamDbError
+impl From<kalamdb_registry::RegistryError> for KalamDbError {
+    fn from(err: kalamdb_registry::RegistryError) -> Self {
+        match err {
+            kalamdb_registry::RegistryError::TableNotFound { namespace, table } => {
+                KalamDbError::TableNotFound(format!("{}.{}", namespace, table))
+            }
+            kalamdb_registry::RegistryError::StorageNotFound { storage_id } => {
+                KalamDbError::NotFound(format!("Storage not found: {}", storage_id))
+            }
+            kalamdb_registry::RegistryError::SchemaConversion { message } => {
+                KalamDbError::SchemaError(message)
+            }
+            kalamdb_registry::RegistryError::SchemaError(msg) => KalamDbError::SchemaError(msg),
+            kalamdb_registry::RegistryError::ArrowError { message } => {
+                KalamDbError::Other(format!("Registry Arrow error: {}", message))
+            }
+            kalamdb_registry::RegistryError::DataFusionError { message } => {
+                KalamDbError::Other(format!("Registry DataFusion error: {}", message))
+            }
+            kalamdb_registry::RegistryError::StorageError { message } => {
+                KalamDbError::Other(format!("Registry storage error: {}", message))
+            }
+            kalamdb_registry::RegistryError::InvalidConfig { message } => {
+                KalamDbError::ConfigError(message)
+            }
+            kalamdb_registry::RegistryError::CacheFailed { message } => {
+                KalamDbError::Other(format!("Cache failed: {}", message))
+            }
+            kalamdb_registry::RegistryError::ViewError { message } => {
+                KalamDbError::Other(format!("View error: {}", message))
+            }
+            kalamdb_registry::RegistryError::InvalidOperation(msg) => KalamDbError::InvalidOperation(msg),
+            kalamdb_registry::RegistryError::Other(msg) => {
+                KalamDbError::Other(format!("Registry error: {}", msg))
+            }
+        }
+    }
+}
+
 // Convert kalamdb_system::SystemError to KalamDbError
 impl From<kalamdb_system::SystemError> for KalamDbError {
     fn from(err: kalamdb_system::SystemError) -> Self {
@@ -558,9 +612,9 @@ impl From<kalamdb_tables::TableError> for KalamDbError {
             TableError::NotFound(msg) => KalamDbError::NotFound(msg),
             TableError::InvalidOperation(msg) => KalamDbError::InvalidOperation(msg),
             TableError::Serialization(msg) => KalamDbError::SerializationError(msg),
-            TableError::DataFusion(msg) => KalamDbError::DataFusionError(msg),
-            TableError::Arrow(e) => KalamDbError::ArrowError(e.to_string()),
-            TableError::Filestore(msg) => KalamDbError::FilestoreError(msg),
+            TableError::DataFusion(msg) => KalamDbError::Other(format!("DataFusion error: {}", msg)),
+            TableError::Arrow(e) => KalamDbError::Other(format!("Arrow error: {}", e)),
+            TableError::Filestore(msg) => KalamDbError::Other(format!("Filestore error: {}", msg)),
             TableError::SchemaError(msg) => KalamDbError::SchemaError(msg),
             TableError::Other(msg) => KalamDbError::Other(msg),
         }

@@ -22,7 +22,7 @@
 
 use kalamdb_commons::constants::{SYSTEM_SCHEMA_VERSION, SYSTEM_SCHEMA_VERSION_KEY};
 use kalamdb_store::{Partition, StorageBackend};
-use crate::error::KalamDbError;
+use crate::error::SystemError;
 use std::sync::Arc;
 
 /// Initialize system tables and verify schema version.
@@ -47,7 +47,7 @@ use std::sync::Arc;
 ///
 /// ## Error Handling
 ///
-/// Returns `KalamDbError` if:
+/// Returns `SystemError` if:
 /// - RocksDB read/write fails
 /// - Version deserialization fails (data corruption)
 ///
@@ -59,7 +59,7 @@ use std::sync::Arc;
 /// ```
 pub async fn initialize_system_tables(
     storage_backend: Arc<dyn StorageBackend>,
-) -> Result<(), KalamDbError> {
+) -> Result<(), SystemError> {
     let current_version = SYSTEM_SCHEMA_VERSION;
     let version_key = SYSTEM_SCHEMA_VERSION_KEY.as_bytes();
     let default_partition = Partition::new("default");
@@ -68,7 +68,7 @@ pub async fn initialize_system_tables(
     let stored_version_opt = match storage_backend.get(&default_partition, version_key)? {
         Some(bytes) => {
             if bytes.len() != 4 {
-                return Err(KalamDbError::InvalidOperation(format!(
+                return Err(SystemError::Other(format!(
                     "Invalid schema version data: expected 4 bytes, got {}",
                     bytes.len()
                 )));
@@ -125,7 +125,7 @@ pub async fn initialize_system_tables(
         }
         Some(stored_version) => {
             // Stored version is NEWER than current (downgrade not supported)
-            return Err(KalamDbError::InvalidOperation(format!(
+            return Err(SystemError::Other(format!(
                 "Schema downgrade not supported: stored v{} > current v{}. \
                  Please upgrade to a newer server version.",
                 stored_version,
@@ -228,8 +228,8 @@ mod tests {
         
         let err = result.unwrap_err();
         assert!(
-            matches!(err, KalamDbError::InvalidOperation(_)),
-            "Expected InvalidOperation for downgrade"
+            matches!(err, SystemError::Other(_)),
+            "Expected Other error for downgrade"
         );
     }
 
@@ -248,8 +248,8 @@ mod tests {
         
         let err = result.unwrap_err();
         assert!(
-            matches!(err, KalamDbError::InvalidOperation(_)),
-            "Expected InvalidOperation for invalid data"
+            matches!(err, SystemError::Other(_)),
+            "Expected Other error for invalid data"
         );
     }
 }

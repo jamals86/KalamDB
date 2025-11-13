@@ -10,9 +10,19 @@ description = "Live query subscription management for KalamDB"
 [dependencies]
 # Internal crates
 kalamdb-commons = { path = "../kalamdb-commons" }
+kalamdb-registry = { path = "../kalamdb-registry" }
+kalamdb-store = { path = "../kalamdb-store" }
+kalamdb-system = { path = "../kalamdb-system" }
+kalamdb-tables = { path = "../kalamdb-tables" }
 
 # Apache Arrow ecosystem (for expression caching)
 datafusion = { workspace = true }
+
+# Concurrent HashMap
+dashmap = { workspace = true }
+
+# Date/time handling
+chrono = { workspace = true }
 
 # Actor framework
 actix = { workspace = true }
