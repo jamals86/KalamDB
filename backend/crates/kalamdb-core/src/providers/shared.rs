@@ -267,11 +267,29 @@ impl BaseTableProvider<SharedTableRowId, SharedTableRow> for SharedTableProvider
         Ok(row_key)
     }
     
-    fn delete(&self, _user_id: &UserId, _key: &SharedTableRowId) -> Result<(), KalamDbError> {
+    fn delete(&self, _user_id: &UserId, key: &SharedTableRowId) -> Result<(), KalamDbError> {
         // IGNORE user_id parameter - no RLS for shared tables
+        // Load referenced version to extract PK so tombstone groups with same logical row
+        let prior = EntityStore::get(&*self.store, key)
+            .map_err(|e| KalamDbError::Other(format!("Failed to load prior version: {}", e)))?
+            .ok_or_else(|| KalamDbError::NotFound("Row not found for delete".to_string()))?;
+
+        let pk_name = self.primary_key_field_name().to_string();
+        // Preserve existing PK value if present; may be null if malformed
+        let pk_json_val = prior
+            .fields
+            .get(&pk_name)
+            .cloned()
+            .unwrap_or(serde_json::Value::Null);
+
         let sys_cols = self.core.system_columns.clone();
         let seq_id = sys_cols.generate_seq_id()?;
-        let entity = SharedTableRow { _seq: seq_id, _deleted: true, fields: serde_json::json!({}) };
+        // Include PK in tombstone fields so version resolution collapses correctly
+        let entity = SharedTableRow {
+            _seq: seq_id,
+            _deleted: true,
+            fields: serde_json::json!({ pk_name: pk_json_val }),
+        };
         let row_key = seq_id;
         self.store.put(&row_key, &entity).map_err(|e| {
             KalamDbError::InvalidOperation(format!("Failed to delete shared table row: {}", e))

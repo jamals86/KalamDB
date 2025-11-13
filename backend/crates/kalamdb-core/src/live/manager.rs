@@ -10,7 +10,6 @@ use super::connection_registry::{
 use super::filter::FilterCache;
 use super::initial_data::{InitialDataFetcher, InitialDataOptions, InitialDataResult};
 use kalamdb_system::LiveQueriesTableProvider;
-use kalamdb_tables::{SharedTableStore, StreamTableStore, UserTableStore};
 use kalamdb_commons::models::{NamespaceId, TableId, TableName, UserId};
 // SchemaRegistry will be passed as Arc parameter from kalamdb-core
 use kalamdb_commons::schemas::TableType;
@@ -35,18 +34,13 @@ impl LiveQueryManager {
         live_queries_provider: Arc<LiveQueriesTableProvider>,
         schema_registry: Arc<crate::schema_registry::SchemaRegistry>,
         node_id: NodeId,
-        user_table_store: Option<Arc<UserTableStore>>,
-        _shared_table_store: Option<Arc<SharedTableStore>>,
-        stream_table_store: Option<Arc<StreamTableStore>>,
+        backend: Option<Arc<dyn kalamdb_store::StorageBackend>>,
     ) -> Self {
         let registry = Arc::new(tokio::sync::RwLock::new(LiveQueryRegistry::new(
             node_id.clone(),
         )));
         let filter_cache = Arc::new(tokio::sync::RwLock::new(FilterCache::new()));
-        let initial_data_fetcher = Arc::new(InitialDataFetcher::new(
-            user_table_store.clone(),
-            stream_table_store.clone(),
-        ));
+        let initial_data_fetcher = Arc::new(InitialDataFetcher::new(backend, schema_registry.clone()));
 
         Self {
             registry,
@@ -987,9 +981,7 @@ mod tests {
             live_queries_provider,
             schema_registry,
             NodeId::from("test_node"),
-            Some(Arc::clone(&user_table_store)),
-            Some(Arc::clone(&shared_table_store)),
-            Some(Arc::clone(&stream_table_store)),
+            Some(backend.clone()),
         );
         (manager, temp_dir)
     }

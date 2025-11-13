@@ -89,22 +89,15 @@ pub struct InitialDataResult {
 }
 
 /// Service for fetching initial data when subscribing to live queries
-#[derive(Default)]
 pub struct InitialDataFetcher {
-    user_table_store: Option<Arc<UserTableStore>>,
-    stream_table_store: Option<Arc<StreamTableStore>>,
+    backend: Option<Arc<dyn kalamdb_store::StorageBackend>>,
+    schema_registry: Arc<crate::schema_registry::SchemaRegistry>,
 }
 
 impl InitialDataFetcher {
     /// Create a new initial data fetcher
-    pub fn new(
-        user_table_store: Option<Arc<UserTableStore>>,
-        stream_table_store: Option<Arc<StreamTableStore>>,
-    ) -> Self {
-        Self {
-            user_table_store,
-            stream_table_store,
-        }
+    pub fn new(backend: Option<Arc<dyn kalamdb_store::StorageBackend>>, schema_registry: Arc<crate::schema_registry::SchemaRegistry>) -> Self {
+        Self { backend, schema_registry }
     }
 
     /// Fetch initial data for a table
@@ -149,19 +142,24 @@ impl InitialDataFetcher {
 
         let mut rows_with_ts: Vec<(i64, JsonValue)> = match table_type {
             TableType::User => {
-                let store = self.user_table_store.as_ref().ok_or_else(|| {
+                let backend = self.backend.as_ref().ok_or_else(|| {
                     KalamDbError::InvalidOperation(
-                        "UserTableStore not configured for live query initial data".to_string(),
+                        "StorageBackend not configured for live query initial data".to_string(),
                     )
                 })?;
 
-                // IMPORTANT: Scan all rows for the table, not just the current
-                // connection's user_id. Filtering by user (if present) is enforced
-                // by the compiled predicate below. This ensures admins and broad
-                // subscriptions receive the correct initial snapshot.
+                // Create table-specific store for this namespace+table
+                let store = kalamdb_tables::new_user_table_store(
+                    backend.clone(),
+                    &kalamdb_commons::models::NamespaceId::new(&namespace),
+                    &kalamdb_commons::TableName::new(&table),
+                );
+
+                // Scan all rows for the table. We'll produce a FLAT JSON object per row
+                // that matches notification format: merge `row.fields` and inject `user_id`.
                 use kalamdb_store::entity_store::EntityStore;
                 let mut rows = Vec::new();
-                for (_key, row) in EntityStore::scan_all(store.as_ref()).map_err(|e| {
+                for (_key, row) in EntityStore::scan_all(&store).map_err(|e| {
                     KalamDbError::Other(format!(
                         "Failed to scan user table {}.{}: {}",
                         namespace, table, e
@@ -171,62 +169,79 @@ impl InitialDataFetcher {
                         continue;
                     }
 
-                    let timestamp =
-                        Self::extract_updated_timestamp(&serde_json::to_value(&row).unwrap());
+                    // Use SeqId timestamp for ordering when _updated is not present
+                    let timestamp = row._seq.timestamp_millis() as i64;
+
                     if let Some(since) = since_timestamp {
                         if timestamp < since {
                             continue;
                         }
                     }
 
+                    // Build flat row JSON: fields + user_id
+                    let mut obj = row
+                        .fields
+                        .as_object()
+                        .cloned()
+                        .unwrap_or_default();
+                    obj.insert("user_id".to_string(), serde_json::json!(row.user_id.as_str()));
+                    let flat = serde_json::Value::Object(obj);
+
                     if let Some(predicate) = filter.as_ref() {
                         if !predicate
-                            .matches(&serde_json::to_value(&row).unwrap())
+                            .matches(&flat)
                             .map_err(|e| KalamDbError::Other(e.to_string()))?
                         {
                             continue;
                         }
                     }
 
-                    rows.push((timestamp, serde_json::to_value(row).unwrap()));
+                    rows.push((timestamp, flat));
                 }
                 rows
             }
             TableType::Stream => {
-                let store = self.stream_table_store.as_ref().ok_or_else(|| {
-                    KalamDbError::InvalidOperation(
-                        "StreamTableStore not configured for live query initial data".to_string(),
-                    )
-                })?;
+                // Use the registered provider to avoid creating a fresh in-memory store
+                let table_id = kalamdb_commons::models::TableId::new(
+                    kalamdb_commons::models::NamespaceId::new(&namespace),
+                    kalamdb_commons::TableName::new(&table),
+                );
 
-                use kalamdb_store::entity_store::EntityStore;
-                let mut rows = Vec::new();
-                for (_row_id, row) in EntityStore::scan_all(store.as_ref()).map_err(|e| {
-                    KalamDbError::Other(format!(
-                        "Failed to scan stream table {}.{}: {}",
-                        namespace, table, e
-                    ))
-                })? {
-                    let timestamp = Self::extract_updated_timestamp(&row.fields);
+                let provider = self
+                    .schema_registry
+                    .get_provider(&table_id)
+                    .ok_or_else(|| KalamDbError::Other(format!(
+                        "Provider not found for stream table {}.{}",
+                        namespace, table
+                    )))?;
 
-                    if let Some(since) = since_timestamp {
-                        if timestamp < since {
-                            continue;
+                // Downcast to StreamTableProvider
+                if let Some(stream_provider) = provider.as_any().downcast_ref::<crate::providers::StreamTableProvider>() {
+                    let mut rows = Vec::new();
+                    for row_fields in stream_provider.snapshot_all_rows_json()? {
+                        let timestamp = Self::extract_updated_timestamp(&row_fields);
+
+                        if let Some(since) = since_timestamp {
+                            if timestamp < since {
+                                continue;
+                            }
                         }
-                    }
 
-                    if let Some(predicate) = filter.as_ref() {
-                        if !predicate
-                            .matches(&row.fields)
-                            .map_err(|e| KalamDbError::Other(e.to_string()))?
-                        {
-                            continue;
+                        if let Some(predicate) = filter.as_ref() {
+                            if !predicate
+                                .matches(&row_fields)
+                                .map_err(|e| KalamDbError::Other(e.to_string()))?
+                            {
+                                continue;
+                            }
                         }
-                    }
 
-                    rows.push((timestamp, row.fields.clone()));
+                        rows.push((timestamp, row_fields));
+                    }
+                    rows
+                } else {
+                    return Err(KalamDbError::Other("Cached provider type mismatch for stream table".to_string()));
                 }
-                rows
             }
             TableType::Shared | TableType::System => {
                 return Err(KalamDbError::InvalidOperation(format!(
@@ -355,7 +370,8 @@ mod tests {
 
     #[test]
     fn test_parse_user_table_name() {
-        let fetcher = InitialDataFetcher::default();
+        let schema_registry = Arc::new(crate::schema_registry::SchemaRegistry::new(100));
+        let fetcher = InitialDataFetcher::new(None, schema_registry);
         let result = fetcher.parse_table_name(&TableName::new("app.messages"), TableType::User);
 
         assert!(result.is_ok());
@@ -366,7 +382,8 @@ mod tests {
 
     #[test]
     fn test_parse_shared_table_name() {
-        let fetcher = InitialDataFetcher::default();
+        let schema_registry = Arc::new(crate::schema_registry::SchemaRegistry::new(100));
+        let fetcher = InitialDataFetcher::new(None, schema_registry);
         let result = fetcher.parse_table_name(&TableName::new("public.announcements"), TableType::Shared);
 
         assert!(result.is_ok());
@@ -377,7 +394,8 @@ mod tests {
 
     #[test]
     fn test_parse_invalid_user_table_name() {
-        let fetcher = InitialDataFetcher::default();
+        let schema_registry = Arc::new(crate::schema_registry::SchemaRegistry::new(100));
+        let fetcher = InitialDataFetcher::new(None, schema_registry);
         let result = fetcher.parse_table_name(&TableName::new("invalid.format.table"), TableType::User);
 
         assert!(result.is_err());
@@ -385,7 +403,8 @@ mod tests {
 
     #[test]
     fn test_parse_invalid_shared_table_name() {
-        let fetcher = InitialDataFetcher::default();
+        let schema_registry = Arc::new(crate::schema_registry::SchemaRegistry::new(100));
+        let fetcher = InitialDataFetcher::new(None, schema_registry);
         let result = fetcher.parse_table_name(&TableName::new("announcements"), TableType::Shared);
 
         assert!(result.is_err());
@@ -397,7 +416,7 @@ mod tests {
         let backend: Arc<dyn kalamdb_store::StorageBackend> = Arc::new(InMemoryBackend::new());
         let ns = NamespaceId::new("batch_test");
         let tbl = TableName::new("items");
-        let store = Arc::new(new_user_table_store(backend, &ns, &tbl));
+        let store = Arc::new(new_user_table_store(backend.clone(), &ns, &tbl));
 
         let user_id = UserId::from("userA");
         let seq = SeqId::new(1234567890);
@@ -413,8 +432,9 @@ mod tests {
         // Insert row using EntityStore trait
         EntityStore::put(&*store, &row_id, &row).expect("put row");
 
-        // Build fetcher with user table store
-        let fetcher = InitialDataFetcher::new(Some(store), None);
+        // Build fetcher with backend
+        let schema_registry = Arc::new(crate::schema_registry::SchemaRegistry::new(100));
+        let fetcher = InitialDataFetcher::new(Some(backend), schema_registry);
 
         // LiveId for connection user 'root' (distinct from row.user_id)
         let conn = ConnId::new("root".to_string(), "conn1".to_string());

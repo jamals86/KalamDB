@@ -229,9 +229,7 @@ impl AppContext {
                     system_tables.live_queries(),
                     schema_registry.clone(),
                     (*node_id).clone(), // Dereference Arc<NodeId> to NodeId for LiveQueryManager
-                    Some(user_table_store.clone()),
-                    Some(shared_table_store.clone()),
-                    Some(stream_table_store.clone()),
+                    Some(storage_backend.clone()),
                 ));
 
                 // Create slow query logger (Phase 11)
@@ -354,9 +352,7 @@ impl AppContext {
             system_tables.live_queries(),
             schema_registry.clone(),
             (*node_id).clone(),
-            Some(user_table_store.clone()),
-            Some(shared_table_store.clone()),
-            Some(stream_table_store.clone()),
+            Some(storage_backend.clone()),
         ));
 
         // Create test config
@@ -507,9 +503,7 @@ impl AppContext {
             system_tables.live_queries(),
             schema_registry.clone(),
             (*node_id).clone(),
-            Some(user_table_store.clone()),
-            Some(shared_table_store.clone()),
-            Some(stream_table_store.clone()),
+            Some(storage_backend.clone()),
         ));
 
         // Create slow query logger

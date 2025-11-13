@@ -357,8 +357,27 @@ impl BaseTableProvider<UserTableRowId, UserTableRow> for UserTableProvider {
 
         let sys_cols = self.core.system_columns.clone();
         let seq_id = sys_cols.generate_seq_id()?;
-        let entity = UserTableRow { user_id: user_id.clone(), _seq: seq_id, _deleted: true, fields: serde_json::json!({}) };
+        // Preserve the primary key value in the tombstone so version resolution groups
+        // the tombstone with the same logical row and suppresses older versions.
+        let pk_json_val = prior
+            .fields
+            .get(&pk_name)
+            .cloned()
+            .unwrap_or(serde_json::Value::Null);
+        let entity = UserTableRow {
+            user_id: user_id.clone(),
+            _seq: seq_id,
+            _deleted: true,
+            fields: serde_json::json!({ pk_name.clone(): pk_json_val.clone() }),
+        };
         let row_key = UserTableRowId::new(user_id.clone(), seq_id);
+        log::info!(
+            "[UserProvider DELETE] Writing tombstone: user={}, _seq={}, PK={}:{}",
+            user_id.as_str(),
+            seq_id.as_i64(),
+            pk_name,
+            pk_json_val
+        );
         self.store.put(&row_key, &entity).map_err(|e| {
             KalamDbError::InvalidOperation(format!("Failed to delete user table row: {}", e))
         })?;
@@ -484,10 +503,11 @@ impl BaseTableProvider<UserTableRowId, UserTableRow> for UserTableProvider {
                 Some(v) => {
                     let key_str = v.to_string();
                     log::debug!(
-                        "[UserProvider] Hot row _seq={}: PK({})={}",
+                        "[UserProvider] Hot row _seq={}: PK({})={}, _deleted={}",
                         row._seq.as_i64(),
                         pk_name,
-                        key_str
+                        key_str,
+                        row._deleted
                     );
                     key_str
                 }
@@ -495,10 +515,11 @@ impl BaseTableProvider<UserTableRowId, UserTableRow> for UserTableProvider {
                     // Missing or null PK in row: group by unique _seq to avoid collapsing
                     let fallback = format!("_seq:{}", row._seq.as_i64());
                     log::debug!(
-                        "[UserProvider] Hot row _seq={}: PK({}) missing/null, using fallback={}",
+                        "[UserProvider] Hot row _seq={}: PK({}) missing/null, using fallback={}, _deleted={}",
                         row._seq.as_i64(),
                         pk_name,
-                        fallback
+                        fallback,
+                        row._deleted
                     );
                     fallback
                 }
@@ -507,10 +528,30 @@ impl BaseTableProvider<UserTableRowId, UserTableRow> for UserTableProvider {
             match best.get(&pk_key) {
                 Some((_existing_key, existing_row)) => {
                     if row._seq > existing_row._seq {
+                        log::debug!(
+                            "[UserProvider] Replacing winner for PK '{}': old_seq={}, new_seq={}, new_deleted={}",
+                            pk_key,
+                            existing_row._seq.as_i64(),
+                            row._seq.as_i64(),
+                            row._deleted
+                        );
                         best.insert(pk_key, (key, row));
+                    } else {
+                        log::debug!(
+                            "[UserProvider] Keeping existing winner for PK '{}': existing_seq={} >= new_seq={}",
+                            pk_key,
+                            existing_row._seq.as_i64(),
+                            row._seq.as_i64()
+                        );
                     }
                 }
                 None => {
+                    log::debug!(
+                        "[UserProvider] First entry for PK '{}': _seq={}, _deleted={}",
+                        pk_key,
+                        row._seq.as_i64(),
+                        row._deleted
+                    );
                     best.insert(pk_key, (key, row));
                 }
             }
@@ -621,6 +662,14 @@ impl BaseTableProvider<UserTableRowId, UserTableRow> for UserTableProvider {
         }
 
         // Filter winners where latest version is not deleted
+        let pre_filter_count = best.len();
+        let deleted_count = best.values().filter(|(_k, r)| r._deleted).count();
+        log::info!(
+            "[UserProvider] Pre-tombstone filter: {} total winners, {} deleted",
+            pre_filter_count,
+            deleted_count
+        );
+        
         let result: Vec<(UserTableRowId, UserTableRow)> = best
             .into_values()
             .filter(|(_k, r)| !r._deleted)

@@ -16,3 +16,5 @@ mod smoke_test_core_operations;
 mod smoke_test_flush_operations;
 #[path = "smoke/smoke_test_queries_benchmark.rs"]
 mod smoke_test_queries_benchmark;
+#[path = "smoke/smoke_test_dml_wide_columns.rs"]
+mod smoke_test_dml_wide_columns;

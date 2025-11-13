@@ -92,6 +92,20 @@ impl StreamTableProvider {
             primary_key_field_name,
         }
     }
+
+    /// Return a snapshot of all rows as JSON objects (no RLS filtering)
+    ///
+    /// Used by live initial snapshot where we need table-wide data. RLS is
+    /// enforced at the WebSocket layer so this method intentionally returns
+    /// all rows for the table.
+    pub fn snapshot_all_rows_json(&self) -> Result<Vec<JsonValue>, KalamDbError> {
+        use kalamdb_store::entity_store::EntityStore;
+        let rows = self
+            .store
+            .scan_all()
+            .map_err(|e| KalamDbError::InvalidOperation(format!("Failed to scan stream store: {}", e)))?;
+        Ok(rows.into_iter().map(|(_k, r)| r.fields).collect())
+    }
     
     /// Extract user context from DataFusion SessionState
     ///
@@ -164,9 +178,10 @@ impl BaseTableProvider<StreamTableRowId, StreamTableRow> for StreamTableProvider
         })?;
         
         log::debug!(
-            "Inserted stream event for user {} with _seq {}",
-            user_id.as_str(),
-            seq_id
+            "[StreamProvider] Inserted event: table={} seq={} user={}",
+            format!("{}.{}", self.table_id.namespace_id().as_str(), self.table_id.table_name().as_str()),
+            seq_id.as_i64(),
+            user_id.as_str()
         );
 
         // Fire live query notification (INSERT)
@@ -188,7 +203,13 @@ impl BaseTableProvider<StreamTableRowId, StreamTableRow> for StreamTableProvider
             obj.insert("user_id".to_string(), json!(user_id.as_str()));
             let row_json = JsonValue::Object(obj);
 
-            let notification = ChangeNotification::insert(table_name, row_json);
+            let notification = ChangeNotification::insert(table_name.clone(), row_json);
+            log::debug!(
+                "[StreamProvider] Notifying change: table={} type=INSERT user={} seq={}",
+                table_name,
+                user_id.as_str(),
+                seq_id.as_i64()
+            );
             manager.notify_table_change_async(user_id.clone(), table_id, notification);
         }
 
@@ -241,6 +262,13 @@ impl BaseTableProvider<StreamTableRowId, StreamTableRow> for StreamTableProvider
         
         // Perform KV scan (hot-only) and convert to batch
         let kvs = self.scan_with_version_resolution_to_kvs(&user_id, filter)?;
+        log::debug!(
+            "[StreamProvider] scan_rows: table={} rows={} user={} ttl={:?}",
+            format!("{}.{}", self.table_id.namespace_id().as_str(), self.table_id.table_name().as_str()),
+            kvs.len(),
+            user_id.as_str(),
+            self.ttl_seconds
+        );
 
         let schema = self.schema_ref();
         let mut rows: Vec<JsonValue> = Vec::with_capacity(kvs.len());
@@ -284,6 +312,12 @@ impl BaseTableProvider<StreamTableRowId, StreamTableRow> for StreamTableProvider
                 "Failed to scan stream table hot storage: {}",
                 e
             )))?;
+        log::debug!(
+            "[StreamProvider] raw scan results: table={} user={} count={}",
+            format!("{}.{}", self.table_id.namespace_id().as_str(), self.table_id.table_name().as_str()),
+            user_id.as_str(),
+            raw.len()
+        );
 
         // 2) TTL filtering (if configured)
         let now_ms = std::time::SystemTime::now()
