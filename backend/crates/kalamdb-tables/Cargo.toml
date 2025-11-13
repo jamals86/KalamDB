@@ -1,0 +1,56 @@
+[package]
+name = "kalamdb-tables"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+authors.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Table providers for user, shared, and stream tables in KalamDB"
+keywords = ["kalamdb", "database", "tables", "providers"]
+categories = ["database"]
+
+[dependencies]
+# Internal crates
+kalamdb-commons = { path = "../kalamdb-commons", features = ["serde"] }
+kalamdb-store = { path = "../kalamdb-store" }
+kalamdb-filestore = { path = "../kalamdb-filestore" }
+kalamdb-system = { path = "../kalamdb-system" }
+kalamdb-registry = { path = "../kalamdb-registry" }
+
+# Apache Arrow ecosystem
+arrow = { workspace = true }
+arrow-schema = { workspace = true }
+datafusion = { workspace = true }
+datafusion-common = { workspace = true }
+
+# Concurrent data structures
+dashmap = { workspace = true }
+
+# Async
+async-trait = { workspace = true }
+tokio = { workspace = true }
+
+# Serialization
+bincode = { workspace = true }
+
+# Serialization
+serde = { workspace = true }
+serde_json = { workspace = true }
+
+# Error handling
+thiserror = { workspace = true }
+anyhow = { workspace = true }
+
+# Time handling
+chrono = { workspace = true }
+
+# Logging
+log = { workspace = true }
+
+# UUID generation
+uuid = { workspace = true }
+
+[lib]
+name = "kalamdb_tables"
+path = "src/lib.rs"

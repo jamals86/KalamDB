@@ -7,7 +7,7 @@
 use crate::error::KalamDbError;
 use crate::live_query::filter::FilterPredicate;
 use crate::schema_registry::TableType;
-use crate::tables::system::system_table_store::{SharedTableStoreExt, UserTableStoreExt};
+use kalamdb_tables::{SharedTableStoreExt, UserTableStoreExt};
 use crate::tables::{StreamTableStore, UserTableStore};
 use chrono::DateTime;
 use kalamdb_commons::TableName;
@@ -307,7 +307,7 @@ impl InitialDataFetcher {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::tables::system::system_table_store::UserTableStoreExt;
+    use kalamdb_tables::UserTableStoreExt;
     use crate::tables::user_tables::user_table_store::{new_user_table_store, UserTableRow};
     use kalamdb_commons::UserId;
     use kalamdb_commons::ids::{SeqId, UserTableRowId};

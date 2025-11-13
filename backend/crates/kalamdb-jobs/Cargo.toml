@@ -1,0 +1,50 @@
+[package]
+name = "kalamdb-jobs"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+authors.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Background job system for KalamDB"
+keywords = ["kalamdb", "database", "jobs", "background-tasks"]
+categories = ["database"]
+
+[dependencies]
+# Internal crates
+kalamdb-commons = { path = "../kalamdb-commons", features = ["serde"] }
+kalamdb-store = { path = "../kalamdb-store" }
+kalamdb-filestore = { path = "../kalamdb-filestore" }
+
+# Apache Arrow ecosystem (for job data processing)
+arrow = { workspace = true }
+datafusion = { workspace = true }
+
+# Concurrent data structures
+dashmap = { workspace = true }
+
+# Async
+async-trait = { workspace = true }
+tokio = { workspace = true }
+
+# Serialization
+serde = { workspace = true }
+serde_json = { workspace = true }
+bincode = { workspace = true }
+
+# Error handling
+thiserror = { workspace = true }
+anyhow = { workspace = true }
+
+# Time handling
+chrono = { workspace = true }
+
+# Logging
+log = { workspace = true }
+
+# UUID generation
+uuid = { workspace = true }
+
+[lib]
+name = "kalamdb_jobs"
+path = "src/lib.rs"

@@ -8,7 +8,7 @@ use crate::error::KalamDbError;
 use crate::live_query::manager::{ChangeNotification, LiveQueryManager};
 use crate::schema_registry::SchemaRegistry;
 use crate::storage::ParquetWriter;
-use crate::tables::system::system_table_store::UserTableStoreExt;
+use kalamdb_tables::UserTableStoreExt;
 use crate::tables::UserTableStore;
 use chrono::Utc;
 use datafusion::arrow::datatypes::SchemaRef;

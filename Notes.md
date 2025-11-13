@@ -152,13 +152,7 @@ INSERT INTO <namespace>.<table>
 
 137) SharedTableFlushJob AND UserTableFlushJob have so much code duplication we need to combine them into one flush job with some parameters to differ between user/shared table flushing
 
-138) Split into more crates:
-      - kalamdb-live       - which contains all live query related code
-      - kalamdb-executor   - which contains all the core/sql folder
-      - kalamdb-system     - All system tables and system related code
-      - kalamdb-tables     - All providers for shared/user/stream tables
-      - kalamdb-filestore  - All filesystem related code
-
+138) Split into more crates - look at the file crates-splitting.md for more info
 
 139) Instead of using JsonValue for the fields use arrow Array directly for better performance and less serdes overhead: HashMap<String, ScalarValue> should solve this issue completely.
 then we wont be needing: json_to_scalar_value
@@ -168,6 +162,7 @@ FilterPredicate will use ScalarValue directly as well
 json_rows_to_arrow_batch will be removed completely or less code since we will be using arrow arrays directly
 scalar_value_to_json will be removed completely as well
 ServerMessage will use arrow arrays directly as well
+
 
 
 
@@ -184,7 +179,7 @@ Here’s the updated 5-line spec with embedding storage inside Parquet and manag
 IMPORTANT:
 1) Done - Schema information_schema
 2) Done - Datatypes for columns
-3) Done - Parametrized Queries
+3) Parametrized Queries needs to work with ScalarValue and be added to the api endpoint
 4) Add manifest file for each user table, that will help us locate which parquet files we need to read in each query, and if in fact we need to read parquet files at all, since sometimes the data will be only inside rocksdb and no need for file io
 4) Support update/deleted as a separate join table per user by MAX(_updated)
 5) Storage files compaction

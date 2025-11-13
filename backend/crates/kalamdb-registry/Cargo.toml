@@ -1,0 +1,36 @@
+[package]
+name = "kalamdb-registry"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+kalamdb-commons = { path = "../kalamdb-commons" }
+kalamdb-store = { path = "../kalamdb-store" }
+
+# DataFusion & Arrow
+datafusion = { workspace = true }
+arrow = { workspace = true }
+arrow-schema = { workspace = true }
+
+# Async runtime
+tokio = { workspace = true }
+
+# Concurrency
+dashmap = { workspace = true }
+
+# Serialization
+serde = { workspace = true }
+serde_json = { workspace = true }
+bincode = { workspace = true }
+
+# Logging
+log = { workspace = true }
+
+# Utilities
+async-trait = { workspace = true }
+
+[features]
+default = []
+
+[dev-dependencies]
+env_logger = { workspace = true }

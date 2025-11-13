@@ -1,34 +1,27 @@
-//! Schema Registry module for Arrow schema management and table metadata caching
+//! Schema Registry module - Re-exports from kalamdb-registry
 //!
-//! This module provides the unified SchemaRegistry for managing table schemas and metadata.
-//! It combines in-memory caching with persistent storage via TablesTableProvider.
+//! **Migration Notice**: This module now re-exports from the `kalamdb-registry` crate.
+//! The schema registry has been extracted to a separate crate to:
+//! - Enable reuse across kalamdb-system and kalamdb-tables
+//! - Break circular dependencies
+//! - Provide a clean foundational layer for caching
 //!
-//! **Note**: Basic type wrappers (UserId, NamespaceId, TableName, TableType) have been
-//! moved to `kalamdb_commons::models` for shared usage across crates.
-//!
-//! **Note**: Namespace struct has been moved to `kalamdb_commons::system::Namespace`
-//! as the single source of truth for all system table models.
-//!
-//! **Phase 5 Complete**: SchemaRegistry provides read-through/write-through persistence
 //! **Phase 10 Complete**: Unified SchemaRegistry replaces old dual-cache architecture
-//! - Deleted: table_cache.rs (516 lines) - old TableCache implementation
-//! - Deleted: tables/system/schemas/registry.rs (443 lines) - old system cache
-//! - Deleted: table_metadata.rs (252 lines) - replaced by CachedTableData
-//! - Single source of truth: CachedTableData in unified SchemaRegistry
+//! **Phase 14**: Extracted to kalamdb-registry crate
+//!
+//! For backwards compatibility, all types are re-exported here.
 
+// Re-export everything from kalamdb-registry
+pub use kalamdb_registry::{
+    arrow_schema, projection, system_columns_metadata, system_columns_service, views,
+    ArrowSchemaWithOptions, CachedTableData, SchemaRegistry, SystemColumns, SystemColumnsService,
+};
 
-pub mod arrow_schema;
-pub mod projection;
-pub mod system_columns;
-pub mod views;
+// Also re-export the submodules directly for code that uses `use crate::schema_registry::registry::*`
+pub use kalamdb_registry::registry;
 
-pub use arrow_schema::ArrowSchemaWithOptions;
-pub use projection::{project_batch, schemas_compatible};
-pub use system_columns::SystemColumns;
-
-pub mod registry; // Phase 10: Unified cache implementation
-
-pub use registry::{CachedTableData, SchemaRegistry};
+// Re-export helper functions
+pub use kalamdb_registry::{project_batch, schemas_compatible};
 
 // Re-export common types from kalamdb_commons for convenience
 pub use kalamdb_commons::models::{NamespaceId, TableName, UserId};

@@ -2,14 +2,16 @@
 //!
 //! Provides centralized registration of all system tables to avoid code duplication.
 
-// All system tables now use EntityStore-based v2 providers
-use crate::tables::system::jobs::JobsTableProvider;
-use crate::tables::system::live_queries::LiveQueriesTableProvider;
-use crate::tables::system::namespaces::NamespacesTableProvider;
-use crate::tables::system::tables::TablesTableProvider;
-use crate::tables::system::storages::StoragesTableProvider;
-use crate::tables::system::users::UsersTableProvider;
-use crate::tables::system::StatsTableProvider;
+// Import system table providers (now from kalamdb-system via re-exports)
+use crate::tables::system::{
+    JobsTableProvider,
+    LiveQueriesTableProvider,
+    NamespacesTableProvider,
+    TablesTableProvider,
+    StoragesTableProvider,
+    UsersTableProvider,
+    StatsTableProvider,
+};
 use datafusion::catalog::memory::MemorySchemaProvider;
 use datafusion::catalog::SchemaProvider;
 use kalamdb_commons::system_tables::SystemTable;

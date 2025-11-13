@@ -28,7 +28,7 @@ pub fn register_user_table_provider(
 ) -> Result<(), KalamDbError> {
     use crate::providers::{TableProviderCore, UserTableProvider};
     use crate::tables::user_tables::new_user_table_store;
-    use crate::tables::system::system_table_store::UserTableStoreExt;
+    use kalamdb_tables::UserTableStoreExt;
 
     log::debug!(
         "📋 Registering USER table provider: {}.{}",
@@ -116,7 +116,7 @@ pub fn register_shared_table_provider(
 ) -> Result<(), KalamDbError> {
     use crate::providers::{SharedTableProvider, TableProviderCore};
     use crate::tables::shared_tables::shared_table_store::new_shared_table_store;
-    use crate::tables::system::system_table_store::SharedTableStoreExt;
+    use kalamdb_tables::SharedTableStoreExt;
 
     log::debug!(
         "📋 Registering SHARED table provider: {}.{}",
@@ -203,7 +203,7 @@ pub fn register_stream_table_provider(
     ttl_seconds: Option<u64>,
 ) -> Result<(), KalamDbError> {
     use crate::tables::stream_tables::stream_table_store::new_stream_table_store;
-    use crate::tables::system::system_table_store::SharedTableStoreExt;
+    use kalamdb_tables::SharedTableStoreExt;
     use crate::providers::{StreamTableProvider, TableProviderCore};
 
     log::debug!(

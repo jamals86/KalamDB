@@ -127,6 +127,48 @@ impl From<kalamdb_store::StorageError> for KalamDbError {
     }
 }
 
+// Convert kalamdb_filestore::FilestoreError to KalamDbError (Phase 13.8)
+impl From<kalamdb_filestore::FilestoreError> for KalamDbError {
+    fn from(err: kalamdb_filestore::FilestoreError) -> Self {
+        match err {
+            kalamdb_filestore::FilestoreError::Io(e) => KalamDbError::Io(e),
+            kalamdb_filestore::FilestoreError::Arrow(e) => {
+                KalamDbError::Other(format!("Arrow error: {}", e))
+            }
+            kalamdb_filestore::FilestoreError::Parquet(msg) => {
+                KalamDbError::Other(format!("Parquet error: {}", msg))
+            }
+            kalamdb_filestore::FilestoreError::Path(msg) => {
+                KalamDbError::Other(format!("Path error: {}", msg))
+            }
+            kalamdb_filestore::FilestoreError::BatchNotFound(msg) => KalamDbError::NotFound(msg),
+            kalamdb_filestore::FilestoreError::InvalidBatchFile(msg) => {
+                KalamDbError::InvalidOperation(format!("Invalid batch file: {}", msg))
+            }
+            kalamdb_filestore::FilestoreError::Serialization(e) => {
+                KalamDbError::SerializationError(e.to_string())
+            }
+            kalamdb_filestore::FilestoreError::Other(msg) => KalamDbError::Other(msg),
+        }
+    }
+}
+
+// Convert kalamdb_system::SystemError to KalamDbError
+impl From<kalamdb_system::SystemError> for KalamDbError {
+    fn from(err: kalamdb_system::SystemError) -> Self {
+        match err {
+            kalamdb_system::SystemError::Storage(msg) => KalamDbError::Other(format!("System table storage error: {}", msg)),
+            kalamdb_system::SystemError::NotFound(msg) => KalamDbError::NotFound(msg),
+            kalamdb_system::SystemError::AlreadyExists(msg) => KalamDbError::AlreadyExists(msg),
+            kalamdb_system::SystemError::InvalidOperation(msg) => KalamDbError::InvalidOperation(msg),
+            kalamdb_system::SystemError::SerializationError(msg) => KalamDbError::SerializationError(msg),
+            kalamdb_system::SystemError::DataFusion(msg) => KalamDbError::Other(format!("DataFusion error: {}", msg)),
+            kalamdb_system::SystemError::Arrow(e) => KalamDbError::Other(format!("Arrow error: {}", e)),
+            kalamdb_system::SystemError::Other(msg) => KalamDbError::Other(msg),
+        }
+    }
+}
+
 /// Storage-related errors
 #[derive(Error, Debug)]
 pub enum StorageError {
@@ -504,5 +546,23 @@ mod tests {
             err.to_string(),
             "Checksum mismatch: expected=abc123, actual=def456"
         );
+    }
+}
+
+// Conversion from TableError (kalamdb-tables) to KalamDbError
+impl From<kalamdb_tables::TableError> for KalamDbError {
+    fn from(err: kalamdb_tables::TableError) -> Self {
+        use kalamdb_tables::TableError;
+        match err {
+            TableError::Storage(msg) => KalamDbError::Storage(StorageError::Other(msg)),
+            TableError::NotFound(msg) => KalamDbError::NotFound(msg),
+            TableError::InvalidOperation(msg) => KalamDbError::InvalidOperation(msg),
+            TableError::Serialization(msg) => KalamDbError::SerializationError(msg),
+            TableError::DataFusion(msg) => KalamDbError::DataFusionError(msg),
+            TableError::Arrow(e) => KalamDbError::ArrowError(e.to_string()),
+            TableError::Filestore(msg) => KalamDbError::FilestoreError(msg),
+            TableError::SchemaError(msg) => KalamDbError::SchemaError(msg),
+            TableError::Other(msg) => KalamDbError::Other(msg),
+        }
     }
 }

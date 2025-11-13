@@ -56,7 +56,7 @@ pub fn append_version_sync(
     }
 
     // Generate new SeqId via SystemColumnsService
-    let sys_cols = app_context.system_columns_service();
+    let sys_cols = system_columns;
     let seq_id = sys_cols.generate_seq_id()?;
 
     match table_type {

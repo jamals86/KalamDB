@@ -9,7 +9,7 @@ use crate::live_query::manager::{ChangeNotification, LiveQueryManager};
 use crate::schema_registry::SchemaRegistry;
 use crate::storage::ParquetWriter;
 use crate::tables::shared_tables::shared_table_store::SharedTableRow;
-use crate::tables::system::system_table_store::SharedTableStoreExt;
+use kalamdb_tables::SharedTableStoreExt;
 use crate::tables::SharedTableStore;
 use chrono::Utc;
 use datafusion::arrow::datatypes::SchemaRef;

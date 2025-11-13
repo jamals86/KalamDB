@@ -142,7 +142,7 @@ impl BaseTableProvider<StreamTableRowId, StreamTableRow> for StreamTableProvider
     
     fn insert(&self, user_id: &UserId, row_data: JsonValue) -> Result<StreamTableRowId, KalamDbError> {
         // Call SystemColumnsService to generate SeqId
-        let sys_cols = self.core.app_context.system_columns_service();
+        let sys_cols = self.core.system_columns;
         let seq_id = sys_cols.generate_seq_id()?;
         
         // Create StreamTableRow (no _deleted field for stream tables)

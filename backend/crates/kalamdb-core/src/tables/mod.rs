@@ -1,24 +1,23 @@
-//! Tables module - Data structures and stores
+//! Tables module - Re-exports from kalamdb-tables and kalamdb-system
 //!
-//! **Phase 13.7: Flush logic moved to crate::providers::flush**
-//!
-//! This module now contains ONLY:
-//! - Store types (UserTableStore, SharedTableStore, StreamTableStore)
-//! - Row structures (UserTableRow, SharedTableRow, StreamTableRow)
-//! - Arrow/JSON conversion utilities
-//! - System tables (metadata views)
-//!
-//! **DEPRECATED (Phase 13.6)**:
-//! - UserTableProvider, SharedTableProvider, StreamTableProvider → use crate::providers::*
-//! - UserTableInsertHandler, UpdateHandler, DeleteHandler → logic now in providers
-//! - unified_dml, version_resolution → moved to crate::providers::*
-//!
-//! **DEPRECATED (Phase 13.7)**:
-//! - base_flush, UserTableFlushJob, SharedTableFlushJob → moved to crate::providers::flush::*
-pub mod shared_tables;
-pub mod stream_tables;
+//! This module re-exports table stores from kalamdb-tables crate and
+//! system tables from kalamdb-system crate for backward compatibility.
+
+// Re-export table stores from kalamdb-tables
+pub mod user_tables {
+    pub use kalamdb_tables::user_tables::*;
+}
+
+pub mod shared_tables {
+    pub use kalamdb_tables::shared_tables::*;
+}
+
+pub mod stream_tables {
+    pub use kalamdb_tables::stream_tables::*;
+}
+
+// System tables remain in kalamdb-core (they import from kalamdb-system)
 pub mod system;
-pub mod user_tables;
 
 // Re-export store types and row structures
 pub use shared_tables::{

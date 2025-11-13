@@ -4,8 +4,7 @@
 //! Initial implementation focuses on schema cache metrics.
 
 use crate::schema_registry::SchemaRegistry;
-use crate::error::KalamDbError;
-use crate::tables::system::SystemTableProviderExt;
+use kalamdb_system::{SystemError, SystemTableProviderExt};
 use async_trait::async_trait;
 use datafusion::arrow::array::{ArrayRef, StringBuilder};
 use datafusion::arrow::datatypes::{DataType, Field, Schema, SchemaRef};
@@ -62,7 +61,7 @@ impl StatsTableProvider {
     }
 
     /// Build a RecordBatch with current metrics
-    fn build_metrics_batch(&self) -> Result<RecordBatch, KalamDbError> {
+    fn build_metrics_batch(&self) -> Result<RecordBatch, SystemError> {
         let mut names = StringBuilder::new();
         let mut values = StringBuilder::new();
 
@@ -103,7 +102,7 @@ impl StatsTableProvider {
                 Arc::new(values.finish()) as ArrayRef,
             ],
         )
-        .map_err(|e| KalamDbError::Other(format!("Failed to build stats batch: {}", e)))?;
+        .map_err(|e| SystemError::Other(format!("Failed to build stats batch: {}", e)))?;
 
         Ok(batch)
     }
@@ -118,7 +117,7 @@ impl SystemTableProviderExt for StatsTableProvider {
         self.schema.clone()
     }
 
-    fn load_batch(&self) -> Result<RecordBatch, KalamDbError> {
+    fn load_batch(&self) -> Result<RecordBatch, SystemError> {
         self.build_metrics_batch()
     }
 }

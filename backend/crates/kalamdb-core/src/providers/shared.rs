@@ -111,7 +111,7 @@ impl BaseTableProvider<SharedTableRowId, SharedTableRow> for SharedTableProvider
         // IGNORE user_id parameter - no RLS for shared tables
         
         // Generate new SeqId via SystemColumnsService
-        let sys_cols = self.core.app_context.system_columns_service();
+        let sys_cols = self.core.system_columns;
         let seq_id = sys_cols.generate_seq_id()?;
         
         // Create SharedTableRow directly
@@ -172,7 +172,7 @@ impl BaseTableProvider<SharedTableRowId, SharedTableRow> for SharedTableProvider
         for (k, v) in update_obj.into_iter() { merged.insert(k, v); }
         let new_fields = JsonValue::Object(merged);
 
-        let sys_cols = self.core.app_context.system_columns_service();
+        let sys_cols = self.core.system_columns;
         let seq_id = sys_cols.generate_seq_id()?;
         let entity = SharedTableRow { _seq: seq_id, _deleted: false, fields: new_fields };
         let row_key = seq_id;
@@ -184,7 +184,7 @@ impl BaseTableProvider<SharedTableRowId, SharedTableRow> for SharedTableProvider
     
     fn delete(&self, _user_id: &UserId, _key: &SharedTableRowId) -> Result<(), KalamDbError> {
         // IGNORE user_id parameter - no RLS for shared tables
-        let sys_cols = self.core.app_context.system_columns_service();
+        let sys_cols = self.core.system_columns;
         let seq_id = sys_cols.generate_seq_id()?;
         let entity = SharedTableRow { _seq: seq_id, _deleted: true, fields: serde_json::json!({}) };
         let row_key = seq_id;
