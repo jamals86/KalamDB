@@ -17,7 +17,7 @@ use tempfile::TempDir;
 
 #[tokio::test]
 async fn test_schema_store_persistence() {
-    use kalamdb_core::tables::system::schemas::TableSchemaStore;
+    use kalamdb_registry::TableSchemaStore;
 
     let temp_dir = TempDir::new().expect("Failed to create temp dir");
     let db = Arc::new(
@@ -71,7 +71,7 @@ async fn test_schema_store_persistence() {
 
 #[tokio::test]
 async fn test_schema_cache_basic_operations() {
-    use kalamdb_core::tables::system::schemas::TableSchemaStore;
+    use kalamdb_registry::TableSchemaStore;
     use kalamdb_core::schema_registry::SchemaRegistry;
 
     let temp_dir = TempDir::new().expect("Failed to create temp dir");
@@ -118,7 +118,7 @@ async fn test_schema_cache_basic_operations() {
 
 #[tokio::test]
 async fn test_schema_versioning() {
-    use kalamdb_core::tables::system::schemas::TableSchemaStore;
+    use kalamdb_registry::TableSchemaStore;
 
     let temp_dir = TempDir::new().expect("Failed to create temp dir");
     let db = Arc::new(
@@ -164,7 +164,7 @@ async fn test_schema_versioning() {
 
 #[tokio::test]
 async fn test_all_system_tables_have_schemas() {
-    use kalamdb_core::tables::system::schemas::TableSchemaStore;
+    use kalamdb_registry::TableSchemaStore;
 
     let temp_dir = TempDir::new().expect("Failed to create temp dir");
     let db = Arc::new(
@@ -232,7 +232,7 @@ async fn test_all_system_tables_have_schemas() {
 
 #[tokio::test]
 async fn test_internal_api_schema_matches_describe_table() {
-    use kalamdb_core::tables::system::schemas::TableSchemaStore;
+    use kalamdb_registry::TableSchemaStore;
 
     let temp_dir = TempDir::new().expect("Failed to create temp dir");
     let db = Arc::new(

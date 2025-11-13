@@ -14,7 +14,7 @@ use datafusion::prelude::*;
 use kalamdb_commons::models::{NamespaceId, TableName, TableId, UserId, Role};
 use kalamdb_core::providers::base::{TableProviderCore, BaseTableProvider};
 use kalamdb_core::providers::StreamTableProvider;
-use kalamdb_tables::StreamTableStore;
+use kalamdb_tables::{StreamTableStore, new_stream_table_store};
 use kalamdb_core::app_context::AppContext;
 use kalamdb_core::sql::executor::models::ExecutionContext;
 use kalamdb_core::schema_registry::CachedTableData;
