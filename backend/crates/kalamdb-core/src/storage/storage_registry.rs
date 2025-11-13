@@ -3,7 +3,7 @@
 //! Provides centralized access to storage configurations and path template validation.
 
 use crate::error::KalamDbError;
-use crate::tables::system::StoragesTableProvider;
+use kalamdb_system::StoragesTableProvider;
 use kalamdb_commons::models::StorageId;
 use kalamdb_commons::system::Storage;
 use std::sync::Arc;

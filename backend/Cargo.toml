@@ -14,6 +14,7 @@ kalamdb-sql = { path = "crates/kalamdb-sql" }
 kalamdb-store = { path = "crates/kalamdb-store" }
 kalamdb-auth = { path = "crates/kalamdb-auth" }
 kalamdb-commons = { path = "crates/kalamdb-commons" }
+kalamdb-system = { path = "crates/kalamdb-system" }
 
 
 # JWT authentication
@@ -152,6 +153,7 @@ kalamdb-auth = { path = "crates/kalamdb-auth" }
 kalamdb-sql = { path = "crates/kalamdb-sql" }
 kalamdb-store = { path = "crates/kalamdb-store" }
 kalamdb-commons = { path = "crates/kalamdb-commons" }
+kalamdb-tables = { path = "crates/kalamdb-tables" }
 
 # External dependencies
 tempfile = { workspace = true }
@@ -167,3 +169,4 @@ datafusion = { workspace = true }
 libc = { workspace = true }
 arrow = { workspace = true }
 hex = { workspace = true }
+once_cell = { workspace = true }

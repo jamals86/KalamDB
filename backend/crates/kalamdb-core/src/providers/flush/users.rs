@@ -8,8 +8,8 @@ use crate::error::KalamDbError;
 use crate::live_query::manager::{ChangeNotification, LiveQueryManager};
 use crate::schema_registry::SchemaRegistry;
 use crate::storage::ParquetWriter;
-use crate::tables::system::system_table_store::UserTableStoreExt;
-use crate::tables::UserTableStore;
+use kalamdb_tables::UserTableStoreExt;
+use kalamdb_tables::UserTableStore;
 use chrono::Utc;
 use datafusion::arrow::datatypes::SchemaRef;
 use datafusion::arrow::record_batch::RecordBatch;
@@ -72,11 +72,11 @@ impl UserTableFlushJob {
         &self,
         user_id: &UserId,
     ) -> Result<String, KalamDbError> {
-        self.unified_cache.get_storage_path(
+        Ok(self.unified_cache.get_storage_path(
             &*self.table_id,
             Some(user_id),
             None,
-        )
+        )?)
     }
 
     /// Generate batch filename with ISO 8601 timestamp
@@ -248,8 +248,11 @@ impl UserTableFlushJob {
             parsed_keys.push(key);
         }
 
-        self.store.delete_batch_by_keys(&parsed_keys)
-            .map_err(|e| KalamDbError::Other(format!("Failed to delete flushed rows: {}", e)))?;
+        // Delete each key individually (no batch_delete in EntityStore trait)
+        for key in &parsed_keys {
+            EntityStore::delete(self.store.as_ref(), key)
+                .map_err(|e| KalamDbError::Other(format!("Failed to delete flushed row: {}", e)))?;
+        }
 
         log::debug!("Deleted {} flushed rows from storage", keys.len());
         Ok(())
@@ -261,8 +264,8 @@ impl TableFlush for UserTableFlushJob {
         log::debug!("🔄 Starting user table flush: table={}.{}, partition={}", 
                    self.namespace_id.as_str(), self.table_name.as_str(), self.store.partition());
 
-        // Stream snapshot-backed scan
-        let iter = self.store.scan_iter()
+        // Scan all rows (EntityStore::scan_all returns Vec<(Vec<u8>, V)>)
+        let entries = EntityStore::scan_all(self.store.as_ref())
             .map_err(|e| {
                 log::error!("❌ Failed to scan table={}.{}: {}", 
                            self.namespace_id.as_str(), self.table_name.as_str(), e);
@@ -271,42 +274,23 @@ impl TableFlush for UserTableFlushJob {
 
         // Group rows by user_id
         let mut rows_by_user: HashMap<String, Vec<(Vec<u8>, JsonValue)>> = HashMap::new();
-        let mut rows_scanned = 0;
+        let rows_scanned = entries.len();
 
-        for entry in iter {
-            let (key_bytes, value_bytes) = match entry {
-                Ok(pair) => pair,
-                Err(e) => {
-                    log::warn!("Skipping row due to iterator error (table={}.{}): {}", 
-                              self.namespace_id.as_str(), self.table_name.as_str(), e);
-                    continue;
-                }
-            };
-
-            rows_scanned += 1;
-
-            let user_table_row: crate::tables::user_tables::user_table_store::UserTableRow =
-                match serde_json::from_slice(&value_bytes) {
-                    Ok(v) => v,
-                    Err(e) => {
-                        log::warn!("Skipping row due to deserialization error (table={}.{}): {}", 
-                                  self.namespace_id.as_str(), self.table_name.as_str(), e);
-                        continue;
-                    }
-                };
+        for (key_bytes, row) in entries {
+            // row is already deserialized by EntityStore::scan_all (UserTableRow)
 
             // Skip soft-deleted rows
-            if user_table_row._deleted {
+            if row._deleted {
                 continue;
             }
 
             // Convert to JSON and inject system columns
-            let mut row_data = match user_table_row.fields {
+            let mut row_data = match row.fields {
                 serde_json::Value::Object(map) => JsonValue::Object(map),
                 other => other,
             };
             if let Some(obj) = row_data.as_object_mut() {
-                obj.insert("_seq".to_string(), JsonValue::Number(user_table_row._seq.as_i64().into()));
+                obj.insert("_seq".to_string(), JsonValue::Number(row._seq.as_i64().into()));
                 obj.insert("_deleted".to_string(), JsonValue::Bool(false));
             }
 

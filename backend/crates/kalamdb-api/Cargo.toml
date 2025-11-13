@@ -12,6 +12,7 @@ kalamdb-commons = { path = "../kalamdb-commons" }
 kalamdb-core = { path = "../kalamdb-core" }
 kalamdb-sql = { path = "../kalamdb-sql" }
 kalamdb-auth = { path = "../kalamdb-auth" }
+kalamdb-system = { path = "../kalamdb-system" }
 
 # Apache Arrow
 arrow = { workspace = true }

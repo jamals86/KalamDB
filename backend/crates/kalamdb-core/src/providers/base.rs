@@ -31,13 +31,23 @@ use std::sync::Arc;
 /// **Memory Optimization**: All provider types share this core structure,
 /// reducing per-table memory footprint from 3× allocation to 1× allocation.
 ///
+/// **Phase 12 Refactoring**: Uses kalamdb-registry services directly
+///
 /// **Services**:
-/// - `app_context`: SystemColumnsService, SnowflakeGenerator, SchemaRegistry
-/// - `live_query_manager`: WebSocket notifications (optional)
-/// - `storage_registry`: Storage path resolution (optional)
+/// - `app_context`: Application context for global services (required for trait methods)
+/// - `schema_registry`: Table schema management and caching (from kalamdb-registry)
+/// - `system_columns`: SeqId generation, _deleted flag handling (from kalamdb-registry)
+/// - `live_query_manager`: WebSocket notifications (optional, from kalamdb-core)
+/// - `storage_registry`: Storage path resolution (optional, from kalamdb-core)
 pub struct TableProviderCore {
-    /// Application context for system services
+    /// Application context for global services (kept for BaseTableProvider trait)
     pub app_context: Arc<AppContext>,
+    
+    /// Schema registry for table metadata and Arrow schema caching
+    pub schema_registry: Arc<crate::schema_registry::SchemaRegistry>,
+    
+    /// System columns service for _seq and _deleted management
+    pub system_columns: Arc<crate::system_columns::SystemColumnsService>,
     
     /// LiveQueryManager for WebSocket notifications (optional)
     pub live_query_manager: Option<Arc<LiveQueryManager>>,
@@ -47,10 +57,12 @@ pub struct TableProviderCore {
 }
 
 impl TableProviderCore {
-    /// Create new core with required app_context
-    pub fn new(app_context: Arc<AppContext>) -> Self {
+    /// Create new core with required services from AppContext
+    pub fn from_app_context(app_context: &Arc<AppContext>) -> Self {
         Self {
-            app_context,
+            app_context: app_context.clone(),
+            schema_registry: app_context.schema_registry(),
+            system_columns: app_context.system_columns_service(),
             live_query_manager: None,
             storage_registry: None,
         }

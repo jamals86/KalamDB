@@ -12,8 +12,8 @@ use crate::jobs::executors::{
 use crate::live_query::LiveQueryManager;
 use crate::sql::datafusion_session::DataFusionSessionFactory;
 use crate::storage::storage_registry::StorageRegistry;
-use crate::tables::system::registry::SystemTablesRegistry;
-use crate::tables::{SharedTableStore, StreamTableStore, UserTableStore};
+use kalamdb_system::SystemTablesRegistry;
+use kalamdb_tables::{SharedTableStore, StreamTableStore, UserTableStore};
 use datafusion::catalog::SchemaProvider;
 use datafusion::prelude::SessionContext;
 use kalamdb_commons::{NodeId, ServerConfig, constants::ColumnFamilyNames};
@@ -158,7 +158,7 @@ impl AppContext {
                 ));
 
                 // Create schema cache (Phase 10 unified cache)
-                let schema_registry = Arc::new(SchemaRegistry::new(10000, Some(storage_registry.clone())));
+                let schema_registry = Arc::new(SchemaRegistry::new(10000));
 
                 // Register all system tables in DataFusion
                 let session_factory = Arc::new(DataFusionSessionFactory::new()
@@ -331,7 +331,7 @@ impl AppContext {
         ));
 
         // Create minimal schema registry
-        let schema_registry = Arc::new(SchemaRegistry::new(100, Some(storage_registry.clone())));
+        let schema_registry = Arc::new(SchemaRegistry::new(100));
 
         // Create DataFusion session
         let session_factory = Arc::new(DataFusionSessionFactory::new()
@@ -437,7 +437,7 @@ impl AppContext {
         ));
 
         // Create schema cache
-        let schema_registry = Arc::new(SchemaRegistry::new(10000, Some(storage_registry.clone())));
+        let schema_registry = Arc::new(SchemaRegistry::new(10000));
 
         // Register all system tables in DataFusion
         let session_factory = Arc::new(DataFusionSessionFactory::new()
@@ -640,6 +640,7 @@ impl AppContext {
     /// Convenience wrapper for system_tables().jobs().create_job()
     pub fn insert_job(&self, job: &kalamdb_commons::system::Job) -> Result<(), crate::error::KalamDbError> {
         self.system_tables.jobs().create_job(job.clone())
+            .map_err(|e| crate::error::KalamDbError::Other(format!("Failed to insert job: {}", e)))
     }
     
     /// Scan all jobs from the jobs table
@@ -647,5 +648,6 @@ impl AppContext {
     /// Convenience wrapper for system_tables().jobs().list_jobs()
     pub fn scan_all_jobs(&self) -> Result<Vec<kalamdb_commons::system::Job>, crate::error::KalamDbError> {
         self.system_tables.jobs().list_jobs()
+            .map_err(|e| crate::error::KalamDbError::Other(format!("Failed to scan jobs: {}", e)))
     }
 }

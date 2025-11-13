@@ -17,8 +17,9 @@ use crate::models::{Notification, SubscriptionRequest};
 use crate::rate_limiter::RateLimiter;
 use kalamdb_core::live_query::{
     ConnectionId as LiveConnectionId, InitialDataOptions, LiveQueryManager, LiveQueryOptions,
-    UserId as LiveUserId,
 };
+// UserId is from kalamdb_commons, not from live_query
+type LiveUserId = UserId;
 
 /// How often heartbeat pings are sent
 const HEARTBEAT_INTERVAL: Duration = Duration::from_secs(5);

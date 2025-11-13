@@ -12,7 +12,7 @@ mod common;
 use kalamdb_commons::models::TableId;
 use kalamdb_core::system_table_registration::register_system_tables;
 use kalamdb_core::schema_registry::SchemaRegistry;
-use kalamdb_core::tables::system::schemas::TableSchemaStore;
+use kalamdb_registry::TableSchemaStore;
 use kalamdb_store::RocksDBBackend;
 use rocksdb::DB;
 use std::sync::Arc;

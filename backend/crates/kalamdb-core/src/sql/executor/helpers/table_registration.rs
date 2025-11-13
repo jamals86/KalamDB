@@ -27,8 +27,8 @@ pub fn register_user_table_provider(
     _arrow_schema: SchemaRef,
 ) -> Result<(), KalamDbError> {
     use crate::providers::{TableProviderCore, UserTableProvider};
-    use crate::tables::user_tables::new_user_table_store;
-    use crate::tables::system::system_table_store::UserTableStoreExt;
+    use kalamdb_tables::new_user_table_store;
+    use kalamdb_tables::UserTableStoreExt;
 
     log::debug!(
         "📋 Registering USER table provider: {}.{}",
@@ -36,26 +36,22 @@ pub fn register_user_table_provider(
         table_id.table_name().as_str()
     );
 
-    // Create user table store
+    // Create user table store (partition is automatically created)
     let user_table_store = Arc::new(new_user_table_store(
         app_context.storage_backend(),
         table_id.namespace_id(),
         table_id.table_name(),
     ));
 
-    // Ensure partition exists for this table
-    if let Err(e) = user_table_store.create_column_family() {
-        return Err(KalamDbError::Other(format!(
-            "Failed to create user table partition for {}.{}: {}",
-            table_id.namespace_id().as_str(),
-            table_id.table_name().as_str(),
-            e
-        )));
-    }
+    log::debug!(
+        "Created user table store for {}.{}",
+        table_id.namespace_id().as_str(),
+        table_id.table_name().as_str()
+    );
 
     // Create TableProviderCore and provider (wire LiveQueryManager for notifications)
     let core = Arc::new(
-        TableProviderCore::new(app_context.clone())
+        TableProviderCore::from_app_context(&app_context)
             .with_live_query_manager(app_context.live_query_manager()),
     );
 
@@ -115,8 +111,8 @@ pub fn register_shared_table_provider(
     _arrow_schema: SchemaRef,
 ) -> Result<(), KalamDbError> {
     use crate::providers::{SharedTableProvider, TableProviderCore};
-    use crate::tables::shared_tables::shared_table_store::new_shared_table_store;
-    use crate::tables::system::system_table_store::SharedTableStoreExt;
+    use kalamdb_tables::new_shared_table_store;
+    use kalamdb_tables::SharedTableStoreExt;
 
     log::debug!(
         "📋 Registering SHARED table provider: {}.{}",
@@ -131,19 +127,15 @@ pub fn register_shared_table_provider(
         table_id.table_name(),
     ));
 
-    // Ensure partition exists for this table
-    if let Err(e) = shared_store.create_column_family() {
-        return Err(KalamDbError::Other(format!(
-            "Failed to create shared table partition for {}.{}: {}",
-            table_id.namespace_id().as_str(),
-            table_id.table_name().as_str(),
-            e
-        )));
-    }
+    log::debug!(
+        "Created shared table store for {}.{}",
+        table_id.namespace_id().as_str(),
+        table_id.table_name().as_str()
+    );
 
     // Create and register new providers::SharedTableProvider
     let core = Arc::new(
-        TableProviderCore::new(app_context.clone())
+        TableProviderCore::from_app_context(&app_context)
             .with_live_query_manager(app_context.live_query_manager()),
     );
 
@@ -202,8 +194,8 @@ pub fn register_stream_table_provider(
     _arrow_schema: SchemaRef, // Unused but kept for API consistency
     ttl_seconds: Option<u64>,
 ) -> Result<(), KalamDbError> {
-    use crate::tables::stream_tables::stream_table_store::new_stream_table_store;
-    use crate::tables::system::system_table_store::SharedTableStoreExt;
+    use kalamdb_tables::new_stream_table_store;
+    use kalamdb_tables::SharedTableStoreExt;
     use crate::providers::{StreamTableProvider, TableProviderCore};
 
     log::debug!(
@@ -219,19 +211,15 @@ pub fn register_stream_table_provider(
         table_id.table_name(),
     ));
 
-    // Ensure partition exists for this table
-    if let Err(e) = stream_store.create_column_family() {
-        return Err(KalamDbError::Other(format!(
-            "Failed to create stream table partition for {}.{}: {}",
-            table_id.namespace_id().as_str(),
-            table_id.table_name().as_str(),
-            e
-        )));
-    }
+    log::debug!(
+        "Created stream table store for {}.{}",
+        table_id.namespace_id().as_str(),
+        table_id.table_name().as_str()
+    );
 
     // Create and register provider (new providers::streams implementation)
     let core = Arc::new(
-        TableProviderCore::new(app_context.clone())
+        TableProviderCore::from_app_context(&app_context)
             .with_live_query_manager(app_context.live_query_manager()),
     );
     // For streams, we use a conventional primary key field name in JSON payload ("id")

@@ -123,26 +123,45 @@ impl TestServer {
     /// * `data_dir` - Optional path to existing database directory
     pub async fn new_with_data_dir(data_dir: Option<String>) -> Self {
         use kalamdb_commons::{AuthType, NodeId, Role, StorageMode, UserId};
+        use std::sync::Mutex;
+        use once_cell::sync::Lazy;
         
-        // Create temporary database
-        let temp_dir = TempDir::new().expect("Failed to create temp directory");
-        let db_path = data_dir.unwrap_or_else(|| {
-            temp_dir
-                .path()
-                .join("test_db")
-                .to_str()
-                .unwrap()
-                .to_string()
-        });
+        // Global shared test resources (initialized once for all tests)
+        static TEST_RESOURCES: Lazy<Mutex<Option<(Arc<TempDir>, Arc<rocksdb::DB>, String)>>> = 
+            Lazy::new(|| Mutex::new(None));
+        
+        // Get or create shared test resources
+        let (temp_dir, db, storage_base_path) = {
+            let mut resources = TEST_RESOURCES.lock().unwrap();
+            if let Some((ref td, ref db, ref path)) = *resources {
+                (td.clone(), db.clone(), path.clone())
+            } else {
+                // First test: initialize shared resources
+                let temp_dir = Arc::new(TempDir::new().expect("Failed to create temp directory"));
+                let db_path = data_dir.unwrap_or_else(|| {
+                    temp_dir
+                        .path()
+                        .join("test_db")
+                        .to_str()
+                        .unwrap()
+                        .to_string()
+                });
 
-        // Prepare storage base directory for Parquet outputs
-        let storage_base_path = temp_dir.path().join("storage");
-        std::fs::create_dir_all(&storage_base_path)
-            .expect("Failed to create storage base directory for tests");
+                // Prepare storage base directory for Parquet outputs
+                let storage_base_path = temp_dir.path().join("storage");
+                std::fs::create_dir_all(&storage_base_path)
+                    .expect("Failed to create storage base directory for tests");
 
-        // Initialize RocksDB with all system tables
-        let db_init = kalamdb_store::RocksDbInit::with_defaults(&db_path);
-        let db = db_init.open().expect("Failed to open RocksDB");
+                // Initialize RocksDB with all system tables
+                let db_init = kalamdb_store::RocksDbInit::with_defaults(&db_path);
+                let db_arc = db_init.open().expect("Failed to open RocksDB");
+                
+                let storage_path_str = storage_base_path.to_str().unwrap().to_string();
+                
+                *resources = Some((temp_dir.clone(), db_arc.clone(), storage_path_str.clone()));
+                (temp_dir, db_arc, storage_path_str)
+            }
+        };
 
         // Initialize StorageBackend
         let backend: Arc<dyn StorageBackend> = Arc::new(RocksDBBackend::new(db.clone()));
@@ -150,58 +169,63 @@ impl TestServer {
         // Create minimal test config
         let mut test_config = kalamdb_commons::config::ServerConfig::default();
         test_config.server.node_id = "test-node".to_string();
-        test_config.storage.default_storage_path = storage_base_path.to_str().unwrap().to_string();
+        test_config.storage.default_storage_path = storage_base_path.clone();
 
-        // Initialize AppContext using singleton pattern
-        // All tests in the same process will share this AppContext, but that's OK
-        // because they're using the same RocksDB instance anyway
+        // Initialize AppContext using singleton pattern (only once for all tests)
+        // All tests in the same process will share both AppContext AND RocksDB
         let app_context = AppContext::init(
             backend.clone(),
             NodeId::new("test-node".to_string()),
-            storage_base_path.to_str().unwrap().to_string(),
+            storage_base_path.clone(),
             test_config,
         );
 
         // Get session context from AppContext
         let session_context = app_context.base_session_context();
 
-        // Bootstrap: ensure a default 'system' user exists for admin operations in tests
+        // Bootstrap: ensure a default 'system' user exists for admin operations in tests (idempotent)
         {
             use kalamdb_commons::types::User;
             let sys_id = UserId::new("system");
-            let now = chrono::Utc::now().timestamp_millis();
-            let sys_user = User {
-                id: sys_id.clone(),
-                username: "system".into(),
-                password_hash: String::new(),
-                role: Role::System,
-                email: Some("system@localhost".to_string()),
-                auth_type: AuthType::Internal,
-                auth_data: None,
-                storage_mode: StorageMode::Table,
-                storage_id: None,
-                created_at: now,
-                updated_at: now,
-                last_seen: None,
-                deleted_at: None,
-            };
-                        // Insert via system tables provider
-            let _ = app_context.system_tables().users().create_user(sys_user);
+            let users_provider = app_context.system_tables().users();
+            
+            // Only create if doesn't exist
+            if users_provider.get_user_by_id(&sys_id).ok().flatten().is_none() {
+                let now = chrono::Utc::now().timestamp_millis();
+                let sys_user = User {
+                    id: sys_id.clone(),
+                    username: "system".into(),
+                    password_hash: String::new(),
+                    role: Role::System,
+                    email: Some("system@localhost".to_string()),
+                    auth_type: AuthType::Internal,
+                    auth_data: None,
+                    storage_mode: StorageMode::Table,
+                    storage_id: None,
+                    created_at: now,
+                    updated_at: now,
+                    last_seen: None,
+                    deleted_at: None,
+                };
+                let _ = users_provider.create_user(sys_user);
+            }
         }
 
-        // Create default 'local' storage if system.storages is empty
+        // Create default 'local' storage if system.storages is empty (idempotent)
         {
             use kalamdb_commons::types::Storage;
             let storages_provider = app_context.system_tables().storages();
-            let storages = storages_provider.list_storages().expect("Failed to scan storages");
-            if storages.is_empty() {
+            let storage_id = StorageId::new("local");
+            
+            // Only create if doesn't exist
+            if storages_provider.get_storage_by_id(&storage_id).ok().flatten().is_none() {
                 let now = chrono::Utc::now().timestamp_millis();
                 let default_storage = Storage {
-                    storage_id: StorageId::new("local"),
+                    storage_id: storage_id.clone(),
                     storage_name: "Local Filesystem".to_string(),
                     description: Some("Default local filesystem storage".to_string()),
                     storage_type: "filesystem".to_string(),
-                    base_directory: storage_base_path.to_str().unwrap().to_string(),
+                    base_directory: storage_base_path.clone(),
                     credentials: None,
                     shared_tables_template: "shared/{namespace}/{tableName}".to_string(),
                     user_tables_template: "users/{userId}/tables/{namespace}/{tableName}".to_string(),
@@ -230,8 +254,8 @@ impl TestServer {
         }
 
         Self {
-            temp_dir: Arc::new(temp_dir),
-            storage_base_path: Arc::new(storage_base_path),
+            temp_dir,
+            storage_base_path: Arc::new(PathBuf::from(storage_base_path)),
             db,
             session_context,
             sql_executor,

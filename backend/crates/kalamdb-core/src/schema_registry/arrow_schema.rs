@@ -3,7 +3,7 @@
 //! This module provides utilities for serializing and deserializing Arrow schemas
 //! using Arrow IPC format.
 
-use crate::error::KalamDbError;
+use super::error::RegistryError;
 use arrow::datatypes::{Schema, SchemaRef};
 use serde_json::Value;
 use std::collections::HashMap;
@@ -38,7 +38,7 @@ impl ArrowSchemaWithOptions {
     /// Serialize schema and options to JSON
     ///
     /// Uses a simplified JSON representation of the schema.
-    pub fn to_json(&self) -> Result<Value, KalamDbError> {
+    pub fn to_json(&self) -> Result<Value, RegistryError> {
         // Serialize schema fields manually
         let fields: Vec<serde_json::Map<String, Value>> = self
             .schema
@@ -65,7 +65,7 @@ impl ArrowSchemaWithOptions {
         combined.insert(
             "options".to_string(),
             serde_json::to_value(&self.options).map_err(|e| {
-                KalamDbError::SchemaError(format!("Failed to serialize options: {}", e))
+                RegistryError::SchemaError(format!("Failed to serialize options: {}", e))
             })?,
         );
 
@@ -75,35 +75,35 @@ impl ArrowSchemaWithOptions {
     /// Deserialize schema and options from JSON
     ///
     /// Reconstructs the Arrow schema from the simplified JSON format.
-    pub fn from_json(json: &Value) -> Result<Self, KalamDbError> {
+    pub fn from_json(json: &Value) -> Result<Self, RegistryError> {
         let obj = json.as_object().ok_or_else(|| {
-            KalamDbError::SchemaError("Expected object for schema JSON".to_string())
+            RegistryError::SchemaError("Expected object for schema JSON".to_string())
         })?;
 
         // Extract fields
         let fields_json = obj
             .get("fields")
-            .ok_or_else(|| KalamDbError::SchemaError("Missing 'fields' field in JSON".to_string()))?
+            .ok_or_else(|| RegistryError::SchemaError("Missing 'fields' field in JSON".to_string()))?
             .as_array()
-            .ok_or_else(|| KalamDbError::SchemaError("'fields' must be an array".to_string()))?;
+            .ok_or_else(|| RegistryError::SchemaError("'fields' must be an array".to_string()))?;
 
-        let fields: Result<Vec<arrow::datatypes::Field>, KalamDbError> = fields_json
+        let fields: Result<Vec<arrow::datatypes::Field>, RegistryError> = fields_json
             .iter()
             .map(|field_json| {
                 let field_obj = field_json.as_object().ok_or_else(|| {
-                    KalamDbError::SchemaError("Field must be an object".to_string())
+                    RegistryError::SchemaError("Field must be an object".to_string())
                 })?;
 
                 let name = field_obj
                     .get("name")
                     .and_then(|v| v.as_str())
-                    .ok_or_else(|| KalamDbError::SchemaError("Field missing 'name'".to_string()))?;
+                    .ok_or_else(|| RegistryError::SchemaError("Field missing 'name'".to_string()))?;
 
                 let data_type_str = field_obj
                     .get("data_type")
                     .and_then(|v| v.as_str())
                     .ok_or_else(|| {
-                        KalamDbError::SchemaError("Field missing 'data_type'".to_string())
+                        RegistryError::SchemaError("Field missing 'data_type'".to_string())
                     })?;
 
                 let nullable = field_obj
@@ -123,7 +123,7 @@ impl ArrowSchemaWithOptions {
         // Extract options (optional)
         let options = if let Some(options_json) = obj.get("options") {
             serde_json::from_value(options_json.clone()).map_err(|e| {
-                KalamDbError::SchemaError(format!("Failed to deserialize options: {}", e))
+                RegistryError::SchemaError(format!("Failed to deserialize options: {}", e))
             })?
         } else {
             HashMap::new()
@@ -133,17 +133,17 @@ impl ArrowSchemaWithOptions {
     }
 
     /// Serialize to JSON string
-    pub fn to_json_string(&self) -> Result<String, KalamDbError> {
+    pub fn to_json_string(&self) -> Result<String, RegistryError> {
         let json = self.to_json()?;
         serde_json::to_string_pretty(&json).map_err(|e| {
-            KalamDbError::SchemaError(format!("Failed to convert to JSON string: {}", e))
+            RegistryError::SchemaError(format!("Failed to convert to JSON string: {}", e))
         })
     }
 
     /// Deserialize from JSON string
-    pub fn from_json_string(json_str: &str) -> Result<Self, KalamDbError> {
+    pub fn from_json_string(json_str: &str) -> Result<Self, RegistryError> {
         let json: Value = serde_json::from_str(json_str).map_err(|e| {
-            KalamDbError::SchemaError(format!("Failed to parse JSON string: {}", e))
+            RegistryError::SchemaError(format!("Failed to parse JSON string: {}", e))
         })?;
         Self::from_json(&json)
     }
@@ -152,7 +152,7 @@ impl ArrowSchemaWithOptions {
 /// Parse data type from debug string representation
 ///
 /// This is a simplified parser - extend as needed for more types.
-fn parse_data_type(type_str: &str) -> Result<arrow::datatypes::DataType, KalamDbError> {
+fn parse_data_type(type_str: &str) -> Result<arrow::datatypes::DataType, RegistryError> {
     use arrow::datatypes::{DataType, TimeUnit};
 
     match type_str {
@@ -172,7 +172,7 @@ fn parse_data_type(type_str: &str) -> Result<arrow::datatypes::DataType, KalamDb
         s if s.starts_with("Timestamp(Nanosecond") => {
             Ok(DataType::Timestamp(TimeUnit::Nanosecond, None))
         }
-        _ => Err(KalamDbError::SchemaError(format!(
+        _ => Err(RegistryError::SchemaError(format!(
             "Unsupported data type: {}",
             type_str
         ))),

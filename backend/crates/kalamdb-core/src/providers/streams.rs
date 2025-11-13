@@ -15,7 +15,7 @@ use super::base::{BaseTableProvider, TableProviderCore};
 use crate::app_context::AppContext;
 use crate::error::KalamDbError;
 use crate::schema_registry::TableType;
-use crate::tables::stream_tables::stream_table_store::{StreamTableRow, StreamTableStore};
+use kalamdb_tables::{StreamTableRow, StreamTableStore};
 use async_trait::async_trait;
 use datafusion::arrow::datatypes::SchemaRef;
 use datafusion::arrow::record_batch::RecordBatch;
@@ -142,7 +142,7 @@ impl BaseTableProvider<StreamTableRowId, StreamTableRow> for StreamTableProvider
     
     fn insert(&self, user_id: &UserId, row_data: JsonValue) -> Result<StreamTableRowId, KalamDbError> {
         // Call SystemColumnsService to generate SeqId
-        let sys_cols = self.core.app_context.system_columns_service();
+        let sys_cols = self.core.system_columns.clone();
         let seq_id = sys_cols.generate_seq_id()?;
         
         // Create StreamTableRow (no _deleted field for stream tables)

@@ -14,7 +14,7 @@ use datafusion::prelude::*;
 use kalamdb_commons::models::{NamespaceId, TableName, TableId, UserId, Role};
 use kalamdb_core::providers::base::{TableProviderCore, BaseTableProvider};
 use kalamdb_core::providers::StreamTableProvider;
-use kalamdb_core::tables::stream_tables::StreamTableStore;
+use kalamdb_tables::{StreamTableStore, new_stream_table_store};
 use kalamdb_core::app_context::AppContext;
 use kalamdb_core::sql::executor::models::ExecutionContext;
 use kalamdb_core::schema_registry::CachedTableData;
@@ -30,7 +30,7 @@ async fn test_stream_table_ttl_eviction_with_select() {
     // Create test database
     let test_db = TestDb::new(&["test:test_events"]).expect("Failed to create test DB");
     let backend: Arc<dyn StorageBackend> = Arc::new(RocksDBBackend::new(test_db.db.clone()));
-    let stream_store = Arc::new(kalamdb_core::tables::new_stream_table_store(
+    let stream_store = Arc::new(kalamdb_tables::new_stream_table_store(
         &NamespaceId::new("test"),
         &TableName::new("test_events"),
     ));
@@ -51,7 +51,7 @@ async fn test_stream_table_ttl_eviction_with_select() {
     let node_id = kalamdb_commons::NodeId::new("test-node".to_string());
     let config = kalamdb_commons::ServerConfig::default();
     let app_ctx = AppContext::init(backend.clone(), node_id, "/tmp/kalamdb-test".to_string(), config);
-    let core = Arc::new(TableProviderCore::new(app_ctx.clone()));
+    let core = Arc::new(TableProviderCore::from_app_context(&app_ctx));
 
     // Prime SchemaRegistry with TableDefinition for this stream table (required by provider.schema_ref())
     let table_def = TableDefinition::new(
@@ -140,7 +140,7 @@ async fn test_stream_table_select_with_projection() {
     // Create test database
     let test_db = TestDb::new(&["test:events_proj"]).expect("Failed to create test DB");
     let backend: Arc<dyn StorageBackend> = Arc::new(RocksDBBackend::new(test_db.db.clone()));
-    let stream_store = Arc::new(kalamdb_core::tables::new_stream_table_store(
+    let stream_store = Arc::new(kalamdb_tables::new_stream_table_store(
         &NamespaceId::new("test"),
         &TableName::new("events_proj"),
     ));
@@ -161,7 +161,7 @@ async fn test_stream_table_select_with_projection() {
     let node_id = kalamdb_commons::NodeId::new("test-node".to_string());
     let config = kalamdb_commons::ServerConfig::default();
     let app_ctx = AppContext::init(backend.clone(), node_id, "/tmp/kalamdb-test".to_string(), config);
-    let core = Arc::new(TableProviderCore::new(app_ctx.clone()));
+    let core = Arc::new(TableProviderCore::from_app_context(&app_ctx));
 
     // Prime SchemaRegistry with TableDefinition for this stream table
     let table_def = TableDefinition::new(
@@ -225,7 +225,7 @@ async fn test_stream_table_select_with_limit() {
     // Create test database
     let test_db = TestDb::new(&["test:events_limit"]).expect("Failed to create test DB");
     let backend: Arc<dyn StorageBackend> = Arc::new(RocksDBBackend::new(test_db.db.clone()));
-    let stream_store = Arc::new(kalamdb_core::tables::new_stream_table_store(
+    let stream_store = Arc::new(kalamdb_tables::new_stream_table_store(
         &NamespaceId::new("test"),
         &TableName::new("events_limit"),
     ));
@@ -245,7 +245,7 @@ async fn test_stream_table_select_with_limit() {
     let node_id = kalamdb_commons::NodeId::new("test-node".to_string());
     let config = kalamdb_commons::ServerConfig::default();
     let app_ctx = AppContext::init(backend.clone(), node_id, "/tmp/kalamdb-test".to_string(), config);
-    let core = Arc::new(TableProviderCore::new(app_ctx.clone()));
+    let core = Arc::new(TableProviderCore::from_app_context(&app_ctx));
 
     // Prime SchemaRegistry with TableDefinition for this stream table
     let table_def = TableDefinition::new(

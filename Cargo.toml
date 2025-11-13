@@ -2,11 +2,13 @@
 resolver = "2"
 members = [
     "backend/crates/kalamdb-commons",
+    "backend/crates/kalamdb-filestore",
+    "backend/crates/kalamdb-system",
+    "backend/crates/kalamdb-tables",
     "backend/crates/kalamdb-core",
     "backend/crates/kalamdb-sql",
     "backend/crates/kalamdb-store",
     "backend/crates/kalamdb-api",
-    "backend/crates/kalamdb-live",
     "backend/crates/kalamdb-auth",
     "backend",
     "link",

@@ -195,15 +195,28 @@ pub fn save_table_definition(
 
     table_def.schema_history.push(SchemaVersion::initial(schema_json));
 
-    // Single atomic write to information_schema_tables via SchemaRegistry
+    // Persist to system.tables AND cache in SchemaRegistry
     let ctx = AppContext::get();
     let schema_registry = ctx.schema_registry();
     let table_id = TableId::from_strings(stmt.namespace_id.as_str(), stmt.table_name.as_str());
+    
+    // Write to system.tables for persistence
+    let tables_provider = ctx.system_tables().tables();
+    tables_provider
+        .create_table(&table_id, &table_def)
+        .map_err(|e| {
+            KalamDbError::Other(format!(
+                "Failed to save table definition to system.tables: {}",
+                e
+            ))
+        })?;
+    
+    // Call stub method for API consistency (actual persistence handled above)
     schema_registry
         .put_table_definition(&table_id, &table_def)
         .map_err(|e| {
             KalamDbError::Other(format!(
-                "Failed to save table definition to information_schema.tables: {}",
+                "Failed to update schema registry: {}",
                 e
             ))
         })?;

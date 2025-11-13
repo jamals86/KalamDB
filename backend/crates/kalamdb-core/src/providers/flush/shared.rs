@@ -8,14 +8,13 @@ use crate::error::KalamDbError;
 use crate::live_query::manager::{ChangeNotification, LiveQueryManager};
 use crate::schema_registry::SchemaRegistry;
 use crate::storage::ParquetWriter;
-use crate::tables::shared_tables::shared_table_store::SharedTableRow;
-use crate::tables::system::system_table_store::SharedTableStoreExt;
-use crate::tables::SharedTableStore;
+use kalamdb_tables::{SharedTableRow, SharedTableStore, SharedTableStoreExt};
 use chrono::Utc;
 use datafusion::arrow::datatypes::SchemaRef;
 use datafusion::arrow::record_batch::RecordBatch;
 use kalamdb_commons::models::{TableId, UserId};
 use kalamdb_commons::{NamespaceId, NodeId, TableName};
+use kalamdb_store::entity_store::EntityStore;
 use serde_json::Value as JsonValue;
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -93,8 +92,11 @@ impl SharedTableFlushJob {
             return Ok(());
         }
 
-        self.store.delete_batch_by_keys(&parsed_keys)
-            .map_err(|e| KalamDbError::Other(format!("Failed to delete flushed rows: {}", e)))?;
+        // Delete each key individually (no batch_delete in EntityStore trait)
+        for key in &parsed_keys {
+            EntityStore::delete(self.store.as_ref(), key)
+                .map_err(|e| KalamDbError::Other(format!("Failed to delete flushed row: {}", e)))?;
+        }
 
         log::debug!("Deleted {} flushed rows from storage", parsed_keys.len());
         Ok(())
@@ -106,8 +108,8 @@ impl TableFlush for SharedTableFlushJob {
         log::debug!("🔄 Starting shared table flush: table={}.{}", 
                    self.namespace_id.as_str(), self.table_name.as_str());
 
-        // Stream snapshot-backed scan and collect active rows
-        let iter = self.store.scan_iter()
+        // Scan all rows (EntityStore::scan_all returns Vec<(Vec<u8>, V)>)
+        let entries = EntityStore::scan_all(self.store.as_ref())
             .map_err(|e| {
                 log::error!("❌ Failed to scan rows for shared table={}.{}: {}", 
                            self.namespace_id.as_str(), self.table_name.as_str(), e);
@@ -115,28 +117,10 @@ impl TableFlush for SharedTableFlushJob {
             })?;
         
         let mut rows: Vec<(Vec<u8>, JsonValue)> = Vec::new();
-        let mut scanned: usize = 0;
+        let scanned = entries.len();
 
-        for entry in iter {
-            let (key_bytes, value_bytes) = match entry {
-                Ok(pair) => pair,
-                Err(e) => {
-                    log::warn!("Skipping row due to iterator error (table={}.{}): {}", 
-                              self.namespace_id.as_str(), self.table_name.as_str(), e);
-                    continue;
-                }
-            };
-
-            scanned += 1;
-
-            let row: SharedTableRow = match serde_json::from_slice(&value_bytes) {
-                Ok(v) => v,
-                Err(e) => {
-                    log::warn!("Skipping row due to deserialization error (table={}.{}): {}", 
-                              self.namespace_id.as_str(), self.table_name.as_str(), e);
-                    continue;
-                }
-            };
+        for (key_bytes, row) in entries {
+            // row is already deserialized by EntityStore::scan_all (SharedTableRow)
 
             // Skip soft-deleted rows
             if row._deleted {
