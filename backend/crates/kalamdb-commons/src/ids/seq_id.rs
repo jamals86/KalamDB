@@ -65,10 +65,7 @@ impl SeqId {
         (id & 0xFFF) as u16
     }
 
-    /// Convert to string representation (for storage/display)
-    pub fn to_string(&self) -> String {
-        self.0.to_string()
-    }
+    // String conversion is provided by Display/ToString; no inherent method needed
 
     /// Parse from string representation
     pub fn from_string(s: &str) -> Result<Self, String> {

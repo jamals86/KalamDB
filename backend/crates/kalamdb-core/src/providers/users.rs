@@ -447,6 +447,13 @@ impl BaseTableProvider<UserTableRowId, UserTableRow> for UserTableProvider {
                 "Failed to scan user table hot storage: {}",
                 e
             )))?;
+        log::info!(
+            "[UserProvider] Hot scan: {} rows for user {} (table={}.{})",
+            raw.len(),
+            user_id.as_str(),
+            self.table_id.namespace_id().as_str(),
+            self.table_id.table_name().as_str()
+        );
 
         // 2) Scan cold storage (Parquet files)
         let parquet_batch = self.scan_parquet_files_as_batch(user_id)?;
@@ -468,18 +475,14 @@ impl BaseTableProvider<UserTableRowId, UserTableRow> for UserTableProvider {
                 }
             };
 
-            // Extract PK from fields
-            let pk_val = match row.fields.get(&pk_name) {
-                Some(v) => v,
+            // Determine grouping key: prefer declared PK, else fall back to unique _seq
+            let pk_key = match row.fields.get(&pk_name) {
+                Some(v) => v.to_string(),
                 None => {
-                    // Missing PK in row fields; skip corrupt row
-                    log::warn!("Row missing primary key field '{}', skipping", pk_name);
-                    continue;
+                    // No declared PK in schema or missing in row: treat each version as unique by _seq
+                    format!("_seq:{}", row._seq.as_i64())
                 }
             };
-
-            // Use string key for grouping (stable across primitives)
-            let pk_key = pk_val.to_string();
 
             match best.get(&pk_key) {
                 Some((_existing_key, existing_row)) => {
@@ -493,8 +496,21 @@ impl BaseTableProvider<UserTableRowId, UserTableRow> for UserTableProvider {
             }
         }
 
+        log::info!(
+            "[UserProvider] After hot version-resolution: {} rows (table={}.{})",
+            best.len(),
+            self.table_id.namespace_id().as_str(),
+            self.table_id.table_name().as_str()
+        );
+
         // Process Parquet rows (cold storage)
-        log::debug!("Processing {} Parquet rows for version resolution", parquet_batch.num_rows());
+        log::info!(
+            "[UserProvider] Cold scan: {} Parquet rows (table={}.{}; user={})",
+            parquet_batch.num_rows(),
+            self.table_id.namespace_id().as_str(),
+            self.table_id.table_name().as_str(),
+            user_id.as_str()
+        );
         
         // Convert RecordBatch to rows and merge with RocksDB data
         if parquet_batch.num_rows() > 0 {
@@ -554,16 +570,11 @@ impl BaseTableProvider<UserTableRowId, UserTableRow> for UserTableProvider {
                     }
                 }
                 
-                // Extract PK from JSON row
-                let pk_val = match json_row.get(&pk_name) {
-                    Some(v) => v,
-                    None => {
-                        log::warn!("Parquet row missing primary key field '{}', skipping", pk_name);
-                        continue;
-                    }
+                // Determine grouping key: declared PK value or fallback to unique _seq
+                let pk_key = match json_row.get(&pk_name) {
+                    Some(v) => v.to_string(),
+                    None => format!("_seq:{}", seq_val),
                 };
-                
-                let pk_key = pk_val.to_string();
                 
                 // Create UserTableRow
                 let row = UserTableRow {
@@ -594,6 +605,13 @@ impl BaseTableProvider<UserTableRowId, UserTableRow> for UserTableProvider {
             .into_values()
             .filter(|(_k, r)| !r._deleted)
             .collect();
+        log::info!(
+            "[UserProvider] Final version-resolved (post-tombstone): {} rows (table={}.{}; user={})",
+            result.len(),
+            self.table_id.namespace_id().as_str(),
+            self.table_id.table_name().as_str(),
+            user_id.as_str()
+        );
         Ok(result)
     }
     

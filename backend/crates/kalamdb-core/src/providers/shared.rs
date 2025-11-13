@@ -318,6 +318,10 @@ impl BaseTableProvider<SharedTableRowId, SharedTableRow> for SharedTableProvider
                 "Failed to scan shared table hot storage: {}",
                 e
             )))?;
+        log::debug!(
+            "[SharedProvider] RocksDB scan returned {} rows",
+            raw.len()
+        );
 
         // Scan cold storage (Parquet files)
         let parquet_batch = self.scan_parquet_files_as_batch()?;
@@ -339,15 +343,11 @@ impl BaseTableProvider<SharedTableRowId, SharedTableRow> for SharedTableProvider
             };
             let key: SharedTableRowId = seq;
 
-            // Extract PK from fields
-            let pk_val = match row.fields.get(&pk_name) {
-                Some(v) => v,
-                None => {
-                    log::warn!("Row missing primary key field '{}', skipping", pk_name);
-                    continue;
-                }
+            // Determine grouping key: prefer declared PK, else fall back to unique _seq
+            let pk_key = match row.fields.get(&pk_name) {
+                Some(v) => v.to_string(),
+                None => format!("_seq:{}", row._seq.as_i64()),
             };
-            let pk_key = pk_val.to_string();
 
             match best.get(&pk_key) {
                 Some((_existing_key, existing_row)) => {
@@ -362,7 +362,10 @@ impl BaseTableProvider<SharedTableRowId, SharedTableRow> for SharedTableProvider
         }
 
         // Process Parquet rows (cold storage)
-        log::debug!("Processing {} Parquet rows for version resolution", parquet_batch.num_rows());
+        log::debug!(
+            "[SharedProvider] Processing {} Parquet rows for version resolution",
+            parquet_batch.num_rows()
+        );
         
         if parquet_batch.num_rows() > 0 {
             use crate::providers::arrow_json_conversion::arrow_value_to_json;
@@ -421,16 +424,11 @@ impl BaseTableProvider<SharedTableRowId, SharedTableRow> for SharedTableProvider
                     }
                 }
                 
-                // Extract PK from JSON row
-                let pk_val = match json_row.get(&pk_name) {
-                    Some(v) => v,
-                    None => {
-                        log::warn!("Parquet row missing primary key field '{}', skipping", pk_name);
-                        continue;
-                    }
+                // Determine grouping key: declared PK value or fallback to unique _seq
+                let pk_key = match json_row.get(&pk_name) {
+                    Some(v) => v.to_string(),
+                    None => format!("_seq:{}", seq_val),
                 };
-                
-                let pk_key = pk_val.to_string();
                 
                 // Create SharedTableRow
                 let row = SharedTableRow {
@@ -459,6 +457,10 @@ impl BaseTableProvider<SharedTableRowId, SharedTableRow> for SharedTableProvider
             .into_values()
             .filter(|(_k, r)| !r._deleted)
             .collect();
+        log::debug!(
+            "[SharedProvider] Version-resolved rows (post-tombstone filter): {}",
+            result.len()
+        );
         Ok(result)
     }
     
