@@ -6,7 +6,7 @@
 use super::SchemaRegistry;
 use crate::error::KalamDbError;
 use async_trait::async_trait;
-use kalamdb_system::SystemTableProviderExt;
+use kalamdb_system::{SystemError, SystemTableProviderExt};
 use datafusion::arrow::array::{ArrayRef, StringBuilder};
 use datafusion::arrow::datatypes::{DataType, Field, Schema, SchemaRef};
 use datafusion::arrow::record_batch::RecordBatch;
@@ -118,8 +118,8 @@ impl SystemTableProviderExt for StatsTableProvider {
         self.schema.clone()
     }
 
-    fn load_batch(&self) -> Result<RecordBatch, KalamDbError> {
-        self.build_metrics_batch()
+    fn load_batch(&self) -> Result<RecordBatch, SystemError> {
+        self.build_metrics_batch().map_err(|e| SystemError::Other(e.to_string()))
     }
 }
 

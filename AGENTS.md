@@ -74,9 +74,18 @@ use kalamdb_commons::models::UserId;
 backend/crates/
 ├── kalamdb-core/               # Core library (embeddable)
 │   ├── app_context.rs          # Singleton AppContext
-│   ├── schema_registry/        # Schema management
-│   │   ├── registry.rs     # Unified cache + Arrow memoization
-│   │   └── arrow_schema.rs     # Arrow schema utilities
+│   ├── schema_registry/        # Schema management (consolidated from kalamdb-registry)
+│   │   ├── registry.rs         # Unified cache + Arrow memoization + persistence
+│   │   ├── arrow_schema.rs     # Arrow schema utilities
+│   │   ├── stats.rs            # Stats table provider
+│   │   ├── views/              # Virtual views (information_schema)
+│   │   └── error.rs            # Registry error types
+│   ├── live/                   # Live query management (consolidated from kalamdb-live)
+│   │   ├── manager.rs          # LiveQueryManager
+│   │   ├── connection_registry.rs # Connection tracking
+│   │   ├── filter.rs           # Filter cache
+│   │   ├── initial_data.rs     # Initial data fetcher
+│   │   └── error.rs            # Live query error types
 │   ├── tables/                 # Table implementations
 │   │   ├── base_table_provider.rs # Common interfaces
 │   │   ├── user_tables/        # User table provider
@@ -84,15 +93,15 @@ backend/crates/
 │   │   ├── stream_tables/      # Stream table provider
 │   │   └── system/             # System tables (10 providers)
 │   │       ├── registry.rs     # SystemTablesRegistry
-│   │       └── [users, jobs, namespaces, storages, live_queries, tables, audit_logs, stats]/
+│   │       └── [users, jobs, namespaces, storages, live_queries, tables, audit_logs]/
 │   ├── sql/executor/           # Handler-based executor
 │   │   ├── mod.rs              # Routing orchestrator
 │   │   └── handlers/           # DDL, DML, Query, Flush, etc.
 │   ├── jobs/                   # Job management
-│   │   ├── jobs_manager.rs  # UnifiedJobManager
+│   │   ├── jobs_manager.rs     # UnifiedJobManager
 │   │   └── executors/          # 8 job executors
 │   ├── flush/                  # Flush operations
-│   └── live_query/             # Live query manager
+│   └── providers/              # Additional table providers
 ├── kalamdb-store/              # RocksDB storage layer
 ├── kalamdb-commons/            # Shared models and utilities
 │   ├── system_tables.rs        # System table models (User, Job, etc.)
@@ -131,3 +140,14 @@ specs/010-core-architecture-v2/ # CURRENT: Arrow memoization, views
 - **Soft Deletes**: Set `deleted_at` timestamp, return same error as invalid credentials
 - **Authorization Checks**: Verify role permissions BEFORE executing database operations
 - **Storage Abstraction**: Use `Arc<dyn StorageBackend>` instead of `Arc<rocksdb::DB>` (except in kalamdb-store)
+
+## Recent Changes
+
+**Phase 13 - Crate Consolidation** (Complete):
+- **Eliminated kalamdb-registry**: All schema management code moved to `kalamdb-core/src/schema_registry/`
+- **Eliminated kalamdb-live**: All live query code moved to `kalamdb-core/src/live/`
+- **Circular Dependency Resolution**: Direct integration into kalamdb-core eliminates circular dependencies
+- **Import Updates**: Changed from `kalamdb_registry::` and `kalamdb_live::` to `crate::schema_registry::` and `crate::live::`
+- **Error Type Consolidation**: RegistryError and LiveError now part of kalamdb-core error module
+- **Workspace Size**: Reduced from 11 crates to 9 crates (more maintainable)
+- **Stats Provider**: Moved from kalamdb-system to kalamdb-core/src/schema_registry/stats.rs
