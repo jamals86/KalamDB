@@ -653,8 +653,13 @@ impl TestServer {
             .scan_all()
             .map_err(|e| anyhow::anyhow!("Failed to list namespaces: {:?}", e))?;
 
-        // Drop each namespace (this will cascade delete tables)
+        // Only drop namespaces that look test-scoped to avoid cross-test interference
+        // Convention: tests create namespaces prefixed with 'test', 'tmp', or 'flush_'
         for ns in namespaces {
+            let name = ns.namespace_id.as_str();
+            if !(name.starts_with("test") || name.starts_with("tmp") || name.starts_with("flush_")) {
+                continue;
+            }
             let sql = format!("DROP NAMESPACE {} CASCADE", ns.namespace_id);
             let response = self.execute_sql(&sql).await;
             if response.status != "success" {

@@ -29,7 +29,7 @@ mod tests {
     use kalamdb_commons::{UserId, UserName};
     use kalamdb_store::test_utils::InMemoryBackend;
     use kalamdb_store::CrossUserTableStore;
-    use kalamdb_store::EntityStore as EntityStore;
+    use kalamdb_store::entity_store::EntityStore;
     use serde_json::json;
 
     fn create_test_store() -> AuditLogsStore {

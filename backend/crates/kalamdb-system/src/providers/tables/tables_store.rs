@@ -59,7 +59,7 @@ mod tests {
     use kalamdb_commons::schemas::{ColumnDefinition, TableDefinition, TableOptions, TableType};
     use kalamdb_store::test_utils::InMemoryBackend;
     use kalamdb_store::CrossUserTableStore;
-    use kalamdb_store::EntityStore as EntityStore;
+    use kalamdb_store::entity_store::EntityStore;
 
     fn create_test_store() -> TablesStore {
         let backend: Arc<dyn StorageBackend> = Arc::new(InMemoryBackend::new());

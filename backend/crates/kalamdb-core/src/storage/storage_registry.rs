@@ -354,7 +354,7 @@ mod tests {
             Arc::new(kalamdb_store::RocksDBBackend::new(db.clone()));
         
         // Create StoragesTableProvider for tests
-        let storages_provider = Arc::new(crate::tables::system::StoragesTableProvider::new(backend));
+        let storages_provider = Arc::new(kalamdb_system::providers::storages::StoragesTableProvider::new(backend));
 
         // Use a temp storage base under the temp dir for tests
         let default_storage_path = db_path

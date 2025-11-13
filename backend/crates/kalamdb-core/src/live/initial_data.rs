@@ -309,7 +309,8 @@ impl InitialDataFetcher {
 mod tests {
     use super::*;
     use kalamdb_tables::UserTableStoreExt;
-    use crate::tables::user_tables::user_table_store::{new_user_table_store, UserTableRow};
+    use kalamdb_tables::user_tables::user_table_store::{new_user_table_store, UserTableRow};
+    use kalamdb_store::entity_store::EntityStore;
     use kalamdb_commons::UserId;
     use kalamdb_commons::ids::{SeqId, UserTableRowId};
     use kalamdb_commons::models::{NamespaceId, TableName};
@@ -409,8 +410,8 @@ mod tests {
             _deleted: false,
         };
         
-        // Use UserTableStoreExt::put with new signature
-        UserTableStoreExt::put(&*store, &row_id, &row).expect("put row");
+        // Insert row using EntityStore trait
+        EntityStore::put(&*store, &row_id, &row).expect("put row");
 
         // Build fetcher with user table store
         let fetcher = InitialDataFetcher::new(Some(store), None);
