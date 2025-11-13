@@ -1,27 +1,23 @@
-//! Schema Registry for KalamDB
+//! Schema Registry module for KalamDB Core
 //!
 //! Provides unified caching and metadata management for table schemas.
-//!
-//! **Architecture**:
-//! - Single DashMap<TableId, Arc<CachedTableData>> for all table metadata + schemas
-//! - Arrow schema memoization for 50-100× speedup on repeated access
-//! - Lock-free concurrent access via DashMap
-//! - LRU eviction policy (configurable max_size)
+//! All schema-related functionality has been consolidated here from the former kalamdb-registry crate.
 
 pub mod arrow_schema;
+pub mod error;
 pub mod projection;
 pub mod registry;
+pub mod stats;
 pub mod system_columns_metadata;
 pub mod system_columns_service;
 pub mod traits;
 pub mod views;
 
-mod error;
-
 pub use arrow_schema::ArrowSchemaWithOptions;
 pub use error::RegistryError;
 pub use projection::{project_batch, schemas_compatible};
 pub use registry::{CachedTableData, SchemaRegistry};
+pub use stats::StatsTableProvider;
 pub use system_columns_metadata::SystemColumns;
 pub use system_columns_service::SystemColumnsService;
 

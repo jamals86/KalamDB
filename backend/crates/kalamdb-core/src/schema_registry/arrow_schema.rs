@@ -3,7 +3,7 @@
 //! This module provides utilities for serializing and deserializing Arrow schemas
 //! using Arrow IPC format.
 
-use crate::error::RegistryError;
+use super::error::RegistryError;
 use arrow::datatypes::{Schema, SchemaRef};
 use serde_json::Value;
 use std::collections::HashMap;

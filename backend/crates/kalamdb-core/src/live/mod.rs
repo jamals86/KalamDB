@@ -2,8 +2,11 @@
 //!
 //! This module handles WebSocket-based live query subscriptions and
 //! real-time change notifications.
+//!
+//! Moved from kalamdb-live crate to kalamdb-core to avoid circular dependencies.
 
 pub mod connection_registry;
+pub mod error;
 pub mod filter;
 pub mod initial_data;
 pub mod manager;

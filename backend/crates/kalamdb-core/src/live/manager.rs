@@ -4,15 +4,15 @@
 //! and real-time notifications to WebSocket clients.
 
 use crate::error::KalamDbError;
-use crate::connection_registry::{
+use super::connection_registry::{
     ConnectionId, LiveId, LiveQueryOptions, LiveQueryRegistry, NodeId,
 };
-use crate::filter::FilterCache;
-use crate::initial_data::{InitialDataFetcher, InitialDataOptions, InitialDataResult};
+use super::filter::FilterCache;
+use super::initial_data::{InitialDataFetcher, InitialDataOptions, InitialDataResult};
 use kalamdb_system::LiveQueriesTableProvider;
 use kalamdb_tables::{SharedTableStore, StreamTableStore, UserTableStore};
 use kalamdb_commons::models::{NamespaceId, TableId, TableName, UserId};
-use kalamdb_registry::SchemaRegistry;
+// SchemaRegistry will be passed as Arc parameter from kalamdb-core
 use kalamdb_commons::schemas::TableType;
 use kalamdb_commons::system::LiveQuery as SystemLiveQuery;
 use kalamdb_commons::LiveQueryId;
@@ -25,7 +25,7 @@ pub struct LiveQueryManager {
     live_queries_provider: Arc<LiveQueriesTableProvider>,
     filter_cache: Arc<tokio::sync::RwLock<FilterCache>>,
     initial_data_fetcher: Arc<InitialDataFetcher>,
-    schema_registry: Arc<SchemaRegistry>,
+    schema_registry: Arc<crate::schema_registry::SchemaRegistry>,
     node_id: NodeId,
 }
 
@@ -33,7 +33,7 @@ impl LiveQueryManager {
     /// Create a new live query manager
     pub fn new(
         live_queries_provider: Arc<LiveQueriesTableProvider>,
-        schema_registry: Arc<SchemaRegistry>,
+        schema_registry: Arc<crate::schema_registry::SchemaRegistry>,
         node_id: NodeId,
         user_table_store: Option<Arc<UserTableStore>>,
         _shared_table_store: Option<Arc<SharedTableStore>>,
@@ -79,7 +79,7 @@ impl LiveQueryManager {
         &self,
         user_id: UserId,
         unique_conn_id: String,
-        notification_tx: Option<crate::connection_registry::NotificationSender>,
+        notification_tx: Option<super::connection_registry::NotificationSender>,
     ) -> Result<ConnectionId, KalamDbError> {
         let connection_id = ConnectionId::new(user_id.as_str().to_string(), unique_conn_id);
 
@@ -756,7 +756,7 @@ impl LiveQueryManager {
     async fn get_notification_sender(
         &self,
         live_id: &LiveId,
-    ) -> Option<crate::connection_registry::NotificationSender> {
+    ) -> Option<super::connection_registry::NotificationSender> {
         let registry = self.registry.read().await;
         registry
             .get_notification_sender(&live_id.connection_id)

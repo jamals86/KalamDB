@@ -10,7 +10,7 @@ use super::{
     AuditLogsTableProvider, JobsTableProvider, LiveQueriesTableProvider, NamespacesTableProvider, 
     StatsTableProvider, StoragesTableProvider, TablesTableProvider, UsersTableProvider,
 };
-use kalamdb_registry::SchemaRegistry;
+// SchemaRegistry will be passed as Arc parameter from kalamdb-core
 use datafusion::datasource::TableProvider;
 use kalamdb_store::StorageBackend;
 use std::sync::{Arc, RwLock};
@@ -82,25 +82,11 @@ impl SystemTablesRegistry {
     /// Set information_schema dependencies after SchemaRegistry is created
     ///
     /// This is called from AppContext::init() after schema_registry is available.
-    pub fn set_information_schema_dependencies(&self, schema_registry: Arc<SchemaRegistry>) {
-        use kalamdb_registry::views::information_schema::{
-            create_information_schema_tables_provider,
-            create_information_schema_columns_provider,
-        };
-        
-        // Initialize information_schema.tables using VirtualView pattern
-        // Wrap Arc<TablesTableProvider> in Arc<dyn TableProvider> as expected by the functions
-        let tables_arc: Arc<dyn TableProvider> = self.tables.clone();
-        let tables_provider = create_information_schema_tables_provider(
-            Arc::new(tables_arc),
-            schema_registry.clone(),
-        );
-        *self.information_schema_tables.write().unwrap() = Some(tables_provider);
-
-        // Initialize information_schema.columns using VirtualView pattern
-        let columns_arc: Arc<dyn TableProvider> = self.tables.clone();
-        let columns_provider = create_information_schema_columns_provider(Arc::new(columns_arc));
-        *self.information_schema_columns.write().unwrap() = Some(columns_provider);
+    /// Note: This method is now implemented in kalamdb-core to avoid circular dependencies.
+    pub fn set_information_schema_dependencies(&self, schema_registry: Arc<dyn std::any::Any + Send + Sync>) {
+        // Implementation moved to kalamdb-core::app_context
+        // Views are created there and set via set_information_schema_tables/columns methods
+        let _ = schema_registry; // Suppress unused warning
     }
     
     // ===== Getter Methods =====
@@ -153,6 +139,16 @@ impl SystemTablesRegistry {
     /// Get the information_schema.columns provider
     pub fn information_schema_columns(&self) -> Option<Arc<dyn TableProvider>> {
         self.information_schema_columns.read().unwrap().clone()
+    }
+    
+    /// Set the information_schema.tables provider (called from kalamdb-core)
+    pub fn set_information_schema_tables(&self, provider: Arc<dyn TableProvider>) {
+        *self.information_schema_tables.write().unwrap() = Some(provider);
+    }
+    
+    /// Set the information_schema.columns provider (called from kalamdb-core)
+    pub fn set_information_schema_columns(&self, provider: Arc<dyn TableProvider>) {
+        *self.information_schema_columns.write().unwrap() = Some(provider);
     }
     
     // ===== Convenience Methods =====

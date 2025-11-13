@@ -169,3 +169,4 @@ datafusion = { workspace = true }
 libc = { workspace = true }
 arrow = { workspace = true }
 hex = { workspace = true }
+once_cell = { workspace = true }

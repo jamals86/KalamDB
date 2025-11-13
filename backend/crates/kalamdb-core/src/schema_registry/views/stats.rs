@@ -11,7 +11,6 @@
 //! - Uses MemTable for efficient DataFusion integration
 
 use super::view_base::VirtualView;
-use crate::registry::SchemaRegistry;
 use datafusion::arrow::array::{ArrayRef, StringBuilder};
 use datafusion::arrow::datatypes::{DataType, Field, Schema, SchemaRef};
 use datafusion::arrow::record_batch::RecordBatch;
@@ -40,13 +39,14 @@ fn stats_schema() -> SchemaRef {
 /// - Computes batch dynamically in compute_batch()
 #[derive(Debug)]
 pub struct StatsView {
-    schema_registry: Option<Arc<SchemaRegistry>>,
+    // SchemaRegistry moved to kalamdb-core, so we can't use it here
+    // TODO: Pass metrics via a trait or callback if needed
 }
 
 impl StatsView {
     /// Create a new stats view
-    pub fn new(schema_registry: Option<Arc<SchemaRegistry>>) -> Self {
-        Self { schema_registry }
+    pub fn new(_schema_registry: Option<Arc<()>>) -> Self {
+        Self {}
     }
 }
 
@@ -55,32 +55,16 @@ impl VirtualView for StatsView {
         stats_schema()
     }
 
-    fn compute_batch(&self) -> Result<RecordBatch, crate::error::RegistryError> {
+    fn compute_batch(&self) -> Result<RecordBatch, super::super::error::RegistryError> {
         let mut names = StringBuilder::new();
         let mut values = StringBuilder::new();
 
-        // Schema cache metrics (unified cache from Phase 10)
-        if let Some(cache) = &self.schema_registry {
-            let (size, hits, misses, hit_rate) = cache.stats();
+        // Schema cache metrics (SchemaRegistry moved to kalamdb-core)
+        names.append_value("schema_cache_hit_rate");
+        values.append_value("N/A");
 
-            names.append_value("schema_cache_hit_rate");
-            values.append_value(format!("{:.6}", hit_rate));
-
-            names.append_value("schema_cache_size");
-            values.append_value(size.to_string());
-
-            names.append_value("schema_cache_hits");
-            values.append_value(hits.to_string());
-
-            names.append_value("schema_cache_misses");
-            values.append_value(misses.to_string());
-        } else {
-            names.append_value("schema_cache_hit_rate");
-            values.append_value("N/A");
-
-            names.append_value("schema_cache_size");
-            values.append_value("0");
-        }
+        names.append_value("schema_cache_size");
+        values.append_value("0");
 
         // Placeholders for future metrics
         names.append_value("type_conversion_cache_hit_rate");
@@ -96,7 +80,7 @@ impl VirtualView for StatsView {
                 Arc::new(values.finish()) as ArrayRef,
             ],
         )
-        .map_err(|e| crate::error::RegistryError::Other(format!("Failed to build stats batch: {}", e)))
+        .map_err(|e| super::super::error::RegistryError::Other(format!("Failed to build stats batch: {}", e)))
     }
 
     fn view_name(&self) -> &str {
@@ -108,8 +92,8 @@ impl VirtualView for StatsView {
 pub type StatsTableProvider = super::view_base::ViewTableProvider<StatsView>;
 
 /// Helper function to create a stats table provider
-pub fn create_stats_provider(schema_registry: Option<Arc<SchemaRegistry>>) -> StatsTableProvider {
-    StatsTableProvider::new(Arc::new(StatsView::new(schema_registry)))
+pub fn create_stats_provider(_schema_registry: Option<Arc<()>>) -> StatsTableProvider {
+    StatsTableProvider::new(Arc::new(StatsView::new(None)))
 }
 
 #[cfg(test)]

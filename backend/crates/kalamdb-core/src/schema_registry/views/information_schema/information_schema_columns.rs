@@ -5,12 +5,10 @@
 //!
 //! **Updated**: Now uses unified VirtualView pattern from view_base.rs
 
-use crate::error::RegistryError;
-use crate::traits::TablesTableProvider;
-use crate::views::VirtualView;
-use datafusion::arrow::array::{
-    ArrayRef, BooleanArray, RecordBatch, StringBuilder, UInt32Array,
-};
+use super::super::super::error::RegistryError;
+use super::super::super::traits::TablesTableProvider;
+use super::super::VirtualView;
+use datafusion::arrow::array::RecordBatch;
 use datafusion::arrow::datatypes::{DataType, Field, Schema, SchemaRef};
 use std::sync::Arc;
 
@@ -146,7 +144,7 @@ impl VirtualView for InformationSchemaColumnsView {
 pub fn create_information_schema_columns_provider(
     tables_provider: Arc<TablesTableProvider>,
 ) -> Arc<dyn datafusion::datasource::TableProvider> {
-    use crate::views::ViewTableProvider;
+    use super::super::ViewTableProvider;
     let view = Arc::new(InformationSchemaColumnsView::new(tables_provider));
     Arc::new(ViewTableProvider::new(view))
 }

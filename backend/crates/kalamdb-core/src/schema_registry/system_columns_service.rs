@@ -42,7 +42,7 @@
 use kalamdb_commons::ids::snowflake::SnowflakeGenerator;
 use kalamdb_commons::ids::SeqId;
 use kalamdb_commons::models::schemas::{ColumnDefinition, ColumnDefault, TableDefinition};
-use crate::error::RegistryError;
+use super::error::RegistryError;
 use std::sync::Arc;
 
 /// System Columns Service

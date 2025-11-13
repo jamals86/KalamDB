@@ -3,7 +3,7 @@
 //! This module provides the VirtualView trait and ViewTableProvider wrapper
 //! to standardize how views compute their data dynamically using DataFusion patterns.
 
-use crate::error::RegistryError;
+use super::super::error::RegistryError;
 use async_trait::async_trait;
 use datafusion::arrow::datatypes::SchemaRef;
 use datafusion::arrow::record_batch::RecordBatch;

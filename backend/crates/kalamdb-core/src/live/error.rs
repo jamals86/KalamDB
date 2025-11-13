@@ -51,8 +51,8 @@ impl From<kalamdb_system::SystemError> for LiveError {
     }
 }
 
-impl From<kalamdb_registry::RegistryError> for LiveError {
-    fn from(e: kalamdb_registry::RegistryError) -> Self {
+impl From<crate::schema_registry::error::RegistryError> for LiveError {
+    fn from(e: crate::schema_registry::error::RegistryError) -> Self {
         LiveError::Storage(e.to_string())
     }
 }

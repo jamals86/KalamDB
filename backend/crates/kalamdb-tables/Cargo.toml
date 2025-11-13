@@ -16,7 +16,6 @@ kalamdb-commons = { path = "../kalamdb-commons", features = ["serde"] }
 kalamdb-store = { path = "../kalamdb-store" }
 kalamdb-filestore = { path = "../kalamdb-filestore" }
 kalamdb-system = { path = "../kalamdb-system" }
-kalamdb-registry = { path = "../kalamdb-registry" }
 
 # Apache Arrow ecosystem
 arrow = { workspace = true }

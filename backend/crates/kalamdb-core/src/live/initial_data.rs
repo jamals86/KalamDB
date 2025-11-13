@@ -5,9 +5,9 @@
 // before real-time notifications begin.
 
 use crate::error::KalamDbError;
-use crate::filter::FilterPredicate;
-use kalamdb_registry::TableType;
-use kalamdb_tables::{SharedTableStoreExt, UserTableStoreExt, SharedTableStore, StreamTableStore, UserTableStore};
+use super::filter::FilterPredicate;
+use crate::schema_registry::TableType;
+use kalamdb_tables::{SharedTableStore, StreamTableStore, UserTableStore};
 use chrono::DateTime;
 use kalamdb_commons::TableName;
 use serde_json::Value as JsonValue;
@@ -118,7 +118,7 @@ impl InitialDataFetcher {
     /// InitialDataResult with rows and metadata
     pub async fn fetch_initial_data(
         &self,
-        _live_id: &crate::connection_registry::LiveId,
+        _live_id: &super::connection_registry::LiveId,
         table_name: &TableName,
         table_type: TableType,
         options: InitialDataOptions,

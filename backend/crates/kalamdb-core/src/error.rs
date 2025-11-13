@@ -167,40 +167,40 @@ impl From<datafusion::arrow::error::ArrowError> for KalamDbError {
     }
 }
 
-// Convert kalamdb_registry::RegistryError to KalamDbError
-impl From<kalamdb_registry::RegistryError> for KalamDbError {
-    fn from(err: kalamdb_registry::RegistryError) -> Self {
+// Convert schema_registry::RegistryError to KalamDbError
+impl From<crate::schema_registry::error::RegistryError> for KalamDbError {
+    fn from(err: crate::schema_registry::error::RegistryError) -> Self {
         match err {
-            kalamdb_registry::RegistryError::TableNotFound { namespace, table } => {
+            crate::schema_registry::error::RegistryError::TableNotFound { namespace, table } => {
                 KalamDbError::TableNotFound(format!("{}.{}", namespace, table))
             }
-            kalamdb_registry::RegistryError::StorageNotFound { storage_id } => {
+            crate::schema_registry::error::RegistryError::StorageNotFound { storage_id } => {
                 KalamDbError::NotFound(format!("Storage not found: {}", storage_id))
             }
-            kalamdb_registry::RegistryError::SchemaConversion { message } => {
+            crate::schema_registry::error::RegistryError::SchemaConversion { message } => {
                 KalamDbError::SchemaError(message)
             }
-            kalamdb_registry::RegistryError::SchemaError(msg) => KalamDbError::SchemaError(msg),
-            kalamdb_registry::RegistryError::ArrowError { message } => {
+            crate::schema_registry::error::RegistryError::SchemaError(msg) => KalamDbError::SchemaError(msg),
+            crate::schema_registry::error::RegistryError::ArrowError { message } => {
                 KalamDbError::Other(format!("Registry Arrow error: {}", message))
             }
-            kalamdb_registry::RegistryError::DataFusionError { message } => {
+            crate::schema_registry::error::RegistryError::DataFusionError { message } => {
                 KalamDbError::Other(format!("Registry DataFusion error: {}", message))
             }
-            kalamdb_registry::RegistryError::StorageError { message } => {
+            crate::schema_registry::error::RegistryError::StorageError { message } => {
                 KalamDbError::Other(format!("Registry storage error: {}", message))
             }
-            kalamdb_registry::RegistryError::InvalidConfig { message } => {
+            crate::schema_registry::error::RegistryError::InvalidConfig { message } => {
                 KalamDbError::ConfigError(message)
             }
-            kalamdb_registry::RegistryError::CacheFailed { message } => {
+            crate::schema_registry::error::RegistryError::CacheFailed { message } => {
                 KalamDbError::Other(format!("Cache failed: {}", message))
             }
-            kalamdb_registry::RegistryError::ViewError { message } => {
+            crate::schema_registry::error::RegistryError::ViewError { message } => {
                 KalamDbError::Other(format!("View error: {}", message))
             }
-            kalamdb_registry::RegistryError::InvalidOperation(msg) => KalamDbError::InvalidOperation(msg),
-            kalamdb_registry::RegistryError::Other(msg) => {
+            crate::schema_registry::error::RegistryError::InvalidOperation(msg) => KalamDbError::InvalidOperation(msg),
+            crate::schema_registry::error::RegistryError::Other(msg) => {
                 KalamDbError::Other(format!("Registry error: {}", msg))
             }
         }
@@ -223,17 +223,17 @@ impl From<kalamdb_system::SystemError> for KalamDbError {
     }
 }
 
-// Convert kalamdb_live::LiveError to KalamDbError
-impl From<kalamdb_live::LiveError> for KalamDbError {
-    fn from(err: kalamdb_live::LiveError) -> Self {
+// Convert live::LiveError to KalamDbError
+impl From<crate::live::error::LiveError> for KalamDbError {
+    fn from(err: crate::live::error::LiveError) -> Self {
         match err {
-            kalamdb_live::LiveError::InvalidOperation(msg) => KalamDbError::InvalidOperation(msg),
-            kalamdb_live::LiveError::NotFound(msg) => KalamDbError::NotFound(msg),
-            kalamdb_live::LiveError::Storage(msg) => KalamDbError::Other(format!("Live query storage error: {}", msg)),
-            kalamdb_live::LiveError::SerializationError(msg) => KalamDbError::SerializationError(msg),
-            kalamdb_live::LiveError::InvalidSql(msg) => KalamDbError::InvalidSql(msg),
-            kalamdb_live::LiveError::System(msg) => KalamDbError::Other(format!("Live query system error: {}", msg)),
-            kalamdb_live::LiveError::Other(msg) => KalamDbError::Other(msg),
+            crate::live::error::LiveError::InvalidOperation(msg) => KalamDbError::InvalidOperation(msg),
+            crate::live::error::LiveError::NotFound(msg) => KalamDbError::NotFound(msg),
+            crate::live::error::LiveError::Storage(msg) => KalamDbError::Other(format!("Live query storage error: {}", msg)),
+            crate::live::error::LiveError::SerializationError(msg) => KalamDbError::SerializationError(msg),
+            crate::live::error::LiveError::InvalidSql(msg) => KalamDbError::InvalidSql(msg),
+            crate::live::error::LiveError::System(msg) => KalamDbError::Other(format!("Live query system error: {}", msg)),
+            crate::live::error::LiveError::Other(msg) => KalamDbError::Other(msg),
         }
     }
 }

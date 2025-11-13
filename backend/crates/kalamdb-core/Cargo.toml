@@ -11,13 +11,11 @@ repository.workspace = true
 # Internal crates
 kalamdb-commons = { path = "../kalamdb-commons", features = ["serde"] }
 kalamdb-filestore = { path = "../kalamdb-filestore" }
-kalamdb-registry = { path = "../kalamdb-registry" }
 kalamdb-sql = { path = "../kalamdb-sql" }
 kalamdb-store = { path = "../kalamdb-store" }
 kalamdb-auth = { path = "../kalamdb-auth" }
 kalamdb-system = { path = "../kalamdb-system" }
 kalamdb-tables = { path = "../kalamdb-tables" }
-kalamdb-live = { path = "../kalamdb-live" }
 
 # Apache Arrow ecosystem
 arrow = { workspace = true }

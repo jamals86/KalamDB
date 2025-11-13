@@ -3,9 +3,10 @@
 //! Provides runtime metrics as key-value pairs for observability.
 //! Initial implementation focuses on schema cache metrics.
 
-// SchemaRegistry type passed as generic parameter to avoid circular dependency
-use crate::{SystemError, SystemTableProviderExt};
+use super::SchemaRegistry;
+use crate::error::KalamDbError;
 use async_trait::async_trait;
+use kalamdb_system::SystemTableProviderExt;
 use datafusion::arrow::array::{ArrayRef, StringBuilder};
 use datafusion::arrow::datatypes::{DataType, Field, Schema, SchemaRef};
 use datafusion::arrow::record_batch::RecordBatch;
@@ -42,7 +43,7 @@ impl StatsTableSchema {
 /// Virtual table that emits key-value metrics
 pub struct StatsTableProvider {
     schema: SchemaRef,
-    unified_cache: Option<Arc<dyn std::any::Any + Send + Sync>>, // Schema registry passed from kalamdb-core
+    unified_cache: Option<Arc<SchemaRegistry>>,
 }
 
 impl std::fmt::Debug for StatsTableProvider {
@@ -53,7 +54,7 @@ impl std::fmt::Debug for StatsTableProvider {
 
 impl StatsTableProvider {
     /// Create a new stats table provider
-    pub fn new(unified_cache: Option<Arc<dyn std::any::Any + Send + Sync>>) -> Self {
+    pub fn new(unified_cache: Option<Arc<SchemaRegistry>>) -> Self {
         Self {
             schema: StatsTableSchema::schema(),
             unified_cache,
@@ -61,25 +62,25 @@ impl StatsTableProvider {
     }
 
     /// Build a RecordBatch with current metrics
-    fn build_metrics_batch(&self) -> Result<RecordBatch, SystemError> {
+    fn build_metrics_batch(&self) -> Result<RecordBatch, KalamDbError> {
         let mut names = StringBuilder::new();
         let mut values = StringBuilder::new();
 
         // Schema cache metrics (unified cache from Phase 10)
-        // Note: Actual stats retrieval is handled in kalamdb-core
-        if self.unified_cache.is_some() {
-            // Placeholder values - real implementation is in kalamdb-core
+        if let Some(cache) = &self.unified_cache {
+            let (size, hits, misses, hit_rate) = cache.stats();
+            
             names.append_value("schema_cache_hit_rate");
-            values.append_value("N/A");
+            values.append_value(format!("{:.6}", hit_rate));
 
             names.append_value("schema_cache_size");
-            values.append_value("0");
+            values.append_value(size.to_string());
 
             names.append_value("schema_cache_hits");
-            values.append_value("0");
+            values.append_value(hits.to_string());
 
             names.append_value("schema_cache_misses");
-            values.append_value("0");
+            values.append_value(misses.to_string());
         } else {
             names.append_value("schema_cache_hit_rate");
             values.append_value("N/A");
@@ -102,7 +103,7 @@ impl StatsTableProvider {
                 Arc::new(values.finish()) as ArrayRef,
             ],
         )
-        .map_err(|e| SystemError::Other(format!("Failed to build stats batch: {}", e)))?;
+        .map_err(|e| KalamDbError::Other(format!("Failed to build stats batch: {}", e)))?;
 
         Ok(batch)
     }
@@ -117,7 +118,7 @@ impl SystemTableProviderExt for StatsTableProvider {
         self.schema.clone()
     }
 
-    fn load_batch(&self) -> Result<RecordBatch, SystemError> {
+    fn load_batch(&self) -> Result<RecordBatch, KalamDbError> {
         self.build_metrics_batch()
     }
 }

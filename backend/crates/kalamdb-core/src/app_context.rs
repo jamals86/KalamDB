@@ -331,7 +331,7 @@ impl AppContext {
         ));
 
         // Create minimal schema registry
-        let schema_registry = Arc::new(SchemaRegistry::new(100, Some(storage_registry.clone())));
+        let schema_registry = Arc::new(SchemaRegistry::new(100));
 
         // Create DataFusion session
         let session_factory = Arc::new(DataFusionSessionFactory::new()
@@ -437,7 +437,7 @@ impl AppContext {
         ));
 
         // Create schema cache
-        let schema_registry = Arc::new(SchemaRegistry::new(10000, Some(storage_registry.clone())));
+        let schema_registry = Arc::new(SchemaRegistry::new(10000));
 
         // Register all system tables in DataFusion
         let session_factory = Arc::new(DataFusionSessionFactory::new()

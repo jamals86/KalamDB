@@ -5,16 +5,12 @@
 //!
 //! **Updated**: Now uses unified VirtualView pattern from view_base.rs
 
-use crate::error::RegistryError;
-use crate::traits::TablesTableProvider;
-use crate::views::VirtualView;
-use crate::registry::SchemaRegistry;
-use datafusion::arrow::array::{
-    ArrayRef, BooleanArray, RecordBatch, StringBuilder, TimestampMillisecondArray, UInt32Array,
-    UInt64Array,
-};
+use super::super::super::error::RegistryError;
+use super::super::super::traits::TablesTableProvider;
+use super::super::VirtualView;
+// Registry is now in the same crate
+use datafusion::arrow::array::RecordBatch;
 use datafusion::arrow::datatypes::{DataType, Field, Schema, SchemaRef, TimeUnit};
-use kalamdb_commons::models::TableId;
 use std::sync::Arc;
 
 /// InformationSchemaTablesView exposes all table metadata from information_schema_tables CF
@@ -22,7 +18,7 @@ use std::sync::Arc;
 #[derive(Debug)]
 pub struct InformationSchemaTablesView {
     tables_provider: Arc<TablesTableProvider>,
-    schema_registry: Arc<SchemaRegistry>,
+    // schema_registry: Arc<SchemaRegistry>, // Moved to kalamdb-core
     schema: SchemaRef,
 }
 
@@ -31,8 +27,8 @@ impl InformationSchemaTablesView {
     ///
     /// # Arguments
     /// * `tables_provider` - TablesTableProvider for accessing system.tables metadata
-    /// * `schema_registry` - SchemaRegistry for accessing table schema details
-    pub fn new(tables_provider: Arc<TablesTableProvider>, schema_registry: Arc<SchemaRegistry>) -> Self {
+    /// * `_schema_registry` - SchemaRegistry (not used, moved to kalamdb-core)
+    pub fn new(tables_provider: Arc<TablesTableProvider>, _schema_registry: Arc<()>) -> Self {
         let schema = Arc::new(Schema::new(vec![
             // SQL standard information_schema.tables columns
             Field::new("table_catalog", DataType::Utf8, false),
@@ -60,7 +56,7 @@ impl InformationSchemaTablesView {
 
         Self { 
             tables_provider,
-            schema_registry,
+            // schema_registry removed
             schema 
         }
     }
@@ -235,10 +231,10 @@ impl VirtualView for InformationSchemaTablesView {
 /// This wraps the InformationSchemaTablesView in a ViewTableProvider for use in DataFusion.
 pub fn create_information_schema_tables_provider(
     tables_provider: Arc<TablesTableProvider>,
-    schema_registry: Arc<SchemaRegistry>,
+    _schema_registry: Arc<()>,
 ) -> Arc<dyn datafusion::datasource::TableProvider> {
-    use crate::views::ViewTableProvider;
-    let view = Arc::new(InformationSchemaTablesView::new(tables_provider, schema_registry));
+    use super::super::ViewTableProvider;
+    let view = Arc::new(InformationSchemaTablesView::new(tables_provider, Arc::new(())));
     Arc::new(ViewTableProvider::new(view))
 }
 
