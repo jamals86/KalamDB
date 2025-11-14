@@ -73,15 +73,17 @@ impl AuditLogsTableProvider {
     /// Scan all audit log entries and return as RecordBatch
     pub fn scan_all_entries(&self) -> Result<RecordBatch, SystemError> {
         let entries = self.store.scan_all()?;
+        let row_count = entries.len();
 
-        let mut audit_ids = StringBuilder::new();
-        let mut timestamps = Vec::new();
-        let mut actor_user_ids = StringBuilder::new();
-        let mut actor_usernames = StringBuilder::new();
-        let mut actions = StringBuilder::new();
-        let mut targets = StringBuilder::new();
-        let mut details_list = StringBuilder::new();
-        let mut ip_addresses = StringBuilder::new();
+        // Pre-allocate builders for optimal performance
+        let mut audit_ids = StringBuilder::with_capacity(row_count, row_count * 16);
+        let mut timestamps = Vec::with_capacity(row_count);
+        let mut actor_user_ids = StringBuilder::with_capacity(row_count, row_count * 16);
+        let mut actor_usernames = StringBuilder::with_capacity(row_count, row_count * 32);
+        let mut actions = StringBuilder::with_capacity(row_count, row_count * 32);
+        let mut targets = StringBuilder::with_capacity(row_count, row_count * 64);
+        let mut details_list = StringBuilder::with_capacity(row_count, row_count * 128);
+        let mut ip_addresses = StringBuilder::with_capacity(row_count, row_count * 16);
 
         for (_key, entry) in entries {
             audit_ids.append_value(entry.audit_id.as_str());
@@ -116,15 +118,17 @@ impl AuditLogsTableProvider {
     pub fn scan_entries_limited(&self, limit: usize) -> Result<RecordBatch, SystemError> {
         use kalamdb_store::entity_store::EntityStore;
         let entries = self.store.scan_limited(limit)?;
+        let row_count = entries.len();
 
-        let mut audit_ids = StringBuilder::new();
-        let mut timestamps = Vec::new();
-        let mut actor_user_ids = StringBuilder::new();
-        let mut actor_usernames = StringBuilder::new();
-        let mut actions = StringBuilder::new();
-        let mut targets = StringBuilder::new();
-        let mut details_list = StringBuilder::new();
-        let mut ip_addresses = StringBuilder::new();
+        // Pre-allocate builders for optimal performance
+        let mut audit_ids = StringBuilder::with_capacity(row_count, row_count * 16);
+        let mut timestamps = Vec::with_capacity(row_count);
+        let mut actor_user_ids = StringBuilder::with_capacity(row_count, row_count * 16);
+        let mut actor_usernames = StringBuilder::with_capacity(row_count, row_count * 32);
+        let mut actions = StringBuilder::with_capacity(row_count, row_count * 32);
+        let mut targets = StringBuilder::with_capacity(row_count, row_count * 64);
+        let mut details_list = StringBuilder::with_capacity(row_count, row_count * 128);
+        let mut ip_addresses = StringBuilder::with_capacity(row_count, row_count * 16);
 
         for (_key, entry) in entries {
             audit_ids.append_value(entry.audit_id.as_str());

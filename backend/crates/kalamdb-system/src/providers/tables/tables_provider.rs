@@ -94,16 +94,18 @@ impl TablesTableProvider {
         use kalamdb_store::entity_store::EntityStore;
         
         let tables = self.store.scan_all()?;
+        let row_count = tables.len();
 
-        let mut table_ids = StringBuilder::new();
-        let mut table_names = StringBuilder::new();
-        let mut namespaces = StringBuilder::new(); // corresponds to column name 'namespace_id'
-        let mut table_types = StringBuilder::new();
-        let mut created_ats = Vec::new();
-        let mut schema_versions = Vec::new();
-        let mut table_comments = StringBuilder::new();
-        let mut updated_ats = Vec::new();
-        let mut options_json = StringBuilder::new();
+        // Pre-allocate builders for optimal performance
+        let mut table_ids = StringBuilder::with_capacity(row_count, row_count * 32);
+        let mut table_names = StringBuilder::with_capacity(row_count, row_count * 16);
+        let mut namespaces = StringBuilder::with_capacity(row_count, row_count * 16); // corresponds to column name 'namespace_id'
+        let mut table_types = StringBuilder::with_capacity(row_count, row_count * 16);
+        let mut created_ats = Vec::with_capacity(row_count);
+        let mut schema_versions = Vec::with_capacity(row_count);
+        let mut table_comments = StringBuilder::with_capacity(row_count, row_count * 64);
+        let mut updated_ats = Vec::with_capacity(row_count);
+        let mut options_json = StringBuilder::with_capacity(row_count, row_count * 128);
 
         for (_table_id, table_def) in tables {
             // Convert TableId to string format: "namespace:table_name"

@@ -58,10 +58,19 @@ mod tests {
 
     #[tokio::test]
     async fn test_show_manifest_cache_empty() {
+        use crate::sql::executor::models::ExecutionContext;
+        use kalamdb_commons::models::{UserId, Role};
+        use datafusion::prelude::SessionContext;
+        use std::sync::Arc;
+
         let app_context = Arc::new(AppContext::new_test());
         let handler = ShowManifestCacheHandler::new(app_context.clone());
         let stmt = ShowManifestStatement;
-        let exec_ctx = ExecutionContext::new_test();
+        let exec_ctx = ExecutionContext::new(
+            UserId::from(1),
+            Role::System,
+            Arc::new(SessionContext::new()),
+        );
 
         let result = handler.execute(stmt, vec![], &exec_ctx).await;
         assert!(result.is_ok());

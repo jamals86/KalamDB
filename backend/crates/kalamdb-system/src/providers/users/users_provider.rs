@@ -166,20 +166,22 @@ impl UsersTableProvider {
     /// Scan all users and return as RecordBatch
     pub fn scan_all_users(&self) -> Result<RecordBatch, SystemError> {
         let users = self.store.scan_all()?;
+        let row_count = users.len();
 
-        let mut user_ids = StringBuilder::new();
-        let mut usernames = StringBuilder::new();
-        let mut password_hashes = StringBuilder::new();
-        let mut roles = StringBuilder::new();
-        let mut emails = StringBuilder::new();
-        let mut auth_types = StringBuilder::new();
-        let mut auth_datas = StringBuilder::new();
-        let mut storage_modes = StringBuilder::new();
-        let mut storage_ids = StringBuilder::new();
-        let mut created_ats = Vec::new();
-        let mut updated_ats = Vec::new();
-        let mut last_seens = Vec::new();
-        let mut deleted_ats = Vec::new();
+        // Pre-allocate builders for optimal performance
+        let mut user_ids = StringBuilder::with_capacity(row_count, row_count * 16);
+        let mut usernames = StringBuilder::with_capacity(row_count, row_count * 32);
+        let mut password_hashes = StringBuilder::with_capacity(row_count, row_count * 64);
+        let mut roles = StringBuilder::with_capacity(row_count, row_count * 16);
+        let mut emails = StringBuilder::with_capacity(row_count, row_count * 32);
+        let mut auth_types = StringBuilder::with_capacity(row_count, row_count * 16);
+        let mut auth_datas = StringBuilder::with_capacity(row_count, row_count * 64);
+        let mut storage_modes = StringBuilder::with_capacity(row_count, row_count * 16);
+        let mut storage_ids = StringBuilder::with_capacity(row_count, row_count * 16);
+        let mut created_ats = Vec::with_capacity(row_count);
+        let mut updated_ats = Vec::with_capacity(row_count);
+        let mut last_seens = Vec::with_capacity(row_count);
+        let mut deleted_ats = Vec::with_capacity(row_count);
 
         for (_key, user) in users {
             user_ids.append_value(user.id.as_str());

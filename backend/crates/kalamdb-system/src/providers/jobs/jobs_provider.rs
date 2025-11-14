@@ -163,22 +163,24 @@ impl JobsTableProvider {
     /// Scan all jobs and return as RecordBatch
     pub fn scan_all_jobs(&self) -> Result<RecordBatch, SystemError> {
         let jobs = self.store.scan_all()?;
+        let row_count = jobs.len();
 
-        let mut job_ids = StringBuilder::new();
-        let mut job_types = StringBuilder::new();
-        let mut namespace_ids = StringBuilder::new();
-        let mut table_names = StringBuilder::new();
-        let mut statuses = StringBuilder::new();
-        let mut parameters = StringBuilder::new();
-        let mut results = StringBuilder::new();
-        let mut traces = StringBuilder::new();
-        let mut memory_useds = Vec::new();
-        let mut cpu_useds = Vec::new();
-        let mut created_ats = Vec::new();
-        let mut started_ats = Vec::new();
-        let mut finished_ats = Vec::new();
-        let mut node_ids = StringBuilder::new();
-        let mut error_messages = StringBuilder::new();
+        // Pre-allocate builders for optimal performance
+        let mut job_ids = StringBuilder::with_capacity(row_count, row_count * 16);
+        let mut job_types = StringBuilder::with_capacity(row_count, row_count * 16);
+        let mut namespace_ids = StringBuilder::with_capacity(row_count, row_count * 16);
+        let mut table_names = StringBuilder::with_capacity(row_count, row_count * 16);
+        let mut statuses = StringBuilder::with_capacity(row_count, row_count * 16);
+        let mut parameters = StringBuilder::with_capacity(row_count, row_count * 64);
+        let mut results = StringBuilder::with_capacity(row_count, row_count * 64);
+        let mut traces = StringBuilder::with_capacity(row_count, row_count * 128);
+        let mut memory_useds = Vec::with_capacity(row_count);
+        let mut cpu_useds = Vec::with_capacity(row_count);
+        let mut created_ats = Vec::with_capacity(row_count);
+        let mut started_ats = Vec::with_capacity(row_count);
+        let mut finished_ats = Vec::with_capacity(row_count);
+        let mut node_ids = StringBuilder::with_capacity(row_count, row_count * 16);
+        let mut error_messages = StringBuilder::with_capacity(row_count, row_count * 64);
 
         for (_key, job) in jobs {
             job_ids.append_value(job.job_id.as_str());

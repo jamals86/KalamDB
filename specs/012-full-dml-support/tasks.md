@@ -600,21 +600,33 @@ By extracting shared helpers with strategy parameters, we can reduce code duplic
 
 ### ManifestFile Data Model
 
-- [ ] T102 [P] [US2] Create ManifestFile struct in backend/crates/kalamdb-commons/src/models/manifest.rs
-- [ ] T103 [P] [US2] Add fields: table_id, scope (user_id/shared), version, generated_at, max_batch, batches (Vec<BatchFileEntry>)
-- [ ] T104 [P] [US2] Create BatchFileEntry struct with fields: batch_number, file_path, min_updated, max_updated, column_min_max, row_count, size_bytes, schema_version, status
-- [ ] T105 [US2] Add JSON serialization/deserialization for ManifestFile and BatchFileEntry
-- [ ] T106 [US2] Add validation: max_batch == max(BatchFileEntry.batch_number)
+- [X] T102 [P] [US2] Create ManifestFile struct in backend/crates/kalamdb-commons/src/models/manifest.rs
+  - Already exists with full implementation ✅
+- [X] T103 [P] [US2] Add fields: table_id, scope (user_id/shared), version, generated_at, max_batch, batches (Vec<BatchFileEntry>)
+  - All fields implemented ✅
+- [X] T104 [P] [US2] Create BatchFileEntry struct with fields: batch_number, file_path, min_updated, max_updated, column_min_max, row_count, size_bytes, schema_version, status
+  - Full implementation with helper methods ✅
+- [X] T105 [US2] Add JSON serialization/deserialization for ManifestFile and BatchFileEntry
+  - Derives Serialize, Deserialize; includes to_json() and from_json() methods ✅
+- [X] T106 [US2] Add validation: max_batch == max(BatchFileEntry.batch_number)
+  - validate() method implemented ✅
 
 ### ManifestService Core
 
-- [ ] T107 [US2] Create ManifestService in backend/crates/kalamdb-core/src/manifest/service.rs
-- [ ] T108 [US2] Implement create_manifest(): generate initial manifest.json for new table
-- [ ] T109 [US2] Implement update_manifest(): read current manifest, increment max_batch, append BatchFileEntry, write atomically
-- [ ] T110 [US2] Implement read_manifest(): parse manifest.json from S3/local storage
-- [ ] T111 [US2] Implement rebuild_manifest(): scan batch files, extract metadata from Parquet footers, regenerate manifest.json
-- [ ] T112 [US2] Implement validate_manifest(): check max_batch matches files, verify JSON schema
-- [ ] T113 [US2] Add atomic write: manifest.json.tmp → rename to manifest.json
+- [X] T107 [US2] Create ManifestService in backend/crates/kalamdb-core/src/manifest/service.rs
+  - ManifestService struct with storage_backend and base_path ✅
+- [X] T108 [US2] Implement create_manifest(): generate initial manifest.json for new table
+  - Returns ManifestFile with version=1, max_batch=0 ✅
+- [X] T109 [US2] Implement update_manifest(): read current manifest, increment max_batch, append BatchFileEntry, write atomically
+  - Reads or creates manifest, adds batch, writes atomically ✅
+- [X] T110 [US2] Implement read_manifest(): parse manifest.json from S3/local storage
+  - Reads file and parses JSON to ManifestFile ✅
+- [X] T111 [US2] Implement rebuild_manifest(): scan batch files, extract metadata from Parquet footers, regenerate manifest.json
+  - Scans batch-*.parquet files, extracts metadata ✅
+- [X] T112 [US2] Implement validate_manifest(): check max_batch matches files, verify JSON schema
+  - Uses ManifestFile.validate() for checks ✅
+- [X] T113 [US2] Add atomic write: manifest.json.tmp → rename to manifest.json
+  - write_manifest_atomic() implements tmp → rename ✅
 
 ### Flush Integration
 
