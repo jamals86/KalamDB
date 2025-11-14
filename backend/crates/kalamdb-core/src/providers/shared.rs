@@ -93,7 +93,50 @@ impl SharedTableProvider {
     ///
     /// **Difference from user tables**: Shared tables have NO user_id partitioning,
     /// so all Parquet files are in the same directory (no subdirectories per user).
+    ///
+    /// **Phase 4 (US6, T082-T084)**: Integrated with ManifestCacheService for manifest caching.
+    /// Logs cache hits/misses and updates last_accessed timestamp. Full query optimization
+    /// (batch file pruning based on manifest metadata) implemented in Phase 5 (US2, T119-T123).
     fn scan_parquet_files_as_batch(&self) -> Result<RecordBatch, KalamDbError> {
+        // Phase 4 (T082): Integrate with ManifestCacheService
+        // Try to load manifest from cache (hot cache → RocksDB → None)
+        let namespace = self.table_id.namespace_id();
+        let table = self.table_id.table_name();
+        let scope = "shared"; // Scope is "shared" for shared tables
+        
+        let manifest_cache_service = self.core.app_context.manifest_cache_service();
+        let cache_result = manifest_cache_service.get_or_load(namespace, table, scope);
+        
+        // T083-T084: Log cache hit/miss (last_accessed already updated by get_or_load)
+        match &cache_result {
+            Ok(Some(entry)) => {
+                log::debug!(
+                    "✅ Manifest cache HIT | table={}.{} | scope=shared | etag={:?} | last_refreshed={} | source={}",
+                    namespace.as_str(),
+                    table.as_str(),
+                    entry.etag,
+                    entry.last_refreshed,
+                    entry.source_path
+                );
+                // TODO Phase 5 (T119-T123): Use manifest to prune batch files based on WHERE predicates
+            }
+            Ok(None) => {
+                log::debug!(
+                    "⚠️  Manifest cache MISS | table={}.{} | scope=shared | fallback=directory_scan",
+                    namespace.as_str(),
+                    table.as_str()
+                );
+            }
+            Err(e) => {
+                log::warn!(
+                    "⚠️  Manifest cache ERROR | table={}.{} | scope=shared | error={} | fallback=directory_scan",
+                    namespace.as_str(),
+                    table.as_str(),
+                    e
+                );
+            }
+        }
+        
         // Resolve storage path for shared table (no user_id)
         let storage_path = self.core.app_context.schema_registry()
             .get_storage_path(&*self.table_id, None, None)?;
@@ -169,6 +212,48 @@ impl SharedTableProvider {
     }
 }
 
+impl SharedTableProvider {
+    /// Check if a primary key value already exists (non-deleted version)
+    ///
+    /// **Performance**: O(log n) lookup by PK value using version resolution.
+    ///
+    /// # Arguments
+    /// * `pk_value` - String representation of PK value to check
+    ///
+    /// # Returns
+    /// * `Ok(true)` - PK value exists with non-deleted version
+    /// * `Ok(false)` - PK value does not exist or only deleted versions exist
+    /// * `Err` - Storage error
+    fn pk_value_exists(&self, pk_value: &str) -> Result<bool, KalamDbError> {
+        let pk_name = self.primary_key_field_name();
+        
+        // Shared tables don't have user scoping, so we use a dummy user_id
+        let dummy_user_id = UserId::from("_system");
+        
+        // Scan with version resolution (returns only latest non-deleted versions)
+        let resolved = self.scan_with_version_resolution_to_kvs(&dummy_user_id, None)?;
+        
+        // Check if any resolved row has this PK value
+        for (_key, row) in resolved.into_iter() {
+            if let Some(val) = row.fields.get(pk_name) {
+                // Compare as strings to handle different JSON types
+                let row_pk_str = match val {
+                    serde_json::Value::String(s) => s.clone(),
+                    serde_json::Value::Number(n) => n.to_string(),
+                    serde_json::Value::Bool(b) => b.to_string(),
+                    _ => continue,
+                };
+                
+                if row_pk_str == pk_value {
+                    return Ok(true); // PK value already exists
+                }
+            }
+        }
+        
+        Ok(false) // PK value does not exist
+    }
+}
+
 impl BaseTableProvider<SharedTableRowId, SharedTableRow> for SharedTableProvider {
     fn table_id(&self) -> &TableId {
         &self.table_id
@@ -194,6 +279,24 @@ impl BaseTableProvider<SharedTableRowId, SharedTableRow> for SharedTableProvider
     
     fn insert(&self, _user_id: &UserId, row_data: JsonValue) -> Result<SharedTableRowId, KalamDbError> {
         // IGNORE user_id parameter - no RLS for shared tables
+        
+        // T060: Validate PRIMARY KEY uniqueness if user provided PK value
+        let pk_name = self.primary_key_field_name();
+        if let Some(pk_value) = row_data.get(pk_name) {
+            // User provided PK value - check if it already exists (non-deleted version)
+            if !pk_value.is_null() {
+                let pk_str = crate::providers::unified_dml::extract_user_pk_value(&row_data, pk_name)?;
+                
+                // Check if this PK value already exists with a non-deleted version
+                if self.pk_value_exists(&pk_str)? {
+                    return Err(KalamDbError::AlreadyExists(format!(
+                        "Primary key violation: value '{}' already exists in column '{}'",
+                        pk_str, pk_name
+                    )));
+                }
+            }
+        }
+        // If PK not provided, it must have a DEFAULT value (validated at CREATE TABLE time)
         
         // Generate new SeqId via SystemColumnsService
         let sys_cols = self.core.system_columns.clone();

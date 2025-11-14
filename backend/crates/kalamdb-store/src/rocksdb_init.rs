@@ -71,6 +71,7 @@ impl RocksDbInit {
             StoragePartition::SystemUsersUsernameIdx.name(),
             StoragePartition::SystemUsersRoleIdx.name(),
             StoragePartition::SystemUsersDeletedAtIdx.name(),
+            StoragePartition::ManifestCache.name(),
         ];
 
         for name in extra_partitions.iter() {

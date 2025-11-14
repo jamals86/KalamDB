@@ -1,0 +1,185 @@
+[package]
+name = "kalamdb-benchmark"
+version = "0.2.0"
+edition = "2021"
+
+[lib]
+name = "kalamdb_benchmark"
+path = "src/lib.rs"
+
+[[bin]]
+name = "benchmark-viewer"
+path = "src/bin/viewer.rs"
+
+[dependencies]
+serde = { workspace = true }
+serde_json = { workspace = true }
+chrono = { workspace = true }
+tokio = { workspace = true }
+anyhow = { workspace = true }
+actix-web = { workspace = true }
+actix-files = "0.6"
+
+# Reference CLI test commons
+kalam-cli = { path = "../cli" }
+
+[dev-dependencies]
+# For benchmarks we use the same structure as tests
+assert_cmd = "2.0"
+tempfile = "3.8"
+
+[[test]]
+name = "user_table_insert_1"
+path = "tests/user_table/insert_1.rs"
+
+[[test]]
+name = "user_table_insert_100"
+path = "tests/user_table/insert_100.rs"
+
+[[test]]
+name = "user_table_insert_50k"
+path = "tests/user_table/insert_50k.rs"
+
+[[test]]
+name = "user_table_select_hot_1"
+path = "tests/user_table/select_hot_1.rs"
+
+[[test]]
+name = "user_table_select_hot_100"
+path = "tests/user_table/select_hot_100.rs"
+
+[[test]]
+name = "user_table_select_hot_50k"
+path = "tests/user_table/select_hot_50k.rs"
+
+[[test]]
+name = "user_table_select_cold_1"
+path = "tests/user_table/select_cold_1.rs"
+
+[[test]]
+name = "user_table_select_cold_100"
+path = "tests/user_table/select_cold_100.rs"
+
+[[test]]
+name = "user_table_select_cold_50k"
+path = "tests/user_table/select_cold_50k.rs"
+
+[[test]]
+name = "user_table_update_1"
+path = "tests/user_table/update_1.rs"
+
+[[test]]
+name = "user_table_update_100"
+path = "tests/user_table/update_100.rs"
+
+[[test]]
+name = "user_table_update_50k"
+path = "tests/user_table/update_50k.rs"
+
+[[test]]
+name = "user_table_delete_1"
+path = "tests/user_table/delete_1.rs"
+
+[[test]]
+name = "user_table_delete_100"
+path = "tests/user_table/delete_100.rs"
+
+[[test]]
+name = "user_table_delete_50k"
+path = "tests/user_table/delete_50k.rs"
+
+[[test]]
+name = "shared_table_insert_1"
+path = "tests/shared_table/insert_1.rs"
+
+[[test]]
+name = "shared_table_insert_100"
+path = "tests/shared_table/insert_100.rs"
+
+[[test]]
+name = "shared_table_insert_50k"
+path = "tests/shared_table/insert_50k.rs"
+
+[[test]]
+name = "shared_table_select_1"
+path = "tests/shared_table/select_1.rs"
+
+[[test]]
+name = "shared_table_select_100"
+path = "tests/shared_table/select_100.rs"
+
+[[test]]
+name = "shared_table_select_50k"
+path = "tests/shared_table/select_50k.rs"
+
+[[test]]
+name = "shared_table_update_1"
+path = "tests/shared_table/update_1.rs"
+
+[[test]]
+name = "shared_table_update_100"
+path = "tests/shared_table/update_100.rs"
+
+[[test]]
+name = "shared_table_update_50k"
+path = "tests/shared_table/update_50k.rs"
+
+[[test]]
+name = "shared_table_delete_1"
+path = "tests/shared_table/delete_1.rs"
+
+[[test]]
+name = "shared_table_delete_100"
+path = "tests/shared_table/delete_100.rs"
+
+[[test]]
+name = "stream_table_insert_1"
+path = "tests/stream_table/insert_1.rs"
+
+[[test]]
+name = "stream_table_insert_100"
+path = "tests/stream_table/insert_100.rs"
+
+[[test]]
+name = "stream_table_insert_50k"
+path = "tests/stream_table/insert_50k.rs"
+
+[[test]]
+name = "stream_table_select_1"
+path = "tests/stream_table/select_1.rs"
+
+[[test]]
+name = "stream_table_select_100"
+path = "tests/stream_table/select_100.rs"
+
+[[test]]
+name = "stream_table_select_50k"
+path = "tests/stream_table/select_50k.rs"
+
+[[test]]
+name = "system_tables_select_tables"
+path = "tests/system_tables/select_tables.rs"
+
+[[test]]
+name = "system_tables_select_jobs"
+path = "tests/system_tables/select_jobs.rs"
+
+[[test]]
+name = "system_tables_select_users"
+path = "tests/system_tables/select_users.rs"
+
+[[test]]
+name = "system_tables_select_schemas"
+path = "tests/system_tables/select_schemas.rs"
+
+[[test]]
+name = "concurrency_insert_1_user"
+path = "tests/concurrency/insert_1_user.rs"
+
+[[test]]
+name = "concurrency_insert_100_users"
+path = "tests/concurrency/insert_100_users.rs"
+
+[[test]]
+name = "concurrency_insert_50k_users"
+path = "tests/concurrency/insert_50k_users.rs"

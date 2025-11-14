@@ -26,6 +26,7 @@ use crate::sql::executor::handlers::namespace::{
 use crate::sql::executor::handlers::storage::{
     CreateStorageHandler, AlterStorageHandler, DropStorageHandler, ShowStoragesHandler,
 };
+use crate::sql::executor::handlers::system::ShowManifestCacheHandler;
 use crate::sql::executor::handlers::table::{
     CreateTableHandler, AlterTableHandler, DropTableHandler, ShowTablesHandler,
     DescribeTableHandler, ShowStatsHandler,
@@ -286,6 +287,15 @@ impl HandlerRegistry {
         );
 
         // ============================================================================
+        // SYSTEM HANDLERS
+        // ============================================================================
+        registry.register_typed(
+            SqlStatementKind::ShowManifest(kalamdb_sql::ddl::ShowManifestStatement),
+            ShowManifestCacheHandler::new(app_context.clone()),
+            |stmt| match stmt.kind() { SqlStatementKind::ShowManifest(s) => Some(s.clone()), _ => None },
+        );
+
+        // ============================================================================
         // FLUSH HANDLERS
         // ============================================================================
         registry.register_typed(
@@ -494,9 +504,9 @@ impl HandlerRegistry {
         handler.check_authorization(&statement, context).await?;
 
         // Step 4: Execute statement (session is in context, no need to pass separately)
-        println!("[DEBUG HandlerRegistry] About to execute handler for statement: {}", statement.name());
+        //println!("[DEBUG HandlerRegistry] About to execute handler for statement: {}", statement.name());
         let result = handler.execute(statement, params, context).await;
-        println!("[DEBUG HandlerRegistry] Handler returned: {:?}", result.as_ref().map(|r| format!("{:?}", r)).unwrap_or_else(|e| format!("Error: {}", e)));
+        //println!("[DEBUG HandlerRegistry] Handler returned: {:?}", result.as_ref().map(|r| format!("{:?}", r)).unwrap_or_else(|e| format!("Error: {}", e)));
         result
     }
 

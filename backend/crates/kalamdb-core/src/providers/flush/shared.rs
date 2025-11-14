@@ -129,14 +129,81 @@ impl TableFlush for SharedTableFlushJob {
                 KalamDbError::Other(format!("Failed to scan rows: {}", e))
             })?;
         
-        let mut rows: Vec<(Vec<u8>, JsonValue)> = Vec::new();
-        let scanned = entries.len();
+        let rows_before_dedup = entries.len();
+        log::info!("📊 [FLUSH DEDUP] Scanned {} total rows from hot storage (table={}.{})",
+                   rows_before_dedup, self.namespace_id.as_str(), self.table_name.as_str());
 
+        // STEP 1: Deduplicate using MAX(_seq) per PK (version resolution)
+        use std::collections::HashMap;
+        
+        // Get primary key field name from schema
+        let pk_field = self.schema.fields()
+            .iter()
+            .find(|f| !f.name().starts_with('_'))
+            .map(|f| f.name().clone())
+            .unwrap_or_else(|| "id".to_string());
+        
+        log::debug!("📊 [FLUSH DEDUP] Using primary key field: {}", pk_field);
+        
+        // Map: pk_value -> (key_bytes, row, _seq)
+        let mut latest_versions: HashMap<String, (Vec<u8>, SharedTableRow, i64)> = HashMap::new();
+        let mut deleted_count = 0;
+        
         for (key_bytes, row) in entries {
-            // row is already deserialized by EntityStore::scan_all (SharedTableRow)
-
-            // Skip soft-deleted rows
+            // Extract PK value from fields
+            let pk_value = match row.fields.get(&pk_field) {
+                Some(v) if !v.is_null() => v.to_string(),
+                _ => {
+                    // No PK or null PK - use unique _seq as fallback
+                    format!("_seq:{}", row._seq.as_i64())
+                }
+            };
+            
+            let seq_val = row._seq.as_i64();
+            
+            // Track deleted rows
             if row._deleted {
+                deleted_count += 1;
+            }
+            
+            // Keep MAX(_seq) per pk_value
+            match latest_versions.get(&pk_value) {
+                Some((_existing_key, _existing_row, existing_seq)) => {
+                    if seq_val > *existing_seq {
+                        log::trace!("[FLUSH DEDUP] Replacing pk={}: old_seq={}, new_seq={}, deleted={}",
+                                   pk_value, existing_seq, seq_val, row._deleted);
+                        latest_versions.insert(pk_value, (key_bytes, row, seq_val));
+                    } else {
+                        log::trace!("[FLUSH DEDUP] Keeping existing pk={}: existing_seq={} >= new_seq={}",
+                                   pk_value, existing_seq, seq_val);
+                    }
+                }
+                None => {
+                    log::trace!("[FLUSH DEDUP] First version pk={}: _seq={}, deleted={}",
+                               pk_value, seq_val, row._deleted);
+                    latest_versions.insert(pk_value, (key_bytes, row, seq_val));
+                }
+            }
+        }
+        
+        let rows_after_dedup = latest_versions.len();
+        let dedup_ratio = if rows_before_dedup > 0 {
+            (rows_before_dedup - rows_after_dedup) as f64 / rows_before_dedup as f64 * 100.0
+        } else {
+            0.0
+        };
+        
+        log::info!("📊 [FLUSH DEDUP] Version resolution complete: {} rows → {} unique (dedup: {:.1}%, deleted: {})",
+                   rows_before_dedup, rows_after_dedup, dedup_ratio, deleted_count);
+        
+        // STEP 2: Filter out deleted rows (tombstones) and convert to JSON
+        let mut rows: Vec<(Vec<u8>, JsonValue)> = Vec::new();
+        let mut tombstones_filtered = 0;
+
+        for (_pk_value, (key_bytes, row, _seq)) in latest_versions {
+            // Skip soft-deleted rows (tombstones)
+            if row._deleted {
+                tombstones_filtered += 1;
                 continue;
             }
 
@@ -150,8 +217,8 @@ impl TableFlush for SharedTableFlushJob {
             rows.push((key_bytes, json_obj));
         }
 
-        log::debug!("📊 Scanned {} rows from shared table={}.{} ({} active)",
-                   scanned, self.namespace_id.as_str(), self.table_name.as_str(), rows.len());
+        log::info!("📊 [FLUSH DEDUP] Final: {} rows to flush ({} tombstones filtered)",
+                   rows.len(), tombstones_filtered);
 
         // If no rows to flush, return early
         if rows.is_empty() {

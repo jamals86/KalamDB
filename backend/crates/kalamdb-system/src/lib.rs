@@ -36,6 +36,9 @@
 //! // SELECT * FROM system.users WHERE role = 'dba';
 //! ```
 
+#[macro_use]
+pub mod macros;
+
 pub mod error;
 pub mod initialization;
 pub mod providers;

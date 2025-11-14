@@ -110,12 +110,14 @@ impl NamespacesTableProvider {
     /// Scan all namespaces and return as RecordBatch
     pub fn scan_all_namespaces(&self) -> Result<RecordBatch, SystemError> {
         let namespaces = self.store.scan_all()?;
+        let row_count = namespaces.len();
 
-        let mut namespace_ids = StringBuilder::new();
-        let mut names = StringBuilder::new();
-        let mut created_ats = Vec::new();
-        let mut options = StringBuilder::new();
-        let mut table_counts = Vec::new();
+        // Pre-allocate builders for optimal performance
+        let mut namespace_ids = StringBuilder::with_capacity(row_count, row_count * 16);
+        let mut names = StringBuilder::with_capacity(row_count, row_count * 32);
+        let mut created_ats = Vec::with_capacity(row_count);
+        let mut options = StringBuilder::with_capacity(row_count, row_count * 64);
+        let mut table_counts = Vec::with_capacity(row_count);
 
         for (_key, ns) in namespaces {
             namespace_ids.append_value(ns.namespace_id.as_str());

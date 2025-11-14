@@ -59,11 +59,23 @@ impl StatementHandler for UpdateHandler {
         }
         let updates = JsonValue::Object(obj);
 
+        // T153: Use effective user_id for impersonation support (Phase 7)
+        let effective_user_id = statement.as_user_id().unwrap_or(&context.user_id);
+
         // Execute native update for USER tables; for SHARED tables, perform provider-level updates across matching rows (MVP: id only)
         let schema_registry = app_context.schema_registry();
         use kalamdb_commons::models::TableId;
         let table_id = TableId::new(namespace.clone(), table_name.clone());
         let def = schema_registry.get_table_definition(&table_id)?.ok_or_else(|| KalamDbError::NotFound(format!("Table {}.{} not found", namespace.as_str(), table_name.as_str())))?;
+        
+        // T163: Reject AS USER on Shared tables (Phase 7)
+        use kalamdb_commons::schemas::TableType;
+        if statement.as_user_id().is_some() && matches!(def.table_type, TableType::Shared) {
+            return Err(KalamDbError::InvalidOperation(
+                "AS USER impersonation is not supported for SHARED tables".to_string()
+            ));
+        }
+        
         match def.table_type {
             kalamdb_commons::schemas::TableType::User => {
                 // Require id for user table update
@@ -74,8 +86,13 @@ impl StatementHandler for UpdateHandler {
                     .ok_or_else(|| KalamDbError::InvalidOperation("User table provider not found".into()))?;
                 
                 if let Some(provider) = provider_arc.as_any().downcast_ref::<crate::providers::UserTableProvider>() {
-                    println!("[DEBUG UpdateHandler] Calling provider.update_by_id_field for user={}, id={}", context.user_id.as_str(), id_value);
-                    match provider.update_by_id_field(&context.user_id, &id_value, updates) {
+                    // T064: Get actual PK column name from provider instead of assuming "id"
+                    let pk_column = provider.primary_key_field_name();
+                    
+                    println!("[DEBUG UpdateHandler] Calling provider.update_by_id_field for user={}, pk_column={}, pk_value={}", 
+                        effective_user_id.as_str(), pk_column, id_value);
+                    
+                    match provider.update_by_id_field(effective_user_id, &id_value, updates) {
                         Ok(_) => {
                             println!("[DEBUG UpdateHandler] update_by_id_field succeeded");
                             Ok(ExecutionResult::Updated { rows_affected: 1 })
@@ -95,7 +112,7 @@ impl StatementHandler for UpdateHandler {
                 if let Some(provider) = provider_arc.as_any().downcast_ref::<crate::providers::SharedTableProvider>() {
                     if let Some(id_value) = row_id_opt {
                         // SharedTableProvider ignores user_id parameter (no RLS)
-                        provider.update_by_id_field(&context.user_id, &id_value, updates)?;
+                        provider.update_by_id_field(effective_user_id, &id_value, updates)?;
                         Ok(ExecutionResult::Updated { rows_affected: 1 })
                     } else {
                         Err(KalamDbError::InvalidOperation("UPDATE on SHARED tables requires WHERE id = <value> (predicate updates not yet supported)".into()))
@@ -117,6 +134,17 @@ impl StatementHandler for UpdateHandler {
         if !matches!(statement.kind(), SqlStatementKind::Update(_)) {
             return Err(KalamDbError::InvalidOperation("UpdateHandler received wrong statement kind".into()));
         }
+        
+        // T152: Validate AS USER authorization - only Service/Dba/System can use AS USER (Phase 7)
+        if statement.as_user_id().is_some() {
+            use kalamdb_commons::Role;
+            if !matches!(context.user_role, Role::Service | Role::Dba | Role::System) {
+                return Err(KalamDbError::Unauthorized(
+                    format!("Role {:?} is not authorized to use AS USER. Only Service, Dba, and System roles are permitted.", context.user_role())
+                ));
+            }
+        }
+        
         use kalamdb_commons::Role;
         match context.user_role {
             Role::System | Role::Dba | Role::Service | Role::User => Ok(()),

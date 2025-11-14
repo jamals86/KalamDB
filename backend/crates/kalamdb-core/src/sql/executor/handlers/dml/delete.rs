@@ -46,17 +46,29 @@ impl StatementHandler for DeleteHandler {
         if !matches!(statement.kind(), SqlStatementKind::Delete(_)) {
             return Err(KalamDbError::InvalidOperation("DeleteHandler received wrong statement kind".into()));
         }
-    let sql = statement.as_str();
-    let (namespace, table_name, row_id) = self.simple_parse_delete(sql)?;
+        
+        let sql = statement.as_str();
+        let (namespace, table_name, row_id) = self.simple_parse_delete(sql)?;
         if row_id.is_none() { return Err(KalamDbError::InvalidOperation("DELETE currently requires WHERE id = <value>".into())); }
         let row_id = row_id.unwrap();
+
+        // T153: Use effective user_id for impersonation support (Phase 7)
+        let effective_user_id = statement.as_user_id().unwrap_or(&context.user_id);
 
         // Execute native delete
         let schema_registry = AppContext::get().schema_registry();
         use kalamdb_commons::models::TableId;
         let table_id = TableId::new(namespace.clone(), table_name.clone());
         let def = schema_registry.get_table_definition(&table_id)?.ok_or_else(|| KalamDbError::NotFound(format!("Table {}.{} not found", namespace.as_str(), table_name.as_str())))?;
+        
+        // T163: Reject AS USER on Shared tables (Phase 7)
         use kalamdb_commons::schemas::TableType;
+        if statement.as_user_id().is_some() && matches!(def.table_type, TableType::Shared) {
+            return Err(KalamDbError::InvalidOperation(
+                "AS USER impersonation is not supported for SHARED tables".to_string()
+            ));
+        }
+        
         match def.table_type {
             TableType::User => {
                 // Get provider from unified cache and downcast to UserTableProvider
@@ -64,7 +76,7 @@ impl StatementHandler for DeleteHandler {
                     .ok_or_else(|| KalamDbError::InvalidOperation("User table provider not found".into()))?;
                 
                 if let Some(provider) = provider_arc.as_any().downcast_ref::<crate::providers::UserTableProvider>() {
-                    let _deleted = provider.delete_by_id_field(&context.user_id, &row_id)?;
+                    let _deleted = provider.delete_by_id_field(effective_user_id, &row_id)?;
                     Ok(ExecutionResult::Deleted { rows_affected: 1 })
                 } else {
                     Err(KalamDbError::InvalidOperation("Cached provider type mismatch for user table".into()))
@@ -75,7 +87,7 @@ impl StatementHandler for DeleteHandler {
                 let provider_arc = schema_registry.get_provider(&table_id).ok_or_else(|| KalamDbError::InvalidOperation("Shared table provider not found".into()))?;
                 if let Some(provider) = provider_arc.as_any().downcast_ref::<crate::providers::SharedTableProvider>() {
                     // SharedTableProvider ignores user_id parameter (no RLS)
-                    provider.delete_by_id_field(&context.user_id, &row_id)?;
+                    provider.delete_by_id_field(effective_user_id, &row_id)?;
                     Ok(ExecutionResult::Deleted { rows_affected: 1 })
                 } else {
                     Err(KalamDbError::InvalidOperation("Cached provider type mismatch for shared table".into()))
@@ -90,6 +102,17 @@ impl StatementHandler for DeleteHandler {
         if !matches!(statement.kind(), SqlStatementKind::Delete(_)) {
             return Err(KalamDbError::InvalidOperation("DeleteHandler received wrong statement kind".into()));
         }
+        
+        // T152: Validate AS USER authorization - only Service/Dba/System can use AS USER (Phase 7)
+        if statement.as_user_id().is_some() {
+            use kalamdb_commons::Role;
+            if !matches!(context.user_role, Role::Service | Role::Dba | Role::System) {
+                return Err(KalamDbError::Unauthorized(
+                    format!("Role {:?} is not authorized to use AS USER. Only Service, Dba, and System roles are permitted.", context.user_role())
+                ));
+            }
+        }
+        
         use kalamdb_commons::Role;
         match context.user_role {
             Role::System | Role::Dba | Role::Service | Role::User => Ok(()),

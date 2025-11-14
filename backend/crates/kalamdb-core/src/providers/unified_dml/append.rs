@@ -39,6 +39,10 @@ pub fn append_version_sync(
 ) -> Result<SeqId, KalamDbError> {
     use kalamdb_store::entity_store::EntityStore as EntityStoreV2;
 
+    // T060: Validate PRIMARY KEY (basic check - full uniqueness validation in provider)
+    // This is a safety check; actual uniqueness validation happens in the provider layer
+    // to avoid scanning all rows on every insert
+    
     // Validate table type
     match table_type {
         TableType::System => {

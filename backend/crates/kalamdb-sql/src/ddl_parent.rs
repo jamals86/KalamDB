@@ -33,3 +33,4 @@ impl DdlAst for CreateUserStatement {}
 impl DdlAst for AlterUserStatement {}
 impl DdlAst for DropUserStatement {}
 impl DdlAst for JobCommand {}
+impl DdlAst for ShowManifestStatement {}

@@ -100,17 +100,19 @@ impl StoragesTableProvider {
     /// Scan all storages and return as RecordBatch
     pub fn scan_all_storages(&self) -> Result<RecordBatch, SystemError> {
         let storages = self.store.scan_all()?;
+        let row_count = storages.len();
 
-        let mut storage_ids = StringBuilder::new();
-        let mut storage_names = StringBuilder::new();
-        let mut descriptions = StringBuilder::new();
-        let mut storage_types = StringBuilder::new();
-        let mut base_directories = StringBuilder::new();
-        let mut credentials = StringBuilder::new();
-        let mut shared_tables_templates = StringBuilder::new();
-        let mut user_tables_templates = StringBuilder::new();
-        let mut created_ats = Vec::new();
-        let mut updated_ats = Vec::new();
+        // Pre-allocate builders for optimal performance
+        let mut storage_ids = StringBuilder::with_capacity(row_count, row_count * 16);
+        let mut storage_names = StringBuilder::with_capacity(row_count, row_count * 32);
+        let mut descriptions = StringBuilder::with_capacity(row_count, row_count * 64);
+        let mut storage_types = StringBuilder::with_capacity(row_count, row_count * 16);
+        let mut base_directories = StringBuilder::with_capacity(row_count, row_count * 64);
+        let mut credentials = StringBuilder::with_capacity(row_count, row_count * 128);
+        let mut shared_tables_templates = StringBuilder::with_capacity(row_count, row_count * 64);
+        let mut user_tables_templates = StringBuilder::with_capacity(row_count, row_count * 64);
+        let mut created_ats = Vec::with_capacity(row_count);
+        let mut updated_ats = Vec::with_capacity(row_count);
 
         for (_key, storage) in storages {
             storage_ids.append_value(storage.storage_id.as_str());

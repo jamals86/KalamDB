@@ -7,6 +7,7 @@
 pub mod error;
 pub mod jobs;
 pub mod live;
+pub mod manifest;
 pub mod providers;
 pub mod slow_query_logger;
 pub mod app_context;

@@ -146,12 +146,19 @@ pub fn save_table_definition(
             let kalam_type = KalamDataType::from_arrow_type(field.data_type())
                 .unwrap_or(KalamDataType::Text);
 
+            // T060: Mark the PRIMARY KEY column with is_primary_key = true
+            let is_pk = stmt
+                .primary_key_column
+                .as_ref()
+                .map(|pk| pk == field.name())
+                .unwrap_or(false);
+
             ColumnDefinition::new(
                 field.name().clone(),
                 (idx + 1) as u32, // ordinal_position is 1-indexed
                 kalam_type,
                 field.is_nullable(),
-                false, // is_primary_key (determined separately)
+                is_pk, // is_primary_key (T060: determined from stmt.primary_key_column)
                 false, // is_partition_key (not used yet)
                 stmt.column_defaults.get(field.name()).cloned().unwrap_or(ColumnDefault::None),
                 None, // column_comment

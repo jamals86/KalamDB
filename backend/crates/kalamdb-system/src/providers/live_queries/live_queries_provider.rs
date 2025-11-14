@@ -151,19 +151,21 @@ impl LiveQueriesTableProvider {
     /// Scan all live queries and return as RecordBatch
     pub fn scan_all_live_queries(&self) -> Result<RecordBatch, SystemError> {
         let live_queries = self.store.scan_all()?;
+        let row_count = live_queries.len();
 
-        let mut live_ids = StringBuilder::new();
-        let mut connection_ids = StringBuilder::new();
-        let mut namespace_ids = StringBuilder::new();
-        let mut table_names = StringBuilder::new();
-        let mut query_ids = StringBuilder::new();
-        let mut user_ids = StringBuilder::new();
-        let mut queries = StringBuilder::new();
-        let mut options = StringBuilder::new();
-        let mut created_ats = Vec::new();
-        let mut last_updates = Vec::new();
-        let mut changes = Vec::new();
-        let mut nodes = StringBuilder::new();
+        // Pre-allocate builders for optimal performance
+        let mut live_ids = StringBuilder::with_capacity(row_count, row_count * 48);
+        let mut connection_ids = StringBuilder::with_capacity(row_count, row_count * 16);
+        let mut namespace_ids = StringBuilder::with_capacity(row_count, row_count * 16);
+        let mut table_names = StringBuilder::with_capacity(row_count, row_count * 16);
+        let mut query_ids = StringBuilder::with_capacity(row_count, row_count * 16);
+        let mut user_ids = StringBuilder::with_capacity(row_count, row_count * 16);
+        let mut queries = StringBuilder::with_capacity(row_count, row_count * 128);
+        let mut options = StringBuilder::with_capacity(row_count, row_count * 64);
+        let mut created_ats = Vec::with_capacity(row_count);
+        let mut last_updates = Vec::with_capacity(row_count);
+        let mut changes = Vec::with_capacity(row_count);
+        let mut nodes = StringBuilder::with_capacity(row_count, row_count * 16);
 
         for (_key, lq) in live_queries {
             live_ids.append_value(lq.live_id.as_str());

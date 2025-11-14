@@ -6,11 +6,12 @@
 use crate::{
     auth::AuthProvider,
     error::{KalamLinkError, Result},
-    models::QueryResponse,
+    models::{HealthCheckResponse, QueryResponse},
     query::QueryExecutor,
     subscription::{SubscriptionConfig, SubscriptionManager},
 };
-use std::time::Duration;
+use std::{sync::Arc, time::{Duration, Instant}};
+use tokio::sync::Mutex;
 
 /// Main KalamDB client.
 ///
@@ -38,6 +39,7 @@ pub struct KalamLinkClient {
     http_client: reqwest::Client,
     auth: AuthProvider,
     query_executor: QueryExecutor,
+    health_cache: Arc<Mutex<HealthCheckCache>>,
 }
 
 impl KalamLinkClient {
@@ -75,12 +77,26 @@ impl KalamLinkClient {
     }
 
     /// Check server health and get server information
-    pub async fn health_check(&self) -> Result<crate::models::HealthCheckResponse> {
+    pub async fn health_check(&self) -> Result<HealthCheckResponse> {
+        {
+            let cache = self.health_cache.lock().await;
+            if let (Some(last_check), Some(response)) =
+                (cache.last_check, cache.last_response.clone())
+            {
+                if last_check.elapsed() < HEALTH_CHECK_TTL {
+                    return Ok(response);
+                }
+            }
+        }
+
         let url = format!("{}/v1/api/healthcheck", self.base_url);
         let response = self.http_client.get(&url).send().await?;
-        let health_response = response
-            .json::<crate::models::HealthCheckResponse>()
-            .await?;
+        let health_response = response.json::<HealthCheckResponse>().await?;
+
+        let mut cache = self.health_cache.lock().await;
+        cache.last_check = Some(Instant::now());
+        cache.last_response = Some(health_response.clone());
+
         Ok(health_response)
     }
 }
@@ -168,8 +184,17 @@ impl KalamLinkClientBuilder {
             http_client,
             auth: self.auth,
             query_executor,
+            health_cache: Arc::new(Mutex::new(HealthCheckCache::default())),
         })
     }
+}
+
+const HEALTH_CHECK_TTL: Duration = Duration::from_secs(10);
+
+#[derive(Debug, Default)]
+struct HealthCheckCache {
+    last_check: Option<Instant>,
+    last_response: Option<HealthCheckResponse>,
 }
 
 #[cfg(test)]
