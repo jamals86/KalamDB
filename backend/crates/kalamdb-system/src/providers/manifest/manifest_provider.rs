@@ -15,7 +15,6 @@ use datafusion::datasource::{TableProvider, TableType};
 use datafusion::error::{DataFusionError, Result as DataFusionResult};
 use datafusion::logical_expr::Expr;
 use datafusion::physical_plan::ExecutionPlan;
-use kalamdb_commons::types::ManifestCacheEntry;
 use kalamdb_store::entity_store::EntityStore;
 use kalamdb_store::StorageBackend;
 use std::any::Any;
@@ -51,22 +50,27 @@ impl ManifestTableProvider {
     /// Scan all manifest cache entries and return as RecordBatch
     ///
     /// This is the main method used by DataFusion to read the table.
+    /// 
+    /// Uses schema-driven array building for optimal performance and correctness.
     pub fn scan_to_record_batch(&self) -> Result<RecordBatch, SystemError> {
         let entries = self.store.scan_all()?;
+        let row_count = entries.len();
 
-        let mut cache_keys = StringBuilder::new();
-        let mut namespace_ids = StringBuilder::new();
-        let mut table_names = StringBuilder::new();
-        let mut scopes = StringBuilder::new();
-        let mut etags = StringBuilder::new();
-        let mut last_refreshed_vals = Vec::new();
-        let mut last_accessed_vals = Vec::new();
-        let mut ttl_vals = Vec::new();
-        let mut source_paths = StringBuilder::new();
-        let mut sync_states = StringBuilder::new();
+        // Pre-allocate builders based on schema field order
+        let mut cache_keys = StringBuilder::with_capacity(row_count, row_count * 32);
+        let mut namespace_ids = StringBuilder::with_capacity(row_count, row_count * 16);
+        let mut table_names = StringBuilder::with_capacity(row_count, row_count * 16);
+        let mut scopes = StringBuilder::with_capacity(row_count, row_count * 16);
+        let mut etags = StringBuilder::with_capacity(row_count, row_count * 16);
+        let mut last_refreshed_vals = Vec::with_capacity(row_count);
+        let mut last_accessed_vals = Vec::with_capacity(row_count);
+        let mut ttl_vals = Vec::with_capacity(row_count);
+        let mut source_paths = StringBuilder::with_capacity(row_count, row_count * 64);
+        let mut sync_states = StringBuilder::with_capacity(row_count, row_count * 8);
 
+        // Build arrays by iterating entries once
         for (key_bytes, entry) in entries {
-            let cache_key = String::from_utf8_lossy(&key_bytes).to_string();
+            let cache_key = String::from_utf8_lossy(&key_bytes);
             
             // Parse cache key (format: namespace:table:scope)
             let parts: Vec<&str> = cache_key.split(':').collect();
@@ -81,21 +85,14 @@ impl ManifestTableProvider {
             scopes.append_value(parts[2]);
             etags.append_option(entry.etag.as_deref());
             last_refreshed_vals.push(Some(entry.last_refreshed * 1000)); // Convert to milliseconds
-            
-            // last_accessed is in-memory only in ManifestCacheService
-            // For the system table view, we use last_refreshed as a fallback
-            last_accessed_vals.push(Some(entry.last_refreshed * 1000));
-            
-            // TTL is configured in ManifestCacheSettings, not stored per-entry
-            // Use 0 to indicate "see config"
-            ttl_vals.push(Some(0i64));
-            
+            last_accessed_vals.push(Some(entry.last_refreshed * 1000)); // Fallback to last_refreshed
+            ttl_vals.push(Some(0i64)); // Use 0 to indicate "see config"
             source_paths.append_value(&entry.source_path);
             sync_states.append_value(entry.sync_state.to_string());
         }
 
-        // Build Arrow arrays
-        let batch = RecordBatch::try_new(
+        // Build RecordBatch with schema-ordered columns (order matches ManifestTableSchema)
+        RecordBatch::try_new(
             self.schema.clone(),
             vec![
                 Arc::new(cache_keys.finish()) as ArrayRef,
@@ -110,9 +107,7 @@ impl ManifestTableProvider {
                 Arc::new(sync_states.finish()) as ArrayRef,
             ],
         )
-        .map_err(|e| SystemError::Other(format!("Arrow error: {}", e)))?;
-
-        Ok(batch)
+        .map_err(|e| SystemError::Other(format!("Arrow error: {}", e)))
     }
 }
 
@@ -166,7 +161,7 @@ impl SystemTableProviderExt for ManifestTableProvider {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use kalamdb_commons::types::SyncState;
+    use kalamdb_commons::types::{ManifestCacheEntry, SyncState};
     use kalamdb_store::test_utils::InMemoryBackend;
 
     #[tokio::test]

@@ -11,9 +11,9 @@
 
 ### Completion Status
 - **Total Tasks**: 313 tasks
-- **Completed**: ~171 tasks (55%)
+- **Completed**: ~204 tasks (65%)
 - **In Progress**: 0 tasks
-- **Remaining**: ~142 tasks (45%)
+- **Remaining**: ~109 tasks (35%)
 
 ### Phase Breakdown
 | Phase | Description | Tasks | Status | Notes |
@@ -22,7 +22,7 @@
 | Phase 2 | MVCC Architecture (US5) | 72 | ✅ COMPLETE | SeqId, unified DML, row structures |
 | Phase 2.5 | Provider Consolidation | 15 | ⚠️ SKIP | Superseded by Phase 13 |
 | Phase 3 | UPDATE/DELETE (US1) | 31 | ✅ COMPLETE | Hot+cold merge, flush dedup complete |
-| Phase 4 | Manifest Cache (US6) | 33 | ❌ NOT STARTED | RocksDB CF, cache service needed |
+| Phase 4 | Manifest Cache (US6) | 33 | ✅ COMPLETE | RocksDB CF, hot cache, SHOW MANIFEST, tests ✨ NEW |
 | Phase 5 | Manifest Optimization (US2) | 27 | ❌ NOT STARTED | ManifestService, query pruning |
 | Phase 6 | Bloom Filters (US3) | 16 | ❌ NOT STARTED | Parquet filters, query optimization |
 | Phase 7 | AS USER (US4) | 26 | ❌ NOT STARTED | Impersonation, audit logging |
@@ -36,12 +36,14 @@
 2. **Code Reduction**: ~2000 lines eliminated (800 DML + 1200 provider consolidation)
 3. **Provider Unification**: Single trait serving custom DML + DataFusion SQL
 4. **Crate Consolidation**: 11 → 9 crates (eliminated registry/live)
-5. **Full DML Support**: UPDATE/DELETE work on both hot+cold storage with flush deduplication ✨ NEW
+5. **Full DML Support**: UPDATE/DELETE work on both hot+cold storage with flush deduplication
+6. **Manifest Cache**: RocksDB persistence + hot cache + SHOW MANIFEST command ✨ NEW
 
 ### Priority Focus Areas 🎯
-1. **AS USER Support** (26 tasks) - Service account impersonation
-2. **Manifest Files** (60 tasks) - Batch file metadata and caching
-3. **~~Full DML on Parquet~~** ✅ COMPLETE - UPDATE/DELETE on flushed data
+1. **~~Manifest Cache~~** ✅ COMPLETE - RocksDB CF, hot cache, server restart recovery
+2. **AS USER Support** (26 tasks) - Service account impersonation
+3. **Manifest Files** (60 tasks) - Batch file metadata and caching
+4. **~~Full DML on Parquet~~** ✅ COMPLETE - UPDATE/DELETE on flushed data
 
 ---
 
@@ -567,13 +569,26 @@ By extracting shared helpers with strategy parameters, we can reduce code duplic
 
 ### Testing & Validation
 
-- [ ] T095 [US6] Add unit test: get_or_load() cache miss → reads from S3, populates both caches
-- [ ] T096 [US6] Add unit test: get_or_load() cache hit → returns cached entry, no S3 read
-- [ ] T097 [US6] Add unit test: validate_freshness() with stale ETag → re-fetches from S3
-- [ ] T098 [US6] Add integration test: flush → manifest written to S3 + RocksDB CF + hot cache
-- [ ] T099 [US6] Add integration test: server restart → cache restored from RocksDB CF
-- [ ] T100 [US6] Add integration test: SHOW MANIFEST CACHE → returns all cached entries
-- [ ] T101 [US6] Add integration test: query after cache eviction → re-populates from S3
+- [X] T095 [US6] Add unit test: get_or_load() cache miss → reads from S3, populates both caches
+  - test_get_or_load_cache_miss() in test_manifest_cache.rs ✅
+- [X] T096 [US6] Add unit test: get_or_load() cache hit → returns cached entry, no S3 read
+  - test_get_or_load_cache_hit() in test_manifest_cache.rs ✅
+- [X] T097 [US6] Add unit test: validate_freshness() with stale ETag → re-fetches from S3
+  - test_validate_freshness_stale() in test_manifest_cache.rs ✅
+- [X] T098 [US6] Add integration test: flush → manifest written to S3 + RocksDB CF + hot cache
+  - test_update_after_flush_atomic_write() in test_manifest_cache.rs ✅
+- [X] T099 [US6] Add integration test: server restart → cache restored from RocksDB CF
+  - test_restore_from_rocksdb() in test_manifest_cache.rs ✅
+- [X] T100 [US6] Add integration test: SHOW MANIFEST CACHE → returns all cached entries
+  - test_show_manifest_returns_all_entries() in test_manifest_cache.rs ✅
+- [X] T101 [US6] Add integration test: query after cache eviction → re-populates from S3
+  - test_cache_eviction_and_repopulation() in test_manifest_cache.rs ✅
+
+**Additional Tests** (not in original spec):
+- test_clear_all_entries() - Verify clear() removes all entries
+- test_multiple_updates_same_key() - Verify updates overwrite, don't duplicate
+
+**Test Results**: 9/9 tests passing ✅
 
 ---
 
