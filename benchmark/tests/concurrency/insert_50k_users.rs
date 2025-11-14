@@ -4,6 +4,7 @@ use std::time::Duration;
 #[test]
 fn concurrency_insert_50k_users() -> anyhow::Result<()> {
     // Note: This is a simplified version. Full implementation would use thread pools
+    std::env::set_var("KALAM_CLI_TIMEOUT_SECS", "180");
     setup_benchmark_tables()?;
     std::thread::sleep(Duration::from_millis(200));
     

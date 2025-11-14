@@ -273,7 +273,8 @@ pub fn execute_cli_timed(
         .unwrap_or_else(|_| "kalam".to_string());
     
     let start = Instant::now();
-    let output = Command::new(&kalam_bin)
+    let mut command = Command::new(&kalam_bin);
+    command
         .arg("-u")
         .arg("http://localhost:8080")
         .arg("--username")
@@ -281,8 +282,15 @@ pub fn execute_cli_timed(
         .arg("--password")
         .arg(password)
         .arg("--command")
-        .arg(sql)
-        .output()?;
+        .arg(sql);
+
+    if let Ok(timeout_value) = std::env::var("KALAM_CLI_TIMEOUT_SECS") {
+        if timeout_value.parse::<u64>().is_ok() {
+            command.arg("--timeout").arg(timeout_value);
+        }
+    }
+
+    let output = command.output()?;
     let cli_total_ms = start.elapsed().as_millis() as f64;
     
     if !output.status.success() {
@@ -376,7 +384,7 @@ pub fn setup_benchmark_tables() -> anyhow::Result<()> {
     // Create user table
     let user_table_sql = r#"
         CREATE USER TABLE IF NOT EXISTS bench_user.items (
-            id BIGINT DEFAULT SNOWFLAKE_ID(),
+            id BIGINT PRIMARY KEY DEFAULT SNOWFLAKE_ID(),
             value TEXT,
             timestamp TIMESTAMP DEFAULT NOW()
         ) FLUSH ROWS 100000
@@ -387,7 +395,7 @@ pub fn setup_benchmark_tables() -> anyhow::Result<()> {
     // Create shared table
     let shared_table_sql = r#"
         CREATE SHARED TABLE IF NOT EXISTS bench_shared.items (
-            id BIGINT DEFAULT SNOWFLAKE_ID(),
+            id BIGINT PRIMARY KEY DEFAULT SNOWFLAKE_ID(),
             value TEXT,
             timestamp TIMESTAMP DEFAULT NOW()
         ) FLUSH ROWS 100000
@@ -398,7 +406,7 @@ pub fn setup_benchmark_tables() -> anyhow::Result<()> {
     // Create stream table
     let stream_table_sql = r#"
         CREATE STREAM TABLE IF NOT EXISTS bench_stream.events (
-            id BIGINT DEFAULT SNOWFLAKE_ID(),
+            id BIGINT PRIMARY KEY DEFAULT SNOWFLAKE_ID(),
             value TEXT,
             timestamp TIMESTAMP DEFAULT NOW()
         ) TTL 10

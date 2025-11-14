@@ -109,7 +109,18 @@ impl CLISession {
         format: OutputFormat,
         color: bool,
     ) -> Result<Self> {
-        Self::with_auth_and_instance(server_url, auth, format, color, None, None, None, true).await
+        Self::with_auth_and_instance(
+            server_url,
+            auth,
+            format,
+            color,
+            None,
+            None,
+            None,
+            true,
+            None,
+        )
+        .await
     }
 
     /// Create a new CLI session with AuthProvider, instance name, and credential store
@@ -124,11 +135,13 @@ impl CLISession {
         credential_store: Option<crate::credentials::FileCredentialStore>,
         loading_threshold_ms: Option<u64>,
         animations: bool,
+        client_timeout: Option<Duration>,
     ) -> Result<Self> {
         // Build kalam-link client with authentication
+        let timeout = client_timeout.unwrap_or_else(|| Duration::from_secs(30));
         let client = KalamLinkClient::builder()
             .base_url(&server_url)
-            .timeout(std::time::Duration::from_secs(30))
+            .timeout(timeout)
             .max_retries(3)
             .auth(auth.clone())
             .build()?;

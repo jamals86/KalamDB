@@ -18,7 +18,7 @@
 use clap::Parser;
 use kalam_link::credentials::{CredentialStore, Credentials};
 use kalam_link::AuthProvider;
-use std::path::PathBuf;
+use std::{path::PathBuf, time::Duration};
 
 use kalam_cli::{
     CLIConfiguration, CLIError, CLISession, FileCredentialStore, OutputFormat, Result,
@@ -115,6 +115,10 @@ struct Cli {
     /// Enable verbose logging
     #[arg(short = 'v', long = "verbose")]
     verbose: bool,
+
+    /// HTTP request timeout in seconds (default: 30)
+    #[arg(long = "timeout", value_name = "SECONDS", default_value_t = 30)]
+    timeout: u64,
 
     // Credential management commands
     /// Show stored credentials for instance
@@ -319,6 +323,7 @@ async fn main() -> Result<()> {
             Some(credential_store),
             cli.loading_threshold_ms,
             !cli.no_spinner,
+            Some(Duration::from_secs(cli.timeout)),
         )
         .await?;
 
@@ -421,6 +426,7 @@ async fn main() -> Result<()> {
         Some(credential_store),
         cli.loading_threshold_ms,
         !cli.no_spinner,
+        Some(Duration::from_secs(cli.timeout)),
     )
     .await?;
 
