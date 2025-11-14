@@ -406,7 +406,9 @@ impl SqlStatement {
             // Flush operations - authorization deferred to table ownership checks
             ["FLUSH", "ALL", "TABLES", ..] => {
                 Ok(Self::wrap(sql, || {
-                    FlushAllTablesStatement::parse(sql).ok().map(SqlStatementKind::FlushAllTables)
+                    FlushAllTablesStatement::parse_with_default(sql, default_namespace)
+                        .ok()
+                        .map(SqlStatementKind::FlushAllTables)
                 }))
             }
             ["FLUSH", "TABLE", ..] => {
@@ -770,6 +772,10 @@ mod tests {
             SqlStatementKind::FlushTable(_)
         ));
         assert!(matches!(
+            SqlStatement::classify("FLUSH ALL TABLES").kind(),
+            SqlStatementKind::FlushAllTables(_)
+        ));
+        assert!(matches!(
             SqlStatement::classify("SHOW MANIFEST").kind(),
             SqlStatementKind::ShowManifest(_)
         ));
@@ -777,11 +783,6 @@ mod tests {
             SqlStatement::classify("show manifest").kind(),
             SqlStatementKind::ShowManifest(_)
         ));
-        // Note: FLUSH ALL might have parse issues
-        // assert!(matches!(
-        //     SqlStatement::classify("FLUSH ALL TABLES IN test").kind(),
-        //     SqlStatementKind::FlushAllTables(_)
-        // ));
     }
 
     #[test]

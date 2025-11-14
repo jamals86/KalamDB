@@ -1008,13 +1008,14 @@ ORDER BY created_at DESC;
 ### FLUSH ALL TABLES
 
 ```sql
-FLUSH ALL TABLES IN <namespace>;
+FLUSH ALL TABLES [IN <namespace>];
 ```
 
 **Behavior**:
 - Triggers flush for all USER and SHARED tables in namespace
 - Each table gets its own async flush job
 - Returns array of job_ids (one per table)
+- When the `IN` clause is omitted, the command uses the current session namespace (defaults to `default`)
 
 **Examples**:
 ```sql
@@ -1023,6 +1024,9 @@ FLUSH ALL TABLES IN app;
 
 -- Flush all tables in production namespace
 FLUSH ALL TABLES IN production;
+
+-- Use current session namespace (e.g., after `USE analytics;`)
+FLUSH ALL TABLES;
 ```
 
 **Response**:

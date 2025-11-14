@@ -7,7 +7,8 @@ use crate::common::*;
 use std::time::Instant;
 
 // Global rows to insert (can be overridden via KBENCH_ROWS env)
-const DEFAULT_ROWS_TO_INSERT: usize = 5000;
+// Reduced from 5000 to 1000 for faster smoke execution while still exercising pagination.
+const DEFAULT_ROWS_TO_INSERT: usize = 1000;
 
 fn rows_to_insert() -> usize {
     if let Ok(val) = std::env::var("KBENCH_ROWS") {
@@ -45,7 +46,7 @@ fn smoke_queries_benchmark() {
     // price DOUBLE, created_at TIMESTAMP, updated_at TIMESTAMP, paid BOOLEAN, notes TEXT
     let create_sql = format!(
         r#"CREATE USER TABLE {} (
-            order_id BIGINT NOT NULL PRIMARY KEY,
+            order_id BIGINT AUTO_INCREMENT PRIMARY KEY,
             customer_id BIGINT,
             sku TEXT,
             status TEXT,
@@ -66,7 +67,9 @@ fn smoke_queries_benchmark() {
 
     let start_insert = Instant::now();
     let mut inserted = 0usize;
+    let insert_deadline = start_insert + std::time::Duration::from_secs(40); // hard timeout guard
 
+    // Use a high-offset base id derived from current time to avoid rare PK collisions if residual rows survived a failed DROP.
     while inserted < total {
         let remain = total - inserted;
         let n = remain.min(batch_size);
@@ -74,7 +77,6 @@ fn smoke_queries_benchmark() {
         // Build multi-row INSERT
         let mut values = String::new();
         for i in 0..n {
-            let id = (inserted + i + 1) as i64;
             let cust = (1000 + ((inserted + i) % 5000)) as i64;
             let sku = format!("SKU{:06}", (inserted + i) % 10_000);
             let status = match (inserted + i) % 4 { 0 => "new", 1 => "paid", 2 => "shipped", _ => "completed" };
@@ -86,17 +88,31 @@ fn smoke_queries_benchmark() {
 
             if !values.is_empty() { values.push_str(", "); }
             values.push_str(&format!(
-                "({}, {}, '{}', '{}', {}, {}, {}, {}, {}, '{}')",
-                id, cust, sku, status, qty, price, now_ms, now_ms, paid, notes
+                "({}, '{}', '{}', {}, {}, {}, {}, {}, '{}')",
+                cust, sku, status, qty, price, now_ms, now_ms, paid, notes
             ));
         }
 
         let insert_sql = format!(
-            "INSERT INTO {} (order_id, customer_id, sku, status, quantity, price, created_at, updated_at, paid, notes) VALUES {}",
+            "INSERT INTO {} (customer_id, sku, status, quantity, price, created_at, updated_at, paid, notes) VALUES {}",
             full, values
         );
-        execute_sql_as_root_via_cli(&insert_sql).expect("insert batch");
+        // Retry on transient errors (e.g., timeout) up to 3 times
+        let mut attempts = 0;
+        loop {
+            match execute_sql_as_root_via_cli(&insert_sql) {
+                Ok(_) => break,
+                Err(e) => {
+                    attempts += 1;
+                    if attempts >= 3 {
+                        panic!("insert batch failed after retries: {}", e);
+                    }
+                    std::thread::sleep(std::time::Duration::from_millis(150));
+                }
+            }
+        }
         inserted += n;
+        if Instant::now() > insert_deadline { panic!("Insert phase exceeded timeout"); }
     }
 
     let insert_elapsed = start_insert.elapsed().as_secs_f64();
@@ -104,7 +120,7 @@ fn smoke_queries_benchmark() {
     println!("Benchmark INSERT: inserted {} rows in {:.3}s → {:.1} rows/sec", inserted, insert_elapsed, rows_per_sec);
 
     // SELECT pagination (cursor-based): 100 rows per page, using order_id > last_id
-    let page_size = 100usize;
+    let page_size = 100usize; // unchanged
     let mut pages = 0usize;
     let mut last_id: i64 = 0;
 

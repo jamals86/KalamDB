@@ -76,6 +76,8 @@
 
 use kalamdb_commons::{NamespaceId, TableName};
 
+const ERR_EXPECTED_NAMESPACE: &str = "Expected FLUSH ALL TABLES IN namespace";
+
 /// FLUSH TABLE statement
 ///
 /// Triggers asynchronous flush for a single table, returning job_id immediately.
@@ -178,7 +180,7 @@ impl FlushAllTablesStatement {
 
         // Parse using utility
         let namespace = parsing::parse_optional_in_clause(&normalized, "FLUSH ALL TABLES")?
-            .ok_or_else(|| "Expected FLUSH ALL TABLES IN namespace".to_string())?;
+            .ok_or_else(|| ERR_EXPECTED_NAMESPACE.to_string())?;
 
         // Check for extra tokens, supporting both "IN <ns>" and "IN NAMESPACE <ns>"
         let normalized_upper = normalized.to_uppercase();
@@ -194,6 +196,26 @@ impl FlushAllTablesStatement {
         Ok(Self {
             namespace: NamespaceId::from(namespace),
         })
+    }
+
+    /// Parse and fall back to the default namespace when no `IN` clause is provided.
+    pub fn parse_with_default(
+        sql: &str,
+        default_namespace: &NamespaceId,
+    ) -> Result<Self, String> {
+        match Self::parse(sql) {
+            Ok(stmt) => Ok(stmt),
+            Err(err) if err == ERR_EXPECTED_NAMESPACE => {
+                if default_namespace.as_str().is_empty() {
+                    Err(err)
+                } else {
+                    Ok(Self {
+                        namespace: default_namespace.clone(),
+                    })
+                }
+            }
+            Err(err) => Err(err),
+        }
     }
 }
 
@@ -268,5 +290,13 @@ mod tests {
             .unwrap_err()
             .to_string()
             .contains("Unexpected tokens"));
+    }
+
+    #[test]
+    fn test_parse_with_default_namespace_when_missing_in_clause() {
+        let default_ns = NamespaceId::from("fallback_ns");
+        let stmt = FlushAllTablesStatement::parse_with_default("FLUSH ALL TABLES", &default_ns)
+            .expect("default namespace should be applied");
+        assert_eq!(stmt.namespace, default_ns);
     }
 }
