@@ -67,7 +67,7 @@ mod tests {
         let handler = ShowManifestCacheHandler::new(app_context.clone());
         let stmt = ShowManifestStatement;
         let exec_ctx = ExecutionContext::new(
-            UserId::from(1),
+            UserId::from("1"),
             Role::System,
             Arc::new(SessionContext::new()),
         );
