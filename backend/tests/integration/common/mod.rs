@@ -354,8 +354,22 @@ impl TestServer {
         use kalamdb_commons::Role;
         
         let session = self.app_context.base_session_context();
+        
+        // Look up user's actual role from the users table
         let exec_ctx = match &user_id_obj {
-            Some(user_id) => ExecutionContext::new(user_id.clone(), Role::System, session.clone()),
+            Some(user_id) => {
+                // Try to get user's actual role from system tables
+                let role = self.app_context
+                    .system_tables()
+                    .users()
+                    .get_user_by_id(user_id)
+                    .ok()
+                    .flatten()
+                    .map(|user| user.role)
+                    .unwrap_or(Role::System); // Default to System if user not found
+                
+                ExecutionContext::new(user_id.clone(), role, session.clone())
+            }
             None => ExecutionContext::new(UserId::system(), Role::System, session),
         };
         

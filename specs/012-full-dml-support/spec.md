@@ -2,12 +2,128 @@
 
 **Feature Branch**: `012-full-dml-support`  
 **Created**: 2025-11-10  
-**Updated**: 2025-11-11 (MVCC Architecture Redesign)  
-**Status**: Draft  
+**Updated**: 2025-11-14 (Status Review)  
+**Status**: In Progress - Core MVCC Complete, Manifest & AS USER Pending
 
-## ⚠️ CRITICAL ARCHITECTURE CHANGE (2025-11-11)
+---
 
-**Original Design**: Append-only storage with `_updated` timestamps and storage layer prioritization (fast storage > Parquet)
+## 📊 IMPLEMENTATION STATUS (2025-11-14)
+
+### ✅ COMPLETED FEATURES
+
+#### 1. MVCC Storage Architecture (Phase 2 - User Story 5) ✅ COMPLETE
+- **SeqId Type**: Implemented with Snowflake ID wrapper, timestamp extraction, ordering
+- **System Columns**: `_seq: SeqId` and `_deleted: bool` automatically added to all tables
+- **Unified DML Module**: Single module (`providers/unified_dml/`) with shared functions:
+  - `append_version_sync()` - Used by INSERT/UPDATE/DELETE
+  - `resolve_latest_version()` - Used by SELECT queries
+  - `validate_primary_key()` - Used by INSERT
+  - `extract_user_pk_value()` - PK extraction from fields JSON
+  - `generate_storage_key()` - Storage key generation
+- **Row Structures**: Minimal overhead structures implemented:
+  - `UserTableRow`: `user_id: UserId`, `_seq: SeqId`, `_deleted: bool`, `fields: JsonValue`
+  - `SharedTableRow`: `_seq: SeqId`, `_deleted: bool`, `fields: JsonValue`
+  - `StreamTableRow`: `user_id: UserId`, `_seq: SeqId`, `_deleted: bool`, `fields: JsonValue`
+- **Storage Keys**: 
+  - `UserTableRowId`: Composite struct with `user_id` + `_seq`, implements `StorageKey`
+  - `SharedTableRowId`: Type alias to `SeqId` (no wrapper)
+  - `StreamTableRowId`: Composite struct with `user_id` + `_seq` (same as UserTableRowId)
+- **Code Reduction**: Eliminated ~800 lines of duplicate DML code via unified functions
+
+#### 2. Provider Architecture Consolidation (Phase 13 - User Story 9) ✅ COMPLETE
+- **BaseTableProvider Trait**: Generic trait with `<K: StorageKey, V>` parameters
+- **Implementations**: All three provider types use trait-based architecture:
+  - `UserTableProvider` implements `BaseTableProvider<UserTableRowId, UserTableRow>`
+  - `SharedTableProvider` implements `BaseTableProvider<SharedTableRowId, SharedTableRow>`
+  - `StreamTableProvider` implements `BaseTableProvider<StreamTableRowId, StreamTableRow>`
+- **Eliminated Wrappers**: Removed `UserTableShared` (~200 lines) and `TableProviderCore` duplication
+- **Code Reduction**: ~1200 lines total (800 DML duplication + 400 wrapper overhead)
+- **DataFusion Integration**: Same provider instances serve both custom DML and SQL queries
+
+#### 3. Crate Reorganization ✅ COMPLETE
+- **Consolidated**: Eliminated `kalamdb-registry` and `kalamdb-live` (Phase 13 prior work)
+- **New Structure**: 
+  - `kalamdb-core/src/schema_registry/` - Schema management
+  - `kalamdb-core/src/live/` - Live query management
+  - `kalamdb-core/src/providers/` - Unified table providers (User/Shared/Stream)
+- **Workspace Size**: 9 crates (down from 11)
+
+### 🚧 IN PROGRESS / PENDING
+
+#### 1. AS USER Syntax (User Story 4) ❌ NOT STARTED
+**Status**: No implementation found
+**Remaining Work**:
+- SQL parser extensions for `AS USER 'user_id'` clause
+- `ImpersonationContext` struct and validation
+- DML handler integration (INSERT/UPDATE/DELETE)
+- Audit logging for impersonated operations
+- Role-based authorization checks (service/admin only)
+
+#### 2. Manifest Files (User Stories 2 & 6) ❌ NOT STARTED
+**Status**: No manifest.json implementation found
+**Remaining Work**:
+- **User Story 6 (Manifest Cache Lifecycle)**:
+  - RocksDB `manifest_cache` column family
+  - `ManifestCacheStore` and `ManifestCacheService`
+  - Cache integration with query planner
+  - `SHOW MANIFEST CACHE` command
+- **User Story 2 (Manifest Optimization)**:
+  - `ManifestFile` and `BatchFileEntry` data models
+  - `ManifestService` (create/update/rebuild/validate)
+  - Flush integration (batch numbering via max_batch counter)
+  - Query planner pruning (timestamp ranges, column min/max)
+
+#### 3. Full DML Support (User Story 1) ⚠️ PARTIALLY COMPLETE
+**Status**: Core MVCC complete, but missing Parquet integration
+**Completed**:
+- ✅ Append-only writes (INSERT/UPDATE/DELETE append new versions)
+- ✅ Version resolution for hot storage (RocksDB)
+- ✅ MAX(_seq) grouping per PK
+- ✅ _deleted filtering in queries
+**Remaining Work**:
+- ❌ UPDATE/DELETE on Parquet-flushed data (cold storage merging)
+- ❌ Version resolution across hot+cold storage layers
+- ❌ Flush deduplication using MAX(_seq) per PK
+
+### 🎯 PRIORITY FOCUS AREAS
+
+Based on the spec's main goals:
+
+1. **AS USER Support** (User Story 4 - Priority P2)
+   - Critical for multi-tenant systems
+   - Service accounts need to act on behalf of users
+   - ~26 tasks remaining (T151-T176 in tasks.md)
+
+2. **Manifest Files** (User Stories 2 & 6 - Priority P1/P2)
+   - Foundation for query optimization
+   - Required for efficient batch file management
+   - ~60 tasks remaining (T069-T134 in tasks.md)
+
+3. **Full DML on Flushed Data** (User Story 1 - Priority P1)
+   - UPDATE/DELETE must work on Parquet-persisted records
+   - Requires hot+cold storage merging
+   - ~15-20 tasks remaining (integration with flush/scan)
+
+### ❌ DEPRECATED / OUT OF SCOPE
+
+#### 1. SystemColumnsService (Original Phase 2 Design) ❌ REPLACED
+- **Original Plan**: Centralized service managing `_id`, `_updated`, `_deleted`
+- **Actual Implementation**: MVCC with `_seq` (Snowflake ID) and `_deleted`
+- **Status**: Original spec sections describing `_id` and `_updated` columns are OBSOLETE
+
+#### 2. Bloom Filters (User Story 3) ⚠️ DEFERRED
+- **Status**: No implementation, spec remains valid
+- **Priority**: P2 (performance optimization)
+- **Dependencies**: Requires manifest files first
+
+#### 3. Configuration/Job Parameters (User Stories 7 & 8) ⚠️ LOWER PRIORITY
+- **Status**: No implementation
+- **Priority**: P3 (infrastructure improvements)
+- **Dependencies**: None (can be done independently)
+
+---
+
+## ⚠️ CRITICAL ARCHITECTURE CHANGE (2025-11-11)**Original Design**: Append-only storage with `_updated` timestamps and storage layer prioritization (fast storage > Parquet)
 
 **New Design (MVCC)**: Multi-Version Concurrency Control with `_seq` Snowflake IDs and unified DML functions
 
@@ -52,6 +168,15 @@
 
 ## User Scenarios & Testing *(mandatory)*
 
+### User Story 1 - Update and Delete Persisted Table Records (Priority: P1) ⚠️ PARTIAL
+
+> **Implementation Status**: ⚠️ PARTIALLY COMPLETE (2025-11-14)
+> - ✅ Core MVCC append-only writes working
+> - ✅ Version resolution on hot storage (RocksDB)
+> - ❌ UPDATE/DELETE on Parquet-flushed data (cold storage merge needed)
+> - ❌ Flush deduplication using MAX(_seq)
+> - **Impact**: Users cannot UPDATE/DELETE records that have been flushed
+
 ### User Story 1 - Update and Delete Persisted Table Records (Priority: P1)
 
 A database administrator needs to update or delete specific records from a user table, including records that have been persisted to long-term storage. The system uses an append-only architecture where updates create new versions and queries automatically retrieve the latest version using timestamp-based resolution.
@@ -69,6 +194,14 @@ A database administrator needs to update or delete specific records from a user 
 5. **Given** a deleted record (`_deleted = true`), **When** user queries the table, **Then** the record is filtered out (WHERE _deleted = false) even though historical versions exist in long-term storage
 
 ---
+
+### User Story 2 - Manifest Files for Query Optimization (Priority: P2) ❌ NOT STARTED
+
+> **Implementation Status**: ❌ NOT STARTED (2025-11-14)
+> - Spec requirement: Explicitly listed as main goal
+> - Dependencies: Requires User Story 6 (Manifest Cache) first
+> - Remaining work: ManifestService, batch file metadata tracking, query pruning
+> - Tasks: 27 tasks (T102-T134)
 
 ### User Story 2 - Manifest Files for Query Optimization (Priority: P2)
 
@@ -88,6 +221,13 @@ System administrators need efficient query execution on tables with many persist
 
 ---
 
+### User Story 3 - Bloom Filter Optimization for Batch Files (Priority: P2) ⚠️ DEFERRED
+
+> **Implementation Status**: ⚠️ DEFERRED (2025-11-14)
+> - Dependencies: Requires User Story 2 (Manifest Files) first
+> - Performance optimization for point queries
+> - Tasks: 16 tasks (T135-T150)
+
 ### User Story 3 - Bloom Filter Optimization for Batch Files (Priority: P2)
 
 Query performance on large batch files needs row-level filtering before reading full column data. Bloom filters embedded in Parquet files enable efficient point lookups by quickly eliminating batch files that definitely don't contain a specific ID or timestamp value.
@@ -106,6 +246,14 @@ Query performance on large batch files needs row-level filtering before reading 
 
 ---
 
+### User Story 4 - Execute DML as Different User (AS USER) (Priority: P2) ❌ NOT STARTED
+
+> **Implementation Status**: ❌ NOT STARTED (2025-11-14)
+> - Spec requirement: Explicitly listed as main goal
+> - Use case: Service accounts acting on behalf of users
+> - Remaining work: SQL parser, ImpersonationContext, DML integration, audit logging
+> - Tasks: 26 tasks (T151-T176)
+
 ### User Story 4 - Execute DML as Different User (AS USER) (Priority: P2)
 
 A service account or admin needs to insert, update, or delete records on behalf of a specific user without switching authentication context. This enables system operations like message routing, AI-generated content, and cross-user notifications.
@@ -122,6 +270,16 @@ A service account or admin needs to insert, update, or delete records on behalf 
 5. **Given** authenticated as service role, **When** attempting `INSERT INTO shared_table AS USER 'user123' VALUES (...)`, **Then** the system rejects the operation with "AS USER clause not supported for Shared tables"
 
 ---
+
+### User Story 5 - MVCC Storage Architecture with System Columns (Priority: P1) ✅ COMPLETE
+
+> **Implementation Status**: ✅ COMPLETE (2025-11-14)
+> - SeqId type implemented with Snowflake ID wrapper
+> - System columns `_seq` and `_deleted` auto-injected
+> - Unified DML module with shared functions
+> - Minimal row structures (UserTableRow, SharedTableRow, StreamTableRow)
+> - Storage keys (UserTableRowId, SharedTableRowId, StreamTableRowId)
+> - ~800 lines of duplicate code eliminated
 
 ### User Story 5 - MVCC Storage Architecture with System Columns (Priority: P1)
 
@@ -161,6 +319,14 @@ Without this foundation, UPDATE/DELETE implementations would be scattered, incon
 13. **Given** incremental sync query, **When** scanning for `_seq > threshold`, **Then** RocksDB range scan efficiently skips older versions using SeqId ordering
 
 ---
+
+### User Story 6 - Manifest Cache Lifecycle (Priority: P1) ❌ NOT STARTED
+
+> **Implementation Status**: ❌ NOT STARTED (2025-11-14)
+> - Spec requirement: Explicitly listed as main goal
+> - Foundation for User Story 2 (Manifest Optimization)
+> - Remaining work: RocksDB CF, ManifestCacheService, query planner integration
+> - Tasks: 33 tasks (T069-T101)
 
 ### User Story 6 - Manifest Cache Lifecycle (Priority: P1)
 
@@ -204,6 +370,13 @@ last_accessed_memory_window = 600    # Keep access timestamps for 10 minutes
 
 ---
 
+### User Story 7 - Centralized Configuration Access (Priority: P3) ❌ NOT STARTED
+
+> **Implementation Status**: ❌ NOT STARTED (2025-11-14)
+> - Lower priority infrastructure improvement
+> - No blocking dependencies
+> - Tasks: 12 tasks (T177-T188)
+
 ### User Story 7 - Centralized Configuration Access (Priority: P3)
 
 Developers need a single consistent way to access all application configuration across the codebase, eliminating duplicate config models and file I/O scattered throughout modules.
@@ -220,6 +393,13 @@ Developers need a single consistent way to access all application configuration 
 4. **Given** a configuration change requiring restart, **When** server restarts, **Then** all components automatically use updated config without code changes
 
 ---
+
+### User Story 8 - Type-Safe Job Executor Parameters (Priority: P3) ❌ NOT STARTED
+
+> **Implementation Status**: ❌ NOT STARTED (2025-11-14)
+> - Lower priority infrastructure improvement
+> - No blocking dependencies
+> - Tasks: 19 tasks (T189-T207)
 
 ### User Story 8 - Type-Safe Job Executor Parameters (Priority: P3)
 
@@ -709,6 +889,15 @@ let manifest = manifest_cache.get_or_load(namespace, table, user_id).await?;
 ---
 
 ---
+
+### User Story 9 - Provider Architecture Consolidation (Priority: P1) ✅ COMPLETE
+
+> **Implementation Status**: ✅ COMPLETE (2025-11-14)
+> - BaseTableProvider<K, V> trait with generic storage abstraction
+> - Three implementations: UserTableProvider, SharedTableProvider, StreamTableProvider
+> - Eliminated wrappers (UserTableShared, TableProviderCore duplication)
+> - ~1200 lines of code eliminated
+> - Same provider instances serve both custom DML and DataFusion SQL
 
 ### User Story 9 - Provider Architecture Consolidation (Priority: P1)
 
