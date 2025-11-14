@@ -21,7 +21,7 @@ fn test_cli_subscription_initial_and_changes() {
 
     // Create user table
     let _ = execute_sql_as_root_via_cli(&format!(
-        "CREATE USER TABLE {} (id INT, name VARCHAR, _updated TIMESTAMP, _deleted BOOLEAN)",
+        "CREATE USER TABLE {} (id INT PRIMARY KEY, name VARCHAR, _updated TIMESTAMP, _deleted BOOLEAN)",
         table_full
     ));
     std::thread::sleep(Duration::from_millis(150));

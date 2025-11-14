@@ -29,7 +29,7 @@ fn test_cli_basic_query_execution() {
     let _ = execute_sql_via_cli(&format!("CREATE NAMESPACE IF NOT EXISTS {}", namespace));
     let _ = execute_sql_via_cli(&format!(
         r#"CREATE USER TABLE {} (
-            id INT AUTO_INCREMENT,
+            id INT PRIMARY KEY AUTO_INCREMENT,
             content VARCHAR NOT NULL,
             created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
         ) FLUSH ROWS 10"#,
@@ -83,7 +83,7 @@ fn test_cli_table_output_formatting() {
     let _ = execute_sql_via_cli(&format!("CREATE NAMESPACE IF NOT EXISTS {}", namespace));
     let _ = execute_sql_via_cli(&format!(
         r#"CREATE USER TABLE {} (
-            id INT AUTO_INCREMENT,
+            id INT PRIMARY KEY AUTO_INCREMENT,
             content VARCHAR NOT NULL
         ) FLUSH ROWS 10"#,
         full_table_name
@@ -137,7 +137,7 @@ fn test_cli_json_output_format() {
     let _ = execute_sql_via_cli(&format!("CREATE NAMESPACE IF NOT EXISTS {}", namespace));
     let _ = execute_sql_via_cli(&format!(
         r#"CREATE USER TABLE {} (
-            id INT AUTO_INCREMENT,
+            id INT PRIMARY KEY AUTO_INCREMENT,
             content VARCHAR NOT NULL
         ) FLUSH ROWS 10"#,
         full_table_name
@@ -194,7 +194,7 @@ fn test_cli_csv_output_format() {
     let _ = execute_sql_via_cli(&format!("CREATE NAMESPACE IF NOT EXISTS {}", namespace));
     let _ = execute_sql_via_cli(&format!(
         r#"CREATE USER TABLE {} (
-            id INT AUTO_INCREMENT,
+            id INT PRIMARY KEY AUTO_INCREMENT,
             content VARCHAR NOT NULL
         ) FLUSH ROWS 10"#,
         full_table_name
@@ -250,7 +250,7 @@ fn test_cli_multiline_query() {
     let _ = execute_sql_via_cli(&format!("CREATE NAMESPACE IF NOT EXISTS {}", namespace));
     let _ = execute_sql_via_cli(&format!(
         r#"CREATE USER TABLE {} (
-            id INT AUTO_INCREMENT,
+            id INT PRIMARY KEY AUTO_INCREMENT,
             content VARCHAR NOT NULL
         ) FLUSH ROWS 10"#,
         full_table_name

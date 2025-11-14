@@ -203,7 +203,7 @@ fn test_cli_subscription_with_initial_data() {
     std::thread::sleep(std::time::Duration::from_millis(200));
 
     let create_table_sql = format!(
-        "CREATE USER TABLE {} (id INT, event_type VARCHAR, timestamp BIGINT)",
+        "CREATE USER TABLE {} (id INT PRIMARY KEY, event_type VARCHAR, timestamp BIGINT)",
         table_name
     );
     let _ = execute_sql_via_cli(&create_table_sql);
@@ -271,7 +271,7 @@ fn test_cli_subscription_comprehensive_crud() {
     std::thread::sleep(std::time::Duration::from_millis(200));
 
     let create_table_sql = format!(
-        "CREATE USER TABLE {} (id INT, event_type VARCHAR, data VARCHAR, timestamp BIGINT)",
+        "CREATE USER TABLE {} (id INT PRIMARY KEY, event_type VARCHAR, data VARCHAR, timestamp BIGINT)",
         table_name
     );
     let _ = execute_sql_via_cli(&create_table_sql);
