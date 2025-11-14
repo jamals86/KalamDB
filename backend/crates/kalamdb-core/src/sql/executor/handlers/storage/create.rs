@@ -4,7 +4,8 @@ use crate::app_context::AppContext;
 use crate::error::KalamDbError;
 use crate::sql::executor::handlers::typed::TypedStatementHandler;
 use crate::sql::executor::models::{ExecutionContext, ExecutionResult, ScalarValue};
-use kalamdb_commons::models::StorageId;
+use crate::sql::executor::helpers::storage::ensure_filesystem_directory;
+use kalamdb_commons::models::{StorageId, StorageType};
 use kalamdb_sql::ddl::CreateStorageStatement;
 use std::sync::Arc;
 
@@ -50,6 +51,11 @@ impl TypedStatementHandler<CreateStorageStatement> for CreateStorageHandler {
         }
         if !statement.user_tables_template.is_empty() {
             storage_registry.validate_template(&statement.user_tables_template, true)?;
+        }
+
+        // Filesystem storages must eagerly create their base directories
+        if statement.storage_type == StorageType::Filesystem {
+            ensure_filesystem_directory(&statement.base_directory)?;
         }
 
         // Validate credentials JSON (if provided)

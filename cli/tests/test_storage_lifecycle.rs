@@ -26,7 +26,6 @@ fn test_storage_drop_requires_detached_tables() {
 
     let temp_dir = TempDir::new().expect("create temp dir for storage path");
     let base_dir = temp_dir.path().join("storage_root");
-    std::fs::create_dir_all(&base_dir).expect("create storage base directory");
     let base_dir_sql = base_dir
         .to_str()
         .expect("valid storage path")
@@ -46,6 +45,11 @@ fn test_storage_drop_requires_detached_tables() {
     );
     execute_sql_as_root_via_cli(&create_storage_sql).expect("storage creation");
 
+    assert!(
+        base_dir.exists(),
+        "filesystem storage should eagerly create its base directory"
+    );
+
     let storage_rows = query_rows(&format!(
         "SELECT storage_id FROM system.storages WHERE storage_id = '{}'",
         storage_id
@@ -63,11 +67,31 @@ fn test_storage_drop_requires_detached_tables() {
     );
     execute_sql_as_root_via_cli(&create_user_table_sql).expect("user table creation");
 
+    let creator_user = "root";
+    let user_table_path = base_dir
+        .join(format!("ns_{}", namespace))
+        .join(format!("user_{}", user_table))
+        .join(format!("user_{}", creator_user));
+    assert!(
+        user_table_path.exists(),
+        "user table path should be created eagerly: {}",
+        user_table_path.display()
+    );
+
     let create_shared_table_sql = format!(
         "CREATE SHARED TABLE {}.{} (id INT AUTO_INCREMENT, body TEXT) STORAGE '{}' FLUSH ROWS 5",
         namespace, shared_table, storage_id
     );
     execute_sql_as_root_via_cli(&create_shared_table_sql).expect("shared table creation");
+
+    let shared_table_path = base_dir
+        .join(format!("ns_{}", namespace))
+        .join(format!("shared_{}", shared_table));
+    assert!(
+        shared_table_path.exists(),
+        "shared table path should be created eagerly: {}",
+        shared_table_path.display()
+    );
 
     let drop_err = execute_sql_as_root_via_cli(&format!("DROP STORAGE {}", storage_id));
     assert!(drop_err.is_err(), "drop storage should fail while tables exist");
