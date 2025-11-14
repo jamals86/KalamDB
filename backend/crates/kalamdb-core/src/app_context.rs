@@ -69,6 +69,9 @@ pub struct AppContext {
     
     // ===== Slow Query Logger =====
     slow_query_logger: Arc<crate::slow_query_logger::SlowQueryLogger>,
+    
+    // ===== Manifest Cache Service (Phase 4, US6) =====
+    manifest_cache_service: Arc<crate::manifest::ManifestCacheService>,
 }
 
 impl std::fmt::Debug for AppContext {
@@ -87,6 +90,7 @@ impl std::fmt::Debug for AppContext {
             .field("system_tables", &"Arc<SystemTablesRegistry>")
             .field("system_columns_service", &"Arc<SystemColumnsService>")
             .field("slow_query_logger", &"Arc<SlowQueryLogger>")
+            .field("manifest_cache_service", &"Arc<ManifestCacheService>")
             .finish()
     }
 }
@@ -244,6 +248,12 @@ impl AppContext {
                 let worker_id = Self::extract_worker_id(&node_id);
                 let system_columns_service = Arc::new(crate::system_columns::SystemColumnsService::new(worker_id));
 
+                // Create manifest cache service (Phase 4, US6, T074-T080)
+                let manifest_cache_service = Arc::new(crate::manifest::ManifestCacheService::new(
+                    storage_backend.clone(),
+                    config.manifest_cache.clone(),
+                ));
+
                 Arc::new(AppContext {
                     node_id,
                     config,
@@ -260,6 +270,7 @@ impl AppContext {
                     base_session_context,
                     system_columns_service,
                     slow_query_logger,
+                    manifest_cache_service,
                 })
             })
             .clone()
@@ -364,6 +375,12 @@ impl AppContext {
         // Create system columns service with worker_id=0 for tests
         let system_columns_service = Arc::new(crate::system_columns::SystemColumnsService::new(0));
 
+        // Create manifest cache service for tests
+        let manifest_cache_service = Arc::new(crate::manifest::ManifestCacheService::new(
+            storage_backend.clone(),
+            config.manifest_cache.clone(),
+        ));
+
         AppContext {
             node_id,
             config,
@@ -380,6 +397,7 @@ impl AppContext {
             base_session_context,
             system_columns_service,
             slow_query_logger,
+            manifest_cache_service,
         }
     }
 
@@ -517,6 +535,12 @@ impl AppContext {
         let worker_id = Self::extract_worker_id(&node_id);
         let system_columns_service = Arc::new(crate::system_columns::SystemColumnsService::new(worker_id));
 
+        // Create manifest cache service
+        let manifest_cache_service = Arc::new(crate::manifest::ManifestCacheService::new(
+            storage_backend.clone(),
+            config.manifest_cache.clone(),
+        ));
+
         Arc::new(AppContext {
             node_id,
             config,
@@ -533,6 +557,7 @@ impl AppContext {
             base_session_context,
             system_columns_service,
             slow_query_logger,
+            manifest_cache_service,
         })
     }
 
@@ -625,6 +650,14 @@ impl AppContext {
     /// to a separate slow.log file for queries exceeding the configured threshold.
     pub fn slow_query_logger(&self) -> Arc<crate::slow_query_logger::SlowQueryLogger> {
         self.slow_query_logger.clone()
+    }
+    
+    /// Get the manifest cache service (Phase 4, US6, T074-T080)
+    ///
+    /// Returns an Arc reference to the ManifestCacheService that provides
+    /// fast manifest access with two-tier caching (hot cache + RocksDB).
+    pub fn manifest_cache_service(&self) -> Arc<crate::manifest::ManifestCacheService> {
+        self.manifest_cache_service.clone()
     }
     
     // ===== Convenience methods for backward compatibility =====

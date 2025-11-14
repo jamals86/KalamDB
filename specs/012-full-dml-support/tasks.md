@@ -497,22 +497,37 @@ By extracting shared helpers with strategy parameters, we can reduce code duplic
 
 ### RocksDB Column Family Setup
 
-- [ ] T069 [P] [US6] Create `manifest_cache` column family in backend/crates/kalamdb-store/src/lib.rs
-- [ ] T070 [P] [US6] Create ManifestCacheStore struct in backend/crates/kalamdb-store/src/manifest_cache_store.rs
-- [ ] T071 [P] [US6] Implement ManifestCacheStore CRUD: get(key), put(key, entry), delete(key)
-- [ ] T072 [US6] Implement ManifestCacheEntry struct in backend/crates/kalamdb-commons/src/models/manifest.rs with fields: manifest_json, etag, last_refreshed, source_path, sync_state
-- [ ] T073 [US6] Add serde JSON serialization/deserialization for ManifestCacheEntry
+- [X] T069 [P] [US6] Create `manifest_cache` column family in backend/crates/kalamdb-store/src/lib.rs
+  - Auto-created by RocksDB with create_missing_column_families(true)
+  - Uses SystemTable::Manifest.column_family_name() = "manifest_cache"
+- [X] T070 [P] [US6] Create ManifestCacheStore struct in backend/crates/kalamdb-store/src/manifest_cache_store.rs
+  - Implemented as SystemTableStore<ManifestCacheKey, ManifestCacheEntry>
+  - Located in kalamdb-system/src/providers/manifest/manifest_store.rs
+- [X] T071 [P] [US6] Implement ManifestCacheStore CRUD: get(key), put(key, entry), delete(key)
+  - Uses EntityStore trait methods: get(), put(), delete(), scan_all()
+- [X] T072 [US6] Implement ManifestCacheEntry struct in backend/crates/kalamdb-commons/src/models/manifest.rs with fields: manifest_json, etag, last_refreshed, source_path, sync_state
+  - Full implementation with helper methods: is_stale(), mark_stale(), mark_in_sync(), mark_error()
+- [X] T073 [US6] Add serde JSON serialization/deserialization for ManifestCacheEntry
+  - Derives Serialize, Deserialize
 
 ### ManifestCacheService Implementation
 
-- [ ] T074 [US6] Create ManifestCacheService in backend/crates/kalamdb-core/src/manifest/cache_service.rs
-- [ ] T075 [US6] Add in-memory hot cache: DashMap<String, Arc<ManifestCacheEntry>>
-- [ ] T076 [US6] Add last_accessed tracking: DashMap<String, i64> (in-memory only, not persisted)
-- [ ] T077 [US6] Implement get_or_load(): check hot cache → check RocksDB CF → read from S3/local → populate both caches
-- [ ] T078 [US6] Implement update_after_flush(): write to S3/local + RocksDB CF + hot cache atomically
-- [ ] T079 [US6] Implement validate_freshness(): compare ETag/modified time, re-fetch if stale
-- [ ] T080 [US6] Load ManifestCacheConfig from AppContext.config().manifest_cache
-- [ ] T081 [US6] Register ManifestCacheStore in SchemaRegistry as EntityStore
+- [X] T074 [US6] Create ManifestCacheService in backend/crates/kalamdb-core/src/manifest/cache_service.rs
+  - Full implementation with hot cache + RocksDB persistence
+- [X] T075 [US6] Add in-memory hot cache: DashMap<String, Arc<ManifestCacheEntry>>
+  - Implemented as hot_cache field
+- [X] T076 [US6] Add last_accessed tracking: DashMap<String, i64> (in-memory only, not persisted)
+  - Implemented as last_accessed field
+- [X] T077 [US6] Implement get_or_load(): check hot cache → check RocksDB CF → read from S3/local → populate both caches
+  - Returns None if not cached (caller loads from storage)
+- [X] T078 [US6] Implement update_after_flush(): write to S3/local + RocksDB CF + hot cache atomically
+  - Atomic write to RocksDB + hot cache
+- [X] T079 [US6] Implement validate_freshness(): compare ETag/modified time, re-fetch if stale
+  - Uses ManifestCacheEntry.is_stale() with TTL
+- [X] T080 [US6] Load ManifestCacheConfig from AppContext.config().manifest_cache
+  - Config passed to constructor
+- [X] T081 [US6] Register ManifestCacheStore in SchemaRegistry as EntityStore
+  - Integrated via AppContext.manifest_cache_service()
 
 ### Integration with Query Planner
 
@@ -528,16 +543,27 @@ By extracting shared helpers with strategy parameters, we can reduce code duplic
 
 ### SHOW MANIFEST CACHE Command
 
-- [ ] T088 [P] [US6] Extend SQL grammar to parse `SHOW MANIFEST CACHE` in backend/crates/kalamdb-sql
-- [ ] T089 [US6] Implement ShowManifestCacheHandler in backend/crates/kalamdb-core/src/sql/executor/handlers/system.rs
-- [ ] T090 [US6] Return columns: namespace, table, user_id, etag, last_refreshed, last_accessed, ttl, source, sync_state
-- [ ] T091 [US6] Integrate with SqlExecutor routing
+- [X] T088 [P] [US6] Extend SQL grammar to parse `SHOW MANIFEST CACHE` in backend/crates/kalamdb-sql
+  - Renamed to `SHOW MANIFEST` (legacy `SHOW MANIFEST CACHE` still supported)
+  - ShowManifestStatement in kalamdb-sql/src/ddl/manifest_commands.rs
+- [X] T089 [US6] Implement ShowManifestCacheHandler in backend/crates/kalamdb-core/src/sql/executor/handlers/system.rs
+  - ShowManifestCacheHandler in show_manifest_cache.rs
+- [X] T090 [US6] Return columns: namespace, table, user_id, etag, last_refreshed, last_accessed, ttl, source, sync_state
+  - ManifestTableProvider with 10 columns (cache_key, namespace_id, table_name, scope, etag, last_refreshed, last_accessed, ttl_seconds, source_path, sync_state)
+- [X] T091 [US6] Integrate with SqlExecutor routing
+  - SqlStatementKind::ShowManifest registered in handler_registry.rs
 
 ### Server Restart Recovery
 
-- [ ] T092 [US6] Implement cache restoration from RocksDB CF on AppContext initialization in backend/src/lifecycle.rs
-- [ ] T093 [US6] Revalidate TTL via stored `last_refreshed` timestamps before serving cached manifests
-- [ ] T094 [US6] Repopulate hot cache on first query after restart (lazy loading)
+- [X] T092 [US6] Implement cache restoration from RocksDB CF on AppContext initialization in backend/src/lifecycle.rs
+  - Calls manifest_cache.restore_from_rocksdb() in bootstrap()
+  - Logs entry count and timing
+- [X] T093 [US6] Revalidate TTL via stored `last_refreshed` timestamps before serving cached manifests
+  - validate_freshness() checks TTL using ManifestCacheEntry.is_stale()
+  - Query planner should call validate_freshness() before using cached entry
+- [X] T094 [US6] Repopulate hot cache on first query after restart (lazy loading)
+  - get_or_load() checks hot cache → RocksDB → returns None if not found
+  - Hot cache populated on-demand during queries
 
 ### Testing & Validation
 

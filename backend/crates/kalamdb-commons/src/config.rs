@@ -17,6 +17,8 @@ pub struct ServerConfig {
     #[serde(default)]
     pub flush: FlushSettings,
     #[serde(default)]
+    pub manifest_cache: ManifestCacheSettings,
+    #[serde(default)]
     pub retention: RetentionSettings,
     #[serde(default)]
     pub stream: StreamSettings,
@@ -192,6 +194,37 @@ pub struct FlushSettings {
     /// Default time interval for flush in seconds (default: 300s = 5 minutes)
     #[serde(default = "default_flush_time_interval")]
     pub default_time_interval: u64,
+}
+
+/// Manifest cache settings (Phase 4 - US6)
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ManifestCacheSettings {
+    /// Time-to-live for cached manifests in seconds (default: 3600s = 1 hour)
+    #[serde(default = "default_manifest_cache_ttl")]
+    pub ttl_seconds: i64,
+
+    /// Eviction job interval in seconds (default: 300s = 5 minutes)
+    #[serde(default = "default_manifest_cache_eviction_interval")]
+    pub eviction_interval_seconds: i64,
+
+    /// Maximum number of cached manifest entries (default: 50000)
+    #[serde(default = "default_manifest_cache_max_entries")]
+    pub max_entries: usize,
+
+    /// Memory window for last_accessed tracking in seconds (default: 3600s = 1 hour)
+    #[serde(default = "default_manifest_cache_memory_window")]
+    pub last_accessed_memory_window: i64,
+}
+
+impl Default for ManifestCacheSettings {
+    fn default() -> Self {
+        Self {
+            ttl_seconds: default_manifest_cache_ttl(),
+            eviction_interval_seconds: default_manifest_cache_eviction_interval(),
+            max_entries: default_manifest_cache_max_entries(),
+            last_accessed_memory_window: default_manifest_cache_memory_window(),
+        }
+    }
 }
 
 /// Retention policy defaults
@@ -618,6 +651,23 @@ fn default_flush_time_interval() -> u64 {
     300 // 5 minutes
 }
 
+// Manifest cache defaults (Phase 4 - US6)
+fn default_manifest_cache_ttl() -> i64 {
+    3600 // 1 hour
+}
+
+fn default_manifest_cache_eviction_interval() -> i64 {
+    300 // 5 minutes
+}
+
+fn default_manifest_cache_max_entries() -> usize {
+    50000
+}
+
+fn default_manifest_cache_memory_window() -> i64 {
+    3600 // 1 hour
+}
+
 // Retention defaults
 fn default_deleted_retention_hours() -> i32 {
     168 // 7 days
@@ -959,6 +1009,7 @@ impl ServerConfig {
             },
             datafusion: DataFusionSettings::default(),
             flush: FlushSettings::default(),
+            manifest_cache: ManifestCacheSettings::default(),
             retention: RetentionSettings::default(),
             stream: StreamSettings::default(),
             rate_limit: RateLimitSettings::default(),

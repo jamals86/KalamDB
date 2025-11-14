@@ -40,6 +40,7 @@ mod tests {
     fn create_test_audit_entry(audit_id: &str, action: &str, timestamp_ms: i64) -> AuditLogEntry {
         AuditLogEntry {
             audit_id: AuditLogId::new(audit_id),
+            subject_user_id: Some(UserId::new("user_123")),
             timestamp: timestamp_ms,
             actor_user_id: UserId::new("admin"),
             actor_username: UserName::new("admin"),

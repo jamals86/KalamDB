@@ -225,6 +225,7 @@ mod tests {
         AuditLogEntry {
             audit_id: AuditLogId::new(audit_id),
             timestamp,
+            subject_user_id: Some(UserId::new("user_123")),
             actor_user_id: UserId::new("admin"),
             actor_username: UserName::new("admin"),
             action: action.to_string(),
@@ -342,6 +343,7 @@ mod tests {
         let entry = AuditLogEntry {
             audit_id: AuditLogId::new("audit_001"),
             timestamp: 1730000000000,
+            subject_user_id: None,
             actor_user_id: UserId::new("admin"),
             actor_username: UserName::new("admin"),
             action: "test.action".to_string(),

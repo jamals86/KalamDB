@@ -36,6 +36,9 @@ pub use crate::ddl::user_commands::{
     AlterUserStatement, CreateUserStatement, DropUserStatement, UserModification,
 };
 
+// Manifest cache commands (SHOW MANIFEST CACHE)
+pub use crate::ddl::manifest_commands::ShowManifestStatement;
+
 /// Extension statement types that don't fit into standard SQL.
 ///
 /// This enum represents KalamDB-specific commands that extend SQL
@@ -64,6 +67,8 @@ pub enum ExtensionStatement {
     AlterUser(AlterUserStatement),
     /// DROP USER command
     DropUser(DropUserStatement),
+    /// SHOW MANIFEST CACHE command
+    ShowManifest(ShowManifestStatement),
 }
 
 impl ExtensionStatement {
@@ -158,7 +163,14 @@ impl ExtensionStatement {
                 .map_err(|e| format!("DROP USER parsing failed: {}", e));
         }
 
-        Err("Unknown KalamDB extension command. Supported commands: CREATE/ALTER/DROP/SHOW STORAGE, FLUSH TABLE, FLUSH ALL TABLES, KILL JOB, SUBSCRIBE TO, CREATE/ALTER/DROP USER".to_string())
+        // Try SHOW MANIFEST
+        if sql_upper.starts_with("SHOW MANIFEST") {
+            return ShowManifestStatement::parse(sql)
+                .map(ExtensionStatement::ShowManifest)
+                .map_err(|e| format!("SHOW MANIFEST parsing failed: {}", e));
+        }
+
+        Err("Unknown KalamDB extension command. Supported commands: CREATE/ALTER/DROP/SHOW STORAGE, FLUSH TABLE, FLUSH ALL TABLES, KILL JOB, SUBSCRIBE TO, CREATE/ALTER/DROP USER, SHOW MANIFEST".to_string())
     }
 }
 

@@ -26,6 +26,7 @@ use crate::sql::executor::handlers::namespace::{
 use crate::sql::executor::handlers::storage::{
     CreateStorageHandler, AlterStorageHandler, DropStorageHandler, ShowStoragesHandler,
 };
+use crate::sql::executor::handlers::system::ShowManifestCacheHandler;
 use crate::sql::executor::handlers::table::{
     CreateTableHandler, AlterTableHandler, DropTableHandler, ShowTablesHandler,
     DescribeTableHandler, ShowStatsHandler,
@@ -283,6 +284,15 @@ impl HandlerRegistry {
             SqlStatementKind::ShowStats(ShowTableStatsStatement { namespace_id: None, table_name: TableName::new("_placeholder"), }),
             ShowStatsHandler::new(app_context.clone()),
             |stmt| match stmt.kind() { SqlStatementKind::ShowStats(s) => Some(s.clone()), _ => None },
+        );
+
+        // ============================================================================
+        // SYSTEM HANDLERS
+        // ============================================================================
+        registry.register_typed(
+            SqlStatementKind::ShowManifest(kalamdb_sql::ddl::ShowManifestStatement),
+            ShowManifestCacheHandler::new(app_context.clone()),
+            |stmt| match stmt.kind() { SqlStatementKind::ShowManifest(s) => Some(s.clone()), _ => None },
         );
 
         // ============================================================================

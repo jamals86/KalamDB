@@ -158,7 +158,53 @@ impl UserTableProvider {
     ///
     /// Lists all *.parquet files in the user's storage directory and merges them into a single RecordBatch.
     /// Returns an empty batch if no Parquet files exist.
+    ///
+    /// **Phase 4 (US6, T082-T084)**: Integrated with ManifestCacheService for manifest caching.
+    /// Logs cache hits/misses and updates last_accessed timestamp. Full query optimization
+    /// (batch file pruning based on manifest metadata) implemented in Phase 5 (US2, T119-T123).
     fn scan_parquet_files_as_batch(&self, user_id: &UserId) -> Result<RecordBatch, KalamDbError> {
+        // Phase 4 (T082): Integrate with ManifestCacheService
+        // Try to load manifest from cache (hot cache → RocksDB → None)
+        let namespace = self.table_id.namespace_id();
+        let table = self.table_id.table_name();
+        let scope = user_id.as_str(); // Scope is user_id for user tables
+        
+        let manifest_cache_service = self.core.app_context.manifest_cache_service();
+        let cache_result = manifest_cache_service.get_or_load(namespace, table, scope);
+        
+        // T083-T084: Log cache hit/miss (last_accessed already updated by get_or_load)
+        match &cache_result {
+            Ok(Some(entry)) => {
+                log::debug!(
+                    "✅ Manifest cache HIT | table={}.{} | user={} | etag={:?} | last_refreshed={} | source={}",
+                    namespace.as_str(),
+                    table.as_str(),
+                    user_id.as_str(),
+                    entry.etag,
+                    entry.last_refreshed,
+                    entry.source_path
+                );
+                // TODO Phase 5 (T119-T123): Use manifest to prune batch files based on WHERE predicates
+            }
+            Ok(None) => {
+                log::debug!(
+                    "⚠️  Manifest cache MISS | table={}.{} | user={} | fallback=directory_scan",
+                    namespace.as_str(),
+                    table.as_str(),
+                    user_id.as_str()
+                );
+            }
+            Err(e) => {
+                log::warn!(
+                    "⚠️  Manifest cache ERROR | table={}.{} | user={} | error={} | fallback=directory_scan",
+                    namespace.as_str(),
+                    table.as_str(),
+                    user_id.as_str(),
+                    e
+                );
+            }
+        }
+        
         // Resolve storage path for user
         let storage_path = self.core.app_context.schema_registry()
             .get_storage_path(&*self.table_id, Some(user_id), None)?;

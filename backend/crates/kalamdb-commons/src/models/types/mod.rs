@@ -48,6 +48,7 @@
 mod audit_log;
 mod job;
 mod live_query;
+mod manifest;
 mod namespace;
 mod storage;
 mod user;
@@ -56,6 +57,9 @@ mod user_table_counter;
 pub use audit_log::AuditLogEntry;
 pub use job::{Job, JobFilter, JobOptions};
 pub use live_query::LiveQuery;
+pub use manifest::{
+    BatchFileEntry, BatchStatus, ManifestCacheEntry, ManifestFile, SyncState,
+};
 pub use namespace::Namespace;
 pub use storage::Storage;
 pub use user::User;

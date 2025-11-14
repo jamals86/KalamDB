@@ -24,6 +24,8 @@ pub enum SystemTable {
     Jobs,
     /// system.audit_log - Administrative audit trail
     AuditLog,
+    /// system.manifest - Manifest cache entries for query optimization
+    Manifest,
 }
 
 impl SystemTable {
@@ -38,6 +40,7 @@ impl SystemTable {
             SystemTable::LiveQueries => "live_queries",
             SystemTable::Jobs => "jobs",
             SystemTable::AuditLog => "audit_log",
+            SystemTable::Manifest => "manifest",
         }
     }
 
@@ -52,6 +55,7 @@ impl SystemTable {
             SystemTable::LiveQueries => "system_live_queries",
             SystemTable::Jobs => "system_jobs",
             SystemTable::AuditLog => "system_audit_log",
+            SystemTable::Manifest => "manifest_cache",
         }
     }
 
@@ -69,6 +73,7 @@ impl SystemTable {
             "live_queries" | "system_live_queries" => Ok(SystemTable::LiveQueries),
             "jobs" | "system_jobs" => Ok(SystemTable::Jobs),
             "audit_log" | "system_audit_log" => Ok(SystemTable::AuditLog),
+            "manifest" | "manifest_cache" => Ok(SystemTable::Manifest),
             _ => Err(format!("Unknown system table: {}", name)),
         }
     }
@@ -84,6 +89,7 @@ impl SystemTable {
             SystemTable::LiveQueries,
             SystemTable::Jobs,
             SystemTable::AuditLog,
+            SystemTable::Manifest,
         ]
     }
 
@@ -116,6 +122,8 @@ impl SystemTable {
             Lazy::new(|| Partition::new(SystemTable::Jobs.column_family_name()));
         static AUDIT_LOG: Lazy<Partition> =
             Lazy::new(|| Partition::new(SystemTable::AuditLog.column_family_name()));
+        static MANIFEST: Lazy<Partition> =
+            Lazy::new(|| Partition::new(SystemTable::Manifest.column_family_name()));
 
         match self {
             SystemTable::Users => &USERS,
@@ -126,6 +134,7 @@ impl SystemTable {
             SystemTable::LiveQueries => &LIVE_QUERIES,
             SystemTable::Jobs => &JOBS,
             SystemTable::AuditLog => &AUDIT_LOG,
+            SystemTable::Manifest => &MANIFEST,
         }
     }
 }
@@ -146,6 +155,8 @@ pub enum StoragePartition {
     SystemUsersRoleIdx,
     /// Deleted_at index for system.users (non-unique index)
     SystemUsersDeletedAtIdx,
+    /// Manifest cache for query optimization (Phase 4 - US6)
+    ManifestCache,
 }
 
 impl StoragePartition {
@@ -158,6 +169,7 @@ impl StoragePartition {
             StoragePartition::SystemUsersUsernameIdx => "system_users_username_idx",
             StoragePartition::SystemUsersRoleIdx => "system_users_role_idx",
             StoragePartition::SystemUsersDeletedAtIdx => "system_users_deleted_at_idx",
+            StoragePartition::ManifestCache => "manifest_cache",
         }
     }
 
@@ -178,6 +190,8 @@ impl StoragePartition {
             Lazy::new(|| Partition::new(StoragePartition::SystemUsersRoleIdx.name()));
         static DELETED_AT_IDX: Lazy<Partition> =
             Lazy::new(|| Partition::new(StoragePartition::SystemUsersDeletedAtIdx.name()));
+        static MANIFEST_CACHE: Lazy<Partition> =
+            Lazy::new(|| Partition::new(StoragePartition::ManifestCache.name()));
 
         match self {
             StoragePartition::InformationSchemaTables => &INFO,
@@ -186,6 +200,7 @@ impl StoragePartition {
             StoragePartition::SystemUsersUsernameIdx => &USERNAME_IDX,
             StoragePartition::SystemUsersRoleIdx => &ROLE_IDX,
             StoragePartition::SystemUsersDeletedAtIdx => &DELETED_AT_IDX,
+            StoragePartition::ManifestCache => &MANIFEST_CACHE,
         }
     }
 }
@@ -257,7 +272,7 @@ mod tests {
     #[test]
     fn test_all() {
         let all = SystemTable::all();
-        assert_eq!(all.len(), 8);
+        assert_eq!(all.len(), 9);
         assert!(all.contains(&SystemTable::Users));
         assert!(all.contains(&SystemTable::Storages));
         assert!(all.contains(&SystemTable::AuditLog));

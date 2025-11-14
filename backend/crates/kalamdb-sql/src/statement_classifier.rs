@@ -65,6 +65,8 @@ pub enum SqlStatementKind {
     FlushTable(FlushTableStatement),
     /// FLUSH ALL TABLES [IN <namespace>]
     FlushAllTables(FlushAllTablesStatement),
+    /// SHOW MANIFEST CACHE
+    ShowManifest(ShowManifestStatement),
 
     // ===== Job Management =====
     /// KILL JOB <job_id>
@@ -412,6 +414,12 @@ impl SqlStatement {
                     FlushTableStatement::parse(sql).ok().map(SqlStatementKind::FlushTable)
                 }))
             }
+            ["SHOW", "MANIFEST", "CACHE", ..] => {
+                // Legacy alias for SHOW MANIFEST - backwards compatibility
+                Ok(Self::wrap(sql, || {
+                    ShowManifestStatement::parse(sql).ok().map(SqlStatementKind::ShowManifest)
+                }))
+            }
 
             // Job management - require admin
             ["KILL", "JOB", ..] => {
@@ -514,6 +522,7 @@ impl SqlStatement {
             SqlStatementKind::ShowStats(_) => "SHOW STATS",
             SqlStatementKind::FlushTable(_) => "FLUSH TABLE",
             SqlStatementKind::FlushAllTables(_) => "FLUSH ALL TABLES",
+            SqlStatementKind::ShowManifest(_) => "SHOW MANIFEST",
             SqlStatementKind::KillJob(_) => "KILL JOB",
             SqlStatementKind::KillLiveQuery(_) => "KILL LIVE QUERY",
             SqlStatementKind::BeginTransaction => "BEGIN",
@@ -592,6 +601,7 @@ impl SqlStatement {
             | SqlStatementKind::ShowTables(_)
             | SqlStatementKind::ShowStorages(_)
             | SqlStatementKind::ShowStats(_)
+            | SqlStatementKind::ShowManifest(_)
             | SqlStatementKind::DescribeTable(_) => Ok(()),
 
             // CREATE TABLE, DROP TABLE, FLUSH TABLE, ALTER TABLE - defer to table ownership checks

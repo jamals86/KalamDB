@@ -93,7 +93,50 @@ impl SharedTableProvider {
     ///
     /// **Difference from user tables**: Shared tables have NO user_id partitioning,
     /// so all Parquet files are in the same directory (no subdirectories per user).
+    ///
+    /// **Phase 4 (US6, T082-T084)**: Integrated with ManifestCacheService for manifest caching.
+    /// Logs cache hits/misses and updates last_accessed timestamp. Full query optimization
+    /// (batch file pruning based on manifest metadata) implemented in Phase 5 (US2, T119-T123).
     fn scan_parquet_files_as_batch(&self) -> Result<RecordBatch, KalamDbError> {
+        // Phase 4 (T082): Integrate with ManifestCacheService
+        // Try to load manifest from cache (hot cache → RocksDB → None)
+        let namespace = self.table_id.namespace_id();
+        let table = self.table_id.table_name();
+        let scope = "shared"; // Scope is "shared" for shared tables
+        
+        let manifest_cache_service = self.core.app_context.manifest_cache_service();
+        let cache_result = manifest_cache_service.get_or_load(namespace, table, scope);
+        
+        // T083-T084: Log cache hit/miss (last_accessed already updated by get_or_load)
+        match &cache_result {
+            Ok(Some(entry)) => {
+                log::debug!(
+                    "✅ Manifest cache HIT | table={}.{} | scope=shared | etag={:?} | last_refreshed={} | source={}",
+                    namespace.as_str(),
+                    table.as_str(),
+                    entry.etag,
+                    entry.last_refreshed,
+                    entry.source_path
+                );
+                // TODO Phase 5 (T119-T123): Use manifest to prune batch files based on WHERE predicates
+            }
+            Ok(None) => {
+                log::debug!(
+                    "⚠️  Manifest cache MISS | table={}.{} | scope=shared | fallback=directory_scan",
+                    namespace.as_str(),
+                    table.as_str()
+                );
+            }
+            Err(e) => {
+                log::warn!(
+                    "⚠️  Manifest cache ERROR | table={}.{} | scope=shared | error={} | fallback=directory_scan",
+                    namespace.as_str(),
+                    table.as_str(),
+                    e
+                );
+            }
+        }
+        
         // Resolve storage path for shared table (no user_id)
         let storage_path = self.core.app_context.schema_registry()
             .get_storage_path(&*self.table_id, None, None)?;

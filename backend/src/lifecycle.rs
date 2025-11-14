@@ -60,6 +60,19 @@ pub async fn bootstrap(config: &ServerConfig) -> Result<(ApplicationComponents, 
     );
     info!("AppContext initialized with all stores, managers, registries, and providers ({:.2}ms)", phase_start.elapsed().as_secs_f64() * 1000.0);
 
+    // Restore manifest cache from RocksDB (Phase 4, US6, T092-T094)
+    let phase_start = std::time::Instant::now();
+    let manifest_cache = app_context.manifest_cache_service();
+    match manifest_cache.restore_from_rocksdb() {
+        Ok(()) => {
+            let count = manifest_cache.count().unwrap_or(0);
+            info!("Manifest cache restored from RocksDB: {} entries ({:.2}ms)", count, phase_start.elapsed().as_secs_f64() * 1000.0);
+        }
+        Err(e) => {
+            warn!("Failed to restore manifest cache from RocksDB: {}. Starting with empty cache.", e);
+        }
+    }
+
     // Initialize system tables and verify schema version (Phase 10 Phase 7, T075-T079)
     let phase_start = std::time::Instant::now();
     kalamdb_system::initialize_system_tables(backend.clone()).await?;
