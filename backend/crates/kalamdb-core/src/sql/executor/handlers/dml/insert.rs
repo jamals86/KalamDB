@@ -92,6 +92,9 @@ impl StatementHandler for InsertHandler {
             ));
         }
 
+        // Determine effective user for AS USER before evaluating defaults
+        let effective_user_id = statement.as_user_id().unwrap_or(&context.user_id);
+
         // Bind parameters and construct JSON rows
         let mut json_rows: Vec<JsonValue> = Vec::new();
         for row_tokens in rows_tokens {
@@ -126,8 +129,8 @@ impl StatementHandler for InsertHandler {
                     continue;
                 }
                 
-                // Evaluate the default value
-                let default_value = evaluate_default(&col_def.default_value, &context.user_id, Some(sys_cols.clone()))?;
+                // Evaluate the default value using the effective user (AS USER subject)
+                let default_value = evaluate_default(&col_def.default_value, effective_user_id, Some(sys_cols.clone()))?;
                 obj.insert(col_name.clone(), default_value);
             }
 
@@ -136,7 +139,6 @@ impl StatementHandler for InsertHandler {
 
         // T153: Execute native insert with impersonation support (Phase 7)
         // Use as_user_id if present, otherwise use context.user_id
-        let effective_user_id = statement.as_user_id().unwrap_or(&context.user_id);
         let rows_affected = self.execute_native_insert(&namespace, &table_name, effective_user_id, json_rows).await?;
         Ok(ExecutionResult::Inserted { rows_affected })
     }

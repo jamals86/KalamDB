@@ -643,18 +643,27 @@ By extracting shared helpers with strategy parameters, we can reduce code duplic
 
 ### Query Planner Integration
 
-- [ ] T119 [US2] Update query planner to read manifest via ManifestCacheService.get_or_load()
-- [ ] T120 [US2] Implement batch file pruning: skip batches where min/max ranges don't overlap WHERE predicates
-- [ ] T121 [US2] Implement timestamp-based pruning: skip batches where max_updated < query min timestamp
-- [ ] T122 [US2] Add fallback: if manifest unavailable, scan all batch files in directory
-- [ ] T123 [US2] Add logging: batches_total, batches_skipped, batches_scanned
+- [X] T119 [US2] Update query planner to read manifest via ManifestCacheService.get_or_load()
+  - Integrated in UserTableProvider and SharedTableProvider scan_parquet_files_as_batch() ✅
+- [X] T120 [US2] Implement batch file pruning: skip batches where min/max ranges don't overlap WHERE predicates
+  - Extract _seq bounds from filter, use overlaps_seq_range() for pruning ✅
+- [X] T121 [US2] Implement timestamp-based pruning: skip batches where max_updated < query min timestamp
+  - Using _seq-based pruning (switched from _updated to _seq) ✅
+- [X] T122 [US2] Add fallback: if manifest unavailable, scan all batch files in directory
+  - Directory scan fallback when manifest parsing fails or cache miss ✅
+- [X] T123 [US2] Add logging: batches_total, batches_skipped, batches_scanned
+  - Debug logs with batches_total, skipped, scanned counters ✅
 
 ### Manifest Recovery
 
-- [ ] T124 [US2] Implement corruption detection: validate_manifest() on table access
-- [ ] T125 [US2] Trigger rebuild_manifest() on validation failure
-- [ ] T126 [US2] Enable degraded mode: serve queries via full directory scan while rebuild runs in background
-- [ ] T127 [US2] Add logging: manifest_corruption_detected, manifest_rebuild_started, manifest_rebuild_completed
+- [X] T124 [US2] Implement corruption detection: validate_manifest() on table access
+  - Validation in scan_parquet_files_as_batch() before using manifest ✅
+- [X] T125 [US2] Trigger rebuild_manifest() on validation failure
+  - Background tokio::spawn() rebuild on corruption detection ✅
+- [X] T126 [US2] Enable degraded mode: serve queries via full directory scan while rebuild runs in background
+  - use_degraded_mode flag forces directory scan during rebuild ✅
+- [X] T127 [US2] Add logging: manifest_corruption_detected, manifest_rebuild_started, manifest_rebuild_completed
+  - Comprehensive logging: MANIFEST CORRUPTION, REBUILD STARTED, REBUILD COMPLETED, REBUILD FAILED ✅
 
 ### Testing & Validation
 

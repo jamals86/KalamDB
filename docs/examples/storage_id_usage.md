@@ -90,6 +90,23 @@ CREATE USER TABLE activity_log (
   FLUSH ROWS 5000;
 ```
 
+### Opting into per-user storage preferences
+```sql
+CREATE USER TABLE geo_events (
+        event_id BIGINT DEFAULT SNOWFLAKE_ID(),
+        payload JSON,
+        created_at TIMESTAMP DEFAULT NOW()
+) STORAGE s3_us
+    USE_USER_STORAGE;
+
+-- Pin specific users to regional storage
+UPDATE system.users
+SET storage_mode = 'region', storage_id = 's3_eu'
+WHERE username = 'alice';
+```
+
+The table keeps `storage_id = 's3_us'` as a fallback while users with `storage_mode = 'region'` point to their preferred storage. See `docs/how-to/user-table-storage.md` for the full workflow and current limitations (flush still uses the table storage until the resolver integration lands).
+
 ## Verifying Storage Configuration
 
 Check which storage a table is using:

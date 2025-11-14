@@ -45,7 +45,7 @@ impl std::fmt::Display for SyncState {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ManifestCacheEntry {
     /// Serialized ManifestFile JSON
-    pub manifest_json: String,
+    pub manifest_json: String, //TODO: Maybe its better to have it as parsed one instead of string
     
     /// ETag or version identifier from storage backend
     pub etag: Option<String>,

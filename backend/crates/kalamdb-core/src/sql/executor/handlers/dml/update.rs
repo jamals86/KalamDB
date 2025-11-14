@@ -48,10 +48,8 @@ impl StatementHandler for UpdateHandler {
             return Err(KalamDbError::InvalidOperation("UpdateHandler received wrong statement kind".into()));
         }
         let sql = statement.as_str();
-        let (namespace, table_name, assignments, where_clause) = self.simple_parse_update(sql)?;
+        let (namespace, table_name, assignments, where_pair) = self.simple_parse_update(sql)?;
 
-        // Relax WHERE restriction: attempt id extraction, else fall back to provider-side update_all (shared tables)
-        let row_id_opt = self.extract_row_id(&where_clause, &params)?;
         let mut obj = serde_json::Map::new();
         for (col, token) in assignments {
             let val = self.token_to_json(&token, &params)?;
@@ -78,9 +76,6 @@ impl StatementHandler for UpdateHandler {
         
         match def.table_type {
             kalamdb_commons::schemas::TableType::User => {
-                // Require id for user table update
-                let id_value = row_id_opt.ok_or_else(|| KalamDbError::InvalidOperation("UPDATE currently requires WHERE id = <value> for USER tables".into()))?;
-                
                 // Get provider from unified cache and downcast to UserTableProvider
                 let provider_arc = schema_registry.get_provider(&table_id)
                     .ok_or_else(|| KalamDbError::InvalidOperation("User table provider not found".into()))?;
@@ -88,6 +83,12 @@ impl StatementHandler for UpdateHandler {
                 if let Some(provider) = provider_arc.as_any().downcast_ref::<crate::providers::UserTableProvider>() {
                     // T064: Get actual PK column name from provider instead of assuming "id"
                     let pk_column = provider.primary_key_field_name();
+                    // Require WHERE <pk> = <value>
+                    let id_value = self.extract_row_id_for_column(&where_pair, pk_column, &params)?
+                        .ok_or_else(|| KalamDbError::InvalidOperation(format!(
+                            "UPDATE currently requires WHERE {} = <value> for USER tables",
+                            pk_column
+                        )))?;
                     
                     println!("[DEBUG UpdateHandler] Calling provider.update_by_id_field for user={}, pk_column={}, pk_value={}", 
                         effective_user_id.as_str(), pk_column, id_value);
@@ -107,15 +108,19 @@ impl StatementHandler for UpdateHandler {
                 }
             }
             kalamdb_commons::schemas::TableType::Shared => {
-                // MVP: If id present, update that row via SharedTableProvider; otherwise, return invalid operation (no predicate support yet)
+                // For SHARED tables, also require WHERE on the actual PK column
                 let provider_arc = schema_registry.get_provider(&table_id).ok_or_else(|| KalamDbError::InvalidOperation("Shared table provider not found".into()))?;
                 if let Some(provider) = provider_arc.as_any().downcast_ref::<crate::providers::SharedTableProvider>() {
-                    if let Some(id_value) = row_id_opt {
+                    let pk_column = provider.primary_key_field_name();
+                    if let Some(id_value) = self.extract_row_id_for_column(&where_pair, pk_column, &params)? {
                         // SharedTableProvider ignores user_id parameter (no RLS)
                         provider.update_by_id_field(effective_user_id, &id_value, updates)?;
                         Ok(ExecutionResult::Updated { rows_affected: 1 })
                     } else {
-                        Err(KalamDbError::InvalidOperation("UPDATE on SHARED tables requires WHERE id = <value> (predicate updates not yet supported)".into()))
+                        Err(KalamDbError::InvalidOperation(format!(
+                            "UPDATE on SHARED tables requires WHERE {} = <value> (predicate updates not yet supported)",
+                            pk_column
+                        )))
                     }
                 } else {
                     Err(KalamDbError::InvalidOperation("Cached provider type mismatch for shared table".into()))
@@ -153,8 +158,8 @@ impl StatementHandler for UpdateHandler {
 }
 
 impl UpdateHandler {
-    fn simple_parse_update(&self, sql: &str) -> Result<(NamespaceId, TableName, Vec<(String, String)>, Option<String>), KalamDbError> {
-        // Expect: UPDATE <ns>.<table> SET col1=val1, col2=$2 WHERE id = <v>
+    fn simple_parse_update(&self, sql: &str) -> Result<(NamespaceId, TableName, Vec<(String, String)>, Option<(String, String)>), KalamDbError> {
+        // Expect: UPDATE <ns>.<table> SET col1=val1, col2=$2 WHERE <pk> = <v>
         let upper = sql.to_uppercase();
         let set_pos = upper.find(" SET ").ok_or_else(|| KalamDbError::InvalidOperation("Missing SET clause".into()))?;
         let where_pos = upper.find(" WHERE ");
@@ -183,37 +188,39 @@ impl UpdateHandler {
             let val = it.next().ok_or_else(|| KalamDbError::InvalidOperation("Malformed SET value".into()))?.trim().to_string();
             assigns.push((col, val));
         }
-        let where_expr = where_pos.map(|wp| {
+        let where_pair = where_pos.and_then(|wp| {
             let where_clause_raw = sql[wp + 7..].trim();
-            // Parse simple id = value pattern
-            let parts: Vec<&str> = where_clause_raw.split('=').collect();
-            if parts.len() == 2 && parts[0].trim().eq_ignore_ascii_case("id") {
-                // Return the value part for extraction
-                parts[1].trim().to_string()
+            // Parse simple "<col> = <value>" pattern
+            let parts: Vec<&str> = where_clause_raw.splitn(2, '=').collect();
+            if parts.len() == 2 {
+                let col = parts[0].trim().to_string();
+                let val = parts[1].trim().to_string();
+                Some((col, val))
             } else {
-                String::new() // Empty means unsupported WHERE
+                None
             }
         });
-        Ok((ns, tbl, assigns, where_expr))
+        Ok((ns, tbl, assigns, where_pair))
     }
 
-    fn extract_row_id(&self, where_token: &Option<String>, params: &[ScalarValue]) -> Result<Option<String>, KalamDbError> {
-        if let Some(token) = where_token {
-            if token.is_empty() {
+    fn extract_row_id_for_column(&self, where_pair: &Option<(String, String)>, pk_column: &str, params: &[ScalarValue]) -> Result<Option<String>, KalamDbError> {
+        if let Some((col, token)) = where_pair {
+            // Ensure WHERE references the actual PK column
+            if !col.eq_ignore_ascii_case(pk_column) {
                 return Ok(None);
             }
             let t = token.trim();
             // Check for placeholder
             if t.starts_with('$') {
                 let num: usize = t[1..].parse().map_err(|_| KalamDbError::InvalidOperation("Invalid placeholder in WHERE".into()))?;
-                if num == 0 || num > params.len() { 
-                    return Err(KalamDbError::InvalidOperation("Placeholder index out of range".into())); 
+                if num == 0 || num > params.len() {
+                    return Err(KalamDbError::InvalidOperation("Placeholder index out of range".into()));
                 }
-                let sv = &params[num-1];
-                return Ok(match sv { 
-                    ScalarValue::Int64(Some(i)) => Some(i.to_string()), 
-                    ScalarValue::Utf8(Some(s)) => Some(s.clone()), 
-                    _ => None 
+                let sv = &params[num - 1];
+                return Ok(match sv {
+                    ScalarValue::Int64(Some(i)) => Some(i.to_string()),
+                    ScalarValue::Utf8(Some(s)) => Some(s.clone()),
+                    _ => None,
                 });
             }
             // Otherwise treat as literal (strip quotes if present)

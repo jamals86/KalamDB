@@ -466,7 +466,7 @@ impl AppContext {
         // Create storage registry
         let storage_registry = Arc::new(StorageRegistry::new(
             system_tables.storages(),
-            storage_base_path,
+            storage_base_path.clone(),
         ));
 
         // Create schema cache

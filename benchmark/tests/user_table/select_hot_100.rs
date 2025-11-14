@@ -1,6 +1,7 @@
 use kalamdb_benchmark::*;
 use std::time::Duration;
 
+#[ignore = "requires running backend server"]
 #[test]
 fn user_table_select_hot_100() -> anyhow::Result<()> {
     // Setup and insert data

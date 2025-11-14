@@ -48,9 +48,7 @@ impl StatementHandler for DeleteHandler {
         }
         
         let sql = statement.as_str();
-        let (namespace, table_name, row_id) = self.simple_parse_delete(sql)?;
-        if row_id.is_none() { return Err(KalamDbError::InvalidOperation("DELETE currently requires WHERE id = <value>".into())); }
-        let row_id = row_id.unwrap();
+        let (namespace, table_name, where_pair) = self.simple_parse_delete(sql)?;
 
         // T153: Use effective user_id for impersonation support (Phase 7)
         let effective_user_id = statement.as_user_id().unwrap_or(&context.user_id);
@@ -76,6 +74,12 @@ impl StatementHandler for DeleteHandler {
                     .ok_or_else(|| KalamDbError::InvalidOperation("User table provider not found".into()))?;
                 
                 if let Some(provider) = provider_arc.as_any().downcast_ref::<crate::providers::UserTableProvider>() {
+                    let pk_column = provider.primary_key_field_name();
+                    let row_id = self.extract_row_id_for_column(&where_pair, pk_column)?
+                        .ok_or_else(|| KalamDbError::InvalidOperation(format!(
+                            "DELETE currently requires WHERE {} = <value>",
+                            pk_column
+                        )))?;
                     let _deleted = provider.delete_by_id_field(effective_user_id, &row_id)?;
                     Ok(ExecutionResult::Deleted { rows_affected: 1 })
                 } else {
@@ -83,9 +87,15 @@ impl StatementHandler for DeleteHandler {
                 }
             }
             TableType::Shared => {
-                // DELETE FROM <ns>.<table> WHERE id = <value> for SHARED tables maps logical id -> row_id
+                // DELETE requires WHERE on the actual PK column for SHARED tables too
                 let provider_arc = schema_registry.get_provider(&table_id).ok_or_else(|| KalamDbError::InvalidOperation("Shared table provider not found".into()))?;
                 if let Some(provider) = provider_arc.as_any().downcast_ref::<crate::providers::SharedTableProvider>() {
+                    let pk_column = provider.primary_key_field_name();
+                    let row_id = self.extract_row_id_for_column(&where_pair, pk_column)?
+                        .ok_or_else(|| KalamDbError::InvalidOperation(format!(
+                            "DELETE on SHARED tables requires WHERE {} = <value>",
+                            pk_column
+                        )))?;
                     // SharedTableProvider ignores user_id parameter (no RLS)
                     provider.delete_by_id_field(effective_user_id, &row_id)?;
                     Ok(ExecutionResult::Deleted { rows_affected: 1 })
@@ -121,8 +131,8 @@ impl StatementHandler for DeleteHandler {
 }
 
 impl DeleteHandler {
-    fn simple_parse_delete(&self, sql: &str) -> Result<(NamespaceId, TableName, Option<String>), KalamDbError> {
-        // Expect: DELETE FROM <ns>.<table> WHERE id = <value>
+    fn simple_parse_delete(&self, sql: &str) -> Result<(NamespaceId, TableName, Option<(String, String)>), KalamDbError> {
+        // Expect: DELETE FROM <ns>.<table> WHERE <pk> = <value>
         let upper = sql.to_uppercase();
         let from_pos = upper.find("DELETE FROM ").ok_or_else(|| KalamDbError::InvalidOperation("Missing 'DELETE FROM'".into()))?;
         let where_pos = upper.find(" WHERE ");
@@ -131,16 +141,29 @@ impl DeleteHandler {
             let parts: Vec<&str> = head.trim().split('.').collect();
             match parts.len() { 1 => (NamespaceId::new("default"), TableName::new(parts[0].trim().to_string())), 2 => (NamespaceId::new(parts[0].trim().to_string()), TableName::new(parts[1].trim().to_string())), _ => return Err(KalamDbError::InvalidOperation("Invalid table reference".into())) }
         };
-        let row_id = if let Some(wp) = where_pos {
+        let where_pair = if let Some(wp) = where_pos {
             let cond = sql[wp + 7..].trim();
-            // Support only 'id = <literal>'
-            let parts: Vec<&str> = cond.split('=').collect();
-            if parts.len() == 2 && parts[0].trim().eq_ignore_ascii_case("id") {
-                let v = parts[1].trim().trim_matches('\'').trim_matches('"').to_string();
-                Some(v)
+            // Support '<col> = <literal>'
+            let parts: Vec<&str> = cond.splitn(2, '=').collect();
+            if parts.len() == 2 {
+                let col = parts[0].trim().to_string();
+                let val = parts[1].trim().to_string();
+                Some((col, val))
             } else { None }
         } else { None };
-        Ok((ns, tbl, row_id))
+        Ok((ns, tbl, where_pair))
+    }
+
+    fn extract_row_id_for_column(&self, where_pair: &Option<(String, String)>, pk_column: &str) -> Result<Option<String>, KalamDbError> {
+        if let Some((col, token)) = where_pair {
+            if !col.eq_ignore_ascii_case(pk_column) {
+                return Ok(None);
+            }
+            let t = token.trim();
+            let unquoted = t.trim_matches('\'').trim_matches('"');
+            return Ok(Some(unquoted.to_string()));
+        }
+        Ok(None)
     }
 }
 

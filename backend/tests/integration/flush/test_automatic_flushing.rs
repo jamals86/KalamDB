@@ -24,7 +24,7 @@ async fn test_manual_flush_respects_row_threshold() {
 
     let create_sql = format!(
         "CREATE USER TABLE {}.{} (
-            id BIGINT,
+            id BIGINT PRIMARY KEY,
             content TEXT,
             created_at TIMESTAMP
         ) FLUSH ROWS 25",
@@ -74,7 +74,7 @@ async fn test_manual_flush_multiple_batches() {
 
     let create_sql = format!(
         "CREATE USER TABLE {}.{} (
-            id BIGINT,
+            id BIGINT PRIMARY KEY,
             event_id BIGINT,
             category TEXT,
             payload TEXT

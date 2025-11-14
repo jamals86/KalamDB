@@ -140,7 +140,6 @@ pub async fn execute_shared_flush_synchronously(
     let table_name_id = TableName::new(table_name);
     let table_id = Arc::new(TableId::new(namespace_id.clone(), table_name_id.clone()));
     
-    let storage_id = StorageId::new("local");
     let flush_job = SharedTableFlushJob::new(
         table_id,
         shared_table_store,
@@ -148,8 +147,8 @@ pub async fn execute_shared_flush_synchronously(
         table_name_id,
         arrow_schema.schema.clone(),
         unified_cache,
-        storage_id,
-        server.app_context.clone(),
+        server.app_context.manifest_service(),
+        server.app_context.manifest_cache_service(),
     );
 
     flush_job

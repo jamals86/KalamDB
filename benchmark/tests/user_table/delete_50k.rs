@@ -1,6 +1,7 @@
 use kalamdb_benchmark::*;
 use std::time::Duration;
 
+#[ignore = "requires running backend server"]
 #[test]
 fn user_table_delete_50k() -> anyhow::Result<()> {
     // NOTE: DELETE tests are skipped for user tables (see delete_1.rs for explanation)

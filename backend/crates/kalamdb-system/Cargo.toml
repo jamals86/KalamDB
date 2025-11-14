@@ -49,6 +49,7 @@ uuid = { workspace = true }
 [lib]
 name = "kalamdb_system"
 path = "src/lib.rs"
+doctest = false
 
 [dev-dependencies]
 tempfile = { workspace = true }

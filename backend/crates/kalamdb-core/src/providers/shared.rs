@@ -97,7 +97,10 @@ impl SharedTableProvider {
     /// **Phase 4 (US6, T082-T084)**: Integrated with ManifestCacheService for manifest caching.
     /// Logs cache hits/misses and updates last_accessed timestamp. Full query optimization
     /// (batch file pruning based on manifest metadata) implemented in Phase 5 (US2, T119-T123).
-    fn scan_parquet_files_as_batch(&self) -> Result<RecordBatch, KalamDbError> {
+    fn scan_parquet_files_as_batch(&self, filter: Option<&Expr>) -> Result<RecordBatch, KalamDbError> {
+        use datafusion::logical_expr::{Expr, Operator};
+        use kalamdb_commons::types::ManifestFile;
+
         // Phase 4 (T082): Integrate with ManifestCacheService
         // Try to load manifest from cache (hot cache → RocksDB → None)
         let namespace = self.table_id.namespace_id();
@@ -107,18 +110,73 @@ impl SharedTableProvider {
         let manifest_cache_service = self.core.app_context.manifest_cache_service();
         let cache_result = manifest_cache_service.get_or_load(namespace, table, scope);
         
-        // T083-T084: Log cache hit/miss (last_accessed already updated by get_or_load)
+        // T124-T127: Manifest recovery - validate and rebuild on corruption
+        let mut manifest_opt: Option<ManifestFile> = None;
+        let mut use_degraded_mode = false;
+        
         match &cache_result {
             Ok(Some(entry)) => {
-                log::debug!(
-                    "✅ Manifest cache HIT | table={}.{} | scope=shared | etag={:?} | last_refreshed={} | source={}",
-                    namespace.as_str(),
-                    table.as_str(),
-                    entry.etag,
-                    entry.last_refreshed,
-                    entry.source_path
-                );
-                // TODO Phase 5 (T119-T123): Use manifest to prune batch files based on WHERE predicates
+                match ManifestFile::from_json(&entry.manifest_json) {
+                    Ok(manifest) => {
+                        // T124: Validate manifest consistency
+                        if let Err(e) = manifest.validate() {
+                            log::warn!(
+                                "⚠️  [MANIFEST CORRUPTION] table={}.{} scope=shared error={} | Triggering rebuild",
+                                namespace.as_str(),
+                                table.as_str(),
+                                e
+                            );
+                            
+                            // T125: Trigger rebuild on validation failure
+                            // T126: Enable degraded mode during rebuild
+                            use_degraded_mode = true;
+                            
+                            // Spawn rebuild in background (non-blocking)
+                            let manifest_service = self.core.app_context.manifest_service();
+                            let ns = namespace.clone();
+                            let tbl = table.clone();
+                            let sc = scope.to_string();
+                            tokio::spawn(async move {
+                                log::info!(
+                                    "🔧 [MANIFEST REBUILD STARTED] table={}.{} scope={}",
+                                    ns.as_str(),
+                                    tbl.as_str(),
+                                    sc
+                                );
+                                match manifest_service.rebuild_manifest(&ns, &tbl, &sc) {
+                                    Ok(_) => {
+                                        log::info!(
+                                            "✅ [MANIFEST REBUILD COMPLETED] table={}.{} scope={}",
+                                            ns.as_str(),
+                                            tbl.as_str(),
+                                            sc
+                                        );
+                                    }
+                                    Err(e) => {
+                                        log::error!(
+                                            "❌ [MANIFEST REBUILD FAILED] table={}.{} scope={} error={}",
+                                            ns.as_str(),
+                                            tbl.as_str(),
+                                            sc,
+                                            e
+                                        );
+                                    }
+                                }
+                            });
+                        } else {
+                            manifest_opt = Some(manifest);
+                        }
+                    }
+                    Err(e) => {
+                        log::warn!(
+                            "⚠️  Failed to parse manifest JSON for table={}.{} scope=shared: {} | Using degraded mode",
+                            namespace.as_str(),
+                            table.as_str(),
+                            e
+                        );
+                        use_degraded_mode = true;
+                    }
+                }
             }
             Ok(None) => {
                 log::debug!(
@@ -126,6 +184,7 @@ impl SharedTableProvider {
                     namespace.as_str(),
                     table.as_str()
                 );
+                use_degraded_mode = true;
             }
             Err(e) => {
                 log::warn!(
@@ -134,7 +193,78 @@ impl SharedTableProvider {
                     table.as_str(),
                     e
                 );
+                use_degraded_mode = true;
             }
+        }
+        
+        // Log cache hit after validation
+        if let Some(ref manifest) = manifest_opt {
+            log::debug!(
+                "✅ Manifest cache HIT | table={}.{} | scope=shared | batches={}",
+                namespace.as_str(),
+                table.as_str(),
+                manifest.batches.len()
+            );
+        }
+
+        // Helper: extract conservative _seq bounds from filter for pruning
+        fn extract_seq_bounds(expr: &Expr) -> (Option<i64>, Option<i64>) {
+            use datafusion::logical_expr::Expr::Column;
+            let mut min_seq: Option<i64> = None;
+            let mut max_seq: Option<i64> = None;
+
+            fn lit_to_i64(e: &Expr) -> Option<i64> {
+                use datafusion::scalar::ScalarValue;
+                if let Expr::Literal(l, _) = e {
+                    match l {
+                        ScalarValue::Int64(Some(v)) => Some(*v),
+                        ScalarValue::Int32(Some(v)) => Some(*v as i64),
+                        ScalarValue::UInt64(Some(v)) => Some(*v as i64),
+                        ScalarValue::UInt32(Some(v)) => Some(*v as i64),
+                        _ => None,
+                    }
+                } else { None }
+            }
+
+            match expr {
+                Expr::BinaryExpr(be) => {
+                    let left = &be.left;
+                    let op = &be.op;
+                    let right = &be.right;
+                    if *op == Operator::And {
+                        let (a_min, a_max) = extract_seq_bounds(left);
+                        let (b_min, b_max) = extract_seq_bounds(right);
+                        let min = match (a_min, b_min) { (Some(a), Some(b)) => Some(a.max(b)), (Some(a), None) => Some(a), (None, Some(b)) => Some(b), _ => None };
+                        let max = match (a_max, b_max) { (Some(a), Some(b)) => Some(a.min(b)), (Some(a), None) => Some(a), (None, Some(b)) => Some(b), _ => None };
+                        return (min, max);
+                    } else {
+                        let is_seq_left = matches!(left.as_ref(), Column(c) if c.name.as_str() == "_seq");
+                        let is_seq_right = matches!(right.as_ref(), Column(c) if c.name.as_str() == "_seq");
+                        if is_seq_left {
+                            if let Some(val) = lit_to_i64(right.as_ref()) {
+                                match op {
+                                    Operator::Gt | Operator::GtEq => { return (Some(val), None); }
+                                    Operator::Lt | Operator::LtEq => { return (None, Some(val)); }
+                                    Operator::Eq => { return (Some(val), Some(val)); }
+                                    _ => {}
+                                }
+                            }
+                        } else if is_seq_right {
+                            if let Some(val) = lit_to_i64(left.as_ref()) {
+                                match op {
+                                    Operator::Lt | Operator::LtEq => { return (Some(val), None); }
+                                    Operator::Gt | Operator::GtEq => { return (None, Some(val)); }
+                                    Operator::Eq => { return (Some(val), Some(val)); }
+                                    _ => {}
+                                }
+                            }
+                        }
+                    }
+                }
+                _ => {}
+            }
+
+            (None, None)
         }
         
         // Resolve storage path for shared table (no user_id)
@@ -150,16 +280,56 @@ impl SharedTableProvider {
             return Ok(RecordBatch::new_empty(schema));
         }
         
-        // List all .parquet files in directory
-        let entries = fs::read_dir(&storage_dir)
-            .map_err(|e| KalamDbError::Io(e))?;
+        // Prefer manifest for file enumeration + pruning; fallback to directory scan
+        let mut parquet_files: Vec<PathBuf> = Vec::new();
+        let (mut total_batches, mut skipped, mut scanned) = (0usize, 0usize, 0usize);
         
-        let mut parquet_files = Vec::new();
-        for entry in entries {
-            let entry = entry.map_err(|e| KalamDbError::Io(e))?;
-            let path = entry.path();
-            if path.extension().and_then(|s| s.to_str()) == Some("parquet") {
-                parquet_files.push(path);
+        if !use_degraded_mode {
+            if let Some(manifest) = manifest_opt {
+                total_batches = manifest.batches.len();
+                let (min_seq, max_seq) = filter.map(|f| extract_seq_bounds(f)).unwrap_or((None, None));
+
+                for b in manifest.batches.iter() {
+                    let mut include = true;
+                    if let (Some(minv), Some(maxv)) = (min_seq, max_seq) {
+                        include = b.overlaps_seq_range(minv, maxv);
+                    } else if let (Some(minv), None) = (min_seq, max_seq) {
+                        include = b.max_seq >= minv;
+                    } else if let (None, Some(maxv)) = (min_seq, max_seq) {
+                        include = b.min_seq <= maxv;
+                    }
+
+                    if include {
+                        let p = storage_dir.join(&b.file_path);
+                        parquet_files.push(p);
+                        scanned += 1;
+                    } else {
+                        skipped += 1;
+                    }
+                }
+
+                log::debug!(
+                    "[Manifest Pruning] table={}.{} scope=shared batches_total={} skipped={} scanned={}",
+                    namespace.as_str(),
+                    table.as_str(),
+                    total_batches,
+                    skipped,
+                    scanned
+                );
+            }
+        }
+
+        if parquet_files.is_empty() {
+            // List all .parquet files in directory
+            let entries = fs::read_dir(&storage_dir)
+                .map_err(|e| KalamDbError::Io(e))?;
+            
+            for entry in entries {
+                let entry = entry.map_err(|e| KalamDbError::Io(e))?;
+                let path = entry.path();
+                if path.extension().and_then(|s| s.to_str()) == Some("parquet") {
+                    parquet_files.push(path);
+                }
             }
         }
         
@@ -445,7 +615,7 @@ impl BaseTableProvider<SharedTableRowId, SharedTableRow> for SharedTableProvider
         );
 
         // Scan cold storage (Parquet files)
-        let parquet_batch = self.scan_parquet_files_as_batch()?;
+        let parquet_batch = self.scan_parquet_files_as_batch(_filter)?;
 
         // Version resolution: MAX(_seq) per PK; honor tombstones
         use std::collections::HashMap;
@@ -623,8 +793,16 @@ impl TableProvider for SharedTableProvider {
         filters: &[Expr],
         limit: Option<usize>,
     ) -> DataFusionResult<Arc<dyn ExecutionPlan>> {
+        // Combine filters (AND) for pruning and pass to scan_rows
+        let combined_filter: Option<Expr> = if filters.is_empty() {
+            None
+        } else {
+            let first = filters[0].clone();
+            Some(filters[1..].iter().cloned().fold(first, |acc, e| acc.and(e)))
+        };
+
         let batch = self
-            .scan_rows(state, None)
+            .scan_rows(state, combined_filter.as_ref())
             .map_err(|e| DataFusionError::Execution(format!("scan_rows failed: {}", e)))?;
 
         let mem = MemTable::try_new(self.schema_ref(), vec![vec![batch]])?;

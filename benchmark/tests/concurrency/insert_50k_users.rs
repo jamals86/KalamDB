@@ -1,6 +1,7 @@
 use kalamdb_benchmark::*;
 use std::time::Duration;
 
+#[ignore = "requires running backend server"]
 #[test]
 fn concurrency_insert_50k_users() -> anyhow::Result<()> {
     // Note: This is a simplified version. Full implementation would use thread pools

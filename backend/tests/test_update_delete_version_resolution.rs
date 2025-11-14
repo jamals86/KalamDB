@@ -36,7 +36,7 @@ async fn test_update_in_fast_storage() {
     let create_response = server
         .execute_sql_as_user(
             r#"CREATE USER TABLE test_ns.products (
-                id TEXT,
+                id TEXT PRIMARY KEY,
                 name TEXT,
                 price INT,
                 stock INT
@@ -110,7 +110,7 @@ async fn test_update_in_parquet() {
     server
         .execute_sql_as_user(
             r#"CREATE USER TABLE test_ns.inventory (
-                id TEXT,
+                id TEXT PRIMARY KEY,
                 item TEXT,
                 quantity INT
             ) STORAGE local"#,
@@ -183,7 +183,7 @@ async fn test_full_workflow_insert_flush_update() {
     server
         .execute_sql_as_user(
             r#"CREATE USER TABLE test_ns.orders (
-                id TEXT,
+                id TEXT PRIMARY KEY,
                 customer TEXT,
                 total INT,
                 status TEXT
@@ -245,7 +245,7 @@ async fn test_multi_version_query() {
     server
         .execute_sql_as_user(
             r#"CREATE USER TABLE test_ns.counters (
-                id TEXT,
+                id TEXT PRIMARY KEY,
                 value INT
             ) STORAGE local"#,
             "user1",
@@ -323,7 +323,7 @@ async fn test_delete_excludes_record() {
     server
         .execute_sql_as_user(
             r#"CREATE USER TABLE test_ns.users (
-                id TEXT,
+                id TEXT PRIMARY KEY,
                 name TEXT,
                 active BOOLEAN
             ) STORAGE local"#,
@@ -372,7 +372,7 @@ async fn test_delete_in_parquet() {
     server
         .execute_sql_as_user(
             r#"CREATE USER TABLE test_ns.accounts (
-                id TEXT,
+                id TEXT PRIMARY KEY,
                 email TEXT,
                 balance INT
             ) STORAGE local"#,
@@ -390,7 +390,7 @@ async fn test_delete_in_parquet() {
         .await;
 
     // Flush to Parquet
-    flush_helpers::execute_flush_synchronously(&server, "test_ns", "products")
+    flush_helpers::execute_flush_synchronously(&server, "test_ns", "accounts")
         .await
         .expect("Flush should succeed");
 
@@ -431,7 +431,7 @@ async fn test_concurrent_updates() {
     server
         .execute_sql_as_user(
             r#"CREATE USER TABLE test_ns.shared_counter (
-                id TEXT,
+                id TEXT PRIMARY KEY,
                 count INT
             ) STORAGE local"#,
             "user1",
@@ -511,7 +511,7 @@ async fn test_nanosecond_collision_handling() {
     server
         .execute_sql_as_user(
             r#"CREATE USER TABLE test_ns.rapid_updates (
-                id TEXT,
+                id TEXT PRIMARY KEY,
                 iteration INT
             ) STORAGE local"#,
             "user1",
@@ -570,7 +570,7 @@ async fn test_query_performance_with_multiple_versions() {
     server
         .execute_sql_as_user(
             r#"CREATE USER TABLE test_ns.perf_test (
-                id TEXT,
+                id TEXT PRIMARY KEY,
                 version INT
             ) STORAGE local"#,
             "user1",

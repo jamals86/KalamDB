@@ -244,6 +244,14 @@ impl TestServer {
             false, // disable password complexity enforcement in tests
         ));
 
+        // Ensure all existing tables are registered with providers/DataFusion for this process
+        if let Err(e) = sql_executor.load_existing_tables().await {
+            eprintln!(
+                "Warning: Failed to load existing table providers in test harness: {:?}",
+                e
+            );
+        }
+
         // Start background job processing loop so queued jobs (e.g., FLUSH TABLE) run in tests
         {
             let jm = app_context.job_manager();
@@ -539,15 +547,18 @@ impl TestServer {
                     },
                 }
             }
-            Err(e) => SqlResponse {
-                status: "error".to_string(),
-                results: vec![],
-                took_ms: 0,
-                error: Some(kalamdb_api::models::ErrorDetail {
-                    code: "EXECUTION_ERROR".to_string(),
-                    message: format!("{:?}", e),
-                    details: None,
-                }),
+            Err(e) => {
+                eprintln!("[DEBUG TestServer] execute() error: {:?}", e);
+                SqlResponse {
+                    status: "error".to_string(),
+                    results: vec![],
+                    took_ms: 0,
+                    error: Some(kalamdb_api::models::ErrorDetail {
+                        code: "EXECUTION_ERROR".to_string(),
+                        message: format!("{:?}", e),
+                        details: None,
+                    }),
+                }
             },
         }
     }
@@ -829,7 +840,7 @@ mod tests {
     #[actix_web::test]
     async fn test_execute_sql() {
         let server = TestServer::new().await;
-        let response = server.execute_sql("CREATE NAMESPACE test_ns").await;
+        let response = server.execute_sql("CREATE NAMESPACE IF NOT EXISTS test_ns").await;
         assert_eq!(response.status, "success");
     }
 
@@ -838,7 +849,7 @@ mod tests {
         let server = TestServer::new().await;
 
         // Create namespace
-        server.execute_sql("CREATE NAMESPACE test_ns").await;
+        server.execute_sql("CREATE NAMESPACE IF NOT EXISTS test_ns").await;
         assert!(server.namespace_exists("test_ns").await);
 
         // Cleanup
@@ -852,7 +863,7 @@ mod tests {
 
         assert!(!server.namespace_exists("nonexistent").await);
 
-        server.execute_sql("CREATE NAMESPACE test_ns").await;
+        server.execute_sql("CREATE NAMESPACE IF NOT EXISTS test_ns").await;
         assert!(server.namespace_exists("test_ns").await);
     }
 }

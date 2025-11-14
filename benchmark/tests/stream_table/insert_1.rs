@@ -1,6 +1,7 @@
 use kalamdb_benchmark::*;
 use std::time::Duration;
 
+#[ignore = "requires running backend server"]
 #[test]
 fn stream_table_insert_1() -> anyhow::Result<()> {
     setup_benchmark_tables()?;

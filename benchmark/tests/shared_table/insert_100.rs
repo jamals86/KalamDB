@@ -1,6 +1,7 @@
 use kalamdb_benchmark::*;
 use std::time::Duration;
 
+#[ignore = "requires running backend server"]
 #[test]
 fn shared_table_insert_100() -> anyhow::Result<()> {
     setup_benchmark_tables()?;

@@ -62,7 +62,7 @@ fn test_storage_drop_requires_detached_tables() {
     );
 
     let create_user_table_sql = format!(
-        "CREATE USER TABLE {}.{} (id INT AUTO_INCREMENT, body TEXT) STORAGE '{}' FLUSH ROWS 5",
+        "CREATE USER TABLE {}.{} (id INT PRIMARY KEY AUTO_INCREMENT, body TEXT) STORAGE '{}' FLUSH ROWS 5",
         namespace, user_table, storage_id
     );
     execute_sql_as_root_via_cli(&create_user_table_sql).expect("user table creation");
@@ -79,7 +79,7 @@ fn test_storage_drop_requires_detached_tables() {
     );
 
     let create_shared_table_sql = format!(
-        "CREATE SHARED TABLE {}.{} (id INT AUTO_INCREMENT, body TEXT) STORAGE '{}' FLUSH ROWS 5",
+        "CREATE SHARED TABLE {}.{} (id INT PRIMARY KEY AUTO_INCREMENT, body TEXT) STORAGE '{}' FLUSH ROWS 5",
         namespace, shared_table, storage_id
     );
     execute_sql_as_root_via_cli(&create_shared_table_sql).expect("shared table creation");

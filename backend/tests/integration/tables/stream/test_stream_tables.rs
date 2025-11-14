@@ -19,7 +19,7 @@ async fn create_stream_table(server: &TestServer, namespace: &str, table_name: &
             id INT,
             event_type VARCHAR,
             data VARCHAR
-        )"#,
+        ) TTL 3600"#,
         namespace, table_name
     );
 

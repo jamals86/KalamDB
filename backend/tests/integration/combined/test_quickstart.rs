@@ -20,7 +20,7 @@ use std::time::Instant;
 async fn test_01_create_namespace() {
     let server = TestServer::new().await;
 
-    let response = server.execute_sql("CREATE NAMESPACE app").await;
+    let response = server.execute_sql("CREATE NAMESPACE IF NOT EXISTS app").await;
     assert_eq!(
         response.status, "success",
         "Failed to create namespace: {:?}",
@@ -39,22 +39,10 @@ async fn test_02_create_user_table() {
     let server = TestServer::new().await;
 
     // Create namespace first
-    server.execute_sql("CREATE NAMESPACE app").await;
+    server.execute_sql("CREATE NAMESPACE IF NOT EXISTS app").await;
 
-    // Create user table with flush policy (requires authentication)
-    // NOTE: USER tables are multi-tenant - they store data for ALL users.
-    // The user_id here is ONLY for authentication, NOT table ownership.
-    let response = server
-        .execute_sql_with_user(
-            r#"CREATE USER TABLE app.messages (
-            id INT AUTO_INCREMENT,
-            user_id VARCHAR NOT NULL,
-            content VARCHAR NOT NULL,
-            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-        ) FLUSH ROWS 100"#,
-            Some("user123"), // Authenticate as user123 (required for RBAC check)
-        )
-        .await;
+    // Create user table idempotently via fixtures (handles IF NOT EXISTS)
+    let response = fixtures::create_messages_table(&server, "app", Some("user123")).await;
 
     assert_eq!(
         response.status, "success",
@@ -127,10 +115,33 @@ async fn test_05_update_data() {
     let server = TestServer::new().await;
     fixtures::create_namespace(&server, "app").await;
     fixtures::create_messages_table(&server, "app", Some("user123")).await;
+    // Insert sample messages as the target user
     fixtures::insert_sample_messages(&server, "app", "user123", 3).await;
 
-    // Update first message
-    let response = fixtures::update_message(&server, "app", 1, "Updated content").await;
+    // Select one id for update
+    let select_resp = server
+        .execute_sql_as_user(
+            "SELECT id FROM app.messages WHERE user_id = 'user123' ORDER BY created_at LIMIT 1",
+            "user123",
+        )
+        .await;
+    assert_eq!(select_resp.status, "success", "Query for id failed: {:?}", select_resp.error);
+    let id = select_resp
+        .results
+        .get(0)
+        .and_then(|r| r.rows.as_ref())
+        .and_then(|rows| rows.first())
+        .and_then(|row| row.get("id"))
+        .and_then(|v| v.as_i64())
+        .expect("Expected an id row");
+
+    // Update by selected id
+    let response = server
+        .execute_sql_as_user(
+            &format!("UPDATE app.messages SET content = 'Updated content' WHERE id = {}", id),
+            "user123",
+        )
+        .await;
 
     assert_eq!(
         response.status, "success",
@@ -139,11 +150,25 @@ async fn test_05_update_data() {
     );
 
     // Verify update
-    let query_response = server
-        .execute_sql("SELECT content FROM app.messages WHERE id = 1")
+    let verify_resp = server
+        .execute_sql_as_user(
+            &format!(
+                "SELECT COUNT(*) AS cnt FROM app.messages WHERE id = {} AND content = 'Updated content'",
+                id
+            ),
+            "user123",
+        )
         .await;
-
-    assert_eq!(query_response.status, "success");
+    assert_eq!(verify_resp.status, "success", "Verification SELECT failed: {:?}", verify_resp.error);
+    let cnt = verify_resp
+        .results
+        .get(0)
+        .and_then(|r| r.rows.as_ref())
+        .and_then(|rows| rows.first())
+        .and_then(|row| row.get("cnt"))
+        .and_then(|v| v.as_u64())
+        .unwrap_or(0);
+    assert!(cnt >= 1, "Updated row not found");
 }
 
 #[actix_web::test]
@@ -153,8 +178,26 @@ async fn test_06_delete_data() {
     fixtures::create_messages_table(&server, "app", Some("user123")).await;
     fixtures::insert_sample_messages(&server, "app", "user123", 3).await;
 
-    // Delete message (soft delete)
-    let response = fixtures::delete_message(&server, "app", 1).await;
+    // Select one id for delete
+    let select_resp = server
+        .execute_sql_as_user(
+            "SELECT id FROM app.messages WHERE user_id = 'user123' ORDER BY created_at LIMIT 1",
+            "user123",
+        )
+        .await;
+    assert_eq!(select_resp.status, "success", "Query for id failed: {:?}", select_resp.error);
+    let id = select_resp
+        .results
+        .get(0)
+        .and_then(|r| r.rows.as_ref())
+        .and_then(|rows| rows.first())
+        .and_then(|row| row.get("id"))
+        .and_then(|v| v.as_i64())
+        .expect("Expected an id row");
+
+    let response = server
+        .execute_sql_as_user(&format!("DELETE FROM app.messages WHERE id = {}", id), "user123")
+        .await;
 
     assert_eq!(
         response.status, "success",
@@ -275,7 +318,7 @@ async fn test_12_list_tables() {
 
     // Query system.tables
     let response = server
-        .execute_sql("SELECT * FROM system.tables WHERE namespace = 'app'")
+        .execute_sql("SELECT * FROM system.tables WHERE namespace_id = 'app'")
         .await;
 
     assert_eq!(
@@ -353,26 +396,27 @@ async fn test_16_complete_workflow() {
     // Complete workflow: namespace → table → insert → query → cleanup
 
     // 1. Create namespace
-    let response = fixtures::create_namespace(&server, "workflow_test").await;
+    let response = fixtures::create_namespace(&server, "qs_workflow").await;
     assert_eq!(response.status, "success");
 
     // 2. Create user table
-    let response = fixtures::create_messages_table(&server, "workflow_test", Some("user123")).await;
+    let response = fixtures::create_messages_table(&server, "qs_workflow", Some("user123")).await;
     assert_eq!(response.status, "success");
 
     // 3. Insert data
-    let responses = fixtures::insert_sample_messages(&server, "workflow_test", "user123", 10).await;
+    let responses = fixtures::insert_sample_messages(&server, "qs_workflow", "user123", 10).await;
     for response in responses {
         assert_eq!(response.status, "success");
     }
 
     // 4. Query data
-    let response = fixtures::query_user_messages(&server, "workflow_test", "user123").await;
+    let response = fixtures::query_user_messages(&server, "qs_workflow", "user123").await;
     assert_eq!(response.status, "success");
 
-    // 5. Cleanup
-    server.cleanup().await.expect("Cleanup failed");
-    assert!(!server.namespace_exists("workflow_test").await);
+    // 5. Cleanup this namespace explicitly to avoid cross-test cleanup races
+    let drop_resp = fixtures::drop_namespace(&server, "qs_workflow").await;
+    assert_eq!(drop_resp.status, "success");
+    assert!(!server.namespace_exists("qs_workflow").await);
 }
 
 #[actix_web::test]
@@ -437,7 +481,7 @@ async fn test_19_multiple_namespaces() {
     let server = TestServer::new().await;
 
     // Create multiple namespaces
-    for ns in ["app1", "app2", "app3"] {
+    for ns in ["test_app1", "test_app2", "test_app3"] {
         let response = fixtures::create_namespace(&server, ns).await;
         assert_eq!(response.status, "success");
         assert!(server.namespace_exists(ns).await);
@@ -446,7 +490,7 @@ async fn test_19_multiple_namespaces() {
     // Cleanup all
     server.cleanup().await.expect("Cleanup failed");
 
-    for ns in ["app1", "app2", "app3"] {
+    for ns in ["test_app1", "test_app2", "test_app3"] {
         assert!(!server.namespace_exists(ns).await);
     }
 }

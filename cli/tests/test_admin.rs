@@ -30,7 +30,7 @@ fn test_cli_list_tables() {
     // Create test table
     let create_sql = format!(
         r#"CREATE USER TABLE {}.{} (
-            id INT AUTO_INCREMENT,
+            id INT PRIMARY KEY AUTO_INCREMENT,
             content VARCHAR NOT NULL,
             created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
         ) FLUSH ROWS 10"#,
@@ -46,7 +46,7 @@ fn test_cli_list_tables() {
     std::thread::sleep(Duration::from_millis(200));
 
     // Query system tables
-    let query_sql = "SELECT table_name FROM system.tables WHERE namespace = 'test_cli'";
+    let query_sql = "SELECT table_name FROM system.tables WHERE namespace_id = 'test_cli'";
     let result = execute_sql_via_cli(query_sql);
 
     // Should list tables
@@ -77,7 +77,7 @@ fn test_cli_describe_table() {
     // Create test table
     let create_sql = format!(
         r#"CREATE USER TABLE {}.{} (
-            id INT AUTO_INCREMENT,
+            id INT PRIMARY KEY AUTO_INCREMENT,
             content VARCHAR NOT NULL,
             created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
         ) FLUSH ROWS 10"#,
@@ -124,17 +124,27 @@ fn test_cli_batch_file_execution() {
     let sql_file = temp_dir.path().join("test.sql");
 
     // Cleanup first in case namespace/table exists from previous run
+    // Note: DROP NAMESPACE CASCADE doesn't properly cascade to tables yet, so drop table first
     let _ = execute_sql_as_root_via_cli("DROP TABLE IF EXISTS batch_test.items");
     std::thread::sleep(std::time::Duration::from_millis(200));
-    let _ = execute_sql_as_root_via_cli("DROP NAMESPACE IF EXISTS batch_test CASCADE");
+    let _ = execute_sql_as_root_via_cli("DROP NAMESPACE IF EXISTS batch_test");
     std::thread::sleep(std::time::Duration::from_millis(500));
+
+    // Use a unique ID based on timestamp to avoid conflicts
+    let unique_id = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap()
+        .as_millis() as i64;
 
     std::fs::write(
         &sql_file,
-        r#"CREATE NAMESPACE batch_test;
-CREATE USER TABLE batch_test.items (id INT, name VARCHAR) FLUSH ROWS 10;
-INSERT INTO batch_test.items (id, name) VALUES (1, 'Item One');
+        format!(
+            r#"CREATE NAMESPACE batch_test;
+CREATE USER TABLE batch_test.items (id BIGINT PRIMARY KEY, name VARCHAR) FLUSH ROWS 10;
+INSERT INTO batch_test.items (id, name) VALUES ({}, 'Item One');
 SELECT * FROM batch_test.items;"#,
+            unique_id
+        ),
     )
     .unwrap();
 

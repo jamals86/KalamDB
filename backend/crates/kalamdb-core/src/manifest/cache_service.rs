@@ -58,7 +58,7 @@ impl ManifestCacheService {
         &self,
         namespace: &NamespaceId,
         table: &TableName,
-        scope: &str, // "user_id" or "shared"
+        scope: &str, // "user_id" or "shared" TODO: Use enum
     ) -> Result<Option<Arc<ManifestCacheEntry>>, StorageError> {
         let cache_key = ManifestCacheKey::from(self.make_cache_key(namespace, table, scope));
         
@@ -203,6 +203,7 @@ impl ManifestCacheService {
 
     // Helper methods
 
+    //TODO: Use enum for scope and also use TableId instead
     fn make_cache_key(&self, namespace: &NamespaceId, table: &TableName, scope: &str) -> String {
         // Use the same key format as cache_keys helper
         format!("{}:{}:{}", namespace.as_str(), table.as_str(), scope)
