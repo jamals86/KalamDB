@@ -580,13 +580,15 @@ impl BaseTableProvider<UserTableRowId, UserTableRow> for UserTableProvider {
             .into_iter()
             .filter(|(_k, r)| &r.user_id == user_id)
             .collect();
-        log::info!(
-            "[UserProvider] Hot scan (filtered): {} rows for user {} (table={}.{})",
-            raw.len(),
-            user_id.as_str(),
-            self.table_id.namespace_id().as_str(),
-            self.table_id.table_name().as_str()
-        );
+        if log::log_enabled!(log::Level::Trace) {
+            log::trace!(
+                "[UserProvider] Hot scan (filtered): {} rows for user {} (table={}.{})",
+                raw.len(),
+                user_id.as_str(),
+                self.table_id.namespace_id().as_str(),
+                self.table_id.table_name().as_str()
+            );
+        }
 
         // 2) Scan cold storage (Parquet files)
         let parquet_batch = self.scan_parquet_files_as_batch(user_id)?;
@@ -612,25 +614,29 @@ impl BaseTableProvider<UserTableRowId, UserTableRow> for UserTableProvider {
             let pk_key = match row.fields.get(&pk_name).filter(|v| !v.is_null()) {
                 Some(v) => {
                     let key_str = v.to_string();
-                    log::debug!(
-                        "[UserProvider] Hot row _seq={}: PK({})={}, _deleted={}",
-                        row._seq.as_i64(),
-                        pk_name,
-                        key_str,
-                        row._deleted
-                    );
+                    if log::log_enabled!(log::Level::Trace) {
+                        log::trace!(
+                            "[UserProvider] Hot row _seq={}: PK({})={}, _deleted={}",
+                            row._seq.as_i64(),
+                            pk_name,
+                            key_str,
+                            row._deleted
+                        );
+                    }
                     key_str
                 }
                 None => {
                     // Missing or null PK in row: group by unique _seq to avoid collapsing
                     let fallback = format!("_seq:{}", row._seq.as_i64());
-                    log::debug!(
-                        "[UserProvider] Hot row _seq={}: PK({}) missing/null, using fallback={}, _deleted={}",
-                        row._seq.as_i64(),
-                        pk_name,
-                        fallback,
-                        row._deleted
-                    );
+                    if log::log_enabled!(log::Level::Trace) {
+                        log::trace!(
+                            "[UserProvider] Hot row _seq={}: PK({}) missing/null, using fallback={}, _deleted={}",
+                            row._seq.as_i64(),
+                            pk_name,
+                            fallback,
+                            row._deleted
+                        );
+                    }
                     fallback
                 }
             };
@@ -638,50 +644,60 @@ impl BaseTableProvider<UserTableRowId, UserTableRow> for UserTableProvider {
             match best.get(&pk_key) {
                 Some((_existing_key, existing_row)) => {
                     if row._seq > existing_row._seq {
-                        log::debug!(
-                            "[UserProvider] Replacing winner for PK '{}': old_seq={}, new_seq={}, new_deleted={}",
-                            pk_key,
-                            existing_row._seq.as_i64(),
-                            row._seq.as_i64(),
-                            row._deleted
-                        );
+                        if log::log_enabled!(log::Level::Trace) {
+                            log::trace!(
+                                "[UserProvider] Replacing winner for PK '{}': old_seq={}, new_seq={}, new_deleted={}",
+                                pk_key,
+                                existing_row._seq.as_i64(),
+                                row._seq.as_i64(),
+                                row._deleted
+                            );
+                        }
                         best.insert(pk_key, (key, row));
                     } else {
-                        log::debug!(
-                            "[UserProvider] Keeping existing winner for PK '{}': existing_seq={} >= new_seq={}",
-                            pk_key,
-                            existing_row._seq.as_i64(),
-                            row._seq.as_i64()
-                        );
+                        if log::log_enabled!(log::Level::Trace) {
+                            log::trace!(
+                                "[UserProvider] Keeping existing winner for PK '{}': existing_seq={} >= new_seq={}",
+                                pk_key,
+                                existing_row._seq.as_i64(),
+                                row._seq.as_i64()
+                            );
+                        }
                     }
                 }
                 None => {
-                    log::debug!(
-                        "[UserProvider] First entry for PK '{}': _seq={}, _deleted={}",
-                        pk_key,
-                        row._seq.as_i64(),
-                        row._deleted
-                    );
+                    if log::log_enabled!(log::Level::Trace) {
+                        log::trace!(
+                            "[UserProvider] First entry for PK '{}': _seq={}, _deleted={}",
+                            pk_key,
+                            row._seq.as_i64(),
+                            row._deleted
+                        );
+                    }
                     best.insert(pk_key, (key, row));
                 }
             }
         }
 
-        log::info!(
-            "[UserProvider] After hot version-resolution: {} rows (table={}.{})",
-            best.len(),
-            self.table_id.namespace_id().as_str(),
-            self.table_id.table_name().as_str()
-        );
+        if log::log_enabled!(log::Level::Trace) {
+            log::trace!(
+                "[UserProvider] After hot version-resolution: {} rows (table={}.{})",
+                best.len(),
+                self.table_id.namespace_id().as_str(),
+                self.table_id.table_name().as_str()
+            );
+        }
 
         // Process Parquet rows (cold storage)
-        log::info!(
-            "[UserProvider] Cold scan: {} Parquet rows (table={}.{}; user={})",
-            parquet_batch.num_rows(),
-            self.table_id.namespace_id().as_str(),
-            self.table_id.table_name().as_str(),
-            user_id.as_str()
-        );
+        if log::log_enabled!(log::Level::Trace) {
+            log::trace!(
+                "[UserProvider] Cold scan: {} Parquet rows (table={}.{}; user={})",
+                parquet_batch.num_rows(),
+                self.table_id.namespace_id().as_str(),
+                self.table_id.table_name().as_str(),
+                user_id.as_str()
+            );
+        }
         
         // Convert RecordBatch to rows and merge with RocksDB data
         if parquet_batch.num_rows() > 0 {
@@ -774,23 +790,27 @@ impl BaseTableProvider<UserTableRowId, UserTableRow> for UserTableProvider {
         // Filter winners where latest version is not deleted
         let pre_filter_count = best.len();
         let deleted_count = best.values().filter(|(_k, r)| r._deleted).count();
-        log::info!(
-            "[UserProvider] Pre-tombstone filter: {} total winners, {} deleted",
-            pre_filter_count,
-            deleted_count
-        );
+        if log::log_enabled!(log::Level::Trace) {
+            log::trace!(
+                "[UserProvider] Pre-tombstone filter: {} total winners, {} deleted",
+                pre_filter_count,
+                deleted_count
+            );
+        }
         
         let result: Vec<(UserTableRowId, UserTableRow)> = best
             .into_values()
             .filter(|(_k, r)| !r._deleted)
             .collect();
-        log::info!(
-            "[UserProvider] Final version-resolved (post-tombstone): {} rows (table={}.{}; user={})",
-            result.len(),
-            self.table_id.namespace_id().as_str(),
-            self.table_id.table_name().as_str(),
-            user_id.as_str()
-        );
+        if log::log_enabled!(log::Level::Trace) {
+            log::trace!(
+                "[UserProvider] Final version-resolved (post-tombstone): {} rows (table={}.{}; user={})",
+                result.len(),
+                self.table_id.namespace_id().as_str(),
+                self.table_id.table_name().as_str(),
+                user_id.as_str()
+            );
+        }
         Ok(result)
     }
     
@@ -832,11 +852,11 @@ impl TableProvider for UserTableProvider {
         filters: &[Expr],
         limit: Option<usize>,
     ) -> DataFusionResult<Arc<dyn ExecutionPlan>> {
-        log::info!(
-            "[UserTableProvider::scan] INVOKED for table {}.{}",
-            self.table_id.namespace_id().as_str(),
-            self.table_id.table_name().as_str()
-        );
+        // log::info!(
+        //     "[UserTableProvider::scan] INVOKED for table {}.{}",
+        //     self.table_id.namespace_id().as_str(),
+        //     self.table_id.table_name().as_str()
+        // );
         // Build a single RecordBatch using our scan_rows(), then wrap in MemTable
         let batch = self
             .scan_rows(state, None)
