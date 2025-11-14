@@ -16,7 +16,6 @@
 //! - Better performance (single lookup instead of potentially two)
 
 use crate::error::KalamDbError;
-use crate::storage::StorageRegistry;
 use dashmap::DashMap;
 use datafusion::datasource::TableProvider;
 use kalamdb_commons::models::schemas::TableDefinition;
@@ -46,7 +45,7 @@ pub struct CachedTableData {
 
     /// Partially-resolved storage path template
     /// Static placeholders substituted ({namespace}, {tableName}), dynamic ones remain ({userId}, {shard})
-    pub storage_path_template: String,
+    pub storage_path_template: String, //TODO: Use PathBuf instead of String
 
     /// Current schema version number
     pub schema_version: u32,
@@ -146,7 +145,8 @@ pub struct SchemaRegistry {
     max_size: usize,
 
     /// Storage registry for resolving path templates
-    storage_registry: Option<Arc<StorageRegistry>>,
+    /// TODO: Replace with trait abstraction after extracting to kalamdb-registry
+    // storage_registry: Option<Arc<dyn StorageRegistryTrait>>,
 
     /// Cache hit count (for metrics)
     hits: AtomicU64,
@@ -178,19 +178,19 @@ impl SchemaRegistry {
     /// ```ignore
     /// // Creating a SchemaRegistry without a StorageRegistry (path resolution disabled)
     /// use kalamdb_core::schema_registry::SchemaRegistry;
-    /// let registry = SchemaRegistry::new(10_000, None);
+    /// let registry = SchemaRegistry::new(10_000);
     ///
     /// // If you need storage path template resolution, construct a StorageRegistry
     /// // with the required dependencies and pass `Some(Arc<StorageRegistry>)` instead.
     /// ```
-    pub fn new(max_size: usize, storage_registry: Option<Arc<StorageRegistry>>) -> Self {
+    pub fn new(max_size: usize) -> Self {
         Self {
             cache: DashMap::new(),
             lru_timestamps: DashMap::new(),
             providers: DashMap::new(),
             base_session_context: OnceLock::new(),
             max_size,
-            storage_registry,
+            // storage_registry,
             hits: AtomicU64::new(0),
             misses: AtomicU64::new(0),
         }
@@ -227,7 +227,7 @@ impl SchemaRegistry {
     /// ```no_run
     /// # use kalamdb_core::schema_registry::SchemaRegistry;
     /// # use kalamdb_commons::models::{TableId, NamespaceId, TableName};
-    /// # let cache = SchemaRegistry::new(1000, None);
+    /// # let cache = SchemaRegistry::new(1000);
     /// let table_id = TableId::new(
     ///     NamespaceId::new("my_namespace"),
     ///     TableName::new("my_table")
@@ -268,7 +268,7 @@ impl SchemaRegistry {
     /// ```no_run
     /// # use kalamdb_core::schema_registry::SchemaRegistry;
     /// # use kalamdb_commons::models::{NamespaceId, TableName};
-    /// # let cache = SchemaRegistry::new(1000, None);
+    /// # let cache = SchemaRegistry::new(1000);
     /// if let Some(data) = cache.get_by_name(
     ///     &NamespaceId::new("my_namespace"),
     ///     &TableName::new("my_table")
@@ -320,7 +320,7 @@ impl SchemaRegistry {
     /// ```no_run
     /// # use kalamdb_core::schema_registry::SchemaRegistry;
     /// # use kalamdb_commons::models::{TableId, NamespaceId, TableName};
-    /// # let cache = SchemaRegistry::new(1000, None);
+    /// # let cache = SchemaRegistry::new(1000);
     /// let table_id = TableId::new(
     ///     NamespaceId::new("my_namespace"),
     ///     TableName::new("my_table")
@@ -374,7 +374,7 @@ impl SchemaRegistry {
     /// ```no_run
     /// # use kalamdb_core::schema_registry::SchemaRegistry;
     /// # use kalamdb_commons::models::{TableId, NamespaceId, TableName, UserId};
-    /// # let cache = SchemaRegistry::new(1000, None);
+    /// # let cache = SchemaRegistry::new(1000);
     /// # let table_id = TableId::new(NamespaceId::new("ns"), TableName::new("tbl"));
     /// let path = cache.get_storage_path(
     ///     &table_id,
@@ -383,6 +383,7 @@ impl SchemaRegistry {
     /// );
     /// // Returns: "/data/ns/tbl/alice/shard_0/"
     /// ```
+    /// TODO: Make this return PathBuf instead of String
     pub fn get_storage_path(
         &self,
         table_id: &TableId,
@@ -391,25 +392,56 @@ impl SchemaRegistry {
     ) -> Result<String, KalamDbError> {
         let data = self.get(table_id).ok_or_else(|| {
             KalamDbError::TableNotFound(format!(
-                "Table not found in cache: {}:{}",
-                table_id.namespace_id().as_str(),
-                table_id.table_name().as_str()
+                "Table not found: {}",
+                table_id
             ))
         })?;
 
-        let mut path = data.storage_path_template.clone();
+        // Start with the stored template and substitute dynamic placeholders
+        let mut relative = data.storage_path_template.clone();
 
         // Substitute {userId} placeholder
         if let Some(uid) = user_id {
-            path = path.replace("{userId}", uid.as_str());
+            relative = relative.replace("{userId}", uid.as_str());
         }
 
         // Substitute {shard} placeholder
         if let Some(shard_num) = shard {
-            path = path.replace("{shard}", &format!("shard_{}", shard_num));
+            relative = relative.replace("{shard}", &format!("shard_{}", shard_num));
         }
 
-        Ok(path)
+        // Resolve base directory from storage configuration or default storage path
+        let app_ctx = crate::app_context::AppContext::get();
+        let default_base = app_ctx
+            .storage_registry()
+            .default_storage_path()
+            .to_string();
+
+        let base_dir = if let Some(storage_id) = data.storage_id.clone() {
+            let storages = app_ctx.system_tables().storages();
+            match storages.get_storage(&storage_id) {
+                Ok(Some(storage)) => {
+                    let trimmed = storage.base_directory.trim();
+                    if trimmed.is_empty() {
+                        default_base.clone()
+                    } else {
+                        trimmed.to_string()
+                    }
+                }
+                _ => default_base.clone(),
+            }
+        } else {
+            default_base.clone()
+        };
+
+        // Join base directory with relative path (normalize leading slashes)
+        let mut rel = relative;
+        if rel.starts_with('/') {
+            rel = rel.trim_start_matches('/').to_string();
+        }
+
+        let full_path = std::path::PathBuf::from(base_dir).join(rel);
+        Ok(full_path.to_string_lossy().to_string())
     }
 
     /// Get cache hit rate (for metrics)
@@ -478,6 +510,11 @@ impl SchemaRegistry {
         table_id: TableId,
         provider: Arc<dyn TableProvider + Send + Sync>,
     ) -> Result<(), KalamDbError> {
+        log::info!(
+            "[SchemaRegistry] Inserting provider for table {}.{}",
+            table_id.namespace_id().as_str(),
+            table_id.table_name().as_str()
+        );
         // Store in our cache
         self.providers.insert(table_id.clone(), provider.clone());
 
@@ -508,6 +545,12 @@ impl SchemaRegistry {
             schema
                 .register_table(table_id.table_name().as_str().to_string(), provider)
                 .map_err(|e| KalamDbError::InvalidOperation(format!("Failed to register table with DataFusion: {}", e)))?;
+            
+            log::info!(
+                "[SchemaRegistry] Registered table {}.{} with DataFusion catalog",
+                table_id.namespace_id().as_str(),
+                table_id.table_name().as_str()
+            );
         }
 
         Ok(())
@@ -564,7 +607,21 @@ impl SchemaRegistry {
         &self,
         table_id: &TableId,
     ) -> Option<Arc<dyn TableProvider + Send + Sync>> {
-        self.providers.get(table_id).map(|e| Arc::clone(e.value()))
+        let result = self.providers.get(table_id).map(|e| Arc::clone(e.value()));
+        if result.is_some() {
+            log::debug!(
+                "[SchemaRegistry] Retrieved provider for table {}.{}",
+                table_id.namespace_id().as_str(),
+                table_id.table_name().as_str()
+            );
+        } else {
+            log::warn!(
+                "[SchemaRegistry] Provider NOT FOUND for table {}.{}",
+                table_id.namespace_id().as_str(),
+                table_id.table_name().as_str()
+            );
+        }
+        result
     }
 
     /// Resolve partial storage path template for a table
@@ -584,7 +641,7 @@ impl SchemaRegistry {
     /// # Example
     /// ```ignore
     /// // Requires a properly constructed StorageRegistry; see crate docs for setup.
-    /// // let registry = SchemaRegistry::new(1000, Some(storage_registry));
+    /// // let registry = SchemaRegistry::new(1000);
     /// // let template = cache.resolve_storage_path_template(
     /// //     &NamespaceId::new("my_ns"),
     /// //     &TableName::new("messages"),
@@ -600,51 +657,51 @@ impl SchemaRegistry {
         table_type: TableType,
         storage_id: &StorageId,
     ) -> Result<String, KalamDbError> {
-        // Get storage registry (required for resolution)
-        let registry = self.storage_registry.as_ref().ok_or_else(|| {
-            KalamDbError::Other(
-                "StorageRegistry not set on SchemaRegistry - call with_storage_registry()".to_string(),
-            )
-        })?;
-
-        // Query storage config from system.storages
-        let storage_config = registry
-            .get_storage_config(storage_id.as_str())?
+        // Fetch storage configuration from system.storages
+        let app_ctx = crate::app_context::AppContext::get();
+        let storages_provider = app_ctx.system_tables().storages();
+        let storage = storages_provider
+            .get_storage(storage_id)
+            .map_err(|e| KalamDbError::Other(format!(
+                "Failed to load storage configuration '{}': {}",
+                storage_id.as_str(),
+                e
+            )))?
             .ok_or_else(|| {
-                KalamDbError::Other(format!("Storage config not found: {}", storage_id))
+                KalamDbError::InvalidOperation(format!(
+                    "Storage '{}' not found while resolving path template",
+                    storage_id.as_str()
+                ))
             })?;
 
-        // Select template based on table type
-        let template = match table_type {
-            TableType::User => &storage_config.user_tables_template,
-            TableType::Shared | TableType::System => &storage_config.shared_tables_template,
-            TableType::Stream => {
-                // Stream tables don't use Parquet storage
-                return Ok(String::new());
-            }
+        let raw_template = match table_type {
+            TableType::User => storage.user_tables_template,
+            TableType::Shared | TableType::Stream => storage.shared_tables_template,
+            TableType::System => "system/{namespace}/{tableName}".to_string(),
         };
 
-        // Substitute STATIC placeholders only
-        let partial_path = template
+        // Normalize legacy placeholder variants to canonical names
+        let canonical = Self::normalize_template_placeholders(&raw_template);
+
+        // Substitute static placeholders while leaving dynamic ones ({userId}, {shard}) for later
+        let resolved = canonical
             .replace("{namespace}", namespace.as_str())
             .replace("{tableName}", table_name.as_str());
 
-        // Build full path: <base_directory>/<partial_template>/
-        // If storage.base_directory is empty, fall back to server-level default_storage_path
-        let base_dir = if storage_config.base_directory.is_empty() {
-            // Use configured default from StorageRegistry (e.g., ./data/storage)
-            registry.default_storage_path().trim_end_matches('/').to_string()
-        } else {
-            storage_config.base_directory.trim_end_matches('/').to_string()
-        };
+        Ok(resolved)
+    }
 
-        let full_path = format!(
-            "{}/{}/",
-            base_dir,
-            partial_path.trim_matches('/')
-        );
-
-        Ok(full_path)
+    fn normalize_template_placeholders(template: &str) -> String {
+        template
+            .replace("{table_name}", "{tableName}")
+            .replace("{namespace_id}", "{namespace}")
+            .replace("{namespaceId}", "{namespace}")
+            .replace("{table-id}", "{tableName}")
+            .replace("{namespace-id}", "{namespace}")
+            .replace("{user_id}", "{userId}")
+            .replace("{user-id}", "{userId}")
+            .replace("{shard_id}", "{shard}")
+            .replace("{shard-id}", "{shard}")
     }
 
     // ===== Persistence Methods (Phase 5: SchemaRegistry Consolidation) =====
@@ -720,7 +777,7 @@ impl SchemaRegistry {
         let tables_provider = app_ctx.system_tables().tables();
         
         // Delete from storage
-        tables_provider.delete_table(&table_id)?;
+        tables_provider.delete_table(table_id)?;
 
         // Invalidate cache
         self.invalidate(table_id);
@@ -741,7 +798,9 @@ impl SchemaRegistry {
         let tables_provider = app_ctx.system_tables().tables();
         
         // Scan all tables from storage
-        tables_provider.scan_all()
+        tables_provider.scan_all().map_err(|e| {
+            KalamDbError::Other(format!("Failed to scan tables: {}", e))
+        })
     }
 
 
@@ -788,9 +847,10 @@ impl SchemaRegistry {
     ) -> Result<Arc<arrow::datatypes::Schema>, KalamDbError> {
         // Get cached table data
         let cached_data = self.get(table_id)
-            .ok_or_else(|| KalamDbError::TableNotFound(
-                format!("Table {} not found in schema cache", table_id)
-            ))?;
+            .ok_or_else(|| KalamDbError::TableNotFound(format!(
+                "Table not found: {}",
+                table_id
+            )))?;
 
         // Delegate to CachedTableData's double-check locking implementation
         cached_data.arrow_schema()
@@ -799,7 +859,7 @@ impl SchemaRegistry {
 
 impl Default for SchemaRegistry {
     fn default() -> Self {
-        Self::new(10000, None) // Default max size: 10,000 tables
+        Self::new(10000) // Default max size: 10,000 tables
     }
 }
 
@@ -851,7 +911,7 @@ mod tests {
 
     #[test]
     fn test_insert_and_get() {
-        let cache = SchemaRegistry::new(1000, None);
+        let cache = SchemaRegistry::new(1000);
         let table_id = TableId::new(NamespaceId::new("ns1"), TableName::new("table1"));
         let data = create_test_data(table_id.clone());
 
@@ -864,7 +924,7 @@ mod tests {
 
     #[test]
     fn test_get_by_name() {
-        let cache = SchemaRegistry::new(1000, None);
+        let cache = SchemaRegistry::new(1000);
         let namespace = NamespaceId::new("ns1");
         let table_name = TableName::new("table1");
         let table_id = TableId::new(namespace.clone(), table_name.clone());
@@ -880,7 +940,7 @@ mod tests {
 
     #[test]
     fn test_lru_eviction() {
-        let cache = SchemaRegistry::new(3, None); // Small cache for testing
+        let cache = SchemaRegistry::new(3); // Small cache for testing
 
         // Insert 3 tables
         let table1 = TableId::new(NamespaceId::new("ns1"), TableName::new("table1"));
@@ -913,7 +973,7 @@ mod tests {
 
     #[test]
     fn test_invalidate() {
-        let cache = SchemaRegistry::new(1000, None);
+        let cache = SchemaRegistry::new(1000);
         let table_id = TableId::new(NamespaceId::new("ns1"), TableName::new("table1"));
         let data = create_test_data(table_id.clone());
 
@@ -926,7 +986,7 @@ mod tests {
 
     #[test]
     fn test_storage_path_resolution() {
-        let cache = SchemaRegistry::new(1000, None);
+        let cache = SchemaRegistry::new(1000);
         let table_id = TableId::new(NamespaceId::new("my_ns"), TableName::new("messages"));
         
         // Create test data with properly set storage_path_template
@@ -942,12 +1002,13 @@ mod tests {
             .get_storage_path(&table_id, Some(&UserId::new("alice")), Some(0))
             .expect("Should resolve path");
 
-        assert_eq!(path, "/data/my_ns/messages/alice/shard_0/");
+        let expected_suffix = "/data/my_ns/messages/alice/shard_0/";
+        assert!(path.ends_with(expected_suffix), "Expected path to end with '{}', got '{}'", expected_suffix, path);
     }
 
     #[test]
     fn test_concurrent_access() {
-        let cache = Arc::new(SchemaRegistry::new(1000, None));
+        let cache = Arc::new(SchemaRegistry::new(1000));
         let table_id = TableId::new(NamespaceId::new("ns1"), TableName::new("table1"));
         let data = create_test_data(table_id.clone());
 
@@ -978,7 +1039,7 @@ mod tests {
 
     #[test]
     fn test_metrics() {
-        let cache = SchemaRegistry::new(1000, None);
+        let cache = SchemaRegistry::new(1000);
         let table_id = TableId::new(NamespaceId::new("ns1"), TableName::new("table1"));
         let data = create_test_data(table_id.clone());
 
@@ -1001,7 +1062,7 @@ mod tests {
 
     #[test]
     fn test_clear() {
-        let cache = SchemaRegistry::new(1000, None);
+        let cache = SchemaRegistry::new(1000);
         let table_id = TableId::new(NamespaceId::new("ns1"), TableName::new("table1"));
         let data = create_test_data(table_id.clone());
 
@@ -1022,7 +1083,7 @@ mod tests {
     fn bench_cache_hit_rate() {
         use std::time::Instant;
 
-        let cache = SchemaRegistry::new(10000, None); // Large enough for all tables
+        let cache = SchemaRegistry::new(10000); // Large enough for all tables
         let num_tables = 1000;
         let queries_per_table = 100;
 
@@ -1086,7 +1147,7 @@ mod tests {
     fn bench_cache_memory_efficiency() {
         use std::mem;
 
-        let cache = SchemaRegistry::new(10000, None);
+        let cache = SchemaRegistry::new(10000);
         let num_tables = 1000;
 
         // Create 1000 CachedTableData entries
@@ -1159,7 +1220,7 @@ mod tests {
     fn bench_provider_caching() {
         use std::sync::Arc as StdArc;
 
-        let cache = SchemaRegistry::new(1000, None);
+        let cache = SchemaRegistry::new(1000);
         let num_tables = 10;
         let num_users = 100;
         let queries_per_user = 10;
@@ -1232,7 +1293,7 @@ mod tests {
         use std::thread;
         use std::time::Instant;
 
-        let cache = StdArc::new(SchemaRegistry::new(1000, None));
+        let cache = StdArc::new(SchemaRegistry::new(1000));
         let num_threads = 100;
         let ops_per_thread = 1000;
 
@@ -1317,14 +1378,74 @@ mod tests {
 
     #[test]
     fn test_provider_cache_insert_and_get() {
-        use crate::tables::system::stats::StatsTableProvider;
-        let cache = SchemaRegistry::new(1000, None);
+        use kalamdb_system::providers::stats::StatsTableProvider;
+        let cache = SchemaRegistry::new(1000);
         let table_id = TableId::new(NamespaceId::new("ns1"), TableName::new("stats"));
         let provider = Arc::new(StatsTableProvider::new(None)) as Arc<dyn TableProvider + Send + Sync>;
 
-        cache.insert_provider(table_id.clone(), Arc::clone(&provider));
+        cache.insert_provider(table_id.clone(), Arc::clone(&provider)).expect("insert failed");
         let retrieved = cache.get_provider(&table_id).expect("provider present");
 
         assert!(Arc::ptr_eq(&provider, &retrieved), "must return same Arc instance");
+    }
+
+    #[test]
+    fn test_cached_table_data_includes_system_columns() {
+        use crate::system_columns::SystemColumnsService;
+        use kalamdb_commons::models::schemas::{ColumnDefinition, TableOptions, TableType};
+        use kalamdb_commons::models::datatypes::KalamDataType;
+        use arrow::datatypes::DataType;
+
+        // Create a table definition with user columns
+        let user_col = ColumnDefinition::new(
+            "user_name".to_string(),
+            1,
+            KalamDataType::Text,
+            false,
+            true,
+            false,
+            kalamdb_commons::models::schemas::ColumnDefault::None,
+            None,
+        );
+
+        let mut table_def = kalamdb_commons::models::schemas::TableDefinition::new(
+            NamespaceId::new("test_ns"),
+            TableName::new("test_table"),
+            TableType::User,
+            vec![user_col],
+            TableOptions::user(),
+            None,
+        )
+        .unwrap();
+
+        // Add system columns using SystemColumnsService
+        let sys_cols = SystemColumnsService::new(1);
+        sys_cols.add_system_columns(&mut table_def).unwrap();
+
+        // Verify columns were added
+        assert_eq!(table_def.columns.len(), 3, "Should have 1 user column + 2 system columns");
+        assert_eq!(table_def.columns[0].column_name, "user_name");
+        assert_eq!(table_def.columns[1].column_name, "_seq");
+        assert_eq!(table_def.columns[2].column_name, "_deleted");
+
+        // Create CachedTableData
+        let cached_data = CachedTableData::new(Arc::new(table_def));
+
+        // Get Arrow schema (should include system columns)
+        let arrow_schema = cached_data.arrow_schema().expect("Arrow schema should be available");
+
+        // Verify Arrow schema has all columns including system columns
+        assert_eq!(arrow_schema.fields().len(), 3, "Arrow schema should have 3 columns");
+        assert_eq!(arrow_schema.field(0).name(), "user_name");
+        assert_eq!(arrow_schema.field(1).name(), "_seq");
+        assert_eq!(arrow_schema.field(2).name(), "_deleted");
+
+        // Verify column types
+        assert!(matches!(arrow_schema.field(1).data_type(), DataType::Int64), 
+                "_seq should be Int64 (BigInt)");
+        assert!(matches!(arrow_schema.field(2).data_type(), DataType::Boolean), 
+                "_deleted should be Boolean");
+
+        println!("✅ T014: CachedTableData Arrow schema includes _seq and _deleted system columns");
     }
 }

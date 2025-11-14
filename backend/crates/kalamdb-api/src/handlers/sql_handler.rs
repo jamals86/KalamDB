@@ -239,7 +239,7 @@ pub async fn execute_sql_v1(
                     stmt_duration_secs,
                     row_count,
                     auth_result.user_id.clone(),
-                    kalamdb_core::slow_query_logger::TableType::User, // Default to User
+                    kalamdb_core::schema_registry::TableType::User, // Default to User
                     None, // Table name could be extracted from SQL parsing
                 );
                 

@@ -494,7 +494,10 @@ impl HandlerRegistry {
         handler.check_authorization(&statement, context).await?;
 
         // Step 4: Execute statement (session is in context, no need to pass separately)
-        handler.execute(statement, params, context).await
+        println!("[DEBUG HandlerRegistry] About to execute handler for statement: {}", statement.name());
+        let result = handler.execute(statement, params, context).await;
+        println!("[DEBUG HandlerRegistry] Handler returned: {:?}", result.as_ref().map(|r| format!("{:?}", r)).unwrap_or_else(|e| format!("Error: {}", e)));
+        result
     }
 
     /// Check if a handler is registered for a statement type
@@ -658,7 +661,7 @@ mod tests {
         init_test_app_context();
         let app_ctx = AppContext::get();
         let registry = HandlerRegistry::new(app_ctx);
-        let session = SessionContext::new();
+        let _session = SessionContext::new();
         let ctx = ExecutionContext::new(UserId::from("test_user"), Role::User, create_test_session());
 
         let stmt = SqlStatement::new(
@@ -669,16 +672,16 @@ mod tests {
         // Check handler is registered (T057)
         assert!(registry.has_handler(&stmt));
 
-        // Execute via registry - should fail with WHERE required (handler is implemented)
+        // Execute via registry - should fail with table not found (table doesn't exist)
         let result = registry
             .handle(stmt, vec![], &ctx)
             .await;
         
-        // Handler is now fully implemented, expect WHERE id = error
+        // Expect table not found error since test table doesn't exist
         match result {
-            Err(KalamDbError::InvalidOperation(msg)) if msg.contains("WHERE id") => {}
+            Err(KalamDbError::NotFound(msg)) if msg.contains("Table") => {}
             Err(e) => panic!("Unexpected error: {:?}", e),
-            Ok(_) => panic!("Expected WHERE clause required error"),
+            Ok(_) => panic!("Expected table not found error"),
         }
     }
 

@@ -14,6 +14,7 @@ kalamdb-sql = { path = "crates/kalamdb-sql" }
 kalamdb-store = { path = "crates/kalamdb-store" }
 kalamdb-auth = { path = "crates/kalamdb-auth" }
 kalamdb-commons = { path = "crates/kalamdb-commons" }
+kalamdb-system = { path = "crates/kalamdb-system" }
 
 
 # JWT authentication
@@ -21,9 +22,6 @@ jsonwebtoken = { workspace = true }
 
 # Password hashing
 bcrypt = { workspace = true }
-
-# Random password generation
-rand = { workspace = true }
 
 # DataFusion for system schema registration
 datafusion = { workspace = true }
@@ -155,11 +153,11 @@ kalamdb-auth = { path = "crates/kalamdb-auth" }
 kalamdb-sql = { path = "crates/kalamdb-sql" }
 kalamdb-store = { path = "crates/kalamdb-store" }
 kalamdb-commons = { path = "crates/kalamdb-commons" }
+kalamdb-tables = { path = "crates/kalamdb-tables" }
 
 # External dependencies
 tempfile = { workspace = true }
 serde_json = { workspace = true }
-actix-http = { workspace = true }
 actix-web = { workspace = true }
 tokio-tungstenite = { workspace = true }
 futures-util = { workspace = true }
@@ -169,6 +167,6 @@ base64 = { workspace = true }
 bcrypt = { workspace = true }
 datafusion = { workspace = true }
 libc = { workspace = true }
-parquet = { workspace = true }
 arrow = { workspace = true }
 hex = { workspace = true }
+once_cell = { workspace = true }

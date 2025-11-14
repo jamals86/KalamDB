@@ -5,7 +5,8 @@
 use crate::app_context::AppContext;
 use crate::error::KalamDbError;
 use crate::sql::executor::models::ExecutionContext;
-use kalamdb_commons::models::{NamespaceId, StorageId, TableId};
+use kalamdb_commons::models::{NamespaceId, StorageId, TableId, UserId};
+use kalamdb_commons::models::StorageType;
 use kalamdb_commons::schemas::TableType;
 use kalamdb_sql::ddl::CreateTableStatement;
 use std::sync::Arc;
@@ -74,7 +75,7 @@ pub fn create_user_table(
     stmt: CreateTableStatement,
     exec_ctx: &ExecutionContext,
 ) -> Result<String, KalamDbError> {
-    use super::tables::{inject_auto_increment_field, inject_system_columns, save_table_definition, validate_table_name};
+    use super::tables::{inject_auto_increment_field, save_table_definition, validate_table_name};
     use kalamdb_commons::schemas::ColumnDefault;
 
     // RBAC check
@@ -151,24 +152,8 @@ pub fn create_user_table(
         )));
     }
 
-    // Validate storage exists (if specified)
-    let storage_id = if let Some(ref sid) = stmt.storage_id {
-        let storages_provider = app_context.system_tables().storages();
-        let storage_id = StorageId::from(sid.as_str());
-        if storages_provider.get_storage_by_id(&storage_id)?.is_none() {
-            log::error!(
-                "❌ CREATE USER TABLE failed: Storage '{}' does not exist",
-                sid
-            );
-            return Err(KalamDbError::InvalidOperation(format!(
-                "Storage '{}' does not exist",
-                sid
-            )));
-        }
-        storage_id
-    } else {
-        StorageId::from("local") // Default storage
-    };
+    // Resolve storage and ensure it exists
+    let (storage_id, storage_type) = resolve_storage_info(&app_context, stmt.storage_id.as_ref())?;
 
     log::debug!(
         "✓ Validation passed for USER TABLE {}.{} (storage: {})",
@@ -180,9 +165,10 @@ pub fn create_user_table(
     // Auto-increment field injection (id column)
     let schema = inject_auto_increment_field(stmt.schema.clone())?;
 
-    // System column injection (_updated, _deleted)
-    let schema = inject_system_columns(schema, TableType::User)?;
-
+    // REMOVED: inject_system_columns() call
+    // System columns (_id, _updated, _deleted) are now added by SystemColumnsService
+    // in save_table_definition() after TableDefinition creation (Phase 12, US5)
+    
     // Inject DEFAULT SNOWFLAKE_ID() for auto-injected id column
     let mut modified_stmt = stmt.clone();
     if !modified_stmt.column_defaults.contains_key("id") {
@@ -192,19 +178,13 @@ pub fn create_user_table(
         );
     }
 
-    // Save complete table definition to information_schema.tables
+    // Save complete table definition to information_schema.tables (produces full Arrow schema with system columns)
     save_table_definition(&modified_stmt, &schema)?;
 
     // Insert into system.tables
     let table_def = schema_registry
         .get_table_definition(&table_id)?
-        .ok_or_else(|| {
-            KalamDbError::Other(format!(
-                "Failed to retrieve table definition for {}.{} after save",
-                stmt.namespace_id.as_str(),
-                stmt.table_name.as_str()
-            ))
-        })?;
+        .ok_or_else(|| KalamDbError::Other(format!("Failed to retrieve table definition for {}.{} after save", stmt.namespace_id.as_str(), stmt.table_name.as_str())))?;
 
     let tables_provider = app_context.system_tables().tables();
     tables_provider.create_table(&table_id, &table_def).map_err(|e| {
@@ -216,8 +196,7 @@ pub fn create_user_table(
         use crate::schema_registry::CachedTableData;
         use kalamdb_commons::schemas::TableType;
         let template = schema_registry
-            .resolve_storage_path_template(&table_id.namespace_id(), &table_id.table_name(), TableType::User, &storage_id)?
-            .replace("{user_id}", "{userId}"); // normalize placeholder variant
+            .resolve_storage_path_template(&table_id.namespace_id(), &table_id.table_name(), TableType::User, &storage_id)?;
         let mut data = CachedTableData::new(Arc::clone(&table_def));
         data.storage_id = Some(storage_id.clone());
         data.storage_path_template = template.clone();
@@ -231,7 +210,16 @@ pub fn create_user_table(
     }
 
     // Register UserTableProvider for INSERT/UPDATE/DELETE/SELECT operations
-    register_user_table_provider(&app_context, &table_id, schema.clone())?;
+    // Use authoritative Arrow schema rebuilt from TableDefinition (includes system columns)
+    let provider_arrow_schema = table_def
+        .to_arrow_schema()
+        .map_err(|e| KalamDbError::SchemaError(format!("Failed to build provider Arrow schema: {}", e)))?;
+    register_user_table_provider(&app_context, &table_id, provider_arrow_schema)?;
+
+    // Ensure filesystem table directories exist for the creator
+    if storage_type == StorageType::Filesystem {
+        ensure_table_directory_exists(&schema_registry, &table_id, Some(exec_ctx.user_id()))?;
+    }
 
     // Log detailed success with table options
     log::info!(
@@ -255,7 +243,7 @@ pub fn create_shared_table(
     stmt: CreateTableStatement,
     exec_ctx: &ExecutionContext,
 ) -> Result<String, KalamDbError> {
-    use super::tables::{inject_auto_increment_field, inject_system_columns, save_table_definition, validate_table_name};
+    use super::tables::{inject_auto_increment_field, save_table_definition, validate_table_name};
     use kalamdb_commons::schemas::ColumnDefault;
 
     // RBAC check
@@ -332,24 +320,8 @@ pub fn create_shared_table(
         )));
     }
 
-    // Validate storage exists (if specified)
-    let storage_id = if let Some(ref sid) = stmt.storage_id {
-        let storages_provider = app_context.system_tables().storages();
-        let storage_id = StorageId::from(sid.as_str());
-        if storages_provider.get_storage_by_id(&storage_id)?.is_none() {
-            log::error!(
-                "❌ CREATE SHARED TABLE failed: Storage '{}' does not exist",
-                sid
-            );
-            return Err(KalamDbError::InvalidOperation(format!(
-                "Storage '{}' does not exist",
-                sid
-            )));
-        }
-        storage_id
-    } else {
-        StorageId::from("local") // Default storage
-    };
+    // Resolve storage and ensure it exists
+    let (storage_id, storage_type) = resolve_storage_info(&app_context, stmt.storage_id.as_ref())?;
 
     log::debug!(
         "✓ Validation passed for SHARED TABLE {}.{} (storage: {})",
@@ -361,9 +333,10 @@ pub fn create_shared_table(
     // Auto-increment field injection (id column)
     let schema = inject_auto_increment_field(stmt.schema.clone())?;
 
-    // System column injection (_updated, _deleted)
-    let schema = inject_system_columns(schema, TableType::Shared)?;
-
+    // REMOVED: inject_system_columns() call
+    // System columns (_id, _updated, _deleted) are now added by SystemColumnsService
+    // in save_table_definition() after TableDefinition creation (Phase 12, US5)
+    
     // Inject DEFAULT SNOWFLAKE_ID() for auto-injected id column
     let mut modified_stmt = stmt.clone();
     if !modified_stmt.column_defaults.contains_key("id") {
@@ -422,11 +395,61 @@ pub fn create_shared_table(
         stmt.access_level
     );
 
+    if storage_type == StorageType::Filesystem {
+        ensure_table_directory_exists(&schema_registry, &table_id, None)?;
+    }
+
     Ok(format!(
         "Shared table {}.{} created successfully",
         stmt.namespace_id.as_str(),
         stmt.table_name.as_str()
     ))
+}
+
+fn resolve_storage_info(
+    app_context: &Arc<AppContext>,
+    requested: Option<&StorageId>,
+) -> Result<(StorageId, StorageType), KalamDbError> {
+    let storages_provider = app_context.system_tables().storages();
+    let storage_id = requested
+        .cloned()
+        .unwrap_or_else(|| StorageId::from("local"));
+
+    let storage = storages_provider
+        .get_storage_by_id(&storage_id)?
+        .ok_or_else(|| {
+            log::error!(
+                "❌ CREATE TABLE failed: Storage '{}' does not exist",
+                storage_id.as_str()
+            );
+            KalamDbError::InvalidOperation(format!(
+                "Storage '{}' does not exist",
+                storage_id.as_str()
+            ))
+        })?;
+
+    let storage_type = StorageType::from(storage.storage_type.as_str());
+    Ok((storage_id, storage_type))
+}
+
+fn ensure_table_directory_exists(
+    schema_registry: &Arc<crate::schema_registry::SchemaRegistry>,
+    table_id: &TableId,
+    user_id: Option<&UserId>,
+) -> Result<(), KalamDbError> {
+    let path = schema_registry.get_storage_path(table_id, user_id, None)?;
+    if path.trim().is_empty() {
+        return Ok(());
+    }
+
+    let dir = std::path::Path::new(&path);
+    std::fs::create_dir_all(dir).map_err(|e| {
+        KalamDbError::IoError(format!(
+            "Failed to create table directory '{}': {}",
+            dir.display(),
+            e
+        ))
+    })
 }
 
 /// Create STREAM table (TTL-based ephemeral table)

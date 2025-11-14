@@ -92,11 +92,6 @@ display what active jobs we are waiting on
 If the user already specified primary key then we dont do that, the _id we add also should check if the id is indeed unique as well
 99) We are still using NodeId::from(format!("node-{}", std::process::id())) in multiple places we should use the same nodeId from config or context everywhere
 100) JobId need to be shorter its now using timestamp and uuid which is too long, we can use namespace-table-timestamp or even a snowflake id
-101) [2025-11-03 00:11:52.004] [ERROR] - actix-rt|system:0|arbiter:8 - kalamdb_core::tables::user_tables::user_table_flush:490 - Failed to flush 3 rows for user sys_root: Table not found in cache: smoke_ns_1762121503280.user_smoke_1762121503280. Rows kept in buffer.
-[2025-11-03 00:11:52.004] [ERROR] - actix-rt|system:0|arbiter:8 - kalamdb_core::tables::user_tables::user_table_flush:504 - ❌ User table flush failed: table=smoke_ns_1762121503280.user_smoke_1762121503280 — One or more user partitions failed to flush (1 errors). Rows flushed before failure: 0. First error: Failed to flush 3 rows for user sys_root: Table not found in cache: smoke_ns_1762121503280.user_smoke_1762121503280
-[2025-11-03 00:11:52.004] [ERROR] - actix-rt|system:0|arbiter:8 - kalamdb_core::tables::base_flush:348 - ❌ Flush failed: job_id=flush-smoke_ns_1762121503280-user_smoke_1762121503280-1762121512003, table=smoke_ns_1762121503280.user_smoke_1762121503280, duration_ms=0, error=One or more user partitions failed to flush (1 errors). Rows flushed before failure: 0. First error: Failed to flush 3 rows for user sys_root: Table not found in cache: smoke_ns_1762121503280.user_smoke_1762121503280
-[2025-11-03 00:11:52.004] [ERROR] - actix-rt|system:0|arbiter:8 - kalamdb_core::sql::executor:2161 - Flush job failed: job_id=flush-user_smoke_1762121503280-1762121512003-11e214e9-6b12-4115-9a8f-f378eed85f43, error=One or more user partitions failed to flush (1 errors). Rows flushed before failure: 0. First error: Failed to flush 3 rows for user sys_root: Table not found in cache: smoke_ns_1762121503280.user_smoke_1762121503280
-
 
 102) CLI Tests common - Verify that we have a timeout set while we wait for the subscription changes/notifications
 103) Check to see any libraries/dependencies not needed and rmeove them, check each one of the dependencies
@@ -139,7 +134,40 @@ INSERT INTO <namespace>.<table>
    [AS USER '<user_id>']
    VALUES (...);
 
+129) Its better to store the _updated as nanosecond since epoch for better precision and also to avoid collisions when we have multiple updates in the same millisecond
 
+130) We need to have describe table <namespace>.<table> to show the table schema in cli and server as well also to display: cold rows count, hot rows count, total rows count, storage id, primary key(s), indexes, etc
+
+131) InitialDataOptions and InitialDataResult should now have SeqId instead of timestamp we check by it now
+132) add_row_id_column should be removed and all the _updated, _id should be removed from everywhere even deprecation shouldnt be added remove the code completely
+133)  _row_id: &str shouldnt be there we now use SharedTableRowId or UserTableRowId in all places instead of string
+134) Instead of passing namespace/table_name and also tableid pass only TableId also places where there is both of NamespaceId and TableName pass TableId instead  
+    namespace_id: &NamespaceId, //TODO: Remove we have TableId
+    table_name: &TableName, //TODO: Remove we have TableId
+    table_id: &TableId,
+
+135) There is some places were we have self.app_context and we at the same time refetch the app_context again
+
+136) Cleanup old data from: backend/crates/kalamdb-commons/src/string_interner.rs and also remove everything have to do with old system columns: _row_id, _id, _updated
+
+137) SharedTableFlushJob AND UserTableFlushJob have so much code duplication we need to combine them into one flush job with some parameters to differ between user/shared table flushing
+
+138) Split into more crates - look at the file crates-splitting.md for more info
+
+139) Instead of using JsonValue for the fields use arrow Array directly for better performance and less serdes overhead: HashMap<String, ScalarValue> should solve this issue completely.
+then we wont be needing: json_to_scalar_value
+SqlRequest will use the same thing as well
+ColumnDefault will use ScalarValue directly as well
+FilterPredicate will use ScalarValue directly as well
+json_rows_to_arrow_batch will be removed completely or less code since we will be using arrow arrays directly
+scalar_value_to_json will be removed completely as well
+ServerMessage will use arrow arrays directly as well
+
+
+140) can we get rid of using EntityStore:: and directlky use the desired store? it will be more type safe
+141) Add a doc file for crates and backend server dependency graph in: docs\architecture, base it on the current code design and add to AGENTS.md to always update the archeticture, this is the base spec for the last change: crates-splitting.md
+
+142) make get_storage_path return PathBuf and any function which responsible for paths and storage should be the same using PathBuf instead of String for better path handling across different OSes, resolve_storage_path_for_user,     pub storage_path_template: String, 
 
 
 Here’s the updated 5-line spec with embedding storage inside Parquet and managed HNSW indexing (with delete handling):
@@ -154,7 +182,7 @@ Here’s the updated 5-line spec with embedding storage inside Parquet and manag
 IMPORTANT:
 1) Done - Schema information_schema
 2) Done - Datatypes for columns
-3) Done - Parametrized Queries
+3) Parametrized Queries needs to work with ScalarValue and be added to the api endpoint
 4) Add manifest file for each user table, that will help us locate which parquet files we need to read in each query, and if in fact we need to read parquet files at all, since sometimes the data will be only inside rocksdb and no need for file io
 4) Support update/deleted as a separate join table per user by MAX(_updated)
 5) Storage files compaction
@@ -166,6 +194,8 @@ IMPORTANT:
 
 9) in impl JobExecutor for FlushExecutor add generic to the model instead of having json parameters we can have T: DeserializeOwned + Send + Sync + 'static and then we can deserialize into the right struct directly instead of having to parse json each time
 
+10) use hashbrown instead of hashmap for better performance where possible
+11) Investigate using vortex instead of parquet or as an option for the user to choose which format to use for storing flushed data
 
 
 Key Findings

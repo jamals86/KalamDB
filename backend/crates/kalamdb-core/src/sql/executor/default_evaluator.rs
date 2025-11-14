@@ -4,6 +4,8 @@
 //! Supports literal values and function calls (NOW, CURRENT_USER, SNOWFLAKE_ID, UUID_V7, ULID).
 
 use crate::error::KalamDbError;
+use crate::schema_registry::system_columns_service::SystemColumnsService;
+use std::sync::Arc;
 use kalamdb_commons::models::UserId;
 use kalamdb_commons::schemas::ColumnDefault;
 use serde_json::Value as JsonValue;
@@ -13,7 +15,7 @@ use serde_json::Value as JsonValue;
 /// # Arguments
 /// - `default`: The ColumnDefault specification from table schema
 /// - `user_id`: Current user ID (for CURRENT_USER() function)
-/// - `node_id`: Node ID for Snowflake ID generation (0 for single-node deployments)
+/// - `sys_cols`: Optional SystemColumnsService for SNOWFLAKE_ID generation (uses fresh generator if None)
 ///
 /// # Returns
 /// - `Ok(JsonValue)`: Evaluated default value
@@ -21,7 +23,7 @@ use serde_json::Value as JsonValue;
 pub fn evaluate_default(
     default: &ColumnDefault,
     user_id: &UserId,
-    node_id: u16,
+    sys_cols: Option<Arc<SystemColumnsService>>,
 ) -> Result<JsonValue, KalamDbError> {
     match default {
         ColumnDefault::None => {
@@ -35,7 +37,7 @@ pub fn evaluate_default(
             Ok(value.clone())
         }
         ColumnDefault::FunctionCall { name, args } => {
-            evaluate_function(name, args, user_id, node_id)
+            evaluate_function(name, args, user_id, sys_cols)
         }
     }
 }
@@ -45,7 +47,7 @@ fn evaluate_function(
     func_name: &str,
     args: &[JsonValue],
     user_id: &UserId,
-    node_id: u16,
+    sys_cols: Option<Arc<SystemColumnsService>>,
 ) -> Result<JsonValue, KalamDbError> {
     let func_upper = func_name.to_uppercase();
 
@@ -79,12 +81,23 @@ fn evaluate_function(
                     "SNOWFLAKE_ID() takes no arguments".to_string(),
                 ));
             }
-            use kalamdb_commons::ids::SnowflakeGenerator;
-            let generator = SnowflakeGenerator::new(node_id);
-            let id = generator
-                .next_id()
-                .map_err(|e| KalamDbError::InvalidOperation(format!("Snowflake ID generation failed: {}", e)))?;
-            Ok(JsonValue::Number(id.into()))
+            // Use SystemColumnsService for proper Snowflake ID generation
+            match sys_cols {
+                Some(svc) => {
+                    let seq_id = svc.generate_seq_id()
+                        .map_err(|e| KalamDbError::InvalidOperation(format!("Snowflake ID generation failed: {}", e)))?;
+                    Ok(JsonValue::Number(seq_id.as_i64().into()))
+                }
+                None => {
+                    // Fallback: create fresh generator (non-singleton, for testing only)
+                    use kalamdb_commons::ids::SnowflakeGenerator;
+                    let generator = SnowflakeGenerator::new(0);
+                    let id = generator
+                        .next_id()
+                        .map_err(|e| KalamDbError::InvalidOperation(format!("Snowflake ID generation failed: {}", e)))?;
+                    Ok(JsonValue::Number(id.into()))
+                }
+            }
         }
 
         "UUID_V7" => {
@@ -130,7 +143,7 @@ mod tests {
     fn test_evaluate_literal() {
         let default = ColumnDefault::literal(serde_json::json!(42));
         let user_id = UserId::from("u_test123");
-        let result = evaluate_default(&default, &user_id, 0).unwrap();
+        let result = evaluate_default(&default, &user_id, None).unwrap();
         assert_eq!(result, serde_json::json!(42));
     }
 
@@ -138,7 +151,7 @@ mod tests {
     fn test_evaluate_current_user() {
         let default = ColumnDefault::function("CURRENT_USER", vec![]);
         let user_id = UserId::from("u_test123");
-        let result = evaluate_default(&default, &user_id, 0).unwrap();
+        let result = evaluate_default(&default, &user_id, None).unwrap();
         assert_eq!(result, serde_json::json!("u_test123"));
     }
 
@@ -146,7 +159,7 @@ mod tests {
     fn test_evaluate_now() {
         let default = ColumnDefault::function("NOW", vec![]);
         let user_id = UserId::from("u_test123");
-        let result = evaluate_default(&default, &user_id, 0).unwrap();
+        let result = evaluate_default(&default, &user_id, None).unwrap();
         // Should be a valid RFC3339 timestamp string
         assert!(result.is_string());
         let timestamp_str = result.as_str().unwrap();
@@ -157,7 +170,7 @@ mod tests {
     fn test_evaluate_snowflake_id() {
         let default = ColumnDefault::function("SNOWFLAKE_ID", vec![]);
         let user_id = UserId::from("u_test123");
-        let result = evaluate_default(&default, &user_id, 0).unwrap();
+        let result = evaluate_default(&default, &user_id, None).unwrap();
         assert!(result.is_number());
         let id = result.as_i64().unwrap();
         assert!(id > 0);
@@ -167,7 +180,7 @@ mod tests {
     fn test_evaluate_uuid_v7() {
         let default = ColumnDefault::function("UUID_V7", vec![]);
         let user_id = UserId::from("u_test123");
-        let result = evaluate_default(&default, &user_id, 0).unwrap();
+        let result = evaluate_default(&default, &user_id, None).unwrap();
         assert!(result.is_string());
         let uuid_str = result.as_str().unwrap();
         assert_eq!(uuid_str.len(), 36); // UUID format: 8-4-4-4-12
@@ -178,7 +191,7 @@ mod tests {
     fn test_evaluate_ulid() {
         let default = ColumnDefault::function("ULID", vec![]);
         let user_id = UserId::from("u_test123");
-        let result = evaluate_default(&default, &user_id, 0).unwrap();
+        let result = evaluate_default(&default, &user_id, None).unwrap();
         assert!(result.is_string());
         let ulid_str = result.as_str().unwrap();
         assert_eq!(ulid_str.len(), 32); // 32 hex chars (UUID without dashes)
@@ -188,7 +201,7 @@ mod tests {
     fn test_evaluate_current_user_with_args_fails() {
         let default = ColumnDefault::function("CURRENT_USER", vec![serde_json::json!("arg")]);
         let user_id = UserId::from("u_test123");
-        let result = evaluate_default(&default, &user_id, 0);
+        let result = evaluate_default(&default, &user_id, None);
         assert!(result.is_err());
         assert!(result.unwrap_err().to_string().contains("takes no arguments"));
     }
@@ -197,7 +210,7 @@ mod tests {
     fn test_evaluate_unknown_function() {
         let default = ColumnDefault::function("UNKNOWN_FUNC", vec![]);
         let user_id = UserId::from("u_test123");
-        let result = evaluate_default(&default, &user_id, 0);
+        let result = evaluate_default(&default, &user_id, None);
         assert!(result.is_err());
         assert!(result.unwrap_err().to_string().contains("Unknown DEFAULT function"));
     }

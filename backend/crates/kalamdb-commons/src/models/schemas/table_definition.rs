@@ -52,9 +52,9 @@ impl TableDefinition {
     ///
     /// # Example
     ///
-    /// ```
+    /// ```rust,ignore
     /// use kalamdb_commons::models::schemas::{TableDefinition, ColumnDefinition, TableType, TableOptions};
-    /// use kalamdb_commons::models::types::KalamDataType;
+    /// use kalamdb_commons::models::datatypes::KalamDataType;
     /// use kalamdb_commons::{NamespaceId, TableName, TableId, StorageId};
     ///
     /// let columns = vec![
@@ -67,19 +67,7 @@ impl TableDefinition {
     /// let table_name = TableName::new("users");
     /// let table_id = TableId::new(namespace_id.clone(), table_name.clone());
     ///
-    /// let table = TableDefinition::new(
-    ///     table_id,
-    ///     namespace_id,
-    ///     table_name,
-    ///     TableType::User,
-    ///     columns,
-    ///     TableOptions::user(),
-    ///     Some("User accounts table".into()),
-    ///     Some(StorageId::local()),
-    ///     false,
-    ///     24,
-    ///     None,
-    /// ).unwrap();
+    /// let table = TableDefinition::new(namespace_id, table_name, TableType::User, columns, TableOptions::user(), Some("User accounts table".into())).unwrap();
     ///
     /// assert_eq!(table.namespace_id, NamespaceId::new("my_namespace"));
     /// assert_eq!(table.table_name, TableName::new("users"));

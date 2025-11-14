@@ -12,8 +12,8 @@ use crate::jobs::executors::{
 use crate::live_query::LiveQueryManager;
 use crate::sql::datafusion_session::DataFusionSessionFactory;
 use crate::storage::storage_registry::StorageRegistry;
-use crate::tables::system::registry::SystemTablesRegistry;
-use crate::tables::{SharedTableStore, StreamTableStore, UserTableStore};
+use kalamdb_system::SystemTablesRegistry;
+use kalamdb_tables::{SharedTableStore, StreamTableStore, UserTableStore};
 use datafusion::catalog::SchemaProvider;
 use datafusion::prelude::SessionContext;
 use kalamdb_commons::{NodeId, ServerConfig, constants::ColumnFamilyNames};
@@ -64,6 +64,9 @@ pub struct AppContext {
     // ===== System Tables Registry =====
     system_tables: Arc<SystemTablesRegistry>,
     
+    // ===== System Columns Service =====
+    system_columns_service: Arc<crate::system_columns::SystemColumnsService>,
+    
     // ===== Slow Query Logger =====
     slow_query_logger: Arc<crate::slow_query_logger::SlowQueryLogger>,
 }
@@ -71,7 +74,6 @@ pub struct AppContext {
 impl std::fmt::Debug for AppContext {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("AppContext")
-            .field("schema_cache", &"Arc<SchemaCache>")
             .field("schema_registry", &"Arc<SchemaRegistry>")
             .field("user_table_store", &"Arc<UserTableStore>")
             .field("shared_table_store", &"Arc<SharedTableStore>")
@@ -83,6 +85,7 @@ impl std::fmt::Debug for AppContext {
             .field("session_factory", &"Arc<DataFusionSessionFactory>")
             .field("base_session_context", &"Arc<SessionContext>")
             .field("system_tables", &"Arc<SystemTablesRegistry>")
+            .field("system_columns_service", &"Arc<SystemColumnsService>")
             .field("slow_query_logger", &"Arc<SlowQueryLogger>")
             .finish()
     }
@@ -155,7 +158,7 @@ impl AppContext {
                 ));
 
                 // Create schema cache (Phase 10 unified cache)
-                let schema_cache = Arc::new(SchemaRegistry::new(10000, Some(storage_registry.clone())));
+                let schema_registry = Arc::new(SchemaRegistry::new(10000));
 
                 // Register all system tables in DataFusion
                 let session_factory = Arc::new(DataFusionSessionFactory::new()
@@ -163,7 +166,7 @@ impl AppContext {
                 let base_session_context = Arc::new(session_factory.create_session());
 
                 // Wire up SchemaRegistry with base_session_context for automatic table registration
-                schema_cache.set_base_session_context(Arc::clone(&base_session_context));
+                schema_registry.set_base_session_context(Arc::clone(&base_session_context));
 
                 // Register system schema
                 let system_schema = Arc::new(datafusion::catalog::memory::MemorySchemaProvider::new());
@@ -184,10 +187,6 @@ impl AppContext {
                         .register_table(table_name.to_string(), provider)
                         .expect("Failed to register system table");
                 }
-
-                // SchemaRegistry is just an alias for SchemaCache (Phase 5 complete)
-                // No separate schema_store needed - persistence methods use AppContext to access TablesTableProvider
-                let schema_registry = schema_cache.clone();
 
                 // NOW wire up information_schema providers with schema_registry
                 // This must happen BEFORE registering them with DataFusion
@@ -230,9 +229,7 @@ impl AppContext {
                     system_tables.live_queries(),
                     schema_registry.clone(),
                     (*node_id).clone(), // Dereference Arc<NodeId> to NodeId for LiveQueryManager
-                    Some(user_table_store.clone()),
-                    Some(shared_table_store.clone()),
-                    Some(stream_table_store.clone()),
+                    Some(storage_backend.clone()),
                 ));
 
                 // Create slow query logger (Phase 11)
@@ -241,6 +238,11 @@ impl AppContext {
                     slow_log_path,
                     config.logging.slow_query_threshold_ms,
                 );
+
+                // Create system columns service (Phase 12, US5, T027)
+                // Extract worker_id from node_id for Snowflake ID generation
+                let worker_id = Self::extract_worker_id(&node_id);
+                let system_columns_service = Arc::new(crate::system_columns::SystemColumnsService::new(worker_id));
 
                 Arc::new(AppContext {
                     node_id,
@@ -256,10 +258,282 @@ impl AppContext {
                     system_tables,
                     session_factory,
                     base_session_context,
+                    system_columns_service,
                     slow_query_logger,
                 })
             })
             .clone()
+    }
+
+    /// Extract worker_id from node_id for Snowflake ID generation
+    ///
+    /// Maps node_id string to 10-bit integer (0-1023) using CRC32 hash.
+    /// This ensures consistent worker_id across server restarts.
+    fn extract_worker_id(node_id: &NodeId) -> u16 {
+        use std::hash::{Hash, Hasher};
+        use std::collections::hash_map::DefaultHasher;
+        
+        let mut hasher = DefaultHasher::new();
+        node_id.as_str().hash(&mut hasher);
+        let hash = hasher.finish();
+        
+        // Map to 10-bit range (0-1023)
+        (hash % 1024) as u16
+    }
+
+    /// Create a minimal AppContext for unit testing
+    ///
+    /// This factory method creates a lightweight AppContext with only essential
+    /// dependencies initialized. Use this in unit tests instead of AppContext::get()
+    /// to avoid singleton initialization requirements.
+    ///
+    /// **Phase 12, US5**: Test-specific factory with SystemColumnsService (worker_id=0)
+    ///
+    /// # Example
+    /// ```no_run
+    /// use kalamdb_core::app_context::AppContext;
+    /// use std::sync::Arc;
+    ///
+    /// let app_context = Arc::new(AppContext::new_test());
+    /// let sys_cols = app_context.system_columns_service();
+    /// let (snowflake_id, updated_ns, deleted) = sys_cols.handle_insert(None).unwrap();
+    /// ```
+    #[cfg(test)]
+    pub fn new_test() -> Self {
+        use kalamdb_store::test_utils::InMemoryBackend;
+        
+        // Create minimal in-memory backend for tests
+        let storage_backend: Arc<dyn StorageBackend> = Arc::new(InMemoryBackend::new());
+        
+        // Create stores
+        let user_table_store = Arc::new(UserTableStore::new(
+            storage_backend.clone(),
+            ColumnFamilyNames::USER_TABLE_PREFIX.to_string(),
+        ));
+        let shared_table_store = Arc::new(SharedTableStore::new(
+            storage_backend.clone(),
+            ColumnFamilyNames::SHARED_TABLE_PREFIX.to_string(),
+        ));
+        let stream_table_store = Arc::new(StreamTableStore::new(
+            storage_backend.clone(),
+            ColumnFamilyNames::STREAM_TABLE_PREFIX.to_string(),
+        ));
+
+        // Create system tables registry
+        let system_tables = Arc::new(SystemTablesRegistry::new(storage_backend.clone()));
+
+        // Create storage registry with temp path
+        let storage_registry = Arc::new(StorageRegistry::new(
+            system_tables.storages(),
+            "/tmp/kalamdb-test".to_string(),
+        ));
+
+        // Create minimal schema registry
+        let schema_registry = Arc::new(SchemaRegistry::new(100));
+
+        // Create DataFusion session
+        let session_factory = Arc::new(DataFusionSessionFactory::new()
+            .expect("Failed to create test session factory"));
+        let base_session_context = Arc::new(session_factory.create_session());
+
+        // Create minimal job manager
+        let job_registry = Arc::new(JobRegistry::new());
+        let jobs_provider = system_tables.jobs();
+        let job_manager = Arc::new(crate::jobs::JobsManager::new(
+            jobs_provider,
+            job_registry,
+        ));
+
+        // Create test NodeId
+        let node_id = Arc::new(NodeId::new("test-node".to_string()));
+
+        // Create live query manager
+        let live_query_manager = Arc::new(LiveQueryManager::new(
+            system_tables.live_queries(),
+            schema_registry.clone(),
+            (*node_id).clone(),
+            Some(storage_backend.clone()),
+        ));
+
+        // Create test config
+        let config = Arc::new(ServerConfig::default());
+
+        // Create minimal slow query logger for tests (no async task)
+        let slow_query_logger = Arc::new(crate::slow_query_logger::SlowQueryLogger::new_test());
+
+        // Create system columns service with worker_id=0 for tests
+        let system_columns_service = Arc::new(crate::system_columns::SystemColumnsService::new(0));
+
+        AppContext {
+            node_id,
+            config,
+            schema_registry,
+            user_table_store,
+            shared_table_store,
+            stream_table_store,
+            storage_backend,
+            job_manager,
+            live_query_manager,
+            storage_registry,
+            system_tables,
+            session_factory,
+            base_session_context,
+            system_columns_service,
+            slow_query_logger,
+        }
+    }
+
+    /// Create AppContext for integration tests without using singleton
+    ///
+    /// This allows each integration test to have its own isolated AppContext
+    /// with its own RocksDB instance, avoiding singleton conflicts.
+    ///
+    /// # Arguments
+    /// * `storage_backend` - Storage backend (usually RocksDB for integration tests)
+    /// * `node_id` - Node identifier  
+    /// * `storage_base_path` - Base directory for storage files
+    /// * `config` - Server configuration
+    ///
+    /// # Returns
+    /// A new Arc<AppContext> that is NOT stored in the singleton
+    /// TODO: Its not used anywhere we can remove it?
+    #[cfg(test)]
+    pub fn new_for_integration_test(
+        storage_backend: Arc<dyn StorageBackend>,
+        node_id: NodeId,
+        storage_base_path: String,
+        config: ServerConfig,
+    ) -> Arc<AppContext> {
+        let node_id = Arc::new(node_id);
+        let config = Arc::new(config);
+
+        // Create stores using constants from kalamdb_commons
+        let user_table_store = Arc::new(UserTableStore::new(
+            storage_backend.clone(),
+            ColumnFamilyNames::USER_TABLE_PREFIX.to_string(),
+        ));
+        let shared_table_store = Arc::new(SharedTableStore::new(
+            storage_backend.clone(),
+            ColumnFamilyNames::SHARED_TABLE_PREFIX.to_string(),
+        ));
+        let stream_table_store = Arc::new(StreamTableStore::new(
+            storage_backend.clone(),
+            ColumnFamilyNames::STREAM_TABLE_PREFIX.to_string(),
+        ));
+
+        // Create system table providers registry
+        let system_tables = Arc::new(SystemTablesRegistry::new(
+            storage_backend.clone(),
+        ));
+
+        // Create storage registry
+        let storage_registry = Arc::new(StorageRegistry::new(
+            system_tables.storages(),
+            storage_base_path,
+        ));
+
+        // Create schema cache
+        let schema_registry = Arc::new(SchemaRegistry::new(10000));
+
+        // Register all system tables in DataFusion
+        let session_factory = Arc::new(DataFusionSessionFactory::new()
+            .expect("Failed to create DataFusion session factory"));
+        let base_session_context = Arc::new(session_factory.create_session());
+
+        // Wire up SchemaRegistry with base_session_context
+        schema_registry.set_base_session_context(Arc::clone(&base_session_context));
+
+        // Register system schema
+        let system_schema = Arc::new(datafusion::catalog::memory::MemorySchemaProvider::new());
+        let catalog_name = base_session_context
+            .catalog_names()
+            .first()
+            .expect("No catalogs available")
+            .clone();
+        base_session_context
+            .catalog(&catalog_name)
+            .expect("Failed to get catalog")
+            .register_schema("system", system_schema.clone())
+            .expect("Failed to register system schema");
+
+        // Register all system table providers
+        for (table_name, provider) in system_tables.all_system_providers() {
+            system_schema
+                .register_table(table_name.to_string(), provider)
+                .expect("Failed to register system table");
+        }
+
+        // Wire up information_schema providers
+        system_tables.set_information_schema_dependencies(schema_registry.clone());
+
+        // Register information_schema
+        let info_schema = Arc::new(datafusion::catalog::memory::MemorySchemaProvider::new());
+        base_session_context
+            .catalog(&catalog_name)
+            .expect("Failed to get catalog")
+            .register_schema("information_schema", info_schema.clone())
+            .expect("Failed to register information_schema");
+
+        for (table_name, provider) in system_tables.all_information_schema_providers() {
+            info_schema
+                .register_table(table_name.to_string(), provider)
+                .expect("Failed to register information_schema table");
+        }
+
+        // Create job registry and register all executors
+        let job_registry = Arc::new(JobRegistry::new());
+        job_registry.register(Arc::new(FlushExecutor::new()));
+        job_registry.register(Arc::new(CleanupExecutor::new()));
+        job_registry.register(Arc::new(RetentionExecutor::new()));
+        job_registry.register(Arc::new(StreamEvictionExecutor::new()));
+        job_registry.register(Arc::new(UserCleanupExecutor::new()));
+        job_registry.register(Arc::new(CompactExecutor::new()));
+        job_registry.register(Arc::new(BackupExecutor::new()));
+        job_registry.register(Arc::new(RestoreExecutor::new()));
+
+        // Create unified job manager
+        let jobs_provider = system_tables.jobs();
+        let job_manager = Arc::new(crate::jobs::JobsManager::new(
+            jobs_provider,
+            job_registry,
+        ));
+
+        // Create live query manager
+        let live_query_manager = Arc::new(LiveQueryManager::new(
+            system_tables.live_queries(),
+            schema_registry.clone(),
+            (*node_id).clone(),
+            Some(storage_backend.clone()),
+        ));
+
+        // Create slow query logger
+        let slow_log_path = format!("{}/slow.log", config.logging.logs_path);
+        let slow_query_logger = crate::slow_query_logger::SlowQueryLogger::new(
+            slow_log_path,
+            config.logging.slow_query_threshold_ms,
+        );
+
+        // Create system columns service
+        let worker_id = Self::extract_worker_id(&node_id);
+        let system_columns_service = Arc::new(crate::system_columns::SystemColumnsService::new(worker_id));
+
+        Arc::new(AppContext {
+            node_id,
+            config,
+            schema_registry,
+            user_table_store,
+            shared_table_store,
+            stream_table_store,
+            storage_backend,
+            job_manager,
+            live_query_manager,
+            storage_registry,
+            system_tables,
+            session_factory,
+            base_session_context,
+            system_columns_service,
+            slow_query_logger,
+        })
     }
 
     /// Get the AppContext singleton
@@ -283,10 +557,6 @@ impl AppContext {
     /// once during AppContext::init() and shared across all components.
     pub fn config(&self) -> &Arc<ServerConfig> {
         &self.config
-    }
-    
-    pub fn schema_cache(&self) -> Arc<SchemaRegistry> {
-        self.schema_registry.clone()
     }
     
     pub fn schema_registry(&self) -> Arc<SchemaRegistry> {
@@ -341,6 +611,14 @@ impl AppContext {
         self.system_tables.clone()
     }
     
+    /// Get the system columns service (Phase 12, US5, T027)
+    ///
+    /// Returns an Arc reference to the SystemColumnsService that manages
+    /// all system column operations (_id, _updated, _deleted).
+    pub fn system_columns_service(&self) -> Arc<crate::system_columns::SystemColumnsService> {
+        self.system_columns_service.clone()
+    }
+    
     /// Get the slow query logger
     ///
     /// Returns an Arc reference to the lightweight slow query logger that writes
@@ -356,6 +634,7 @@ impl AppContext {
     /// Convenience wrapper for system_tables().jobs().create_job()
     pub fn insert_job(&self, job: &kalamdb_commons::system::Job) -> Result<(), crate::error::KalamDbError> {
         self.system_tables.jobs().create_job(job.clone())
+            .map_err(|e| crate::error::KalamDbError::Other(format!("Failed to insert job: {}", e)))
     }
     
     /// Scan all jobs from the jobs table
@@ -363,5 +642,6 @@ impl AppContext {
     /// Convenience wrapper for system_tables().jobs().list_jobs()
     pub fn scan_all_jobs(&self) -> Result<Vec<kalamdb_commons::system::Job>, crate::error::KalamDbError> {
         self.system_tables.jobs().list_jobs()
+            .map_err(|e| crate::error::KalamDbError::Other(format!("Failed to scan jobs: {}", e)))
     }
 }

@@ -6,7 +6,7 @@ use crate::app_context::AppContext;
 use crate::error::KalamDbError;
 use crate::sql::executor::models::{ExecutionContext, ExecutionResult};
 use datafusion::execution::context::SessionContext;
-use kalamdb_commons::models::StorageId;
+use kalamdb_commons::models::{StorageId, StorageType};
 use kalamdb_sql::CreateStorageStatement;
 use std::sync::Arc;
 
@@ -76,6 +76,11 @@ pub async fn execute_create_storage(
         storage_registry.validate_template(&stmt.user_tables_template, true)?;
     }
 
+    // Ensure filesystem storages eagerly create their base directory
+    if stmt.storage_type == StorageType::Filesystem {
+        ensure_filesystem_directory(&stmt.base_directory)?;
+    }
+
     // Validate credentials JSON (if provided)
     let normalized_credentials = if let Some(raw) = stmt.credentials.as_ref() {
         let value: serde_json::Value = serde_json::from_str(raw).map_err(|e| {
@@ -119,6 +124,25 @@ pub async fn execute_create_storage(
 
     Ok(ExecutionResult::Success {
         message: format!("Storage '{}' created successfully", stmt.storage_id),
+    })
+}
+
+/// Ensure a filesystem directory exists (used by CREATE STORAGE handlers)
+pub fn ensure_filesystem_directory(path: &str) -> Result<(), KalamDbError> {
+    let trimmed = path.trim();
+    if trimmed.is_empty() {
+        return Err(KalamDbError::InvalidOperation(
+            "Filesystem storage requires a non-empty base directory".to_string(),
+        ));
+    }
+
+    let dir = std::path::Path::new(trimmed);
+    std::fs::create_dir_all(dir).map_err(|e| {
+        KalamDbError::IoError(format!(
+            "Failed to create storage directory '{}': {}",
+            dir.display(),
+            e
+        ))
     })
 }
 

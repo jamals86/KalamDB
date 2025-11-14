@@ -9,8 +9,9 @@
 
 use super::TestServer;
 use kalamdb_commons::models::{NamespaceId, StorageId, TableId, TableName};
-use kalamdb_core::tables::user_tables::UserTableFlushJob;
-use kalamdb_core::tables::shared_tables::SharedTableFlushJob;
+use kalamdb_core::providers::flush::{FlushJobResult, SharedTableFlushJob, UserTableFlushJob};
+use kalamdb_tables::new_user_table_store;
+use kalamdb_commons::models::NamespaceId as _NsIdAlias; // keep imports grouped
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::Duration;
@@ -34,7 +35,7 @@ pub async fn execute_flush_synchronously(
     server: &TestServer,
     namespace: &str,
     table_name: &str,
-) -> Result<kalamdb_core::tables::base_flush::FlushJobResult, String> {
+) -> Result<FlushJobResult, String> {
     // Get table definition from schema registry via AppContext
     let namespace_id = NamespaceId::new(namespace);
     let table_name_id = TableName::new(table_name);
@@ -70,29 +71,12 @@ pub async fn execute_flush_synchronously(
     let unified_cache = server.app_context.schema_registry();
     let table_id_arc = Arc::new(table_id.clone());
 
-    // Get the registered UserTableProvider and access its store; fallback to constructing a new per-table store
-    let user_table_store = if let Some(provider_arc) = server
-        .app_context
-        .schema_registry()
-        .get_provider(&table_id)
-    {
-        if let Some(provider) = provider_arc.as_any().downcast_ref::<kalamdb_core::tables::user_tables::UserTableProvider>() {
-            provider.shared().store().clone()
-        } else {
-            // Fallback if wrong provider type
-            Arc::new(kalamdb_core::tables::new_user_table_store(
-                server.app_context.storage_backend(),
-                &namespace_id,
-                &table_name_id,
-            ))
-        }
-    } else {
-        Arc::new(kalamdb_core::tables::new_user_table_store(
-            server.app_context.storage_backend(),
-            &namespace_id,
-            &table_name_id,
-        ))
-    };;
+    // Construct a per-table UserTableStore directly (avoids reaching into provider internals)
+    let user_table_store = Arc::new(new_user_table_store(
+        server.app_context.storage_backend(),
+        &namespace_id,
+        &table_name_id,
+    ));
 
     let flush_job = UserTableFlushJob::new(
         table_id_arc,
@@ -113,7 +97,7 @@ pub async fn execute_shared_flush_synchronously(
     server: &TestServer,
     namespace: &str,
     table_name: &str,
-) -> Result<kalamdb_core::tables::base_flush::FlushJobResult, String> {
+) -> Result<FlushJobResult, String> {
     let namespace_id = NamespaceId::new(namespace);
     let table_name_id = TableName::new(table_name);
     let table_id = TableId::new(namespace_id.clone(), table_name_id.clone());
@@ -145,7 +129,7 @@ pub async fn execute_shared_flush_synchronously(
     // Get per-table SharedTableStore and registry from AppContext
     let unified_cache = server.app_context.schema_registry();
     let shared_table_store = Arc::new(
-        kalamdb_core::tables::new_shared_table_store(
+        kalamdb_tables::new_shared_table_store(
             server.app_context.storage_backend(),
             &namespace_id,
             &table_name_id,

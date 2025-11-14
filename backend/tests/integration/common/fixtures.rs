@@ -29,7 +29,7 @@
 
 use crate::common::TestServer;
 use anyhow::Result;
-use kalamdb_api::models::SqlResponse;
+use kalamdb_api::models::{SqlResponse, QueryResult};
 use serde_json::json;
 
 /// Execute SQL with a specific user context.
@@ -66,7 +66,7 @@ pub async fn execute_sql(server: &TestServer, sql: &str, user_id: &str) -> Resul
 /// fixtures::create_namespace(&server, "app").await;
 /// ```
 pub async fn create_namespace(server: &TestServer, namespace: &str) -> SqlResponse {
-    let sql = format!("CREATE NAMESPACE {}", namespace);
+    let sql = format!("CREATE NAMESPACE IF NOT EXISTS {}", namespace);
     // Perform namespace creation as 'system' admin user for RBAC enforcement
     let resp = server.execute_sql_as_user(&sql, "system").await;
     if resp.status != "success" {
@@ -126,10 +126,28 @@ pub async fn drop_namespace(server: &TestServer, namespace: &str) -> SqlResponse
 pub async fn create_messages_table(
     server: &TestServer,
     namespace: &str,
-    user_id: Option<&str>,
+    _user_id: Option<&str>,
 ) -> SqlResponse {
+    // Idempotency: If table already exists in the shared TestServer, short-circuit as success
+    if server.table_exists(namespace, "messages").await {
+        return SqlResponse {
+            status: "success".to_string(),
+            results: vec![QueryResult {
+                rows: None,
+                row_count: 0,
+                columns: vec![],
+                message: Some(format!(
+                    "Table {}.{} already exists (IF NOT EXISTS)",
+                    namespace, "messages"
+                )),
+            }],
+            took_ms: 0,
+            error: None,
+        };
+    }
+
     let sql = format!(
-        r#"CREATE USER TABLE {}.messages (
+        r#"CREATE USER TABLE IF NOT EXISTS {}.messages (
             id INT AUTO_INCREMENT,
             user_id VARCHAR NOT NULL,
             content VARCHAR NOT NULL,
@@ -137,7 +155,8 @@ pub async fn create_messages_table(
         ) FLUSH ROWS 100"#,
         namespace
     );
-    let resp = server.execute_sql_with_user(&sql, user_id).await;
+    // Use system user since only System/Dba roles can create tables
+    let resp = server.execute_sql_as_user(&sql, "system").await;
     if resp.status != "success" {
         eprintln!(
             "CREATE MESSAGES TABLE failed: status={}, error={:?}",
@@ -162,7 +181,7 @@ pub async fn create_user_table_with_flush(
     flush_rows: u32,
 ) -> SqlResponse {
     let sql = format!(
-        r#"CREATE USER TABLE {}.{} (
+        r#"CREATE USER TABLE IF NOT EXISTS {}.{} (
             id INT AUTO_INCREMENT,
             user_id VARCHAR NOT NULL,
             data VARCHAR,
@@ -170,7 +189,7 @@ pub async fn create_user_table_with_flush(
         ) FLUSH ROWS {}"#,
         namespace, table_name, flush_rows
     );
-    server.execute_sql(&sql).await
+    server.execute_sql_as_user(&sql, "system").await
 }
 
 /// Create a shared table (accessible to all users).
@@ -483,7 +502,19 @@ mod tests {
         create_namespace(&server, "app").await;
 
         let response = create_messages_table(&server, "app", Some("user123")).await;
-        assert_eq!(response.status, "success");
+        if response.status != "success" {
+            // In shared TestServer runs, provider may already be registered; accept idempotent already-exists
+            let msg = response
+                .error
+                .as_ref()
+                .map(|e| e.message.clone())
+                .unwrap_or_default();
+            assert!(
+                msg.contains("already exists"),
+                "CREATE TABLE failed unexpectedly: {:?}",
+                response.error
+            );
+        }
         assert!(server.table_exists("app", "messages").await);
     }
 

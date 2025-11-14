@@ -6,6 +6,7 @@
 use crate::error::KalamDbError;
 use arrow::datatypes::{DataType, Field, Schema, TimeUnit};
 use kalamdb_commons::schemas::{ColumnDefault, TableType};
+use kalamdb_commons::StorageId;
 use kalamdb_sql::ddl::CreateTableStatement;
 use std::sync::Arc;
 
@@ -68,8 +69,17 @@ pub fn inject_auto_increment_field(
 
 /// Inject system columns for user tables
 ///
+/// **DEPRECATED (Phase 12, US5)**: This function is being phased out in favor of
+/// `SystemColumnsService.add_system_columns()` which operates on TableDefinition.
+/// The new approach adds _id (Snowflake ID), _updated, and _deleted atomically.
+///
+/// This legacy function only adds _updated and _deleted to Arrow Schema.
+/// It's still called during CREATE TABLE for backward compatibility, but the
+/// actual system columns are now added by SystemColumnsService in save_table_definition().
+///
 /// Adds _updated (TIMESTAMP) and _deleted (BOOLEAN) columns.
 /// For stream tables, this should NOT be called (handled in stream table service).
+#[deprecated(since = "0.2.0", note = "Use SystemColumnsService.add_system_columns() instead")]
 pub fn inject_system_columns(
     schema: Arc<Schema>,
     table_type: TableType,
@@ -117,7 +127,7 @@ pub fn inject_system_columns(
 /// Ok(()) on success, error on failure
 pub fn save_table_definition(
     stmt: &CreateTableStatement,
-    schema: &Arc<Schema>,
+    original_arrow_schema: &Arc<Schema>,
 ) -> Result<(), KalamDbError> {
     use crate::app_context::AppContext;
     use crate::schema_registry::arrow_schema::ArrowSchemaWithOptions;
@@ -127,8 +137,8 @@ pub fn save_table_definition(
         ColumnDefinition, SchemaVersion, TableDefinition, TableOptions,
     };
 
-    // Extract columns directly from Arrow schema
-    let columns: Vec<ColumnDefinition> = schema
+    // Extract columns directly from Arrow schema (user-provided columns only)
+    let columns: Vec<ColumnDefinition> = original_arrow_schema
         .fields()
         .iter()
         .enumerate()
@@ -157,7 +167,7 @@ pub fn save_table_definition(
         TableType::System => TableOptions::system(),
     };
 
-    // Create NEW TableDefinition directly
+    // Create NEW TableDefinition directly (WITHOUT system columns yet)
     let mut table_def = TableDefinition::new(
         stmt.namespace_id.clone(),
         stmt.table_name.clone(),
@@ -168,31 +178,79 @@ pub fn save_table_definition(
     )
     .map_err(|e| KalamDbError::SchemaError(e))?;
 
-    // Initialize schema history with version 1 entry (Initial schema)
-    let schema_json = ArrowSchemaWithOptions::new(schema.clone())
+    // Persist table-level options from DDL (storage, flush policy, ACL, TTL overrides)
+    match (&mut table_def.table_options, stmt.table_type) {
+        (TableOptions::User(opts), TableType::User) => {
+            let storage = stmt
+                .storage_id
+                .clone()
+                .unwrap_or_else(StorageId::local);
+            opts.storage_id = storage;
+            opts.use_user_storage = stmt.use_user_storage;
+            opts.flush_policy = stmt.flush_policy.clone();
+        }
+        (TableOptions::Shared(opts), TableType::Shared) => {
+            let storage = stmt
+                .storage_id
+                .clone()
+                .unwrap_or_else(StorageId::local);
+            opts.storage_id = storage;
+            opts.access_level = stmt.access_level.clone();
+            opts.flush_policy = stmt.flush_policy.clone();
+        }
+        (TableOptions::Stream(opts), TableType::Stream) => {
+            if let Some(ttl) = stmt.ttl_seconds {
+                opts.ttl_seconds = ttl;
+            }
+        }
+        _ => {}
+    }
+
+    // Inject system columns via SystemColumnsService (Phase 12, US5, T022)
+    // This adds _id, _updated, _deleted to the TableDefinition (authoritative types)
+    let app_ctx = AppContext::get();
+    let sys_cols = app_ctx.system_columns_service();
+    sys_cols.add_system_columns(&mut table_def)?;
+
+    // Build Arrow schema FROM the mutated TableDefinition (includes system columns)
+    let full_arrow_schema = table_def
+        .to_arrow_schema()
+        .map_err(|e| KalamDbError::SchemaError(format!("Failed to build Arrow schema after system columns injection: {}", e)))?;
+
+    // Initialize schema history with version 1 entry (Initial full schema WITH system columns)
+    let schema_json = ArrowSchemaWithOptions::new(full_arrow_schema.clone())
         .to_json_string()
-        .map_err(|e| {
-            KalamDbError::SchemaError(format!("Failed to serialize Arrow schema: {}", e))
-        })?;
+        .map_err(|e| KalamDbError::SchemaError(format!("Failed to serialize Arrow schema: {}", e)))?;
 
-    table_def
-        .schema_history
-        .push(SchemaVersion::initial(schema_json));
+    table_def.schema_history.push(SchemaVersion::initial(schema_json));
 
-    // Single atomic write to information_schema_tables via SchemaRegistry
+    // Persist to system.tables AND cache in SchemaRegistry
     let ctx = AppContext::get();
     let schema_registry = ctx.schema_registry();
     let table_id = TableId::from_strings(stmt.namespace_id.as_str(), stmt.table_name.as_str());
+    
+    // Write to system.tables for persistence
+    let tables_provider = ctx.system_tables().tables();
+    tables_provider
+        .create_table(&table_id, &table_def)
+        .map_err(|e| {
+            KalamDbError::Other(format!(
+                "Failed to save table definition to system.tables: {}",
+                e
+            ))
+        })?;
+    
+    // Call stub method for API consistency (actual persistence handled above)
     schema_registry
         .put_table_definition(&table_id, &table_def)
         .map_err(|e| {
             KalamDbError::Other(format!(
-                "Failed to save table definition to information_schema.tables: {}",
+                "Failed to update schema registry: {}",
                 e
             ))
         })?;
 
-    // Prime unified schema cache with freshly saved definition so providers can resolve Arrow schema immediately
+    // Prime unified schema cache with freshly saved definition (includes system columns)
     {
         use crate::schema_registry::CachedTableData;
         let cached = Arc::new(CachedTableData::new(Arc::new(table_def.clone())));

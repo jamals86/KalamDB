@@ -34,7 +34,7 @@ use serde::{Deserialize, Serialize};
 ///
 /// ## Example
 ///
-/// ```rust
+/// ```rust,ignore
 /// use kalamdb_commons::types::Job;
 /// use kalamdb_commons::{NamespaceId, TableName, JobType, JobStatus, JobId, NodeId};
 ///

@@ -342,26 +342,47 @@ impl CLISession {
     }
 
     fn primary_prompt(&self) -> String {
-        let status = if self.color {
+        // On Windows, rustyline has critical issues with ANSI color codes in prompts
+        // The terminal cannot properly calculate display width, causing cursor misalignment
+        // Disable colors entirely in the prompt on Windows (colors still work in output)
+        #[cfg(target_os = "windows")]
+        let use_colors_in_prompt = false;
+        #[cfg(not(target_os = "windows"))]
+        let use_colors_in_prompt = self.color;
+
+        #[cfg(target_os = "windows")]
+        let use_unicode = false;
+        #[cfg(not(target_os = "windows"))]
+        let use_unicode = true;
+
+        let status = if use_colors_in_prompt {
             if self.connected {
-                "●".green().bold().to_string()
+                if use_unicode {
+                    "●".green().bold().to_string()
+                } else {
+                    "*".green().bold().to_string()
+                }
             } else {
-                "○".yellow().bold().to_string()
+                if use_unicode {
+                    "○".yellow().bold().to_string()
+                } else {
+                    "o".yellow().bold().to_string()
+                }
             }
         } else if self.connected {
-            "[ok]".to_string()
+            "*".to_string()
         } else {
-            "[--]".to_string()
+            "o".to_string()
         };
 
-        let brand = if self.color {
+        let brand = if use_colors_in_prompt {
             "KalamDB".bright_blue().bold().to_string()
         } else {
-            "kalamdb".to_string()
+            "KalamDB".to_string()
         };
 
         let brand_with_profile = if let Some(instance) = self.instance.as_deref() {
-            if self.color {
+            if use_colors_in_prompt {
                 format!("{}{}", brand, format!("[{}]", instance).dimmed())
             } else {
                 format!("{}[{}]", brand, instance)
@@ -370,7 +391,7 @@ impl CLISession {
             brand
         };
 
-        let identity = if self.color {
+        let identity = if use_colors_in_prompt {
             format!(
                 "{}{}",
                 self.username.cyan(),
@@ -380,8 +401,12 @@ impl CLISession {
             format!("{}@{}", self.username, self.server_host)
         };
 
-        let arrow = if self.color {
-            "❯".bright_blue().bold().to_string()
+        let arrow = if use_colors_in_prompt {
+            if use_unicode {
+                "❯".bright_blue().bold().to_string()
+            } else {
+                ">".bright_blue().bold().to_string()
+            }
         } else {
             ">".to_string()
         };
@@ -392,8 +417,23 @@ impl CLISession {
     }
 
     fn continuation_prompt(&self) -> String {
-        if self.color {
-            format!("  {} {} ", "↳".dimmed(), "❯".bright_blue().bold())
+        // On Windows, disable colors in prompt to avoid rustyline cursor misalignment
+        #[cfg(target_os = "windows")]
+        let use_colors_in_prompt = false;
+        #[cfg(not(target_os = "windows"))]
+        let use_colors_in_prompt = self.color;
+
+        #[cfg(target_os = "windows")]
+        let use_unicode = false;
+        #[cfg(not(target_os = "windows"))]
+        let use_unicode = true;
+
+        if use_colors_in_prompt {
+            if use_unicode {
+                format!("  {} {} ", "↳".dimmed(), "❯".bright_blue().bold())
+            } else {
+                format!("  {} {} ", "->".dimmed(), ">".bright_blue().bold())
+            }
         } else {
             "  -> ".to_string()
         }

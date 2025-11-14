@@ -5,12 +5,10 @@
 //!
 //! **Updated**: Now uses unified VirtualView pattern from view_base.rs
 
-use crate::error::KalamDbError;
-use crate::schema_registry::views::VirtualView;
-use crate::tables::system::TablesTableProvider;
-use datafusion::arrow::array::{
-    ArrayRef, BooleanArray, RecordBatch, StringBuilder, UInt32Array,
-};
+use super::super::super::error::RegistryError;
+use super::super::super::traits::TablesTableProvider;
+use super::super::VirtualView;
+use datafusion::arrow::array::RecordBatch;
 use datafusion::arrow::datatypes::{DataType, Field, Schema, SchemaRef};
 use std::sync::Arc;
 
@@ -40,7 +38,13 @@ impl InformationSchemaColumnsView {
         }
     }
 
-    fn scan_all_columns(&self) -> Result<RecordBatch, KalamDbError> {
+    fn scan_all_columns(&self) -> Result<RecordBatch, RegistryError> {
+        // TODO: Reimplement after extracting system tables traits
+        return Err(RegistryError::ViewError {
+            message: "information_schema.columns not yet implemented in kalamdb-registry".to_string(),
+        });
+        
+        /* TODO: Reimplement with trait abstraction
         // Get all table definitions from system.tables
         let all_tables = self.tables_provider.list_tables()?;
         
@@ -113,9 +117,10 @@ impl InformationSchemaColumnsView {
                 Arc::new(BooleanArray::from(is_primary_key_values)) as ArrayRef,
             ],
         )
-        .map_err(|e| KalamDbError::Other(format!("Failed to create RecordBatch: {}", e)))?;
+        .map_err(|e| RegistryError::Other(format!("Failed to create RecordBatch: {}", e)))?;
 
         Ok(batch)
+        */
     }
 }
 
@@ -124,7 +129,7 @@ impl VirtualView for InformationSchemaColumnsView {
         self.schema.clone()
     }
 
-    fn compute_batch(&self) -> Result<RecordBatch, KalamDbError> {
+    fn compute_batch(&self) -> Result<RecordBatch, RegistryError> {
         self.scan_all_columns()
     }
 
@@ -139,7 +144,7 @@ impl VirtualView for InformationSchemaColumnsView {
 pub fn create_information_schema_columns_provider(
     tables_provider: Arc<TablesTableProvider>,
 ) -> Arc<dyn datafusion::datasource::TableProvider> {
-    use crate::schema_registry::views::ViewTableProvider;
+    use super::super::ViewTableProvider;
     let view = Arc::new(InformationSchemaColumnsView::new(tables_provider));
     Arc::new(ViewTableProvider::new(view))
 }

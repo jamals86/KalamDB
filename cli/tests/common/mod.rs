@@ -122,6 +122,15 @@ pub fn execute_sql_via_cli_as(
     password: &str,
     sql: &str,
 ) -> Result<String, Box<dyn std::error::Error>> {
+    execute_sql_via_cli_as_with_args(username, password, sql, &[])
+}
+
+fn execute_sql_via_cli_as_with_args(
+    username: &str,
+    password: &str,
+    sql: &str,
+    extra_args: &[&str],
+) -> Result<String, Box<dyn std::error::Error>> {
     let output = Command::new(env!("CARGO_BIN_EXE_kalam"))
         .arg("-u")
         .arg(SERVER_URL)
@@ -129,6 +138,7 @@ pub fn execute_sql_via_cli_as(
         .arg(username)
         .arg("--password")
         .arg(password)
+        .args(extra_args)
         .arg("--command")
         .arg(sql)
         .output()?;
@@ -147,6 +157,13 @@ pub fn execute_sql_via_cli_as(
 /// Helper to execute SQL as root user via CLI (empty password for localhost)
 pub fn execute_sql_as_root_via_cli(sql: &str) -> Result<String, Box<dyn std::error::Error>> {
     execute_sql_via_cli_as("root", "", sql)
+}
+
+/// Helper to execute SQL as root user via CLI returning JSON output to avoid table truncation
+pub fn execute_sql_as_root_via_cli_json(
+    sql: &str,
+) -> Result<String, Box<dyn std::error::Error>> {
+    execute_sql_via_cli_as_with_args("root", "", sql, &["--json"])
 }
 
 /// Helper to generate unique namespace name
@@ -238,8 +255,8 @@ pub fn cleanup_test_table(table_full_name: &str) -> Result<(), Box<dyn std::erro
 /// println!("Generated: {}", token);
 /// ```
 pub fn random_string(len: usize) -> String {
-    rand::thread_rng()
-        .sample_iter(Alphanumeric)
+    let rng = rand::rng();
+    rng.sample_iter(Alphanumeric)
         .take(len)
         .map(char::from)
         .collect()

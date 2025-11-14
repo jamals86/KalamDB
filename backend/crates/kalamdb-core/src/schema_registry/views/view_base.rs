@@ -3,7 +3,7 @@
 //! This module provides the VirtualView trait and ViewTableProvider wrapper
 //! to standardize how views compute their data dynamically using DataFusion patterns.
 
-use crate::error::KalamDbError;
+use super::super::error::RegistryError;
 use async_trait::async_trait;
 use datafusion::arrow::datatypes::SchemaRef;
 use datafusion::arrow::record_batch::RecordBatch;
@@ -25,7 +25,7 @@ pub trait VirtualView: Send + Sync + std::fmt::Debug {
     /// Compute a RecordBatch with the current view data
     ///
     /// This is called on each query to generate fresh results.
-    fn compute_batch(&self) -> Result<RecordBatch, KalamDbError>;
+    fn compute_batch(&self) -> Result<RecordBatch, RegistryError>;
 
     /// Get the view name for logging and debugging
     fn view_name(&self) -> &str;

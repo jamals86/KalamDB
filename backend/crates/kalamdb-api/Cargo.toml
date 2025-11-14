@@ -12,13 +12,13 @@ kalamdb-commons = { path = "../kalamdb-commons" }
 kalamdb-core = { path = "../kalamdb-core" }
 kalamdb-sql = { path = "../kalamdb-sql" }
 kalamdb-auth = { path = "../kalamdb-auth" }
+kalamdb-system = { path = "../kalamdb-system" }
 
 # Apache Arrow
 arrow = { workspace = true }
 
 # Web framework
 actix-web = { workspace = true }
-actix-rt = { workspace = true }
 actix-web-actors = { workspace = true }
 actix = { workspace = true }
 
@@ -50,6 +50,6 @@ chrono = { workspace = true }
 
 [dev-dependencies]
 # Testing utilities
-actix-rt = { workspace = true }
 tempfile = { workspace = true }
 kalamdb-store = { path = "../kalamdb-store" }
+actix-rt = { workspace = true }

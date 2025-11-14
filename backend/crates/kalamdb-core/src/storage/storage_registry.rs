@@ -3,7 +3,7 @@
 //! Provides centralized access to storage configurations and path template validation.
 
 use crate::error::KalamDbError;
-use crate::tables::system::StoragesTableProvider;
+use kalamdb_system::StoragesTableProvider;
 use kalamdb_commons::models::StorageId;
 use kalamdb_commons::system::Storage;
 use std::sync::Arc;
@@ -354,7 +354,7 @@ mod tests {
             Arc::new(kalamdb_store::RocksDBBackend::new(db.clone()));
         
         // Create StoragesTableProvider for tests
-        let storages_provider = Arc::new(crate::tables::system::StoragesTableProvider::new(backend));
+        let storages_provider = Arc::new(kalamdb_system::providers::storages::StoragesTableProvider::new(backend));
 
         // Use a temp storage base under the temp dir for tests
         let default_storage_path = db_path

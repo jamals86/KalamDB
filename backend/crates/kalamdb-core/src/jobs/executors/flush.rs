@@ -21,9 +21,9 @@
 //! ```
 
 use crate::error::KalamDbError;
+use crate::providers::arrow_json_conversion; // For schema_with_system_columns
 use crate::jobs::executors::{JobContext, JobDecision, JobExecutor};
-use crate::tables::{SharedTableFlushJob, UserTableFlushJob};
-use crate::tables::base_flush::TableFlush;
+use crate::providers::flush::{SharedTableFlushJob, TableFlush, UserTableFlushJob};
 use async_trait::async_trait;
 use kalamdb_commons::{JobType, NamespaceId, TableName, TableId};
 use kalamdb_commons::system::Job;
@@ -112,8 +112,7 @@ impl JobExecutor for FlushExecutor {
 
         // Get dependencies from AppContext
         let app_ctx = &ctx.app_ctx;
-    let schema_cache = app_ctx.schema_cache();
-    let schema_registry = app_ctx.schema_registry();
+        let schema_registry = app_ctx.schema_registry();
         let live_query_manager = app_ctx.live_query_manager();
 
         let namespace_id = NamespaceId::new(namespace_id_str.to_string());
@@ -123,12 +122,24 @@ impl JobExecutor for FlushExecutor {
         let table_id = Arc::new(TableId::new(namespace_id.clone(), table_name.clone()));
 
         // Get table definition and schema
-        let _table_def = schema_registry
+        let table_def = schema_registry
             .get_table_definition(&table_id)?
             .ok_or_else(|| KalamDbError::NotFound(format!("Table {}.{} not found", namespace_id_str, table_name_str)))?;
-        let schema = schema_registry
-            .get_arrow_schema(&table_id)
-            .map_err(|e| KalamDbError::NotFound(format!("Arrow schema not found for {}.{}: {}", namespace_id_str, table_name_str, e)))?;
+        // The authoritative Arrow schema should include system columns already
+        // because SystemColumnsService injected them into the TableDefinition.
+        // Use schema from schema_history if available to avoid stale cache.
+        let base_schema = if let Some(latest) = table_def.schema_history.last() {
+            crate::schema_registry::arrow_schema::ArrowSchemaWithOptions::from_json_string(&latest.arrow_schema_json)
+                .map_err(|e| KalamDbError::Other(format!("Failed to parse Arrow schema from history: {}", e)))?
+                .schema
+        } else {
+            schema_registry
+                .get_arrow_schema(&table_id)
+                .map_err(|e| KalamDbError::NotFound(format!("Arrow schema not found for {}.{}: {}", namespace_id_str, table_name_str, e)))?
+        };
+
+        // Ensure system columns are present or add if missing (idempotent)
+        let schema = arrow_json_conversion::schema_with_system_columns(&base_schema);
 
         // Execute flush based on table type
         let result = match table_type {
@@ -148,11 +159,11 @@ impl JobExecutor for FlushExecutor {
                         namespace_id_str, table_name_str, table_id
                     )))?;
                 
-                // Downcast to UserTableProvider to access shared state
-                let provider = provider_arc.as_any().downcast_ref::<crate::tables::user_tables::UserTableProvider>()
+                // Downcast to UserTableProvider to access store
+                let provider = provider_arc.as_any().downcast_ref::<crate::providers::UserTableProvider>()
                     .ok_or_else(|| KalamDbError::InvalidOperation("Cached provider type mismatch for user table".into()))?;
                 
-                let store = provider.shared().store().clone();
+                let store = provider.store.clone();
 
                 let flush_job = UserTableFlushJob::new(
                     table_id.clone(),
@@ -160,7 +171,7 @@ impl JobExecutor for FlushExecutor {
                     namespace_id.clone(),
                     table_name.clone(),
                     schema.clone(),
-                    schema_cache.clone(),
+                    schema_registry.clone(),
                 )
                 .with_live_query_manager(live_query_manager);
 
@@ -174,7 +185,7 @@ impl JobExecutor for FlushExecutor {
                 // Use a per-table SharedTableStore for the specific <namespace, table>
                 // to ensure we read the correct partition ("shared_<ns>:<table>").
                 let store = Arc::new(
-                    crate::tables::shared_tables::shared_table_store::new_shared_table_store(
+                    kalamdb_tables::new_shared_table_store(
                         app_ctx.storage_backend(),
                         &namespace_id,
                         &table_name,
@@ -187,7 +198,7 @@ impl JobExecutor for FlushExecutor {
                     namespace_id.clone(),
                     table_name.clone(),
                     schema.clone(),
-                    schema_cache.clone(),
+                    schema_registry.clone(),
                 )
                 .with_live_query_manager(live_query_manager);
 

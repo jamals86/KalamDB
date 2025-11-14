@@ -687,6 +687,30 @@ impl CreateTableStatement {
 }
 
 #[cfg(test)]
+mod create_table_tests {
+    use super::*;
+    use kalamdb_commons::models::NamespaceId;
+
+    #[test]
+    fn parses_storage_clause_with_quotes() {
+        let ns = NamespaceId::new("storage_ns");
+        let sql = r#"
+            CREATE USER TABLE storage_ns.messages (
+                id INT,
+                body TEXT
+            ) STORAGE 'custom_storage'
+              FLUSH ROWS 10
+        "#;
+
+        let stmt = CreateTableStatement::parse(sql, &ns).expect("parse CREATE TABLE");
+        let storage = stmt
+            .storage_id
+            .expect("storage_id should be captured");
+        assert_eq!(storage.as_str(), "custom_storage");
+    }
+}
+
+#[cfg(test)]
 mod tests {
     use super::*;
     fn test_namespace() -> NamespaceId {

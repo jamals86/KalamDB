@@ -43,7 +43,7 @@
 
 use crate::app_context::AppContext;
 use crate::jobs::executors::{JobContext, JobDecision, JobRegistry};
-use crate::tables::system::JobsTableProvider;
+use kalamdb_system::JobsTableProvider;
 use kalamdb_commons::system::{Job, JobFilter, JobOptions};
 use kalamdb_commons::{JobId, JobStatus, JobType, NamespaceId, NodeId};
 use std::sync::Arc;

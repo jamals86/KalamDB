@@ -5,16 +5,12 @@
 //!
 //! **Updated**: Now uses unified VirtualView pattern from view_base.rs
 
-use crate::error::KalamDbError;
-use crate::schema_registry::views::VirtualView;
-use crate::schema_registry::SchemaRegistry;
-use crate::tables::system::TablesTableProvider;
-use datafusion::arrow::array::{
-    ArrayRef, BooleanArray, RecordBatch, StringBuilder, TimestampMillisecondArray, UInt32Array,
-    UInt64Array,
-};
+use super::super::super::error::RegistryError;
+use super::super::super::traits::TablesTableProvider;
+use super::super::VirtualView;
+// Registry is now in the same crate
+use datafusion::arrow::array::RecordBatch;
 use datafusion::arrow::datatypes::{DataType, Field, Schema, SchemaRef, TimeUnit};
-use kalamdb_commons::models::TableId;
 use std::sync::Arc;
 
 /// InformationSchemaTablesView exposes all table metadata from information_schema_tables CF
@@ -22,7 +18,7 @@ use std::sync::Arc;
 #[derive(Debug)]
 pub struct InformationSchemaTablesView {
     tables_provider: Arc<TablesTableProvider>,
-    schema_registry: Arc<SchemaRegistry>,
+    // schema_registry: Arc<SchemaRegistry>, // Moved to kalamdb-core
     schema: SchemaRef,
 }
 
@@ -31,8 +27,8 @@ impl InformationSchemaTablesView {
     ///
     /// # Arguments
     /// * `tables_provider` - TablesTableProvider for accessing system.tables metadata
-    /// * `schema_registry` - SchemaRegistry for accessing table schema details
-    pub fn new(tables_provider: Arc<TablesTableProvider>, schema_registry: Arc<SchemaRegistry>) -> Self {
+    /// * `_schema_registry` - SchemaRegistry (not used, moved to kalamdb-core)
+    pub fn new(tables_provider: Arc<TablesTableProvider>, _schema_registry: Arc<()>) -> Self {
         let schema = Arc::new(Schema::new(vec![
             // SQL standard information_schema.tables columns
             Field::new("table_catalog", DataType::Utf8, false),
@@ -60,40 +56,47 @@ impl InformationSchemaTablesView {
 
         Self { 
             tables_provider,
-            schema_registry,
+            // schema_registry removed
             schema 
         }
     }
 
     /// Scan all tables across all namespaces and return as RecordBatch
-    fn scan_all_tables(&self) -> Result<RecordBatch, KalamDbError> {
+    /// TODO: Reimplement after extracting system tables traits
+    fn scan_all_tables(&self) -> Result<RecordBatch, RegistryError> {
+        // Temporary stub - return empty batch
+        return Err(RegistryError::ViewError {
+            message: "information_schema.tables not yet implemented in kalamdb-registry".to_string(),
+        });
+        
+        /* TODO: Reimplement with trait abstraction
         // Get table metadata from system.tables
         let tables_batch = self
             .tables_provider
             .scan_all_tables()
-            .map_err(|e| KalamDbError::Other(format!("Failed to scan tables: {}", e)))?;
+            .map_err(|e| RegistryError::Other(format!("Failed to scan tables: {}", e)))?;
 
         // Parse system.tables columns
         use datafusion::arrow::array::{Array, StringArray, Int32Array, Int64Array};
         
         let table_id_col = tables_batch.column(0).as_any().downcast_ref::<StringArray>()
-            .ok_or_else(|| KalamDbError::Other("table_id column type mismatch".to_string()))?;
+            .ok_or_else(|| RegistryError::Other("table_id column type mismatch".to_string()))?;
         let table_name_col = tables_batch.column(1).as_any().downcast_ref::<StringArray>()
-            .ok_or_else(|| KalamDbError::Other("table_name column type mismatch".to_string()))?;
+            .ok_or_else(|| RegistryError::Other("table_name column type mismatch".to_string()))?;
         let namespace_col = tables_batch.column(2).as_any().downcast_ref::<StringArray>()
-            .ok_or_else(|| KalamDbError::Other("namespace column type mismatch".to_string()))?;
+            .ok_or_else(|| RegistryError::Other("namespace column type mismatch".to_string()))?;
         let table_type_col = tables_batch.column(3).as_any().downcast_ref::<StringArray>()
-            .ok_or_else(|| KalamDbError::Other("table_type column type mismatch".to_string()))?;
+            .ok_or_else(|| RegistryError::Other("table_type column type mismatch".to_string()))?;
         let created_at_col = tables_batch.column(4).as_any().downcast_ref::<Int64Array>()
-            .ok_or_else(|| KalamDbError::Other("created_at column type mismatch".to_string()))?;
+            .ok_or_else(|| RegistryError::Other("created_at column type mismatch".to_string()))?;
         let storage_id_col = tables_batch.column(5).as_any().downcast_ref::<StringArray>()
-            .ok_or_else(|| KalamDbError::Other("storage_id column type mismatch".to_string()))?;
+            .ok_or_else(|| RegistryError::Other("storage_id column type mismatch".to_string()))?;
         let use_user_storage_col = tables_batch.column(6).as_any().downcast_ref::<BooleanArray>()
-            .ok_or_else(|| KalamDbError::Other("use_user_storage column type mismatch".to_string()))?;
+            .ok_or_else(|| RegistryError::Other("use_user_storage column type mismatch".to_string()))?;
         let schema_version_col = tables_batch.column(8).as_any().downcast_ref::<Int32Array>()
-            .ok_or_else(|| KalamDbError::Other("schema_version column type mismatch".to_string()))?;
+            .ok_or_else(|| RegistryError::Other("schema_version column type mismatch".to_string()))?;
         let deleted_retention_col = tables_batch.column(9).as_any().downcast_ref::<Int32Array>()
-            .ok_or_else(|| KalamDbError::Other("deleted_retention_hours column type mismatch".to_string()))?;
+            .ok_or_else(|| RegistryError::Other("deleted_retention_hours column type mismatch".to_string()))?;
 
         let num_rows = tables_batch.num_rows();
         let mut table_catalogs = StringBuilder::new();
@@ -202,9 +205,10 @@ impl InformationSchemaTablesView {
                 Arc::new(UInt64Array::from(ttl_seconds_vec)) as ArrayRef,
             ],
         )
-        .map_err(|e| KalamDbError::Other(format!("Failed to create RecordBatch: {}", e)))?;
+        .map_err(|e| RegistryError::Other(format!("Failed to create RecordBatch: {}", e)))?;
 
         Ok(batch)
+        */
     }
 }
 
@@ -213,7 +217,7 @@ impl VirtualView for InformationSchemaTablesView {
         self.schema.clone()
     }
 
-    fn compute_batch(&self) -> Result<RecordBatch, KalamDbError> {
+    fn compute_batch(&self) -> Result<RecordBatch, RegistryError> {
         self.scan_all_tables()
     }
 
@@ -227,10 +231,10 @@ impl VirtualView for InformationSchemaTablesView {
 /// This wraps the InformationSchemaTablesView in a ViewTableProvider for use in DataFusion.
 pub fn create_information_schema_tables_provider(
     tables_provider: Arc<TablesTableProvider>,
-    schema_registry: Arc<SchemaRegistry>,
+    _schema_registry: Arc<()>,
 ) -> Arc<dyn datafusion::datasource::TableProvider> {
-    use crate::schema_registry::views::ViewTableProvider;
-    let view = Arc::new(InformationSchemaTablesView::new(tables_provider, schema_registry));
+    use super::super::ViewTableProvider;
+    let view = Arc::new(InformationSchemaTablesView::new(tables_provider, Arc::new(())));
     Arc::new(ViewTableProvider::new(view))
 }
 

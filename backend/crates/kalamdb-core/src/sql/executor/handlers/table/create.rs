@@ -73,6 +73,30 @@ mod tests {
         ExecutionContext::new(UserId::new("test_user"), role, create_test_session())
     }
 
+    fn ensure_default_storage() {
+        let app_ctx = AppContext::get();
+        let storages_provider = app_ctx.system_tables().storages();
+        let storage_id = kalamdb_commons::models::StorageId::from("local");
+        
+        // Check if "local" storage exists, create if not
+        if storages_provider.get_storage_by_id(&storage_id).unwrap().is_none() {
+            use kalamdb_sql::Storage;
+            let storage = Storage {
+                storage_id: storage_id.clone(),
+                storage_name: "Local Storage".to_string(),
+                description: Some("Default local storage".to_string()),
+                storage_type: "local".to_string(),
+                base_directory: "/tmp/kalamdb_test".to_string(),
+                credentials: None,
+                shared_tables_template: "shared/{namespace}/{table}".to_string(),
+                user_tables_template: "user/{namespace}/{table}/{userId}".to_string(),
+                created_at: chrono::Utc::now().timestamp_millis(),
+                updated_at: chrono::Utc::now().timestamp_millis(),
+            };
+            storages_provider.create_storage(storage).unwrap();
+        }
+    }
+
     fn create_test_statement(table_type: TableType) -> CreateTableStatement {
         let schema = Arc::new(Schema::new(vec![
             Arc::new(Field::new("name", DataType::Utf8, false)),
@@ -107,9 +131,14 @@ mod tests {
         let handler = CreateTableHandler::new(app_ctx);
         let stmt = create_test_statement(TableType::User);
         
-        // User role can create USER tables
+        // User role CANNOT create tables (DML only)
         let user_ctx = create_test_context(Role::User);
         let result = handler.check_authorization(&stmt, &user_ctx).await;
+        assert!(result.is_err());
+        
+        // Dba role CAN create USER tables
+        let dba_ctx = create_test_context(Role::Dba);
+        let result = handler.check_authorization(&stmt, &dba_ctx).await;
         assert!(result.is_ok());
     }
 
@@ -144,7 +173,8 @@ mod tests {
         init_test_app_context();
         let app_ctx = AppContext::get();
         
-        // Ensure default namespace exists
+        // Ensure default storage and namespace exist
+        ensure_default_storage();
         let namespaces_provider = app_ctx.system_tables().namespaces();
         let namespace_id = NamespaceId::new("default");
         if namespaces_provider.get_namespace(&namespace_id).unwrap().is_none() {
@@ -160,12 +190,15 @@ mod tests {
 
         let handler = CreateTableHandler::new(app_ctx);
         let stmt = create_test_statement(TableType::User);
-        let ctx = create_test_context(Role::User);
-        let session = SessionContext::new();
+        let ctx = create_test_context(Role::Dba);
+        let _session = SessionContext::new();
 
         let result = handler.execute(stmt, vec![], &ctx).await;
         
-        assert!(result.is_ok());
+        if let Err(e) = &result {
+            eprintln!("CREATE TABLE ERROR: {:?}", e);
+        }
+        assert!(result.is_ok(), "CREATE TABLE failed: {:?}", result);
         if let Ok(ExecutionResult::Success { message }) = result {
             assert!(message.contains("created successfully"));
         }
@@ -173,9 +206,11 @@ mod tests {
 
     #[tokio::test]
     async fn test_create_table_if_not_exists() {
+        init_test_app_context();
         let app_ctx = AppContext::get();
         
-        // Ensure default namespace exists
+        // Ensure default storage and namespace exist
+        ensure_default_storage();
         let namespaces_provider = app_ctx.system_tables().namespaces();
         let namespace_id = NamespaceId::new("default");
         if namespaces_provider.get_namespace(&namespace_id).unwrap().is_none() {
@@ -194,8 +229,8 @@ mod tests {
         
         let mut stmt = create_test_statement(TableType::User);
         stmt.table_name = table_name.clone().into();
-        let ctx = create_test_context(Role::User);
-        let session = SessionContext::new();
+        let ctx = create_test_context(Role::Dba);
+        let _session = SessionContext::new();
 
         // First creation should succeed
         let result1 = handler.execute(stmt.clone(), vec![], &ctx).await;

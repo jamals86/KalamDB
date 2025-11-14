@@ -23,8 +23,8 @@ pub enum ArrowConversionError {
 ///
 /// # Example
 ///
-/// ```
-/// use kalamdb_commons::models::types::{KalamDataType, ToArrowType};
+/// ```rust,ignore
+/// use kalamdb_commons::models::datatypes::{KalamDataType, ToArrowType};
 /// use arrow_schema::DataType as ArrowDataType;
 ///
 /// let kalam_type = KalamDataType::Decimal { precision: 10, scale: 2 };
@@ -41,8 +41,8 @@ pub trait ToArrowType {
 ///
 /// # Example
 ///
-/// ```
-/// use kalamdb_commons::models::types::{KalamDataType, FromArrowType};
+/// ```rust,ignore
+/// use kalamdb_commons::models::datatypes::{KalamDataType, FromArrowType};
 /// use arrow_schema::DataType as ArrowDataType;
 ///
 /// let arrow_type = ArrowDataType::Float64;

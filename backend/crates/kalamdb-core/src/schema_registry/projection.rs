@@ -9,7 +9,7 @@
 //! This ensures that all RecordBatches returned from Parquet files match the current
 //! table schema, regardless of when the file was written.
 
-use crate::error::KalamDbError;
+use super::error::RegistryError;
 use arrow::array::{ArrayRef, NullArray};
 use arrow::compute::cast;
 use arrow::datatypes::{DataType, Schema, SchemaRef};
@@ -57,7 +57,7 @@ pub fn project_batch(
     batch: &RecordBatch,
     old_schema: &SchemaRef,
     new_schema: &SchemaRef,
-) -> Result<RecordBatch, KalamDbError> {
+) -> Result<RecordBatch, RegistryError> {
     // If schemas are identical, no projection needed
     if old_schema == new_schema {
         return Ok(batch.clone());
@@ -74,20 +74,22 @@ pub fn project_batch(
         if let Ok(old_field) = old_schema.field_with_name(field_name) {
             // Field exists in old schema - handle type changes
             let old_column = batch.column_by_name(field_name).ok_or_else(|| {
-                KalamDbError::SchemaError(format!("Column '{}' not found in batch", field_name))
+                RegistryError::SchemaError(format!("Column '{}' not found in batch", field_name))
             })?;
 
             // Check if type changed
             if old_field.data_type() != new_field.data_type() {
                 // Attempt to cast to new type
                 let casted = cast(old_column, new_field.data_type()).map_err(|e| {
-                    KalamDbError::invalid_schema_evolution(format!(
-                        "Cannot cast column '{}' from {:?} to {:?}: {}",
-                        field_name,
-                        old_field.data_type(),
-                        new_field.data_type(),
-                        e
-                    ))
+                    RegistryError::SchemaConversion {
+                        message: format!(
+                            "Cannot cast column '{}' from {:?} to {:?}: {}",
+                            field_name,
+                            old_field.data_type(),
+                            new_field.data_type(),
+                            e
+                        )
+                    }
                 })?;
                 new_columns.push(casted);
             } else {
@@ -105,7 +107,7 @@ pub fn project_batch(
                 dt => {
                     // Cast null array to target type (creates array of nulls with correct type)
                     cast(&null_array, dt).map_err(|e| {
-                        KalamDbError::SchemaError(format!(
+                        RegistryError::SchemaError(format!(
                             "Failed to create null array for new column '{}': {}",
                             field_name, e
                         ))
@@ -119,7 +121,7 @@ pub fn project_batch(
 
     // Create new RecordBatch with projected schema
     RecordBatch::try_new(new_schema.clone(), new_columns).map_err(|e| {
-        KalamDbError::SchemaError(format!("Failed to create projected RecordBatch: {}", e))
+        RegistryError::SchemaError(format!("Failed to create projected RecordBatch: {}", e))
     })
 }
 

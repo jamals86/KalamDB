@@ -118,38 +118,45 @@ impl OutputFormatter {
 
             let column_count = col_widths.len();
             if column_count > 0 {
-                for width in col_widths.iter_mut() {
-                    if *width > MAX_COLUMN_WIDTH {
-                        *width = MAX_COLUMN_WIDTH;
-                    }
-                }
-
+                // Calculate available width for columns
                 let border_padding = column_count * 3 + 1;
                 let mut available = terminal_width.saturating_sub(border_padding);
                 if available < column_count {
                     available = column_count;
                 }
 
+                // Only truncate if total width exceeds available space
                 let mut total_width = col_widths.iter().sum::<usize>();
-                while total_width > available {
-                    if let Some((idx, _)) = col_widths
-                        .iter()
-                        .enumerate()
-                        .filter(|(_, width)| **width > MIN_COLUMN_WIDTH)
-                        .max_by_key(|(_, width)| *width)
-                    {
-                        col_widths[idx] -= 1;
-                    } else if let Some((idx, _)) = col_widths
-                        .iter()
-                        .enumerate()
-                        .filter(|(_, width)| **width > 1)
-                        .max_by_key(|(_, width)| *width)
-                    {
-                        col_widths[idx] -= 1;
-                    } else {
-                        break;
+                if total_width > available {
+                    // First pass: cap at MAX_COLUMN_WIDTH if needed
+                    for width in col_widths.iter_mut() {
+                        if *width > MAX_COLUMN_WIDTH {
+                            *width = MAX_COLUMN_WIDTH;
+                        }
                     }
                     total_width = col_widths.iter().sum();
+
+                    // Second pass: shrink columns to fit terminal if still too wide
+                    while total_width > available {
+                        if let Some((idx, _)) = col_widths
+                            .iter()
+                            .enumerate()
+                            .filter(|(_, width)| **width > MIN_COLUMN_WIDTH)
+                            .max_by_key(|(_, width)| *width)
+                        {
+                            col_widths[idx] -= 1;
+                        } else if let Some((idx, _)) = col_widths
+                            .iter()
+                            .enumerate()
+                            .filter(|(_, width)| **width > 1)
+                            .max_by_key(|(_, width)| *width)
+                        {
+                            col_widths[idx] -= 1;
+                        } else {
+                            break;
+                        }
+                        total_width = col_widths.iter().sum();
+                    }
                 }
             }
 

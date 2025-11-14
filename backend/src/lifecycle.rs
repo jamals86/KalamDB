@@ -62,7 +62,7 @@ pub async fn bootstrap(config: &ServerConfig) -> Result<(ApplicationComponents, 
 
     // Initialize system tables and verify schema version (Phase 10 Phase 7, T075-T079)
     let phase_start = std::time::Instant::now();
-    kalamdb_core::tables::system::initialize_system_tables(backend.clone()).await?;
+    kalamdb_system::initialize_system_tables(backend.clone()).await?;
     info!("System tables initialized with schema version tracking ({:.2}ms)", phase_start.elapsed().as_secs_f64() * 1000.0);
 
     // Start JobsManager run loop (Phase 9, T163)
@@ -91,7 +91,7 @@ pub async fn bootstrap(config: &ServerConfig) -> Result<(ApplicationComponents, 
             storage_name: "Local Filesystem".to_string(),
             description: Some("Default local filesystem storage".to_string()),
             storage_type: "filesystem".to_string(),
-            base_directory: "".to_string(),
+            base_directory: config.storage.default_storage_path.clone(),
             credentials: None,
             shared_tables_template: config.storage.shared_tables_template.clone(),
             user_tables_template: config.storage.user_tables_template.clone(),
@@ -299,7 +299,7 @@ pub async fn run(
 /// # Returns
 /// Result indicating success or failure
 async fn create_default_system_user(
-    users_provider: Arc<kalamdb_core::tables::system::UsersTableProvider>,
+    users_provider: Arc<kalamdb_system::UsersTableProvider>,
 ) -> Result<()> {
     use kalamdb_commons::constants::AuthConstants;
     use kalamdb_commons::system::User;
@@ -364,7 +364,7 @@ async fn create_default_system_user(
 /// Informs users about password requirements for remote access
 async fn check_remote_access_security(
     config: &ServerConfig,
-    users_provider: Arc<kalamdb_core::tables::system::UsersTableProvider>,
+    users_provider: Arc<kalamdb_system::UsersTableProvider>,
 ) -> Result<()> {
     use kalamdb_commons::constants::AuthConstants;
 

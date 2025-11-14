@@ -3,6 +3,7 @@
 //! Handles DELETE statements with parameter binding support via DataFusion.
 
 use crate::error::KalamDbError;
+use crate::providers::base::BaseTableProvider; // Phase 13.6: Bring trait methods into scope
 use crate::sql::executor::handlers::StatementHandler;
 use crate::sql::executor::models::{ExecutionContext, ExecutionResult, ScalarValue};
 use crate::sql::executor::parameter_validation::{validate_parameters, ParameterLimits};
@@ -62,7 +63,7 @@ impl StatementHandler for DeleteHandler {
                 let provider_arc = schema_registry.get_provider(&table_id)
                     .ok_or_else(|| KalamDbError::InvalidOperation("User table provider not found".into()))?;
                 
-                if let Some(provider) = provider_arc.as_any().downcast_ref::<crate::tables::user_tables::UserTableProvider>() {
+                if let Some(provider) = provider_arc.as_any().downcast_ref::<crate::providers::UserTableProvider>() {
                     let _deleted = provider.delete_by_id_field(&context.user_id, &row_id)?;
                     Ok(ExecutionResult::Deleted { rows_affected: 1 })
                 } else {
@@ -72,8 +73,9 @@ impl StatementHandler for DeleteHandler {
             TableType::Shared => {
                 // DELETE FROM <ns>.<table> WHERE id = <value> for SHARED tables maps logical id -> row_id
                 let provider_arc = schema_registry.get_provider(&table_id).ok_or_else(|| KalamDbError::InvalidOperation("Shared table provider not found".into()))?;
-                if let Some(provider) = provider_arc.as_any().downcast_ref::<crate::tables::shared_tables::SharedTableProvider>() {
-                    provider.delete_by_id_field(&row_id)?;
+                if let Some(provider) = provider_arc.as_any().downcast_ref::<crate::providers::SharedTableProvider>() {
+                    // SharedTableProvider ignores user_id parameter (no RLS)
+                    provider.delete_by_id_field(&context.user_id, &row_id)?;
                     Ok(ExecutionResult::Deleted { rows_affected: 1 })
                 } else {
                     Err(KalamDbError::InvalidOperation("Cached provider type mismatch for shared table".into()))

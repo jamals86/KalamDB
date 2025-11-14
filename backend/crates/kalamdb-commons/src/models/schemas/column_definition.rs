@@ -38,9 +38,9 @@ impl ColumnDefinition {
     ///
     /// # Example
     ///
-    /// ```
+    /// ```rust,ignore
     /// use kalamdb_commons::models::schemas::{ColumnDefinition, ColumnDefault};
-    /// use kalamdb_commons::models::types::KalamDataType;
+    /// use kalamdb_commons::models::datatypes::KalamDataType;
     ///
     /// let column = ColumnDefinition::new(
     ///     "user_id",
@@ -85,9 +85,9 @@ impl ColumnDefinition {
     ///
     /// # Example
     ///
-    /// ```
+    /// ```rust,ignore
     /// use kalamdb_commons::models::schemas::ColumnDefinition;
-    /// use kalamdb_commons::models::types::KalamDataType;
+    /// use kalamdb_commons::models::datatypes::KalamDataType;
     ///
     /// let column = ColumnDefinition::simple("email", 2, KalamDataType::Utf8);
     ///

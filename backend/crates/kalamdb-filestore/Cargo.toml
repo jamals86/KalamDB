@@ -1,0 +1,48 @@
+[package]
+name = "kalamdb-filestore"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+authors.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Filesystem and Parquet file operations for KalamDB"
+keywords = ["kalamdb", "database", "parquet", "storage"]
+categories = ["database"]
+
+[dependencies]
+# Workspace dependencies
+kalamdb-commons = { path = "../kalamdb-commons" }
+
+# Apache Arrow ecosystem
+arrow = { workspace = true }
+arrow-schema = { workspace = true }
+datafusion = { workspace = true }
+datafusion-common = { workspace = true }
+
+# Serialization
+serde = { workspace = true }
+serde_json = { workspace = true }
+
+# Error handling
+thiserror = { workspace = true }
+anyhow = { workspace = true }
+
+# Async runtime
+tokio = { workspace = true }
+
+# Logging
+log = { workspace = true }
+
+# Time handling
+chrono = { workspace = true }
+
+# UUID generation
+uuid = { workspace = true }
+
+# Object store (for S3/filesystem abstraction)
+# object_store = { version = "0.11", features = ["aws", "gcp", "azure"] }
+
+[lib]
+name = "kalamdb_filestore"
+path = "src/lib.rs"
