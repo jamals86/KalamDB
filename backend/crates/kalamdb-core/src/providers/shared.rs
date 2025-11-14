@@ -169,6 +169,48 @@ impl SharedTableProvider {
     }
 }
 
+impl SharedTableProvider {
+    /// Check if a primary key value already exists (non-deleted version)
+    ///
+    /// **Performance**: O(log n) lookup by PK value using version resolution.
+    ///
+    /// # Arguments
+    /// * `pk_value` - String representation of PK value to check
+    ///
+    /// # Returns
+    /// * `Ok(true)` - PK value exists with non-deleted version
+    /// * `Ok(false)` - PK value does not exist or only deleted versions exist
+    /// * `Err` - Storage error
+    fn pk_value_exists(&self, pk_value: &str) -> Result<bool, KalamDbError> {
+        let pk_name = self.primary_key_field_name();
+        
+        // Shared tables don't have user scoping, so we use a dummy user_id
+        let dummy_user_id = UserId::from("_system");
+        
+        // Scan with version resolution (returns only latest non-deleted versions)
+        let resolved = self.scan_with_version_resolution_to_kvs(&dummy_user_id, None)?;
+        
+        // Check if any resolved row has this PK value
+        for (_key, row) in resolved.into_iter() {
+            if let Some(val) = row.fields.get(pk_name) {
+                // Compare as strings to handle different JSON types
+                let row_pk_str = match val {
+                    serde_json::Value::String(s) => s.clone(),
+                    serde_json::Value::Number(n) => n.to_string(),
+                    serde_json::Value::Bool(b) => b.to_string(),
+                    _ => continue,
+                };
+                
+                if row_pk_str == pk_value {
+                    return Ok(true); // PK value already exists
+                }
+            }
+        }
+        
+        Ok(false) // PK value does not exist
+    }
+}
+
 impl BaseTableProvider<SharedTableRowId, SharedTableRow> for SharedTableProvider {
     fn table_id(&self) -> &TableId {
         &self.table_id
@@ -194,6 +236,24 @@ impl BaseTableProvider<SharedTableRowId, SharedTableRow> for SharedTableProvider
     
     fn insert(&self, _user_id: &UserId, row_data: JsonValue) -> Result<SharedTableRowId, KalamDbError> {
         // IGNORE user_id parameter - no RLS for shared tables
+        
+        // T060: Validate PRIMARY KEY uniqueness if user provided PK value
+        let pk_name = self.primary_key_field_name();
+        if let Some(pk_value) = row_data.get(pk_name) {
+            // User provided PK value - check if it already exists (non-deleted version)
+            if !pk_value.is_null() {
+                let pk_str = crate::providers::unified_dml::extract_user_pk_value(&row_data, pk_name)?;
+                
+                // Check if this PK value already exists with a non-deleted version
+                if self.pk_value_exists(&pk_str)? {
+                    return Err(KalamDbError::AlreadyExists(format!(
+                        "Primary key violation: value '{}' already exists in column '{}'",
+                        pk_str, pk_name
+                    )));
+                }
+            }
+        }
+        // If PK not provided, it must have a DEFAULT value (validated at CREATE TABLE time)
         
         // Generate new SeqId via SystemColumnsService
         let sys_cols = self.core.system_columns.clone();

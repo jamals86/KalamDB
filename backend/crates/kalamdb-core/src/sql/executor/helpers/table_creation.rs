@@ -105,6 +105,18 @@ pub fn create_user_table(
     validate_table_name(stmt.table_name.as_str())
         .map_err(KalamDbError::InvalidOperation)?;
 
+    // T051: Validate PRIMARY KEY is specified (MVCC requirement)
+    if stmt.primary_key_column.is_none() {
+        log::error!(
+            "❌ CREATE USER TABLE failed: {}.{} - PRIMARY KEY column is required",
+            stmt.namespace_id.as_str(),
+            stmt.table_name.as_str()
+        );
+        return Err(KalamDbError::InvalidOperation(
+            "CREATE TABLE requires a PRIMARY KEY column (MVCC architecture requirement)".to_string(),
+        ));
+    }
+
     // Check if table already exists
     let schema_registry = app_context.schema_registry();
     let table_id = TableId::from_strings(stmt.namespace_id.as_str(), stmt.table_name.as_str());
@@ -162,8 +174,15 @@ pub fn create_user_table(
         storage_id.as_str()
     );
 
-    // Auto-increment field injection (id column)
-    let schema = inject_auto_increment_field(stmt.schema.clone())?;
+    // Auto-increment field injection ONLY if no explicit PRIMARY KEY
+    // T060: When user specifies PRIMARY KEY, don't add auto-increment 'id' column
+    let schema = if stmt.primary_key_column.is_some() {
+        // User specified explicit PK - use schema as-is
+        stmt.schema.clone()
+    } else {
+        // No explicit PK - add auto-increment 'id' column for backward compatibility
+        inject_auto_increment_field(stmt.schema.clone())?
+    };
 
     // REMOVED: inject_system_columns() call
     // System columns (_id, _updated, _deleted) are now added by SystemColumnsService
@@ -245,6 +264,18 @@ pub fn create_shared_table(
 ) -> Result<String, KalamDbError> {
     use super::tables::{inject_auto_increment_field, save_table_definition, validate_table_name};
     use kalamdb_commons::schemas::ColumnDefault;
+
+    // T051: Validate PRIMARY KEY is specified (MVCC requirement)
+    if stmt.primary_key_column.is_none() {
+        log::error!(
+            "❌ CREATE SHARED TABLE failed: {}.{} - PRIMARY KEY column is required",
+            stmt.namespace_id.as_str(),
+            stmt.table_name.as_str()
+        );
+        return Err(KalamDbError::InvalidOperation(
+            "CREATE TABLE requires a PRIMARY KEY column (MVCC architecture requirement)".to_string(),
+        ));
+    }
 
     // RBAC check
     if !crate::auth::rbac::can_create_table(exec_ctx.user_role, TableType::Shared) {
@@ -330,8 +361,15 @@ pub fn create_shared_table(
         storage_id.as_str()
     );
 
-    // Auto-increment field injection (id column)
-    let schema = inject_auto_increment_field(stmt.schema.clone())?;
+    // Auto-increment field injection ONLY if no explicit PRIMARY KEY
+    // T060: When user specifies PRIMARY KEY, don't add auto-increment 'id' column
+    let schema = if stmt.primary_key_column.is_some() {
+        // User specified explicit PK - use schema as-is
+        stmt.schema.clone()
+    } else {
+        // No explicit PK - add auto-increment 'id' column for backward compatibility
+        inject_auto_increment_field(stmt.schema.clone())?
+    };
 
     // REMOVED: inject_system_columns() call
     // System columns (_id, _updated, _deleted) are now added by SystemColumnsService

@@ -18,6 +18,9 @@ pub struct SqlStatement {
     sql_text: String,
     /// Parsed statement variant
     kind: SqlStatementKind,
+    /// Optional AS USER impersonation (Phase 7)
+    /// Extracted from "AS USER 'user_id'" clause in DML statements
+    as_user_id: Option<kalamdb_commons::models::UserId>,
 }
 
 /// Statement type variants (internal to SqlStatement)
@@ -107,7 +110,59 @@ pub enum SqlStatementKind {
 impl SqlStatement {
     /// Create a SqlStatement with SQL text and kind
     pub fn new(sql_text: String, kind: SqlStatementKind) -> Self {
-        Self { sql_text, kind }
+        Self { sql_text, kind, as_user_id: None }
+    }
+
+    /// Create a SqlStatement with AS USER impersonation
+    pub fn with_as_user(sql_text: String, kind: SqlStatementKind, as_user_id: kalamdb_commons::models::UserId) -> Self {
+        Self { sql_text, kind, as_user_id: Some(as_user_id) }
+    }
+
+    /// Extract AS USER 'user_id' clause from SQL if present
+    /// Returns (cleaned_sql, optional_user_id)
+    fn extract_as_user(sql: &str) -> (String, Option<kalamdb_commons::models::UserId>) {
+        let upper = sql.to_uppercase();
+        
+        // Find "AS USER 'user_id'" or "AS USER \"user_id\"" pattern
+        if let Some(as_user_pos) = upper.find(" AS USER ") {
+            // Extract after "AS USER "
+            let after_as_user = &sql[as_user_pos + 9..].trim_start();
+            
+            // Determine quote type
+            let user_id_str = if after_as_user.starts_with('\'') {
+                // Single quote: 'user_id'
+                if let Some(end_quote) = after_as_user[1..].find('\'') {
+                    &after_as_user[1..end_quote + 1]
+                } else {
+                    return (sql.to_string(), None); // Malformed, ignore
+                }
+            } else if after_as_user.starts_with('"') {
+                // Double quote: "user_id"
+                if let Some(end_quote) = after_as_user[1..].find('"') {
+                    &after_as_user[1..end_quote + 1]
+                } else {
+                    return (sql.to_string(), None); // Malformed, ignore
+                }
+            } else {
+                return (sql.to_string(), None); // No quote, ignore
+            };
+            
+            // Remove AS USER clause from SQL
+            let before_as_user = &sql[..as_user_pos];
+            let quote_end_pos = as_user_pos + 9 + 1 + user_id_str.len() + 1; // " AS USER " + quote + user_id + quote
+            let after_as_user_clause = if quote_end_pos < sql.len() {
+                &sql[quote_end_pos..]
+            } else {
+                ""
+            };
+            
+            let cleaned_sql = format!("{} {}", before_as_user.trim(), after_as_user_clause.trim()).trim().to_string();
+            let user_id = kalamdb_commons::models::UserId::from(user_id_str.to_string());
+            
+            (cleaned_sql, Some(user_id))
+        } else {
+            (sql.to_string(), None)
+        }
     }
 
     /// Wrap a parsed statement into SqlStatement with sql_text
@@ -129,6 +184,11 @@ impl SqlStatement {
     /// Get the statement kind (for pattern matching)
     pub fn kind(&self) -> &SqlStatementKind {
         &self.kind
+    }
+
+    /// Get the AS USER impersonation user_id if present
+    pub fn as_user_id(&self) -> Option<&kalamdb_commons::models::UserId> {
+        self.as_user_id.as_ref()
     }
 
     /// Check if this is a specific statement kind (helper for tests and matching)
@@ -191,9 +251,33 @@ impl SqlStatement {
         // DML statements - create typed markers for handler pattern
         match words[0] {
             "SELECT" => return Ok(Self::new(sql.to_string(), SqlStatementKind::Select)),
-            "INSERT" => return Ok(Self::new(sql.to_string(), SqlStatementKind::Insert(crate::ddl::InsertStatement))),
-            "DELETE" => return Ok(Self::new(sql.to_string(), SqlStatementKind::Delete(crate::ddl::DeleteStatement))),
-            "UPDATE" => return Ok(Self::new(sql.to_string(), SqlStatementKind::Update(crate::ddl::UpdateStatement))),
+            "INSERT" => {
+                // T151: Extract AS USER clause from INSERT statement (Phase 7)
+                let (cleaned_sql, as_user_id) = Self::extract_as_user(sql);
+                return if let Some(user_id) = as_user_id {
+                    Ok(Self::with_as_user(cleaned_sql, SqlStatementKind::Insert(crate::ddl::InsertStatement), user_id))
+                } else {
+                    Ok(Self::new(sql.to_string(), SqlStatementKind::Insert(crate::ddl::InsertStatement)))
+                };
+            }
+            "DELETE" => {
+                // T151: Extract AS USER clause from DELETE statement (Phase 7)
+                let (cleaned_sql, as_user_id) = Self::extract_as_user(sql);
+                return if let Some(user_id) = as_user_id {
+                    Ok(Self::with_as_user(cleaned_sql, SqlStatementKind::Delete(crate::ddl::DeleteStatement), user_id))
+                } else {
+                    Ok(Self::new(sql.to_string(), SqlStatementKind::Delete(crate::ddl::DeleteStatement)))
+                };
+            }
+            "UPDATE" => {
+                // T151: Extract AS USER clause from UPDATE statement (Phase 7)
+                let (cleaned_sql, as_user_id) = Self::extract_as_user(sql);
+                return if let Some(user_id) = as_user_id {
+                    Ok(Self::with_as_user(cleaned_sql, SqlStatementKind::Update(crate::ddl::UpdateStatement), user_id))
+                } else {
+                    Ok(Self::new(sql.to_string(), SqlStatementKind::Update(crate::ddl::UpdateStatement)))
+                };
+            }
             _ => {}
         }
 

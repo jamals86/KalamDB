@@ -61,6 +61,7 @@ impl StatementHandler for InsertHandler {
         }
 
         let sql = statement.as_str();
+        
         // Very lightweight INSERT parser (avoids tight coupling to sqlparser internals)
         let (namespace, table_name, columns, rows_tokens) = self.simple_parse_insert(sql)?;
         // Validate table exists via SchemaRegistry fast path (using TableId)
@@ -82,6 +83,14 @@ impl StatementHandler for InsertHandler {
                     table_name.as_str()
                 ))
             })?;
+
+        // T163: Reject AS USER on Shared tables (Phase 7)
+        use kalamdb_commons::schemas::TableType;
+        if statement.as_user_id().is_some() && matches!(table_def.table_type, TableType::Shared) {
+            return Err(KalamDbError::InvalidOperation(
+                "AS USER impersonation is not supported for SHARED tables".to_string()
+            ));
+        }
 
         // Bind parameters and construct JSON rows
         let mut json_rows: Vec<JsonValue> = Vec::new();
@@ -125,8 +134,10 @@ impl StatementHandler for InsertHandler {
             json_rows.push(JsonValue::Object(obj));
         }
 
-        // Execute native insert
-        let rows_affected = self.execute_native_insert(&namespace, &table_name, &context.user_id, json_rows).await?;
+        // T153: Execute native insert with impersonation support (Phase 7)
+        // Use as_user_id if present, otherwise use context.user_id
+        let effective_user_id = statement.as_user_id().unwrap_or(&context.user_id);
+        let rows_affected = self.execute_native_insert(&namespace, &table_name, effective_user_id, json_rows).await?;
         Ok(ExecutionResult::Inserted { rows_affected })
     }
 
@@ -138,6 +149,17 @@ impl StatementHandler for InsertHandler {
         if !matches!(statement.kind(), SqlStatementKind::Insert(_)) {
             return Err(KalamDbError::InvalidOperation("InsertHandler received wrong statement kind".into()));
         }
+        
+        // T152: Validate AS USER authorization - only Service/Dba/System can use AS USER (Phase 7)
+        if statement.as_user_id().is_some() {
+            use kalamdb_commons::Role;
+            if !matches!(context.user_role, Role::Service | Role::Dba | Role::System) {
+                return Err(KalamDbError::Unauthorized(
+                    format!("Role {:?} is not authorized to use AS USER. Only Service, Dba, and System roles are permitted.", context.user_role())
+                ));
+            }
+        }
+        
         use kalamdb_commons::Role;
         match context.user_role {
             Role::System | Role::Dba | Role::Service | Role::User => Ok(()),

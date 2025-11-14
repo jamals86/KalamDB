@@ -272,15 +272,93 @@ impl TableFlush for UserTableFlushJob {
                 KalamDbError::Other(format!("Failed to scan table: {}", e))
             })?;
 
-        // Group rows by user_id
-        let mut rows_by_user: HashMap<String, Vec<(Vec<u8>, JsonValue)>> = HashMap::new();
-        let rows_scanned = entries.len();
+        let rows_before_dedup = entries.len();
+        log::info!("📊 [FLUSH DEDUP] Scanned {} total rows from hot storage (table={}.{})",
+                   rows_before_dedup, self.namespace_id.as_str(), self.table_name.as_str());
 
+        // STEP 1: Deduplicate using MAX(_seq) per PK (version resolution)
+        // Group by (user_id, primary_key) and keep only the latest version
+        use std::collections::HashMap;
+        
+        // Get primary key field name from schema
+        let pk_field = self.schema.fields()
+            .iter()
+            .find(|f| !f.name().starts_with('_'))
+            .map(|f| f.name().clone())
+            .unwrap_or_else(|| "id".to_string());
+        
+        log::debug!("📊 [FLUSH DEDUP] Using primary key field: {}", pk_field);
+        
+        // Map: (user_id, pk_value) -> (key_bytes, row, _seq)
+        let mut latest_versions: HashMap<(String, String), (Vec<u8>, kalamdb_tables::UserTableRow, i64)> = HashMap::new();
+        let mut deleted_count = 0;
+        
         for (key_bytes, row) in entries {
-            // row is already deserialized by EntityStore::scan_all (UserTableRow)
-
-            // Skip soft-deleted rows
+            // Parse user_id from key
+            let row_id = match kalamdb_commons::ids::UserTableRowId::from_bytes(&key_bytes) {
+                Ok(id) => id,
+                Err(e) => {
+                    log::warn!("Skipping row due to invalid key format: {}", e);
+                    continue;
+                }
+            };
+            let user_id = row_id.user_id().as_str().to_string();
+            
+            // Extract PK value from fields
+            let pk_value = match row.fields.get(&pk_field) {
+                Some(v) if !v.is_null() => v.to_string(),
+                _ => {
+                    // No PK or null PK - use unique _seq as fallback to avoid collapsing
+                    format!("_seq:{}", row._seq.as_i64())
+                }
+            };
+            
+            let group_key = (user_id.clone(), pk_value.clone());
+            let seq_val = row._seq.as_i64();
+            
+            // Track deleted rows
             if row._deleted {
+                deleted_count += 1;
+            }
+            
+            // Keep MAX(_seq) per (user_id, pk_value)
+            match latest_versions.get(&group_key) {
+                Some((_existing_key, _existing_row, existing_seq)) => {
+                    if seq_val > *existing_seq {
+                        log::trace!("[FLUSH DEDUP] Replacing user={}, pk={}: old_seq={}, new_seq={}, deleted={}",
+                                   user_id, pk_value, existing_seq, seq_val, row._deleted);
+                        latest_versions.insert(group_key, (key_bytes, row, seq_val));
+                    } else {
+                        log::trace!("[FLUSH DEDUP] Keeping existing user={}, pk={}: existing_seq={} >= new_seq={}",
+                                   user_id, pk_value, existing_seq, seq_val);
+                    }
+                }
+                None => {
+                    log::trace!("[FLUSH DEDUP] First version user={}, pk={}: _seq={}, deleted={}",
+                               user_id, pk_value, seq_val, row._deleted);
+                    latest_versions.insert(group_key, (key_bytes, row, seq_val));
+                }
+            }
+        }
+        
+        let rows_after_dedup = latest_versions.len();
+        let dedup_ratio = if rows_before_dedup > 0 {
+            (rows_before_dedup - rows_after_dedup) as f64 / rows_before_dedup as f64 * 100.0
+        } else {
+            0.0
+        };
+        
+        log::info!("📊 [FLUSH DEDUP] Version resolution complete: {} rows → {} unique (dedup: {:.1}%, deleted: {})",
+                   rows_before_dedup, rows_after_dedup, dedup_ratio, deleted_count);
+        
+        // STEP 2: Filter out deleted rows (tombstones)
+        let mut rows_by_user: HashMap<String, Vec<(Vec<u8>, JsonValue)>> = HashMap::new();
+        let mut tombstones_filtered = 0;
+        
+        for ((user_id, _pk_value), (key_bytes, row, _seq)) in latest_versions {
+            // Skip soft-deleted rows (tombstones)
+            if row._deleted {
+                tombstones_filtered += 1;
                 continue;
             }
 
@@ -294,29 +372,12 @@ impl TableFlush for UserTableFlushJob {
                 obj.insert("_deleted".to_string(), JsonValue::Bool(false));
             }
 
-            // Parse binary key to get user_id (keys are NOT UTF-8 strings!)
-            // Key format: {user_id_len:1byte}{user_id:variable}{seq:8bytes}
-            let row_id = match kalamdb_commons::ids::UserTableRowId::from_bytes(&key_bytes) {
-                Ok(id) => id,
-                Err(e) => {
-                    log::warn!("Skipping row due to invalid key format (table={}.{}): {}", 
-                              self.namespace_id.as_str(), self.table_name.as_str(), e);
-                    continue;
-                }
-            };
-
-            let user_id = row_id.user_id().as_str().to_string();
             rows_by_user.entry(user_id).or_default().push((key_bytes, row_data));
-
-            if rows_scanned % 1000 == 0 {
-                log::debug!("📊 Processed {} rows so far (table={}.{})", 
-                           rows_scanned, self.namespace_id.as_str(), self.table_name.as_str());
-            }
         }
 
-        log::debug!("📊 Scanned {} rows from user table={}.{} ({} users, {} active rows)",
-                   rows_scanned, self.namespace_id.as_str(), self.table_name.as_str(),
-                   rows_by_user.len(), rows_by_user.values().map(|v| v.len()).sum::<usize>());
+        let rows_to_flush = rows_by_user.values().map(|v| v.len()).sum::<usize>();
+        log::info!("📊 [FLUSH DEDUP] Final: {} rows to flush ({} users, {} tombstones filtered)",
+                   rows_to_flush, rows_by_user.len(), tombstones_filtered);
 
         // If no rows to flush, return early
         if rows_by_user.is_empty() {
