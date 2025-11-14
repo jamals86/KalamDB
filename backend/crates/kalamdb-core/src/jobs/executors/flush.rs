@@ -199,6 +199,8 @@ impl JobExecutor for FlushExecutor {
                     table_name.clone(),
                     schema.clone(),
                     schema_registry.clone(),
+                    app_ctx.manifest_service(),
+                    app_ctx.manifest_cache_service(),
                 )
                 .with_live_query_manager(live_query_manager);
 

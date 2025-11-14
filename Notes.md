@@ -169,6 +169,8 @@ ServerMessage will use arrow arrays directly as well
 
 142) make get_storage_path return PathBuf and any function which responsible for paths and storage should be the same using PathBuf instead of String for better path handling across different OSes, resolve_storage_path_for_user,     pub storage_path_template: String, 
 
+143) Add type-safe modles to ChangeNotification
+
 
 Here’s the updated 5-line spec with embedding storage inside Parquet and managed HNSW indexing (with delete handling):
 	1.	Parquet Storage: All embeddings are stored as regular columns in the Parquet file alongside other table columns to keep data unified and versioned per batch.

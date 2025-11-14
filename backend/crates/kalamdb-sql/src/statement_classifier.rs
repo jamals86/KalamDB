@@ -65,7 +65,7 @@ pub enum SqlStatementKind {
     FlushTable(FlushTableStatement),
     /// FLUSH ALL TABLES [IN <namespace>]
     FlushAllTables(FlushAllTablesStatement),
-    /// SHOW MANIFEST CACHE
+    /// SHOW MANIFEST
     ShowManifest(ShowManifestStatement),
 
     // ===== Job Management =====
@@ -412,6 +412,12 @@ impl SqlStatement {
             ["FLUSH", "TABLE", ..] => {
                 Ok(Self::wrap(sql, || {
                     FlushTableStatement::parse(sql).ok().map(SqlStatementKind::FlushTable)
+                }))
+            }
+            ["SHOW", "MANIFEST"] => {
+                // SHOW MANIFEST command for inspecting manifest cache
+                Ok(Self::wrap(sql, || {
+                    ShowManifestStatement::parse(sql).ok().map(SqlStatementKind::ShowManifest)
                 }))
             }
             ["SHOW", "MANIFEST", "CACHE", ..] => {
@@ -762,6 +768,14 @@ mod tests {
         assert!(matches!(
             SqlStatement::classify("FLUSH TABLE test.users").kind(),
             SqlStatementKind::FlushTable(_)
+        ));
+        assert!(matches!(
+            SqlStatement::classify("SHOW MANIFEST").kind(),
+            SqlStatementKind::ShowManifest(_)
+        ));
+        assert!(matches!(
+            SqlStatement::classify("show manifest").kind(),
+            SqlStatementKind::ShowManifest(_)
         ));
         // Note: FLUSH ALL might have parse issues
         // assert!(matches!(

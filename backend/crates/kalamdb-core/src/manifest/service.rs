@@ -315,12 +315,12 @@ impl ManifestService {
             .unwrap_or(0);
 
         // For now, return a basic entry
-        // TODO: Parse Parquet footer to extract min/max timestamps and column stats
+        // TODO: Parse Parquet footer to extract min/max _seq and column stats
         Ok(Some(BatchFileEntry::new(
             batch_number,
             file_name.to_string(),
-            0, // min_updated (TODO: extract from Parquet footer)
-            0, // max_updated (TODO: extract from Parquet footer)
+            0, // min_seq (TODO: extract from Parquet footer)
+            0, // max_seq (TODO: extract from Parquet footer)
             std::collections::HashMap::new(), // column_min_max (TODO: extract)
             0, // row_count (TODO: extract from Parquet footer)
             size_bytes,

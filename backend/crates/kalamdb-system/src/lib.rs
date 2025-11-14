@@ -58,6 +58,7 @@ pub use providers::{
     AuditLogsTableProvider,
     JobsTableProvider,
     LiveQueriesTableProvider,
+        ManifestTableProvider,
     NamespacesTableProvider,
     StoragesTableProvider,
     StatsTableProvider,

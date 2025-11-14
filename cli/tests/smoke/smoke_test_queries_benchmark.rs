@@ -45,7 +45,7 @@ fn smoke_queries_benchmark() {
     // price DOUBLE, created_at TIMESTAMP, updated_at TIMESTAMP, paid BOOLEAN, notes TEXT
     let create_sql = format!(
         r#"CREATE USER TABLE {} (
-            order_id BIGINT NOT NULL,
+            order_id BIGINT NOT NULL PRIMARY KEY,
             customer_id BIGINT,
             sku TEXT,
             status TEXT,

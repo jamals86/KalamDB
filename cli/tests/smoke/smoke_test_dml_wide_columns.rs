@@ -121,7 +121,7 @@ fn smoke_user_table_dml_wide_columns() {
     // create USER table with 8+ columns of various types
     let create_sql = format!(
         r#"CREATE USER TABLE {} (
-            id BIGINT AUTO_INCREMENT,
+            id BIGINT AUTO_INCREMENT PRIMARY KEY,
             name VARCHAR NOT NULL,
             age INT,
             active BOOLEAN,
@@ -153,7 +153,7 @@ fn smoke_shared_table_dml_wide_columns() {
     // create SHARED table with the same schema
     let create_sql = format!(
         r#"CREATE SHARED TABLE {} (
-            id BIGINT AUTO_INCREMENT,
+            id BIGINT AUTO_INCREMENT PRIMARY KEY,
             name VARCHAR NOT NULL,
             age INT,
             active BOOLEAN,
@@ -186,7 +186,7 @@ fn smoke_subscription_update_delete_notifications() {
     create_namespace(&namespace);
 
     let create_sql = format!(
-        "CREATE USER TABLE {} (id INT, name VARCHAR, _updated TIMESTAMP, _deleted BOOLEAN, note VARCHAR)",
+        "CREATE USER TABLE {} (id INT PRIMARY KEY, name VARCHAR, _updated TIMESTAMP, _deleted BOOLEAN, note VARCHAR)",
         full
     );
     execute_sql_as_root_via_cli(&create_sql).expect("create user table should succeed");

@@ -6,6 +6,7 @@
 use super::base::{FlushExecutor, FlushJobResult, FlushMetadata, TableFlush};
 use crate::error::KalamDbError;
 use crate::live_query::manager::{ChangeNotification, LiveQueryManager};
+use crate::manifest::{ManifestCacheService, ManifestService};
 use crate::schema_registry::SchemaRegistry;
 use crate::storage::ParquetWriter;
 use kalamdb_tables::{SharedTableRow, SharedTableStore, SharedTableStoreExt};
@@ -29,6 +30,8 @@ pub struct SharedTableFlushJob {
     unified_cache: Arc<SchemaRegistry>, //TODO: We have AppContext now
     node_id: NodeId, //TODO: We can pass AppContext and has node_id there
     live_query_manager: Option<Arc<LiveQueryManager>>, //TODO: We can pass AppContext and has live_query_manager there
+    manifest_service: Arc<ManifestService>,
+    manifest_cache: Arc<ManifestCacheService>,
 }
 
 impl SharedTableFlushJob {
@@ -40,6 +43,8 @@ impl SharedTableFlushJob {
         table_name: TableName,
         schema: SchemaRef,
         unified_cache: Arc<SchemaRegistry>,
+        manifest_service: Arc<ManifestService>,
+        manifest_cache: Arc<ManifestCacheService>,
     ) -> Self {
         let node_id = NodeId::from(format!("node-{}", std::process::id()));
         Self {
@@ -51,6 +56,8 @@ impl SharedTableFlushJob {
             unified_cache,
             node_id,
             live_query_manager: None,
+            manifest_service,
+            manifest_cache,
         }
     }
 
@@ -65,9 +72,94 @@ impl SharedTableFlushJob {
         FlushExecutor::execute_with_tracking(self, self.namespace_id.clone())
     }
 
-    /// Generate batch filename with timestamp
-    fn generate_batch_filename(&self) -> String {
-        format!("batch-{}.parquet", Utc::now().timestamp_millis())
+    /// Generate batch filename using manifest max_batch (T115)
+    /// Returns (batch_number, filename)
+    fn generate_batch_filename(&self) -> Result<(u64, String), KalamDbError> {
+        // T114: Read manifest before writing batch file
+        let scope = "shared"; // Shared tables use "shared" scope
+        let batch_number = match self.manifest_service.read_manifest(&self.namespace_id, &self.table_name, scope) {
+            Ok(manifest) => {
+                // T115: Extract max_batch from manifest, next batch is max_batch + 1
+                manifest.max_batch + 1
+            }
+            Err(_) => {
+                // No manifest exists yet, start with batch 0
+                0
+            }
+        };
+        
+        let filename = format!("batch-{}.parquet", batch_number);
+        log::debug!("[MANIFEST] Generated batch filename: {} (batch_number={})", filename, batch_number);
+        Ok((batch_number, filename))
+    }
+    
+    /// Extract min/max values for all columns from RecordBatch (T116)
+    fn extract_column_stats(&self, batch: &RecordBatch) -> Result<std::collections::HashMap<String, (serde_json::Value, serde_json::Value)>, KalamDbError> {
+        use datafusion::arrow::array::*;
+        use datafusion::arrow::datatypes::DataType;
+        
+        let mut column_min_max = std::collections::HashMap::new();
+        
+        for (idx, field) in batch.schema().fields().iter().enumerate() {
+            let column = batch.column(idx);
+            let column_name = field.name();
+            
+            // Skip if all nulls
+            if column.null_count() == column.len() {
+                continue;
+            }
+            
+            // Extract min/max based on data type
+            let (min_val, max_val) = match field.data_type() {
+                DataType::Int64 => {
+                    if let Some(arr) = column.as_any().downcast_ref::<Int64Array>() {
+                        let values: Vec<i64> = (0..arr.len())
+                            .filter_map(|i| if arr.is_null(i) { None } else { Some(arr.value(i)) })
+                            .collect();
+                        if let (Some(min), Some(max)) = (values.iter().min(), values.iter().max()) {
+                            (serde_json::json!(min), serde_json::json!(max))
+                        } else {
+                            continue;
+                        }
+                    } else {
+                        continue;
+                    }
+                }
+                DataType::Utf8 => {
+                    if let Some(arr) = column.as_any().downcast_ref::<StringArray>() {
+                        let values: Vec<&str> = (0..arr.len())
+                            .filter_map(|i| if arr.is_null(i) { None } else { Some(arr.value(i)) })
+                            .collect();
+                        if let (Some(min), Some(max)) = (values.iter().min(), values.iter().max()) {
+                            (serde_json::json!(min), serde_json::json!(max))
+                        } else {
+                            continue;
+                        }
+                    } else {
+                        continue;
+                    }
+                }
+                DataType::Timestamp(_, _) => {
+                    if let Some(arr) = column.as_any().downcast_ref::<TimestampMillisecondArray>() {
+                        let values: Vec<i64> = (0..arr.len())
+                            .filter_map(|i| if arr.is_null(i) { None } else { Some(arr.value(i)) })
+                            .collect();
+                        if let (Some(min), Some(max)) = (values.iter().min(), values.iter().max()) {
+                            (serde_json::json!(min), serde_json::json!(max))
+                        } else {
+                            continue;
+                        }
+                    } else {
+                        continue;
+                    }
+                }
+                _ => continue, // Skip other types for now
+            };
+            
+            column_min_max.insert(column_name.clone(), (min_val, max_val));
+        }
+        
+        Ok(column_min_max)
     }
 
     /// Convert JSON rows to Arrow RecordBatch
@@ -239,8 +331,8 @@ impl TableFlush for SharedTableFlushJob {
         // Convert rows to RecordBatch
         let batch = self.rows_to_record_batch(&rows)?;
 
-        // Determine output path via unified SchemaCache
-        let batch_filename = self.generate_batch_filename();
+        // T114-T115: Generate batch filename using manifest (sequential numbering)
+        let (batch_number, batch_filename) = self.generate_batch_filename()?;
         let full_path = self.unified_cache.get_storage_path(&*self.table_id, None, None)?;
         let table_dir = PathBuf::from(full_path);
         let output_path = table_dir.join(&batch_filename);
@@ -254,10 +346,57 @@ impl TableFlush for SharedTableFlushJob {
         // Write to Parquet
         log::debug!("📝 Writing Parquet file: path={}, rows={}", output_path.display(), rows_count);
         let writer = ParquetWriter::new(output_path.to_str().unwrap());
-        writer.write(self.schema.clone(), vec![batch])?;
+        writer.write(self.schema.clone(), vec![batch.clone()])?;
 
         log::info!("✅ Flushed {} rows for shared table={}.{} to {}", 
                   rows_count, self.namespace_id.as_str(), self.table_name.as_str(), output_path.display());
+
+        // T116: Extract min/max values for all columns
+        let column_min_max = self.extract_column_stats(&batch)?;
+        log::debug!("[MANIFEST] Extracted column stats: {} columns with min/max", column_min_max.len());
+
+        // T117: Update manifest with new BatchFileEntry
+        use kalamdb_commons::types::BatchFileEntry;
+        
+        // Extract min/max _seq values from batch (MVCC version identifiers)
+        let min_seq = column_min_max.get("_seq")
+            .and_then(|(min, _)| min.as_i64())
+            .unwrap_or(0);
+        let max_seq = column_min_max.get("_seq")
+            .and_then(|(_, max)| max.as_i64())
+            .unwrap_or(0);
+        
+        // Get file size
+        let size_bytes = std::fs::metadata(&output_path)
+            .map(|m| m.len())
+            .unwrap_or(0);
+        
+        let batch_entry = BatchFileEntry::new(
+            batch_number,
+            batch_filename.clone(),
+            min_seq,
+            max_seq,
+            column_min_max,
+            rows_count as u64, // Convert usize to u64
+            size_bytes,
+            1, // schema_version
+        );
+        
+        let scope = "shared"; // Shared tables use "shared" scope
+        self.manifest_service
+            .update_manifest(&self.namespace_id, &self.table_name, scope, batch_entry)
+            .map_err(|e| KalamDbError::Other(format!("Failed to update manifest: {}", e)))?;
+        
+        log::info!("[MANIFEST] Updated manifest: batch_number={}, rows={}, size={} bytes", 
+                  batch_number, rows_count, size_bytes);
+        
+        // T118: Sync manifest cache after update
+        self.manifest_cache
+            .invalidate(&self.namespace_id, &self.table_name, scope)
+            .map_err(|e| KalamDbError::Other(format!("Failed to invalidate manifest cache: {}", e)))?;
+        
+        log::debug!("[MANIFEST] Invalidated cache for {}.{} (scope={})", 
+                   self.namespace_id.as_str(), self.table_name.as_str(), scope);
 
         // Delete flushed rows from RocksDB
         log::debug!("🗑️  Deleting {} flushed rows from RocksDB (table={}.{})",
