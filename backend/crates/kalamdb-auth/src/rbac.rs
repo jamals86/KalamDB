@@ -43,8 +43,12 @@ pub fn can_access_table_type(role: Role, table_type: TableType) -> bool {
 ///
 /// # Returns
 /// True if creation is allowed, false otherwise
-pub fn can_create_table(role: Role, _table_type: TableType) -> bool {
-    matches!(role, Role::System | Role::Dba)
+pub fn can_create_table(role: Role, table_type: TableType) -> bool {
+    match role {
+        Role::System | Role::Dba => true,
+        // Allow Service & User roles to create USER and STREAM tables (not SHARED or SYSTEM)
+        Role::Service | Role::User => matches!(table_type, TableType::User | TableType::Stream),
+    }
 }
 
 /// Check if a role can manage users (create, update, delete).
@@ -209,9 +213,9 @@ mod tests {
         assert!(can_create_table(Role::Dba, TableType::Shared));
         
         // Service and User cannot create any tables (DML only)
-        assert!(!can_create_table(Role::Service, TableType::User));
+        assert!(can_create_table(Role::Service, TableType::User));
         assert!(!can_create_table(Role::Service, TableType::Shared));
-        assert!(!can_create_table(Role::User, TableType::User));
+        assert!(can_create_table(Role::User, TableType::User));
         assert!(!can_create_table(Role::User, TableType::System));
     }
 

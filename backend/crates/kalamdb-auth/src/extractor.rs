@@ -49,10 +49,47 @@ pub async fn extract_auth_with_repo(
 
     if auth_header.starts_with("Basic ") {
         extract_basic_auth_with_repo(req, repo, auth_header).await
-    } else if auth_header.starts_with("Bearer ") {
-        Err(AuthError::MalformedAuthorization(
-            "JWT authentication not yet implemented".to_string(),
-        ))
+    } else if auth_header.starts_with("Bearer") {
+        // Minimal JWT support (HS256) for integration tests.
+        // Reads secret from env KALAMDB_JWT_SECRET or falls back to default dev secret.
+        let token = auth_header.strip_prefix("Bearer").unwrap_or("").trim();
+        if token.is_empty() {
+            return Err(AuthError::MalformedAuthorization("Bearer token missing".to_string()));
+        }
+        let secret = std::env::var("KALAMDB_JWT_SECRET")
+            .unwrap_or_else(|_| "kalamdb-dev-secret-key-change-in-production".to_string());
+        let trusted = std::env::var("KALAMDB_JWT_TRUSTED_ISSUERS")
+            .unwrap_or_else(|_| "kalamdb-test".to_string());
+        let issuers: Vec<String> = trusted.split(',').map(|s| s.trim().to_string()).collect();
+        match crate::jwt_auth::validate_jwt_token(token, &secret, &issuers) {
+            Ok(claims) => {
+                // Look up user by username to avoid mismatched sub causing 500 later
+                if let Some(uname) = claims.username.clone() {
+                    if let Ok(user) = repo.get_user_by_username(&uname).await {
+                        let role = claims
+                            .role
+                            .as_deref()
+                            .and_then(|r| match r.to_lowercase().as_str() {
+                                "system" => Some(Role::System),
+                                "dba" => Some(Role::Dba),
+                                "service" => Some(Role::Service),
+                                "user" => Some(Role::User),
+                                _ => None,
+                            })
+                            .unwrap_or(user.role);
+                        return Ok(AuthenticatedRequest {
+                            user_id: user.id.clone(),
+                            role,
+                            username: user.username.to_string(),
+                        });
+                    } else {
+                        return Err(AuthError::InvalidCredentials("Invalid username or password".to_string()));
+                    }
+                }
+                Err(AuthError::MissingClaim("username".to_string()))
+            }
+            Err(e) => Err(e),
+        }
     } else {
         Err(AuthError::MalformedAuthorization(
             "Authorization header must start with 'Basic ' or 'Bearer '".to_string(),

@@ -100,6 +100,11 @@ impl StatementHandler for UpdateHandler {
                         }
                         Err(e) => {
                             println!("[DEBUG UpdateHandler] update_by_id_field failed: {}", e);
+                            // Isolation-friendly semantics: updating a non-existent row under this user_id
+                            // should return success with 0 rows affected (no-op), not an error.
+                            if matches!(e, crate::error::KalamDbError::NotFound(_)) {
+                                return Ok(ExecutionResult::Updated { rows_affected: 0 });
+                            }
                             Err(e)
                         }
                     }

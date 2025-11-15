@@ -36,6 +36,12 @@ use kalamdb_commons::models::UserId;
 9. Don't import use inside methods always add them to the top of the rust file instead
 10. EntityStore is used instead of using the EntityStorev2 alias
 
+11. Filesystem vs RocksDB separation of concerns
+   - Filesystem/file storage logic (cold storage, Parquet files, directory management, file size accounting) must live in `backend/crates/kalamdb-filestore`
+   - Key-value storage engines and partition/column family logic must live in `backend/crates/kalamdb-store`
+   - Orchestration layers in `kalamdb-core` (DDL/DML handlers, job executors) should delegate to these crates and avoid embedding filesystem or RocksDB specifics directly
+   - When adding cleanup/compaction/file lifecycle functionality, implement it in `kalamdb-filestore` and call it from `kalamdb-core`
+
 **When adding a new dependency:**
 1. Add it to `Cargo.toml` (root) under `[workspace.dependencies]` with version
 2. Reference it in individual crates using `{ workspace = true }`

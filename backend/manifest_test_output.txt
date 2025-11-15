@@ -1,0 +1,150 @@
+warning: unused variable: `file_path`
+  --> backend/crates/kalamdb-filestore/src/parquet_reader.rs:21:9
+   |
+21 |         file_path: &Path,
+   |         ^^^^^^^^^ help: if this is intentional, prefix it with an underscore: `_file_path`
+   |
+   = note: `#[warn(unused_variables)]` on by default
+
+warning: field `base_path` is never read
+ --> backend/crates/kalamdb-filestore/src/parquet_reader.rs:8:5
+  |
+7 | pub struct ParquetReader {
+  |            ------------- field in this struct
+8 |     base_path: std::path::PathBuf,
+  |     ^^^^^^^^^
+  |
+  = note: `#[warn(dead_code)]` on by default
+
+warning: `kalamdb-filestore` (lib) generated 2 warnings
+   Compiling kalamdb-core v0.1.0 (/Users/jamal/git/KalamDB/backend/crates/kalamdb-core)
+   Compiling kalamdb-api v0.1.0 (/Users/jamal/git/KalamDB/backend/crates/kalamdb-api)
+warning: unused import: `kalamdb_tables::UserTableStoreExt`
+  --> backend/crates/kalamdb-core/src/sql/executor/helpers/table_registration.rs:31:9
+   |
+31 |     use kalamdb_tables::UserTableStoreExt;
+   |         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+   |
+   = note: `#[warn(unused_imports)]` on by default
+
+warning: unused import: `kalamdb_tables::SharedTableStoreExt`
+   --> backend/crates/kalamdb-core/src/sql/executor/helpers/table_registration.rs:115:9
+    |
+115 |     use kalamdb_tables::SharedTableStoreExt;
+    |         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: unused import: `kalamdb_tables::SharedTableStoreExt`
+   --> backend/crates/kalamdb-core/src/sql/executor/helpers/table_registration.rs:198:9
+    |
+198 |     use kalamdb_tables::SharedTableStoreExt;
+    |         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: value assigned to `total_batches` is never read
+   --> backend/crates/kalamdb-core/src/providers/shared.rs:285:18
+    |
+285 |         let (mut total_batches, mut skipped, mut scanned) = (0usize, 0usize, 0usize);
+    |                  ^^^^^^^^^^^^^
+    |
+    = help: maybe it is overwritten before being read?
+    = note: `#[warn(unused_assignments)]` on by default
+
+warning: unused variable: `min_seq`
+   --> backend/crates/kalamdb-core/src/providers/shared.rs:213:21
+    |
+213 |             let mut min_seq: Option<i64> = None;
+    |                     ^^^^^^^ help: if this is intentional, prefix it with an underscore: `_min_seq`
+    |
+    = note: `#[warn(unused_variables)]` on by default
+
+warning: unused variable: `max_seq`
+   --> backend/crates/kalamdb-core/src/providers/shared.rs:214:21
+    |
+214 |             let mut max_seq: Option<i64> = None;
+    |                     ^^^^^^^ help: if this is intentional, prefix it with an underscore: `_max_seq`
+
+warning: variable does not need to be mutable
+   --> backend/crates/kalamdb-core/src/providers/shared.rs:213:17
+    |
+213 |             let mut min_seq: Option<i64> = None;
+    |                 ----^^^^^^^
+    |                 |
+    |                 help: remove this `mut`
+    |
+    = note: `#[warn(unused_mut)]` on by default
+
+warning: variable does not need to be mutable
+   --> backend/crates/kalamdb-core/src/providers/shared.rs:214:17
+    |
+214 |             let mut max_seq: Option<i64> = None;
+    |                 ----^^^^^^^
+    |                 |
+    |                 help: remove this `mut`
+
+warning: value assigned to `total_batches` is never read
+   --> backend/crates/kalamdb-core/src/providers/users.rs:354:18
+    |
+354 |         let (mut total_batches, mut skipped, mut scanned) = (0usize, 0usize, 0usize);
+    |                  ^^^^^^^^^^^^^
+    |
+    = help: maybe it is overwritten before being read?
+
+warning: method `generate_batch_filename` is never used
+  --> backend/crates/kalamdb-core/src/providers/flush/users.rs:87:8
+   |
+36 | impl UserTableFlushJob {
+   | ---------------------- method in this implementation
+...
+87 |     fn generate_batch_filename(&self) -> String {
+   |        ^^^^^^^^^^^^^^^^^^^^^^^
+   |
+   = note: `#[warn(dead_code)]` on by default
+
+warning: function `resolve_latest_version_from_rows` is never used
+  --> backend/crates/kalamdb-core/src/providers/unified_dml/resolve.rs:61:8
+   |
+61 | pub fn resolve_latest_version_from_rows(
+   |        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: field `tables_provider` is never read
+  --> backend/crates/kalamdb-core/src/schema_registry/views/information_schema/information_schema_columns.rs:17:5
+   |
+16 | pub struct InformationSchemaColumnsView {
+   |            ---------------------------- field in this struct
+17 |     tables_provider: Arc<TablesTableProvider>,
+   |     ^^^^^^^^^^^^^^^
+   |
+   = note: `InformationSchemaColumnsView` has a derived impl for the trait `Debug`, but this is intentionally ignored during dead code analysis
+
+warning: field `tables_provider` is never read
+  --> backend/crates/kalamdb-core/src/schema_registry/views/information_schema/information_schema_tables.rs:20:5
+   |
+19 | pub struct InformationSchemaTablesView {
+   |            --------------------------- field in this struct
+20 |     tables_provider: Arc<TablesTableProvider>,
+   |     ^^^^^^^^^^^^^^^
+   |
+   = note: `InformationSchemaTablesView` has a derived impl for the trait `Debug`, but this is intentionally ignored during dead code analysis
+
+warning: `kalamdb-core` (lib) generated 13 warnings (run `cargo fix --lib -p kalamdb-core` to apply 5 suggestions)
+   Compiling kalamdb-server v0.1.0 (/Users/jamal/git/KalamDB/backend)
+error[E0583]: file not found for module `common`
+ --> backend/tests/integration/manifest/test_manifest_flush.rs:3:1
+  |
+3 | mod common;
+  | ^^^^^^^^^^^
+  |
+  = help: to create the module `common`, create file "backend/tests/integration/manifest/common.rs" or "backend/tests/integration/manifest/common/mod.rs"
+  = note: if there is a `mod common` elsewhere in the crate already, import it with `use crate::...` instead
+
+error[E0609]: no field `filename` on type `&BatchFileEntry`
+  --> backend/tests/integration/manifest/test_manifest_flush.rs:69:22
+   |
+69 |     assert_eq!(batch.filename, "batch-0.parquet");
+   |                      ^^^^^^^^ unknown field
+   |
+   = note: available fields are: `batch_number`, `file_path`, `min_seq`, `max_seq`, `column_min_max` ... and 4 others
+
+Some errors have detailed explanations: E0583, E0609.
+For more information about an error, try `rustc --explain E0583`.
+error: could not compile `kalamdb-server` (test "test_manifest_flush") due to 2 previous errors
+warning: build failed, waiting for other jobs to finish...

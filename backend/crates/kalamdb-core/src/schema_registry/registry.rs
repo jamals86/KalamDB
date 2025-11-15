@@ -541,10 +541,25 @@ impl SchemaRegistry {
                     new_schema
                 });
             
-            // Register table with DataFusion
-            schema
-                .register_table(table_id.table_name().as_str().to_string(), provider)
-                .map_err(|e| KalamDbError::InvalidOperation(format!("Failed to register table with DataFusion: {}", e)))?;
+            // Register table with DataFusion, tolerate duplicates
+            match schema.register_table(table_id.table_name().as_str().to_string(), provider) {
+                Ok(_) => {},
+                Err(e) => {
+                    let msg = e.to_string();
+                    // If the table already exists, treat as idempotent success
+                    if msg.to_lowercase().contains("already exists") || msg.to_lowercase().contains("exists") {
+                        log::warn!(
+                            "[SchemaRegistry] Table {}.{} already registered in DataFusion; continuing",
+                            table_id.namespace_id().as_str(),
+                            table_id.table_name().as_str()
+                        );
+                    } else {
+                        return Err(KalamDbError::InvalidOperation(format!(
+                            "Failed to register table with DataFusion: {}", e
+                        )));
+                    }
+                }
+            }
             
             log::info!(
                 "[SchemaRegistry] Registered table {}.{} with DataFusion catalog",

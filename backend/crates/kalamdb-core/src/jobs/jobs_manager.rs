@@ -307,7 +307,9 @@ impl JobsManager {
         // Update job to completed status
         let now_ms = chrono::Utc::now().timestamp_millis();
         job.status = JobStatus::Completed;
-        job.message = message;
+        job.started_at.get_or_insert(now_ms);
+        let success_message = message.unwrap_or_else(|| "Job completed successfully".to_string());
+        job.message = Some(success_message.clone());
         job.updated_at = now_ms;
         job.finished_at = Some(now_ms);
         
@@ -315,7 +317,7 @@ impl JobsManager {
             .update_job(job.clone())
             .map_err(|e| crate::error::KalamDbError::Other(format!("Failed to complete job: {}", e)))?;
         
-        self.log_job_event(job_id, "info", &format!("Job completed successfully"));
+        self.log_job_event(job_id, "info", &format!("{}", success_message));
         Ok(())
     }
 
@@ -334,6 +336,7 @@ impl JobsManager {
         // Manually update job to failed state
         let now_ms = chrono::Utc::now().timestamp_millis();
         job.status = JobStatus::Failed;
+        job.started_at.get_or_insert(now_ms);
         job.message = Some(error_message.clone());
         job.exception_trace = None;
         job.updated_at = now_ms;

@@ -2,8 +2,8 @@
 //!
 //! This module provides HTTP handlers for executing SQL statements via the REST API.
 
-use actix_web::{post, web, HttpMessage, HttpRequest, HttpResponse, Responder};
-use kalamdb_auth::{extract_auth_with_repo, AuthenticatedUser, UserRepository};
+use actix_web::{post, web, HttpRequest, HttpResponse, Responder};
+use kalamdb_auth::{extract_auth_with_repo, UserRepository};
 use kalamdb_commons::models::UserId;
 use kalamdb_core::sql::ExecutionResult;
 use kalamdb_core::sql::executor::{ExecutorMetadataAlias, SqlExecutor};
@@ -87,13 +87,38 @@ pub async fn execute_sql_v1(
     http_req: HttpRequest,
     req: web::Json<SqlRequest>,
     app_context: web::Data<Arc<kalamdb_core::app_context::AppContext>>,
-    user_repo: web::Data<Arc<dyn UserRepository>>,
+    sql_executor: web::Data<Arc<SqlExecutor>>,
+    user_repo: Option<web::Data<Arc<dyn UserRepository>>>,
     rate_limiter: Option<web::Data<Arc<RateLimiter>>>,
 ) -> impl Responder {
     let start_time = Instant::now();
 
+    // TODO: Handle all auth errors and checking inside kalamdb-auth crate
+    // Early guard: reject malformed bare Bearer headers consistently with 401
+    if let Some(auth_val) = http_req.headers().get("Authorization") {
+        if let Ok(h) = auth_val.to_str() {
+            if h == "Bearer" || h == "Bearer " {
+                let took_ms = start_time.elapsed().as_millis() as u64;
+                return HttpResponse::Unauthorized().json(SqlResponse::error(
+                    "MALFORMED_AUTHORIZATION",
+                    "Bearer token missing",
+                    took_ms,
+                ));
+            }
+        }
+    }
+
+    // Resolve user repository (tests may not inject it explicitly)
+    // Prefer injected repository; fallback to CoreUsersRepo if not provided
+    let repo: Arc<dyn UserRepository> = if let Some(repo) = user_repo {
+        repo.get_ref().clone()
+    } else {
+        let users_provider = app_context.system_tables().users();
+        Arc::new(crate::repositories::user_repo::CoreUsersRepo::new(users_provider)) as Arc<dyn UserRepository>
+    };
+
     // Extract and validate authentication from request using repo
-    let auth_result = match extract_auth_with_repo(&http_req, user_repo.get_ref()).await {
+    let auth_result = match extract_auth_with_repo(&http_req, &repo).await {
         Ok(auth) => auth,
         Err(e) => {
             let took_ms = start_time.elapsed().as_millis() as u64;
@@ -108,6 +133,10 @@ pub async fn execute_sql_v1(
                 kalamdb_auth::AuthError::RemoteAccessDenied(msg) => ("REMOTE_ACCESS_DENIED", msg),
                 kalamdb_auth::AuthError::UserNotFound(msg) => ("USER_NOT_FOUND", msg),
                 kalamdb_auth::AuthError::DatabaseError(msg) => ("DATABASE_ERROR", msg),
+                kalamdb_auth::AuthError::TokenExpired => ("TOKEN_EXPIRED", "Token expired".to_string()),
+                kalamdb_auth::AuthError::InvalidSignature => ("INVALID_SIGNATURE", "Invalid token signature".to_string()),
+                kalamdb_auth::AuthError::UntrustedIssuer(iss) => ("UNTRUSTED_ISSUER", format!("Untrusted issuer: {}", iss)),
+                kalamdb_auth::AuthError::MissingClaim(claim) => ("MISSING_CLAIM", format!("Missing required claim: {}", claim)),
                 _ => ("AUTHENTICATION_ERROR", format!("{:?}", e)),
             };
             return HttpResponse::Unauthorized().json(SqlResponse::error(code, &message, took_ms));
@@ -185,9 +214,7 @@ pub async fn execute_sql_v1(
 
     // Execute each statement sequentially
     let mut results = Vec::new();
-    let sql_executor: Option<&Arc<SqlExecutor>> = http_req
-        .app_data::<web::Data<Arc<SqlExecutor>>>()
-        .map(|data| data.as_ref());
+    let sql_executor: Option<&Arc<SqlExecutor>> = Some(sql_executor.get_ref());
 
     // Phase 3 (T033): Extract request_id and ip_address for ExecutionContext
     let request_id = http_req
@@ -197,23 +224,12 @@ pub async fn execute_sql_v1(
         .map(|s| s.to_string());
     
     let resolved_ip = http_req
-        .extensions()
-        .get::<AuthenticatedUser>()
-        .and_then(|user| user.connection_info.remote_addr.clone())
-        .or_else(|| {
-            http_req
-                .headers()
-                .get("X-Forwarded-For")
-                .and_then(|h| h.to_str().ok())
-                .and_then(|raw| raw.split(',').next().map(|s| s.trim().to_string()))
-                .filter(|s| !s.is_empty())
-        })
-        .or_else(|| {
-            http_req
-                .connection_info()
-                .realip_remote_addr()
-                .map(|s| s.to_string())
-        });
+        .headers()
+        .get("X-Forwarded-For")
+        .and_then(|h| h.to_str().ok())
+        .and_then(|raw| raw.split(',').next().map(|s| s.trim().to_string()))
+        .filter(|s| !s.is_empty())
+        .or_else(|| http_req.connection_info().realip_remote_addr().map(|s| s.to_string()));
     
     for (idx, sql) in statements.iter().enumerate() {
         let stmt_start = std::time::Instant::now();

@@ -12,6 +12,7 @@ use datafusion::arrow::datatypes::{DataType, SchemaRef, TimeUnit};
 use datafusion::arrow::record_batch::RecordBatch;
 use serde_json::Value as JsonValue;
 use std::sync::Arc;
+use chrono::Utc;
 
 /// Type alias for Arc<dyn Array> to improve readability
 type ArrayRef = Arc<dyn datafusion::arrow::array::Array>;
@@ -33,7 +34,7 @@ type ArrayRef = Arc<dyn datafusion::arrow::array::Array>;
 /// - Int32, Int64 (Integers)
 /// - Float64 (Floating point)
 /// - Boolean
-/// - Timestamp (milliseconds) - can parse from i64 or RFC3339 string
+/// - Timestamp (milliseconds, microseconds) - can parse from i64 or RFC3339 string
 ///
 /// # Errors
 /// Returns error if:
@@ -101,7 +102,7 @@ pub fn json_rows_to_arrow_batch(
                     .collect();
                 Arc::new(BooleanArray::from(values)) as ArrayRef
             }
-            DataType::Timestamp(TimeUnit::Millisecond, _) => {
+            DataType::Timestamp(TimeUnit::Millisecond, tz_opt) => {
                 let values: Vec<Option<i64>> = rows
                     .iter()
                     .map(|row| {
@@ -117,7 +118,43 @@ pub fn json_rows_to_arrow_batch(
                         })
                     })
                     .collect();
-                Arc::new(TimestampMillisecondArray::from(values)) as ArrayRef
+                let arr = TimestampMillisecondArray::from(values);
+                let arr = if let Some(tz) = tz_opt.as_deref() {
+                    arr.with_timezone(tz)
+                } else { arr };
+                Arc::new(arr) as ArrayRef
+            }
+            DataType::Timestamp(TimeUnit::Microsecond, tz_opt) => {
+                // Default for non-nullable system column _updated if missing
+                let default_now_micros: i64 = {
+                    let now = Utc::now();
+                    now.timestamp() * 1_000_000 + (now.timestamp_subsec_nanos() as i64) / 1_000
+                };
+                let values: Vec<Option<i64>> = rows
+                    .iter()
+                    .map(|row| {
+                        // For _updated (non-nullable), provide default if missing/null
+                        match row.get(field.name()) {
+                            Some(v) => v.as_i64().or_else(|| {
+                                v.as_str().and_then(|s| {
+                                    chrono::DateTime::parse_from_rfc3339(s)
+                                        .ok()
+                                        .map(|dt| {
+                                            let secs = dt.timestamp();
+                                            let micros = (dt.timestamp_subsec_nanos() as i64) / 1_000;
+                                            secs * 1_000_000 + micros
+                                        })
+                                })
+                            }),
+                            None => if field.name() == "_updated" { Some(default_now_micros) } else { None },
+                        }
+                    })
+                    .collect();
+                let arr = TimestampMicrosecondArray::from(values);
+                let arr = if let Some(tz) = tz_opt.as_deref() {
+                    arr.with_timezone(tz)
+                } else { arr };
+                Arc::new(arr) as ArrayRef
             }
             _ => {
                 return Err(format!(
@@ -145,8 +182,15 @@ fn create_empty_array(data_type: &DataType) -> ArrayRef {
         DataType::Int64 => Arc::new(Int64Array::from(Vec::<Option<i64>>::new())),
         DataType::Float64 => Arc::new(Float64Array::from(Vec::<Option<f64>>::new())),
         DataType::Boolean => Arc::new(BooleanArray::from(Vec::<Option<bool>>::new())),
-        DataType::Timestamp(TimeUnit::Millisecond, _) => {
-            Arc::new(TimestampMillisecondArray::from(Vec::<Option<i64>>::new()))
+        DataType::Timestamp(TimeUnit::Millisecond, tz_opt) => {
+            let arr = TimestampMillisecondArray::from(Vec::<Option<i64>>::new());
+            let arr = if let Some(tz) = tz_opt.as_deref() { arr.with_timezone(tz) } else { arr };
+            Arc::new(arr)
+        }
+        DataType::Timestamp(TimeUnit::Microsecond, tz_opt) => {
+            let arr = TimestampMicrosecondArray::from(Vec::<Option<i64>>::new());
+            let arr = if let Some(tz) = tz_opt.as_deref() { arr.with_timezone(tz) } else { arr };
+            Arc::new(arr)
         }
         _ => Arc::new(StringArray::from(Vec::<Option<String>>::new())), // Fallback
     }
@@ -360,6 +404,10 @@ pub fn arrow_value_to_json(
         }
         DataType::Timestamp(TimeUnit::Millisecond, _) => {
             let arr = array.as_any().downcast_ref::<TimestampMillisecondArray>().unwrap();
+            Ok(JsonValue::Number(arr.value(row_idx).into()))
+        }
+        DataType::Timestamp(TimeUnit::Microsecond, _) => {
+            let arr = array.as_any().downcast_ref::<TimestampMicrosecondArray>().unwrap();
             Ok(JsonValue::Number(arr.value(row_idx).into()))
         }
         DataType::Timestamp(TimeUnit::Nanosecond, _) => {

@@ -7,7 +7,7 @@ use datafusion::arrow::array::{
     Array, ArrayData, ArrayRef, BinaryBuilder, BooleanBuilder, Date32Builder, Decimal128Builder,
     FixedSizeBinaryBuilder, FixedSizeListArray, FixedSizeListBuilder, Float32Builder,
     Float64Builder, Int16Builder, Int32Builder, Int64Builder, StringBuilder,
-    Time64MicrosecondBuilder, TimestampMillisecondBuilder,
+    Time64MicrosecondBuilder, TimestampMicrosecondBuilder, TimestampMillisecondBuilder,
 };
 use datafusion::arrow::datatypes::{DataType, Field, SchemaRef, TimeUnit};
 use datafusion::arrow::record_batch::RecordBatch;
@@ -34,6 +34,8 @@ enum ColBuilder {
     Bool(BooleanBuilder),
     TsMsNoTz(TimestampMillisecondBuilder),
     TsMsUtc(TimestampMillisecondBuilder),
+    TsUsNoTz(TimestampMicrosecondBuilder),
+    TsUsUtc(TimestampMicrosecondBuilder),
     Date32(Date32Builder),
     Time64Us(Time64MicrosecondBuilder),
     Binary(BinaryBuilder),
@@ -67,6 +69,12 @@ impl JsonBatchBuilder {
                 }
                 DataType::Timestamp(TimeUnit::Millisecond, Some(_)) => {
                     ColBuilder::TsMsUtc(TimestampMillisecondBuilder::new())
+                }
+                DataType::Timestamp(TimeUnit::Microsecond, None) => {
+                    ColBuilder::TsUsNoTz(TimestampMicrosecondBuilder::new())
+                }
+                DataType::Timestamp(TimeUnit::Microsecond, Some(_)) => {
+                    ColBuilder::TsUsUtc(TimestampMicrosecondBuilder::new())
                 }
                 DataType::Date32 => ColBuilder::Date32(Date32Builder::new()),
                 DataType::Time64(TimeUnit::Microsecond) => {
@@ -198,6 +206,23 @@ impl JsonBatchBuilder {
                         } else if let Some(s) = vvv.as_str() {
                             if let Ok(dt) = chrono::DateTime::parse_from_rfc3339(s) {
                                 b.append_value(dt.timestamp_millis());
+                            } else {
+                                b.append_null();
+                            }
+                        } else {
+                            b.append_null();
+                        }
+                    } else {
+                        b.append_null();
+                    }
+                }
+                ColBuilder::TsUsNoTz(b) | ColBuilder::TsUsUtc(b) => {
+                    if let Some(vvv) = v {
+                        if let Some(us) = vvv.as_i64() {
+                            b.append_value(us);
+                        } else if let Some(s) = vvv.as_str() {
+                            if let Ok(dt) = chrono::DateTime::parse_from_rfc3339(s) {
+                                b.append_value(dt.timestamp_micros());
                             } else {
                                 b.append_null();
                             }
@@ -477,6 +502,8 @@ impl JsonBatchBuilder {
                 ColBuilder::Bool(mut b) => Arc::new(b.finish()) as ArrayRef,
                 ColBuilder::TsMsNoTz(mut b) => Arc::new(b.finish()) as ArrayRef,
                 ColBuilder::TsMsUtc(mut b) => Arc::new(b.finish().with_timezone("UTC")) as ArrayRef,
+                ColBuilder::TsUsNoTz(mut b) => Arc::new(b.finish()) as ArrayRef,
+                ColBuilder::TsUsUtc(mut b) => Arc::new(b.finish().with_timezone("UTC")) as ArrayRef,
                 ColBuilder::Date32(mut b) => Arc::new(b.finish()) as ArrayRef,
                 ColBuilder::Time64Us(mut b) => Arc::new(b.finish()) as ArrayRef,
                 ColBuilder::Binary(mut b) => Arc::new(b.finish()) as ArrayRef,

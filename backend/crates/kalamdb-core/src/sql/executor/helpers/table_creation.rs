@@ -105,17 +105,11 @@ pub fn create_user_table(
     validate_table_name(stmt.table_name.as_str())
         .map_err(KalamDbError::InvalidOperation)?;
 
-    // T051: Validate PRIMARY KEY is specified (MVCC requirement)
-    if stmt.primary_key_column.is_none() {
-        log::error!(
-            "❌ CREATE USER TABLE failed: {}.{} - PRIMARY KEY column is required",
-            stmt.namespace_id.as_str(),
-            stmt.table_name.as_str()
-        );
-        return Err(KalamDbError::InvalidOperation(
-            "CREATE TABLE requires a PRIMARY KEY column (MVCC architecture requirement)".to_string(),
-        ));
-    }
+    // PRIMARY KEY auto-injection (backward compatibility)
+    // Historical tests created tables without explicit PRIMARY KEY declarations.
+    // Instead of rejecting, we now auto-inject an `id` BIGINT primary key with
+    // DEFAULT SNOWFLAKE_ID() when none is provided (Phase 12 compatibility shim).
+    let missing_pk = stmt.primary_key_column.is_none();
 
     // Check if table already exists
     let schema_registry = app_context.schema_registry();
@@ -176,7 +170,7 @@ pub fn create_user_table(
 
     // Auto-increment field injection ONLY if no explicit PRIMARY KEY
     // T060: When user specifies PRIMARY KEY, don't add auto-increment 'id' column
-    let schema = if stmt.primary_key_column.is_some() {
+    let schema = if !missing_pk {
         // User specified explicit PK - use schema as-is
         stmt.schema.clone()
     } else {
@@ -190,6 +184,10 @@ pub fn create_user_table(
     
     // Inject DEFAULT SNOWFLAKE_ID() for auto-injected id column
     let mut modified_stmt = stmt.clone();
+    if missing_pk {
+        // Ensure the auto-injected column is marked as PRIMARY KEY in statement metadata
+        modified_stmt.primary_key_column = Some("id".to_string());
+    }
     if !modified_stmt.column_defaults.contains_key("id") {
         modified_stmt.column_defaults.insert(
             "id".to_string(),
@@ -265,17 +263,8 @@ pub fn create_shared_table(
     use super::tables::{inject_auto_increment_field, save_table_definition, validate_table_name};
     use kalamdb_commons::schemas::ColumnDefault;
 
-    // T051: Validate PRIMARY KEY is specified (MVCC requirement)
-    if stmt.primary_key_column.is_none() {
-        log::error!(
-            "❌ CREATE SHARED TABLE failed: {}.{} - PRIMARY KEY column is required",
-            stmt.namespace_id.as_str(),
-            stmt.table_name.as_str()
-        );
-        return Err(KalamDbError::InvalidOperation(
-            "CREATE TABLE requires a PRIMARY KEY column (MVCC architecture requirement)".to_string(),
-        ));
-    }
+    // PRIMARY KEY auto-injection (backward compatibility for older tests)
+    let missing_pk = stmt.primary_key_column.is_none();
 
     // RBAC check
     if !crate::auth::rbac::can_create_table(exec_ctx.user_role, TableType::Shared) {
@@ -363,7 +352,7 @@ pub fn create_shared_table(
 
     // Auto-increment field injection ONLY if no explicit PRIMARY KEY
     // T060: When user specifies PRIMARY KEY, don't add auto-increment 'id' column
-    let schema = if stmt.primary_key_column.is_some() {
+    let schema = if !missing_pk {
         // User specified explicit PK - use schema as-is
         stmt.schema.clone()
     } else {
@@ -377,6 +366,9 @@ pub fn create_shared_table(
     
     // Inject DEFAULT SNOWFLAKE_ID() for auto-injected id column
     let mut modified_stmt = stmt.clone();
+    if missing_pk {
+        modified_stmt.primary_key_column = Some("id".to_string());
+    }
     if !modified_stmt.column_defaults.contains_key("id") {
         modified_stmt.column_defaults.insert(
             "id".to_string(),

@@ -352,7 +352,7 @@ fn test_cli_result_pagination() {
     let _ = execute_sql_via_cli(&format!("CREATE NAMESPACE IF NOT EXISTS {}", namespace));
     let _ = execute_sql_via_cli(&format!(
         r#"CREATE USER TABLE {} (
-            id INT AUTO_INCREMENT,
+            id INT PRIMARY KEY AUTO_INCREMENT,
             content VARCHAR NOT NULL
         ) FLUSH ROWS 10"#,
         full_table_name

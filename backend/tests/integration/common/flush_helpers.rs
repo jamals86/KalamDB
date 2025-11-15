@@ -11,7 +11,6 @@ use super::TestServer;
 use kalamdb_commons::models::{NamespaceId, StorageId, TableId, TableName};
 use kalamdb_core::providers::flush::{FlushJobResult, SharedTableFlushJob, UserTableFlushJob};
 use kalamdb_tables::new_user_table_store;
-use kalamdb_commons::models::NamespaceId as _NsIdAlias; // keep imports grouped
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::Duration;
@@ -85,6 +84,8 @@ pub async fn execute_flush_synchronously(
         table_name_id,
         arrow_schema.schema.clone(),
         unified_cache,
+        server.app_context.manifest_service(),
+        server.app_context.manifest_cache_service(),
     );
 
     flush_job

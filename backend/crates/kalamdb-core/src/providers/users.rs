@@ -170,10 +170,9 @@ impl UserTableProvider {
         // Try to load manifest from cache (hot cache → RocksDB → None)
         let namespace = self.table_id.namespace_id();
         let table = self.table_id.table_name();
-        let scope = user_id.as_str(); // Scope is user_id for user tables
         
         let manifest_cache_service = self.core.app_context.manifest_cache_service();
-        let cache_result = manifest_cache_service.get_or_load(namespace, table, scope);
+        let cache_result = manifest_cache_service.get_or_load(namespace, table, Some(user_id));
         
         // T124-T127: Manifest recovery - validate and rebuild on corruption
         let mut manifest_opt: Option<ManifestFile> = None;
@@ -201,29 +200,29 @@ impl UserTableProvider {
                             let manifest_service = self.core.app_context.manifest_service();
                             let ns = namespace.clone();
                             let tbl = table.clone();
-                            let sc = scope.to_string();
+                            let uid = user_id.clone();
                             tokio::spawn(async move {
                                 log::info!(
-                                    "🔧 [MANIFEST REBUILD STARTED] table={}.{} scope={}",
+                                    "🔧 [MANIFEST REBUILD STARTED] table={}.{} user_id={}",
                                     ns.as_str(),
                                     tbl.as_str(),
-                                    sc
+                                    uid.as_str()
                                 );
-                                match manifest_service.rebuild_manifest(&ns, &tbl, &sc) {
+                                match manifest_service.rebuild_manifest(&ns, &tbl, Some(&uid)) {
                                     Ok(_) => {
                                         log::info!(
-                                            "✅ [MANIFEST REBUILD COMPLETED] table={}.{} scope={}",
+                                            "✅ [MANIFEST REBUILD COMPLETED] table={}.{} user_id={}",
                                             ns.as_str(),
                                             tbl.as_str(),
-                                            sc
+                                            uid.as_str()
                                         );
                                     }
                                     Err(e) => {
                                         log::error!(
-                                            "❌ [MANIFEST REBUILD FAILED] table={}.{} scope={} error={}",
+                                            "❌ [MANIFEST REBUILD FAILED] table={}.{} user_id={} error={}",
                                             ns.as_str(),
                                             tbl.as_str(),
-                                            sc,
+                                            uid.as_str(),
                                             e
                                         );
                                     }
@@ -709,6 +708,13 @@ impl BaseTableProvider<UserTableRowId, UserTableRow> for UserTableProvider {
         
         // Perform KV scan with version resolution
         let kvs = self.scan_with_version_resolution_to_kvs(&user_id, filter)?;
+        log::debug!(
+            "[UserTableProvider] scan_rows resolved {} row(s) for user={} table={}.{}",
+            kvs.len(),
+            user_id.as_str(),
+            self.table_id.namespace_id().as_str(),
+            self.table_id.table_name().as_str()
+        );
 
         // Convert rows to JSON values aligned with current schema
         let schema = self.schema_ref();

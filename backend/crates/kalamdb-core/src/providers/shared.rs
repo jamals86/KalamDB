@@ -105,10 +105,9 @@ impl SharedTableProvider {
         // Try to load manifest from cache (hot cache → RocksDB → None)
         let namespace = self.table_id.namespace_id();
         let table = self.table_id.table_name();
-        let scope = "shared"; // Scope is "shared" for shared tables
         
         let manifest_cache_service = self.core.app_context.manifest_cache_service();
-        let cache_result = manifest_cache_service.get_or_load(namespace, table, scope);
+        let cache_result = manifest_cache_service.get_or_load(namespace, table, None);
         
         // T124-T127: Manifest recovery - validate and rebuild on corruption
         let mut manifest_opt: Option<ManifestFile> = None;
@@ -135,29 +134,25 @@ impl SharedTableProvider {
                             let manifest_service = self.core.app_context.manifest_service();
                             let ns = namespace.clone();
                             let tbl = table.clone();
-                            let sc = scope.to_string();
                             tokio::spawn(async move {
                                 log::info!(
-                                    "🔧 [MANIFEST REBUILD STARTED] table={}.{} scope={}",
+                                    "🔧 [MANIFEST REBUILD STARTED] table={}.{} scope=shared",
                                     ns.as_str(),
-                                    tbl.as_str(),
-                                    sc
+                                    tbl.as_str()
                                 );
-                                match manifest_service.rebuild_manifest(&ns, &tbl, &sc) {
+                                match manifest_service.rebuild_manifest(&ns, &tbl, None) {
                                     Ok(_) => {
                                         log::info!(
-                                            "✅ [MANIFEST REBUILD COMPLETED] table={}.{} scope={}",
+                                            "✅ [MANIFEST REBUILD COMPLETED] table={}.{} scope=shared",
                                             ns.as_str(),
-                                            tbl.as_str(),
-                                            sc
+                                            tbl.as_str()
                                         );
                                     }
                                     Err(e) => {
                                         log::error!(
-                                            "❌ [MANIFEST REBUILD FAILED] table={}.{} scope={} error={}",
+                                            "❌ [MANIFEST REBUILD FAILED] table={}.{} scope=shared error={}",
                                             ns.as_str(),
                                             tbl.as_str(),
-                                            sc,
                                             e
                                         );
                                     }

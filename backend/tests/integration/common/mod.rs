@@ -168,6 +168,12 @@ impl TestServer {
 
         // Create minimal test config
         let mut test_config = kalamdb_commons::config::ServerConfig::default();
+        // Align JWT settings with integration test expectations
+        test_config.auth.jwt_secret = "test-secret-key-for-jwt-authentication".to_string();
+        test_config.auth.jwt_trusted_issuers = "kalamdb-test".to_string();
+        // Expose to extractor via env for JWT path (non-invasive)
+        std::env::set_var("KALAMDB_JWT_SECRET", &test_config.auth.jwt_secret);
+        std::env::set_var("KALAMDB_JWT_TRUSTED_ISSUERS", &test_config.auth.jwt_trusted_issuers);
         test_config.server.node_id = "test-node".to_string();
         test_config.storage.default_storage_path = storage_base_path.clone();
 
@@ -628,15 +634,43 @@ fn record_batch_to_query_result(
                         serde_json::Value::Bool(array.value(row_idx))
                     }
                 }
-                DataType::Timestamp(_, _) => {
-                    let array = column
-                        .as_any()
-                        .downcast_ref::<TimestampMillisecondArray>()
-                        .unwrap();
-                    if array.is_null(row_idx) {
-                        serde_json::Value::Null
-                    } else {
-                        serde_json::Value::Number(array.value(row_idx).into())
+                DataType::Timestamp(unit, tz) => {
+                    match unit {
+                        datafusion::arrow::datatypes::TimeUnit::Millisecond => {
+                            let array = column
+                                .as_any()
+                                .downcast_ref::<TimestampMillisecondArray>()
+                                .unwrap();
+                            if array.is_null(row_idx) {
+                                serde_json::Value::Null
+                            } else {
+                                serde_json::Value::Number(array.value(row_idx).into())
+                            }
+                        }
+                        datafusion::arrow::datatypes::TimeUnit::Microsecond => {
+                            let array = column
+                                .as_any()
+                                .downcast_ref::<TimestampMicrosecondArray>()
+                                .unwrap();
+                            if array.is_null(row_idx) {
+                                serde_json::Value::Null
+                            } else {
+                                // Preserve value in microseconds since epoch
+                                serde_json::Value::Number(array.value(row_idx).into())
+                            }
+                        }
+                        datafusion::arrow::datatypes::TimeUnit::Nanosecond => {
+                            let array = column
+                                .as_any()
+                                .downcast_ref::<TimestampNanosecondArray>()
+                                .unwrap();
+                            if array.is_null(row_idx) {
+                                serde_json::Value::Null
+                            } else {
+                                serde_json::Value::Number(array.value(row_idx).into())
+                            }
+                        }
+                        _ => serde_json::Value::String(format!("{:?}", column)),
                     }
                 }
                 _ => serde_json::Value::String(format!("{:?}", column)),
