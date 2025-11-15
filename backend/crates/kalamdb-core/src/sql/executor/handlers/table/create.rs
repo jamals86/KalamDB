@@ -99,6 +99,7 @@ mod tests {
 
     fn create_test_statement(table_type: TableType) -> CreateTableStatement {
         let schema = Arc::new(Schema::new(vec![
+            Arc::new(Field::new("id", DataType::Int64, false)),
             Arc::new(Field::new("name", DataType::Utf8, false)),
             Arc::new(Field::new("age", DataType::Int32, true)),
         ]));
@@ -108,19 +109,19 @@ mod tests {
             table_name: format!("test_table_{}", chrono::Utc::now().timestamp_millis()).into(),
             table_type,
             schema,
-                column_defaults: std::collections::HashMap::new(),
-                primary_key_column: None,
-                storage_id: None,
-                use_user_storage: false,
-                flush_policy: None,
-                deleted_retention_hours: None,
-                ttl_seconds: if table_type == TableType::Stream {
-                    Some(3600)
-                } else {
-                    None
-                },
+            column_defaults: std::collections::HashMap::new(),
+            primary_key_column: Some("id".to_string()),
+            storage_id: None,
+            use_user_storage: false,
+            flush_policy: None,
+            deleted_retention_hours: None,
+            ttl_seconds: if table_type == TableType::Stream {
+                Some(3600)
+            } else {
+                None
+            },
             if_not_exists: false,
-                access_level: None,
+            access_level: None,
         }
     }
 

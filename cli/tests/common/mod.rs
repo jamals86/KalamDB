@@ -225,7 +225,7 @@ pub fn setup_test_table(test_name: &str) -> Result<String, Box<dyn std::error::E
     // Create test table
     let create_sql = format!(
         r#"CREATE USER TABLE {} (
-            id INT AUTO_INCREMENT,
+            id INT PRIMARY KEY AUTO_INCREMENT,
             content VARCHAR NOT NULL,
             created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
         ) FLUSH ROWS 10"#,

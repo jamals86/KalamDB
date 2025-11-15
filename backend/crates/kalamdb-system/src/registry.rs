@@ -9,6 +9,7 @@
 use super::{
     AuditLogsTableProvider, JobsTableProvider, LiveQueriesTableProvider, NamespacesTableProvider, 
     StatsTableProvider, StoragesTableProvider, TablesTableProvider, UsersTableProvider,
+    ManifestTableProvider,
 };
 // SchemaRegistry will be passed as Arc parameter from kalamdb-core
 use datafusion::datasource::TableProvider;
@@ -29,6 +30,9 @@ pub struct SystemTablesRegistry {
     live_queries: Arc<LiveQueriesTableProvider>,
     tables: Arc<TablesTableProvider>,
     audit_logs: Arc<AuditLogsTableProvider>,
+        // ===== Manifest cache table =====
+        manifest: Arc<ManifestTableProvider>,
+    
     
     // ===== Virtual tables =====
     stats: Arc<StatsTableProvider>,
@@ -68,7 +72,10 @@ impl SystemTablesRegistry {
             storages: Arc::new(StoragesTableProvider::new(storage_backend.clone())),
             live_queries: Arc::new(LiveQueriesTableProvider::new(storage_backend.clone())),
             tables: Arc::new(TablesTableProvider::new(storage_backend.clone())),
-            audit_logs: Arc::new(AuditLogsTableProvider::new(storage_backend)),
+            audit_logs: Arc::new(AuditLogsTableProvider::new(storage_backend.clone())),
+            
+            // Manifest cache provider
+            manifest: Arc::new(ManifestTableProvider::new(storage_backend)),
             
             // Virtual tables
             stats: Arc::new(StatsTableProvider::new(None)), // Will be wired with cache later
@@ -130,7 +137,12 @@ impl SystemTablesRegistry {
     pub fn stats(&self) -> Arc<StatsTableProvider> {
         self.stats.clone()
     }
-    
+
+    /// Get the system.manifest provider
+    pub fn manifest(&self) -> Arc<ManifestTableProvider> {
+       self.manifest.clone()
+    }
+
     /// Get the information_schema.tables provider
     pub fn information_schema_tables(&self) -> Option<Arc<dyn TableProvider>> {
         self.information_schema_tables.read().unwrap().clone()
@@ -166,6 +178,7 @@ impl SystemTablesRegistry {
             ("tables", self.tables.clone() as Arc<dyn datafusion::datasource::TableProvider>),
             ("audit_logs", self.audit_logs.clone() as Arc<dyn datafusion::datasource::TableProvider>),
             ("stats", self.stats.clone() as Arc<dyn datafusion::datasource::TableProvider>),
+                    ("manifest", self.manifest.clone() as Arc<dyn datafusion::datasource::TableProvider>),
         ]
     }
     

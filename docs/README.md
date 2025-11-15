@@ -6,45 +6,19 @@ Welcome to KalamDB documentation! This folder contains guides for getting starte
 
 ### Getting Started
 
-- **[🚀 Quick Start Guide](QUICK_START.md)** - Get KalamDB running in under 10 minutes
-  - Platform-specific quick starts for Windows, macOS, and Linux
-  - Essential commands and verification steps
-  - Basic usage examples
+- **[🚀 Quick Start Guide](QUICK_START.md)** – Build the server and run your first query
+- **[📘 Development Setup Guide](DEVELOPMENT_SETUP.md)** – Full environment setup and troubleshooting
 
-- **[📘 Development Setup Guide](DEVELOPMENT_SETUP.md)** - Comprehensive installation guide
-  - Detailed prerequisites and system requirements
-  - Step-by-step setup for Windows, macOS, and Linux
-  - LLVM/Clang installation instructions
-  - C++ compiler setup for each platform
-  - Complete troubleshooting section
+### Using KalamDB
 
-- **[🔧 Troubleshooting Checklist](TROUBLESHOOTING.md)** - Quick problem-solving reference
-  - Pre-build verification checklist
-  - Common error messages and solutions
-  - Build performance tips
-  - Environment diagnostic scripts
+- **[SQL Reference](SQL.md)** – SQL syntax, datatypes, and examples
+- **[API Guide](API.md)** – HTTP and WebSocket endpoints
+- **[CLI Guide](cli.md)** – Using the `kalam` command-line client
 
-### Project Documentation
+### Project Docs
 
-- **[Backend README](../backend/README.md)** - Backend project structure and development workflow
-- **[Main README](../README.md)** - Project overview and architecture
-
-### Architecture & Specifications
-
-- **[Complete Specification](../specs/001-build-a-rust/SPECIFICATION-COMPLETE.md)** - Full design document
-- **[Data Model](../specs/001-build-a-rust/data-model.md)** - Entities, schemas, and lifecycle
-- **[API Architecture](../specs/001-build-a-rust/API-ARCHITECTURE.md)** - SQL-first design approach
-- **[SQL Query Examples](../specs/001-build-a-rust/sql-query-examples.md)** - Query patterns cookbook
-
-### Protocols & APIs
-
-- **[REST API (OpenAPI)](../specs/001-build-a-rust/contracts/rest-api.yaml)** - HTTP endpoint specifications
-- **[WebSocket Protocol](../specs/001-build-a-rust/contracts/websocket-protocol.md)** - Real-time streaming protocol
-
-### Development Guidelines
-
-- **[Project Constitution](../.specify/memory/constitution.md)** - Core principles and development standards
-- **[Implementation Plan](../specs/001-build-a-rust/plan.md)** - Development roadmap and phases
+- **[Backend README](../backend/README.md)** – Backend project structure and workflow
+- **[Main README](../README.md)** – High-level overview and architecture
 
 ---
 
@@ -52,39 +26,9 @@ Welcome to KalamDB documentation! This folder contains guides for getting starte
 
 ### New Contributors
 
-Start here if you're new to KalamDB:
-
-1. Read the [Main README](../README.md) to understand what KalamDB is
-2. Follow the [Quick Start Guide](QUICK_START.md) to get it running
-3. Review the [Project Constitution](../.specify/memory/constitution.md) for development principles
-4. Check the [Implementation Plan](../specs/001-build-a-rust/plan.md) for current status
-
-### Developers
-
-Building features or fixing bugs:
-
-1. Use the [Development Setup Guide](DEVELOPMENT_SETUP.md) for environment setup
-2. Read the [Backend README](../backend/README.md) for project structure
-3. Study the [Data Model](../specs/001-build-a-rust/data-model.md) for entities and relationships
-4. Reference the [SQL Query Examples](../specs/001-build-a-rust/sql-query-examples.md) for query patterns
-
-### API Integrators
-
-Building clients or integrations:
-
-1. Review the [REST API Specification](../specs/001-build-a-rust/contracts/rest-api.yaml)
-2. Learn the [WebSocket Protocol](../specs/001-build-a-rust/contracts/websocket-protocol.md)
-3. Check the [API Architecture](../specs/001-build-a-rust/API-ARCHITECTURE.md) for design decisions
-4. Try the [SQL Query Examples](../specs/001-build-a-rust/sql-query-examples.md)
-
-### Architects
-
-Understanding design decisions:
-
-1. Read the [Complete Specification](../specs/001-build-a-rust/SPECIFICATION-COMPLETE.md)
-2. Study the [Table-Per-User Architecture](../README.md#-what-makes-kalamdb-different)
-3. Review the [Project Constitution](../.specify/memory/constitution.md) for principles
-4. Examine the [API Architecture](../specs/001-build-a-rust/API-ARCHITECTURE.md)
+1. Read the [Main README](../README.md)
+2. Follow the [Quick Start Guide](QUICK_START.md)
+3. Skim the [SQL Reference](SQL.md) and [API Guide](API.md)
 
 ---
 
@@ -160,7 +104,7 @@ When adding or updating documentation:
 - [Apache Arrow](https://arrow.apache.org/) - Columnar data format
 - [Apache Parquet](https://parquet.apache.org/) - Columnar storage format
 - [DataFusion](https://arrow.apache.org/datafusion/) - SQL query engine
-- [Actix-web](https://actix.rs/) - Web framework (future)
+- [Actix-web](https://actix.rs/) - Web framework
 - [Tokio](https://tokio.rs/) - Async runtime
 
 ### Tools

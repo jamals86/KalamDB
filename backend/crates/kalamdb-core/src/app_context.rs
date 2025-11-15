@@ -72,6 +72,9 @@ pub struct AppContext {
     
     // ===== Manifest Cache Service (Phase 4, US6) =====
     manifest_cache_service: Arc<crate::manifest::ManifestCacheService>,
+    
+    // ===== Manifest Service (Phase 5, US2, T107-T113) =====
+    manifest_service: Arc<crate::manifest::ManifestService>,
 }
 
 impl std::fmt::Debug for AppContext {
@@ -91,6 +94,7 @@ impl std::fmt::Debug for AppContext {
             .field("system_columns_service", &"Arc<SystemColumnsService>")
             .field("slow_query_logger", &"Arc<SlowQueryLogger>")
             .field("manifest_cache_service", &"Arc<ManifestCacheService>")
+            .field("manifest_service", &"Arc<ManifestService>")
             .finish()
     }
 }
@@ -253,6 +257,13 @@ impl AppContext {
                     storage_backend.clone(),
                     config.manifest_cache.clone(),
                 ));
+                
+                // Create manifest service (Phase 5, US2, T107-T113)
+                let base_storage_path = config.storage.default_storage_path.clone();
+                let manifest_service = Arc::new(crate::manifest::ManifestService::new(
+                    storage_backend.clone(),
+                    base_storage_path,
+                ));
 
                 Arc::new(AppContext {
                     node_id,
@@ -271,6 +282,7 @@ impl AppContext {
                     system_columns_service,
                     slow_query_logger,
                     manifest_cache_service,
+                    manifest_service,
                 })
             })
             .clone()
@@ -380,6 +392,12 @@ impl AppContext {
             storage_backend.clone(),
             config.manifest_cache.clone(),
         ));
+        
+        // Create manifest service for tests
+        let manifest_service = Arc::new(crate::manifest::ManifestService::new(
+            storage_backend.clone(),
+            "./data/storage".to_string(),
+        ));
 
         AppContext {
             node_id,
@@ -398,6 +416,7 @@ impl AppContext {
             system_columns_service,
             slow_query_logger,
             manifest_cache_service,
+            manifest_service,
         }
     }
 
@@ -447,7 +466,7 @@ impl AppContext {
         // Create storage registry
         let storage_registry = Arc::new(StorageRegistry::new(
             system_tables.storages(),
-            storage_base_path,
+            storage_base_path.clone(),
         ));
 
         // Create schema cache
@@ -540,6 +559,12 @@ impl AppContext {
             storage_backend.clone(),
             config.manifest_cache.clone(),
         ));
+        
+        // Create manifest service
+        let manifest_service = Arc::new(crate::manifest::ManifestService::new(
+            storage_backend.clone(),
+            storage_base_path.clone(),
+        ));
 
         Arc::new(AppContext {
             node_id,
@@ -558,6 +583,7 @@ impl AppContext {
             system_columns_service,
             slow_query_logger,
             manifest_cache_service,
+            manifest_service,
         })
     }
 
@@ -658,6 +684,14 @@ impl AppContext {
     /// fast manifest access with two-tier caching (hot cache + RocksDB).
     pub fn manifest_cache_service(&self) -> Arc<crate::manifest::ManifestCacheService> {
         self.manifest_cache_service.clone()
+    }
+    
+    /// Get the manifest service (Phase 5, US2, T107-T113)
+    ///
+    /// Returns an Arc reference to the ManifestService that provides
+    /// read/write access to manifest.json files in storage backends.
+    pub fn manifest_service(&self) -> Arc<crate::manifest::ManifestService> {
+        self.manifest_service.clone()
     }
     
     // ===== Convenience methods for backward compatibility =====

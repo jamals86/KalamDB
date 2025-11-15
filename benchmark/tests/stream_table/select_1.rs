@@ -1,6 +1,7 @@
 use kalamdb_benchmark::*;
 use std::time::Duration;
 
+#[ignore = "requires running backend server"]
 #[test]
 fn stream_table_select_1() -> anyhow::Result<()> {
     // Setup: Create stream table with 1000 rows

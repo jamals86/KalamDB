@@ -1,6 +1,7 @@
 use kalamdb_benchmark::*;
 use std::time::Duration;
 
+#[ignore = "requires running backend server"]
 #[test]
 fn shared_table_delete_100() -> anyhow::Result<()> {
     // Setup: Create shared table with 200 rows

@@ -168,6 +168,12 @@ impl TestServer {
 
         // Create minimal test config
         let mut test_config = kalamdb_commons::config::ServerConfig::default();
+        // Align JWT settings with integration test expectations
+        test_config.auth.jwt_secret = "test-secret-key-for-jwt-authentication".to_string();
+        test_config.auth.jwt_trusted_issuers = "kalamdb-test".to_string();
+        // Expose to extractor via env for JWT path (non-invasive)
+        std::env::set_var("KALAMDB_JWT_SECRET", &test_config.auth.jwt_secret);
+        std::env::set_var("KALAMDB_JWT_TRUSTED_ISSUERS", &test_config.auth.jwt_trusted_issuers);
         test_config.server.node_id = "test-node".to_string();
         test_config.storage.default_storage_path = storage_base_path.clone();
 
@@ -243,6 +249,14 @@ impl TestServer {
             app_context.clone(),
             false, // disable password complexity enforcement in tests
         ));
+
+        // Ensure all existing tables are registered with providers/DataFusion for this process
+        if let Err(e) = sql_executor.load_existing_tables().await {
+            eprintln!(
+                "Warning: Failed to load existing table providers in test harness: {:?}",
+                e
+            );
+        }
 
         // Start background job processing loop so queued jobs (e.g., FLUSH TABLE) run in tests
         {
@@ -539,15 +553,18 @@ impl TestServer {
                     },
                 }
             }
-            Err(e) => SqlResponse {
-                status: "error".to_string(),
-                results: vec![],
-                took_ms: 0,
-                error: Some(kalamdb_api::models::ErrorDetail {
-                    code: "EXECUTION_ERROR".to_string(),
-                    message: format!("{:?}", e),
-                    details: None,
-                }),
+            Err(e) => {
+                eprintln!("[DEBUG TestServer] execute() error: {:?}", e);
+                SqlResponse {
+                    status: "error".to_string(),
+                    results: vec![],
+                    took_ms: 0,
+                    error: Some(kalamdb_api::models::ErrorDetail {
+                        code: "EXECUTION_ERROR".to_string(),
+                        message: format!("{:?}", e),
+                        details: None,
+                    }),
+                }
             },
         }
     }
@@ -617,15 +634,43 @@ fn record_batch_to_query_result(
                         serde_json::Value::Bool(array.value(row_idx))
                     }
                 }
-                DataType::Timestamp(_, _) => {
-                    let array = column
-                        .as_any()
-                        .downcast_ref::<TimestampMillisecondArray>()
-                        .unwrap();
-                    if array.is_null(row_idx) {
-                        serde_json::Value::Null
-                    } else {
-                        serde_json::Value::Number(array.value(row_idx).into())
+                DataType::Timestamp(unit, tz) => {
+                    match unit {
+                        datafusion::arrow::datatypes::TimeUnit::Millisecond => {
+                            let array = column
+                                .as_any()
+                                .downcast_ref::<TimestampMillisecondArray>()
+                                .unwrap();
+                            if array.is_null(row_idx) {
+                                serde_json::Value::Null
+                            } else {
+                                serde_json::Value::Number(array.value(row_idx).into())
+                            }
+                        }
+                        datafusion::arrow::datatypes::TimeUnit::Microsecond => {
+                            let array = column
+                                .as_any()
+                                .downcast_ref::<TimestampMicrosecondArray>()
+                                .unwrap();
+                            if array.is_null(row_idx) {
+                                serde_json::Value::Null
+                            } else {
+                                // Preserve value in microseconds since epoch
+                                serde_json::Value::Number(array.value(row_idx).into())
+                            }
+                        }
+                        datafusion::arrow::datatypes::TimeUnit::Nanosecond => {
+                            let array = column
+                                .as_any()
+                                .downcast_ref::<TimestampNanosecondArray>()
+                                .unwrap();
+                            if array.is_null(row_idx) {
+                                serde_json::Value::Null
+                            } else {
+                                serde_json::Value::Number(array.value(row_idx).into())
+                            }
+                        }
+                        _ => serde_json::Value::String(format!("{:?}", column)),
                     }
                 }
                 _ => serde_json::Value::String(format!("{:?}", column)),
@@ -829,7 +874,7 @@ mod tests {
     #[actix_web::test]
     async fn test_execute_sql() {
         let server = TestServer::new().await;
-        let response = server.execute_sql("CREATE NAMESPACE test_ns").await;
+        let response = server.execute_sql("CREATE NAMESPACE IF NOT EXISTS test_ns").await;
         assert_eq!(response.status, "success");
     }
 
@@ -838,7 +883,7 @@ mod tests {
         let server = TestServer::new().await;
 
         // Create namespace
-        server.execute_sql("CREATE NAMESPACE test_ns").await;
+        server.execute_sql("CREATE NAMESPACE IF NOT EXISTS test_ns").await;
         assert!(server.namespace_exists("test_ns").await);
 
         // Cleanup
@@ -852,7 +897,7 @@ mod tests {
 
         assert!(!server.namespace_exists("nonexistent").await);
 
-        server.execute_sql("CREATE NAMESPACE test_ns").await;
+        server.execute_sql("CREATE NAMESPACE IF NOT EXISTS test_ns").await;
         assert!(server.namespace_exists("test_ns").await);
     }
 }

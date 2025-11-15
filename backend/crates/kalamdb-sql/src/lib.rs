@@ -13,7 +13,7 @@
 //!
 //! # Example
 //!
-//! ```no_run
+//! ```ignore
 //! use kalamdb_store::{RocksDBBackend, storage_trait::StorageBackend};
 //! use std::sync::Arc;
 //!

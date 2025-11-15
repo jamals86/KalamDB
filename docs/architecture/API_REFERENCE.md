@@ -570,13 +570,13 @@ SHOW STORAGES;
 Specify storage backend when creating tables:
 
 ```sql
--- Use specific storage for a table
+-- Use specific storage for a table and allow per-user overrides
 CREATE USER TABLE app.messages (
-    id BIGINT,
-    content TEXT
+  id BIGINT,
+  content TEXT
 ) TABLE_TYPE user
-OWNER_ID 'alice'
-USE_USER_STORAGE 's3_prod';
+STORAGE s3_prod
+USE_USER_STORAGE;
 
 -- Use default 'local' storage (implicit)
 CREATE SHARED TABLE app.shared_data (
@@ -585,10 +585,12 @@ CREATE SHARED TABLE app.shared_data (
 ) TABLE_TYPE shared;
 ```
 
-**Storage Lookup Chain** (for user tables):
-1. If `USE_USER_STORAGE` specified in CREATE TABLE → use that storage
-2. If user has `storage_id` preference → use user's preferred storage
-3. Otherwise → use 'local' storage (default)
+**Storage Lookup Chain** (user tables with `USE_USER_STORAGE`):
+1. Table always keeps a fallback `storage_id` (explicit or default `local`).
+2. If the table opts into `USE_USER_STORAGE`, the resolver checks the caller's row in `system.users`.
+3. When the user has `storage_mode = 'region'` **and** a `storage_id`, that storage is used; otherwise the table storage handles the write.
+
+See `docs/how-to/user-table-storage.md` for a step-by-step guide and current limitations of the feature.
 
 ---
 

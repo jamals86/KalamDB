@@ -15,6 +15,13 @@ use kalamdb_commons::models::{AuthType, Role, StorageMode, UserId, UserName};
 
 async fn insert_user(server: &TestServer, username: &str, role: Role) -> UserId {
     let user_id = UserId::new(username);
+
+    // Idempotent: return existing if already present (shared AppContext across tests)
+    let users = server.app_context.system_tables().users();
+    if users.get_user_by_id(&user_id).ok().flatten().is_some() {
+        return user_id;
+    }
+
     let now = chrono::Utc::now().timestamp_millis();
     let user = kalamdb_commons::system::User {
         id: user_id.clone(),
@@ -31,12 +38,9 @@ async fn insert_user(server: &TestServer, username: &str, role: Role) -> UserId 
         last_seen: None,
         deleted_at: None,
     };
-    server
-        .app_context
-        .system_tables()
-        .users()
-        .create_user(user)
-        .expect("insert user");
+
+    // Best-effort: ignore AlreadyExists from races
+    let _ = users.create_user(user);
     user_id
 }
 
@@ -53,7 +57,7 @@ async fn test_as_user_blocked_for_regular_user() {
     
     // Create namespace and USER table (using default/system for DDL)
     server.execute_sql(&format!("CREATE NAMESPACE {}", ns)).await;
-    let create_table = format!("CREATE USER TABLE {}.items (item_id VARCHAR PRIMARY KEY, name VARCHAR)", ns);
+    let create_table = format!("CREATE USER TABLE {}.items (item_id VARCHAR PRIMARY KEY, name VARCHAR) STORAGE local", ns);
     server.execute_sql(&create_table).await; // Use default system user for table creation
     
     // Attempt INSERT AS USER (should be BLOCKED)
@@ -79,18 +83,19 @@ async fn test_as_user_with_service_role() {
     let server = TestServer::new().await;
     let ns = "test_as_user_service";
     
-    // Create service user and target user
+    // Create service user, DBA, and target user
     let service_user = insert_user(&server, "service_user", Role::Service).await;
+    let admin_user = insert_user(&server, "admin_service_setup", Role::Dba).await;
     let target_user = insert_user(&server, "target_user", Role::User).await;
     
-    // Create namespace and USER table
+    // Create namespace and USER table as DBA
     server.execute_sql(&format!("CREATE NAMESPACE {}", ns)).await;
-    let create_table = format!("CREATE USER TABLE {}.orders (order_id VARCHAR PRIMARY KEY, amount DECIMAL)", ns);
-    server.execute_sql_as_user(&create_table, service_user.as_str()).await;
+    let create_table = format!("CREATE USER TABLE {}.orders (order_id VARCHAR PRIMARY KEY, amount VARCHAR) STORAGE local", ns);
+    server.execute_sql_as_user(&create_table, admin_user.as_str()).await;
     
     // INSERT AS USER target_user (should succeed)
     let insert_sql = format!(
-        "INSERT INTO {}.orders (order_id, amount) VALUES ('ORD-123', 99.99) AS USER '{}'",
+        "INSERT INTO {}.orders (order_id, amount) VALUES ('ORD-123', '99.99') AS USER '{}'",
         ns,
         target_user.as_str()
     );
@@ -119,7 +124,7 @@ async fn test_as_user_with_dba_role() {
     
     // Create namespace and USER table
     server.execute_sql(&format!("CREATE NAMESPACE {}", ns)).await;
-    let create_table = format!("CREATE USER TABLE {}.logs (log_id VARCHAR PRIMARY KEY, message VARCHAR)", ns);
+    let create_table = format!("CREATE USER TABLE {}.logs (log_id VARCHAR PRIMARY KEY, message VARCHAR) STORAGE local", ns);
     server.execute_sql_as_user(&create_table, dba_user.as_str()).await;
     
     // INSERT AS USER (should succeed)
@@ -147,7 +152,7 @@ async fn test_insert_as_user_ownership() {
     
     // Create namespace and USER table
     server.execute_sql(&format!("CREATE NAMESPACE {}", ns)).await;
-    let create_table = format!("CREATE USER TABLE {}.messages (msg_id VARCHAR PRIMARY KEY, content VARCHAR)", ns);
+    let create_table = format!("CREATE USER TABLE {}.messages (msg_id VARCHAR PRIMARY KEY, content VARCHAR) STORAGE local", ns);
     server.execute_sql_as_user(&create_table, admin_user.as_str()).await;
     
     // INSERT AS USER alice
@@ -182,7 +187,7 @@ async fn test_update_as_user() {
     
     // Create namespace, USER table, and insert record as charlie
     server.execute_sql(&format!("CREATE NAMESPACE {}", ns)).await;
-    let create_table = format!("CREATE USER TABLE {}.profiles (profile_id VARCHAR PRIMARY KEY, status VARCHAR)", ns);
+    let create_table = format!("CREATE USER TABLE {}.profiles (profile_id VARCHAR PRIMARY KEY, status VARCHAR) STORAGE local", ns);
     server.execute_sql_as_user(&create_table, admin_user.as_str()).await;
     
     let insert_sql = format!(
@@ -224,7 +229,7 @@ async fn test_delete_as_user() {
     
     // Create namespace, USER table, and insert record as dave
     server.execute_sql(&format!("CREATE NAMESPACE {}", ns)).await;
-    let create_table = format!("CREATE USER TABLE {}.sessions (session_id VARCHAR PRIMARY KEY, active BOOLEAN)", ns);
+    let create_table = format!("CREATE USER TABLE {}.sessions (session_id VARCHAR PRIMARY KEY, active BOOLEAN) STORAGE local", ns);
     server.execute_sql_as_user(&create_table, admin_user.as_str()).await;
     
     let insert_sql = format!(
@@ -294,7 +299,7 @@ async fn test_as_user_nonexistent_user() {
     
     // Create namespace and USER table
     server.execute_sql(&format!("CREATE NAMESPACE {}", ns)).await;
-    let create_table = format!("CREATE USER TABLE {}.logs (log_id VARCHAR PRIMARY KEY, message VARCHAR)", ns);
+    let create_table = format!("CREATE USER TABLE {}.logs (log_id VARCHAR PRIMARY KEY, message VARCHAR) STORAGE local", ns);
     server.execute_sql_as_user(&create_table, admin_user.as_str()).await;
     
     // INSERT AS USER with non-existent user
@@ -318,12 +323,13 @@ async fn test_as_user_performance() {
     let ns = "test_as_user_perf";
     
     let service_user = insert_user(&server, "service_perf", Role::Service).await;
+    let admin_user = insert_user(&server, "admin_perf_setup", Role::Dba).await;
     let target_user = insert_user(&server, "target_perf", Role::User).await;
     
-    // Create namespace and USER table
+    // Create namespace and USER table as DBA
     server.execute_sql(&format!("CREATE NAMESPACE {}", ns)).await;
-    let create_table = format!("CREATE USER TABLE {}.perf_test (id VARCHAR PRIMARY KEY, data VARCHAR)", ns);
-    server.execute_sql_as_user(&create_table, service_user.as_str()).await;
+    let create_table = format!("CREATE USER TABLE {}.perf_test (id VARCHAR PRIMARY KEY, data VARCHAR) STORAGE local", ns);
+    server.execute_sql_as_user(&create_table, admin_user.as_str()).await;
     
     // Measure 10 INSERT AS USER operations
     let mut durations = Vec::new();

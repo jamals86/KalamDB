@@ -45,7 +45,7 @@ impl std::fmt::Display for SyncState {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ManifestCacheEntry {
     /// Serialized ManifestFile JSON
-    pub manifest_json: String,
+    pub manifest_json: String, //TODO: Maybe its better to have it as parsed one instead of string
     
     /// ETag or version identifier from storage backend
     pub etag: Option<String>,
@@ -133,11 +133,11 @@ pub struct BatchFileEntry {
     /// Relative file path (e.g., "batch-0.parquet")
     pub file_path: String,
     
-    /// Minimum _updated timestamp in this batch (nanoseconds)
-    pub min_updated: i64,
+    /// Minimum _seq value in this batch (for MVCC version pruning)
+    pub min_seq: i64,
     
-    /// Maximum _updated timestamp in this batch (nanoseconds)
-    pub max_updated: i64,
+    /// Maximum _seq value in this batch (for MVCC version pruning)
+    pub max_seq: i64,
     
     /// Min/max values for indexed columns (for pruning)
     pub column_min_max: HashMap<String, (serde_json::Value, serde_json::Value)>,
@@ -161,8 +161,8 @@ impl BatchFileEntry {
     pub fn new(
         batch_number: u64,
         file_path: String,
-        min_updated: i64,
-        max_updated: i64,
+        min_seq: i64,
+        max_seq: i64,
         column_min_max: HashMap<String, (serde_json::Value, serde_json::Value)>,
         row_count: u64,
         size_bytes: u64,
@@ -171,8 +171,8 @@ impl BatchFileEntry {
         Self {
             batch_number,
             file_path,
-            min_updated,
-            max_updated,
+            min_seq,
+            max_seq,
             column_min_max,
             row_count,
             size_bytes,
@@ -181,9 +181,9 @@ impl BatchFileEntry {
         }
     }
 
-    /// Check if batch overlaps with timestamp range
-    pub fn overlaps_timestamp_range(&self, min_ts: i64, max_ts: i64) -> bool {
-        !(self.max_updated < min_ts || self.min_updated > max_ts)
+    /// Check if batch overlaps with sequence range (for MVCC version pruning)
+    pub fn overlaps_seq_range(&self, min_seq: i64, max_seq: i64) -> bool {
+        !(self.max_seq < min_seq || self.min_seq > max_seq)
     }
 }
 
@@ -310,7 +310,7 @@ mod tests {
     }
 
     #[test]
-    fn test_batch_file_entry_overlaps_timestamp() {
+    fn test_batch_file_entry_overlaps_seq_range() {
         let batch = BatchFileEntry::new(
             0,
             "batch-0.parquet".to_string(),
@@ -323,13 +323,13 @@ mod tests {
         );
 
         // Overlaps
-        assert!(batch.overlaps_timestamp_range(1500, 2500));
-        assert!(batch.overlaps_timestamp_range(500, 1500));
-        assert!(batch.overlaps_timestamp_range(1000, 2000));
+        assert!(batch.overlaps_seq_range(1500, 2500));
+        assert!(batch.overlaps_seq_range(500, 1500));
+        assert!(batch.overlaps_seq_range(1000, 2000));
         
         // No overlap
-        assert!(!batch.overlaps_timestamp_range(2001, 3000));
-        assert!(!batch.overlaps_timestamp_range(0, 999));
+        assert!(!batch.overlaps_seq_range(2001, 3000));
+        assert!(!batch.overlaps_seq_range(0, 999));
     }
 
     #[test]

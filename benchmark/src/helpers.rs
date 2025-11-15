@@ -268,9 +268,22 @@ pub fn execute_cli_timed(
 ) -> anyhow::Result<CliExecution> {
     use std::process::Command;
     
-    // Use environment variable or default to "kalam" binary name
-    let kalam_bin = std::env::var("CARGO_BIN_EXE_kalam")
-        .unwrap_or_else(|_| "kalam".to_string());
+    // Resolve CLI binary path:
+    // 1) honor Cargo's injected path (when available)
+    // 2) fallback to workspace target path: ../target/debug/kalam relative to benchmark crate
+    // 3) fallback to plain "kalam" in PATH
+    let kalam_bin = std::env::var("CARGO_BIN_EXE_kalam").ok().or_else(|| {
+        let candidate = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("..")
+            .join("target")
+            .join("debug")
+            .join(if cfg!(windows) { "kalam.exe" } else { "kalam" });
+        if candidate.exists() {
+            Some(candidate.to_string_lossy().to_string())
+        } else {
+            None
+        }
+    }).unwrap_or_else(|| "kalam".to_string());
     
     let start = Instant::now();
     let mut command = Command::new(&kalam_bin);

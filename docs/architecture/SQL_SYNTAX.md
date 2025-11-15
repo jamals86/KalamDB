@@ -524,12 +524,13 @@ User tables create one table instance per user with isolated storage.
 CREATE USER TABLE [<namespace>.]<table_name> (
   <column_name> <data_type> [NOT NULL] [DEFAULT <value|function>],
   ...
-) [STORAGE <storage_id>] [FLUSH <flush_policy>];
+) [STORAGE <storage_id>] [USE_USER_STORAGE] [FLUSH <flush_policy>];
 ```
 
 **Storage Options**:
-- `STORAGE <storage_id>`: Storage location reference from `system.storages` (defaults to `local`)
-- Storage IDs must be pre-configured via `CREATE STORAGE` command
+- `STORAGE <storage_id>`: Storage location reference from `system.storages` (defaults to `local`).
+- `USE_USER_STORAGE`: Opt-in flag telling KalamDB to prefer each caller's storage preference (when defined) and fall back to the table storage otherwise. The flag is already persisted; the flush path will start honoring it once the per-user resolver ships.
+- Storage IDs must be pre-configured via `CREATE STORAGE` command.
 
 **Flush Policies** (new syntax):
 - `FLUSH ROW_THRESHOLD <n>`: Flush after `n` rows inserted
@@ -549,6 +550,13 @@ CREATE USER TABLE app.messages2 (
   author TEXT,
   timestamp TIMESTAMP
 ) STORAGE local FLUSH ROW_THRESHOLD 1000;
+
+-- Table that opts into per-user storage preferences
+CREATE USER TABLE app.user_events (
+  event_id BIGINT NOT NULL DEFAULT SNOWFLAKE_ID(),
+  payload JSON,
+  created_at TIMESTAMP DEFAULT NOW()
+) STORAGE s3_us USE_USER_STORAGE FLUSH ROW_THRESHOLD 5000;
 
 -- Time-based flush (every 5 minutes)
 CREATE USER TABLE app.events (
@@ -599,6 +607,28 @@ CREATE USER TABLE app.logs (
 - Flush policy is optional (no auto-flush if not specified)
 - User tables create isolated storage per user_id
 - System columns cannot be specified in INSERT/UPDATE
+- Pair `USE_USER_STORAGE` tables with per-user preferences (next section) to keep each tenant's data in their chosen region
+
+### Per-user storage preferences
+
+User rows in `system.users` expose two columns that control routing when `USE_USER_STORAGE` is enabled:
+
+- `storage_mode`: `table` (default) or `region`. `region` tells KalamDB to try the user's own storage first.
+- `storage_id`: optional reference to `system.storages`.
+
+Example assignments:
+
+```sql
+UPDATE system.users
+SET storage_mode = 'region', storage_id = 's3_eu'
+WHERE username = 'alice';
+
+UPDATE system.users
+SET storage_mode = 'table', storage_id = NULL
+WHERE username = 'bob';
+```
+
+Only `dba`/`system` roles should modify these columns. A dedicated `ALTER USER` syntax is planned. See `docs/how-to/user-table-storage.md` for a deeper walkthrough and current limitations.
 
 ---
 
@@ -1008,13 +1038,14 @@ ORDER BY created_at DESC;
 ### FLUSH ALL TABLES
 
 ```sql
-FLUSH ALL TABLES IN <namespace>;
+FLUSH ALL TABLES [IN <namespace>];
 ```
 
 **Behavior**:
 - Triggers flush for all USER and SHARED tables in namespace
 - Each table gets its own async flush job
 - Returns array of job_ids (one per table)
+- When the `IN` clause is omitted, the command uses the current session namespace (defaults to `default`)
 
 **Examples**:
 ```sql
@@ -1023,6 +1054,9 @@ FLUSH ALL TABLES IN app;
 
 -- Flush all tables in production namespace
 FLUSH ALL TABLES IN production;
+
+-- Use current session namespace (e.g., after `USE analytics;`)
+FLUSH ALL TABLES;
 ```
 
 **Response**:

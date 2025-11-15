@@ -20,7 +20,6 @@ Future:
 23) Add https://docs.rs/object_store/latest/object_store/ to support any object storage out there easily
 24) Check if we can replace rocksdb with this one: https://github.com/foyer-rs/foyer, it already support objectstore so we can also store the non-flushed tables into s3 directly, and not forcing flushing when server goes down, even whenever we use the filesystem we can rely on the same logic inside foyer as well
 
-26) Low Priority - Maybe instead of _updated we can use _seq which is a snowflake id for better syncing ability accross distributed nodes
 31) SHOW STATS FOR TABLE app.messages; maybe this is better be implemented with information_Schemas tasks
 32) Do we have counter per userId per buffered rows? this will help us tune the select from user table to check if we even need to query the buffer in first place
 33) Add option for a specific user to download all his data this is done with an endpoint in rest api which will create a zip file with all his tables data in parquet format and then provide a link to download it
@@ -86,7 +85,6 @@ Also check that registering ctaalogs are done in one place and one session, we s
 93) Add a new dataType which preserve the timezone info when storing timestamp with timezone
 95) while: [2025-11-01 23:55:16.242] [INFO ] - main - kalamdb_server::lifecycle:413 - Waiting up to 300s for active flush jobs to complete...
 display what active jobs we are waiting on
-96) IMPORTANT - Can we support a full timestamp with nanosecond precision? _updated column currently is in milliseconds only: 2025-11-02T13:45:17.592
 97) check if we have duplicates backend/crates/kalamdb-commons/src/constants.rs and backend/crates/kalamdb-commons/src/system_tables.rs both have system table names defined
 98) IMPORTANT - If no primary key found for a table then we will add our own system column _id to be primary key with snowflake id, make sure this is implemented everywhere correctly
 If the user already specified primary key then we dont do that, the _id we add also should check if the id is indeed unique as well
@@ -134,7 +132,6 @@ INSERT INTO <namespace>.<table>
    [AS USER '<user_id>']
    VALUES (...);
 
-129) Its better to store the _updated as nanosecond since epoch for better precision and also to avoid collisions when we have multiple updates in the same millisecond
 
 130) We need to have describe table <namespace>.<table> to show the table schema in cli and server as well also to display: cold rows count, hot rows count, total rows count, storage id, primary key(s), indexes, etc
 
@@ -148,7 +145,7 @@ INSERT INTO <namespace>.<table>
 
 135) There is some places were we have self.app_context and we at the same time refetch the app_context again
 
-136) Cleanup old data from: backend/crates/kalamdb-commons/src/string_interner.rs and also remove everything have to do with old system columns: _row_id, _id, _updated
+136) Cleanup old data from: backend/crates/kalamdb-commons/src/string_interner.rs and also remove everything have to do with old system columns: _row_id, _id, _updated and also have one place which is SystemColumnNames which is in commons to have the word _seq/_deleted in, so we can refer to it from one place only
 
 137) SharedTableFlushJob AND UserTableFlushJob have so much code duplication we need to combine them into one flush job with some parameters to differ between user/shared table flushing
 
@@ -169,6 +166,30 @@ ServerMessage will use arrow arrays directly as well
 
 142) make get_storage_path return PathBuf and any function which responsible for paths and storage should be the same using PathBuf instead of String for better path handling across different OSes, resolve_storage_path_for_user,     pub storage_path_template: String, 
 
+143) Add type-safe modles to ChangeNotification
+144) Shared tables should have a manifest stored in memory as well for better performance with also the same as user table to disk 
+145) User tables manifest should be in rocksdb and persisted into storage disk after flush
+146) Instead of these let partition_name = format!(
+                "{}{}:{}",
+                ColumnFamilyNames::USER_TABLE_PREFIX,
+                table_id.namespace_id().as_str(),
+                table_id.table_name().as_str()
+            );
+    read the partion as it is from a const or static function in commons for all of them
+
+147) When flushing shouldnt i do that async? so i dont block while waiting for rocksdb flushing or deleting folder to finish
+
+148) Create a compiler for paths templates to avoid doing string replacements each time we need to get the path for a user/table
+    we can combine all the places and use this compiler even in tests as well
+
+    there is many places where we need to compile paths:
+    1) In User Table output batch parquet file
+    2) In Shared Table parquet path
+    3) Caching the storage paths for user tables/shared tables
+    4) Manifest paths for user/shared tables
+    5) All error logic will be checked in the compiler, it should be optomized as much as possible
+    6) We can get tableid and also namespaceId/tablename so whenever we are calling it we can get whatever method we need instead of always combining or separating it to fit
+    7) Make sure manifest.json file should be next to the other parquet files in the same folder
 
 Here’s the updated 5-line spec with embedding storage inside Parquet and managed HNSW indexing (with delete handling):
 	1.	Parquet Storage: All embeddings are stored as regular columns in the Parquet file alongside other table columns to keep data unified and versioned per batch.
@@ -184,7 +205,7 @@ IMPORTANT:
 2) Done - Datatypes for columns
 3) Parametrized Queries needs to work with ScalarValue and be added to the api endpoint
 4) Add manifest file for each user table, that will help us locate which parquet files we need to read in each query, and if in fact we need to read parquet files at all, since sometimes the data will be only inside rocksdb and no need for file io
-4) Support update/deleted as a separate join table per user by MAX(_updated)
+4) Done - Support update/deleted as a separate join table per user by MAX(_updated)
 5) Storage files compaction
 6) AS USER support for DML statements - to be able to insert/update/delete as a specific user_id (Only service/admin roles can do that)
 7) Vector Search + HNSW indexing with deletes support
@@ -201,4 +222,17 @@ IMPORTANT:
 Key Findings
 Flush Timing Issue: Data inserted immediately before flush may not be in RocksDB column families yet, resulting in 0 rows flushed
 Parquet Querying Limitation: After flush, data is removed from RocksDB but queries don't yet retrieve from Parquet files - this is a known gap
+
+
+
+
+Code Cleanup Operations:
+1) Remove all occurrences of _row_id, _id, _updated system columns from the codebase
+2) Replace all instances of String types for namespace/table names with their respective NamespaceId/TableName
+3) Instead of passing to a method both NamespaceId and TableName, pass only TableId
+4) Make sure all using UserId/NamespaceId/TableName/TableId/StorageId types instead of raw strings across the codebase
+5) Instead of using "_seq","_deleted" use a SystemColumnNames constant or static function to get the name from one place only
+6) Remove un-needed imports across the codebase
+7) Fix all clippy warnings and errors
+
 

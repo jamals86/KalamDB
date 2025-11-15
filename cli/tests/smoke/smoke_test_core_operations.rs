@@ -299,7 +299,7 @@ fn test_flush_operations() {
         .expect("CREATE NAMESPACE should succeed");
     
     let create_table_sql = format!(
-        "CREATE USER TABLE {} (id INT, value VARCHAR) FLUSH ROWS 100",
+        "CREATE USER TABLE {} (id INT PRIMARY KEY, value VARCHAR) FLUSH ROWS 100",
         full_table_name
     );
     execute_sql_as_root_via_cli(&create_table_sql)

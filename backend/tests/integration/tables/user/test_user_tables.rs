@@ -23,6 +23,14 @@ async fn create_user_table(
     table_name: &str,
     user_id: &str,
 ) -> SqlResponse {
+    // Ensure a clean slate per test: drop the table if it already exists
+    let _ = server
+        .execute_sql_as_user(
+            &format!("DROP TABLE {}.{}", namespace, table_name),
+            "system",
+        )
+        .await;
+
     server
         .execute_sql_as_user(
             &format!(

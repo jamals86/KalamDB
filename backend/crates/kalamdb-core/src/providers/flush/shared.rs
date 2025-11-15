@@ -6,10 +6,10 @@
 use super::base::{FlushExecutor, FlushJobResult, FlushMetadata, TableFlush};
 use crate::error::KalamDbError;
 use crate::live_query::manager::{ChangeNotification, LiveQueryManager};
+use crate::manifest::{FlushManifestHelper, ManifestCacheService, ManifestService};
 use crate::schema_registry::SchemaRegistry;
 use crate::storage::ParquetWriter;
-use kalamdb_tables::{SharedTableRow, SharedTableStore, SharedTableStoreExt};
-use chrono::Utc;
+use kalamdb_tables::{SharedTableRow, SharedTableStore};
 use datafusion::arrow::datatypes::SchemaRef;
 use datafusion::arrow::record_batch::RecordBatch;
 use kalamdb_commons::models::{TableId, UserId};
@@ -29,6 +29,7 @@ pub struct SharedTableFlushJob {
     unified_cache: Arc<SchemaRegistry>, //TODO: We have AppContext now
     node_id: NodeId, //TODO: We can pass AppContext and has node_id there
     live_query_manager: Option<Arc<LiveQueryManager>>, //TODO: We can pass AppContext and has live_query_manager there
+    manifest_helper: FlushManifestHelper,
 }
 
 impl SharedTableFlushJob {
@@ -40,8 +41,11 @@ impl SharedTableFlushJob {
         table_name: TableName,
         schema: SchemaRef,
         unified_cache: Arc<SchemaRegistry>,
+        manifest_service: Arc<ManifestService>,
+        manifest_cache: Arc<ManifestCacheService>,
     ) -> Self {
         let node_id = NodeId::from(format!("node-{}", std::process::id()));
+        let manifest_helper = FlushManifestHelper::new(manifest_service, manifest_cache);
         Self {
             store,
             table_id,
@@ -51,6 +55,7 @@ impl SharedTableFlushJob {
             unified_cache,
             node_id,
             live_query_manager: None,
+            manifest_helper,
         }
     }
 
@@ -65,9 +70,13 @@ impl SharedTableFlushJob {
         FlushExecutor::execute_with_tracking(self, self.namespace_id.clone())
     }
 
-    /// Generate batch filename with timestamp
-    fn generate_batch_filename(&self) -> String {
-        format!("batch-{}.parquet", Utc::now().timestamp_millis())
+    /// Generate batch filename using manifest max_batch (T115)
+    /// Returns (batch_number, filename)
+    fn generate_batch_filename(&self) -> Result<(u64, String), KalamDbError> {
+        let batch_number = self.manifest_helper.get_next_batch_number(&self.namespace_id, &self.table_name, None)?;
+        let filename = FlushManifestHelper::generate_batch_filename(batch_number);
+        log::debug!("[MANIFEST] Generated batch filename: {} (batch_number={})", filename, batch_number);
+        Ok((batch_number, filename))
     }
 
     /// Convert JSON rows to Arrow RecordBatch
@@ -239,8 +248,8 @@ impl TableFlush for SharedTableFlushJob {
         // Convert rows to RecordBatch
         let batch = self.rows_to_record_batch(&rows)?;
 
-        // Determine output path via unified SchemaCache
-        let batch_filename = self.generate_batch_filename();
+        // T114-T115: Generate batch filename using manifest (sequential numbering)
+        let (batch_number, batch_filename) = self.generate_batch_filename()?;
         let full_path = self.unified_cache.get_storage_path(&*self.table_id, None, None)?;
         let table_dir = PathBuf::from(full_path);
         let output_path = table_dir.join(&batch_filename);
@@ -254,10 +263,26 @@ impl TableFlush for SharedTableFlushJob {
         // Write to Parquet
         log::debug!("📝 Writing Parquet file: path={}, rows={}", output_path.display(), rows_count);
         let writer = ParquetWriter::new(output_path.to_str().unwrap());
-        writer.write(self.schema.clone(), vec![batch])?;
+        writer.write(self.schema.clone(), vec![batch.clone()])?;
 
         log::info!("✅ Flushed {} rows for shared table={}.{} to {}", 
                   rows_count, self.namespace_id.as_str(), self.table_name.as_str(), output_path.display());
+
+        // Get file size
+        let size_bytes = std::fs::metadata(&output_path)
+            .map(|m| m.len())
+            .unwrap_or(0);
+
+        // Update manifest and cache using helper
+        self.manifest_helper.update_manifest_after_flush(
+            &self.namespace_id,
+            &self.table_name,
+            None,
+            batch_number,
+            batch_filename.clone(),
+            &batch,
+            size_bytes,
+        )?;
 
         // Delete flushed rows from RocksDB
         log::debug!("🗑️  Deleting {} flushed rows from RocksDB (table={}.{})",

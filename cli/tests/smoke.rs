@@ -20,3 +20,5 @@ mod smoke_test_queries_benchmark;
 mod smoke_test_dml_wide_columns;
 #[path = "smoke/smoke_test_storage_templates.rs"]
 mod smoke_test_storage_templates;
+#[path = "smoke/chat_ai_example_smoke.rs"]
+mod chat_ai_example_smoke;

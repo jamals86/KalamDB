@@ -37,8 +37,8 @@ KalamDB is a **SQL-first, real-time database** that scales to millions of concur
 ```sql
 -- Create a user table with real-time subscriptions
 CREATE USER TABLE app.messages (
-  id BIGINT DEFAULT SNOWFLAKE_ID(),
-  content TEXT,
+  id BIGINT PRIMARY KEY DEFAULT SNOWFLAKE_ID(),
+  content TEXT NOT NULL,
   timestamp TIMESTAMP DEFAULT NOW()
 ) FLUSH ROW_THRESHOLD 1000;
 
@@ -139,9 +139,9 @@ watch_directory("user_12345/messages/")
 -- Standard SQL with KalamDB extensions
 CREATE NAMESPACE app;
 CREATE USER TABLE app.conversations (
-  id BIGINT DEFAULT SNOWFLAKE_ID(),
+  id BIGINT PRIMARY KEY DEFAULT SNOWFLAKE_ID(),
   user_id TEXT DEFAULT CURRENT_USER(),
-  message TEXT,
+  message TEXT NOT NULL,
   created_at TIMESTAMP DEFAULT NOW()
 ) FLUSH ROW_THRESHOLD 1000;
 
@@ -158,9 +158,12 @@ ORDER BY id DESC;
 - Scales horizontally to millions of users
 
 ```sql
-CREATE USER TABLE app.messages (...) FLUSH ROW_THRESHOLD 1000;
--- alice's data → user/alice123/messages/batch-*.parquet
--- bob's data   → user/bob456/messages/batch-*.parquet
+CREATE USER TABLE app.messages (
+  id BIGINT PRIMARY KEY DEFAULT SNOWFLAKE_ID(),
+  content TEXT NOT NULL
+) FLUSH ROW_THRESHOLD 1000;
+-- alice's data → user/alice123/messages/batch-<index>.parquet
+-- bob's data   → user/bob456/messages/batch-<index>.parquet
 ```
 
 #### 2. **SHARED Tables** - Global Data
@@ -169,8 +172,11 @@ CREATE USER TABLE app.messages (...) FLUSH ROW_THRESHOLD 1000;
 - Centralized storage with shared access
 
 ```sql
-CREATE SHARED TABLE app.config (...) FLUSH ROW_THRESHOLD 100;
--- All users read/write → shared/app/config/batch-*.parquet
+CREATE SHARED TABLE app.config (
+  key TEXT PRIMARY KEY,
+  value JSON
+) FLUSH ROW_THRESHOLD 100;
+-- All users read/write → shared/app/config/batch-<index>.parquet
 ```
 
 #### 3. **STREAM Tables** - Ephemeral Real-Time
@@ -179,7 +185,11 @@ CREATE SHARED TABLE app.config (...) FLUSH ROW_THRESHOLD 100;
 - No persistence, maximum performance
 
 ```sql
-CREATE STREAM TABLE app.live_events (...) TTL 10;
+CREATE STREAM TABLE app.live_events (
+  id BIGINT PRIMARY KEY DEFAULT SNOWFLAKE_ID(),
+  payload JSON,
+  created_at TIMESTAMP DEFAULT NOW()
+) TTL 10;
 -- Data expires after 10 seconds, memory-only
 ```
 
@@ -287,17 +297,6 @@ ALTER TABLE app.messages RENAME COLUMN content TO message_text;
 DESCRIBE TABLE app.messages HISTORY;
 ```
 
-### **Backup and Restore**
-- **Namespace-Level**: Backup all tables in one command
-- **Parquet File Copy**: Efficient cold storage backup
-- **Checksum Verification**: Data integrity validation
-- **Incremental Support**: Planned for future releases
-
-```sql
-BACKUP DATABASE app TO '/backups/app-20251028';
-RESTORE DATABASE app FROM '/backups/app-20251028';
-```
-
 ### **Comprehensive Catalog & Introspection**
 - **System Tables**: Query metadata via SQL
 - **SHOW Commands**: List namespaces, tables, storage, users
@@ -322,121 +321,79 @@ SELECT * FROM system.users WHERE role = 'dba';
 
 ## 📊 Architecture Overview
 
----
+KalamDB stores data in a simple, inspectable layout. Each folder now contains a small `manifest.json` alongside the data files.
+
+```text
+data/
+├── rocksdb/                         # Hot storage (RocksDB column families)
+│   ├── system_*                     # System tables
+│   └── user_* / shared_*            # Hot buffers per table
+└── storage/                         # Cold storage (Parquet segments)
+    ├── user/{user_id}/{table}/
+    │   ├── manifest.json            # Schema + segment index
+    │   └── batch-<index>.parquet    # Flushed segments
+    └── shared/{table}/
+  ├── manifest.json
+  └── batch-<index>.parquet
+```
+
+High level crate graph today:
+
+```text
+        +----------------+
+        |  kalamdb-api   |   HTTP + WebSocket server
+        +--------+-------+
+           |
+           v
+        +----------------+
+        |  kalamdb-core  |   SQL handlers, jobs, tables
+        +--------+-------+
+           |
+    +------------+-------------+
+    v                          v
+  +---------------+          +-----------------+
+  | kalamdb-store |          | kalamdb-filestore|  (Parquet + manifests)
+  +-------+-------+          +---------+-------+
+    |                             |
+    v                             v
+   RocksDB column families         Filesystem / object storage
+```
+
+`kalamdb-core` orchestrates everything and never talks to RocksDB or the filesystem directly; it goes through `kalamdb-store` (key/value hot path) and `kalamdb-filestore` (Parquet + `manifest.json` and batch indexes).
 
 ## 🌟 **KalamDB Core Features & Roadmap**
 
 ### ✅ **Implemented**
 
-* Three table types (**USER**, **SHARED**, **STREAM**) with isolated storage
-* DataFusion SQL engine with full DDL/DML support
-* **Unified schema system** with type-safe models and >99% cache hit rate (16 data types)
-* **EMBEDDING type** for AI/ML vector storage (FixedSizeList<Float32> in Arrow)
-* **UUID, DECIMAL, SMALLINT** types for modern database applications
-* Sub-millisecond writes (RocksDB hot tier + Parquet cold tier)
-* WebSocket live query subscriptions with change tracking
-* Schema evolution (**ALTER TABLE** with backward compatibility)
-* **Schema caching** with DashMap-based concurrent access
-* **Column ordering** via ordinal_position for deterministic SELECT * results
-* Multi-storage backends (Local, S3, Azure Blob, GCS)
-* Role-based access control (user, service, dba, system)
-* Backup/restore with Parquet file verification
-* Catalog browsing (**SHOW**, **DESCRIBE**, **STATS** commands)
-* HTTP Basic Auth and JWT authentication (with soft delete)
-* Docker deployment with environment variable configuration
-* TypeScript SDK (WASM) with React example app
-* Custom SQL functions: `SNOWFLAKE_ID`, `UUID_V7`, `ULID`, `CURRENT_USER`
-* RocksDB storage with column family architecture
-* Namespace and table registry stored in RocksDB system tables
-* Configurable flush policies (row-based, time-based, or both)
-* Parquet consolidation (hot → cold storage)
-* System tables (`namespaces`, `tables`, `schemas`, `storage_locations`, `live_queries`, `jobs`, `users`)
-* Integration tests and quickstart script (32+ automated tests)
-* **Kalam CLI** — interactive command-line client similar to MySQL/psql
-  * Supports SQL execution, autocomplete, and table rendering
-  * Live query subscriptions via WebSocket
-  * JSON/CSV/table output modes
-  * Config file (`~/.kalam/config.toml`) and history persistence
-  * JWT and API key authentication
-  * Built on top of `kalam-link` library (also available as WASM SDK)
+- SQL engine with full DDL/DML support
+- Three table types: USER, SHARED, STREAM
+- Per-user tables with hot (RocksDB) + cold (Parquet) storage
+- Real-time subscriptions over WebSocket
+- Unified schema system with 16 data types (incl. EMBEDDING)
+- Role-based access control and authentication
+- Backup/restore and system catalog tables
+- Dockerized server and `kalam` CLI
 
 ---
 
 ### 🚧 **In Progress**
 
-* Enhanced error handling (error types integrated with REST and SQL engine)
-* Structured logging for all operations
-* Request/response logging (REST + WebSocket)
-* Performance optimizations (connection pooling, schema/query caching)
-* Parquet bloom filters on `_updated` column
-* Metrics collection (latency, throughput, flush duration, WebSocket stats)
-* WebSocket authentication and authorization
-* Rate limiting (per user, per connection)
-* Configuration improvements (RocksDB tuning, env vars)
-* Comprehensive documentation (README, SQL syntax, API docs, ADRs)
+- SDK for TypeScript using WASM
+- Performance tuning and metrics
+- Stronger WebSocket auth and rate limiting
+- Cleanup and simplification of docs and examples
 
 ---
 
 ### 📋 **Planned / Future**
-
-* Distributed replication (via `system.nodes` table with tag-based routing)
-* Incremental backups and recovery jobs
-* Admin web UI dashboard
-* Multiple indexes on shared/user tables
-* Full-text search integration
-* Vector search (hybrid semantic + relational queries)
-* Query result caching with TTL
-* Transactions (`BEGIN`, `COMMIT`, `ROLLBACK`)
-* Foreign key constraints
-* Materialized views
-* Automatic table flushing with job tracking
-* Kubernetes deployment (Helm charts, operator support)
-* Cloud storage optimizations (S3 multipart, Azure blob tiers)
-* Raft-based distributed metadata replication (future `kalamdb-raft` crate)
+- Run workflows on data changes (triggers)
+- High-availability and replication
+- Richer search (full-text, vector)
+- Query caching and more indexes
+- Transactions and constraints
+- Admin UI and better cloud/Kubernetes story
 
 ---
-
-## 📐 Architecture Overview
-
-### Three-Layer Architecture
-
-KalamDB follows a clean **three-layer architecture** that ensures maintainability and testability:
-
-```
-┌──────────────────────────────────────────┐
-│         kalamdb-core (Layer 1)           │  ← Business logic, services, SQL execution
-│  - Table operations                      │
-│  - Live query management                 │
-│  - Flush/backup services                 │
-│  - DataFusion integration                │
-└───────────┬──────────────────────────────┘
-            │ uses (no direct RocksDB access)
-            ▼
-┌──────────────────────────────────────────┐
-│    kalamdb-sql + kalamdb-store (Layer 2) │  ← Data access layer
-│                                          │
-│  kalamdb-sql:                            │
-│  - System tables (namespaces, tables,    │
-│    schemas, storage_locations, jobs)     │
-│  - Metadata operations                   │
-│                                          │
-│  kalamdb-store:                          │
-│  - UserTableStore                        │
-│  - SharedTableStore                      │
-│  - StreamTableStore                      │
-│  - Parquet file operations               │
-└───────────┬──────────────────────────────┘
-            │ uses
-            ▼
-┌──────────────────────────────────────────┐
-│         RocksDB (Layer 3)                │  ← Persistence layer
-│  - Column families                       │
-│  - System tables storage                 │
-│  - Hot data buffering                    │
-└──────────────────────────────────────────┘
-```
-
-**Key Principle**: `kalamdb-core` **never** directly accesses RocksDB. All data operations flow through `kalamdb-sql` (for metadata) and `kalamdb-store` (for user/shared/stream data).
 
 ### Storage Layout
 
@@ -478,115 +435,126 @@ cargo run --release --bin kalamdb-server
 
 See [Quick Start Guide](docs/QUICK_START.md) for detailed setup instructions.
 
-### Basic Usage
+### Basic Usage – Real-World Chat + AI Example (with `kalam` CLI)
 
-#### 1. Create a Namespace and Table
+Below is a minimal but realistic end-to-end example for a **chat app with AI**. It uses:
 
-```bash
-curl -X POST http://localhost:8080/api/sql \
-  -u user1:password \
-  -H "Content-Type: application/json" \
-  -d '{
-    "sql": "CREATE NAMESPACE IF NOT EXISTS app"
-  }'
+- One **user table** for conversations
+- One **user table** for messages
+- One **stream table** for ephemeral typing/thinking/cancel events
 
-curl -X POST http://localhost:8080/api/sql \
-  -u user1:password \
-  -H "Content-Type: application/json" \
-  -d '{
-    "sql": "CREATE USER TABLE app.messages (id BIGINT, content TEXT, timestamp TIMESTAMP) FLUSH POLICY ROW_LIMIT 1000"
-  }'
-```
+We assume:
 
-#### 2. Insert and Query Data
+- The server is running at `http://localhost:8080`
+- You're running on localhost (automatically connects as `root` user)
+- You have the CLI built and available as `kalam` (see `docs/CLI.md`)
+
+#### 1. Start Interactive CLI and Create Schema
 
 ```bash
-# Insert data (goes to RocksDB hot buffer)
-curl -X POST http://localhost:8080/api/sql \
-  -u user1:password \
-  -H "Content-Type: application/json" \
-  -d '{
-    "sql": "INSERT INTO app.messages (id, content, timestamp) VALUES (1, '\''Hello World'\'', NOW())"
-  }'
-
-# Query data (reads from hot + cold storage)
-curl -X POST http://localhost:8080/api/sql \
-  -u user1:password \
-  -H "Content-Type: application/json" \
-  -d '{
-    "sql": "SELECT * FROM app.messages ORDER BY timestamp DESC LIMIT 10"
-  }'
+# Start the interactive CLI (connects as root on localhost by default)
+kalam
 ```
 
-#### 3. Subscribe to Live Updates (WebSocket)
+Now inside the `kalam>` prompt:
+
+```sql
+-- Create namespace and tables
+CREATE NAMESPACE IF NOT EXISTS chat;
+
+CREATE USER TABLE chat.conversations (
+  id BIGINT PRIMARY KEY DEFAULT SNOWFLAKE_ID(),
+  title TEXT NOT NULL,
+  created_at TIMESTAMP DEFAULT NOW()
+) FLUSH ROW_THRESHOLD 1000;
+
+CREATE USER TABLE chat.messages (
+  id BIGINT PRIMARY KEY DEFAULT SNOWFLAKE_ID(),
+  conversation_id BIGINT NOT NULL,
+  role TEXT NOT NULL,
+  content TEXT NOT NULL,
+  created_at TIMESTAMP DEFAULT NOW()
+) FLUSH ROW_THRESHOLD 1000;
+
+CREATE STREAM TABLE chat.typing_events (
+  id BIGINT PRIMARY KEY DEFAULT SNOWFLAKE_ID(),
+  conversation_id BIGINT NOT NULL,
+  user_id TEXT NOT NULL,
+  event_type TEXT NOT NULL,
+  created_at TIMESTAMP DEFAULT NOW()
+) TTL 30;
+```
+
+#### 2. Start a Conversation and Add Messages
+
+```sql
+-- Create a new conversation and get its id
+INSERT INTO chat.conversations (title)
+VALUES ('Chat with AI')
+RETURNING id;
+
+-- Suppose the returned id is 1 – insert user + AI messages
+INSERT INTO chat.messages (conversation_id, role, content) VALUES
+  (1, 'user', 'Hello, AI!'),
+  (1, 'assistant', 'Hi! How can I help you today?');
+
+-- Query the conversation history
+SELECT role, content, created_at
+FROM chat.messages
+WHERE conversation_id = 1
+ORDER BY created_at ASC;
+```
+
+#### 3. Track Typing/Thinking/Cancel Events (Stream Table)
+
+```sql
+-- User starts typing
+INSERT INTO chat.typing_events (conversation_id, user_id, event_type)
+VALUES (1, 'user_123', 'typing');
+
+-- AI starts thinking
+INSERT INTO chat.typing_events (conversation_id, user_id, event_type)
+VALUES (1, 'ai_model', 'thinking');
+
+-- AI cancels / stops
+INSERT INTO chat.typing_events (conversation_id, user_id, event_type)
+VALUES (1, 'ai_model', 'cancelled');
+
+-- Subscribe to live typing events
+SUBSCRIBE TO chat.typing_events WHERE conversation_id = 1 OPTIONS (last_rows=50);
+```
+
+**Note**: Press `Ctrl+C` to stop the subscription and return to the prompt.
+
+#### 4. Subscribe to Live Message + Typing Updates (WebSocket API)
 
 ```javascript
 const ws = new WebSocket('ws://localhost:8080/ws');
 
-// Subscribe to live queries
-ws.send(JSON.stringify({
-  subscriptions: [{
-    query_id: "sub1",
-    sql: "SELECT * FROM app.messages WHERE timestamp > NOW() - INTERVAL '\''5 minutes'\''",
-    options: { last_rows: 10 }
-  }]
-}));
+ws.onopen = () => {
+  ws.send(JSON.stringify({
+    subscriptions: [
+      {
+        query_id: "chat-messages-1",
+        sql: "SELECT * FROM chat.messages WHERE conversation_id = 1 ORDER BY created_at DESC",
+        options: { last_rows: 20 }
+      },
+      {
+        query_id: "chat-typing-1",
+        sql: "SELECT * FROM chat.typing_events WHERE conversation_id = 1",
+        options: { last_rows: 10 }
+      }
+    ]
+  }));
+};
 
-// Receive real-time notifications
 ws.onmessage = (event) => {
   const notification = JSON.parse(event.data);
-  console.log('Change detected:', notification.type, notification.data);
-  // notification.type: "INSERT" | "UPDATE" | "DELETE" | "FLUSH"
+  console.log('Change detected:', notification.query_id, notification.type, notification.data);
 };
 ```
 
-### Common SQL Commands
-
-```sql
--- Namespace management
-CREATE NAMESPACE app;
-DROP NAMESPACE app;
-
--- User tables (one table per user)
-CREATE USER TABLE app.messages (
-  id BIGINT,
-  content TEXT,
-  created_at TIMESTAMP
-) FLUSH POLICY ROW_LIMIT 1000;
-
--- Shared tables (global data)
-CREATE SHARED TABLE app.analytics (
-  event_name TEXT,
-  count BIGINT,
-  timestamp TIMESTAMP
-) FLUSH POLICY TIME_INTERVAL 300;
-
--- Stream tables (ephemeral, memory-only)
-CREATE STREAM TABLE app.events (
-  event_id TEXT,
-  data TEXT
-) RETENTION 10 EPHEMERAL MAX_BUFFER 5000;
-
--- User management
-CREATE USER 'alice' WITH PASSWORD 'Secret123!' ROLE 'user';
-ALTER USER 'alice' SET PASSWORD 'NewPassword456!';
-DROP USER 'alice';
-
--- Schema evolution
-ALTER TABLE app.messages ADD COLUMN author TEXT;
-ALTER TABLE app.messages DROP COLUMN author;
-
--- Backup and restore
-BACKUP DATABASE app TO '/backups/app-20251020';
-RESTORE DATABASE app FROM '/backups/app-20251020';
-
--- Catalog browsing
-SHOW TABLES IN app;
-DESCRIBE TABLE app.messages;
-SHOW STATS FOR TABLE app.messages;
-```
-
-**📖 Complete SQL Reference**: See [SQL Syntax Documentation](docs/architecture/SQL_SYNTAX.md) for the full command reference with all options, examples, and PostgreSQL/MySQL compatibility details.
+**📖 Complete SQL Reference**: See [SQL Syntax Documentation](docs/SQL.md) for the full command reference with all options.
 
 ---
 
@@ -601,24 +569,6 @@ SHOW STATS FOR TABLE app.messages;
 - Sub-millisecond writes to RocksDB hot tier
 - Automatic message history archival to Parquet cold tier
 
-**Example**:
-```sql
--- Each user gets isolated storage
-CREATE USER TABLE chat.messages (
-  id BIGINT DEFAULT SNOWFLAKE_ID(),
-  room_id TEXT,
-  content TEXT,
-  timestamp TIMESTAMP DEFAULT NOW()
-) FLUSH INTERVAL 300s ROW_THRESHOLD 1000;
-
--- Real-time subscription (per user)
-SUBSCRIBE TO chat.messages 
-WHERE room_id IN ('general', 'support') 
-OPTIONS (last_rows=50);
-```
-
-**Result**: WhatsApp-scale messaging with simple SQL queries.
-
 ---
 
 ### 2. **AI Assistant Platforms**
@@ -629,29 +579,6 @@ OPTIONS (last_rows=50);
 - Full-text search via DataFusion SQL
 - Time-range queries for recent context
 - Schema evolution as AI models change
-
-**Example**:
-```sql
--- Store AI conversations per user
-CREATE USER TABLE ai.conversations (
-  id BIGINT DEFAULT SNOWFLAKE_ID(),
-  conversation_id TEXT DEFAULT UUID_V7(),
-  role TEXT,  -- 'user' or 'assistant'
-  content TEXT,
-  model TEXT,
-  tokens INT,
-  created_at TIMESTAMP DEFAULT NOW()
-) FLUSH INTERVAL 600s ROW_THRESHOLD 5000;
-
--- Query recent context for RAG
-SELECT content, role, created_at
-FROM ai.conversations
-WHERE conversation_id = '018b6e8a-07d1-7000-8000-0123456789ab'
-  AND created_at > NOW() - INTERVAL '1 hour'
-ORDER BY created_at ASC;
-```
-
-**Result**: ChatGPT-style assistants with complete conversation memory and instant context retrieval.
 
 ---
 
@@ -804,16 +731,16 @@ CREATE USER 'tenant_acme' WITH PASSWORD 'SecureKey123!' ROLE 'service';
 
 | Component | Technology | Version | Purpose |
 |-----------|-----------|---------|---------|
-| **Language** | Rust | 1.75+ | Performance, safety, concurrency |
-| **Storage (Hot)** | RocksDB | 0.21 | Fast buffered writes (<1ms latency) |
-| **Storage (Cold)** | Apache Parquet | 50.0 | Compressed columnar format for analytics |
-| **Query Engine** | Apache DataFusion | 35.0 | SQL execution across hot+cold storage |
-| **In-Memory** | Apache Arrow | 50.0 | Zero-copy data structures |
+| **Language** | Rust | 1.90+ | Performance, safety, concurrency |
+| **Storage (Hot)** | RocksDB | 0.24 | Fast buffered writes (<1ms latency) |
+| **Storage (Cold)** | Apache Parquet | 52.0 | Compressed columnar format for analytics |
+| **Query Engine** | Apache DataFusion | 40.0 | SQL execution across hot+cold storage |
+| **In-Memory** | Apache Arrow | 52.0 | Zero-copy data structures |
 | **API Server** | Actix-web | 4.4 | REST endpoints + WebSocket subscriptions |
 | **Authentication** | bcrypt + JWT | - | Password hashing + token-based auth |
 | **Real-time** | WebSocket | - | Live message notifications |
 | **Deployment** | Docker | - | Production-ready containerization |
-| **Client SDK** | Rust → WASM | - | TypeScript/JavaScript bindings |
+| **Client SDK** | Rust → WASM | coming soon | TypeScript/JavaScript bindings |
 
 **Why These Choices?**
 
@@ -827,8 +754,6 @@ CREATE USER 'tenant_acme' WITH PASSWORD 'SecureKey123!' ROLE 'service';
 ---
 
 ## 📐 Design Principles
-
-From [`constitution.md`](.specify/memory/constitution.md):
 
 1. **Simplicity First** - Direct code paths, minimal abstractions
 2. **Performance by Design** - Sub-millisecond writes, SQL queries
@@ -845,40 +770,13 @@ From [`constitution.md`](.specify/memory/constitution.md):
 ### 🚀 Getting Started
 
 - **[Quick Start Guide](docs/quickstart/QUICK_START.md)** - Get up and running in 10 minutes
-- **[Quick Test Guide](docs/quickstart/QUICK_TEST_GUIDE.md)** - Run automated tests and examples
-- **[Development Setup](docs/build/DEVELOPMENT_SETUP.md)** - Complete installation for Windows/macOS/Linux
-- **[Backend README](backend/README.md)** - Project structure and development workflow
 
-### 📖 SQL & API Reference
+### 📖 SQL, API & CLI
 
-- **[SQL Syntax Reference](docs/architecture/SQL_SYNTAX.md)** - **Complete SQL command reference with examples** ⭐
-  - All DDL/DML commands with syntax
-  - User management (CREATE/ALTER/DROP USER)
-  - Multi-storage backends configuration
-  - Live query subscriptions
-  - Custom functions (SNOWFLAKE_ID, UUID_V7, ULID, CURRENT_USER)
-  - PostgreSQL/MySQL compatibility
-- **[API Reference](docs/architecture/API_REFERENCE.md)** - REST API endpoints (OpenAPI spec)
-- **[WebSocket Protocol](docs/architecture/WEBSOCKET_PROTOCOL.md)** - Real-time streaming protocol
-
-### 🏗️ Architecture & Design
-
-- **[Complete Specification](specs/002-simple-kalamdb/SPECIFICATION-COMPLETE.md)** - Full design overview
-- **[Data Model](specs/002-simple-kalamdb/data-model.md)** - Entities, schemas, lifecycle
-- **[API Architecture](specs/002-simple-kalamdb/API-ARCHITECTURE.md)** - SQL-first approach
-- **[Architecture Decision Records (ADRs)](docs/architecture/adrs/)** - Key design decisions
-
-### 🐳 Deployment Guides
-
-- **[Docker Deployment](docker/README.md)** - Production-ready containerization
-- **[WASM Client SDK](link/sdks/typescript/README.md)** - TypeScript/JavaScript SDK
-- **[React Example App](examples/simple-typescript/README.md)** - Real-time TODO app
-
-### 📝 Development Guidelines
-
-- **[Constitution](.specify/memory/constitution.md)** - Project principles and standards
-- **[Implementation Plan](specs/002-simple-kalamdb/plan.md)** - Development roadmap
-- **[Troubleshooting](docs/TROUBLESHOOTING.md)** - Common issues and solutions
+- **[SQL Reference](docs/SQL.md)** – SQL syntax and examples
+- **[API Reference](docs/API.md)** – HTTP & WebSocket API overview
+- **[CLI Guide](docs/cli.md)** – using the `kalam` command-line client
+ - **[SDK (TypeScript/WASM)](docs/SDK.md)** – browser/Node.js client (under development)
 
 ---
 
@@ -910,51 +808,10 @@ Features:
 
 **Documentation**: See [docker/README.md](docker/README.md) for complete deployment guide.
 
-### WASM Client for Browser/Node.js
+### WASM Client / SDK (Coming Soon)
 
-Use KalamDB from TypeScript/JavaScript applications via the official SDK:
-
-```typescript
-// Install SDK as dependency
-// package.json: "@kalamdb/client": "file:../../link/sdks/typescript"
-
-import init, { KalamClient } from '@kalamdb/client';
-
-// Initialize WASM module
-await init();
-
-// Create client with username and password
-const client = new KalamClient(
-  'http://localhost:8080',
-  'myuser',
-  'SecurePass123!'
-);
-
-// Connect and query
-await client.connect();
-const results = await client.query('SELECT * FROM todos');
-
-// Subscribe to real-time changes
-await client.subscribe('todos', (eventJson) => {
-  const event = JSON.parse(eventJson);
-  console.log('Change detected:', event);
-});
-```
-
-**SDK Architecture**:
-- 📦 **Location**: `link/sdks/typescript/` - Complete, publishable npm package
-- 🔗 **Usage**: Examples import SDK as local dependency via `file:` protocol
-- ✅ **No Mocks**: Examples MUST use real SDK, not custom implementations
-- 🛠️ **Extension**: If examples need helpers, add to SDK for all users
-
-Features:
-- ✅ TypeScript SDK with full type definitions (14 passing tests)
-- ✅ Real-time WebSocket subscriptions
-- ✅ Compiled Rust → WASM (37 KB module)
-- ✅ Works in browsers and Node.js
-- ✅ Complete test suite and API documentation
-
-**Documentation**: See [link/sdks/typescript/README.md](link/sdks/typescript/README.md) and [SDK Integration Guide](specs/006-docker-wasm-examples/SDK_INTEGRATION.md).
+TypeScript/JavaScript SDK built on Rust → WASM is under development.
+See `docs/SDK.md` for the current design and status.
 
 ### Example Application: React TODO App
 
@@ -975,12 +832,6 @@ Features:
 - ✅ Complete with tests and documentation
 
 **Live Demo**: See [examples/simple-typescript/README.md](examples/simple-typescript/README.md) for complete walkthrough.
-
----
-
-## 🤝 Contributing
-
-KalamDB is in active development. See [`specs/001-build-a-rust/plan.md`](specs/001-build-a-rust/plan.md) for implementation plan.
 
 ---
 

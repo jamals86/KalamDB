@@ -75,6 +75,14 @@ name = "test_user_tables"
 path = "tests/integration/tables/user/test_user_tables.rs"
 
 [[test]]
+name = "test_user_drop_cleanup"
+path = "tests/integration/tables/user/test_user_drop_cleanup.rs"
+
+[[test]]
+name = "test_shared_drop_cleanup"
+path = "tests/integration/tables/shared/test_shared_drop_cleanup.rs"
+
+[[test]]
 name = "test_stream_tables"
 path = "tests/integration/tables/stream/test_stream_tables.rs"
 
@@ -119,6 +127,11 @@ path = "tests/integration/flush/test_automatic_flushing.rs"
 [[test]]
 name = "test_automatic_flushing_comprehensive"
 path = "tests/integration/flush/test_automatic_flushing_comprehensive.rs"
+
+[[test]]
+name = "test_manifest_flush"
+path = "tests/integration/manifest/test_manifest_flush.rs"
+harness = true
 
 # [[test]]
 # name = "test_schema_integrity"

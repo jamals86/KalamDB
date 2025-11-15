@@ -8,7 +8,7 @@ use dashmap::DashMap;
 use kalamdb_commons::{
     config::ManifestCacheSettings,
     types::{ManifestCacheEntry, ManifestFile, SyncState},
-    NamespaceId, TableName,
+    NamespaceId, TableName, UserId,
 };
 use kalamdb_store::{entity_store::EntityStore, StorageBackend, StorageError};
 use kalamdb_system::providers::manifest::{new_manifest_store, ManifestCacheKey, ManifestStore};
@@ -58,9 +58,9 @@ impl ManifestCacheService {
         &self,
         namespace: &NamespaceId,
         table: &TableName,
-        scope: &str, // "user_id" or "shared"
+        user_id: Option<&UserId>,
     ) -> Result<Option<Arc<ManifestCacheEntry>>, StorageError> {
-        let cache_key = ManifestCacheKey::from(self.make_cache_key(namespace, table, scope));
+        let cache_key = ManifestCacheKey::from(self.make_cache_key(namespace, table, user_id));
         
         // 1. Check hot cache
         if let Some(entry) = self.hot_cache.get(cache_key.as_str()) {
@@ -91,12 +91,12 @@ impl ManifestCacheService {
         &self,
         namespace: &NamespaceId,
         table: &TableName,
-        scope: &str,
+        user_id: Option<&UserId>,
         manifest: &ManifestFile,
         etag: Option<String>,
         source_path: String,
     ) -> Result<(), StorageError> {
-        let cache_key_str = self.make_cache_key(namespace, table, scope);
+        let cache_key_str = self.make_cache_key(namespace, table, user_id);
         let cache_key = ManifestCacheKey::from(cache_key_str.clone());
         let now = chrono::Utc::now().timestamp();
 
@@ -146,9 +146,9 @@ impl ManifestCacheService {
         &self,
         namespace: &NamespaceId,
         table: &TableName,
-        scope: &str,
+        user_id: Option<&UserId>,
     ) -> Result<(), StorageError> {
-        let cache_key_str = self.make_cache_key(namespace, table, scope);
+        let cache_key_str = self.make_cache_key(namespace, table, user_id);
         let cache_key = ManifestCacheKey::from(cache_key_str.clone());
         self.hot_cache.remove(&cache_key_str);
         self.last_accessed.remove(&cache_key_str);
@@ -203,8 +203,8 @@ impl ManifestCacheService {
 
     // Helper methods
 
-    fn make_cache_key(&self, namespace: &NamespaceId, table: &TableName, scope: &str) -> String {
-        // Use the same key format as cache_keys helper
+    fn make_cache_key(&self, namespace: &NamespaceId, table: &TableName, user_id: Option<&UserId>) -> String {
+        let scope = user_id.map(|u| u.as_str()).unwrap_or("shared");
         format!("{}:{}:{}", namespace.as_str(), table.as_str(), scope)
     }
 
@@ -257,7 +257,7 @@ mod tests {
         let namespace = NamespaceId::new("ns1");
         let table = TableName::new("tbl1");
 
-        let result = service.get_or_load(&namespace, &table, "u_123").unwrap();
+        let result = service.get_or_load(&namespace, &table, Some(&UserId::from("u_123"))).unwrap();
         assert!(result.is_none());
     }
 
@@ -272,7 +272,7 @@ mod tests {
             .update_after_flush(
                 &namespace,
                 &table,
-                "u_123",
+                Some(&UserId::from("u_123")),
                 &manifest,
                 Some("etag123".to_string()),
                 "s3://bucket/path/manifest.json".to_string(),
@@ -280,7 +280,7 @@ mod tests {
             .unwrap();
 
         // Verify cached
-        let cached = service.get_or_load(&namespace, &table, "u_123").unwrap();
+        let cached = service.get_or_load(&namespace, &table, Some(&UserId::from("u_123"))).unwrap();
         assert!(cached.is_some());
         let entry = cached.unwrap();
         assert_eq!(entry.etag, Some("etag123".to_string()));
@@ -299,7 +299,7 @@ mod tests {
             .update_after_flush(
                 &namespace,
                 &table,
-                "u_123",
+                Some(&UserId::from("u_123")),
                 &manifest,
                 None,
                 "path".to_string(),
@@ -307,11 +307,11 @@ mod tests {
             .unwrap();
 
         // Second read should hit hot cache
-        let result = service.get_or_load(&namespace, &table, "u_123").unwrap();
+        let result = service.get_or_load(&namespace, &table, Some(&UserId::from("u_123"))).unwrap();
         assert!(result.is_some());
 
         // Verify last_accessed updated
-        let cache_key = service.make_cache_key(&namespace, &table, "u_123");
+        let cache_key = service.make_cache_key(&namespace, &table, Some(&UserId::from("u_123")));
         assert!(service.get_last_accessed(&cache_key).is_some());
     }
 
@@ -324,17 +324,17 @@ mod tests {
 
         // Add entry
         service
-            .update_after_flush(&namespace, &table, "u_123", &manifest, None, "path".to_string())
+            .update_after_flush(&namespace, &table, Some(&UserId::from("u_123")), &manifest, None, "path".to_string())
             .unwrap();
 
         // Verify cached
-        assert!(service.get_or_load(&namespace, &table, "u_123").unwrap().is_some());
+        assert!(service.get_or_load(&namespace, &table, Some(&UserId::from("u_123"))).unwrap().is_some());
 
         // Invalidate
-        service.invalidate(&namespace, &table, "u_123").unwrap();
+        service.invalidate(&namespace, &table, Some(&UserId::from("u_123"))).unwrap();
 
         // Verify removed
-        assert!(service.get_or_load(&namespace, &table, "u_123").unwrap().is_none());
+        assert!(service.get_or_load(&namespace, &table, Some(&UserId::from("u_123"))).unwrap().is_none());
     }
 
     #[test]
@@ -346,10 +346,10 @@ mod tests {
 
         // Add fresh entry
         service
-            .update_after_flush(&namespace, &table, "u_123", &manifest, None, "path".to_string())
+            .update_after_flush(&namespace, &table, Some(&UserId::from("u_123")), &manifest, None, "path".to_string())
             .unwrap();
 
-        let cache_key = service.make_cache_key(&namespace, &table, "u_123");
+        let cache_key = service.make_cache_key(&namespace, &table, Some(&UserId::from("u_123")));
         
         // Should be fresh
         assert!(service.validate_freshness(&cache_key).unwrap());
@@ -367,7 +367,7 @@ mod tests {
 
         // Add entry
         service1
-            .update_after_flush(&namespace, &table, "u_123", &manifest, None, "path".to_string())
+            .update_after_flush(&namespace, &table, Some(&UserId::from("u_123")), &manifest, None, "path".to_string())
             .unwrap();
 
         // Create new service (simulating restart)
@@ -375,7 +375,7 @@ mod tests {
         service2.restore_from_rocksdb().unwrap();
 
         // Verify entry restored to hot cache
-        let cached = service2.get_or_load(&namespace, &table, "u_123").unwrap();
+        let cached = service2.get_or_load(&namespace, &table, Some(&UserId::from("u_123"))).unwrap();
         assert!(cached.is_some());
     }
 
@@ -387,7 +387,7 @@ mod tests {
         let manifest = create_test_manifest();
 
         service
-            .update_after_flush(&namespace, &table, "u_123", &manifest, None, "path".to_string())
+            .update_after_flush(&namespace, &table, Some(&UserId::from("u_123")), &manifest, None, "path".to_string())
             .unwrap();
 
         assert_eq!(service.count().unwrap(), 1);

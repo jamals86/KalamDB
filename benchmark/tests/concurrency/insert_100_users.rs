@@ -2,6 +2,7 @@ use kalamdb_benchmark::*;
 use std::time::Duration;
 
 #[test]
+#[ignore = "requires running backend server"]
 fn concurrency_insert_100_users() -> anyhow::Result<()> {
     // Note: This is a simplified version. Full implementation would use threads
     setup_benchmark_tables()?;

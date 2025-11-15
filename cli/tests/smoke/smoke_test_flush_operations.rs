@@ -48,7 +48,7 @@ fn smoke_test_user_table_flush() {
     // Create USER table with flush policy
     let create_sql = format!(
         r#"CREATE USER TABLE {} (
-            id INT AUTO_INCREMENT,
+            id INT AUTO_INCREMENT PRIMARY KEY,
             content VARCHAR NOT NULL,
             sequence INT NOT NULL,
             created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
@@ -65,21 +65,32 @@ fn smoke_test_user_table_flush() {
     // Insert rows in batches to avoid single large transaction
     println!("📝 Inserting {} rows...", INSERT_ROWS);
     let batch_size = 50;
-    for batch in 0..(INSERT_ROWS / batch_size) {
-        let start = batch * batch_size;
-        let end = (batch + 1) * batch_size;
+        for batch in 0..(INSERT_ROWS / batch_size) {
+            let start = batch * batch_size;
+            let end = (batch + 1) * batch_size;
         
-        for i in start..end {
-            let insert_sql = format!(
-                "INSERT INTO {} (content, sequence) VALUES ('Row {}', {})",
-                full_table_name, i, i
-            );
-            execute_sql_as_root_via_cli(&insert_sql)
-                .unwrap_or_else(|e| panic!("Failed to insert row {}: {}", i, e));
-        }
+            for i in start..end {
+                let insert_sql = format!(
+                    "INSERT INTO {} (content, sequence) VALUES ('Row {}', {})",
+                    full_table_name, i, i
+                );
+                let mut attempts = 0;
+                loop {
+                    match execute_sql_as_root_via_cli(&insert_sql) {
+                        Ok(_) => break,
+                        Err(e) => {
+                            attempts += 1;
+                            if attempts >= 3 {
+                                panic!("Failed to insert row {} after retries: {}", i, e);
+                            }
+                            std::thread::sleep(Duration::from_millis(120));
+                        }
+                    }
+                }
+            }
         
-        println!("  Inserted batch {}/{} ({}-{})", batch + 1, INSERT_ROWS / batch_size, start, end - 1);
-        std::thread::sleep(Duration::from_millis(100));
+            println!("  Inserted batch {}/{} ({}-{})", batch + 1, INSERT_ROWS / batch_size, start, end - 1);
+            std::thread::sleep(Duration::from_millis(100));
     }
 
     println!("✅ Inserted {} rows", INSERT_ROWS);
@@ -179,7 +190,7 @@ fn smoke_test_shared_table_flush() {
     // Create SHARED table with flush policy
     let create_sql = format!(
         r#"CREATE SHARED TABLE {} (
-            id INT AUTO_INCREMENT,
+            id INT AUTO_INCREMENT PRIMARY KEY,
             content VARCHAR NOT NULL,
             sequence INT NOT NULL,
             created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
@@ -196,21 +207,32 @@ fn smoke_test_shared_table_flush() {
     // Insert rows in batches
     println!("📝 Inserting {} rows...", INSERT_ROWS);
     let batch_size = 50;
-    for batch in 0..(INSERT_ROWS / batch_size) {
-        let start = batch * batch_size;
-        let end = (batch + 1) * batch_size;
+        for batch in 0..(INSERT_ROWS / batch_size) {
+            let start = batch * batch_size;
+            let end = (batch + 1) * batch_size;
         
-        for i in start..end {
-            let insert_sql = format!(
-                "INSERT INTO {} (content, sequence) VALUES ('Shared Row {}', {})",
-                full_table_name, i, i
-            );
-            execute_sql_as_root_via_cli(&insert_sql)
-                .unwrap_or_else(|e| panic!("Failed to insert row {}: {}", i, e));
-        }
+            for i in start..end {
+                let insert_sql = format!(
+                    "INSERT INTO {} (content, sequence) VALUES ('Shared Row {}', {})",
+                    full_table_name, i, i
+                );
+                let mut attempts = 0;
+                loop {
+                    match execute_sql_as_root_via_cli(&insert_sql) {
+                        Ok(_) => break,
+                        Err(e) => {
+                            attempts += 1;
+                            if attempts >= 3 {
+                                panic!("Failed to insert row {} in batch 1 after retries: {}", i, e);
+                            }
+                            std::thread::sleep(Duration::from_millis(120));
+                        }
+                    }
+                }
+            }
         
-        println!("  Inserted batch {}/{} ({}-{})", batch + 1, INSERT_ROWS / batch_size, start, end - 1);
-        std::thread::sleep(Duration::from_millis(100));
+            println!("  Inserted batch {}/{} ({}-{})", batch + 1, INSERT_ROWS / batch_size, start, end - 1);
+            std::thread::sleep(Duration::from_millis(100));
     }
 
     println!("✅ Inserted {} rows", INSERT_ROWS);
@@ -311,7 +333,7 @@ fn smoke_test_mixed_source_query() {
     // Create table with small flush policy
     let create_sql = format!(
         r#"CREATE USER TABLE {} (
-            id INT AUTO_INCREMENT,
+            id INT AUTO_INCREMENT PRIMARY KEY,
             content VARCHAR NOT NULL,
             sequence INT NOT NULL
         ) FLUSH ROWS 30"#,
@@ -325,12 +347,23 @@ fn smoke_test_mixed_source_query() {
     // Insert first batch (will be flushed)
     println!("📝 Inserting first batch (50 rows - will exceed flush policy)...");
     for i in 0..50 {
-        let insert_sql = format!(
-            "INSERT INTO {} (content, sequence) VALUES ('Batch1-Row{}', {})",
-            full_table_name, i, i
-        );
-        execute_sql_as_root_via_cli(&insert_sql)
-            .unwrap_or_else(|e| panic!("Failed to insert row {}: {}", i, e));
+            let insert_sql = format!(
+                "INSERT INTO {} (content, sequence) VALUES ('Batch1-Row{}', {})",
+                full_table_name, i, i
+            );
+            let mut attempts = 0;
+            loop {
+                match execute_sql_as_root_via_cli(&insert_sql) {
+                    Ok(_) => break,
+                    Err(e) => {
+                        attempts += 1;
+                        if attempts >= 3 {
+                            panic!("Failed to insert row {}: {}", i, e);
+                        }
+                        std::thread::sleep(Duration::from_millis(120));
+                    }
+                }
+            }
     }
     std::thread::sleep(Duration::from_millis(200));
 

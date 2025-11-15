@@ -6,9 +6,9 @@
 use super::base::{FlushExecutor, FlushJobResult, FlushMetadata, TableFlush};
 use crate::error::KalamDbError;
 use crate::live_query::manager::{ChangeNotification, LiveQueryManager};
+use crate::manifest::{FlushManifestHelper, ManifestCacheService, ManifestService};
 use crate::schema_registry::SchemaRegistry;
 use crate::storage::ParquetWriter;
-use kalamdb_tables::UserTableStoreExt;
 use kalamdb_tables::UserTableStore;
 use chrono::Utc;
 use datafusion::arrow::datatypes::SchemaRef;
@@ -17,7 +17,6 @@ use kalamdb_commons::models::{TableId, UserId};
 use kalamdb_commons::{NamespaceId, NodeId, TableName};
 use kalamdb_store::entity_store::EntityStore;
 use serde_json::Value as JsonValue;
-use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::Arc;
 
@@ -31,6 +30,7 @@ pub struct UserTableFlushJob {
     unified_cache: Arc<SchemaRegistry>, //TODO: wE HAVE APPCONTEXT NOW
     node_id: NodeId, //TODO: We can pass AppContext and has node_id there
     live_query_manager: Option<Arc<LiveQueryManager>>, //TODO: We can pass AppContext and has live_query_manager there
+    manifest_helper: FlushManifestHelper,
 }
 
 impl UserTableFlushJob {
@@ -42,8 +42,11 @@ impl UserTableFlushJob {
         table_name: TableName,
         schema: SchemaRef,
         unified_cache: Arc<SchemaRegistry>,
+        manifest_service: Arc<ManifestService>,
+        manifest_cache: Arc<ManifestCacheService>,
     ) -> Self {
         let node_id = NodeId::from(format!("node-{}", std::process::id()));
+        let manifest_helper = FlushManifestHelper::new(manifest_service, manifest_cache);
         Self {
             store,
             table_id,
@@ -53,6 +56,7 @@ impl UserTableFlushJob {
             unified_cache,
             node_id,
             live_query_manager: None,
+            manifest_helper,
         }
     }
 
@@ -214,8 +218,10 @@ impl UserTableFlushJob {
             )));
         }
 
-        // Generate output path
-        let batch_filename = self.generate_batch_filename();
+        // Generate batch filename using manifest
+        let user_id_typed = kalamdb_commons::models::UserId::from(user_id);
+        let batch_number = self.manifest_helper.get_next_batch_number(&self.namespace_id, &self.table_name, Some(&user_id_typed))?;
+        let batch_filename = FlushManifestHelper::generate_batch_filename(batch_number);
         let output_path = PathBuf::from(&storage_path).join(&batch_filename);
 
         // Ensure directory exists
@@ -227,9 +233,25 @@ impl UserTableFlushJob {
         // Write to Parquet
         log::debug!("📝 Writing Parquet file: path={}, rows={}", output_path.display(), rows_count);
         let writer = ParquetWriter::new(output_path.to_str().unwrap());
-        writer.write(self.schema.clone(), vec![batch])?;
+        writer.write(self.schema.clone(), vec![batch.clone()])?;
 
-        log::info!("✅ Flushed {} rows for user {} to {}", rows_count, user_id, output_path.display());
+        // Calculate file size
+        let size_bytes = std::fs::metadata(&output_path)
+            .map(|m| m.len())
+            .unwrap_or(0);
+
+        // Update manifest and cache using helper
+        self.manifest_helper.update_manifest_after_flush(
+            &self.namespace_id,
+            &self.table_name,
+            Some(&user_id_typed),
+            batch_number,
+            batch_filename.clone(),
+            &batch,
+            size_bytes,
+        )?;
+
+        log::info!("✅ Flushed {} rows for user {} to {} (batch={})", rows_count, user_id, output_path.display(), batch_number);
 
         parquet_files.push(output_path.to_string_lossy().to_string());
         Ok(rows_count)

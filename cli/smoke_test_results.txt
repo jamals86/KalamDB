@@ -1,0 +1,72 @@
+    Blocking waiting for file lock on build directory
+   Compiling kalam-cli v0.1.0 (/Users/jamal/git/KalamDB/cli)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 1.45s
+     Running tests/smoke.rs (/Users/jamal/git/KalamDB/target/debug/deps/smoke-d70c623447626232)
+
+running 14 tests
+test smoke_test_dml_wide_columns::smoke_subscription_update_delete_notifications ... ignored
+test smoke_test_shared_table_crud::smoke_shared_table_crud ... ok
+test smoke_test_dml_wide_columns::smoke_user_table_dml_wide_columns ... ok
+test smoke_test_system_and_users::smoke_system_tables_and_user_lifecycle ... ok
+test smoke_test_dml_wide_columns::smoke_shared_table_dml_wide_columns ... ok
+test smoke_test_core_operations::smoke_test_core_operations ... ok
+test smoke_test_stream_subscription::smoke_stream_table_subscription ... ok
+test smoke_test_user_table_subscription::smoke_user_table_subscription_lifecycle ... FAILED
+test smoke_test_user_table_rls::smoke_user_table_rls_isolation ... ok
+test smoke_test_storage_templates::smoke_storage_custom_templates ... FAILED
+test smoke_test_flush_operations::smoke_test_mixed_source_query has been running for over 60 seconds
+test smoke_test_flush_operations::smoke_test_shared_table_flush has been running for over 60 seconds
+test smoke_test_flush_operations::smoke_test_user_table_flush has been running for over 60 seconds
+test smoke_test_queries_benchmark::smoke_queries_benchmark has been running for over 60 seconds
+test smoke_test_queries_benchmark::smoke_queries_benchmark ... FAILED
+test smoke_test_flush_operations::smoke_test_shared_table_flush ... FAILED
+test smoke_test_flush_operations::smoke_test_mixed_source_query ... ok
+test smoke_test_flush_operations::smoke_test_user_table_flush ... ok
+
+failures:
+
+---- smoke_test_user_table_subscription::smoke_user_table_subscription_lifecycle stdout ----
+[DEBUG] Row count before subscribing: ┌─────┐
+│ cnt │
+├─────┤
+│ 2   │
+└─────┘
+(1 row)
+
+Took: 4.000 ms
+
+
+thread 'smoke_test_user_table_subscription::smoke_user_table_subscription_lifecycle' panicked at cli/tests/smoke/smoke_test_user_table_subscription.rs:77:5:
+snapshot should contain 'alpha' but was: 
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+
+---- smoke_test_storage_templates::smoke_storage_custom_templates stdout ----
+
+thread 'smoke_test_storage_templates::smoke_storage_custom_templates' panicked at cli/tests/smoke/smoke_test_storage_templates.rs:175:28:
+Expected parquet files under /Users/jamal/git/KalamDB/cli/data/storage/tpl_smoke_1763137315358/ns_smk_tpl_ns_u_1763137315358/tbl_tpl_user_table_1763137315358/usr_tpl_owner_1763137315358 but none were found
+
+---- smoke_test_queries_benchmark::smoke_queries_benchmark stdout ----
+
+thread 'smoke_test_queries_benchmark::smoke_queries_benchmark' panicked at cli/tests/smoke/smoke_test_queries_benchmark.rs:98:50:
+insert batch: "CLI command failed: Error: LinkError(ServerError { status_code: 400, message: \"Statement 1 failed: Already exists: Primary key violation: value '4001' already exists in column 'order_id'\" })\n"
+
+---- smoke_test_flush_operations::smoke_test_shared_table_flush stdout ----
+🧪 Testing SHARED table flush: smoke_flush_1763137315359_10.shared_flush_1763137315359_13
+✅ Created SHARED table with FLUSH ROWS 50
+📝 Inserting 200 rows...
+  Inserted batch 1/4 (0-49)
+
+thread 'smoke_test_flush_operations::smoke_test_shared_table_flush' panicked at cli/tests/smoke/smoke_test_flush_operations.rs:209:37:
+Failed to insert row 71: CLI command failed: Error: LinkError(ServerError { status_code: 408, message: "" })
+
+
+
+failures:
+    smoke_test_flush_operations::smoke_test_shared_table_flush
+    smoke_test_queries_benchmark::smoke_queries_benchmark
+    smoke_test_storage_templates::smoke_storage_custom_templates
+    smoke_test_user_table_subscription::smoke_user_table_subscription_lifecycle
+
+test result: FAILED. 9 passed; 4 failed; 1 ignored; 0 measured; 0 filtered out; finished in 157.78s
+
+error: test failed, to rerun pass `--test smoke`

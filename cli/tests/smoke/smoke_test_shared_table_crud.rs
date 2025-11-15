@@ -25,7 +25,7 @@ fn smoke_shared_table_crud() {
     // 1) Create shared table
     let create_sql = format!(
         r#"CREATE SHARED TABLE {} (
-            id BIGINT AUTO_INCREMENT,
+            id BIGINT AUTO_INCREMENT PRIMARY KEY,
             name VARCHAR NOT NULL,
             status VARCHAR,
             created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP

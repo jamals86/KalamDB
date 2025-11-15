@@ -128,27 +128,9 @@ pub async fn create_messages_table(
     namespace: &str,
     _user_id: Option<&str>,
 ) -> SqlResponse {
-    // Idempotency: If table already exists in the shared TestServer, short-circuit as success
-    if server.table_exists(namespace, "messages").await {
-        return SqlResponse {
-            status: "success".to_string(),
-            results: vec![QueryResult {
-                rows: None,
-                row_count: 0,
-                columns: vec![],
-                message: Some(format!(
-                    "Table {}.{} already exists (IF NOT EXISTS)",
-                    namespace, "messages"
-                )),
-            }],
-            took_ms: 0,
-            error: None,
-        };
-    }
-
     let sql = format!(
         r#"CREATE USER TABLE IF NOT EXISTS {}.messages (
-            id INT AUTO_INCREMENT,
+            id BIGINT PRIMARY KEY DEFAULT SNOWFLAKE_ID(),
             user_id VARCHAR NOT NULL,
             content VARCHAR NOT NULL,
             created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
@@ -158,10 +140,30 @@ pub async fn create_messages_table(
     // Use system user since only System/Dba roles can create tables
     let resp = server.execute_sql_as_user(&sql, "system").await;
     if resp.status != "success" {
-        eprintln!(
-            "CREATE MESSAGES TABLE failed: status={}, error={:?}",
-            resp.status, resp.error
-        );
+        // Treat already-exists as success for idempotent tests
+        let already_exists = resp
+            .error
+            .as_ref()
+            .and_then(|e| Some(e.message.to_lowercase().contains("already exists")))
+            .unwrap_or(false);
+        if already_exists {
+            return SqlResponse {
+                status: "success".to_string(),
+                results: vec![QueryResult {
+                    rows: None,
+                    row_count: 0,
+                    columns: vec![],
+                    message: Some("Table already existed".to_string()),
+                }],
+                took_ms: 0,
+                error: None,
+            };
+        } else {
+            eprintln!(
+                "CREATE MESSAGES TABLE failed: status={}, error={:?}",
+                resp.status, resp.error
+            );
+        }
     }
     resp
 }
@@ -182,7 +184,7 @@ pub async fn create_user_table_with_flush(
 ) -> SqlResponse {
     let sql = format!(
         r#"CREATE USER TABLE IF NOT EXISTS {}.{} (
-            id INT AUTO_INCREMENT,
+            id BIGINT PRIMARY KEY DEFAULT SNOWFLAKE_ID(),
             user_id VARCHAR NOT NULL,
             data VARCHAR,
             created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
@@ -243,7 +245,7 @@ pub async fn create_stream_table(
     ttl_seconds: u32,
 ) -> SqlResponse {
     let sql = format!(
-        r#"CREATE STREAM TABLE {}.{} (
+        r#"CREATE STREAM TABLE IF NOT EXISTS {}.{} (
             event_id TEXT NOT NULL,
             event_type TEXT,
             payload TEXT,
@@ -251,7 +253,28 @@ pub async fn create_stream_table(
         ) TTL {}"#,
         namespace, table_name, ttl_seconds
     );
-    server.execute_sql(&sql).await
+    let resp = server.execute_sql(&sql).await;
+    if resp.status != "success" {
+        let already_exists = resp
+            .error
+            .as_ref()
+            .and_then(|e| Some(e.message.to_lowercase().contains("already exists")))
+            .unwrap_or(false);
+        if already_exists {
+            return SqlResponse {
+                status: "success".to_string(),
+                results: vec![QueryResult {
+                    rows: None,
+                    row_count: 0,
+                    columns: vec![],
+                    message: Some("Table already existed".to_string()),
+                }],
+                took_ms: 0,
+                error: None,
+            };
+        }
+    }
+    resp
 }
 
 /// Drop a table.
@@ -263,7 +286,7 @@ pub async fn create_stream_table(
 /// * `table_name` - Table name
 pub async fn drop_table(server: &TestServer, namespace: &str, table_name: &str) -> SqlResponse {
     let lookup_sql = format!(
-        "SELECT table_type FROM system.tables WHERE namespace = '{}' AND table_name = '{}'",
+        "SELECT table_type FROM system.tables WHERE namespace_id = '{}' AND table_name = '{}'",
         namespace, table_name
     );
     let lookup_response = server.execute_sql(&lookup_sql).await;
@@ -316,7 +339,7 @@ pub async fn insert_sample_messages(
             r#"INSERT INTO {}.messages (user_id, content) VALUES ('{}', 'Message {}')"#,
             namespace, user_id, i
         );
-        responses.push(server.execute_sql(&sql).await);
+        responses.push(server.execute_sql_as_user(&sql, user_id).await);
     }
 
     responses
@@ -340,7 +363,14 @@ pub async fn insert_message(
         r#"INSERT INTO {}.messages (user_id, content) VALUES ('{}', '{}')"#,
         namespace, user_id, content
     );
-    server.execute_sql(&sql).await
+    let resp = server.execute_sql_as_user(&sql, user_id).await;
+    if resp.status != "success" {
+        eprintln!(
+            "INSERT MESSAGE failed: ns={}, user={}, error={:?}",
+            namespace, user_id, resp.error
+        );
+    }
+    resp
 }
 
 /// Update a message by ID.
@@ -354,7 +384,7 @@ pub async fn insert_message(
 pub async fn update_message(
     server: &TestServer,
     namespace: &str,
-    id: i32,
+    id: i64,
     new_content: &str,
 ) -> SqlResponse {
     let sql = format!(
@@ -371,7 +401,7 @@ pub async fn update_message(
 /// * `server` - Test server instance
 /// * `namespace` - Namespace name
 /// * `id` - Message ID
-pub async fn delete_message(server: &TestServer, namespace: &str, id: i32) -> SqlResponse {
+pub async fn delete_message(server: &TestServer, namespace: &str, id: i64) -> SqlResponse {
     let sql = format!(r#"DELETE FROM {}.messages WHERE id = {}"#, namespace, id);
     server.execute_sql(&sql).await
 }
@@ -392,7 +422,14 @@ pub async fn query_user_messages(
         r#"SELECT * FROM {}.messages WHERE user_id = '{}' ORDER BY created_at DESC"#,
         namespace, user_id
     );
-    server.execute_sql(&sql).await
+    let resp = server.execute_sql_as_user(&sql, user_id).await;
+    if resp.status != "success" {
+        eprintln!(
+            "QUERY USER MESSAGES failed: ns={}, user={}, error={:?}",
+            namespace, user_id, resp.error
+        );
+    }
+    resp
 }
 
 /// Generate sample user data.

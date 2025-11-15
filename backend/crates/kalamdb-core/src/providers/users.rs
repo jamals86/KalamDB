@@ -162,29 +162,102 @@ impl UserTableProvider {
     /// **Phase 4 (US6, T082-T084)**: Integrated with ManifestCacheService for manifest caching.
     /// Logs cache hits/misses and updates last_accessed timestamp. Full query optimization
     /// (batch file pruning based on manifest metadata) implemented in Phase 5 (US2, T119-T123).
-    fn scan_parquet_files_as_batch(&self, user_id: &UserId) -> Result<RecordBatch, KalamDbError> {
-        // Phase 4 (T082): Integrate with ManifestCacheService
-        // Try to load manifest from cache (hot cache → RocksDB → None)
+    fn scan_parquet_files_as_batch(&self, user_id: &UserId, filter: Option<&Expr>) -> Result<RecordBatch, KalamDbError> {
+        use datafusion::logical_expr::{Expr, Operator};
+        use kalamdb_commons::types::ManifestFile;
+
         let namespace = self.table_id.namespace_id();
         let table = self.table_id.table_name();
-        let scope = user_id.as_str(); // Scope is user_id for user tables
         
+        // OPTIMIZATION: Check if directory exists BEFORE querying manifest cache
+        // For new users with no flushed data, this avoids unnecessary cache lookups
+        let storage_path = self.core.app_context.schema_registry()
+            .get_storage_path(&*self.table_id, Some(user_id), None)?;
+        
+        let storage_dir = PathBuf::from(&storage_path);
+        
+        // Early exit: If directory doesn't exist, return empty batch immediately
+        if !storage_dir.exists() {
+            log::trace!("No Parquet directory exists for user {} (table={}.{}) - returning empty batch", 
+                       user_id.as_str(), namespace.as_str(), table.as_str());
+            let schema = self.schema_ref();
+            return Ok(RecordBatch::new_empty(schema));
+        }
+        
+        // Phase 4 (T082): Integrate with ManifestCacheService
+        // Try to load manifest from cache (hot cache → RocksDB → None)
         let manifest_cache_service = self.core.app_context.manifest_cache_service();
-        let cache_result = manifest_cache_service.get_or_load(namespace, table, scope);
+        let cache_result = manifest_cache_service.get_or_load(namespace, table, Some(user_id));
         
-        // T083-T084: Log cache hit/miss (last_accessed already updated by get_or_load)
+        // T124-T127: Manifest recovery - validate and rebuild on corruption
+        let mut manifest_opt: Option<ManifestFile> = None;
+        let mut use_degraded_mode = false;
+        
         match &cache_result {
             Ok(Some(entry)) => {
-                log::debug!(
-                    "✅ Manifest cache HIT | table={}.{} | user={} | etag={:?} | last_refreshed={} | source={}",
-                    namespace.as_str(),
-                    table.as_str(),
-                    user_id.as_str(),
-                    entry.etag,
-                    entry.last_refreshed,
-                    entry.source_path
-                );
-                // TODO Phase 5 (T119-T123): Use manifest to prune batch files based on WHERE predicates
+                match ManifestFile::from_json(&entry.manifest_json) {
+                    Ok(manifest) => {
+                        // T124: Validate manifest consistency
+                        if let Err(e) = manifest.validate() {
+                            log::warn!(
+                                "⚠️  [MANIFEST CORRUPTION] table={}.{} user={} error={} | Triggering rebuild",
+                                namespace.as_str(),
+                                table.as_str(),
+                                user_id.as_str(),
+                                e
+                            );
+                            
+                            // T125: Trigger rebuild on validation failure
+                            // T126: Enable degraded mode during rebuild
+                            use_degraded_mode = true;
+                            
+                            // Spawn rebuild in background (non-blocking)
+                            let manifest_service = self.core.app_context.manifest_service();
+                            let ns = namespace.clone();
+                            let tbl = table.clone();
+                            let uid = user_id.clone();
+                            tokio::spawn(async move {
+                                log::info!(
+                                    "🔧 [MANIFEST REBUILD STARTED] table={}.{} user_id={}",
+                                    ns.as_str(),
+                                    tbl.as_str(),
+                                    uid.as_str()
+                                );
+                                match manifest_service.rebuild_manifest(&ns, &tbl, Some(&uid)) {
+                                    Ok(_) => {
+                                        log::info!(
+                                            "✅ [MANIFEST REBUILD COMPLETED] table={}.{} user_id={}",
+                                            ns.as_str(),
+                                            tbl.as_str(),
+                                            uid.as_str()
+                                        );
+                                    }
+                                    Err(e) => {
+                                        log::error!(
+                                            "❌ [MANIFEST REBUILD FAILED] table={}.{} user_id={} error={}",
+                                            ns.as_str(),
+                                            tbl.as_str(),
+                                            uid.as_str(),
+                                            e
+                                        );
+                                    }
+                                }
+                            });
+                        } else {
+                            manifest_opt = Some(manifest);
+                        }
+                    }
+                    Err(e) => {
+                        log::warn!(
+                            "⚠️  Failed to parse manifest JSON for table={}.{} user={}: {} | Using degraded mode",
+                            namespace.as_str(),
+                            table.as_str(),
+                            user_id.as_str(),
+                            e
+                        );
+                        use_degraded_mode = true;
+                    }
+                }
             }
             Ok(None) => {
                 log::debug!(
@@ -193,6 +266,7 @@ impl UserTableProvider {
                     table.as_str(),
                     user_id.as_str()
                 );
+                use_degraded_mode = true;
             }
             Err(e) => {
                 log::warn!(
@@ -202,32 +276,133 @@ impl UserTableProvider {
                     user_id.as_str(),
                     e
                 );
+                use_degraded_mode = true;
             }
         }
         
-        // Resolve storage path for user
-        let storage_path = self.core.app_context.schema_registry()
-            .get_storage_path(&*self.table_id, Some(user_id), None)?;
-        
-        let storage_dir = PathBuf::from(&storage_path);
-        
-        // If directory doesn't exist, return empty batch
-        if !storage_dir.exists() {
-            log::debug!("No Parquet directory found for user {}: {}", user_id.as_str(), storage_path);
-            let schema = self.schema_ref();
-            return Ok(RecordBatch::new_empty(schema));
+        // Log cache hit after validation
+        if let Some(ref manifest) = manifest_opt {
+            log::debug!(
+                "✅ Manifest cache HIT | table={}.{} | user={} | batches={}",
+                namespace.as_str(),
+                table.as_str(),
+                user_id.as_str(),
+                manifest.batches.len()
+            );
+        }
+
+        // Helper: extract conservative _seq bounds from filter for pruning
+        fn extract_seq_bounds(expr: &Expr) -> (Option<i64>, Option<i64>) {
+            use datafusion::logical_expr::Expr::Column;
+            let mut min_seq: Option<i64> = None;
+            let mut max_seq: Option<i64> = None;
+
+            fn lit_to_i64(e: &Expr) -> Option<i64> {
+                use datafusion::scalar::ScalarValue;
+                if let Expr::Literal(l, _) = e {
+                    match l {
+                        ScalarValue::Int64(Some(v)) => Some(*v),
+                        ScalarValue::Int32(Some(v)) => Some(*v as i64),
+                        ScalarValue::UInt64(Some(v)) => Some(*v as i64),
+                        ScalarValue::UInt32(Some(v)) => Some(*v as i64),
+                        _ => None,
+                    }
+                } else { None }
+            }
+
+            match expr {
+                Expr::BinaryExpr(be) => {
+                    let left = &be.left;
+                    let op = &be.op;
+                    let right = &be.right;
+                    if *op == Operator::And {
+                        let (a_min, a_max) = extract_seq_bounds(left);
+                        let (b_min, b_max) = extract_seq_bounds(right);
+                        min_seq = match (a_min, b_min) { (Some(a), Some(b)) => Some(a.max(b)), (Some(a), None) => Some(a), (None, Some(b)) => Some(b), _ => None };
+                        max_seq = match (a_max, b_max) { (Some(a), Some(b)) => Some(a.min(b)), (Some(a), None) => Some(a), (None, Some(b)) => Some(b), _ => None };
+                    } else {
+                        let is_seq_left = matches!(left.as_ref(), Column(c) if c.name.as_str() == "_seq");
+                        let is_seq_right = matches!(right.as_ref(), Column(c) if c.name.as_str() == "_seq");
+                        if is_seq_left {
+                            if let Some(val) = lit_to_i64(right.as_ref()) {
+                                match op {
+                                    Operator::Gt | Operator::GtEq => { min_seq = Some(val); }
+                                    Operator::Lt | Operator::LtEq => { max_seq = Some(val); }
+                                    Operator::Eq => { min_seq = Some(val); max_seq = Some(val); }
+                                    _ => {}
+                                }
+                            }
+                        } else if is_seq_right {
+                            if let Some(val) = lit_to_i64(left.as_ref()) {
+                                match op {
+                                    Operator::Lt | Operator::LtEq => { min_seq = Some(val); }
+                                    Operator::Gt | Operator::GtEq => { max_seq = Some(val); }
+                                    Operator::Eq => { min_seq = Some(val); max_seq = Some(val); }
+                                    _ => {}
+                                }
+                            }
+                        }
+                    }
+                }
+                _ => {}
+            }
+
+            (min_seq, max_seq)
         }
         
-        // List all .parquet files in directory
-        let entries = fs::read_dir(&storage_dir)
-            .map_err(|e| KalamDbError::Io(e))?;
+        // storage_path and storage_dir already resolved earlier (before manifest cache check)
         
-        let mut parquet_files = Vec::new();
-        for entry in entries {
-            let entry = entry.map_err(|e| KalamDbError::Io(e))?;
-            let path = entry.path();
-            if path.extension().and_then(|s| s.to_str()) == Some("parquet") {
-                parquet_files.push(path);
+        // Prefer manifest for file enumeration + pruning; fallback to directory scan
+        let mut parquet_files: Vec<PathBuf> = Vec::new();
+        let (mut total_batches, mut skipped, mut scanned) = (0usize, 0usize, 0usize);
+        
+        if !use_degraded_mode {
+            if let Some(manifest) = manifest_opt {
+                total_batches = manifest.batches.len();
+                let (min_seq, max_seq) = filter.map(|f| extract_seq_bounds(f)).unwrap_or((None, None));
+
+                for b in manifest.batches.iter() {
+                    let mut include = true;
+                    if let (Some(minv), Some(maxv)) = (min_seq, max_seq) {
+                        include = b.overlaps_seq_range(minv, maxv);
+                    } else if let (Some(minv), None) = (min_seq, max_seq) {
+                        include = b.max_seq >= minv;
+                    } else if let (None, Some(maxv)) = (min_seq, max_seq) {
+                        include = b.min_seq <= maxv;
+                    }
+
+                    if include {
+                        let p = storage_dir.join(&b.file_path);
+                        parquet_files.push(p);
+                        scanned += 1;
+                    } else {
+                        skipped += 1;
+                    }
+                }
+
+                log::debug!(
+                    "[Manifest Pruning] table={}.{} user={} batches_total={} skipped={} scanned={}",
+                    namespace.as_str(),
+                    table.as_str(),
+                    user_id.as_str(),
+                    total_batches,
+                    skipped,
+                    scanned
+                );
+            }
+        }
+
+        if parquet_files.is_empty() {
+            // List all .parquet files in directory
+            let entries = fs::read_dir(&storage_dir)
+                .map_err(|e| KalamDbError::Io(e))?;
+            
+            for entry in entries {
+                let entry = entry.map_err(|e| KalamDbError::Io(e))?;
+                let path = entry.path();
+                if path.extension().and_then(|s| s.to_str()) == Some("parquet") {
+                    parquet_files.push(path);
+                }
             }
         }
         
@@ -397,7 +572,21 @@ impl BaseTableProvider<UserTableRowId, UserTableRow> for UserTableProvider {
         let mut latest_opt: Option<(UserTableRowId, UserTableRow)> = None;
         for (k, r) in resolved.into_iter() {
             if let Some(val) = r.fields.get(&pk_name) {
-                if val.to_string() == pk_value {
+                let matches = match val {
+                    serde_json::Value::String(s) => s == &pk_value,
+                    serde_json::Value::Number(n) => {
+                        let num_str = n.to_string();
+                        if num_str == pk_value {
+                            true
+                        } else if let Ok(iv) = pk_value.parse::<i64>() {
+                            n.as_i64().map(|x| x == iv).unwrap_or(false)
+                        } else {
+                            false
+                        }
+                    }
+                    _ => false,
+                };
+                if matches {
                     latest_opt = Some((k, r));
                     break;
                 }
@@ -523,6 +712,13 @@ impl BaseTableProvider<UserTableRowId, UserTableRow> for UserTableProvider {
         
         // Perform KV scan with version resolution
         let kvs = self.scan_with_version_resolution_to_kvs(&user_id, filter)?;
+        log::debug!(
+            "[UserTableProvider] scan_rows resolved {} row(s) for user={} table={}.{}",
+            kvs.len(),
+            user_id.as_str(),
+            self.table_id.namespace_id().as_str(),
+            self.table_id.table_name().as_str()
+        );
 
         // Convert rows to JSON values aligned with current schema
         let schema = self.schema_ref();
@@ -591,7 +787,7 @@ impl BaseTableProvider<UserTableRowId, UserTableRow> for UserTableProvider {
         }
 
         // 2) Scan cold storage (Parquet files)
-        let parquet_batch = self.scan_parquet_files_as_batch(user_id)?;
+        let parquet_batch = self.scan_parquet_files_as_batch(user_id, _filter)?;
 
         // 3) Version resolution: keep MAX(_seq) per primary key; honor tombstones
         use std::collections::HashMap;
@@ -857,9 +1053,17 @@ impl TableProvider for UserTableProvider {
         //     self.table_id.namespace_id().as_str(),
         //     self.table_id.table_name().as_str()
         // );
+        // Combine filters (AND) for pruning and pass to scan_rows
+        let combined_filter: Option<Expr> = if filters.is_empty() {
+            None
+        } else {
+            let first = filters[0].clone();
+            Some(filters[1..].iter().cloned().fold(first, |acc, e| acc.and(e)))
+        };
+
         // Build a single RecordBatch using our scan_rows(), then wrap in MemTable
         let batch = self
-            .scan_rows(state, None)
+            .scan_rows(state, combined_filter.as_ref())
             .map_err(|e| DataFusionError::Execution(format!("scan_rows failed: {}", e)))?;
 
         let mem = MemTable::try_new(self.schema_ref(), vec![vec![batch]])?;

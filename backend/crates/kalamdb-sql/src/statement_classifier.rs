@@ -65,7 +65,7 @@ pub enum SqlStatementKind {
     FlushTable(FlushTableStatement),
     /// FLUSH ALL TABLES [IN <namespace>]
     FlushAllTables(FlushAllTablesStatement),
-    /// SHOW MANIFEST CACHE
+    /// SHOW MANIFEST
     ShowManifest(ShowManifestStatement),
 
     // ===== Job Management =====
@@ -406,12 +406,20 @@ impl SqlStatement {
             // Flush operations - authorization deferred to table ownership checks
             ["FLUSH", "ALL", "TABLES", ..] => {
                 Ok(Self::wrap(sql, || {
-                    FlushAllTablesStatement::parse(sql).ok().map(SqlStatementKind::FlushAllTables)
+                    FlushAllTablesStatement::parse_with_default(sql, default_namespace)
+                        .ok()
+                        .map(SqlStatementKind::FlushAllTables)
                 }))
             }
             ["FLUSH", "TABLE", ..] => {
                 Ok(Self::wrap(sql, || {
                     FlushTableStatement::parse(sql).ok().map(SqlStatementKind::FlushTable)
+                }))
+            }
+            ["SHOW", "MANIFEST"] => {
+                // SHOW MANIFEST command for inspecting manifest cache
+                Ok(Self::wrap(sql, || {
+                    ShowManifestStatement::parse(sql).ok().map(SqlStatementKind::ShowManifest)
                 }))
             }
             ["SHOW", "MANIFEST", "CACHE", ..] => {
@@ -763,11 +771,18 @@ mod tests {
             SqlStatement::classify("FLUSH TABLE test.users").kind(),
             SqlStatementKind::FlushTable(_)
         ));
-        // Note: FLUSH ALL might have parse issues
-        // assert!(matches!(
-        //     SqlStatement::classify("FLUSH ALL TABLES IN test").kind(),
-        //     SqlStatementKind::FlushAllTables(_)
-        // ));
+        assert!(matches!(
+            SqlStatement::classify("FLUSH ALL TABLES").kind(),
+            SqlStatementKind::FlushAllTables(_)
+        ));
+        assert!(matches!(
+            SqlStatement::classify("SHOW MANIFEST").kind(),
+            SqlStatementKind::ShowManifest(_)
+        ));
+        assert!(matches!(
+            SqlStatement::classify("show manifest").kind(),
+            SqlStatementKind::ShowManifest(_)
+        ));
     }
 
     #[test]

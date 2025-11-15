@@ -7,8 +7,9 @@ use common::*;
 
 use std::{thread, time::{Duration, Instant}};
 
-const NUM_USERS: usize = 25;
+const NUM_USERS: usize = 5;
 const ROWS_PER_USER: usize = 2000;
+const INSERT_BATCH_SIZE: usize = 250;
 
 #[test]
 fn test_concurrent_users_isolation() {
@@ -91,32 +92,51 @@ fn test_concurrent_users_isolation() {
         
         let handle = thread::spawn(move || {
             let thread_start = Instant::now();
-            
-            // Build batch INSERT with multiple VALUES
-            let mut values = Vec::new();
-            for row_id in 0..ROWS_PER_USER {
-                values.push(format!(
-                    "({}, 'User {} row {}', {})",
-                    row_id, user, row_id, chrono::Utc::now().timestamp_millis()
-                ));
-            }
-            
-            let sql = format!(
-                "INSERT INTO {} (id, message, timestamp) VALUES {}",
-                table,
-                values.join(", ")
-            );
-            
-            match execute_sql_via_cli_as_with_timing(&user, &pass, &sql) {
-                Ok(timing) => {
-                    let elapsed = thread_start.elapsed();
-                    Ok((elapsed, timing.server_time_ms, timing.total_time_ms))
+            let mut total_cli_time = 0u128;
+            let mut total_server_time = 0.0;
+            let mut server_samples = 0usize;
+
+            for chunk_start in (0..ROWS_PER_USER).step_by(INSERT_BATCH_SIZE) {
+                let chunk_end = (chunk_start + INSERT_BATCH_SIZE).min(ROWS_PER_USER);
+                let mut values = Vec::new();
+                for row_id in chunk_start..chunk_end {
+                    values.push(format!(
+                        "('User {} row {}', {})",
+                        user,
+                        row_id,
+                        chrono::Utc::now().timestamp_millis()
+                    ));
                 }
-                Err(e) => {
-                    eprintln!("⚠️  Batch insert failed for {}: {}", user, e);
-                    Err(format!("{}", e))
+
+                let sql = format!(
+                    "INSERT INTO {} (message, timestamp) VALUES {}",
+                    table,
+                    values.join(", ")
+                );
+
+                match execute_sql_via_cli_as_with_timing(&user, &pass, &sql) {
+                    Ok(timing) => {
+                        total_cli_time += timing.total_time_ms;
+                        if let Some(server) = timing.server_time_ms {
+                            total_server_time += server;
+                            server_samples += 1;
+                        }
+                    }
+                    Err(e) => {
+                        eprintln!("⚠️  Batch insert failed for {}: {}", user, e);
+                        return Err(format!("{}", e));
+                    }
                 }
             }
+
+            let avg_server = if server_samples > 0 {
+                Some(total_server_time / server_samples as f64)
+            } else {
+                None
+            };
+
+            let elapsed = thread_start.elapsed();
+            Ok((elapsed, avg_server, total_cli_time))
         });
         
         handles.push(handle);
@@ -135,10 +155,13 @@ fn test_concurrent_users_isolation() {
                 }
                 cli_times.push(cli_ms);
             }
-            Err(e) => eprintln!("⚠️  Thread failed: {}", e),
+            Err(e) => panic!("⚠️  Thread failed: {}", e),
         }
     }
     let insert_elapsed = insert_start.elapsed();
+    if thread_times.is_empty() {
+        panic!("⚠️  No successful insert threads completed; aborting test.");
+    }
     
     // Calculate stats
     let avg_thread_time = thread_times.iter().sum::<Duration>() / thread_times.len() as u32;

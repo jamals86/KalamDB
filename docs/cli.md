@@ -1,397 +1,107 @@
-# KalamDB CLI - Command Reference
+## Kalam CLI
 
-The Kalam CLI is an interactive terminal client for KalamDB, providing a rich SQL interface with real-time subscriptions, auto-completion, and credential management.
+Interactive terminal client for KalamDB, built on `kalam-link`.
 
-## Table of Contents
+Binary name: `kalam` (from the `cli` crate).
 
-- [Installation](#installation)
-- [Quick Start](#quick-start)
-- [Command-Line Options](#command-line-options)
-- [Interactive Commands](#interactive-commands)
-- [SQL Statements](#sql-statements)
-- [Credential Management](#credential-management)
-- [Configuration](#configuration)
-- [Examples](#examples)
-- [Smoke Tests](#smoke-tests)
-- [Keyboard Shortcuts](#keyboard-shortcuts)
-- [Tips & Tricks](#tips--tricks)
-
----
-
-## Installation
+### Basic usage
 
 ```bash
-# Build from source
+# Default – connect to http://localhost:8080
+## Kalam CLI
+
+Simple command-line client for KalamDB.
+
+Binary name: `kalam`.
+
+### Install
+
+```bash
 cd cli
 cargo build --release
 
-# The binary will be at: target/release/kalam
+./target/release/kalam --help
 ```
 
----
-
-## Quick Start
+### Connect
 
 ```bash
-# Connect to local server
+# Default – http://localhost:8080
 kalam
 
-# Connect to specific server
+# Explicit URL
 kalam --url http://localhost:8080
 
-# Connect with authentication
-kalam --url http://localhost:8080 --username alice --password secret123
+# Basic auth
+kalam --username alice --password Secret123!
 
-# Execute SQL file and exit
-kalam --file queries.sql
-
-# Execute single command and exit
-kalam --command "SELECT * FROM users"
+# JWT
+kalam --token "<JWT_TOKEN>"
 ```
 
----
+### Run SQL
 
-## Command-Line Options
+```bash
+# One command and exit
+kalam -c "SELECT * FROM system.tables LIMIT 5;"
 
-### Connection Options
+# File and exit
+kalam -f setup.sql
+```
 
-| Option | Short | Description | Example |
-|--------|-------|-------------|---------|
-| `--url <URL>` | `-u` | Server URL | `--url http://localhost:8080` |
-| `--host <HOST>` | `-H` | Host address | `--host localhost` |
-| `--port <PORT>` | `-p` | Port number (default: 3000) | `--port 8080` |
-| `--instance <NAME>` | | Database instance name (default: local) | `--instance production` |
+### Important flags
 
-### Authentication Options
+- `--url`, `-u` – server URL
+- `--host`, `-H` and `--port`, `-p` – alternative to `--url`
+- `--token` – JWT bearer token
+- `--username` / `--password` – Basic auth
+- `--format` – `table` (default) | `json` | `csv`
+- `--json` / `--csv` – shorthand for `--format`
+- `--file`, `-f` – execute SQL file
+- `--command`, `-c` – execute a single SQL statement
+- `--config` – config path (default `~/.kalam/config.toml`)
+- `--timeout` – HTTP timeout in seconds
 
-| Option | Description | Example |
-|--------|-------------|---------|
-| `--username <USER>` | HTTP Basic Auth username | `--username alice` |
-| `--password <PASS>` | HTTP Basic Auth password | `--password secret123` |
-| `--token <TOKEN>` | JWT authentication token | `--token eyJhbGc...` |
+### Interactive `\` commands
 
-### Output Options
+In interactive mode, meta-commands start with `\`:
 
-| Option | Short | Description | Example |
-|--------|-------|-------------|---------|
-| `--format <FORMAT>` | | Output format: table, json, csv | `--format json` |
-| `--json` | | Enable JSON output | `--json` |
-| `--csv` | | Enable CSV output | `--csv` |
-| `--no-color` | | Disable colored output | `--no-color` |
+| Command                          | Description                               |
+|----------------------------------|-------------------------------------------|
+| `\help`, `\?`                   | Show help                                 |
+| `\quit`, `\q`                   | Exit                                      |
+| `\info`                         | Show session info                         |
+| `\config`                       | Show CLI configuration                    |
+| `\dt`, `\tables`               | List tables (`system.tables`)             |
+| `\d <table>`                   | Describe table                            |
+| `\stats`, `\metrics`          | Show `system.stats`                       |
+| `\health`                       | Server healthcheck                        |
+| `\format table|json|csv`        | Change output format                      |
+| `\subscribe <SELECT ...>`       | Start WebSocket live subscription         |
+| `\unsubscribe`                  | Stop active subscription (or Ctrl+C)      |
+| `\refresh-tables`, `\refresh` | Refresh autocomplete metadata             |
+| `\show-credentials`            | Show stored credentials                   |
+| `\update-credentials`          | Update stored credentials                 |
+| `\delete-credentials`          | Delete stored credentials                 |
 
-### Execution Options
+### Output formats
 
-| Option | Short | Description | Example |
-|--------|-------|-------------|---------|
-| `--file <PATH>` | `-f` | Execute SQL from file and exit | `--file queries.sql` |
-| `--command <SQL>` | `-c` | Execute SQL command and exit | `--command "SELECT 1"` |
-| `--verbose` | `-v` | Enable verbose logging | `--verbose` |
+- `table` – pretty table with row count and latency
+- `json` – raw JSON rows
+- `csv` – header + rows (good for piping)
 
-### Configuration Options
+### Live subscriptions
 
-| Option | Description | Default | Example |
-|--------|-------------|---------|---------|
-| `--config <PATH>` | Configuration file path | `~/.kalam/config.toml` | `--config /etc/kalam.toml` |
-
-### Credential Management Options
-
-| Option | Description | Example |
-|--------|-------------|---------|
-| `--list-instances` | List all stored credential instances | `--list-instances` |
-| `--show-credentials` | Show stored credentials for instance | `--show-credentials --instance prod` |
-| `--update-credentials` | Update/store credentials for instance | `--update-credentials --instance local` |
-| `--delete-credentials` | Delete stored credentials for instance | `--delete-credentials --instance test` |
-
----
-
-## Interactive Commands
-
-Once connected, you can use both SQL statements and meta-commands (prefixed with `\`).
-
-### Meta-Commands
-
-#### General Commands
-
-| Command | Alias | Description | Example |
-|---------|-------|-------------|---------|
-| `\quit` | `\q` | Exit the CLI | `\quit` |
-| `\help` | `\?` | Show help message | `\help` |
-
-#### Connection Commands
-
-| Command | Description | Example |
-|---------|-------------|---------|
-| `\connect <url>` | Connect to a different server | `\connect http://localhost:8080` |
-| `\health` | Check server health | `\health` |
-| `\config` | Show current configuration | `\config` |
-
-#### Table Management
-
-| Command | Alias | Description | Example |
-|---------|-------|-------------|---------|
-| `\dt` | `\tables` | List all tables | `\dt` |
-| `\d <table>` | `\describe` | Describe table schema | `\d users` |
-| `\refresh-tables` | `\refresh` | Refresh table names for autocomplete | `\refresh-tables` |
-
-#### Output Formatting
-
-| Command | Description | Example |
-|---------|-------------|---------|
-| `\format <type>` | Set output format (table, json, csv) | `\format json` |
-
-#### Data Management
-
-| Command | Alias | Description | Example |
-|---------|-------|-------------|---------|
-| `\flush` | | Flush all data to disk | `\flush` |
-| `\stats` | `\metrics` | Show cache statistics and system metrics | `\stats` |
-
-#### Streaming/Subscriptions
-
-| Command | Alias | Description | Example |
-|---------|-------|-------------|---------|
-| `\subscribe <query>` | `\watch` | Start WebSocket subscription for real-time updates | `\subscribe SELECT * FROM messages` |
-| `\unsubscribe` | `\unwatch` | Cancel active subscription | `\unsubscribe` |
-| `\pause` | | Pause ingestion | `\pause` |
-| `\continue` | | Resume ingestion | `\continue` |
-
----
-
-## SQL Statements
-
-The CLI supports all standard SQL statements:
-
-### Data Query Language (DQL)
+Drive WebSocket subscriptions either via SQL or meta-command:
 
 ```sql
--- Simple select
-SELECT * FROM users;
+-- inside kalam
+SUBSCRIBE TO app.messages
+WHERE user_id = 'alice'
+OPTIONS (last_rows = 10);
 
--- With WHERE clause
-SELECT name, age FROM users WHERE age > 18;
-
--- With ORDER BY and LIMIT
-SELECT * FROM users ORDER BY created_at DESC LIMIT 10;
-
--- Joins
-SELECT u.name, o.total 
-FROM users u 
-JOIN orders o ON u.id = o.user_id;
-
--- Aggregations
-SELECT country, COUNT(*) as user_count 
-FROM users 
-GROUP BY country 
-HAVING user_count > 100;
-```
-
-### Data Manipulation Language (DML)
-
-```sql
--- Insert single row
-INSERT INTO users (name, age, email) VALUES ('Alice', 25, 'alice@example.com');
-
--- Insert multiple rows
-INSERT INTO users (name, age) VALUES 
-  ('Bob', 30),
-  ('Carol', 28);
-
--- Update rows
-UPDATE users SET age = 26 WHERE name = 'Alice';
-
--- Delete rows
-DELETE FROM users WHERE age < 18;
-```
-
-### Data Definition Language (DDL)
-
-```sql
--- Create table
-CREATE TABLE users (
-  id INTEGER PRIMARY KEY AUTO_INCREMENT,
-  name VARCHAR(100) NOT NULL,
-  email VARCHAR(255) UNIQUE,
-  created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-);
-
--- Create stream table with TTL
-CREATE STREAM TABLE events (
-  event_id VARCHAR(50),
-  event_type VARCHAR(50),
-  payload JSON,
-  timestamp TIMESTAMP
-) WITH (
-  TTL = 3600,
-  FLUSH_POLICY = 'immediate'
-);
-
--- Drop table
-DROP TABLE old_users;
-
--- Alter table (if supported)
-ALTER TABLE users ADD COLUMN phone VARCHAR(20);
-```
-
-### System Tables
-
-```sql
--- List all tables
-SELECT * FROM system.tables;
-
--- View users
-SELECT * FROM system.users;
-
--- Check jobs
-SELECT * FROM system.jobs;
-
--- View namespaces
-SELECT * FROM system.namespaces;
-
--- Monitor live queries
-SELECT * FROM system.live_queries;
-```
-
----
-
-## Credential Management
-
-The CLI can store credentials securely for multiple database instances.
-
-### Store Credentials
-
-```bash
-# Interactive prompt (recommended for security)
-kalam --update-credentials --instance production
-# Prompts for: Username, Password
-
-# Command-line (less secure, visible in shell history)
-kalam --update-credentials --instance local \
-  --username alice \
-  --password secret123 \
-  --url http://localhost:8080
-```
-
-### View Credentials
-
-```bash
-# List all stored instances
-kalam --list-instances
-
-# Show credentials for specific instance (password hidden)
-kalam --show-credentials --instance production
-```
-
-### Use Stored Credentials
-
-```bash
-# Connect using stored credentials (auto-loaded)
-kalam --instance production
-
-# Override instance selection
-kalam --instance local
-```
-
-### Delete Credentials
-
-```bash
-# Remove stored credentials
-kalam --delete-credentials --instance test
-```
-
-### Credential Storage Location
-
-- **Linux/macOS**: `~/.config/kalamdb/credentials.toml`
-- **Windows**: `%APPDATA%\kalamdb\credentials.toml`
-
-File format (TOML):
-```toml
-[instances.local]
-username = "alice"
-password = "secret123"
-server_url = "http://localhost:8080"
-
-[instances.production]
-username = "admin"
-password = "prod_password"
-server_url = "https://db.example.com"
-```
-
-**Security Notes**:
-- File permissions automatically set to 0600 (owner read/write only) on Unix
-- Passwords stored in plain text - consider using OS keyring for production
-- Credentials never logged or displayed (except in masked form)
-
----
-
-## Configuration
-
-### Configuration File
-
-Default location: `~/.kalam/config.toml`
-
-```toml
-[server]
-url = "http://localhost:8080"
-timeout = 30
-max_retries = 3
-
-[auth]
-jwt_token = "your-jwt-token"
-
-[ui]
-format = "table"  # table, json, csv
-color = true
-history_size = 1000
-```
-
-### Priority Order
-
-Configuration values are loaded in this priority order (highest to lowest):
-
-1. **Command-line arguments** - Direct flags like `--url`, `--username`
-2. **Stored credentials** - From `~/.config/kalamdb/credentials.toml`
-3. **Config file** - From `~/.kalam/config.toml`
-4. **Defaults** - Built-in default values
-
-### Command History
-
-Command history is automatically saved to: `~/.kalam/history`
-
-- Default size: 1000 commands
-- Persists across sessions
-- Navigate with ↑/↓ arrow keys
-- Search with Ctrl+R (reverse search)
-
----
-
-## Examples
-
-### Basic Queries
-
-```bash
-# Start interactive session
-kalam --url http://localhost:8080
-
-# In the CLI:
-kalam> SELECT * FROM users LIMIT 5;
-kalam> \dt
-kalam> \d users
-kalam> \quit
-```
-
-### Non-Interactive Mode
-
-```bash
-# Execute single query
-kalam -c "SELECT COUNT(*) FROM users" --json
-
-# Execute from file
-kalam -f migration.sql --verbose
-
-# Pipe SQL commands
-echo "SELECT * FROM users;" | kalam --csv > users.csv
-```
-
+-- or
+\subscribe SELECT * FROM app.messages WHERE user_id = 'alice';
 ### Real-Time Subscriptions
 
 ```bash

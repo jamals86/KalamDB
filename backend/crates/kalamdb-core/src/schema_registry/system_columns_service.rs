@@ -62,11 +62,11 @@ impl SystemColumnsService {
     pub const COL_SEQ: &'static str = "_seq";
     pub const COL_DELETED: &'static str = "_deleted";
 
-    /// Legacy column names (deprecated, for migration reference)
-    #[deprecated(note = "Use COL_SEQ instead - _id removed in MVCC architecture")]
-    pub const COL_ID: &'static str = "_id";
-    #[deprecated(note = "Use _seq.timestamp_millis() instead - _updated removed in MVCC architecture")]
-    pub const COL_UPDATED: &'static str = "_updated";
+    // /// Legacy column names (deprecated, for migration reference)
+    // #[deprecated(note = "Use COL_SEQ instead - _id removed in MVCC architecture")]
+    // pub const COL_ID: &'static str = "_id";
+    // #[deprecated(note = "Use _seq.timestamp_millis() instead - _updated removed in MVCC architecture")]
+    // pub const COL_UPDATED: &'static str = "_updated";
 
     /// Create a new SystemColumnsService
     ///
@@ -105,8 +105,8 @@ impl SystemColumnsService {
 
     /// Add system columns to a table definition
     ///
-    /// **MVCC Architecture**: Injects `_seq BIGINT` and `_deleted BOOLEAN` columns
-    /// if they don't already exist.
+    /// **MVCC Architecture**: Injects `_seq BIGINT`, `_updated DATETIME(UTC)`, and `_deleted BOOLEAN`
+    /// columns if they don't already exist.
     ///
     /// # Arguments
     /// * `table_def` - Mutable reference to table definition
@@ -136,7 +136,7 @@ impl SystemColumnsService {
             is_primary_key: false, // User-defined PK required separately
             is_partition_key: false,
             default_value: ColumnDefault::None,
-            column_comment: Some("System-generated Snowflake-based version ID (MVCC)".to_string()),
+            column_comment: Some("System-generated Snowflake-based version ID (MVCC) with embedded timestamp".to_string()),
         });
 
         // Add _deleted column (BOOLEAN, NOT NULL, DEFAULT FALSE)
@@ -265,9 +265,10 @@ mod tests {
 
         svc.add_system_columns(&mut table_def).unwrap();
 
-        assert_eq!(table_def.columns.len(), 2); // _seq and _deleted
+        assert_eq!(table_def.columns.len(), 3); // _seq, _updated and _deleted
         assert_eq!(table_def.columns[0].column_name, "_seq");
-        assert_eq!(table_def.columns[1].column_name, "_deleted");
+        assert_eq!(table_def.columns[1].column_name, "_updated");
+        assert_eq!(table_def.columns[2].column_name, "_deleted");
     }
 
     #[test]

@@ -15,8 +15,7 @@ use datafusion::datasource::{TableProvider, TableType};
 use datafusion::error::{DataFusionError, Result as DataFusionResult};
 use datafusion::logical_expr::Expr;
 use datafusion::physical_plan::ExecutionPlan;
-use kalamdb_commons::system::Job;
-use kalamdb_commons::JobId;
+use kalamdb_commons::{system::Job, JobId, JobStatus};
 use kalamdb_store::entity_store::EntityStore;
 use kalamdb_store::StorageBackend;
 use std::any::Any;
@@ -80,6 +79,7 @@ impl JobsTableProvider {
             )));
         }
 
+        validate_job_update(&job)?;
         self.store.put(&job.job_id, &job)?;
         Ok(())
     }
@@ -98,8 +98,6 @@ impl JobsTableProvider {
 
     /// Cancel a running job
     pub fn cancel_job(&self, job_id: &JobId) -> Result<(), SystemError> {
-        use kalamdb_commons::JobStatus;
-
         // Get current job
         let job = self
             .get_job(job_id)?
@@ -134,8 +132,6 @@ impl JobsTableProvider {
 
     /// Delete jobs older than retention period (in days)
     pub fn cleanup_old_jobs(&self, retention_days: i64) -> Result<usize, SystemError> {
-        use kalamdb_commons::JobStatus;
-
         let now = chrono::Utc::now().timestamp_millis();
         let retention_ms = retention_days * 24 * 60 * 60 * 1000;
 
@@ -225,6 +221,37 @@ impl JobsTableProvider {
 
         Ok(batch)
     }
+}
+
+fn validate_job_update(job: &Job) -> Result<(), SystemError> {
+    let status = job.status;
+
+    if matches!(status, JobStatus::Running | JobStatus::Retrying | JobStatus::Completed | JobStatus::Failed | JobStatus::Cancelled)
+        && job.started_at.is_none()
+    {
+        return Err(SystemError::Other(format!(
+            "Job {}: started_at must be set before marking status {}",
+            job.job_id, status
+        )));
+    }
+
+    if matches!(status, JobStatus::Completed | JobStatus::Failed | JobStatus::Cancelled)
+        && job.finished_at.is_none()
+    {
+        return Err(SystemError::Other(format!(
+            "Job {}: finished_at must be set before marking status {}",
+            job.job_id, status
+        )));
+    }
+
+    if status == JobStatus::Completed && job.message.is_none() {
+        return Err(SystemError::Other(format!(
+            "Job {}: result/message must be set before marking status {}",
+            job.job_id, status
+        )));
+    }
+
+    Ok(())
 }
 
 #[async_trait]
@@ -338,12 +365,49 @@ mod tests {
 
         // Update
         job.status = JobStatus::Completed;
+        job.finished_at = Some(job.created_at + 1);
+        job.message = Some("flush complete".to_string());
         provider.update_job(job.clone()).unwrap();
 
         // Verify
         let job_id = JobId::new("job1");
         let retrieved = provider.get_job_by_id(&job_id).unwrap().unwrap();
         assert_eq!(retrieved.status, JobStatus::Completed);
+    }
+
+    #[test]
+    fn test_update_job_requires_started_at_for_completed() {
+        let provider = create_test_provider();
+        let mut job = create_test_job("job1");
+        provider.create_job(job.clone()).unwrap();
+
+        job.status = JobStatus::Completed;
+        job.started_at = None;
+        job.finished_at = Some(job.created_at + 1);
+        job.message = Some("flush complete".to_string());
+
+        let err = provider.update_job(job).unwrap_err();
+        match err {
+            SystemError::Other(msg) => assert!(msg.contains("started_at")),
+            _ => panic!("unexpected error type"),
+        }
+    }
+
+    #[test]
+    fn test_update_job_requires_result_for_completed() {
+        let provider = create_test_provider();
+        let mut job = create_test_job("job1");
+        provider.create_job(job.clone()).unwrap();
+
+        job.status = JobStatus::Completed;
+        job.finished_at = Some(job.created_at + 1);
+        job.message = None;
+
+        let err = provider.update_job(job).unwrap_err();
+        match err {
+            SystemError::Other(msg) => assert!(msg.contains("result/message")),
+            _ => panic!("unexpected error type"),
+        }
     }
 
     #[test]

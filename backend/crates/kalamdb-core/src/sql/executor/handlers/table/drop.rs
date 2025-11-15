@@ -33,20 +33,139 @@ pub async fn cleanup_table_data_internal(
 
     let rows_deleted = match table_type {
         TableType::User => {
-            // TODO: Implement delete_table_data() in UserTableStore
-            // For now, return 0 (will be implemented when store.scan_iter() is added)
-            log::warn!("[CleanupHelper] UserTable data cleanup not yet implemented");
-            0
+            // Fast path: drop the entire RocksDB partition for this user table
+            // Partition format mirrors new_user_table_store():
+            //   user_{namespace}:{tableName}
+            use kalamdb_commons::constants::ColumnFamilyNames;
+            use kalamdb_store::storage_trait::Partition as StorePartition;
+
+            let partition_name = format!(
+                "{}{}:{}",
+                ColumnFamilyNames::USER_TABLE_PREFIX,
+                table_id.namespace_id().as_str(),
+                table_id.table_name().as_str()
+            );
+
+            let backend = _app_context.storage_backend();
+            let partition = StorePartition::new(partition_name.clone());
+
+            match backend.drop_partition(&partition) {
+                Ok(_) => {
+                    log::info!(
+                        "[CleanupHelper] Dropped partition '{}' for user table {:?}",
+                        partition_name,
+                        table_id
+                    );
+                    0usize // Unknown exact row count after drop
+                }
+                Err(e) => {
+                    // If partition not found, treat as already clean
+                    let msg = e.to_string();
+                    if msg.to_lowercase().contains("not found") {
+                        log::warn!(
+                            "[CleanupHelper] Partition '{}' not found during cleanup (already clean)",
+                            partition_name
+                        );
+                        0usize
+                    } else {
+                        return Err(KalamDbError::Other(format!(
+                            "Failed to drop partition '{}' for table {}: {}",
+                            partition_name,
+                            table_id,
+                            e
+                        )));
+                    }
+                }
+            }
         }
         TableType::Shared => {
-            // TODO: Implement delete_table_data() in SharedTableStore
-            log::warn!("[CleanupHelper] SharedTable data cleanup not yet implemented");
-            0
+            // Drop the entire RocksDB partition for this shared table
+            // Partition format mirrors new_shared_table_store():
+            //   shared_{namespace}:{tableName}
+            use kalamdb_commons::constants::ColumnFamilyNames;
+            use kalamdb_store::storage_trait::Partition as StorePartition;
+
+            let partition_name = format!(
+                "{}{}:{}",
+                ColumnFamilyNames::SHARED_TABLE_PREFIX,
+                table_id.namespace_id().as_str(),
+                table_id.table_name().as_str()
+            );
+
+            let backend = _app_context.storage_backend();
+            let partition = StorePartition::new(partition_name.clone());
+
+            match backend.drop_partition(&partition) {
+                Ok(_) => {
+                    log::info!(
+                        "[CleanupHelper] Dropped partition '{}' for shared table {:?}",
+                        partition_name,
+                        table_id
+                    );
+                    0usize
+                }
+                Err(e) => {
+                    let msg = e.to_string();
+                    if msg.to_lowercase().contains("not found") {
+                        log::warn!(
+                            "[CleanupHelper] Partition '{}' not found during cleanup (already clean)",
+                            partition_name
+                        );
+                        0usize
+                    } else {
+                        return Err(KalamDbError::Other(format!(
+                            "Failed to drop partition '{}' for table {}: {}",
+                            partition_name,
+                            table_id,
+                            e
+                        )));
+                    }
+                }
+            }
         }
         TableType::Stream => {
-            // TODO: Implement delete_table_data() in StreamTableStore
-            log::warn!("[CleanupHelper] StreamTable data cleanup not yet implemented");
-            0
+            // Stream tables are in-memory by design. However, if a persistent
+            // backend is configured, attempt to drop the partition best-effort.
+            use kalamdb_commons::constants::ColumnFamilyNames;
+            use kalamdb_store::storage_trait::Partition as StorePartition;
+
+            let partition_name = format!(
+                "{}{}:{}",
+                ColumnFamilyNames::STREAM_TABLE_PREFIX,
+                table_id.namespace_id().as_str(),
+                table_id.table_name().as_str()
+            );
+
+            let backend = _app_context.storage_backend();
+            let partition = StorePartition::new(partition_name.clone());
+
+            match backend.drop_partition(&partition) {
+                Ok(_) => {
+                    log::info!(
+                        "[CleanupHelper] Dropped partition '{}' for stream table {:?}",
+                        partition_name,
+                        table_id
+                    );
+                    0usize
+                }
+                Err(e) => {
+                    let msg = e.to_string();
+                    if msg.to_lowercase().contains("not found") {
+                        log::debug!(
+                            "[CleanupHelper] Stream partition '{}' not found (likely in-memory)",
+                            partition_name
+                        );
+                        0usize
+                    } else {
+                        return Err(KalamDbError::Other(format!(
+                            "Failed to drop partition '{}' for stream table {}: {}",
+                            partition_name,
+                            table_id,
+                            e
+                        )));
+                    }
+                }
+            }
         }
         TableType::System => {
             // System tables cannot be dropped via DDL
@@ -76,14 +195,55 @@ pub async fn cleanup_parquet_files_internal(
 ) -> Result<u64, KalamDbError> {
     log::info!("[CleanupHelper] Cleaning up Parquet files for {:?}", table_id);
 
-    // Note: Actual implementation would:
-    // 1. Get storage backend from AppContext
-    // 2. List all files matching pattern {namespace}/{table_name}/*.parquet
-    // 3. Get file sizes before deletion
-    // 4. Delete each file
-    // 5. Sum total bytes freed
-    // For now, return 0 as placeholder
-    let bytes_freed = 0u64;
+    // 1) Load table definition to determine type (and ensure it still exists)
+    let registry = _app_context.schema_registry();
+    let table_def = match registry.get_table_definition(table_id)? {
+        Some(def) => def,
+        None => {
+            log::warn!(
+                "[CleanupHelper] Skipping Parquet cleanup: table definition not found for {}",
+                table_id
+            );
+            return Ok(0);
+        }
+    };
+
+    // 2) Determine storage_id and template
+    let cached = registry.get(table_id);
+    let storage_id = cached
+        .as_ref()
+        .and_then(|c| c.storage_id.clone())
+        .unwrap_or_else(kalamdb_commons::models::StorageId::local);
+
+    // Resolve relative template: substitutes {namespace} and {tableName};
+    // leaves {userId}/{shard} placeholders intact for expansion below.
+    let relative_template = registry.resolve_storage_path_template(
+        &table_def.namespace_id,
+        &table_def.table_name,
+        table_def.table_type,
+        &storage_id,
+    )?;
+
+    // 3) Resolve base directory using storage config or default base path
+    let default_base = _app_context
+        .storage_registry()
+        .default_storage_path()
+        .to_string();
+    let storages = _app_context.system_tables().storages();
+    let base_dir = match storages.get_storage(&storage_id) {
+        Ok(Some(storage)) => {
+            let trimmed = storage.base_directory.trim();
+            if trimmed.is_empty() { default_base.clone() } else { trimmed.to_string() }
+        }
+        _ => default_base.clone(),
+    };
+
+    // 4) Delegate deletion to kalamdb-filestore to keep FS logic isolated
+    let bytes_freed = kalamdb_filestore::delete_parquet_tree_for_table(
+        &base_dir,
+        &relative_template,
+        table_def.table_type,
+    ).map_err(|e| KalamDbError::Other(format!("Filestore delete failed: {}", e)))?;
 
     log::info!("[CleanupHelper] Freed {} bytes from Parquet files", bytes_freed);
     Ok(bytes_freed)
@@ -269,6 +429,13 @@ impl TypedStatementHandler<DropTableStatement> for DropTableHandler {
         // Unregister provider from SchemaRegistry (auto-unregisters from DataFusion)
         use crate::sql::executor::helpers::table_registration::unregister_table_provider;
         unregister_table_provider(&self.app_context, &table_id)?;
+
+        // Cleanup table data from storage for user/shared/stream tables
+        // Perform data cleanup prior to metadata removal
+        let _ = cleanup_table_data_internal(&self.app_context, &table_id, actual_type).await?;
+
+        // Also cleanup Parquet files/folders from storage backends (best-effort)
+        let _ = cleanup_parquet_files_internal(&self.app_context, &table_id).await?;
 
         // Remove definition via SchemaRegistry (delete-through) → invalidates cache
         registry.delete_table_definition(&table_id)?;

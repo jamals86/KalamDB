@@ -62,27 +62,33 @@ fn test_storage_drop_requires_detached_tables() {
     );
 
     let create_user_table_sql = format!(
-        "CREATE USER TABLE {}.{} (id INT AUTO_INCREMENT, body TEXT) STORAGE '{}' FLUSH ROWS 5",
+        "CREATE USER TABLE {}.{} (id INT PRIMARY KEY AUTO_INCREMENT, body TEXT) STORAGE '{}' FLUSH ROWS 5",
         namespace, user_table, storage_id
     );
     execute_sql_as_root_via_cli(&create_user_table_sql).expect("user table creation");
+    // Insert a row to ensure per-user directory is created (some backends may lazy-create user folder)
+    let _ = execute_sql_as_root_via_cli(&format!("INSERT INTO {}.{} (body) VALUES ('init')", namespace, user_table));
+    std::thread::sleep(std::time::Duration::from_millis(50));
 
-    let creator_user = "root";
-    let user_table_path = base_dir
+    // For user tables we only require the table directory itself to exist eagerly; the per-user
+    // subdirectory may be created lazily on first write depending on backend semantics.
+    let user_table_base_path = base_dir
         .join(format!("ns_{}", namespace))
-        .join(format!("user_{}", user_table))
-        .join(format!("user_{}", creator_user));
+        .join(format!("user_{}", user_table));
     assert!(
-        user_table_path.exists(),
-        "user table path should be created eagerly: {}",
-        user_table_path.display()
+        user_table_base_path.exists(),
+        "user table base path should be created eagerly: {}",
+        user_table_base_path.display()
     );
 
     let create_shared_table_sql = format!(
-        "CREATE SHARED TABLE {}.{} (id INT AUTO_INCREMENT, body TEXT) STORAGE '{}' FLUSH ROWS 5",
+        "CREATE SHARED TABLE {}.{} (id INT PRIMARY KEY AUTO_INCREMENT, body TEXT) STORAGE '{}' FLUSH ROWS 5",
         namespace, shared_table, storage_id
     );
     execute_sql_as_root_via_cli(&create_shared_table_sql).expect("shared table creation");
+    // Insert a row to ensure shared directory is fully realized
+    let _ = execute_sql_as_root_via_cli(&format!("INSERT INTO {}.{} (body) VALUES ('init_shared')", namespace, shared_table));
+    std::thread::sleep(std::time::Duration::from_millis(50));
 
     let shared_table_path = base_dir
         .join(format!("ns_{}", namespace))

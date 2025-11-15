@@ -142,7 +142,7 @@ async fn test_root_can_create_drop_tables() {
 
     // Create table as root
     let result = execute_sql_as_root(
-        "CREATE USER TABLE test_tables_ns.test_table (id INT, name VARCHAR) FLUSH ROWS 10",
+        "CREATE USER TABLE test_tables_ns.test_table (id INT PRIMARY KEY, name VARCHAR) FLUSH ROWS 10",
     )
     .await
     .unwrap();
@@ -334,7 +334,7 @@ async fn test_cli_admin_operations() {
     let sql_batch = format!(
         r#"
 CREATE NAMESPACE {};
-CREATE USER TABLE {}.users (id INT, name VARCHAR) FLUSH ROWS 10;
+CREATE USER TABLE {}.users (id INT PRIMARY KEY, name VARCHAR) FLUSH ROWS 10;
 INSERT INTO {}.users (id, name) VALUES (1, 'Alice');
 SELECT * FROM {}.users;
 "#,
@@ -430,7 +430,7 @@ async fn test_cli_flush_table() {
 
     // Create a USER table with flush policy (SHARED tables cannot be flushed)
     let result = execute_sql_as_root(&format!(
-        "CREATE USER TABLE {}.metrics (timestamp BIGINT, value DOUBLE) FLUSH ROWS 5",
+        "CREATE USER TABLE {}.metrics (timestamp BIGINT PRIMARY KEY, value DOUBLE) FLUSH ROWS 5",
         namespace_name
     ))
     .await
@@ -672,11 +672,11 @@ async fn test_cli_flush_all_tables() {
 
     // Create multiple USER tables (SHARED tables cannot be flushed)
     let _ = execute_sql_as_root(
-        "CREATE USER TABLE flush_all_test.table1 (id INT, data VARCHAR) FLUSH ROWS 10",
+        "CREATE USER TABLE flush_all_test.table1 (id INT PRIMARY KEY, data VARCHAR) FLUSH ROWS 10",
     )
     .await;
     let _ = execute_sql_as_root(
-        "CREATE USER TABLE flush_all_test.table2 (id INT, value DOUBLE) FLUSH ROWS 10",
+        "CREATE USER TABLE flush_all_test.table2 (id INT PRIMARY KEY, value DOUBLE) FLUSH ROWS 10",
     )
     .await;
     tokio::time::sleep(Duration::from_millis(100)).await;
