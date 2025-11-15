@@ -374,9 +374,9 @@ impl HandlerRegistry {
         use kalamdb_sql::ddl::{SubscribeStatement, SubscribeOptions};
         registry.register_typed(
             SqlStatementKind::Subscribe(SubscribeStatement {
+                select_query: "SELECT * FROM _placeholder._placeholder".to_string(),
                 namespace: NamespaceId::new("_placeholder"),
                 table_name: TableName::new("_placeholder"),
-                where_clause: None,
                 options: SubscribeOptions::default(),
             }),
             SubscribeHandler::new(app_context.clone()),

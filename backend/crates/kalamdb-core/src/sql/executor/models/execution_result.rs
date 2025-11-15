@@ -25,6 +25,7 @@ pub enum ExecutionResult {
     Subscription {
         subscription_id: String,
         channel: String,
+        select_query: String,
     },
     /// Job killed result
     JobKilled {

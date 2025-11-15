@@ -23,7 +23,8 @@ NC='\033[0m' # No Color
 # Configuration
 REPO_OWNER="jamals86"
 REPO_NAME="KalamDB"
-BUILD_DIR="target/release"
+ROOT_DIR="$(pwd)"
+BUILD_DIR="$ROOT_DIR/target/release"
 DIST_DIR="dist"
 
 # Parse arguments
@@ -108,49 +109,48 @@ echo -e "${YELLOW}Cleaning previous builds...${NC}"
 rm -rf "$DIST_DIR"
 mkdir -p "$DIST_DIR"
 
-# Build CLI
-echo -e "${YELLOW}Building CLI...${NC}"
-cd cli
+# Build both CLI and Server in workspace root
+echo -e "${YELLOW}Building workspace (CLI + Server)...${NC}"
 cargo build --release
-cd ..
-
-# Build Server
-echo -e "${YELLOW}Building Server...${NC}"
-cd backend
-cargo build --release
-cd ..
 
 # Determine binary extensions and names
 if [[ "$PLATFORM" == *"windows"* ]]; then
-    CLI_BIN="kalam-cli.exe"
+    CLI_BIN="kalam.exe"
     SERVER_BIN="kalamdb-server.exe"
 else
-    CLI_BIN="kalam-cli"
+    CLI_BIN="kalam"
     SERVER_BIN="kalamdb-server"
 fi
 
 # Copy binaries to dist
 echo -e "${YELLOW}Copying binaries to dist...${NC}"
+# Extension for destination files
+if [[ "$PLATFORM" == *"windows"* ]]; then
+    EXT=".exe"
+else
+    EXT=""
+fi
 
-if [ -f "cli/$BUILD_DIR/$CLI_BIN" ]; then
-    cp "cli/$BUILD_DIR/$CLI_BIN" "$DIST_DIR/kalam-cli-${VERSION}-${PLATFORM}${CLI_BIN##*.exe}"
+
+if [ -f "$BUILD_DIR/$CLI_BIN" ]; then
+    cp "$BUILD_DIR/$CLI_BIN" "$DIST_DIR/kalam-${VERSION}-${PLATFORM}${EXT}"
     if [[ "$PLATFORM" != *"windows"* ]]; then
-        chmod +x "$DIST_DIR/kalam-cli-${VERSION}-${PLATFORM}"
+        chmod +x "$DIST_DIR/kalam-${VERSION}-${PLATFORM}"
     fi
     echo -e "${GREEN}✓ CLI binary copied${NC}"
 else
-    echo -e "${RED}Error: CLI binary not found at cli/$BUILD_DIR/$CLI_BIN${NC}"
+    echo -e "${RED}Error: CLI binary not found at $BUILD_DIR/$CLI_BIN${NC}"
     exit 1
 fi
 
-if [ -f "backend/$BUILD_DIR/$SERVER_BIN" ]; then
-    cp "backend/$BUILD_DIR/$SERVER_BIN" "$DIST_DIR/kalamdb-server-${VERSION}-${PLATFORM}${SERVER_BIN##*.exe}"
+if [ -f "$BUILD_DIR/$SERVER_BIN" ]; then
+    cp "$BUILD_DIR/$SERVER_BIN" "$DIST_DIR/kalamdb-server-${VERSION}-${PLATFORM}${EXT}"
     if [[ "$PLATFORM" != *"windows"* ]]; then
         chmod +x "$DIST_DIR/kalamdb-server-${VERSION}-${PLATFORM}"
     fi
     echo -e "${GREEN}✓ Server binary copied${NC}"
 else
-    echo -e "${RED}Error: Server binary not found at backend/$BUILD_DIR/$SERVER_BIN${NC}"
+    echo -e "${RED}Error: Server binary not found at $BUILD_DIR/$SERVER_BIN${NC}"
     exit 1
 fi
 
@@ -169,7 +169,7 @@ if [[ "$PLATFORM" == *"windows"* ]]; then
     fi
 else
     # Use tar.gz for Unix-like systems
-    tar -czf "kalam-cli-${VERSION}-${PLATFORM}.tar.gz" "kalam-cli-${VERSION}-${PLATFORM}"
+    tar -czf "kalam-${VERSION}-${PLATFORM}.tar.gz" "kalam-${VERSION}-${PLATFORM}"
     tar -czf "kalamdb-server-${VERSION}-${PLATFORM}.tar.gz" "kalamdb-server-${VERSION}-${PLATFORM}"
     echo -e "${GREEN}✓ TAR.GZ archives created${NC}"
 fi

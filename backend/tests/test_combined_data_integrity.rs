@@ -43,7 +43,7 @@ async fn test_01_combined_data_count_and_select() {
     // Create user table
     let create_sql = format!(
         "CREATE USER TABLE {}.{} (
-            order_id BIGINT,
+            order_id BIGINT PRIMARY KEY,
             customer_name TEXT,
             amount DOUBLE,
             status TEXT,
@@ -172,7 +172,7 @@ async fn test_01_combined_data_count_and_select() {
     let select_response = server
         .execute_sql_as_user(
             &format!(
-                "SELECT id, order_id, customer_name, amount, status FROM {}.{} ORDER BY order_id",
+                "SELECT order_id, customer_name, amount, status FROM {}.{} ORDER BY order_id",
                 namespace, table_name
             ),
             user_id,
@@ -192,7 +192,6 @@ async fn test_01_combined_data_count_and_select() {
         assert_eq!(rows.len(), 15, "Should return 15 rows");
 
         // Verify order_id sequence is correct (1..15)
-        let mut last_id = 0_i64;
         for (idx, row) in rows.iter().enumerate() {
             eprintln!("Row {}: {:?}", idx, row);
             let order_id = row
@@ -200,21 +199,8 @@ async fn test_01_combined_data_count_and_select() {
                 .and_then(|v| v.as_i64())
                 .unwrap_or_else(|| panic!("Row {} missing order_id", idx));
             assert_eq!(order_id, (idx + 1) as i64, "order_id should be sequential");
-
-            let row_id = row
-                .get("id")
-                .and_then(|v| v.as_i64())
-                .unwrap_or_else(|| panic!("Row {} missing auto-generated id", idx));
-            assert!(
-                row_id > last_id,
-                "Snowflake id for row {} should be monotonic (prev={}, current={})",
-                idx,
-                last_id,
-                row_id
-            );
-            last_id = row_id;
         }
-        println!("  ✓ All 15 rows returned with monotonic Snowflake ids");
+        println!("  ✓ All 15 rows returned with correct order_ids");
     }
 
     if flush_result.rows_flushed > 0 {
@@ -241,7 +227,7 @@ async fn test_02_combined_data_aggregations() {
 
     let create_sql = format!(
         "CREATE USER TABLE {}.{} (
-            sale_id BIGINT,
+            sale_id BIGINT PRIMARY KEY,
             product TEXT,
             quantity INT,
             price DOUBLE,
@@ -388,7 +374,7 @@ async fn test_03_combined_data_filtering() {
 
     let create_sql = format!(
         "CREATE USER TABLE {}.{} (
-            product_id BIGINT,
+            product_id BIGINT PRIMARY KEY,
             name TEXT,
             category TEXT,
             price DOUBLE,
@@ -565,7 +551,7 @@ async fn test_04_combined_data_integrity_verification() {
 
     let create_sql = format!(
         "CREATE USER TABLE {}.{} (
-            record_id BIGINT,
+            record_id BIGINT PRIMARY KEY,
             data TEXT,
             value DOUBLE,
             created_at TIMESTAMP
@@ -690,7 +676,7 @@ async fn test_05_multiple_flush_cycles() {
 
     let create_sql = format!(
         "CREATE USER TABLE {}.{} (
-            event_id BIGINT,
+            event_id BIGINT PRIMARY KEY,
             event_type TEXT,
             timestamp TIMESTAMP
         )",
@@ -761,7 +747,7 @@ async fn test_06_soft_delete_operations() {
 
     let create_sql = format!(
         "CREATE USER TABLE {}.{} (
-            task_id TEXT,
+            task_id TEXT PRIMARY KEY,
             title TEXT
         )",
         namespace, table_name

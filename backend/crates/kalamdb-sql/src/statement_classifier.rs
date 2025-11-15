@@ -239,10 +239,58 @@ impl SqlStatement {
     ) -> Result<Self, String> {
         use kalamdb_commons::Role;
 
-        let sql_upper = sql.trim().to_uppercase();
-        let words: Vec<&str> = sql_upper.split_whitespace().collect();
+        // Use sqlparser's tokenizer to get the first keyword (skips comments automatically)
+        let dialect = sqlparser::dialect::GenericDialect {};
+        let mut tokenizer = sqlparser::tokenizer::Tokenizer::new(&dialect, sql);
+        let tokens = match tokenizer.tokenize() {
+            Ok(t) => t,
+            Err(_) => {
+                // If tokenization fails, use simple whitespace split as fallback
+                let sql_upper = sql.trim().to_uppercase();
+                let words: Vec<&str> = sql_upper.split_whitespace().collect();
+                if words.is_empty() {
+                    return Ok(Self::new(sql.to_string(), SqlStatementKind::Unknown));
+                }
+                // Continue with simple word-based matching
+                vec![]
+            }
+        };
+        
+        // Get first non-whitespace, non-comment token
+        let first_keyword_upper = if !tokens.is_empty() {
+            tokens.iter()
+                .find_map(|tok| match tok {
+                    sqlparser::tokenizer::Token::Word(w) => Some(w.value.to_uppercase()),
+                    _ => None,
+                })
+                .unwrap_or_else(|| {
+                    // Fallback to simple parsing
+                    let sql_upper = sql.trim().to_uppercase();
+                    let words: Vec<&str> = sql_upper.split_whitespace().collect();
+                    words.first().map(|s| s.to_string()).unwrap_or_default()
+                })
+        } else {
+            // Fallback to simple parsing
+            let sql_upper = sql.trim().to_uppercase();
+            let words: Vec<&str> = sql_upper.split_whitespace().collect();
+            words.first().map(|s| s.to_string()).unwrap_or_default()
+        };
+        
+        // Build words list from non-comment tokens for pattern matching
+        let words: Vec<String> = if !tokens.is_empty() {
+            tokens.iter()
+                .filter_map(|tok| match tok {
+                    sqlparser::tokenizer::Token::Word(w) => Some(w.value.to_uppercase()),
+                    _ => None,
+                })
+                .collect()
+        } else {
+            let sql_upper = sql.trim().to_uppercase();
+            sql_upper.split_whitespace().map(|s| s.to_string()).collect()
+        };
+        let word_refs: Vec<&str> = words.iter().map(|s| s.as_str()).collect();
 
-        if words.is_empty() {
+        if word_refs.is_empty() {
             return Ok(Self::new(sql.to_string(), SqlStatementKind::Unknown));
         }
 
@@ -251,31 +299,31 @@ impl SqlStatement {
 
         // Hot path: Check SELECT/INSERT/DELETE first (99% of queries)
         // DML statements - create typed markers for handler pattern
-        match words[0] {
+        match first_keyword_upper.as_str() {
             "SELECT" => return Ok(Self::new(sql.to_string(), SqlStatementKind::Select)),
             "INSERT" => {
                 // T151: Extract AS USER clause from INSERT statement (Phase 7)
-                let (cleaned_sql, as_user_id) = Self::extract_as_user(sql);
+                let (cleaned_sql2, as_user_id) = Self::extract_as_user(sql);
                 return if let Some(user_id) = as_user_id {
-                    Ok(Self::with_as_user(cleaned_sql, SqlStatementKind::Insert(crate::ddl::InsertStatement), user_id))
+                    Ok(Self::with_as_user(cleaned_sql2, SqlStatementKind::Insert(crate::ddl::InsertStatement), user_id))
                 } else {
                     Ok(Self::new(sql.to_string(), SqlStatementKind::Insert(crate::ddl::InsertStatement)))
                 };
             }
             "DELETE" => {
                 // T151: Extract AS USER clause from DELETE statement (Phase 7)
-                let (cleaned_sql, as_user_id) = Self::extract_as_user(sql);
+                let (cleaned_sql2, as_user_id) = Self::extract_as_user(sql);
                 return if let Some(user_id) = as_user_id {
-                    Ok(Self::with_as_user(cleaned_sql, SqlStatementKind::Delete(crate::ddl::DeleteStatement), user_id))
+                    Ok(Self::with_as_user(cleaned_sql2, SqlStatementKind::Delete(crate::ddl::DeleteStatement), user_id))
                 } else {
                     Ok(Self::new(sql.to_string(), SqlStatementKind::Delete(crate::ddl::DeleteStatement)))
                 };
             }
             "UPDATE" => {
                 // T151: Extract AS USER clause from UPDATE statement (Phase 7)
-                let (cleaned_sql, as_user_id) = Self::extract_as_user(sql);
+                let (cleaned_sql2, as_user_id) = Self::extract_as_user(sql);
                 return if let Some(user_id) = as_user_id {
-                    Ok(Self::with_as_user(cleaned_sql, SqlStatementKind::Update(crate::ddl::UpdateStatement), user_id))
+                    Ok(Self::with_as_user(cleaned_sql2, SqlStatementKind::Update(crate::ddl::UpdateStatement), user_id))
                 } else {
                     Ok(Self::new(sql.to_string(), SqlStatementKind::Update(crate::ddl::UpdateStatement)))
                 };
@@ -284,7 +332,7 @@ impl SqlStatement {
         }
 
         // Check multi-word prefixes and parse DDL statements
-        match words.as_slice() {
+        match word_refs.as_slice() {
                         // Namespace operations - require admin
             ["CREATE", "NAMESPACE", ..] => {
                 if !is_admin {
@@ -491,6 +539,8 @@ impl SqlStatement {
             _ => Ok(Self::new(sql.to_string(), SqlStatementKind::Unknown)),
         }
     }
+
+// (helper moved to top-level to avoid nested impl issues)
 
     /// Check if this statement type requires DataFusion execution
     ///

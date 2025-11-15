@@ -16,11 +16,11 @@ async fn test_soft_delete_hides_rows() {
     let server = TestServer::new().await;
 
     // Setup
-    fixtures::create_namespace(&server, "test_ns").await;
+    fixtures::create_namespace(&server, "test_hide").await;
     server
         .execute_sql_as_user(
-            r#"CREATE USER TABLE test_ns.tasks (
-                id TEXT,
+            r#"CREATE USER TABLE test_hide.tasks (
+                id TEXT PRIMARY KEY,
                 title TEXT,
                 completed BOOLEAN
             ) STORAGE local"#,
@@ -31,7 +31,7 @@ async fn test_soft_delete_hides_rows() {
     // Insert test data
     server
         .execute_sql_as_user(
-            r#"INSERT INTO test_ns.tasks (id, title, completed) 
+            r#"INSERT INTO test_hide.tasks (id, title, completed) 
                VALUES ('task1', 'First task', false)"#,
             "user1",
         )
@@ -39,7 +39,7 @@ async fn test_soft_delete_hides_rows() {
 
     server
         .execute_sql_as_user(
-            r#"INSERT INTO test_ns.tasks (id, title, completed) 
+            r#"INSERT INTO test_hide.tasks (id, title, completed) 
                VALUES ('task2', 'Second task', false)"#,
             "user1",
         )
@@ -47,7 +47,7 @@ async fn test_soft_delete_hides_rows() {
 
     // Verify both tasks exist
     let response = server
-        .execute_sql_as_user("SELECT id FROM test_ns.tasks ORDER BY id", "user1")
+        .execute_sql_as_user("SELECT id FROM test_hide.tasks ORDER BY id", "user1")
         .await;
 
     assert_eq!(response.status, "success");
@@ -57,7 +57,7 @@ async fn test_soft_delete_hides_rows() {
 
     // Delete task1 (soft delete)
     let response = server
-        .execute_sql_as_user("DELETE FROM test_ns.tasks WHERE id = 'task1'", "user1")
+        .execute_sql_as_user("DELETE FROM test_hide.tasks WHERE id = 'task1'", "user1")
         .await;
 
     assert_eq!(
@@ -68,7 +68,7 @@ async fn test_soft_delete_hides_rows() {
 
     // Verify task1 is hidden from SELECT
     let response = server
-        .execute_sql_as_user("SELECT id FROM test_ns.tasks ORDER BY id", "user1")
+        .execute_sql_as_user("SELECT id FROM test_hide.tasks ORDER BY id", "user1")
         .await;
 
     assert_eq!(response.status, "success");
@@ -93,7 +93,7 @@ async fn test_soft_delete_preserves_data() {
     server
         .execute_sql_as_user(
             r#"CREATE USER TABLE test_ns.tasks (
-                id TEXT,
+                id TEXT PRIMARY KEY,
                 title TEXT,
                 completed BOOLEAN
             ) STORAGE local"#,
@@ -146,7 +146,7 @@ async fn test_deleted_field_default_false() {
     server
         .execute_sql_as_user(
             r#"CREATE USER TABLE test_ns.tasks (
-                id TEXT,
+                id TEXT PRIMARY KEY,
                 title TEXT
             ) STORAGE local"#,
             "user1",
@@ -191,7 +191,7 @@ async fn test_multiple_deletes() {
     server
         .execute_sql_as_user(
             r#"CREATE USER TABLE test_ns.tasks (
-                id TEXT,
+                id TEXT PRIMARY KEY,
                 title TEXT
             ) STORAGE local"#,
             "user1",
@@ -249,7 +249,7 @@ async fn test_delete_with_where_clause() {
     server
         .execute_sql_as_user(
             r#"CREATE USER TABLE test_ns.tasks (
-                id TEXT,
+                id TEXT PRIMARY KEY,
                 title TEXT,
                 priority INT
             ) STORAGE local"#,
@@ -312,7 +312,7 @@ async fn test_count_excludes_deleted_rows() {
     server
         .execute_sql_as_user(
             r#"CREATE USER TABLE test_ns.tasks (
-                id TEXT,
+                id TEXT PRIMARY KEY,
                 title TEXT
             ) STORAGE local"#,
             "user1",

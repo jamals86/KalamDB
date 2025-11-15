@@ -39,14 +39,12 @@ impl InformationSchemaColumnsView {
     }
 
     fn scan_all_columns(&self) -> Result<RecordBatch, RegistryError> {
-        // TODO: Reimplement after extracting system tables traits
-        return Err(RegistryError::ViewError {
-            message: "information_schema.columns not yet implemented in kalamdb-registry".to_string(),
-        });
+        use datafusion::arrow::array::{ArrayRef, BooleanArray, StringBuilder, UInt32Array};
         
-        /* TODO: Reimplement with trait abstraction
-        // Get all table definitions from system.tables
-        let all_tables = self.tables_provider.list_tables()?;
+        // Get all table definitions from SchemaRegistry
+        let schema_registry = crate::app_context::AppContext::get().schema_registry();
+        let all_tables = schema_registry.scan_all_table_definitions()
+            .map_err(|e| RegistryError::Other(format!("Failed to scan tables: {}", e)))?;
         
         // Flatten columns from all tables
         let mut table_catalog_values = StringBuilder::new();
@@ -120,7 +118,6 @@ impl InformationSchemaColumnsView {
         .map_err(|e| RegistryError::Other(format!("Failed to create RecordBatch: {}", e)))?;
 
         Ok(batch)
-        */
     }
 }
 

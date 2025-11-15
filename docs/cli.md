@@ -517,7 +517,7 @@ kalam --csv
 ## Related Documentation
 
 - [API Examples (Bruno collection)](API-Kalam/) - REST API request examples
-- [SQL Syntax](architecture/SQL_SYNTAX.md) - Complete SQL syntax guide
+- [SQL Syntax](SQL.md) - Complete SQL syntax guide
 - [WebSocket Protocol](architecture/WEBSOCKET_PROTOCOL.md) - Real-time subscription details
 - [Development Setup](build/DEVELOPMENT_SETUP.md) - Build and development guide
 

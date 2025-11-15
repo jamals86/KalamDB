@@ -136,49 +136,93 @@ impl JobExecutor for StreamEvictionExecutor {
         ));
 
         // Calculate cutoff time for eviction (records created before this time are expired)
-        let now = chrono::Utc::now().timestamp_millis();
-        let ttl_ms = (ttl_seconds * 1000) as i64;
-        let cutoff_time = now - ttl_ms;
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map_err(|e| KalamDbError::InvalidOperation(format!("System time error: {}", e)))?
+            .as_millis() as u64;
+        let ttl_ms = ttl_seconds * 1000;
+        let cutoff_ms = now.saturating_sub(ttl_ms);
 
         ctx.log_info(&format!(
-            "Cutoff time: {} (records created before this are expired)",
-            chrono::DateTime::from_timestamp_millis(cutoff_time)
-                .map(|dt| dt.to_rfc3339())
-                .unwrap_or_else(|| "invalid".to_string())
+            "Cutoff time: {}ms (records with timestamp < {} are expired)",
+            cutoff_ms,
+            cutoff_ms
         ));
 
-        // TODO: Implement actual stream eviction logic
-        // Current limitation: StreamTableRow doesn't have created_at field yet
-        // When adding TTL support to stream tables:
-        //   1. Add `created_at: i64` field to StreamTableRow (required for TTL)
-        //   2. Scan table using stream_table_store.scan_prefix()
-        //   3. Filter rows where created_at < cutoff_time
-        //   4. Delete in batches up to batch_size using store.delete()
-        //   5. If batch full (== batch_size), return JobDecision::Retry with 5000ms backoff
-        //   6. Track metrics (rows_evicted, estimated_bytes_freed)
-        //
-        // Implementation sketch:
-        //   let expired_rows: Vec<RowId> = all_rows
-        //       .filter(|row| row.created_at < cutoff_time)
-        //       .take(batch_size as usize)
-        //       .map(|row| row.row_id)
-        //       .collect();
-        //   for row_id in &expired_rows {
-        //       store.delete(row_id)?;
-        //   }
-        //   if expired_rows.len() == batch_size as usize {
-        //       return Ok(JobDecision::Retry { backoff_ms: 5000 });
-        //   }
-        //
-        // For now, return placeholder metrics
-        let rows_evicted = 0;
+        // Get table's StreamTableStore
+        use kalamdb_commons::models::{NamespaceId, TableId, TableName};
+        use kalamdb_tables::new_stream_table_store;
+        let ns_id = NamespaceId::new(namespace_id);
+        let tbl_name = TableName::new(table_name);
+        let table_id = TableId::from_strings(namespace_id, table_name);
+        let store = new_stream_table_store(&ns_id, &tbl_name);
 
-        ctx.log_info(&format!("Stream eviction completed - {} rows evicted", rows_evicted));
+        // Scan all rows (no prefix filter - evict for ALL users)
+        use kalamdb_store::entity_store::EntityStore;
+        let all_rows = store.scan_all()
+            .map_err(|e| KalamDbError::InvalidOperation(format!("Failed to scan stream store: {}", e)))?;
+
+        ctx.log_info(&format!(
+            "Scanned {} total rows from {}.{}",
+            all_rows.len(),
+            namespace_id,
+            table_name
+        ));
+
+        // Filter expired rows (timestamp < cutoff)
+        let mut expired_keys = Vec::new();
+        for (key_bytes, row) in all_rows.iter() {
+            let row_ts = row._seq.timestamp_millis();
+            if row_ts < cutoff_ms {
+                // Parse key from bytes
+                if let Ok(row_key) = kalamdb_commons::ids::StreamTableRowId::from_bytes(key_bytes) {
+                    expired_keys.push(row_key);
+                    // Stop if we hit batch size limit
+                    if expired_keys.len() >= batch_size as usize {
+                        break;
+                    }
+                }
+            }
+        }
+
+        ctx.log_info(&format!(
+            "Found {} expired rows (batch limit: {})",
+            expired_keys.len(),
+            batch_size
+        ));
+
+        // Delete expired rows in batch
+        let mut deleted_count = 0;
+        for key in &expired_keys {
+            match store.delete(key) {
+                Ok(_) => deleted_count += 1,
+                Err(e) => {
+                    ctx.log_warn(&format!("Failed to delete row {:?}: {}", key, e));
+                }
+            }
+        }
+
+        ctx.log_info(&format!(
+            "Stream eviction completed - {} rows evicted from {}.{}",
+            deleted_count,
+            namespace_id,
+            table_name
+        ));
+
+        // If we hit batch size limit, schedule retry for next batch
+        if expired_keys.len() >= batch_size as usize {
+            ctx.log_info("Batch size limit reached - scheduling retry for next batch");
+            return Ok(JobDecision::Retry {
+                message: format!("Batch evicted {} rows, more remaining", deleted_count),
+                exception_trace: None,
+                backoff_ms: 5000,
+            });
+        }
 
         Ok(JobDecision::Completed {
             message: Some(format!(
                 "Evicted {} expired records from {}.{} (ttl: {}s)",
-                rows_evicted, namespace_id, table_name, ttl_seconds
+                deleted_count, namespace_id, table_name, ttl_seconds
             )),
         })
     }

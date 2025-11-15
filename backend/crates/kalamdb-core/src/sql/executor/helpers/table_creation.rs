@@ -75,8 +75,7 @@ pub fn create_user_table(
     stmt: CreateTableStatement,
     exec_ctx: &ExecutionContext,
 ) -> Result<String, KalamDbError> {
-    use super::tables::{inject_auto_increment_field, save_table_definition, validate_table_name};
-    use kalamdb_commons::schemas::ColumnDefault;
+    use super::tables::{save_table_definition, validate_table_name};
 
     // RBAC check
     if !crate::auth::rbac::can_create_table(exec_ctx.user_role, TableType::User) {
@@ -105,11 +104,17 @@ pub fn create_user_table(
     validate_table_name(stmt.table_name.as_str())
         .map_err(KalamDbError::InvalidOperation)?;
 
-    // PRIMARY KEY auto-injection (backward compatibility)
-    // Historical tests created tables without explicit PRIMARY KEY declarations.
-    // Instead of rejecting, we now auto-inject an `id` BIGINT primary key with
-    // DEFAULT SNOWFLAKE_ID() when none is provided (Phase 12 compatibility shim).
-    let missing_pk = stmt.primary_key_column.is_none();
+    // PRIMARY KEY validation - USER tables MUST have PRIMARY KEY
+    if stmt.primary_key_column.is_none() {
+        log::error!(
+            "❌ CREATE USER TABLE {}.{}: PRIMARY KEY is required",
+            stmt.namespace_id.as_str(),
+            stmt.table_name.as_str()
+        );
+        return Err(KalamDbError::InvalidOperation(
+            "USER tables require a PRIMARY KEY column".to_string(),
+        ));
+    }
 
     // Check if table already exists
     let schema_registry = app_context.schema_registry();
@@ -168,35 +173,15 @@ pub fn create_user_table(
         storage_id.as_str()
     );
 
-    // Auto-increment field injection ONLY if no explicit PRIMARY KEY
-    // T060: When user specifies PRIMARY KEY, don't add auto-increment 'id' column
-    let schema = if !missing_pk {
-        // User specified explicit PK - use schema as-is
-        stmt.schema.clone()
-    } else {
-        // No explicit PK - add auto-increment 'id' column for backward compatibility
-        inject_auto_increment_field(stmt.schema.clone())?
-    };
+    // Use schema as-is (PRIMARY KEY already validated)
+    let schema = stmt.schema.clone();
 
     // REMOVED: inject_system_columns() call
     // System columns (_id, _updated, _deleted) are now added by SystemColumnsService
     // in save_table_definition() after TableDefinition creation (Phase 12, US5)
-    
-    // Inject DEFAULT SNOWFLAKE_ID() for auto-injected id column
-    let mut modified_stmt = stmt.clone();
-    if missing_pk {
-        // Ensure the auto-injected column is marked as PRIMARY KEY in statement metadata
-        modified_stmt.primary_key_column = Some("id".to_string());
-    }
-    if !modified_stmt.column_defaults.contains_key("id") {
-        modified_stmt.column_defaults.insert(
-            "id".to_string(),
-            ColumnDefault::function("SNOWFLAKE_ID", vec![]),
-        );
-    }
 
     // Save complete table definition to information_schema.tables (produces full Arrow schema with system columns)
-    save_table_definition(&modified_stmt, &schema)?;
+    save_table_definition(&stmt, &schema)?;
 
     // Insert into system.tables
     let table_def = schema_registry
@@ -240,11 +225,12 @@ pub fn create_user_table(
 
     // Log detailed success with table options
     log::info!(
-        "✅ USER TABLE created: {}.{} | storage: {} | columns: {} | auto_increment: true | system_columns: [_updated, _deleted]",
+        "✅ USER TABLE created: {}.{} | storage: {} | columns: {} | pk: {} | system_columns: [_updated, _deleted]",
         stmt.namespace_id.as_str(),
         stmt.table_name.as_str(),
         storage_id.as_str(),
-        schema.fields().len()
+        schema.fields().len(),
+        stmt.primary_key_column.as_ref().unwrap()
     );
 
     Ok(format!(
@@ -263,8 +249,17 @@ pub fn create_shared_table(
     use super::tables::{inject_auto_increment_field, save_table_definition, validate_table_name};
     use kalamdb_commons::schemas::ColumnDefault;
 
-    // PRIMARY KEY auto-injection (backward compatibility for older tests)
-    let missing_pk = stmt.primary_key_column.is_none();
+    // PRIMARY KEY validation - SHARED tables MUST have PRIMARY KEY
+    if stmt.primary_key_column.is_none() {
+        log::error!(
+            "❌ CREATE SHARED TABLE {}.{}: PRIMARY KEY is required",
+            stmt.namespace_id.as_str(),
+            stmt.table_name.as_str()
+        );
+        return Err(KalamDbError::InvalidOperation(
+            "SHARED tables require a PRIMARY KEY column".to_string(),
+        ));
+    }
 
     // RBAC check
     if !crate::auth::rbac::can_create_table(exec_ctx.user_role, TableType::Shared) {
@@ -350,34 +345,15 @@ pub fn create_shared_table(
         storage_id.as_str()
     );
 
-    // Auto-increment field injection ONLY if no explicit PRIMARY KEY
-    // T060: When user specifies PRIMARY KEY, don't add auto-increment 'id' column
-    let schema = if !missing_pk {
-        // User specified explicit PK - use schema as-is
-        stmt.schema.clone()
-    } else {
-        // No explicit PK - add auto-increment 'id' column for backward compatibility
-        inject_auto_increment_field(stmt.schema.clone())?
-    };
+    // Use schema as-is (PRIMARY KEY already validated)
+    let schema = stmt.schema.clone();
 
     // REMOVED: inject_system_columns() call
     // System columns (_id, _updated, _deleted) are now added by SystemColumnsService
     // in save_table_definition() after TableDefinition creation (Phase 12, US5)
-    
-    // Inject DEFAULT SNOWFLAKE_ID() for auto-injected id column
-    let mut modified_stmt = stmt.clone();
-    if missing_pk {
-        modified_stmt.primary_key_column = Some("id".to_string());
-    }
-    if !modified_stmt.column_defaults.contains_key("id") {
-        modified_stmt.column_defaults.insert(
-            "id".to_string(),
-            ColumnDefault::function("SNOWFLAKE_ID", vec![]),
-        );
-    }
 
     // Save complete table definition to information_schema.tables
-    save_table_definition(&modified_stmt, &schema)?;
+    save_table_definition(&stmt, &schema)?;
 
     // Insert into system.tables
     let table_def = schema_registry
@@ -417,11 +393,12 @@ pub fn create_shared_table(
 
     // Log detailed success with table options
     log::info!(
-        "✅ SHARED TABLE created: {}.{} | storage: {} | columns: {} | access_level: {:?} | auto_increment: true | system_columns: [_updated, _deleted]",
+        "✅ SHARED TABLE created: {}.{} | storage: {} | columns: {} | pk: {} | access_level: {:?} | system_columns: [_updated, _deleted]",
         stmt.namespace_id.as_str(),
         stmt.table_name.as_str(),
         storage_id.as_str(),
         schema.fields().len(),
+        stmt.primary_key_column.as_ref().unwrap(),
         stmt.access_level
     );
 
