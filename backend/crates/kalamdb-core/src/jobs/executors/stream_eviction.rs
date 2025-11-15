@@ -23,9 +23,12 @@
 
 use crate::jobs::executors::{JobContext, JobDecision, JobExecutor};
 use crate::error::KalamDbError;
+use crate::providers::StreamTableProvider;
 use async_trait::async_trait;
 use kalamdb_commons::system::Job;
 use kalamdb_commons::JobType;
+use kalamdb_commons::models::TableId;
+use kalamdb_store::entity_store::EntityStore;
 
 /// Stream Eviction Job Executor
 ///
@@ -150,16 +153,39 @@ impl JobExecutor for StreamEvictionExecutor {
         ));
 
         // Get table's StreamTableStore
-        use kalamdb_commons::models::{NamespaceId, TableId, TableName};
-        use kalamdb_tables::new_stream_table_store;
-        let ns_id = NamespaceId::new(namespace_id);
-        let tbl_name = TableName::new(table_name);
         let table_id = TableId::from_strings(namespace_id, table_name);
-        let store = new_stream_table_store(&ns_id, &tbl_name);
+
+        // Use the registered StreamTableProvider so we access the live in-memory store
+        let schema_registry = ctx.app_ctx.schema_registry();
+        let provider_arc = match schema_registry.get_provider(&table_id) {
+            Some(p) => p,
+            None => {
+                ctx.log_warn(&format!(
+                    "Stream provider not registered for {}.{}; skipping eviction",
+                    namespace_id, table_name
+                ));
+                return Ok(JobDecision::Completed {
+                    message: Some(format!(
+                        "Stream table {}.{} not registered; nothing to evict",
+                        namespace_id, table_name
+                    )),
+                });
+            }
+        };
+        let stream_provider = provider_arc
+            .as_any()
+            .downcast_ref::<StreamTableProvider>()
+            .ok_or_else(|| {
+                KalamDbError::InvalidOperation(format!(
+                    "Cached provider for {}.{} is not a StreamTableProvider",
+                    namespace_id, table_name
+                ))
+            })?;
+        let store = stream_provider.store_arc();
 
         // Scan all rows (no prefix filter - evict for ALL users)
-        use kalamdb_store::entity_store::EntityStore;
-        let all_rows = store.scan_all()
+        let all_rows = store
+            .scan_all()
             .map_err(|e| KalamDbError::InvalidOperation(format!("Failed to scan stream store: {}", e)))?;
 
         ctx.log_info(&format!(
@@ -168,6 +194,17 @@ impl JobExecutor for StreamEvictionExecutor {
             namespace_id,
             table_name
         ));
+
+        // If no rows, nothing to evict
+        if all_rows.is_empty() {
+            ctx.log_info("No rows found; nothing to evict");
+            return Ok(JobDecision::Completed {
+                message: Some(format!(
+                    "No rows found in {}.{}; nothing to evict",
+                    namespace_id, table_name
+                )),
+            });
+        }
 
         // Filter expired rows (timestamp < cutoff)
         let mut expired_keys = Vec::new();
@@ -245,6 +282,19 @@ mod tests {
     use super::*;
     use kalamdb_commons::{JobId, NamespaceId, NodeId};
     use kalamdb_commons::system::Job;
+    use crate::test_helpers::init_test_app_context;
+    use crate::app_context::AppContext;
+    use crate::providers::base::{BaseTableProvider, TableProviderCore};
+    use crate::schema_registry::CachedTableData;
+    use chrono::Utc;
+    use datafusion::datasource::TableProvider;
+    use kalamdb_commons::models::{TableId, TableName, UserId};
+    use kalamdb_commons::models::schemas::{ColumnDefinition, ColumnDefault, TableDefinition, TableOptions, TableType};
+    use kalamdb_commons::models::datatypes::KalamDataType;
+    use kalamdb_store::entity_store::EntityStore;
+    use serde_json::json;
+    use std::sync::Arc;
+    use tokio::time::{sleep, Duration};
 
     fn make_job(id: &str, job_type: JobType, ns: &str) -> Job {
         let now = chrono::Utc::now().timestamp_millis();
@@ -321,5 +371,107 @@ mod tests {
         let executor = StreamEvictionExecutor::new();
         assert_eq!(executor.job_type(), JobType::StreamEviction);
         assert_eq!(executor.name(), "StreamEvictionExecutor");
+    }
+
+    #[tokio::test]
+    async fn test_execute_evicts_expired_rows_from_provider_store() {
+        init_test_app_context();
+        let app_ctx = AppContext::get();
+
+        let ns = NamespaceId::new("chat_stream_jobs");
+        let table_name_value = format!("typing_events_{}", Utc::now().timestamp_nanos_opt().unwrap_or(0));
+        let tbl = TableName::new(&table_name_value);
+        let table_id = TableId::new(ns.clone(), tbl.clone());
+
+        // Register table definition for schema registry consumers
+        let table_def = TableDefinition::new(
+            ns.clone(),
+            tbl.clone(),
+            TableType::Stream,
+            vec![
+                ColumnDefinition::new(
+                    "event_id".to_string(),
+                    1,
+                    KalamDataType::Text,
+                    false,
+                    false,
+                    false,
+                    ColumnDefault::None,
+                    None,
+                ),
+                ColumnDefinition::new(
+                    "payload".to_string(),
+                    2,
+                    KalamDataType::Text,
+                    false,
+                    false,
+                    false,
+                    ColumnDefault::None,
+                    None,
+                ),
+            ],
+            TableOptions::stream(1),
+            None,
+        )
+        .expect("table definition");
+        app_ctx
+            .schema_registry()
+            .insert(table_id.clone(), Arc::new(CachedTableData::new(Arc::new(table_def))));
+
+        let stream_store = Arc::new(kalamdb_tables::new_stream_table_store(&ns, &tbl));
+        let core = Arc::new(TableProviderCore::from_app_context(&app_ctx));
+        let provider = Arc::new(StreamTableProvider::new(
+            core,
+            table_id.clone(),
+            stream_store.clone(),
+            Some(1),
+            "event_id".to_string(),
+        ));
+        let provider_trait: Arc<dyn TableProvider> = provider.clone();
+        app_ctx
+            .schema_registry()
+            .insert_provider(table_id.clone(), provider_trait)
+            .expect("register provider");
+
+        // Insert a couple of rows
+        let user = UserId::new("user-ttl");
+        provider
+            .insert(&user, json!({"event_id": "evt1", "payload": "hello"}))
+            .expect("insert evt1");
+        provider
+            .insert(&user, json!({"event_id": "evt2", "payload": "world"}))
+            .expect("insert evt2");
+
+        // Wait for TTL to make them eligible for eviction
+        sleep(Duration::from_millis(1200)).await;
+
+        let mut job = make_job("SE-evict", JobType::StreamEviction, ns.as_str());
+        job.parameters = Some(
+            json!({
+                "namespace_id": ns.as_str(),
+                "table_name": table_name_value.clone(),
+                "table_type": "Stream",
+                "ttl_seconds": 1,
+                "batch_size": 100
+            })
+            .to_string(),
+        );
+
+        let ctx = JobContext::new(app_ctx.clone(), job.job_id.as_str().to_string());
+        let executor = StreamEvictionExecutor::new();
+        let decision = executor.execute(&ctx, &job).await.expect("execute eviction");
+
+        match decision {
+            JobDecision::Completed { message } => {
+                assert!(message.unwrap().contains("Evicted"));
+            }
+            other => panic!("Expected Completed decision, got {:?}", other),
+        }
+
+        let remaining = provider
+            .store_arc()
+            .scan_all()
+            .expect("scan store after eviction");
+        assert!(remaining.is_empty(), "All expired rows should be removed");
     }
 }

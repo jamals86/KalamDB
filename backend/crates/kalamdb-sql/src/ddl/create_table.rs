@@ -192,9 +192,10 @@ impl CreateTableStatement {
         normalized_sql = ACCESS_LEVEL_RE
             .replace_all(&normalized_sql, "")
             .into_owned();
-        // Strip non-Postgres AUTO_INCREMENT for compatibility
+        // MySQL compatibility: map AUTO_INCREMENT to DEFAULT SNOWFLAKE_ID()
+        // This preserves the intent of auto-generated IDs while keeping SQL parseable
         normalized_sql = AUTO_INCREMENT_RE
-            .replace_all(&normalized_sql, "")
+            .replace_all(&normalized_sql, " DEFAULT SNOWFLAKE_ID() ")
             .into_owned();
 
         // Parse with sqlparser - use PostgreSQL dialect for better TEXT support
@@ -1012,5 +1013,22 @@ mod tests {
         // Both validations should pass
         assert!(stmt.validate_primary_key().is_ok());
         assert!(stmt.validate_default_functions().is_ok());
+    }
+
+    // Test AUTO_INCREMENT maps to DEFAULT SNOWFLAKE_ID()
+    #[test]
+    fn test_auto_increment_maps_to_default_snowflake_id() {
+        let sql = "CREATE USER TABLE users (id BIGINT PRIMARY KEY AUTO_INCREMENT, name TEXT)";
+        let stmt = CreateTableStatement::parse(sql, &test_namespace()).unwrap();
+        // Ensure column default is set to SNOWFLAKE_ID()
+        let def = stmt.column_defaults.get("id");
+        assert!(def.is_some(), "Expected default for id column from AUTO_INCREMENT");
+        match def.unwrap() {
+            ColumnDefault::FunctionCall { name, args } => {
+                assert_eq!(name.to_uppercase(), "SNOWFLAKE_ID");
+                assert!(args.is_empty());
+            }
+            other => panic!("Unexpected default variant: {:?}", other),
+        }
     }
 }

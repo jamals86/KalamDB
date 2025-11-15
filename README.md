@@ -376,7 +376,7 @@ WHERE temperature > 80.0 OR humidity > 95.0;
 ```sql
 -- Create user with audit trail
 CREATE USER TABLE app.user_data (
-  id BIGINT DEFAULT SNOWFLAKE_ID(),
+  id BIGINT PRIMARY KEY DEFAULT SNOWFLAKE_ID(),
   data_type TEXT,
   content TEXT,
   created_by TEXT DEFAULT CURRENT_USER(),
@@ -410,7 +410,7 @@ DROP USER 'alice';
 ```sql
 -- Tenant-isolated data
 CREATE USER TABLE saas.customer_data (
-  id BIGINT DEFAULT SNOWFLAKE_ID(),
+  id BIGINT PRIMARY KEY DEFAULT SNOWFLAKE_ID(),
   customer_id TEXT DEFAULT CURRENT_USER(),
   entity_type TEXT,
   entity_data TEXT,
@@ -419,6 +419,7 @@ CREATE USER TABLE saas.customer_data (
 
 -- Cross-tenant analytics (aggregated)
 CREATE SHARED TABLE saas.analytics (
+  id BIGINT PRIMARY KEY DEFAULT SNOWFLAKE_ID(),
   metric_name TEXT,
   metric_value DOUBLE,
   tenant_id TEXT,

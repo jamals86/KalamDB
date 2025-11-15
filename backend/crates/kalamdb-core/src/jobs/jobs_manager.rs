@@ -46,6 +46,7 @@ use crate::jobs::executors::{JobContext, JobDecision, JobRegistry};
 use kalamdb_system::JobsTableProvider;
 use kalamdb_commons::system::{Job, JobFilter, JobOptions};
 use kalamdb_commons::{JobId, JobStatus, JobType, NamespaceId, NodeId, TableType};
+use kalamdb_commons::models::schemas::TableOptions;
 use std::sync::Arc;
 use sysinfo::System;
 use tokio::sync::RwLock;
@@ -723,7 +724,13 @@ impl JobsManager {
             if table.table_type != TableType::Stream {
                 continue;
             }
-            let ttl_seconds = table.table_options.cache_ttl_seconds().unwrap_or(0);
+            // Stream tables store TTL in the StreamTableOptions.ttl_seconds field, not cache TTL.
+            // TableOptions::cache_ttl_seconds() returns None for Stream tables so reading that
+            // value will incorrectly indicate there is no TTL configured.
+            let ttl_seconds = match &table.table_options {
+                TableOptions::Stream(opts) => opts.ttl_seconds,
+                _ => 0,
+            };
             if ttl_seconds <= 0 {
                 continue;
             }
@@ -805,5 +812,54 @@ impl JobsManager {
     pub async fn shutdown(&self) {
         log::info!("Initiating job manager shutdown");
         *self.shutdown.write().await = true;
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::test_helpers::*;
+    use kalamdb_commons::models::schemas::TableOptions;
+    use kalamdb_commons::models::{NamespaceId, TableName, TableId};
+    use kalamdb_commons::schemas::TableType;
+    use std::sync::Arc;
+
+    #[tokio::test]
+    async fn test_check_stream_eviction_finds_stream_table() {
+        // Initialize test app context and providers
+        init_test_app_context();
+        let ctx = crate::app_context::AppContext::get();
+        let tables_provider = ctx.system_tables().tables();
+        let jobs_provider = ctx.system_tables().jobs();
+
+        // Create a stream table definition with TTL
+        let namespace = NamespaceId::new("chat");
+        let table_name = TableName::new("typing_events");
+        let table_id = TableId::new(namespace.clone(), table_name.clone());
+        let cols = vec![kalamdb_commons::models::schemas::ColumnDefinition::primary_key("id", 1, kalamdb_commons::datatypes::KalamDataType::BigInt)];
+        let table_def = kalamdb_commons::models::schemas::TableDefinition::new(
+            namespace.clone(),
+            table_name.clone(),
+            TableType::Stream,
+            cols,
+            TableOptions::stream(30),
+            None,
+        ).expect("Failed to create stream table definition");
+
+        // Insert into system.tables
+        tables_provider.create_table(&table_id, &table_def).expect("Failed to create table in provider");
+
+        // Create job registry and manager
+        let job_registry = Arc::new(create_test_job_registry());
+        let jobs_manager = JobsManager::new(jobs_provider.clone(), job_registry);
+
+        // Run the eviction check
+        jobs_manager.check_stream_eviction().await.expect("check_stream_eviction failed");
+
+        // Verify a new stream eviction job was created
+        let jobs = jobs_provider.list_jobs().unwrap();
+        assert!(!jobs.is_empty(), "Expected at least one job created");
+        let found = jobs.into_iter().any(|j| j.job_type == kalamdb_commons::JobType::StreamEviction);
+        assert!(found, "Expected StreamEviction job to be created");
     }
 }

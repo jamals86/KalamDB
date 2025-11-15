@@ -105,7 +105,7 @@ impl SystemColumnsService {
 
     /// Add system columns to a table definition
     ///
-    /// **MVCC Architecture**: Injects `_seq BIGINT`, `_updated DATETIME(UTC)`, and `_deleted BOOLEAN`
+    /// **MVCC Architecture**: Injects `_seq BIGINT`, `_updated TIMESTAMP`, and `_deleted BOOLEAN`
     /// columns if they don't already exist.
     ///
     /// # Arguments
@@ -137,6 +137,18 @@ impl SystemColumnsService {
             is_partition_key: false,
             default_value: ColumnDefault::None,
             column_comment: Some("System-generated Snowflake-based version ID (MVCC) with embedded timestamp".to_string()),
+        });
+
+        // Add _updated column (TIMESTAMP, NOT NULL)
+        table_def.columns.push(ColumnDefinition {
+            column_name: "_updated".to_string(),
+            ordinal_position: next_ordinal + 1,
+            data_type: kalamdb_commons::models::datatypes::KalamDataType::Timestamp,
+            is_nullable: false,
+            is_primary_key: false,
+            is_partition_key: false,
+            default_value: ColumnDefault::None,
+            column_comment: Some("System-generated last update timestamp (UTC)".to_string()),
         });
 
         // Add _deleted column (BOOLEAN, NOT NULL, DEFAULT FALSE)

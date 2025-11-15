@@ -8,6 +8,7 @@
 //! - T099: restore_from_rocksdb() after server restart
 //! - T100: SHOW MANIFEST returns all cached entries
 //! - T101: cache eviction and re-population
+use kalamdb_commons::UserId;
 
 use kalamdb_commons::{config::ManifestCacheSettings, types::{ManifestCacheEntry, ManifestFile, SyncState}, NamespaceId, TableName};
 use kalamdb_core::manifest::ManifestCacheService;
@@ -43,7 +44,7 @@ fn test_get_or_load_cache_miss() {
     let namespace = NamespaceId::new("ns1");
     let table = TableName::new("products");
     
-    let result = service.get_or_load(&namespace, &table, "u_123").unwrap();
+    let result = service.get_or_load(&namespace, &table, Some(&UserId::from("u_123"))).unwrap();
     assert!(result.is_none(), "Expected cache miss to return None");
 }
 
@@ -60,7 +61,7 @@ fn test_get_or_load_cache_hit() {
         .update_after_flush(
             &namespace,
             &table,
-            "u_123",
+            Some(&UserId::from("u_123")),
             &manifest,
             Some("etag-v1".to_string()),
             "s3://bucket/ns1/products/u_123/manifest.json".to_string(),
@@ -68,14 +69,14 @@ fn test_get_or_load_cache_hit() {
         .unwrap();
 
     // First read should hit hot cache
-    let result1 = service.get_or_load(&namespace, &table, "u_123").unwrap();
+    let result1 = service.get_or_load(&namespace, &table, Some(&UserId::from("u_123"))).unwrap();
     assert!(result1.is_some(), "Expected cache hit");
     let entry1 = result1.unwrap();
     assert_eq!(entry1.etag, Some("etag-v1".to_string()));
     assert_eq!(entry1.sync_state, SyncState::InSync);
 
     // Second read should also hit hot cache (last_accessed updated)
-    let result2 = service.get_or_load(&namespace, &table, "u_123").unwrap();
+    let result2 = service.get_or_load(&namespace, &table, Some(&UserId::from("u_123"))).unwrap();
     assert!(result2.is_some(), "Expected cache hit on second read");
     
     // Verify last_accessed was updated
@@ -104,7 +105,7 @@ fn test_validate_freshness_stale() {
         .update_after_flush(
             &namespace,
             &table,
-            "shared",
+            None,
             &manifest,
             Some("etag-v1".to_string()),
             "s3://bucket/ns1/products/shared/manifest.json".to_string(),
@@ -135,7 +136,7 @@ fn test_update_after_flush_atomic_write() {
         .update_after_flush(
             &namespace,
             &table,
-            "u_456",
+            Some(&UserId::from("u_456")),
             &manifest,
             Some("etag-abc123".to_string()),
             "s3://bucket/ns1/orders/u_456/manifest.json".to_string(),
@@ -143,7 +144,7 @@ fn test_update_after_flush_atomic_write() {
         .unwrap();
 
     // Verify entry exists in cache
-    let result = service.get_or_load(&namespace, &table, "u_456").unwrap();
+    let result = service.get_or_load(&namespace, &table, Some(&UserId::from("u_456"))).unwrap();
     assert!(result.is_some(), "Entry should be cached");
     
     let entry = result.unwrap();
@@ -174,10 +175,10 @@ fn test_restore_from_rocksdb() {
     let manifest2 = create_test_manifest("ns2.orders", "shared");
 
     service1
-        .update_after_flush(&namespace1, &table1, "u_123", &manifest1, None, "path1".to_string())
+        .update_after_flush(&namespace1, &table1, Some(&UserId::from("u_123")), &manifest1, None, "path1".to_string())
         .unwrap();
     service1
-        .update_after_flush(&namespace2, &table2, "shared", &manifest2, None, "path2".to_string())
+        .update_after_flush(&namespace2, &table2, None, &manifest2, None, "path2".to_string())
         .unwrap();
 
     assert_eq!(service1.count().unwrap(), 2, "Should have 2 entries");
@@ -186,7 +187,7 @@ fn test_restore_from_rocksdb() {
     let service2 = ManifestCacheService::new(backend, config);
     
     // Before restore, hot cache should be empty
-    let result_before = service2.get_or_load(&namespace1, &table1, "u_123").unwrap();
+    let result_before = service2.get_or_load(&namespace1, &table1, Some(&UserId::from("u_123"))).unwrap();
     assert!(result_before.is_some(), "Entry should be in RocksDB, loaded to hot cache");
 
     // Restore from RocksDB
@@ -197,10 +198,10 @@ fn test_restore_from_rocksdb() {
     assert_eq!(count, 2, "Should have 2 entries after restore");
     
     // Verify entries are accessible from hot cache
-    let entry1 = service2.get_or_load(&namespace1, &table1, "u_123").unwrap();
+    let entry1 = service2.get_or_load(&namespace1, &table1, Some(&UserId::from("u_123"))).unwrap();
     assert!(entry1.is_some(), "Entry 1 should be restored");
     
-    let entry2 = service2.get_or_load(&namespace2, &table2, "shared").unwrap();
+    let entry2 = service2.get_or_load(&namespace2, &table2, None).unwrap();
     assert!(entry2.is_some(), "Entry 2 should be restored");
 }
 
@@ -217,9 +218,11 @@ fn test_show_manifest_returns_all_entries() {
     ];
 
     for (namespace, table, scope) in &entries {
+        let scope_user: Option<UserId> = if *scope == "shared" { None } else { Some(UserId::from(*scope)) };
+        let scope_user_ref: Option<&UserId> = scope_user.as_ref();
         let manifest = create_test_manifest(&format!("{}.{}", namespace.as_str(), table.as_str()), scope);
         service
-            .update_after_flush(namespace, table, scope, &manifest, None, format!("path/{}/{}/{}", namespace.as_str(), table.as_str(), scope))
+            .update_after_flush(namespace, table, scope_user_ref, &manifest, None, format!("path/{}/{}/{}", namespace.as_str(), table.as_str(), scope))
             .unwrap();
     }
 
@@ -247,7 +250,7 @@ fn test_cache_eviction_and_repopulation() {
         .update_after_flush(
             &namespace,
             &table,
-            "u_789",
+            Some(&UserId::from("u_789")),
             &manifest,
             Some("etag-v1".to_string()),
             "s3://bucket/ns1/products/u_789/manifest.json".to_string(),
@@ -255,14 +258,14 @@ fn test_cache_eviction_and_repopulation() {
         .unwrap();
 
     // Verify entry exists
-    let result1 = service.get_or_load(&namespace, &table, "u_789").unwrap();
+    let result1 = service.get_or_load(&namespace, &table, Some(&UserId::from("u_789"))).unwrap();
     assert!(result1.is_some(), "Entry should be cached");
 
     // Evict (invalidate) the entry
-    service.invalidate(&namespace, &table, "u_789").unwrap();
+    service.invalidate(&namespace, &table, Some(&UserId::from("u_789"))).unwrap();
 
     // Verify entry is gone
-    let result2 = service.get_or_load(&namespace, &table, "u_789").unwrap();
+    let result2 = service.get_or_load(&namespace, &table, Some(&UserId::from("u_789"))).unwrap();
     assert!(result2.is_none(), "Entry should be evicted");
 
     // Re-populate cache (simulating reload from S3)
@@ -271,7 +274,7 @@ fn test_cache_eviction_and_repopulation() {
         .update_after_flush(
             &namespace,
             &table,
-            "u_789",
+            Some(&UserId::from("u_789")),
             &manifest_v2,
             Some("etag-v2".to_string()),
             "s3://bucket/ns1/products/u_789/manifest.json".to_string(),
@@ -279,7 +282,7 @@ fn test_cache_eviction_and_repopulation() {
         .unwrap();
 
     // Verify entry is back with new ETag
-    let result3 = service.get_or_load(&namespace, &table, "u_789").unwrap();
+    let result3 = service.get_or_load(&namespace, &table, Some(&UserId::from("u_789"))).unwrap();
     assert!(result3.is_some(), "Entry should be re-populated");
     let entry = result3.unwrap();
     assert_eq!(entry.etag, Some("etag-v2".to_string()), "Should have new ETag");
@@ -296,7 +299,7 @@ fn test_clear_all_entries() {
         let table = TableName::new("test_table");
         let manifest = create_test_manifest(&format!("ns{}.test_table", i), "shared");
         service
-            .update_after_flush(&namespace, &table, "shared", &manifest, None, format!("path{}", i))
+            .update_after_flush(&namespace, &table, None, &manifest, None, format!("path{}", i))
             .unwrap();
     }
 
@@ -318,19 +321,19 @@ fn test_multiple_updates_same_key() {
     // First update
     let manifest1 = create_test_manifest("ns1.products", "u_123");
     service
-        .update_after_flush(&namespace, &table, "u_123", &manifest1, Some("etag-v1".to_string()), "path1".to_string())
+        .update_after_flush(&namespace, &table, Some(&UserId::from("u_123")), &manifest1, Some("etag-v1".to_string()), "path1".to_string())
         .unwrap();
 
-    let entry1 = service.get_or_load(&namespace, &table, "u_123").unwrap().unwrap();
+    let entry1 = service.get_or_load(&namespace, &table, Some(&UserId::from("u_123"))).unwrap().unwrap();
     assert_eq!(entry1.etag, Some("etag-v1".to_string()));
 
     // Second update (same key, new ETag)
     let manifest2 = create_test_manifest("ns1.products", "u_123");
     service
-        .update_after_flush(&namespace, &table, "u_123", &manifest2, Some("etag-v2".to_string()), "path2".to_string())
+        .update_after_flush(&namespace, &table, Some(&UserId::from("u_123")), &manifest2, Some("etag-v2".to_string()), "path2".to_string())
         .unwrap();
 
-    let entry2 = service.get_or_load(&namespace, &table, "u_123").unwrap().unwrap();
+    let entry2 = service.get_or_load(&namespace, &table, Some(&UserId::from("u_123"))).unwrap().unwrap();
     assert_eq!(entry2.etag, Some("etag-v2".to_string()));
     assert_eq!(entry2.source_path, "path2");
     
