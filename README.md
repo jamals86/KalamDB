@@ -395,28 +395,6 @@ High level crate graph today:
 
 ---
 
-### Storage Layout
-
-```
-/var/lib/kalamdb/
-├── rocksdb/                             # RocksDB data directory
-│   ├── system_namespaces/              # System table CFs
-│   ├── system_tables/
-│   ├── user_table:messages/            # User table hot buffers
-│   └── shared_table:analytics/         # Shared table hot buffers
-│
-├── user/{user_id}/                      # Per-user Parquet storage
-│   ├── messages/
-│   │   ├── batch-20251020-001.parquet  # Flushed user data
-│   │   └── batch-20251020-002.parquet
-│   └── conversations/
-│       └── batch-*.parquet
-│
-└── shared/{table_name}/                 # Shared table Parquet storage
-    ├── batch-20251020-001.parquet      # Flushed shared data
-    └── batch-20251020-002.parquet
-```
-
 ## 🚀 Quick Start
 
 ### Installation
