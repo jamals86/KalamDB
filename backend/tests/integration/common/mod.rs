@@ -429,7 +429,7 @@ impl TestServer {
                         }
                     }
                 }
-                ExecutionResult::Subscription { subscription_id, channel } => {
+                ExecutionResult::Subscription { subscription_id, channel, select_query: _ } => {
                     let mut row = std::collections::HashMap::new();
                     row.insert("subscription_id".to_string(), serde_json::Value::String(subscription_id));
                     row.insert("channel".to_string(), serde_json::Value::String(channel));

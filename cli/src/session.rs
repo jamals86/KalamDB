@@ -904,7 +904,11 @@ impl CLISession {
                 }
             }
             Command::ListTables => {
-                self.execute("SELECT table_name, table_type FROM system.tables")
+                // Show namespace along with table name and type
+                self
+                    .execute(
+                        "SELECT namespace_id AS namespace, table_name, table_type FROM system.tables ORDER BY namespace_id, table_name",
+                    )
                     .await?;
             }
             Command::RefreshTables => {
@@ -936,7 +940,10 @@ impl CLISession {
                 }
             },
             Command::Subscribe(query) => {
-                let config = SubscriptionConfig::new(query);
+                // Parse OPTIONS clause from SQL before creating config
+                let (clean_sql, options) = Self::extract_subscribe_options(&query);
+                let mut config = SubscriptionConfig::new(clean_sql);
+                config.options = options;
                 self.run_subscription(config).await?;
             }
             Command::Unsubscribe => {
@@ -965,6 +972,72 @@ impl CLISession {
             }
         }
         Ok(())
+    }
+
+    /// Extract OPTIONS clause from SUBSCRIBE SQL query.
+    ///
+    /// Parses `OPTIONS (last_rows=N)` from the SQL and returns cleaned SQL + options.
+    /// If no OPTIONS found, returns original SQL with default options (last_rows=100).
+    ///
+    /// # Examples
+    /// ```
+    /// // Input:  "SELECT * FROM table OPTIONS (last_rows=20)"
+    /// // Output: ("SELECT * FROM table", Some(SubscriptionOptions { last_rows: Some(20) }))
+    /// ```
+    fn extract_subscribe_options(sql: &str) -> (String, Option<SubscriptionOptions>) {
+        let sql = sql.trim();
+        let sql_upper = sql.to_uppercase();
+
+        // Find OPTIONS keyword (case-insensitive)
+        let options_idx = sql_upper
+            .rfind(" OPTIONS ")
+            .or_else(|| sql_upper.rfind(" OPTIONS("));
+
+        let Some(idx) = options_idx else {
+            // No OPTIONS found - return SQL as-is with default options
+            return (sql.to_string(), Some(SubscriptionOptions { last_rows: Some(100) }));
+        };
+
+        // Split SQL at OPTIONS
+        let clean_sql = sql[..idx].trim().to_string();
+        let options_str = sql[idx + " OPTIONS".len()..].trim(); // " OPTIONS".len() == 8
+
+        // Parse OPTIONS (last_rows=N)
+        let options = Self::parse_subscribe_options(options_str);
+
+        (clean_sql, options)
+    }
+
+    /// Parse OPTIONS clause value: (last_rows=N)
+    fn parse_subscribe_options(options_str: &str) -> Option<SubscriptionOptions> {
+        let options_str = options_str.trim();
+
+        // Expected format: (last_rows=N) or ( last_rows = N )
+        if !options_str.starts_with('(') || !options_str.ends_with(')') {
+            eprintln!("Warning: Invalid OPTIONS format, using defaults");
+            return Some(SubscriptionOptions { last_rows: Some(100) });
+        }
+
+        let inner = options_str[1..options_str.len() - 1].trim();
+
+        // Parse last_rows=N
+        if let Some(equals_idx) = inner.find('=') {
+            let key = inner[..equals_idx].trim();
+            let value = inner[equals_idx + 1..].trim();
+
+            if key.to_lowercase() == "last_rows" {
+                if let Ok(last_rows) = value.parse::<usize>() {
+                    return Some(SubscriptionOptions { last_rows: Some(last_rows) });
+                } else {
+                    eprintln!("Warning: Invalid last_rows value '{}', using default 100", value);
+                }
+            } else {
+                eprintln!("Warning: Unknown option '{}', ignoring", key);
+            }
+        }
+
+        // Default to 100 rows if parsing failed
+        Some(SubscriptionOptions { last_rows: Some(100) })
     }
 
     /// Run a WebSocket subscription

@@ -1,15 +1,21 @@
 # Multi-platform Rust builder for KalamDB
 # Supports cross-compilation to Linux, macOS, and Windows
 
-FROM rust:1.75-bookworm
+FROM rust:1.90-bookworm
 
 # Install cross-compilation dependencies
 RUN apt-get update && apt-get install -y \
+    gcc \
+    g++ \
     gcc-mingw-w64-x86-64 \
     gcc-aarch64-linux-gnu \
     g++-aarch64-linux-gnu \
+    gcc-x86-64-linux-gnu \
+    g++-x86-64-linux-gnu \
     clang \
     lld \
+        llvm-dev \
+        libclang-dev \
     cmake \
     libssl-dev \
     pkg-config \

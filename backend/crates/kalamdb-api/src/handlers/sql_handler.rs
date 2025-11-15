@@ -347,12 +347,16 @@ async fn execute_single_statement(
                             )),
                         ))
                     }
-                    ExecutionResult::Subscription { subscription_id, channel } => {
-                        // Create subscription result as JSON
+                    ExecutionResult::Subscription { subscription_id, channel, select_query } => {
+                        // Create subscription result matching expected format
                         let sub_data = serde_json::json!({
-                            "subscription_id": subscription_id,
-                            "channel": channel,
-                            "status": "active"
+                            "status": "active",
+                            "ws_url": channel,
+                            "subscription": serde_json::json!({
+                                "id": subscription_id,
+                                "sql": select_query // Use the parsed SELECT query, not the original SUBSCRIBE TO
+                            }),
+                            "message": "WebSocket subscription created. Connect to ws_url to receive updates."
                         });
                         Ok(QueryResult::subscription(sub_data))
                     }

@@ -45,7 +45,7 @@ use crate::app_context::AppContext;
 use crate::jobs::executors::{JobContext, JobDecision, JobRegistry};
 use kalamdb_system::JobsTableProvider;
 use kalamdb_commons::system::{Job, JobFilter, JobOptions};
-use kalamdb_commons::{JobId, JobStatus, JobType, NamespaceId, NodeId};
+use kalamdb_commons::{JobId, JobStatus, JobType, NamespaceId, NodeId, TableType};
 use std::sync::Arc;
 use sysinfo::System;
 use tokio::sync::RwLock;
@@ -354,6 +354,7 @@ impl JobsManager {
     ///
     /// Continuously polls for queued jobs and executes them using registered executors.
     /// Implements idempotency checks, retry logic with exponential backoff, and crash recovery.
+    /// Also periodically checks for stream tables requiring TTL eviction.
     ///
     /// # Arguments
     /// * `max_concurrent` - Maximum number of concurrent jobs to run
@@ -373,6 +374,12 @@ impl JobsManager {
         let health_check_interval = Duration::from_secs(30);
         let mut last_health_check = Instant::now();
 
+        // Stream eviction interval (configurable, default 60 seconds)
+        let app_context = AppContext::get();
+        let eviction_interval_secs = app_context.config().stream.eviction_interval_seconds;
+        let stream_eviction_interval = Duration::from_secs(eviction_interval_secs);
+        let mut last_stream_eviction = Instant::now();
+
         loop {
             // Check for shutdown signal
             if *self.shutdown.read().await {
@@ -386,6 +393,14 @@ impl JobsManager {
                     log::warn!("Failed to log health metrics: {}", e);
                 }
                 last_health_check = Instant::now();
+            }
+
+            // Periodic stream eviction job creation
+            if eviction_interval_secs > 0 && last_stream_eviction.elapsed() >= stream_eviction_interval {
+                if let Err(e) = self.check_stream_eviction().await {
+                    log::warn!("Failed to check stream eviction: {}", e);
+                }
+                last_stream_eviction = Instant::now();
             }
 
             // Poll for next job
@@ -683,6 +698,104 @@ impl JobsManager {
                 failed_count,
                 all_jobs.len()
             );
+        }
+
+        Ok(())
+    }
+
+    /// Check for stream tables requiring TTL eviction
+    ///
+    /// Scans system.tables for STREAM tables with ttl_seconds > 0 and creates
+    /// StreamEviction jobs with idempotency keys to prevent duplicates.
+    ///
+    /// Called periodically by run_loop based on config.stream.eviction_interval_seconds
+    async fn check_stream_eviction(&self) -> Result<(), crate::error::KalamDbError> {
+        let app_context = AppContext::get();
+        let tables = app_context.schema_registry().scan_all_table_definitions()
+            .map_err(|e| crate::error::KalamDbError::IoError(format!("Failed to scan table definitions: {}", e)))?;
+        
+        let mut stream_tables_found = 0;
+        let mut jobs_created = 0;
+
+        //Loop over the tables
+        for table in tables.iter() {
+            // Only process STREAM tables
+            if table.table_type != TableType::Stream {
+                continue;
+            }
+            let ttl_seconds = table.table_options.cache_ttl_seconds().unwrap_or(0);
+            if ttl_seconds <= 0 {
+                continue;
+            }
+
+            stream_tables_found += 1;
+
+            let namespace_id = table.namespace_id.clone();
+            let table_name = table.table_name.clone();
+
+            // Create eviction job parameters
+            let params = serde_json::json!({
+                "namespace_id": namespace_id,
+                "table_name": table_name,
+                "table_type": "Stream",
+                "ttl_seconds": ttl_seconds,
+                "batch_size": 10000
+            });
+
+            // Generate idempotency key (hourly granularity)
+            let now = chrono::Utc::now();
+            let date_key = now.format("%Y-%m-%d-%H").to_string();
+            let idempotency_key = format!("SE:{}:{}:{}", namespace_id, table_name, date_key);
+
+            // Create eviction job
+            match self
+                .create_job(
+                    JobType::StreamEviction,
+                    namespace_id.clone(),
+                    params,
+                    Some(idempotency_key),
+                    None,
+                )
+                .await
+            {
+                Ok(job_id) => {
+                    jobs_created += 1;
+                    log::debug!(
+                        "Created stream eviction job {} for {}.{} (ttl: {}s)",
+                        job_id.as_str(),
+                        namespace_id,
+                        table_name,
+                        ttl_seconds
+                    );
+                }
+                Err(e) => {
+                    // Idempotency errors are expected (job already exists for this hour)
+                    if e.to_string().contains("already running") || e.to_string().contains("already exists") {
+                        log::trace!(
+                            "Stream eviction job for {}.{} already exists (idempotent)",
+                            namespace_id,
+                            table_name
+                        );
+                    } else {
+                        log::warn!(
+                            "Failed to create stream eviction job for {}.{}: {}",
+                            namespace_id,
+                            table_name,
+                            e
+                        );
+                    }
+                }
+            }
+        }
+
+        if stream_tables_found > 0 {
+            log::info!(
+                "Stream eviction check: found {} stream tables, created {} new eviction jobs",
+                stream_tables_found,
+                jobs_created
+            );
+        } else {
+            log::debug!("Stream eviction check: no stream tables with TTL found");
         }
 
         Ok(())

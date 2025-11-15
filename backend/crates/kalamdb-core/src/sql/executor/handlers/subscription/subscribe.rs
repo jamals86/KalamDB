@@ -36,7 +36,13 @@ impl TypedStatementHandler<SubscribeStatement> for SubscribeHandler {
         );
         // Channel placeholder (could read from config.toml later)
         let channel = "ws://localhost:8080/ws".to_string();
-        Ok(ExecutionResult::Subscription { subscription_id, channel })
+        
+        // Return subscription metadata with the SELECT query
+        Ok(ExecutionResult::Subscription { 
+            subscription_id, 
+            channel,
+            select_query: statement.select_query,
+        })
     }
 
     async fn check_authorization(

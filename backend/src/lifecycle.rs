@@ -164,11 +164,12 @@ pub async fn bootstrap(config: &ServerConfig) -> Result<(ApplicationComponents, 
     );
 
     // Phase 9: All job scheduling now handled by JobsManager
+    // Stream eviction is now handled by JobsManager.run_loop() - no separate scheduler needed
+    // JobsManager periodically checks for STREAM tables with TTL and creates eviction jobs
     // Crash recovery handled by JobsManager.recover_incomplete_jobs() in run_loop
     // Flush scheduling via FLUSH TABLE/FLUSH ALL TABLES commands
-    // Stream eviction and user cleanup via scheduled job creation (TODO: implement cron scheduler)
     
-    info!("Job management delegated to JobsManager (already running in background)");
+    info!("Job management delegated to JobsManager (already running in background, handles stream eviction)");
 
     // Get users provider for system user initialization
     let phase_start = std::time::Instant::now();
@@ -295,6 +296,12 @@ pub async fn run(
     info!("Server shutdown complete");
     Ok(())
 }
+
+/// Periodic scheduler for stream table TTL eviction
+///
+/// Runs in background, checking all STREAM tables and creating eviction jobs
+/// for tables that have TTL configured.
+/// T125-T127: Create default system user on database initialization
 
 /// T125-T127: Create default system user on database initialization
 ///

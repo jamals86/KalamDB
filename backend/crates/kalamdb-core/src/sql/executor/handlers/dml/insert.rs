@@ -20,6 +20,9 @@ use kalamdb_commons::schemas::TableType;
 use kalamdb_sql::statement_classifier::{SqlStatement, SqlStatementKind};
 use serde_json::Value as JsonValue;
 use crate::providers::base::BaseTableProvider; // bring trait into scope for insert_batch
+use sqlparser::dialect::GenericDialect;
+use sqlparser::parser::Parser;
+use sqlparser::ast::{Statement, Expr, Values as SqlValues};
 
 /// Handler for INSERT statements
 ///
@@ -62,8 +65,9 @@ impl StatementHandler for InsertHandler {
 
         let sql = statement.as_str();
         
-        // Very lightweight INSERT parser (avoids tight coupling to sqlparser internals)
-        let (namespace, table_name, columns, rows_tokens) = self.simple_parse_insert(sql)?;
+        // Parse INSERT using sqlparser-rs (handles multi-line, comments, complex expressions)
+        let (namespace, table_name, columns, rows_data) = self.parse_insert_with_sqlparser(sql)?;
+        
         // Validate table exists via SchemaRegistry fast path (using TableId)
         use kalamdb_commons::models::TableId;
         let table_id = TableId::new(namespace.clone(), table_name.clone());
@@ -97,18 +101,18 @@ impl StatementHandler for InsertHandler {
 
         // Bind parameters and construct JSON rows
         let mut json_rows: Vec<JsonValue> = Vec::new();
-        for row_tokens in rows_tokens {
+        for row_exprs in rows_data {
             let mut obj = serde_json::Map::new();
             if columns.is_empty() {
                 // Positional mapping: column order from schema will be used later; here just store as v1,v2...
                 // For simplicity require explicit column list for MVP
                 return Err(KalamDbError::InvalidOperation("INSERT without explicit column list not supported yet".into()));
             }
-            if row_tokens.len() != columns.len() {
-                return Err(KalamDbError::InvalidOperation(format!("VALUES column count mismatch: expected {} got {}", columns.len(), row_tokens.len())));
+            if row_exprs.len() != columns.len() {
+                return Err(KalamDbError::InvalidOperation(format!("VALUES column count mismatch: expected {} got {}", columns.len(), row_exprs.len())));
             }
-            for (col, token) in columns.iter().zip(row_tokens.iter()) {
-                let value = self.token_to_json(token, &params)?;
+            for (col, expr) in columns.iter().zip(row_exprs.iter()) {
+                let value = self.expr_to_json(expr, &params)?;
                 obj.insert(col.clone(), value);
             }
 
@@ -170,118 +174,109 @@ impl StatementHandler for InsertHandler {
 }
 
 impl InsertHandler {
-    /// Parse table name from sqlparser TableObject
-    #[allow(dead_code)]
-    fn parse_table_object(
-        table_ref: &sqlparser::ast::TableObject,
-    ) -> Result<(NamespaceId, TableName), KalamDbError> {
-        // TableObject should be converted to string and parsed
-        let table_str = table_ref.to_string();
-        let parts: Vec<&str> = table_str.split('.').collect();
-
-        match parts.len() {
-            1 => {
-                // Table without namespace -> use default
-                Ok((
-                    NamespaceId::new("default"),
-                    TableName::new(parts[0].to_string()),
-                ))
-            }
-            2 => {
-                // Namespace.table
-                Ok((
-                    NamespaceId::new(parts[0].to_string()),
-                    TableName::new(parts[1].to_string()),
-                ))
-            }
-            _ => Err(KalamDbError::InvalidOperation(format!(
-                "Invalid table name: {}",
-                table_str
-            ))),
+    /// Parse INSERT statement using sqlparser-rs
+    /// Returns (namespace, table_name, columns, rows_of_exprs)
+    fn parse_insert_with_sqlparser(&self, sql: &str) -> Result<(NamespaceId, TableName, Vec<String>, Vec<Vec<Expr>>), KalamDbError> {
+        let dialect = GenericDialect {};
+        let stmts = Parser::parse_sql(&dialect, sql)
+            .map_err(|e| KalamDbError::InvalidOperation(format!("SQL parse error: {}", e)))?;
+        
+        if stmts.is_empty() {
+            return Err(KalamDbError::InvalidOperation("No SQL statement found".into()));
         }
+        
+        let Statement::Insert(insert) = &stmts[0] else {
+            return Err(KalamDbError::InvalidOperation("Expected INSERT statement".into()));
+        };
+        
+        // Extract table name from TableObject
+        let table_parts: Vec<String> = match &insert.table {
+            sqlparser::ast::TableObject::TableName(obj_name) => {
+                obj_name.0.iter().filter_map(|part| {
+                    match part {
+                        sqlparser::ast::ObjectNamePart::Identifier(ident) => Some(ident.value.clone()),
+                        _ => None,
+                    }
+                }).collect()
+            }
+            _ => return Err(KalamDbError::InvalidOperation("Unsupported table reference type".into())),
+        };
+        
+        let (namespace, table_name) = match table_parts.len() {
+            1 => (NamespaceId::new("default"), TableName::new(table_parts[0].clone())),
+            2 => (NamespaceId::new(table_parts[0].clone()), TableName::new(table_parts[1].clone())),
+            _ => return Err(KalamDbError::InvalidOperation("Invalid table name".into())),
+        };
+        
+        // Extract columns
+        let columns: Vec<String> = insert.columns.iter()
+            .map(|ident| ident.value.clone())
+            .collect();
+        
+        // Extract VALUES rows
+        let Some(ref source) = insert.source else {
+            return Err(KalamDbError::InvalidOperation("INSERT missing VALUES clause".into()));
+        };
+        
+        let rows = match source.body.as_ref() {
+            sqlparser::ast::SetExpr::Values(SqlValues { rows, .. }) => {
+                rows.iter().map(|row| row.clone()).collect()
+            }
+            _ => return Err(KalamDbError::InvalidOperation("Only VALUES clause supported for INSERT".into())),
+        };
+        
+        Ok((namespace, table_name, columns, rows))
     }
-
-    /// Parse table name from sqlparser ObjectName (legacy method, kept for compatibility)
-    #[allow(dead_code)]
-    fn parse_table_name(
-        table_ref: &sqlparser::ast::ObjectName,
-    ) -> Result<(NamespaceId, TableName), KalamDbError> {
-        let parts: Vec<String> = table_ref.0.iter().map(|ident| ident.to_string()).collect();
-
-        match parts.len() {
-            1 => {
-                // Table without namespace -> use default
-                Ok((
-                    NamespaceId::new("default"),
-                    TableName::new(parts[0].clone()),
-                ))
+    
+    /// Convert sqlparser Expr to JSON value, binding parameters as needed
+    fn expr_to_json(&self, expr: &Expr, params: &[ScalarValue]) -> Result<JsonValue, KalamDbError> {
+        match expr {
+            Expr::Value(val_with_span) => {
+                match &val_with_span.value {
+                    sqlparser::ast::Value::Number(n, _) => {
+                        // Try as i64 first, then f64
+                        if let Ok(i) = n.parse::<i64>() {
+                            Ok(JsonValue::Number(i.into()))
+                        } else if let Ok(f) = n.parse::<f64>() {
+                            serde_json::Number::from_f64(f)
+                                .map(JsonValue::Number)
+                                .ok_or_else(|| KalamDbError::InvalidOperation("Invalid float value".into()))
+                        } else {
+                            Err(KalamDbError::InvalidOperation(format!("Invalid number: {}", n)))
+                        }
+                    }
+                    sqlparser::ast::Value::SingleQuotedString(s) |
+                    sqlparser::ast::Value::DoubleQuotedString(s) => {
+                        Ok(JsonValue::String(s.clone()))
+                    }
+                    sqlparser::ast::Value::Boolean(b) => {
+                        Ok(JsonValue::Bool(*b))
+                    }
+                    sqlparser::ast::Value::Null => {
+                        Ok(JsonValue::Null)
+                    }
+                    _ => Ok(JsonValue::String(val_with_span.to_string()))
+                }
             }
-            2 => {
-                // Namespace.table
-                Ok((
-                    NamespaceId::new(parts[0].clone()),
-                    TableName::new(parts[1].clone()),
-                ))
+            Expr::Identifier(ident) if ident.value.starts_with('$') => {
+                // Parameter placeholder: $1, $2, etc.
+                let param_num: usize = ident.value[1..].parse()
+                    .map_err(|_| KalamDbError::InvalidOperation(format!("Invalid placeholder: {}", ident.value)))?;
+                
+                if param_num == 0 || param_num > params.len() {
+                    return Err(KalamDbError::InvalidOperation(format!(
+                        "Parameter ${} out of range (have {} parameters)",
+                        param_num, params.len()
+                    )));
+                }
+                
+                self.scalar_value_to_json(&params[param_num - 1])
             }
-            _ => Err(KalamDbError::InvalidOperation(format!(
-                "Invalid table name: {}",
-                table_ref
-            ))),
-        }
-    }
-
-    /// Convert token string to JSON value, binding parameters as needed
-    fn token_to_json(&self, token: &str, params: &[ScalarValue]) -> Result<JsonValue, KalamDbError> {
-        let t = token.trim();
-        
-        // Check for placeholder ($1, $2, etc.)
-        if t.starts_with('$') {
-            let param_num: usize = t[1..].parse()
-                .map_err(|_| KalamDbError::InvalidOperation(format!("Invalid placeholder: {}", t)))?;
-            
-            if param_num == 0 || param_num > params.len() {
-                return Err(KalamDbError::InvalidOperation(format!(
-                    "Parameter ${} out of range (have {} parameters)",
-                    param_num, params.len()
-                )));
+            _ => {
+                // For other expressions, convert to string (fallback)
+                Ok(JsonValue::String(expr.to_string()))
             }
-            
-            return self.scalar_value_to_json(&params[param_num - 1]);
         }
-        
-        // Check for NULL
-        if t.eq_ignore_ascii_case("NULL") {
-            return Ok(JsonValue::Null);
-        }
-        
-        // Check for boolean
-        if t.eq_ignore_ascii_case("TRUE") {
-            return Ok(JsonValue::Bool(true));
-        }
-        if t.eq_ignore_ascii_case("FALSE") {
-            return Ok(JsonValue::Bool(false));
-        }
-        
-        // Check for quoted string
-        if (t.starts_with('\'') && t.ends_with('\'')) || 
-           (t.starts_with('"') && t.ends_with('"')) ||
-           (t.starts_with('`') && t.ends_with('`')) {
-            let unquoted = &t[1..t.len()-1];
-            return Ok(JsonValue::String(unquoted.to_string()));
-        }
-        
-        // Try parsing as number
-        if let Ok(i) = t.parse::<i64>() {
-            return Ok(JsonValue::Number(i.into()));
-        }
-        if let Ok(f) = t.parse::<f64>() {
-            return serde_json::Number::from_f64(f)
-                .map(JsonValue::Number)
-                .ok_or_else(|| KalamDbError::InvalidOperation("Invalid float value".into()));
-        }
-        
-        // Default to string
-        Ok(JsonValue::String(t.to_string()))
     }
 
     /// Convert DataFusion ScalarValue to JSON
@@ -410,47 +405,6 @@ impl InsertHandler {
     }
 }
 
-impl InsertHandler {
-    fn simple_parse_insert(&self, sql: &str) -> Result<(NamespaceId, TableName, Vec<String>, Vec<Vec<String>>), KalamDbError> {
-        // Expect pattern: INSERT INTO <ns>.<table> (<cols>) VALUES (...),(...)
-        let upper = sql.to_uppercase();
-        let into_pos = upper.find("INSERT INTO").ok_or_else(|| KalamDbError::InvalidOperation("Missing 'INSERT INTO'".into()))?;
-        let values_pos = upper.find(" VALUES ").ok_or_else(|| KalamDbError::InvalidOperation("Missing 'VALUES' clause".into()))?;
-        let head = sql[into_pos + 11..values_pos].trim();
-        // Split head into table and optional column list
-        let (table_part, cols_part) = if let Some(lp) = head.find('(') {
-            let rp = head.rfind(')').ok_or_else(|| KalamDbError::InvalidOperation("Malformed column list".into()))?;
-            (head[..lp].trim(), Some(&head[lp + 1..rp]))
-        } else { (head, None) };
-
-        let (namespace, table_name) = {
-            let parts: Vec<&str> = table_part.split('.').collect();
-            match parts.len() { 
-                1 => (NamespaceId::new("default"), TableName::new(parts[0].trim().to_string())), 
-                2 => (NamespaceId::new(parts[0].trim().to_string()), TableName::new(parts[1].trim().to_string())), 
-                _ => return Err(KalamDbError::InvalidOperation("Invalid table reference".into())) 
-            }
-        };
-
-        let columns: Vec<String> = match cols_part {
-            Some(cols) => cols.split(',').map(|s| s.trim().trim_matches('"').trim_matches('`').to_string()).collect(),
-            None => Vec::new(),
-        };
-
-        // Parse VALUES rows as string tokens (we'll bind params later)
-        let values_str = &sql[values_pos + 8..];
-        let mut rows_tokens: Vec<Vec<String>> = Vec::new();
-        for row_str in values_str.split(')').filter(|s| !s.trim().is_empty()) {
-            let row_str = row_str.trim().trim_start_matches(',').trim().trim_start_matches('(').trim();
-            if row_str.is_empty() { continue; }
-            let row_tokens: Vec<String> = row_str.split(',').map(|s| s.trim().to_string()).collect();
-            rows_tokens.push(row_tokens);
-        }
-
-        Ok((namespace, table_name, columns, rows_tokens))
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -488,10 +442,4 @@ mod tests {
         let result = handler.check_authorization(&stmt, &ctx).await;
         assert!(result.is_ok());
     }
-
-    // Note: TypedStatementHandler pattern doesn't require wrong-type checking -
-    // type safety is enforced at compile time by the type parameter.
-    //
-    // Actual INSERT execution tests require table creation and SQL text parsing,
-    // which are better suited for integration tests in Phase 7.
 }

@@ -818,7 +818,6 @@ impl SchemaRegistry {
         })
     }
 
-
     /// Check if table exists in persistence layer
     ///
     /// Checks cache first for performance, falls back to persistence.

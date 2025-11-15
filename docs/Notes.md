@@ -191,6 +191,15 @@ ServerMessage will use arrow arrays directly as well
     6) We can get tableid and also namespaceId/tablename so whenever we are calling it we can get whatever method we need instead of always combining or separating it to fit
     7) Make sure manifest.json file should be next to the other parquet files in the same folder
 
+
+149)  We currently check if not exists we need to use this boolean for that not the contains one,
+    pub if_not_exists: bool,
+
+150) the expiration or ttl in stream tables is not working at all, i subscribe after 30 seconds and still have the same rows returned to me
+
+151) 
+
+
 Here’s the updated 5-line spec with embedding storage inside Parquet and managed HNSW indexing (with delete handling):
 	1.	Parquet Storage: All embeddings are stored as regular columns in the Parquet file alongside other table columns to keep data unified and versioned per batch.
 	2.	Temp Indexing: On each row insert/update, serialize embeddings into a temporary .hnsw file under /tmp/kalamdb/{namespace}/{table}/{column}-hot_index.hnsw for fast incremental indexing.
@@ -234,5 +243,6 @@ Code Cleanup Operations:
 5) Instead of using "_seq","_deleted" use a SystemColumnNames constant or static function to get the name from one place only
 6) Remove un-needed imports across the codebase
 7) Fix all clippy warnings and errors
+8) Check where we use AppContext::get() multiple times in the same struct and make it a member of the struct instead, or if the code already have AppContext as a member use it directly
 
 

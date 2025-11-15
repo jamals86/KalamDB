@@ -163,6 +163,45 @@ impl BaseTableProvider<StreamTableRowId, StreamTableRow> for StreamTableProvider
     }
     
     fn insert(&self, user_id: &UserId, row_data: JsonValue) -> Result<StreamTableRowId, KalamDbError> {
+        // Lazy TTL cleanup: delete expired rows BEFORE inserting new one
+        // This ensures storage doesn't grow unbounded without background jobs
+        if let Some(ttl_seconds) = self.ttl_seconds {
+            let now_ms = std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map(|d| d.as_millis() as u64)
+                .unwrap_or(0);
+            let ttl_ms = ttl_seconds * 1000;
+            let cutoff_ms = now_ms.saturating_sub(ttl_ms);
+
+            // Scan for expired rows (limit to 100 per insert to avoid blocking)
+            let all_rows = self.store.scan_all()
+                .map_err(|e| KalamDbError::InvalidOperation(format!("Failed to scan for TTL cleanup: {}", e)))?;
+            
+            let mut deleted_count = 0;
+            for (key_bytes, row) in all_rows.iter().take(100) {
+                let row_ts = row._seq.timestamp_millis();
+                if row_ts < cutoff_ms {
+                    // Parse key from bytes
+                    if let Ok(row_key) = StreamTableRowId::from_bytes(key_bytes) {
+                        if let Err(e) = self.store.delete(&row_key) {
+                            log::warn!("Failed to delete expired row during TTL cleanup: {}", e);
+                        } else {
+                            deleted_count += 1;
+                        }
+                    }
+                }
+            }
+
+            if deleted_count > 0 {
+                log::debug!(
+                    "[StreamProvider] TTL cleanup: table={}.{} deleted={} expired rows",
+                    self.table_id.namespace_id().as_str(),
+                    self.table_id.table_name().as_str(),
+                    deleted_count
+                );
+            }
+        }
+
         // Call SystemColumnsService to generate SeqId
         let sys_cols = self.core.system_columns.clone();
         let seq_id = sys_cols.generate_seq_id()?;
