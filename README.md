@@ -1,4 +1,4 @@
-# KalamDB
+# KalamDB (IN DEVELOPMENT)
 
 KalamDB is designed for speed, efficiency, and minimal resource use.
 We aim to store and process data with the smallest possible footprint, reducing CPU, memory, storage, and token costs while improving performance.
@@ -391,30 +391,7 @@ High level crate graph today:
 - Query caching and more indexes
 - Transactions and constraints
 - Admin UI and better cloud/Kubernetes story
-
 ---
-
-### Storage Layout
-
-```
-/var/lib/kalamdb/
-├── rocksdb/                             # RocksDB data directory
-│   ├── system_namespaces/              # System table CFs
-│   ├── system_tables/
-│   ├── user_table:messages/            # User table hot buffers
-│   └── shared_table:analytics/         # Shared table hot buffers
-│
-├── user/{user_id}/                      # Per-user Parquet storage
-│   ├── messages/
-│   │   ├── batch-001.parquet  # Flushed user data
-│   │   └── batch-002.parquet
-│   └── conversations/
-│       └── batch-*.parquet
-│
-└── shared/{table_name}/                 # Shared table Parquet storage
-    ├── batch-001.parquet      # Flushed shared data
-    └── batch-002.parquet
-```
 
 ## 🚀 Quick Start
 
