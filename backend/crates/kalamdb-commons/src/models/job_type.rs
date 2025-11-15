@@ -1,4 +1,5 @@
 use std::fmt;
+use std::str::FromStr;
 
 #[cfg(feature = "serde")]
 use serde::{Deserialize, Serialize};
@@ -60,7 +61,7 @@ impl JobType {
         }
     }
 
-    pub fn from_str(s: &str) -> Option<Self> {
+    pub fn from_str_opt(s: &str) -> Option<Self> {
         match s.to_lowercase().as_str() {
             "flush" => Some(JobType::Flush),
             "compact" => Some(JobType::Compact),
@@ -73,6 +74,13 @@ impl JobType {
             "unknown" => Some(JobType::Unknown),
             _ => None,
         }
+    }
+}
+
+impl FromStr for JobType {
+    type Err = String;
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        JobType::from_str_opt(s).ok_or_else(|| format!("Invalid JobType: {}", s))
     }
 }
 

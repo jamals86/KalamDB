@@ -1,4 +1,5 @@
 use std::fmt;
+use std::str::FromStr;
 
 #[cfg(feature = "serde")]
 use serde::{Deserialize, Serialize};
@@ -20,12 +21,19 @@ impl StorageMode {
         }
     }
 
-    pub fn from_str(s: &str) -> Option<Self> {
+    pub fn from_str_opt(s: &str) -> Option<Self> {
         match s.to_lowercase().as_str() {
             "table" => Some(StorageMode::Table),
             "region" => Some(StorageMode::Region),
             _ => None,
         }
+    }
+}
+
+impl FromStr for StorageMode {
+    type Err = String;
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        StorageMode::from_str_opt(s).ok_or_else(|| format!("Invalid StorageMode: {}", s))
     }
 }
 

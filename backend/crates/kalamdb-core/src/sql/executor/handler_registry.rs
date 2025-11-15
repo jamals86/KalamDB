@@ -106,7 +106,7 @@ impl HandlerRegistry {
     /// This is called once during SqlExecutor initialization.
     pub fn new(app_context: Arc<AppContext>) -> Self {
         use kalamdb_sql::statement_classifier::SqlStatementKind;
-    use kalamdb_commons::models::{NamespaceId, StorageId};
+    use kalamdb_commons::models::{NamespaceId, StorageId, TableId};
     use kalamdb_commons::TableType; // Role not needed here
         
         let registry = Self {
@@ -325,10 +325,10 @@ impl HandlerRegistry {
         );
 
         // For discriminant extraction, we only need a placeholder instance. Use LiveId::from_string.
-        let placeholder_live = kalamdb_commons::models::LiveId::from_string("user123-conn_abc-table_q1-q1").unwrap_or_else(|_| {
+        let placeholder_live = kalamdb_commons::models::LiveId::from_string("user123-conn_abc-default:table_q1-q1").unwrap_or_else(|_| {
             kalamdb_commons::models::LiveId::new(
                 kalamdb_commons::models::ConnectionId::new("user123".to_string(), "conn_abc".to_string()),
-                "table_q1".to_string(),
+                kalamdb_commons::models::TableId::from_strings("default", "table_q1"),
                 "q1".to_string(),
             )
         });

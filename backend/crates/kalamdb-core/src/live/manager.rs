@@ -137,11 +137,10 @@ impl LiveQueryManager {
             ));
         }
 
-        let canonical_table = format!("{}.{}", namespace, table);
         let mut where_clause = self.extract_where_clause(&query);
 
         // Generate LiveId
-        let live_id = LiveId::new(connection_id.clone(), canonical_table.clone(), query_id);
+        let live_id = LiveId::new(connection_id.clone(), table_id.clone(), query_id);
 
         // Auto-inject user_id filter for user tables (row-level security)
         // Skip injection for admin/system users so they can observe all rows.
@@ -178,8 +177,8 @@ impl LiveQueryManager {
         let live_query_record = SystemLiveQuery {
             live_id: LiveQueryId::new(live_id.to_string()),
             connection_id: connection_id.to_string(),
-            namespace_id: NamespaceId::new(namespace.to_string()),
-            table_name: TableName::new(canonical_table.clone()),
+            namespace_id: table_id.namespace_id().clone(),
+            table_name: table_id.table_name().clone(),
             query_id: live_id.query_id().to_string(),
             user_id: kalamdb_commons::UserId::new(connection_id.user_id().to_string()),
             query: query.clone(),
@@ -269,8 +268,6 @@ impl LiveQueryManager {
                     ))
                 })?;
 
-            let canonical_table = format!("{}.{}", namespace, table);
-
             let live_id_string = live_id.to_string();
             let filter_predicate = {
                 let cache = self.filter_cache.read().await;
@@ -281,7 +278,7 @@ impl LiveQueryManager {
                 self.initial_data_fetcher
                     .fetch_initial_data(
                         &live_id,
-                        &TableName::new(canonical_table.clone()),
+                        &table_id,
                         table_def.table_type,
                         fetch_options,
                         filter_predicate,
@@ -762,7 +759,7 @@ impl LiveQueryManager {
 #[derive(Debug, Clone)]
 pub struct ChangeNotification {
     pub change_type: ChangeType,
-    pub table_name: String,
+    pub table_id: kalamdb_commons::models::TableId,
     pub row_data: serde_json::Value,
     pub old_data: Option<serde_json::Value>, // For UPDATE notifications
     pub row_id: Option<String>,              // For DELETE notifications (hard delete)
@@ -770,10 +767,10 @@ pub struct ChangeNotification {
 
 impl ChangeNotification {
     /// Create an INSERT notification
-    pub fn insert(table_name: String, row_data: serde_json::Value) -> Self {
+    pub fn insert(table_id: kalamdb_commons::models::TableId, row_data: serde_json::Value) -> Self {
         Self {
             change_type: ChangeType::Insert,
-            table_name,
+            table_id,
             row_data,
             old_data: None,
             row_id: None,
@@ -782,13 +779,13 @@ impl ChangeNotification {
 
     /// Create an UPDATE notification with old and new values
     pub fn update(
-        table_name: String,
+        table_id: kalamdb_commons::models::TableId,
         old_data: serde_json::Value,
         new_data: serde_json::Value,
     ) -> Self {
         Self {
             change_type: ChangeType::Update,
-            table_name,
+            table_id,
             row_data: new_data,
             old_data: Some(old_data),
             row_id: None,
@@ -796,10 +793,10 @@ impl ChangeNotification {
     }
 
     /// Create a DELETE notification (soft delete with data)
-    pub fn delete_soft(table_name: String, row_data: serde_json::Value) -> Self {
+    pub fn delete_soft(table_id: kalamdb_commons::models::TableId, row_data: serde_json::Value) -> Self {
         Self {
             change_type: ChangeType::Delete,
-            table_name,
+            table_id,
             row_data,
             old_data: None,
             row_id: None,
@@ -807,10 +804,10 @@ impl ChangeNotification {
     }
 
     /// Create a DELETE notification (hard delete, row_id only)
-    pub fn delete_hard(table_name: String, row_id: String) -> Self {
+    pub fn delete_hard(table_id: kalamdb_commons::models::TableId, row_id: String) -> Self {
         Self {
             change_type: ChangeType::Delete,
-            table_name,
+            table_id,
             row_data: serde_json::Value::Null,
             old_data: None,
             row_id: Some(row_id),
@@ -818,10 +815,10 @@ impl ChangeNotification {
     }
 
     /// Create a FLUSH notification (Parquet flush completion)
-    pub fn flush(table_name: String, row_count: usize, parquet_files: Vec<String>) -> Self {
+    pub fn flush(table_id: kalamdb_commons::models::TableId, row_count: usize, parquet_files: Vec<String>) -> Self {
         Self {
             change_type: ChangeType::Flush,
-            table_name,
+            table_id,
             row_data: serde_json::json!({
                 "row_count": row_count,
                 "parquet_files": parquet_files,
@@ -1027,7 +1024,7 @@ mod tests {
             .unwrap();
 
         assert_eq!(live_id.connection_id(), &connection_id);
-        assert_eq!(live_id.table_name(), "user1.messages");
+        assert_eq!(live_id.table_id().to_string(), "user1:messages");
         assert_eq!(live_id.query_id(), "q1");
 
         let stats = manager.get_stats().await;
@@ -1089,12 +1086,12 @@ mod tests {
         let table_id1 = TableId::from_strings("user1", "messages");
         let messages_subs = registry.get_subscriptions_for_table(&user_id, &table_id1);
         assert_eq!(messages_subs.len(), 1);
-        assert_eq!(messages_subs[0].live_id.table_name(), "user1.messages");
+        assert_eq!(messages_subs[0].live_id.table_id().table_name().as_str(), "messages");
 
         let table_id2 = TableId::from_strings("user1", "notifications");
         let notif_subs = registry.get_subscriptions_for_table(&user_id, &table_id2);
         assert_eq!(notif_subs.len(), 1);
-        assert_eq!(notif_subs[0].live_id.table_name(), "user1.notifications");
+        assert_eq!(notif_subs[0].live_id.table_id().table_name().as_str(), "notifications");
     }
 
     #[tokio::test]
@@ -1330,7 +1327,7 @@ mod tests {
 
         // Matching notification
         let matching_change = ChangeNotification::insert(
-            "user1.messages".to_string(),
+            TableId::from_strings("user1", "messages"),
             serde_json::json!({"user_id": "user1", "text": "Hello"}),
         );
 
@@ -1343,7 +1340,7 @@ mod tests {
 
         // Non-matching notification
         let non_matching_change = ChangeNotification::insert(
-            "user1.messages".to_string(),
+            TableId::from_strings("user1", "messages"),
             serde_json::json!({"user_id": "user2", "text": "Hello"}),
         );
 

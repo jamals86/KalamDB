@@ -27,9 +27,11 @@ use crate::storage_trait::{Operation, Partition, StorageBackend};
 /// backend.put(&partition, b"key", b"value").unwrap();
 /// assert_eq!(backend.get(&partition, b"key").unwrap(), Some(b"value".to_vec()));
 /// ```
+type PartitionMap = HashMap<Vec<u8>, Vec<u8>>;
+
 pub struct InMemoryBackend {
     // Partition -> (Key -> Value)
-    data: RwLock<HashMap<String, HashMap<Vec<u8>, Vec<u8>>>>,
+    data: RwLock<HashMap<String, PartitionMap>>,
 }
 
 impl InMemoryBackend {
@@ -103,7 +105,7 @@ impl StorageBackend for InMemoryBackend {
         partition: &Partition,
         prefix: Option<&[u8]>,
         limit: Option<usize>,
-    ) -> crate::storage_trait::Result<Box<dyn Iterator<Item = (Vec<u8>, Vec<u8>)> + '_>> {
+    ) -> crate::storage_trait::Result<kalamdb_commons::storage::KvIterator<'_>> {
         let data = self.data.read().unwrap();
         let items: Vec<(Vec<u8>, Vec<u8>)> = data
             .get(partition.name())

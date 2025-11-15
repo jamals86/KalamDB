@@ -95,7 +95,7 @@ impl JobExecutor for FlushExecutor {
         let table_name_str = params_obj["table_name"].as_str().unwrap();
         // Normalize table_type (handle lowercase stored values like "user")
         let table_type_raw = params_obj["table_type"].as_str().unwrap();
-        let table_type = match kalamdb_commons::schemas::TableType::from_str(table_type_raw) {
+        let table_type = match kalamdb_commons::schemas::TableType::from_str_opt(table_type_raw) {
             Some(tt) => tt, // use enum for matching
             None => {
                 return Err(KalamDbError::InvalidOperation(format!(
@@ -184,15 +184,18 @@ impl JobExecutor for FlushExecutor {
             kalamdb_commons::schemas::TableType::Shared => {
                 ctx.log_info("Executing SharedTableFlushJob");
 
-                // Use a per-table SharedTableStore for the specific <namespace, table>
-                // to ensure we read the correct partition ("shared_<ns>:<table>").
-                let store = Arc::new(
-                    kalamdb_tables::new_shared_table_store(
-                        app_ctx.storage_backend(),
-                        &namespace_id,
-                        &table_name,
-                    ),
-                );
+                // Get the SharedTableProvider from the schema registry to reuse the cached store
+                let provider_arc = schema_registry.get_provider(&table_id)
+                    .ok_or_else(|| KalamDbError::NotFound(format!(
+                        "Shared table provider not registered for {}.{} (id={})",
+                        namespace_id_str, table_name_str, table_id
+                    )))?;
+                
+                // Downcast to SharedTableProvider to access store
+                let provider = provider_arc.as_any().downcast_ref::<crate::providers::SharedTableProvider>()
+                    .ok_or_else(|| KalamDbError::InvalidOperation("Cached provider type mismatch for shared table".into()))?;
+                
+                let store = provider.store.clone();
 
                 let flush_job = SharedTableFlushJob::new(
                     table_id.clone(),

@@ -255,7 +255,7 @@ impl BaseTableProvider<StreamTableRowId, StreamTableRow> for StreamTableProvider
             obj.insert("user_id".to_string(), json!(user_id.as_str()));
             let row_json = JsonValue::Object(obj);
 
-            let notification = ChangeNotification::insert(table_name.clone(), row_json);
+            let notification = ChangeNotification::insert(table_id.clone(), row_json);
             log::debug!(
                 "[StreamProvider] Notifying change: table={} type=INSERT user={} seq={}",
                 table_name,
@@ -301,7 +301,7 @@ impl BaseTableProvider<StreamTableRowId, StreamTableRow> for StreamTableProvider
             );
 
             let row_id_str = format!("{}:{}", key.user_id().as_str(), key.seq().as_i64());
-            let notification = ChangeNotification::delete_hard(table_name, row_id_str);
+            let notification = ChangeNotification::delete_hard(table_id.clone(), row_id_str);
             manager.notify_table_change_async(user_id.clone(), table_id, notification);
         }
 

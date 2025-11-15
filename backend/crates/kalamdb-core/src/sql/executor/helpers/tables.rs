@@ -6,6 +6,7 @@
 use crate::error::KalamDbError;
 use arrow::datatypes::{DataType, Field, Schema, TimeUnit};
 use kalamdb_commons::schemas::{ColumnDefault, TableType};
+use kalamdb_commons::constants::SystemColumnNames;
 use kalamdb_commons::StorageId;
 use kalamdb_sql::ddl::CreateTableStatement;
 use std::sync::Arc;
@@ -90,8 +91,8 @@ pub fn inject_system_columns(
     }
 
     // Check if system columns already exist
-    let has_updated = schema.field_with_name("_updated").is_ok();
-    let has_deleted = schema.field_with_name("_deleted").is_ok();
+    let has_updated = schema.field_with_name(SystemColumnNames::UPDATED).is_ok();
+    let has_deleted = schema.field_with_name(SystemColumnNames::DELETED).is_ok();
 
     if has_updated && has_deleted {
         return Ok(schema);
@@ -102,14 +103,14 @@ pub fn inject_system_columns(
 
     if !has_updated {
         fields.push(Arc::new(Field::new(
-            "_updated",
+            SystemColumnNames::UPDATED,
             DataType::Timestamp(TimeUnit::Millisecond, None),
             false, // Not nullable
         )));
     }
 
     if !has_deleted {
-        fields.push(Arc::new(Field::new("_deleted", DataType::Boolean, false)));
+    fields.push(Arc::new(Field::new(SystemColumnNames::DELETED, DataType::Boolean, false)));
     }
 
     Ok(Arc::new(Schema::new(fields)))
@@ -328,8 +329,8 @@ mod tests {
 
         let result = inject_system_columns(schema, TableType::User).unwrap();
         assert_eq!(result.fields().len(), 3);
-        assert_eq!(result.field(1).name(), "_updated");
-        assert_eq!(result.field(2).name(), "_deleted");
+        assert_eq!(result.field(1).name(), SystemColumnNames::UPDATED);
+        assert_eq!(result.field(2).name(), SystemColumnNames::DELETED);
     }
 
     #[test]

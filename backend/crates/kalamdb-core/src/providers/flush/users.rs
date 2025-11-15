@@ -456,8 +456,8 @@ impl TableFlush for UserTableFlushJob {
         // Send flush notification if LiveQueryManager configured
         if let Some(manager) = &self.live_query_manager {
             let table_name = format!("{}.{}", self.namespace_id.as_str(), self.table_name.as_str());
-            let notification = ChangeNotification::flush(table_name.clone(), total_rows_flushed, parquet_files.clone());
             let table_id = TableId::new(self.namespace_id.clone(), self.table_name.clone());
+            let notification = ChangeNotification::flush(table_id.clone(), total_rows_flushed, parquet_files.clone());
             let system_user = UserId::system();
             manager.notify_table_change_async(system_user, table_id, notification);
         }

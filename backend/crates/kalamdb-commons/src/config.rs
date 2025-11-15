@@ -970,8 +970,12 @@ impl ServerConfig {
         Ok(())
     }
 
-    /// Get default configuration (useful for testing)
-    pub fn default() -> Self {
+}
+/// Get default configuration (useful for testing)
+///
+/// Note: Prefer `Default::default()` constructor pattern.
+impl Default for ServerConfig {
+    fn default() -> Self {
         ServerConfig {
             server: ServerSettings {
                 host: "127.0.0.1".to_string(),

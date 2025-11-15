@@ -103,6 +103,9 @@ impl SystemColumnNames {
 
     /// Soft delete flag (true = deleted)
     pub const DELETED: &'static str = "_deleted";
+
+    /// Sequence column used for MVCC versioning
+    pub const SEQ: &'static str = "_seq";
 }
 
 /// Global instance of system column names.
@@ -139,7 +142,7 @@ pub const AUTH: AuthConstants = AuthConstants;
 /// - v1 (2025-01-15): Initial schema with 7 system tables:
 ///   - system.users, system.namespaces, system.tables, system.storages
 ///   - system.live_queries, system.jobs, system.audit_logs
-
+///
 /// Current system schema version.
 pub const SYSTEM_SCHEMA_VERSION: u32 = 1;
 

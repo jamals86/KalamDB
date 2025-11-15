@@ -1,4 +1,5 @@
 use std::fmt;
+use std::str::FromStr;
 
 #[cfg(feature = "serde")]
 use serde::{Deserialize, Serialize};
@@ -30,7 +31,7 @@ impl JobStatus {
         }
     }
 
-    pub fn from_str(s: &str) -> Option<Self> {
+    pub fn from_str_opt(s: &str) -> Option<Self> {
         match s.to_lowercase().as_str() {
             "new" => Some(JobStatus::New),
             "queued" => Some(JobStatus::Queued),
@@ -41,6 +42,13 @@ impl JobStatus {
             "cancelled" => Some(JobStatus::Cancelled),
             _ => None,
         }
+    }
+}
+
+impl FromStr for JobStatus {
+    type Err = String;
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        JobStatus::from_str_opt(s).ok_or_else(|| format!("Invalid JobStatus: {}", s))
     }
 }
 

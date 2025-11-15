@@ -1,4 +1,5 @@
 use std::fmt;
+use std::str::FromStr;
 
 #[cfg(feature = "serde")]
 use serde::{Deserialize, Serialize};
@@ -22,13 +23,20 @@ impl AuthType {
         }
     }
 
-    pub fn from_str(s: &str) -> Option<Self> {
+    pub fn from_str_opt(s: &str) -> Option<Self> {
         match s.to_lowercase().as_str() {
             "password" => Some(AuthType::Password),
             "oauth" => Some(AuthType::OAuth),
             "internal" => Some(AuthType::Internal),
             _ => None,
         }
+    }
+}
+
+impl FromStr for AuthType {
+    type Err = String;
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        AuthType::from_str_opt(s).ok_or_else(|| format!("Invalid AuthType: {}", s))
     }
 }
 

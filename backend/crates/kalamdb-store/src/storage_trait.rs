@@ -230,7 +230,7 @@ pub trait StorageBackend: Send + Sync {
         partition: &Partition,
         prefix: Option<&[u8]>,
         limit: Option<usize>,
-    ) -> Result<Box<dyn Iterator<Item = (Vec<u8>, Vec<u8>)> + '_>>;
+    ) -> Result<kalamdb_commons::storage::KvIterator<'_>>;
 
     /// Checks if a partition exists.
     fn partition_exists(&self, partition: &Partition) -> bool;

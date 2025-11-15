@@ -56,8 +56,8 @@ pub struct SharedTableProvider {
     /// Logical table type
     table_type: TableType,
     
-    /// SharedTableStore for DML operations
-    store: Arc<SharedTableStore>,
+    /// SharedTableStore for DML operations (public for flush jobs)
+    pub(crate) store: Arc<SharedTableStore>,
     
     /// Cached primary key field name
     primary_key_field_name: String,

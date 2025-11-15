@@ -92,6 +92,35 @@ impl UserTableProvider {
         &self.primary_key_field_name
     }
     
+    /// Return a snapshot of all rows as JSON objects (no RLS filtering)
+    ///
+    /// Used by live initial snapshot where we need table-wide data. RLS is
+    /// enforced at the WebSocket layer so this method intentionally returns
+    /// all rows for the table.
+    ///
+    /// Returns rows with user_id field injected, matching notification format.
+    pub fn snapshot_all_rows_json(&self) -> Result<Vec<JsonValue>, KalamDbError> {
+        use kalamdb_store::entity_store::EntityStore;
+        let rows = self
+            .store
+            .scan_all()
+            .map_err(|e| KalamDbError::InvalidOperation(format!("Failed to scan user table store: {}", e)))?;
+        let count = rows.len();
+        log::debug!(
+            "[UserTableProvider] snapshot_all_rows_json: table={}.{} rows={}",
+            self.table_id.namespace_id().as_str(),
+            self.table_id.table_name().as_str(),
+            count
+        );
+        
+        // Build flat row JSON: fields + user_id (matching notification format)
+        Ok(rows.into_iter().map(|(_k, row)| {
+            let mut obj = row.fields.as_object().cloned().unwrap_or_default();
+            obj.insert("user_id".to_string(), serde_json::json!(row.user_id.as_str()));
+            serde_json::Value::Object(obj)
+        }).collect())
+    }
+    
     /// Check if a primary key value already exists (non-deleted version)
     ///
     /// **Performance**: O(log n) lookup by PK value using version resolution.
@@ -547,7 +576,7 @@ impl BaseTableProvider<UserTableRowId, UserTableRow> for UserTableProvider {
             obj.insert("user_id".to_string(), json!(user_id.as_str()));
             let row_json = JsonValue::Object(obj);
 
-            let notification = ChangeNotification::insert(table_name, row_json);
+            let notification = ChangeNotification::insert(table_id.clone(), row_json);
             manager.notify_table_change_async(user_id.clone(), table_id, notification);
         }
         
@@ -640,7 +669,7 @@ impl BaseTableProvider<UserTableRowId, UserTableRow> for UserTableProvider {
             new_obj.insert("user_id".to_string(), json!(user_id.as_str()));
             let new_json = JsonValue::Object(new_obj);
 
-            let notification = ChangeNotification::update(table_name, old_json, new_json);
+            let notification = ChangeNotification::update(table_id.clone(), old_json, new_json);
             manager.notify_table_change_async(user_id.clone(), table_id, notification);
         }
         Ok(row_key)
@@ -700,7 +729,7 @@ impl BaseTableProvider<UserTableRowId, UserTableRow> for UserTableProvider {
             obj.insert("user_id".to_string(), json!(user_id.as_str()));
             let row_json = JsonValue::Object(obj);
 
-            let notification = ChangeNotification::delete_soft(table_name, row_json);
+            let notification = ChangeNotification::delete_soft(table_id.clone(), row_json);
             manager.notify_table_change_async(user_id.clone(), table_id, notification);
         }
         Ok(())

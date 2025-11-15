@@ -3,6 +3,7 @@
 //! Migrated from kalamdb-core/src/storage/parquet_writer.rs
 
 use crate::error::{FilestoreError, Result};
+use kalamdb_commons::constants::SystemColumnNames;
 use arrow::datatypes::SchemaRef;
 use arrow::record_batch::RecordBatch;
 use datafusion::parquet::arrow::ArrowWriter;
@@ -50,13 +51,13 @@ impl ParquetWriter {
             .set_max_row_group_size(100_000);
 
         // Find _updated column and enable bloom filter
-        if schema.fields().iter().any(|f| f.name() == "_updated") {
+        if schema.fields().iter().any(|f| f.name() == SystemColumnNames::UPDATED) {
             // Enable bloom filter on _updated column with 0.01 FPP (1% false positive rate)
             // ColumnPath::from() accepts a str and converts it to the proper type
             props_builder = props_builder
-                .set_column_bloom_filter_enabled("_updated".into(), true)
-                .set_column_bloom_filter_fpp("_updated".into(), 0.01)
-                .set_column_bloom_filter_ndv("_updated".into(), 100_000); // Estimated distinct values
+                .set_column_bloom_filter_enabled(SystemColumnNames::UPDATED.into(), true)
+                .set_column_bloom_filter_fpp(SystemColumnNames::UPDATED.into(), 0.01)
+                .set_column_bloom_filter_ndv(SystemColumnNames::UPDATED.into(), 100_000); // Estimated distinct values
         }
 
         let props = props_builder.build();
@@ -195,15 +196,12 @@ mod tests {
         let updated_col_idx = row_group
             .columns()
             .iter()
-            .position(|col| col.column_path().string() == "_updated")
-            .expect("_updated column should exist");
+            .position(|col| col.column_path().string() == SystemColumnNames::UPDATED)
+                .expect("_updated column should exist");
 
         // Check that _updated column has bloom filter
         let updated_col_metadata = row_group.column(updated_col_idx);
-        assert!(
-            updated_col_metadata.bloom_filter_offset().is_some(),
-            "_updated column should have bloom filter"
-        );
+                assert!(updated_col_metadata.bloom_filter_offset().is_some(), "_updated column should have bloom filter");
 
         let _ = fs::remove_dir_all(&temp_dir);
     }

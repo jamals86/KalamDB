@@ -1,4 +1,5 @@
 use std::fmt;
+use std::str::FromStr;
 
 #[cfg(feature = "serde")]
 use serde::{Deserialize, Serialize};
@@ -22,13 +23,20 @@ impl TableAccess {
         }
     }
 
-    pub fn from_str(s: &str) -> Option<Self> {
+    pub fn from_str_opt(s: &str) -> Option<Self> {
         match s.to_lowercase().as_str() {
             "public" => Some(TableAccess::Public),
             "private" => Some(TableAccess::Private),
             "restricted" => Some(TableAccess::Restricted),
             _ => None,
         }
+    }
+}
+
+impl FromStr for TableAccess {
+    type Err = String;
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        TableAccess::from_str_opt(s).ok_or_else(|| format!("Invalid TableAccess: {}", s))
     }
 }
 
