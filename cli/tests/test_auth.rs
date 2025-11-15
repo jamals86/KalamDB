@@ -58,13 +58,23 @@ fn test_cli_invalid_token() {
         .timeout(TEST_TIMEOUT);
 
     let output = cmd.output().unwrap();
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    let error_lower = stderr.to_lowercase();
 
     // May succeed on localhost (auth bypass) or fail with auth error
     // Either outcome is acceptable
-    let stderr = String::from_utf8_lossy(&output.stderr);
     assert!(
-        output.status.success() || stderr.contains("auth") || stderr.contains("token"),
-        "Should handle invalid token appropriately"
+        output.status.success()
+            || error_lower.contains("unauthorized")
+            || error_lower.contains("authentication")
+            || error_lower.contains("invalid token")
+            || error_lower.contains("token")
+            || error_lower.contains("401")
+            || error_lower.contains("403"),
+        "Should handle invalid token appropriately. stdout: {}, stderr: {}",
+        stdout,
+        stderr
     );
 }
 

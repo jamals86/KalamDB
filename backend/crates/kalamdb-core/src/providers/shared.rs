@@ -101,11 +101,26 @@ impl SharedTableProvider {
         use datafusion::logical_expr::{Expr, Operator};
         use kalamdb_commons::types::ManifestFile;
 
-        // Phase 4 (T082): Integrate with ManifestCacheService
-        // Try to load manifest from cache (hot cache → RocksDB → None)
         let namespace = self.table_id.namespace_id();
         let table = self.table_id.table_name();
         
+        // OPTIMIZATION: Check if directory exists BEFORE querying manifest cache
+        // For new tables with no flushed data, this avoids unnecessary cache lookups
+        let storage_path = self.core.app_context.schema_registry()
+            .get_storage_path(&*self.table_id, None, None)?;
+        
+        let storage_dir = PathBuf::from(&storage_path);
+        
+        // Early exit: If directory doesn't exist, return empty batch immediately
+        if !storage_dir.exists() {
+            log::trace!("No Parquet directory exists for shared table {}.{} - returning empty batch", 
+                       namespace.as_str(), table.as_str());
+            let schema = self.schema_ref();
+            return Ok(RecordBatch::new_empty(schema));
+        }
+        
+        // Phase 4 (T082): Integrate with ManifestCacheService
+        // Try to load manifest from cache (hot cache → RocksDB → None)
         let manifest_cache_service = self.core.app_context.manifest_cache_service();
         let cache_result = manifest_cache_service.get_or_load(namespace, table, None);
         
@@ -262,18 +277,7 @@ impl SharedTableProvider {
             (None, None)
         }
         
-        // Resolve storage path for shared table (no user_id)
-        let storage_path = self.core.app_context.schema_registry()
-            .get_storage_path(&*self.table_id, None, None)?;
-        
-        let storage_dir = PathBuf::from(&storage_path);
-        
-        // If directory doesn't exist, return empty batch
-        if !storage_dir.exists() {
-            log::debug!("No Parquet directory found for shared table: {}", storage_path);
-            let schema = self.schema_ref();
-            return Ok(RecordBatch::new_empty(schema));
-        }
+        // storage_path and storage_dir already resolved earlier (before manifest cache check)
         
         // Prefer manifest for file enumeration + pruning; fallback to directory scan
         let mut parquet_files: Vec<PathBuf> = Vec::new();
