@@ -83,7 +83,7 @@
 use super::DdlResult;
 use kalamdb_commons::{NamespaceId, TableName};
 use sqlparser::ast::{ObjectName, ObjectNamePart, SetExpr, Statement, TableFactor};
-use sqlparser::dialect::GenericDialect;
+use sqlparser::dialect::{GenericDialect, PostgreSqlDialect};
 use sqlparser::parser::Parser;
 
 /// SUBSCRIBE TO statement for live query subscriptions.
@@ -159,10 +159,17 @@ impl SubscribeStatement {
             Self::replace_subscribe_with_select(&sql_without_options)
         };
 
+        // Normalize certain function call syntaxes that sqlparser sees as keywords
+        // e.g., PostgreSQL treats CURRENT_USER as a special keyword (no parentheses)
+        let current_user_re = regex::Regex::new(r"(?i)CURRENT_USER\s*\(\s*\)").unwrap();
+        let select_sql = current_user_re.replace_all(&select_sql, "CURRENT_USER").into_owned();
+
         // Parse the SELECT statement using sqlparser
-        let dialect = GenericDialect {};
-        let mut ast = Parser::parse_sql(&dialect, &select_sql)
-            .map_err(|e| format!("Failed to parse SUBSCRIBE TO as SELECT: {}", e))?;
+        let dialect = PostgreSqlDialect {};
+        let mut ast = match Parser::parse_sql(&dialect, &select_sql) {
+            Ok(ast) => ast,
+            Err(e) => return Err(format!("Failed to parse SUBSCRIBE TO as SELECT: {}", e)),
+        };
 
         if ast.len() != 1 {
             return Err("Expected exactly one SUBSCRIBE TO statement".to_string());

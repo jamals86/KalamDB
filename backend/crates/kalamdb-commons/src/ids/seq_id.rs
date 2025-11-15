@@ -47,6 +47,17 @@ impl SeqId {
         (id >> 22) + Self::EPOCH
     }
 
+    /// Extract timestamp in whole seconds since Unix epoch
+    pub fn timestamp_seconds(&self) -> u64 {
+        self.timestamp_millis() / 1000
+    }
+
+    /// Compute how many whole seconds old this SeqId is relative to `now_millis`
+    pub fn age_seconds(&self, now_millis: u64) -> u64 {
+        let ts = self.timestamp_millis();
+        now_millis.saturating_sub(ts) / 1000
+    }
+
     /// Extract timestamp as SystemTime
     pub fn timestamp(&self) -> SystemTime {
         let millis = self.timestamp_millis();
@@ -137,6 +148,25 @@ mod tests {
         assert_eq!(seq_id.timestamp_millis(), SeqId::EPOCH + timestamp_offset);
         assert_eq!(seq_id.worker_id(), 5);
         assert_eq!(seq_id.sequence(), 42);
+    }
+
+    #[test]
+    fn test_seq_id_timestamp_seconds() {
+        let timestamp_offset = 5000u64; // 5 seconds after epoch
+        let id = (timestamp_offset << 22) as i64;
+        let seq_id = SeqId::new(id);
+
+        assert_eq!(seq_id.timestamp_seconds(), (SeqId::EPOCH + timestamp_offset) / 1000);
+    }
+
+    #[test]
+    fn test_seq_id_age_seconds() {
+        let timestamp_offset = 2000u64;
+        let id = (timestamp_offset << 22) as i64;
+        let seq_id = SeqId::new(id);
+        let now_millis = SeqId::EPOCH + timestamp_offset + 7000; // 7s later
+
+        assert_eq!(seq_id.age_seconds(now_millis), 7);
     }
 
     #[test]

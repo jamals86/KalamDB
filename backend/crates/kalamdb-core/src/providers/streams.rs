@@ -93,6 +93,11 @@ impl StreamTableProvider {
         }
     }
 
+    /// Expose the underlying store (used by maintenance jobs such as stream eviction)
+    pub fn store_arc(&self) -> Arc<StreamTableStore> {
+        self.store.clone()
+    }
+
     /// Return a snapshot of all rows as JSON objects (no RLS filtering)
     ///
     /// Used by live initial snapshot where we need table-wide data. RLS is

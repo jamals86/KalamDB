@@ -10,6 +10,7 @@
 //! - T134: manifest pruning reduces file scans by 80%+ (TODO: performance test)
 
 use kalamdb_commons::{NamespaceId, TableName};
+use kalamdb_commons::UserId;
 use kalamdb_core::manifest::ManifestService;
 use kalamdb_commons::types::{BatchFileEntry, ManifestFile};
 use kalamdb_store::{test_utils::InMemoryBackend, StorageBackend};
@@ -20,6 +21,48 @@ fn create_test_service() -> (ManifestService, TempDir) {
     let temp_dir = TempDir::new().unwrap();
     let backend: Arc<dyn StorageBackend> = Arc::new(InMemoryBackend::new());
     let service = ManifestService::new(backend, temp_dir.path().to_string_lossy().to_string());
+    // Initialize a test AppContext for SchemaRegistry and providers (used by ManifestService)
+    kalamdb_core::test_helpers::init_test_app_context();
+    // Register minimal table definitions required for these tests
+    {
+        use kalamdb_commons::models::schemas::{TableDefinition, ColumnDefinition, TableOptions, TableType};
+        use kalamdb_commons::models::{TableId};
+        use kalamdb_core::schema_registry::CachedTableData;
+        use std::sync::Arc as StdArc;
+
+        let app_ctx = kalamdb_core::app_context::AppContext::get();
+        let schema_registry = app_ctx.schema_registry();
+        let tables_provider = app_ctx.system_tables().tables();
+
+        let base_dir = temp_dir.path().to_string_lossy().to_string();
+        let register = |ns: &str, name: &str, ttype: TableType| {
+            let namespace = kalamdb_commons::NamespaceId::new(ns);
+            let table_name = kalamdb_commons::TableName::new(name);
+            let table_id = TableId::new(namespace.clone(), table_name.clone());
+            let cols = vec![
+                ColumnDefinition::primary_key("id", 1, kalamdb_commons::models::datatypes::KalamDataType::BigInt),
+                ColumnDefinition::simple("value", 2, kalamdb_commons::models::datatypes::KalamDataType::Text),
+            ];
+            let table_def = TableDefinition::new_with_defaults(namespace.clone(), table_name.clone(), ttype, cols, None).unwrap();
+            // Persist to system.tables
+            let _ = tables_provider.create_table(&table_id, &table_def);
+            // Put into schema registry cache
+            let _ = schema_registry.put_table_definition(&table_id, &table_def);
+            // Build cached table data and set storage path template to a temp directory for tests
+            let mut cached = CachedTableData::new(StdArc::new(table_def.clone()));
+            let storage_template = format!("{}/{}/{}", base_dir, ns, name);
+            cached.storage_path_template = storage_template.clone();
+            // Ensure directories exist
+            let _ = std::fs::create_dir_all(&storage_template);
+            schema_registry.insert(table_id, StdArc::new(cached));
+        };
+
+        register("test_ns", "orders", TableType::Shared);
+        register("prod", "events", TableType::Shared);
+        register("test_ns", "persistent_table", TableType::Shared);
+        register("test_ns", "metadata_table", TableType::User);
+        register("ns1", "products", TableType::User);
+    }
     (service, temp_dir)
 }
 
@@ -29,8 +72,7 @@ fn test_create_manifest_generates_valid_json() {
     let (service, _temp_dir) = create_test_service();
     let namespace = NamespaceId::new("test_ns");
     let table = TableName::new("test_table");
-    
-    let manifest = service.create_manifest(&namespace, &table, "shared");
+    let manifest = service.create_manifest(&namespace, &table, None);
     
     // Verify structure
     assert_eq!(manifest.table_id, "test_ns.test_table");
@@ -58,6 +100,8 @@ fn test_update_manifest_increments_max_batch() {
     let namespace = NamespaceId::new("test_ns");
     let table = TableName::new("orders");
     let scope = "shared";
+    let scope_user: Option<UserId> = if scope == "shared" { None } else { Some(UserId::from(scope)) };
+    let scope_user_ref: Option<&UserId> = scope_user.as_ref();
     
     // Create first batch entry
     let batch_entry_0 = BatchFileEntry::new(
@@ -73,7 +117,7 @@ fn test_update_manifest_increments_max_batch() {
     
     // First update (creates manifest if doesn't exist)
     let manifest_v1 = service
-        .update_manifest(&namespace, &table, scope, batch_entry_0)
+        .update_manifest(&namespace, &table, scope_user_ref, batch_entry_0)
         .unwrap();
     
     assert_eq!(manifest_v1.max_batch, 0, "First batch should be batch-0");
@@ -94,7 +138,7 @@ fn test_update_manifest_increments_max_batch() {
     
     // Second update
     let manifest_v2 = service
-        .update_manifest(&namespace, &table, scope, batch_entry_1)
+        .update_manifest(&namespace, &table, scope_user_ref, batch_entry_1)
         .unwrap();
     
     assert_eq!(manifest_v2.max_batch, 1, "Second batch should increment max_batch to 1");
@@ -115,7 +159,7 @@ fn test_update_manifest_increments_max_batch() {
     
     // Third update
     let manifest_v3 = service
-        .update_manifest(&namespace, &table, scope, batch_entry_2)
+        .update_manifest(&namespace, &table, scope_user_ref, batch_entry_2)
         .unwrap();
     
     assert_eq!(manifest_v3.max_batch, 2, "Third batch should increment max_batch to 2");
@@ -134,6 +178,8 @@ fn test_flush_five_batches_manifest_tracking() {
     let namespace = NamespaceId::new("prod");
     let table = TableName::new("events");
     let scope = "shared";
+    let scope_user: Option<UserId> = if scope == "shared" { None } else { Some(UserId::from(scope)) };
+    let scope_user_ref: Option<&UserId> = scope_user.as_ref();
     
     // Simulate flushing 5 batches with different metadata
     let batch_configs = vec![
@@ -167,12 +213,12 @@ fn test_flush_five_batches_manifest_tracking() {
         );
         
         service
-            .update_manifest(&namespace, &table, scope, batch_entry)
+            .update_manifest(&namespace, &table, scope_user_ref, batch_entry)
             .unwrap();
     }
     
     // Read final manifest
-    let final_manifest = service.read_manifest(&namespace, &table, scope).unwrap();
+    let final_manifest = service.read_manifest(&namespace, &table, scope_user_ref).unwrap();
     
     // Verify all batches are tracked
     assert_eq!(final_manifest.max_batch, 4, "Final max_batch should be 4");
@@ -209,6 +255,8 @@ fn test_manifest_persistence_across_reads() {
     let namespace = NamespaceId::new("test_ns");
     let table = TableName::new("persistent_table");
     let scope = "shared";
+    let scope_user: Option<UserId> = if scope == "shared" { None } else { Some(UserId::from(scope)) };
+    let scope_user_ref: Option<&UserId> = scope_user.as_ref();
     
     // Create and write manifest
     let batch_entry = BatchFileEntry::new(
@@ -223,12 +271,12 @@ fn test_manifest_persistence_across_reads() {
     );
     
     service
-        .update_manifest(&namespace, &table, scope, batch_entry)
+        .update_manifest(&namespace, &table, scope_user_ref, batch_entry)
         .unwrap();
     
     // Read it back multiple times
-    let read1 = service.read_manifest(&namespace, &table, scope).unwrap();
-    let read2 = service.read_manifest(&namespace, &table, scope).unwrap();
+    let read1 = service.read_manifest(&namespace, &table, scope_user_ref).unwrap();
+    let read2 = service.read_manifest(&namespace, &table, scope_user_ref).unwrap();
     
     assert_eq!(read1.max_batch, read2.max_batch);
     assert_eq!(read1.batches.len(), read2.batches.len());
@@ -242,6 +290,8 @@ fn test_batch_entry_metadata_preservation() {
     let namespace = NamespaceId::new("test_ns");
     let table = TableName::new("metadata_table");
     let scope = "u_123";
+    let scope_user: Option<UserId> = if scope == "shared" { None } else { Some(UserId::from(scope)) };
+    let scope_user_ref: Option<&UserId> = scope_user.as_ref();
     
     // Create batch entry with rich metadata
     let mut column_stats = std::collections::HashMap::new();
@@ -273,12 +323,14 @@ fn test_batch_entry_metadata_preservation() {
         1,
     );
     
+    let scope_user: Option<UserId> = if scope == "shared" { None } else { Some(UserId::from(scope)) };
+    let scope_user_ref: Option<&UserId> = scope_user.as_ref();
     service
-        .update_manifest(&namespace, &table, scope, batch_entry)
+        .update_manifest(&namespace, &table, scope_user_ref, batch_entry)
         .unwrap();
     
     // Read back and verify
-    let manifest = service.read_manifest(&namespace, &table, scope).unwrap();
+    let manifest = service.read_manifest(&namespace, &table, scope_user_ref).unwrap();
     let saved_batch = &manifest.batches[0];
     
     assert_eq!(saved_batch.batch_number, 0);
