@@ -24,9 +24,8 @@ Faster operations. Lower infrastructure expenses. Zero waste.
 | **Data Types** | 16 | BOOLEAN, INT, BIGINT, DOUBLE, FLOAT, TEXT, TIMESTAMP, DATE, DATETIME, TIME, JSON, BYTES, EMBEDDING, UUID, DECIMAL, SMALLINT |
 | **Schema Cache** | >99% | DashMap-based concurrent schema caching with sub-100μs lookups |
 | **SQL Engine** | DataFusion 40.0 | Full SQL support with 100% standard compatibility |
-| **Storage Backends** | 4 | Local, S3, Azure Blob, Google Cloud Storage |
+| **Storage Backends** | 1 | Local Filesystem (S3/Azure/GCS planned) |
 | **Real-Time** | WebSocket | Live query subscriptions with change tracking |
-| **Auto-ID Generation** | 3 | SNOWFLAKE_ID, UUID_V7, ULID for distributed systems |
 
 ---
 
@@ -214,7 +213,7 @@ FLUSH INTERVAL 300s ROW_THRESHOLD 5000;  -- Flush every 5min OR 5000 rows
 ```sql
 -- Subscribe to filtered real-time updates
 SUBSCRIBE TO chat.messages 
-WHERE room_id = 'general' AND timestamp > NOW() - INTERVAL '1 hour'
+WHERE room_id = 'general'
 OPTIONS (last_rows=10);
 ```
 
@@ -313,9 +312,8 @@ SELECT * FROM system.users WHERE role = 'dba';
 ### **Production-Ready Deployment**
 - **Docker Support**: Multi-stage builds, non-root user, health checks
 - **Environment Variables**: Override all config settings
-- **TypeScript SDK**: WASM-compiled client for browser/Node.js
-- **React Example**: Complete TODO app with real-time sync
-- **14 Passing Tests**: Integration test suite
+- **CLI Tool**: Interactive `kalam` client with auto-completion
+- **Integration Tests**: Comprehensive test suite
 
 ---
 
@@ -382,6 +380,7 @@ High level crate graph today:
 - Performance tuning and metrics
 - Stronger WebSocket auth and rate limiting
 - Cleanup and simplification of docs and examples
+- Support for more storage backends (Azure, GCS, S3-compatible)
 
 ---
 
@@ -407,14 +406,14 @@ High level crate graph today:
 │
 ├── user/{user_id}/                      # Per-user Parquet storage
 │   ├── messages/
-│   │   ├── batch-20251020-001.parquet  # Flushed user data
-│   │   └── batch-20251020-002.parquet
+│   │   ├── batch-001.parquet  # Flushed user data
+│   │   └── batch-002.parquet
 │   └── conversations/
 │       └── batch-*.parquet
 │
 └── shared/{table_name}/                 # Shared table Parquet storage
-    ├── batch-20251020-001.parquet      # Flushed shared data
-    └── batch-20251020-002.parquet
+    ├── batch-001.parquet      # Flushed shared data
+    └── batch-002.parquet
 ```
 
 ## 🚀 Quick Start
