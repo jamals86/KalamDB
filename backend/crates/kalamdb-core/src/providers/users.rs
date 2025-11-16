@@ -752,8 +752,6 @@ impl BaseTableProvider<UserTableRowId, UserTableRow> for UserTableProvider {
         // Convert rows to JSON values aligned with current schema
         let schema = self.schema_ref();
         let mut rows: Vec<JsonValue> = Vec::with_capacity(kvs.len());
-        let has_seq = schema.field_with_name("_seq").is_ok();
-        let has_deleted = schema.field_with_name("_deleted").is_ok();
 
         for (_key, row) in kvs.into_iter() {
             // Base fields from stored row
@@ -763,12 +761,8 @@ impl BaseTableProvider<UserTableRowId, UserTableRow> for UserTableProvider {
                 .cloned()
                 .unwrap_or_default();
 
-            if has_seq {
-                obj.insert("_seq".to_string(), json!(row._seq.as_i64()));
-            }
-            if has_deleted {
-                obj.insert("_deleted".to_string(), json!(row._deleted));
-            }
+            // Inject system columns using consolidated helper
+            crate::providers::base::inject_system_columns(&schema, &mut obj, row._seq.as_i64(), row._deleted);
 
             rows.push(JsonValue::Object(obj));
         }

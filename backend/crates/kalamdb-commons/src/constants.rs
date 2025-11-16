@@ -98,8 +98,9 @@ pub struct SystemColumnNames;
 
 #[allow(non_upper_case_globals)]
 impl SystemColumnNames {
-    /// Timestamp when row was last updated
-    pub const UPDATED: &'static str = "_updated";
+    // REMOVED: _updated column (timestamp is embedded in _seq Snowflake ID)
+    // Use _seq >> 22 to extract timestamp in milliseconds
+    // pub const UPDATED: &'static str = "_updated";
 
     /// Soft delete flag (true = deleted)
     pub const DELETED: &'static str = "_deleted";

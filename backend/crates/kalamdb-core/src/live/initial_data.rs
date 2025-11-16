@@ -154,8 +154,8 @@ impl InitialDataFetcher {
                 if let Some(user_provider) = provider.as_any().downcast_ref::<crate::providers::UserTableProvider>() {
                     let mut rows = Vec::new();
                     for row_fields in user_provider.snapshot_all_rows_json()? {
-                        // Extract timestamp from _updated field or use 0
-                        let timestamp = Self::extract_updated_timestamp(&row_fields);
+                        // Extract timestamp from _seq field (Snowflake ID has embedded timestamp)
+                        let timestamp = Self::extract_seq_timestamp(&row_fields);
                         
                         // Check if deleted (skip if include_deleted is false)
                         if !include_deleted {
@@ -202,7 +202,8 @@ impl InitialDataFetcher {
                 if let Some(stream_provider) = provider.as_any().downcast_ref::<crate::providers::StreamTableProvider>() {
                     let mut rows = Vec::new();
                     for row_fields in stream_provider.snapshot_all_rows_json()? {
-                        let timestamp = Self::extract_updated_timestamp(&row_fields);
+                        // Extract timestamp from _seq (Snowflake ID has embedded timestamp)
+                        let timestamp = Self::extract_seq_timestamp(&row_fields);
 
                         if let Some(since) = since_timestamp {
                             if timestamp < since {
@@ -285,11 +286,15 @@ impl InitialDataFetcher {
         }
     }
 
-    fn extract_updated_timestamp(row: &JsonValue) -> i64 {
-        row.get(kalamdb_commons::constants::SystemColumnNames::UPDATED)
-            .and_then(JsonValue::as_str)
-            .and_then(|s| DateTime::parse_from_rfc3339(s).ok())
-            .map(|dt| dt.timestamp_millis())
+    fn extract_seq_timestamp(row: &JsonValue) -> i64 {
+        // Extract timestamp from _seq Snowflake ID (timestamp is in upper 41 bits)
+        row.get("_seq")
+            .and_then(JsonValue::as_i64)
+            .map(|seq| {
+                // Snowflake ID format: timestamp (41 bits) + machine (10 bits) + sequence (12 bits)
+                // Shift right 22 bits to get timestamp in milliseconds
+                (seq >> 22) + 1609459200000 // Add epoch offset (2021-01-01 00:00:00 UTC)
+            })
             .unwrap_or(0)
     }
 }
@@ -396,9 +401,7 @@ mod tests {
         
         // Create a minimal AppContext for the test
         use crate::app_context::AppContext;
-        use kalamdb_store::test_utils::InMemoryBackend;
-        let test_backend: Arc<dyn kalamdb_store::StorageBackend> = Arc::new(InMemoryBackend::new());
-        let app_context = Arc::new(AppContext::new_for_test(test_backend.clone(), schema_registry.clone()));
+        let app_context = Arc::new(AppContext::new_test());
         
         // Create a mock provider with the store
         use crate::providers::UserTableProvider;

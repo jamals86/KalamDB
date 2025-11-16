@@ -131,7 +131,7 @@ path = "tests/integration/flush/test_automatic_flushing_comprehensive.rs"
 
 [[test]]
 name = "test_manifest_flush"
-path = "tests/integration/manifest/test_manifest_flush.rs"
+path = "tests/test_manifest_flush_integration.rs"
 harness = true
 
 # [[test]]

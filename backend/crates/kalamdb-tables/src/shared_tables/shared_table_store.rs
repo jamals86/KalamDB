@@ -18,8 +18,8 @@ use std::sync::Arc;
 /// Shared table row data
 ///
 /// **MVCC Architecture (Phase 12, User Story 5)**:
-/// - Removed: row_id (redundant with _seq), _updated (replaced by _seq timestamp), access_level (moved to schema definition)
-/// - Kept: _seq (version identifier), _deleted (tombstone), fields (all shared table columns including PK)
+/// - Removed: row_id (redundant with _seq), _updated (timestamp embedded in _seq Snowflake ID), access_level (moved to schema definition)
+/// - Kept: _seq (version identifier with embedded timestamp), _deleted (tombstone), fields (all shared table columns including PK)
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct SharedTableRow {
     pub _seq: SeqId,

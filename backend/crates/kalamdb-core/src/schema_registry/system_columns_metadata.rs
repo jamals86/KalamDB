@@ -1,23 +1,23 @@
 //! System column injection logic
 //!
 //! This module handles injection of system columns into table schemas.
+//! 
+//! **NOTE**: This is legacy code. New code should use SystemColumnsService instead.
 
-use arrow::datatypes::{DataType, Field, Schema, SchemaRef, TimeUnit};
+use arrow::datatypes::{DataType, Field, Schema, SchemaRef};
 use std::sync::Arc;
 
 /// System columns that are automatically added to user and shared tables
+/// 
+/// **DEPRECATED**: Use SystemColumnsService for adding system columns.
 pub struct SystemColumns;
 
 impl SystemColumns {
-    /// Get the _updated system column
+    /// Get the _seq system column (Snowflake ID with embedded timestamp)
     ///
-    /// Type: TIMESTAMP (microsecond precision)
-    pub fn updated_column() -> Field {
-        Field::new(
-            "_updated",
-            DataType::Timestamp(TimeUnit::Microsecond, None),
-            false,
-        )
+    /// Type: BIGINT (Int64)
+    pub fn seq_column() -> Field {
+        Field::new("_seq", DataType::Int64, false)
     }
 
     /// Get the _deleted system column
@@ -29,7 +29,7 @@ impl SystemColumns {
 
     /// Inject system columns into a schema
     ///
-    /// Adds _updated and _deleted columns for user/shared tables.
+    /// Adds _seq and _deleted columns for user/shared tables.
     /// System and stream tables don't get these columns.
     pub fn inject_into_schema(schema: SchemaRef, include_system_columns: bool) -> SchemaRef {
         if !include_system_columns {
@@ -42,7 +42,7 @@ impl SystemColumns {
         }
 
         // Add system columns at the end
-        fields.push(Self::updated_column());
+        fields.push(Self::seq_column());
         fields.push(Self::deleted_column());
 
         Arc::new(Schema::new(fields))
@@ -50,12 +50,12 @@ impl SystemColumns {
 
     /// Check if a column is a system column
     pub fn is_system_column(column_name: &str) -> bool {
-        matches!(column_name, "_updated" | "_deleted")
+        matches!(column_name, "_seq" | "_deleted")
     }
 
     /// Get all system column names
     pub fn column_names() -> Vec<&'static str> {
-        vec!["_updated", "_deleted"]
+        vec!["_seq", "_deleted"]
     }
 }
 
@@ -66,9 +66,9 @@ mod tests {
 
     #[test]
     fn test_system_columns() {
-        let updated = SystemColumns::updated_column();
-        assert_eq!(updated.name(), "_updated");
-        assert!(matches!(updated.data_type(), DataType::Timestamp(_, _)));
+        let seq = SystemColumns::seq_column();
+        assert_eq!(seq.name(), "_seq");
+        assert_eq!(seq.data_type(), &DataType::Int64);
 
         let deleted = SystemColumns::deleted_column();
         assert_eq!(deleted.name(), "_deleted");
@@ -85,7 +85,7 @@ mod tests {
         // Inject system columns
         let with_system = SystemColumns::inject_into_schema(user_schema.clone(), true);
         assert_eq!(with_system.fields().len(), 4);
-        assert_eq!(with_system.field(2).name(), "_updated");
+        assert_eq!(with_system.field(2).name(), "_seq");
         assert_eq!(with_system.field(3).name(), "_deleted");
 
         // Don't inject system columns
@@ -95,7 +95,7 @@ mod tests {
 
     #[test]
     fn test_is_system_column() {
-        assert!(SystemColumns::is_system_column("_updated"));
+        assert!(SystemColumns::is_system_column("_seq"));
         assert!(SystemColumns::is_system_column("_deleted"));
         assert!(!SystemColumns::is_system_column("id"));
         assert!(!SystemColumns::is_system_column("message"));
@@ -105,7 +105,7 @@ mod tests {
     fn test_column_names() {
         let names = SystemColumns::column_names();
         assert_eq!(names.len(), 2);
-        assert!(names.contains(&"_updated"));
+        assert!(names.contains(&"_seq"));
         assert!(names.contains(&"_deleted"));
     }
 }

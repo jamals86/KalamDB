@@ -17,8 +17,8 @@ use std::sync::Arc;
 /// User table row data
 ///
 /// **MVCC Architecture (Phase 12, User Story 5)**:
-/// - Removed: row_id (redundant with _seq), _updated (replaced by _seq timestamp)
-/// - Kept: user_id (row owner), _seq (version identifier), _deleted (tombstone), fields (all user columns including PK)
+/// - Removed: row_id (redundant with _seq), _updated (timestamp embedded in _seq Snowflake ID)
+/// - Kept: user_id (row owner), _seq (version identifier with embedded timestamp), _deleted (tombstone), fields (all user columns including PK)
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct UserTableRow {
     pub user_id: UserId,

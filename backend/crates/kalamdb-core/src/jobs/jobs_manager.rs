@@ -91,14 +91,35 @@ impl JobsManager {
     /// calling AppContext::get() repeatedly while still supporting initialization
     /// ordering where AppContext is created after JobsManager.
     pub fn set_app_context(&self, app_ctx: Arc<AppContext>) {
-        let mut w = self.app_context.blocking_write();
-        *w = Some(app_ctx);
+        // Use try_write() to avoid blocking in async context
+        if let Ok(mut w) = self.app_context.try_write() {
+            *w = Some(app_ctx);
+        } else {
+            // Fallback: spin until we can acquire the lock (should be rare)
+            loop {
+                if let Ok(mut w) = self.app_context.try_write() {
+                    *w = Some(app_ctx);
+                    break;
+                }
+                std::thread::yield_now();
+            }
+        }
     }
 
     /// Get attached AppContext (panics if not attached)
     fn get_attached_app_context(&self) -> Arc<AppContext> {
-        let r = self.app_context.blocking_read();
-        r.clone().expect("AppContext not attached to JobsManager")
+        // Use try_read() to avoid blocking in async context
+        if let Ok(r) = self.app_context.try_read() {
+            r.clone().expect("AppContext not attached to JobsManager")
+        } else {
+            // Fallback: spin until we can acquire the lock (should be rare)
+            loop {
+                if let Ok(r) = self.app_context.try_read() {
+                    return r.clone().expect("AppContext not attached to JobsManager");
+                }
+                std::thread::yield_now();
+            }
+        }
     }
 
     /// Create a new job

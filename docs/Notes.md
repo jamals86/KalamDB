@@ -197,7 +197,10 @@ ServerMessage will use arrow arrays directly as well
 
 150) the expiration or ttl in stream tables is not working at all, i subscribe after 30 seconds and still have the same rows returned to me
 
-151) 
+151) Add field and tablename naming convention and system reserved words like you can't create namespace with name system/sys/root/kalamdb/main/default etc or field names with _row_id/_id/_updated etc or anything which starts with _ or spaces or special characters
+Create a validation function to be used in create/alter table for namespace/table/column names
+The reserved words should be in commons in one place for the whole codebase to refer to it from one place only
+Also make sure we dont add the "id" column as we used to do before, we rely solely on _seq system column for uniqueness and rely on the user's own fields adding
 
 
 Here’s the updated 5-line spec with embedding storage inside Parquet and managed HNSW indexing (with delete handling):

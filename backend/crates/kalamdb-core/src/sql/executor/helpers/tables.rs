@@ -68,54 +68,6 @@ pub fn inject_auto_increment_field(
     Ok(Arc::new(Schema::new(fields)))
 }
 
-/// Inject system columns for user tables
-///
-/// **DEPRECATED (Phase 12, US5)**: This function is being phased out in favor of
-/// `SystemColumnsService.add_system_columns()` which operates on TableDefinition.
-/// The new approach adds _id (Snowflake ID), _updated, and _deleted atomically.
-///
-/// This legacy function only adds _updated and _deleted to Arrow Schema.
-/// It's still called during CREATE TABLE for backward compatibility, but the
-/// actual system columns are now added by SystemColumnsService in save_table_definition().
-///
-/// Adds _updated (TIMESTAMP) and _deleted (BOOLEAN) columns.
-/// For stream tables, this should NOT be called (handled in stream table service).
-#[deprecated(since = "0.2.0", note = "Use SystemColumnsService.add_system_columns() instead")]
-pub fn inject_system_columns(
-    schema: Arc<Schema>,
-    table_type: TableType,
-) -> Result<Arc<Schema>, KalamDbError> {
-    // Stream tables do NOT have system columns
-    if table_type == TableType::Stream {
-        return Ok(schema);
-    }
-
-    // Check if system columns already exist
-    let has_updated = schema.field_with_name(SystemColumnNames::UPDATED).is_ok();
-    let has_deleted = schema.field_with_name(SystemColumnNames::DELETED).is_ok();
-
-    if has_updated && has_deleted {
-        return Ok(schema);
-    }
-
-    // Create system columns
-    let mut fields: Vec<Arc<Field>> = schema.fields().iter().cloned().collect();
-
-    if !has_updated {
-        fields.push(Arc::new(Field::new(
-            SystemColumnNames::UPDATED,
-            DataType::Timestamp(TimeUnit::Millisecond, None),
-            false, // Not nullable
-        )));
-    }
-
-    if !has_deleted {
-    fields.push(Arc::new(Field::new(SystemColumnNames::DELETED, DataType::Boolean, false)));
-    }
-
-    Ok(Arc::new(Schema::new(fields)))
-}
-
 /// Save table definition to information_schema.tables
 ///
 /// Replaces fragmented schema storage with single atomic write.
@@ -215,7 +167,7 @@ pub fn save_table_definition(
     }
 
     // Inject system columns via SystemColumnsService (Phase 12, US5, T022)
-    // This adds _id, _updated, _deleted to the TableDefinition (authoritative types)
+    // This adds _seq, _deleted to the TableDefinition (authoritative types)
     let app_ctx = AppContext::get();
     let sys_cols = app_ctx.system_columns_service();
     sys_cols.add_system_columns(&mut table_def)?;
@@ -317,31 +269,5 @@ mod tests {
         let result = inject_auto_increment_field(schema.clone()).unwrap();
         assert_eq!(result.fields().len(), 2); // No change
         assert_eq!(result.field(0).name(), "id");
-    }
-
-    #[test]
-    fn test_inject_system_columns() {
-        let schema = Arc::new(Schema::new(vec![Arc::new(Field::new(
-            "data",
-            DataType::Utf8,
-            false,
-        ))]));
-
-        let result = inject_system_columns(schema, TableType::User).unwrap();
-        assert_eq!(result.fields().len(), 3);
-        assert_eq!(result.field(1).name(), SystemColumnNames::UPDATED);
-        assert_eq!(result.field(2).name(), SystemColumnNames::DELETED);
-    }
-
-    #[test]
-    fn test_inject_system_columns_stream_table() {
-        let schema = Arc::new(Schema::new(vec![Arc::new(Field::new(
-            "data",
-            DataType::Utf8,
-            false,
-        ))]));
-
-        let result = inject_system_columns(schema.clone(), TableType::Stream).unwrap();
-        assert_eq!(result.fields().len(), 1); // No system columns for stream tables
     }
 }

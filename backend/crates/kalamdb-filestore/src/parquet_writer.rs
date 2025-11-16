@@ -1,4 +1,4 @@
-//! Parquet writer with _updated column bloom filter
+//! Parquet writer with _seq column bloom filter
 //!
 //! Migrated from kalamdb-core/src/storage/parquet_writer.rs
 
@@ -25,7 +25,7 @@ impl ParquetWriter {
         }
     }
 
-    /// Write RecordBatches to a Parquet file with bloom filter on _updated column
+    /// Write RecordBatches to a Parquet file with bloom filter on _seq column
     pub fn write_with_bloom_filter(
         &self,
         schema: SchemaRef,
@@ -42,7 +42,7 @@ impl ParquetWriter {
         let file = File::create(path)
             .map_err(|e| FilestoreError::Io(e))?;
 
-        // Configure writer properties with bloom filter on _updated column
+        // Configure writer properties with bloom filter on _seq column
         let mut props_builder = WriterProperties::builder()
             .set_compression(datafusion::parquet::basic::Compression::SNAPPY)
             // Enable statistics for all columns (helps with query planning)
@@ -50,14 +50,14 @@ impl ParquetWriter {
             // Set row group size (optimize for time-range queries)
             .set_max_row_group_size(100_000);
 
-        // Find _updated column and enable bloom filter
-        if schema.fields().iter().any(|f| f.name() == SystemColumnNames::UPDATED) {
-            // Enable bloom filter on _updated column with 0.01 FPP (1% false positive rate)
+        // Find _seq column and enable bloom filter
+        if schema.fields().iter().any(|f| f.name() == SystemColumnNames::SEQ) {
+            // Enable bloom filter on _seq column with 0.01 FPP (1% false positive rate)
             // ColumnPath::from() accepts a str and converts it to the proper type
             props_builder = props_builder
-                .set_column_bloom_filter_enabled(SystemColumnNames::UPDATED.into(), true)
-                .set_column_bloom_filter_fpp(SystemColumnNames::UPDATED.into(), 0.01)
-                .set_column_bloom_filter_ndv(SystemColumnNames::UPDATED.into(), 100_000); // Estimated distinct values
+                .set_column_bloom_filter_enabled(SystemColumnNames::SEQ.into(), true)
+                .set_column_bloom_filter_fpp(SystemColumnNames::SEQ.into(), 0.01)
+                .set_column_bloom_filter_ndv(SystemColumnNames::SEQ.into(), 100_000); // Estimated distinct values
         }
 
         let props = props_builder.build();
@@ -151,15 +151,11 @@ mod tests {
         let _ = fs::remove_dir_all(&temp_dir);
         fs::create_dir_all(&temp_dir).unwrap();
 
-        // Schema with _updated column
+        // Schema with _seq column
         let schema = Arc::new(Schema::new(vec![
             Field::new("id", DataType::Int64, false),
             Field::new("content", DataType::Utf8, true),
-            Field::new(
-                "_updated",
-                DataType::Timestamp(TimeUnit::Microsecond, None),
-                false,
-            ),
+            Field::new("_seq", DataType::Int64, false),
         ]));
 
         let batch = RecordBatch::try_new(
@@ -167,7 +163,7 @@ mod tests {
             vec![
                 Arc::new(Int64Array::from(vec![1, 2, 3])),
                 Arc::new(StringArray::from(vec!["a", "b", "c"])),
-                Arc::new(TimestampMicrosecondArray::from(vec![
+                Arc::new(Int64Array::from(vec![
                     1000000, 2000000, 3000000,
                 ])),
             ],
@@ -192,16 +188,16 @@ mod tests {
         // Get first row group metadata
         let row_group = metadata.row_group(0);
 
-        // Find _updated column index
-        let updated_col_idx = row_group
+        // Find _seq column index
+        let seq_col_idx = row_group
             .columns()
             .iter()
-            .position(|col| col.column_path().string() == SystemColumnNames::UPDATED)
-                .expect("_updated column should exist");
+            .position(|col| col.column_path().string() == SystemColumnNames::SEQ)
+                .expect("_seq column should exist");
 
-        // Check that _updated column has bloom filter
-        let updated_col_metadata = row_group.column(updated_col_idx);
-                assert!(updated_col_metadata.bloom_filter_offset().is_some(), "_updated column should have bloom filter");
+        // Check that _seq column has bloom filter
+        let seq_col_metadata = row_group.column(seq_col_idx);
+                assert!(seq_col_metadata.bloom_filter_offset().is_some(), "_seq column should have bloom filter");
 
         let _ = fs::remove_dir_all(&temp_dir);
     }
@@ -212,7 +208,7 @@ mod tests {
         let _ = fs::remove_dir_all(&temp_dir);
         fs::create_dir_all(&temp_dir).unwrap();
 
-        // Schema without _updated column
+        // Schema without _seq column
         let schema = Arc::new(Schema::new(vec![
             Field::new("id", DataType::Int64, false),
             Field::new("content", DataType::Utf8, true),
@@ -260,18 +256,14 @@ mod tests {
 
         let schema = Arc::new(Schema::new(vec![
             Field::new("id", DataType::Int64, false),
-            Field::new(
-                "_updated",
-                DataType::Timestamp(TimeUnit::Microsecond, None),
-                false,
-            ),
+            Field::new("_seq", DataType::Int64, false),
         ]));
 
         let batch = RecordBatch::try_new(
             schema.clone(),
             vec![
                 Arc::new(Int64Array::from(vec![1, 2, 3, 4, 5])),
-                Arc::new(TimestampMicrosecondArray::from(vec![
+                Arc::new(Int64Array::from(vec![
                     1000000, 2000000, 3000000, 4000000, 5000000,
                 ])),
             ],

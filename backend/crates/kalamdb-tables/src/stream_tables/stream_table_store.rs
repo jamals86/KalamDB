@@ -12,11 +12,11 @@ use kalamdb_store::{test_utils::InMemoryBackend, StorageBackend};
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 
-/// Stream table row data
+/// Stream table row entity (ephemeral, in-memory only)
 ///
-/// **MVCC Architecture (Phase 13.2)**:
-/// - Removed: event_id (redundant with _seq), timestamp (use _seq.timestamp_millis()), row_id, inserted_at, _updated
-/// - Added: user_id (event owner), _seq (version identifier), fields (all event data)
+/// **Design Notes**:
+/// - Removed: event_id (redundant with _seq), timestamp (embedded in _seq Snowflake ID), row_id, inserted_at, _updated
+/// - Kept: user_id (event owner), _seq (unique version ID with embedded timestamp), fields (all event data)
 /// - Note: NO _deleted field (stream tables don't use soft deletes, only TTL eviction)
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct StreamTableRow {

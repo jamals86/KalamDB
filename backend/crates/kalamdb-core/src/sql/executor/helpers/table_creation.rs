@@ -177,7 +177,7 @@ pub fn create_user_table(
     let schema = stmt.schema.clone();
 
     // REMOVED: inject_system_columns() call
-    // System columns (_id, _updated, _deleted) are now added by SystemColumnsService
+    // System columns (_seq, _deleted) are now added by SystemColumnsService
     // in save_table_definition() after TableDefinition creation (Phase 12, US5)
 
     // Save complete table definition to information_schema.tables (produces full Arrow schema with system columns)
@@ -225,7 +225,7 @@ pub fn create_user_table(
 
     // Log detailed success with table options
     log::info!(
-        "✅ USER TABLE created: {}.{} | storage: {} | columns: {} | pk: {} | system_columns: [_updated, _deleted]",
+        "✅ USER TABLE created: {}.{} | storage: {} | columns: {} | pk: {} | system_columns: [_seq, _deleted]",
         stmt.namespace_id.as_str(),
         stmt.table_name.as_str(),
         storage_id.as_str(),
@@ -393,7 +393,7 @@ pub fn create_shared_table(
 
     // Log detailed success with table options
     log::info!(
-        "✅ SHARED TABLE created: {}.{} | storage: {} | columns: {} | pk: {} | access_level: {:?} | system_columns: [_updated, _deleted]",
+        "✅ SHARED TABLE created: {}.{} | storage: {} | columns: {} | pk: {} | access_level: {:?} | system_columns: [_seq, _deleted]",
         stmt.namespace_id.as_str(),
         stmt.table_name.as_str(),
         storage_id.as_str(),

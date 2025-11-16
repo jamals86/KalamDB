@@ -125,7 +125,7 @@ pub fn json_rows_to_arrow_batch(
                 Arc::new(arr) as ArrayRef
             }
             DataType::Timestamp(TimeUnit::Microsecond, tz_opt) => {
-                // Default for non-nullable system column _updated if missing
+                // Default for non-nullable timestamp columns if missing
                 let default_now_micros: i64 = {
                     let now = Utc::now();
                     now.timestamp() * 1_000_000 + (now.timestamp_subsec_nanos() as i64) / 1_000
@@ -133,7 +133,7 @@ pub fn json_rows_to_arrow_batch(
                 let values: Vec<Option<i64>> = rows
                     .iter()
                     .map(|row| {
-                        // For _updated (non-nullable), provide default if missing/null
+                        // Provide default for non-nullable timestamp fields if missing/null
                         match row.get(field.name()) {
                             Some(v) => v.as_i64().or_else(|| {
                                 v.as_str().and_then(|s| {
@@ -146,7 +146,7 @@ pub fn json_rows_to_arrow_batch(
                                         })
                                 })
                             }),
-                            None => if field.name() == "_updated" { Some(default_now_micros) } else { None },
+                            None => if !field.is_nullable() { Some(default_now_micros) } else { None },
                         }
                     })
                     .collect();
@@ -285,7 +285,7 @@ mod tests {
 ///
 /// **Moved from base_table_provider.rs (Phase 13.6 cleanup)**
 ///
-/// Ensures the schema contains _id (Int64), _updated (Timestamp), and _deleted (Boolean).
+/// Ensures the schema contains _seq (Int64) and _deleted (Boolean).
 /// This is used when scanning hot/cold storage for UPDATE/DELETE operations.
 ///
 /// # Arguments
