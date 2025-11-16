@@ -106,7 +106,7 @@ impl HandlerRegistry {
     /// This is called once during SqlExecutor initialization.
     pub fn new(app_context: Arc<AppContext>) -> Self {
         use kalamdb_sql::statement_classifier::SqlStatementKind;
-    use kalamdb_commons::models::{NamespaceId, StorageId, TableId};
+    use kalamdb_commons::models::{NamespaceId, StorageId};
     use kalamdb_commons::TableType; // Role not needed here
         
         let registry = Self {

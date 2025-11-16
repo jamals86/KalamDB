@@ -8,7 +8,6 @@ use crate::error::KalamDbError;
 use super::filter::FilterPredicate;
 use crate::schema_registry::TableType;
 // Removed unused store imports after provider-based snapshots for streams
-use chrono::DateTime;
 use kalamdb_commons::models::TableId;
 use serde_json::Value as JsonValue;
 use std::sync::Arc;

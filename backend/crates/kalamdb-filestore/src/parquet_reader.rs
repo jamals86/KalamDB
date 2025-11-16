@@ -5,20 +5,20 @@ use std::path::Path;
 /// Placeholder for Parquet reader
 /// TODO: Move actual implementation from kalamdb-core/kalamdb-store
 pub struct ParquetReader {
-    base_path: std::path::PathBuf,
+    _base_path: std::path::PathBuf,
 }
 
 impl ParquetReader {
     pub fn new<P: AsRef<Path>>(base_path: P) -> Result<Self> {
         Ok(Self {
-            base_path: base_path.as_ref().to_path_buf(),
+            _base_path: base_path.as_ref().to_path_buf(),
         })
     }
 
     /// Read RecordBatches from a Parquet file
     pub fn read_batches(
         &self,
-        file_path: &Path,
+        _file_path: &Path,
     ) -> Result<Vec<RecordBatch>> {
         // TODO: Implement actual Parquet reading
         // This will be moved from kalamdb-core or kalamdb-store

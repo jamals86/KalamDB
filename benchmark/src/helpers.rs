@@ -214,8 +214,8 @@ pub fn measure_memory_mb() -> f64 {
     }
     
     unsafe {
-        let mut info: TaskBasicInfo = mem::zeroed();
-        let mut count = (mem::size_of::<TaskBasicInfo>() / mem::size_of::<u32>()) as u32;
+        let _info: TaskBasicInfo = mem::zeroed();
+        let _count = (mem::size_of::<TaskBasicInfo>() / mem::size_of::<u32>()) as u32;
         
         // Note: This is a simplified version. Full implementation would need mach kernel APIs
         // For now, return a placeholder

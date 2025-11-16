@@ -769,7 +769,7 @@ impl JobsManager {
                 TableOptions::Stream(opts) => opts.ttl_seconds,
                 _ => 0,
             };
-            if ttl_seconds <= 0 {
+            if ttl_seconds == 0 {
                 continue;
             }
 

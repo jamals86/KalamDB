@@ -246,8 +246,7 @@ pub fn create_shared_table(
     stmt: CreateTableStatement,
     exec_ctx: &ExecutionContext,
 ) -> Result<String, KalamDbError> {
-    use super::tables::{inject_auto_increment_field, save_table_definition, validate_table_name};
-    use kalamdb_commons::schemas::ColumnDefault;
+    use super::tables::{save_table_definition, validate_table_name};
 
     // PRIMARY KEY validation - SHARED tables MUST have PRIMARY KEY
     if stmt.primary_key_column.is_none() {

@@ -37,7 +37,6 @@ use std::sync::Arc;
 
 // Arrow <-> JSON helpers
 use crate::providers::arrow_json_conversion::json_rows_to_arrow_batch;
-use serde_json::json;
 
 /// Shared table provider without RLS
 ///

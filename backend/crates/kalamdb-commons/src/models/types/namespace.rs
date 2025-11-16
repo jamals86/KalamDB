@@ -82,25 +82,8 @@ impl Namespace {
     /// assert!(Namespace::validate_name("Invalid").is_err());
     /// ```
     pub fn validate_name(name: &str) -> Result<(), String> {
-        if name == "system" {
-            return Err("Namespace name 'system' is reserved".to_string());
-        }
-
-        if !name.chars().next().is_some_and(|c| c.is_ascii_lowercase()) {
-            return Err("Namespace name must start with a lowercase letter".to_string());
-        }
-
-        if !name
-            .chars()
-            .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '_')
-        {
-            return Err(
-                "Namespace name can only contain lowercase letters, digits, and underscores"
-                    .to_string(),
-            );
-        }
-
-        Ok(())
+        crate::validation::validate_namespace_name(name)
+            .map_err(|e| e.to_string())
     }
 
     /// Check if this namespace can be deleted (has no tables)
