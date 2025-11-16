@@ -37,6 +37,9 @@ pub mod parquet_writer;
 pub mod path_utils;
 pub mod cleanup;
 
+#[cfg(test)]
+mod tests;
+
 // Re-export commonly used types
 pub use error::{FilestoreError, Result};
 pub use batch_manager::BatchManager;

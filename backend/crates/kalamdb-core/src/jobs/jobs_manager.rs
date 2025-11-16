@@ -9,6 +9,7 @@
 //! - Automatic retry with exponential backoff
 //! - Dedicated jobs.log file for job-specific logging
 //! - Crash recovery (mark incomplete jobs as failed on restart)
+//! - Type-safe job creation with JobParams trait
 //!
 //! ## Architecture
 //!
@@ -24,15 +25,17 @@
 //! ```rust
 //! use kalamdb_core::jobs::JobsManager;
 //! use kalamdb_commons::{JobType, NamespaceId};
+//! use kalamdb_core::jobs::executors::flush::FlushParams;
 //!
 //! // Create job manager
 //! let job_manager = JobsManager::new(jobs_provider, job_registry);
 //!
-//! // Create a flush job
-//! let job_id = job_manager.create_job(
+//! // Create a flush job (typed params)
+//! let params = FlushParams { /* ... */ };
+//! let job_id = job_manager.create_job_typed(
 //!     JobType::Flush,
 //!     NamespaceId::new("default"),
-//!     serde_json::json!({"table_name": "users"}),
+//!     params,
 //!     Some("flush-users-hourly".to_string()), // idempotency key
 //!     None, // use default options
 //! ).await?;
@@ -42,11 +45,12 @@
 //! ```
 
 use crate::app_context::AppContext;
-use crate::jobs::executors::{JobContext, JobDecision, JobRegistry};
+use crate::error::KalamDbError;
+use crate::jobs::executors::{JobContext, JobDecision, JobRegistry, JobParams};
 use kalamdb_system::JobsTableProvider;
 use kalamdb_commons::system::{Job, JobFilter, JobOptions};
 use kalamdb_commons::{JobId, JobStatus, JobType, NamespaceId, NodeId, TableType};
-use kalamdb_commons::models::schemas::TableOptions;
+use kalamdb_commons::models::{schemas::TableOptions, TableId};
 use std::sync::Arc;
 use sysinfo::System;
 use tokio::sync::RwLock;
@@ -216,6 +220,65 @@ impl JobsManager {
         self.log_job_event(&job_id, "info", &format!("Job created: type={:?}", job_type));
 
         Ok(job_id)
+    }
+
+    /// Create a job with type-safe parameters
+    ///
+    /// **Type-Safe Alternative**: Accepts JobParams trait implementations for compile-time validation
+    ///
+    /// # Type Parameters
+    /// * `T` - JobParams implementation (FlushParams, CleanupParams, etc.)
+    ///
+    /// # Arguments
+    /// * `job_type` - Type of job to create
+    /// * `namespace_id` - Namespace for the job
+    /// * `params` - Typed parameters (automatically validated and serialized)
+    /// * `idempotency_key` - Optional key to prevent duplicate jobs
+    /// * `options` - Optional job configuration (retries, priority, queue)
+    ///
+    /// # Returns
+    /// Job ID if creation successful
+    ///
+    /// # Errors
+    /// - `IdempotentConflict` if job with same idempotency key already exists
+    /// - `KalamDbError` if parameter validation or persistence fails
+    ///
+    /// # Example
+    /// ```rust
+    /// use kalamdb_core::jobs::executors::FlushParams;
+    /// use kalamdb_commons::TableId;
+    ///
+    /// let params = FlushParams {
+    ///     table_id: TableId::new(namespace_id.clone(), table_name.clone()),
+    ///     table_type: TableType::User,
+    ///     flush_threshold: None,
+    /// };
+    ///
+    /// let job_id = job_manager.create_job_typed(
+    ///     JobType::Flush,
+    ///     namespace_id,
+    ///     params,
+    ///     Some("flush-users".to_string()),
+    ///     None,
+    /// ).await?;
+    /// ```
+    pub async fn create_job_typed<T: JobParams>(
+        &self,
+        job_type: JobType,
+        namespace_id: NamespaceId,
+        params: T,
+        idempotency_key: Option<String>,
+        options: Option<JobOptions>,
+    ) -> Result<JobId, KalamDbError> {
+        // Validate parameters before serialization
+        params.validate()?;
+
+        // Serialize to JSON for storage
+        let parameters = serde_json::to_value(&params)
+            .map_err(|e| KalamDbError::Other(format!("Failed to serialize job parameters: {}", e)))?;
+
+        // Delegate to existing create_job method
+        self.create_job(job_type, namespace_id, parameters, idempotency_key, options).await
     }
 
     /// Cancel a running or queued job
@@ -491,18 +554,11 @@ impl JobsManager {
 
         self.log_job_event(&job_id, "info", "Job started");
 
-        // Get executor for job type
-        let executor = self
-            .job_registry
-            .get(&job.job_type)
-            .ok_or_else(|| crate::error::KalamDbError::Other(format!("No executor found for job type {:?}", job.job_type)))?;
-
-        // Create job context
+        // Execute job using registry (handles deserialization and validation)
         let app_ctx = self.get_attached_app_context();
-    let ctx = JobContext::new(app_ctx, job_id.as_str().to_string());
 
         // Execute job with robust error handling (do not tear down run loop on executor error)
-        let decision = match executor.execute(&ctx, &job).await {
+        let decision = match self.job_registry.execute(app_ctx, &job).await {
             Ok(d) => d,
             Err(e) => {
                 // Mark job as failed and continue processing other jobs
@@ -777,15 +833,15 @@ impl JobsManager {
 
             let namespace_id = table.namespace_id.clone();
             let table_name = table.table_name.clone();
+            let table_id = TableId::new(namespace_id.clone(), table_name.clone());
 
-            // Create eviction job parameters
-            let params = serde_json::json!({
-                "namespace_id": namespace_id,
-                "table_name": table_name,
-                "table_type": "Stream",
-                "ttl_seconds": ttl_seconds,
-                "batch_size": 10000
-            });
+            // Create eviction job with typed parameters
+            let params = crate::jobs::executors::stream_eviction::StreamEvictionParams {
+                table_id: table_id.clone(),
+                table_type: TableType::Stream,
+                ttl_seconds,
+                batch_size: 10000,
+            };
 
             // Generate idempotency key (hourly granularity)
             let now = chrono::Utc::now();
@@ -794,7 +850,7 @@ impl JobsManager {
 
             // Create eviction job
             match self
-                .create_job(
+                .create_job_typed(
                     JobType::StreamEviction,
                     namespace_id.clone(),
                     params,

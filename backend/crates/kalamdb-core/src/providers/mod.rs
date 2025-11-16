@@ -34,7 +34,7 @@ pub mod version_resolution; // Phase 13.6: Moved from tables/
 // Re-export key types for convenience
 pub use base::{BaseTableProvider, TableProviderCore};
 pub use flush::{
-    FlushExecutor, FlushJobResult, FlushMetadata, SharedTableFlushJob, 
+    FlushJobResult, FlushMetadata, SharedTableFlushJob, 
     SharedTableFlushMetadata, TableFlush, UserTableFlushJob, UserTableFlushMetadata,
 };
 pub use shared::SharedTableProvider;

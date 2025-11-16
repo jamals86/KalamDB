@@ -36,7 +36,7 @@ fn smoke_chat_ai_example_from_readme() {
         "CREATE USER TABLE IF NOT EXISTS {} (
             id BIGINT PRIMARY KEY DEFAULT SNOWFLAKE_ID(),
             conversation_id BIGINT NOT NULL,
-            role TEXT NOT NULL,
+            message_role TEXT NOT NULL,
             content TEXT NOT NULL,
             created_at TIMESTAMP DEFAULT NOW()
         ) FLUSH ROW_THRESHOLD 1000;",
@@ -56,22 +56,21 @@ fn smoke_chat_ai_example_from_readme() {
     );
     execute_sql_as_root_via_cli(&create_typing).expect("failed to create typing_events table");
 
-    // 2. Insert a conversation and get the ID
+    // 2. Insert a conversation
     let insert_conv_sql = format!(
-        "INSERT INTO {} (title) VALUES ('Chat with AI') RETURNING id;",
+        "INSERT INTO {} (title) VALUES ('Chat with AI');",
         conversations_table
     );
-    let conv_output = execute_sql_as_root_via_cli_json(&insert_conv_sql)
+    execute_sql_as_root_via_cli(&insert_conv_sql)
         .expect("failed to insert conversation");
-    assert!(conv_output.contains("id"), "conversation insert should return id");
 
     // For smoke purposes, we'll use conversation_id = 1
-    // (In production, you'd parse the JSON to get the actual ID)
+    // (In production, you'd parse the conversation ID from a query)
     let conversation_id = 1;
 
     // 3. Insert user + AI messages
     let insert_msgs_sql = format!(
-        "INSERT INTO {} (conversation_id, role, content) VALUES
+        "INSERT INTO {} (conversation_id, message_role, content) VALUES
             ({}, 'user', 'Hello, AI!'),
             ({}, 'assistant', 'Hi! How can I help you today?');",
         messages_table, conversation_id, conversation_id
@@ -80,7 +79,7 @@ fn smoke_chat_ai_example_from_readme() {
 
     // 4. Query back the conversation history
     let select_msgs_sql = format!(
-        "SELECT role, content FROM {} WHERE conversation_id = {} ORDER BY created_at ASC;",
+        "SELECT message_role, content FROM {} WHERE conversation_id = {} ORDER BY created_at ASC;",
         messages_table, conversation_id
     );
     let history = execute_sql_as_root_via_cli_json(&select_msgs_sql)

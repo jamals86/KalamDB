@@ -1,14 +1,14 @@
 //! Backup Job Executor
 //!
-//! **Phase 9 (T152)**: JobExecutor implementation for backup operations
+//! **Phase 9 (T152)**: JobExecutor implementation for table backups
 //!
-//! Handles backup of table data and metadata.
+//! Handles backup of table data to external storage.
 //!
 //! ## Responsibilities (TODO)
-//! - Create consistent snapshots of table data
-//! - Export metadata and schema definitions
-//! - Compress and upload to backup storage
-//! - Track backup metrics (size, duration, compression ratio)
+//! - Export table data to Parquet format
+//! - Upload to configured backup storage (S3, etc.)
+//! - Track backup metadata and versions
+//! - Support incremental backups
 //!
 //! ## Parameters Format
 //! ```json
@@ -16,20 +16,47 @@
 //!   "namespace_id": "default",
 //!   "table_name": "users",
 //!   "table_type": "User",
-//!   "backup_location": "s3://backups/kalamdb/",
-//!   "compression": "zstd"
+//!   "backup_location": "s3://backups/users",
+//!   "incremental": false
 //! }
 //! ```
 
 use crate::error::KalamDbError;
-use crate::jobs::executors::{JobContext, JobDecision, JobExecutor};
+use crate::jobs::executors::{JobContext, JobDecision, JobExecutor, JobParams};
 use async_trait::async_trait;
-use kalamdb_commons::system::Job;
-use kalamdb_commons::JobType;
+use kalamdb_commons::{JobType, TableId};
+use kalamdb_commons::schemas::TableType;
+use serde::{Deserialize, Serialize};
+
+/// Typed parameters for backup operations
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct BackupParams {
+    /// Table identifier (required)
+    #[serde(flatten)]
+    pub table_id: TableId,
+    /// Table type (required)
+    pub table_type: TableType,
+    /// Backup location URI (required)
+    pub backup_location: String,
+    /// Incremental backup (optional, defaults to false)
+    #[serde(default)]
+    pub incremental: bool,
+}
+
+impl JobParams for BackupParams {
+    fn validate(&self) -> Result<(), KalamDbError> {
+        if self.backup_location.is_empty() {
+            return Err(KalamDbError::InvalidOperation(
+                "backup_location cannot be empty".to_string(),
+            ));
+        }
+        Ok(())
+    }
+}
 
 /// Backup Job Executor (Placeholder)
 ///
-/// TODO: Implement backup logic
+/// TODO: Implement table backup logic
 pub struct BackupExecutor;
 
 impl BackupExecutor {
@@ -40,6 +67,8 @@ impl BackupExecutor {
 
 #[async_trait]
 impl JobExecutor for BackupExecutor {
+    type Params = BackupParams;
+
     fn job_type(&self) -> JobType {
         JobType::Backup
     }
@@ -48,39 +77,18 @@ impl JobExecutor for BackupExecutor {
         "BackupExecutor"
     }
 
-    async fn validate_params(&self, job: &Job) -> Result<(), KalamDbError> {
-        let params = job
-            .parameters
-            .as_ref()
-            .ok_or_else(|| KalamDbError::InvalidOperation("Missing parameters".to_string()))?;
-
-        let _params_obj: serde_json::Value = serde_json::from_str(params)
-            .map_err(|e| KalamDbError::InvalidOperation(format!("Invalid JSON parameters: {}", e)))?;
-
-        // TODO: Validate backup-specific parameters
-        Ok(())
-    }
-
-    async fn execute(&self, ctx: &JobContext, _job: &Job) -> Result<JobDecision, KalamDbError> {
+    async fn execute(&self, ctx: &JobContext<Self::Params>) -> Result<JobDecision, KalamDbError> {
         ctx.log_warn("BackupExecutor not yet implemented");
         
         // TODO: Implement backup logic
-        // - Create snapshot of table data (RocksDB + Parquet files)
-        // - Export schema and metadata
-        // - Compress backup data
-        // - Upload to backup storage (S3, GCS, Azure Blob, etc.)
-        // - Verify backup integrity
+        // - Export table data to Parquet format
+        // - Upload to configured backup storage
+        // - Track backup metadata
         
         Ok(JobDecision::Failed {
             message: "BackupExecutor not yet implemented".to_string(),
             exception_trace: Some("BackupExecutor not yet implemented".to_string()),
         })
-    }
-
-    async fn cancel(&self, ctx: &JobContext, _job: &Job) -> Result<(), KalamDbError> {
-        ctx.log_warn("Backup job cancellation requested");
-        // Allow cancellation since partial backups can be discarded
-        Ok(())
     }
 }
 

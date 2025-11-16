@@ -20,11 +20,36 @@
 //! }
 //! ```
 
-use crate::jobs::executors::{JobContext, JobDecision, JobExecutor};
+use crate::jobs::executors::{JobContext, JobDecision, JobExecutor, JobParams};
 use crate::error::KalamDbError;
 use async_trait::async_trait;
-use kalamdb_commons::JobType;
-use kalamdb_commons::system::Job;
+use kalamdb_commons::{JobType, TableId};
+use kalamdb_commons::schemas::TableType;
+use serde::{Deserialize, Serialize};
+use std::sync::Arc;
+
+/// Typed parameters for retention operations (T192)
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct RetentionParams {
+    /// Table identifier (required)
+    #[serde(flatten)]
+    pub table_id: TableId,
+    /// Table type (required)
+    pub table_type: TableType,
+    /// Retention period in hours (required, must be > 0)
+    pub retention_hours: u64,
+}
+
+impl JobParams for RetentionParams {
+    fn validate(&self) -> Result<(), KalamDbError> {
+        if self.retention_hours == 0 {
+            return Err(KalamDbError::InvalidOperation(
+                "retention_hours must be greater than 0".to_string(),
+            ));
+        }
+        Ok(())
+    }
+}
 
 /// Retention Job Executor
 ///
@@ -40,6 +65,8 @@ impl RetentionExecutor {
 
 #[async_trait]
 impl JobExecutor for RetentionExecutor {
+    type Params = RetentionParams;
+
     fn job_type(&self) -> JobType {
         JobType::Retention
     }
@@ -48,66 +75,18 @@ impl JobExecutor for RetentionExecutor {
         "RetentionExecutor"
     }
 
-    async fn validate_params(&self, job: &Job) -> Result<(), KalamDbError> {
-        let params = job
-            .parameters
-            .as_ref()
-            .ok_or_else(|| KalamDbError::InvalidOperation("Missing parameters".to_string()))?;
-
-        let params_obj: serde_json::Value = serde_json::from_str(params)
-            .map_err(|e| KalamDbError::InvalidOperation(format!("Invalid JSON parameters: {}", e)))?;
-
-        // Validate required fields
-        if params_obj.get("namespace_id").is_none() {
-            return Err(KalamDbError::InvalidOperation(
-                "Missing required parameter: namespace_id".to_string(),
-            ));
-        }
-        if params_obj.get("table_name").is_none() {
-            return Err(KalamDbError::InvalidOperation(
-                "Missing required parameter: table_name".to_string(),
-            ));
-        }
-        if params_obj.get("table_type").is_none() {
-            return Err(KalamDbError::InvalidOperation(
-                "Missing required parameter: table_type".to_string(),
-            ));
-        }
-        if params_obj.get("retention_hours").is_none() {
-            return Err(KalamDbError::InvalidOperation(
-                "Missing required parameter: retention_hours".to_string(),
-            ));
-        }
-
-        // Validate retention_hours is a number
-        if !params_obj["retention_hours"].is_number() {
-            return Err(KalamDbError::InvalidOperation(
-                "retention_hours must be a number".to_string(),
-            ));
-        }
-
-        Ok(())
-    }
-
-    async fn execute(&self, ctx: &JobContext, job: &Job) -> Result<JobDecision, KalamDbError> {
+    async fn execute(&self, ctx: &JobContext<Self::Params>) -> Result<JobDecision, KalamDbError> {
         ctx.log_info("Starting retention enforcement operation");
 
-        // Validate parameters
-        self.validate_params(job).await?;
-
-        // Parse parameters
-        let params = job.parameters.as_ref().unwrap();
-        let params_obj: serde_json::Value = serde_json::from_str(params)
-            .map_err(|e| KalamDbError::InvalidOperation(format!("Failed to parse parameters: {}", e)))?;
-
-        let namespace_id = params_obj["namespace_id"].as_str().unwrap();
-        let table_name = params_obj["table_name"].as_str().unwrap();
-        let table_type = params_obj["table_type"].as_str().unwrap();
-        let retention_hours = params_obj["retention_hours"].as_u64().unwrap();
+        // Parameters already validated in JobContext - type-safe access
+        let params = ctx.params();
+        let table_id = Arc::new(params.table_id.clone());
+        let table_type = params.table_type;
+        let retention_hours = params.retention_hours;
 
         ctx.log_info(&format!(
-            "Enforcing retention policy for {}.{} (type: {}, retention: {}h)",
-            namespace_id, table_name, table_type, retention_hours
+            "Enforcing retention policy for {} (type: {:?}, retention: {}h)",
+            table_id, table_type, retention_hours
         ));
 
         // Calculate cutoff time for deletion (records deleted before this time are expired)
@@ -147,13 +126,13 @@ impl JobExecutor for RetentionExecutor {
 
         Ok(JobDecision::Completed {
             message: Some(format!(
-                "Enforced retention policy for {}.{} ({}h) - {} rows deleted",
-                namespace_id, table_name, retention_hours, rows_deleted
+                "Enforced retention policy for {} ({}h) - {} rows deleted",
+                table_id, retention_hours, rows_deleted
             )),
         })
     }
 
-    async fn cancel(&self, ctx: &JobContext, _job: &Job) -> Result<(), KalamDbError> {
+    async fn cancel(&self, ctx: &JobContext<Self::Params>) -> Result<(), KalamDbError> {
         ctx.log_warn("Retention job cancellation requested");
         // Allow cancellation since partial retention enforcement is acceptable
         Ok(())
@@ -169,83 +148,32 @@ impl Default for RetentionExecutor {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use kalamdb_commons::{JobId, NamespaceId, NodeId};
-    use kalamdb_commons::system::Job;
-
-    fn make_job(id: &str, job_type: JobType, ns: &str) -> Job {
-        let now = chrono::Utc::now().timestamp_millis();
-        Job {
-            job_id: JobId::new(id),
-            job_type,
-            namespace_id: NamespaceId::new(ns),
-            table_name: None,
-            status: kalamdb_commons::JobStatus::Running,
-            parameters: None,
-            message: None,
-            exception_trace: None,
-            idempotency_key: None,
-            retry_count: 0,
-            max_retries: 3,
-            memory_used: None,
-            cpu_used: None,
-            created_at: now,
-            updated_at: now,
-            started_at: Some(now),
-            finished_at: None,
-            node_id: NodeId::from("node1"),
-            queue: None,
-            priority: None,
-        }
-    }
-
-    #[tokio::test]
-    async fn test_validate_params_success() {
-        let executor = RetentionExecutor::new();
-
-        let job = make_job("RT-test123", JobType::Retention, "default");
-
-        let mut job = job;
-        job.parameters = Some(
-            serde_json::json!({
-                "namespace_id": "default",
-                "table_name": "users",
-                "table_type": "User",
-                "retention_hours": 720
-            })
-            .to_string(),
-        );
-
-        assert!(executor.validate_params(&job).await.is_ok());
-    }
-
-    #[tokio::test]
-    async fn test_validate_params_missing_retention_hours() {
-        let executor = RetentionExecutor::new();
-
-        let job = make_job("RT-test123", JobType::Retention, "default");
-
-        let mut job = job;
-        job.parameters = Some(
-            serde_json::json!({
-                "namespace_id": "default",
-                "table_name": "users",
-                "table_type": "User"
-            })
-            .to_string(),
-        );
-
-        let result = executor.validate_params(&job).await;
-        assert!(result.is_err());
-        let err = result.unwrap_err();
-        assert!(err
-            .to_string()
-            .contains("Missing required parameter: retention_hours"));
-    }
+    use kalamdb_commons::{NamespaceId, TableName};
 
     #[test]
     fn test_executor_properties() {
         let executor = RetentionExecutor::new();
         assert_eq!(executor.job_type(), JobType::Retention);
         assert_eq!(executor.name(), "RetentionExecutor");
+    }
+
+    #[test]
+    fn test_params_validation_success() {
+        let params = RetentionParams {
+            table_id: TableId::new(NamespaceId::new("default"), TableName::new("users")),
+            table_type: TableType::User,
+            retention_hours: 720,
+        };
+        assert!(params.validate().is_ok());
+    }
+
+    #[test]
+    fn test_params_validation_zero_hours() {
+        let params = RetentionParams {
+            table_id: TableId::new(NamespaceId::new("default"), TableName::new("users")),
+            table_type: TableType::User,
+            retention_hours: 0,
+        };
+        assert!(params.validate().is_err());
     }
 }

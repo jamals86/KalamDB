@@ -3,7 +3,7 @@
 //! Flushes user table data from RocksDB to Parquet files, grouping by UserId.
 //! Each user's data is written to a separate Parquet file for RLS isolation.
 
-use super::base::{FlushExecutor, FlushJobResult, FlushMetadata, TableFlush};
+use super::base::{FlushJobResult, FlushMetadata, TableFlush};
 use crate::error::KalamDbError;
 use crate::live_query::manager::{ChangeNotification, LiveQueryManager};
 use crate::manifest::{FlushManifestHelper, ManifestCacheService, ManifestService};
@@ -31,6 +31,8 @@ pub struct UserTableFlushJob {
     node_id: NodeId, //TODO: We can pass AppContext and has node_id there
     live_query_manager: Option<Arc<LiveQueryManager>>, //TODO: We can pass AppContext and has live_query_manager there
     manifest_helper: FlushManifestHelper,
+    /// Bloom filter columns (PRIMARY KEY + _seq) - fetched once per job for efficiency
+    bloom_filter_columns: Vec<String>,
 }
 
 impl UserTableFlushJob {
@@ -47,6 +49,18 @@ impl UserTableFlushJob {
     ) -> Self {
         let node_id = NodeId::from(format!("node-{}", std::process::id()));
         let manifest_helper = FlushManifestHelper::new(manifest_service, manifest_cache);
+        
+        // Fetch Bloom filter columns once per job (PRIMARY KEY + _seq)
+        // This avoids fetching TableDefinition for each user during flush
+        let bloom_filter_columns = unified_cache
+            .get_bloom_filter_columns(&table_id)
+            .unwrap_or_else(|e| {
+                log::warn!("⚠️  Failed to get Bloom filter columns for {}: {}. Using default (_seq only)", table_id, e);
+                vec!["_seq".to_string()]
+            });
+        
+        log::debug!("🌸 Bloom filters enabled for columns: {:?}", bloom_filter_columns);
+        
         Self {
             store,
             table_id,
@@ -57,6 +71,7 @@ impl UserTableFlushJob {
             node_id,
             live_query_manager: None,
             manifest_helper,
+            bloom_filter_columns,
         }
     }
 
@@ -64,11 +79,6 @@ impl UserTableFlushJob {
     pub fn with_live_query_manager(mut self, manager: Arc<LiveQueryManager>) -> Self {
         self.live_query_manager = Some(manager);
         self
-    }
-
-    /// Execute flush job with tracking
-    pub fn execute_tracked(&self) -> Result<FlushJobResult, KalamDbError> {
-        FlushExecutor::execute_with_tracking(self, self.namespace_id.clone())
     }
 
     /// Resolve storage path for a specific user
@@ -193,6 +203,7 @@ impl UserTableFlushJob {
         user_id: &str,
         rows: &[(Vec<u8>, JsonValue)],
         parquet_files: &mut Vec<String>,
+        bloom_filter_columns: &[String],
     ) -> Result<usize, KalamDbError> {
         if rows.is_empty() {
             return Ok(0);
@@ -230,10 +241,10 @@ impl UserTableFlushJob {
                 .map_err(|e| KalamDbError::Other(format!("Failed to create directory: {}", e)))?;
         }
 
-        // Write to Parquet
+        // Write to Parquet with Bloom filters on PRIMARY KEY + _seq (FR-054, FR-055)
         log::debug!("📝 Writing Parquet file: path={}, rows={}", output_path.display(), rows_count);
         let writer = ParquetWriter::new(output_path.to_str().unwrap());
-        writer.write(self.schema.clone(), vec![batch.clone()])?;
+        writer.write_with_bloom_filter(self.schema.clone(), vec![batch.clone()], Some(bloom_filter_columns.to_vec()))?;
 
         // Calculate file size
         let size_bytes = std::fs::metadata(&output_path)
@@ -406,7 +417,6 @@ impl TableFlush for UserTableFlushJob {
             log::info!("⚠️  No rows to flush for user table={}.{} (empty table or all deleted)",
                       self.namespace_id.as_str(), self.table_name.as_str());
             return Ok(FlushJobResult {
-                job_record: self.create_job_record(&self.generate_job_id(), self.namespace_id.clone()),
                 rows_flushed: 0,
                 parquet_files: vec![],
                 metadata: FlushMetadata::user_table(0, vec![]),
@@ -419,7 +429,7 @@ impl TableFlush for UserTableFlushJob {
         let mut error_messages: Vec<String> = Vec::new();
 
         for (user_id, rows) in &rows_by_user {
-            match self.flush_user_data(user_id, rows, &mut parquet_files) {
+            match self.flush_user_data(user_id, rows, &mut parquet_files, &self.bloom_filter_columns) {
                 Ok(rows_count) => {
                     let keys: Vec<Vec<u8>> = rows.iter().map(|(key, _)| key.clone()).collect();
                     if let Err(e) = self.delete_flushed_keys(&keys) {
@@ -463,7 +473,6 @@ impl TableFlush for UserTableFlushJob {
         }
 
         Ok(FlushJobResult {
-            job_record: self.create_job_record(&self.generate_job_id(), self.namespace_id.clone()),
             rows_flushed: total_rows_flushed,
             parquet_files,
             metadata: FlushMetadata::user_table(rows_by_user.len(), error_messages),
@@ -476,9 +485,5 @@ impl TableFlush for UserTableFlushJob {
 
     fn live_query_manager(&self) -> Option<&Arc<LiveQueryManager>> {
         self.live_query_manager.as_ref()
-    }
-
-    fn node_id(&self) -> NodeId {
-        self.node_id.clone()
     }
 }

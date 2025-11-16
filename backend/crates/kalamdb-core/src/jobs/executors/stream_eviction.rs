@@ -21,14 +21,54 @@
 //! }
 //! ```
 
-use crate::jobs::executors::{JobContext, JobDecision, JobExecutor};
+use crate::jobs::executors::{JobContext, JobDecision, JobExecutor, JobParams};
 use crate::error::KalamDbError;
 use crate::providers::StreamTableProvider;
 use async_trait::async_trait;
-use kalamdb_commons::system::Job;
-use kalamdb_commons::JobType;
-use kalamdb_commons::models::TableId;
+use kalamdb_commons::{JobType, TableId};
+use kalamdb_commons::schemas::TableType;
 use kalamdb_store::entity_store::EntityStore;
+use serde::{Deserialize, Serialize};
+
+fn default_batch_size() -> u64 {
+    10000
+}
+
+/// Typed parameters for stream eviction operations (T193)
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct StreamEvictionParams {
+    /// Table identifier (required)
+    #[serde(flatten)]
+    pub table_id: TableId,
+    /// Table type (must be Stream - validated in validate())
+    pub table_type: TableType,
+    /// TTL in seconds (required, must be > 0)
+    pub ttl_seconds: u64,
+    /// Batch size for eviction (optional, defaults to 10000)
+    #[serde(default = "default_batch_size")]
+    pub batch_size: u64,
+}
+
+impl JobParams for StreamEvictionParams {
+    fn validate(&self) -> Result<(), KalamDbError> {
+        if self.table_type != TableType::Stream {
+            return Err(KalamDbError::InvalidOperation(
+                format!("table_type must be Stream, got: {:?}", self.table_type),
+            ));
+        }
+        if self.ttl_seconds == 0 {
+            return Err(KalamDbError::InvalidOperation(
+                "ttl_seconds must be greater than 0".to_string(),
+            ));
+        }
+        if self.batch_size == 0 {
+            return Err(KalamDbError::InvalidOperation(
+                "batch_size must be greater than 0".to_string(),
+            ));
+        }
+        Ok(())
+    }
+}
 
 /// Stream Eviction Job Executor
 ///
@@ -44,6 +84,8 @@ impl StreamEvictionExecutor {
 
 #[async_trait]
 impl JobExecutor for StreamEvictionExecutor {
+    type Params = StreamEvictionParams;
+
     fn job_type(&self) -> JobType {
         JobType::StreamEviction
     }
@@ -52,90 +94,18 @@ impl JobExecutor for StreamEvictionExecutor {
         "StreamEvictionExecutor"
     }
 
-    async fn validate_params(&self, job: &Job) -> Result<(), KalamDbError> {
-        let params = job
-            .parameters
-            .as_ref()
-            .ok_or_else(|| KalamDbError::InvalidOperation("Missing parameters".to_string()))?;
-
-        let params_obj: serde_json::Value = serde_json::from_str(params)
-            .map_err(|e| KalamDbError::InvalidOperation(format!("Invalid JSON parameters: {}", e)))?;
-
-        // Validate required fields
-        if params_obj.get("namespace_id").is_none() {
-            return Err(KalamDbError::InvalidOperation(
-                "Missing required parameter: namespace_id".to_string(),
-            ));
-        }
-        if params_obj.get("table_name").is_none() {
-            return Err(KalamDbError::InvalidOperation(
-                "Missing required parameter: table_name".to_string(),
-            ));
-        }
-        if params_obj.get("table_type").is_none() {
-            return Err(KalamDbError::InvalidOperation(
-                "Missing required parameter: table_type".to_string(),
-            ));
-        }
-
-        // Validate table_type is Stream
-        let table_type = params_obj["table_type"]
-            .as_str()
-            .ok_or_else(|| KalamDbError::InvalidOperation("table_type must be a string".to_string()))?;
-        if table_type != "Stream" {
-            return Err(KalamDbError::InvalidOperation(format!(
-                "Invalid table_type: expected 'Stream', got '{}'",
-                table_type
-            )));
-        }
-
-        if params_obj.get("ttl_seconds").is_none() {
-            return Err(KalamDbError::InvalidOperation(
-                "Missing required parameter: ttl_seconds".to_string(),
-            ));
-        }
-
-        // Validate ttl_seconds is a number
-        if !params_obj["ttl_seconds"].is_number() {
-            return Err(KalamDbError::InvalidOperation(
-                "ttl_seconds must be a number".to_string(),
-            ));
-        }
-
-        // Validate batch_size if present
-        if let Some(batch_size) = params_obj.get("batch_size") {
-            if !batch_size.is_number() {
-                return Err(KalamDbError::InvalidOperation(
-                    "batch_size must be a number".to_string(),
-                ));
-            }
-        }
-
-        Ok(())
-    }
-
-    async fn execute(&self, ctx: &JobContext, job: &Job) -> Result<JobDecision, KalamDbError> {
+    async fn execute(&self, ctx: &JobContext<Self::Params>) -> Result<JobDecision, KalamDbError> {
         ctx.log_info("Starting stream eviction operation");
 
-        // Validate parameters
-        self.validate_params(job).await?;
-
-        // Parse parameters
-        let params = job.parameters.as_ref().unwrap();
-        let params_obj: serde_json::Value = serde_json::from_str(params)
-            .map_err(|e| KalamDbError::InvalidOperation(format!("Failed to parse parameters: {}", e)))?;
-
-        let namespace_id = params_obj["namespace_id"].as_str().unwrap();
-        let table_name = params_obj["table_name"].as_str().unwrap();
-        let ttl_seconds = params_obj["ttl_seconds"].as_u64().unwrap();
-        let batch_size = params_obj
-            .get("batch_size")
-            .and_then(|v| v.as_u64())
-            .unwrap_or(10000);
+        // Parameters already validated in JobContext - type-safe access
+        let params = ctx.params();
+        let table_id = params.table_id.clone();
+        let ttl_seconds = params.ttl_seconds;
+        let batch_size = params.batch_size;
 
         ctx.log_info(&format!(
-            "Evicting expired records from stream {}.{} (ttl: {}s, batch: {})",
-            namespace_id, table_name, ttl_seconds, batch_size
+            "Evicting expired records from stream {} (ttl: {}s, batch: {})",
+            table_id, ttl_seconds, batch_size
         ));
 
         // Calculate cutoff time for eviction (records created before this time are expired)
@@ -153,21 +123,19 @@ impl JobExecutor for StreamEvictionExecutor {
         ));
 
         // Get table's StreamTableStore
-        let table_id = TableId::from_strings(namespace_id, table_name);
-
         // Use the registered StreamTableProvider so we access the live in-memory store
         let schema_registry = ctx.app_ctx.schema_registry();
         let provider_arc = match schema_registry.get_provider(&table_id) {
             Some(p) => p,
             None => {
                 ctx.log_warn(&format!(
-                    "Stream provider not registered for {}.{}; skipping eviction",
-                    namespace_id, table_name
+                    "Stream provider not registered for {}; skipping eviction",
+                    table_id
                 ));
                 return Ok(JobDecision::Completed {
                     message: Some(format!(
-                        "Stream table {}.{} not registered; nothing to evict",
-                        namespace_id, table_name
+                        "Stream table {} not registered; nothing to evict",
+                        table_id
                     )),
                 });
             }
@@ -177,8 +145,8 @@ impl JobExecutor for StreamEvictionExecutor {
             .downcast_ref::<StreamTableProvider>()
             .ok_or_else(|| {
                 KalamDbError::InvalidOperation(format!(
-                    "Cached provider for {}.{} is not a StreamTableProvider",
-                    namespace_id, table_name
+                    "Cached provider for {} is not a StreamTableProvider",
+                    table_id
                 ))
             })?;
         let store = stream_provider.store_arc();
@@ -189,10 +157,9 @@ impl JobExecutor for StreamEvictionExecutor {
             .map_err(|e| KalamDbError::InvalidOperation(format!("Failed to scan stream store: {}", e)))?;
 
         ctx.log_info(&format!(
-            "Scanned {} total rows from {}.{}",
+            "Scanned {} total rows from {}",
             all_rows.len(),
-            namespace_id,
-            table_name
+            table_id
         ));
 
         // If no rows, nothing to evict
@@ -200,8 +167,8 @@ impl JobExecutor for StreamEvictionExecutor {
             ctx.log_info("No rows found; nothing to evict");
             return Ok(JobDecision::Completed {
                 message: Some(format!(
-                    "No rows found in {}.{}; nothing to evict",
-                    namespace_id, table_name
+                    "No rows found in {}; nothing to evict",
+                    table_id
                 )),
             });
         }
@@ -240,10 +207,9 @@ impl JobExecutor for StreamEvictionExecutor {
         }
 
         ctx.log_info(&format!(
-            "Stream eviction completed - {} rows evicted from {}.{}",
+            "Stream eviction completed - {} rows evicted from {}",
             deleted_count,
-            namespace_id,
-            table_name
+            table_id
         ));
 
         // If we hit batch size limit, schedule retry for next batch
@@ -258,13 +224,13 @@ impl JobExecutor for StreamEvictionExecutor {
 
         Ok(JobDecision::Completed {
             message: Some(format!(
-                "Evicted {} expired records from {}.{} (ttl: {}s)",
-                deleted_count, namespace_id, table_name, ttl_seconds
+                "Evicted {} expired records from {} (ttl: {}s)",
+                deleted_count, table_id, ttl_seconds
             )),
         })
     }
 
-    async fn cancel(&self, ctx: &JobContext, _job: &Job) -> Result<(), KalamDbError> {
+    async fn cancel(&self, ctx: &JobContext<Self::Params>) -> Result<(), KalamDbError> {
         ctx.log_warn("Stream eviction job cancellation requested");
         // Allow cancellation since partial eviction is acceptable
         Ok(())
@@ -322,48 +288,37 @@ mod tests {
         }
     }
 
-    #[tokio::test]
-    async fn test_validate_params_success() {
-        let executor = StreamEvictionExecutor::new();
-
-        let job = make_job("SE-test123", JobType::StreamEviction, "default");
-
-        let mut job = job;
-        job.parameters = Some(
-            serde_json::json!({
-                "namespace_id": "default",
-                "table_name": "events",
-                "table_type": "Stream",
-                "ttl_seconds": 86400,
-                "batch_size": 10000
-            })
-            .to_string(),
-        );
-
-        assert!(executor.validate_params(&job).await.is_ok());
+    #[test]
+    fn test_params_validation_success() {
+        let params = StreamEvictionParams {
+            table_id: TableId::new(NamespaceId::new("default"), kalamdb_commons::TableName::new("events")),
+            table_type: TableType::Stream,
+            ttl_seconds: 86400,
+            batch_size: 10000,
+        };
+        assert!(params.validate().is_ok());
     }
 
-    #[tokio::test]
-    async fn test_validate_params_invalid_table_type() {
-        let executor = StreamEvictionExecutor::new();
+    #[test]
+    fn test_params_validation_invalid_table_type() {
+        let params = StreamEvictionParams {
+            table_id: TableId::new(NamespaceId::new("default"), kalamdb_commons::TableName::new("events")),
+            table_type: TableType::User,  // Wrong type
+            ttl_seconds: 86400,
+            batch_size: 10000,
+        };
+        assert!(params.validate().is_err());
+    }
 
-        let job = make_job("SE-test123", JobType::StreamEviction, "default");
-
-        let mut job = job;
-        job.parameters = Some(
-            serde_json::json!({
-                "namespace_id": "default",
-                "table_name": "users",
-                "table_type": "User",
-                "ttl_seconds": 86400
-            })
-            .to_string(),
-        );
-
-        let result = executor.validate_params(&job).await;
-        assert!(result.is_err());
-        let err = result.unwrap_err();
-        assert!(err.to_string().contains("expected 'Stream'"));
+    #[test]
+    fn test_params_validation_zero_ttl() {
+        let params = StreamEvictionParams {
+            table_id: TableId::new(NamespaceId::new("default"), kalamdb_commons::TableName::new("events")),
+            table_type: TableType::Stream,
+            ttl_seconds: 0,  // Invalid
+            batch_size: 10000,
+        };
+        assert!(params.validate().is_err());
     }
 
     #[test]
@@ -457,9 +412,16 @@ mod tests {
             .to_string(),
         );
 
-        let ctx = JobContext::new(app_ctx.clone(), job.job_id.as_str().to_string());
+        let params = StreamEvictionParams {
+            table_id: table_id.clone(),
+            table_type: TableType::Stream,
+            ttl_seconds: 1,
+            batch_size: 100,
+        };
+
+        let ctx = JobContext::new(app_ctx.clone(), job.job_id.as_str().to_string(), params);
         let executor = StreamEvictionExecutor::new();
-        let decision = executor.execute(&ctx, &job).await.expect("execute eviction");
+        let decision = executor.execute(&ctx).await.expect("execute eviction");
 
         match decision {
             JobDecision::Completed { message } => {

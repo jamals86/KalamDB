@@ -193,7 +193,7 @@ async fn test_datatypes_preservation_values() {
         unified_cache,
     );
 
-    let result = job.execute_tracked().expect("flush job failed");
+    let result = job.execute().expect("flush job failed");
     assert_eq!(
         result.rows_flushed as usize, row_count,
         "unexpected rows_flushed"

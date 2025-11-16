@@ -23,7 +23,8 @@ pub mod backup;
 pub mod restore;
 
 // Re-export key types
-pub use executor_trait::{JobContext, JobDecision, JobExecutor};
+// Export core trait and types
+pub use executor_trait::{CancellationToken, JobContext, JobDecision, JobExecutor, JobParams};
 pub use registry::JobRegistry;
 
 // Re-export concrete executors

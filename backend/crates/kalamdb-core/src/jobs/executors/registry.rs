@@ -1,35 +1,154 @@
 //! Job Registry
 //!
-//! Central registry for all job executors. Maps JobType to executor implementations.
+//! Central registry for all job executors with type erasure for heterogeneous storage.
+//!
+//! ## Type Erasure Pattern
+//!
+//! The registry uses a two-layer approach:
+//! 1. `JobExecutor<Params = T>` - Type-safe trait with associated types
+//! 2. `DynJobExecutor` - Type-erased trait for storage in DashMap
+//!
+//! This allows storing executors with different parameter types in a single collection
+//! while preserving type safety at execution time through runtime deserialization.
 
-use super::executor_trait::JobExecutor;
+use super::executor_trait::{JobContext, JobDecision, JobExecutor, JobParams};
 use crate::error::KalamDbError;
-use kalamdb_commons::models::JobType;
+use crate::app_context::AppContext;
+use kalamdb_commons::models::{JobType, system::Job};
 use dashmap::DashMap;
 use std::sync::Arc;
+use async_trait::async_trait;
+
+/// Type-erased job executor trait for heterogeneous storage
+///
+/// Internal trait used by JobRegistry to store executors with different
+/// parameter types in a single DashMap. Handles deserialization and
+/// validation at runtime.
+#[async_trait]
+trait DynJobExecutor: Send + Sync {
+    /// Returns the job type this executor handles
+    fn job_type(&self) -> JobType;
+
+    /// Returns the executor name for logging
+    fn name(&self) -> &'static str;
+
+    /// Executes the job with dynamic parameter deserialization
+    ///
+    /// Deserializes parameters from JSON, validates them, creates typed
+    /// JobContext, and delegates to type-safe execute method.
+    async fn execute_dyn(
+        &self,
+        app_ctx: Arc<AppContext>,
+        job: &Job,
+    ) -> Result<JobDecision, KalamDbError>;
+
+    /// Cancels a running job with dynamic parameter deserialization
+    async fn cancel_dyn(
+        &self,
+        app_ctx: Arc<AppContext>,
+        job: &Job,
+    ) -> Result<(), KalamDbError>;
+}
+
+/// Bridge from type-safe JobExecutor<T> to type-erased DynJobExecutor
+///
+/// Implements DynJobExecutor for any type that implements JobExecutor,
+/// handling the deserialization and type conversion automatically.
+#[async_trait]
+impl<T, E> DynJobExecutor for E
+where
+    T: JobParams,
+    E: JobExecutor<Params = T>,
+{
+    fn job_type(&self) -> JobType {
+        JobExecutor::job_type(self)
+    }
+
+    fn name(&self) -> &'static str {
+        JobExecutor::name(self)
+    }
+
+    async fn execute_dyn(
+        &self,
+        app_ctx: Arc<AppContext>,
+        job: &Job,
+    ) -> Result<JobDecision, KalamDbError> {
+        // Deserialize parameters from JSON string
+        let params_json = job
+            .parameters
+            .as_ref()
+            .ok_or_else(|| KalamDbError::InvalidOperation("Missing job parameters".to_string()))?;
+
+        let params: T = serde_json::from_str(params_json)
+            .map_err(|e| KalamDbError::InvalidOperation(
+                format!("Failed to deserialize job parameters: {}", e)
+            ))?;
+
+        // Validate parameters
+        params.validate()?;
+
+        // Create typed JobContext with validated parameters
+        let ctx = JobContext::new(
+            app_ctx,
+            job.job_id.as_str().to_string(),
+            params,
+        );
+
+        // Call type-safe execute method
+        self.execute(&ctx).await
+    }
+
+    async fn cancel_dyn(
+        &self,
+        app_ctx: Arc<AppContext>,
+        job: &Job,
+    ) -> Result<(), KalamDbError> {
+        // For cancellation, we still need to deserialize params to create context
+        let params_json = job
+            .parameters
+            .as_ref()
+            .ok_or_else(|| KalamDbError::InvalidOperation("Missing job parameters".to_string()))?;
+
+        let params: T = serde_json::from_str(params_json)
+            .map_err(|e| KalamDbError::InvalidOperation(
+                format!("Failed to deserialize job parameters: {}", e)
+            ))?;
+
+        // No validation needed for cancellation
+        let ctx = JobContext::new(
+            app_ctx,
+            job.job_id.as_str().to_string(),
+            params,
+        );
+
+        // Call type-safe cancel method
+        self.cancel(&ctx).await
+    }
+}
 
 /// Registry of job executors
 ///
 /// Thread-safe registry that maps job types to their executor implementations.
 /// Uses DashMap for lock-free concurrent access.
 ///
+/// Stores type-erased `Arc<dyn DynJobExecutor>` internally but provides
+/// type-safe registration through `register<E: JobExecutor>()`.
+///
 /// # Example
 ///
 /// ```no_run
-/// use kalamdb_core::jobs::executors::{JobRegistry, JobExecutor};
+/// use kalamdb_core::jobs::executors::{JobRegistry, flush::FlushExecutor};
 /// use std::sync::Arc;
 ///
 /// let registry = JobRegistry::new();
 /// 
-/// // Register executors
-/// // registry.register(Arc::new(FlushJobExecutor));
-/// // registry.register(Arc::new(CleanupJobExecutor));
+/// // Register executors (type-safe at registration)
+/// registry.register(Arc::new(FlushExecutor::new()));
 ///
-/// // Look up executor
-/// // let executor = registry.get(&JobType::Flush).unwrap();
+/// // Execution is type-safe through DynJobExecutor bridge
 /// ```
 pub struct JobRegistry {
-    executors: DashMap<JobType, Arc<dyn JobExecutor>>,
+    executors: DashMap<JobType, Arc<dyn DynJobExecutor>>,
 }
 
 impl JobRegistry {
@@ -47,7 +166,10 @@ impl JobRegistry {
     ///
     /// # Panics
     /// Panics if an executor for this job type is already registered
-    pub fn register(&self, executor: Arc<dyn JobExecutor>) {
+    pub fn register<E>(&self, executor: Arc<E>)
+    where
+        E: JobExecutor + 'static,
+    {
         let job_type = executor.job_type();
         if self.executors.contains_key(&job_type) {
             panic!(
@@ -55,6 +177,7 @@ impl JobRegistry {
                 job_type
             );
         }
+        // Coerce to Arc<dyn DynJobExecutor> through the blanket impl
         self.executors.insert(job_type, executor);
     }
 
@@ -64,34 +187,73 @@ impl JobRegistry {
     /// * `executor` - Job executor implementation
     ///
     /// Returns the previous executor if one was registered
-    pub fn register_or_replace(&self, executor: Arc<dyn JobExecutor>) -> Option<Arc<dyn JobExecutor>> {
+    pub fn register_or_replace<E>(&self, executor: Arc<E>) -> Option<Arc<dyn DynJobExecutor>>
+    where
+        E: JobExecutor + 'static,
+    {
         let job_type = executor.job_type();
         self.executors.insert(job_type, executor)
     }
 
-    /// Get a job executor by type
+    /// Execute a job using the registered executor
+    ///
+    /// Looks up the executor by job type, deserializes parameters,
+    /// and delegates to the type-safe execute method.
     ///
     /// # Arguments
-    /// * `job_type` - Type of job to look up
-    ///
-    /// # Returns
-    /// * `Some(executor)` - If an executor is registered for this type
-    /// * `None` - If no executor is registered
-    pub fn get(&self, job_type: &JobType) -> Option<Arc<dyn JobExecutor>> {
-        self.executors.get(job_type).map(|e| e.clone())
-    }
-
-    /// Get a job executor by type, returning an error if not found
-    ///
-    /// # Arguments
-    /// * `job_type` - Type of job to look up
+    /// * `app_ctx` - Application context
+    /// * `job` - Job to execute
     ///
     /// # Errors
-    /// Returns `KalamDbError::NotFound` if no executor is registered for this type
-    pub fn get_or_error(&self, job_type: &JobType) -> Result<Arc<dyn JobExecutor>, KalamDbError> {
-        self.get(job_type).ok_or_else(|| {
-            KalamDbError::NotFound(format!("No executor registered for job type: {:?}", job_type))
-        })
+    /// Returns error if:
+    /// - No executor registered for job type
+    /// - Parameter deserialization fails
+    /// - Parameter validation fails
+    /// - Execution fails
+    pub async fn execute(
+        &self,
+        app_ctx: Arc<AppContext>,
+        job: &Job,
+    ) -> Result<JobDecision, KalamDbError> {
+        let executor = self
+            .executors
+            .get(&job.job_type)
+            .ok_or_else(|| {
+                KalamDbError::NotFound(format!(
+                    "No executor registered for job type: {:?}",
+                    job.job_type
+                ))
+            })?;
+
+        executor.execute_dyn(app_ctx, job).await
+    }
+
+    /// Cancel a running job using the registered executor
+    ///
+    /// # Arguments
+    /// * `app_ctx` - Application context
+    /// * `job` - Job to cancel
+    ///
+    /// # Errors
+    /// Returns error if:
+    /// - No executor registered for job type
+    /// - Cancellation fails
+    pub async fn cancel(
+        &self,
+        app_ctx: Arc<AppContext>,
+        job: &Job,
+    ) -> Result<(), KalamDbError> {
+        let executor = self
+            .executors
+            .get(&job.job_type)
+            .ok_or_else(|| {
+                KalamDbError::NotFound(format!(
+                    "No executor registered for job type: {:?}",
+                    job.job_type
+                ))
+            })?;
+
+        executor.cancel_dyn(app_ctx, job).await
     }
 
     /// Check if an executor is registered for a job type
@@ -114,6 +276,11 @@ impl JobRegistry {
         self.executors.iter().map(|entry| *entry.key()).collect()
     }
 
+    /// Get executor name for a job type
+    pub fn executor_name(&self, job_type: &JobType) -> Option<&'static str> {
+        self.executors.get(job_type).map(|e| e.name())
+    }
+
     /// Clear all registered executors
     pub fn clear(&self) {
         self.executors.clear();
@@ -129,10 +296,17 @@ impl Default for JobRegistry {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use kalamdb_commons::models::system::Job;
-    use kalamdb_commons::models::JobType;
-    use crate::jobs::executors::{JobContext, JobDecision};
-    use async_trait::async_trait;
+    use crate::jobs::executors::JobParams;
+    use crate::test_helpers::init_test_app_context;
+    use kalamdb_commons::models::{JobId, NamespaceId, NodeId, JobStatus};
+    use serde::{Deserialize, Serialize};
+
+    #[derive(Clone, Serialize, Deserialize)]
+    struct MockParams {
+        value: i32,
+    }
+
+    impl JobParams for MockParams {}
 
     struct MockExecutor {
         job_type: JobType,
@@ -140,6 +314,8 @@ mod tests {
 
     #[async_trait]
     impl JobExecutor for MockExecutor {
+        type Params = MockParams;
+
         fn job_type(&self) -> JobType {
             self.job_type
         }
@@ -148,30 +324,48 @@ mod tests {
             "MockExecutor"
         }
 
-        async fn validate_params(&self, _job: &Job) -> Result<(), KalamDbError> {
-            Ok(())
-        }
-
-        async fn execute(&self, _ctx: &JobContext, _job: &Job) -> Result<JobDecision, KalamDbError> {
+        async fn execute(&self, _ctx: &JobContext<Self::Params>) -> Result<JobDecision, KalamDbError> {
             Ok(JobDecision::Completed { message: None })
         }
+    }
 
-        async fn cancel(&self, _ctx: &JobContext, _job: &Job) -> Result<(), KalamDbError> {
-            Ok(())
+    fn make_test_job(job_type: JobType, params: &str) -> Job {
+        let now = chrono::Utc::now().timestamp_millis();
+        Job {
+            job_id: JobId::new("TEST-001"),
+            job_type,
+            namespace_id: NamespaceId::new("default"),
+            table_name: None,
+            status: JobStatus::Running,
+            parameters: Some(params.to_string()),
+            message: None,
+            exception_trace: None,
+            idempotency_key: None,
+            retry_count: 0,
+            max_retries: 3,
+            memory_used: None,
+            cpu_used: None,
+            created_at: now,
+            updated_at: now,
+            started_at: Some(now),
+            finished_at: None,
+            node_id: NodeId::default_node(),
+            queue: None,
+            priority: None,
         }
     }
 
     #[test]
-    fn test_registry_register_and_get() {
+    fn test_registry_register_and_contains() {
         let registry = JobRegistry::new();
         let executor = Arc::new(MockExecutor {
             job_type: JobType::Flush,
         });
 
-        registry.register(executor.clone());
+        registry.register(executor);
 
-        let retrieved = registry.get(&JobType::Flush).unwrap();
-        assert_eq!(retrieved.job_type(), JobType::Flush);
+        assert!(registry.contains(&JobType::Flush));
+        assert!(!registry.contains(&JobType::Cleanup));
     }
 
     #[test]
@@ -206,38 +400,42 @@ mod tests {
         assert!(old.is_some());
     }
 
-    #[test]
-    fn test_registry_get_or_error() {
+    #[tokio::test]
+    async fn test_registry_execute() {
+        init_test_app_context();
+        let app_ctx = AppContext::get();
+        
         let registry = JobRegistry::new();
-
-        let result = registry.get_or_error(&JobType::Flush);
-        assert!(result.is_err());
-
         let executor = Arc::new(MockExecutor {
             job_type: JobType::Flush,
         });
         registry.register(executor);
 
-        let result = registry.get_or_error(&JobType::Flush);
+        let job = make_test_job(JobType::Flush, r#"{"value": 42}"#);
+        let result = registry.execute(app_ctx, &job).await;
+        
         assert!(result.is_ok());
+        match result.unwrap() {
+            JobDecision::Completed { .. } => {},
+            _ => panic!("Expected Completed decision"),
+        }
     }
 
-    #[test]
-    fn test_registry_contains() {
+    #[tokio::test]
+    async fn test_registry_execute_not_found() {
+        init_test_app_context();
+        let app_ctx = AppContext::get();
+        
         let registry = JobRegistry::new();
-        assert!(!registry.contains(&JobType::Flush));
-
-        let executor = Arc::new(MockExecutor {
-            job_type: JobType::Flush,
-        });
-        registry.register(executor);
-
-        assert!(registry.contains(&JobType::Flush));
-        assert!(!registry.contains(&JobType::Cleanup));
+        let job = make_test_job(JobType::Flush, r#"{"value": 42}"#);
+        
+        let result = registry.execute(app_ctx, &job).await;
+        assert!(result.is_err());
+        assert!(result.unwrap_err().to_string().contains("No executor registered"));
     }
 
     #[test]
-    fn test_registry_len() {
+    fn test_registry_len_and_empty() {
         let registry = JobRegistry::new();
         assert_eq!(registry.len(), 0);
         assert!(registry.is_empty());
@@ -269,6 +467,20 @@ mod tests {
         assert_eq!(types.len(), 2);
         assert!(types.contains(&JobType::Flush));
         assert!(types.contains(&JobType::Cleanup));
+    }
+
+    #[test]
+    fn test_registry_executor_name() {
+        let registry = JobRegistry::new();
+        
+        assert!(registry.executor_name(&JobType::Flush).is_none());
+        
+        registry.register(Arc::new(MockExecutor {
+            job_type: JobType::Flush,
+        }));
+        
+        let name = registry.executor_name(&JobType::Flush);
+        assert_eq!(name, Some("MockExecutor"));
     }
 
     #[test]

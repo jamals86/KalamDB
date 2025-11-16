@@ -25,11 +25,31 @@ impl ParquetWriter {
         }
     }
 
-    /// Write RecordBatches to a Parquet file with bloom filter on _seq column
+    /// Write RecordBatches to a Parquet file with bloom filters
+    ///
+    /// # Arguments
+    /// * `schema` - Arrow schema for the data
+    /// * `batches` - Record batches to write
+    /// * `bloom_filter_columns` - Optional list of columns to enable Bloom filters on.
+    ///                             If None, defaults to [_seq] only.
+    ///                             Common usage: Pass PRIMARY KEY columns + _seq for optimal point query performance.
+    ///
+    /// # Bloom Filter Configuration
+    /// - **False Positive Rate**: 1% (0.01) - balances space overhead vs accuracy
+    /// - **Estimated NDV**: 100,000 - heuristic for filter sizing
+    /// - **Target Columns**: _seq (default) + user-specified columns (typically PRIMARY KEY)
+    ///
+    /// # Example
+    /// ```rust,ignore
+    /// // Enable Bloom filters for PRIMARY KEY ("id") and _seq
+    /// let bloom_cols = vec!["id".to_string(), "_seq".to_string()];
+    /// writer.write_with_bloom_filter(schema, batches, Some(bloom_cols))?;
+    /// ```
     pub fn write_with_bloom_filter(
         &self,
         schema: SchemaRef,
         batches: Vec<RecordBatch>,
+        bloom_filter_columns: Option<Vec<String>>,
     ) -> Result<()> {
         let path = Path::new(&self.file_path);
 
@@ -42,7 +62,7 @@ impl ParquetWriter {
         let file = File::create(path)
             .map_err(|e| FilestoreError::Io(e))?;
 
-        // Configure writer properties with bloom filter on _seq column
+        // Configure writer properties with bloom filters
         let mut props_builder = WriterProperties::builder()
             .set_compression(datafusion::parquet::basic::Compression::SNAPPY)
             // Enable statistics for all columns (helps with query planning)
@@ -50,14 +70,27 @@ impl ParquetWriter {
             // Set row group size (optimize for time-range queries)
             .set_max_row_group_size(100_000);
 
-        // Find _seq column and enable bloom filter
-        if schema.fields().iter().any(|f| f.name() == SystemColumnNames::SEQ) {
-            // Enable bloom filter on _seq column with 0.01 FPP (1% false positive rate)
-            // ColumnPath::from() accepts a str and converts it to the proper type
-            props_builder = props_builder
-                .set_column_bloom_filter_enabled(SystemColumnNames::SEQ.into(), true)
-                .set_column_bloom_filter_fpp(SystemColumnNames::SEQ.into(), 0.01)
-                .set_column_bloom_filter_ndv(SystemColumnNames::SEQ.into(), 100_000); // Estimated distinct values
+        // Determine which columns should have Bloom filters
+        let bloom_columns = bloom_filter_columns.unwrap_or_else(|| {
+            // Default: only _seq column
+            vec![SystemColumnNames::SEQ.to_string()]
+        });
+
+        // Enable bloom filters for specified columns
+        for column_name in &bloom_columns {
+            // Check if column exists in schema
+            if schema.fields().iter().any(|f| f.name() == column_name) {
+                // Enable bloom filter with 0.01 FPP (1% false positive rate)
+                // ColumnPath::from() accepts a str and converts it to the proper type
+                props_builder = props_builder
+                    .set_column_bloom_filter_enabled(column_name.clone().into(), true)
+                    .set_column_bloom_filter_fpp(column_name.clone().into(), 0.01)
+                    .set_column_bloom_filter_ndv(column_name.clone().into(), 100_000); // Estimated distinct values
+                
+                log::debug!("✅ Enabled Bloom filter for column: {}", column_name);
+            } else {
+                log::warn!("⚠️  Column {} not found in schema, skipping Bloom filter", column_name);
+            }
         }
 
         let props = props_builder.build();
@@ -79,9 +112,12 @@ impl ParquetWriter {
         Ok(())
     }
 
-    /// Write RecordBatches to a Parquet file (without bloom filter)
+    /// Write RecordBatches to a Parquet file with default Bloom filters (only _seq)
+    ///
+    /// For custom Bloom filter configuration (e.g., including PRIMARY KEY columns),
+    /// use `write_with_bloom_filter()` instead.
     pub fn write(&self, schema: SchemaRef, batches: Vec<RecordBatch>) -> Result<()> {
-        self.write_with_bloom_filter(schema, batches)
+        self.write_with_bloom_filter(schema, batches, None)
     }
 }
 
@@ -173,7 +209,7 @@ mod tests {
         let file_path = temp_dir.join("with_bloom.parquet");
         let writer = ParquetWriter::new(file_path.to_str().unwrap());
 
-        let result = writer.write_with_bloom_filter(schema, vec![batch]);
+        let result = writer.write_with_bloom_filter(schema, vec![batch], None);
         assert!(result.is_ok());
         assert!(file_path.exists());
 
@@ -226,7 +262,7 @@ mod tests {
         let file_path = temp_dir.join("without_bloom.parquet");
         let writer = ParquetWriter::new(file_path.to_str().unwrap());
 
-        let result = writer.write_with_bloom_filter(schema, vec![batch]);
+        let result = writer.write_with_bloom_filter(schema, vec![batch], None);
         assert!(result.is_ok());
         assert!(file_path.exists());
 
@@ -273,7 +309,7 @@ mod tests {
         let file_path = temp_dir.join("with_stats.parquet");
         let writer = ParquetWriter::new(file_path.to_str().unwrap());
 
-        let result = writer.write_with_bloom_filter(schema, vec![batch]);
+        let result = writer.write_with_bloom_filter(schema, vec![batch], None);
         assert!(result.is_ok());
 
         // Verify statistics are present
@@ -307,7 +343,7 @@ mod tests {
         let file_path = temp_dir.join("compressed.parquet");
         let writer = ParquetWriter::new(file_path.to_str().unwrap());
 
-        let result = writer.write_with_bloom_filter(schema, vec![batch]);
+        let result = writer.write_with_bloom_filter(schema, vec![batch], None);
         assert!(result.is_ok());
 
         // Verify compression is SNAPPY

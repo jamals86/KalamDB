@@ -202,6 +202,11 @@ Create a validation function to be used in create/alter table for namespace/tabl
 The reserved words should be in commons in one place for the whole codebase to refer to it from one place only
 Also make sure we dont add the "id" column as we used to do before, we rely solely on _seq system column for uniqueness and rely on the user's own fields adding
 
+153) SharedTableFlushJob and UserTableFlushJob should take as an input the appContext and the TableId and TableType as an input for creating them
+
+155) Whenever we drop a table cancel all jobs for this table which are still running or queued
+
+
 
 Here’s the updated 5-line spec with embedding storage inside Parquet and managed HNSW indexing (with delete handling):
 	1.	Parquet Storage: All embeddings are stored as regular columns in the Parquet file alongside other table columns to keep data unified and versioned per batch.

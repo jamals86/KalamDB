@@ -128,12 +128,14 @@ High level crate graph today:
 ---
 
 ### 📋 **Planned / Future**
+- Admin UI and dashboard
 - Run workflows on data changes (triggers)
-- High-availability and replication
-- Richer search (full-text, vector)
+- File storage and BLOB support
+- High-availability and replication using Raft
+- Richer search (full-text, vector embeddings as DataType)
 - Query caching and more indexes
+- Connectors to external data sources (Flink, Kafka, etc)
 - Transactions and constraints
-- Admin UI and better cloud/Kubernetes story
 ---
 
 ## 🚀 Quick Start

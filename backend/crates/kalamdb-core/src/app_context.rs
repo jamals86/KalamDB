@@ -183,9 +183,16 @@ impl AppContext {
                     .first()
                     .expect("No catalogs available")
                     .clone();
-                base_session_context
+                let catalog = base_session_context
                     .catalog(&catalog_name)
                     .expect("Failed to get catalog");
+                
+                // Register the system schema with the catalog
+                catalog
+                    .register_schema("system", system_schema.clone())
+                    .expect("Failed to register system schema");
+                
+                // Register all system tables in the system schema
                 for (table_name, provider) in system_tables.all_system_providers() {
                     system_schema
                         .register_table(table_name.to_string(), provider)

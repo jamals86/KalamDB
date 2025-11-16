@@ -22,12 +22,33 @@
 
 use crate::error::KalamDbError;
 use crate::providers::arrow_json_conversion; // For schema_with_system_columns
-use crate::jobs::executors::{JobContext, JobDecision, JobExecutor};
+use crate::jobs::executors::{JobContext, JobDecision, JobExecutor, JobParams};
 use crate::providers::flush::{SharedTableFlushJob, TableFlush, UserTableFlushJob};
 use async_trait::async_trait;
-use kalamdb_commons::{JobType, NamespaceId, TableName, TableId};
-use kalamdb_commons::system::Job;
+use kalamdb_commons::{JobType, TableId};
+use kalamdb_commons::schemas::TableType;
+use serde::{Deserialize, Serialize};
 use std::sync::Arc;
+
+/// Typed parameters for flush operations (T189)
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct FlushParams {
+    /// Table identifier (required)
+    #[serde(flatten)]
+    pub table_id: TableId,
+    /// Table type (required)
+    pub table_type: TableType,
+    /// Flush threshold in rows (optional, defaults to config)
+    #[serde(default)]
+    pub flush_threshold: Option<u64>,
+}
+
+impl JobParams for FlushParams {
+    fn validate(&self) -> Result<(), KalamDbError> {
+        // TableId and TableType validation is handled by their constructors
+        Ok(())
+    }
+}
 
 /// Flush Job Executor
 ///
@@ -43,6 +64,8 @@ impl FlushExecutor {
 
 #[async_trait]
 impl JobExecutor for FlushExecutor {
+    type Params = FlushParams;
+
     fn job_type(&self) -> JobType {
         JobType::Flush
     }
@@ -51,63 +74,17 @@ impl JobExecutor for FlushExecutor {
         "FlushExecutor"
     }
 
-    async fn validate_params(&self, job: &Job) -> Result<(), KalamDbError> {
-        let params = job
-            .parameters
-            .as_ref()
-            .ok_or_else(|| KalamDbError::InvalidOperation("Missing parameters".to_string()))?;
-
-        let params_obj: serde_json::Value = serde_json::from_str(params)
-            .map_err(|e| KalamDbError::InvalidOperation(format!("Invalid JSON parameters: {}", e)))?;
-
-        // Validate required fields
-        if params_obj.get("namespace_id").is_none() {
-            return Err(KalamDbError::InvalidOperation(
-                "Missing required parameter: namespace_id".to_string(),
-            ));
-        }
-        if params_obj.get("table_name").is_none() {
-            return Err(KalamDbError::InvalidOperation(
-                "Missing required parameter: table_name".to_string(),
-            ));
-        }
-        if params_obj.get("table_type").is_none() {
-            return Err(KalamDbError::InvalidOperation(
-                "Missing required parameter: table_type".to_string(),
-            ));
-        }
-
-        Ok(())
-    }
-
-    async fn execute(&self, ctx: &JobContext, job: &Job) -> Result<JobDecision, KalamDbError> {
+    async fn execute(&self, ctx: &JobContext<Self::Params>) -> Result<JobDecision, KalamDbError> {
         ctx.log_info("Starting flush operation");
 
-        // Validate parameters
-        self.validate_params(job).await?;
-
-        // Parse parameters
-        let params = job.parameters.as_ref().unwrap();
-        let params_obj: serde_json::Value = serde_json::from_str(params)
-            .map_err(|e| KalamDbError::InvalidOperation(format!("Failed to parse parameters: {}", e)))?;
-
-        let namespace_id_str = params_obj["namespace_id"].as_str().unwrap();
-        let table_name_str = params_obj["table_name"].as_str().unwrap();
-        // Normalize table_type (handle lowercase stored values like "user")
-        let table_type_raw = params_obj["table_type"].as_str().unwrap();
-        let table_type = match kalamdb_commons::schemas::TableType::from_str_opt(table_type_raw) {
-            Some(tt) => tt, // use enum for matching
-            None => {
-                return Err(KalamDbError::InvalidOperation(format!(
-                    "Unknown table type: {}",
-                    table_type_raw
-                )));
-            }
-        };
+        // Parameters already validated in JobContext - type-safe access
+        let params = ctx.params();
+        let table_id = Arc::new(params.table_id.clone());
+        let table_type = params.table_type;
 
         ctx.log_info(&format!(
-            "Flushing {}.{} (type: {})",
-            namespace_id_str, table_name_str, table_type.as_str()
+            "Flushing {} (type: {:?})",
+            table_id, table_type
         ));
 
         // Get dependencies from AppContext
@@ -115,16 +92,10 @@ impl JobExecutor for FlushExecutor {
         let schema_registry = app_ctx.schema_registry();
         let live_query_manager = app_ctx.live_query_manager();
 
-        let namespace_id = NamespaceId::new(namespace_id_str.to_string());
-        let table_name = TableName::new(table_name_str.to_string());
-
-        // Create TableId for cache lookups
-        let table_id = Arc::new(TableId::new(namespace_id.clone(), table_name.clone()));
-
         // Get table definition and schema
         let table_def = schema_registry
             .get_table_definition(&table_id)?
-            .ok_or_else(|| KalamDbError::NotFound(format!("Table {}.{} not found", namespace_id_str, table_name_str)))?;
+            .ok_or_else(|| KalamDbError::NotFound(format!("Table {} not found", table_id)))?;
         // The authoritative Arrow schema should include system columns already
         // because SystemColumnsService injected them into the TableDefinition.
         // Use schema from schema_history if available to avoid stale cache.
@@ -135,7 +106,7 @@ impl JobExecutor for FlushExecutor {
         } else {
             schema_registry
                 .get_arrow_schema(&table_id)
-                .map_err(|e| KalamDbError::NotFound(format!("Arrow schema not found for {}.{}: {}", namespace_id_str, table_name_str, e)))?
+                .map_err(|e| KalamDbError::NotFound(format!("Arrow schema not found for {}: {}", table_id, e)))?
         };
 
         // Ensure system columns are present or add if missing (idempotent)
@@ -143,7 +114,7 @@ impl JobExecutor for FlushExecutor {
 
         // Execute flush based on table type
         let result = match table_type {
-            kalamdb_commons::schemas::TableType::User => {
+            TableType::User => {
                 ctx.log_info("Executing UserTableFlushJob");
 
                 // IMPORTANT: Use the per-table UserTableStore (created at table registration)
@@ -155,8 +126,8 @@ impl JobExecutor for FlushExecutor {
                 // Retrieve the UserTableProvider instance to access the correct store.
                 let provider_arc = schema_registry.get_provider(&table_id)
                     .ok_or_else(|| KalamDbError::NotFound(format!(
-                        "User table provider not registered for {}.{} (id={})",
-                        namespace_id_str, table_name_str, table_id
+                        "User table provider not registered for {} (id={})",
+                        table_id, table_id
                     )))?;
                 
                 // Downcast to UserTableProvider to access store
@@ -168,8 +139,8 @@ impl JobExecutor for FlushExecutor {
                 let flush_job = UserTableFlushJob::new(
                     table_id.clone(),
                     store,
-                    namespace_id.clone(),
-                    table_name.clone(),
+                    table_id.namespace_id().clone(),
+                    table_id.table_name().clone(),
                     schema.clone(),
                     schema_registry.clone(),
                     app_ctx.manifest_service(),
@@ -181,14 +152,14 @@ impl JobExecutor for FlushExecutor {
                     .execute()
                     .map_err(|e| KalamDbError::Other(format!("User table flush failed: {}", e)))?
             }
-            kalamdb_commons::schemas::TableType::Shared => {
+            TableType::Shared => {
                 ctx.log_info("Executing SharedTableFlushJob");
 
                 // Get the SharedTableProvider from the schema registry to reuse the cached store
                 let provider_arc = schema_registry.get_provider(&table_id)
                     .ok_or_else(|| KalamDbError::NotFound(format!(
-                        "Shared table provider not registered for {}.{} (id={})",
-                        namespace_id_str, table_name_str, table_id
+                        "Shared table provider not registered for {} (id={})",
+                        table_id, table_id
                     )))?;
                 
                 // Downcast to SharedTableProvider to access store
@@ -200,8 +171,8 @@ impl JobExecutor for FlushExecutor {
                 let flush_job = SharedTableFlushJob::new(
                     table_id.clone(),
                     store,
-                    namespace_id.clone(),
-                    table_name.clone(),
+                    table_id.namespace_id().clone(),
+                    table_id.table_name().clone(),
                     schema.clone(),
                     schema_registry.clone(),
                     app_ctx.manifest_service(),
@@ -213,17 +184,17 @@ impl JobExecutor for FlushExecutor {
                     .execute()
                     .map_err(|e| KalamDbError::Other(format!("Shared table flush failed: {}", e)))?
             }
-            kalamdb_commons::schemas::TableType::Stream => {
+            TableType::Stream => {
                 ctx.log_info("Stream table flush not yet implemented");
                 // Streams: return Completed (no-op) for idempotency and clarity
                 return Ok(JobDecision::Completed {
                     message: Some(format!(
-                        "Stream flush skipped (not implemented) for {}.{}",
-                        namespace_id_str, table_name_str
+                        "Stream flush skipped (not implemented) for {}",
+                        table_id
                     )),
                 });
             }
-            kalamdb_commons::schemas::TableType::System => {
+            TableType::System => {
                 return Err(KalamDbError::InvalidOperation("Cannot flush SYSTEM tables".to_string()));
             }
         };
@@ -235,19 +206,12 @@ impl JobExecutor for FlushExecutor {
 
         Ok(JobDecision::Completed {
             message: Some(format!(
-                "Flushed {}.{} successfully ({} rows, {} files)",
-                namespace_id_str,
-                table_name_str,
+                "Flushed {} successfully ({} rows, {} files)",
+                table_id,
                 result.rows_flushed,
                 result.parquet_files.len()
             )),
         })
-    }
-
-    async fn cancel(&self, ctx: &JobContext, _job: &Job) -> Result<(), KalamDbError> {
-        ctx.log_warn("Flush job cancellation requested");
-        // Flush jobs are typically fast, so cancellation is best-effort
-        Ok(())
     }
 }
 
@@ -260,80 +224,26 @@ impl Default for FlushExecutor {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use kalamdb_commons::{JobId, NamespaceId, NodeId};
-    use kalamdb_commons::system::Job;
-
-    fn make_job(id: &str, job_type: JobType, ns: &str) -> Job {
-        let now = chrono::Utc::now().timestamp_millis();
-        Job {
-            job_id: JobId::new(id),
-            job_type,
-            namespace_id: NamespaceId::new(ns),
-            table_name: None,
-            status: kalamdb_commons::JobStatus::Running,
-            parameters: None,
-            message: None,
-            exception_trace: None,
-            idempotency_key: None,
-            retry_count: 0,
-            max_retries: 3,
-            memory_used: None,
-            cpu_used: None,
-            created_at: now,
-            updated_at: now,
-            started_at: Some(now),
-            finished_at: None,
-            node_id: NodeId::default_node(),
-            queue: None,
-            priority: None,
-        }
-    }
-
-    #[tokio::test]
-    async fn test_validate_params_success() {
-        let executor = FlushExecutor::new();
-
-        let job = make_job("FL-test123", JobType::Flush, "default");
-
-        let mut job = job;
-        job.parameters = Some(
-            serde_json::json!({
-                "namespace_id": "default",
-                "table_name": "users",
-                "table_type": "User",
-                "flush_threshold": 10000
-            })
-            .to_string(),
-        );
-
-        assert!(executor.validate_params(&job).await.is_ok());
-    }
-
-    #[tokio::test]
-    async fn test_validate_params_missing_fields() {
-        let executor = FlushExecutor::new();
-
-        let job = make_job("FL-test123", JobType::Flush, "default");
-
-        let mut job = job;
-        job.parameters = Some(
-            serde_json::json!({
-                "namespace_id": "default"
-                // Missing table_name and table_type
-            })
-            .to_string(),
-        );
-
-        let result = executor.validate_params(&job).await;
-        assert!(result.is_err());
-        let err = result.unwrap_err();
-        assert!(err.to_string().contains("table_name"));
-    }
+    use kalamdb_commons::NamespaceId;
 
     #[test]
     fn test_executor_properties() {
         let executor = FlushExecutor::new();
         assert_eq!(executor.job_type(), JobType::Flush);
         assert_eq!(executor.name(), "FlushExecutor");
+    }
+    
+    #[test]
+    fn test_flush_params_validate() {
+        let params = FlushParams {
+            table_id: TableId::new(
+                NamespaceId::new("default"),
+                kalamdb_commons::TableName::new("users"),
+            ),
+            table_type: TableType::User,
+            flush_threshold: Some(10000),
+        };
+        
+        assert!(params.validate().is_ok());
     }
 }

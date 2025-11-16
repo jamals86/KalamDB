@@ -20,9 +20,7 @@
 
 use crate::error::KalamDbError;
 use crate::live_query::manager::LiveQueryManager;
-use chrono::Utc;
-use kalamdb_commons::system::Job;
-use kalamdb_commons::{JobId, JobStatus, JobType, NamespaceId, NodeId};
+use kalamdb_commons::NamespaceId;
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 
@@ -91,12 +89,9 @@ impl FlushMetadata {
 
 /// Result of a flush job execution
 ///
-/// Contains job metadata, metrics, and output files
+/// Contains metrics and output files (no Job record - that's JobsManager's responsibility)
 #[derive(Debug, Clone)]
 pub struct FlushJobResult {
-    /// Job record for system.jobs table
-    pub job_record: Job,
-
     /// Total rows flushed from RocksDB to Parquet
     pub rows_flushed: usize,
 
@@ -110,8 +105,7 @@ pub struct FlushJobResult {
 /// Base trait for table flush operations
 ///
 /// Implement this trait for each table type (shared, user, stream).
-/// Use `FlushExecutor::execute_with_tracking()` to run flush jobs with
-/// automatic job tracking, metrics, and error handling.
+/// Called by FlushExecutor after JobsManager creates the Job record.
 ///
 /// ## Snapshot Consistency
 ///
@@ -129,7 +123,7 @@ pub trait TableFlush: Send + Sync {
     ///
     /// # Returns
     ///
-    /// `FlushJobResult` with metrics and job record
+    /// `FlushJobResult` with metrics (rows flushed, files created, metadata)
     ///
     /// # Errors
     ///
@@ -147,133 +141,6 @@ pub trait TableFlush: Send + Sync {
     /// Default returns None (no notifications).
     fn live_query_manager(&self) -> Option<&Arc<LiveQueryManager>> {
         None
-    }
-
-    /// Optional: Get node ID for job tracking
-    ///
-    /// Override to customize node identification.
-    /// Default uses process ID.
-    fn node_id(&self) -> NodeId {
-        NodeId::from(format!("node-{}", std::process::id()))
-    }
-
-    /// Generate unique job ID
-    ///
-    /// Format: `flush-{table}-{timestamp}`
-    fn generate_job_id(&self) -> String {
-        format!(
-            "flush-{}-{}",
-            self.table_identifier().replace('.', "-"),
-            Utc::now().timestamp_millis()
-        )
-    }
-
-    /// Create base job record with common fields
-    fn create_job_record(&self, job_id: &str, namespace_id: NamespaceId) -> Job {
-        let now_ms = chrono::Utc::now().timestamp_millis();
-        Job {
-            job_id: JobId::new(job_id.to_string()),
-            job_type: JobType::Flush,
-            namespace_id,
-            table_name: None,
-            status: JobStatus::Running,
-            parameters: None,
-            message: None,
-            exception_trace: None,
-            idempotency_key: None,
-            retry_count: 0,
-            max_retries: 3,
-            memory_used: None,
-            cpu_used: None,
-            created_at: now_ms,
-            updated_at: now_ms,
-            started_at: Some(now_ms),
-            finished_at: None,
-            node_id: self.node_id(),
-            queue: None,
-            priority: None,
-        }
-    }
-}
-
-/// Template method executor for flush jobs
-///
-/// Provides common workflow for all flush operations:
-/// 1. Generate job ID
-/// 2. Create job record (status: "running")
-/// 3. Execute flush (call `TableFlush::execute()`)
-/// 4. Track metrics (duration, row count)
-/// 5. Update job record (status: "completed" or "failed")
-pub struct FlushExecutor;
-
-impl FlushExecutor {
-    /// Execute flush job with automatic tracking and metrics
-    pub fn execute_with_tracking<F: TableFlush>(
-        flush_job: &F,
-        namespace_id: NamespaceId,
-    ) -> Result<FlushJobResult, KalamDbError> {
-        let job_id = flush_job.generate_job_id();
-        let job_record = flush_job.create_job_record(&job_id, namespace_id);
-
-        log::info!(
-            "🚀 Flush job started: job_id={}, table={}",
-            job_id,
-            flush_job.table_identifier()
-        );
-
-        let start_time = std::time::Instant::now();
-
-        match flush_job.execute() {
-            Ok(mut result) => {
-                let duration_ms = start_time.elapsed().as_millis() as u64;
-
-                log::info!(
-                    "✅ Flush completed: job_id={}, table={}, rows={}, files={}, duration_ms={}",
-                    job_id,
-                    flush_job.table_identifier(),
-                    result.rows_flushed,
-                    result.parquet_files.len(),
-                    duration_ms
-                );
-
-                // Serialize metadata to JSON for job result
-                let metadata_json = serde_json::to_value(&result.metadata).map_err(|e| {
-                    KalamDbError::Other(format!("Failed to serialize metadata: {}", e))
-                })?;
-
-                // Update job record with success
-                let now_ms = chrono::Utc::now().timestamp_millis();
-                let mut completed_job = job_record;
-                completed_job.status = JobStatus::Completed;
-                completed_job.message = Some(
-                    serde_json::json!({
-                        "rows_flushed": result.rows_flushed,
-                        "duration_ms": duration_ms,
-                        "parquet_files": result.parquet_files,
-                        "metadata": metadata_json,
-                    })
-                    .to_string(),
-                );
-                completed_job.updated_at = now_ms;
-                completed_job.finished_at = Some(now_ms);
-
-                result.job_record = completed_job;
-                Ok(result)
-            }
-            Err(e) => {
-                let duration_ms = start_time.elapsed().as_millis() as u64;
-
-                log::error!(
-                    "❌ Flush failed: job_id={}, table={}, duration_ms={}, error={}",
-                    job_id,
-                    flush_job.table_identifier(),
-                    duration_ms,
-                    e
-                );
-
-                Err(e)
-            }
-        }
     }
 }
 
@@ -294,7 +161,6 @@ mod tests {
             }
 
             Ok(FlushJobResult {
-                job_record: self.create_job_record("test-job-123", self.namespace_id.clone()),
                 rows_flushed: self.rows_count,
                 parquet_files: vec!["batch-123.parquet".to_string()],
                 metadata: FlushMetadata::shared_table(),
@@ -307,7 +173,7 @@ mod tests {
     }
 
     #[test]
-    fn test_flush_executor_success() {
+    fn test_flush_execution_success() {
         let namespace_id = NamespaceId::new("test".to_string());
         let job = MockFlushJob {
             should_fail: false,
@@ -315,18 +181,16 @@ mod tests {
             namespace_id: namespace_id.clone(),
         };
 
-        let result = FlushExecutor::execute_with_tracking(&job, namespace_id);
+        let result = job.execute();
         assert!(result.is_ok());
 
         let result = result.unwrap();
         assert_eq!(result.rows_flushed, 100);
         assert_eq!(result.parquet_files.len(), 1);
-        assert_eq!(result.job_record.status, JobStatus::Completed);
-        assert!(result.job_record.message.is_some());
     }
 
     #[test]
-    fn test_flush_executor_failure() {
+    fn test_flush_execution_failure() {
         let namespace_id = NamespaceId::new("test".to_string());
         let job = MockFlushJob {
             should_fail: true,
@@ -334,7 +198,7 @@ mod tests {
             namespace_id: namespace_id.clone(),
         };
 
-        let result = FlushExecutor::execute_with_tracking(&job, namespace_id);
+        let result = job.execute();
         assert!(result.is_err());
     }
 }

@@ -5,17 +5,17 @@
 //!
 //! ## Module Structure
 //!
-//! - `base`: Common flush trait, result types, and executor template
+//! - `base`: Common flush trait and result types
 //! - `users`: User table flush implementation (multi-file, RLS-enforced)
 //! - `shared`: Shared table flush implementation (single-file)
 //!
 //! ## Usage
 //!
 //! ```rust,ignore
-//! use crate::providers::flush::{UserTableFlushJob, FlushExecutor};
+//! use crate::providers::flush::{UserTableFlushJob, FlushJobResult};
 //!
 //! let flush_job = UserTableFlushJob::new(/* ... */);
-//! let result = flush_job.execute_tracked()?;
+//! let result = flush_job.execute()?;
 //! ```
 
 pub mod base;
@@ -25,7 +25,7 @@ pub mod util;
 
 // Re-export common types
 pub use base::{
-    FlushExecutor, FlushJobResult, FlushMetadata, SharedTableFlushMetadata, TableFlush,
+    FlushJobResult, FlushMetadata, SharedTableFlushMetadata, TableFlush,
     UserTableFlushMetadata,
 };
 pub use shared::SharedTableFlushJob;
