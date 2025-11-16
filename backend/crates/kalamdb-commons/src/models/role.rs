@@ -1,4 +1,5 @@
 use std::fmt;
+use std::str::FromStr;
 
 #[cfg(feature = "serde")]
 use serde::{Deserialize, Serialize};
@@ -24,7 +25,7 @@ impl Role {
         }
     }
 
-    pub fn from_str(s: &str) -> Option<Self> {
+    pub fn from_str_opt(s: &str) -> Option<Self> {
         match s.to_lowercase().as_str() {
             "user" => Some(Role::User),
             "service" => Some(Role::Service),
@@ -32,6 +33,13 @@ impl Role {
             "system" => Some(Role::System),
             _ => None,
         }
+    }
+}
+
+impl FromStr for Role {
+    type Err = String;
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        Role::from_str_opt(s).ok_or_else(|| format!("Invalid Role: {}", s))
     }
 }
 

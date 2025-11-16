@@ -2,6 +2,7 @@
 
 use crate::app_context::AppContext;
 use crate::error::KalamDbError;
+use crate::jobs::executors::flush::FlushParams;
 use crate::sql::executor::handlers::typed::TypedStatementHandler;
 use crate::sql::executor::models::{ExecutionContext, ExecutionResult, ScalarValue};
 use kalamdb_commons::{JobType, JobId};
@@ -40,21 +41,22 @@ impl TypedStatementHandler<FlushTableStatement> for FlushTableHandler {
             )));
         }
         let table_def = table_def.unwrap();
-        let table_type_str = format!("{}", table_def.table_type); // relies on Display impl
+
+        // Create FlushParams with typed parameters
+        let params = FlushParams {
+            table_id: table_id.clone(),
+            table_type: table_def.table_type,
+            flush_threshold: None, // Use default from config
+        };
 
         // Create a flush job via JobsManager (async execution handled in background loop)
         let job_manager = self.app_context.job_manager();
-        let params_json = serde_json::json!({
-            "namespace_id": statement.namespace.as_str(),
-            "table_name": statement.table_name.as_str(),
-            "table_type": table_type_str
-        });
         let idempotency_key = format!("flush-{}-{}", statement.namespace.as_str(), statement.table_name.as_str());
         let job_id: JobId = job_manager
-            .create_job(
+            .create_job_typed(
                 JobType::Flush,
                 statement.namespace.clone(),
-                params_json,
+                params,
                 Some(idempotency_key),
                 None,
             )

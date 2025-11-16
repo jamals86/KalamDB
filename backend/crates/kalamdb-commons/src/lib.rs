@@ -51,6 +51,7 @@ pub mod storage;
 pub mod storage_key; // StorageKey trait for type-safe key serialization
 pub mod string_interner;
 pub mod system_tables;
+pub mod validation; // Naming validation for namespaces, tables, and columns
 pub mod websocket;
 
 // Re-export commonly used types at crate root
@@ -85,4 +86,8 @@ pub use storage::{Operation, Partition, StorageBackend, StorageError};
 pub use storage_key::StorageKey;
 pub use string_interner::{intern, stats as interner_stats, SystemColumns, SYSTEM_COLUMNS};
 pub use system_tables::{StoragePartition, SystemTable};
+pub use validation::{
+    validate_column_name, validate_namespace_name, validate_table_name, ValidationError,
+    RESERVED_COLUMN_NAMES, RESERVED_NAMESPACES, RESERVED_SQL_KEYWORDS,
+};
 pub use websocket::{ChangeType as WsChangeType, Notification, WebSocketMessage};

@@ -2,6 +2,7 @@
 
 use serde::{Deserialize, Serialize};
 use std::fmt;
+use std::str::FromStr;
 
 /// Enum representing the type of table in KalamDB.
 ///
@@ -42,7 +43,7 @@ impl TableType {
     }
 
     /// Parse a table type from a string (case-insensitive).
-    pub fn from_str(s: &str) -> Option<Self> {
+    pub fn from_str_opt(s: &str) -> Option<Self> {
         match s.to_uppercase().as_str() {
             "USER" => Some(TableType::User),
             "SHARED" => Some(TableType::Shared),
@@ -50,6 +51,13 @@ impl TableType {
             "SYSTEM" => Some(TableType::System),
             _ => None,
         }
+    }
+}
+
+impl FromStr for TableType {
+    type Err = String;
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        TableType::from_str_opt(s).ok_or_else(|| format!("Invalid TableType: {}", s))
     }
 }
 
@@ -73,12 +81,12 @@ mod tests {
 
     #[test]
     fn test_from_str() {
-        assert_eq!(TableType::from_str("USER"), Some(TableType::User));
-        assert_eq!(TableType::from_str("user"), Some(TableType::User));
-        assert_eq!(TableType::from_str("SHARED"), Some(TableType::Shared));
-        assert_eq!(TableType::from_str("STREAM"), Some(TableType::Stream));
-        assert_eq!(TableType::from_str("SYSTEM"), Some(TableType::System));
-        assert_eq!(TableType::from_str("INVALID"), None);
+        assert_eq!(TableType::from_str_opt("USER"), Some(TableType::User));
+        assert_eq!(TableType::from_str_opt("user"), Some(TableType::User));
+        assert_eq!(TableType::from_str_opt("SHARED"), Some(TableType::Shared));
+        assert_eq!(TableType::from_str_opt("STREAM"), Some(TableType::Stream));
+        assert_eq!(TableType::from_str_opt("SYSTEM"), Some(TableType::System));
+        assert_eq!(TableType::from_str_opt("INVALID"), None);
     }
 
     #[test]

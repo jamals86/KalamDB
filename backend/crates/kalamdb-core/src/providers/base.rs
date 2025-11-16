@@ -348,3 +348,33 @@ pub trait BaseTableProvider<K: StorageKey, V>: Send + Sync + TableProvider {
     /// Each provider implements this to access the `fields: JsonValue` from their row type.
     fn extract_fields(row: &V) -> Option<&JsonValue>;
 }
+
+/// Helper function to inject system columns (_seq, _deleted) into JSON object
+///
+/// This consolidates the duplicated logic across UserTableProvider, SharedTableProvider,
+/// and StreamTableProvider scan_rows() methods.
+///
+/// # Arguments
+/// * `schema` - Arrow schema to check which system columns exist
+/// * `obj` - Mutable JSON object to inject system columns into
+/// * `seq_value` - _seq column value (i64)
+/// * `deleted_value` - _deleted column value (bool)
+///
+/// # Note
+/// Only injects columns that exist in the schema to avoid adding unexpected fields.
+pub fn inject_system_columns(
+    schema: &SchemaRef,
+    obj: &mut serde_json::Map<String, JsonValue>,
+    seq_value: i64,
+    deleted_value: bool,
+) {
+    let has_seq = schema.field_with_name("_seq").is_ok();
+    let has_deleted = schema.field_with_name("_deleted").is_ok();
+
+    if has_seq {
+        obj.insert("_seq".to_string(), serde_json::json!(seq_value));
+    }
+    if has_deleted {
+        obj.insert("_deleted".to_string(), serde_json::json!(deleted_value));
+    }
+}

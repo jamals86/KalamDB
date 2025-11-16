@@ -276,7 +276,7 @@ impl LiveQueryRegistry {
     pub fn has_subscriptions_for_table(&self, table_ref: &str) -> bool {
         self.subscriptions.iter().any(|entry| {
             entry.value().iter().any(|handle| {
-                handle.live_id.table_name().contains(table_ref)
+                handle.live_id.table_id().to_string().contains(table_ref)
             })
         })
     }
@@ -304,19 +304,21 @@ mod tests {
     #[test]
     fn test_live_id_format() {
         let conn_id = ConnectionId::new("user123".to_string(), "conn_abc".to_string());
-        let live_id = LiveId::new(conn_id, "messages".to_string(), "q1".to_string());
-        assert_eq!(live_id.to_string(), "user123-conn_abc-messages-q1");
-        assert_eq!(live_id.table_name(), "messages");
+        let table_id = TableId::from_strings("default", "messages");
+        let live_id = LiveId::new(conn_id, table_id, "q1".to_string());
+        assert_eq!(live_id.to_string(), "user123-conn_abc-default:messages-q1");
+        assert_eq!(live_id.table_id().table_name().as_str(), "messages");
         assert_eq!(live_id.query_id(), "q1");
         assert_eq!(live_id.user_id(), "user123");
     }
 
     #[test]
     fn test_live_id_parse() {
-        let live_id = LiveId::from_string("user123-conn_abc-messages-q1").unwrap();
+        let live_id = LiveId::from_string("user123-conn_abc-default:messages-q1").unwrap();
         assert_eq!(live_id.connection_id.user_id.as_str(), "user123");
         assert_eq!(live_id.connection_id.unique_conn_id, "conn_abc");
-        assert_eq!(live_id.table_name, "messages");
+        assert_eq!(live_id.table_id.table_name().as_str(), "messages");
+        assert_eq!(live_id.table_id.namespace_id().as_str(), "default");
         assert_eq!(live_id.query_id, "q1");
     }
 
@@ -342,7 +344,7 @@ mod tests {
         registry.register_connection(conn_id.clone(), tx);
 
         let table_id = TableId::from_strings("default", "messages");
-        let live_id = LiveId::new(conn_id.clone(), "messages".to_string(), "q1".to_string());
+        let live_id = LiveId::new(conn_id.clone(), table_id.clone(), "q1".to_string());
 
         registry
             .register_subscription(
@@ -367,12 +369,12 @@ mod tests {
         registry.register_connection(conn_id.clone(), tx);
 
         let table_id1 = TableId::from_strings("default", "messages");
-        let live_id1 = LiveId::new(conn_id.clone(), "messages".to_string(), "q1".to_string());
+        let live_id1 = LiveId::new(conn_id.clone(), table_id1.clone(), "q1".to_string());
 
         let table_id2 = TableId::from_strings("default", "notifications");
         let live_id2 = LiveId::new(
             conn_id.clone(),
-            "notifications".to_string(),
+            table_id2.clone(),
             "q2".to_string(),
         );
 
@@ -398,7 +400,7 @@ mod tests {
 
         let messages_subs = registry.get_subscriptions_for_table(&user_id, &table_id1);
         assert_eq!(messages_subs.len(), 1);
-        assert_eq!(messages_subs[0].live_id.table_name(), "messages");
+        assert_eq!(messages_subs[0].live_id.table_id().table_name().as_str(), "messages");
     }
 
     #[test]
@@ -411,8 +413,8 @@ mod tests {
         registry.register_connection(conn_id.clone(), tx);
 
         let table_id = TableId::from_strings("default", "messages");
-        let live_id1 = LiveId::new(conn_id.clone(), "messages".to_string(), "q1".to_string());
-        let live_id2 = LiveId::new(conn_id.clone(), "messages".to_string(), "q2".to_string());
+        let live_id1 = LiveId::new(conn_id.clone(), table_id.clone(), "q1".to_string());
+        let live_id2 = LiveId::new(conn_id.clone(), table_id.clone(), "q2".to_string());
 
         registry
             .register_subscription(
@@ -449,12 +451,12 @@ mod tests {
         registry.register_connection(conn_id.clone(), tx);
 
         let table_id1 = TableId::from_strings("default", "messages");
-        let live_id1 = LiveId::new(conn_id.clone(), "messages".to_string(), "q1".to_string());
+        let live_id1 = LiveId::new(conn_id.clone(), table_id1.clone(), "q1".to_string());
 
         let table_id2 = TableId::from_strings("default", "notifications");
         let live_id2 = LiveId::new(
             conn_id.clone(),
-            "notifications".to_string(),
+            table_id2.clone(),
             "q2".to_string(),
         );
 
@@ -495,7 +497,7 @@ mod tests {
         registry.register_connection(conn_id.clone(), tx);
 
         let table_id = TableId::from_strings("default", "messages");
-        let live_id = LiveId::new(conn_id.clone(), "messages".to_string(), "q1".to_string());
+        let live_id = LiveId::new(conn_id.clone(), table_id.clone(), "q1".to_string());
 
         registry
             .register_subscription(

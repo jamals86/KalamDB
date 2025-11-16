@@ -5,9 +5,11 @@
 
 use crate::app_context::AppContext;
 use crate::error::KalamDbError;
+use crate::jobs::executors::cleanup::{CleanupParams, CleanupOperation};
 use crate::schema_registry::SchemaRegistry;
 use crate::sql::executor::handlers::typed::TypedStatementHandler;
 use crate::sql::executor::models::{ExecutionContext, ExecutionResult, ScalarValue};
+use kalamdb_commons::JobType;
 use kalamdb_commons::models::TableId;
 use kalamdb_commons::schemas::TableType;
 use kalamdb_sql::ddl::DropTableStatement;
@@ -430,28 +432,47 @@ impl TypedStatementHandler<DropTableStatement> for DropTableHandler {
         use crate::sql::executor::helpers::table_registration::unregister_table_provider;
         unregister_table_provider(&self.app_context, &table_id)?;
 
-        // Cleanup table data from storage for user/shared/stream tables
-        // Perform data cleanup prior to metadata removal
-        let _ = cleanup_table_data_internal(&self.app_context, &table_id, actual_type).await?;
-
-        // Also cleanup Parquet files/folders from storage backends (best-effort)
-        let _ = cleanup_parquet_files_internal(&self.app_context, &table_id).await?;
-
-        // Remove definition via SchemaRegistry (delete-through) → invalidates cache
+        // Mark table as deleted in SchemaRegistry (soft delete)
         registry.delete_table_definition(&table_id)?;
 
+        // Create cleanup job for async data removal (with retry on failure)
+        let params = CleanupParams {
+            table_id: table_id.clone(),
+            table_type: actual_type,
+            operation: CleanupOperation::DropTable,
+        };
+
+        let idempotency_key = format!(
+            "drop-{}-{}",
+            statement.namespace_id.as_str(),
+            statement.table_name.as_str()
+        );
+
+        let job_manager = self.app_context.job_manager();
+        let job_id = job_manager
+            .create_job_typed(
+                JobType::Cleanup,
+                statement.namespace_id.clone(),
+                params,
+                Some(idempotency_key),
+                None,
+            )
+            .await?;
+
         log::info!(
-            "✅ DROP TABLE succeeded: {}.{} (type: {:?})",
+            "✅ DROP TABLE succeeded: {}.{} (type: {:?}) - Cleanup job: {}",
             statement.namespace_id.as_str(),
             statement.table_name.as_str(),
-            actual_type
+            actual_type,
+            job_id.as_str()
         );
 
         Ok(ExecutionResult::Success {
             message: format!(
-                "Table {}.{} dropped successfully",
+                "Table {}.{} dropped successfully. Cleanup job: {}",
                 statement.namespace_id.as_str(),
-                statement.table_name.as_str()
+                statement.table_name.as_str(),
+                job_id.as_str()
             ),
         })
     }

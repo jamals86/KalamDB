@@ -2,10 +2,11 @@
 
 use crate::app_context::AppContext;
 use crate::error::KalamDbError;
+use crate::jobs::executors::flush::FlushParams;
 use crate::sql::executor::handlers::typed::TypedStatementHandler;
 use crate::sql::executor::models::{ExecutionContext, ExecutionResult, ScalarValue};
 use kalamdb_commons::{JobType, JobId};
-use kalamdb_commons::models::TableName;
+use kalamdb_commons::models::{TableName, TableId};
 use kalamdb_sql::ddl::FlushAllTablesStatement;
 use std::sync::Arc;
 
@@ -32,10 +33,10 @@ impl TypedStatementHandler<FlushAllTablesStatement> for FlushAllTablesHandler {
         let tables_provider = self.app_context.system_tables().tables();
         let all_defs = tables_provider.list_tables()?;
         let ns = statement.namespace.clone();
-        let target_tables: Vec<(TableName, String)> = all_defs
+        let target_tables: Vec<(TableName, kalamdb_commons::schemas::TableType)> = all_defs
             .into_iter()
             .filter(|d| d.namespace_id == ns)
-            .map(|d| (d.table_name.clone(), format!("{}", d.table_type)))
+            .map(|d| (d.table_name.clone(), d.table_type))
             .collect();
 
         if target_tables.is_empty() {
@@ -47,15 +48,16 @@ impl TypedStatementHandler<FlushAllTablesStatement> for FlushAllTablesHandler {
 
         let job_manager = self.app_context.job_manager();
         let mut job_ids: Vec<String> = Vec::new();
-        for (table_name, table_type_str) in &target_tables {
-            let params_json = serde_json::json!({
-                "namespace_id": ns.as_str(),
-                "table_name": table_name.as_str(),
-                "table_type": table_type_str
-            });
+        for (table_name, table_type) in &target_tables {
+            let table_id = TableId::new(ns.clone(), table_name.clone());
+            let params = FlushParams {
+                table_id: table_id.clone(),
+                table_type: *table_type,
+                flush_threshold: None,
+            };
             let idempotency_key = format!("flush-{}-{}", ns.as_str(), table_name.as_str());
             let job_id: JobId = job_manager
-                .create_job(JobType::Flush, ns.clone(), params_json, Some(idempotency_key), None)
+                .create_job_typed(JobType::Flush, ns.clone(), params, Some(idempotency_key), None)
                 .await?;
             job_ids.push(job_id.as_str().to_string());
         }

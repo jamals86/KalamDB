@@ -72,7 +72,7 @@ mod tests {
             .unwrap();
         assert_eq!(stmt.live_id.user_id(), "user123");
         assert_eq!(stmt.live_id.connection_id().unique_conn_id(), "conn_abc");
-        assert_eq!(stmt.live_id.table_name(), "messages");
+        assert_eq!(stmt.live_id.table_id().table_name().as_str(), "messages");
         assert_eq!(stmt.live_id.query_id(), "q1");
     }
 
@@ -82,7 +82,7 @@ mod tests {
             KillLiveQueryStatement::parse("KILL LIVE QUERY \"user456-conn_xyz-notifications-q2\"")
                 .unwrap();
         assert_eq!(stmt.live_id.user_id(), "user456");
-        assert_eq!(stmt.live_id.table_name(), "notifications");
+        assert_eq!(stmt.live_id.table_id().table_name().as_str(), "notifications");
     }
 
     #[test]
@@ -90,7 +90,7 @@ mod tests {
         let stmt =
             KillLiveQueryStatement::parse("KILL LIVE QUERY user789-conn_123-users-q3").unwrap();
         assert_eq!(stmt.live_id.user_id(), "user789");
-        assert_eq!(stmt.live_id.table_name(), "users");
+        assert_eq!(stmt.live_id.table_id().table_name().as_str(), "users");
     }
 
     #[test]

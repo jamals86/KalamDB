@@ -37,7 +37,6 @@ use std::sync::Arc;
 
 // Arrow <-> JSON helpers
 use crate::providers::arrow_json_conversion::json_rows_to_arrow_batch;
-use serde_json::json;
 
 /// Shared table provider without RLS
 ///
@@ -56,8 +55,8 @@ pub struct SharedTableProvider {
     /// Logical table type
     table_type: TableType,
     
-    /// SharedTableStore for DML operations
-    store: Arc<SharedTableStore>,
+    /// SharedTableStore for DML operations (public for flush jobs)
+    pub(crate) store: Arc<SharedTableStore>,
     
     /// Cached primary key field name
     primary_key_field_name: String,
@@ -576,8 +575,6 @@ impl BaseTableProvider<SharedTableRowId, SharedTableRow> for SharedTableProvider
         // Convert to JSON rows aligned with schema
         let schema = self.schema_ref();
         let mut rows: Vec<JsonValue> = Vec::with_capacity(kvs.len());
-        let has_seq = schema.field_with_name("_seq").is_ok();
-        let has_deleted = schema.field_with_name("_deleted").is_ok();
 
         for (_key, row) in kvs.into_iter() {
             let mut obj = row
@@ -585,8 +582,10 @@ impl BaseTableProvider<SharedTableRowId, SharedTableRow> for SharedTableProvider
                 .as_object()
                 .cloned()
                 .unwrap_or_default();
-            if has_seq { obj.insert("_seq".to_string(), json!(row._seq.as_i64())); }
-            if has_deleted { obj.insert("_deleted".to_string(), json!(row._deleted)); }
+            
+            // Inject system columns using consolidated helper
+            crate::providers::base::inject_system_columns(&schema, &mut obj, row._seq.as_i64(), row._deleted);
+            
             rows.push(JsonValue::Object(obj));
         }
 

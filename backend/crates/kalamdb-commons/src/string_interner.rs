@@ -24,6 +24,7 @@
 use dashmap::DashMap;
 use once_cell::sync::Lazy;
 use std::sync::Arc;
+use crate::constants::SystemColumnNames;
 
 /// Global string interner
 static INTERNER: Lazy<DashMap<Arc<str>, ()>> = Lazy::new(DashMap::new);
@@ -67,12 +68,10 @@ pub fn intern(s: &str) -> Arc<str> {
 /// row.insert(SYSTEM_COLUMNS.row_id.clone(), "123".to_string());
 /// ```
 pub struct SystemColumns {
-    /// "_updated" column (last update timestamp)
-    pub updated: Arc<str>,
-    /// "_deleted" column (soft delete timestamp)
+    /// "_seq" column (Snowflake ID with embedded timestamp)
+    pub seq: Arc<str>,
+    /// "_deleted" column (soft delete flag)
     pub deleted: Arc<str>,
-    /// "_row_id" column (unique row identifier)
-    pub row_id: Arc<str>,
     /// "user_id" column (user identifier in system tables)
     pub user_id: Arc<str>,
     /// "namespace_id" column (namespace identifier)
@@ -89,9 +88,8 @@ pub struct SystemColumns {
 
 /// Global pre-interned system column names
 pub static SYSTEM_COLUMNS: Lazy<SystemColumns> = Lazy::new(|| SystemColumns {
-    updated: intern("_updated"),
-    deleted: intern("_deleted"),
-    row_id: intern("_row_id"),
+    seq: intern(SystemColumnNames::SEQ),
+    deleted: intern(SystemColumnNames::DELETED),
     user_id: intern("user_id"),
     namespace_id: intern("namespace_id"),
     table_id: intern("table_id"),
@@ -149,27 +147,24 @@ mod tests {
     #[test]
     fn test_system_columns_are_interned() {
         // Access system columns
-        let updated = SYSTEM_COLUMNS.updated.clone();
+        let seq = SYSTEM_COLUMNS.seq.clone();
         let deleted = SYSTEM_COLUMNS.deleted.clone();
-        let row_id = SYSTEM_COLUMNS.row_id.clone();
 
         // Verify they have correct values
-        assert_eq!(updated.as_ref(), "_updated");
+        assert_eq!(seq.as_ref(), "_seq");
         assert_eq!(deleted.as_ref(), "_deleted");
-        assert_eq!(row_id.as_ref(), "_row_id");
 
         // Interning the same string should return the same Arc
-        let updated2 = intern("_updated");
-        assert!(Arc::ptr_eq(&updated, &updated2));
+        let seq2 = intern("_seq");
+        assert!(Arc::ptr_eq(&seq, &seq2));
     }
 
     #[test]
     fn test_all_system_columns() {
         let cols = &*SYSTEM_COLUMNS;
 
-        assert_eq!(cols.updated.as_ref(), "_updated");
+        assert_eq!(cols.seq.as_ref(), "_seq");
         assert_eq!(cols.deleted.as_ref(), "_deleted");
-        assert_eq!(cols.row_id.as_ref(), "_row_id");
         assert_eq!(cols.user_id.as_ref(), "user_id");
         assert_eq!(cols.namespace_id.as_ref(), "namespace_id");
         assert_eq!(cols.table_id.as_ref(), "table_id");

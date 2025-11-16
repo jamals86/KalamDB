@@ -1,0 +1,418 @@
+//! Naming validation for namespaces, tables, and columns
+//!
+//! This module provides validation functions to ensure that user-provided names
+//! comply with KalamDB naming conventions and don't conflict with reserved words.
+
+use std::collections::HashSet;
+use once_cell::sync::Lazy;
+
+/// Reserved namespace names that cannot be used by users
+pub static RESERVED_NAMESPACES: Lazy<HashSet<&'static str>> = Lazy::new(|| {
+    let mut set = HashSet::new();
+    set.insert("system");
+    set.insert("sys");
+    set.insert("root");
+    set.insert("kalamdb");
+    set.insert("kalam");
+    set.insert("main");
+    set.insert("default");
+    set.insert("sql");
+    set.insert("admin");
+    set.insert("internal");
+    set.insert("information_schema");
+    set
+});
+
+/// Reserved column names that cannot be used by users
+/// These are system columns that are automatically managed
+pub static RESERVED_COLUMN_NAMES: Lazy<HashSet<&'static str>> = Lazy::new(|| {
+    let mut set = HashSet::new();
+    // Current system columns
+    set.insert("_seq");
+    set.insert("_deleted");
+    
+    // Legacy system columns (prevent reuse)
+    set.insert("_row_id");
+    set.insert("_id");
+    set.insert("_updated");
+    
+    // Additional reserved columns
+    set.insert("_created_at");
+    set.insert("_modified_at");
+    set.insert("_version");
+    set
+});
+
+/// SQL reserved keywords that cannot be used as identifiers
+pub static RESERVED_SQL_KEYWORDS: Lazy<HashSet<&'static str>> = Lazy::new(|| {
+    let mut set = HashSet::new();
+    // SQL standard keywords
+    set.insert("select");
+    set.insert("from");
+    set.insert("where");
+    set.insert("insert");
+    set.insert("update");
+    set.insert("delete");
+    set.insert("create");
+    set.insert("alter");
+    set.insert("drop");
+    set.insert("table");
+    set.insert("index");
+    set.insert("view");
+    set.insert("join");
+    set.insert("left");
+    set.insert("right");
+    set.insert("inner");
+    set.insert("outer");
+    set.insert("on");
+    set.insert("as");
+    set.insert("and");
+    set.insert("or");
+    set.insert("not");
+    set.insert("null");
+    set.insert("true");
+    set.insert("false");
+    set.insert("order");
+    set.insert("by");
+    set.insert("group");
+    set.insert("having");
+    set.insert("limit");
+    set.insert("offset");
+    set.insert("distinct");
+    set.insert("all");
+    set.insert("exists");
+    set.insert("in");
+    set.insert("between");
+    set.insert("like");
+    set.insert("is");
+    set.insert("case");
+    set.insert("when");
+    set.insert("then");
+    set.insert("else");
+    set.insert("end");
+    set.insert("union");
+    set.insert("intersect");
+    set.insert("except");
+    set.insert("cast");
+    set.insert("using");
+    set.insert("window");
+    set.insert("as");
+    set.insert("user");
+    set.insert("role");
+    set.insert("grant");
+    set.insert("revoke");
+    set.insert("transaction");
+    set.insert("commit");
+    set.insert("rollback");
+    set  // Return the HashSet
+});
+
+/// Validation error types
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ValidationError {
+    /// Name is empty
+    Empty,
+    /// Name is too long (max 64 characters)
+    TooLong(usize),
+    /// Name starts with an underscore (reserved for system columns)
+    StartsWithUnderscore,
+    /// Name contains invalid characters (only alphanumeric and underscore allowed)
+    InvalidCharacters(String),
+    /// Name is a reserved namespace
+    ReservedNamespace(String),
+    /// Name is a reserved column name
+    ReservedColumnName(String),
+    /// Name is a reserved SQL keyword
+    ReservedSqlKeyword(String),
+    /// Name starts with a number
+    StartsWithNumber,
+    /// Name contains spaces
+    ContainsSpaces,
+}
+
+impl std::fmt::Display for ValidationError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            ValidationError::Empty => write!(f, "Name cannot be empty"),
+            ValidationError::TooLong(len) => write!(f, "Name is too long ({} characters, max 64)", len),
+            ValidationError::StartsWithUnderscore => write!(f, "Name cannot start with underscore (reserved for system columns)"),
+            ValidationError::InvalidCharacters(name) => write!(f, "Name '{}' contains invalid characters (only alphanumeric and underscore allowed)", name),
+            ValidationError::ReservedNamespace(name) => write!(f, "Namespace '{}' is reserved and cannot be used", name),
+            ValidationError::ReservedColumnName(name) => write!(f, "Column name '{}' is reserved and cannot be used", name),
+            ValidationError::ReservedSqlKeyword(name) => write!(f, "Name '{}' is a reserved SQL keyword and cannot be used", name),
+            ValidationError::StartsWithNumber => write!(f, "Name cannot start with a number"),
+            ValidationError::ContainsSpaces => write!(f, "Name cannot contain spaces"),
+        }
+    }
+}
+
+impl std::error::Error for ValidationError {}
+
+/// Maximum length for namespace, table, and column names
+pub const MAX_NAME_LENGTH: usize = 64;
+
+/// Validate a namespace name
+///
+/// Rules:
+/// - Not empty
+/// - Max 64 characters
+/// - Only alphanumeric and underscore
+/// - Cannot start with underscore or number
+/// - Cannot contain spaces
+/// - Cannot be a reserved namespace
+/// - Cannot be a reserved SQL keyword
+pub fn validate_namespace_name(name: &str) -> Result<(), ValidationError> {
+    validate_identifier_base(name)?;
+    
+    // Check if it's a reserved namespace
+    let lowercase = name.to_lowercase();
+    if RESERVED_NAMESPACES.contains(lowercase.as_str()) {
+        return Err(ValidationError::ReservedNamespace(name.to_string()));
+    }
+    
+    Ok(())
+}
+
+/// Validate a table name
+///
+/// Rules:
+/// - Not empty
+/// - Max 64 characters
+/// - Only alphanumeric and underscore
+/// - Cannot start with underscore or number
+/// - Cannot contain spaces
+/// - Cannot be a reserved SQL keyword
+pub fn validate_table_name(name: &str) -> Result<(), ValidationError> {
+    validate_identifier_base(name)?;
+    Ok(())
+}
+
+/// Validate a column name
+///
+/// Rules:
+/// - Not empty
+/// - Max 64 characters
+/// - Only alphanumeric and underscore
+/// - Cannot start with underscore (reserved for system columns)
+/// - Cannot start with number
+/// - Cannot contain spaces
+/// - Cannot be a reserved column name
+/// - Cannot be a reserved SQL keyword
+pub fn validate_column_name(name: &str) -> Result<(), ValidationError> {
+    validate_identifier_base(name)?;
+    
+    // Check if it's a reserved column name
+    let lowercase = name.to_lowercase();
+    if RESERVED_COLUMN_NAMES.contains(lowercase.as_str()) {
+        return Err(ValidationError::ReservedColumnName(name.to_string()));
+    }
+    
+    Ok(())
+}
+
+/// Base validation rules for all identifiers
+fn validate_identifier_base(name: &str) -> Result<(), ValidationError> {
+    // Check if empty
+    if name.is_empty() {
+        return Err(ValidationError::Empty);
+    }
+    
+    // Check length
+    if name.len() > MAX_NAME_LENGTH {
+        return Err(ValidationError::TooLong(name.len()));
+    }
+    
+    // Check for spaces
+    if name.contains(' ') {
+        return Err(ValidationError::ContainsSpaces);
+    }
+    
+    // Check if starts with underscore
+    if name.starts_with('_') {
+        return Err(ValidationError::StartsWithUnderscore);
+    }
+    
+    // Check if starts with number
+    if name.chars().next().unwrap().is_ascii_digit() {
+        return Err(ValidationError::StartsWithNumber);
+    }
+    
+    // Check for invalid characters (only alphanumeric and underscore allowed)
+    if !name.chars().all(|c| c.is_ascii_alphanumeric() || c == '_') {
+        return Err(ValidationError::InvalidCharacters(name.to_string()));
+    }
+    
+    // Check if it's a reserved SQL keyword
+    let lowercase = name.to_lowercase();
+    if RESERVED_SQL_KEYWORDS.contains(lowercase.as_str()) {
+        return Err(ValidationError::ReservedSqlKeyword(name.to_string()));
+    }
+    
+    Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_valid_namespace_names() {
+        assert!(validate_namespace_name("app").is_ok());
+        assert!(validate_namespace_name("my_namespace").is_ok());
+        assert!(validate_namespace_name("namespace123").is_ok());
+        assert!(validate_namespace_name("MyNamespace").is_ok());
+    }
+
+    #[test]
+    fn test_reserved_namespace_names() {
+        assert_eq!(
+            validate_namespace_name("system"),
+            Err(ValidationError::ReservedNamespace("system".to_string()))
+        );
+        assert_eq!(
+            validate_namespace_name("sys"),
+            Err(ValidationError::ReservedNamespace("sys".to_string()))
+        );
+        assert_eq!(
+            validate_namespace_name("root"),
+            Err(ValidationError::ReservedNamespace("root".to_string()))
+        );
+        assert_eq!(
+            validate_namespace_name("kalamdb"),
+            Err(ValidationError::ReservedNamespace("kalamdb".to_string()))
+        );
+        assert_eq!(
+            validate_namespace_name("SYSTEM"),
+            Err(ValidationError::ReservedNamespace("SYSTEM".to_string()))
+        );
+    }
+
+    #[test]
+    fn test_valid_table_names() {
+        assert!(validate_table_name("users").is_ok());
+        assert!(validate_table_name("user_messages").is_ok());
+        assert!(validate_table_name("table123").is_ok());
+    }
+
+    #[test]
+    fn test_valid_column_names() {
+        assert!(validate_column_name("user_id").is_ok());
+        assert!(validate_column_name("firstName").is_ok());
+        assert!(validate_column_name("age").is_ok());
+        assert!(validate_column_name("field123").is_ok());
+    }
+
+    #[test]
+    fn test_reserved_column_names() {
+        // All reserved column names start with underscore, so they get caught by StartsWithUnderscore check
+        assert_eq!(
+            validate_column_name("_seq"),
+            Err(ValidationError::StartsWithUnderscore)
+        );
+        assert_eq!(
+            validate_column_name("_deleted"),
+            Err(ValidationError::StartsWithUnderscore)
+        );
+        assert_eq!(
+            validate_column_name("_row_id"),
+            Err(ValidationError::StartsWithUnderscore)
+        );
+        assert_eq!(
+            validate_column_name("_id"),
+            Err(ValidationError::StartsWithUnderscore)
+        );
+        assert_eq!(
+            validate_column_name("_updated"),
+            Err(ValidationError::StartsWithUnderscore)
+        );
+    }
+
+    #[test]
+    fn test_starts_with_underscore() {
+        assert_eq!(
+            validate_column_name("_custom"),
+            Err(ValidationError::StartsWithUnderscore)
+        );
+        assert_eq!(
+            validate_table_name("_table"),
+            Err(ValidationError::StartsWithUnderscore)
+        );
+        assert_eq!(
+            validate_namespace_name("_namespace"),
+            Err(ValidationError::StartsWithUnderscore)
+        );
+    }
+
+    #[test]
+    fn test_starts_with_number() {
+        assert_eq!(
+            validate_column_name("123field"),
+            Err(ValidationError::StartsWithNumber)
+        );
+        assert_eq!(
+            validate_table_name("1table"),
+            Err(ValidationError::StartsWithNumber)
+        );
+    }
+
+    #[test]
+    fn test_contains_spaces() {
+        assert_eq!(
+            validate_column_name("user name"),
+            Err(ValidationError::ContainsSpaces)
+        );
+        assert_eq!(
+            validate_table_name("my table"),
+            Err(ValidationError::ContainsSpaces)
+        );
+    }
+
+    #[test]
+    fn test_invalid_characters() {
+        assert_eq!(
+            validate_column_name("user-name"),
+            Err(ValidationError::InvalidCharacters("user-name".to_string()))
+        );
+        assert_eq!(
+            validate_table_name("table@name"),
+            Err(ValidationError::InvalidCharacters("table@name".to_string()))
+        );
+        assert_eq!(
+            validate_namespace_name("name.space"),
+            Err(ValidationError::InvalidCharacters("name.space".to_string()))
+        );
+    }
+
+    #[test]
+    fn test_too_long() {
+        let long_name = "a".repeat(65);
+        assert_eq!(
+            validate_column_name(&long_name),
+            Err(ValidationError::TooLong(65))
+        );
+    }
+
+    #[test]
+    fn test_empty_name() {
+        assert_eq!(
+            validate_column_name(""),
+            Err(ValidationError::Empty)
+        );
+    }
+
+    #[test]
+    fn test_reserved_sql_keywords() {
+        assert_eq!(
+            validate_table_name("select"),
+            Err(ValidationError::ReservedSqlKeyword("select".to_string()))
+        );
+        assert_eq!(
+            validate_column_name("from"),
+            Err(ValidationError::ReservedSqlKeyword("from".to_string()))
+        );
+        assert_eq!(
+            validate_namespace_name("WHERE"),
+            Err(ValidationError::ReservedSqlKeyword("WHERE".to_string()))
+        );
+    }
+}

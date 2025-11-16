@@ -10,6 +10,7 @@
 //! - T134: manifest pruning reduces file scans by 80%+ (TODO: performance test)
 
 use kalamdb_commons::{NamespaceId, TableName};
+use kalamdb_commons::constants::SystemColumnNames;
 use kalamdb_commons::UserId;
 use kalamdb_core::manifest::ManifestService;
 use kalamdb_commons::types::{BatchFileEntry, ManifestFile};
@@ -193,7 +194,7 @@ fn test_flush_five_batches_manifest_tracking() {
     for (batch_num, file_name, min_seq, max_seq, row_count, size_bytes) in batch_configs {
         let mut column_stats = std::collections::HashMap::new();
         column_stats.insert(
-            "_seq".to_string(),
+            SystemColumnNames::SEQ.to_string(),
             (serde_json::json!(min_seq), serde_json::json!(max_seq)),
         );
         column_stats.insert(
@@ -236,7 +237,7 @@ fn test_flush_five_batches_manifest_tracking() {
         assert_eq!(batch.max_seq, expected_max);
         
         // Verify column stats
-        assert!(batch.column_min_max.contains_key("_seq"));
+        assert!(batch.column_min_max.contains_key(SystemColumnNames::SEQ));
         assert!(batch.column_min_max.contains_key("id"));
         
         // Verify row count increases
@@ -296,7 +297,7 @@ fn test_batch_entry_metadata_preservation() {
     // Create batch entry with rich metadata
     let mut column_stats = std::collections::HashMap::new();
     column_stats.insert(
-        "_seq".to_string(),
+        SystemColumnNames::SEQ.to_string(),
         (serde_json::json!(1000), serde_json::json!(2000)),
     );
     column_stats.insert(
@@ -343,12 +344,12 @@ fn test_batch_entry_metadata_preservation() {
     
     // Verify column stats
     assert_eq!(saved_batch.column_min_max.len(), 4);
-    assert!(saved_batch.column_min_max.contains_key("_seq"));
+    assert!(saved_batch.column_min_max.contains_key(SystemColumnNames::SEQ));
     assert!(saved_batch.column_min_max.contains_key("id"));
     assert!(saved_batch.column_min_max.contains_key("name"));
     assert!(saved_batch.column_min_max.contains_key("score"));
     
-    let seq_stats = saved_batch.column_min_max.get("_seq").unwrap();
+    let seq_stats = saved_batch.column_min_max.get(SystemColumnNames::SEQ).unwrap();
     assert_eq!(seq_stats.0, serde_json::json!(1000));
     assert_eq!(seq_stats.1, serde_json::json!(2000));
 }
@@ -393,7 +394,7 @@ fn test_manifest_validation_detects_corruption() {
 fn test_batch_file_entry_creation() {
     let mut stats = std::collections::HashMap::new();
     stats.insert(
-        "_seq".to_string(),
+        SystemColumnNames::SEQ.to_string(),
         (serde_json::json!(1000), serde_json::json!(2000)),
     );
     

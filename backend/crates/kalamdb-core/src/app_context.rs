@@ -183,13 +183,16 @@ impl AppContext {
                     .first()
                     .expect("No catalogs available")
                     .clone();
-                base_session_context
+                let catalog = base_session_context
                     .catalog(&catalog_name)
-                    .expect("Failed to get catalog")
+                    .expect("Failed to get catalog");
+                
+                // Register the system schema with the catalog
+                catalog
                     .register_schema("system", system_schema.clone())
                     .expect("Failed to register system schema");
-
-                // Register all system table providers
+                
+                // Register all system tables in the system schema
                 for (table_name, provider) in system_tables.all_system_providers() {
                     system_schema
                         .register_table(table_name.to_string(), provider)
@@ -231,8 +234,7 @@ impl AppContext {
                     jobs_provider,
                     job_registry,
                 ));
-
-                // Create live query manager
+                
                 let live_query_manager = Arc::new(LiveQueryManager::new(
                     system_tables.live_queries(),
                     schema_registry.clone(),
@@ -265,7 +267,7 @@ impl AppContext {
                     base_storage_path,
                 ));
 
-                Arc::new(AppContext {
+                let app_ctx = Arc::new(AppContext {
                     node_id,
                     config,
                     schema_registry,
@@ -273,7 +275,7 @@ impl AppContext {
                     shared_table_store,
                     stream_table_store,
                     storage_backend,
-                    job_manager,
+                    job_manager: job_manager.clone(),
                     live_query_manager,
                     storage_registry,
                     system_tables,
@@ -283,7 +285,12 @@ impl AppContext {
                     slow_query_logger,
                     manifest_cache_service,
                     manifest_service,
-                })
+                });
+
+                // Attach AppContext to components that require it (JobsManager)
+                job_manager.set_app_context(Arc::clone(&app_ctx));
+
+                app_ctx
             })
             .clone()
     }
@@ -566,7 +573,7 @@ impl AppContext {
             storage_base_path.clone(),
         ));
 
-        Arc::new(AppContext {
+        let app_ctx = Arc::new(AppContext {
             node_id,
             config,
             schema_registry,
@@ -574,7 +581,7 @@ impl AppContext {
             shared_table_store,
             stream_table_store,
             storage_backend,
-            job_manager,
+            job_manager: job_manager.clone(),
             live_query_manager,
             storage_registry,
             system_tables,
@@ -584,7 +591,12 @@ impl AppContext {
             slow_query_logger,
             manifest_cache_service,
             manifest_service,
-        })
+        });
+
+        // Attach AppContext to job_manager
+        job_manager.set_app_context(Arc::clone(&app_ctx));
+
+        app_ctx
     }
 
     /// Get the AppContext singleton
@@ -665,7 +677,7 @@ impl AppContext {
     /// Get the system columns service (Phase 12, US5, T027)
     ///
     /// Returns an Arc reference to the SystemColumnsService that manages
-    /// all system column operations (_id, _updated, _deleted).
+    /// all system column operations (_seq, _deleted).
     pub fn system_columns_service(&self) -> Arc<crate::system_columns::SystemColumnsService> {
         self.system_columns_service.clone()
     }

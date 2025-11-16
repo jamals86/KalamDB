@@ -21,10 +21,39 @@
 //! ```
 
 use crate::error::KalamDbError;
-use crate::jobs::executors::{JobContext, JobDecision, JobExecutor};
+use crate::jobs::executors::{JobContext, JobDecision, JobExecutor, JobParams};
 use async_trait::async_trait;
-use kalamdb_commons::system::Job;
-use kalamdb_commons::JobType;
+use kalamdb_commons::{JobType, TableId};
+use kalamdb_commons::schemas::TableType;
+use serde::{Deserialize, Serialize};
+
+/// Typed parameters for compaction operations
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CompactParams {
+    /// Table identifier (required)
+    #[serde(flatten)]
+    pub table_id: TableId,
+    /// Table type (required)
+    pub table_type: TableType,
+    /// Target file size in MB (optional, defaults to 128)
+    #[serde(default = "default_target_file_size")]
+    pub target_file_size_mb: u64,
+}
+
+fn default_target_file_size() -> u64 {
+    128
+}
+
+impl JobParams for CompactParams {
+    fn validate(&self) -> Result<(), KalamDbError> {
+        if self.target_file_size_mb == 0 {
+            return Err(KalamDbError::InvalidOperation(
+                "target_file_size_mb must be greater than 0".to_string(),
+            ));
+        }
+        Ok(())
+    }
+}
 
 /// Compact Job Executor (Placeholder)
 ///
@@ -39,6 +68,8 @@ impl CompactExecutor {
 
 #[async_trait]
 impl JobExecutor for CompactExecutor {
+    type Params = CompactParams;
+
     fn job_type(&self) -> JobType {
         JobType::Compact
     }
@@ -47,20 +78,7 @@ impl JobExecutor for CompactExecutor {
         "CompactExecutor"
     }
 
-    async fn validate_params(&self, job: &Job) -> Result<(), KalamDbError> {
-        let params = job
-            .parameters
-            .as_ref()
-            .ok_or_else(|| KalamDbError::InvalidOperation("Missing parameters".to_string()))?;
-
-        let _params_obj: serde_json::Value = serde_json::from_str(params)
-            .map_err(|e| KalamDbError::InvalidOperation(format!("Invalid JSON parameters: {}", e)))?;
-
-        // TODO: Validate compaction-specific parameters
-        Ok(())
-    }
-
-    async fn execute(&self, ctx: &JobContext, _job: &Job) -> Result<JobDecision, KalamDbError> {
+    async fn execute(&self, ctx: &JobContext<Self::Params>) -> Result<JobDecision, KalamDbError> {
         ctx.log_warn("CompactExecutor not yet implemented");
         
         // TODO: Implement compaction logic
@@ -73,11 +91,6 @@ impl JobExecutor for CompactExecutor {
             message: "CompactExecutor not yet implemented".to_string(),
             exception_trace: Some("CompactExecutor not yet implemented".to_string()),
         })
-    }
-
-    async fn cancel(&self, ctx: &JobContext, _job: &Job) -> Result<(), KalamDbError> {
-        ctx.log_warn("Compact job cancellation requested");
-        Ok(())
     }
 }
 

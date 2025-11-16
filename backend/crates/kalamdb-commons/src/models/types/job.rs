@@ -68,8 +68,8 @@ use serde::{Deserialize, Serialize};
 pub struct Job {
     pub job_id: JobId,
     pub job_type: JobType,
-    pub namespace_id: NamespaceId,
-    pub table_name: Option<TableName>,
+    pub namespace_id: NamespaceId, //TODO: Should we use these? since in the params we already have them
+    pub table_name: Option<TableName>, //TODO: Should we use these? since in the params we already have them
     pub status: JobStatus,
     pub parameters: Option<String>, // JSON object (migrated from array)
     pub message: Option<String>,    // Unified field replacing result/error_message
@@ -161,6 +161,21 @@ impl Job {
         self.memory_used = memory_used;
         self.cpu_used = cpu_used;
         self
+    }
+
+    /// get the parameters as T if possible
+    pub fn get_parameters_as<T: for<'de> Deserialize<'de>>(&self) -> Option<T> {
+        /*
+                let cleanup_params: CleanupParams = serde_json::from_str(params)
+            .map_err(|e| KalamDbError::InvalidOperation(format!("Failed to parse parameters: {}", e)))?;
+
+         */
+        match &self.parameters {
+            Some(params) => {
+                serde_json::from_str(params).ok()
+            }
+            None => None,
+        }   
     }
 }
 

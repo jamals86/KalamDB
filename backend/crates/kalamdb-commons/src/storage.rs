@@ -62,6 +62,9 @@
 use std::any::Any;
 use std::fmt;
 
+/// Type alias for a boxed key-value iterator to simplify function signatures
+pub type KvIterator<'a> = Box<dyn Iterator<Item = (Vec<u8>, Vec<u8>)> + 'a>;
+
 /// Result type for storage operations.
 pub type Result<T> = std::result::Result<T, StorageError>;
 
@@ -214,7 +217,7 @@ pub trait StorageBackend: Send + Sync {
         partition: &Partition,
         prefix: Option<&[u8]>,
         limit: Option<usize>,
-    ) -> Result<Box<dyn Iterator<Item = (Vec<u8>, Vec<u8>)> + '_>>;
+    ) -> Result<KvIterator<'_>>;
 
     /// Checks if a partition exists.
     fn partition_exists(&self, partition: &Partition) -> bool;

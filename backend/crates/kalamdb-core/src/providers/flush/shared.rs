@@ -3,7 +3,7 @@
 //! Flushes shared table data from RocksDB to a single Parquet file.
 //! All rows are written to one file per flush operation.
 
-use super::base::{FlushExecutor, FlushJobResult, FlushMetadata, TableFlush};
+use super::base::{FlushJobResult, FlushMetadata, TableFlush};
 use crate::error::KalamDbError;
 use crate::live_query::manager::{ChangeNotification, LiveQueryManager};
 use crate::manifest::{FlushManifestHelper, ManifestCacheService, ManifestService};
@@ -63,11 +63,6 @@ impl SharedTableFlushJob {
     pub fn with_live_query_manager(mut self, manager: Arc<LiveQueryManager>) -> Self {
         self.live_query_manager = Some(manager);
         self
-    }
-
-    /// Execute flush job with tracking
-    pub fn execute_tracked(&self) -> Result<FlushJobResult, KalamDbError> {
-        FlushExecutor::execute_with_tracking(self, self.namespace_id.clone())
     }
 
     /// Generate batch filename using manifest max_batch (T115)
@@ -234,7 +229,6 @@ impl TableFlush for SharedTableFlushJob {
             log::info!("⚠️  No rows to flush for shared table={}.{} (empty table or all deleted)",
                       self.namespace_id.as_str(), self.table_name.as_str());
             return Ok(FlushJobResult {
-                job_record: self.create_job_record(&self.generate_job_id(), self.namespace_id.clone()),
                 rows_flushed: 0,
                 parquet_files: vec![],
                 metadata: FlushMetadata::shared_table(),
@@ -260,10 +254,21 @@ impl TableFlush for SharedTableFlushJob {
                 .map_err(|e| KalamDbError::Other(format!("Failed to create directory: {}", e)))?;
         }
 
-        // Write to Parquet
+        // Extract PRIMARY KEY columns from TableDefinition for Bloom filter optimization (FR-054, FR-055)
+        // Fetch once per flush job instead of per-batch for efficiency
+        let bloom_filter_columns = self.unified_cache
+            .get_bloom_filter_columns(&*self.table_id)
+            .unwrap_or_else(|e| {
+                log::warn!("⚠️  Failed to get Bloom filter columns for {}: {}. Using default (_seq only)", self.table_id, e);
+                vec!["_seq".to_string()]
+            });
+        
+        log::debug!("🌸 Bloom filters enabled for columns: {:?}", bloom_filter_columns);
+
+        // Write to Parquet with Bloom filters on PRIMARY KEY + _seq
         log::debug!("📝 Writing Parquet file: path={}, rows={}", output_path.display(), rows_count);
         let writer = ParquetWriter::new(output_path.to_str().unwrap());
-        writer.write(self.schema.clone(), vec![batch.clone()])?;
+        writer.write_with_bloom_filter(self.schema.clone(), vec![batch.clone()], Some(bloom_filter_columns))?;
 
         log::info!("✅ Flushed {} rows for shared table={}.{} to {}", 
                   rows_count, self.namespace_id.as_str(), self.table_name.as_str(), output_path.display());
@@ -295,14 +300,13 @@ impl TableFlush for SharedTableFlushJob {
         if let Some(manager) = &self.live_query_manager {
             let table_name = format!("{}.{}", self.namespace_id.as_str(), self.table_name.as_str());
             let parquet_files = vec![parquet_path.clone()];
-            let notification = ChangeNotification::flush(table_name.clone(), rows_count, parquet_files.clone());
             let table_id = TableId::new(self.namespace_id.clone(), self.table_name.clone());
+            let notification = ChangeNotification::flush(table_id.clone(), rows_count, parquet_files.clone());
             let system_user = UserId::system();
             manager.notify_table_change_async(system_user, table_id, notification);
         }
 
         Ok(FlushJobResult {
-            job_record: self.create_job_record(&self.generate_job_id(), self.namespace_id.clone()),
             rows_flushed: rows_count,
             parquet_files: vec![parquet_path],
             metadata: FlushMetadata::shared_table(),
@@ -315,9 +319,5 @@ impl TableFlush for SharedTableFlushJob {
 
     fn live_query_manager(&self) -> Option<&Arc<LiveQueryManager>> {
         self.live_query_manager.as_ref()
-    }
-
-    fn node_id(&self) -> NodeId {
-        self.node_id.clone()
     }
 }

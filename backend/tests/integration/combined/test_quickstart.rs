@@ -360,7 +360,18 @@ async fn test_14_drop_table() {
         response.error
     );
 
-    // Verify table no longer exists
+    // Verify response includes cleanup job ID
+    let result_message = response.results.get(0)
+        .and_then(|r| r.message.as_ref())
+        .expect("DROP TABLE should return result message");
+    
+    assert!(
+        result_message.contains("Cleanup job:"),
+        "DROP TABLE should create cleanup job, got: {}",
+        result_message
+    );
+
+    // Verify table no longer exists (soft delete completed)
     assert!(
         !server.table_exists("app", "messages").await,
         "Table should be dropped"

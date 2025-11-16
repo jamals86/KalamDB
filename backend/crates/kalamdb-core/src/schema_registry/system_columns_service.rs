@@ -105,8 +105,10 @@ impl SystemColumnsService {
 
     /// Add system columns to a table definition
     ///
-    /// **MVCC Architecture**: Injects `_seq BIGINT`, `_updated TIMESTAMP`, and `_deleted BOOLEAN`
+    /// **MVCC Architecture**: Injects `_seq BIGINT` and `_deleted BOOLEAN`
     /// columns if they don't already exist.
+    /// 
+    /// Note: _seq contains embedded timestamp, so no separate _updated column is needed.
     ///
     /// # Arguments
     /// * `table_def` - Mutable reference to table definition
@@ -128,6 +130,7 @@ impl SystemColumnsService {
 
         // Add _seq column (BIGINT, NOT NULL)
         // Note: _seq is NOT a primary key - user must define their own PK
+        // _seq contains embedded timestamp (Snowflake ID format)
         table_def.columns.push(ColumnDefinition {
             column_name: Self::COL_SEQ.to_string(),
             ordinal_position: next_ordinal,
@@ -137,18 +140,6 @@ impl SystemColumnsService {
             is_partition_key: false,
             default_value: ColumnDefault::None,
             column_comment: Some("System-generated Snowflake-based version ID (MVCC) with embedded timestamp".to_string()),
-        });
-
-        // Add _updated column (TIMESTAMP, NOT NULL)
-        table_def.columns.push(ColumnDefinition {
-            column_name: "_updated".to_string(),
-            ordinal_position: next_ordinal + 1,
-            data_type: kalamdb_commons::models::datatypes::KalamDataType::Timestamp,
-            is_nullable: false,
-            is_primary_key: false,
-            is_partition_key: false,
-            default_value: ColumnDefault::None,
-            column_comment: Some("System-generated last update timestamp (UTC)".to_string()),
         });
 
         // Add _deleted column (BOOLEAN, NOT NULL, DEFAULT FALSE)
@@ -277,10 +268,9 @@ mod tests {
 
         svc.add_system_columns(&mut table_def).unwrap();
 
-        assert_eq!(table_def.columns.len(), 3); // _seq, _updated and _deleted
+        assert_eq!(table_def.columns.len(), 2); // _seq and _deleted
         assert_eq!(table_def.columns[0].column_name, "_seq");
-        assert_eq!(table_def.columns[1].column_name, "_updated");
-        assert_eq!(table_def.columns[2].column_name, "_deleted");
+        assert_eq!(table_def.columns[1].column_name, "_deleted");
     }
 
     #[test]

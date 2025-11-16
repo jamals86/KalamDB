@@ -869,6 +869,46 @@ impl SchemaRegistry {
         // Delegate to CachedTableData's double-check locking implementation
         cached_data.arrow_schema()
     }
+
+    /// Get Bloom filter column names for a table (PRIMARY KEY columns + _seq)
+    ///
+    /// Returns a Vec of column names that should have Bloom filters enabled
+    /// for optimal point query performance (FR-054, FR-055).
+    ///
+    /// # Arguments
+    /// * `table_id` - Table identifier
+    ///
+    /// # Returns
+    /// Vec of column names: PRIMARY KEY columns + "_seq" system column
+    ///
+    /// # Example
+    /// ```rust,ignore
+    /// let bloom_cols = registry.get_bloom_filter_columns(&table_id)?;
+    /// // Returns: vec!["id", "_seq"] for table with PRIMARY KEY "id"
+    /// writer.write_with_bloom_filter(schema, batches, Some(bloom_cols))?;
+    /// ```
+    pub fn get_bloom_filter_columns(
+        &self,
+        table_id: &TableId,
+    ) -> Result<Vec<String>, KalamDbError> {
+        let table_def = self.get_table_definition(table_id)?
+            .ok_or_else(|| KalamDbError::TableNotFound(format!(
+                "Table not found: {}",
+                table_id
+            )))?;
+
+        let mut columns = vec![];
+        
+        // Add PRIMARY KEY columns (FR-055: indexed columns)
+        for col in table_def.columns.iter().filter(|c| c.is_primary_key) {
+            columns.push(col.column_name.clone());
+        }
+        
+        // Add _seq system column (FR-054: default Bloom filter columns)
+        columns.push("_seq".to_string());
+        
+        Ok(columns)
+    }
 }
 
 impl Default for SchemaRegistry {
@@ -1461,5 +1501,111 @@ mod tests {
                 "_deleted should be Boolean");
 
         println!("✅ T014: CachedTableData Arrow schema includes _seq and _deleted system columns");
+    }
+
+    #[test]
+    fn test_get_bloom_filter_columns() {
+        use crate::system_columns::SystemColumnsService;
+        use kalamdb_commons::models::schemas::{ColumnDefinition, TableOptions, TableType};
+        use kalamdb_commons::models::datatypes::KalamDataType;
+
+        let cache = SchemaRegistry::new(1000);
+        let table_id = TableId::new(NamespaceId::new("test_ns"), TableName::new("users"));
+
+        // Create table with PRIMARY KEY column
+        let pk_col = ColumnDefinition::primary_key("id", 1, KalamDataType::BigInt);
+        let name_col = ColumnDefinition::simple("name", 2, KalamDataType::Text);
+
+        let mut table_def = kalamdb_commons::models::schemas::TableDefinition::new(
+            NamespaceId::new("test_ns"),
+            TableName::new("users"),
+            TableType::User,
+            vec![pk_col, name_col],
+            TableOptions::user(),
+            None,
+        )
+        .unwrap();
+
+        // Add system columns (_seq, _deleted)
+        let sys_cols = SystemColumnsService::new(1);
+        sys_cols.add_system_columns(&mut table_def).unwrap();
+
+        // Insert into cache
+        let cached_data = CachedTableData::new(Arc::new(table_def));
+        cache.insert(table_id.clone(), Arc::new(cached_data));
+
+        // Get Bloom filter columns
+        let bloom_cols = cache.get_bloom_filter_columns(&table_id)
+            .expect("Should get Bloom filter columns");
+
+        // Verify: PRIMARY KEY "id" + system column "_seq"
+        assert_eq!(bloom_cols.len(), 2, "Should have 2 Bloom filter columns");
+        assert_eq!(bloom_cols[0], "id", "First column should be PRIMARY KEY 'id'");
+        assert_eq!(bloom_cols[1], "_seq", "Second column should be system column '_seq'");
+
+        println!("✅ get_bloom_filter_columns returns PRIMARY KEY + _seq");
+    }
+
+    #[test]
+    fn test_get_bloom_filter_columns_composite_pk() {
+        use crate::system_columns::SystemColumnsService;
+        use kalamdb_commons::models::schemas::{ColumnDefinition, TableOptions, TableType};
+        use kalamdb_commons::models::datatypes::KalamDataType;
+
+        let cache = SchemaRegistry::new(1000);
+        let table_id = TableId::new(NamespaceId::new("test_ns"), TableName::new("orders"));
+
+        // Create table with composite PRIMARY KEY (user_id, order_id)
+        let user_id_col = ColumnDefinition::new(
+            "user_id",
+            1,
+            KalamDataType::BigInt,
+            false, // not nullable
+            true,  // is_primary_key
+            false, // not partition key
+            kalamdb_commons::models::schemas::ColumnDefault::None,
+            None,
+        );
+        let order_id_col = ColumnDefinition::new(
+            "order_id",
+            2,
+            KalamDataType::BigInt,
+            false,
+            true,  // is_primary_key
+            false,
+            kalamdb_commons::models::schemas::ColumnDefault::None,
+            None,
+        );
+        let amount_col = ColumnDefinition::simple("amount", 3, KalamDataType::Int);
+
+        let mut table_def = kalamdb_commons::models::schemas::TableDefinition::new(
+            NamespaceId::new("test_ns"),
+            TableName::new("orders"),
+            TableType::Shared,
+            vec![user_id_col, order_id_col, amount_col],
+            TableOptions::shared(),
+            None,
+        )
+        .unwrap();
+
+        // Add system columns
+        let sys_cols = SystemColumnsService::new(1);
+        sys_cols.add_system_columns(&mut table_def).unwrap();
+
+        // Insert into cache
+        let cached_data = CachedTableData::new(Arc::new(table_def));
+        cache.insert(table_id.clone(), Arc::new(cached_data));
+
+        // Get Bloom filter columns
+        let bloom_cols = cache.get_bloom_filter_columns(&table_id)
+            .expect("Should get Bloom filter columns");
+
+        // Verify: Both PRIMARY KEY columns + _seq
+        assert_eq!(bloom_cols.len(), 3, "Should have 3 Bloom filter columns (2 PK + _seq)");
+        assert_eq!(bloom_cols[0], "user_id", "First PK column");
+        assert_eq!(bloom_cols[1], "order_id", "Second PK column");
+        assert_eq!(bloom_cols[2], "_seq", "System column");
+
+        println!("✅ get_bloom_filter_columns handles composite PRIMARY KEY");
     }
 }

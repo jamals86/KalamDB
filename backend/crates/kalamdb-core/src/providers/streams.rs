@@ -255,7 +255,7 @@ impl BaseTableProvider<StreamTableRowId, StreamTableRow> for StreamTableProvider
             obj.insert("user_id".to_string(), json!(user_id.as_str()));
             let row_json = JsonValue::Object(obj);
 
-            let notification = ChangeNotification::insert(table_name.clone(), row_json);
+            let notification = ChangeNotification::insert(table_id.clone(), row_json);
             log::debug!(
                 "[StreamProvider] Notifying change: table={} type=INSERT user={} seq={}",
                 table_name,
@@ -301,7 +301,7 @@ impl BaseTableProvider<StreamTableRowId, StreamTableRow> for StreamTableProvider
             );
 
             let row_id_str = format!("{}:{}", key.user_id().as_str(), key.seq().as_i64());
-            let notification = ChangeNotification::delete_hard(table_name, row_id_str);
+            let notification = ChangeNotification::delete_hard(table_id.clone(), row_id_str);
             manager.notify_table_change_async(user_id.clone(), table_id, notification);
         }
 
@@ -324,8 +324,6 @@ impl BaseTableProvider<StreamTableRowId, StreamTableRow> for StreamTableProvider
 
         let schema = self.schema_ref();
         let mut rows: Vec<JsonValue> = Vec::with_capacity(kvs.len());
-        let has_seq = schema.field_with_name("_seq").is_ok();
-        let has_deleted = schema.field_with_name("_deleted").is_ok(); // likely false for streams
         let has_user = schema.field_with_name("user_id").is_ok();
 
         for (_key, row) in kvs.into_iter() {
@@ -334,8 +332,10 @@ impl BaseTableProvider<StreamTableRowId, StreamTableRow> for StreamTableProvider
                 .as_object()
                 .cloned()
                 .unwrap_or_default();
-            if has_seq { obj.insert("_seq".to_string(), json!(row._seq.as_i64())); }
-            if has_deleted { obj.insert("_deleted".to_string(), json!(false)); }
+            
+            // Inject system columns using consolidated helper
+            crate::providers::base::inject_system_columns(&schema, &mut obj, row._seq.as_i64(), false);
+            
             if has_user { obj.insert("user_id".to_string(), json!(row.user_id.as_str())); }
             rows.push(JsonValue::Object(obj));
         }

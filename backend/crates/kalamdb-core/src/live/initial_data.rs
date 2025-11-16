@@ -8,8 +8,7 @@ use crate::error::KalamDbError;
 use super::filter::FilterPredicate;
 use crate::schema_registry::TableType;
 // Removed unused store imports after provider-based snapshots for streams
-use chrono::DateTime;
-use kalamdb_commons::TableName;
+use kalamdb_commons::models::TableId;
 use serde_json::Value as JsonValue;
 use std::sync::Arc;
 
@@ -103,7 +102,7 @@ impl InitialDataFetcher {
     /// Fetch initial data for a table
     ///
     /// # Arguments
-    /// * `table_name` - Fully qualified table name (e.g., "user123.messages.chat")
+    /// * `table_id` - Table identifier with namespace and table name
     /// * `table_type` - User or Shared table
     /// * `options` - Options for the fetch (timestamp, limit, etc.)
     ///
@@ -112,14 +111,14 @@ impl InitialDataFetcher {
     pub async fn fetch_initial_data(
         &self,
         _live_id: &super::connection_registry::LiveId,
-        table_name: &TableName,
+        table_id: &TableId,
         table_type: TableType,
         options: InitialDataOptions,
         filter: Option<Arc<FilterPredicate>>,
     ) -> Result<InitialDataResult, KalamDbError> {
         log::info!(
             "fetch_initial_data called: table={}, type={:?}, limit={}, since={:?}",
-            table_name.as_str(),
+            table_id,
             table_type,
             options.limit,
             options.since_timestamp
@@ -136,90 +135,74 @@ impl InitialDataFetcher {
             });
         }
 
-        let (namespace, table) = self.parse_table_name(table_name, table_type)?;
         let since_timestamp = options.since_timestamp;
         let include_deleted = options.include_deleted;
 
         let mut rows_with_ts: Vec<(i64, JsonValue)> = match table_type {
             TableType::User => {
-                let backend = self.backend.as_ref().ok_or_else(|| {
-                    KalamDbError::InvalidOperation(
-                        "StorageBackend not configured for live query initial data".to_string(),
-                    )
-                })?;
+                // Use the registered provider to avoid creating a fresh store
+                let provider = self
+                    .schema_registry
+                    .get_provider(table_id)
+                    .ok_or_else(|| KalamDbError::Other(format!(
+                        "Provider not found for user table {}",
+                        table_id
+                    )))?;
 
-                // Create table-specific store for this namespace+table
-                let store = kalamdb_tables::new_user_table_store(
-                    backend.clone(),
-                    &kalamdb_commons::models::NamespaceId::new(&namespace),
-                    &kalamdb_commons::TableName::new(&table),
-                );
-
-                // Scan all rows for the table. We'll produce a FLAT JSON object per row
-                // that matches notification format: merge `row.fields` and inject `user_id`.
-                use kalamdb_store::entity_store::EntityStore;
-                let mut rows = Vec::new();
-                for (_key, row) in EntityStore::scan_all(&store).map_err(|e| {
-                    KalamDbError::Other(format!(
-                        "Failed to scan user table {}.{}: {}",
-                        namespace, table, e
-                    ))
-                })? {
-                    if !include_deleted && row._deleted {
-                        continue;
-                    }
-
-                    // Use SeqId timestamp for ordering when _updated is not present
-                    let timestamp = row._seq.timestamp_millis() as i64;
-
-                    if let Some(since) = since_timestamp {
-                        if timestamp < since {
-                            continue;
+                // Downcast to UserTableProvider
+                if let Some(user_provider) = provider.as_any().downcast_ref::<crate::providers::UserTableProvider>() {
+                    let mut rows = Vec::new();
+                    for row_fields in user_provider.snapshot_all_rows_json()? {
+                        // Extract timestamp from _seq field (Snowflake ID has embedded timestamp)
+                        let timestamp = Self::extract_seq_timestamp(&row_fields);
+                        
+                        // Check if deleted (skip if include_deleted is false)
+                        if !include_deleted {
+                            if let Some(deleted) = row_fields.get("_deleted").and_then(|v| v.as_bool()) {
+                                if deleted {
+                                    continue;
+                                }
+                            }
                         }
-                    }
 
-                    // Build flat row JSON: fields + user_id
-                    let mut obj = row
-                        .fields
-                        .as_object()
-                        .cloned()
-                        .unwrap_or_default();
-                    obj.insert("user_id".to_string(), serde_json::json!(row.user_id.as_str()));
-                    let flat = serde_json::Value::Object(obj);
-
-                    if let Some(predicate) = filter.as_ref() {
-                        if !predicate
-                            .matches(&flat)
-                            .map_err(|e| KalamDbError::Other(e.to_string()))?
-                        {
-                            continue;
+                        if let Some(since) = since_timestamp {
+                            if timestamp < since {
+                                continue;
+                            }
                         }
-                    }
 
-                    rows.push((timestamp, flat));
+                        if let Some(predicate) = filter.as_ref() {
+                            if !predicate
+                                .matches(&row_fields)
+                                .map_err(|e| KalamDbError::Other(e.to_string()))?
+                            {
+                                continue;
+                            }
+                        }
+
+                        rows.push((timestamp, row_fields));
+                    }
+                    rows
+                } else {
+                    return Err(KalamDbError::Other("Cached provider type mismatch for user table".to_string()));
                 }
-                rows
             }
             TableType::Stream => {
                 // Use the registered provider to avoid creating a fresh in-memory store
-                let table_id = kalamdb_commons::models::TableId::new(
-                    kalamdb_commons::models::NamespaceId::new(&namespace),
-                    kalamdb_commons::TableName::new(&table),
-                );
-
                 let provider = self
                     .schema_registry
-                    .get_provider(&table_id)
+                    .get_provider(table_id)
                     .ok_or_else(|| KalamDbError::Other(format!(
-                        "Provider not found for stream table {}.{}",
-                        namespace, table
+                        "Provider not found for stream table {}",
+                        table_id
                     )))?;
 
                 // Downcast to StreamTableProvider
                 if let Some(stream_provider) = provider.as_any().downcast_ref::<crate::providers::StreamTableProvider>() {
                     let mut rows = Vec::new();
                     for row_fields in stream_provider.snapshot_all_rows_json()? {
-                        let timestamp = Self::extract_updated_timestamp(&row_fields);
+                        // Extract timestamp from _seq (Snowflake ID has embedded timestamp)
+                        let timestamp = Self::extract_seq_timestamp(&row_fields);
 
                         if let Some(since) = since_timestamp {
                             if timestamp < since {
@@ -264,7 +247,7 @@ impl InitialDataFetcher {
 
         log::info!(
             "fetch_initial_data complete: table={}, returned {} rows (total available: {}, has_more: {})",
-            table_name,
+            table_id,
             total_available.min(limit),
             total_available,
             has_more
@@ -278,31 +261,23 @@ impl InitialDataFetcher {
         })
     }
 
-    /// Parse table name into components
+    /// Parse table name into components (deprecated - use TableId directly)
     ///
     /// # Arguments
-    /// * `table_name` - Fully qualified table name
+    /// * `table_id` - Table identifier with namespace and table name
     /// * `table_type` - User or Shared table
     ///
     /// # Returns
     /// (namespace_id, table_name)
+    #[deprecated(note = "Use TableId directly instead of parsing strings")]
     fn parse_table_name(
         &self,
-        table_name: &TableName,
+        table_id: &TableId,
         table_type: TableType,
     ) -> Result<(String, String), KalamDbError> {
-        let parts: Vec<&str> = table_name.as_str().split('.').collect();
-
-        if parts.len() != 2 {
-            return Err(KalamDbError::Other(format!(
-                "Invalid table reference '{}', expected namespace.table",
-                table_name
-            )));
-        }
-
         match table_type {
             TableType::User | TableType::Shared | TableType::Stream => {
-                Ok((parts[0].to_string(), parts[1].to_string()))
+                Ok((table_id.namespace_id().as_str().to_string(), table_id.table_name().as_str().to_string()))
             }
             TableType::System => Err(KalamDbError::Other(
                 "System tables do not support live queries".to_string(),
@@ -310,11 +285,15 @@ impl InitialDataFetcher {
         }
     }
 
-    fn extract_updated_timestamp(row: &JsonValue) -> i64 {
-        row.get(kalamdb_commons::constants::SystemColumnNames::UPDATED)
-            .and_then(JsonValue::as_str)
-            .and_then(|s| DateTime::parse_from_rfc3339(s).ok())
-            .map(|dt| dt.timestamp_millis())
+    fn extract_seq_timestamp(row: &JsonValue) -> i64 {
+        // Extract timestamp from _seq Snowflake ID (timestamp is in upper 41 bits)
+        row.get("_seq")
+            .and_then(JsonValue::as_i64)
+            .map(|seq| {
+                // Snowflake ID format: timestamp (41 bits) + machine (10 bits) + sequence (12 bits)
+                // Shift right 22 bits to get timestamp in milliseconds
+                (seq >> 22) + 1609459200000 // Add epoch offset (2021-01-01 00:00:00 UTC)
+            })
             .unwrap_or(0)
     }
 }
@@ -371,7 +350,8 @@ mod tests {
     fn test_parse_user_table_name() {
         let schema_registry = Arc::new(crate::schema_registry::SchemaRegistry::new(100));
         let fetcher = InitialDataFetcher::new(None, schema_registry);
-        let result = fetcher.parse_table_name(&TableName::new("app.messages"), TableType::User);
+        let table_id = TableId::from_strings("app", "messages");
+        let result = fetcher.parse_table_name(&table_id, TableType::User);
 
         assert!(result.is_ok());
         let (namespace, table) = result.unwrap();
@@ -383,30 +363,13 @@ mod tests {
     fn test_parse_shared_table_name() {
         let schema_registry = Arc::new(crate::schema_registry::SchemaRegistry::new(100));
         let fetcher = InitialDataFetcher::new(None, schema_registry);
-        let result = fetcher.parse_table_name(&TableName::new("public.announcements"), TableType::Shared);
+        let table_id = TableId::from_strings("public", "announcements");
+        let result = fetcher.parse_table_name(&table_id, TableType::Shared);
 
         assert!(result.is_ok());
         let (namespace, table) = result.unwrap();
         assert_eq!(namespace, "public");
         assert_eq!(table, "announcements");
-    }
-
-    #[test]
-    fn test_parse_invalid_user_table_name() {
-        let schema_registry = Arc::new(crate::schema_registry::SchemaRegistry::new(100));
-        let fetcher = InitialDataFetcher::new(None, schema_registry);
-        let result = fetcher.parse_table_name(&TableName::new("invalid.format.table"), TableType::User);
-
-        assert!(result.is_err());
-    }
-
-    #[test]
-    fn test_parse_invalid_shared_table_name() {
-        let schema_registry = Arc::new(crate::schema_registry::SchemaRegistry::new(100));
-        let fetcher = InitialDataFetcher::new(None, schema_registry);
-        let result = fetcher.parse_table_name(&TableName::new("announcements"), TableType::Shared);
-
-        assert!(result.is_err());
     }
 
     #[tokio::test]
@@ -415,6 +378,7 @@ mod tests {
         let backend: Arc<dyn kalamdb_store::StorageBackend> = Arc::new(InMemoryBackend::new());
         let ns = NamespaceId::new("batch_test");
         let tbl = TableName::new("items");
+        let table_id = kalamdb_commons::models::TableId::new(ns.clone(), tbl.clone());
         let store = Arc::new(new_user_table_store(backend.clone(), &ns, &tbl));
 
         let user_id = UserId::from("userA");
@@ -431,17 +395,36 @@ mod tests {
         // Insert row using EntityStore trait
         EntityStore::put(&*store, &row_id, &row).expect("put row");
 
-        // Build fetcher with backend
+        // Build schema registry and register provider
         let schema_registry = Arc::new(crate::schema_registry::SchemaRegistry::new(100));
+        
+        // Create a minimal AppContext for the test
+        use crate::app_context::AppContext;
+        let app_context = Arc::new(AppContext::new_test());
+        
+        // Create a mock provider with the store
+        use crate::providers::UserTableProvider;
+        use crate::providers::base::TableProviderCore;
+        let core = Arc::new(TableProviderCore::from_app_context(&app_context));
+        let provider = Arc::new(UserTableProvider::new(
+            core,
+            table_id.clone(),
+            store,
+            "id".to_string(),
+        ));
+        
+        // Register the provider in schema_registry
+        schema_registry.insert_provider(table_id.clone(), provider).expect("register provider");
+        
         let fetcher = InitialDataFetcher::new(Some(backend), schema_registry);
 
         // LiveId for connection user 'root' (distinct from row.user_id)
         let conn = ConnId::new("root".to_string(), "conn1".to_string());
-        let live = CommonsLiveId::new(conn, format!("{}.{}", ns.as_str(), tbl.as_str()), "q1".to_string());
+        let live = CommonsLiveId::new(conn, table_id.clone(), "q1".to_string());
 
         // Fetch initial data (default options: last 100)
         let res = fetcher
-            .fetch_initial_data(&live, &TableName::new(format!("{}.{}", ns.as_str(), tbl.as_str())), TableType::User, InitialDataOptions::last(100), None)
+            .fetch_initial_data(&live, &table_id, TableType::User, InitialDataOptions::last(100), None)
             .await
             .expect("initial fetch");
 

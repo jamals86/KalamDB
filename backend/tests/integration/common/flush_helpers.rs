@@ -10,6 +10,7 @@
 use super::TestServer;
 use kalamdb_commons::models::{NamespaceId, StorageId, TableId, TableName};
 use kalamdb_core::providers::flush::{FlushJobResult, SharedTableFlushJob, UserTableFlushJob};
+use kalamdb_core::providers::TableFlush;
 use kalamdb_tables::new_user_table_store;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -18,8 +19,8 @@ use tokio::time::sleep;
 
 /// Execute a flush job synchronously for testing
 ///
-/// Uses execute_tracked() which handles job tracking via FlushExecutor.
-/// This is useful in test environments for direct flush execution.
+/// Calls flush_job.execute() directly to get immediate results.
+/// This is useful in test environments where we need synchronous execution.
 ///
 /// # Arguments
 ///
@@ -89,7 +90,7 @@ pub async fn execute_flush_synchronously(
     );
 
     flush_job
-        .execute_tracked()
+        .execute()
         .map_err(|e| format!("Flush execution failed: {}", e))
 }
 
@@ -153,7 +154,7 @@ pub async fn execute_shared_flush_synchronously(
     );
 
     flush_job
-        .execute_tracked()
+        .execute()
         .map_err(|e| format!("Shared table flush execution failed: {}", e))
 }
 
