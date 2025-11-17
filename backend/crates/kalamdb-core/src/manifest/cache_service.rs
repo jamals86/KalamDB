@@ -229,6 +229,7 @@ impl ManifestCacheService {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use kalamdb_commons::TableId;
     use kalamdb_store::test_utils::InMemoryBackend;
 
     fn create_test_service() -> ManifestCacheService {
@@ -243,14 +244,9 @@ mod tests {
     }
 
     fn create_test_manifest() -> ManifestFile {
-        ManifestFile {
-            table_id: "test.table".to_string(),
-            scope: "u_123".to_string(),
-            version: 1,
-            generated_at: chrono::Utc::now().timestamp(),
-            max_batch: 0,
-            batches: Vec::new(),
-        }
+        use kalamdb_commons::models::schemas::TableType;
+        let table_id = TableId::new(NamespaceId::new("test"), TableName::new("table"));
+        ManifestFile::new(table_id, TableType::Shared, Some(UserId::from("u_123")))
     }
 
     #[test]

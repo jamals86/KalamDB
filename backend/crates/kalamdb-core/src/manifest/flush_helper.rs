@@ -176,7 +176,6 @@ impl FlushManifestHelper {
         Ok((row_group_stats, has_page_index, Some(footer_size)))
     }
 
-
     /// Update manifest and cache after successful flush
     ///
     /// This is the canonical flow for updating manifest during flush:
@@ -217,18 +216,15 @@ impl FlushManifestHelper {
         let row_count = batch.num_rows() as u64;
 
         // Extract row-group level stats from the written Parquet file
-        let (row_groups, has_page_index, footer_size) = Self::extract_row_group_stats(
-            file_path,
-            indexed_columns,
-        )
-        .unwrap_or_else(|e| {
-            log::warn!(
+        let (row_groups, has_page_index, footer_size) =
+            Self::extract_row_group_stats(file_path, indexed_columns).unwrap_or_else(|e| {
+                log::warn!(
                 "⚠️  Failed to extract row-group stats for {}: {}. Skipping fine-grained metadata.",
                 file_path.display(),
                 e
             );
-            (Vec::new(), false, None)
-        });
+                (Vec::new(), false, None)
+            });
 
         // Create batch entry with row-group metadata
         let mut batch_entry = BatchFileEntry::new(
@@ -344,5 +340,4 @@ mod tests {
         assert_eq!(min, 100);
         assert_eq!(max, 200);
     }
-
 }

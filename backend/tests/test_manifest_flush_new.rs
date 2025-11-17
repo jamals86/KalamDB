@@ -87,10 +87,14 @@ async fn test_shared_table_flush_creates_manifest() {
     let manifest: ManifestFile = ManifestFile::from_json(&manifest_json).unwrap();
 
     assert_eq!(
-        manifest.table_id,
-        format!("{}.{}", namespace.as_str(), table.as_str())
+        manifest.table_id.namespace_id().as_str(),
+        namespace.as_str()
     );
-    assert_eq!(manifest.scope, "shared");
+    assert_eq!(manifest.table_id.table_name().as_str(), table.as_str());
+    assert_eq!(
+        manifest.user_id, None,
+        "Shared table should have no user_id"
+    );
     assert!(
         !manifest.batches.is_empty(),
         "Should have at least one batch"

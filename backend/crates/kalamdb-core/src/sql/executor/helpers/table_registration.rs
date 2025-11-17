@@ -4,6 +4,7 @@
 
 use crate::app_context::AppContext;
 use crate::error::KalamDbError;
+use crate::schema_registry::TableType;
 use arrow::datatypes::SchemaRef;
 use datafusion::datasource::TableProvider;
 use kalamdb_commons::models::TableId;
@@ -28,7 +29,6 @@ pub fn register_user_table_provider(
 ) -> Result<(), KalamDbError> {
     use crate::providers::{TableProviderCore, UserTableProvider};
     use kalamdb_tables::new_user_table_store;
-    use kalamdb_tables::UserTableStoreExt;
 
     log::debug!(
         "📋 Registering USER table provider: {}.{}",
@@ -51,7 +51,7 @@ pub fn register_user_table_provider(
 
     // Create TableProviderCore and provider (wire LiveQueryManager for notifications)
     let core = Arc::new(
-        TableProviderCore::from_app_context(&app_context)
+        TableProviderCore::from_app_context(&app_context, table_id.clone(), TableType::User)
             .with_live_query_manager(app_context.live_query_manager()),
     );
 
@@ -74,7 +74,7 @@ pub fn register_user_table_provider(
         .map(|c| c.column_name.clone())
         .unwrap_or_else(|| "id".to_string());
 
-    let provider = UserTableProvider::new(core, table_id.clone(), user_table_store, pk_field);
+    let provider = UserTableProvider::new(core, user_table_store, pk_field);
     let provider_arc: Arc<dyn TableProvider> = Arc::new(provider);
 
     app_context
@@ -109,7 +109,6 @@ pub fn register_shared_table_provider(
 ) -> Result<(), KalamDbError> {
     use crate::providers::{SharedTableProvider, TableProviderCore};
     use kalamdb_tables::new_shared_table_store;
-    use kalamdb_tables::SharedTableStoreExt;
 
     log::debug!(
         "📋 Registering SHARED table provider: {}.{}",
@@ -132,7 +131,7 @@ pub fn register_shared_table_provider(
 
     // Create and register new providers::SharedTableProvider
     let core = Arc::new(
-        TableProviderCore::from_app_context(&app_context)
+        TableProviderCore::from_app_context(&app_context, table_id.clone(), TableType::Shared)
             .with_live_query_manager(app_context.live_query_manager()),
     );
 
@@ -154,7 +153,7 @@ pub fn register_shared_table_provider(
         .map(|c| c.column_name.clone())
         .unwrap_or_else(|| "id".to_string());
 
-    let provider = SharedTableProvider::new(core, table_id.clone(), shared_store, pk_field);
+    let provider = SharedTableProvider::new(core, shared_store, pk_field);
 
     app_context
         .schema_registry()
@@ -190,7 +189,6 @@ pub fn register_stream_table_provider(
 ) -> Result<(), KalamDbError> {
     use crate::providers::{StreamTableProvider, TableProviderCore};
     use kalamdb_tables::new_stream_table_store;
-    use kalamdb_tables::SharedTableStoreExt;
 
     log::debug!(
         "📋 Registering STREAM table provider: {}.{} (TTL: {:?}s)",
@@ -213,17 +211,11 @@ pub fn register_stream_table_provider(
 
     // Create and register provider (new providers::streams implementation)
     let core = Arc::new(
-        TableProviderCore::from_app_context(&app_context)
+        TableProviderCore::from_app_context(&app_context, table_id.clone(), TableType::Stream)
             .with_live_query_manager(app_context.live_query_manager()),
     );
     // For streams, we use a conventional primary key field name in JSON payload ("id")
-    let provider = StreamTableProvider::new(
-        core,
-        table_id.clone(),
-        stream_store,
-        ttl_seconds,
-        "id".to_string(),
-    );
+    let provider = StreamTableProvider::new(core, stream_store, ttl_seconds, "id".to_string());
 
     app_context
         .schema_registry()

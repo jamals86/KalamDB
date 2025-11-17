@@ -58,6 +58,7 @@ pub fn resolve_latest_version(
 ///
 /// # Returns
 /// * HashMap<pk_value, (seq_id, fields_json)> with only latest non-deleted versions
+#[cfg_attr(not(test), allow(dead_code))]
 pub fn resolve_latest_version_from_rows(
     rows: Vec<(String, i64, bool, serde_json::Value)>,
 ) -> HashMap<String, (i64, serde_json::Value)> {

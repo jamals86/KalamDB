@@ -346,9 +346,9 @@ impl ManifestService {
         Ok(Some(BatchFileEntry::new(
             batch_number,
             file_name.to_string(),
-            0,         // min_seq (TODO: extract from Parquet footer)
-            0,         // max_seq (TODO: extract from Parquet footer)
-            0,         // row_count (TODO: extract from Parquet footer)
+            0, // min_seq (TODO: extract from Parquet footer)
+            0, // max_seq (TODO: extract from Parquet footer)
+            0, // row_count (TODO: extract from Parquet footer)
             size_bytes,
             1, // schema_version
         )))
@@ -357,8 +357,6 @@ impl ManifestService {
 
 #[cfg(test)]
 mod tests {
-    use crate::sql::executor::handlers::user;
-
     use super::*;
     use kalamdb_store::test_utils::InMemoryBackend;
     use tempfile::TempDir;
@@ -376,7 +374,7 @@ mod tests {
 
     #[test]
     fn test_create_manifest() {
-        use kalamdb_commons::models::TableType;
+        use kalamdb_commons::models::schemas::TableType;
 
         let (service, _temp_dir) = create_test_service();
         let namespace = NamespaceId::new("ns1");
@@ -384,7 +382,7 @@ mod tests {
 
         let manifest = service.create_manifest(&namespace, &table, TableType::Shared, None);
 
-        assert_eq!(manifest.table_id.namespace().as_str(), "ns1");
+        assert_eq!(manifest.table_id.namespace_id().as_str(), "ns1");
         assert_eq!(manifest.table_id.table_name().as_str(), "products");
         assert_eq!(manifest.table_type, TableType::Shared);
         assert_eq!(manifest.user_id, None);
@@ -396,25 +394,24 @@ mod tests {
     #[test]
     #[ignore = "Requires SchemaRegistry with registered tables"]
     fn test_update_manifest_creates_if_missing() {
-        use kalamdb_commons::models::TableType;
+        use kalamdb_commons::models::schemas::TableType;
 
         let (service, _temp_dir) = create_test_service();
         let namespace = NamespaceId::new("ns1");
         let table = TableName::new("orders");
 
-        let batch_entry = BatchFileEntry::new(
-            0,
-            "batch-0.parquet".to_string(),
-            1000,
-            2000,
-            100,
-            1024,
-            1,
-        );
+        let batch_entry =
+            BatchFileEntry::new(0, "batch-0.parquet".to_string(), 1000, 2000, 100, 1024, 1);
 
         let user_id = UserId::from("u_123");
         let manifest = service
-            .update_manifest(&namespace, &table, TableType::User, Some(&user_id), batch_entry)
+            .update_manifest(
+                &namespace,
+                &table,
+                TableType::User,
+                Some(&user_id),
+                batch_entry,
+            )
             .unwrap();
 
         assert_eq!(manifest.max_batch, 0);
@@ -424,7 +421,7 @@ mod tests {
 
     #[test]
     fn test_validate_manifest() {
-        use kalamdb_commons::models::TableType;
+        use kalamdb_commons::models::schemas::TableType;
 
         let (service, _temp_dir) = create_test_service();
         let namespace = NamespaceId::new("ns1");
@@ -436,15 +433,7 @@ mod tests {
         assert!(service.validate_manifest(&manifest).is_ok());
 
         // Add batch
-        let batch = BatchFileEntry::new(
-            1,
-            "batch-1.parquet".to_string(),
-            1000,
-            2000,
-            50,
-            512,
-            1,
-        );
+        let batch = BatchFileEntry::new(1, "batch-1.parquet".to_string(), 1000, 2000, 50, 512, 1);
         manifest.add_batch(batch);
 
         // Valid manifest with batch
@@ -458,21 +447,14 @@ mod tests {
     #[test]
     #[ignore = "Requires SchemaRegistry with registered tables"]
     fn test_write_read_manifest() {
-        use kalamdb_commons::models::TableType;
+        use kalamdb_commons::models::schemas::TableType;
 
         let (service, _temp_dir) = create_test_service();
         let namespace = NamespaceId::new("ns1");
         let table = TableName::new("products");
 
-        let batch_entry = BatchFileEntry::new(
-            0,
-            "batch-0.parquet".to_string(),
-            1000,
-            2000,
-            100,
-            1024,
-            1,
-        );
+        let batch_entry =
+            BatchFileEntry::new(0, "batch-0.parquet".to_string(), 1000, 2000, 100, 1024, 1);
 
         // Update (creates and writes)
         service
@@ -482,7 +464,7 @@ mod tests {
         // Read back
         let manifest = service.read_manifest(&namespace, &table, None).unwrap();
 
-        assert_eq!(manifest.table_id.namespace().as_str(), "ns1");
+        assert_eq!(manifest.table_id.namespace_id().as_str(), "ns1");
         assert_eq!(manifest.table_id.table_name().as_str(), "products");
         assert_eq!(manifest.table_type, TableType::Shared);
         assert_eq!(manifest.user_id, None);

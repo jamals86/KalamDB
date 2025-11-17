@@ -12,7 +12,7 @@ use crate::storage::ParquetWriter;
 use datafusion::arrow::datatypes::SchemaRef;
 use datafusion::arrow::record_batch::RecordBatch;
 use kalamdb_commons::models::{TableId, UserId};
-use kalamdb_commons::{NamespaceId, NodeId, TableName};
+use kalamdb_commons::{NamespaceId, TableName};
 use kalamdb_store::entity_store::EntityStore;
 use kalamdb_tables::{SharedTableRow, SharedTableStore};
 use serde_json::Value as JsonValue;
@@ -23,11 +23,8 @@ use std::sync::Arc;
 pub struct SharedTableFlushJob {
     store: Arc<SharedTableStore>,
     table_id: Arc<TableId>,
-    namespace_id: NamespaceId,
-    table_name: TableName,
     schema: SchemaRef,                                 //TODO: needed?
     unified_cache: Arc<SchemaRegistry>,                //TODO: We have AppContext now
-    node_id: NodeId, //TODO: We can pass AppContext and has node_id there
     live_query_manager: Option<Arc<LiveQueryManager>>, //TODO: We can pass AppContext and has live_query_manager there
     manifest_helper: FlushManifestHelper,
 }
@@ -37,23 +34,17 @@ impl SharedTableFlushJob {
     pub fn new(
         table_id: Arc<TableId>,
         store: Arc<SharedTableStore>,
-        namespace_id: NamespaceId,
-        table_name: TableName,
         schema: SchemaRef,
         unified_cache: Arc<SchemaRegistry>,
         manifest_service: Arc<ManifestService>,
         manifest_cache: Arc<ManifestCacheService>,
     ) -> Self {
-        let node_id = NodeId::from(format!("node-{}", std::process::id()));
         let manifest_helper = FlushManifestHelper::new(manifest_service, manifest_cache);
         Self {
             store,
             table_id,
-            namespace_id,
-            table_name,
             schema,
             unified_cache,
-            node_id,
             live_query_manager: None,
             manifest_helper,
         }
@@ -65,12 +56,20 @@ impl SharedTableFlushJob {
         self
     }
 
+    fn namespace_id(&self) -> &NamespaceId {
+        self.table_id.namespace_id()
+    }
+
+    fn table_name(&self) -> &TableName {
+        self.table_id.table_name()
+    }
+
     /// Generate batch filename using manifest max_batch (T115)
     /// Returns (batch_number, filename)
     fn generate_batch_filename(&self) -> Result<(u64, String), KalamDbError> {
         let batch_number = self.manifest_helper.get_next_batch_number(
-            &self.namespace_id,
-            &self.table_name,
+            self.namespace_id(),
+            self.table_name(),
             None,
         )?;
         let filename = FlushManifestHelper::generate_batch_filename(batch_number);
@@ -138,16 +137,16 @@ impl TableFlush for SharedTableFlushJob {
     fn execute(&self) -> Result<FlushJobResult, KalamDbError> {
         log::debug!(
             "🔄 Starting shared table flush: table={}.{}",
-            self.namespace_id.as_str(),
-            self.table_name.as_str()
+            self.namespace_id().as_str(),
+            self.table_name().as_str()
         );
 
         // Scan all rows (EntityStore::scan_all returns Vec<(Vec<u8>, V)>)
         let entries = EntityStore::scan_all(self.store.as_ref()).map_err(|e| {
             log::error!(
                 "❌ Failed to scan rows for shared table={}.{}: {}",
-                self.namespace_id.as_str(),
-                self.table_name.as_str(),
+                self.namespace_id().as_str(),
+                self.table_name().as_str(),
                 e
             );
             KalamDbError::Other(format!("Failed to scan rows: {}", e))
@@ -157,8 +156,8 @@ impl TableFlush for SharedTableFlushJob {
         log::info!(
             "📊 [FLUSH DEDUP] Scanned {} total rows from hot storage (table={}.{})",
             rows_before_dedup,
-            self.namespace_id.as_str(),
-            self.table_name.as_str()
+            self.namespace_id().as_str(),
+            self.table_name().as_str()
         );
 
         // STEP 1: Deduplicate using MAX(_seq) per PK (version resolution)
@@ -273,8 +272,8 @@ impl TableFlush for SharedTableFlushJob {
         if rows.is_empty() {
             log::info!(
                 "⚠️  No rows to flush for shared table={}.{} (empty table or all deleted)",
-                self.namespace_id.as_str(),
-                self.table_name.as_str()
+                self.namespace_id().as_str(),
+                self.table_name().as_str()
             );
             return Ok(FlushJobResult {
                 rows_flushed: 0,
@@ -287,8 +286,8 @@ impl TableFlush for SharedTableFlushJob {
         log::debug!(
             "💾 Flushing {} rows to Parquet for shared table={}.{}",
             rows_count,
-            self.namespace_id.as_str(),
-            self.table_name.as_str()
+            self.namespace_id().as_str(),
+            self.table_name().as_str()
         );
 
         // Convert rows to RecordBatch
@@ -343,8 +342,8 @@ impl TableFlush for SharedTableFlushJob {
         log::info!(
             "✅ Flushed {} rows for shared table={}.{} to {}",
             rows_count,
-            self.namespace_id.as_str(),
-            self.table_name.as_str(),
+            self.namespace_id().as_str(),
+            self.table_name().as_str(),
             output_path.display()
         );
 
@@ -355,8 +354,8 @@ impl TableFlush for SharedTableFlushJob {
 
         // Update manifest and cache using helper (with row-group stats)
         self.manifest_helper.update_manifest_after_flush(
-            &self.namespace_id,
-            &self.table_name,
+            self.namespace_id(),
+            self.table_name(),
             kalamdb_commons::models::schemas::TableType::Shared,
             None,
             batch_number,
@@ -371,8 +370,8 @@ impl TableFlush for SharedTableFlushJob {
         log::debug!(
             "🗑️  Deleting {} flushed rows from RocksDB (table={}.{})",
             rows_count,
-            self.namespace_id.as_str(),
-            self.table_name.as_str()
+            self.namespace_id().as_str(),
+            self.table_name().as_str()
         );
         self.delete_flushed_rows(&rows)?;
 
@@ -380,13 +379,8 @@ impl TableFlush for SharedTableFlushJob {
 
         // Send flush notification if LiveQueryManager configured
         if let Some(manager) = &self.live_query_manager {
-            let table_name = format!(
-                "{}.{}",
-                self.namespace_id.as_str(),
-                self.table_name.as_str()
-            );
             let parquet_files = vec![parquet_path.clone()];
-            let table_id = TableId::new(self.namespace_id.clone(), self.table_name.clone());
+            let table_id = self.table_id.as_ref().clone();
             let notification =
                 ChangeNotification::flush(table_id.clone(), rows_count, parquet_files.clone());
             let system_user = UserId::system();
@@ -403,8 +397,8 @@ impl TableFlush for SharedTableFlushJob {
     fn table_identifier(&self) -> String {
         format!(
             "{}.{}",
-            self.namespace_id.as_str(),
-            self.table_name.as_str()
+            self.namespace_id().as_str(),
+            self.table_name().as_str()
         )
     }
 

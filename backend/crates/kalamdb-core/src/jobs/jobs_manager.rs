@@ -46,7 +46,7 @@
 
 use crate::app_context::AppContext;
 use crate::error::KalamDbError;
-use crate::jobs::executors::{JobContext, JobDecision, JobParams, JobRegistry};
+use crate::jobs::executors::{JobDecision, JobParams, JobRegistry};
 use kalamdb_commons::models::{schemas::TableOptions, TableId};
 use kalamdb_commons::system::{Job, JobFilter, JobOptions};
 use kalamdb_commons::{JobId, JobStatus, JobType, NamespaceId, NodeId, TableType};
@@ -963,7 +963,7 @@ impl JobsManager {
         }
 
         if stream_tables_found > 0 {
-            log::info!(
+            log::debug!(
                 "Stream eviction check: found {} stream tables, created {} new eviction jobs",
                 stream_tables_found,
                 jobs_created

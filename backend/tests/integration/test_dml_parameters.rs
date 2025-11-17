@@ -39,7 +39,7 @@ async fn test_insert_with_simple_parameters() {
 
     // Create test table
     server.execute_sql("CREATE NAMESPACE default").await;
-    server.execute_sql("CREATE USER TABLE default.test_insert (id INT, name TEXT, age INT)").await;
+    server.execute_sql("CREATE USER TABLE default.test_insert (id INT PRIMARY KEY, name TEXT, age INT)").await;
 
     // Execute INSERT with parameters
     let handler = InsertHandler::new();
@@ -75,7 +75,7 @@ async fn test_insert_multiple_rows_with_parameters() {
 
     // Create test table
     server.execute_sql("CREATE NAMESPACE default").await;
-    server.execute_sql("CREATE USER TABLE default.test_insert_multi (id INT, name TEXT)").await;
+    server.execute_sql("CREATE USER TABLE default.test_insert_multi (id INT PRIMARY KEY, name TEXT)").await;
 
     // Execute INSERT with multiple rows
     let handler = InsertHandler::new();
@@ -170,7 +170,7 @@ async fn test_update_with_simple_parameters() {
 
     // Create test table and insert data
     server.execute_sql("CREATE NAMESPACE default").await;
-    server.execute_sql("CREATE USER TABLE default.test_update (id TEXT, name TEXT, age INT)").await;
+    server.execute_sql("CREATE USER TABLE default.test_update (id TEXT PRIMARY KEY, name TEXT, age INT)").await;
     server.execute_sql_as_user("INSERT INTO default.test_update (id, name, age) VALUES ('row1', 'Alice', 30)", "test_user").await;
 
     // Execute UPDATE with parameters
@@ -266,7 +266,7 @@ async fn test_delete_with_simple_parameters() {
 
     // Create test table and insert data
     server.execute_sql("CREATE NAMESPACE default").await;
-    server.execute_sql("CREATE USER TABLE default.test_delete (id TEXT, name TEXT)").await;
+    server.execute_sql("CREATE USER TABLE default.test_delete (id TEXT PRIMARY KEY, name TEXT)").await;
     server.execute_sql_as_user("INSERT INTO default.test_delete (id, name) VALUES ('row1', 'Alice')", "test_user").await;
 
     // Execute DELETE
@@ -359,7 +359,7 @@ async fn test_dml_e2e_insert_update_delete() {
 
     // Create test table
     server.execute_sql("CREATE NAMESPACE default").await;
-    server.execute_sql("CREATE USER TABLE default.test_e2e (id TEXT, name TEXT, age INT)").await;
+    server.execute_sql("CREATE USER TABLE default.test_e2e (id TEXT PRIMARY KEY, name TEXT, age INT)").await;
 
     // Step 1: INSERT with parameters
     let insert_handler = InsertHandler::new();

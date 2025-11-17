@@ -3,13 +3,13 @@
 //! Provides utilities to translate `ManifestFile` metadata into
 //! concrete file/row-group selections for efficient reads.
 
-use kalamdb_commons::types::{ManifestFile, RowGroupPruningStats};
-use std::path::PathBuf;
-use std::fs;
+use crate::error::KalamDbError;
 use datafusion::arrow::datatypes::SchemaRef;
 use datafusion::arrow::record_batch::RecordBatch;
 use datafusion::parquet::arrow::arrow_reader::ParquetRecordBatchReaderBuilder;
-use crate::error::KalamDbError;
+use kalamdb_commons::types::{ManifestFile, RowGroupPruningStats};
+use std::fs;
+use std::path::PathBuf;
 
 /// Planned selection for a single Parquet file
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -22,7 +22,10 @@ pub struct RowGroupSelection {
 
 impl RowGroupSelection {
     pub fn new(file_path: String, row_groups: Vec<usize>) -> Self {
-        Self { file_path, row_groups }
+        Self {
+            file_path,
+            row_groups,
+        }
     }
 }
 
@@ -39,13 +42,17 @@ impl ManifestAccessPlanner {
     ///
     /// Returns a list of all batch files to scan.
     pub fn plan_all_files(&self, manifest: &ManifestFile) -> Vec<String> {
-        manifest.batches.iter().map(|b| b.file_path.clone()).collect()
+        manifest
+            .batches
+            .iter()
+            .map(|b| b.file_path.clone())
+            .collect()
     }
 
     /// Unified scan method: returns combined RecordBatch from Parquet files
     ///
     /// Handles manifest-based pruning, file loading, and batch concatenation.
-    /// 
+    ///
     /// # Arguments
     /// * `manifest_opt` - Optional manifest for metadata-driven selection
     /// * `storage_dir` - Base directory containing Parquet files
@@ -104,7 +111,10 @@ impl ManifestAccessPlanner {
 
         // Return empty batch if no files found
         if parquet_files.is_empty() {
-            return Ok((RecordBatch::new_empty(schema), (total_batches, skipped, scanned)));
+            return Ok((
+                RecordBatch::new_empty(schema),
+                (total_batches, skipped, scanned),
+            ));
         }
 
         // Read all Parquet files and merge batches
@@ -132,12 +142,15 @@ impl ManifestAccessPlanner {
 
         // Return empty batch if all files were empty
         if all_batches.is_empty() {
-            return Ok((RecordBatch::new_empty(schema), (total_batches, skipped, scanned)));
+            return Ok((
+                RecordBatch::new_empty(schema),
+                (total_batches, skipped, scanned),
+            ));
         }
 
         // Concatenate all batches
-        let combined = datafusion::arrow::compute::concat_batches(&schema, &all_batches)
-            .map_err(|e| {
+        let combined =
+            datafusion::arrow::compute::concat_batches(&schema, &all_batches).map_err(|e| {
                 KalamDbError::Other(format!("Failed to concatenate Parquet batches: {}", e))
             })?;
 
@@ -193,36 +206,52 @@ fn overlaps_seq_range(rg: &RowGroupPruningStats, min_seq: i64, max_seq: i64) -> 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use kalamdb_commons::types::{BatchFileEntry, ManifestFile};
-    use std::sync::Arc;
+    use datafusion::arrow::array::{Int32Array, Int64Array};
     use datafusion::arrow::datatypes::Schema;
-    use std::time::{SystemTime, UNIX_EPOCH};
-    use std::fs as stdfs;
-    use parquet::arrow::arrow_writer::ArrowWriter;
-    use datafusion::arrow::array::{Int64Array, Int32Array};
     use datafusion::arrow::record_batch::RecordBatch as ArrowRecordBatch;
+    use kalamdb_commons::types::{BatchFileEntry, ManifestFile};
+    use parquet::arrow::arrow_writer::ArrowWriter;
+    use std::fs as stdfs;
+    use std::sync::Arc;
+    use std::time::{SystemTime, UNIX_EPOCH};
 
     fn make_manifest_with_groups() -> ManifestFile {
-        use kalamdb_commons::models::TableType;
+        use kalamdb_commons::models::schemas::TableType;
         use kalamdb_commons::{NamespaceId, TableId, TableName};
 
-        let table_id = TableId::new(
-            NamespaceId::new("ns"),
-            TableName::new("tbl"),
-        );
+        let table_id = TableId::new(NamespaceId::new("ns"), TableName::new("tbl"));
         let mut mf = ManifestFile::new(table_id, TableType::Shared, None);
 
         let mut b0 = BatchFileEntry::new(0, "batch-0.parquet".to_string(), 0, 99, 100, 1024, 1);
         b0.row_groups = vec![
-            RowGroupPruningStats { index: 0, row_count: 50, min_seq: 0, max_seq: 49, column_min_max: Default::default(), byte_range: None },
-            RowGroupPruningStats { index: 1, row_count: 50, min_seq: 50, max_seq: 99, column_min_max: Default::default(), byte_range: None },
+            RowGroupPruningStats {
+                index: 0,
+                row_count: 50,
+                min_seq: 0,
+                max_seq: 49,
+                column_min_max: Default::default(),
+                byte_range: None,
+            },
+            RowGroupPruningStats {
+                index: 1,
+                row_count: 50,
+                min_seq: 50,
+                max_seq: 99,
+                column_min_max: Default::default(),
+                byte_range: None,
+            },
         ];
         mf.add_batch(b0);
 
         let mut b1 = BatchFileEntry::new(1, "batch-1.parquet".to_string(), 100, 199, 100, 2048, 1);
-        b1.row_groups = vec![
-            RowGroupPruningStats { index: 0, row_count: 100, min_seq: 100, max_seq: 199, column_min_max: Default::default(), byte_range: None },
-        ];
+        b1.row_groups = vec![RowGroupPruningStats {
+            index: 0,
+            row_count: 100,
+            min_seq: 100,
+            max_seq: 199,
+            column_min_max: Default::default(),
+            byte_range: None,
+        }];
         mf.add_batch(b1);
 
         mf
@@ -236,10 +265,16 @@ mod tests {
         let plan = planner.plan_by_seq_range(&mf, 25, 150);
         assert_eq!(plan.len(), 2);
 
-        let p0 = plan.iter().find(|p| p.file_path == "batch-0.parquet").unwrap();
+        let p0 = plan
+            .iter()
+            .find(|p| p.file_path == "batch-0.parquet")
+            .unwrap();
         assert_eq!(p0.row_groups, vec![0, 1]);
 
-        let p1 = plan.iter().find(|p| p.file_path == "batch-1.parquet").unwrap();
+        let p1 = plan
+            .iter()
+            .find(|p| p.file_path == "batch-1.parquet")
+            .unwrap();
         assert_eq!(p1.row_groups, vec![0]);
     }
 
@@ -267,7 +302,9 @@ mod tests {
         stdfs::create_dir_all(&dir).unwrap();
 
         // Empty schema
-        let schema: SchemaRef = Arc::new(Schema::new(vec![]));
+        let schema: SchemaRef = Arc::new(Schema::new(
+            vec![] as Vec<datafusion::arrow::datatypes::Field>
+        ));
 
         let planner = ManifestAccessPlanner::new();
         let (batch, (_total, _skipped, _scanned)) = planner
@@ -282,13 +319,15 @@ mod tests {
 
     fn write_parquet_with_rows(path: &std::path::Path, schema: &SchemaRef, rows: usize) {
         let file = stdfs::File::create(path).unwrap();
-        let mut writer = ArrowWriter::try_new(file, schema.as_ref(), None).unwrap();
+        let mut writer = ArrowWriter::try_new(file, schema.clone(), None).unwrap();
         if rows > 0 {
             let seq_values: Vec<i64> = (0..rows as i64).collect();
             let val_values: Vec<i32> = (0..rows as i32).collect();
             let seq = Int64Array::from(seq_values);
             let val = Int32Array::from(val_values);
-            let batch = ArrowRecordBatch::try_new(schema.clone(), vec![Arc::new(seq), Arc::new(val)]).unwrap();
+            let batch =
+                ArrowRecordBatch::try_new(schema.clone(), vec![Arc::new(seq), Arc::new(val)])
+                    .unwrap();
             writer.write(&batch).unwrap();
         }
         writer.close().unwrap();
@@ -322,8 +361,8 @@ mod tests {
         write_parquet_with_rows(&f1, &schema, 10);
 
         // Manifest with two batches
-        use kalamdb_commons::{NamespaceId, TableId, TableName};
         use crate::schema_registry::TableType;
+        use kalamdb_commons::{NamespaceId, TableId, TableName};
         let table_id = TableId::new(NamespaceId::new("ns"), TableName::new("tbl"));
         let mut mf = ManifestFile::new(table_id, TableType::Shared, None);
 

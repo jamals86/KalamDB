@@ -9,11 +9,9 @@ use crate::live_query::manager::{ChangeNotification, LiveQueryManager};
 use crate::manifest::{FlushManifestHelper, ManifestCacheService, ManifestService};
 use crate::schema_registry::SchemaRegistry;
 use crate::storage::ParquetWriter;
-use chrono::Utc;
 use datafusion::arrow::datatypes::SchemaRef;
 use datafusion::arrow::record_batch::RecordBatch;
 use kalamdb_commons::models::{TableId, UserId};
-use kalamdb_commons::{NamespaceId, NodeId, TableName};
 use kalamdb_store::entity_store::EntityStore;
 use kalamdb_tables::UserTableStore;
 use serde_json::Value as JsonValue;
@@ -24,11 +22,8 @@ use std::sync::Arc;
 pub struct UserTableFlushJob {
     store: Arc<UserTableStore>,
     table_id: Arc<TableId>,
-    namespace_id: NamespaceId,
-    table_name: TableName,
     schema: SchemaRef,                                 //TODO: needed?
     unified_cache: Arc<SchemaRegistry>,                //TODO: wE HAVE APPCONTEXT NOW
-    node_id: NodeId, //TODO: We can pass AppContext and has node_id there
     live_query_manager: Option<Arc<LiveQueryManager>>, //TODO: We can pass AppContext and has live_query_manager there
     manifest_helper: FlushManifestHelper,
     /// Bloom filter columns (PRIMARY KEY + _seq) - fetched once per job for efficiency
@@ -40,14 +35,11 @@ impl UserTableFlushJob {
     pub fn new(
         table_id: Arc<TableId>,
         store: Arc<UserTableStore>,
-        namespace_id: NamespaceId,
-        table_name: TableName,
         schema: SchemaRef,
         unified_cache: Arc<SchemaRegistry>,
         manifest_service: Arc<ManifestService>,
         manifest_cache: Arc<ManifestCacheService>,
     ) -> Self {
-        let node_id = NodeId::from(format!("node-{}", std::process::id()));
         let manifest_helper = FlushManifestHelper::new(manifest_service, manifest_cache);
 
         // Fetch Bloom filter columns once per job (PRIMARY KEY + _seq)
@@ -71,11 +63,8 @@ impl UserTableFlushJob {
         Self {
             store,
             table_id,
-            namespace_id,
-            table_name,
             schema,
             unified_cache,
-            node_id,
             live_query_manager: None,
             manifest_helper,
             bloom_filter_columns,
@@ -88,16 +77,19 @@ impl UserTableFlushJob {
         self
     }
 
+    fn namespace_id(&self) -> &kalamdb_commons::NamespaceId {
+        self.table_id.namespace_id()
+    }
+
+    fn table_name(&self) -> &kalamdb_commons::TableName {
+        self.table_id.table_name()
+    }
+
     /// Resolve storage path for a specific user
     fn resolve_storage_path_for_user(&self, user_id: &UserId) -> Result<String, KalamDbError> {
         Ok(self
             .unified_cache
             .get_storage_path(&*self.table_id, Some(user_id), None)?)
-    }
-
-    /// Generate batch filename with ISO 8601 timestamp
-    fn generate_batch_filename(&self) -> String {
-        Utc::now().format("%Y-%m-%dT%H-%M-%S.parquet").to_string()
     }
 
     /// Parse user key to extract user_id and row_id
@@ -233,8 +225,8 @@ impl UserTableFlushJob {
             "💾 Flushing {} rows for user {} (table={}.{})",
             rows_count,
             user_id,
-            self.namespace_id.as_str(),
-            self.table_name.as_str()
+            self.namespace_id().as_str(),
+            self.table_name().as_str()
         );
 
         // Convert rows to RecordBatch
@@ -260,8 +252,8 @@ impl UserTableFlushJob {
         // Generate batch filename using manifest
         let user_id_typed = kalamdb_commons::models::UserId::from(user_id);
         let batch_number = self.manifest_helper.get_next_batch_number(
-            &self.namespace_id,
-            &self.table_name,
+            self.namespace_id(),
+            self.table_name(),
             Some(&user_id_typed),
         )?;
         let batch_filename = FlushManifestHelper::generate_batch_filename(batch_number);
@@ -293,8 +285,8 @@ impl UserTableFlushJob {
 
         // Update manifest and cache using helper (with row-group stats)
         self.manifest_helper.update_manifest_after_flush(
-            &self.namespace_id,
-            &self.table_name,
+            self.namespace_id(),
+            self.table_name(),
             kalamdb_commons::models::schemas::TableType::User,
             Some(&user_id_typed),
             batch_number,
@@ -345,8 +337,8 @@ impl TableFlush for UserTableFlushJob {
     fn execute(&self) -> Result<FlushJobResult, KalamDbError> {
         log::debug!(
             "🔄 Starting user table flush: table={}.{}, partition={}",
-            self.namespace_id.as_str(),
-            self.table_name.as_str(),
+            self.namespace_id().as_str(),
+            self.table_name().as_str(),
             self.store.partition()
         );
 
@@ -354,8 +346,8 @@ impl TableFlush for UserTableFlushJob {
         let entries = EntityStore::scan_all(self.store.as_ref()).map_err(|e| {
             log::error!(
                 "❌ Failed to scan table={}.{}: {}",
-                self.namespace_id.as_str(),
-                self.table_name.as_str(),
+                self.namespace_id().as_str(),
+                self.table_name().as_str(),
                 e
             );
             KalamDbError::Other(format!("Failed to scan table: {}", e))
@@ -365,8 +357,8 @@ impl TableFlush for UserTableFlushJob {
         log::info!(
             "📊 [FLUSH DEDUP] Scanned {} total rows from hot storage (table={}.{})",
             rows_before_dedup,
-            self.namespace_id.as_str(),
-            self.table_name.as_str()
+            self.namespace_id().as_str(),
+            self.table_name().as_str()
         );
 
         // STEP 1: Deduplicate using MAX(_seq) per PK (version resolution)
@@ -496,8 +488,8 @@ impl TableFlush for UserTableFlushJob {
         if rows_by_user.is_empty() {
             log::info!(
                 "⚠️  No rows to flush for user table={}.{} (empty table or all deleted)",
-                self.namespace_id.as_str(),
-                self.table_name.as_str()
+                self.namespace_id().as_str(),
+                self.table_name().as_str()
             );
             return Ok(FlushJobResult {
                 rows_flushed: 0,
@@ -550,25 +542,20 @@ impl TableFlush for UserTableFlushJob {
             );
             log::error!(
                 "❌ User table flush failed: table={}.{} — {}",
-                self.namespace_id.as_str(),
-                self.table_name.as_str(),
+                self.namespace_id().as_str(),
+                self.table_name().as_str(),
                 summary
             );
             return Err(KalamDbError::Other(summary));
         }
 
         log::info!("✅ User table flush completed: table={}.{}, rows_flushed={}, users_count={}, parquet_files={}",
-                  self.namespace_id.as_str(), self.table_name.as_str(),
+                  self.namespace_id().as_str(), self.table_name().as_str(),
                   total_rows_flushed, rows_by_user.len(), parquet_files.len());
 
         // Send flush notification if LiveQueryManager configured
         if let Some(manager) = &self.live_query_manager {
-            let table_name = format!(
-                "{}.{}",
-                self.namespace_id.as_str(),
-                self.table_name.as_str()
-            );
-            let table_id = TableId::new(self.namespace_id.clone(), self.table_name.clone());
+            let table_id = self.table_id.as_ref().clone();
             let notification = ChangeNotification::flush(
                 table_id.clone(),
                 total_rows_flushed,
@@ -588,8 +575,8 @@ impl TableFlush for UserTableFlushJob {
     fn table_identifier(&self) -> String {
         format!(
             "{}.{}",
-            self.namespace_id.as_str(),
-            self.table_name.as_str()
+            self.namespace_id().as_str(),
+            self.table_name().as_str()
         )
     }
 

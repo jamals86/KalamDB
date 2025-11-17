@@ -4,7 +4,7 @@
 //! table validation, and metadata storage.
 
 use crate::error::KalamDbError;
-use arrow::datatypes::{DataType, Field, Schema};
+use arrow::datatypes::Schema;
 use kalamdb_commons::schemas::{ColumnDefault, TableType};
 use kalamdb_commons::StorageId;
 use kalamdb_sql::ddl::CreateTableStatement;
@@ -23,17 +23,6 @@ use std::sync::Arc;
 /// Ok(()) if valid, error otherwise
 pub fn validate_table_name(name: &str) -> Result<(), String> {
     kalamdb_commons::validation::validate_table_name(name).map_err(|e| e.to_string())
-}
-
-/// DEPRECATED: We no longer inject auto-increment "id" fields.
-/// Tables rely on _seq system column for uniqueness and user-defined primary keys.
-#[deprecated(
-    since = "0.2.0",
-    note = "Use _seq system column and user-defined primary keys instead"
-)]
-pub fn inject_auto_increment_field(schema: Arc<Schema>) -> Result<Arc<Schema>, KalamDbError> {
-    // No longer inject "id" field - rely on _seq and user-defined primary keys
-    Ok(schema)
 }
 
 /// Save table definition to information_schema.tables
@@ -220,34 +209,5 @@ mod tests {
         assert!(validate_table_name("select").is_err()); // SQL keyword
         assert!(validate_table_name("table").is_err()); // SQL keyword
         assert!(validate_table_name("123table").is_err()); // Starts with number
-    }
-
-    #[test]
-    fn test_inject_auto_increment_field() {
-        // DEPRECATED: This function no longer adds an "id" column
-        // We rely solely on _seq system column for uniqueness
-        let schema = Arc::new(Schema::new(vec![Arc::new(Field::new(
-            "name",
-            DataType::Utf8,
-            false,
-        ))]));
-
-        let result = inject_auto_increment_field(schema.clone()).unwrap();
-        // Should return schema unchanged
-        assert_eq!(result.fields().len(), 1);
-        assert_eq!(result.field(0).name(), "name");
-        assert_eq!(result.field(0).data_type(), &DataType::Utf8);
-    }
-
-    #[test]
-    fn test_inject_auto_increment_field_already_exists() {
-        let schema = Arc::new(Schema::new(vec![
-            Arc::new(Field::new("id", DataType::Int64, false)),
-            Arc::new(Field::new("name", DataType::Utf8, false)),
-        ]));
-
-        let result = inject_auto_increment_field(schema.clone()).unwrap();
-        assert_eq!(result.fields().len(), 2); // No change
-        assert_eq!(result.field(0).name(), "id");
     }
 }

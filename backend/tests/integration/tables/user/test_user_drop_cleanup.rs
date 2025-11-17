@@ -31,7 +31,7 @@ async fn test_drop_user_table_deletes_partitions_and_parquet() {
     // Create user table
     let create_sql = format!(
         r#"CREATE USER TABLE {}.{} (
-            id TEXT,
+            id TEXT PRIMARY KEY,
             content TEXT,
             priority INT
         ) STORAGE local"#,

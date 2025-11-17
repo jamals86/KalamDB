@@ -17,7 +17,7 @@ use std::sync::Arc;
 /// using the unified VirtualView pattern
 #[derive(Debug)]
 pub struct InformationSchemaTablesView {
-    tables_provider: Arc<TablesTableProvider>,
+    _tables_provider: Arc<TablesTableProvider>,
     // schema_registry: Arc<SchemaRegistry>, // Moved to kalamdb-core
     schema: SchemaRef,
 }
@@ -55,7 +55,7 @@ impl InformationSchemaTablesView {
         ]));
 
         Self {
-            tables_provider,
+            _tables_provider: tables_provider,
             // schema_registry removed
             schema,
         }

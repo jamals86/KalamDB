@@ -2,12 +2,16 @@
 //
 // Selects MAX(_updated) per row_id with tie-breaker: FastStorage (priority=2) > Parquet (priority=1)
 
+use super::arrow_json_conversion::arrow_value_to_json;
 use crate::error::KalamDbError;
 use datafusion::arrow::array::{
     Array, ArrayRef, BooleanArray, Int32Array, RecordBatch, StringArray, UInt64Array,
 };
 use datafusion::arrow::compute;
 use datafusion::arrow::datatypes::{DataType, Field, Schema};
+use kalamdb_commons::ids::SeqId;
+use kalamdb_tables::{SharedTableRow, UserTableRow};
+use serde_json::{Map, Value as JsonValue};
 use std::collections::HashMap;
 use std::sync::Arc;
 
@@ -417,4 +421,161 @@ where
     }
 
     Ok(results)
+}
+
+/// Parsed representation of a Parquet row used for version resolution merging
+#[derive(Debug, Clone)]
+pub struct ParquetRowData {
+    pub seq_id: SeqId,
+    pub deleted: bool,
+    pub fields: Map<String, JsonValue>,
+}
+
+/// Convert Parquet RecordBatch rows into SeqId + JSON field maps
+pub fn parquet_batch_to_rows(batch: &RecordBatch) -> Result<Vec<ParquetRowData>, KalamDbError> {
+    use datafusion::arrow::array::{Array, BooleanArray, Int64Array};
+
+    if batch.num_rows() == 0 {
+        return Ok(Vec::new());
+    }
+
+    let schema = batch.schema();
+    let seq_idx = schema
+        .fields()
+        .iter()
+        .position(|f| f.name() == "_seq")
+        .ok_or_else(|| KalamDbError::Other("Missing _seq column in Parquet batch".to_string()))?;
+    let deleted_idx = schema.fields().iter().position(|f| f.name() == "_deleted");
+
+    let seq_array = batch
+        .column(seq_idx)
+        .as_any()
+        .downcast_ref::<Int64Array>()
+        .ok_or_else(|| KalamDbError::Other("_seq column is not Int64Array".to_string()))?;
+    let deleted_array =
+        deleted_idx.and_then(|idx| batch.column(idx).as_any().downcast_ref::<BooleanArray>());
+
+    let mut rows = Vec::with_capacity(batch.num_rows());
+    for row_idx in 0..batch.num_rows() {
+        let seq_val = seq_array.value(row_idx);
+        let seq_id = SeqId::from_i64(seq_val);
+        let deleted = deleted_array
+            .and_then(|arr| {
+                if !arr.is_null(row_idx) {
+                    Some(arr.value(row_idx))
+                } else {
+                    None
+                }
+            })
+            .unwrap_or(false);
+
+        let mut json_row = Map::new();
+        for (col_idx, field) in schema.fields().iter().enumerate() {
+            let col_name = field.name();
+            if col_name == "_seq" || col_name == "_deleted" {
+                continue;
+            }
+
+            let array = batch.column(col_idx);
+            match arrow_value_to_json(array.as_ref(), row_idx) {
+                Ok(val) => {
+                    json_row.insert(col_name.clone(), val);
+                }
+                Err(e) => {
+                    log::warn!(
+                        "Failed to convert column {} for row {}: {}",
+                        col_name,
+                        row_idx,
+                        e
+                    );
+                }
+            }
+        }
+
+        rows.push(ParquetRowData {
+            seq_id,
+            deleted,
+            fields: json_row,
+        });
+    }
+
+    Ok(rows)
+}
+
+/// Trait covering the minimal information needed for merging versioned rows
+pub trait VersionedRow {
+    fn seq_id(&self) -> SeqId;
+    fn deleted(&self) -> bool;
+    fn pk_value(&self, pk_name: &str) -> Option<String>;
+}
+
+impl VersionedRow for SharedTableRow {
+    fn seq_id(&self) -> SeqId {
+        self._seq
+    }
+
+    fn deleted(&self) -> bool {
+        self._deleted
+    }
+
+    fn pk_value(&self, pk_name: &str) -> Option<String> {
+        self.fields
+            .as_object()
+            .and_then(|obj| obj.get(pk_name))
+            .filter(|val| !val.is_null())
+            .map(|val| val.to_string())
+    }
+}
+
+impl VersionedRow for UserTableRow {
+    fn seq_id(&self) -> SeqId {
+        self._seq
+    }
+
+    fn deleted(&self) -> bool {
+        self._deleted
+    }
+
+    fn pk_value(&self, pk_name: &str) -> Option<String> {
+        self.fields
+            .as_object()
+            .and_then(|obj| obj.get(pk_name))
+            .filter(|val| !val.is_null())
+            .map(|val| val.to_string())
+    }
+}
+
+/// Merge hot (RocksDB) and cold (Parquet) rows keeping latest version per PK
+pub fn merge_versioned_rows<K, R, I, J>(pk_name: &str, hot_rows: I, cold_rows: J) -> Vec<(K, R)>
+where
+    I: IntoIterator<Item = (K, R)>,
+    J: IntoIterator<Item = (K, R)>,
+    K: Clone,
+    R: VersionedRow,
+{
+    use std::collections::hash_map::Entry;
+
+    let mut best: HashMap<String, (K, R)> = HashMap::new();
+
+    for (key, row) in hot_rows.into_iter().chain(cold_rows) {
+        let pk_key = row
+            .pk_value(pk_name)
+            .filter(|val| !val.is_empty())
+            .unwrap_or_else(|| format!("_seq:{}", row.seq_id().as_i64()));
+
+        match best.entry(pk_key) {
+            Entry::Occupied(mut entry) => {
+                if row.seq_id() > entry.get().1.seq_id() {
+                    entry.insert((key, row));
+                }
+            }
+            Entry::Vacant(entry) => {
+                entry.insert((key, row));
+            }
+        }
+    }
+
+    best.into_values()
+        .filter(|(_, row)| !row.deleted())
+        .collect()
 }

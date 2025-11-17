@@ -58,7 +58,7 @@ async fn test_concurrent_user_isolation_with_shared_session() {
     let _ = sql_executor
         .execute(
             session,
-            "CREATE USER TABLE test_isolation.messages (id INT, user_id TEXT, message TEXT)",
+            "CREATE USER TABLE test_isolation.messages (id INT PRIMARY KEY, user_id TEXT, message TEXT)",
             &admin_ctx,
             vec![],
         )

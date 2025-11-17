@@ -147,8 +147,6 @@ impl JobExecutor for FlushExecutor {
                 let flush_job = UserTableFlushJob::new(
                     table_id.clone(),
                     store,
-                    table_id.namespace_id().clone(),
-                    table_id.table_name().clone(),
                     schema.clone(),
                     schema_registry.clone(),
                     app_ctx.manifest_service(),
@@ -186,8 +184,6 @@ impl JobExecutor for FlushExecutor {
                 let flush_job = SharedTableFlushJob::new(
                     table_id.clone(),
                     store,
-                    table_id.namespace_id().clone(),
-                    table_id.table_name().clone(),
                     schema.clone(),
                     schema_registry.clone(),
                     app_ctx.manifest_service(),

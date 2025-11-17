@@ -10,10 +10,9 @@
 //! - NO RLS - ignores user_id parameter (operates on all rows)
 //! - SessionState NOT extracted in scan_rows() (scans all rows)
 
-use super::base::{BaseTableProvider, TableProviderCore};
+use super::base::{self, BaseTableProvider, TableProviderCore};
 use crate::app_context::AppContext;
 use crate::error::KalamDbError;
-use crate::manifest::ManifestAccessPlanner;
 use crate::schema_registry::TableType;
 use async_trait::async_trait;
 use datafusion::arrow::datatypes::SchemaRef;
@@ -31,11 +30,10 @@ use kalamdb_store::entity_store::EntityStore;
 use kalamdb_tables::{SharedTableRow, SharedTableStore};
 use serde_json::Value as JsonValue;
 use std::any::Any;
-use std::path::PathBuf;
 use std::sync::Arc;
 
 // Arrow <-> JSON helpers
-use crate::providers::arrow_json_conversion::json_rows_to_arrow_batch;
+use crate::providers::version_resolution::{merge_versioned_rows, parquet_batch_to_rows};
 
 /// Shared table provider without RLS
 ///
@@ -47,12 +45,6 @@ use crate::providers::arrow_json_conversion::json_rows_to_arrow_batch;
 pub struct SharedTableProvider {
     /// Shared core (app_context, live_query_manager, storage_registry)
     core: Arc<TableProviderCore>,
-
-    /// Table identifier
-    table_id: Arc<TableId>,
-
-    /// Logical table type
-    table_type: TableType,
 
     /// SharedTableStore for DML operations (public for flush jobs)
     pub(crate) store: Arc<SharedTableStore>,
@@ -71,14 +63,11 @@ impl SharedTableProvider {
     /// * `primary_key_field_name` - Primary key field name from schema
     pub fn new(
         core: Arc<TableProviderCore>,
-        table_id: TableId,
         store: Arc<SharedTableStore>,
         primary_key_field_name: String,
     ) -> Self {
         Self {
             core,
-            table_id: Arc::new(table_id),
-            table_type: TableType::Shared,
             store,
             primary_key_field_name,
         }
@@ -102,300 +91,20 @@ impl SharedTableProvider {
         &self,
         filter: Option<&Expr>,
     ) -> Result<RecordBatch, KalamDbError> {
-        use datafusion::logical_expr::{Expr, Operator};
-        use kalamdb_commons::types::ManifestFile;
-        use crate::manifest::ManifestAccessPlanner;
-
-        let namespace = self.table_id.namespace_id();
-        let table = self.table_id.table_name();
-
-        // OPTIMIZATION: Check if directory exists BEFORE querying manifest cache
-        // For new tables with no flushed data, this avoids unnecessary cache lookups
-        let storage_path = self.core.app_context.schema_registry().get_storage_path(
-            &*self.table_id,
+        base::scan_parquet_files_as_batch(
+            &self.core,
+            self.core.table_id(),
+            self.core.table_type(),
             None,
-            None,
-        )?;
-
-        let storage_dir = PathBuf::from(&storage_path);
-
-        // Early exit: If directory doesn't exist, return empty batch immediately
-        if !storage_dir.exists() {
-            log::trace!(
-                "No Parquet directory exists for shared table {}.{} - returning empty batch",
-                namespace.as_str(),
-                table.as_str()
-            );
-            let schema = self.schema_ref();
-            return Ok(RecordBatch::new_empty(schema));
-        }
-
-        // Phase 4 (T082): Integrate with ManifestCacheService
-        // Try to load manifest from cache (hot cache → RocksDB → None)
-        let manifest_cache_service = self.core.app_context.manifest_cache_service();
-        let cache_result = manifest_cache_service.get_or_load(namespace, table, None);
-
-        // T124-T127: Manifest recovery - validate and rebuild on corruption
-        let mut manifest_opt: Option<ManifestFile> = None;
-        let mut use_degraded_mode = false;
-
-        match &cache_result {
-            Ok(Some(entry)) => {
-                match ManifestFile::from_json(&entry.manifest_json) {
-                    Ok(manifest) => {
-                        // T124: Validate manifest consistency
-                        if let Err(e) = manifest.validate() {
-                            log::warn!(
-                                "⚠️  [MANIFEST CORRUPTION] table={}.{} scope=shared error={} | Triggering rebuild",
-                                namespace.as_str(),
-                                table.as_str(),
-                                e
-                            );
-
-                            // T125: Trigger rebuild on validation failure
-                            // T126: Enable degraded mode during rebuild
-                            use_degraded_mode = true;
-
-                            // Spawn rebuild in background (non-blocking)
-                            let manifest_service = self.core.app_context.manifest_service();
-                            let ns = namespace.clone();
-                            let tbl = table.clone();
-                            tokio::spawn(async move {
-                                log::info!(
-                                    "🔧 [MANIFEST REBUILD STARTED] table={}.{} scope=shared",
-                                    ns.as_str(),
-                                    tbl.as_str()
-                                );
-                                match manifest_service.rebuild_manifest(
-                                    &ns,
-                                    &tbl,
-                                    kalamdb_commons::models::schemas::TableType::Shared,
-                                    None,
-                                ) {
-                                    Ok(_) => {
-                                        log::info!(
-                                            "✅ [MANIFEST REBUILD COMPLETED] table={}.{} scope=shared",
-                                            ns.as_str(),
-                                            tbl.as_str()
-                                        );
-                                    }
-                                    Err(e) => {
-                                        log::error!(
-                                            "❌ [MANIFEST REBUILD FAILED] table={}.{} scope=shared error={}",
-                                            ns.as_str(),
-                                            tbl.as_str(),
-                                            e
-                                        );
-                                    }
-                                }
-                            });
-                        } else {
-                            manifest_opt = Some(manifest);
-                        }
-                    }
-                    Err(e) => {
-                        log::warn!(
-                            "⚠️  Failed to parse manifest JSON for table={}.{} scope=shared: {} | Using degraded mode",
-                            namespace.as_str(),
-                            table.as_str(),
-                            e
-                        );
-                        use_degraded_mode = true;
-                    }
-                }
-            }
-            Ok(None) => {
-                log::debug!(
-                    "⚠️  Manifest cache MISS | table={}.{} | scope=shared | fallback=directory_scan",
-                    namespace.as_str(),
-                    table.as_str()
-                );
-                use_degraded_mode = true;
-            }
-            Err(e) => {
-                log::warn!(
-                    "⚠️  Manifest cache ERROR | table={}.{} | scope=shared | error={} | fallback=directory_scan",
-                    namespace.as_str(),
-                    table.as_str(),
-                    e
-                );
-                use_degraded_mode = true;
-            }
-        }
-
-        // Log cache hit after validation
-        if let Some(ref manifest) = manifest_opt {
-            log::debug!(
-                "✅ Manifest cache HIT | table={}.{} | scope=shared | batches={}",
-                namespace.as_str(),
-                table.as_str(),
-                manifest.batches.len()
-            );
-        }
-
-        // Helper: extract conservative _seq bounds from filter for pruning
-        fn extract_seq_bounds(expr: &Expr) -> (Option<i64>, Option<i64>) {
-            use datafusion::logical_expr::Expr::Column;
-            let mut min_seq: Option<i64> = None;
-            let mut max_seq: Option<i64> = None;
-
-            fn lit_to_i64(e: &Expr) -> Option<i64> {
-                use datafusion::scalar::ScalarValue;
-                if let Expr::Literal(l, _) = e {
-                    match l {
-                        ScalarValue::Int64(Some(v)) => Some(*v),
-                        ScalarValue::Int32(Some(v)) => Some(*v as i64),
-                        ScalarValue::UInt64(Some(v)) => Some(*v as i64),
-                        ScalarValue::UInt32(Some(v)) => Some(*v as i64),
-                        _ => None,
-                    }
-                } else {
-                    None
-                }
-            }
-
-            match expr {
-                Expr::BinaryExpr(be) => {
-                    let left = &be.left;
-                    let op = &be.op;
-                    let right = &be.right;
-                    if *op == Operator::And {
-                        let (a_min, a_max) = extract_seq_bounds(left);
-                        let (b_min, b_max) = extract_seq_bounds(right);
-                        let min = match (a_min, b_min) {
-                            (Some(a), Some(b)) => Some(a.max(b)),
-                            (Some(a), None) => Some(a),
-                            (None, Some(b)) => Some(b),
-                            _ => None,
-                        };
-                        let max = match (a_max, b_max) {
-                            (Some(a), Some(b)) => Some(a.min(b)),
-                            (Some(a), None) => Some(a),
-                            (None, Some(b)) => Some(b),
-                            _ => None,
-                        };
-                        return (min, max);
-                    } else {
-                        let is_seq_left =
-                            matches!(left.as_ref(), Column(c) if c.name.as_str() == "_seq");
-                        let is_seq_right =
-                            matches!(right.as_ref(), Column(c) if c.name.as_str() == "_seq");
-                        if is_seq_left {
-                            if let Some(val) = lit_to_i64(right.as_ref()) {
-                                match op {
-                                    Operator::Gt | Operator::GtEq => {
-                                        return (Some(val), None);
-                                    }
-                                    Operator::Lt | Operator::LtEq => {
-                                        return (None, Some(val));
-                                    }
-                                    Operator::Eq => {
-                                        return (Some(val), Some(val));
-                                    }
-                                    _ => {}
-                                }
-                            }
-                        } else if is_seq_right {
-                            if let Some(val) = lit_to_i64(left.as_ref()) {
-                                match op {
-                                    Operator::Lt | Operator::LtEq => {
-                                        return (Some(val), None);
-                                    }
-                                    Operator::Gt | Operator::GtEq => {
-                                        return (None, Some(val));
-                                    }
-                                    Operator::Eq => {
-                                        return (Some(val), Some(val));
-                                    }
-                                    _ => {}
-                                }
-                            }
-                        }
-                    }
-                }
-                _ => {}
-            }
-
-            (None, None)
-        }
-
-        // storage_path and storage_dir already resolved earlier (before manifest cache check)
-
-        // Use planner for unified Parquet loading (manifest-based pruning + file reading)
-        let planner = ManifestAccessPlanner::new();
-        let (min_seq, max_seq) = filter
-            .map(|f| extract_seq_bounds(f))
-            .unwrap_or((None, None));
-        let seq_range = match (min_seq, max_seq) {
-            (Some(min), Some(max)) => Some((min, max)),
-            _ => None,
-        };
-
-        let schema = self.schema_ref();
-        let (combined, (total_batches, skipped, scanned)) = planner
-            .scan_parquet_files(manifest_opt.as_ref(), &storage_dir, seq_range, use_degraded_mode, schema.clone())?;
-
-        if total_batches > 0 {
-            log::debug!(
-                "[Manifest Pruning] table={}.{} scope=shared batches_total={} skipped={} scanned={} rows={}",
-                namespace.as_str(),
-                table.as_str(),
-                total_batches,
-                skipped,
-                scanned,
-                combined.num_rows()
-            );
-        }
-
-        Ok(combined)
-    }
-}
-
-impl SharedTableProvider {
-    /// Check if a primary key value already exists (non-deleted version)
-    ///
-    /// **Performance**: O(log n) lookup by PK value using version resolution.
-    ///
-    /// # Arguments
-    /// * `pk_value` - String representation of PK value to check
-    ///
-    /// # Returns
-    /// * `Ok(true)` - PK value exists with non-deleted version
-    /// * `Ok(false)` - PK value does not exist or only deleted versions exist
-    /// * `Err` - Storage error
-    fn pk_value_exists(&self, pk_value: &str) -> Result<bool, KalamDbError> {
-        let pk_name = self.primary_key_field_name();
-
-        // Shared tables don't have user scoping, so we use a dummy user_id
-        let dummy_user_id = UserId::from("_system");
-
-        // Scan with version resolution (returns only latest non-deleted versions)
-        let resolved = self.scan_with_version_resolution_to_kvs(&dummy_user_id, None)?;
-
-        // Check if any resolved row has this PK value
-        for (_key, row) in resolved.into_iter() {
-            if let Some(val) = row.fields.get(pk_name) {
-                // Compare as strings to handle different JSON types
-                let row_pk_str = match val {
-                    serde_json::Value::String(s) => s.clone(),
-                    serde_json::Value::Number(n) => n.to_string(),
-                    serde_json::Value::Bool(b) => b.to_string(),
-                    _ => continue,
-                };
-
-                if row_pk_str == pk_value {
-                    return Ok(true); // PK value already exists
-                }
-            }
-        }
-
-        Ok(false) // PK value does not exist
+            self.schema_ref(),
+            filter,
+        )
     }
 }
 
 impl BaseTableProvider<SharedTableRowId, SharedTableRow> for SharedTableProvider {
     fn table_id(&self) -> &TableId {
-        &self.table_id
+        self.core.table_id()
     }
 
     fn schema_ref(&self) -> SchemaRef {
@@ -403,12 +112,12 @@ impl BaseTableProvider<SharedTableRowId, SharedTableRow> for SharedTableProvider
         self.core
             .app_context
             .schema_registry()
-            .get_arrow_schema(&self.table_id)
+            .get_arrow_schema(self.core.table_id())
             .expect("Failed to get Arrow schema from registry")
     }
 
     fn provider_table_type(&self) -> TableType {
-        self.table_type
+        self.core.table_type()
     }
 
     fn app_context(&self) -> &Arc<AppContext> {
@@ -425,25 +134,7 @@ impl BaseTableProvider<SharedTableRowId, SharedTableRow> for SharedTableProvider
         row_data: JsonValue,
     ) -> Result<SharedTableRowId, KalamDbError> {
         // IGNORE user_id parameter - no RLS for shared tables
-
-        // T060: Validate PRIMARY KEY uniqueness if user provided PK value
-        let pk_name = self.primary_key_field_name();
-        if let Some(pk_value) = row_data.get(pk_name) {
-            // User provided PK value - check if it already exists (non-deleted version)
-            if !pk_value.is_null() {
-                let pk_str =
-                    crate::providers::unified_dml::extract_user_pk_value(&row_data, pk_name)?;
-
-                // Check if this PK value already exists with a non-deleted version
-                if self.pk_value_exists(&pk_str)? {
-                    return Err(KalamDbError::AlreadyExists(format!(
-                        "Primary key violation: value '{}' already exists in column '{}'",
-                        pk_str, pk_name
-                    )));
-                }
-            }
-        }
-        // If PK not provided, it must have a DEFAULT value (validated at CREATE TABLE time)
+        base::ensure_unique_pk_value(self, None, &row_data)?;
 
         // Generate new SeqId via SystemColumnsService
         let sys_cols = self.core.system_columns.clone();
@@ -489,20 +180,10 @@ impl BaseTableProvider<SharedTableRowId, SharedTableRow> for SharedTableProvider
         let pk_value =
             crate::providers::unified_dml::extract_user_pk_value(&prior.fields, &pk_name)?;
         // Resolve latest per PK
-        let resolved = self.scan_with_version_resolution_to_kvs(&_user_id.clone(), None)?;
-
-        let mut latest_opt: Option<(SharedTableRowId, SharedTableRow)> = None;
-        for (k, r) in resolved.into_iter() {
-            if let Some(val) = r.fields.get(&pk_name) {
-                if val.to_string() == pk_value {
-                    latest_opt = Some((k, r));
-                    break;
-                }
-            }
-        }
-        let (_latest_key, latest_row) = latest_opt.ok_or_else(|| {
-            KalamDbError::NotFound(format!("Row with {}={} not found", pk_name, pk_value))
-        })?;
+        let (_latest_key, latest_row) =
+            base::find_row_by_pk(self, None, &pk_value)?.ok_or_else(|| {
+                KalamDbError::NotFound(format!("Row with {}={} not found", pk_name, pk_value))
+            })?;
 
         let mut merged = latest_row.fields.as_object().cloned().unwrap_or_default();
         for (k, v) in update_obj.into_iter() {
@@ -560,30 +241,11 @@ impl BaseTableProvider<SharedTableRowId, SharedTableRow> for SharedTableProvider
         filter: Option<&Expr>,
     ) -> Result<RecordBatch, KalamDbError> {
         // NO user_id extraction - shared tables scan ALL rows
-        let kvs = self.scan_with_version_resolution_to_kvs(&UserId::new("_ignored"), filter)?;
+        let kvs = self.scan_with_version_resolution_to_kvs(base::system_user_id(), filter)?;
 
         // Convert to JSON rows aligned with schema
         let schema = self.schema_ref();
-        let mut rows: Vec<JsonValue> = Vec::with_capacity(kvs.len());
-
-        for (_key, row) in kvs.into_iter() {
-            let mut obj = row.fields.as_object().cloned().unwrap_or_default();
-
-            // Inject system columns using consolidated helper
-            crate::providers::base::inject_system_columns(
-                &schema,
-                &mut obj,
-                row._seq.as_i64(),
-                row._deleted,
-            );
-
-            rows.push(JsonValue::Object(obj));
-        }
-
-        let batch = json_rows_to_arrow_batch(&schema, rows).map_err(|e| {
-            KalamDbError::InvalidOperation(format!("Failed to build Arrow batch: {}", e))
-        })?;
-        Ok(batch)
+        crate::providers::base::rows_to_arrow_batch(&schema, kvs, |_, _| {})
     }
 
     fn scan_with_version_resolution_to_kvs(
@@ -603,153 +265,38 @@ impl BaseTableProvider<SharedTableRowId, SharedTableRow> for SharedTableProvider
         // Scan cold storage (Parquet files)
         let parquet_batch = self.scan_parquet_files_as_batch(_filter)?;
 
-        // Version resolution: MAX(_seq) per PK; honor tombstones
-        use std::collections::HashMap;
         let pk_name = self.primary_key_field_name().to_string();
-        let mut best: HashMap<String, (SharedTableRowId, SharedTableRow)> = HashMap::new();
 
-        // Process RocksDB rows
-        for (key_bytes, row) in raw.into_iter() {
-            // Parse key (SeqId) from bytes
-            let seq = match kalamdb_commons::ids::SeqId::from_bytes(&key_bytes) {
-                Ok(s) => s,
-                Err(err) => {
-                    log::warn!("Skipping invalid SeqId key bytes: {}", err);
-                    continue;
-                }
-            };
-            let key: SharedTableRowId = seq;
-
-            // Determine grouping key: prefer declared PK when present and non-null; else fall back to unique _seq
-            let pk_key = match row.fields.get(&pk_name).filter(|v| !v.is_null()) {
-                Some(v) => v.to_string(),
-                None => format!("_seq:{}", row._seq.as_i64()),
-            };
-
-            match best.get(&pk_key) {
-                Some((_existing_key, existing_row)) => {
-                    if row._seq > existing_row._seq {
-                        best.insert(pk_key, (key, row));
+        let hot_rows: Vec<(SharedTableRowId, SharedTableRow)> = raw
+            .into_iter()
+            .filter_map(|(key_bytes, row)| {
+                match kalamdb_commons::ids::SeqId::from_bytes(&key_bytes) {
+                    Ok(seq) => Some((seq, row)),
+                    Err(err) => {
+                        log::warn!("Skipping invalid SeqId key bytes: {}", err);
+                        None
                     }
                 }
-                None => {
-                    best.insert(pk_key, (key, row));
-                }
-            }
-        }
+            })
+            .collect();
 
-        // Process Parquet rows (cold storage)
-        log::debug!(
-            "[SharedProvider] Processing {} Parquet rows for version resolution",
-            parquet_batch.num_rows()
-        );
+        let cold_rows: Vec<(SharedTableRowId, SharedTableRow)> =
+            parquet_batch_to_rows(&parquet_batch)?
+                .into_iter()
+                .map(|row_data| {
+                    let seq_id = row_data.seq_id;
+                    (
+                        seq_id,
+                        SharedTableRow {
+                            _seq: seq_id,
+                            _deleted: row_data.deleted,
+                            fields: JsonValue::Object(row_data.fields),
+                        },
+                    )
+                })
+                .collect();
 
-        if parquet_batch.num_rows() > 0 {
-            use crate::providers::arrow_json_conversion::arrow_value_to_json;
-            use datafusion::arrow::array::{Array, BooleanArray, Int64Array};
-            use serde_json::Map;
-
-            // Extract column arrays
-            let schema = parquet_batch.schema();
-
-            // Find _seq column index
-            let seq_idx = schema
-                .fields()
-                .iter()
-                .position(|f| f.name() == "_seq")
-                .ok_or_else(|| {
-                    KalamDbError::Other("Missing _seq column in Parquet batch".to_string())
-                })?;
-
-            // Find _deleted column index (optional)
-            let deleted_idx = schema.fields().iter().position(|f| f.name() == "_deleted");
-
-            // Get _seq array
-            let seq_array = parquet_batch
-                .column(seq_idx)
-                .as_any()
-                .downcast_ref::<Int64Array>()
-                .ok_or_else(|| KalamDbError::Other("_seq column is not Int64Array".to_string()))?;
-
-            // Get _deleted array if exists
-            let deleted_array = deleted_idx.and_then(|idx| {
-                parquet_batch
-                    .column(idx)
-                    .as_any()
-                    .downcast_ref::<BooleanArray>()
-            });
-
-            // Convert each row to SharedTableRow
-            for row_idx in 0..parquet_batch.num_rows() {
-                let seq_val = seq_array.value(row_idx);
-                let seq_id = kalamdb_commons::ids::SeqId::from_i64(seq_val);
-
-                let deleted = deleted_array
-                    .and_then(|arr| {
-                        if !arr.is_null(row_idx) {
-                            Some(arr.value(row_idx))
-                        } else {
-                            None
-                        }
-                    })
-                    .unwrap_or(false);
-
-                // Build JSON object from all columns
-                let mut json_row = Map::new();
-                for (col_idx, field) in schema.fields().iter().enumerate() {
-                    let col_name = field.name();
-                    // Skip system columns (_seq, _deleted) - they're stored separately
-                    if col_name == "_seq" || col_name == "_deleted" {
-                        continue;
-                    }
-
-                    let array = parquet_batch.column(col_idx);
-                    match arrow_value_to_json(array.as_ref(), row_idx) {
-                        Ok(val) => {
-                            json_row.insert(col_name.clone(), val);
-                        }
-                        Err(e) => {
-                            log::warn!(
-                                "Failed to convert column {} for row {}: {}",
-                                col_name,
-                                row_idx,
-                                e
-                            );
-                        }
-                    }
-                }
-
-                // Determine grouping key: declared PK value (non-null) or fallback to unique _seq
-                let pk_key = match json_row.get(&pk_name).filter(|v| !v.is_null()) {
-                    Some(v) => v.to_string(),
-                    None => format!("_seq:{}", seq_val),
-                };
-
-                // Create SharedTableRow
-                let row = SharedTableRow {
-                    _seq: seq_id,
-                    _deleted: deleted,
-                    fields: JsonValue::Object(json_row),
-                };
-
-                let key: SharedTableRowId = seq_id;
-
-                // Merge with existing data using MAX(_seq)
-                match best.get(&pk_key) {
-                    Some((_existing_key, existing_row)) => {
-                        if row._seq > existing_row._seq {
-                            best.insert(pk_key, (key, row));
-                        }
-                    }
-                    None => {
-                        best.insert(pk_key, (key, row));
-                    }
-                }
-            }
-        }
-
-        let result: Vec<(SharedTableRowId, SharedTableRow)> =
-            best.into_values().filter(|(_k, r)| !r._deleted).collect();
+        let result = merge_versioned_rows(&pk_name, hot_rows, cold_rows);
         log::debug!(
             "[SharedProvider] Version-resolved rows (post-tombstone filter): {}",
             result.len()
@@ -765,9 +312,10 @@ impl BaseTableProvider<SharedTableRowId, SharedTableRow> for SharedTableProvider
 // Manual Debug to satisfy DataFusion's TableProvider: Debug bound
 impl std::fmt::Debug for SharedTableProvider {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let table_id = self.core.table_id_arc();
         f.debug_struct("SharedTableProvider")
-            .field("table_id", &self.table_id)
-            .field("table_type", &self.table_type)
+            .field("table_id", &table_id)
+            .field("table_type", &self.core.table_type())
             .field("primary_key_field_name", &self.primary_key_field_name)
             .finish()
     }
@@ -822,26 +370,26 @@ impl TableProvider for SharedTableProvider {
         //   ```rust
         //   use datafusion::datasource::physical_plan::parquet::ParquetExec;
         //   use datafusion_physical_plan::parquet::ParquetAccessPlan;
-        //   
+        //
         //   let planner = ManifestAccessPlanner::new();
         //   let selections = planner.plan_by_seq_range(&manifest, min_seq, max_seq);
-        //   
+        //
         //   // Build file-level ParquetAccessPlan
         //   let mut file_groups = Vec::new();
         //   for selection in selections {
         //       let file_path = storage_dir.join(&selection.file_path);
         //       let partitioned_file = PartitionedFile::new(file_path, file_size);
-        //       
+        //
         //       // Row-group access plan per file
         //       let rg_access = if selection.row_groups.is_empty() {
         //           RowGroupAccess::Scan  // No metadata, scan all
         //       } else {
         //           RowGroupAccess::Selection(selection.row_groups.into_iter().collect())
         //       };
-        //       
+        //
         //       file_groups.push((partitioned_file, vec![rg_access]));
         //   }
-        //   
+        //
         //   let parquet_exec = ParquetExec::builder(file_scan_config)
         //       .with_parquet_access_plan(ParquetAccessPlan::new(file_groups))
         //       .build();
@@ -853,7 +401,7 @@ impl TableProvider for SharedTableProvider {
         //   let hot_batch = self.scan_hot_data(state, &combined_filter)?;
         //   let hot_mem = MemTable::try_new(schema, vec![vec![hot_batch]])?;
         //   let hot_exec = hot_mem.scan(state, projection, filters, limit).await?;
-        //   
+        //
         //   let union_exec = UnionExec::new(vec![parquet_exec, hot_exec]);
         //   return Ok(Arc::new(union_exec));
         //   ```

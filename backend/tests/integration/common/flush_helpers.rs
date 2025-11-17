@@ -81,8 +81,6 @@ pub async fn execute_flush_synchronously(
     let flush_job = UserTableFlushJob::new(
         table_id_arc,
         user_table_store,
-        namespace_id,
-        table_name_id,
         arrow_schema.schema.clone(),
         unified_cache,
         server.app_context.manifest_service(),
@@ -136,15 +134,9 @@ pub async fn execute_shared_flush_synchronously(
         &table_name_id,
     ));
 
-    let namespace_id = NamespaceId::new(namespace);
-    let table_name_id = TableName::new(table_name);
-    let table_id = Arc::new(TableId::new(namespace_id.clone(), table_name_id.clone()));
-
     let flush_job = SharedTableFlushJob::new(
-        table_id,
+        Arc::new(table_id.clone()),
         shared_table_store,
-        namespace_id,
-        table_name_id,
         arrow_schema.schema.clone(),
         unified_cache,
         server.app_context.manifest_service(),

@@ -30,22 +30,15 @@ pub static RESERVED_COLUMN_NAMES: Lazy<HashSet<&'static str>> = Lazy::new(|| {
     // Current system columns
     set.insert("_seq");
     set.insert("_deleted");
-
-    // Legacy system columns (prevent reuse)
-    set.insert("_row_id");
-    set.insert("_id");
-    set.insert("_updated");
-
-    // Additional reserved columns
-    set.insert("_created_at");
-    set.insert("_modified_at");
-    set.insert("_version");
     set
 });
 
 /// SQL reserved keywords that cannot be used as identifiers
 pub static RESERVED_SQL_KEYWORDS: Lazy<HashSet<&'static str>> = Lazy::new(|| {
     let mut set = HashSet::new();
+
+    // ALL_KEYWORDS from sqlparser crate
+
     // SQL standard keywords
     set.insert("select");
     set.insert("from");

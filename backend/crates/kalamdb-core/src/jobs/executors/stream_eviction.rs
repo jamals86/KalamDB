@@ -385,10 +385,13 @@ mod tests {
         );
 
         let stream_store = Arc::new(kalamdb_tables::new_stream_table_store(&ns, &tbl));
-        let core = Arc::new(TableProviderCore::from_app_context(&app_ctx));
+        let core = Arc::new(TableProviderCore::from_app_context(
+            &app_ctx,
+            table_id.clone(),
+            TableType::Stream,
+        ));
         let provider = Arc::new(StreamTableProvider::new(
             core,
-            table_id.clone(),
             stream_store.clone(),
             Some(1),
             "event_id".to_string(),

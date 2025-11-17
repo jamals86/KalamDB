@@ -14,7 +14,7 @@ use std::sync::Arc;
 
 #[derive(Debug)]
 pub struct InformationSchemaColumnsView {
-    tables_provider: Arc<TablesTableProvider>,
+    _tables_provider: Arc<TablesTableProvider>,
     schema: SchemaRef,
 }
 
@@ -33,7 +33,7 @@ impl InformationSchemaColumnsView {
         ]));
 
         Self {
-            tables_provider,
+            _tables_provider: tables_provider,
             schema,
         }
     }

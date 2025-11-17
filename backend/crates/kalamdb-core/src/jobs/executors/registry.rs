@@ -26,9 +26,6 @@ use std::sync::Arc;
 /// validation at runtime.
 #[async_trait]
 trait DynJobExecutor: Send + Sync {
-    /// Returns the job type this executor handles
-    fn job_type(&self) -> JobType;
-
     /// Returns the executor name for logging
     fn name(&self) -> &'static str;
 
@@ -56,10 +53,6 @@ where
     T: JobParams,
     E: JobExecutor<Params = T>,
 {
-    fn job_type(&self) -> JobType {
-        JobExecutor::job_type(self)
-    }
-
     fn name(&self) -> &'static str {
         JobExecutor::name(self)
     }
@@ -166,7 +159,8 @@ impl JobRegistry {
     /// * `executor` - Job executor implementation
     ///
     /// Returns the previous executor if one was registered
-    pub fn register_or_replace<E>(&self, executor: Arc<E>) -> Option<Arc<dyn DynJobExecutor>>
+    #[cfg(test)]
+    pub(crate) fn register_or_replace<E>(&self, executor: Arc<E>) -> Option<Arc<dyn DynJobExecutor>>
     where
         E: JobExecutor + 'static,
     {

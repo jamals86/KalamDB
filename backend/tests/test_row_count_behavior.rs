@@ -19,7 +19,7 @@ async fn test_update_returns_correct_row_count() {
     server
         .execute_sql_as_user(
             r#"CREATE USER TABLE test_ns.users (
-                id TEXT,
+                id TEXT PRIMARY KEY,
                 name TEXT,
                 email TEXT
             ) STORAGE local"#,
@@ -96,7 +96,7 @@ async fn test_update_same_values_still_counts() {
     server
         .execute_sql_as_user(
             r#"CREATE USER TABLE test_ns.users (
-                id TEXT,
+                id TEXT PRIMARY KEY,
                 name TEXT
             ) STORAGE local"#,
             "user1",
@@ -143,7 +143,7 @@ async fn test_delete_returns_correct_row_count() {
     server
         .execute_sql_as_user(
             r#"CREATE USER TABLE test_ns.tasks (
-                id TEXT,
+                id TEXT PRIMARY KEY,
                 title TEXT
             ) STORAGE local"#,
             "user1",
@@ -213,7 +213,7 @@ async fn test_delete_already_deleted_returns_zero() {
     server
         .execute_sql_as_user(
             r#"CREATE USER TABLE test_ns.tasks (
-                id TEXT,
+                id TEXT PRIMARY KEY,
                 title TEXT
             ) STORAGE local"#,
             "user1",
@@ -274,7 +274,7 @@ async fn test_delete_multiple_rows_count() {
     server
         .execute_sql_as_user(
             r#"CREATE USER TABLE test_ns.tasks (
-                id TEXT,
+                id TEXT PRIMARY KEY,
                 priority INT
             ) STORAGE local"#,
             "user1",

@@ -35,7 +35,6 @@ use std::sync::Arc;
 
 // Arrow <-> JSON helpers
 use crate::live_query::manager::ChangeNotification;
-use crate::providers::arrow_json_conversion::json_rows_to_arrow_batch;
 use serde_json::json;
 
 /// Stream table provider with RLS and TTL filtering
@@ -50,12 +49,6 @@ use serde_json::json;
 pub struct StreamTableProvider {
     /// Shared core (app_context, live_query_manager, storage_registry)
     core: Arc<TableProviderCore>,
-
-    /// Table identifier
-    table_id: Arc<TableId>,
-
-    /// Logical table type
-    table_type: TableType,
 
     /// StreamTableStore for DML operations (hot-only, in-memory)
     store: Arc<StreamTableStore>,
@@ -78,15 +71,12 @@ impl StreamTableProvider {
     /// * `primary_key_field_name` - Primary key field name from schema
     pub fn new(
         core: Arc<TableProviderCore>,
-        table_id: TableId,
         store: Arc<StreamTableStore>,
         ttl_seconds: Option<u64>,
         primary_key_field_name: String,
     ) -> Self {
         Self {
             core,
-            table_id: Arc::new(table_id),
-            table_type: TableType::Stream,
             store,
             ttl_seconds,
             primary_key_field_name,
@@ -109,10 +99,11 @@ impl StreamTableProvider {
             KalamDbError::InvalidOperation(format!("Failed to scan stream store: {}", e))
         })?;
         let count = rows.len();
+        let table_id = self.core.table_id();
         log::debug!(
             "[StreamProvider] snapshot_all_rows_json: table={}.{} rows={} ttl={:?}",
-            self.table_id.namespace_id().as_str(),
-            self.table_id.table_name().as_str(),
+            table_id.namespace_id().as_str(),
+            table_id.table_name().as_str(),
             count,
             self.ttl_seconds
         );
@@ -150,7 +141,7 @@ impl StreamTableProvider {
 
 impl BaseTableProvider<StreamTableRowId, StreamTableRow> for StreamTableProvider {
     fn table_id(&self) -> &TableId {
-        &self.table_id
+        self.core.table_id()
     }
 
     fn schema_ref(&self) -> SchemaRef {
@@ -158,12 +149,12 @@ impl BaseTableProvider<StreamTableRowId, StreamTableRow> for StreamTableProvider
         self.core
             .app_context
             .schema_registry()
-            .get_arrow_schema(&self.table_id)
+            .get_arrow_schema(self.core.table_id())
             .expect("Failed to get Arrow schema from registry")
     }
 
     fn provider_table_type(&self) -> TableType {
-        self.table_type
+        self.core.table_type()
     }
 
     fn app_context(&self) -> &Arc<AppContext> {
@@ -179,6 +170,7 @@ impl BaseTableProvider<StreamTableRowId, StreamTableRow> for StreamTableProvider
         user_id: &UserId,
         row_data: JsonValue,
     ) -> Result<StreamTableRowId, KalamDbError> {
+        let table_id = self.core.table_id();
         // Lazy TTL cleanup: delete expired rows BEFORE inserting new one
         // This ensures storage doesn't grow unbounded without background jobs
         if let Some(ttl_seconds) = self.ttl_seconds {
@@ -212,8 +204,8 @@ impl BaseTableProvider<StreamTableRowId, StreamTableRow> for StreamTableProvider
             if deleted_count > 0 {
                 log::debug!(
                     "[StreamProvider] TTL cleanup: table={}.{} deleted={} expired rows",
-                    self.table_id.namespace_id().as_str(),
-                    self.table_id.table_name().as_str(),
+                    table_id.namespace_id().as_str(),
+                    table_id.table_name().as_str(),
                     deleted_count
                 );
             }
@@ -242,8 +234,8 @@ impl BaseTableProvider<StreamTableRowId, StreamTableRow> for StreamTableProvider
             "[StreamProvider] Inserted event: table={} seq={} user={}",
             format!(
                 "{}.{}",
-                self.table_id.namespace_id().as_str(),
-                self.table_id.table_name().as_str()
+                table_id.namespace_id().as_str(),
+                table_id.table_name().as_str()
             ),
             seq_id.as_i64(),
             user_id.as_str()
@@ -251,7 +243,7 @@ impl BaseTableProvider<StreamTableRowId, StreamTableRow> for StreamTableProvider
 
         // Fire live query notification (INSERT)
         if let Some(manager) = &self.core.live_query_manager {
-            let table_id = (*self.table_id).clone();
+            let table_id = self.core.table_id().clone();
             let table_name = format!(
                 "{}.{}",
                 table_id.namespace_id().as_str(),
@@ -304,12 +296,7 @@ impl BaseTableProvider<StreamTableRowId, StreamTableRow> for StreamTableProvider
 
         // Fire live query notification (DELETE hard)
         if let Some(manager) = &self.core.live_query_manager {
-            let table_id = (*self.table_id).clone();
-            let table_name = format!(
-                "{}.{}",
-                table_id.namespace_id().as_str(),
-                table_id.table_name().as_str()
-            );
+            let table_id = self.core.table_id().clone();
 
             let row_id_str = format!("{}:{}", key.user_id().as_str(), key.seq().as_i64());
             let notification = ChangeNotification::delete_hard(table_id.clone(), row_id_str);
@@ -329,12 +316,13 @@ impl BaseTableProvider<StreamTableRowId, StreamTableRow> for StreamTableProvider
 
         // Perform KV scan (hot-only) and convert to batch
         let kvs = self.scan_with_version_resolution_to_kvs(&user_id, filter)?;
+        let table_id = self.core.table_id();
         log::debug!(
             "[StreamProvider] scan_rows: table={} rows={} user={} ttl={:?}",
             format!(
                 "{}.{}",
-                self.table_id.namespace_id().as_str(),
-                self.table_id.table_name().as_str()
+                table_id.namespace_id().as_str(),
+                table_id.table_name().as_str()
             ),
             kvs.len(),
             user_id.as_str(),
@@ -342,30 +330,12 @@ impl BaseTableProvider<StreamTableRowId, StreamTableRow> for StreamTableProvider
         );
 
         let schema = self.schema_ref();
-        let mut rows: Vec<JsonValue> = Vec::with_capacity(kvs.len());
         let has_user = schema.field_with_name("user_id").is_ok();
-
-        for (_key, row) in kvs.into_iter() {
-            let mut obj = row.fields.as_object().cloned().unwrap_or_default();
-
-            // Inject system columns using consolidated helper
-            crate::providers::base::inject_system_columns(
-                &schema,
-                &mut obj,
-                row._seq.as_i64(),
-                false,
-            );
-
+        crate::providers::base::rows_to_arrow_batch(&schema, kvs, |obj, row| {
             if has_user {
                 obj.insert("user_id".to_string(), json!(row.user_id.as_str()));
             }
-            rows.push(JsonValue::Object(obj));
-        }
-
-        let batch = json_rows_to_arrow_batch(&schema, rows).map_err(|e| {
-            KalamDbError::InvalidOperation(format!("Failed to build Arrow batch: {}", e))
-        })?;
-        Ok(batch)
+        })
     }
 
     fn scan_with_version_resolution_to_kvs(
@@ -373,6 +343,7 @@ impl BaseTableProvider<StreamTableRowId, StreamTableRow> for StreamTableProvider
         user_id: &UserId,
         _filter: Option<&Expr>,
     ) -> Result<Vec<(StreamTableRowId, StreamTableRow)>, KalamDbError> {
+        let table_id = self.core.table_id();
         // 1) Scan ONLY RocksDB (hot storage) with user_id prefix filter
         let user_bytes = user_id.as_str().as_bytes();
         let len = (user_bytes.len().min(255)) as u8;
@@ -387,8 +358,8 @@ impl BaseTableProvider<StreamTableRowId, StreamTableRow> for StreamTableProvider
             .as_millis() as u64;
         log::debug!(
             "[StreamProvider] prefix scan: table={}.{} user={} prefix_len={} ttl_ms={:?} now_ms={}",
-            self.table_id.namespace_id().as_str(),
-            self.table_id.table_name().as_str(),
+            table_id.namespace_id().as_str(),
+            table_id.table_name().as_str(),
             user_id.as_str(),
             prefix.len(),
             ttl_ms,
@@ -408,8 +379,8 @@ impl BaseTableProvider<StreamTableRowId, StreamTableRow> for StreamTableProvider
             "[StreamProvider] raw scan results: table={} user={} count={}",
             format!(
                 "{}.{}",
-                self.table_id.namespace_id().as_str(),
-                self.table_id.table_name().as_str()
+                table_id.namespace_id().as_str(),
+                table_id.table_name().as_str()
             ),
             user_id.as_str(),
             raw.len()
@@ -445,8 +416,8 @@ impl BaseTableProvider<StreamTableRowId, StreamTableRow> for StreamTableProvider
 
         log::debug!(
             "[StreamProvider] ttl-filtered results: table={}.{} user={} kept={}",
-            self.table_id.namespace_id().as_str(),
-            self.table_id.table_name().as_str(),
+            table_id.namespace_id().as_str(),
+            table_id.table_name().as_str(),
             user_id.as_str(),
             results.len()
         );
@@ -463,9 +434,10 @@ impl BaseTableProvider<StreamTableRowId, StreamTableRow> for StreamTableProvider
 // Manual Debug to satisfy DataFusion's TableProvider: Debug bound
 impl std::fmt::Debug for StreamTableProvider {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let table_id = self.core.table_id_arc();
         f.debug_struct("StreamTableProvider")
-            .field("table_id", &self.table_id)
-            .field("table_type", &self.table_type)
+            .field("table_id", &table_id)
+            .field("table_type", &self.core.table_type())
             .field("ttl_seconds", &self.ttl_seconds)
             .field("primary_key_field_name", &self.primary_key_field_name)
             .finish()
@@ -496,8 +468,8 @@ impl TableProvider for StreamTableProvider {
     ) -> DataFusionResult<Arc<dyn ExecutionPlan>> {
         log::debug!(
             "[StreamProvider] scan start: table={}.{} projection={:?} filters={} limit={:?}",
-            self.table_id.namespace_id().as_str(),
-            self.table_id.table_name().as_str(),
+            self.core.table_id().namespace_id().as_str(),
+            self.core.table_id().table_name().as_str(),
             projection,
             filters.len(),
             limit
@@ -510,8 +482,8 @@ impl TableProvider for StreamTableProvider {
         let plan = mem.scan(state, projection, filters, limit).await?;
         log::debug!(
             "[StreamProvider] scan planned: table={}.{}",
-            self.table_id.namespace_id().as_str(),
-            self.table_id.table_name().as_str()
+            self.core.table_id().namespace_id().as_str(),
+            self.core.table_id().table_name().as_str()
         );
         Ok(plan)
     }

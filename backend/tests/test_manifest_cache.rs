@@ -8,15 +8,14 @@
 //! - T099: restore_from_rocksdb() after server restart
 //! - T100: SHOW MANIFEST returns all cached entries
 //! - T101: cache eviction and re-population
-use kalamdb_commons::UserId;
-
 use kalamdb_commons::{
     config::ManifestCacheSettings,
-    types::{ManifestCacheEntry, ManifestFile, SyncState},
-    NamespaceId, TableName,
+    models::{schemas::TableType, TableId},
+    types::{ManifestFile, SyncState},
+    NamespaceId, TableName, UserId,
 };
 use kalamdb_core::manifest::ManifestCacheService;
-use kalamdb_store::{entity_store::EntityStore, test_utils::InMemoryBackend, StorageBackend};
+use kalamdb_store::{test_utils::InMemoryBackend, StorageBackend};
 use std::sync::Arc;
 
 fn create_test_service() -> ManifestCacheService {
@@ -30,15 +29,15 @@ fn create_test_service() -> ManifestCacheService {
     ManifestCacheService::new(backend, config)
 }
 
-fn create_test_manifest(table_id: &str, scope: &str) -> ManifestFile {
-    ManifestFile {
-        table_id: table_id.to_string(),
-        scope: scope.to_string(),
-        version: 1,
-        generated_at: chrono::Utc::now().timestamp(),
-        max_batch: 0,
-        batches: Vec::new(),
-    }
+fn create_test_manifest(namespace: &str, table_name: &str, user_id: Option<&str>) -> ManifestFile {
+    let table_id = TableId::new(NamespaceId::new(namespace), TableName::new(table_name));
+    let user_id_opt = user_id.map(UserId::from);
+    let table_type = if user_id.is_some() {
+        TableType::User
+    } else {
+        TableType::Shared
+    };
+    ManifestFile::new(table_id, table_type, user_id_opt)
 }
 
 // T095: get_or_load() cache miss → returns None (caller should load from S3)
@@ -60,7 +59,7 @@ fn test_get_or_load_cache_hit() {
     let service = create_test_service();
     let namespace = NamespaceId::new("ns1");
     let table = TableName::new("products");
-    let manifest = create_test_manifest("ns1.products", "u_123");
+    let manifest = create_test_manifest("ns1", "products", Some("u_123"));
 
     // Populate cache
     service
@@ -111,7 +110,7 @@ fn test_validate_freshness_stale() {
 
     let namespace = NamespaceId::new("ns1");
     let table = TableName::new("products");
-    let manifest = create_test_manifest("ns1.products", "shared");
+    let manifest = create_test_manifest("ns1", "products", None);
 
     // Add entry
     service
@@ -145,7 +144,7 @@ fn test_update_after_flush_atomic_write() {
     let service = create_test_service();
     let namespace = NamespaceId::new("ns1");
     let table = TableName::new("orders");
-    let manifest = create_test_manifest("ns1.orders", "u_456");
+    let manifest = create_test_manifest("ns1", "orders", Some("u_456"));
 
     // Update cache after flush
     service
@@ -175,8 +174,9 @@ fn test_update_after_flush_atomic_write() {
 
     // Verify manifest JSON is valid
     let parsed_manifest = ManifestFile::from_json(&entry.manifest_json).unwrap();
-    assert_eq!(parsed_manifest.table_id, "ns1.orders");
-    assert_eq!(parsed_manifest.scope, "u_456");
+    assert_eq!(parsed_manifest.table_id.namespace_id().as_str(), "ns1");
+    assert_eq!(parsed_manifest.table_id.table_name().as_str(), "orders");
+    assert_eq!(parsed_manifest.user_id, Some(UserId::from("u_456")));
 }
 
 // T099: restore_from_rocksdb() → cache restored from RocksDB CF after server restart
@@ -189,11 +189,11 @@ fn test_restore_from_rocksdb() {
     let service1 = ManifestCacheService::new(Arc::clone(&backend), config.clone());
     let namespace1 = NamespaceId::new("ns1");
     let table1 = TableName::new("products");
-    let manifest1 = create_test_manifest("ns1.products", "u_123");
+    let manifest1 = create_test_manifest("ns1", "products", Some("u_123"));
 
     let namespace2 = NamespaceId::new("ns2");
     let table2 = TableName::new("orders");
-    let manifest2 = create_test_manifest("ns2.orders", "shared");
+    let manifest2 = create_test_manifest("ns2", "orders", None);
 
     service1
         .update_after_flush(
@@ -254,20 +254,23 @@ fn test_show_manifest_returns_all_entries() {
 
     // Add multiple entries
     let entries = vec![
-        (NamespaceId::new("ns1"), TableName::new("products"), "u_123"),
-        (NamespaceId::new("ns1"), TableName::new("orders"), "u_456"),
-        (NamespaceId::new("ns2"), TableName::new("sales"), "shared"),
+        (
+            NamespaceId::new("ns1"),
+            TableName::new("products"),
+            Some("u_123"),
+        ),
+        (
+            NamespaceId::new("ns1"),
+            TableName::new("orders"),
+            Some("u_456"),
+        ),
+        (NamespaceId::new("ns2"), TableName::new("sales"), None),
     ];
 
-    for (namespace, table, scope) in &entries {
-        let scope_user: Option<UserId> = if *scope == "shared" {
-            None
-        } else {
-            Some(UserId::from(*scope))
-        };
+    for (namespace, table, user_id_opt) in &entries {
+        let scope_user: Option<UserId> = user_id_opt.map(UserId::from);
         let scope_user_ref: Option<&UserId> = scope_user.as_ref();
-        let manifest =
-            create_test_manifest(&format!("{}.{}", namespace.as_str(), table.as_str()), scope);
+        let manifest = create_test_manifest(namespace.as_str(), table.as_str(), *user_id_opt);
         service
             .update_after_flush(
                 namespace,
@@ -275,7 +278,12 @@ fn test_show_manifest_returns_all_entries() {
                 scope_user_ref,
                 &manifest,
                 None,
-                format!("path/{}/{}/{}", namespace.as_str(), table.as_str(), scope),
+                format!(
+                    "path/{}/{}/{}",
+                    namespace.as_str(),
+                    table.as_str(),
+                    user_id_opt.unwrap_or("shared")
+                ),
             )
             .unwrap();
     }
@@ -306,7 +314,7 @@ fn test_cache_eviction_and_repopulation() {
     let service = create_test_service();
     let namespace = NamespaceId::new("ns1");
     let table = TableName::new("products");
-    let manifest = create_test_manifest("ns1.products", "u_789");
+    let manifest = create_test_manifest("ns1", "products", Some("u_789"));
 
     // Add entry
     service
@@ -338,7 +346,7 @@ fn test_cache_eviction_and_repopulation() {
     assert!(result2.is_none(), "Entry should be evicted");
 
     // Re-populate cache (simulating reload from S3)
-    let manifest_v2 = create_test_manifest("ns1.products", "u_789");
+    let manifest_v2 = create_test_manifest("ns1", "products", Some("u_789"));
     service
         .update_after_flush(
             &namespace,
@@ -372,7 +380,7 @@ fn test_clear_all_entries() {
     for i in 0..5 {
         let namespace = NamespaceId::new(&format!("ns{}", i));
         let table = TableName::new("test_table");
-        let manifest = create_test_manifest(&format!("ns{}.test_table", i), "shared");
+        let manifest = create_test_manifest(&format!("ns{}", i), "test_table", None);
         service
             .update_after_flush(
                 &namespace,
@@ -405,7 +413,7 @@ fn test_multiple_updates_same_key() {
     let table = TableName::new("products");
 
     // First update
-    let manifest1 = create_test_manifest("ns1.products", "u_123");
+    let manifest1 = create_test_manifest("ns1", "products", Some("u_123"));
     service
         .update_after_flush(
             &namespace,
@@ -424,7 +432,7 @@ fn test_multiple_updates_same_key() {
     assert_eq!(entry1.etag, Some("etag-v1".to_string()));
 
     // Second update (same key, new ETag)
-    let manifest2 = create_test_manifest("ns1.products", "u_123");
+    let manifest2 = create_test_manifest("ns1", "products", Some("u_123"));
     service
         .update_after_flush(
             &namespace,

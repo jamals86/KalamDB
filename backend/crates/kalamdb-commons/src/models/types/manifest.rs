@@ -349,9 +349,6 @@ mod tests {
 
     #[test]
     fn test_manifest_cache_entry_is_stale() {
-        use crate::models::TableType;
-        use crate::{NamespaceId, TableName};
-
         let entry = ManifestCacheEntry::new(
             "{}".to_string(),
             Some("etag123".to_string()),
@@ -391,15 +388,7 @@ mod tests {
 
     #[test]
     fn test_batch_file_entry_overlaps_seq_range() {
-        let batch = BatchFileEntry::new(
-            0,
-            "batch-0.parquet".to_string(),
-            1000,
-            2000,
-            100,
-            1024,
-            1,
-        );
+        let batch = BatchFileEntry::new(0, "batch-0.parquet".to_string(), 1000, 2000, 100, 1024, 1);
 
         // Overlaps
         assert!(batch.overlaps_seq_range(1500, 2500));
@@ -413,27 +402,17 @@ mod tests {
 
     #[test]
     fn test_manifest_file_add_batch() {
-        use crate::models::TableType;
+        use crate::models::schemas::TableType;
         use crate::{NamespaceId, TableName, UserId};
 
-        let table_id = TableId::new(
-            NamespaceId::new("test"),
-            TableName::new("table"),
-        );
-        let mut manifest = ManifestFile::new(table_id, TableType::User, Some(UserId::from("user_123")));
+        let table_id = TableId::new(NamespaceId::new("test"), TableName::new("table"));
+        let mut manifest =
+            ManifestFile::new(table_id, TableType::User, Some(UserId::from("user_123")));
 
         assert_eq!(manifest.max_batch, 0);
         assert_eq!(manifest.batches.len(), 0);
 
-        let batch = BatchFileEntry::new(
-            1,
-            "batch-1.parquet".to_string(),
-            1000,
-            2000,
-            50,
-            512,
-            1,
-        );
+        let batch = BatchFileEntry::new(1, "batch-1.parquet".to_string(), 1000, 2000, 50, 512, 1);
 
         manifest.add_batch(batch);
         assert_eq!(manifest.max_batch, 1);
@@ -442,28 +421,17 @@ mod tests {
 
     #[test]
     fn test_manifest_file_validate() {
-        use crate::models::TableType;
+        use crate::models::schemas::TableType;
         use crate::{NamespaceId, TableName};
 
-        let table_id = TableId::new(
-            NamespaceId::new("test"),
-            TableName::new("table"),
-        );
+        let table_id = TableId::new(NamespaceId::new("test"), TableName::new("table"));
         let mut manifest = ManifestFile::new(table_id, TableType::Shared, None);
 
         // Empty manifest is valid
         assert!(manifest.validate().is_ok());
 
         // Add batch
-        let batch = BatchFileEntry::new(
-            1,
-            "batch-1.parquet".to_string(),
-            1000,
-            2000,
-            50,
-            512,
-            1,
-        );
+        let batch = BatchFileEntry::new(1, "batch-1.parquet".to_string(), 1000, 2000, 50, 512, 1);
         manifest.add_batch(batch);
         assert!(manifest.validate().is_ok());
 
@@ -474,24 +442,14 @@ mod tests {
 
     #[test]
     fn test_manifest_file_json_roundtrip() {
-        use crate::models::TableType;
+        use crate::models::schemas::TableType;
         use crate::{NamespaceId, TableName, UserId};
 
-        let table_id = TableId::new(
-            NamespaceId::new("test"),
-            TableName::new("table"),
-        );
-        let mut manifest = ManifestFile::new(table_id, TableType::User, Some(UserId::from("user_456")));
+        let table_id = TableId::new(NamespaceId::new("test"), TableName::new("table"));
+        let mut manifest =
+            ManifestFile::new(table_id, TableType::User, Some(UserId::from("user_456")));
 
-        let batch = BatchFileEntry::new(
-            0,
-            "batch-0.parquet".to_string(),
-            1000,
-            2000,
-            100,
-            1024,
-            1,
-        );
+        let batch = BatchFileEntry::new(0, "batch-0.parquet".to_string(), 1000, 2000, 100, 1024, 1);
         manifest.add_batch(batch);
 
         let json = manifest.to_json().unwrap();

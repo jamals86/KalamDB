@@ -49,7 +49,10 @@ async fn test_user_role_own_tables_access_and_isolation() {
         eprintln!("Create namespace error: {:?}", ns_resp.error);
     }
     assert_eq!(ns_resp.status, "success");
-    let create = format!("CREATE USER TABLE {}.notes (id INT, content TEXT)", ns);
+    let create = format!(
+        "CREATE USER TABLE {}.notes (id INT PRIMARY KEY, content TEXT)",
+        ns
+    );
     let resp = server.execute_sql_as_user(&create, u1.as_str()).await;
     println!("create user table resp = {:?}", resp);
     assert_eq!(resp.status, "success", "create user table resp: {:?}", resp);
@@ -89,7 +92,10 @@ async fn test_service_role_cross_user_access() {
 
     fixtures::create_namespace(&server, ns).await;
 
-    let create = format!("CREATE USER TABLE {}.orders (id INT, content TEXT)", ns);
+    let create = format!(
+        "CREATE USER TABLE {}.orders (id INT PRIMARY KEY, content TEXT)",
+        ns
+    );
     let resp = server.execute_sql_as_user(&create, alice.as_str()).await;
     assert_eq!(
         resp.status, "success",
@@ -136,7 +142,10 @@ async fn test_service_role_flush_operations() {
 
     fixtures::create_namespace(&server, ns).await;
 
-    let create = format!("CREATE USER TABLE {}.events (id INT, message TEXT)", ns);
+    let create = format!(
+        "CREATE USER TABLE {}.events (id INT PRIMARY KEY, message TEXT)",
+        ns
+    );
     let resp = server.execute_sql_as_user(&create, svc.as_str()).await;
     assert_eq!(resp.status, "success", "service should create user table");
 

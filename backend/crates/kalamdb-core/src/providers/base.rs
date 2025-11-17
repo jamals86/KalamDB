@@ -13,6 +13,9 @@
 use crate::app_context::AppContext;
 use crate::error::KalamDbError;
 use crate::live_query::LiveQueryManager;
+use crate::manifest::ManifestAccessPlanner;
+use crate::providers::arrow_json_conversion::json_rows_to_arrow_batch;
+use crate::providers::unified_dml;
 use crate::schema_registry::TableType;
 use crate::storage::storage_registry::StorageRegistry;
 use async_trait::async_trait;
@@ -22,9 +25,15 @@ use datafusion::catalog::Session;
 use datafusion::datasource::TableProvider;
 use datafusion::logical_expr::Expr;
 use kalamdb_commons::models::{NamespaceId, TableName, UserId};
+use kalamdb_commons::types::ManifestFile;
 use kalamdb_commons::{StorageKey, TableId};
-use serde_json::Value as JsonValue;
+use kalamdb_tables::{SharedTableRow, StreamTableRow, UserTableRow};
+use once_cell::sync::Lazy;
+use serde_json::{Map, Value as JsonValue};
+use std::path::PathBuf;
 use std::sync::Arc;
+
+static SYSTEM_USER_ID: Lazy<UserId> = Lazy::new(|| UserId::from("_system"));
 
 /// Shared core state for all table providers
 ///
@@ -43,6 +52,12 @@ pub struct TableProviderCore {
     /// Application context for global services (kept for BaseTableProvider trait)
     pub app_context: Arc<AppContext>,
 
+    /// Table identity shared by provider implementations
+    table_id: Arc<TableId>,
+
+    /// Logical table type used for routing/storage decisions
+    table_type: TableType,
+
     /// Schema registry for table metadata and Arrow schema caching
     pub schema_registry: Arc<crate::schema_registry::SchemaRegistry>,
 
@@ -58,14 +73,25 @@ pub struct TableProviderCore {
 
 impl TableProviderCore {
     /// Create new core with required services from AppContext
-    pub fn from_app_context(app_context: &Arc<AppContext>) -> Self {
+    pub fn new(app_context: Arc<AppContext>, table_id: TableId, table_type: TableType) -> Self {
         Self {
-            app_context: app_context.clone(),
+            table_id: Arc::new(table_id),
+            table_type,
             schema_registry: app_context.schema_registry(),
             system_columns: app_context.system_columns_service(),
             live_query_manager: None,
             storage_registry: None,
+            app_context,
         }
+    }
+
+    /// Backwards-compatible helper to build from borrowed AppContext
+    pub fn from_app_context(
+        app_context: &Arc<AppContext>,
+        table_id: TableId,
+        table_type: TableType,
+    ) -> Self {
+        Self::new(app_context.clone(), table_id, table_type)
     }
 
     /// Add LiveQueryManager to core
@@ -78,6 +104,21 @@ impl TableProviderCore {
     pub fn with_storage_registry(mut self, registry: Arc<StorageRegistry>) -> Self {
         self.storage_registry = Some(registry);
         self
+    }
+
+    /// TableId accessor (shared across providers)
+    pub fn table_id(&self) -> &TableId {
+        self.table_id.as_ref()
+    }
+
+    /// Cloneable TableId handle (avoids leaking Arc internals to callers)
+    pub fn table_id_arc(&self) -> Arc<TableId> {
+        self.table_id.clone()
+    }
+
+    /// TableType accessor
+    pub fn table_type(&self) -> TableType {
+        self.table_type
     }
 }
 
@@ -409,4 +450,387 @@ pub fn inject_system_columns(
     if has_deleted {
         obj.insert("_deleted".to_string(), serde_json::json!(deleted_value));
     }
+}
+
+/// Trait implemented by provider row types to expose system columns and JSON payload
+pub trait ScanRow {
+    fn field_map(&self) -> Option<&Map<String, JsonValue>>;
+    fn seq_value(&self) -> i64;
+    fn deleted_flag(&self) -> bool;
+}
+
+impl ScanRow for SharedTableRow {
+    fn field_map(&self) -> Option<&Map<String, JsonValue>> {
+        self.fields.as_object()
+    }
+
+    fn seq_value(&self) -> i64 {
+        self._seq.as_i64()
+    }
+
+    fn deleted_flag(&self) -> bool {
+        self._deleted
+    }
+}
+
+impl ScanRow for UserTableRow {
+    fn field_map(&self) -> Option<&Map<String, JsonValue>> {
+        self.fields.as_object()
+    }
+
+    fn seq_value(&self) -> i64 {
+        self._seq.as_i64()
+    }
+
+    fn deleted_flag(&self) -> bool {
+        self._deleted
+    }
+}
+
+impl ScanRow for StreamTableRow {
+    fn field_map(&self) -> Option<&Map<String, JsonValue>> {
+        self.fields.as_object()
+    }
+
+    fn seq_value(&self) -> i64 {
+        self._seq.as_i64()
+    }
+
+    fn deleted_flag(&self) -> bool {
+        false
+    }
+}
+
+/// Convert resolved key-value rows into an Arrow RecordBatch with system columns injected
+pub fn rows_to_arrow_batch<K, R, F>(
+    schema: &SchemaRef,
+    kvs: Vec<(K, R)>,
+    mut enrich_row: F,
+) -> Result<RecordBatch, KalamDbError>
+where
+    R: ScanRow,
+    F: FnMut(&mut Map<String, JsonValue>, &R),
+{
+    let mut rows: Vec<JsonValue> = Vec::with_capacity(kvs.len());
+
+    for (_key, row) in kvs.into_iter() {
+        let mut obj = row.field_map().cloned().unwrap_or_else(|| Map::new());
+
+        enrich_row(&mut obj, &row);
+
+        inject_system_columns(schema, &mut obj, row.seq_value(), row.deleted_flag());
+        rows.push(JsonValue::Object(obj));
+    }
+
+    json_rows_to_arrow_batch(schema, rows)
+        .map_err(|e| KalamDbError::InvalidOperation(format!("Failed to build Arrow batch: {}", e)))
+}
+
+/// Shared helper for loading Parquet batches via ManifestAccessPlanner.
+pub(crate) fn scan_parquet_files_as_batch(
+    core: &TableProviderCore,
+    table_id: &TableId,
+    table_type: TableType,
+    user_id: Option<&UserId>,
+    schema: SchemaRef,
+    filter: Option<&Expr>,
+) -> Result<RecordBatch, KalamDbError> {
+    use datafusion::logical_expr::Operator;
+
+    let namespace = table_id.namespace_id();
+    let table = table_id.table_name();
+    let scope_label = user_id
+        .map(|uid| format!("user={}", uid.as_str()))
+        .unwrap_or_else(|| format!("scope={}", table_type.as_str()));
+
+    let storage_path = core
+        .app_context
+        .schema_registry()
+        .get_storage_path(table_id, user_id, None)?;
+    let storage_dir = PathBuf::from(&storage_path);
+
+    if !storage_dir.exists() {
+        log::trace!(
+            "No Parquet directory exists ({}) for table {}.{} - returning empty batch",
+            scope_label,
+            namespace.as_str(),
+            table.as_str()
+        );
+        return Ok(RecordBatch::new_empty(schema.clone()));
+    }
+
+    let manifest_cache_service = core.app_context.manifest_cache_service();
+    let cache_result = manifest_cache_service.get_or_load(namespace, table, user_id);
+    let mut manifest_opt: Option<ManifestFile> = None;
+    let mut use_degraded_mode = false;
+
+    match &cache_result {
+        Ok(Some(entry)) => match ManifestFile::from_json(&entry.manifest_json) {
+            Ok(manifest) => {
+                if let Err(e) = manifest.validate() {
+                    log::warn!(
+                        "⚠️  [MANIFEST CORRUPTION] table={}.{} {} error={} | Triggering rebuild",
+                        namespace.as_str(),
+                        table.as_str(),
+                        scope_label,
+                        e
+                    );
+                    use_degraded_mode = true;
+                    let manifest_service = core.app_context.manifest_service();
+                    let ns = namespace.clone();
+                    let tbl = table.clone();
+                    let uid = user_id.cloned();
+                    let scope_for_spawn = scope_label.clone();
+                    let manifest_table_type = table_type.clone();
+                    tokio::spawn(async move {
+                        log::info!(
+                            "🔧 [MANIFEST REBUILD STARTED] table={}.{} {}",
+                            ns.as_str(),
+                            tbl.as_str(),
+                            scope_for_spawn
+                        );
+                        match manifest_service.rebuild_manifest(
+                            &ns,
+                            &tbl,
+                            manifest_table_type,
+                            uid.as_ref(),
+                        ) {
+                            Ok(_) => {
+                                log::info!(
+                                    "✅ [MANIFEST REBUILD COMPLETED] table={}.{} {}",
+                                    ns.as_str(),
+                                    tbl.as_str(),
+                                    scope_for_spawn
+                                );
+                            }
+                            Err(e) => {
+                                log::error!(
+                                    "❌ [MANIFEST REBUILD FAILED] table={}.{} {} error={}",
+                                    ns.as_str(),
+                                    tbl.as_str(),
+                                    scope_for_spawn,
+                                    e
+                                );
+                            }
+                        }
+                    });
+                } else {
+                    manifest_opt = Some(manifest);
+                }
+            }
+            Err(e) => {
+                log::warn!(
+                    "⚠️  Failed to parse manifest JSON for table={}.{} {}: {} | Using degraded mode",
+                    namespace.as_str(),
+                    table.as_str(),
+                    scope_label,
+                    e
+                );
+                use_degraded_mode = true;
+            }
+        },
+        Ok(None) => {
+            log::debug!(
+                "⚠️  Manifest cache MISS | table={}.{} | {} | fallback=directory_scan",
+                namespace.as_str(),
+                table.as_str(),
+                scope_label
+            );
+            use_degraded_mode = true;
+        }
+        Err(e) => {
+            log::warn!(
+                "⚠️  Manifest cache ERROR | table={}.{} | {} | error={} | fallback=directory_scan",
+                namespace.as_str(),
+                table.as_str(),
+                scope_label,
+                e
+            );
+            use_degraded_mode = true;
+        }
+    }
+
+    if let Some(ref manifest) = manifest_opt {
+        log::debug!(
+            "✅ Manifest cache HIT | table={}.{} | {} | batches={}",
+            namespace.as_str(),
+            table.as_str(),
+            scope_label,
+            manifest.batches.len()
+        );
+    }
+
+    fn extract_seq_bounds(expr: &Expr) -> (Option<i64>, Option<i64>) {
+        use datafusion::logical_expr::Expr::Column;
+        use datafusion::scalar::ScalarValue;
+
+        fn lit_to_i64(e: &Expr) -> Option<i64> {
+            if let Expr::Literal(lit, _) = e {
+                match lit {
+                    ScalarValue::Int64(Some(v)) => Some(*v),
+                    ScalarValue::Int32(Some(v)) => Some(*v as i64),
+                    ScalarValue::UInt64(Some(v)) => Some(*v as i64),
+                    ScalarValue::UInt32(Some(v)) => Some(*v as i64),
+                    _ => None,
+                }
+            } else {
+                None
+            }
+        }
+
+        match expr {
+            Expr::BinaryExpr(be) => {
+                let left = &be.left;
+                let right = &be.right;
+                let op = &be.op;
+
+                if *op == Operator::And {
+                    let (a_min, a_max) = extract_seq_bounds(left);
+                    let (b_min, b_max) = extract_seq_bounds(right);
+                    let min = match (a_min, b_min) {
+                        (Some(a), Some(b)) => Some(a.max(b)),
+                        (Some(a), None) => Some(a),
+                        (None, Some(b)) => Some(b),
+                        _ => None,
+                    };
+                    let max = match (a_max, b_max) {
+                        (Some(a), Some(b)) => Some(a.min(b)),
+                        (Some(a), None) => Some(a),
+                        (None, Some(b)) => Some(b),
+                        _ => None,
+                    };
+                    return (min, max);
+                }
+
+                let is_seq_left = matches!(left.as_ref(), Column(c) if c.name.as_str() == "_seq");
+                let is_seq_right = matches!(right.as_ref(), Column(c) if c.name.as_str() == "_seq");
+
+                if is_seq_left {
+                    if let Some(val) = lit_to_i64(right.as_ref()) {
+                        return match op {
+                            Operator::Gt | Operator::GtEq => (Some(val), None),
+                            Operator::Lt | Operator::LtEq => (None, Some(val)),
+                            Operator::Eq => (Some(val), Some(val)),
+                            _ => (None, None),
+                        };
+                    }
+                } else if is_seq_right {
+                    if let Some(val) = lit_to_i64(left.as_ref()) {
+                        return match op {
+                            Operator::Lt | Operator::LtEq => (Some(val), None),
+                            Operator::Gt | Operator::GtEq => (None, Some(val)),
+                            Operator::Eq => (Some(val), Some(val)),
+                            _ => (None, None),
+                        };
+                    }
+                }
+            }
+            _ => {}
+        }
+
+        (None, None)
+    }
+
+    let planner = ManifestAccessPlanner::new();
+    let (min_seq, max_seq) = filter
+        .map(|f| extract_seq_bounds(f))
+        .unwrap_or((None, None));
+    let seq_range = match (min_seq, max_seq) {
+        (Some(min), Some(max)) => Some((min, max)),
+        _ => None,
+    };
+
+    let (combined, (total_batches, skipped, scanned)) = planner.scan_parquet_files(
+        manifest_opt.as_ref(),
+        &storage_dir,
+        seq_range,
+        use_degraded_mode,
+        schema.clone(),
+    )?;
+
+    if total_batches > 0 {
+        log::debug!(
+            "[Manifest Pruning] table={}.{} {} batches_total={} skipped={} scanned={} rows={}",
+            namespace.as_str(),
+            table.as_str(),
+            scope_label,
+            total_batches,
+            skipped,
+            scanned,
+            combined.num_rows()
+        );
+    }
+
+    Ok(combined)
+}
+
+/// Return a shared `_system` user identifier for scope-agnostic operations
+pub fn system_user_id() -> &'static UserId {
+    &SYSTEM_USER_ID
+}
+
+/// Resolve user scope, defaulting to the shared system identifier for scope-less tables
+pub fn resolve_user_scope(scope: Option<&UserId>) -> &UserId {
+    scope.unwrap_or_else(|| system_user_id())
+}
+
+fn json_value_matches_pk(value: &JsonValue, target: &str) -> bool {
+    match value {
+        JsonValue::String(s) => s == target,
+        JsonValue::Number(n) => n.to_string() == target,
+        JsonValue::Bool(b) => b.to_string() == target,
+        _ => false,
+    }
+}
+
+/// Locate the latest non-deleted row matching the provided primary-key value
+pub fn find_row_by_pk<P, K, V>(
+    provider: &P,
+    scope: Option<&UserId>,
+    pk_value: &str,
+) -> Result<Option<(K, V)>, KalamDbError>
+where
+    P: BaseTableProvider<K, V>,
+    K: StorageKey,
+{
+    let user_scope = resolve_user_scope(scope);
+    let resolved = provider.scan_with_version_resolution_to_kvs(user_scope, None)?;
+    let pk_name = provider.primary_key_field_name();
+
+    for (key, row) in resolved.into_iter() {
+        if let Some(fields) = P::extract_fields(&row) {
+            if let Some(val) = fields.get(pk_name) {
+                if json_value_matches_pk(val, pk_value) {
+                    return Ok(Some((key, row)));
+                }
+            }
+        }
+    }
+
+    Ok(None)
+}
+
+/// Ensure an INSERT payload either auto-generates or provides a unique primary-key value
+pub fn ensure_unique_pk_value<P, K, V>(
+    provider: &P,
+    scope: Option<&UserId>,
+    row_data: &JsonValue,
+) -> Result<(), KalamDbError>
+where
+    P: BaseTableProvider<K, V>,
+    K: StorageKey,
+{
+    let pk_name = provider.primary_key_field_name();
+    if let Some(pk_value) = row_data.get(pk_name) {
+        if !pk_value.is_null() {
+            let pk_str = unified_dml::extract_user_pk_value(row_data, pk_name)?;
+            if find_row_by_pk(provider, scope, &pk_str)?.is_some() {
+                return Err(KalamDbError::AlreadyExists(format!(
+                    "Primary key violation: value '{}' already exists in column '{}'",
+                    pk_str, pk_name
+                )));
+            }
+        }
+    }
+    Ok(())
 }

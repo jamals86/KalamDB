@@ -62,12 +62,6 @@ impl SystemColumnsService {
     pub const COL_SEQ: &'static str = "_seq";
     pub const COL_DELETED: &'static str = "_deleted";
 
-    // /// Legacy column names (deprecated, for migration reference)
-    // #[deprecated(note = "Use COL_SEQ instead - _id removed in MVCC architecture")]
-    // pub const COL_ID: &'static str = "_id";
-    // #[deprecated(note = "Use _seq.timestamp_millis() instead - _updated removed in MVCC architecture")]
-    // pub const COL_UPDATED: &'static str = "_updated";
-
     /// Create a new SystemColumnsService
     ///
     /// # Arguments

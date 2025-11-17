@@ -65,7 +65,7 @@ async fn test_create_table_path_resolution() {
 
     // Create user table
     let create_sql = format!(
-        "CREATE USER TABLE {}.{} (id INT, name TEXT) FLUSH ROWS 10",
+        "CREATE USER TABLE {}.{} (id INT PRIMARY KEY, name TEXT) FLUSH ROWS 10",
         namespace, table
     );
     let response = server.execute_sql(&create_sql).await;
@@ -132,7 +132,7 @@ async fn test_cache_hit_performance() {
 
     let response = server
         .execute_sql(&format!(
-            "CREATE USER TABLE {}.{} (id INT, value TEXT) FLUSH ROWS 10",
+            "CREATE USER TABLE {}.{} (id INT PRIMARY KEY, value TEXT) FLUSH ROWS 10",
             namespace, table
         ))
         .await;
@@ -201,7 +201,7 @@ async fn test_cache_invalidation() {
 
     let response = server
         .execute_sql(&format!(
-            "CREATE USER TABLE {}.{} (id INT, name TEXT) FLUSH ROWS 10",
+            "CREATE USER TABLE {}.{} (id INT PRIMARY KEY, name TEXT) FLUSH ROWS 10",
             namespace, table
         ))
         .await;
@@ -276,7 +276,7 @@ async fn test_cache_hit_rate_many_queries() {
         let table = format!("table_{}", i);
         let response = server
             .execute_sql(&format!(
-                "CREATE USER TABLE {}.{} (id INT) FLUSH ROWS 10",
+                "CREATE USER TABLE {}.{} (id INT PRIMARY KEY) FLUSH ROWS 10",
                 namespace, table
             ))
             .await;

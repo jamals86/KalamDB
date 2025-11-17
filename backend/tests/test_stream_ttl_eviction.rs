@@ -55,7 +55,11 @@ async fn test_stream_table_ttl_eviction_with_select() {
         "/tmp/kalamdb-test".to_string(),
         config,
     );
-    let core = Arc::new(TableProviderCore::from_app_context(&app_ctx));
+    let core = Arc::new(TableProviderCore::from_app_context(
+        &app_ctx,
+        table_id.clone(),
+        TableType::Stream,
+    ));
 
     // Prime SchemaRegistry with TableDefinition for this stream table (required by provider.schema_ref())
     let table_def = TableDefinition::new(
@@ -105,7 +109,6 @@ async fn test_stream_table_ttl_eviction_with_select() {
 
     let provider = Arc::new(StreamTableProvider::new(
         core.clone(),
-        table_id.clone(),
         stream_store.clone(),
         Some(1), // 1-second TTL
         "event_id".to_string(),
@@ -206,7 +209,11 @@ async fn test_stream_table_select_with_projection() {
         "/tmp/kalamdb-test".to_string(),
         config,
     );
-    let core = Arc::new(TableProviderCore::from_app_context(&app_ctx));
+    let core = Arc::new(TableProviderCore::from_app_context(
+        &app_ctx,
+        table_id.clone(),
+        TableType::Stream,
+    ));
 
     // Prime SchemaRegistry with TableDefinition for this stream table
     let table_def = TableDefinition::new(
@@ -256,7 +263,6 @@ async fn test_stream_table_select_with_projection() {
 
     let provider = Arc::new(StreamTableProvider::new(
         core.clone(),
-        table_id.clone(),
         stream_store.clone(),
         None, // No TTL for this test
         "event_id".to_string(),
@@ -325,7 +331,11 @@ async fn test_stream_table_select_with_limit() {
         "/tmp/kalamdb-test".to_string(),
         config,
     );
-    let core = Arc::new(TableProviderCore::from_app_context(&app_ctx));
+    let core = Arc::new(TableProviderCore::from_app_context(
+        &app_ctx,
+        table_id.clone(),
+        TableType::Stream,
+    ));
 
     // Prime SchemaRegistry with TableDefinition for this stream table
     let table_def = TableDefinition::new(
@@ -365,7 +375,6 @@ async fn test_stream_table_select_with_limit() {
 
     let provider = Arc::new(StreamTableProvider::new(
         core.clone(),
-        table_id.clone(),
         stream_store.clone(),
         None,
         "event_id".to_string(),

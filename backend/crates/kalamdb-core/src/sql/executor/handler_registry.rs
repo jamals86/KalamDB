@@ -98,7 +98,6 @@ type HandlerKey = std::mem::Discriminant<kalamdb_sql::statement_classifier::SqlS
 pub struct HandlerRegistry {
     handlers: DashMap<HandlerKey, Arc<dyn SqlStatementHandler>>,
     app_context: Arc<AppContext>,
-    enforce_password_complexity: bool,
 }
 
 impl HandlerRegistry {
@@ -113,7 +112,6 @@ impl HandlerRegistry {
         let registry = Self {
             handlers: DashMap::new(),
             app_context: app_context.clone(),
-            enforce_password_complexity,
         };
 
         // ============================================================================
@@ -611,7 +609,7 @@ mod tests {
 
         init_test_app_context();
         let app_ctx = AppContext::get();
-        let registry = HandlerRegistry::new(app_ctx);
+        let registry = HandlerRegistry::new(app_ctx, false);
         let session = SessionContext::new();
         let ctx = test_context();
 
@@ -644,7 +642,7 @@ mod tests {
 
         init_test_app_context();
         let app_ctx = AppContext::get();
-        let registry = HandlerRegistry::new(app_ctx);
+        let registry = HandlerRegistry::new(app_ctx, false);
         let session = SessionContext::new();
         let ctx = test_context();
 
@@ -676,7 +674,7 @@ mod tests {
 
         init_test_app_context();
         let app_ctx = AppContext::get();
-        let registry = HandlerRegistry::new(app_ctx);
+        let registry = HandlerRegistry::new(app_ctx, false);
         let session: SessionContext = SessionContext::new();
         let user_ctx = ExecutionContext::new(
             UserId::from("regular_user"),
@@ -708,7 +706,7 @@ mod tests {
 
         init_test_app_context();
         let app_ctx = AppContext::get();
-        let registry = HandlerRegistry::new(app_ctx);
+        let registry = HandlerRegistry::new(app_ctx, false);
         let session = SessionContext::new();
         let ctx =
             ExecutionContext::new(UserId::from("test_user"), Role::User, create_test_session());
@@ -738,7 +736,7 @@ mod tests {
 
         init_test_app_context();
         let app_ctx = AppContext::get();
-        let registry = HandlerRegistry::new(app_ctx);
+        let registry = HandlerRegistry::new(app_ctx, false);
         let _session = SessionContext::new();
         let ctx =
             ExecutionContext::new(UserId::from("test_user"), Role::User, create_test_session());
@@ -768,7 +766,7 @@ mod tests {
 
         init_test_app_context();
         let app_ctx = AppContext::get();
-        let registry = HandlerRegistry::new(app_ctx);
+        let registry = HandlerRegistry::new(app_ctx, false);
         let session = SessionContext::new();
         let ctx =
             ExecutionContext::new(UserId::from("test_user"), Role::User, create_test_session());
