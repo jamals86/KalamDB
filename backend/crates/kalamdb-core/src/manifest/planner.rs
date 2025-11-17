@@ -88,14 +88,16 @@ impl ManifestAccessPlanner {
             }
         }
 
-        // Fallback: list directory if no files selected from manifest
+        // Fallback: only when no manifest (or degraded mode)
         if parquet_files.is_empty() {
-            let entries = fs::read_dir(storage_dir).map_err(|e| KalamDbError::Io(e))?;
-            for entry in entries {
-                let entry = entry.map_err(|e| KalamDbError::Io(e))?;
-                let path = entry.path();
-                if path.extension().and_then(|s| s.to_str()) == Some("parquet") {
-                    parquet_files.push(path);
+            if manifest_opt.is_none() || use_degraded_mode {
+                let entries = fs::read_dir(storage_dir).map_err(|e| KalamDbError::Io(e))?;
+                for entry in entries {
+                    let entry = entry.map_err(|e| KalamDbError::Io(e))?;
+                    let path = entry.path();
+                    if path.extension().and_then(|s| s.to_str()) == Some("parquet") {
+                        parquet_files.push(path);
+                    }
                 }
             }
         }
@@ -196,6 +198,9 @@ mod tests {
     use datafusion::arrow::datatypes::Schema;
     use std::time::{SystemTime, UNIX_EPOCH};
     use std::fs as stdfs;
+    use parquet::arrow::arrow_writer::ArrowWriter;
+    use datafusion::arrow::array::{Int64Array, Int32Array};
+    use datafusion::arrow::record_batch::RecordBatch as ArrowRecordBatch;
 
     fn make_manifest_with_groups() -> ManifestFile {
         use kalamdb_commons::models::TableType;
@@ -270,6 +275,92 @@ mod tests {
             .expect("planner should handle empty directory");
 
         assert_eq!(batch.num_rows(), 0, "Expected empty batch for empty dir");
+
+        // Cleanup
+        stdfs::remove_dir_all(&dir).unwrap();
+    }
+
+    fn write_parquet_with_rows(path: &std::path::Path, schema: &SchemaRef, rows: usize) {
+        let file = stdfs::File::create(path).unwrap();
+        let mut writer = ArrowWriter::try_new(file, schema.as_ref(), None).unwrap();
+        if rows > 0 {
+            let seq_values: Vec<i64> = (0..rows as i64).collect();
+            let val_values: Vec<i32> = (0..rows as i32).collect();
+            let seq = Int64Array::from(seq_values);
+            let val = Int32Array::from(val_values);
+            let batch = ArrowRecordBatch::try_new(schema.clone(), vec![Arc::new(seq), Arc::new(val)]).unwrap();
+            writer.write(&batch).unwrap();
+        }
+        writer.close().unwrap();
+    }
+
+    #[test]
+    fn test_pruning_stats_with_manifest_and_seq_ranges() {
+        // Temp dir
+        let base = std::env::temp_dir();
+        let unique = format!(
+            "kalamdb_test_prune_{}",
+            SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        );
+        let dir = base.join(unique);
+        stdfs::create_dir_all(&dir).unwrap();
+
+        // Schema: _seq: Int64, val: Int32
+        use datafusion::arrow::datatypes::{DataType, Field};
+        let schema: SchemaRef = Arc::new(Schema::new(vec![
+            Field::new("_seq", DataType::Int64, false),
+            Field::new("val", DataType::Int32, false),
+        ]));
+
+        // Create two files
+        let f0 = dir.join("batch-0.parquet");
+        let f1 = dir.join("batch-1.parquet");
+        write_parquet_with_rows(&f0, &schema, 10);
+        write_parquet_with_rows(&f1, &schema, 10);
+
+        // Manifest with two batches
+        use kalamdb_commons::{NamespaceId, TableId, TableName};
+        use crate::schema_registry::TableType;
+        let table_id = TableId::new(NamespaceId::new("ns"), TableName::new("tbl"));
+        let mut mf = ManifestFile::new(table_id, TableType::Shared, None);
+
+        let b0 = BatchFileEntry::new(0, "batch-0.parquet".to_string(), 0, 99, 10, 123, 1);
+        mf.add_batch(b0);
+        let b1 = BatchFileEntry::new(1, "batch-1.parquet".to_string(), 100, 199, 10, 123, 1);
+        mf.add_batch(b1);
+
+        let planner = ManifestAccessPlanner::new();
+
+        // Range overlaps only first file
+        let (batch, (total, skipped, scanned)) = planner
+            .scan_parquet_files(Some(&mf), &dir, Some((0, 90)), false, schema.clone())
+            .expect("planner should read files");
+        assert_eq!(total, 2);
+        assert_eq!(scanned, 1);
+        assert_eq!(skipped, 1);
+        // rows: full file read (we don't prune row-groups yet)
+        assert_eq!(batch.num_rows(), 10);
+
+        // Range overlaps only second file
+        let (batch2, (total2, skipped2, scanned2)) = planner
+            .scan_parquet_files(Some(&mf), &dir, Some((150, 160)), false, schema.clone())
+            .expect("planner should read files");
+        assert_eq!(total2, 2);
+        assert_eq!(scanned2, 1);
+        assert_eq!(skipped2, 1);
+        assert_eq!(batch2.num_rows(), 10);
+
+        // Range overlaps none -> scanned 0, empty batch, no fallback because manifest exists
+        let (batch3, (total3, skipped3, scanned3)) = planner
+            .scan_parquet_files(Some(&mf), &dir, Some((300, 400)), false, schema.clone())
+            .expect("planner should handle no-overlap");
+        assert_eq!(total3, 2);
+        assert_eq!(scanned3, 0);
+        assert_eq!(skipped3, 2);
+        assert_eq!(batch3.num_rows(), 0);
 
         // Cleanup
         stdfs::remove_dir_all(&dir).unwrap();

@@ -212,6 +212,10 @@ instead of: 1 failed: Invalid operation: No handler registered for statement typ
 
 157) Are we closing all ParquetWriter? whenever we use them?
 158) extract_seq_bounds is duplicated we cna combine it
+159) Add tests to cover the indexes and manifest reading - check if it's actually working and the planner works with indexes now and doesnt read the un-needed parquet files
+
+
+
 
 
 Here’s the updated 5-line spec with embedding storage inside Parquet and managed HNSW indexing (with delete handling):
