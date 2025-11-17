@@ -12,11 +12,12 @@ use kalamdb_commons::types::User;
 /// Handler for CREATE USER
 pub struct CreateUserHandler {
     app_context: Arc<AppContext>,
+    enforce_complexity: bool,
 }
 
 impl CreateUserHandler {
-    pub fn new(app_context: Arc<AppContext>) -> Self {
-        Self { app_context }
+    pub fn new(app_context: Arc<AppContext>, enforce_complexity: bool) -> Self {
+        Self { app_context, enforce_complexity }
     }
 }
 
@@ -43,7 +44,7 @@ impl TypedStatementHandler<CreateUserStatement> for CreateUserHandler {
             AuthType::Password => {
                 let raw = statement.password.clone().ok_or_else(|| KalamDbError::InvalidOperation("Password required for WITH PASSWORD".to_string()))?;
                 // Enforce password complexity if enabled in config
-                if self.app_context.config().auth.enforce_password_complexity {
+                if self.enforce_complexity || self.app_context.config().auth.enforce_password_complexity {
                     validate_password_complexity(&raw)?;
                 }
                 bcrypt::hash(raw, bcrypt::DEFAULT_COST).map_err(|e| KalamDbError::Other(format!("Password hash error: {}", e)))?

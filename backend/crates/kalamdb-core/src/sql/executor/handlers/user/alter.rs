@@ -11,11 +11,12 @@ use std::sync::Arc;
 /// Handler for ALTER USER
 pub struct AlterUserHandler {
     app_context: Arc<AppContext>,
+    enforce_complexity: bool,
 }
 
 impl AlterUserHandler {
-    pub fn new(app_context: Arc<AppContext>) -> Self {
-        Self { app_context }
+    pub fn new(app_context: Arc<AppContext>, enforce_complexity: bool) -> Self {
+        Self { app_context, enforce_complexity }
     }
 }
 
@@ -41,7 +42,7 @@ impl TypedStatementHandler<AlterUserStatement> for AlterUserHandler {
                     return Err(KalamDbError::Unauthorized("Only admins can change other users' passwords".to_string()));
                 }
                 // Enforce password complexity if enabled in config
-                if self.app_context.config().auth.enforce_password_complexity {
+                if self.enforce_complexity || self.app_context.config().auth.enforce_password_complexity {
                     validate_password_complexity(&new_pw)?;
                 }
                 updated.password_hash = bcrypt::hash(new_pw, bcrypt::DEFAULT_COST)

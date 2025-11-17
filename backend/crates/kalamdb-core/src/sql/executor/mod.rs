@@ -38,7 +38,7 @@ impl SqlExecutor {
         app_context: Arc<crate::app_context::AppContext>,
         enforce_password_complexity: bool,
     ) -> Self {
-        let handler_registry = Arc::new(HandlerRegistry::new(app_context.clone()));
+        let handler_registry = Arc::new(HandlerRegistry::new(app_context.clone(), enforce_password_complexity));
         Self {
             app_context,
             handler_registry,

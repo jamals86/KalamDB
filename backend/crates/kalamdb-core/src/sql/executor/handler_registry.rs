@@ -98,13 +98,14 @@ type HandlerKey = std::mem::Discriminant<kalamdb_sql::statement_classifier::SqlS
 pub struct HandlerRegistry {
     handlers: DashMap<HandlerKey, Arc<dyn SqlStatementHandler>>,
     app_context: Arc<AppContext>,
+    enforce_password_complexity: bool,
 }
 
 impl HandlerRegistry {
     /// Create a new handler registry with all handlers pre-registered
     ///
     /// This is called once during SqlExecutor initialization.
-    pub fn new(app_context: Arc<AppContext>) -> Self {
+    pub fn new(app_context: Arc<AppContext>, enforce_password_complexity: bool) -> Self {
         use kalamdb_sql::statement_classifier::SqlStatementKind;
     use kalamdb_commons::models::{NamespaceId, StorageId};
     use kalamdb_commons::TableType; // Role not needed here
@@ -112,6 +113,7 @@ impl HandlerRegistry {
         let registry = Self {
             handlers: DashMap::new(),
             app_context: app_context.clone(),
+            enforce_password_complexity,
         };
 
         // ============================================================================
@@ -351,7 +353,7 @@ impl HandlerRegistry {
                 email: None,
                 password: None,
             }),
-            CreateUserHandler::new(app_context.clone()),
+            CreateUserHandler::new(app_context.clone(), enforce_password_complexity),
             |stmt| match stmt.kind() { SqlStatementKind::CreateUser(s) => Some(s.clone()), _ => None },
         );
         registry.register_typed(
@@ -359,7 +361,7 @@ impl HandlerRegistry {
                 username: "_placeholder".to_string(),
                 modification: UserModification::SetEmail("_placeholder".to_string()),
             }),
-            AlterUserHandler::new(app_context.clone()),
+            AlterUserHandler::new(app_context.clone(), enforce_password_complexity),
             |stmt| match stmt.kind() { SqlStatementKind::AlterUser(s) => Some(s.clone()), _ => None },
         );
         registry.register_typed(
