@@ -18,7 +18,7 @@ async fn test_user_table_manual_flush_creates_parquet() {
 
     let create_sql = format!(
         "CREATE USER TABLE {}.{} (
-            id BIGINT,
+            id BIGINT PRIMARY KEY,
             metric TEXT,
             value DOUBLE
         ) FLUSH ROWS 5",

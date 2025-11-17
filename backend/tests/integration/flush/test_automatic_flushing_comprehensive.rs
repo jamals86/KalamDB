@@ -21,7 +21,7 @@ async fn test_manual_flush_multi_user_partitions() {
 
     let create_sql = format!(
         "CREATE USER TABLE {}.{} (
-            id BIGINT,
+            id BIGINT PRIMARY KEY,
             message_id BIGINT,
             body TEXT
         ) FLUSH ROWS 20",
@@ -79,7 +79,7 @@ async fn test_flush_table_sql_job_and_files() {
 
     let create_sql = format!(
         "CREATE USER TABLE {}.{} (
-            id BIGINT,
+            id BIGINT PRIMARY KEY,
             entry TEXT
         ) FLUSH ROWS 50",
         namespace, table_name

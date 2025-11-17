@@ -206,6 +206,9 @@ Also make sure we dont add the "id" column as we used to do before, we rely sole
 
 155) Whenever we drop a table cancel all jobs for this table which are still running or queued
 
+156) When there is an sql parsing or any error the parser should return a clear error with maybe line or description of what is it
+instead of: 1 failed: Invalid operation: No handler registered for statement type 'UNKNOWN'
+                           
 
 
 Here’s the updated 5-line spec with embedding storage inside Parquet and managed HNSW indexing (with delete handling):

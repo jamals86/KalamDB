@@ -104,6 +104,22 @@ pub fn create_user_table(
     validate_table_name(stmt.table_name.as_str())
         .map_err(KalamDbError::InvalidOperation)?;
 
+    // Validate namespace exists BEFORE other validations to surface actionable guidance
+    let namespaces_provider = app_context.system_tables().namespaces();
+    let namespace_id = NamespaceId::new(stmt.namespace_id.as_str());
+    if namespaces_provider.get_namespace(&namespace_id)?.is_none() {
+        log::error!(
+            "❌ CREATE USER TABLE failed: Namespace '{}' does not exist. Create it first with CREATE NAMESPACE {}",
+            stmt.namespace_id.as_str(),
+            stmt.namespace_id.as_str()
+        );
+        return Err(KalamDbError::InvalidOperation(format!(
+            "Namespace '{}' does not exist. Create it first with CREATE NAMESPACE {}",
+            stmt.namespace_id.as_str(),
+            stmt.namespace_id.as_str()
+        )));
+    }
+
     // PRIMARY KEY validation - USER tables MUST have PRIMARY KEY
     if stmt.primary_key_column.is_none() {
         log::error!(
@@ -248,17 +264,6 @@ pub fn create_shared_table(
 ) -> Result<String, KalamDbError> {
     use super::tables::{save_table_definition, validate_table_name};
 
-    // PRIMARY KEY validation - SHARED tables MUST have PRIMARY KEY
-    if stmt.primary_key_column.is_none() {
-        log::error!(
-            "❌ CREATE SHARED TABLE {}.{}: PRIMARY KEY is required",
-            stmt.namespace_id.as_str(),
-            stmt.table_name.as_str()
-        );
-        return Err(KalamDbError::InvalidOperation(
-            "SHARED tables require a PRIMARY KEY column".to_string(),
-        ));
-    }
 
     // RBAC check
     if !crate::auth::rbac::can_create_table(exec_ctx.user_role, TableType::Shared) {
@@ -286,6 +291,34 @@ pub fn create_shared_table(
     // Validate table name
     validate_table_name(stmt.table_name.as_str())
         .map_err(KalamDbError::InvalidOperation)?;
+
+    // Validate namespace exists BEFORE other validations to surface actionable guidance
+    let namespaces_provider = app_context.system_tables().namespaces();
+    let namespace_id = NamespaceId::new(stmt.namespace_id.as_str());
+    if namespaces_provider.get_namespace(&namespace_id)?.is_none() {
+        log::error!(
+            "❌ CREATE SHARED TABLE failed: Namespace '{}' does not exist. Create it first with CREATE NAMESPACE {}",
+            stmt.namespace_id.as_str(),
+            stmt.namespace_id.as_str()
+        );
+        return Err(KalamDbError::InvalidOperation(format!(
+            "Namespace '{}' does not exist. Create it first with CREATE NAMESPACE {}",
+            stmt.namespace_id.as_str(),
+            stmt.namespace_id.as_str()
+        )));
+    }
+
+    // PRIMARY KEY validation - SHARED tables MUST have PRIMARY KEY
+    if stmt.primary_key_column.is_none() {
+        log::error!(
+            "❌ CREATE SHARED TABLE {}.{}: PRIMARY KEY is required",
+            stmt.namespace_id.as_str(),
+            stmt.table_name.as_str()
+        );
+        return Err(KalamDbError::InvalidOperation(
+            "SHARED tables require a PRIMARY KEY column".to_string(),
+        ));
+    }
 
     // Check if table already exists
     let schema_registry = app_context.schema_registry();
@@ -320,19 +353,7 @@ pub fn create_shared_table(
         }
     }
 
-    // Validate namespace exists
-    let namespaces_provider = app_context.system_tables().namespaces();
-    let namespace_id = NamespaceId::new(stmt.namespace_id.as_str());
-    if namespaces_provider.get_namespace(&namespace_id)?.is_none() {
-        log::error!(
-            "❌ CREATE SHARED TABLE failed: Namespace '{}' does not exist",
-            stmt.namespace_id.as_str()
-        );
-        return Err(KalamDbError::InvalidOperation(format!(
-            "Namespace '{}' does not exist",
-            stmt.namespace_id.as_str()
-        )));
-    }
+    // (namespace existence validated above)
 
     // Resolve storage and ensure it exists
     let (storage_id, storage_type) = resolve_storage_info(&app_context, stmt.storage_id.as_ref())?;
@@ -525,16 +546,18 @@ pub fn create_stream_table(
         }
     }
 
-    // Validate namespace exists
+    // Validate namespace exists BEFORE other validations to surface actionable guidance
     let namespaces_provider = app_context.system_tables().namespaces();
     let namespace_id = NamespaceId::new(stmt.namespace_id.as_str());
     if namespaces_provider.get_namespace(&namespace_id)?.is_none() {
         log::error!(
-            "❌ CREATE STREAM TABLE failed: Namespace '{}' does not exist",
+            "❌ CREATE STREAM TABLE failed: Namespace '{}' does not exist. Create it first with CREATE NAMESPACE {}",
+            stmt.namespace_id.as_str(),
             stmt.namespace_id.as_str()
         );
         return Err(KalamDbError::InvalidOperation(format!(
-            "Namespace '{}' does not exist",
+            "Namespace '{}' does not exist. Create it first with CREATE NAMESPACE {}",
+            stmt.namespace_id.as_str(),
             stmt.namespace_id.as_str()
         )));
     }

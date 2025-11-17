@@ -37,8 +37,7 @@ async fn test_reserved_namespace_names() {
             panic!("Expected error for reserved namespace '{}'", name);
         }
     }
-    
-    server.cleanup().await;
+    // No namespaces were created; no cleanup needed
 }
 
 #[actix_web::test]
@@ -57,9 +56,9 @@ async fn test_valid_namespace_names() {
             name,
             response.error
         );
+        // Targeted cleanup to avoid cross-test interference
+        let _ = server.cleanup_namespace(name).await;
     }
-    
-    server.cleanup().await;
 }
 
 #[actix_web::test]
@@ -87,8 +86,8 @@ async fn test_reserved_column_names() {
             col_name
         );
     }
-    
-    server.cleanup().await;
+    // Targeted cleanup for this namespace
+    let _ = server.cleanup_namespace("test_cols").await;
 }
 
 #[actix_web::test]
@@ -118,8 +117,8 @@ async fn test_valid_column_names() {
             response.error
         );
     }
-    
-    server.cleanup().await;
+    // Targeted cleanup for this namespace
+    let _ = server.cleanup_namespace("test_valid_cols").await;
 }
 
 #[actix_web::test]
@@ -138,8 +137,8 @@ async fn test_no_auto_id_column_injection() {
     let insert_sql = "INSERT INTO test_no_id.messages (message, content) VALUES ('msg1', 'Hello')";
     let response = server.execute_sql_as_user(insert_sql, "user_001").await;
     assert_eq!(response.status, "success", "Should insert row");
-    
-    server.cleanup().await;
+    // Targeted cleanup for this namespace
+    let _ = server.cleanup_namespace("test_no_id").await;
 }
 
 #[actix_web::test]
@@ -158,6 +157,6 @@ async fn test_user_can_use_id_as_column_name() {
         "Should allow user to define 'id' column themselves, but got error: {:?}",
         response.error
     );
-    
-    server.cleanup().await;
+    // Targeted cleanup for this namespace
+    let _ = server.cleanup_namespace("test_user_id").await;
 }

@@ -42,6 +42,10 @@ impl TypedStatementHandler<CreateUserStatement> for CreateUserHandler {
         let password_hash = match statement.auth_type {
             AuthType::Password => {
                 let raw = statement.password.clone().ok_or_else(|| KalamDbError::InvalidOperation("Password required for WITH PASSWORD".to_string()))?;
+                // Enforce password complexity if enabled in config
+                if self.app_context.config().auth.enforce_password_complexity {
+                    validate_password_complexity(&raw)?;
+                }
                 bcrypt::hash(raw, bcrypt::DEFAULT_COST).map_err(|e| KalamDbError::Other(format!("Password hash error: {}", e)))?
             }
             _ => "".to_string(),
@@ -81,4 +85,18 @@ impl TypedStatementHandler<CreateUserStatement> for CreateUserHandler {
         }
         Ok(())
     }
+}
+
+/// Validate password complexity according to policy
+/// Requires at least one uppercase, one lowercase, one digit, and one special character
+fn validate_password_complexity(pw: &str) -> Result<(), KalamDbError> {
+    let has_upper = pw.chars().any(|c| c.is_ascii_uppercase());
+    if !has_upper { return Err(KalamDbError::InvalidOperation("Password must include at least one uppercase letter".to_string())); }
+    let has_lower = pw.chars().any(|c| c.is_ascii_lowercase());
+    if !has_lower { return Err(KalamDbError::InvalidOperation("Password must include at least one lowercase letter".to_string())); }
+    let has_digit = pw.chars().any(|c| c.is_ascii_digit());
+    if !has_digit { return Err(KalamDbError::InvalidOperation("Password must include at least one digit".to_string())); }
+    let has_special = pw.chars().any(|c| !c.is_ascii_alphanumeric());
+    if !has_special { return Err(KalamDbError::InvalidOperation("Password must include at least one special character".to_string())); }
+    Ok(())
 }

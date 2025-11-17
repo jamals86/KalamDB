@@ -17,7 +17,7 @@ async fn test_flush_table_command_creates_parquet() {
 
     let create_sql = format!(
         "CREATE USER TABLE {}.{} (
-            id BIGINT,
+            id BIGINT PRIMARY KEY,
             message TEXT,
             created_at TIMESTAMP
         ) FLUSH ROWS 20",

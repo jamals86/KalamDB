@@ -22,6 +22,8 @@ async fn setup_executor(enforce_complexity: bool) -> (SqlExecutor, TempDir, Arc<
     let mut test_config = kalamdb_commons::config::ServerConfig::default();
     test_config.server.node_id = "test-node".to_string();
     test_config.storage.default_storage_path = temp_dir.path().join("storage").to_str().unwrap().to_string();
+    // Align auth complexity with test parameter
+    test_config.auth.enforce_password_complexity = enforce_complexity;
     
     // Initialize AppContext with config
     let app_context = AppContext::init(
@@ -46,6 +48,11 @@ async fn create_admin_user(app_context: &Arc<AppContext>) -> UserId {
     use kalamdb_commons::types::User;
     let user_id = UserId::new("complexity_admin");
     let now = chrono::Utc::now().timestamp_millis();
+
+    // If user already exists (singleton AppContext across tests), return existing id
+    if let Ok(Some(existing)) = app_context.system_tables().users().get_user_by_username("complexity_admin") {
+        return existing.id;
+    }
 
     let user = User {
         id: user_id.clone(),

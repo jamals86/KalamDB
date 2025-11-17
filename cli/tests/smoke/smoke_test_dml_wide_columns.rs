@@ -172,7 +172,6 @@ fn smoke_shared_table_dml_wide_columns() {
 // Subscription coverage for UPDATE and DELETE notifications on a user table with
 // _updated/_deleted columns. Marked ignored due to flakiness in CI environments.
 #[test]
-#[ignore]
 fn smoke_subscription_update_delete_notifications() {
     if !is_server_running() { 
         eprintln!("⚠️  Server not running. Skipping test.");

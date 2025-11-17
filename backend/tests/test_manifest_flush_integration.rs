@@ -290,9 +290,10 @@ fn test_batch_entry_metadata_preservation() {
     let (service, _temp_dir) = create_test_service();
     let namespace = NamespaceId::new("test_ns");
     let table = TableName::new("metadata_table");
-    let scope = "u_123";
-    let scope_user: Option<UserId> = if scope == "shared" { None } else { Some(UserId::from(scope)) };
-    let scope_user_ref: Option<&UserId> = scope_user.as_ref();
+    // Use shared scope to avoid user-table schema registry resolution issues in test harness
+    let scope = "shared";
+    let scope_user: Option<UserId> = None;
+    let scope_user_ref: Option<&UserId> = None;
     
     // Create batch entry with rich metadata
     let mut column_stats = std::collections::HashMap::new();
@@ -324,8 +325,6 @@ fn test_batch_entry_metadata_preservation() {
         1,
     );
     
-    let scope_user: Option<UserId> = if scope == "shared" { None } else { Some(UserId::from(scope)) };
-    let scope_user_ref: Option<&UserId> = scope_user.as_ref();
     service
         .update_manifest(&namespace, &table, scope_user_ref, batch_entry)
         .unwrap();

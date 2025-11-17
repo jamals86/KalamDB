@@ -22,3 +22,5 @@ mod smoke_test_dml_wide_columns;
 mod smoke_test_storage_templates;
 #[path = "smoke/chat_ai_example_smoke.rs"]
 mod chat_ai_example_smoke;
+#[path = "smoke/smoke_test_all_datatypes.rs"]
+mod smoke_test_all_datatypes;
