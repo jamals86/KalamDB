@@ -11,6 +11,7 @@
 
 use crate::app_context::AppContext;
 use crate::error::KalamDbError;
+use crate::providers::base::BaseTableProvider; // bring trait into scope for insert_batch
 use crate::sql::executor::handlers::StatementHandler;
 use crate::sql::executor::models::{ExecutionContext, ExecutionResult, ScalarValue};
 use crate::sql::executor::parameter_validation::{validate_parameters, ParameterLimits};
@@ -19,10 +20,9 @@ use kalamdb_commons::models::{NamespaceId, TableName};
 use kalamdb_commons::schemas::TableType;
 use kalamdb_sql::statement_classifier::{SqlStatement, SqlStatementKind};
 use serde_json::Value as JsonValue;
-use crate::providers::base::BaseTableProvider; // bring trait into scope for insert_batch
+use sqlparser::ast::{Expr, Statement, Values as SqlValues};
 use sqlparser::dialect::GenericDialect;
 use sqlparser::parser::Parser;
-use sqlparser::ast::{Statement, Expr, Values as SqlValues};
 
 /// Handler for INSERT statements
 ///
@@ -60,21 +60,27 @@ impl StatementHandler for InsertHandler {
 
         // Ensure correct variant
         if !matches!(statement.kind(), SqlStatementKind::Insert(_)) {
-            return Err(KalamDbError::InvalidOperation("InsertHandler received wrong statement kind".into()));
+            return Err(KalamDbError::InvalidOperation(
+                "InsertHandler received wrong statement kind".into(),
+            ));
         }
 
         let sql = statement.as_str();
-        
+
         // Parse INSERT using sqlparser-rs (handles multi-line, comments, complex expressions)
         let (namespace, table_name, columns, rows_data) = self.parse_insert_with_sqlparser(sql)?;
-        
+
         // Validate table exists via SchemaRegistry fast path (using TableId)
         use kalamdb_commons::models::TableId;
         let table_id = TableId::new(namespace.clone(), table_name.clone());
         let schema_registry = AppContext::get().schema_registry();
         let exists = schema_registry.table_exists(&table_id)?;
         if !exists {
-            return Err(KalamDbError::InvalidOperation(format!("Table '{}.{}' does not exist", namespace.as_str(), table_name.as_str())));
+            return Err(KalamDbError::InvalidOperation(format!(
+                "Table '{}.{}' does not exist",
+                namespace.as_str(),
+                table_name.as_str()
+            )));
         }
 
         // Get table definition to access column_defaults
@@ -92,7 +98,7 @@ impl StatementHandler for InsertHandler {
         use kalamdb_commons::schemas::TableType;
         if statement.as_user_id().is_some() && matches!(table_def.table_type, TableType::Shared) {
             return Err(KalamDbError::InvalidOperation(
-                "AS USER impersonation is not supported for SHARED tables".to_string()
+                "AS USER impersonation is not supported for SHARED tables".to_string(),
             ));
         }
 
@@ -106,10 +112,16 @@ impl StatementHandler for InsertHandler {
             if columns.is_empty() {
                 // Positional mapping: column order from schema will be used later; here just store as v1,v2...
                 // For simplicity require explicit column list for MVP
-                return Err(KalamDbError::InvalidOperation("INSERT without explicit column list not supported yet".into()));
+                return Err(KalamDbError::InvalidOperation(
+                    "INSERT without explicit column list not supported yet".into(),
+                ));
             }
             if row_exprs.len() != columns.len() {
-                return Err(KalamDbError::InvalidOperation(format!("VALUES column count mismatch: expected {} got {}", columns.len(), row_exprs.len())));
+                return Err(KalamDbError::InvalidOperation(format!(
+                    "VALUES column count mismatch: expected {} got {}",
+                    columns.len(),
+                    row_exprs.len()
+                )));
             }
             for (col, expr) in columns.iter().zip(row_exprs.iter()) {
                 let value = self.expr_to_json(expr, &params)?;
@@ -119,22 +131,26 @@ impl StatementHandler for InsertHandler {
             // Apply DEFAULT values for missing columns
             use crate::sql::executor::default_evaluator::evaluate_default;
             let sys_cols = self.app_context.system_columns_service();
-            
+
             for col_def in &table_def.columns {
                 let col_name = &col_def.column_name;
-                
+
                 // Skip if column was explicitly provided in INSERT
                 if obj.contains_key(col_name) {
                     continue;
                 }
-                
+
                 // Skip if this is a None default (column is optional)
                 if col_def.default_value.is_none() {
                     continue;
                 }
-                
+
                 // Evaluate the default value using the effective user (AS USER subject)
-                let default_value = evaluate_default(&col_def.default_value, effective_user_id, Some(sys_cols.clone()))?;
+                let default_value = evaluate_default(
+                    &col_def.default_value,
+                    effective_user_id,
+                    Some(sys_cols.clone()),
+                )?;
                 obj.insert(col_name.clone(), default_value);
             }
 
@@ -143,7 +159,9 @@ impl StatementHandler for InsertHandler {
 
         // T153: Execute native insert with impersonation support (Phase 7)
         // Use as_user_id if present, otherwise use context.user_id
-        let rows_affected = self.execute_native_insert(&namespace, &table_name, effective_user_id, json_rows).await?;
+        let rows_affected = self
+            .execute_native_insert(&namespace, &table_name, effective_user_id, json_rows)
+            .await?;
         Ok(ExecutionResult::Inserted { rows_affected })
     }
 
@@ -153,9 +171,11 @@ impl StatementHandler for InsertHandler {
         context: &ExecutionContext,
     ) -> Result<(), KalamDbError> {
         if !matches!(statement.kind(), SqlStatementKind::Insert(_)) {
-            return Err(KalamDbError::InvalidOperation("InsertHandler received wrong statement kind".into()));
+            return Err(KalamDbError::InvalidOperation(
+                "InsertHandler received wrong statement kind".into(),
+            ));
         }
-        
+
         // T152: Validate AS USER authorization - only Service/Dba/System can use AS USER (Phase 7)
         if statement.as_user_id().is_some() {
             use kalamdb_commons::Role;
@@ -165,7 +185,7 @@ impl StatementHandler for InsertHandler {
                 ));
             }
         }
-        
+
         use kalamdb_commons::Role;
         match context.user_role {
             Role::System | Role::Dba | Role::Service | Role::User => Ok(()),
@@ -176,58 +196,83 @@ impl StatementHandler for InsertHandler {
 impl InsertHandler {
     /// Parse INSERT statement using sqlparser-rs
     /// Returns (namespace, table_name, columns, rows_of_exprs)
-    fn parse_insert_with_sqlparser(&self, sql: &str) -> Result<(NamespaceId, TableName, Vec<String>, Vec<Vec<Expr>>), KalamDbError> {
+    fn parse_insert_with_sqlparser(
+        &self,
+        sql: &str,
+    ) -> Result<(NamespaceId, TableName, Vec<String>, Vec<Vec<Expr>>), KalamDbError> {
         let dialect = GenericDialect {};
         let stmts = Parser::parse_sql(&dialect, sql)
             .map_err(|e| KalamDbError::InvalidOperation(format!("SQL parse error: {}", e)))?;
-        
+
         if stmts.is_empty() {
-            return Err(KalamDbError::InvalidOperation("No SQL statement found".into()));
+            return Err(KalamDbError::InvalidOperation(
+                "No SQL statement found".into(),
+            ));
         }
-        
+
         let Statement::Insert(insert) = &stmts[0] else {
-            return Err(KalamDbError::InvalidOperation("Expected INSERT statement".into()));
+            return Err(KalamDbError::InvalidOperation(
+                "Expected INSERT statement".into(),
+            ));
         };
-        
+
         // Extract table name from TableObject
         let table_parts: Vec<String> = match &insert.table {
-            sqlparser::ast::TableObject::TableName(obj_name) => {
-                obj_name.0.iter().filter_map(|part| {
-                    match part {
-                        sqlparser::ast::ObjectNamePart::Identifier(ident) => Some(ident.value.clone()),
-                        _ => None,
-                    }
-                }).collect()
+            sqlparser::ast::TableObject::TableName(obj_name) => obj_name
+                .0
+                .iter()
+                .filter_map(|part| match part {
+                    sqlparser::ast::ObjectNamePart::Identifier(ident) => Some(ident.value.clone()),
+                    _ => None,
+                })
+                .collect(),
+            _ => {
+                return Err(KalamDbError::InvalidOperation(
+                    "Unsupported table reference type".into(),
+                ))
             }
-            _ => return Err(KalamDbError::InvalidOperation("Unsupported table reference type".into())),
         };
-        
+
         let (namespace, table_name) = match table_parts.len() {
-            1 => (NamespaceId::new("default"), TableName::new(table_parts[0].clone())),
-            2 => (NamespaceId::new(table_parts[0].clone()), TableName::new(table_parts[1].clone())),
+            1 => (
+                NamespaceId::new("default"),
+                TableName::new(table_parts[0].clone()),
+            ),
+            2 => (
+                NamespaceId::new(table_parts[0].clone()),
+                TableName::new(table_parts[1].clone()),
+            ),
             _ => return Err(KalamDbError::InvalidOperation("Invalid table name".into())),
         };
-        
+
         // Extract columns
-        let columns: Vec<String> = insert.columns.iter()
+        let columns: Vec<String> = insert
+            .columns
+            .iter()
             .map(|ident| ident.value.clone())
             .collect();
-        
+
         // Extract VALUES rows
         let Some(ref source) = insert.source else {
-            return Err(KalamDbError::InvalidOperation("INSERT missing VALUES clause".into()));
+            return Err(KalamDbError::InvalidOperation(
+                "INSERT missing VALUES clause".into(),
+            ));
         };
-        
+
         let rows = match source.body.as_ref() {
             sqlparser::ast::SetExpr::Values(SqlValues { rows, .. }) => {
                 rows.iter().map(|row| row.clone()).collect()
             }
-            _ => return Err(KalamDbError::InvalidOperation("Only VALUES clause supported for INSERT".into())),
+            _ => {
+                return Err(KalamDbError::InvalidOperation(
+                    "Only VALUES clause supported for INSERT".into(),
+                ))
+            }
         };
-        
+
         Ok((namespace, table_name, columns, rows))
     }
-    
+
     /// Convert sqlparser Expr to JSON value, binding parameters as needed
     fn expr_to_json(&self, expr: &Expr, params: &[ScalarValue]) -> Result<JsonValue, KalamDbError> {
         match expr {
@@ -240,36 +285,39 @@ impl InsertHandler {
                         } else if let Ok(f) = n.parse::<f64>() {
                             serde_json::Number::from_f64(f)
                                 .map(JsonValue::Number)
-                                .ok_or_else(|| KalamDbError::InvalidOperation("Invalid float value".into()))
+                                .ok_or_else(|| {
+                                    KalamDbError::InvalidOperation("Invalid float value".into())
+                                })
                         } else {
-                            Err(KalamDbError::InvalidOperation(format!("Invalid number: {}", n)))
+                            Err(KalamDbError::InvalidOperation(format!(
+                                "Invalid number: {}",
+                                n
+                            )))
                         }
                     }
-                    sqlparser::ast::Value::SingleQuotedString(s) |
-                    sqlparser::ast::Value::DoubleQuotedString(s) => {
+                    sqlparser::ast::Value::SingleQuotedString(s)
+                    | sqlparser::ast::Value::DoubleQuotedString(s) => {
                         Ok(JsonValue::String(s.clone()))
                     }
-                    sqlparser::ast::Value::Boolean(b) => {
-                        Ok(JsonValue::Bool(*b))
-                    }
-                    sqlparser::ast::Value::Null => {
-                        Ok(JsonValue::Null)
-                    }
-                    _ => Ok(JsonValue::String(val_with_span.to_string()))
+                    sqlparser::ast::Value::Boolean(b) => Ok(JsonValue::Bool(*b)),
+                    sqlparser::ast::Value::Null => Ok(JsonValue::Null),
+                    _ => Ok(JsonValue::String(val_with_span.to_string())),
                 }
             }
             Expr::Identifier(ident) if ident.value.starts_with('$') => {
                 // Parameter placeholder: $1, $2, etc.
-                let param_num: usize = ident.value[1..].parse()
-                    .map_err(|_| KalamDbError::InvalidOperation(format!("Invalid placeholder: {}", ident.value)))?;
-                
+                let param_num: usize = ident.value[1..].parse().map_err(|_| {
+                    KalamDbError::InvalidOperation(format!("Invalid placeholder: {}", ident.value))
+                })?;
+
                 if param_num == 0 || param_num > params.len() {
                     return Err(KalamDbError::InvalidOperation(format!(
                         "Parameter ${} out of range (have {} parameters)",
-                        param_num, params.len()
+                        param_num,
+                        params.len()
                     )));
                 }
-                
+
                 self.scalar_value_to_json(&params[param_num - 1])
             }
             _ => {
@@ -292,16 +340,12 @@ impl InsertHandler {
             ScalarValue::UInt16(Some(i)) => Ok(JsonValue::Number((*i).into())),
             ScalarValue::UInt32(Some(i)) => Ok(JsonValue::Number((*i).into())),
             ScalarValue::UInt64(Some(i)) => Ok(JsonValue::Number((*i).into())),
-            ScalarValue::Float32(Some(f)) => {
-                serde_json::Number::from_f64(*f as f64)
-                    .map(JsonValue::Number)
-                    .ok_or_else(|| KalamDbError::InvalidOperation("Invalid float value".into()))
-            }
-            ScalarValue::Float64(Some(f)) => {
-                serde_json::Number::from_f64(*f)
-                    .map(JsonValue::Number)
-                    .ok_or_else(|| KalamDbError::InvalidOperation("Invalid float value".into()))
-            }
+            ScalarValue::Float32(Some(f)) => serde_json::Number::from_f64(*f as f64)
+                .map(JsonValue::Number)
+                .ok_or_else(|| KalamDbError::InvalidOperation("Invalid float value".into())),
+            ScalarValue::Float64(Some(f)) => serde_json::Number::from_f64(*f)
+                .map(JsonValue::Number)
+                .ok_or_else(|| KalamDbError::InvalidOperation("Invalid float value".into())),
             ScalarValue::Utf8(Some(s)) | ScalarValue::LargeUtf8(Some(s)) => {
                 Ok(JsonValue::String(s.clone()))
             }
@@ -342,20 +386,24 @@ impl InsertHandler {
         match table_type {
             TableType::User => {
                 // Get UserTableProvider (new providers module) and downcast
-                let provider_arc = schema_registry.get_provider(&table_id)
-                    .ok_or_else(|| {
-                        KalamDbError::InvalidOperation(format!(
-                            "User table provider not found for: {}.{}",
-                            namespace.as_str(),
-                            table_name.as_str()
-                        ))
-                    })?;
+                let provider_arc = schema_registry.get_provider(&table_id).ok_or_else(|| {
+                    KalamDbError::InvalidOperation(format!(
+                        "User table provider not found for: {}.{}",
+                        namespace.as_str(),
+                        table_name.as_str()
+                    ))
+                })?;
 
-                if let Some(provider) = provider_arc.as_any().downcast_ref::<crate::providers::UserTableProvider>() {
+                if let Some(provider) = provider_arc
+                    .as_any()
+                    .downcast_ref::<crate::providers::UserTableProvider>()
+                {
                     let row_ids = provider.insert_batch(&user_id, rows)?;
                     Ok(row_ids.len())
                 } else {
-                    Err(KalamDbError::InvalidOperation("Cached provider type mismatch for user table".into()))
+                    Err(KalamDbError::InvalidOperation(
+                        "Cached provider type mismatch for user table".into(),
+                    ))
                 }
             }
             TableType::Shared => {
@@ -368,7 +416,10 @@ impl InsertHandler {
                     ))
                 })?;
 
-                if let Some(shared_provider) = provider_arc.as_any().downcast_ref::<crate::providers::SharedTableProvider>() {
+                if let Some(shared_provider) = provider_arc
+                    .as_any()
+                    .downcast_ref::<crate::providers::SharedTableProvider>(
+                ) {
                     let row_ids = shared_provider.insert_batch(&user_id, rows)?;
                     Ok(row_ids.len())
                 } else {
@@ -389,7 +440,10 @@ impl InsertHandler {
                 })?;
 
                 // New providers::StreamTableProvider supports batch insert with user_id
-                if let Some(stream_provider) = provider_arc.as_any().downcast_ref::<crate::providers::StreamTableProvider>() {
+                if let Some(stream_provider) = provider_arc
+                    .as_any()
+                    .downcast_ref::<crate::providers::StreamTableProvider>(
+                ) {
                     let row_ids = stream_provider.insert_batch(&user_id, rows)?;
                     Ok(row_ids.len())
                 } else {
@@ -400,7 +454,9 @@ impl InsertHandler {
                     )))
                 }
             }
-            TableType::System => Err(KalamDbError::InvalidOperation("Cannot INSERT into SYSTEM tables".to_string())),
+            TableType::System => Err(KalamDbError::InvalidOperation(
+                "Cannot INSERT into SYSTEM tables".to_string(),
+            )),
         }
     }
 }
@@ -420,7 +476,10 @@ mod tests {
     async fn test_insert_authorization_user() {
         let handler = InsertHandler::new();
         let ctx = test_context(Role::User);
-        let stmt = SqlStatement::new("INSERT INTO default.test (id) VALUES (1)".to_string(), SqlStatementKind::Insert(kalamdb_sql::ddl::InsertStatement));
+        let stmt = SqlStatement::new(
+            "INSERT INTO default.test (id) VALUES (1)".to_string(),
+            SqlStatementKind::Insert(kalamdb_sql::ddl::InsertStatement),
+        );
         let result = handler.check_authorization(&stmt, &ctx).await;
         assert!(result.is_ok());
     }
@@ -429,7 +488,10 @@ mod tests {
     async fn test_insert_authorization_dba() {
         let handler = InsertHandler::new();
         let ctx = test_context(Role::Dba);
-        let stmt = SqlStatement::new("INSERT INTO default.test (id) VALUES (1)".to_string(), SqlStatementKind::Insert(kalamdb_sql::ddl::InsertStatement));
+        let stmt = SqlStatement::new(
+            "INSERT INTO default.test (id) VALUES (1)".to_string(),
+            SqlStatementKind::Insert(kalamdb_sql::ddl::InsertStatement),
+        );
         let result = handler.check_authorization(&stmt, &ctx).await;
         assert!(result.is_ok());
     }
@@ -438,7 +500,10 @@ mod tests {
     async fn test_insert_authorization_service() {
         let handler = InsertHandler::new();
         let ctx = test_context(Role::Service);
-        let stmt = SqlStatement::new("INSERT INTO default.test (id) VALUES (1)".to_string(), SqlStatementKind::Insert(kalamdb_sql::ddl::InsertStatement));
+        let stmt = SqlStatement::new(
+            "INSERT INTO default.test (id) VALUES (1)".to_string(),
+            SqlStatementKind::Insert(kalamdb_sql::ddl::InsertStatement),
+        );
         let result = handler.check_authorization(&stmt, &ctx).await;
         assert!(result.is_ok());
     }

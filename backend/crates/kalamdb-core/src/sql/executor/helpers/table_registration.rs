@@ -59,11 +59,13 @@ pub fn register_user_table_provider(
     let table_def = app_context
         .schema_registry()
         .get_table_definition(table_id)?
-        .ok_or_else(|| KalamDbError::InvalidOperation(format!(
-            "Table definition not found for {}.{}",
-            table_id.namespace_id().as_str(),
-            table_id.table_name().as_str()
-        )))?;
+        .ok_or_else(|| {
+            KalamDbError::InvalidOperation(format!(
+                "Table definition not found for {}.{}",
+                table_id.namespace_id().as_str(),
+                table_id.table_name().as_str()
+            ))
+        })?;
 
     let pk_field = table_def
         .columns
@@ -72,14 +74,9 @@ pub fn register_user_table_provider(
         .map(|c| c.column_name.clone())
         .unwrap_or_else(|| "id".to_string());
 
-    let provider = UserTableProvider::new(
-        core,
-        table_id.clone(),
-        user_table_store,
-        pk_field,
-    );
+    let provider = UserTableProvider::new(core, table_id.clone(), user_table_store, pk_field);
     let provider_arc: Arc<dyn TableProvider> = Arc::new(provider);
-    
+
     app_context
         .schema_registry()
         .insert_provider(table_id.clone(), provider_arc)?;
@@ -143,11 +140,13 @@ pub fn register_shared_table_provider(
     let table_def = app_context
         .schema_registry()
         .get_table_definition(table_id)?
-        .ok_or_else(|| KalamDbError::InvalidOperation(format!(
-            "Table definition not found for {}.{}",
-            table_id.namespace_id().as_str(),
-            table_id.table_name().as_str()
-        )))?;
+        .ok_or_else(|| {
+            KalamDbError::InvalidOperation(format!(
+                "Table definition not found for {}.{}",
+                table_id.namespace_id().as_str(),
+                table_id.table_name().as_str()
+            ))
+        })?;
     let pk_field = table_def
         .columns
         .iter()
@@ -155,13 +154,8 @@ pub fn register_shared_table_provider(
         .map(|c| c.column_name.clone())
         .unwrap_or_else(|| "id".to_string());
 
-    let provider = SharedTableProvider::new(
-        core,
-        table_id.clone(),
-        shared_store,
-        pk_field,
-    );
-    
+    let provider = SharedTableProvider::new(core, table_id.clone(), shared_store, pk_field);
+
     app_context
         .schema_registry()
         .insert_provider(table_id.clone(), Arc::new(provider))?;
@@ -194,9 +188,9 @@ pub fn register_stream_table_provider(
     _arrow_schema: SchemaRef, // Unused but kept for API consistency
     ttl_seconds: Option<u64>,
 ) -> Result<(), KalamDbError> {
+    use crate::providers::{StreamTableProvider, TableProviderCore};
     use kalamdb_tables::new_stream_table_store;
     use kalamdb_tables::SharedTableStoreExt;
-    use crate::providers::{StreamTableProvider, TableProviderCore};
 
     log::debug!(
         "📋 Registering STREAM table provider: {}.{} (TTL: {:?}s)",
@@ -267,9 +261,7 @@ pub fn unregister_table_provider(
     );
 
     // Remove from SchemaRegistry (automatically unregisters from DataFusion)
-    app_context
-        .schema_registry()
-        .remove_provider(table_id)?;
+    app_context.schema_registry().remove_provider(table_id)?;
 
     log::debug!(
         "✅ Table provider unregistered: {}.{}",

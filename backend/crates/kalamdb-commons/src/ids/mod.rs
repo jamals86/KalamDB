@@ -1,8 +1,8 @@
 // IDs module
-pub mod snowflake;
-pub mod seq_id;
 pub mod row_id;
+pub mod seq_id;
+pub mod snowflake;
 
-pub use snowflake::SnowflakeGenerator;
+pub use row_id::{SharedTableRowId, StreamTableRowId, UserTableRowId};
 pub use seq_id::SeqId;
-pub use row_id::{UserTableRowId, SharedTableRowId, StreamTableRowId};
+pub use snowflake::SnowflakeGenerator;

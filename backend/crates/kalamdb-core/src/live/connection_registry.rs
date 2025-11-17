@@ -256,7 +256,10 @@ impl LiveQueryRegistry {
 
     /// Get total number of active subscriptions
     pub fn total_subscriptions(&self) -> usize {
-        self.subscriptions.iter().map(|entry| entry.value().len()).sum()
+        self.subscriptions
+            .iter()
+            .map(|entry| entry.value().len())
+            .sum()
     }
 
     /// Get notification sender for a connection (internal API)
@@ -275,9 +278,10 @@ impl LiveQueryRegistry {
     /// where the table name contains the specified string.
     pub fn has_subscriptions_for_table(&self, table_ref: &str) -> bool {
         self.subscriptions.iter().any(|entry| {
-            entry.value().iter().any(|handle| {
-                handle.live_id.table_id().to_string().contains(table_ref)
-            })
+            entry
+                .value()
+                .iter()
+                .any(|handle| handle.live_id.table_id().to_string().contains(table_ref))
         })
     }
 }
@@ -372,11 +376,7 @@ mod tests {
         let live_id1 = LiveId::new(conn_id.clone(), table_id1.clone(), "q1".to_string());
 
         let table_id2 = TableId::from_strings("default", "notifications");
-        let live_id2 = LiveId::new(
-            conn_id.clone(),
-            table_id2.clone(),
-            "q2".to_string(),
-        );
+        let live_id2 = LiveId::new(conn_id.clone(), table_id2.clone(), "q2".to_string());
 
         registry
             .register_subscription(
@@ -400,7 +400,10 @@ mod tests {
 
         let messages_subs = registry.get_subscriptions_for_table(&user_id, &table_id1);
         assert_eq!(messages_subs.len(), 1);
-        assert_eq!(messages_subs[0].live_id.table_id().table_name().as_str(), "messages");
+        assert_eq!(
+            messages_subs[0].live_id.table_id().table_name().as_str(),
+            "messages"
+        );
     }
 
     #[test]
@@ -454,11 +457,7 @@ mod tests {
         let live_id1 = LiveId::new(conn_id.clone(), table_id1.clone(), "q1".to_string());
 
         let table_id2 = TableId::from_strings("default", "notifications");
-        let live_id2 = LiveId::new(
-            conn_id.clone(),
-            table_id2.clone(),
-            "q2".to_string(),
-        );
+        let live_id2 = LiveId::new(conn_id.clone(), table_id2.clone(), "q2".to_string());
 
         registry
             .register_subscription(

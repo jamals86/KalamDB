@@ -1,9 +1,9 @@
-use kalamdb_commons::{NamespaceId, Role, UserId};
-use std::sync::Arc;
-use std::time::SystemTime;
 use datafusion::prelude::SessionContext;
 use datafusion::scalar::ScalarValue;
 use datafusion_common::config::{ConfigExtension, ExtensionOptions};
+use kalamdb_commons::{NamespaceId, Role, UserId};
+use std::sync::Arc;
+use std::time::SystemTime;
 
 /// Session-level user context passed via DataFusion's extension system
 ///
@@ -92,7 +92,11 @@ impl ExecutionContext {
     /// The base_session_context contains all registered table providers.
     /// When executing queries, call `create_session_with_user()` to get a
     /// SessionContext with user_id injected for per-user filtering.
-    pub fn new(user_id: UserId, user_role: Role, base_session_context: Arc<SessionContext>) -> Self {
+    pub fn new(
+        user_id: UserId,
+        user_role: Role,
+        base_session_context: Arc<SessionContext>,
+    ) -> Self {
         Self {
             user_id,
             user_role,
@@ -156,15 +160,31 @@ impl ExecutionContext {
         }
     }
 
-    pub fn is_admin(&self) -> bool { matches!(self.user_role, Role::Dba | Role::System) }
-    pub fn is_system(&self) -> bool { matches!(self.user_role, Role::System) }
+    pub fn is_admin(&self) -> bool {
+        matches!(self.user_role, Role::Dba | Role::System)
+    }
+    pub fn is_system(&self) -> bool {
+        matches!(self.user_role, Role::System)
+    }
 
-    pub fn user_id(&self) -> &UserId { &self.user_id }
-    pub fn user_role(&self) -> Role { self.user_role }
-    pub fn namespace_id(&self) -> Option<&NamespaceId> { self.namespace_id.as_ref() }
-    pub fn request_id(&self) -> Option<&str> { self.request_id.as_deref() }
-    pub fn ip_address(&self) -> Option<&str> { self.ip_address.as_deref() }
-    pub fn timestamp(&self) -> SystemTime { self.timestamp }
+    pub fn user_id(&self) -> &UserId {
+        &self.user_id
+    }
+    pub fn user_role(&self) -> Role {
+        self.user_role
+    }
+    pub fn namespace_id(&self) -> Option<&NamespaceId> {
+        self.namespace_id.as_ref()
+    }
+    pub fn request_id(&self) -> Option<&str> {
+        self.request_id.as_deref()
+    }
+    pub fn ip_address(&self) -> Option<&str> {
+        self.ip_address.as_deref()
+    }
+    pub fn timestamp(&self) -> SystemTime {
+        self.timestamp
+    }
 
     // Builder methods for Phase 3
     pub fn with_params(mut self, params: Vec<ScalarValue>) -> Self {
@@ -209,7 +229,7 @@ impl ExecutionContext {
     pub fn create_session_with_user(&self) -> SessionContext {
         // Clone SessionState (mostly Arc pointer copies, ~1-2μs)
         let mut session_state = self.base_session_context.state();
-        
+
         // Inject current user_id and role into session config extensions
         // TableProviders will read this during scan() for per-user filtering
         session_state

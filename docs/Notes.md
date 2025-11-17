@@ -210,6 +210,9 @@ Also make sure we dont add the "id" column as we used to do before, we rely sole
 instead of: 1 failed: Invalid operation: No handler registered for statement type 'UNKNOWN'
                            
 
+157) Are we closing all ParquetWriter? whenever we use them?
+158) extract_seq_bounds is duplicated we cna combine it
+
 
 Here’s the updated 5-line spec with embedding storage inside Parquet and managed HNSW indexing (with delete handling):
 	1.	Parquet Storage: All embeddings are stored as regular columns in the Parquet file alongside other table columns to keep data unified and versioned per batch.

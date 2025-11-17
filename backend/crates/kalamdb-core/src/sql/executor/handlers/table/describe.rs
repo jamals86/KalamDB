@@ -6,8 +6,8 @@ use crate::sql::executor::handlers::typed::TypedStatementHandler;
 use crate::sql::executor::models::{ExecutionContext, ExecutionResult, ScalarValue};
 use datafusion::arrow::array::{ArrayRef, BooleanArray, RecordBatch, StringArray, UInt32Array};
 use datafusion::arrow::datatypes::{DataType, Field, Schema};
-use kalamdb_commons::models::{NamespaceId, TableId};
 use kalamdb_commons::models::schemas::TableDefinition;
+use kalamdb_commons::models::{NamespaceId, TableId};
 use kalamdb_sql::ddl::DescribeTableStatement;
 use std::sync::Arc;
 
@@ -38,15 +38,20 @@ impl TypedStatementHandler<DescribeTableStatement> for DescribeTableHandler {
             .app_context
             .schema_registry()
             .get_table_definition(&table_id)?
-            .ok_or_else(|| KalamDbError::NotFound(format!(
-                "Table '{}' not found in namespace '{}'",
-                statement.table_name.as_str(),
-                ns.as_str()
-            )))?;
+            .ok_or_else(|| {
+                KalamDbError::NotFound(format!(
+                    "Table '{}' not found in namespace '{}'",
+                    statement.table_name.as_str(),
+                    ns.as_str()
+                ))
+            })?;
 
         let batch = build_describe_batch(&def)?;
         let row_count = batch.num_rows();
-        Ok(ExecutionResult::Rows { batches: vec![batch], row_count })
+        Ok(ExecutionResult::Rows {
+            batches: vec![batch],
+            row_count,
+        })
     }
 
     async fn check_authorization(
@@ -84,7 +89,11 @@ fn build_describe_batch(def: &TableDefinition) -> Result<RecordBatch, KalamDbErr
         types.push(c.data_type.sql_name().to_string());
         nulls.push(c.is_nullable);
         pks.push(c.is_primary_key);
-        defaults.push(if c.default_value.is_none() { None } else { Some(c.default_value.to_sql()) });
+        defaults.push(if c.default_value.is_none() {
+            None
+        } else {
+            Some(c.default_value.to_sql())
+        });
         comments.push(c.column_comment.clone());
     }
 

@@ -7,10 +7,10 @@
 //! - UserTableRow: Minimal structure with user_id, _seq, _deleted, fields (JSON)
 //! - Storage key format: {user_id}:{_seq} (big-endian bytes)
 
-use kalamdb_system::system_table_store::SystemTableStore;
 use kalamdb_commons::ids::{SeqId, UserTableRowId};
 use kalamdb_commons::models::{NamespaceId, TableName, UserId};
 use kalamdb_store::StorageBackend;
+use kalamdb_system::system_table_store::SystemTableStore;
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 
@@ -127,7 +127,8 @@ mod tests {
                     UserId::new(&format!("user{}", user_i)),
                     SeqId::new((user_i * 1000 + row_i) as i64),
                 );
-                let row = create_test_row(&format!("user{}", user_i), (user_i * 1000 + row_i) as i64);
+                let row =
+                    create_test_row(&format!("user{}", user_i), (user_i * 1000 + row_i) as i64);
                 store.put(&key, &row).unwrap();
             }
         }
@@ -152,7 +153,13 @@ mod tests {
         store.put(&key2, &row2).unwrap();
 
         // Both exist independently
-        assert_eq!(store.get(&key1).unwrap().unwrap().user_id, UserId::new("user1"));
-        assert_eq!(store.get(&key2).unwrap().unwrap().user_id, UserId::new("user2"));
+        assert_eq!(
+            store.get(&key1).unwrap().unwrap().user_id,
+            UserId::new("user1")
+        );
+        assert_eq!(
+            store.get(&key2).unwrap().unwrap().user_id,
+            UserId::new("user2")
+        );
     }
 }

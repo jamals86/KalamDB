@@ -6,6 +6,10 @@
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 
+use crate::models::schemas::TableType;
+use crate::models::TableId;
+use crate::UserId;
+
 /// Synchronization state of a cached manifest entry.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -46,16 +50,16 @@ impl std::fmt::Display for SyncState {
 pub struct ManifestCacheEntry {
     /// Serialized ManifestFile JSON
     pub manifest_json: String, //TODO: Maybe its better to have it as parsed one instead of string
-    
+
     /// ETag or version identifier from storage backend
     pub etag: Option<String>,
-    
+
     /// Last refresh timestamp (Unix seconds)
     pub last_refreshed: i64,
-    
+
     /// Source path in storage (e.g., "s3://bucket/namespace/table/manifest.json")
     pub source_path: String,
-    
+
     /// Synchronization state
     pub sync_state: SyncState,
 }
@@ -119,40 +123,108 @@ impl Default for BatchStatus {
     }
 }
 
-/// Entry for a single batch file in the manifest (Phase 5 - US2).
+/// Row group level pruning stats for advanced indexing.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct RowGroupPruningStats {
+    /// Row group index within the Parquet file
+    pub index: u32,
+
+    /// Total number of rows in the row group
+    pub row_count: u64,
+
+    /// Minimum sequence id observed in the row group
+    pub min_seq: i64,
+
+    /// Maximum sequence id observed in the row group
+    pub max_seq: i64,
+
+    /// Column min/max bounds for predicate pruning
+    #[serde(default)]
+    pub column_min_max: HashMap<String, (serde_json::Value, serde_json::Value)>,
+
+    /// Optional byte range for fast IO planning (start, length)
+    #[serde(default)]
+    pub byte_range: Option<(u64, u64)>,
+}
+
+impl RowGroupPruningStats {
+    /// Create a new row group pruning stats entry
+    pub fn new(
+        index: u32,
+        row_count: u64,
+        min_seq: i64,
+        max_seq: i64,
+        column_min_max: HashMap<String, (serde_json::Value, serde_json::Value)>,
+        byte_range: Option<(u64, u64)>,
+    ) -> Self {
+        Self {
+            index,
+            row_count,
+            min_seq,
+            max_seq,
+            column_min_max,
+            byte_range,
+        }
+    }
+}
+
+impl Default for RowGroupPruningStats {
+    fn default() -> Self {
+        Self {
+            index: 0,
+            row_count: 0,
+            min_seq: 0,
+            max_seq: 0,
+            column_min_max: HashMap::new(),
+            byte_range: None,
+        }
+    }
+}
+
+/// Entry for a single batch file in the manifest (Phase 5 - US2, extended for DataFusion indexing).
 ///
 /// Tracks metadata about a Parquet batch file for query optimization:
 /// - Row counts and size for cost estimation
 /// - Min/max timestamps for temporal pruning
 /// - Column min/max values for predicate pushdown
+/// - Optional row-group level statistics for fine grained pruning
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct BatchFileEntry {
     /// Batch number (sequential, starting from 0)
     pub batch_number: u64,
-    
+
     /// Relative file path (e.g., "batch-0.parquet")
     pub file_path: String,
-    
+
     /// Minimum _seq value in this batch (for MVCC version pruning)
     pub min_seq: i64,
-    
+
     /// Maximum _seq value in this batch (for MVCC version pruning)
     pub max_seq: i64,
-    
-    /// Min/max values for indexed columns (for pruning)
-    pub column_min_max: HashMap<String, (serde_json::Value, serde_json::Value)>,
-    
+
     /// Number of rows in this batch
     pub row_count: u64,
-    
+
     /// File size in bytes
     pub size_bytes: u64,
-    
+
     /// Schema version at time of flush
     pub schema_version: u32,
-    
+
     /// Batch file status
     pub status: BatchStatus,
+
+    /// Indicates whether the Parquet writer stored page index metadata
+    #[serde(default)]
+    pub has_page_index: bool,
+
+    /// Optional cached footer size to avoid re-reading file metadata
+    #[serde(default)]
+    pub footer_size: Option<u64>,
+
+    /// Row group level pruning metadata (empty when not collected)
+    #[serde(default)]
+    pub row_groups: Vec<RowGroupPruningStats>,
 }
 
 impl BatchFileEntry {
@@ -163,7 +235,6 @@ impl BatchFileEntry {
         file_path: String,
         min_seq: i64,
         max_seq: i64,
-        column_min_max: HashMap<String, (serde_json::Value, serde_json::Value)>,
         row_count: u64,
         size_bytes: u64,
         schema_version: u32,
@@ -173,11 +244,13 @@ impl BatchFileEntry {
             file_path,
             min_seq,
             max_seq,
-            column_min_max,
             row_count,
             size_bytes,
             schema_version,
             status: BatchStatus::Active,
+            has_page_index: false,
+            footer_size: None,
+            row_groups: Vec::new(),
         }
     }
 
@@ -194,30 +267,34 @@ impl BatchFileEntry {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ManifestFile {
     /// Table identifier (namespace + table name)
-    pub table_id: String,
-    
-    /// Scope: user_id for USER tables, "shared" for SHARED tables
-    pub scope: String,
-    
+    pub table_id: TableId,
+
+    /// Table type (User or Shared)
+    pub table_type: TableType,
+
+    /// Scope: user_id for USER tables, None for SHARED tables
+    pub user_id: Option<UserId>,
+
     /// Manifest format version (for backward compatibility)
     pub version: u32,
-    
+
     /// Timestamp when manifest was generated (Unix seconds)
     pub generated_at: i64,
-    
+
     /// Highest batch number (max(batches.batch_number))
     pub max_batch: u64,
-    
+
     /// List of batch file entries
     pub batches: Vec<BatchFileEntry>,
 }
 
 impl ManifestFile {
     /// Create a new empty manifest
-    pub fn new(table_id: String, scope: String) -> Self {
+    pub fn new(table_id: TableId, table_type: TableType, user_id: Option<UserId>) -> Self {
         Self {
             table_id,
-            scope,
+            table_type,
+            user_id,
             version: 1,
             generated_at: chrono::Utc::now().timestamp(),
             max_batch: 0,
@@ -272,6 +349,9 @@ mod tests {
 
     #[test]
     fn test_manifest_cache_entry_is_stale() {
+        use crate::models::TableType;
+        use crate::{NamespaceId, TableName};
+
         let entry = ManifestCacheEntry::new(
             "{}".to_string(),
             Some("etag123".to_string()),
@@ -282,7 +362,7 @@ mod tests {
 
         // Not stale within TTL
         assert!(!entry.is_stale(3600, 1000 + 1800));
-        
+
         // Stale after TTL
         assert!(entry.is_stale(3600, 1000 + 3601));
     }
@@ -316,7 +396,6 @@ mod tests {
             "batch-0.parquet".to_string(),
             1000,
             2000,
-            HashMap::new(),
             100,
             1024,
             1,
@@ -326,7 +405,7 @@ mod tests {
         assert!(batch.overlaps_seq_range(1500, 2500));
         assert!(batch.overlaps_seq_range(500, 1500));
         assert!(batch.overlaps_seq_range(1000, 2000));
-        
+
         // No overlap
         assert!(!batch.overlaps_seq_range(2001, 3000));
         assert!(!batch.overlaps_seq_range(0, 999));
@@ -334,8 +413,15 @@ mod tests {
 
     #[test]
     fn test_manifest_file_add_batch() {
-        let mut manifest = ManifestFile::new("test.table".to_string(), "user_123".to_string());
-        
+        use crate::models::TableType;
+        use crate::{NamespaceId, TableName, UserId};
+
+        let table_id = TableId::new(
+            NamespaceId::new("test"),
+            TableName::new("table"),
+        );
+        let mut manifest = ManifestFile::new(table_id, TableType::User, Some(UserId::from("user_123")));
+
         assert_eq!(manifest.max_batch, 0);
         assert_eq!(manifest.batches.len(), 0);
 
@@ -344,7 +430,6 @@ mod tests {
             "batch-1.parquet".to_string(),
             1000,
             2000,
-            HashMap::new(),
             50,
             512,
             1,
@@ -357,8 +442,15 @@ mod tests {
 
     #[test]
     fn test_manifest_file_validate() {
-        let mut manifest = ManifestFile::new("test.table".to_string(), "shared".to_string());
-        
+        use crate::models::TableType;
+        use crate::{NamespaceId, TableName};
+
+        let table_id = TableId::new(
+            NamespaceId::new("test"),
+            TableName::new("table"),
+        );
+        let mut manifest = ManifestFile::new(table_id, TableType::Shared, None);
+
         // Empty manifest is valid
         assert!(manifest.validate().is_ok());
 
@@ -368,7 +460,6 @@ mod tests {
             "batch-1.parquet".to_string(),
             1000,
             2000,
-            HashMap::new(),
             50,
             512,
             1,
@@ -383,14 +474,20 @@ mod tests {
 
     #[test]
     fn test_manifest_file_json_roundtrip() {
-        let mut manifest = ManifestFile::new("test.table".to_string(), "user_456".to_string());
-        
+        use crate::models::TableType;
+        use crate::{NamespaceId, TableName, UserId};
+
+        let table_id = TableId::new(
+            NamespaceId::new("test"),
+            TableName::new("table"),
+        );
+        let mut manifest = ManifestFile::new(table_id, TableType::User, Some(UserId::from("user_456")));
+
         let batch = BatchFileEntry::new(
             0,
             "batch-0.parquet".to_string(),
             1000,
             2000,
-            HashMap::new(),
             100,
             1024,
             1,
@@ -401,7 +498,8 @@ mod tests {
         let roundtrip = ManifestFile::from_json(&json).unwrap();
 
         assert_eq!(manifest.table_id, roundtrip.table_id);
-        assert_eq!(manifest.scope, roundtrip.scope);
+        assert_eq!(manifest.table_type, roundtrip.table_type);
+        assert_eq!(manifest.user_id, roundtrip.user_id);
         assert_eq!(manifest.max_batch, roundtrip.max_batch);
         assert_eq!(manifest.batches.len(), roundtrip.batches.len());
     }

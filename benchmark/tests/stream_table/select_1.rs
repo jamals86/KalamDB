@@ -7,7 +7,7 @@ fn stream_table_select_1() -> anyhow::Result<()> {
     // Setup: Create stream table with 1000 rows
     setup_benchmark_tables()?;
     std::thread::sleep(Duration::from_millis(200));
-    
+
     let setup_sql = "INSERT INTO bench_stream.events (id, value) SELECT generate_series(1, 1000), 'event_' || generate_series(1, 1000)";
     execute_cli_timed_root(setup_sql)?;
 
@@ -46,6 +46,6 @@ fn stream_table_select_1() -> anyhow::Result<()> {
 
     // Cleanup
     cleanup_benchmark_tables()?;
-    
+
     Ok(())
 }

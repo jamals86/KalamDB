@@ -26,10 +26,13 @@ fn smoke_system_tables_and_user_lifecycle() {
     }
 
     // 2) CREATE USER and verify present in system.users
-    let uname = format!("smoke_user_{}", std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .unwrap()
-        .as_millis());
+    let uname = format!(
+        "smoke_user_{}",
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_millis()
+    );
     let pass = "S1mpleP@ss!";
     let create_user = format!("CREATE USER {} WITH PASSWORD '{}' ROLE 'user'", uname, pass);
     execute_sql_as_root_via_cli(&create_user).expect("create user should succeed");
@@ -56,7 +59,8 @@ fn smoke_system_tables_and_user_lifecycle() {
     ))
     .expect("select user after drop should succeed");
     assert!(
-        !users_out2.contains(&format!("| {} |", uname)) || users_out2.to_lowercase().contains("deleted"),
+        !users_out2.contains(&format!("| {} |", uname))
+            || users_out2.to_lowercase().contains("deleted"),
         "user should be removed or marked deleted: {}",
         users_out2
     );
@@ -66,7 +70,7 @@ fn smoke_system_tables_and_user_lifecycle() {
     // Use a unique namespace per run to avoid cross-test collisions when tests run in parallel
     let test_ns = generate_unique_namespace("smoke_test_flush");
     let _ = execute_sql_as_root_via_cli(&format!("CREATE NAMESPACE IF NOT EXISTS {}", test_ns));
-    
+
     // Create a user table to flush (unique per run to avoid collisions)
     let unique_tbl = generate_unique_table("test_flush_table");
     let test_table = format!("{}.{}", test_ns, unique_tbl);
@@ -74,35 +78,29 @@ fn smoke_system_tables_and_user_lifecycle() {
         "CREATE USER TABLE {} (id INT PRIMARY KEY, value VARCHAR) FLUSH ROWS 100",
         test_table
     );
-    execute_sql_as_root_via_cli(&create_table_sql)
-        .expect("create test table should succeed");
-    
+    execute_sql_as_root_via_cli(&create_table_sql).expect("create test table should succeed");
+
     // Insert some data
     let insert_sql = format!("INSERT INTO {} (id, value) VALUES (1, 'test')", test_table);
-    execute_sql_as_root_via_cli(&insert_sql)
-        .expect("insert should succeed");
-    
+    execute_sql_as_root_via_cli(&insert_sql).expect("insert should succeed");
+
     // Now flush all tables in the namespace
     let flush_output = execute_sql_as_root_via_cli(&format!("FLUSH ALL TABLES IN {}", test_ns))
         .expect("flush all tables in namespace should succeed");
-    
+
     println!("[FLUSH ALL] Output: {}", flush_output);
-    
+
     // Parse job IDs from flush all output
     let job_ids = parse_job_ids_from_flush_all_output(&flush_output)
         .expect("should parse job IDs from FLUSH ALL output");
-    
+
     println!("[FLUSH ALL] Job IDs: {:?}", job_ids);
     assert!(!job_ids.is_empty(), "should have at least one job ID");
-    
+
     // Verify each job has been recorded in system.jobs (no need to wait for completion here)
     for job_id in &job_ids {
-        let q = format!(
-            "SELECT job_id FROM system.jobs WHERE job_id='{}'",
-            job_id
-        );
-        let out = execute_sql_as_root_via_cli(&q)
-            .expect("query system.jobs should succeed");
+        let q = format!("SELECT job_id FROM system.jobs WHERE job_id='{}'", job_id);
+        let out = execute_sql_as_root_via_cli(&q).expect("query system.jobs should succeed");
         // The pretty table may truncate long IDs; rely on row count footer instead
         assert!(
             out.contains("(1 row)"),
@@ -111,5 +109,8 @@ fn smoke_system_tables_and_user_lifecycle() {
             out
         );
     }
-    println!("[FLUSH ALL] Verified {} jobs recorded in system.jobs", job_ids.len());
+    println!(
+        "[FLUSH ALL] Verified {} jobs recorded in system.jobs",
+        job_ids.len()
+    );
 }

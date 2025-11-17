@@ -21,10 +21,10 @@
 //! let updated_col = SYSTEM_COLUMNS.updated;
 //! ```
 
+use crate::constants::SystemColumnNames;
 use dashmap::DashMap;
 use once_cell::sync::Lazy;
 use std::sync::Arc;
-use crate::constants::SystemColumnNames;
 
 /// Global string interner
 static INTERNER: Lazy<DashMap<Arc<str>, ()>> = Lazy::new(DashMap::new);

@@ -19,22 +19,24 @@ use crate::error::KalamDbError;
 use kalamdb_sql::statement_classifier::SqlStatement;
 
 // Typed handlers organized by category
-pub mod namespace;
-pub mod storage;
-pub mod system;
-pub mod table;
 pub mod dml;
 pub mod flush;
 pub mod jobs;
+pub mod namespace;
+pub mod storage;
 pub mod subscription;
-pub mod user;
+pub mod system;
+pub mod table;
 pub mod typed;
+pub mod user;
 
 // Re-export core types from executor/models for convenience
-pub use crate::sql::executor::models::{ExecutionContext, ExecutionMetadata, ExecutionResult, ScalarValue};
+pub use crate::sql::executor::models::{
+    ExecutionContext, ExecutionMetadata, ExecutionResult, ScalarValue,
+};
 
 // Re-export DML handlers (keeping old exports for compatibility)
-pub use dml::{InsertHandler, DeleteHandler, UpdateHandler};
+pub use dml::{DeleteHandler, InsertHandler, UpdateHandler};
 
 // Re-export legacy placeholder handlers
 pub use typed::TypedStatementHandler;
@@ -119,6 +121,8 @@ pub trait StatementHandler: Send + Sync {
     ) -> Result<(), KalamDbError> {
         // Default implementation: delegate to AuthorizationHandler
         //AuthorizationHandler::check_authorization(context, statement)
-        statement.check_authorization(context.user_role.clone()).map_err(KalamDbError::PermissionDenied)
+        statement
+            .check_authorization(context.user_role.clone())
+            .map_err(KalamDbError::PermissionDenied)
     }
 }

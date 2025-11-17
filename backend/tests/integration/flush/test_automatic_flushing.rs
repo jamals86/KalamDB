@@ -112,8 +112,8 @@ async fn test_manual_flush_multiple_batches() {
             use kalamdb_commons::models::{
                 NamespaceId as ModelNamespaceId, TableName as ModelTableName,
             };
-            use kalamdb_tables::UserTableStoreExt;
             use kalamdb_store::entity_store::EntityStore;
+            use kalamdb_tables::UserTableStoreExt;
 
             // Use the SAME backend as AppContext to ensure consistency
             let backend = server.app_context.storage_backend();
@@ -121,8 +121,8 @@ async fn test_manual_flush_multiple_batches() {
             let model_table = ModelTableName::new(table_name);
             let store =
                 kalamdb_tables::new_user_table_store(backend, &model_namespace, &model_table);
-            let buffered_rows = EntityStore::scan_all(&store)
-                .expect("scan_all should succeed before flush");
+            let buffered_rows =
+                EntityStore::scan_all(&store).expect("scan_all should succeed before flush");
             assert_eq!(
                 buffered_rows.len(),
                 10,

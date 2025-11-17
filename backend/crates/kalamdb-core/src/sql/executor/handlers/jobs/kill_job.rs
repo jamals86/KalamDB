@@ -32,7 +32,10 @@ impl TypedStatementHandler<JobCommand> for KillJobHandler {
             JobCommand::Kill { job_id } => {
                 let job_id_typed = JobId::new(job_id.clone());
                 job_manager.cancel_job(&job_id_typed).await?;
-                Ok(ExecutionResult::JobKilled { job_id, status: "cancelled".to_string() })
+                Ok(ExecutionResult::JobKilled {
+                    job_id,
+                    status: "cancelled".to_string(),
+                })
             }
         }
     }

@@ -5,10 +5,10 @@
 
 use crate::app_context::AppContext;
 use crate::error::KalamDbError;
-use kalamdb_tables::{SharedTableRow, UserTableRow};
 use kalamdb_commons::ids::{SeqId, UserTableRowId};
 use kalamdb_commons::models::schemas::TableType;
 use kalamdb_commons::models::{TableId, UserId};
+use kalamdb_tables::{SharedTableRow, UserTableRow};
 use std::sync::Arc;
 
 /// Append a new version to the table's hot storage (synchronous)
@@ -42,7 +42,7 @@ pub fn append_version_sync(
     // T060: Validate PRIMARY KEY (basic check - full uniqueness validation in provider)
     // This is a safety check; actual uniqueness validation happens in the provider layer
     // to avoid scanning all rows on every insert
-    
+
     // Validate table type
     match table_type {
         TableType::System => {
@@ -190,7 +190,11 @@ mod tests {
         .await;
 
         // Should succeed with in-memory test backend
-        assert!(result.is_ok(), "INSERT via append_version should succeed: {:?}", result.err());
+        assert!(
+            result.is_ok(),
+            "INSERT via append_version should succeed: {:?}",
+            result.err()
+        );
         let seq_id = result.unwrap();
         assert!(seq_id.as_i64() > 0, "SeqId should be positive");
     }

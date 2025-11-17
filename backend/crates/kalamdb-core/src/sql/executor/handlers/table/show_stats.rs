@@ -31,18 +31,21 @@ impl TypedStatementHandler<ShowTableStatsStatement> for ShowStatsHandler {
     ) -> Result<ExecutionResult, KalamDbError> {
         // For now we surface basic logical stats from system tables registry.
         // Future: integrate storage layer (Parquet segments, RocksDB mem stats, eviction metrics).
-        let ns = statement.namespace_id.unwrap_or_else(|| NamespaceId::new("default"));
+        let ns = statement
+            .namespace_id
+            .unwrap_or_else(|| NamespaceId::new("default"));
         let table_id = TableId::from_strings(ns.as_str(), statement.table_name.as_str());
 
         // TableDefinition gives us metadata only; stats system not yet implemented.
         // Provide placeholder zero metrics plus schema version.
         let registry = self.app_context.schema_registry();
-        let def = registry
-            .get_table_definition(&table_id)?
-            .ok_or_else(|| KalamDbError::NotFound(format!(
+        let def = registry.get_table_definition(&table_id)?.ok_or_else(|| {
+            KalamDbError::NotFound(format!(
                 "Table '{}' not found in namespace '{}'",
-                statement.table_name.as_str(), ns.as_str()
-            )))?;
+                statement.table_name.as_str(),
+                ns.as_str()
+            ))
+        })?;
 
         let logical_rows = 0u64; // TODO: integrate row count tracking
         let flushed_segments = 0u64; // TODO: integrate flush segment counters
@@ -64,16 +67,23 @@ impl TypedStatementHandler<ShowTableStatsStatement> for ShowStatsHandler {
             schema,
             vec![
                 Arc::new(StringArray::from(vec![def.table_name.as_str().to_string()])) as ArrayRef,
-                Arc::new(StringArray::from(vec![def.namespace_id.as_str().to_string()])) as ArrayRef,
+                Arc::new(StringArray::from(vec![def
+                    .namespace_id
+                    .as_str()
+                    .to_string()])) as ArrayRef,
                 Arc::new(UInt64Array::from(vec![schema_version])) as ArrayRef,
                 Arc::new(UInt64Array::from(vec![logical_rows])) as ArrayRef,
                 Arc::new(UInt64Array::from(vec![flushed_segments])) as ArrayRef,
                 Arc::new(UInt64Array::from(vec![active_streams])) as ArrayRef,
                 Arc::new(UInt64Array::from(vec![memory_bytes])) as ArrayRef,
             ],
-        ).map_err(|e| KalamDbError::Other(format!("Arrow error: {}", e)))?;
+        )
+        .map_err(|e| KalamDbError::Other(format!("Arrow error: {}", e)))?;
 
-        Ok(ExecutionResult::Rows { batches: vec![batch], row_count: 1 })
+        Ok(ExecutionResult::Rows {
+            batches: vec![batch],
+            row_count: 1,
+        })
     }
 
     async fn check_authorization(

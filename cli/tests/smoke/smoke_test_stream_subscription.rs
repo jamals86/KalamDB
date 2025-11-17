@@ -66,15 +66,18 @@ fn smoke_stream_table_subscription() {
             }
         }
     }
-    assert!(got_any, "expected to receive some subscription output within retry window");
+    assert!(
+        got_any,
+        "expected to receive some subscription output within retry window"
+    );
 
     // Stop subscription
     listener.stop().ok();
 
     // 5) Verify data is present via regular SELECT immediately after insert
     let select_sql = format!("SELECT * FROM {}", full);
-    let select_output = execute_sql_as_root_via_cli_json(&select_sql)
-        .expect("select should succeed");
+    let select_output =
+        execute_sql_as_root_via_cli_json(&select_sql).expect("select should succeed");
     assert!(
         select_output.contains(ev_val),
         "expected to find inserted event '{}' in SELECT output immediately after insert. Output:\n{}",
@@ -87,8 +90,8 @@ fn smoke_stream_table_subscription() {
     std::thread::sleep(std::time::Duration::from_secs(11));
 
     // 7) Verify data has been evicted via regular SELECT
-    let select_after_ttl = execute_sql_as_root_via_cli_json(&select_sql)
-        .expect("select after TTL should succeed");
+    let select_after_ttl =
+        execute_sql_as_root_via_cli_json(&select_sql).expect("select after TTL should succeed");
     assert!(
         !select_after_ttl.contains(ev_val),
         "expected event '{}' to be evicted after 11 seconds (TTL=10s)",

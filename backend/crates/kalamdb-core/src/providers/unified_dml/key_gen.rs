@@ -8,7 +8,6 @@ use kalamdb_commons::models::schemas::TableType;
 use kalamdb_commons::models::UserId;
 use kalamdb_commons::StorageKey;
 
-
 /// Storage key type enum
 ///
 /// Used to return different key types from generate_storage_key()

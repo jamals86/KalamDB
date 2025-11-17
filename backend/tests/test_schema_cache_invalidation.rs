@@ -10,8 +10,8 @@
 mod common;
 
 use kalamdb_commons::models::TableId;
-use kalamdb_core::system_table_registration::register_system_tables;
 use kalamdb_core::schema_registry::SchemaRegistry;
+use kalamdb_core::system_table_registration::register_system_tables;
 use kalamdb_registry::TableSchemaStore;
 use kalamdb_store::RocksDBBackend;
 use rocksdb::DB;
@@ -46,8 +46,8 @@ async fn test_cache_invalidation_removes_entry() {
 
     // Simulate CREATE TABLE by inserting into cache
     // (In real scenario, this would happen through DESCRIBE TABLE query)
-    use kalamdb_commons::schemas::{ColumnDefinition, TableDefinition, TableOptions, TableType};
     use kalamdb_commons::models::datatypes::KalamDataType;
+    use kalamdb_commons::schemas::{ColumnDefinition, TableDefinition, TableOptions, TableType};
 
     let columns = vec![
         ColumnDefinition::new(
@@ -118,8 +118,8 @@ async fn test_cache_invalidation_forces_cache_miss() {
     // Create a test table
     let table_id = TableId::from_strings("default", "test_table");
 
-    use kalamdb_commons::schemas::{ColumnDefinition, TableDefinition, TableOptions, TableType};
     use kalamdb_commons::models::datatypes::KalamDataType;
+    use kalamdb_commons::schemas::{ColumnDefinition, TableDefinition, TableOptions, TableType};
 
     let columns = vec![ColumnDefinition::new(
         "id",
@@ -176,8 +176,8 @@ async fn test_selective_invalidation_preserves_other_entries() {
     // Note: register_system_tables pre-warms cache with system table schemas
     let initial_cache_size = schema_registry.len();
 
-    use kalamdb_commons::schemas::{ColumnDefinition, TableDefinition, TableOptions, TableType};
     use kalamdb_commons::models::datatypes::KalamDataType;
+    use kalamdb_commons::schemas::{ColumnDefinition, TableDefinition, TableOptions, TableType};
 
     // Create 3 test tables
     for i in 1..=3 {
@@ -250,8 +250,8 @@ async fn test_invalidation_idempotent() {
 
     let table_id = TableId::from_strings("default", "test_table");
 
-    use kalamdb_commons::schemas::{ColumnDefinition, TableDefinition, TableOptions, TableType};
     use kalamdb_commons::models::datatypes::KalamDataType;
+    use kalamdb_commons::schemas::{ColumnDefinition, TableDefinition, TableOptions, TableType};
 
     let columns = vec![ColumnDefinition::new(
         "id",
@@ -298,8 +298,8 @@ async fn test_cache_stats_track_invalidation_behavior() {
 
     let table_id = TableId::from_strings("default", "test_table");
 
-    use kalamdb_commons::schemas::{ColumnDefinition, TableDefinition, TableOptions, TableType};
     use kalamdb_commons::models::datatypes::KalamDataType;
+    use kalamdb_commons::schemas::{ColumnDefinition, TableDefinition, TableOptions, TableType};
 
     let columns = vec![ColumnDefinition::new(
         "id",

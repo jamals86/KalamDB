@@ -28,7 +28,9 @@ impl TypedStatementHandler<KillLiveQueryStatement> for KillLiveQueryHandler {
     ) -> Result<ExecutionResult, KalamDbError> {
         let manager = self.app_context.live_query_manager();
         manager.unregister_subscription(&statement.live_id).await?;
-        Ok(ExecutionResult::Success { message: format!("Live query killed: {}", statement.live_id) })
+        Ok(ExecutionResult::Success {
+            message: format!("Live query killed: {}", statement.live_id),
+        })
     }
 
     async fn check_authorization(

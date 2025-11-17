@@ -12,7 +12,10 @@ use crate::common::*;
 #[test]
 fn smoke_user_table_rls_isolation() -> Result<(), Box<dyn std::error::Error>> {
     if !is_server_running() {
-        eprintln!("Skipping smoke_user_table_rls_isolation: server not running at {}", SERVER_URL);
+        eprintln!(
+            "Skipping smoke_user_table_rls_isolation: server not running at {}",
+            SERVER_URL
+        );
         return Ok(());
     }
 
@@ -21,8 +24,13 @@ fn smoke_user_table_rls_isolation() -> Result<(), Box<dyn std::error::Error>> {
     let table = generate_unique_table("smoke_rls_tbl");
     let full_table = format!("{}.{}", namespace, table);
 
-    let user_name = format!("smoke_user_{}", std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH).unwrap().as_millis());
+    let user_name = format!(
+        "smoke_user_{}",
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_millis()
+    );
     let user_pass = "smoke_pass_123";
 
     // 0) As root: create namespace
@@ -48,7 +56,10 @@ fn smoke_user_table_rls_isolation() -> Result<(), Box<dyn std::error::Error>> {
     }
 
     // 3) Create a new regular user
-    let create_user_sql = format!("CREATE USER {} WITH PASSWORD '{}' ROLE 'user'", user_name, user_pass);
+    let create_user_sql = format!(
+        "CREATE USER {} WITH PASSWORD '{}' ROLE 'user'",
+        user_name, user_pass
+    );
     execute_sql_as_root_via_cli(&create_user_sql)?;
 
     // 4) Login via CLI as the regular user (implicit via next commands)
@@ -81,17 +92,26 @@ fn smoke_user_table_rls_isolation() -> Result<(), Box<dyn std::error::Error>> {
                 let id_part = parts[1].trim();
                 // Validate it's a number (allowing negative)
                 if let Ok(_) = id_part.parse::<i64>() {
-                    if line.contains("user_row_b") { row_b_id = Some(id_part.to_string()); }
-                    if line.contains("user_row_c") { row_c_id = Some(id_part.to_string()); }
+                    if line.contains("user_row_b") {
+                        row_b_id = Some(id_part.to_string());
+                    }
+                    if line.contains("user_row_c") {
+                        row_c_id = Some(id_part.to_string());
+                    }
                 }
             }
         }
     }
-    let row_b_id = row_b_id.ok_or_else(|| format!("Failed to parse id for user_row_b from output: {}", id_out))?;
-    let row_c_id = row_c_id.ok_or_else(|| format!("Failed to parse id for user_row_c from output: {}", id_out))?;
+    let row_b_id = row_b_id
+        .ok_or_else(|| format!("Failed to parse id for user_row_b from output: {}", id_out))?;
+    let row_c_id = row_c_id
+        .ok_or_else(|| format!("Failed to parse id for user_row_c from output: {}", id_out))?;
 
     // Update one of the user's rows (set updated=1) using id predicate
-    let upd = format!("UPDATE {} SET updated = 1 WHERE id = {}", full_table, row_b_id);
+    let upd = format!(
+        "UPDATE {} SET updated = 1 WHERE id = {}",
+        full_table, row_b_id
+    );
     execute_sql_via_cli_as(&user_name, user_pass, &upd)?;
 
     // Delete one of the user's rows using id predicate
@@ -99,22 +119,43 @@ fn smoke_user_table_rls_isolation() -> Result<(), Box<dyn std::error::Error>> {
     execute_sql_via_cli_as(&user_name, user_pass, &del)?;
 
     // 6) SELECT as the regular user and verify visibility
-    let select_out = execute_sql_via_cli_as(&user_name, user_pass, &format!("SELECT id, content, updated FROM {} ORDER BY id", full_table))?;
+    let select_out = execute_sql_via_cli_as(
+        &user_name,
+        user_pass,
+        &format!(
+            "SELECT id, content, updated FROM {} ORDER BY id",
+            full_table
+        ),
+    )?;
 
     // (a) user could insert (at least one of user's values appears)
-    assert!(select_out.contains("user_row_a") || select_out.contains("user_row_b"),
-        "Expected at least one user row to be present in selection, got: {}", select_out);
+    assert!(
+        select_out.contains("user_row_a") || select_out.contains("user_row_b"),
+        "Expected at least one user row to be present in selection, got: {}",
+        select_out
+    );
 
     // (b) CLI login succeeded implicitly through previous commands; also ensured via SELECT 1
 
     // (c) ensure no root rows are visible
     for r in &root_rows {
-        assert!(!select_out.contains(r), "User selection should not contain root row '{}': {}", r, select_out);
+        assert!(
+            !select_out.contains(r),
+            "User selection should not contain root row '{}': {}",
+            r,
+            select_out
+        );
     }
 
     // Ensure update took effect and delete removed the row
-    assert!(select_out.contains("user_row_b"), "Expected updated row to be present");
-    assert!(!select_out.contains("user_row_c"), "Expected deleted row to be absent");
+    assert!(
+        select_out.contains("user_row_b"),
+        "Expected updated row to be present"
+    );
+    assert!(
+        !select_out.contains("user_row_c"),
+        "Expected deleted row to be absent"
+    );
 
     // Cleanup (best-effort)
     let _ = execute_sql_as_root_via_cli(&format!("DROP USER {}", user_name));

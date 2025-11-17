@@ -12,8 +12,7 @@ pub mod initial_data;
 pub mod manager;
 
 pub use connection_registry::{
-    ConnectionId, LiveId, LiveQueryOptions, LiveQueryRegistry, NodeId,
-    SubscriptionHandle, UserId,
+    ConnectionId, LiveId, LiveQueryOptions, LiveQueryRegistry, NodeId, SubscriptionHandle, UserId,
 };
 pub use filter::{FilterCache, FilterPredicate};
 pub use initial_data::{InitialDataFetcher, InitialDataOptions, InitialDataResult};

@@ -3,9 +3,9 @@
 //! This module provides a DataFusion TableProvider implementation for the system.audit_log table.
 //! Uses the EntityStore architecture with type-safe keys (AuditLogId).
 
-use crate::system_table_trait::SystemTableProviderExt;
 use super::{new_audit_logs_store, AuditLogsStore, AuditLogsTableSchema};
 use crate::error::SystemError;
+use crate::system_table_trait::SystemTableProviderExt;
 use async_trait::async_trait;
 use datafusion::arrow::array::{ArrayRef, RecordBatch, StringBuilder, TimestampMillisecondArray};
 use datafusion::arrow::datatypes::SchemaRef;
@@ -198,12 +198,15 @@ impl TableProvider for AuditLogsTableProvider {
         use datafusion::datasource::MemTable;
         let schema = self.schema.clone();
         let batch = match limit {
-            Some(lim) => self
-                .scan_entries_limited(lim)
-                .map_err(|e| DataFusionError::Execution(format!("Failed to build limited audit log batch: {}", e)))?,
-            None => self
-                .scan_all_entries()
-                .map_err(|e| DataFusionError::Execution(format!("Failed to build audit log batch: {}", e)))?,
+            Some(lim) => self.scan_entries_limited(lim).map_err(|e| {
+                DataFusionError::Execution(format!(
+                    "Failed to build limited audit log batch: {}",
+                    e
+                ))
+            })?,
+            None => self.scan_all_entries().map_err(|e| {
+                DataFusionError::Execution(format!("Failed to build audit log batch: {}", e))
+            })?,
         };
         let partitions = vec![vec![batch]];
         let table = MemTable::try_new(schema, partitions)

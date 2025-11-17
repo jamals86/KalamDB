@@ -6,11 +6,12 @@
 use super::{ManifestCacheService, ManifestService};
 use crate::error::KalamDbError;
 use datafusion::arrow::array::*;
-use datafusion::arrow::datatypes::DataType;
 use datafusion::arrow::record_batch::RecordBatch;
-use kalamdb_commons::types::{BatchFileEntry, ManifestFile};
+use datafusion::parquet::arrow::arrow_reader::ParquetRecordBatchReaderBuilder;
+use kalamdb_commons::types::{BatchFileEntry, ManifestFile, RowGroupPruningStats};
 use kalamdb_commons::{NamespaceId, TableName, UserId};
 use std::collections::HashMap;
+use std::path::Path;
 use std::sync::Arc;
 
 /// Helper for manifest operations during flush
@@ -40,7 +41,10 @@ impl FlushManifestHelper {
         table: &TableName,
         user_id: Option<&UserId>,
     ) -> Result<u64, KalamDbError> {
-        match self.manifest_service.read_manifest(namespace, table, user_id) {
+        match self
+            .manifest_service
+            .read_manifest(namespace, table, user_id)
+        {
             Ok(manifest) => Ok(manifest.max_batch + 1),
             Err(_) => Ok(0), // No manifest exists yet, start with batch 0
         }
@@ -68,151 +72,129 @@ impl FlushManifestHelper {
         }
     }
 
-    /// Extract column statistics (min/max) from RecordBatch
+    /// Extract row-group level statistics from a Parquet file
     ///
-    /// Returns HashMap of column_name -> (min_value, max_value)
-    pub fn extract_column_stats(
-        batch: &RecordBatch,
-    ) -> Result<HashMap<String, (serde_json::Value, serde_json::Value)>, KalamDbError> {
-        let mut column_min_max = HashMap::new();
+    /// Opens the Parquet file, iterates through row groups, and extracts:
+    /// - Row counts per group
+    /// - Min/max _seq per group
+    /// - Column min/max for indexed columns per group
+    /// - Byte ranges (if available from metadata)
+    /// - Page index presence flag
+    ///
+    /// Returns (row_group_stats, has_page_index, footer_size)
+    pub fn extract_row_group_stats(
+        file_path: &Path,
+        indexed_columns: &[String],
+    ) -> Result<(Vec<RowGroupPruningStats>, bool, Option<u64>), KalamDbError> {
+        use std::fs::File;
 
-        for (idx, field) in batch.schema().fields().iter().enumerate() {
-            let column = batch.column(idx);
-            let column_name = field.name();
+        let file = File::open(file_path).map_err(|e| KalamDbError::Io(e))?;
 
-            // Skip if all nulls
-            if column.null_count() == column.len() {
-                continue;
+        let builder = ParquetRecordBatchReaderBuilder::try_new(file)
+            .map_err(|e| KalamDbError::Other(format!("Failed to open Parquet file: {}", e)))?;
+
+        let metadata = builder.metadata();
+        let num_row_groups = metadata.num_row_groups();
+        let footer_size = metadata.file_metadata().num_rows() as u64; // Approximation
+
+        // Check if page index exists (check first row group)
+        let has_page_index = if num_row_groups > 0 {
+            metadata.row_group(0).columns().iter().any(|col| {
+                col.column_index_offset().is_some() || col.offset_index_offset().is_some()
+            })
+        } else {
+            false
+        };
+
+        let mut row_group_stats = Vec::with_capacity(num_row_groups);
+
+        for rg_idx in 0..num_row_groups {
+            let rg_metadata = metadata.row_group(rg_idx);
+            let row_count = rg_metadata.num_rows() as u64;
+
+            // Extract min/max _seq from row group statistics
+            let mut min_seq = i64::MAX;
+            let mut max_seq = i64::MIN;
+            let mut column_min_max = HashMap::new();
+
+            for col_metadata in rg_metadata.columns() {
+                let col_name = col_metadata.column_path().string();
+
+                if let Some(stats) = col_metadata.statistics() {
+                    // Extract _seq bounds
+                    if col_name == "_seq" {
+                        if let (Some(min_bytes), Some(max_bytes)) =
+                            (stats.min_bytes_opt(), stats.max_bytes_opt())
+                        {
+                            if min_bytes.len() == 8 {
+                                let min_val = i64::from_le_bytes(min_bytes.try_into().unwrap());
+                                min_seq = min_seq.min(min_val);
+                            }
+                            if max_bytes.len() == 8 {
+                                let max_val = i64::from_le_bytes(max_bytes.try_into().unwrap());
+                                max_seq = max_seq.max(max_val);
+                            }
+                        }
+                    }
+
+                    // Extract indexed column bounds
+                    if indexed_columns.contains(&col_name.to_string()) {
+                        if let (Some(min_bytes), Some(max_bytes)) =
+                            (stats.min_bytes_opt(), stats.max_bytes_opt())
+                        {
+                            // For simplicity, store as JSON strings (could be type-specific)
+                            let min_json = serde_json::json!(format!("{:?}", min_bytes));
+                            let max_json = serde_json::json!(format!("{:?}", max_bytes));
+                            column_min_max.insert(col_name.to_string(), (min_json, max_json));
+                        }
+                    }
+                }
             }
 
-            // Extract min/max based on data type
-            let (min_val, max_val) = match field.data_type() {
-                DataType::Int64 => {
-                    if let Some(arr) = column.as_any().downcast_ref::<Int64Array>() {
-                        let values: Vec<i64> = (0..arr.len())
-                            .filter_map(|i| if arr.is_null(i) { None } else { Some(arr.value(i)) })
-                            .collect();
-                        if let (Some(min), Some(max)) = (values.iter().min(), values.iter().max()) {
-                            (serde_json::json!(min), serde_json::json!(max))
-                        } else {
-                            continue;
-                        }
-                    } else {
-                        continue;
-                    }
-                }
-                DataType::Int32 => {
-                    if let Some(arr) = column.as_any().downcast_ref::<Int32Array>() {
-                        let values: Vec<i32> = (0..arr.len())
-                            .filter_map(|i| if arr.is_null(i) { None } else { Some(arr.value(i)) })
-                            .collect();
-                        if let (Some(min), Some(max)) = (values.iter().min(), values.iter().max()) {
-                            (serde_json::json!(min), serde_json::json!(max))
-                        } else {
-                            continue;
-                        }
-                    } else {
-                        continue;
-                    }
-                }
-                DataType::Float64 => {
-                    if let Some(arr) = column.as_any().downcast_ref::<Float64Array>() {
-                        let values: Vec<f64> = (0..arr.len())
-                            .filter_map(|i| if arr.is_null(i) { None } else { Some(arr.value(i)) })
-                            .collect();
-                        if let (Some(min), Some(max)) = (
-                            values.iter().min_by(|a, b| a.partial_cmp(b).unwrap()),
-                            values.iter().max_by(|a, b| a.partial_cmp(b).unwrap()),
-                        ) {
-                            (serde_json::json!(min), serde_json::json!(max))
-                        } else {
-                            continue;
-                        }
-                    } else {
-                        continue;
-                    }
-                }
-                DataType::Utf8 => {
-                    if let Some(arr) = column.as_any().downcast_ref::<StringArray>() {
-                        let values: Vec<&str> = (0..arr.len())
-                            .filter_map(|i| if arr.is_null(i) { None } else { Some(arr.value(i)) })
-                            .collect();
-                        if let (Some(min), Some(max)) = (values.iter().min(), values.iter().max()) {
-                            (serde_json::json!(min), serde_json::json!(max))
-                        } else {
-                            continue;
-                        }
-                    } else {
-                        continue;
-                    }
-                }
-                DataType::Timestamp(_, _) => {
-                    if let Some(arr) = column.as_any().downcast_ref::<TimestampMillisecondArray>()
-                    {
-                        let values: Vec<i64> = (0..arr.len())
-                            .filter_map(|i| if arr.is_null(i) { None } else { Some(arr.value(i)) })
-                            .collect();
-                        if let (Some(min), Some(max)) = (values.iter().min(), values.iter().max()) {
-                            (serde_json::json!(min), serde_json::json!(max))
-                        } else {
-                            continue;
-                        }
-                    } else if let Some(arr) =
-                        column.as_any().downcast_ref::<TimestampMicrosecondArray>()
-                    {
-                        let values: Vec<i64> = (0..arr.len())
-                            .filter_map(|i| if arr.is_null(i) { None } else { Some(arr.value(i)) })
-                            .collect();
-                        if let (Some(min), Some(max)) = (values.iter().min(), values.iter().max()) {
-                            (serde_json::json!(min), serde_json::json!(max))
-                        } else {
-                            continue;
-                        }
-                    } else {
-                        continue;
-                    }
-                }
-                DataType::Boolean => {
-                    if let Some(arr) = column.as_any().downcast_ref::<BooleanArray>() {
-                        let has_true = (0..arr.len()).any(|i| !arr.is_null(i) && arr.value(i));
-                        let has_false = (0..arr.len()).any(|i| !arr.is_null(i) && !arr.value(i));
-                        if has_true && has_false {
-                            (serde_json::json!(false), serde_json::json!(true))
-                        } else if has_true {
-                            (serde_json::json!(true), serde_json::json!(true))
-                        } else if has_false {
-                            (serde_json::json!(false), serde_json::json!(false))
-                        } else {
-                            continue;
-                        }
-                    } else {
-                        continue;
-                    }
-                }
-                _ => continue, // Skip other types for now
-            };
+            // Fallback if _seq stats missing
+            if min_seq == i64::MAX || max_seq == i64::MIN {
+                min_seq = 0;
+                max_seq = 0;
+            }
 
-            column_min_max.insert(column_name.clone(), (min_val, max_val));
+            // Byte range extraction (optional, depends on metadata availability)
+            let byte_range = rg_metadata.columns().first().map(|col| {
+                let offset = col.file_offset();
+                (offset as u64, rg_metadata.compressed_size() as u64)
+            });
+
+            row_group_stats.push(RowGroupPruningStats::new(
+                rg_idx as u32,
+                row_count,
+                min_seq,
+                max_seq,
+                column_min_max,
+                byte_range,
+            ));
         }
 
-        Ok(column_min_max)
+        Ok((row_group_stats, has_page_index, Some(footer_size)))
     }
+
 
     /// Update manifest and cache after successful flush
     ///
     /// This is the canonical flow for updating manifest during flush:
-    /// 1. Create BatchFileEntry with metadata
+    /// 1. Create BatchFileEntry with metadata (including row-group stats)
     /// 2. Update manifest file on disk
     /// 3. Update cache with new manifest
     ///
     /// # Arguments
     /// * `namespace` - Namespace ID
     /// * `table` - Table name
+    /// * `table_type` - Table type (Shared or User)
     /// * `user_id` - User ID for user tables, None for shared tables
     /// * `batch_number` - Batch number
     /// * `batch_filename` - Batch filename
+    /// * `file_path` - Full path to the written Parquet file
     /// * `batch` - RecordBatch (for extracting stats)
     /// * `file_size_bytes` - Size of written Parquet file
+    /// * `indexed_columns` - Columns with Bloom filters/page stats enabled
     ///
     /// # Returns
     /// Updated ManifestFile
@@ -220,33 +202,52 @@ impl FlushManifestHelper {
         &self,
         namespace: &NamespaceId,
         table: &TableName,
+        table_type: kalamdb_commons::models::schemas::TableType,
         user_id: Option<&UserId>,
         batch_number: u64,
         batch_filename: String,
+        file_path: &Path,
         batch: &RecordBatch,
         file_size_bytes: u64,
+        indexed_columns: &[String],
     ) -> Result<ManifestFile, KalamDbError> {
-        // Extract metadata from batch
+        // Extract metadata from batch (batch-level)
         let (min_seq, max_seq) = Self::extract_seq_range(batch);
-        let column_min_max = Self::extract_column_stats(batch)?;
+
         let row_count = batch.num_rows() as u64;
 
-        // Create batch entry
-        let batch_entry = BatchFileEntry::new(
+        // Extract row-group level stats from the written Parquet file
+        let (row_groups, has_page_index, footer_size) = Self::extract_row_group_stats(
+            file_path,
+            indexed_columns,
+        )
+        .unwrap_or_else(|e| {
+            log::warn!(
+                "⚠️  Failed to extract row-group stats for {}: {}. Skipping fine-grained metadata.",
+                file_path.display(),
+                e
+            );
+            (Vec::new(), false, None)
+        });
+
+        // Create batch entry with row-group metadata
+        let mut batch_entry = BatchFileEntry::new(
             batch_number,
             batch_filename,
             min_seq,
             max_seq,
-            column_min_max,
             row_count,
             file_size_bytes,
             1, // schema_version
         );
+        batch_entry.row_groups = row_groups;
+        batch_entry.has_page_index = has_page_index;
+        batch_entry.footer_size = footer_size;
 
         // Update manifest on disk
         let updated_manifest = self
             .manifest_service
-            .update_manifest(namespace, table, user_id, batch_entry)
+            .update_manifest(namespace, table, table_type, user_id, batch_entry)
             .map_err(|e| {
                 KalamDbError::Other(format!(
                     "Failed to update manifest for {}.{} (user_id={:?}): {}",
@@ -258,10 +259,24 @@ impl FlushManifestHelper {
             })?;
 
         // Update cache
-        let scope_str = user_id.map(|u| u.as_str().to_string()).unwrap_or_else(|| "shared".to_string());
-        let manifest_path = format!("{}/{}/{}/manifest.json", namespace.as_str(), table.as_str(), scope_str);
+        let scope_str = user_id
+            .map(|u| u.as_str().to_string())
+            .unwrap_or_else(|| "shared".to_string());
+        let manifest_path = format!(
+            "{}/{}/{}/manifest.json",
+            namespace.as_str(),
+            table.as_str(),
+            scope_str
+        );
         self.manifest_cache
-            .update_after_flush(namespace, table, user_id, &updated_manifest, None, manifest_path)
+            .update_after_flush(
+                namespace,
+                table,
+                user_id,
+                &updated_manifest,
+                None,
+                manifest_path,
+            )
             .map_err(|e| {
                 KalamDbError::Other(format!(
                     "Failed to update manifest cache for {}.{} (user_id={:?}): {}",
@@ -295,9 +310,18 @@ mod tests {
 
     #[test]
     fn test_generate_batch_filename() {
-        assert_eq!(FlushManifestHelper::generate_batch_filename(0), "batch-0.parquet");
-        assert_eq!(FlushManifestHelper::generate_batch_filename(42), "batch-42.parquet");
-        assert_eq!(FlushManifestHelper::generate_batch_filename(999), "batch-999.parquet");
+        assert_eq!(
+            FlushManifestHelper::generate_batch_filename(0),
+            "batch-0.parquet"
+        );
+        assert_eq!(
+            FlushManifestHelper::generate_batch_filename(42),
+            "batch-42.parquet"
+        );
+        assert_eq!(
+            FlushManifestHelper::generate_batch_filename(999),
+            "batch-999.parquet"
+        );
     }
 
     #[test]
@@ -321,46 +345,4 @@ mod tests {
         assert_eq!(max, 200);
     }
 
-    #[test]
-    fn test_extract_column_stats() {
-        let schema = StdArc::new(Schema::new(vec![
-            Field::new("id", DataType::Int64, false),
-            Field::new("name", DataType::Utf8, true),
-            Field::new("_seq", DataType::Int64, false),
-        ]));
-
-        let id_array = Int64Array::from(vec![1, 2, 3, 4]);
-        let name_array = StringArray::from(vec![Some("alice"), Some("bob"), None, Some("charlie")]);
-        let seq_array = Int64Array::from(vec![100, 200, 150, 175]);
-
-        let batch = RecordBatch::try_new(
-            schema,
-            vec![
-                StdArc::new(id_array),
-                StdArc::new(name_array),
-                StdArc::new(seq_array),
-            ],
-        )
-        .unwrap();
-
-        let stats = FlushManifestHelper::extract_column_stats(&batch).unwrap();
-
-        // Check id column stats
-        assert!(stats.contains_key("id"));
-        let (min, max) = &stats["id"];
-        assert_eq!(min, &serde_json::json!(1));
-        assert_eq!(max, &serde_json::json!(4));
-
-        // Check name column stats (skips nulls)
-        assert!(stats.contains_key("name"));
-        let (min, max) = &stats["name"];
-        assert_eq!(min, &serde_json::json!("alice"));
-        assert_eq!(max, &serde_json::json!("charlie"));
-
-        // Check _seq column stats
-        assert!(stats.contains_key("_seq"));
-        let (min, max) = &stats["_seq"];
-        assert_eq!(min, &serde_json::json!(100));
-        assert_eq!(max, &serde_json::json!(200));
-    }
 }

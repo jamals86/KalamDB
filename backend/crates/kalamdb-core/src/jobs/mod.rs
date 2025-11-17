@@ -19,13 +19,13 @@
 //! let backend: Arc<dyn StorageBackend> = Arc::new(InMemoryBackend::new());
 //! let jobs_provider = Arc::new(JobsTableProvider::new(backend));
 //! let job_manager = Arc::new(JobsManager::new(jobs_provider));
-//! 
+//!
 //! // Register executors (8 concrete implementations)
 //! let mut registry = JobRegistry::new();
 //! registry.register("flush", Arc::new(FlushExecutor::new(/* ... */)));
 //! registry.register("cleanup", Arc::new(CleanupExecutor::new(/* ... */)));
 //! // ... register remaining 6 executors
-//! 
+//!
 //! // Create job with typed JobId (idempotency enforced)
 //! let job_id = job_manager.create_job(
 //!     JobType::Flush,
@@ -33,7 +33,7 @@
 //!     "flush-table-xyz",  // Idempotency key
 //!     serde_json::json!({"table_id": "xyz"}),
 //! ).await.unwrap();
-//! 
+//!
 //! // Job processing loop (spawned in lifecycle.rs)
 //! // job_manager.run_loop(max_concurrent).await?;
 //! # }
@@ -42,9 +42,9 @@
 // ============================================================================
 // PHASE 9: UNIFIED JOB MANAGEMENT (PRODUCTION-READY)
 // ============================================================================
-pub mod jobs_manager;
 pub mod executors;
+pub mod jobs_manager;
 
 // Phase 9 exports (production API)
-pub use jobs_manager::JobsManager;
 pub use executors::{JobContext, JobDecision, JobExecutor as JobExecutorTrait, JobRegistry};
+pub use jobs_manager::JobsManager;

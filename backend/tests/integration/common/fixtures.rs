@@ -29,7 +29,7 @@
 
 use crate::common::TestServer;
 use anyhow::Result;
-use kalamdb_api::models::{SqlResponse, QueryResult};
+use kalamdb_api::models::{QueryResult, SqlResponse};
 use serde_json::json;
 
 /// Execute SQL with a specific user context.

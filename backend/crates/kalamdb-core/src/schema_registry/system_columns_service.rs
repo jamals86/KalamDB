@@ -2,7 +2,7 @@
 //!
 //! **Phase 12, User Story 5 - MVCC Architecture**:
 //! Centralizes all system column logic (`_seq`, `_deleted`) for KalamDB tables.
-//! 
+//!
 //! ## Responsibilities
 //! - Generate unique Snowflake-based SeqIds for `_seq` column (version identifier)
 //! - Handle `_deleted` soft delete flags
@@ -39,10 +39,10 @@
 //! # Ok::<(), kalamdb_registry::RegistryError>(())
 //! ```
 
+use super::error::RegistryError;
 use kalamdb_commons::ids::snowflake::SnowflakeGenerator;
 use kalamdb_commons::ids::SeqId;
-use kalamdb_commons::models::schemas::{ColumnDefinition, ColumnDefault, TableDefinition};
-use super::error::RegistryError;
+use kalamdb_commons::models::schemas::{ColumnDefault, ColumnDefinition, TableDefinition};
 use std::sync::Arc;
 
 /// System Columns Service
@@ -97,9 +97,9 @@ impl SystemColumnsService {
     /// # Errors
     /// Returns `RegistryError::InvalidOperation` if clock moves backwards
     pub fn generate_seq_id(&self) -> Result<SeqId, RegistryError> {
-        let id = self.snowflake_gen
-            .next_id()
-            .map_err(|e| RegistryError::InvalidOperation(format!("SeqId generation failed: {}", e)))?;
+        let id = self.snowflake_gen.next_id().map_err(|e| {
+            RegistryError::InvalidOperation(format!("SeqId generation failed: {}", e))
+        })?;
         Ok(SeqId::new(id))
     }
 
@@ -107,7 +107,7 @@ impl SystemColumnsService {
     ///
     /// **MVCC Architecture**: Injects `_seq BIGINT` and `_deleted BOOLEAN`
     /// columns if they don't already exist.
-    /// 
+    ///
     /// Note: _seq contains embedded timestamp, so no separate _updated column is needed.
     ///
     /// # Arguments
@@ -139,7 +139,10 @@ impl SystemColumnsService {
             is_primary_key: false, // User-defined PK required separately
             is_partition_key: false,
             default_value: ColumnDefault::None,
-            column_comment: Some("System-generated Snowflake-based version ID (MVCC) with embedded timestamp".to_string()),
+            column_comment: Some(
+                "System-generated Snowflake-based version ID (MVCC) with embedded timestamp"
+                    .to_string(),
+            ),
         });
 
         // Add _deleted column (BOOLEAN, NOT NULL, DEFAULT FALSE)

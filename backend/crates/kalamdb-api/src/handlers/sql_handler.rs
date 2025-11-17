@@ -5,9 +5,9 @@
 use actix_web::{post, web, HttpRequest, HttpResponse, Responder};
 use kalamdb_auth::{extract_auth_with_repo, UserRepository};
 use kalamdb_commons::models::UserId;
-use kalamdb_core::sql::ExecutionResult;
-use kalamdb_core::sql::executor::{ExecutorMetadataAlias, SqlExecutor};
 use kalamdb_core::sql::executor::models::{ExecutionContext, ScalarValue};
+use kalamdb_core::sql::executor::{ExecutorMetadataAlias, SqlExecutor};
+use kalamdb_core::sql::ExecutionResult;
 use log::warn;
 use serde_json::Value as JsonValue;
 use std::sync::Arc;
@@ -114,7 +114,9 @@ pub async fn execute_sql_v1(
         repo.get_ref().clone()
     } else {
         let users_provider = app_context.system_tables().users();
-        Arc::new(crate::repositories::user_repo::CoreUsersRepo::new(users_provider)) as Arc<dyn UserRepository>
+        Arc::new(crate::repositories::user_repo::CoreUsersRepo::new(
+            users_provider,
+        )) as Arc<dyn UserRepository>
     };
 
     // Extract and validate authentication from request using repo
@@ -133,10 +135,19 @@ pub async fn execute_sql_v1(
                 kalamdb_auth::AuthError::RemoteAccessDenied(msg) => ("REMOTE_ACCESS_DENIED", msg),
                 kalamdb_auth::AuthError::UserNotFound(msg) => ("USER_NOT_FOUND", msg),
                 kalamdb_auth::AuthError::DatabaseError(msg) => ("DATABASE_ERROR", msg),
-                kalamdb_auth::AuthError::TokenExpired => ("TOKEN_EXPIRED", "Token expired".to_string()),
-                kalamdb_auth::AuthError::InvalidSignature => ("INVALID_SIGNATURE", "Invalid token signature".to_string()),
-                kalamdb_auth::AuthError::UntrustedIssuer(iss) => ("UNTRUSTED_ISSUER", format!("Untrusted issuer: {}", iss)),
-                kalamdb_auth::AuthError::MissingClaim(claim) => ("MISSING_CLAIM", format!("Missing required claim: {}", claim)),
+                kalamdb_auth::AuthError::TokenExpired => {
+                    ("TOKEN_EXPIRED", "Token expired".to_string())
+                }
+                kalamdb_auth::AuthError::InvalidSignature => {
+                    ("INVALID_SIGNATURE", "Invalid token signature".to_string())
+                }
+                kalamdb_auth::AuthError::UntrustedIssuer(iss) => {
+                    ("UNTRUSTED_ISSUER", format!("Untrusted issuer: {}", iss))
+                }
+                kalamdb_auth::AuthError::MissingClaim(claim) => (
+                    "MISSING_CLAIM",
+                    format!("Missing required claim: {}", claim),
+                ),
                 _ => ("AUTHENTICATION_ERROR", format!("{:?}", e)),
             };
             return HttpResponse::Unauthorized().json(SqlResponse::error(code, &message, took_ms));
@@ -222,15 +233,20 @@ pub async fn execute_sql_v1(
         .get("X-Request-ID")
         .and_then(|h| h.to_str().ok())
         .map(|s| s.to_string());
-    
+
     let resolved_ip = http_req
         .headers()
         .get("X-Forwarded-For")
         .and_then(|h| h.to_str().ok())
         .and_then(|raw| raw.split(',').next().map(|s| s.trim().to_string()))
         .filter(|s| !s.is_empty())
-        .or_else(|| http_req.connection_info().realip_remote_addr().map(|s| s.to_string()));
-    
+        .or_else(|| {
+            http_req
+                .connection_info()
+                .realip_remote_addr()
+                .map(|s| s.to_string())
+        });
+
     for (idx, sql) in statements.iter().enumerate() {
         let stmt_start = std::time::Instant::now();
         match execute_single_statement(
@@ -249,7 +265,7 @@ pub async fn execute_sql_v1(
                 // Log slow query if threshold exceeded
                 let stmt_duration_secs = stmt_start.elapsed().as_secs_f64();
                 let row_count = result.rows.as_ref().map(|r| r.len()).unwrap_or(0);
-                
+
                 app_context.slow_query_logger().log_if_slow(
                     sql.to_string(),
                     stmt_duration_secs,
@@ -258,7 +274,7 @@ pub async fn execute_sql_v1(
                     kalamdb_core::schema_registry::TableType::User, // Default to User
                     None, // Table name could be extracted from SQL parsing
                 );
-                
+
                 results.push(result);
             }
             Err(err) => {
@@ -293,8 +309,9 @@ async fn execute_single_statement(
     // Get base SessionContext from AppContext (tables already registered)
     // ExecutionContext will extract SessionState and inject user_id for per-user filtering
     let base_session = app_context.base_session_context();
-    let mut exec_ctx = ExecutionContext::new(auth.user_id.clone(), auth.role, Arc::clone(&base_session));
-    
+    let mut exec_ctx =
+        ExecutionContext::new(auth.user_id.clone(), auth.role, Arc::clone(&base_session));
+
     // Add request_id and ip_address if available
     if let Some(rid) = request_id {
         exec_ctx = exec_ctx.with_request_id(rid.to_string());
@@ -302,7 +319,7 @@ async fn execute_single_statement(
     if let Some(ip) = ip_address {
         exec_ctx = exec_ctx.with_ip(ip.to_string());
     }
-    
+
     // If sql_executor is available, use it (production path)
     if let Some(sql_executor) = sql_executor {
         // Execute through SqlExecutor (handles both custom DDL and DataFusion)
@@ -316,9 +333,10 @@ async fn execute_single_statement(
                 // Phase 3 (T036-T038): Use new ExecutionResult struct variants with row counts
                 match exec_result {
                     ExecutionResult::Success { message } => Ok(QueryResult::with_message(message)),
-                    ExecutionResult::Rows { batches, row_count: _ } => {
-                        record_batch_to_query_result(batches, Some(&auth.user_id))
-                    }
+                    ExecutionResult::Rows {
+                        batches,
+                        row_count: _,
+                    } => record_batch_to_query_result(batches, Some(&auth.user_id)),
                     ExecutionResult::Inserted { rows_affected } => {
                         Ok(QueryResult::with_affected_rows(
                             rows_affected,
@@ -337,17 +355,22 @@ async fn execute_single_statement(
                             Some(format!("Deleted {} row(s)", rows_affected)),
                         ))
                     }
-                    ExecutionResult::Flushed { tables, bytes_written } => {
-                        Ok(QueryResult::with_affected_rows(
+                    ExecutionResult::Flushed {
+                        tables,
+                        bytes_written,
+                    } => Ok(QueryResult::with_affected_rows(
+                        tables.len(),
+                        Some(format!(
+                            "Flushed {} table(s), {} bytes written",
                             tables.len(),
-                            Some(format!(
-                                "Flushed {} table(s), {} bytes written",
-                                tables.len(),
-                                bytes_written
-                            )),
-                        ))
-                    }
-                    ExecutionResult::Subscription { subscription_id, channel, select_query } => {
+                            bytes_written
+                        )),
+                    )),
+                    ExecutionResult::Subscription {
+                        subscription_id,
+                        channel,
+                        select_query,
+                    } => {
                         // Create subscription result matching expected format
                         let sub_data = serde_json::json!({
                             "status": "active",
@@ -360,15 +383,14 @@ async fn execute_single_statement(
                         });
                         Ok(QueryResult::subscription(sub_data))
                     }
-                    ExecutionResult::JobKilled { job_id, status } => {
-                        Ok(QueryResult::with_message(format!("Job {} killed: {}", job_id, status)))
-                    }
+                    ExecutionResult::JobKilled { job_id, status } => Ok(QueryResult::with_message(
+                        format!("Job {} killed: {}", job_id, status),
+                    )),
                 }
             }
             Err(e) => Err(Box::new(e)),
         }
-    }
-    else {
+    } else {
         // // Fallback for testing: use shared session from AppContext (avoid memory leak)
         // let session = app_context.session();
         // let df = session.sql(sql).await?;

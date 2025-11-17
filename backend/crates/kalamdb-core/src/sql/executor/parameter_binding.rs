@@ -7,8 +7,8 @@
 
 use crate::error::KalamDbError;
 use arrow::array::Array;
-use datafusion::scalar::ScalarValue;
 use datafusion::logical_expr::LogicalPlan;
+use datafusion::scalar::ScalarValue;
 
 /// Maximum number of parameters allowed per statement
 const MAX_PARAMS: usize = 50;
@@ -59,9 +59,9 @@ fn estimate_scalar_value_size(value: &ScalarValue) -> usize {
         ScalarValue::Utf8(s) | ScalarValue::LargeUtf8(s) => {
             s.as_ref().map(|s| s.len()).unwrap_or(0)
         }
-        ScalarValue::Binary(b) | ScalarValue::LargeBinary(b) | ScalarValue::FixedSizeBinary(_, b) => {
-            b.as_ref().map(|b| b.len()).unwrap_or(0)
-        }
+        ScalarValue::Binary(b)
+        | ScalarValue::LargeBinary(b)
+        | ScalarValue::FixedSizeBinary(_, b) => b.as_ref().map(|b| b.len()).unwrap_or(0),
         // ScalarValue::List(arr) | ScalarValue::LargeList(arr) | ScalarValue::FixedSizeList(arr) => {
         //     // Rough estimate: 64 bytes per array element
         //     arr.len() * 64
@@ -131,10 +131,11 @@ pub fn replace_placeholders_in_plan(
     // 1. LogicalPlan::with_exprs() + custom ExprRewriter
     // 2. LogicalPlan visitor pattern with mutable state
     // 3. DataFrame API with parameter binding support (if available)
-    
+
     Err(KalamDbError::NotImplemented {
         feature: "Parameter binding via LogicalPlan rewrite".to_string(),
-        message: "validate_params() works, placeholder replacement pending DataFusion API research".to_string(),
+        message: "validate_params() works, placeholder replacement pending DataFusion API research"
+            .to_string(),
     })
 }
 
@@ -174,7 +175,10 @@ mod tests {
 
     #[test]
     fn test_estimate_scalar_value_size() {
-        assert_eq!(estimate_scalar_value_size(&ScalarValue::Int64(Some(123))), 8);
+        assert_eq!(
+            estimate_scalar_value_size(&ScalarValue::Int64(Some(123))),
+            8
+        );
         assert_eq!(
             estimate_scalar_value_size(&ScalarValue::Utf8(Some("hello".to_string()))),
             5
@@ -182,4 +186,3 @@ mod tests {
         assert_eq!(estimate_scalar_value_size(&ScalarValue::Null), 0);
     }
 }
-

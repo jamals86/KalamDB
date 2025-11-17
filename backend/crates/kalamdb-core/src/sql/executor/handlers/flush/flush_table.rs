@@ -5,8 +5,8 @@ use crate::error::KalamDbError;
 use crate::jobs::executors::flush::FlushParams;
 use crate::sql::executor::handlers::typed::TypedStatementHandler;
 use crate::sql::executor::models::{ExecutionContext, ExecutionResult, ScalarValue};
-use kalamdb_commons::{JobType, JobId};
 use kalamdb_commons::models::TableId;
+use kalamdb_commons::{JobId, JobType};
 use kalamdb_sql::ddl::FlushTableStatement;
 use std::sync::Arc;
 
@@ -32,7 +32,7 @@ impl TypedStatementHandler<FlushTableStatement> for FlushTableHandler {
         // Validate table exists via SchemaRegistry and fetch definition for table_type
         let registry = self.app_context.schema_registry();
         let table_id = TableId::new(statement.namespace.clone(), statement.table_name.clone());
-        let table_def = registry.get_table_definition(&table_id)?;        
+        let table_def = registry.get_table_definition(&table_id)?;
         if table_def.is_none() {
             return Err(KalamDbError::NotFound(format!(
                 "Table {}.{} not found",
@@ -51,7 +51,11 @@ impl TypedStatementHandler<FlushTableStatement> for FlushTableHandler {
 
         // Create a flush job via JobsManager (async execution handled in background loop)
         let job_manager = self.app_context.job_manager();
-        let idempotency_key = format!("flush-{}-{}", statement.namespace.as_str(), statement.table_name.as_str());
+        let idempotency_key = format!(
+            "flush-{}-{}",
+            statement.namespace.as_str(),
+            statement.table_name.as_str()
+        );
         let job_id: JobId = job_manager
             .create_job_typed(
                 JobType::Flush,

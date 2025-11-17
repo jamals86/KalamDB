@@ -2,15 +2,17 @@ use crate::models::{BenchmarkMeta, BenchmarkResult, MachineInfo, TestResult};
 use std::fs::{self, File};
 use std::io::Write;
 use std::path::{Path, PathBuf};
-use std::time::{Duration, Instant};
 use std::sync::Mutex;
+use std::time::{Duration, Instant};
 
 // Global lock for benchmark file writes
 static BENCHMARK_LOCK: Mutex<()> = Mutex::new(());
 
 /// Get the benchmark results directory
 pub fn get_results_dir() -> PathBuf {
-    PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("view").join("results")
+    PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("view")
+        .join("results")
 }
 
 /// Ensure the results directory exists
@@ -41,7 +43,7 @@ fn get_git_commit_hash() -> String {
 /// Get version from Cargo.toml
 fn get_version() -> String {
     use std::fs;
-    
+
     let cargo_toml_path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("Cargo.toml");
     if let Ok(content) = fs::read_to_string(cargo_toml_path) {
         for line in content.lines() {
@@ -87,11 +89,11 @@ pub fn write_benchmark_result(result: &BenchmarkResult) -> anyhow::Result<PathBu
     let dir = ensure_results_dir()?;
     let filename = generate_benchmark_filename();
     let path = dir.join(&filename);
-    
+
     let json = serde_json::to_string_pretty(result)?;
     let mut file = File::create(&path)?;
     file.write_all(json.as_bytes())?;
-    
+
     Ok(path)
 }
 
@@ -99,14 +101,14 @@ pub fn write_benchmark_result(result: &BenchmarkResult) -> anyhow::Result<PathBu
 pub fn append_test_result(test_result: TestResult) -> anyhow::Result<PathBuf> {
     // Acquire lock to prevent concurrent writes
     let _lock = BENCHMARK_LOCK.lock().unwrap();
-    
+
     let dir = ensure_results_dir()?;
     let filename = generate_benchmark_filename();
     let path = dir.join(&filename);
-    
+
     let version = get_version();
     let branch = get_git_branch();
-    
+
     let mut benchmark = if path.exists() {
         let json = fs::read_to_string(&path)?;
         serde_json::from_str::<BenchmarkResult>(&json)?
@@ -116,14 +118,14 @@ pub fn append_test_result(test_result: TestResult) -> anyhow::Result<PathBuf> {
             tests: Vec::new(),
         }
     };
-    
+
     benchmark.tests.push(test_result);
-    
+
     let json = serde_json::to_string_pretty(&benchmark)?;
     let mut file = File::create(&path)?;
     file.write_all(json.as_bytes())?;
     file.sync_all()?; // Ensure data is written to disk
-    
+
     Ok(path)
 }
 
@@ -131,7 +133,7 @@ pub fn append_test_result(test_result: TestResult) -> anyhow::Result<PathBuf> {
 #[cfg(target_os = "windows")]
 pub fn measure_memory_mb() -> f64 {
     use std::mem;
-    
+
     #[repr(C)]
     struct ProcessMemoryCounters {
         cb: u32,
@@ -145,7 +147,7 @@ pub fn measure_memory_mb() -> f64 {
         pagefile_usage: usize,
         peak_pagefile_usage: usize,
     }
-    
+
     #[link(name = "psapi")]
     extern "system" {
         fn GetProcessMemoryInfo(
@@ -155,17 +157,13 @@ pub fn measure_memory_mb() -> f64 {
         ) -> i32;
         fn GetCurrentProcess() -> *mut std::ffi::c_void;
     }
-    
+
     unsafe {
         let mut counters: ProcessMemoryCounters = mem::zeroed();
         counters.cb = mem::size_of::<ProcessMemoryCounters>() as u32;
-        
-        let result = GetProcessMemoryInfo(
-            GetCurrentProcess(),
-            &mut counters,
-            counters.cb,
-        );
-        
+
+        let result = GetProcessMemoryInfo(GetCurrentProcess(), &mut counters, counters.cb);
+
         if result != 0 {
             (counters.working_set_size as f64) / (1024.0 * 1024.0)
         } else {
@@ -177,7 +175,7 @@ pub fn measure_memory_mb() -> f64 {
 #[cfg(target_os = "linux")]
 pub fn measure_memory_mb() -> f64 {
     use std::fs;
-    
+
     if let Ok(content) = fs::read_to_string("/proc/self/statm") {
         // statm format: size resident shared text lib data dt
         // We use resident (RSS) which is in pages
@@ -195,7 +193,7 @@ pub fn measure_memory_mb() -> f64 {
 #[cfg(target_os = "macos")]
 pub fn measure_memory_mb() -> f64 {
     use std::mem;
-    
+
     #[repr(C)]
     struct TaskBasicInfo {
         virtual_size: u64,
@@ -206,17 +204,17 @@ pub fn measure_memory_mb() -> f64 {
         policy: i32,
         suspend_count: i32,
     }
-    
+
     #[repr(C)]
     struct TimeValue {
         seconds: i32,
         microseconds: i32,
     }
-    
+
     unsafe {
         let _info: TaskBasicInfo = mem::zeroed();
         let _count = (mem::size_of::<TaskBasicInfo>() / mem::size_of::<u32>()) as u32;
-        
+
         // Note: This is a simplified version. Full implementation would need mach kernel APIs
         // For now, return a placeholder
         0.0
@@ -232,7 +230,7 @@ pub fn measure_memory_mb() -> f64 {
 pub fn measure_disk_mb<P: AsRef<Path>>(path: P) -> f64 {
     fn dir_size(path: &Path) -> u64 {
         let mut total = 0u64;
-        
+
         if let Ok(entries) = fs::read_dir(path) {
             for entry in entries.flatten() {
                 if let Ok(metadata) = entry.metadata() {
@@ -244,10 +242,10 @@ pub fn measure_disk_mb<P: AsRef<Path>>(path: P) -> f64 {
                 }
             }
         }
-        
+
         total
     }
-    
+
     let bytes = dir_size(path.as_ref());
     bytes as f64 / (1024.0 * 1024.0)
 }
@@ -267,24 +265,27 @@ pub fn execute_cli_timed(
     sql: &str,
 ) -> anyhow::Result<CliExecution> {
     use std::process::Command;
-    
+
     // Resolve CLI binary path:
     // 1) honor Cargo's injected path (when available)
     // 2) fallback to workspace target path: ../target/debug/kalam relative to benchmark crate
     // 3) fallback to plain "kalam" in PATH
-    let kalam_bin = std::env::var("CARGO_BIN_EXE_kalam").ok().or_else(|| {
-        let candidate = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-            .join("..")
-            .join("target")
-            .join("debug")
-            .join(if cfg!(windows) { "kalam.exe" } else { "kalam" });
-        if candidate.exists() {
-            Some(candidate.to_string_lossy().to_string())
-        } else {
-            None
-        }
-    }).unwrap_or_else(|| "kalam".to_string());
-    
+    let kalam_bin = std::env::var("CARGO_BIN_EXE_kalam")
+        .ok()
+        .or_else(|| {
+            let candidate = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+                .join("..")
+                .join("target")
+                .join("debug")
+                .join(if cfg!(windows) { "kalam.exe" } else { "kalam" });
+            if candidate.exists() {
+                Some(candidate.to_string_lossy().to_string())
+            } else {
+                None
+            }
+        })
+        .unwrap_or_else(|| "kalam".to_string());
+
     let start = Instant::now();
     let mut command = Command::new(&kalam_bin);
     command
@@ -305,16 +306,16 @@ pub fn execute_cli_timed(
 
     let output = command.output()?;
     let cli_total_ms = start.elapsed().as_millis() as f64;
-    
+
     if !output.status.success() {
         anyhow::bail!(
             "CLI command failed: {}",
             String::from_utf8_lossy(&output.stderr)
         );
     }
-    
+
     let output_str = String::from_utf8_lossy(&output.stdout).to_string();
-    
+
     // Extract server time from output (looks for "Took: XXX.XXX ms")
     let server_time_ms = output_str
         .lines()
@@ -325,9 +326,9 @@ pub fn execute_cli_timed(
                 .and_then(|s| s.parse::<f64>().ok())
         })
         .unwrap_or(0.0);
-    
+
     let overhead_ms = cli_total_ms - server_time_ms;
-    
+
     Ok(CliExecution {
         output: output_str,
         cli_total_ms,
@@ -345,27 +346,24 @@ pub fn execute_cli_timed_root(sql: &str) -> anyhow::Result<CliExecution> {
 pub fn wait_for_flush_completion(job_id: &str, timeout: Duration) -> anyhow::Result<()> {
     let start = Instant::now();
     let poll_interval = Duration::from_millis(200);
-    
+
     loop {
         if start.elapsed() > timeout {
             anyhow::bail!("Timeout waiting for flush job {} to complete", job_id);
         }
-        
-        let query = format!(
-            "SELECT status FROM system.jobs WHERE job_id = '{}'",
-            job_id
-        );
-        
+
+        let query = format!("SELECT status FROM system.jobs WHERE job_id = '{}'", job_id);
+
         let result = execute_cli_timed_root(&query)?;
-        
+
         if result.output.to_lowercase().contains("completed") {
             return Ok(());
         }
-        
+
         if result.output.to_lowercase().contains("failed") {
             anyhow::bail!("Flush job {} failed", job_id);
         }
-        
+
         std::thread::sleep(poll_interval);
     }
 }
@@ -381,7 +379,7 @@ pub fn parse_job_id_from_flush(output: &str) -> anyhow::Result<String> {
             .ok_or_else(|| anyhow::anyhow!("Missing job id token"))?;
         return Ok(id_token.trim().to_string());
     }
-    
+
     anyhow::bail!("Failed to parse job ID from FLUSH output: {}", output)
 }
 
@@ -393,7 +391,7 @@ pub fn setup_benchmark_tables() -> anyhow::Result<()> {
         execute_cli_timed_root(&sql)?;
         std::thread::sleep(Duration::from_millis(100));
     }
-    
+
     // Create user table
     let user_table_sql = r#"
         CREATE USER TABLE IF NOT EXISTS bench_user.items (
@@ -404,7 +402,7 @@ pub fn setup_benchmark_tables() -> anyhow::Result<()> {
     "#;
     execute_cli_timed_root(user_table_sql)?;
     std::thread::sleep(Duration::from_millis(100));
-    
+
     // Create shared table
     let shared_table_sql = r#"
         CREATE SHARED TABLE IF NOT EXISTS bench_shared.items (
@@ -415,7 +413,7 @@ pub fn setup_benchmark_tables() -> anyhow::Result<()> {
     "#;
     execute_cli_timed_root(shared_table_sql)?;
     std::thread::sleep(Duration::from_millis(100));
-    
+
     // Create stream table
     let stream_table_sql = r#"
         CREATE STREAM TABLE IF NOT EXISTS bench_stream.events (
@@ -426,7 +424,7 @@ pub fn setup_benchmark_tables() -> anyhow::Result<()> {
     "#;
     execute_cli_timed_root(stream_table_sql)?;
     std::thread::sleep(Duration::from_millis(100));
-    
+
     Ok(())
 }
 
@@ -437,13 +435,13 @@ pub fn cleanup_benchmark_tables() -> anyhow::Result<()> {
         "bench_shared.items",
         "bench_stream.events",
     ];
-    
+
     for table in &tables {
         let sql = format!("DROP TABLE IF EXISTS {}", table);
         let _ = execute_cli_timed_root(&sql);
         std::thread::sleep(Duration::from_millis(50));
     }
-    
+
     Ok(())
 }
 

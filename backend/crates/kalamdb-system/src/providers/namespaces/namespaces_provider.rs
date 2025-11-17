@@ -3,9 +3,9 @@
 //! This module provides a DataFusion TableProvider implementation for the system.namespaces table.
 //! Uses the new EntityStore architecture with NamespaceId keys.
 
-use crate::system_table_trait::SystemTableProviderExt;
 use super::{new_namespaces_store, NamespacesStore, NamespacesTableSchema};
 use crate::error::SystemError;
+use crate::system_table_trait::SystemTableProviderExt;
 use async_trait::async_trait;
 use datafusion::arrow::array::{
     ArrayRef, Int32Array, RecordBatch, StringBuilder, TimestampMillisecondArray,

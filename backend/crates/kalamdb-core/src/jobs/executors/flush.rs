@@ -21,12 +21,12 @@
 //! ```
 
 use crate::error::KalamDbError;
-use crate::providers::arrow_json_conversion; // For schema_with_system_columns
 use crate::jobs::executors::{JobContext, JobDecision, JobExecutor, JobParams};
+use crate::providers::arrow_json_conversion; // For schema_with_system_columns
 use crate::providers::flush::{SharedTableFlushJob, TableFlush, UserTableFlushJob};
 use async_trait::async_trait;
-use kalamdb_commons::{JobType, TableId};
 use kalamdb_commons::schemas::TableType;
+use kalamdb_commons::{JobType, TableId};
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 
@@ -82,10 +82,7 @@ impl JobExecutor for FlushExecutor {
         let table_id = Arc::new(params.table_id.clone());
         let table_type = params.table_type;
 
-        ctx.log_info(&format!(
-            "Flushing {} (type: {:?})",
-            table_id, table_type
-        ));
+        ctx.log_info(&format!("Flushing {} (type: {:?})", table_id, table_type));
 
         // Get dependencies from AppContext
         let app_ctx = &ctx.app_ctx;
@@ -100,13 +97,17 @@ impl JobExecutor for FlushExecutor {
         // because SystemColumnsService injected them into the TableDefinition.
         // Use schema from schema_history if available to avoid stale cache.
         let base_schema = if let Some(latest) = table_def.schema_history.last() {
-            crate::schema_registry::arrow_schema::ArrowSchemaWithOptions::from_json_string(&latest.arrow_schema_json)
-                .map_err(|e| KalamDbError::Other(format!("Failed to parse Arrow schema from history: {}", e)))?
-                .schema
+            crate::schema_registry::arrow_schema::ArrowSchemaWithOptions::from_json_string(
+                &latest.arrow_schema_json,
+            )
+            .map_err(|e| {
+                KalamDbError::Other(format!("Failed to parse Arrow schema from history: {}", e))
+            })?
+            .schema
         } else {
-            schema_registry
-                .get_arrow_schema(&table_id)
-                .map_err(|e| KalamDbError::NotFound(format!("Arrow schema not found for {}: {}", table_id, e)))?
+            schema_registry.get_arrow_schema(&table_id).map_err(|e| {
+                KalamDbError::NotFound(format!("Arrow schema not found for {}: {}", table_id, e))
+            })?
         };
 
         // Ensure system columns are present or add if missing (idempotent)
@@ -124,16 +125,23 @@ impl JobExecutor for FlushExecutor {
                 // "user_<namespace>:<table>". Using it caused runtime errors:
                 //   Not found: user_
                 // Retrieve the UserTableProvider instance to access the correct store.
-                let provider_arc = schema_registry.get_provider(&table_id)
-                    .ok_or_else(|| KalamDbError::NotFound(format!(
+                let provider_arc = schema_registry.get_provider(&table_id).ok_or_else(|| {
+                    KalamDbError::NotFound(format!(
                         "User table provider not registered for {} (id={})",
                         table_id, table_id
-                    )))?;
-                
+                    ))
+                })?;
+
                 // Downcast to UserTableProvider to access store
-                let provider = provider_arc.as_any().downcast_ref::<crate::providers::UserTableProvider>()
-                    .ok_or_else(|| KalamDbError::InvalidOperation("Cached provider type mismatch for user table".into()))?;
-                
+                let provider = provider_arc
+                    .as_any()
+                    .downcast_ref::<crate::providers::UserTableProvider>()
+                    .ok_or_else(|| {
+                        KalamDbError::InvalidOperation(
+                            "Cached provider type mismatch for user table".into(),
+                        )
+                    })?;
+
                 let store = provider.store.clone();
 
                 let flush_job = UserTableFlushJob::new(
@@ -156,16 +164,23 @@ impl JobExecutor for FlushExecutor {
                 ctx.log_info("Executing SharedTableFlushJob");
 
                 // Get the SharedTableProvider from the schema registry to reuse the cached store
-                let provider_arc = schema_registry.get_provider(&table_id)
-                    .ok_or_else(|| KalamDbError::NotFound(format!(
+                let provider_arc = schema_registry.get_provider(&table_id).ok_or_else(|| {
+                    KalamDbError::NotFound(format!(
                         "Shared table provider not registered for {} (id={})",
                         table_id, table_id
-                    )))?;
-                
+                    ))
+                })?;
+
                 // Downcast to SharedTableProvider to access store
-                let provider = provider_arc.as_any().downcast_ref::<crate::providers::SharedTableProvider>()
-                    .ok_or_else(|| KalamDbError::InvalidOperation("Cached provider type mismatch for shared table".into()))?;
-                
+                let provider = provider_arc
+                    .as_any()
+                    .downcast_ref::<crate::providers::SharedTableProvider>()
+                    .ok_or_else(|| {
+                        KalamDbError::InvalidOperation(
+                            "Cached provider type mismatch for shared table".into(),
+                        )
+                    })?;
+
                 let store = provider.store.clone();
 
                 let flush_job = SharedTableFlushJob::new(
@@ -195,13 +210,16 @@ impl JobExecutor for FlushExecutor {
                 });
             }
             TableType::System => {
-                return Err(KalamDbError::InvalidOperation("Cannot flush SYSTEM tables".to_string()));
+                return Err(KalamDbError::InvalidOperation(
+                    "Cannot flush SYSTEM tables".to_string(),
+                ));
             }
         };
 
         ctx.log_info(&format!(
             "Flush operation completed: {} rows flushed, {} files created",
-            result.rows_flushed, result.parquet_files.len()
+            result.rows_flushed,
+            result.parquet_files.len()
         ));
 
         Ok(JobDecision::Completed {
@@ -232,7 +250,7 @@ mod tests {
         assert_eq!(executor.job_type(), JobType::Flush);
         assert_eq!(executor.name(), "FlushExecutor");
     }
-    
+
     #[test]
     fn test_flush_params_validate() {
         let params = FlushParams {
@@ -243,7 +261,7 @@ mod tests {
             table_type: TableType::User,
             flush_threshold: Some(10000),
         };
-        
+
         assert!(params.validate().is_ok());
     }
 }

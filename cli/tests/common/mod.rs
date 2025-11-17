@@ -1,13 +1,13 @@
 #![allow(dead_code, unused_imports)]
 use assert_cmd;
+use rand::{distr::Alphanumeric, Rng};
 use std::io::{BufRead, BufReader};
 use std::process::Command;
 use std::process::{Child, Stdio};
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::mpsc as std_mpsc;
 use std::thread;
 use std::time::Duration;
-use std::sync::atomic::{AtomicU64, Ordering};
-use rand::{distr::Alphanumeric, Rng};
 
 // Global monotonic counter to ensure uniqueness when multiple tests generate
 // names within the same millisecond (which was causing occasional collisions
@@ -63,7 +63,8 @@ pub struct CliTiming {
 
 impl CliTiming {
     pub fn overhead_ms(&self) -> Option<f64> {
-        self.server_time_ms.map(|server| self.total_time_ms as f64 - server)
+        self.server_time_ms
+            .map(|server| self.total_time_ms as f64 - server)
     }
 }
 
@@ -74,7 +75,7 @@ pub fn execute_sql_via_cli_as_with_timing(
     sql: &str,
 ) -> Result<CliTiming, Box<dyn std::error::Error>> {
     use std::time::Instant;
-    
+
     let start = Instant::now();
     let output = Command::new(env!("CARGO_BIN_EXE_kalam"))
         .arg("-u")
@@ -90,7 +91,7 @@ pub fn execute_sql_via_cli_as_with_timing(
 
     if output.status.success() {
         let output_str = String::from_utf8_lossy(&output.stdout).to_string();
-        
+
         // Extract server time from output (looks for "Took: XXX.XXX ms")
         let server_time_ms = output_str
             .lines()
@@ -101,7 +102,7 @@ pub fn execute_sql_via_cli_as_with_timing(
                     .nth(1)
                     .and_then(|s| s.parse::<f64>().ok())
             });
-        
+
         Ok(CliTiming {
             output: output_str,
             total_time_ms,
@@ -160,9 +161,7 @@ pub fn execute_sql_as_root_via_cli(sql: &str) -> Result<String, Box<dyn std::err
 }
 
 /// Helper to execute SQL as root user via CLI returning JSON output to avoid table truncation
-pub fn execute_sql_as_root_via_cli_json(
-    sql: &str,
-) -> Result<String, Box<dyn std::error::Error>> {
+pub fn execute_sql_as_root_via_cli_json(sql: &str) -> Result<String, Box<dyn std::error::Error>> {
     execute_sql_via_cli_as_with_args("root", "", sql, &["--json"])
 }
 
@@ -246,7 +245,6 @@ pub fn cleanup_test_table(table_full_name: &str) -> Result<(), Box<dyn std::erro
     Ok(())
 }
 
-
 /// Generate a random alphanumeric string of the given length.
 ///
 /// Example:
@@ -263,7 +261,7 @@ pub fn random_string(len: usize) -> String {
 }
 
 /// Parse job ID from FLUSH TABLE output
-/// 
+///
 /// Expected format: "Flush started for table 'namespace.table'. Job ID: flush-table-123-uuid"
 pub fn parse_job_id_from_flush_output(output: &str) -> Result<String, Box<dyn std::error::Error>> {
     // Robustly locate the "Job ID: <id>" fragment and extract only the ID token
@@ -282,9 +280,11 @@ pub fn parse_job_id_from_flush_output(output: &str) -> Result<String, Box<dyn st
 }
 
 /// Parse multiple job IDs from FLUSH ALL TABLES output
-/// 
+///
 /// Expected format: "Flush started for N table(s) in namespace 'ns'. Job IDs: [id1, id2, id3]"
-pub fn parse_job_ids_from_flush_all_output(output: &str) -> Result<Vec<String>, Box<dyn std::error::Error>> {
+pub fn parse_job_ids_from_flush_all_output(
+    output: &str,
+) -> Result<Vec<String>, Box<dyn std::error::Error>> {
     // Look for pattern: "Job IDs: [id1, id2, id3]"
     if let Some(ids_str) = output.split("Job IDs: [").nth(1) {
         if let Some(ids_part) = ids_str.split(']').next() {
@@ -294,72 +294,75 @@ pub fn parse_job_ids_from_flush_all_output(output: &str) -> Result<Vec<String>, 
                 .map(|s| s.split_whitespace().next().unwrap_or("").to_string())
                 .filter(|s| !s.is_empty())
                 .collect();
-            
+
             if !job_ids.is_empty() {
                 return Ok(job_ids);
             }
         }
     }
-    
+
     Err(format!("Failed to parse job IDs from FLUSH ALL output: {}", output).into())
 }
 
 /// Verify that a job has completed successfully
-/// 
+///
 /// Polls system.jobs table until the job reaches 'completed' status or timeout occurs.
 /// Returns an error if the job fails or times out.
-pub fn verify_job_completed(job_id: &str, timeout: Duration) -> Result<(), Box<dyn std::error::Error>> {
+pub fn verify_job_completed(
+    job_id: &str,
+    timeout: Duration,
+) -> Result<(), Box<dyn std::error::Error>> {
     let start = std::time::Instant::now();
     let poll_interval = Duration::from_millis(200);
-    
+
     loop {
         if start.elapsed() > timeout {
             return Err(format!(
                 "Timeout waiting for job {} to complete after {:?}",
                 job_id, timeout
-            ).into());
+            )
+            .into());
         }
-        
+
         // Query system.jobs for this specific job
         let query = format!(
             "SELECT job_id, status, error_message FROM system.jobs WHERE job_id = '{}'",
             job_id
         );
-        
+
         match execute_sql_as_root_via_cli(&query) {
             Ok(output) => {
                 // Check if output contains the job and its status
                 if output.to_lowercase().contains("completed") {
                     return Ok(());
                 }
-                
+
                 if output.to_lowercase().contains("failed") {
                     // Try to extract error message if present
-                    return Err(format!(
-                        "Job {} failed. Query output: {}",
-                        job_id, output
-                    ).into());
+                    return Err(format!("Job {} failed. Query output: {}", job_id, output).into());
                 }
-                
+
                 // Job might still be running or pending, continue polling
             }
             Err(e) => {
                 // If we can't query the jobs table, that's an error
-                return Err(format!(
-                    "Failed to query system.jobs for job {}: {}",
-                    job_id, e
-                ).into());
+                return Err(
+                    format!("Failed to query system.jobs for job {}: {}", job_id, e).into(),
+                );
             }
         }
-        
+
         std::thread::sleep(poll_interval);
     }
 }
 
 /// Verify that multiple jobs have all completed successfully
-/// 
+///
 /// Convenience wrapper for verifying multiple jobs from FLUSH ALL TABLES
-pub fn verify_jobs_completed(job_ids: &[String], timeout: Duration) -> Result<(), Box<dyn std::error::Error>> {
+pub fn verify_jobs_completed(
+    job_ids: &[String],
+    timeout: Duration,
+) -> Result<(), Box<dyn std::error::Error>> {
     for job_id in job_ids {
         verify_job_completed(job_id, timeout)?;
     }
@@ -368,7 +371,10 @@ pub fn verify_jobs_completed(job_ids: &[String], timeout: Duration) -> Result<()
 
 /// Wait until a job reaches a terminal state (completed or failed)
 /// Returns the final lowercase status string ("completed" or "failed")
-pub fn wait_for_job_finished(job_id: &str, timeout: Duration) -> Result<String, Box<dyn std::error::Error>> {
+pub fn wait_for_job_finished(
+    job_id: &str,
+    timeout: Duration,
+) -> Result<String, Box<dyn std::error::Error>> {
     let start = std::time::Instant::now();
     let poll_interval = Duration::from_millis(250);
 
@@ -377,7 +383,8 @@ pub fn wait_for_job_finished(job_id: &str, timeout: Duration) -> Result<String, 
             return Err(format!(
                 "Timeout waiting for job {} to finish after {:?}",
                 job_id, timeout
-            ).into());
+            )
+            .into());
         }
 
         let query = format!(
@@ -403,7 +410,10 @@ pub fn wait_for_job_finished(job_id: &str, timeout: Duration) -> Result<String, 
 }
 
 /// Wait until all jobs reach a terminal state; returns a Vec of final statuses aligned with job_ids
-pub fn wait_for_jobs_finished(job_ids: &[String], timeout_per_job: Duration) -> Result<Vec<String>, Box<dyn std::error::Error>> {
+pub fn wait_for_jobs_finished(
+    job_ids: &[String],
+    timeout_per_job: Duration,
+) -> Result<Vec<String>, Box<dyn std::error::Error>> {
     let mut statuses = Vec::with_capacity(job_ids.len());
     for job_id in job_ids {
         let status = wait_for_job_finished(job_id, timeout_per_job)?;
@@ -430,7 +440,7 @@ impl SubscriptionListener {
             .arg("root")
             .arg("--password")
             .arg("")
-            .arg("--no-spinner")  // Disable animations and banner messages
+            .arg("--no-spinner") // Disable animations and banner messages
             .arg("--subscribe")
             .arg(query)
             .stdout(Stdio::piped())

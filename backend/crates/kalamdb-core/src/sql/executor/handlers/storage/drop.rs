@@ -29,7 +29,7 @@ impl TypedStatementHandler<DropStorageStatement> for DropStorageHandler {
         let storages_provider = self.app_context.system_tables().storages();
         let tables_provider = self.app_context.system_tables().tables();
 
-            let storage_id = statement.storage_id.clone();
+        let storage_id = statement.storage_id.clone();
 
         // Check if storage exists
         let storage = storages_provider
@@ -39,30 +39,30 @@ impl TypedStatementHandler<DropStorageStatement> for DropStorageHandler {
         if storage.is_none() {
             return Err(KalamDbError::InvalidOperation(format!(
                 "Storage '{}' not found",
-                    statement.storage_id.as_str()
+                statement.storage_id.as_str()
             )));
         }
 
         // Check if any tables are using this storage
-            let all_tables = tables_provider
-                .list_tables()
+        let all_tables = tables_provider
+            .list_tables()
             .map_err(|e| KalamDbError::Other(format!("Failed to check tables: {}", e)))?;
 
-            let tables_using_storage: Vec<_> = all_tables
-                .iter()
-                .filter(|t| {
-                    // Check if table uses this storage (compare storage_id from table options)
-                        match &t.table_options {
-                            kalamdb_commons::schemas::TableOptions::User(opts) => {
-                                opts.storage_id == storage_id
-                            }
-                            kalamdb_commons::schemas::TableOptions::Shared(opts) => {
-                                opts.storage_id == storage_id
-                            }
-                            _ => false, // STREAM and SYSTEM tables don't have storage_id
-                        }
-                })
-                .collect();
+        let tables_using_storage: Vec<_> = all_tables
+            .iter()
+            .filter(|t| {
+                // Check if table uses this storage (compare storage_id from table options)
+                match &t.table_options {
+                    kalamdb_commons::schemas::TableOptions::User(opts) => {
+                        opts.storage_id == storage_id
+                    }
+                    kalamdb_commons::schemas::TableOptions::Shared(opts) => {
+                        opts.storage_id == storage_id
+                    }
+                    _ => false, // STREAM and SYSTEM tables don't have storage_id
+                }
+            })
+            .collect();
 
         if !tables_using_storage.is_empty() {
             return Err(KalamDbError::InvalidOperation(format!(
@@ -89,8 +89,7 @@ impl TypedStatementHandler<DropStorageStatement> for DropStorageHandler {
     ) -> Result<(), KalamDbError> {
         if !context.is_admin() {
             return Err(KalamDbError::Unauthorized(
-                "Insufficient privileges to drop storage. DBA or System role required."
-                    .to_string(),
+                "Insufficient privileges to drop storage. DBA or System role required.".to_string(),
             ));
         }
         Ok(())
@@ -116,12 +115,12 @@ mod tests {
         let stmt = DropStorageStatement {
             storage_id: StorageId::new("test_storage"),
         };
-        
+
         // User role should be denied
         let user_ctx = create_test_context(Role::User);
         let result = handler.check_authorization(&stmt, &user_ctx).await;
         assert!(result.is_err());
-        
+
         // DBA role should be allowed
         let dba_ctx = create_test_context(Role::Dba);
         let result = handler.check_authorization(&stmt, &dba_ctx).await;
@@ -132,7 +131,7 @@ mod tests {
     async fn test_drop_storage_success() {
         let app_ctx = AppContext::get();
         let storages_provider = app_ctx.system_tables().storages();
-        
+
         // Create a test storage
         let storage_id = format!("test_drop_{}", chrono::Utc::now().timestamp_millis());
         let storage = kalamdb_commons::system::Storage {
@@ -158,14 +157,16 @@ mod tests {
         let session = SessionContext::new();
 
         let result = handler.execute(stmt, vec![], &ctx).await;
-        
+
         assert!(result.is_ok());
         if let Ok(ExecutionResult::Success { message }) = result {
             assert!(message.contains(&storage_id));
         }
 
         // Verify deletion
-        let deleted = storages_provider.get_storage_by_id(&StorageId::from(storage_id.as_str())).unwrap();
+        let deleted = storages_provider
+            .get_storage_by_id(&StorageId::from(storage_id.as_str()))
+            .unwrap();
         assert!(deleted.is_none());
     }
 
@@ -180,7 +181,7 @@ mod tests {
         let session = SessionContext::new();
 
         let result = handler.execute(stmt, vec![], &ctx).await;
-        
+
         assert!(result.is_err());
     }
 }

@@ -26,7 +26,7 @@ impl BatchManager {
     /// List all batch files in a directory
     pub fn list_batches(&self, directory: &Path) -> Result<Vec<BatchFile>> {
         let full_path = self.base_path.join(directory);
-        
+
         if !full_path.exists() {
             return Ok(Vec::new());
         }
@@ -41,11 +41,9 @@ impl BatchManager {
                 continue;
             }
 
-            let filename = path.file_name()
-                .and_then(|s| s.to_str())
-                .ok_or_else(|| FilestoreError::InvalidBatchFile(
-                    format!("Invalid filename: {:?}", path)
-                ))?;
+            let filename = path.file_name().and_then(|s| s.to_str()).ok_or_else(|| {
+                FilestoreError::InvalidBatchFile(format!("Invalid filename: {:?}", path))
+            })?;
 
             let (timestamp_ms, batch_index) = PathUtils::parse_batch_filename(filename)?;
             let metadata = entry.metadata()?;
@@ -65,7 +63,11 @@ impl BatchManager {
     }
 
     /// Delete batch files older than a given timestamp
-    pub fn delete_batches_before(&self, directory: &Path, cutoff_timestamp_ms: i64) -> Result<usize> {
+    pub fn delete_batches_before(
+        &self,
+        directory: &Path,
+        cutoff_timestamp_ms: i64,
+    ) -> Result<usize> {
         let batches = self.list_batches(directory)?;
         let mut deleted_count = 0;
 

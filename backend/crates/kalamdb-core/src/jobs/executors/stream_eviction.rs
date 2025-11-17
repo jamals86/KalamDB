@@ -21,12 +21,12 @@
 //! }
 //! ```
 
-use crate::jobs::executors::{JobContext, JobDecision, JobExecutor, JobParams};
 use crate::error::KalamDbError;
+use crate::jobs::executors::{JobContext, JobDecision, JobExecutor, JobParams};
 use crate::providers::StreamTableProvider;
 use async_trait::async_trait;
-use kalamdb_commons::{JobType, TableId};
 use kalamdb_commons::schemas::TableType;
+use kalamdb_commons::{JobType, TableId};
 use kalamdb_store::entity_store::EntityStore;
 use serde::{Deserialize, Serialize};
 
@@ -52,9 +52,10 @@ pub struct StreamEvictionParams {
 impl JobParams for StreamEvictionParams {
     fn validate(&self) -> Result<(), KalamDbError> {
         if self.table_type != TableType::Stream {
-            return Err(KalamDbError::InvalidOperation(
-                format!("table_type must be Stream, got: {:?}", self.table_type),
-            ));
+            return Err(KalamDbError::InvalidOperation(format!(
+                "table_type must be Stream, got: {:?}",
+                self.table_type
+            )));
         }
         if self.ttl_seconds == 0 {
             return Err(KalamDbError::InvalidOperation(
@@ -118,8 +119,7 @@ impl JobExecutor for StreamEvictionExecutor {
 
         ctx.log_info(&format!(
             "Cutoff time: {}ms (records with timestamp < {} are expired)",
-            cutoff_ms,
-            cutoff_ms
+            cutoff_ms, cutoff_ms
         ));
 
         // Get table's StreamTableStore
@@ -152,9 +152,9 @@ impl JobExecutor for StreamEvictionExecutor {
         let store = stream_provider.store_arc();
 
         // Scan all rows (no prefix filter - evict for ALL users)
-        let all_rows = store
-            .scan_all()
-            .map_err(|e| KalamDbError::InvalidOperation(format!("Failed to scan stream store: {}", e)))?;
+        let all_rows = store.scan_all().map_err(|e| {
+            KalamDbError::InvalidOperation(format!("Failed to scan stream store: {}", e))
+        })?;
 
         ctx.log_info(&format!(
             "Scanned {} total rows from {}",
@@ -166,10 +166,7 @@ impl JobExecutor for StreamEvictionExecutor {
         if all_rows.is_empty() {
             ctx.log_info("No rows found; nothing to evict");
             return Ok(JobDecision::Completed {
-                message: Some(format!(
-                    "No rows found in {}; nothing to evict",
-                    table_id
-                )),
+                message: Some(format!("No rows found in {}; nothing to evict", table_id)),
             });
         }
 
@@ -208,8 +205,7 @@ impl JobExecutor for StreamEvictionExecutor {
 
         ctx.log_info(&format!(
             "Stream eviction completed - {} rows evicted from {}",
-            deleted_count,
-            table_id
+            deleted_count, table_id
         ));
 
         // If we hit batch size limit, schedule retry for next batch
@@ -246,17 +242,19 @@ impl Default for StreamEvictionExecutor {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use kalamdb_commons::{JobId, NamespaceId, NodeId};
-    use kalamdb_commons::system::Job;
-    use crate::test_helpers::init_test_app_context;
     use crate::app_context::AppContext;
     use crate::providers::base::{BaseTableProvider, TableProviderCore};
     use crate::schema_registry::CachedTableData;
+    use crate::test_helpers::init_test_app_context;
     use chrono::Utc;
     use datafusion::datasource::TableProvider;
-    use kalamdb_commons::models::{TableId, TableName, UserId};
-    use kalamdb_commons::models::schemas::{ColumnDefinition, ColumnDefault, TableDefinition, TableOptions, TableType};
     use kalamdb_commons::models::datatypes::KalamDataType;
+    use kalamdb_commons::models::schemas::{
+        ColumnDefault, ColumnDefinition, TableDefinition, TableOptions, TableType,
+    };
+    use kalamdb_commons::models::{TableId, TableName, UserId};
+    use kalamdb_commons::system::Job;
+    use kalamdb_commons::{JobId, NamespaceId, NodeId};
     use kalamdb_store::entity_store::EntityStore;
     use serde_json::json;
     use std::sync::Arc;
@@ -291,7 +289,10 @@ mod tests {
     #[test]
     fn test_params_validation_success() {
         let params = StreamEvictionParams {
-            table_id: TableId::new(NamespaceId::new("default"), kalamdb_commons::TableName::new("events")),
+            table_id: TableId::new(
+                NamespaceId::new("default"),
+                kalamdb_commons::TableName::new("events"),
+            ),
             table_type: TableType::Stream,
             ttl_seconds: 86400,
             batch_size: 10000,
@@ -302,8 +303,11 @@ mod tests {
     #[test]
     fn test_params_validation_invalid_table_type() {
         let params = StreamEvictionParams {
-            table_id: TableId::new(NamespaceId::new("default"), kalamdb_commons::TableName::new("events")),
-            table_type: TableType::User,  // Wrong type
+            table_id: TableId::new(
+                NamespaceId::new("default"),
+                kalamdb_commons::TableName::new("events"),
+            ),
+            table_type: TableType::User, // Wrong type
             ttl_seconds: 86400,
             batch_size: 10000,
         };
@@ -313,9 +317,12 @@ mod tests {
     #[test]
     fn test_params_validation_zero_ttl() {
         let params = StreamEvictionParams {
-            table_id: TableId::new(NamespaceId::new("default"), kalamdb_commons::TableName::new("events")),
+            table_id: TableId::new(
+                NamespaceId::new("default"),
+                kalamdb_commons::TableName::new("events"),
+            ),
             table_type: TableType::Stream,
-            ttl_seconds: 0,  // Invalid
+            ttl_seconds: 0, // Invalid
             batch_size: 10000,
         };
         assert!(params.validate().is_err());
@@ -334,7 +341,10 @@ mod tests {
         let app_ctx = AppContext::get();
 
         let ns = NamespaceId::new("chat_stream_jobs");
-        let table_name_value = format!("typing_events_{}", Utc::now().timestamp_nanos_opt().unwrap_or(0));
+        let table_name_value = format!(
+            "typing_events_{}",
+            Utc::now().timestamp_nanos_opt().unwrap_or(0)
+        );
         let tbl = TableName::new(&table_name_value);
         let table_id = TableId::new(ns.clone(), tbl.clone());
 
@@ -369,9 +379,10 @@ mod tests {
             None,
         )
         .expect("table definition");
-        app_ctx
-            .schema_registry()
-            .insert(table_id.clone(), Arc::new(CachedTableData::new(Arc::new(table_def))));
+        app_ctx.schema_registry().insert(
+            table_id.clone(),
+            Arc::new(CachedTableData::new(Arc::new(table_def))),
+        );
 
         let stream_store = Arc::new(kalamdb_tables::new_stream_table_store(&ns, &tbl));
         let core = Arc::new(TableProviderCore::from_app_context(&app_ctx));

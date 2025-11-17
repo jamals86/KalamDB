@@ -58,26 +58,28 @@ impl PathUtils {
 
     /// Parse batch filename to extract timestamp and index
     pub fn parse_batch_filename(filename: &str) -> Result<(i64, u64)> {
-        let parts: Vec<&str> = filename
-            .trim_end_matches(".parquet")
-            .split('_')
-            .collect();
-        
+        let parts: Vec<&str> = filename.trim_end_matches(".parquet").split('_').collect();
+
         if parts.len() != 3 || parts[0] != "batch" {
-            return Err(crate::error::FilestoreError::InvalidBatchFile(
-                format!("Invalid batch filename format: {}", filename)
-            ));
+            return Err(crate::error::FilestoreError::InvalidBatchFile(format!(
+                "Invalid batch filename format: {}",
+                filename
+            )));
         }
 
-        let timestamp = parts[1].parse::<i64>()
-            .map_err(|_| crate::error::FilestoreError::InvalidBatchFile(
-                format!("Invalid timestamp in filename: {}", filename)
-            ))?;
+        let timestamp = parts[1].parse::<i64>().map_err(|_| {
+            crate::error::FilestoreError::InvalidBatchFile(format!(
+                "Invalid timestamp in filename: {}",
+                filename
+            ))
+        })?;
 
-        let index = parts[2].parse::<u64>()
-            .map_err(|_| crate::error::FilestoreError::InvalidBatchFile(
-                format!("Invalid index in filename: {}", filename)
-            ))?;
+        let index = parts[2].parse::<u64>().map_err(|_| {
+            crate::error::FilestoreError::InvalidBatchFile(format!(
+                "Invalid index in filename: {}",
+                filename
+            ))
+        })?;
 
         Ok((timestamp, index))
     }
@@ -103,8 +105,9 @@ mod tests {
 
     #[test]
     fn test_batch_filename_parsing() {
-        let (timestamp, index) = PathUtils::parse_batch_filename("batch_1699000000000_00000042.parquet")
-            .expect("Failed to parse batch filename");
+        let (timestamp, index) =
+            PathUtils::parse_batch_filename("batch_1699000000000_00000042.parquet")
+                .expect("Failed to parse batch filename");
         assert_eq!(timestamp, 1699000000000);
         assert_eq!(index, 42);
     }

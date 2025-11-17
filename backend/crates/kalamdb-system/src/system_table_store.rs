@@ -56,7 +56,9 @@ where
 /// Implement SystemTableProviderExt for integration with table providers
 impl<K: Send + Sync, V: Send + Sync> SystemTableProviderExt for SystemTableStore<K, V> {
     fn table_name(&self) -> &str {
-        self.partition.strip_prefix("system_").unwrap_or(&self.partition)
+        self.partition
+            .strip_prefix("system_")
+            .unwrap_or(&self.partition)
     }
 
     fn schema_ref(&self) -> arrow::datatypes::SchemaRef {

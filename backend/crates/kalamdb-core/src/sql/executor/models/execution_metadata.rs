@@ -8,6 +8,10 @@ pub struct ExecutionMetadata {
 
 impl ExecutionMetadata {
     pub fn new(rows_affected: usize, execution_time_ms: u64, statement_type: String) -> Self {
-        Self { rows_affected, execution_time_ms, statement_type }
+        Self {
+            rows_affected,
+            execution_time_ms,
+            statement_type,
+        }
     }
 }

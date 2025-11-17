@@ -7,8 +7,8 @@ use datafusion::prelude::SessionContext;
 use kalamdb_commons::models::{NodeId, StorageId};
 use kalamdb_store::test_utils::TestDb;
 use kalamdb_store::{RocksDBBackend, StorageBackend};
-use std::sync::Arc;
 use once_cell::sync::OnceCell;
+use std::sync::Arc;
 use std::sync::Once;
 
 static TEST_DB: OnceCell<Arc<TestDb>> = OnceCell::new();
@@ -52,7 +52,8 @@ pub fn init_test_app_context() -> Arc<TestDb> {
         // Store in static for reuse
         TEST_DB.set(test_db.clone()).ok();
 
-        let storage_backend: Arc<dyn StorageBackend> = Arc::new(RocksDBBackend::new(test_db.db.clone()));
+        let storage_backend: Arc<dyn StorageBackend> =
+            Arc::new(RocksDBBackend::new(test_db.db.clone()));
 
         // Create minimal test config using Default + overrides
         let mut test_config = kalamdb_commons::config::ServerConfig::default();
@@ -74,9 +75,9 @@ pub fn init_test_app_context() -> Arc<TestDb> {
     // Create default 'local' storage entry for tests (separate Once to avoid deadlock)
     STORAGE_INIT.call_once(|| {
         use kalamdb_commons::system::Storage;
-        
-    let _ctx = AppContext::get();
-        
+
+        let _ctx = AppContext::get();
+
         let _default_storage = Storage {
             storage_id: StorageId::local(),
             storage_name: "local".to_string(),
@@ -92,7 +93,10 @@ pub fn init_test_app_context() -> Arc<TestDb> {
     });
 
     // Return the test DB (guaranteed to be set by Once)
-    TEST_DB.get().expect("TEST_DB should be initialized").clone()
+    TEST_DB
+        .get()
+        .expect("TEST_DB should be initialized")
+        .clone()
 }
 
 /// Create a JobsTableProvider for testing
@@ -108,7 +112,7 @@ pub fn create_test_jobs_provider() -> Arc<kalamdb_system::JobsTableProvider> {
 pub fn create_test_job_registry() -> crate::jobs::JobRegistry {
     use crate::jobs::executors::*;
     let registry = crate::jobs::JobRegistry::new();
-    
+
     // Register all 8 executors
     registry.register(Arc::new(FlushExecutor::new()));
     registry.register(Arc::new(CleanupExecutor::new()));
@@ -118,7 +122,7 @@ pub fn create_test_job_registry() -> crate::jobs::JobRegistry {
     registry.register(Arc::new(CompactExecutor::new()));
     registry.register(Arc::new(BackupExecutor::new()));
     registry.register(Arc::new(RestoreExecutor::new()));
-    
+
     registry
 }
 
@@ -140,4 +144,3 @@ pub fn create_test_job_registry() -> crate::jobs::JobRegistry {
 pub fn create_test_session() -> Arc<SessionContext> {
     Arc::new(SessionContext::new())
 }
-

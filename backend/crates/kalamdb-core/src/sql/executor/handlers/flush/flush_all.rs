@@ -5,8 +5,8 @@ use crate::error::KalamDbError;
 use crate::jobs::executors::flush::FlushParams;
 use crate::sql::executor::handlers::typed::TypedStatementHandler;
 use crate::sql::executor::models::{ExecutionContext, ExecutionResult, ScalarValue};
-use kalamdb_commons::{JobType, JobId};
-use kalamdb_commons::models::{TableName, TableId};
+use kalamdb_commons::models::{TableId, TableName};
+use kalamdb_commons::{JobId, JobType};
 use kalamdb_sql::ddl::FlushAllTablesStatement;
 use std::sync::Arc;
 
@@ -57,7 +57,13 @@ impl TypedStatementHandler<FlushAllTablesStatement> for FlushAllTablesHandler {
             };
             let idempotency_key = format!("flush-{}-{}", ns.as_str(), table_name.as_str());
             let job_id: JobId = job_manager
-                .create_job_typed(JobType::Flush, ns.clone(), params, Some(idempotency_key), None)
+                .create_job_typed(
+                    JobType::Flush,
+                    ns.clone(),
+                    params,
+                    Some(idempotency_key),
+                    None,
+                )
                 .await?;
             job_ids.push(job_id.as_str().to_string());
         }

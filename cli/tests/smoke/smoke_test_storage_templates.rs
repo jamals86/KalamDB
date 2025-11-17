@@ -17,7 +17,9 @@ struct CleanupActions {
 
 impl CleanupActions {
     fn new() -> Self {
-        Self { actions: Vec::new() }
+        Self {
+            actions: Vec::new(),
+        }
     }
 
     fn defer<F>(&mut self, action: F)
@@ -104,13 +106,15 @@ fn smoke_storage_custom_templates() {
     cleanup.defer({
         let ns = namespace_user.clone();
         move || {
-            let _ = execute_sql_as_root_via_cli(&format!("DROP NAMESPACE IF EXISTS {} CASCADE", ns));
+            let _ =
+                execute_sql_as_root_via_cli(&format!("DROP NAMESPACE IF EXISTS {} CASCADE", ns));
         }
     });
     cleanup.defer({
         let ns = namespace_shared.clone();
         move || {
-            let _ = execute_sql_as_root_via_cli(&format!("DROP NAMESPACE IF EXISTS {} CASCADE", ns));
+            let _ =
+                execute_sql_as_root_via_cli(&format!("DROP NAMESPACE IF EXISTS {} CASCADE", ns));
         }
     });
     cleanup.defer({
@@ -175,35 +179,50 @@ fn smoke_storage_custom_templates() {
         .join(format!("tbl_{}", user_table))
         .join(format!("usr_{}", internal_user_id));
     // Increase wait duration and also search one level deeper if direct directory empty
-    let user_parquet_files = match wait_for_parquet_files(&expected_user_dir, Duration::from_secs(12)) {
-        Some(v) if !v.is_empty() => v,
-        _ => {
-            // Fallback: scan recursively for any parquet files beneath expected_user_dir
-            println!("[storage_templates] Primary wait failed; performing recursive search");
-            let mut collected = Vec::new();
-            if expected_user_dir.exists() {
-                // Manual depth-limited traversal (depth <= 3)
-                fn visit(dir: &std::path::Path, depth: usize, acc: &mut Vec<std::path::PathBuf>) {
-                    if depth > 3 { return; }
-                    if let Ok(entries) = std::fs::read_dir(dir) {
-                        for entry in entries.flatten() {
-                            let p = entry.path();
-                            if p.is_dir() {
-                                visit(&p, depth + 1, acc);
-                            } else if p.extension().and_then(|e| e.to_str()).map(|e| e.eq_ignore_ascii_case("parquet")).unwrap_or(false) {
-                                acc.push(p);
+    let user_parquet_files =
+        match wait_for_parquet_files(&expected_user_dir, Duration::from_secs(12)) {
+            Some(v) if !v.is_empty() => v,
+            _ => {
+                // Fallback: scan recursively for any parquet files beneath expected_user_dir
+                println!("[storage_templates] Primary wait failed; performing recursive search");
+                let mut collected = Vec::new();
+                if expected_user_dir.exists() {
+                    // Manual depth-limited traversal (depth <= 3)
+                    fn visit(
+                        dir: &std::path::Path,
+                        depth: usize,
+                        acc: &mut Vec<std::path::PathBuf>,
+                    ) {
+                        if depth > 3 {
+                            return;
+                        }
+                        if let Ok(entries) = std::fs::read_dir(dir) {
+                            for entry in entries.flatten() {
+                                let p = entry.path();
+                                if p.is_dir() {
+                                    visit(&p, depth + 1, acc);
+                                } else if p
+                                    .extension()
+                                    .and_then(|e| e.to_str())
+                                    .map(|e| e.eq_ignore_ascii_case("parquet"))
+                                    .unwrap_or(false)
+                                {
+                                    acc.push(p);
+                                }
                             }
                         }
                     }
+                    visit(&expected_user_dir, 0, &mut collected);
                 }
-                visit(&expected_user_dir, 0, &mut collected);
+                if collected.is_empty() {
+                    panic!(
+                        "Expected parquet files under {} (direct or recursive) but none were found",
+                        expected_user_dir.display()
+                    );
+                }
+                collected
             }
-            if collected.is_empty() {
-                panic!("Expected parquet files under {} (direct or recursive) but none were found", expected_user_dir.display());
-            }
-            collected
-        }
-    };
+        };
     assert!(
         !user_parquet_files.is_empty(),
         "user table flush should produce parquet files"
@@ -222,7 +241,10 @@ fn smoke_storage_custom_templates() {
     execute_sql_as_root_via_cli(&format!("DROP TABLE {}", table_user_full))
         .expect("drop user table");
     if !wait_for_directory_absence(&expected_user_dir, Duration::from_secs(15)) {
-        println!("[storage_templates] WARNING: user template directory not removed (non-fatal): {}", expected_user_dir.display());
+        println!(
+            "[storage_templates] WARNING: user template directory not removed (non-fatal): {}",
+            expected_user_dir.display()
+        );
     }
 
     // ----- Shared table scenario -----
@@ -242,33 +264,48 @@ fn smoke_storage_custom_templates() {
     let expected_shared_dir = base_dir
         .join(format!("ns_{}", namespace_shared))
         .join(format!("table_{}", shared_table));
-    let shared_parquet_files = match wait_for_parquet_files(&expected_shared_dir, Duration::from_secs(12)) {
-        Some(v) if !v.is_empty() => v,
-        _ => {
-            println!("[storage_templates] Shared table primary wait failed; recursive search");
-            let mut collected = Vec::new();
-            if expected_shared_dir.exists() {
-                fn visit(dir: &std::path::Path, depth: usize, acc: &mut Vec<std::path::PathBuf>) {
-                    if depth > 3 { return; }
-                    if let Ok(entries) = std::fs::read_dir(dir) {
-                        for entry in entries.flatten() {
-                            let p = entry.path();
-                            if p.is_dir() {
-                                visit(&p, depth + 1, acc);
-                            } else if p.extension().and_then(|e| e.to_str()).map(|e| e.eq_ignore_ascii_case("parquet")).unwrap_or(false) {
-                                acc.push(p);
+    let shared_parquet_files =
+        match wait_for_parquet_files(&expected_shared_dir, Duration::from_secs(12)) {
+            Some(v) if !v.is_empty() => v,
+            _ => {
+                println!("[storage_templates] Shared table primary wait failed; recursive search");
+                let mut collected = Vec::new();
+                if expected_shared_dir.exists() {
+                    fn visit(
+                        dir: &std::path::Path,
+                        depth: usize,
+                        acc: &mut Vec<std::path::PathBuf>,
+                    ) {
+                        if depth > 3 {
+                            return;
+                        }
+                        if let Ok(entries) = std::fs::read_dir(dir) {
+                            for entry in entries.flatten() {
+                                let p = entry.path();
+                                if p.is_dir() {
+                                    visit(&p, depth + 1, acc);
+                                } else if p
+                                    .extension()
+                                    .and_then(|e| e.to_str())
+                                    .map(|e| e.eq_ignore_ascii_case("parquet"))
+                                    .unwrap_or(false)
+                                {
+                                    acc.push(p);
+                                }
                             }
                         }
                     }
+                    visit(&expected_shared_dir, 0, &mut collected);
                 }
-                visit(&expected_shared_dir, 0, &mut collected);
+                if collected.is_empty() {
+                    panic!(
+                        "Expected parquet files under {} (direct or recursive) but none were found",
+                        expected_shared_dir.display()
+                    );
+                }
+                collected
             }
-            if collected.is_empty() {
-                panic!("Expected parquet files under {} (direct or recursive) but none were found", expected_shared_dir.display());
-            }
-            collected
-        }
-    };
+        };
     assert!(
         !shared_parquet_files.is_empty(),
         "shared table flush should produce parquet files"
@@ -287,7 +324,10 @@ fn smoke_storage_custom_templates() {
     execute_sql_as_root_via_cli(&format!("DROP TABLE {}", table_shared_full))
         .expect("drop shared table");
     if !wait_for_directory_absence(&expected_shared_dir, Duration::from_secs(15)) {
-        println!("[storage_templates] WARNING: shared template directory not removed (non-fatal): {}", expected_shared_dir.display());
+        println!(
+            "[storage_templates] WARNING: shared template directory not removed (non-fatal): {}",
+            expected_shared_dir.display()
+        );
     }
 
     // Drop storage so cleanup guard doesn't emit errors
@@ -297,8 +337,7 @@ fn smoke_storage_custom_templates() {
 fn insert_rows_as_user(username: &str, password: &str, table_name: &str, row_count: usize) {
     let values = build_values_clause(row_count, "user payload");
     let insert_sql = format!("INSERT INTO {} (body) VALUES {}", table_name, values);
-    execute_sql_via_cli_as(username, password, &insert_sql)
-        .expect("user insert should succeed");
+    execute_sql_via_cli_as(username, password, &insert_sql).expect("user insert should succeed");
 }
 
 fn insert_rows_as_root(table_name: &str, row_count: usize) {
@@ -317,15 +356,17 @@ fn build_values_clause(row_count: usize, prefix: &str) -> String {
 fn trigger_flush_and_wait(table_name: &str) {
     let flush_sql = format!("FLUSH TABLE {}", table_name);
     let output = execute_sql_as_root_via_cli(&flush_sql).expect("flush command should succeed");
-    let job_id = parse_job_id_from_flush_output(&output)
-        .expect("flush output should contain job id");
-    verify_job_completed(&job_id, Duration::from_secs(60))
-        .expect("flush job should complete");
+    let job_id =
+        parse_job_id_from_flush_output(&output).expect("flush output should contain job id");
+    verify_job_completed(&job_id, Duration::from_secs(60)).expect("flush job should complete");
 }
 
 // Fetch internal user_id for a given username from system.users (first column user_id)
 fn fetch_user_id(username: &str) -> String {
-    let sql = format!("SELECT user_id FROM system.users WHERE username = '{}' LIMIT 1", username);
+    let sql = format!(
+        "SELECT user_id FROM system.users WHERE username = '{}' LIMIT 1",
+        username
+    );
     let rows = query_rows(&sql);
     if rows.is_empty() {
         panic!("User '{}' not found in system.users", username);
@@ -334,7 +375,13 @@ fn fetch_user_id(username: &str) -> String {
         .get("user_id")
         .and_then(JsonValue::as_str)
         .map(|s| s.to_string())
-        .unwrap_or_else(|| panic!("Row for user '{}' missing user_id field: {}", username, rows[0].to_string()))
+        .unwrap_or_else(|| {
+            panic!(
+                "Row for user '{}' missing user_id field: {}",
+                username,
+                rows[0].to_string()
+            )
+        })
 }
 
 fn wait_for_parquet_files(dir: &Path, timeout: Duration) -> Option<Vec<PathBuf>> {
@@ -406,12 +453,9 @@ fn assert_storage_registered(storage_id: &str, expected_base_dir: &str) {
         .and_then(JsonValue::as_str)
         .unwrap_or("");
     assert_eq!(
-        base_dir,
-        expected_base_dir,
+        base_dir, expected_base_dir,
         "Storage '{}' base_directory mismatch (expected {}, got {})",
-        storage_id,
-        expected_base_dir,
-        base_dir
+        storage_id, expected_base_dir, base_dir
     );
 }
 
@@ -444,14 +488,9 @@ fn assert_table_storage(namespace: &str, table_name: &str, expected_storage_id: 
         .and_then(JsonValue::as_str)
         .unwrap_or("");
     assert_eq!(
-        storage_id,
-        expected_storage_id,
+        storage_id, expected_storage_id,
         "Table {}.{} is not using storage '{}' (reported '{}', options={})",
-        namespace,
-        table_name,
-        expected_storage_id,
-        storage_id,
-        options_raw
+        namespace, table_name, expected_storage_id, storage_id, options_raw
     );
 }
 
@@ -473,8 +512,7 @@ fn rows_as_debug_string(rows: &[JsonValue]) -> String {
     if rows.is_empty() {
         "<no rows>".to_string()
     } else {
-        rows
-            .iter()
+        rows.iter()
             .map(|row| row.to_string())
             .collect::<Vec<_>>()
             .join(", ")

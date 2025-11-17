@@ -7,10 +7,13 @@ fn shared_table_delete_100() -> anyhow::Result<()> {
     // Setup: Create shared table with 200 rows
     setup_benchmark_tables()?;
     std::thread::sleep(Duration::from_millis(200));
-    
+
     // Insert 200 rows
     for i in 1..=200 {
-        let sql = format!("INSERT INTO bench_shared.items (id, value) VALUES ({}, 'val_{}')", i, i);
+        let sql = format!(
+            "INSERT INTO bench_shared.items (id, value) VALUES ({}, 'val_{}')",
+            i, i
+        );
         execute_cli_timed_root(&sql)?;
     }
     std::thread::sleep(Duration::from_millis(100));
@@ -50,6 +53,6 @@ fn shared_table_delete_100() -> anyhow::Result<()> {
 
     // Cleanup
     cleanup_benchmark_tables()?;
-    
+
     Ok(())
 }

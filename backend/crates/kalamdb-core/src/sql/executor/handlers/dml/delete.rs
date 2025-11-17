@@ -2,15 +2,15 @@
 //!
 //! Handles DELETE statements with parameter binding support via DataFusion.
 
+use crate::app_context::AppContext;
 use crate::error::KalamDbError;
 use crate::providers::base::BaseTableProvider; // Phase 13.6: Bring trait methods into scope
 use crate::sql::executor::handlers::StatementHandler;
 use crate::sql::executor::models::{ExecutionContext, ExecutionResult, ScalarValue};
 use crate::sql::executor::parameter_validation::{validate_parameters, ParameterLimits};
 use async_trait::async_trait;
-use kalamdb_sql::statement_classifier::{SqlStatement, SqlStatementKind};
 use kalamdb_commons::models::{NamespaceId, TableName};
-use crate::app_context::AppContext;
+use kalamdb_sql::statement_classifier::{SqlStatement, SqlStatementKind};
 
 /// Handler for DELETE statements
 ///
@@ -44,9 +44,11 @@ impl StatementHandler for DeleteHandler {
         validate_parameters(&_params, &limits)?;
 
         if !matches!(statement.kind(), SqlStatementKind::Delete(_)) {
-            return Err(KalamDbError::InvalidOperation("DeleteHandler received wrong statement kind".into()));
+            return Err(KalamDbError::InvalidOperation(
+                "DeleteHandler received wrong statement kind".into(),
+            ));
         }
-        
+
         let sql = statement.as_str();
         let (namespace, table_name, where_pair) = self.simple_parse_delete(sql)?;
 
@@ -57,62 +59,99 @@ impl StatementHandler for DeleteHandler {
         let schema_registry = AppContext::get().schema_registry();
         use kalamdb_commons::models::TableId;
         let table_id = TableId::new(namespace.clone(), table_name.clone());
-        let def = schema_registry.get_table_definition(&table_id)?.ok_or_else(|| KalamDbError::NotFound(format!("Table {}.{} not found", namespace.as_str(), table_name.as_str())))?;
-        
+        let def = schema_registry
+            .get_table_definition(&table_id)?
+            .ok_or_else(|| {
+                KalamDbError::NotFound(format!(
+                    "Table {}.{} not found",
+                    namespace.as_str(),
+                    table_name.as_str()
+                ))
+            })?;
+
         // T163: Reject AS USER on Shared tables (Phase 7)
         use kalamdb_commons::schemas::TableType;
         if statement.as_user_id().is_some() && matches!(def.table_type, TableType::Shared) {
             return Err(KalamDbError::InvalidOperation(
-                "AS USER impersonation is not supported for SHARED tables".to_string()
+                "AS USER impersonation is not supported for SHARED tables".to_string(),
             ));
         }
-        
+
         match def.table_type {
             TableType::User => {
                 // Get provider from unified cache and downcast to UserTableProvider
-                let provider_arc = schema_registry.get_provider(&table_id)
-                    .ok_or_else(|| KalamDbError::InvalidOperation("User table provider not found".into()))?;
-                
-                if let Some(provider) = provider_arc.as_any().downcast_ref::<crate::providers::UserTableProvider>() {
+                let provider_arc = schema_registry.get_provider(&table_id).ok_or_else(|| {
+                    KalamDbError::InvalidOperation("User table provider not found".into())
+                })?;
+
+                if let Some(provider) = provider_arc
+                    .as_any()
+                    .downcast_ref::<crate::providers::UserTableProvider>()
+                {
                     let pk_column = provider.primary_key_field_name();
-                    let row_id = self.extract_row_id_for_column(&where_pair, pk_column)?
-                        .ok_or_else(|| KalamDbError::InvalidOperation(format!(
-                            "DELETE currently requires WHERE {} = <value>",
-                            pk_column
-                        )))?;
+                    let row_id = self
+                        .extract_row_id_for_column(&where_pair, pk_column)?
+                        .ok_or_else(|| {
+                            KalamDbError::InvalidOperation(format!(
+                                "DELETE currently requires WHERE {} = <value>",
+                                pk_column
+                            ))
+                        })?;
                     let _deleted = provider.delete_by_id_field(effective_user_id, &row_id)?;
                     Ok(ExecutionResult::Deleted { rows_affected: 1 })
                 } else {
-                    Err(KalamDbError::InvalidOperation("Cached provider type mismatch for user table".into()))
+                    Err(KalamDbError::InvalidOperation(
+                        "Cached provider type mismatch for user table".into(),
+                    ))
                 }
             }
             TableType::Shared => {
                 // DELETE requires WHERE on the actual PK column for SHARED tables too
-                let provider_arc = schema_registry.get_provider(&table_id).ok_or_else(|| KalamDbError::InvalidOperation("Shared table provider not found".into()))?;
-                if let Some(provider) = provider_arc.as_any().downcast_ref::<crate::providers::SharedTableProvider>() {
+                let provider_arc = schema_registry.get_provider(&table_id).ok_or_else(|| {
+                    KalamDbError::InvalidOperation("Shared table provider not found".into())
+                })?;
+                if let Some(provider) = provider_arc
+                    .as_any()
+                    .downcast_ref::<crate::providers::SharedTableProvider>()
+                {
                     let pk_column = provider.primary_key_field_name();
-                    let row_id = self.extract_row_id_for_column(&where_pair, pk_column)?
-                        .ok_or_else(|| KalamDbError::InvalidOperation(format!(
-                            "DELETE on SHARED tables requires WHERE {} = <value>",
-                            pk_column
-                        )))?;
+                    let row_id = self
+                        .extract_row_id_for_column(&where_pair, pk_column)?
+                        .ok_or_else(|| {
+                            KalamDbError::InvalidOperation(format!(
+                                "DELETE on SHARED tables requires WHERE {} = <value>",
+                                pk_column
+                            ))
+                        })?;
                     // SharedTableProvider ignores user_id parameter (no RLS)
                     provider.delete_by_id_field(effective_user_id, &row_id)?;
                     Ok(ExecutionResult::Deleted { rows_affected: 1 })
                 } else {
-                    Err(KalamDbError::InvalidOperation("Cached provider type mismatch for shared table".into()))
+                    Err(KalamDbError::InvalidOperation(
+                        "Cached provider type mismatch for shared table".into(),
+                    ))
                 }
             }
-            TableType::Stream => Err(KalamDbError::InvalidOperation("DELETE not supported for STREAM tables".into())),
-            TableType::System => Err(KalamDbError::InvalidOperation("Cannot DELETE from SYSTEM tables".into())),
+            TableType::Stream => Err(KalamDbError::InvalidOperation(
+                "DELETE not supported for STREAM tables".into(),
+            )),
+            TableType::System => Err(KalamDbError::InvalidOperation(
+                "Cannot DELETE from SYSTEM tables".into(),
+            )),
         }
     }
 
-    async fn check_authorization(&self, statement: &SqlStatement, context: &ExecutionContext) -> Result<(), KalamDbError> {
+    async fn check_authorization(
+        &self,
+        statement: &SqlStatement,
+        context: &ExecutionContext,
+    ) -> Result<(), KalamDbError> {
         if !matches!(statement.kind(), SqlStatementKind::Delete(_)) {
-            return Err(KalamDbError::InvalidOperation("DeleteHandler received wrong statement kind".into()));
+            return Err(KalamDbError::InvalidOperation(
+                "DeleteHandler received wrong statement kind".into(),
+            ));
         }
-        
+
         // T152: Validate AS USER authorization - only Service/Dba/System can use AS USER (Phase 7)
         if statement.as_user_id().is_some() {
             use kalamdb_commons::Role;
@@ -122,7 +161,7 @@ impl StatementHandler for DeleteHandler {
                 ));
             }
         }
-        
+
         use kalamdb_commons::Role;
         match context.user_role {
             Role::System | Role::Dba | Role::Service | Role::User => Ok(()),
@@ -131,15 +170,38 @@ impl StatementHandler for DeleteHandler {
 }
 
 impl DeleteHandler {
-    fn simple_parse_delete(&self, sql: &str) -> Result<(NamespaceId, TableName, Option<(String, String)>), KalamDbError> {
+    fn simple_parse_delete(
+        &self,
+        sql: &str,
+    ) -> Result<(NamespaceId, TableName, Option<(String, String)>), KalamDbError> {
         // Expect: DELETE FROM <ns>.<table> WHERE <pk> = <value>
         let upper = sql.to_uppercase();
-        let from_pos = upper.find("DELETE FROM ").ok_or_else(|| KalamDbError::InvalidOperation("Missing 'DELETE FROM'".into()))?;
+        let from_pos = upper
+            .find("DELETE FROM ")
+            .ok_or_else(|| KalamDbError::InvalidOperation("Missing 'DELETE FROM'".into()))?;
         let where_pos = upper.find(" WHERE ");
-        let head = if let Some(wp) = where_pos { &sql[from_pos + 12..wp] } else { &sql[from_pos + 12..] };
+        let head = if let Some(wp) = where_pos {
+            &sql[from_pos + 12..wp]
+        } else {
+            &sql[from_pos + 12..]
+        };
         let (ns, tbl) = {
             let parts: Vec<&str> = head.trim().split('.').collect();
-            match parts.len() { 1 => (NamespaceId::new("default"), TableName::new(parts[0].trim().to_string())), 2 => (NamespaceId::new(parts[0].trim().to_string()), TableName::new(parts[1].trim().to_string())), _ => return Err(KalamDbError::InvalidOperation("Invalid table reference".into())) }
+            match parts.len() {
+                1 => (
+                    NamespaceId::new("default"),
+                    TableName::new(parts[0].trim().to_string()),
+                ),
+                2 => (
+                    NamespaceId::new(parts[0].trim().to_string()),
+                    TableName::new(parts[1].trim().to_string()),
+                ),
+                _ => {
+                    return Err(KalamDbError::InvalidOperation(
+                        "Invalid table reference".into(),
+                    ))
+                }
+            }
         };
         let where_pair = if let Some(wp) = where_pos {
             let cond = sql[wp + 7..].trim();
@@ -149,12 +211,20 @@ impl DeleteHandler {
                 let col = parts[0].trim().to_string();
                 let val = parts[1].trim().to_string();
                 Some((col, val))
-            } else { None }
-        } else { None };
+            } else {
+                None
+            }
+        } else {
+            None
+        };
         Ok((ns, tbl, where_pair))
     }
 
-    fn extract_row_id_for_column(&self, where_pair: &Option<(String, String)>, pk_column: &str) -> Result<Option<String>, KalamDbError> {
+    fn extract_row_id_for_column(
+        &self,
+        where_pair: &Option<(String, String)>,
+        pk_column: &str,
+    ) -> Result<Option<String>, KalamDbError> {
         if let Some((col, token)) = where_pair {
             if !col.eq_ignore_ascii_case(pk_column) {
                 return Ok(None);
@@ -182,7 +252,10 @@ mod tests {
     async fn test_delete_authorization_user() {
         let handler = DeleteHandler::new();
         let ctx = test_context(Role::User);
-        let stmt = SqlStatement::new("DELETE FROM default.test WHERE id = 1".to_string(), SqlStatementKind::Delete(kalamdb_sql::ddl::DeleteStatement));
+        let stmt = SqlStatement::new(
+            "DELETE FROM default.test WHERE id = 1".to_string(),
+            SqlStatementKind::Delete(kalamdb_sql::ddl::DeleteStatement),
+        );
         let result = handler.check_authorization(&stmt, &ctx).await;
         assert!(result.is_ok());
     }
@@ -191,7 +264,10 @@ mod tests {
     async fn test_delete_authorization_dba() {
         let handler = DeleteHandler::new();
         let ctx = test_context(Role::Dba);
-        let stmt = SqlStatement::new("DELETE FROM default.test WHERE id = 1".to_string(), SqlStatementKind::Delete(kalamdb_sql::ddl::DeleteStatement));
+        let stmt = SqlStatement::new(
+            "DELETE FROM default.test WHERE id = 1".to_string(),
+            SqlStatementKind::Delete(kalamdb_sql::ddl::DeleteStatement),
+        );
         let result = handler.check_authorization(&stmt, &ctx).await;
         assert!(result.is_ok());
     }
@@ -200,7 +276,10 @@ mod tests {
     async fn test_delete_authorization_service() {
         let handler = DeleteHandler::new();
         let ctx = test_context(Role::Service);
-        let stmt = SqlStatement::new("DELETE FROM default.test WHERE id = 1".to_string(), SqlStatementKind::Delete(kalamdb_sql::ddl::DeleteStatement));
+        let stmt = SqlStatement::new(
+            "DELETE FROM default.test WHERE id = 1".to_string(),
+            SqlStatementKind::Delete(kalamdb_sql::ddl::DeleteStatement),
+        );
         let result = handler.check_authorization(&stmt, &ctx).await;
         assert!(result.is_ok());
     }

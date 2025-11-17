@@ -130,18 +130,16 @@ pub async fn execute_shared_flush_synchronously(
 
     // Get per-table SharedTableStore and registry from AppContext
     let unified_cache = server.app_context.schema_registry();
-    let shared_table_store = Arc::new(
-        kalamdb_tables::new_shared_table_store(
-            server.app_context.storage_backend(),
-            &namespace_id,
-            &table_name_id,
-        ),
-    );
+    let shared_table_store = Arc::new(kalamdb_tables::new_shared_table_store(
+        server.app_context.storage_backend(),
+        &namespace_id,
+        &table_name_id,
+    ));
 
     let namespace_id = NamespaceId::new(namespace);
     let table_name_id = TableName::new(table_name);
     let table_id = Arc::new(TableId::new(namespace_id.clone(), table_name_id.clone()));
-    
+
     let flush_job = SharedTableFlushJob::new(
         table_id,
         shared_table_store,

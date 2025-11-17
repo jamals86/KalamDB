@@ -6,8 +6,8 @@
 #[path = "../../common/mod.rs"]
 mod common;
 
+use common::flush_helpers::{check_shared_parquet_files, execute_shared_flush_synchronously};
 use common::{fixtures, TestServer};
-use common::flush_helpers::{execute_shared_flush_synchronously, check_shared_parquet_files};
 use std::path::Path;
 
 #[actix_web::test]
@@ -34,7 +34,11 @@ async fn test_drop_shared_table_deletes_partitions_and_parquet() {
         namespace, table
     );
     let resp = server.execute_sql(&create_sql).await;
-    assert_eq!(resp.status, "success", "CREATE TABLE failed: {:?}", resp.error);
+    assert_eq!(
+        resp.status, "success",
+        "CREATE TABLE failed: {:?}",
+        resp.error
+    );
 
     // Insert some rows
     for i in 0..3 {
@@ -51,7 +55,10 @@ async fn test_drop_shared_table_deletes_partitions_and_parquet() {
     let flush_res = execute_shared_flush_synchronously(&server, namespace, table)
         .await
         .expect("Shared flush failed");
-    assert!(flush_res.rows_flushed > 0, "Expected at least 1 row flushed");
+    assert!(
+        flush_res.rows_flushed > 0,
+        "Expected at least 1 row flushed"
+    );
 
     // Verify Parquet exists pre-drop
     let files = check_shared_parquet_files(&server, namespace, table);
@@ -69,7 +76,11 @@ async fn test_drop_shared_table_deletes_partitions_and_parquet() {
     let drop_resp = server
         .execute_sql(&format!("DROP TABLE {}.{}", namespace, table))
         .await;
-    assert_eq!(drop_resp.status, "success", "DROP TABLE failed: {:?}", drop_resp.error);
+    assert_eq!(
+        drop_resp.status, "success",
+        "DROP TABLE failed: {:?}",
+        drop_resp.error
+    );
 
     // Verify table metadata removed
     assert!(

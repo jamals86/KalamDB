@@ -129,7 +129,10 @@ async fn test_e2e_auth_flow() {
         .await;
     // Current behavior: soft-deleted users can still execute SQL via test harness
     // because execute_sql_as_user bypasses credential re-validation. Adjust expectation.
-    assert_eq!(response.status, "success", "Soft-deleted user should not block ad-hoc execution in current model");
+    assert_eq!(
+        response.status, "success",
+        "Soft-deleted user should not block ad-hoc execution in current model"
+    );
     println!("✅ Soft delete recorded; execution still permitted (expected with current harness)");
 
     println!("🎉 E2E Authentication Flow Test Completed!");
@@ -196,7 +199,10 @@ async fn test_role_based_auth_e2e() {
 
     // Create table as DBA
     // Ensure PRIMARY KEY for shared table creation
-    let create_table_sql = format!("CREATE TABLE {}.test_table (id BIGINT PRIMARY KEY)", namespace);
+    let create_table_sql = format!(
+        "CREATE TABLE {}.test_table (id BIGINT PRIMARY KEY)",
+        namespace
+    );
     let response = server
         .execute_sql_as_user(&create_table_sql, dba_user.id.as_str())
         .await;

@@ -111,7 +111,6 @@ impl FlushPolicyExt for FlushPolicy {
     }
 }
 
-
 /// Unified CREATE TABLE statement that works for USER, SHARED, and STREAM tables
 #[derive(Debug, Clone, PartialEq)]
 pub struct CreateTableStatement {
@@ -170,16 +169,18 @@ impl CreateTableStatement {
         let default_func_re = regex::Regex::new(r"DEFAULT\s+(\w+)\s*\(\s*\)").unwrap();
         let mut default_functions = Vec::new();
         let mut func_index = 0;
-        normalized_sql = default_func_re.replace_all(&normalized_sql, |caps: &regex::Captures| {
-            if let Some(func_name) = caps.get(1) {
-                default_functions.push(func_name.as_str().to_string());
-                let placeholder = format!("DEFAULT '__KALAMDB_DEFAULT_FUNC_{}__'", func_index);
-                func_index += 1;
-                placeholder
-            } else {
-                caps[0].to_string()
-            }
-        }).into_owned();
+        normalized_sql = default_func_re
+            .replace_all(&normalized_sql, |caps: &regex::Captures| {
+                if let Some(func_name) = caps.get(1) {
+                    default_functions.push(func_name.as_str().to_string());
+                    let placeholder = format!("DEFAULT '__KALAMDB_DEFAULT_FUNC_{}__'", func_index);
+                    func_index += 1;
+                    placeholder
+                } else {
+                    caps[0].to_string()
+                }
+            })
+            .into_owned();
 
         // Remove KalamDB-specific clauses using pre-compiled regexes
         normalized_sql = FLUSH_RE.replace_all(&normalized_sql, "").into_owned();
@@ -218,10 +219,11 @@ impl CreateTableStatement {
                 // Check if this is a placeholder (format: __KALAMDB_DEFAULT_FUNC_N__)
                 if s.starts_with("__KALAMDB_DEFAULT_FUNC_") && s.ends_with("__") {
                     // Extract the index from the placeholder
-                    let index_str = &s["__KALAMDB_DEFAULT_FUNC_".len()..s.len()-2];
+                    let index_str = &s["__KALAMDB_DEFAULT_FUNC_".len()..s.len() - 2];
                     if let Ok(idx) = index_str.parse::<usize>() {
                         if idx < default_functions.len() {
-                            *default_value = ColumnDefault::function(default_functions[idx].clone(), vec![]);
+                            *default_value =
+                                ColumnDefault::function(default_functions[idx].clone(), vec![]);
                         }
                     }
                 }
@@ -412,8 +414,12 @@ impl CreateTableStatement {
             // Literal value: DEFAULT 'text', DEFAULT 42, DEFAULT TRUE
             Expr::Value(value_with_span) => {
                 let literal_json = match &value_with_span.value {
-                    sqlparser::ast::Value::SingleQuotedString(s) => serde_json::Value::String(s.clone()),
-                    sqlparser::ast::Value::DoubleQuotedString(s) => serde_json::Value::String(s.clone()),
+                    sqlparser::ast::Value::SingleQuotedString(s) => {
+                        serde_json::Value::String(s.clone())
+                    }
+                    sqlparser::ast::Value::DoubleQuotedString(s) => {
+                        serde_json::Value::String(s.clone())
+                    }
                     sqlparser::ast::Value::Number(n, _) => {
                         // Try to parse as number
                         if let Ok(i) = n.parse::<i64>() {
@@ -573,7 +579,10 @@ impl CreateTableStatement {
         ];
 
         for (column_name, default_value) in &self.column_defaults {
-            if let ColumnDefault::FunctionCall { name: func_name, .. } = default_value {
+            if let ColumnDefault::FunctionCall {
+                name: func_name, ..
+            } = default_value
+            {
                 let func_upper = func_name.to_uppercase();
 
                 // T530: Validate function exists
@@ -704,9 +713,7 @@ mod create_table_tests {
         "#;
 
         let stmt = CreateTableStatement::parse(sql, &ns).expect("parse CREATE TABLE");
-        let storage = stmt
-            .storage_id
-            .expect("storage_id should be captured");
+        let storage = stmt.storage_id.expect("storage_id should be captured");
         assert_eq!(storage.as_str(), "custom_storage");
     }
 }
@@ -1022,7 +1029,10 @@ mod tests {
         let stmt = CreateTableStatement::parse(sql, &test_namespace()).unwrap();
         // Ensure column default is set to SNOWFLAKE_ID()
         let def = stmt.column_defaults.get("id");
-        assert!(def.is_some(), "Expected default for id column from AUTO_INCREMENT");
+        assert!(
+            def.is_some(),
+            "Expected default for id column from AUTO_INCREMENT"
+        );
         match def.unwrap() {
             ColumnDefault::FunctionCall { name, args } => {
                 assert_eq!(name.to_uppercase(), "SNOWFLAKE_ID");

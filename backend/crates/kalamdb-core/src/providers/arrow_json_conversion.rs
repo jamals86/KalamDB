@@ -7,12 +7,12 @@
 //! These utilities are used by user_table_provider, shared_table_provider,
 //! and stream_table_provider to avoid code duplication.
 
+use chrono::Utc;
 use datafusion::arrow::array::*;
 use datafusion::arrow::datatypes::{DataType, SchemaRef, TimeUnit};
 use datafusion::arrow::record_batch::RecordBatch;
 use serde_json::Value as JsonValue;
 use std::sync::Arc;
-use chrono::Utc;
 
 /// Type alias for Arc<dyn Array> to improve readability
 type ArrayRef = Arc<dyn datafusion::arrow::array::Array>;
@@ -121,7 +121,9 @@ pub fn json_rows_to_arrow_batch(
                 let arr = TimestampMillisecondArray::from(values);
                 let arr = if let Some(tz) = tz_opt.as_deref() {
                     arr.with_timezone(tz)
-                } else { arr };
+                } else {
+                    arr
+                };
                 Arc::new(arr) as ArrayRef
             }
             DataType::Timestamp(TimeUnit::Microsecond, tz_opt) => {
@@ -137,23 +139,29 @@ pub fn json_rows_to_arrow_batch(
                         match row.get(field.name()) {
                             Some(v) => v.as_i64().or_else(|| {
                                 v.as_str().and_then(|s| {
-                                    chrono::DateTime::parse_from_rfc3339(s)
-                                        .ok()
-                                        .map(|dt| {
-                                            let secs = dt.timestamp();
-                                            let micros = (dt.timestamp_subsec_nanos() as i64) / 1_000;
-                                            secs * 1_000_000 + micros
-                                        })
+                                    chrono::DateTime::parse_from_rfc3339(s).ok().map(|dt| {
+                                        let secs = dt.timestamp();
+                                        let micros = (dt.timestamp_subsec_nanos() as i64) / 1_000;
+                                        secs * 1_000_000 + micros
+                                    })
                                 })
                             }),
-                            None => if !field.is_nullable() { Some(default_now_micros) } else { None },
+                            None => {
+                                if !field.is_nullable() {
+                                    Some(default_now_micros)
+                                } else {
+                                    None
+                                }
+                            }
                         }
                     })
                     .collect();
                 let arr = TimestampMicrosecondArray::from(values);
                 let arr = if let Some(tz) = tz_opt.as_deref() {
                     arr.with_timezone(tz)
-                } else { arr };
+                } else {
+                    arr
+                };
                 Arc::new(arr) as ArrayRef
             }
             _ => {
@@ -184,12 +192,20 @@ fn create_empty_array(data_type: &DataType) -> ArrayRef {
         DataType::Boolean => Arc::new(BooleanArray::from(Vec::<Option<bool>>::new())),
         DataType::Timestamp(TimeUnit::Millisecond, tz_opt) => {
             let arr = TimestampMillisecondArray::from(Vec::<Option<i64>>::new());
-            let arr = if let Some(tz) = tz_opt.as_deref() { arr.with_timezone(tz) } else { arr };
+            let arr = if let Some(tz) = tz_opt.as_deref() {
+                arr.with_timezone(tz)
+            } else {
+                arr
+            };
             Arc::new(arr)
         }
         DataType::Timestamp(TimeUnit::Microsecond, tz_opt) => {
             let arr = TimestampMicrosecondArray::from(Vec::<Option<i64>>::new());
-            let arr = if let Some(tz) = tz_opt.as_deref() { arr.with_timezone(tz) } else { arr };
+            let arr = if let Some(tz) = tz_opt.as_deref() {
+                arr.with_timezone(tz)
+            } else {
+                arr
+            };
             Arc::new(arr)
         }
         _ => Arc::new(StringArray::from(Vec::<Option<String>>::new())), // Fallback
@@ -293,16 +309,14 @@ mod tests {
 ///
 /// # Returns
 /// New schema with system columns added if missing
-pub fn schema_with_system_columns(
-    base_schema: &SchemaRef,
-) -> SchemaRef {
+pub fn schema_with_system_columns(base_schema: &SchemaRef) -> SchemaRef {
     use datafusion::arrow::datatypes::{DataType, Field, Schema};
-    
+
     let mut fields = base_schema.fields().to_vec();
-    
+
     // Check if system columns already exist (added by SystemColumnsService during CREATE TABLE)
     let has_deleted = fields.iter().any(|f| f.name() == "_deleted");
-    
+
     // Only add missing system columns
     // Note: SystemColumnsService adds them as (BigInt, Timestamp, Boolean) to TableDefinition
     // which becomes (Int64, Timestamp(Millisecond, None), Boolean) in Arrow schema
@@ -314,7 +328,7 @@ pub fn schema_with_system_columns(
             false, // NOT NULL
         )));
     }
-    
+
     Arc::new(Schema::new(fields))
 }
 
@@ -403,15 +417,24 @@ pub fn arrow_value_to_json(
             Ok(JsonValue::String(arr.value(row_idx).to_string()))
         }
         DataType::Timestamp(TimeUnit::Millisecond, _) => {
-            let arr = array.as_any().downcast_ref::<TimestampMillisecondArray>().unwrap();
+            let arr = array
+                .as_any()
+                .downcast_ref::<TimestampMillisecondArray>()
+                .unwrap();
             Ok(JsonValue::Number(arr.value(row_idx).into()))
         }
         DataType::Timestamp(TimeUnit::Microsecond, _) => {
-            let arr = array.as_any().downcast_ref::<TimestampMicrosecondArray>().unwrap();
+            let arr = array
+                .as_any()
+                .downcast_ref::<TimestampMicrosecondArray>()
+                .unwrap();
             Ok(JsonValue::Number(arr.value(row_idx).into()))
         }
         DataType::Timestamp(TimeUnit::Nanosecond, _) => {
-            let arr = array.as_any().downcast_ref::<TimestampNanosecondArray>().unwrap();
+            let arr = array
+                .as_any()
+                .downcast_ref::<TimestampNanosecondArray>()
+                .unwrap();
             Ok(JsonValue::Number(arr.value(row_idx).into()))
         }
         _ => {

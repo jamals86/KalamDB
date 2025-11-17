@@ -1,5 +1,5 @@
 #![cfg(any())] // Disabled pending migration to UnifiedJobManager APIs
- 
+
 //! Integration tests for scheduled user cleanup job.
 //!
 //! Verifies that:
@@ -14,10 +14,10 @@ use chrono::Utc;
 use common::{fixtures, TestServer};
 use kalamdb_commons::{JobStatus, JobType, NamespaceId, TableName};
 use kalamdb_core::jobs::{JobExecutor, JobResult, UserCleanupConfig, UserCleanupJob};
-use kalamdb_tables::UserTableStoreExt;
-use kalamdb_system::JobsTableProvider;
-use kalamdb_tables::{new_user_table_store, UserTableStore};
 use kalamdb_store::{RocksDBBackend, StorageBackend};
+use kalamdb_system::JobsTableProvider;
+use kalamdb_tables::UserTableStoreExt;
+use kalamdb_tables::{new_user_table_store, UserTableStore};
 use std::sync::Arc;
 
 const DAY_MS: i64 = 24 * 60 * 60 * 1000;
@@ -161,7 +161,10 @@ async fn test_cleanup_job_logging() {
 
     let backend: Arc<dyn StorageBackend> = Arc::new(RocksDBBackend::new(server.db.clone()));
     let jobs_provider = Arc::new(JobsTableProvider::new(backend));
-    let job_executor = JobExecutor::new(jobs_provider, kalamdb_commons::NodeId::new("test-node".to_string()));
+    let job_executor = JobExecutor::new(
+        jobs_provider,
+        kalamdb_commons::NodeId::new("test-node".to_string()),
+    );
 
     let job_id = "user-cleanup-test-job".to_string();
     let result = job_executor

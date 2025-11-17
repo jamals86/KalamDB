@@ -32,20 +32,21 @@ impl InformationSchemaColumnsView {
             Field::new("is_primary_key", DataType::Boolean, false),
         ]));
 
-        Self { 
+        Self {
             tables_provider,
-            schema 
+            schema,
         }
     }
 
     fn scan_all_columns(&self) -> Result<RecordBatch, RegistryError> {
         use datafusion::arrow::array::{ArrayRef, BooleanArray, StringBuilder, UInt32Array};
-        
+
         // Get all table definitions from SchemaRegistry
         let schema_registry = crate::app_context::AppContext::get().schema_registry();
-        let all_tables = schema_registry.scan_all_table_definitions()
+        let all_tables = schema_registry
+            .scan_all_table_definitions()
             .map_err(|e| RegistryError::Other(format!("Failed to scan tables: {}", e)))?;
-        
+
         // Flatten columns from all tables
         let mut table_catalog_values = StringBuilder::new();
         let mut table_schema_values = StringBuilder::new();
@@ -62,39 +63,39 @@ impl InformationSchemaColumnsView {
             for column in &table_def.columns {
                 // table_catalog: Use "def" as default catalog (SQL standard)
                 table_catalog_values.append_value("def");
-                
+
                 // table_schema is the namespace
                 table_schema_values.append_value(table_def.namespace_id.as_str());
-                
+
                 // table_name
                 table_name_values.append_value(table_def.table_name.as_str());
-                
+
                 // column_name
                 column_name_values.append_value(&column.column_name);
-                
+
                 // ordinal_position (1-indexed)
                 ordinal_position_values.push(column.ordinal_position);
-                
+
                 // data_type: Convert KalamDataType to SQL standard name
                 let data_type_str = format!("{:?}", column.data_type);
                 data_type_values.append_value(&data_type_str);
-                
+
                 // is_nullable
                 is_nullable_values.push(column.is_nullable);
-                
+
                 // column_default: Convert ColumnDefault to Option<String>
                 match &column.default_value {
                     kalamdb_commons::schemas::ColumnDefault::None => {
                         column_default_values.append_null();
-                    },
+                    }
                     kalamdb_commons::schemas::ColumnDefault::Literal(val) => {
                         column_default_values.append_value(&val.to_string());
-                    },
+                    }
                     kalamdb_commons::schemas::ColumnDefault::FunctionCall { name, .. } => {
                         column_default_values.append_value(&format!("{}()", name));
-                    },
+                    }
                 }
-                
+
                 // is_primary_key
                 is_primary_key_values.push(column.is_primary_key);
             }

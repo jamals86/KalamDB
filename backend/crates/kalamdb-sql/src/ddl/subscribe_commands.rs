@@ -144,7 +144,10 @@ impl SubscribeStatement {
         let (sql_without_options, options) = Self::extract_options_clause(sql)?;
 
         // Check if user provided custom SELECT query
-        let select_sql = if sql_without_options.to_uppercase().contains("SUBSCRIBE TO SELECT") {
+        let select_sql = if sql_without_options
+            .to_uppercase()
+            .contains("SUBSCRIBE TO SELECT")
+        {
             // Format: SUBSCRIBE TO SELECT columns FROM table [WHERE ...]
             // Just strip "SUBSCRIBE TO " prefix (case-insensitive)
             let upper = sql_without_options.to_uppercase();
@@ -162,7 +165,9 @@ impl SubscribeStatement {
         // Normalize certain function call syntaxes that sqlparser sees as keywords
         // e.g., PostgreSQL treats CURRENT_USER as a special keyword (no parentheses)
         let current_user_re = regex::Regex::new(r"(?i)CURRENT_USER\s*\(\s*\)").unwrap();
-        let select_sql = current_user_re.replace_all(&select_sql, "CURRENT_USER").into_owned();
+        let select_sql = current_user_re
+            .replace_all(&select_sql, "CURRENT_USER")
+            .into_owned();
 
         // Parse the SELECT statement using sqlparser
         let dialect = PostgreSqlDialect {};
@@ -213,7 +218,7 @@ impl SubscribeStatement {
 
         let dialect = GenericDialect {};
         let mut tokenizer = Tokenizer::new(&dialect, sql);
-        
+
         // Tokenize to get list of tokens
         let tokens = tokenizer
             .tokenize()
@@ -222,10 +227,10 @@ impl SubscribeStatement {
         // Find OPTIONS keyword and calculate its byte position in original SQL
         let mut byte_pos = 0;
         let mut options_byte_pos = None;
-        
+
         for token in &tokens {
             let token_str = token.to_string();
-            
+
             // Check if this token is OPTIONS keyword
             if let Token::Word(word) = token {
                 if word.value.to_uppercase() == "OPTIONS" {
@@ -233,7 +238,7 @@ impl SubscribeStatement {
                     break;
                 }
             }
-            
+
             // Advance byte position (account for token length + spaces)
             // This is approximate but works for our purpose since we'll search for the keyword
             if let Some(pos) = sql[byte_pos..].find(&token_str) {
@@ -399,11 +404,13 @@ mod tests {
     #[test]
     fn test_parse_subscribe_with_where_clause() {
         let stmt =
-            SubscribeStatement::parse("SUBSCRIBE TO app.messages WHERE user_id = 'alice'")
-                .unwrap();
+            SubscribeStatement::parse("SUBSCRIBE TO app.messages WHERE user_id = 'alice'").unwrap();
         assert_eq!(stmt.namespace, NamespaceId::from("app"));
         assert_eq!(stmt.table_name, TableName::from("messages"));
-        assert_eq!(stmt.select_query, "SELECT * FROM app.messages WHERE user_id = 'alice'");
+        assert_eq!(
+            stmt.select_query,
+            "SELECT * FROM app.messages WHERE user_id = 'alice'"
+        );
     }
 
     #[test]
@@ -424,7 +431,10 @@ mod tests {
         .unwrap();
         assert_eq!(stmt.namespace, NamespaceId::from("app"));
         assert_eq!(stmt.table_name, TableName::from("messages"));
-        assert_eq!(stmt.select_query, "SELECT * FROM app.messages WHERE user_id = 'alice'");
+        assert_eq!(
+            stmt.select_query,
+            "SELECT * FROM app.messages WHERE user_id = 'alice'"
+        );
         assert_eq!(stmt.options.last_rows, Some(20));
     }
 
@@ -439,7 +449,8 @@ mod tests {
 
     #[test]
     fn test_parse_subscribe_custom_columns() {
-        let stmt = SubscribeStatement::parse("SUBSCRIBE TO SELECT event_type FROM app.messages").unwrap();
+        let stmt =
+            SubscribeStatement::parse("SUBSCRIBE TO SELECT event_type FROM app.messages").unwrap();
         assert_eq!(stmt.namespace, NamespaceId::from("app"));
         assert_eq!(stmt.table_name, TableName::from("messages"));
         assert_eq!(stmt.select_query, "SELECT event_type FROM app.messages");
@@ -449,21 +460,29 @@ mod tests {
     #[test]
     fn test_parse_subscribe_custom_columns_with_where() {
         let stmt = SubscribeStatement::parse(
-            "SUBSCRIBE TO SELECT event_type, user_id FROM app.messages WHERE conversation_id = 1"
-        ).unwrap();
+            "SUBSCRIBE TO SELECT event_type, user_id FROM app.messages WHERE conversation_id = 1",
+        )
+        .unwrap();
         assert_eq!(stmt.namespace, NamespaceId::from("app"));
         assert_eq!(stmt.table_name, TableName::from("messages"));
-        assert_eq!(stmt.select_query, "SELECT event_type, user_id FROM app.messages WHERE conversation_id = 1");
+        assert_eq!(
+            stmt.select_query,
+            "SELECT event_type, user_id FROM app.messages WHERE conversation_id = 1"
+        );
     }
 
     #[test]
     fn test_parse_subscribe_custom_columns_with_options() {
         let stmt = SubscribeStatement::parse(
-            "SUBSCRIBE TO SELECT event_type FROM chat.typing_events OPTIONS (last_rows=20)"
-        ).unwrap();
+            "SUBSCRIBE TO SELECT event_type FROM chat.typing_events OPTIONS (last_rows=20)",
+        )
+        .unwrap();
         assert_eq!(stmt.namespace, NamespaceId::from("chat"));
         assert_eq!(stmt.table_name, TableName::from("typing_events"));
-        assert_eq!(stmt.select_query, "SELECT event_type FROM chat.typing_events");
+        assert_eq!(
+            stmt.select_query,
+            "SELECT event_type FROM chat.typing_events"
+        );
         assert_eq!(stmt.options.last_rows, Some(20));
     }
 
@@ -506,7 +525,8 @@ mod tests {
 
     #[test]
     fn test_to_select_sql_custom_columns() {
-        let stmt = SubscribeStatement::parse("SUBSCRIBE TO SELECT event_type FROM app.messages").unwrap();
+        let stmt =
+            SubscribeStatement::parse("SUBSCRIBE TO SELECT event_type FROM app.messages").unwrap();
         assert_eq!(stmt.to_select_sql(), "SELECT event_type FROM app.messages");
     }
 

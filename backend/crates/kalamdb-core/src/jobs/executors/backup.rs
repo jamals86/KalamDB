@@ -24,8 +24,8 @@
 use crate::error::KalamDbError;
 use crate::jobs::executors::{JobContext, JobDecision, JobExecutor, JobParams};
 use async_trait::async_trait;
-use kalamdb_commons::{JobType, TableId};
 use kalamdb_commons::schemas::TableType;
+use kalamdb_commons::{JobType, TableId};
 use serde::{Deserialize, Serialize};
 
 /// Typed parameters for backup operations
@@ -79,12 +79,12 @@ impl JobExecutor for BackupExecutor {
 
     async fn execute(&self, ctx: &JobContext<Self::Params>) -> Result<JobDecision, KalamDbError> {
         ctx.log_warn("BackupExecutor not yet implemented");
-        
+
         // TODO: Implement backup logic
         // - Export table data to Parquet format
         // - Upload to configured backup storage
         // - Track backup metadata
-        
+
         Ok(JobDecision::Failed {
             message: "BackupExecutor not yet implemented".to_string(),
             exception_trace: Some("BackupExecutor not yet implemented".to_string()),

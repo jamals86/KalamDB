@@ -1,7 +1,7 @@
 //! Typed statement handler trait over parsed AST statements
 
-use crate::error::KalamDbError;
 use super::{ExecutionContext, ExecutionResult, ScalarValue};
+use crate::error::KalamDbError;
 use kalamdb_sql::DdlAst;
 
 #[async_trait::async_trait]

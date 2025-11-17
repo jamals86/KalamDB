@@ -33,7 +33,7 @@ use std::sync::Arc;
 ///   BASE_DIRECTORY '/var/lib/kalamdb/data'
 ///   SHARED_TABLES_TEMPLATE '{namespace}/{tableName}/'
 ///   USER_TABLES_TEMPLATE '{namespace}/{tableName}/{userId}/';
-/// 
+///
 /// CREATE STORAGE s3_prod
 ///   TYPE 's3'
 ///   NAME 'Production S3 Storage'
@@ -94,10 +94,7 @@ pub async fn execute_create_storage(
         }
 
         Some(serde_json::to_string(&value).map_err(|e| {
-            KalamDbError::InvalidOperation(format!(
-                "Failed to normalize credentials JSON: {}",
-                e
-            ))
+            KalamDbError::InvalidOperation(format!("Failed to normalize credentials JSON: {}", e))
         })?)
     } else {
         None

@@ -1,8 +1,8 @@
 //! Table definition - single source of truth for table schemas
 
+use crate::models::datatypes::{ArrowConversionError, ToArrowType};
 use crate::models::schemas::{ColumnDefinition, SchemaVersion, TableOptions, TableType};
 use crate::{NamespaceId, TableName};
-use crate::models::datatypes::{ArrowConversionError, ToArrowType};
 use arrow_schema::{Field, Schema as ArrowSchema};
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
@@ -81,7 +81,7 @@ impl TableDefinition {
         table_type: TableType,
         columns: Vec<ColumnDefinition>,
         table_options: TableOptions,
-        table_comment: Option<String>
+        table_comment: Option<String>,
     ) -> Result<Self, String> {
         let columns_sorted = Self::validate_and_sort_columns(columns)?;
         let now = Utc::now();
@@ -96,7 +96,7 @@ impl TableDefinition {
             table_options,
             table_comment,
             created_at: now,
-            updated_at: now
+            updated_at: now,
         })
     }
 
@@ -113,7 +113,7 @@ impl TableDefinition {
         table_type: TableType,
         columns: Vec<ColumnDefinition>,
         table_comment: Option<String>,
-    ) -> Result<Self, String> {        
+    ) -> Result<Self, String> {
         let table_options = match table_type {
             TableType::User => TableOptions::user(),
             TableType::Shared => TableOptions::shared(),
@@ -127,7 +127,7 @@ impl TableDefinition {
             table_type,
             columns,
             table_options,
-            table_comment
+            table_comment,
         )
     }
 
@@ -223,7 +223,11 @@ impl TableDefinition {
 
     /// Get fully qualified table name (namespace.table)
     pub fn qualified_name(&self) -> String {
-        format!("{}.{}", self.namespace_id.as_str(), self.table_name.as_str())
+        format!(
+            "{}.{}",
+            self.namespace_id.as_str(),
+            self.table_name.as_str()
+        )
     }
 
     /// Add a column (for ALTER TABLE ADD COLUMN)
@@ -513,8 +517,8 @@ mod tests {
             panic!("Expected Stream options");
         }
 
-    // Test SHARED table options
-    let _shared_table = TableDefinition::new(
+        // Test SHARED table options
+        let _shared_table = TableDefinition::new(
             NamespaceId::new("default"),
             TableName::new("categories"),
             TableType::Shared,

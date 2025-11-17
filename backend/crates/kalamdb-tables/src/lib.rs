@@ -46,12 +46,16 @@ pub mod stream_tables;
 pub mod user_tables;
 
 // Re-export commonly used types
-pub use error::{TableError, Result};
+pub use error::{Result, TableError};
 
 // Re-export table stores
-pub use user_tables::user_table_store::{UserTableRow, UserTableStore, new_user_table_store};
-pub use shared_tables::shared_table_store::{SharedTableRow, SharedTableStore, new_shared_table_store};
-pub use stream_tables::stream_table_store::{StreamTableRow, StreamTableStore, new_stream_table_store};
+pub use shared_tables::shared_table_store::{
+    new_shared_table_store, SharedTableRow, SharedTableStore,
+};
+pub use stream_tables::stream_table_store::{
+    new_stream_table_store, StreamTableRow, StreamTableStore,
+};
+pub use user_tables::user_table_store::{new_user_table_store, UserTableRow, UserTableStore};
 
 // Re-export extension traits
-pub use store_ext::{UserTableStoreExt, SharedTableStoreExt, StreamTableStoreExt};
+pub use store_ext::{SharedTableStoreExt, StreamTableStoreExt, UserTableStoreExt};

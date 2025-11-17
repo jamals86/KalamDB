@@ -17,7 +17,7 @@ async fn test_shared_table_flush_creates_manifest() {
 
     // Create namespace and table
     create_namespace(&server, namespace.as_str()).await;
-    
+
     let create_sql = format!(
         "CREATE SHARED TABLE {}.{} (id INT PRIMARY KEY, name TEXT) FLUSH ROWS 5",
         namespace.as_str(),
@@ -39,7 +39,7 @@ async fn test_shared_table_flush_creates_manifest() {
 
     // Execute manual flush
     println!("🔧 Server data dir: {}", data_path.display());
-    
+
     let flush_result = flush_helpers::execute_shared_flush_synchronously(
         &server,
         namespace.as_str(),
@@ -47,10 +47,10 @@ async fn test_shared_table_flush_creates_manifest() {
     )
     .await
     .expect("Flush should succeed");
-    
+
     println!("✅ Flushed {} rows", flush_result.rows_flushed);
     println!("📄 Parquet files: {:?}", flush_result.parquet_files);
-    
+
     // List all files in the table directory
     let table_dir = format!(
         "{}/storage/shared/{}/{}",
@@ -75,7 +75,7 @@ async fn test_shared_table_flush_creates_manifest() {
         namespace.as_str(),
         table.as_str()
     );
-    
+
     assert!(
         std::path::Path::new(&manifest_path).exists(),
         "Manifest should exist at: {}",
@@ -91,7 +91,10 @@ async fn test_shared_table_flush_creates_manifest() {
         format!("{}.{}", namespace.as_str(), table.as_str())
     );
     assert_eq!(manifest.scope, "shared");
-    assert!(!manifest.batches.is_empty(), "Should have at least one batch");
+    assert!(
+        !manifest.batches.is_empty(),
+        "Should have at least one batch"
+    );
 
     let batch = &manifest.batches[0];
     assert_eq!(batch.batch_number, 0);
@@ -101,7 +104,10 @@ async fn test_shared_table_flush_creates_manifest() {
     assert!(batch.min_seq > 0);
     assert!(batch.max_seq >= batch.min_seq);
 
-    println!("✅ Manifest created successfully with {} batch(es)", manifest.batches.len());
+    println!(
+        "✅ Manifest created successfully with {} batch(es)",
+        manifest.batches.len()
+    );
 }
 
 #[tokio::test]
@@ -111,7 +117,7 @@ async fn test_manifest_cache_works() {
     let table = TableName::new("items");
 
     create_namespace(&server, namespace.as_str()).await;
-    
+
     execute_sql(
         &server,
         &format!(
@@ -145,7 +151,11 @@ async fn test_manifest_cache_works() {
     // Query should use cached manifest (check logs for HIT message)
     let resp = execute_sql(
         &server,
-        &format!("SELECT COUNT(*) FROM {}.{}", namespace.as_str(), table.as_str()),
+        &format!(
+            "SELECT COUNT(*) FROM {}.{}",
+            namespace.as_str(),
+            table.as_str()
+        ),
         "root",
     )
     .await

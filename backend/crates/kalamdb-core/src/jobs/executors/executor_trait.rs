@@ -37,12 +37,12 @@
 //! }
 //! ```
 
-use crate::error::KalamDbError;
 use crate::app_context::AppContext;
+use crate::error::KalamDbError;
 use kalamdb_commons::models::JobType;
+use log::{debug, error, info, warn};
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
-use log::{debug, info, warn, error};
 
 // Note: CancellationToken is not available in tokio::sync in older versions
 // We'll use a simple atomic bool for now
@@ -143,7 +143,12 @@ impl<T: JobParams> JobContext<T> {
     }
 
     /// Create a new job context with cancellation token
-    pub fn with_cancellation(app_ctx: Arc<AppContext>, job_id: String, params: T, token: CancellationToken) -> Self {
+    pub fn with_cancellation(
+        app_ctx: Arc<AppContext>,
+        job_id: String,
+        params: T,
+        token: CancellationToken,
+    ) -> Self {
         Self {
             app_ctx,
             cancellation_token: token,
@@ -156,7 +161,7 @@ impl<T: JobParams> JobContext<T> {
     pub fn params(&self) -> &T {
         &self.params
     }
-    
+
     /// Consume context and return parameters
     pub fn into_params(self) -> T {
         self.params
@@ -292,7 +297,11 @@ mod tests {
             backoff_ms: 1000,
         };
         match decision {
-            JobDecision::Retry { message, exception_trace, backoff_ms } => {
+            JobDecision::Retry {
+                message,
+                exception_trace,
+                backoff_ms,
+            } => {
                 assert_eq!(message, "Temporary failure");
                 assert_eq!(exception_trace, Some("Stack trace".to_string()));
                 assert_eq!(backoff_ms, 1000);
@@ -308,7 +317,10 @@ mod tests {
             exception_trace: None,
         };
         match decision {
-            JobDecision::Failed { message, exception_trace } => {
+            JobDecision::Failed {
+                message,
+                exception_trace,
+            } => {
                 assert_eq!(message, "Permanent failure");
                 assert_eq!(exception_trace, None);
             }
@@ -317,17 +329,17 @@ mod tests {
     }
 
     #[test]
-    fn test_job_context_logging() {     
+    fn test_job_context_logging() {
         init_test_app_context();
         let app_ctx = AppContext::get();
-        
+
         // Use dummy params for testing
         #[derive(Clone, Serialize, Deserialize)]
         struct DummyParams;
         impl JobParams for DummyParams {}
-        
+
         let ctx = JobContext::new(app_ctx, "FL-abc123".to_string(), DummyParams);
-        
+
         // These should not panic
         ctx.log_debug("Debug message");
         ctx.log_info("Info message");
@@ -339,12 +351,12 @@ mod tests {
     fn test_job_context_timestamp() {
         let now_millis = JobContext::<DummyParams>::now_millis();
         let now_secs = JobContext::<DummyParams>::now_secs();
-        
+
         assert!(now_millis > 0);
         assert!(now_secs > 0);
         assert!(now_millis > now_secs * 1000);
     }
-    
+
     // Helper type for tests
     #[derive(Clone, Serialize, Deserialize)]
     struct DummyParams;

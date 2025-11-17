@@ -1,7 +1,7 @@
 // Configuration module
 use serde::{Deserialize, Serialize};
-use std::fs;
 use std::collections::HashMap;
+use std::fs;
 use std::path::Path;
 
 /// Main server configuration
@@ -296,10 +296,8 @@ pub struct ExecutionSettings {
     pub max_parameter_size_bytes: usize,
 }
 
-
 /// Shutdown settings
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[derive(Default)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct ShutdownSettings {
     /// Flush job timeout settings
     pub flush: ShutdownFlushSettings,
@@ -384,8 +382,7 @@ pub struct OAuthSettings {
 }
 
 /// OAuth providers configuration
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[derive(Default)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct OAuthProvidersSettings {
     #[serde(default)]
     pub google: OAuthProviderConfig,
@@ -433,7 +430,6 @@ impl Default for OAuthSettings {
         }
     }
 }
-
 
 impl Default for OAuthProviderConfig {
     fn default() -> Self {
@@ -538,7 +534,6 @@ impl Default for ExecutionSettings {
         }
     }
 }
-
 
 impl Default for ShutdownFlushSettings {
     fn default() -> Self {
@@ -719,7 +714,6 @@ fn default_max_parameters() -> usize {
 fn default_max_parameter_size_bytes() -> usize {
     524288 // 512KB maximum parameter size
 }
-
 
 // Rate limiter defaults
 fn default_rate_limit_queries_per_sec() -> u32 {
@@ -969,7 +963,6 @@ impl ServerConfig {
 
         Ok(())
     }
-
 }
 /// Get default configuration (useful for testing)
 ///

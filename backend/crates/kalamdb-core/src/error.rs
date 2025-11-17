@@ -180,7 +180,9 @@ impl From<crate::schema_registry::error::RegistryError> for KalamDbError {
             crate::schema_registry::error::RegistryError::SchemaConversion { message } => {
                 KalamDbError::SchemaError(message)
             }
-            crate::schema_registry::error::RegistryError::SchemaError(msg) => KalamDbError::SchemaError(msg),
+            crate::schema_registry::error::RegistryError::SchemaError(msg) => {
+                KalamDbError::SchemaError(msg)
+            }
             crate::schema_registry::error::RegistryError::ArrowError { message } => {
                 KalamDbError::Other(format!("Registry Arrow error: {}", message))
             }
@@ -199,7 +201,9 @@ impl From<crate::schema_registry::error::RegistryError> for KalamDbError {
             crate::schema_registry::error::RegistryError::ViewError { message } => {
                 KalamDbError::Other(format!("View error: {}", message))
             }
-            crate::schema_registry::error::RegistryError::InvalidOperation(msg) => KalamDbError::InvalidOperation(msg),
+            crate::schema_registry::error::RegistryError::InvalidOperation(msg) => {
+                KalamDbError::InvalidOperation(msg)
+            }
             crate::schema_registry::error::RegistryError::Other(msg) => {
                 KalamDbError::Other(format!("Registry error: {}", msg))
             }
@@ -211,13 +215,23 @@ impl From<crate::schema_registry::error::RegistryError> for KalamDbError {
 impl From<kalamdb_system::SystemError> for KalamDbError {
     fn from(err: kalamdb_system::SystemError) -> Self {
         match err {
-            kalamdb_system::SystemError::Storage(msg) => KalamDbError::Other(format!("System table storage error: {}", msg)),
+            kalamdb_system::SystemError::Storage(msg) => {
+                KalamDbError::Other(format!("System table storage error: {}", msg))
+            }
             kalamdb_system::SystemError::NotFound(msg) => KalamDbError::NotFound(msg),
             kalamdb_system::SystemError::AlreadyExists(msg) => KalamDbError::AlreadyExists(msg),
-            kalamdb_system::SystemError::InvalidOperation(msg) => KalamDbError::InvalidOperation(msg),
-            kalamdb_system::SystemError::SerializationError(msg) => KalamDbError::SerializationError(msg),
-            kalamdb_system::SystemError::DataFusion(msg) => KalamDbError::Other(format!("DataFusion error: {}", msg)),
-            kalamdb_system::SystemError::Arrow(e) => KalamDbError::Other(format!("Arrow error: {}", e)),
+            kalamdb_system::SystemError::InvalidOperation(msg) => {
+                KalamDbError::InvalidOperation(msg)
+            }
+            kalamdb_system::SystemError::SerializationError(msg) => {
+                KalamDbError::SerializationError(msg)
+            }
+            kalamdb_system::SystemError::DataFusion(msg) => {
+                KalamDbError::Other(format!("DataFusion error: {}", msg))
+            }
+            kalamdb_system::SystemError::Arrow(e) => {
+                KalamDbError::Other(format!("Arrow error: {}", e))
+            }
             kalamdb_system::SystemError::Other(msg) => KalamDbError::Other(msg),
         }
     }
@@ -227,12 +241,20 @@ impl From<kalamdb_system::SystemError> for KalamDbError {
 impl From<crate::live::error::LiveError> for KalamDbError {
     fn from(err: crate::live::error::LiveError) -> Self {
         match err {
-            crate::live::error::LiveError::InvalidOperation(msg) => KalamDbError::InvalidOperation(msg),
+            crate::live::error::LiveError::InvalidOperation(msg) => {
+                KalamDbError::InvalidOperation(msg)
+            }
             crate::live::error::LiveError::NotFound(msg) => KalamDbError::NotFound(msg),
-            crate::live::error::LiveError::Storage(msg) => KalamDbError::Other(format!("Live query storage error: {}", msg)),
-            crate::live::error::LiveError::SerializationError(msg) => KalamDbError::SerializationError(msg),
+            crate::live::error::LiveError::Storage(msg) => {
+                KalamDbError::Other(format!("Live query storage error: {}", msg))
+            }
+            crate::live::error::LiveError::SerializationError(msg) => {
+                KalamDbError::SerializationError(msg)
+            }
             crate::live::error::LiveError::InvalidSql(msg) => KalamDbError::InvalidSql(msg),
-            crate::live::error::LiveError::System(msg) => KalamDbError::Other(format!("Live query system error: {}", msg)),
+            crate::live::error::LiveError::System(msg) => {
+                KalamDbError::Other(format!("Live query system error: {}", msg))
+            }
             crate::live::error::LiveError::Other(msg) => KalamDbError::Other(msg),
         }
     }
@@ -627,7 +649,9 @@ impl From<kalamdb_tables::TableError> for KalamDbError {
             TableError::NotFound(msg) => KalamDbError::NotFound(msg),
             TableError::InvalidOperation(msg) => KalamDbError::InvalidOperation(msg),
             TableError::Serialization(msg) => KalamDbError::SerializationError(msg),
-            TableError::DataFusion(msg) => KalamDbError::Other(format!("DataFusion error: {}", msg)),
+            TableError::DataFusion(msg) => {
+                KalamDbError::Other(format!("DataFusion error: {}", msg))
+            }
             TableError::Arrow(e) => KalamDbError::Other(format!("Arrow error: {}", e)),
             TableError::Filestore(msg) => KalamDbError::Other(format!("Filestore error: {}", msg)),
             TableError::SchemaError(msg) => KalamDbError::SchemaError(msg),

@@ -35,7 +35,10 @@ fn smoke_shared_table_crud() {
     execute_sql_as_root_via_cli(&create_sql).expect("create shared table should succeed");
 
     // 2) Insert rows
-    let ins1 = format!("INSERT INTO {} (name, status) VALUES ('alpha', 'new')", full);
+    let ins1 = format!(
+        "INSERT INTO {} (name, status) VALUES ('alpha', 'new')",
+        full
+    );
     let ins2 = format!("INSERT INTO {} (name, status) VALUES ('beta', 'new')", full);
     execute_sql_as_root_via_cli(&ins1).expect("insert alpha should succeed");
     execute_sql_as_root_via_cli(&ins2).expect("insert beta should succeed");
@@ -43,13 +46,20 @@ fn smoke_shared_table_crud() {
     // 3) SELECT and verify both rows present
     let sel_all = format!("SELECT * FROM {}", full);
     let out = execute_sql_as_root_via_cli(&sel_all).expect("select should succeed");
-    assert!(out.contains("alpha"), "expected 'alpha' in results: {}", out);
+    assert!(
+        out.contains("alpha"),
+        "expected 'alpha' in results: {}",
+        out
+    );
     assert!(out.contains("beta"), "expected 'beta' in results: {}", out);
 
     // 4) Retrieve ids for rows we will mutate (backend requires primary key equality for UPDATE/DELETE)
-    let id_sel = format!("SELECT id, name FROM {} WHERE name IN ('alpha','beta') ORDER BY name", full);
+    let id_sel = format!(
+        "SELECT id, name FROM {} WHERE name IN ('alpha','beta') ORDER BY name",
+        full
+    );
     let id_out = execute_sql_as_root_via_cli(&id_sel).expect("id select should succeed");
-    
+
     let mut alpha_id: Option<String> = None;
     let mut beta_id: Option<String> = None;
     for line in id_out.lines() {
@@ -60,11 +70,11 @@ fn smoke_shared_table_crud() {
                 let id_part = parts[1].trim();
                 // Try to parse as i64 to validate it's a number
                 if let Ok(_) = id_part.parse::<i64>() {
-                    if line.contains("alpha") { 
-                        alpha_id = Some(id_part.to_string()); 
+                    if line.contains("alpha") {
+                        alpha_id = Some(id_part.to_string());
                     }
-                    if line.contains("beta") { 
-                        beta_id = Some(id_part.to_string()); 
+                    if line.contains("beta") {
+                        beta_id = Some(id_part.to_string());
                     }
                 }
             }
@@ -84,7 +94,11 @@ fn smoke_shared_table_crud() {
     // 7) SELECT non-deleted rows and verify contents reflect changes
     let out2 = execute_sql_as_root_via_cli(&sel_all).expect("second select should succeed");
     assert!(out2.contains("beta"), "expected 'beta' to remain: {}", out2);
-    assert!(out2.contains("done"), "expected updated status 'done': {}", out2);
+    assert!(
+        out2.contains("done"),
+        "expected updated status 'done': {}",
+        out2
+    );
 
     // 8) DROP TABLE and verify selecting fails
     let drop_sql = format!("DROP TABLE {}", full);
@@ -92,7 +106,10 @@ fn smoke_shared_table_crud() {
 
     let select_after_drop = execute_sql_via_cli(&sel_all);
     match select_after_drop {
-        Ok(s) => panic!("expected failure selecting dropped table, got output: {}", s),
+        Ok(s) => panic!(
+            "expected failure selecting dropped table, got output: {}",
+            s
+        ),
         Err(e) => {
             let msg = e.to_string().to_lowercase();
             assert!(

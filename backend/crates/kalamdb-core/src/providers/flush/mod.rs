@@ -25,8 +25,7 @@ pub mod util;
 
 // Re-export common types
 pub use base::{
-    FlushJobResult, FlushMetadata, SharedTableFlushMetadata, TableFlush,
-    UserTableFlushMetadata,
+    FlushJobResult, FlushMetadata, SharedTableFlushMetadata, TableFlush, UserTableFlushMetadata,
 };
 pub use shared::SharedTableFlushJob;
 pub use users::UserTableFlushJob;

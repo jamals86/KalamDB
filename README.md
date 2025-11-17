@@ -112,18 +112,18 @@ High level crate graph today:
 - Real-time subscriptions over WebSocket
 - Unified schema system with 16 data types (incl. EMBEDDING)
 - Role-based access control and authentication
-- Backup/restore and system catalog tables
-- Dockerized server and `kalam` CLI
+- `kalam` CLI tool
 
 ---
 
 ### 🚧 **In Progress**
-
+- Indexes for both cold/hot storages
+- Backup/restore and system catalog tables
 - SDK for TypeScript using WASM
 - Performance tuning and metrics
 - Stronger WebSocket auth and rate limiting
 - Cleanup and simplification of docs and examples
-- Support for more storage backends (Azure, GCS, S3-compatible)
+- Support for more storage backends (Azure, GCS, S3-compatible) using ObjectStore 
 
 ---
 

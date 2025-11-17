@@ -149,14 +149,19 @@ impl MachineInfo {
     #[cfg(not(target_os = "windows"))]
     fn detect_cpu() -> String {
         use std::process::Command;
-        
+
         #[cfg(target_os = "linux")]
         {
             if let Ok(output) = Command::new("lscpu").output() {
                 if let Ok(s) = String::from_utf8(output.stdout) {
                     for line in s.lines() {
                         if line.starts_with("Model name:") {
-                            return line.split(':').nth(1).unwrap_or("Unknown").trim().to_string();
+                            return line
+                                .split(':')
+                                .nth(1)
+                                .unwrap_or("Unknown")
+                                .trim()
+                                .to_string();
                         }
                     }
                 }
@@ -209,11 +214,7 @@ impl MachineInfo {
     #[cfg(target_os = "macos")]
     fn detect_memory_total() -> u64 {
         use std::process::Command;
-        if let Ok(output) = Command::new("sysctl")
-            .arg("-n")
-            .arg("hw.memsize")
-            .output()
-        {
+        if let Ok(output) = Command::new("sysctl").arg("-n").arg("hw.memsize").output() {
             if let Ok(s) = String::from_utf8(output.stdout) {
                 if let Ok(bytes) = s.trim().parse::<u64>() {
                     return bytes / (1024 * 1024); // Convert to MB

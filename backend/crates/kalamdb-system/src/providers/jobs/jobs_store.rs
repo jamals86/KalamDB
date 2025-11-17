@@ -26,9 +26,9 @@ pub fn new_jobs_store(backend: Arc<dyn StorageBackend>) -> JobsStore {
 mod tests {
     use super::*;
     use kalamdb_commons::{JobStatus, JobType, NamespaceId, NodeId, Role, TableName};
+    use kalamdb_store::entity_store::EntityStore;
     use kalamdb_store::test_utils::InMemoryBackend;
     use kalamdb_store::CrossUserTableStore;
-    use kalamdb_store::entity_store::EntityStore;
 
     fn make_job(job_id: &str, job_type: JobType, ns: &str) -> Job {
         let now = chrono::Utc::now().timestamp_millis();

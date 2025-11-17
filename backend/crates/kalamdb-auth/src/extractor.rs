@@ -6,9 +6,9 @@
 use crate::basic_auth::parse_basic_auth_header;
 use crate::error::{AuthError, AuthResult};
 use crate::password;
+use crate::user_repo::UserRepository;
 use actix_web::HttpRequest;
 use kalamdb_commons::{AuthType, Role, UserId};
-use crate::user_repo::UserRepository;
 use log::warn;
 use std::sync::Arc;
 
@@ -30,8 +30,7 @@ pub struct AuthenticatedRequest {
 pub async fn extract_auth_with_repo(
     req: &HttpRequest,
     repo: &Arc<dyn UserRepository>,
-)
--> AuthResult<AuthenticatedRequest> {
+) -> AuthResult<AuthenticatedRequest> {
     let auth_header = req
         .headers()
         .get("Authorization")
@@ -54,7 +53,9 @@ pub async fn extract_auth_with_repo(
         // Reads secret from env KALAMDB_JWT_SECRET or falls back to default dev secret.
         let token = auth_header.strip_prefix("Bearer").unwrap_or("").trim();
         if token.is_empty() {
-            return Err(AuthError::MalformedAuthorization("Bearer token missing".to_string()));
+            return Err(AuthError::MalformedAuthorization(
+                "Bearer token missing".to_string(),
+            ));
         }
         let secret = std::env::var("KALAMDB_JWT_SECRET")
             .unwrap_or_else(|_| "kalamdb-dev-secret-key-change-in-production".to_string());
@@ -83,7 +84,9 @@ pub async fn extract_auth_with_repo(
                             username: user.username.to_string(),
                         });
                     } else {
-                        return Err(AuthError::InvalidCredentials("Invalid username or password".to_string()));
+                        return Err(AuthError::InvalidCredentials(
+                            "Invalid username or password".to_string(),
+                        ));
                     }
                 }
                 Err(AuthError::MissingClaim("username".to_string()))
@@ -96,8 +99,6 @@ pub async fn extract_auth_with_repo(
         ))
     }
 }
-
-
 
 /// Extract and validate Basic Auth credentials using a UserRepository
 async fn extract_basic_auth_with_repo(

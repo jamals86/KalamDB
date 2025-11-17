@@ -3,9 +3,9 @@
 //! This module provides a DataFusion TableProvider implementation for the system.tables table.
 //! Uses the new EntityStore architecture with TableId keys and TableDefinition values.
 
-use crate::system_table_trait::SystemTableProviderExt;
 use super::{new_tables_store, TablesStore, TablesTableSchema};
 use crate::error::SystemError;
+use crate::system_table_trait::SystemTableProviderExt;
 use async_trait::async_trait;
 use datafusion::arrow::array::{
     ArrayRef, Int32Array, RecordBatch, StringBuilder, TimestampMillisecondArray,
@@ -17,8 +17,8 @@ use datafusion::logical_expr::Expr;
 use datafusion::physical_plan::ExecutionPlan;
 use kalamdb_commons::models::TableId;
 use kalamdb_commons::schemas::TableDefinition;
-use kalamdb_store::StorageBackend;
 use kalamdb_store::entity_store::EntityStore;
+use kalamdb_store::StorageBackend;
 use std::any::Any;
 use std::sync::Arc;
 
@@ -49,12 +49,20 @@ impl TablesTableProvider {
         }
     }
 
-    pub fn create_table(&self, table_id: &TableId, table_def: &TableDefinition) -> Result<(), SystemError> {
+    pub fn create_table(
+        &self,
+        table_id: &TableId,
+        table_def: &TableDefinition,
+    ) -> Result<(), SystemError> {
         self.store.put(table_id, table_def)?;
         Ok(())
     }
 
-    pub fn update_table(&self, table_id: &TableId, table_def: &TableDefinition) -> Result<(), SystemError> {
+    pub fn update_table(
+        &self,
+        table_id: &TableId,
+        table_def: &TableDefinition,
+    ) -> Result<(), SystemError> {
         // Check if table exists
         if self.store.get(table_id)?.is_none() {
             return Err(SystemError::NotFound(format!(
@@ -74,7 +82,10 @@ impl TablesTableProvider {
     }
 
     /// Get a table by ID
-    pub fn get_table_by_id(&self, table_id: &TableId) -> Result<Option<TableDefinition>, SystemError> {
+    pub fn get_table_by_id(
+        &self,
+        table_id: &TableId,
+    ) -> Result<Option<TableDefinition>, SystemError> {
         Ok(self.store.get(table_id)?)
     }
 
@@ -92,7 +103,7 @@ impl TablesTableProvider {
     /// Scan all tables and return as RecordBatch
     pub fn scan_all_tables(&self) -> Result<RecordBatch, SystemError> {
         use kalamdb_store::entity_store::EntityStore;
-        
+
         let tables = self.store.scan_all()?;
         let row_count = tables.len();
 
@@ -109,7 +120,11 @@ impl TablesTableProvider {
 
         for (_table_id, table_def) in tables {
             // Convert TableId to string format: "namespace:table_name"
-            let table_id_str = format!("{}:{}", table_def.namespace_id.as_str(), table_def.table_name.as_str());
+            let table_id_str = format!(
+                "{}:{}",
+                table_def.namespace_id.as_str(),
+                table_def.table_name.as_str()
+            );
             table_ids.append_value(&table_id_str);
             table_names.append_value(table_def.table_name.as_str());
             namespaces.append_value(table_def.namespace_id.as_str());
@@ -121,22 +136,25 @@ impl TablesTableProvider {
             // Serialize TableOptions enum to JSON
             match serde_json::to_string(&table_def.table_options) {
                 Ok(json) => options_json.append_value(&json),
-                Err(e) => options_json.append_value(&format!("{{\"error\":\"failed to serialize options: {}\"}}", e)),
+                Err(e) => options_json.append_value(&format!(
+                    "{{\"error\":\"failed to serialize options: {}\"}}",
+                    e
+                )),
             }
         }
 
         let batch = RecordBatch::try_new(
             self.schema.clone(),
             vec![
-                Arc::new(table_ids.finish()) as ArrayRef,          // 1 table_id
-                Arc::new(table_names.finish()) as ArrayRef,        // 2 table_name
-                Arc::new(namespaces.finish()) as ArrayRef,         // 3 namespace_id
-                Arc::new(table_types.finish()) as ArrayRef,        // 4 table_type
+                Arc::new(table_ids.finish()) as ArrayRef,   // 1 table_id
+                Arc::new(table_names.finish()) as ArrayRef, // 2 table_name
+                Arc::new(namespaces.finish()) as ArrayRef,  // 3 namespace_id
+                Arc::new(table_types.finish()) as ArrayRef, // 4 table_type
                 Arc::new(TimestampMillisecondArray::from(created_ats)) as ArrayRef, // 5 created_at
                 Arc::new(Int32Array::from(schema_versions)) as ArrayRef, // 6 schema_version
-                Arc::new(table_comments.finish()) as ArrayRef,     // 7 table_comment
+                Arc::new(table_comments.finish()) as ArrayRef, // 7 table_comment
                 Arc::new(TimestampMillisecondArray::from(updated_ats)) as ArrayRef, // 8 updated_at
-                Arc::new(options_json.finish()) as ArrayRef,       // 9 options
+                Arc::new(options_json.finish()) as ArrayRef, // 9 options
             ],
         )
         .map_err(|e| SystemError::Other(format!("Arrow error: {}", e)))?;
@@ -195,11 +213,11 @@ impl SystemTableProviderExt for TablesTableProvider {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use kalamdb_commons::{
-        NamespaceId, TableId, TableName,
-    };
     use kalamdb_commons::datatypes::KalamDataType;
-    use kalamdb_commons::schemas::{ColumnDefinition, TableDefinition, TableOptions, TableType as KalamTableType};
+    use kalamdb_commons::schemas::{
+        ColumnDefinition, TableDefinition, TableOptions, TableType as KalamTableType,
+    };
+    use kalamdb_commons::{NamespaceId, TableId, TableName};
     use kalamdb_store::test_utils::InMemoryBackend;
 
     fn create_test_provider() -> TablesTableProvider {
@@ -211,7 +229,7 @@ mod tests {
         let namespace_id = NamespaceId::new(namespace);
         let table_name_id = TableName::new(table_name);
         let table_id = TableId::new(namespace_id.clone(), table_name_id.clone());
-        
+
         let columns = vec![
             ColumnDefinition::new(
                 "id",
@@ -242,7 +260,8 @@ mod tests {
             columns,
             TableOptions::user(),
             None,
-        ).expect("Failed to create table definition");
+        )
+        .expect("Failed to create table definition");
 
         (table_id, table_def)
     }
@@ -272,10 +291,7 @@ mod tests {
         provider.update_table(&table_id, &table_def).unwrap();
 
         // Verify
-        let retrieved = provider
-            .get_table_by_id(&table_id)
-            .unwrap()
-            .unwrap();
+        let retrieved = provider.get_table_by_id(&table_id).unwrap().unwrap();
         assert_eq!(retrieved.schema_version, 2);
     }
 
@@ -303,8 +319,8 @@ mod tests {
 
         // Scan
         let batch = provider.scan_all_tables().unwrap();
-    assert_eq!(batch.num_rows(), 3);
-    assert_eq!(batch.num_columns(), 9); // Schema has 9 fields (no storage_id; storage_id is inside options JSON)
+        assert_eq!(batch.num_rows(), 3);
+        assert_eq!(batch.num_columns(), 9); // Schema has 9 fields (no storage_id; storage_id is inside options JSON)
     }
 
     #[tokio::test]

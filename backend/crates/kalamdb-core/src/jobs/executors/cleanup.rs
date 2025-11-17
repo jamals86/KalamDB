@@ -19,14 +19,14 @@
 //! }
 //! ```
 
-use crate::jobs::executors::{JobContext, JobDecision, JobExecutor, JobParams};
 use crate::error::KalamDbError;
+use crate::jobs::executors::{JobContext, JobDecision, JobExecutor, JobParams};
 use crate::sql::executor::handlers::table::drop::{
-    cleanup_table_data_internal, cleanup_parquet_files_internal, cleanup_metadata_internal,
+    cleanup_metadata_internal, cleanup_parquet_files_internal, cleanup_table_data_internal,
 };
 use async_trait::async_trait;
-use kalamdb_commons::{JobType, TableId};
 use kalamdb_commons::schemas::TableType;
+use kalamdb_commons::{JobType, TableId};
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 
@@ -101,19 +101,13 @@ impl JobExecutor for CleanupExecutor {
 
         // Execute cleanup in 3 phases:
         // 1. Clean up table data (rows) from RocksDB stores
-        let rows_deleted = cleanup_table_data_internal(
-            &ctx.app_ctx,
-            &table_id,
-            table_type.clone(),
-        ).await?;
+        let rows_deleted =
+            cleanup_table_data_internal(&ctx.app_ctx, &table_id, table_type.clone()).await?;
 
         ctx.log_info(&format!("Cleaned up {} rows from table data", rows_deleted));
 
         // 2. Clean up Parquet files from storage backend
-        let bytes_freed = cleanup_parquet_files_internal(
-            &ctx.app_ctx,
-            &table_id,
-        ).await?;
+        let bytes_freed = cleanup_parquet_files_internal(&ctx.app_ctx, &table_id).await?;
 
         ctx.log_info(&format!("Freed {} bytes from Parquet files", bytes_freed));
 

@@ -18,7 +18,10 @@ pub struct ConnectionId {
 impl ConnectionId {
     /// Create a new connection ID
     pub fn new(user_id: String, unique_conn_id: String) -> Self {
-        Self { user_id: UserId::new(user_id), unique_conn_id }
+        Self {
+            user_id: UserId::new(user_id),
+            unique_conn_id,
+        }
     }
 
     /// Parse from string format: {user_id}-{unique_conn_id}
@@ -30,11 +33,18 @@ impl ConnectionId {
                 s
             ));
         }
-        Ok(Self { user_id: UserId::new(parts[0].to_string()), unique_conn_id: parts[1].to_string() })
+        Ok(Self {
+            user_id: UserId::new(parts[0].to_string()),
+            unique_conn_id: parts[1].to_string(),
+        })
     }
 
-    pub fn user_id(&self) -> &str { self.user_id.as_str() }
-    pub fn unique_conn_id(&self) -> &str { &self.unique_conn_id }
+    pub fn user_id(&self) -> &str {
+        self.user_id.as_str()
+    }
+    pub fn unique_conn_id(&self) -> &str {
+        &self.unique_conn_id
+    }
 }
 
 impl fmt::Display for ConnectionId {

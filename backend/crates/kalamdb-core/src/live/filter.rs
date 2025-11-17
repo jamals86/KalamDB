@@ -31,7 +31,6 @@
 //!     // Send notification to subscriber
 //! }
 /// ```
-
 use crate::error::KalamDbError;
 use datafusion::sql::sqlparser::ast::{BinaryOperator, Expr, Statement, Value};
 use datafusion::sql::sqlparser::dialect::PostgreSqlDialect;

@@ -15,13 +15,12 @@ use super::base::{BaseTableProvider, TableProviderCore};
 use crate::app_context::AppContext;
 use crate::error::KalamDbError;
 use crate::schema_registry::TableType;
-use kalamdb_tables::{StreamTableRow, StreamTableStore};
 use async_trait::async_trait;
 use datafusion::arrow::datatypes::SchemaRef;
 use datafusion::arrow::record_batch::RecordBatch;
 use datafusion::catalog::Session;
-use datafusion::datasource::TableProvider;
 use datafusion::datasource::memory::MemTable;
+use datafusion::datasource::TableProvider;
 use datafusion::error::{DataFusionError, Result as DataFusionResult};
 use datafusion::logical_expr::Expr;
 use datafusion::physical_plan::ExecutionPlan;
@@ -29,14 +28,15 @@ use kalamdb_commons::ids::StreamTableRowId;
 use kalamdb_commons::models::UserId;
 use kalamdb_commons::{Role, TableId};
 use kalamdb_store::entity_store::EntityStore;
+use kalamdb_tables::{StreamTableRow, StreamTableStore};
 use serde_json::Value as JsonValue;
 use std::any::Any;
 use std::sync::Arc;
 
 // Arrow <-> JSON helpers
+use crate::live_query::manager::ChangeNotification;
 use crate::providers::arrow_json_conversion::json_rows_to_arrow_batch;
 use serde_json::json;
-use crate::live_query::manager::ChangeNotification;
 
 /// Stream table provider with RLS and TTL filtering
 ///
@@ -50,19 +50,19 @@ use crate::live_query::manager::ChangeNotification;
 pub struct StreamTableProvider {
     /// Shared core (app_context, live_query_manager, storage_registry)
     core: Arc<TableProviderCore>,
-    
+
     /// Table identifier
     table_id: Arc<TableId>,
-    
+
     /// Logical table type
     table_type: TableType,
-    
+
     /// StreamTableStore for DML operations (hot-only, in-memory)
     store: Arc<StreamTableStore>,
-    
+
     /// TTL in seconds (optional)
     ttl_seconds: Option<u64>,
-    
+
     /// Cached primary key field name
     primary_key_field_name: String,
 }
@@ -105,10 +105,9 @@ impl StreamTableProvider {
     /// all rows for the table.
     pub fn snapshot_all_rows_json(&self) -> Result<Vec<JsonValue>, KalamDbError> {
         use kalamdb_store::entity_store::EntityStore;
-        let rows = self
-            .store
-            .scan_all()
-            .map_err(|e| KalamDbError::InvalidOperation(format!("Failed to scan stream store: {}", e)))?;
+        let rows = self.store.scan_all().map_err(|e| {
+            KalamDbError::InvalidOperation(format!("Failed to scan stream store: {}", e))
+        })?;
         let count = rows.len();
         log::debug!(
             "[StreamProvider] snapshot_all_rows_json: table={}.{} rows={} ttl={:?}",
@@ -119,7 +118,7 @@ impl StreamTableProvider {
         );
         Ok(rows.into_iter().map(|(_k, r)| r.fields).collect())
     }
-    
+
     /// Extract user context from DataFusion SessionState
     ///
     /// **Purpose**: Read (user_id, role) from SessionState.config.options.extensions
@@ -128,18 +127,23 @@ impl StreamTableProvider {
     /// **Returns**: (UserId, Role) tuple for RLS enforcement
     fn extract_user_context(state: &dyn Session) -> Result<(UserId, Role), KalamDbError> {
         use crate::sql::executor::models::SessionUserContext;
-        
-        let session_state = state.as_any()
+
+        let session_state = state
+            .as_any()
             .downcast_ref::<datafusion::execution::context::SessionState>()
             .ok_or_else(|| KalamDbError::InvalidOperation("Expected SessionState".to_string()))?;
-        
+
         let user_ctx = session_state
             .config()
             .options()
             .extensions
             .get::<SessionUserContext>()
-            .ok_or_else(|| KalamDbError::InvalidOperation("SessionUserContext not found in extensions".to_string()))?;
-        
+            .ok_or_else(|| {
+                KalamDbError::InvalidOperation(
+                    "SessionUserContext not found in extensions".to_string(),
+                )
+            })?;
+
         Ok((user_ctx.user_id.clone(), user_ctx.role.clone()))
     }
 }
@@ -148,26 +152,33 @@ impl BaseTableProvider<StreamTableRowId, StreamTableRow> for StreamTableProvider
     fn table_id(&self) -> &TableId {
         &self.table_id
     }
-    
+
     fn schema_ref(&self) -> SchemaRef {
         // Get memoized Arrow schema from SchemaRegistry via AppContext
-        self.core.app_context
+        self.core
+            .app_context
             .schema_registry()
             .get_arrow_schema(&self.table_id)
             .expect("Failed to get Arrow schema from registry")
     }
-    
-    fn provider_table_type(&self) -> TableType { self.table_type }
-    
+
+    fn provider_table_type(&self) -> TableType {
+        self.table_type
+    }
+
     fn app_context(&self) -> &Arc<AppContext> {
         &self.core.app_context
     }
-    
+
     fn primary_key_field_name(&self) -> &str {
         &self.primary_key_field_name
     }
-    
-    fn insert(&self, user_id: &UserId, row_data: JsonValue) -> Result<StreamTableRowId, KalamDbError> {
+
+    fn insert(
+        &self,
+        user_id: &UserId,
+        row_data: JsonValue,
+    ) -> Result<StreamTableRowId, KalamDbError> {
         // Lazy TTL cleanup: delete expired rows BEFORE inserting new one
         // This ensures storage doesn't grow unbounded without background jobs
         if let Some(ttl_seconds) = self.ttl_seconds {
@@ -179,9 +190,10 @@ impl BaseTableProvider<StreamTableRowId, StreamTableRow> for StreamTableProvider
             let cutoff_ms = now_ms.saturating_sub(ttl_ms);
 
             // Scan for expired rows (limit to 100 per insert to avoid blocking)
-            let all_rows = self.store.scan_all()
-                .map_err(|e| KalamDbError::InvalidOperation(format!("Failed to scan for TTL cleanup: {}", e)))?;
-            
+            let all_rows = self.store.scan_all().map_err(|e| {
+                KalamDbError::InvalidOperation(format!("Failed to scan for TTL cleanup: {}", e))
+            })?;
+
             let mut deleted_count = 0;
             for (key_bytes, row) in all_rows.iter().take(100) {
                 let row_ts = row._seq.timestamp_millis();
@@ -210,28 +222,29 @@ impl BaseTableProvider<StreamTableRowId, StreamTableRow> for StreamTableProvider
         // Call SystemColumnsService to generate SeqId
         let sys_cols = self.core.system_columns.clone();
         let seq_id = sys_cols.generate_seq_id()?;
-        
+
         // Create StreamTableRow (no _deleted field for stream tables)
         let entity = StreamTableRow {
             user_id: user_id.clone(),
             _seq: seq_id,
             fields: row_data,
         };
-        
+
         // Create composite key
         let row_key = StreamTableRowId::new(user_id.clone(), seq_id);
-        
+
         // Store in hot-only storage (RocksDB, no Parquet)
         self.store.put(&row_key, &entity).map_err(|e| {
-            KalamDbError::InvalidOperation(format!(
-                "Failed to insert stream event: {}",
-                e
-            ))
+            KalamDbError::InvalidOperation(format!("Failed to insert stream event: {}", e))
         })?;
-        
+
         log::debug!(
             "[StreamProvider] Inserted event: table={} seq={} user={}",
-            format!("{}.{}", self.table_id.namespace_id().as_str(), self.table_id.table_name().as_str()),
+            format!(
+                "{}.{}",
+                self.table_id.namespace_id().as_str(),
+                self.table_id.table_name().as_str()
+            ),
             seq_id.as_i64(),
             user_id.as_str()
         );
@@ -244,14 +257,10 @@ impl BaseTableProvider<StreamTableRowId, StreamTableRow> for StreamTableProvider
                 table_id.namespace_id().as_str(),
                 table_id.table_name().as_str()
             );
-            
+
             //TODO: Should we keep the user_id in the row JSON?
             // Flatten event fields and include user_id
-            let mut obj = entity
-                .fields
-                .as_object()
-                .cloned()
-                .unwrap_or_default();
+            let mut obj = entity.fields.as_object().cloned().unwrap_or_default();
             obj.insert("user_id".to_string(), json!(user_id.as_str()));
             let row_json = JsonValue::Object(obj);
 
@@ -267,28 +276,30 @@ impl BaseTableProvider<StreamTableRowId, StreamTableRow> for StreamTableProvider
 
         Ok(row_key)
     }
-    
-    fn update(&self, user_id: &UserId, _key: &StreamTableRowId, updates: JsonValue) -> Result<StreamTableRowId, KalamDbError> {
+
+    fn update(
+        &self,
+        user_id: &UserId,
+        _key: &StreamTableRowId,
+        updates: JsonValue,
+    ) -> Result<StreamTableRowId, KalamDbError> {
         // TODO: Implement full UPDATE logic for stream tables
         // 1. Scan ONLY RocksDB (hot storage, no Parquet)
         // 2. Find row by key (user-scoped)
         // 3. Merge updates
         // 4. Append new version
-        
+
         // Placeholder: Just append as new version (incomplete implementation)
         self.insert(user_id, updates)
     }
-    
+
     fn delete(&self, user_id: &UserId, key: &StreamTableRowId) -> Result<(), KalamDbError> {
         // TODO: Implement DELETE logic for stream tables
         // Stream tables may use hard delete or tombstone depending on requirements
-        
+
         // Placeholder: Delete from hot storage directly
         self.store.delete(key).map_err(|e| {
-            KalamDbError::InvalidOperation(format!(
-                "Failed to delete stream event: {}",
-                e
-            ))
+            KalamDbError::InvalidOperation(format!("Failed to delete stream event: {}", e))
         })?;
 
         // Fire live query notification (DELETE hard)
@@ -307,16 +318,24 @@ impl BaseTableProvider<StreamTableRowId, StreamTableRow> for StreamTableProvider
 
         Ok(())
     }
-    
-    fn scan_rows(&self, state: &dyn Session, filter: Option<&Expr>) -> Result<RecordBatch, KalamDbError> {
+
+    fn scan_rows(
+        &self,
+        state: &dyn Session,
+        filter: Option<&Expr>,
+    ) -> Result<RecordBatch, KalamDbError> {
         // Extract user_id from SessionState for RLS
         let (user_id, _role) = Self::extract_user_context(state)?;
-        
+
         // Perform KV scan (hot-only) and convert to batch
         let kvs = self.scan_with_version_resolution_to_kvs(&user_id, filter)?;
         log::debug!(
             "[StreamProvider] scan_rows: table={} rows={} user={} ttl={:?}",
-            format!("{}.{}", self.table_id.namespace_id().as_str(), self.table_id.table_name().as_str()),
+            format!(
+                "{}.{}",
+                self.table_id.namespace_id().as_str(),
+                self.table_id.table_name().as_str()
+            ),
             kvs.len(),
             user_id.as_str(),
             self.ttl_seconds
@@ -327,28 +346,32 @@ impl BaseTableProvider<StreamTableRowId, StreamTableRow> for StreamTableProvider
         let has_user = schema.field_with_name("user_id").is_ok();
 
         for (_key, row) in kvs.into_iter() {
-            let mut obj = row
-                .fields
-                .as_object()
-                .cloned()
-                .unwrap_or_default();
-            
+            let mut obj = row.fields.as_object().cloned().unwrap_or_default();
+
             // Inject system columns using consolidated helper
-            crate::providers::base::inject_system_columns(&schema, &mut obj, row._seq.as_i64(), false);
-            
-            if has_user { obj.insert("user_id".to_string(), json!(row.user_id.as_str())); }
+            crate::providers::base::inject_system_columns(
+                &schema,
+                &mut obj,
+                row._seq.as_i64(),
+                false,
+            );
+
+            if has_user {
+                obj.insert("user_id".to_string(), json!(row.user_id.as_str()));
+            }
             rows.push(JsonValue::Object(obj));
         }
 
-        let batch = json_rows_to_arrow_batch(&schema, rows)
-            .map_err(|e| KalamDbError::InvalidOperation(format!("Failed to build Arrow batch: {}", e)))?;
+        let batch = json_rows_to_arrow_batch(&schema, rows).map_err(|e| {
+            KalamDbError::InvalidOperation(format!("Failed to build Arrow batch: {}", e))
+        })?;
         Ok(batch)
     }
-    
+
     fn scan_with_version_resolution_to_kvs(
         &self,
-    user_id: &UserId,
-    _filter: Option<&Expr>,
+        user_id: &UserId,
+        _filter: Option<&Expr>,
     ) -> Result<Vec<(StreamTableRowId, StreamTableRow)>, KalamDbError> {
         // 1) Scan ONLY RocksDB (hot storage) with user_id prefix filter
         let user_bytes = user_id.as_str().as_bytes();
@@ -375,13 +398,19 @@ impl BaseTableProvider<StreamTableRowId, StreamTableRow> for StreamTableProvider
         let raw = self
             .store
             .scan_limited_with_prefix_bytes(Some(&prefix), 100_000)
-            .map_err(|e| KalamDbError::InvalidOperation(format!(
-                "Failed to scan stream table hot storage: {}",
-                e
-            )))?;
+            .map_err(|e| {
+                KalamDbError::InvalidOperation(format!(
+                    "Failed to scan stream table hot storage: {}",
+                    e
+                ))
+            })?;
         log::debug!(
             "[StreamProvider] raw scan results: table={} user={} count={}",
-            format!("{}.{}", self.table_id.namespace_id().as_str(), self.table_id.table_name().as_str()),
+            format!(
+                "{}.{}",
+                self.table_id.namespace_id().as_str(),
+                self.table_id.table_name().as_str()
+            ),
             user_id.as_str(),
             raw.len()
         );
@@ -425,7 +454,7 @@ impl BaseTableProvider<StreamTableRowId, StreamTableRow> for StreamTableProvider
         // TODO(phase 13.6): Apply filter expression for simple predicates if provided
         Ok(results)
     }
-    
+
     fn extract_fields(row: &StreamTableRow) -> Option<&JsonValue> {
         Some(&row.fields)
     }
@@ -449,15 +478,15 @@ impl TableProvider for StreamTableProvider {
     fn as_any(&self) -> &dyn Any {
         self
     }
-    
+
     fn schema(&self) -> SchemaRef {
         self.schema_ref()
     }
-    
+
     fn table_type(&self) -> datafusion::logical_expr::TableType {
         datafusion::logical_expr::TableType::Base
     }
-    
+
     async fn scan(
         &self,
         state: &dyn Session,

@@ -46,8 +46,8 @@
 //! let retrieved = store.get(&user_id).unwrap().unwrap();
 //! ```
 
-use kalamdb_commons::StorageKey;
 use crate::storage_trait::{Partition, Result, StorageBackend, StorageError};
+use kalamdb_commons::StorageKey;
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 
@@ -293,9 +293,7 @@ where
         limit: usize,
     ) -> Result<Vec<(Vec<u8>, V)>> {
         let partition = Partition::new(self.partition());
-        let iter = self
-            .backend()
-            .scan(&partition, prefix, Some(limit))?;
+        let iter = self.backend().scan(&partition, prefix, Some(limit))?;
 
         let mut results = Vec::with_capacity(limit);
         for (key_bytes, value_bytes) in iter {

@@ -3,11 +3,12 @@
 //! Migrated from kalamdb-core/src/storage/parquet_writer.rs
 
 use crate::error::{FilestoreError, Result};
-use kalamdb_commons::constants::SystemColumnNames;
 use arrow::datatypes::SchemaRef;
 use arrow::record_batch::RecordBatch;
 use datafusion::parquet::arrow::ArrowWriter;
-use datafusion::parquet::file::properties::WriterProperties;
+use datafusion::parquet::file::properties::{EnabledStatistics, WriterProperties};
+use datafusion::parquet::schema::types::ColumnPath;
+use kalamdb_commons::constants::SystemColumnNames;
 use std::fs::File;
 use std::path::Path;
 
@@ -55,18 +56,16 @@ impl ParquetWriter {
 
         // Create parent directory if needed
         if let Some(parent) = path.parent() {
-            std::fs::create_dir_all(parent)
-                .map_err(|e| FilestoreError::Io(e))?;
+            std::fs::create_dir_all(parent).map_err(|e| FilestoreError::Io(e))?;
         }
 
-        let file = File::create(path)
-            .map_err(|e| FilestoreError::Io(e))?;
+        let file = File::create(path).map_err(|e| FilestoreError::Io(e))?;
 
         // Configure writer properties with bloom filters
         let mut props_builder = WriterProperties::builder()
             .set_compression(datafusion::parquet::basic::Compression::SNAPPY)
             // Enable statistics for all columns (helps with query planning)
-            .set_statistics_enabled(datafusion::parquet::file::properties::EnabledStatistics::Chunk)
+            .set_statistics_enabled(EnabledStatistics::Chunk)
             // Set row group size (optimize for time-range queries)
             .set_max_row_group_size(100_000);
 
@@ -82,21 +81,28 @@ impl ParquetWriter {
             if schema.fields().iter().any(|f| f.name() == column_name) {
                 // Enable bloom filter with 0.01 FPP (1% false positive rate)
                 // ColumnPath::from() accepts a str and converts it to the proper type
+                let column_path = ColumnPath::from(column_name.as_str());
                 props_builder = props_builder
-                    .set_column_bloom_filter_enabled(column_name.clone().into(), true)
-                    .set_column_bloom_filter_fpp(column_name.clone().into(), 0.01)
-                    .set_column_bloom_filter_ndv(column_name.clone().into(), 100_000); // Estimated distinct values
-                
+                    .set_column_bloom_filter_enabled(column_path.clone(), true)
+                    .set_column_bloom_filter_fpp(column_path.clone(), 0.01)
+                    .set_column_bloom_filter_ndv(column_path.clone(), 100_000)
+                    // Enable per-page statistics so row selections can skip data pages later.
+                    .set_column_statistics_enabled(column_path, EnabledStatistics::Page);
+
                 log::debug!("✅ Enabled Bloom filter for column: {}", column_name);
             } else {
-                log::warn!("⚠️  Column {} not found in schema, skipping Bloom filter", column_name);
+                log::warn!(
+                    "⚠️  Column {} not found in schema, skipping Bloom filter",
+                    column_name
+                );
             }
         }
 
         let props = props_builder.build();
 
-        let mut writer = ArrowWriter::try_new(file, schema, Some(props))
-            .map_err(|e| FilestoreError::Parquet(format!("Failed to create Parquet writer: {}", e)))?;
+        let mut writer = ArrowWriter::try_new(file, schema, Some(props)).map_err(|e| {
+            FilestoreError::Parquet(format!("Failed to create Parquet writer: {}", e))
+        })?;
 
         // Write all batches
         for batch in batches {
@@ -199,9 +205,7 @@ mod tests {
             vec![
                 Arc::new(Int64Array::from(vec![1, 2, 3])),
                 Arc::new(StringArray::from(vec!["a", "b", "c"])),
-                Arc::new(Int64Array::from(vec![
-                    1000000, 2000000, 3000000,
-                ])),
+                Arc::new(Int64Array::from(vec![1000000, 2000000, 3000000])),
             ],
         )
         .unwrap();
@@ -229,11 +233,14 @@ mod tests {
             .columns()
             .iter()
             .position(|col| col.column_path().string() == SystemColumnNames::SEQ)
-                .expect("_seq column should exist");
+            .expect("_seq column should exist");
 
         // Check that _seq column has bloom filter
         let seq_col_metadata = row_group.column(seq_col_idx);
-                assert!(seq_col_metadata.bloom_filter_offset().is_some(), "_seq column should have bloom filter");
+        assert!(
+            seq_col_metadata.bloom_filter_offset().is_some(),
+            "_seq column should have bloom filter"
+        );
 
         let _ = fs::remove_dir_all(&temp_dir);
     }

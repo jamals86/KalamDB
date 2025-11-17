@@ -82,8 +82,7 @@ impl Namespace {
     /// assert!(Namespace::validate_name("Invalid").is_err());
     /// ```
     pub fn validate_name(name: &str) -> Result<(), String> {
-        crate::validation::validate_namespace_name(name)
-            .map_err(|e| e.to_string())
+        crate::validation::validate_namespace_name(name).map_err(|e| e.to_string())
     }
 
     /// Check if this namespace can be deleted (has no tables)

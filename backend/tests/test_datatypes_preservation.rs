@@ -10,16 +10,14 @@ use arrow::array::Array; // for is_valid()
 use base64::{engine::general_purpose, Engine as _};
 use chrono::{Duration, TimeZone, Utc};
 use datafusion::catalog::memory::MemorySchemaProvider;
-use kalamdb_commons::models::schemas::{ColumnDefinition, TableDefinition, TableType};
 use kalamdb_commons::models::datatypes::KalamDataType;
+use kalamdb_commons::models::schemas::{ColumnDefinition, TableDefinition, TableType};
 use kalamdb_commons::{NamespaceId, TableId, TableName};
-use kalamdb_core::system_table_registration::register_system_tables;
-use kalamdb_core::schema_registry::SchemaRegistry;
 use kalamdb_core::providers::flush::UserTableFlushJob;
-use kalamdb_tables::{
-    new_user_table_store, UserTableRow, UserTableRowId,
-};
+use kalamdb_core::schema_registry::SchemaRegistry;
+use kalamdb_core::system_table_registration::register_system_tables;
 use kalamdb_store::{EntityStoreV2, RocksDBBackend};
+use kalamdb_tables::{new_user_table_store, UserTableRow, UserTableRowId};
 use rocksdb::DB;
 use tempfile::TempDir;
 
@@ -35,9 +33,8 @@ async fn test_datatypes_preservation_values() {
 
     // Register system tables (schema store not strictly required here, but keep consistent)
     let system_schema = Arc::new(MemorySchemaProvider::new());
-        let (_jobs_provider, schema_store) =
-        register_system_tables(&system_schema, backend.clone())
-            .expect("register_system_tables failed");
+    let (_jobs_provider, schema_store) = register_system_tables(&system_schema, backend.clone())
+        .expect("register_system_tables failed");
 
     // Create a user table schema covering all types
     let ns = NamespaceId::from("ns_types");

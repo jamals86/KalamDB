@@ -35,10 +35,10 @@ impl TypedStatementHandler<AlterStorageStatement> for AlterStorageHandler {
             .get_storage_by_id(&storage_id)
             .map_err(|e| KalamDbError::Other(format!("Failed to get storage: {}", e)))?
             .ok_or_else(|| {
-                    KalamDbError::InvalidOperation(format!(
-                        "Storage '{}' not found",
-                        statement.storage_id.as_str()
-                    ))
+                KalamDbError::InvalidOperation(format!(
+                    "Storage '{}' not found",
+                    statement.storage_id.as_str()
+                ))
             })?;
 
         // Update fields if provided
@@ -112,18 +112,18 @@ mod tests {
         let app_ctx = AppContext::get();
         let handler = AlterStorageHandler::new(app_ctx);
         let stmt = AlterStorageStatement {
-                storage_id: StorageId::from("test_storage"),
+            storage_id: StorageId::from("test_storage"),
             storage_name: Some("Updated Storage".to_string()),
             description: None,
             shared_tables_template: None,
             user_tables_template: None,
         };
-        
+
         // User role should be denied
         let user_ctx = create_test_context(Role::User);
         let result = handler.check_authorization(&stmt, &user_ctx).await;
         assert!(result.is_err());
-        
+
         // DBA role should be allowed
         let dba_ctx = create_test_context(Role::Dba);
         let result = handler.check_authorization(&stmt, &dba_ctx).await;
@@ -133,11 +133,11 @@ mod tests {
     #[tokio::test]
     async fn test_alter_storage_success() {
         let app_ctx = AppContext::get();
-        
+
         // First create a storage to alter
         let storages_provider = app_ctx.system_tables().storages();
         let storage_id = format!("test_alter_{}", chrono::Utc::now().timestamp_millis());
-            let storage = Storage {
+        let storage = Storage {
             storage_id: StorageId::from(storage_id.as_str()),
             storage_name: "Original Name".to_string(),
             description: None,
@@ -154,7 +154,7 @@ mod tests {
         // Now alter it
         let handler = AlterStorageHandler::new(app_ctx);
         let stmt = AlterStorageStatement {
-                storage_id: StorageId::from(storage_id.as_str()),
+            storage_id: StorageId::from(storage_id.as_str()),
             storage_name: Some("Updated Name".to_string()),
             description: Some("New description".to_string()),
             shared_tables_template: None,
@@ -164,14 +164,16 @@ mod tests {
         let session = SessionContext::new();
 
         let result = handler.execute(stmt, vec![], &ctx).await;
-        
+
         assert!(result.is_ok());
         if let Ok(ExecutionResult::Success { message }) = result {
             assert!(message.contains(&storage_id));
         }
 
         // Verify the changes
-        let updated = storages_provider.get_storage_by_id(&StorageId::from(storage_id.as_str())).unwrap();
+        let updated = storages_provider
+            .get_storage_by_id(&StorageId::from(storage_id.as_str()))
+            .unwrap();
         assert!(updated.is_some());
         let updated = updated.unwrap();
         assert_eq!(updated.storage_name, "Updated Name");

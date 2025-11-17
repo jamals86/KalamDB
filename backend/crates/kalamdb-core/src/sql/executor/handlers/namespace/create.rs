@@ -104,9 +104,7 @@ mod tests {
             if_not_exists: false,
         };
 
-        let result = handler
-            .execute(stmt, vec![], &ctx)
-            .await;
+        let result = handler.execute(stmt, vec![], &ctx).await;
         assert!(result.is_ok());
 
         match result.unwrap() {
@@ -132,15 +130,11 @@ mod tests {
         };
 
         // First creation should succeed
-        let result1 = handler
-            .execute(stmt.clone(), vec![], &ctx)
-            .await;
+        let result1 = handler.execute(stmt.clone(), vec![], &ctx).await;
         assert!(result1.is_ok());
 
         // Second creation with IF NOT EXISTS should also succeed
-        let result2 = handler
-            .execute(stmt, vec![], &ctx)
-            .await;
+        let result2 = handler.execute(stmt, vec![], &ctx).await;
         assert!(result2.is_ok());
 
         match result2.unwrap() {
@@ -154,7 +148,11 @@ mod tests {
         init_test_app_context();
         let app_ctx = AppContext::get();
         let handler = CreateNamespaceHandler::new(app_ctx);
-        let user_ctx = ExecutionContext::new(UserId::from("regular_user"), Role::User, create_test_session());
+        let user_ctx = ExecutionContext::new(
+            UserId::from("regular_user"),
+            Role::User,
+            create_test_session(),
+        );
 
         let stmt = CreateNamespaceStatement {
             name: NamespaceId::new("unauthorized_ns"),

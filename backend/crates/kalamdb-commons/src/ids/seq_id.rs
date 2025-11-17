@@ -93,7 +93,10 @@ impl SeqId {
     /// Parse from bytes (big-endian)
     pub fn from_bytes(bytes: &[u8]) -> Result<Self, String> {
         if bytes.len() != 8 {
-            return Err(format!("Invalid byte length: expected 8, got {}", bytes.len()));
+            return Err(format!(
+                "Invalid byte length: expected 8, got {}",
+                bytes.len()
+            ));
         }
         let mut array = [0u8; 8];
         array.copy_from_slice(bytes);
@@ -141,10 +144,10 @@ mod tests {
         let timestamp_offset = 1000u64; // 1000ms after epoch
         let worker_id = 5u64;
         let sequence = 42u64;
-        
+
         let id = (timestamp_offset << 22) | (worker_id << 12) | sequence;
         let seq_id = SeqId::new(id as i64);
-        
+
         assert_eq!(seq_id.timestamp_millis(), SeqId::EPOCH + timestamp_offset);
         assert_eq!(seq_id.worker_id(), 5);
         assert_eq!(seq_id.sequence(), 42);
@@ -156,7 +159,10 @@ mod tests {
         let id = (timestamp_offset << 22) as i64;
         let seq_id = SeqId::new(id);
 
-        assert_eq!(seq_id.timestamp_seconds(), (SeqId::EPOCH + timestamp_offset) / 1000);
+        assert_eq!(
+            seq_id.timestamp_seconds(),
+            (SeqId::EPOCH + timestamp_offset) / 1000
+        );
     }
 
     #[test]
@@ -174,7 +180,7 @@ mod tests {
         let seq_id = SeqId::new(987654321);
         let s = seq_id.to_string();
         assert_eq!(s, "987654321");
-        
+
         let parsed = SeqId::from_string(&s).unwrap();
         assert_eq!(parsed, seq_id);
     }
@@ -192,7 +198,7 @@ mod tests {
         let seq1 = SeqId::new(100);
         let seq2 = SeqId::new(200);
         let seq3 = SeqId::new(300);
-        
+
         assert!(seq1 < seq2);
         assert!(seq2 < seq3);
         assert!(seq3 > seq1);
@@ -202,7 +208,7 @@ mod tests {
     fn test_seq_id_from_i64() {
         let seq_id: SeqId = 42i64.into();
         assert_eq!(seq_id.as_i64(), 42);
-        
+
         let value: i64 = seq_id.into();
         assert_eq!(value, 42);
     }

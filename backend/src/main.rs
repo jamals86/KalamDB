@@ -24,9 +24,14 @@ async fn main() -> Result<()> {
     let config_path = "config.toml";
     let config = match ServerConfig::from_file(config_path) {
         Ok(cfg) => {
-            eprintln!("✅ Loaded config from: {}", std::fs::canonicalize(config_path).unwrap_or_else(|_| std::path::PathBuf::from(config_path)).display());
+            eprintln!(
+                "✅ Loaded config from: {}",
+                std::fs::canonicalize(config_path)
+                    .unwrap_or_else(|_| std::path::PathBuf::from(config_path))
+                    .display()
+            );
             cfg
-        },
+        }
         Err(e) => {
             eprintln!("❌ FATAL: Failed to load config.toml: {}", e);
             eprintln!("❌ Server cannot start without valid configuration");

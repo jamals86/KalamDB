@@ -6,7 +6,7 @@
 //! - DROP STORAGE: Remove a storage backend
 //! - SHOW STORAGES: List all registered storages
 
-use kalamdb_commons::{StorageId, models::StorageType};
+use kalamdb_commons::{models::StorageType, StorageId};
 use serde::{Deserialize, Serialize};
 
 /// CREATE STORAGE command
@@ -205,7 +205,7 @@ impl AlterStorageStatement {
             Self::extract_set_value(&normalized, "USER_TABLES_TEMPLATE").ok();
 
         Ok(AlterStorageStatement {
-                storage_id: StorageId::from(storage_id.as_str()),
+            storage_id: StorageId::from(storage_id.as_str()),
             storage_name,
             description,
             shared_tables_template,

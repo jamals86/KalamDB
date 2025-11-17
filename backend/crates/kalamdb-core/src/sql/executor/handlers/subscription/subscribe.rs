@@ -15,7 +15,9 @@ pub struct SubscribeHandler {
 
 impl SubscribeHandler {
     pub fn new(app_context: Arc<AppContext>) -> Self {
-        Self { _app_context: app_context }
+        Self {
+            _app_context: app_context,
+        }
     }
 }
 
@@ -36,10 +38,10 @@ impl TypedStatementHandler<SubscribeStatement> for SubscribeHandler {
         );
         // Channel placeholder (could read from config.toml later)
         let channel = "ws://localhost:8080/ws".to_string();
-        
+
         // Return subscription metadata with the SELECT query
-        Ok(ExecutionResult::Subscription { 
-            subscription_id, 
+        Ok(ExecutionResult::Subscription {
+            subscription_id,
             channel,
             select_query: statement.select_query,
         })

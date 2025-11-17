@@ -3,11 +3,11 @@
 //! This module provides granular handlers for DML operations and re-exports
 //! their public types for convenient import from `handlers::dml`.
 
-pub mod insert;
 pub mod delete;
-pub mod update;
+pub mod insert;
 pub mod mod_helpers;
+pub mod update;
 
-pub use insert::InsertHandler;
 pub use delete::DeleteHandler;
+pub use insert::InsertHandler;
 pub use update::UpdateHandler;

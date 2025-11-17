@@ -18,13 +18,13 @@ async fn test_reserved_namespace_names() {
     for name in reserved_names {
         let sql = format!("CREATE NAMESPACE {}", name);
         let response = server.execute_sql(&sql).await;
-        
+
         assert_eq!(
             response.status, "error",
             "Should reject reserved namespace name '{}', but got status: {}",
             name, response.status
         );
-        
+
         if let Some(error) = &response.error {
             let error_msg = error.message.to_lowercase();
             assert!(
@@ -49,12 +49,11 @@ async fn test_valid_namespace_names() {
     for name in valid_names {
         let sql = format!("CREATE NAMESPACE {}", name);
         let response = server.execute_sql(&sql).await;
-        
+
         assert_eq!(
             response.status, "success",
             "Should accept valid namespace name '{}', but got error: {:?}",
-            name,
-            response.error
+            name, response.error
         );
         // Targeted cleanup to avoid cross-test interference
         let _ = server.cleanup_namespace(name).await;
@@ -75,11 +74,10 @@ async fn test_reserved_column_names() {
         let table_name = format!("test_{}", col_name.replace("_", ""));
         let sql = format!(
             "CREATE USER TABLE test_cols.{} ({} TEXT PRIMARY KEY)",
-            table_name,
-            col_name
+            table_name, col_name
         );
         let response = server.execute_sql(&sql).await;
-        
+
         assert_eq!(
             response.status, "error",
             "Should reject reserved column name '{}', but got success",
@@ -97,24 +95,19 @@ async fn test_valid_column_names() {
     // Create a test namespace first
     fixtures::create_namespace(&server, "test_valid_cols").await;
 
-    let valid_columns = vec![
-        ("user_id", "users"), 
-        ("firstName", "profiles"), 
-    ];
+    let valid_columns = vec![("user_id", "users"), ("firstName", "profiles")];
 
     for (col_name, table_name) in valid_columns {
         let sql = format!(
             "CREATE USER TABLE test_valid_cols.{} ({} TEXT PRIMARY KEY)",
-            table_name,
-            col_name
+            table_name, col_name
         );
         let response = server.execute_sql(&sql).await;
-        
+
         assert_eq!(
             response.status, "success",
             "Should accept valid column name '{}', but got error: {:?}",
-            col_name,
-            response.error
+            col_name, response.error
         );
     }
     // Targeted cleanup for this namespace
@@ -151,7 +144,7 @@ async fn test_user_can_use_id_as_column_name() {
     // Users should be able to define their own "id" column if they want
     let sql = "CREATE USER TABLE test_user_id.products (id TEXT PRIMARY KEY, name TEXT)";
     let response = server.execute_sql(sql).await;
-    
+
     assert_eq!(
         response.status, "success",
         "Should allow user to define 'id' column themselves, but got error: {:?}",

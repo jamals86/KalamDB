@@ -68,11 +68,7 @@ impl UserIndexManager {
     ///
     /// # Returns
     /// Result indicating success or failure
-    pub fn update_user(
-        &self,
-        old_user: Option<&User>,
-        new_user: &User,
-    ) -> Result<(), SystemError> {
+    pub fn update_user(&self, old_user: Option<&User>, new_user: &User) -> Result<(), SystemError> {
         // Handle username changes
         if let Some(old) = old_user {
             if old.username != new_user.username {

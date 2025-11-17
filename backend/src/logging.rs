@@ -120,19 +120,20 @@ pub fn init_logging(
         );
     } else {
         // File only output without colors
-        let mut file_only = fern::Dispatch::new()
-            .level(level_filter)
-            .format(|out, message, record| {
-                out.finish(format_args!(
-                    "[{}] [{:5}] [{} - {}:{}] - {}",
-                    chrono::Local::now().format("%Y-%m-%d %H:%M:%S%.3f"),
-                    record.level(),
-                    std::thread::current().name().unwrap_or("main"),
-                    record.target(),
-                    record.line().unwrap_or(0),
-                    message
-                ))
-            });
+        let mut file_only =
+            fern::Dispatch::new()
+                .level(level_filter)
+                .format(|out, message, record| {
+                    out.finish(format_args!(
+                        "[{}] [{:5}] [{} - {}:{}] - {}",
+                        chrono::Local::now().format("%Y-%m-%d %H:%M:%S%.3f"),
+                        record.level(),
+                        std::thread::current().name().unwrap_or("main"),
+                        record.target(),
+                        record.line().unwrap_or(0),
+                        message
+                    ))
+                });
 
         // Apply per-target overrides from configuration (if any)
         if let Some(map) = target_levels {

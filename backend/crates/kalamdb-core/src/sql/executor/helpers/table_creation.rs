@@ -5,17 +5,15 @@
 use crate::app_context::AppContext;
 use crate::error::KalamDbError;
 use crate::sql::executor::models::ExecutionContext;
-use kalamdb_commons::models::{NamespaceId, StorageId, TableId, UserId};
 use kalamdb_commons::models::StorageType;
+use kalamdb_commons::models::{NamespaceId, StorageId, TableId, UserId};
 use kalamdb_commons::schemas::TableType;
 use kalamdb_sql::ddl::CreateTableStatement;
 use std::sync::Arc;
 
 // Import shared registration helpers
 use super::table_registration::{
-    register_user_table_provider,
-    register_shared_table_provider,
-    register_stream_table_provider,
+    register_shared_table_provider, register_stream_table_provider, register_user_table_provider,
 };
 
 /// Route CREATE TABLE to type-specific handler
@@ -32,7 +30,11 @@ pub fn create_table(
     stmt: CreateTableStatement,
     exec_ctx: &ExecutionContext,
 ) -> Result<String, KalamDbError> {
-    let table_id_str = format!("{}.{}", stmt.namespace_id.as_str(), stmt.table_name.as_str());
+    let table_id_str = format!(
+        "{}.{}",
+        stmt.namespace_id.as_str(),
+        stmt.table_name.as_str()
+    );
     let table_type = stmt.table_type;
     let user_id_str = exec_ctx.user_id.as_str().to_string();
     let user_role = exec_ctx.user_role;
@@ -101,8 +103,7 @@ pub fn create_user_table(
     );
 
     // Validate table name
-    validate_table_name(stmt.table_name.as_str())
-        .map_err(KalamDbError::InvalidOperation)?;
+    validate_table_name(stmt.table_name.as_str()).map_err(KalamDbError::InvalidOperation)?;
 
     // Validate namespace exists BEFORE other validations to surface actionable guidance
     let namespaces_provider = app_context.system_tables().namespaces();
@@ -202,19 +203,31 @@ pub fn create_user_table(
     // Insert into system.tables
     let table_def = schema_registry
         .get_table_definition(&table_id)?
-        .ok_or_else(|| KalamDbError::Other(format!("Failed to retrieve table definition for {}.{} after save", stmt.namespace_id.as_str(), stmt.table_name.as_str())))?;
+        .ok_or_else(|| {
+            KalamDbError::Other(format!(
+                "Failed to retrieve table definition for {}.{} after save",
+                stmt.namespace_id.as_str(),
+                stmt.table_name.as_str()
+            ))
+        })?;
 
     let tables_provider = app_context.system_tables().tables();
-    tables_provider.create_table(&table_id, &table_def).map_err(|e| {
-        KalamDbError::Other(format!("Failed to insert table into system catalog: {}", e))
-    })?;
+    tables_provider
+        .create_table(&table_id, &table_def)
+        .map_err(|e| {
+            KalamDbError::Other(format!("Failed to insert table into system catalog: {}", e))
+        })?;
 
     // Prime cache entry with storage path template + storage id (needed for flush path resolution)
     {
         use crate::schema_registry::CachedTableData;
         use kalamdb_commons::schemas::TableType;
-        let template = schema_registry
-            .resolve_storage_path_template(&table_id.namespace_id(), &table_id.table_name(), TableType::User, &storage_id)?;
+        let template = schema_registry.resolve_storage_path_template(
+            &table_id.namespace_id(),
+            &table_id.table_name(),
+            TableType::User,
+            &storage_id,
+        )?;
         let mut data = CachedTableData::new(Arc::clone(&table_def));
         data.storage_id = Some(storage_id.clone());
         data.storage_path_template = template.clone();
@@ -229,9 +242,9 @@ pub fn create_user_table(
 
     // Register UserTableProvider for INSERT/UPDATE/DELETE/SELECT operations
     // Use authoritative Arrow schema rebuilt from TableDefinition (includes system columns)
-    let provider_arrow_schema = table_def
-        .to_arrow_schema()
-        .map_err(|e| KalamDbError::SchemaError(format!("Failed to build provider Arrow schema: {}", e)))?;
+    let provider_arrow_schema = table_def.to_arrow_schema().map_err(|e| {
+        KalamDbError::SchemaError(format!("Failed to build provider Arrow schema: {}", e))
+    })?;
     register_user_table_provider(&app_context, &table_id, provider_arrow_schema)?;
 
     // Ensure filesystem table directories exist for the creator
@@ -264,7 +277,6 @@ pub fn create_shared_table(
 ) -> Result<String, KalamDbError> {
     use super::tables::{save_table_definition, validate_table_name};
 
-
     // RBAC check
     if !crate::auth::rbac::can_create_table(exec_ctx.user_role, TableType::Shared) {
         log::error!(
@@ -289,8 +301,7 @@ pub fn create_shared_table(
     );
 
     // Validate table name
-    validate_table_name(stmt.table_name.as_str())
-        .map_err(KalamDbError::InvalidOperation)?;
+    validate_table_name(stmt.table_name.as_str()).map_err(KalamDbError::InvalidOperation)?;
 
     // Validate namespace exists BEFORE other validations to surface actionable guidance
     let namespaces_provider = app_context.system_tables().namespaces();
@@ -387,9 +398,11 @@ pub fn create_shared_table(
         })?;
 
     let tables_provider = app_context.system_tables().tables();
-    tables_provider.create_table(&table_id, &table_def).map_err(|e| {
-        KalamDbError::Other(format!("Failed to insert table into system catalog: {}", e))
-    })?;
+    tables_provider
+        .create_table(&table_id, &table_def)
+        .map_err(|e| {
+            KalamDbError::Other(format!("Failed to insert table into system catalog: {}", e))
+        })?;
 
     // Register SharedTableProvider for CRUD/query access
     register_shared_table_provider(&app_context, &table_id, schema.clone())?;
@@ -397,8 +410,12 @@ pub fn create_shared_table(
     // Prime cache entry with storage path template + storage id (needed for flush path resolution)
     {
         use crate::schema_registry::CachedTableData;
-        let template = schema_registry
-            .resolve_storage_path_template(&table_id.namespace_id(), &table_id.table_name(), TableType::Shared, &storage_id)?;
+        let template = schema_registry.resolve_storage_path_template(
+            &table_id.namespace_id(),
+            &table_id.table_name(),
+            TableType::Shared,
+            &storage_id,
+        )?;
         let mut data = CachedTableData::new(Arc::clone(&table_def));
         data.storage_id = Some(storage_id.clone());
         data.storage_path_template = template.clone();
@@ -510,8 +527,7 @@ pub fn create_stream_table(
     );
 
     // Validate table name
-    validate_table_name(stmt.table_name.as_str())
-        .map_err(KalamDbError::InvalidOperation)?;
+    validate_table_name(stmt.table_name.as_str()).map_err(KalamDbError::InvalidOperation)?;
 
     // Check if table already exists
     let schema_registry = app_context.schema_registry();
@@ -600,9 +616,11 @@ pub fn create_stream_table(
         })?;
 
     let tables_provider = app_context.system_tables().tables();
-    tables_provider.create_table(&table_id, &table_def).map_err(|e| {
-        KalamDbError::Other(format!("Failed to insert table into system catalog: {}", e))
-    })?;
+    tables_provider
+        .create_table(&table_id, &table_def)
+        .map_err(|e| {
+            KalamDbError::Other(format!("Failed to insert table into system catalog: {}", e))
+        })?;
 
     // Register StreamTableProvider for event operations (distinct from SHARED)
     register_stream_table_provider(&app_context, &table_id, schema.clone(), Some(ttl_seconds))?;

@@ -50,7 +50,7 @@ impl ManifestTableProvider {
     /// Scan all manifest cache entries and return as RecordBatch
     ///
     /// This is the main method used by DataFusion to read the table.
-    /// 
+    ///
     /// Uses schema-driven array building for optimal performance and correctness.
     pub fn scan_to_record_batch(&self) -> Result<RecordBatch, SystemError> {
         let entries = self.store.scan_all()?;
@@ -71,7 +71,7 @@ impl ManifestTableProvider {
         // Build arrays by iterating entries once
         for (key_bytes, entry) in entries {
             let cache_key = String::from_utf8_lossy(&key_bytes);
-            
+
             // Parse cache key (format: namespace:table:scope)
             let parts: Vec<&str> = cache_key.split(':').collect();
             if parts.len() != 3 {

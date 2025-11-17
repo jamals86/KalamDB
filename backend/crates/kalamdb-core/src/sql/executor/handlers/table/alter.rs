@@ -2,13 +2,13 @@
 
 use crate::app_context::AppContext;
 use crate::error::KalamDbError;
+use crate::schema_registry::arrow_schema::ArrowSchemaWithOptions;
 use crate::sql::executor::handlers::typed::TypedStatementHandler;
 use crate::sql::executor::models::{ExecutionContext, ExecutionResult, ScalarValue};
-use crate::schema_registry::arrow_schema::ArrowSchemaWithOptions;
-use kalamdb_commons::models::{TableId, NamespaceId};
-use kalamdb_commons::schemas::{ColumnDefault, TableType};
-use kalamdb_commons::models::schemas::{ColumnDefinition, TableDefinition};
 use kalamdb_commons::models::datatypes::KalamDataType;
+use kalamdb_commons::models::schemas::{ColumnDefinition, TableDefinition};
+use kalamdb_commons::models::{NamespaceId, TableId};
+use kalamdb_commons::schemas::{ColumnDefault, TableType};
 use kalamdb_sql::ddl::{AlterTableStatement, ColumnOperation};
 use std::sync::Arc;
 
@@ -45,20 +45,18 @@ impl TypedStatementHandler<AlterTableStatement> for AlterTableHandler {
         );
 
         let registry = self.app_context.schema_registry();
-        let table_def_arc = registry
-            .get_table_definition(&table_id)?
-            .ok_or_else(|| {
-                log::warn!(
-                    "⚠️  ALTER TABLE failed: Table '{}' not found in namespace '{}'",
-                    statement.table_name.as_str(),
-                    namespace_id.as_str()
-                );
-                KalamDbError::NotFound(format!(
-                    "Table '{}' not found in namespace '{}'",
-                    statement.table_name.as_str(),
-                    namespace_id.as_str()
-                ))
-            })?;
+        let table_def_arc = registry.get_table_definition(&table_id)?.ok_or_else(|| {
+            log::warn!(
+                "⚠️  ALTER TABLE failed: Table '{}' not found in namespace '{}'",
+                statement.table_name.as_str(),
+                namespace_id.as_str()
+            );
+            KalamDbError::NotFound(format!(
+                "Table '{}' not found in namespace '{}'",
+                statement.table_name.as_str(),
+                namespace_id.as_str()
+            ))
+        })?;
 
         // Clone for mutation
         let mut table_def: TableDefinition = (*table_def_arc).clone();
@@ -87,13 +85,22 @@ impl TypedStatementHandler<AlterTableStatement> for AlterTableHandler {
         }
 
         // Apply operation
-    // Defer building change description until operation applied
-    #[allow(unused_assignments)]
-    let mut change_desc_opt: Option<String> = None;
+        // Defer building change description until operation applied
+        #[allow(unused_assignments)]
+        let mut change_desc_opt: Option<String> = None;
         match statement.operation {
-            ColumnOperation::Add { column_name, data_type, nullable, default_value } => {
+            ColumnOperation::Add {
+                column_name,
+                data_type,
+                nullable,
+                default_value,
+            } => {
                 // Prevent duplicates
-                if table_def.columns.iter().any(|c| c.column_name == column_name) {
+                if table_def
+                    .columns
+                    .iter()
+                    .any(|c| c.column_name == column_name)
+                {
                     log::error!(
                         "❌ ALTER TABLE failed: Column '{}' already exists in {}.{}",
                         column_name,
@@ -111,10 +118,22 @@ impl TypedStatementHandler<AlterTableStatement> for AlterTableHandler {
                     .unwrap_or(ColumnDefault::None);
                 let ordinal = (table_def.columns.len() + 1) as u32;
                 table_def.columns.push(ColumnDefinition::new(
-                    column_name.clone(), ordinal, kalam_type, nullable, false, false, default, None,
+                    column_name.clone(),
+                    ordinal,
+                    kalam_type,
+                    nullable,
+                    false,
+                    false,
+                    default,
+                    None,
                 ));
                 change_desc_opt = Some(format!("ADD COLUMN {} {}", column_name, data_type));
-                log::debug!("✓ Added column {} (type: {}, nullable: {})", column_name, data_type, nullable);
+                log::debug!(
+                    "✓ Added column {} (type: {}, nullable: {})",
+                    column_name,
+                    data_type,
+                    nullable
+                );
             }
             ColumnOperation::Drop { column_name } => {
                 let idx = table_def
@@ -141,7 +160,11 @@ impl TypedStatementHandler<AlterTableStatement> for AlterTableHandler {
                 change_desc_opt = Some(format!("DROP COLUMN {}", column_name));
                 log::debug!("✓ Dropped column {}", column_name);
             }
-            ColumnOperation::Modify { column_name, new_data_type, nullable } => {
+            ColumnOperation::Modify {
+                column_name,
+                new_data_type,
+                nullable,
+            } => {
                 let col = table_def
                     .columns
                     .iter_mut()
@@ -159,9 +182,15 @@ impl TypedStatementHandler<AlterTableStatement> for AlterTableHandler {
                         ))
                     })?;
                 col.data_type = map_string_type(&new_data_type)?;
-                if let Some(n) = nullable { col.is_nullable = n; }
+                if let Some(n) = nullable {
+                    col.is_nullable = n;
+                }
                 change_desc_opt = Some(format!("MODIFY COLUMN {} {}", column_name, new_data_type));
-                log::debug!("✓ Modified column {} (new type: {})", column_name, new_data_type);
+                log::debug!(
+                    "✓ Modified column {} (new type: {})",
+                    column_name,
+                    new_data_type
+                );
             }
             ColumnOperation::SetAccessLevel { access_level } => {
                 if table_def.table_type != TableType::Shared {
@@ -175,7 +204,9 @@ impl TypedStatementHandler<AlterTableStatement> for AlterTableHandler {
                         "ACCESS LEVEL can only be set on SHARED tables".to_string(),
                     ));
                 }
-                if let kalamdb_commons::schemas::TableOptions::Shared(opts) = &mut table_def.table_options {
+                if let kalamdb_commons::schemas::TableOptions::Shared(opts) =
+                    &mut table_def.table_options
+                {
                     opts.access_level = Some(access_level.clone());
                 }
                 change_desc_opt = Some(format!("SET ACCESS LEVEL {:?}", access_level));
@@ -187,10 +218,13 @@ impl TypedStatementHandler<AlterTableStatement> for AlterTableHandler {
         let arrow_schema = table_def
             .to_arrow_schema()
             .map_err(|e| KalamDbError::SchemaError(format!("Arrow conversion failed: {}", e)))?;
-        let schema_json = ArrowSchemaWithOptions::new(arrow_schema).to_json_string().map_err(|e| {
-            KalamDbError::SchemaError(format!("Failed to serialize Arrow schema: {}", e))
-        })?;
-        let change_desc = change_desc_opt.expect("ALTER TABLE operation must set change description");
+        let schema_json = ArrowSchemaWithOptions::new(arrow_schema)
+            .to_json_string()
+            .map_err(|e| {
+                KalamDbError::SchemaError(format!("Failed to serialize Arrow schema: {}", e))
+            })?;
+        let change_desc =
+            change_desc_opt.expect("ALTER TABLE operation must set change description");
         table_def
             .add_schema_version(change_desc.clone(), schema_json)
             .map_err(KalamDbError::SchemaError)?;
@@ -201,7 +235,10 @@ impl TypedStatementHandler<AlterTableStatement> for AlterTableHandler {
         // Prime cache with updated definition so existing providers retain memoized access
         {
             use crate::schema_registry::CachedTableData;
-            registry.insert(table_id.clone(), Arc::new(CachedTableData::new(Arc::new(table_def.clone()))));
+            registry.insert(
+                table_id.clone(),
+                Arc::new(CachedTableData::new(Arc::new(table_def.clone()))),
+            );
         }
 
         log::info!(
@@ -254,10 +291,12 @@ fn map_string_type(dt: &str) -> Result<KalamDataType, KalamDbError> {
         "UUID" => K::Uuid,
         "FLOAT" | "FLOAT32" => K::Float,
         "DOUBLE" | "FLOAT64" => K::Double,
-        other => return Err(KalamDbError::InvalidOperation(format!(
-            "Unsupported data type '{}' for ALTER TABLE",
-            other
-        ))),
+        other => {
+            return Err(KalamDbError::InvalidOperation(format!(
+                "Unsupported data type '{}' for ALTER TABLE",
+                other
+            )))
+        }
     };
     Ok(t)
 }
@@ -265,13 +304,19 @@ fn map_string_type(dt: &str) -> Result<KalamDataType, KalamDbError> {
 /// Get a summary string for the operation for logging
 fn get_operation_summary(op: &ColumnOperation) -> String {
     match op {
-        ColumnOperation::Add { column_name, data_type, .. } => 
-            format!("ADD COLUMN {} {}", column_name, data_type),
-        ColumnOperation::Drop { column_name } => 
-            format!("DROP COLUMN {}", column_name),
-        ColumnOperation::Modify { column_name, new_data_type, .. } => 
-            format!("MODIFY COLUMN {} {}", column_name, new_data_type),
-        ColumnOperation::SetAccessLevel { access_level } => 
-            format!("SET ACCESS LEVEL {:?}", access_level),
+        ColumnOperation::Add {
+            column_name,
+            data_type,
+            ..
+        } => format!("ADD COLUMN {} {}", column_name, data_type),
+        ColumnOperation::Drop { column_name } => format!("DROP COLUMN {}", column_name),
+        ColumnOperation::Modify {
+            column_name,
+            new_data_type,
+            ..
+        } => format!("MODIFY COLUMN {} {}", column_name, new_data_type),
+        ColumnOperation::SetAccessLevel { access_level } => {
+            format!("SET ACCESS LEVEL {:?}", access_level)
+        }
     }
 }

@@ -58,7 +58,7 @@ pub use audit_log::AuditLogEntry;
 pub use job::{Job, JobFilter, JobOptions};
 pub use live_query::LiveQuery;
 pub use manifest::{
-    BatchFileEntry, BatchStatus, ManifestCacheEntry, ManifestFile, SyncState,
+    BatchFileEntry, BatchStatus, ManifestCacheEntry, ManifestFile, RowGroupPruningStats, SyncState,
 };
 pub use namespace::Namespace;
 pub use storage::Storage;

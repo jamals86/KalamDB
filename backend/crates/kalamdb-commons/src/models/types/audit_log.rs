@@ -1,6 +1,9 @@
 //! Audit log entry for administrative actions.
 
-use crate::models::{ids::{AuditLogId, UserId}, UserName};
+use crate::models::{
+    ids::{AuditLogId, UserId},
+    UserName,
+};
 use bincode::{Decode, Encode};
 use serde::{Deserialize, Serialize};
 

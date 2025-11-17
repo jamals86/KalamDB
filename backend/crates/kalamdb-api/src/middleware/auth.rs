@@ -34,10 +34,7 @@ use actix_web::{
     Error, HttpMessage, HttpResponse,
 };
 use futures_util::future::LocalBoxFuture;
-use kalamdb_auth::{
-    connection::ConnectionInfo, context::AuthenticatedUser,
-    UserRepository,
-};
+use kalamdb_auth::{connection::ConnectionInfo, context::AuthenticatedUser, UserRepository};
 use log::{debug, warn};
 use serde_json::json;
 use std::{
@@ -110,19 +107,16 @@ where
     forward_ready!(service);
 
     fn call(&self, req: ServiceRequest) -> Self::Future {
-    let service = self.service.clone();
+        let service = self.service.clone();
 
         Box::pin(async move {
             // Extract remote address
-            let remote_addr = req
-                .peer_addr()
-                .map(|addr| addr.to_string())
-                .or_else(|| {
-                    req.headers()
-                        .get("X-Forwarded-For")
-                        .and_then(|h| h.to_str().ok())
-                        .map(|s| s.split(',').next().unwrap_or("").trim().to_string())
-                });
+            let remote_addr = req.peer_addr().map(|addr| addr.to_string()).or_else(|| {
+                req.headers()
+                    .get("X-Forwarded-For")
+                    .and_then(|h| h.to_str().ok())
+                    .map(|s| s.split(',').next().unwrap_or("").trim().to_string())
+            });
 
             let connection_info = ConnectionInfo::new(remote_addr.clone());
 
@@ -184,9 +178,9 @@ where
                 // Basic auth will be validated by calling the repository
                 // For simplicity, we'll just log and continue
                 debug!("Basic authentication attempted from {:?}", remote_addr);
-                
+
                 // TODO: Implement actual Basic auth validation using repo
-                // For now, bypass authentication 
+                // For now, bypass authentication
                 let default_user = AuthenticatedUser::new(
                     kalamdb_commons::UserId::new("default_user"),
                     "default_user".to_string(),
@@ -200,7 +194,10 @@ where
             } else if auth_header.starts_with("Bearer ") {
                 // JWT authentication not yet implemented
                 let request_id = generate_request_id();
-                warn!("JWT authentication not yet implemented, request_id={}", request_id);
+                warn!(
+                    "JWT authentication not yet implemented, request_id={}",
+                    request_id
+                );
                 let (req, _) = req.into_parts();
                 let response = HttpResponse::Unauthorized().json(json!({
                     "error": "JWT_NOT_IMPLEMENTED",

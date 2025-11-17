@@ -36,12 +36,12 @@ impl RocksDbInit {
         let mut db_opts = Options::default();
         db_opts.create_if_missing(true);
         db_opts.create_missing_column_families(true);
-        
+
         // Memory optimization: Use configured settings instead of hardcoded values
         db_opts.set_write_buffer_size(self.settings.write_buffer_size);
         db_opts.set_max_write_buffer_number(self.settings.max_write_buffers);
         db_opts.set_max_background_jobs(self.settings.max_background_jobs);
-        
+
         // Block cache: Shared across all CFs to control total memory
         let cache = Cache::new_lru_cache(self.settings.block_cache_size);
         let mut block_opts = BlockBasedOptions::default();

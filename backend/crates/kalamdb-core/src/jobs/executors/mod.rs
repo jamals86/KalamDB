@@ -13,14 +13,14 @@ pub mod executor_trait;
 pub mod registry;
 
 // Concrete executor implementations
-pub mod flush;
+pub mod backup;
 pub mod cleanup;
+pub mod compact;
+pub mod flush;
+pub mod restore;
 pub mod retention;
 pub mod stream_eviction;
 pub mod user_cleanup;
-pub mod compact;
-pub mod backup;
-pub mod restore;
 
 // Re-export key types
 // Export core trait and types

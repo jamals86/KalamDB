@@ -112,10 +112,7 @@ async fn test_create_table_auto_adds_system_columns() {
         assert_eq!(row.get("price").unwrap().as_i64().unwrap(), 100);
 
         // Verify system columns exist
-        assert!(
-            row.contains_key("_seq"),
-            "_seq column should be auto-added"
-        );
+        assert!(row.contains_key("_seq"), "_seq column should be auto-added");
         assert!(
             row.contains_key("_deleted"),
             "_deleted column should be auto-added"
@@ -400,10 +397,7 @@ async fn test_insert_duplicate_pk_rejected() {
         )
         .await;
 
-    assert_eq!(
-        response.status, "success",
-        "First INSERT should succeed"
-    );
+    assert_eq!(response.status, "success", "First INSERT should succeed");
 
     // Try to insert duplicate PK (should fail - user provided explicit PK value)
     let response = server
@@ -423,7 +417,7 @@ async fn test_insert_duplicate_pk_rejected() {
     if let Some(error) = &response.error {
         let msg_lower = error.message.to_lowercase();
         assert!(
-            msg_lower.contains("primary key") 
+            msg_lower.contains("primary key")
                 || msg_lower.contains("already exists")
                 || msg_lower.contains("violation"),
             "Error should mention primary key violation, got: {}",
@@ -440,7 +434,11 @@ async fn test_insert_duplicate_pk_rejected() {
 
     assert_eq!(response.status, "success");
     if let Some(rows) = &response.results[0].rows {
-        assert_eq!(rows.len(), 1, "Should only have 1 record (duplicate rejected)");
+        assert_eq!(
+            rows.len(),
+            1,
+            "Should only have 1 record (duplicate rejected)"
+        );
         assert_eq!(
             rows[0].get("name").unwrap().as_str().unwrap(),
             "First",
@@ -532,11 +530,7 @@ async fn test_incremental_sync_seq_threshold() {
 
     assert_eq!(response.status, "success");
     if let Some(rows) = &response.results[0].rows {
-        assert_eq!(
-            rows.len(),
-            1,
-            "Should return only records after threshold"
-        );
+        assert_eq!(rows.len(), 1, "Should return only records after threshold");
         assert_eq!(
             rows[0].get("id").unwrap().as_str().unwrap(),
             "rec3",
@@ -606,11 +600,7 @@ async fn test_rocksdb_prefix_scan_user_isolation() {
 
     assert_eq!(response.status, "success");
     if let Some(rows) = &response.results[0].rows {
-        assert_eq!(
-            rows.len(),
-            2,
-            "User1 should only see their own 2 notes"
-        );
+        assert_eq!(rows.len(), 2, "User1 should only see their own 2 notes");
         assert_eq!(
             rows[0].get("content").unwrap().as_str().unwrap(),
             "User1 Note 1"
@@ -631,11 +621,7 @@ async fn test_rocksdb_prefix_scan_user_isolation() {
 
     assert_eq!(response.status, "success");
     if let Some(rows) = &response.results[0].rows {
-        assert_eq!(
-            rows.len(),
-            1,
-            "User2 should only see their own 1 note"
-        );
+        assert_eq!(rows.len(), 1, "User2 should only see their own 1 note");
         assert_eq!(
             rows[0].get("content").unwrap().as_str().unwrap(),
             "User2 Note 1"
@@ -681,10 +667,7 @@ async fn test_rocksdb_range_scan_efficiency() {
         )
         .await;
 
-    let initial_seq = response.results[0]
-        .rows
-        .as_ref()
-        .unwrap()[0]
+    let initial_seq = response.results[0].rows.as_ref().unwrap()[0]
         .get("_seq")
         .unwrap()
         .as_i64()

@@ -20,7 +20,9 @@ use std::time::Instant;
 async fn test_01_create_namespace() {
     let server = TestServer::new().await;
 
-    let response = server.execute_sql("CREATE NAMESPACE IF NOT EXISTS app").await;
+    let response = server
+        .execute_sql("CREATE NAMESPACE IF NOT EXISTS app")
+        .await;
     assert_eq!(
         response.status, "success",
         "Failed to create namespace: {:?}",
@@ -39,7 +41,9 @@ async fn test_02_create_user_table() {
     let server = TestServer::new().await;
 
     // Create namespace first
-    server.execute_sql("CREATE NAMESPACE IF NOT EXISTS app").await;
+    server
+        .execute_sql("CREATE NAMESPACE IF NOT EXISTS app")
+        .await;
 
     // Create user table idempotently via fixtures (handles IF NOT EXISTS)
     let response = fixtures::create_messages_table(&server, "app", Some("user123")).await;
@@ -125,7 +129,11 @@ async fn test_05_update_data() {
             "user123",
         )
         .await;
-    assert_eq!(select_resp.status, "success", "Query for id failed: {:?}", select_resp.error);
+    assert_eq!(
+        select_resp.status, "success",
+        "Query for id failed: {:?}",
+        select_resp.error
+    );
     let id = select_resp
         .results
         .get(0)
@@ -138,7 +146,10 @@ async fn test_05_update_data() {
     // Update by selected id
     let response = server
         .execute_sql_as_user(
-            &format!("UPDATE app.messages SET content = 'Updated content' WHERE id = {}", id),
+            &format!(
+                "UPDATE app.messages SET content = 'Updated content' WHERE id = {}",
+                id
+            ),
             "user123",
         )
         .await;
@@ -159,7 +170,11 @@ async fn test_05_update_data() {
             "user123",
         )
         .await;
-    assert_eq!(verify_resp.status, "success", "Verification SELECT failed: {:?}", verify_resp.error);
+    assert_eq!(
+        verify_resp.status, "success",
+        "Verification SELECT failed: {:?}",
+        verify_resp.error
+    );
     let cnt = verify_resp
         .results
         .get(0)
@@ -185,7 +200,11 @@ async fn test_06_delete_data() {
             "user123",
         )
         .await;
-    assert_eq!(select_resp.status, "success", "Query for id failed: {:?}", select_resp.error);
+    assert_eq!(
+        select_resp.status, "success",
+        "Query for id failed: {:?}",
+        select_resp.error
+    );
     let id = select_resp
         .results
         .get(0)
@@ -196,7 +215,10 @@ async fn test_06_delete_data() {
         .expect("Expected an id row");
 
     let response = server
-        .execute_sql_as_user(&format!("DELETE FROM app.messages WHERE id = {}", id), "user123")
+        .execute_sql_as_user(
+            &format!("DELETE FROM app.messages WHERE id = {}", id),
+            "user123",
+        )
         .await;
 
     assert_eq!(
@@ -361,10 +383,12 @@ async fn test_14_drop_table() {
     );
 
     // Verify response includes cleanup job ID
-    let result_message = response.results.get(0)
+    let result_message = response
+        .results
+        .get(0)
         .and_then(|r| r.message.as_ref())
         .expect("DROP TABLE should return result message");
-    
+
     assert!(
         result_message.contains("Cleanup job:"),
         "DROP TABLE should create cleanup job, got: {}",

@@ -12,7 +12,8 @@ fn create_namespace(ns: &str) {
 fn extract_first_id(output: &str) -> Option<i64> {
     // Parses the first numeric cell after a header line from a table-style output
     for line in output.lines() {
-        if line.starts_with('│') && line.contains('│') && !line.to_lowercase().contains("user_id") {
+        if line.starts_with('│') && line.contains('│') && !line.to_lowercase().contains("user_id")
+        {
             let parts: Vec<&str> = line.split('│').collect();
             if parts.len() >= 2 {
                 let candidate = parts[1].trim();
@@ -47,7 +48,11 @@ fn run_dml_sequence(full: &str, _is_shared: bool) {
         full
     );
     let out1 = execute_sql_as_root_via_cli(&ins1).expect("insert 1 should succeed");
-    assert!(out1.contains("1 rows affected"), "expected 1 row affected: {}", out1);
+    assert!(
+        out1.contains("1 rows affected"),
+        "expected 1 row affected: {}",
+        out1
+    );
 
     // insert row 2
     let ins2 = format!(
@@ -58,9 +63,16 @@ fn run_dml_sequence(full: &str, _is_shared: bool) {
     assert!(out2.contains("1 rows affected"));
 
     // check rows exist
-    let sel_all = format!("SELECT id, name, age, active, score, balance, created_at, note FROM {} ORDER BY id", full);
+    let sel_all = format!(
+        "SELECT id, name, age, active, score, balance, created_at, note FROM {} ORDER BY id",
+        full
+    );
     let out_sel = execute_sql_as_root_via_cli(&sel_all).expect("select should succeed");
-    assert!(out_sel.contains("alpha") && out_sel.contains("beta"), "expected both rows present: {}", out_sel);
+    assert!(
+        out_sel.contains("alpha") && out_sel.contains("beta"),
+        "expected both rows present: {}",
+        out_sel
+    );
 
     // parse alpha id via focused query to avoid brittle table parsing
     let sel_alpha_id = format!("SELECT id FROM {} WHERE name = 'alpha'", full);
@@ -74,7 +86,11 @@ fn run_dml_sequence(full: &str, _is_shared: bool) {
 
     // check
     let out_chk1 = execute_sql_as_root_via_cli(&sel_all).expect("post update select");
-    assert!(out_chk1.contains("26"), "expected updated age 26: {}", out_chk1);
+    assert!(
+        out_chk1.contains("26"),
+        "expected updated age 26: {}",
+        out_chk1
+    );
 
     // multi-column update on alpha
     let upd2 = format!(
@@ -86,8 +102,13 @@ fn run_dml_sequence(full: &str, _is_shared: bool) {
 
     // check
     let out_chk2 = execute_sql_as_root_via_cli(&sel_all).expect("post multi update select");
-    assert!(out_chk2.contains("alpha2") && out_chk2.contains("42") && out_chk2.to_lowercase().contains("false"),
-            "expected multi-column updates reflected: {}", out_chk2);
+    assert!(
+        out_chk2.contains("alpha2")
+            && out_chk2.contains("42")
+            && out_chk2.to_lowercase().contains("false"),
+        "expected multi-column updates reflected: {}",
+        out_chk2
+    );
 
     // delete beta row by filtering on name to get id, then delete by id to respect pk equality
     let sel_beta = format!("SELECT id, name FROM {} WHERE name = 'beta'", full);
@@ -100,16 +121,20 @@ fn run_dml_sequence(full: &str, _is_shared: bool) {
 
     // best-effort final check: ensure updated row still present
     let out_after = execute_sql_as_root_via_cli(&sel_all).expect("final select after delete");
-    assert!(out_after.contains("alpha2"), "expected updated row present: {}", out_after);
+    assert!(
+        out_after.contains("alpha2"),
+        "expected updated row present: {}",
+        out_after
+    );
 
     // Note: subscription validations are covered in dedicated test below
 }
 
 #[test]
 fn smoke_user_table_dml_wide_columns() {
-    if !is_server_running() { 
+    if !is_server_running() {
         eprintln!("⚠️  Server not running. Skipping test.");
-        return; 
+        return;
     }
 
     let namespace = generate_unique_namespace("smoke_ns");
@@ -139,9 +164,9 @@ fn smoke_user_table_dml_wide_columns() {
 
 #[test]
 fn smoke_shared_table_dml_wide_columns() {
-    if !is_server_running() { 
+    if !is_server_running() {
         eprintln!("⚠️  Server not running. Skipping test.");
-        return; 
+        return;
     }
 
     let namespace = generate_unique_namespace("smoke_ns");
@@ -173,9 +198,9 @@ fn smoke_shared_table_dml_wide_columns() {
 // _updated/_deleted columns. Marked ignored due to flakiness in CI environments.
 #[test]
 fn smoke_subscription_update_delete_notifications() {
-    if !is_server_running() { 
+    if !is_server_running() {
         eprintln!("⚠️  Server not running. Skipping test.");
-        return; 
+        return;
     }
 
     let namespace = generate_unique_namespace("smoke_ns");
@@ -207,10 +232,7 @@ fn smoke_subscription_update_delete_notifications() {
     assert!(snapshot_line.contains("1 rows") || snapshot_line.contains("1 row"));
 
     // UPDATE
-    let _ = execute_sql_as_root_via_cli(&format!(
-        "UPDATE {} SET name='one-upd' WHERE id=1",
-        full
-    ));
+    let _ = execute_sql_as_root_via_cli(&format!("UPDATE {} SET name='one-upd' WHERE id=1", full));
     let update_line = listener
         .wait_for_event("UPDATE", Duration::from_secs(5))
         .expect("expected UPDATE event");

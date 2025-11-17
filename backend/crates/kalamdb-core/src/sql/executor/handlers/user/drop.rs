@@ -31,13 +31,20 @@ impl TypedStatementHandler<DropUserStatement> for DropUserHandler {
         let existing = users.get_user_by_username(&statement.username)?;
         if existing.is_none() {
             if statement.if_exists {
-                return Ok(ExecutionResult::Success { message: format!("User '{}' does not exist (skipped)", statement.username) });
+                return Ok(ExecutionResult::Success {
+                    message: format!("User '{}' does not exist (skipped)", statement.username),
+                });
             }
-            return Err(KalamDbError::NotFound(format!("User '{}' not found", statement.username)));
+            return Err(KalamDbError::NotFound(format!(
+                "User '{}' not found",
+                statement.username
+            )));
         }
         let user = existing.unwrap();
         users.delete_user(&user.id)?;
-        Ok(ExecutionResult::Success { message: format!("User '{}' dropped (soft delete)", statement.username) })
+        Ok(ExecutionResult::Success {
+            message: format!("User '{}' dropped (soft delete)", statement.username),
+        })
     }
 
     async fn check_authorization(

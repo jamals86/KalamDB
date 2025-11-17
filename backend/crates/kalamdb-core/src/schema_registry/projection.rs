@@ -88,7 +88,7 @@ pub fn project_batch(
                             old_field.data_type(),
                             new_field.data_type(),
                             e
-                        )
+                        ),
                     }
                 })?;
                 new_columns.push(casted);

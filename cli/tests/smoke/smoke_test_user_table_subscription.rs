@@ -42,8 +42,16 @@ fn smoke_user_table_subscription_lifecycle() {
     // Quick verification via SELECT
     let sel = format!("SELECT * FROM {}", full);
     let out = execute_sql_as_root_via_cli(&sel).expect("select should succeed");
-    assert!(out.contains("alpha"), "expected to see 'alpha' in select output: {}", out);
-    assert!(out.contains("beta"), "expected to see 'beta' in select output: {}", out);
+    assert!(
+        out.contains("alpha"),
+        "expected to see 'alpha' in select output: {}",
+        out
+    );
+    assert!(
+        out.contains("beta"),
+        "expected to see 'beta' in select output: {}",
+        out
+    );
 
     // Small delay to ensure data is visible to subscription queries
     std::thread::sleep(std::time::Duration::from_millis(200));
@@ -80,8 +88,16 @@ fn smoke_user_table_subscription_lifecycle() {
     } else {
         snapshot_lines.join("\n")
     };
-    assert!(snapshot_joined.contains("alpha"), "snapshot should contain 'alpha' but was: {}", snapshot_joined);
-    assert!(snapshot_joined.contains("beta"), "snapshot should contain 'beta' but was: {}", snapshot_joined);
+    assert!(
+        snapshot_joined.contains("alpha"),
+        "snapshot should contain 'alpha' but was: {}",
+        snapshot_joined
+    );
+    assert!(
+        snapshot_joined.contains("beta"),
+        "snapshot should contain 'beta' but was: {}",
+        snapshot_joined
+    );
 
     // 5) Insert a new row and verify subscription outputs the change event
     let sub_val = "from_subscription";
@@ -108,39 +124,57 @@ fn smoke_user_table_subscription_lifecycle() {
                 }
             }
             Ok(None) => {
-                println!("[DEBUG] EOF on subscription stream after {} polls", poll_count);
+                println!(
+                    "[DEBUG] EOF on subscription stream after {} polls",
+                    poll_count
+                );
                 break;
             }
             Err(_e) => {
                 if poll_count % 10 == 0 {
-                    println!("[DEBUG] Still waiting for change event... (poll {})", poll_count);
+                    println!(
+                        "[DEBUG] Still waiting for change event... (poll {})",
+                        poll_count
+                    );
                 }
                 continue;
             }
         }
     }
-    println!("[DEBUG] Total polls: {}, lines collected: {}", poll_count, change_lines.len());
+    println!(
+        "[DEBUG] Total polls: {}, lines collected: {}",
+        poll_count,
+        change_lines.len()
+    );
 
     let changes_joined = change_lines.join("\n");
-    assert!(changes_joined.contains(sub_val), "expected change event containing '{}' within 5s; got: {}", sub_val, changes_joined);
+    assert!(
+        changes_joined.contains(sub_val),
+        "expected change event containing '{}' within 5s; got: {}",
+        sub_val,
+        changes_joined
+    );
 
     // 6) Flush the user table and verify job completes successfully
     let flush_sql = format!("FLUSH TABLE {}", full);
-    let flush_output = execute_sql_as_root_via_cli(&flush_sql)
-        .expect("flush should succeed for user table");
-    
+    let flush_output =
+        execute_sql_as_root_via_cli(&flush_sql).expect("flush should succeed for user table");
+
     println!("[FLUSH] Output: {}", flush_output);
-    
+
     // Parse job ID from flush output
     let job_id = parse_job_id_from_flush_output(&flush_output)
         .expect("should parse job_id from FLUSH output");
-    
+
     println!("[FLUSH] Job ID: {}", job_id);
-    
+
     // Wait for terminal state (completed or failed) to avoid flakes
     let final_status = wait_for_job_finished(&job_id, std::time::Duration::from_secs(30))
         .expect("flush job should reach terminal state");
-    println!("[FLUSH] Job {} finished with status: {}", job_id, final_status);
+    println!(
+        "[FLUSH] Job {} finished with status: {}",
+        job_id, final_status
+    );
 
     // Stop subscription
     listener.stop().ok();

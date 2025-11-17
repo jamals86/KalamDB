@@ -69,10 +69,7 @@ mod tests {
     fn test_sql_request_with_parameters() {
         let request = SqlRequest {
             sql: "SELECT * FROM users WHERE id = $1 AND status = $2".to_string(),
-            params: Some(vec![
-                serde_json::json!(42),
-                serde_json::json!("active"),
-            ]),
+            params: Some(vec![serde_json::json!(42), serde_json::json!("active")]),
         };
 
         let json = serde_json::to_string(&request).unwrap();

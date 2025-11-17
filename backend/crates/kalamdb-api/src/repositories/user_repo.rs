@@ -1,7 +1,7 @@
 use std::sync::Arc;
 
 use arrow::array::{Array, StringArray, TimestampMillisecondArray};
-use kalamdb_auth::{AuthError, UserRepository, error::AuthResult};
+use kalamdb_auth::{error::AuthResult, AuthError, UserRepository};
 use kalamdb_commons::{system::User, AuthType, Role, StorageId, StorageMode, UserId, UserName};
 use kalamdb_system::UsersTableProvider;
 
@@ -59,7 +59,9 @@ impl UserRepository for CoreUsersRepo {
             let password_hash_col = batch
                 .column_by_name("password_hash")
                 .and_then(|c| c.as_any().downcast_ref::<StringArray>())
-                .ok_or_else(|| AuthError::DatabaseError("users.password_hash column missing".into()))?;
+                .ok_or_else(|| {
+                    AuthError::DatabaseError("users.password_hash column missing".into())
+                })?;
             let role_col = batch
                 .column_by_name("role")
                 .and_then(|c| c.as_any().downcast_ref::<StringArray>())
@@ -79,19 +81,27 @@ impl UserRepository for CoreUsersRepo {
             let storage_mode_col = batch
                 .column_by_name("storage_mode")
                 .and_then(|c| c.as_any().downcast_ref::<StringArray>())
-                .ok_or_else(|| AuthError::DatabaseError("users.storage_mode column missing".into()))?;
+                .ok_or_else(|| {
+                    AuthError::DatabaseError("users.storage_mode column missing".into())
+                })?;
             let storage_id_col = batch
                 .column_by_name("storage_id")
                 .and_then(|c| c.as_any().downcast_ref::<StringArray>())
-                .ok_or_else(|| AuthError::DatabaseError("users.storage_id column missing".into()))?;
+                .ok_or_else(|| {
+                    AuthError::DatabaseError("users.storage_id column missing".into())
+                })?;
             let created_at_col = batch
                 .column_by_name("created_at")
                 .and_then(|c| c.as_any().downcast_ref::<TimestampMillisecondArray>())
-                .ok_or_else(|| AuthError::DatabaseError("users.created_at column missing".into()))?;
+                .ok_or_else(|| {
+                    AuthError::DatabaseError("users.created_at column missing".into())
+                })?;
             let updated_at_col = batch
                 .column_by_name("updated_at")
                 .and_then(|c| c.as_any().downcast_ref::<TimestampMillisecondArray>())
-                .ok_or_else(|| AuthError::DatabaseError("users.updated_at column missing".into()))?;
+                .ok_or_else(|| {
+                    AuthError::DatabaseError("users.updated_at column missing".into())
+                })?;
             let last_seen_col = batch
                 .column_by_name("last_seen")
                 .and_then(|c| c.as_any().downcast_ref::<TimestampMillisecondArray>())
@@ -99,7 +109,9 @@ impl UserRepository for CoreUsersRepo {
             let deleted_at_col = batch
                 .column_by_name("deleted_at")
                 .and_then(|c| c.as_any().downcast_ref::<TimestampMillisecondArray>())
-                .ok_or_else(|| AuthError::DatabaseError("users.deleted_at column missing".into()))?;
+                .ok_or_else(|| {
+                    AuthError::DatabaseError("users.deleted_at column missing".into())
+                })?;
 
             let mut users = Vec::with_capacity(batch.num_rows());
             for i in 0..batch.num_rows() {

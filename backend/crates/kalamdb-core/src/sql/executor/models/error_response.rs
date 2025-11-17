@@ -1,8 +1,8 @@
 //! Structured error response format for API responses
 
+use crate::error::KalamDbError;
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
-use crate::error::KalamDbError;
 
 /// Structured error response with machine-readable code and context
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -43,13 +43,20 @@ impl ErrorResponse {
         let (code, message, details) = match err {
             KalamDbError::ParamCountExceeded { max, actual } => (
                 "PARAM_COUNT_EXCEEDED",
-                format!("Parameter count exceeded: maximum {} parameters allowed, got {}", max, actual),
+                format!(
+                    "Parameter count exceeded: maximum {} parameters allowed, got {}",
+                    max, actual
+                ),
                 Some(serde_json::json!({
                     "max": max,
                     "actual": actual,
                 })),
             ),
-            KalamDbError::ParamSizeExceeded { index, max_bytes, actual_bytes } => (
+            KalamDbError::ParamSizeExceeded {
+                index,
+                max_bytes,
+                actual_bytes,
+            } => (
                 "PARAM_SIZE_EXCEEDED",
                 format!(
                     "Parameter size exceeded: parameter at index {} is {} bytes (max {} bytes)",
@@ -63,7 +70,10 @@ impl ErrorResponse {
             ),
             KalamDbError::ParamCountMismatch { expected, actual } => (
                 "PARAM_COUNT_MISMATCH",
-                format!("Parameter count mismatch: expected {} parameters, got {}", expected, actual),
+                format!(
+                    "Parameter count mismatch: expected {} parameters, got {}",
+                    expected, actual
+                ),
                 Some(serde_json::json!({
                     "expected": expected,
                     "actual": actual,
@@ -71,7 +81,10 @@ impl ErrorResponse {
             ),
             KalamDbError::ParamsNotSupported { statement_type } => (
                 "PARAMS_NOT_SUPPORTED",
-                format!("Parameters are not supported for {} statements", statement_type),
+                format!(
+                    "Parameters are not supported for {} statements",
+                    statement_type
+                ),
                 Some(serde_json::json!({
                     "statement_type": statement_type,
                     "supported_types": ["SELECT", "INSERT", "UPDATE", "DELETE"],
@@ -84,21 +97,11 @@ impl ErrorResponse {
                     "timeout_seconds": timeout_seconds,
                 })),
             ),
-            KalamDbError::PermissionDenied(msg) | KalamDbError::Unauthorized(msg) => (
-                "AUTH_INSUFFICIENT_ROLE",
-                msg.clone(),
-                None,
-            ),
-            KalamDbError::TableNotFound(msg) => (
-                "NOT_FOUND_TABLE",
-                msg.clone(),
-                None,
-            ),
-            KalamDbError::NamespaceNotFound(msg) => (
-                "NOT_FOUND_NAMESPACE",
-                msg.clone(),
-                None,
-            ),
+            KalamDbError::PermissionDenied(msg) | KalamDbError::Unauthorized(msg) => {
+                ("AUTH_INSUFFICIENT_ROLE", msg.clone(), None)
+            }
+            KalamDbError::TableNotFound(msg) => ("NOT_FOUND_TABLE", msg.clone(), None),
+            KalamDbError::NamespaceNotFound(msg) => ("NOT_FOUND_NAMESPACE", msg.clone(), None),
             KalamDbError::NotImplemented { feature, message } => (
                 "NOT_IMPLEMENTED",
                 format!("{}: {}", feature, message),
@@ -107,16 +110,8 @@ impl ErrorResponse {
                     "message": message,
                 })),
             ),
-            KalamDbError::InvalidSql(msg) => (
-                "INVALID_SQL_SYNTAX",
-                msg.clone(),
-                None,
-            ),
-            _ => (
-                "INTERNAL_ERROR",
-                err.to_string(),
-                None,
-            ),
+            KalamDbError::InvalidSql(msg) => ("INVALID_SQL_SYNTAX", msg.clone(), None),
+            _ => ("INTERNAL_ERROR", err.to_string(), None),
         };
 
         Self::new(code, message, details, request_id)
@@ -129,9 +124,12 @@ mod tests {
 
     #[test]
     fn test_error_response_from_param_count_exceeded() {
-        let err = KalamDbError::ParamCountExceeded { max: 50, actual: 51 };
+        let err = KalamDbError::ParamCountExceeded {
+            max: 50,
+            actual: 51,
+        };
         let response = ErrorResponse::from_error(&err, Some("req_123".to_string()));
-        
+
         assert_eq!(response.code, "PARAM_COUNT_EXCEEDED");
         assert!(response.message.contains("50"));
         assert!(response.message.contains("51"));
@@ -147,7 +145,7 @@ mod tests {
             actual_bytes: 600000,
         };
         let response = ErrorResponse::from_error(&err, None);
-        
+
         assert_eq!(response.code, "PARAM_SIZE_EXCEEDED");
         assert!(response.message.contains("600000"));
         assert!(response.message.contains("524288"));

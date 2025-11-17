@@ -80,11 +80,9 @@ async fn test_user_table_manual_flush_creates_parquet() {
         let backend = server.app_context.storage_backend();
         let model_namespace = ModelNamespaceId::new(namespace);
         let model_table = ModelTableName::new(table_name);
-        let store =
-            kalamdb_tables::new_user_table_store(backend, &model_namespace, &model_table);
+        let store = kalamdb_tables::new_user_table_store(backend, &model_namespace, &model_table);
         use kalamdb_store::entity_store::EntityStore;
-        let buffered_rows = EntityStore::scan_all(&store)
-            .expect("scan_all() should succeed");
+        let buffered_rows = EntityStore::scan_all(&store).expect("scan_all() should succeed");
         assert_eq!(
             buffered_rows.len(),
             5,
@@ -126,8 +124,14 @@ async fn test_user_table_manual_flush_creates_parquet() {
     // - "Flushed <ns>.<table> successfully (5 rows, 1 files)"
     let jr_lower = job_result.to_lowercase();
     let has_files_phrase = jr_lower.contains("parquet files");
-    let looks_successful = jr_lower.contains("successfully") && jr_lower.contains("rows") && (jr_lower.contains("file") || jr_lower.contains("files"));
-    assert!(has_files_phrase || looks_successful, "Unexpected flush job result: {}", job_result);
+    let looks_successful = jr_lower.contains("successfully")
+        && jr_lower.contains("rows")
+        && (jr_lower.contains("file") || jr_lower.contains("files"));
+    assert!(
+        has_files_phrase || looks_successful,
+        "Unexpected flush job result: {}",
+        job_result
+    );
     assert!(
         !jr_lower.contains("parquet files: 0") && !jr_lower.contains("0 files"),
         "Flush did not produce Parquet files: {}",
