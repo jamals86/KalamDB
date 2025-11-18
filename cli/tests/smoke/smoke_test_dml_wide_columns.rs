@@ -210,14 +210,14 @@ fn smoke_subscription_update_delete_notifications() {
     create_namespace(&namespace);
 
     let create_sql = format!(
-        "CREATE USER TABLE {} (id INT PRIMARY KEY, name VARCHAR, _updated TIMESTAMP, _deleted BOOLEAN, note VARCHAR)",
+        "CREATE USER TABLE {} (id INT PRIMARY KEY, name VARCHAR, updated_at TIMESTAMP, is_deleted BOOLEAN, note VARCHAR)",
         full
     );
     execute_sql_as_root_via_cli(&create_sql).expect("create user table should succeed");
 
     // Insert initial row BEFORE subscribing
     let _ = execute_sql_as_root_via_cli(&format!(
-        "INSERT INTO {} (id, name, _updated, _deleted, note) VALUES (1, 'one', 1730497770045, false, 'n1')",
+        "INSERT INTO {} (id, name, updated_at, is_deleted, note) VALUES (1, 'one', 1730497770045, false, 'n1')",
         full
     ));
 

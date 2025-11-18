@@ -395,7 +395,22 @@ impl TestServer {
                     .ok()
                     .flatten()
                     .map(|user| user.role)
-                    .unwrap_or(Role::System); // Default to System if user not found
+                    .unwrap_or_else(|| {
+                        // For test convenience: auto-escalate based on user ID patterns
+                        let id_lower = user_id.as_str().to_lowercase();
+                        if id_lower == "system" 
+                            || id_lower == "admin" 
+                            || id_lower == "root"
+                            || id_lower.starts_with("e2e_") {
+                            Role::System
+                        } else if id_lower.contains("dba") {
+                            Role::Dba
+                        } else if id_lower.contains("service") || id_lower.starts_with("svc") {
+                            Role::Service
+                        } else {
+                            Role::User
+                        }
+                    });
 
                 ExecutionContext::new(user_id.clone(), role, session.clone())
             }

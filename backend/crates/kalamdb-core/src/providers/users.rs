@@ -165,6 +165,131 @@ impl UserTableProvider {
             filter,
         )
     }
+
+    /// Scan all users' data with version resolution (for Service/DBA/System roles)
+    ///
+    /// Similar to scan_with_version_resolution_to_kvs but without RLS filtering.
+    /// Returns all rows from all users in the table.
+    fn scan_all_users_with_version_resolution(
+        &self,
+        _filter: Option<&Expr>,
+    ) -> Result<Vec<(UserTableRowId, UserTableRow)>, KalamDbError> {
+        let table_id = self.core.table_id();
+        
+        // 1) Scan ALL hot storage (RocksDB) without per-user filtering
+        let raw_all = self.store.scan_all().map_err(|e| {
+            KalamDbError::InvalidOperation(format!("Failed to scan user table hot storage: {}", e))
+        })?;
+        let hot_rows: Vec<(UserTableRowId, UserTableRow)> = raw_all
+            .into_iter()
+            .filter_map(|(key_bytes, row)| {
+                match kalamdb_commons::ids::UserTableRowId::from_bytes(&key_bytes) {
+                    Ok(k) => Some((k, row)),
+                    Err(err) => {
+                        log::warn!("Skipping invalid UserTableRowId key bytes: {}", err);
+                        None
+                    }
+                }
+            })
+            .collect();
+
+        if log::log_enabled!(log::Level::Trace) {
+            log::trace!(
+                "[UserProvider] Hot scan (ALL users): {} rows (table={}.{})",
+                hot_rows.len(),
+                table_id.namespace_id().as_str(),
+                table_id.table_name().as_str()
+            );
+        }
+
+        // 2) Scan cold storage (Parquet files) for ALL users (from hot storage + cold storage)
+        // Collect unique user_ids from hot storage
+        let mut all_users: std::collections::HashSet<UserId> = hot_rows
+            .iter()
+            .map(|(_, row)| row.user_id.clone())
+            .collect();
+        
+        // Also get users from cold storage (by scanning the table directory for user subdirectories)
+        if let Ok(cold_users) = self.get_users_from_cold_storage() {
+            all_users.extend(cold_users);
+        }
+
+        let mut all_cold_rows: Vec<(UserTableRowId, UserTableRow)> = Vec::new();
+        for user_id in all_users {
+            let parquet_batch = self.scan_parquet_files_as_batch(&user_id, _filter)?;
+            let user_cold_rows: Vec<(UserTableRowId, UserTableRow)> = parquet_batch_to_rows(&parquet_batch)?
+                .into_iter()
+                .map(|row_data| {
+                    let seq_id = row_data.seq_id;
+                    let row = UserTableRow {
+                        user_id: user_id.clone(),
+                        _seq: seq_id,
+                        _deleted: row_data.deleted,
+                        fields: JsonValue::Object(row_data.fields),
+                    };
+                    (UserTableRowId::new(user_id.clone(), seq_id), row)
+                })
+                .collect();
+            all_cold_rows.extend(user_cold_rows);
+        }
+
+        if log::log_enabled!(log::Level::Trace) {
+            log::trace!(
+                "[UserProvider] Cold scan (ALL users): {} Parquet rows (table={}.{})",
+                all_cold_rows.len(),
+                table_id.namespace_id().as_str(),
+                table_id.table_name().as_str()
+            );
+        }
+
+        // 3) Version resolution: keep MAX(_seq) per primary key; honor tombstones
+        let pk_name = self.primary_key_field_name().to_string();
+        let result = merge_versioned_rows(&pk_name, hot_rows, all_cold_rows);
+
+        if log::log_enabled!(log::Level::Trace) {
+            log::trace!(
+                "[UserProvider] Final version-resolved (ALL users, post-tombstone): {} rows (table={}.{})",
+                result.len(),
+                table_id.namespace_id().as_str(),
+                table_id.table_name().as_str()
+            );
+        }
+
+        Ok(result)
+    }
+    
+    /// Get list of users that have data in cold storage (Parquet files).
+    /// Scans the table directory for user subdirectories.
+    fn get_users_from_cold_storage(&self) -> Result<Vec<UserId>, KalamDbError> {
+        use std::fs;
+        use std::path::PathBuf;
+        
+        let table_id = self.core.table_id();
+        let namespace = table_id.namespace_id();
+        let table = table_id.table_name();
+        
+        // Build table directory path: ./data/storage/{namespace}/{table}
+        let mut table_dir = PathBuf::from(&self.core.app_context.config().storage.default_storage_path);
+        table_dir.push(namespace.as_str());
+        table_dir.push(table.as_str());
+        
+        let mut users = Vec::new();
+        
+        // Read directory entries (each subdirectory is a user_id)
+        if let Ok(entries) = fs::read_dir(&table_dir) {
+            for entry in entries.flatten() {
+                if let Ok(metadata) = entry.metadata() {
+                    if metadata.is_dir() {
+                        if let Some(dir_name) = entry.file_name().to_str() {
+                            users.push(UserId::from(dir_name));
+                        }
+                    }
+                }
+            }
+        }
+        
+        Ok(users)
+    }
 }
 
 impl BaseTableProvider<UserTableRowId, UserTableRow> for UserTableProvider {
@@ -367,16 +492,24 @@ impl BaseTableProvider<UserTableRowId, UserTableRow> for UserTableProvider {
         state: &dyn Session,
         filter: Option<&Expr>,
     ) -> Result<RecordBatch, KalamDbError> {
-        // Extract user_id from SessionState for RLS
-        let (user_id, _role) = Self::extract_user_context(state)?;
+        // Extract user_id and role from SessionState for RLS
+        let (user_id, role) = Self::extract_user_context(state)?;
 
-        // Perform KV scan with version resolution
-        let kvs = self.scan_with_version_resolution_to_kvs(&user_id, filter)?;
+        // Service/DBA/System role sees all users' data; regular users only see their own
+        let kvs = if matches!(role, Role::Service | Role::Dba | Role::System) {
+            // Service/admin roles: scan ALL users (no RLS filtering)
+            self.scan_all_users_with_version_resolution(filter)?
+        } else {
+            // Regular user: scan only their own data (RLS enforced)
+            self.scan_with_version_resolution_to_kvs(&user_id, filter)?
+        };
+
         let table_id = self.core.table_id();
         log::debug!(
-            "[UserTableProvider] scan_rows resolved {} row(s) for user={} table={}.{}",
+            "[UserTableProvider] scan_rows resolved {} row(s) for user={} role={:?} table={}.{}",
             kvs.len(),
             user_id.as_str(),
+            role,
             table_id.namespace_id().as_str(),
             table_id.table_name().as_str()
         );

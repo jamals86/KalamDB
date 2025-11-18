@@ -45,6 +45,9 @@ futures-util = { workspace = true }
 # Async trait support
 async-trait = { workspace = true }
 
+# Base64 encoding/decoding
+base64 = { workspace = true }
+
 [build-dependencies]
 chrono = { workspace = true }
 
