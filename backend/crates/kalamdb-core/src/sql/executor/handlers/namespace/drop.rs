@@ -58,7 +58,7 @@ impl TypedStatementHandler<DropNamespaceStatement> for DropNamespaceHandler {
         // Delete namespace via provider
         namespaces_provider.delete_namespace(&namespace_id)?;
 
-            let message = format!("Namespace '{}' dropped successfully", namespace.name);
+        let message = format!("Namespace '{}' dropped successfully", namespace.name);
         Ok(ExecutionResult::Success { message })
     }
 
@@ -104,7 +104,7 @@ mod tests {
         // Note: This test would need proper setup of test namespace
         // For now, it demonstrates the pattern
         let result = handler.execute(stmt, vec![], &ctx).await;
-        
+
         // Would verify result or error based on test setup
         assert!(result.is_ok() || result.is_err());
     }
@@ -117,11 +117,11 @@ mod tests {
             name: kalamdb_commons::models::NamespaceId::new("test"),
             if_exists: false,
         };
-        
+
         // Test with non-admin user
         let ctx = ExecutionContext::new(UserId::new("user"), Role::User, create_test_session());
         let result = handler.check_authorization(&stmt, &ctx).await;
-        
+
         assert!(result.is_err());
         assert!(matches!(result.unwrap_err(), KalamDbError::Unauthorized(_)));
     }
@@ -138,7 +138,7 @@ mod tests {
         let session = SessionContext::new();
 
         let result = handler.execute(stmt, vec![], &ctx).await;
-        
+
         // With IF EXISTS, should succeed even if namespace doesn't exist
         if let Ok(ExecutionResult::Success { message }) = result {
             assert!(message.contains("does not exist"));

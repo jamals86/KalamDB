@@ -3,9 +3,9 @@
 //! This module provides a DataFusion TableProvider implementation for the system.jobs table.
 //! Uses the new EntityStore architecture with String keys (job_id).
 
-use crate::system_table_trait::SystemTableProviderExt;
 use super::{new_jobs_store, JobsStore, JobsTableSchema};
 use crate::error::SystemError;
+use crate::system_table_trait::SystemTableProviderExt;
 use async_trait::async_trait;
 use datafusion::arrow::array::{
     ArrayRef, Int64Array, RecordBatch, StringBuilder, TimestampMillisecondArray,
@@ -143,10 +143,7 @@ impl JobsTableProvider {
                 continue;
             }
 
-            let reference_time = job
-                .finished_at
-                .or(job.started_at)
-                .unwrap_or(job.created_at);
+            let reference_time = job.finished_at.or(job.started_at).unwrap_or(job.created_at);
             if now - reference_time > retention_ms {
                 self.delete_job(&job.job_id)?;
                 deleted += 1;
@@ -226,8 +223,14 @@ impl JobsTableProvider {
 fn validate_job_update(job: &Job) -> Result<(), SystemError> {
     let status = job.status;
 
-    if matches!(status, JobStatus::Running | JobStatus::Retrying | JobStatus::Completed | JobStatus::Failed | JobStatus::Cancelled)
-        && job.started_at.is_none()
+    if matches!(
+        status,
+        JobStatus::Running
+            | JobStatus::Retrying
+            | JobStatus::Completed
+            | JobStatus::Failed
+            | JobStatus::Cancelled
+    ) && job.started_at.is_none()
     {
         return Err(SystemError::Other(format!(
             "Job {}: started_at must be set before marking status {}",
@@ -235,8 +238,10 @@ fn validate_job_update(job: &Job) -> Result<(), SystemError> {
         )));
     }
 
-    if matches!(status, JobStatus::Completed | JobStatus::Failed | JobStatus::Cancelled)
-        && job.finished_at.is_none()
+    if matches!(
+        status,
+        JobStatus::Completed | JobStatus::Failed | JobStatus::Cancelled
+    ) && job.finished_at.is_none()
     {
         return Err(SystemError::Other(format!(
             "Job {}: finished_at must be set before marking status {}",

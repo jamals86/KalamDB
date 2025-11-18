@@ -33,9 +33,14 @@ pub struct ApplicationComponents {
 }
 
 /// Initialize RocksDB, DataFusion, services, rate limiter, and flush scheduler.
-pub async fn bootstrap(config: &ServerConfig) -> Result<(ApplicationComponents, Arc<kalamdb_core::app_context::AppContext>)> {
+pub async fn bootstrap(
+    config: &ServerConfig,
+) -> Result<(
+    ApplicationComponents,
+    Arc<kalamdb_core::app_context::AppContext>,
+)> {
     let bootstrap_start = std::time::Instant::now();
-    
+
     // Initialize RocksDB
     let phase_start = std::time::Instant::now();
     let db_path = std::path::PathBuf::from(&config.storage.rocksdb_path);
@@ -43,7 +48,11 @@ pub async fn bootstrap(config: &ServerConfig) -> Result<(ApplicationComponents, 
 
     let db_init = RocksDbInit::new(db_path.to_str().unwrap(), config.storage.rocksdb.clone());
     let db = db_init.open()?;
-    info!("RocksDB initialized at {} ({:.2}ms)", db_path.display(), phase_start.elapsed().as_secs_f64() * 1000.0);
+    info!(
+        "RocksDB initialized at {} ({:.2}ms)",
+        db_path.display(),
+        phase_start.elapsed().as_secs_f64() * 1000.0
+    );
 
     // Initialize RocksDB backend for all components (single StorageBackend trait)
     let backend = Arc::new(RocksDBBackend::new(db.clone()));
@@ -58,7 +67,10 @@ pub async fn bootstrap(config: &ServerConfig) -> Result<(ApplicationComponents, 
         config.storage.default_storage_path.clone(),
         config.clone(), // Pass ServerConfig to AppContext for centralized access
     );
-    info!("AppContext initialized with all stores, managers, registries, and providers ({:.2}ms)", phase_start.elapsed().as_secs_f64() * 1000.0);
+    info!(
+        "AppContext initialized with all stores, managers, registries, and providers ({:.2}ms)",
+        phase_start.elapsed().as_secs_f64() * 1000.0
+    );
 
     // Restore manifest cache from RocksDB (Phase 4, US6, T092-T094)
     let phase_start = std::time::Instant::now();
@@ -66,23 +78,36 @@ pub async fn bootstrap(config: &ServerConfig) -> Result<(ApplicationComponents, 
     match manifest_cache.restore_from_rocksdb() {
         Ok(()) => {
             let count = manifest_cache.count().unwrap_or(0);
-            info!("Manifest cache restored from RocksDB: {} entries ({:.2}ms)", count, phase_start.elapsed().as_secs_f64() * 1000.0);
+            info!(
+                "Manifest cache restored from RocksDB: {} entries ({:.2}ms)",
+                count,
+                phase_start.elapsed().as_secs_f64() * 1000.0
+            );
         }
         Err(e) => {
-            warn!("Failed to restore manifest cache from RocksDB: {}. Starting with empty cache.", e);
+            warn!(
+                "Failed to restore manifest cache from RocksDB: {}. Starting with empty cache.",
+                e
+            );
         }
     }
 
     // Initialize system tables and verify schema version (Phase 10 Phase 7, T075-T079)
     let phase_start = std::time::Instant::now();
     kalamdb_system::initialize_system_tables(backend.clone()).await?;
-    info!("System tables initialized with schema version tracking ({:.2}ms)", phase_start.elapsed().as_secs_f64() * 1000.0);
+    info!(
+        "System tables initialized with schema version tracking ({:.2}ms)",
+        phase_start.elapsed().as_secs_f64() * 1000.0
+    );
 
     // Start JobsManager run loop (Phase 9, T163)
     let job_manager = app_context.job_manager();
     let max_concurrent = config.jobs.max_concurrent;
     tokio::spawn(async move {
-        info!("Starting JobsManager run loop with max {} concurrent jobs", max_concurrent);
+        info!(
+            "Starting JobsManager run loop with max {} concurrent jobs",
+            max_concurrent
+        );
         if let Err(e) = job_manager.run_loop(max_concurrent as usize).await {
             log::error!("JobsManager run loop failed: {}", e);
         }
@@ -94,7 +119,7 @@ pub async fn bootstrap(config: &ServerConfig) -> Result<(ApplicationComponents, 
     let storages_provider = app_context.system_tables().storages();
     let existing_storages = storages_provider.scan_all_storages()?;
     let storage_count = existing_storages.num_rows();
-    
+
     //TODO: Extract as a separate function create_default_storage_if_needed
     if storage_count == 0 {
         info!("No storages found, creating default 'local' storage");
@@ -116,18 +141,22 @@ pub async fn bootstrap(config: &ServerConfig) -> Result<(ApplicationComponents, 
     } else {
         info!("Found {} existing storage(s)", storage_count);
     }
-    info!("Storage initialization completed ({:.2}ms)", phase_start.elapsed().as_secs_f64() * 1000.0);
+    info!(
+        "Storage initialization completed ({:.2}ms)",
+        phase_start.elapsed().as_secs_f64() * 1000.0
+    );
 
     // Get references from AppContext for services that need them
     let live_query_manager = app_context.live_query_manager();
     let session_factory = app_context.session_factory();
     // session_factory obtained above
-    
+
     // Get system table providers for job executor and flush scheduler
     let users_provider = app_context.system_tables().users();
-    let user_repo: Arc<dyn kalamdb_auth::UserRepository> =
-        Arc::new(kalamdb_api::repositories::CoreUsersRepo::new(users_provider));
-    
+    let user_repo: Arc<dyn kalamdb_auth::UserRepository> = Arc::new(
+        kalamdb_api::repositories::CoreUsersRepo::new(users_provider),
+    );
+
     // SqlExecutor now uses AppContext directly
     let phase_start = std::time::Instant::now();
     let sql_executor = Arc::new(SqlExecutor::new(
@@ -140,7 +169,10 @@ pub async fn bootstrap(config: &ServerConfig) -> Result<(ApplicationComponents, 
     );
 
     sql_executor.load_existing_tables().await?;
-    info!("Existing tables loaded and registered with DataFusion ({:.2}ms)", phase_start.elapsed().as_secs_f64() * 1000.0);
+    info!(
+        "Existing tables loaded and registered with DataFusion ({:.2}ms)",
+        phase_start.elapsed().as_secs_f64() * 1000.0
+    );
 
     // JWT authentication
     use jsonwebtoken::Algorithm;
@@ -168,7 +200,7 @@ pub async fn bootstrap(config: &ServerConfig) -> Result<(ApplicationComponents, 
     // JobsManager periodically checks for STREAM tables with TTL and creates eviction jobs
     // Crash recovery handled by JobsManager.recover_incomplete_jobs() in run_loop
     // Flush scheduling via FLUSH TABLE/FLUSH ALL TABLES commands
-    
+
     info!("Job management delegated to JobsManager (already running in background, handles stream eviction)");
 
     // Get users provider for system user initialization
@@ -180,7 +212,10 @@ pub async fn bootstrap(config: &ServerConfig) -> Result<(ApplicationComponents, 
 
     // Security warning: Check if remote access is enabled with empty root password
     check_remote_access_security(config, users_provider_for_init).await?;
-    info!("User initialization completed ({:.2}ms)", phase_start.elapsed().as_secs_f64() * 1000.0);
+    info!(
+        "User initialization completed ({:.2}ms)",
+        phase_start.elapsed().as_secs_f64() * 1000.0
+    );
 
     let components = ApplicationComponents {
         session_factory,
@@ -191,14 +226,17 @@ pub async fn bootstrap(config: &ServerConfig) -> Result<(ApplicationComponents, 
         user_repo,
     };
 
-    info!("🚀 Server bootstrap completed in {:.2}ms", bootstrap_start.elapsed().as_secs_f64() * 1000.0);
+    info!(
+        "🚀 Server bootstrap completed in {:.2}ms",
+        bootstrap_start.elapsed().as_secs_f64() * 1000.0
+    );
 
     Ok((components, app_context))
 }
 
 /// Start the HTTP server and manage graceful shutdown.
 pub async fn run(
-    config: &ServerConfig, 
+    config: &ServerConfig,
     components: ApplicationComponents,
     app_context: Arc<kalamdb_core::app_context::AppContext>,
 ) -> Result<()> {
@@ -228,7 +266,7 @@ pub async fn run(
             .app_data(web::Data::new(jwt_auth.clone()))
             .app_data(web::Data::new(rate_limiter.clone()))
             .app_data(web::Data::new(live_query_manager.clone()))
-        .app_data(web::Data::new(user_repo.clone()))
+            .app_data(web::Data::new(user_repo.clone()))
             .configure(routes::configure)
     })
     .bind(&bind_addr)?
@@ -260,18 +298,18 @@ pub async fn run(
 
             // Signal shutdown to JobsManager
             job_manager_shutdown.shutdown().await;
-            
+
             // Wait for active jobs with timeout
             let timeout = std::time::Duration::from_secs(shutdown_timeout_secs as u64);
             let start = std::time::Instant::now();
-            
+
             loop {
                 // Check for Running jobs
                 let filter = kalamdb_commons::system::JobFilter {
                     status: Some(kalamdb_commons::JobStatus::Running),
                     ..Default::default()
                 };
-                
+
                 match job_manager_shutdown.list_jobs(filter).await {
                     Ok(jobs) if jobs.is_empty() => {
                         info!("All jobs completed successfully");
@@ -390,7 +428,9 @@ async fn check_remote_access_security(
 
     // Check if root user exists and has empty password
     // Always show this info if root has no password, regardless of allow_remote_access setting
-    if let Ok(Some(user)) = users_provider.get_user_by_username(AuthConstants::DEFAULT_SYSTEM_USERNAME) {
+    if let Ok(Some(user)) =
+        users_provider.get_user_by_username(AuthConstants::DEFAULT_SYSTEM_USERNAME)
+    {
         if user.password_hash.is_empty() {
             // Root user has no password - this is secure for localhost-only but warn about limitations
             warn!("╔═══════════════════════════════════════════════════════════════════╗");

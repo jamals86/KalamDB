@@ -1,23 +1,22 @@
 //! AppContext singleton for KalamDB (Phase 5, T204)
-//! 
+//!
 //! Provides global access to all core resources with simplified 3-parameter initialization.
 //! Uses constants from kalamdb_commons for table prefixes.
 
-use crate::schema_registry::SchemaRegistry;
 use crate::jobs::executors::{
-    BackupExecutor, CleanupExecutor, CompactExecutor, FlushExecutor,
-    JobRegistry, RestoreExecutor, RetentionExecutor, StreamEvictionExecutor,
-    UserCleanupExecutor,
+    BackupExecutor, CleanupExecutor, CompactExecutor, FlushExecutor, JobRegistry, RestoreExecutor,
+    RetentionExecutor, StreamEvictionExecutor, UserCleanupExecutor,
 };
 use crate::live_query::LiveQueryManager;
+use crate::schema_registry::SchemaRegistry;
 use crate::sql::datafusion_session::DataFusionSessionFactory;
 use crate::storage::storage_registry::StorageRegistry;
-use kalamdb_system::SystemTablesRegistry;
-use kalamdb_tables::{SharedTableStore, StreamTableStore, UserTableStore};
 use datafusion::catalog::SchemaProvider;
 use datafusion::prelude::SessionContext;
-use kalamdb_commons::{NodeId, ServerConfig, constants::ColumnFamilyNames};
+use kalamdb_commons::{constants::ColumnFamilyNames, NodeId, ServerConfig};
 use kalamdb_store::StorageBackend;
+use kalamdb_system::SystemTablesRegistry;
+use kalamdb_tables::{SharedTableStore, StreamTableStore, UserTableStore};
 use std::sync::{Arc, OnceLock};
 
 static APP_CONTEXT: OnceLock<Arc<AppContext>> = OnceLock::new();
@@ -41,38 +40,38 @@ pub struct AppContext {
 
     // ===== Caches =====
     schema_registry: Arc<SchemaRegistry>,
-    
+
     // ===== Stores =====
     user_table_store: Arc<UserTableStore>,
     shared_table_store: Arc<SharedTableStore>,
     stream_table_store: Arc<StreamTableStore>,
-    
+
     // ===== Core Infrastructure =====
     storage_backend: Arc<dyn StorageBackend>,
-    
+
     // ===== Managers =====
     job_manager: Arc<crate::jobs::JobsManager>,
     live_query_manager: Arc<LiveQueryManager>,
-    
+
     // ===== Registries =====
     storage_registry: Arc<StorageRegistry>,
-    
+
     // ===== DataFusion Session Management =====
     session_factory: Arc<DataFusionSessionFactory>,
     base_session_context: Arc<SessionContext>,
-    
+
     // ===== System Tables Registry =====
     system_tables: Arc<SystemTablesRegistry>,
-    
+
     // ===== System Columns Service =====
     system_columns_service: Arc<crate::system_columns::SystemColumnsService>,
-    
+
     // ===== Slow Query Logger =====
     slow_query_logger: Arc<crate::slow_query_logger::SlowQueryLogger>,
-    
+
     // ===== Manifest Cache Service (Phase 4, US6) =====
     manifest_cache_service: Arc<crate::manifest::ManifestCacheService>,
-    
+
     // ===== Manifest Service (Phase 5, US2, T107-T113) =====
     manifest_service: Arc<crate::manifest::ManifestService>,
 }
@@ -155,9 +154,7 @@ impl AppContext {
                 ));
 
                 // Create system table providers registry FIRST (needed by StorageRegistry and information_schema)
-                let system_tables = Arc::new(SystemTablesRegistry::new(
-                    storage_backend.clone(),
-                ));
+                let system_tables = Arc::new(SystemTablesRegistry::new(storage_backend.clone()));
 
                 // Create storage registry (uses StoragesTableProvider from system_tables)
                 let storage_registry = Arc::new(StorageRegistry::new(
@@ -169,15 +166,18 @@ impl AppContext {
                 let schema_registry = Arc::new(SchemaRegistry::new(10000));
 
                 // Register all system tables in DataFusion
-                let session_factory = Arc::new(DataFusionSessionFactory::new()
-                    .expect("Failed to create DataFusion session factory"));
+                let session_factory = Arc::new(
+                    DataFusionSessionFactory::new()
+                        .expect("Failed to create DataFusion session factory"),
+                );
                 let base_session_context = Arc::new(session_factory.create_session());
 
                 // Wire up SchemaRegistry with base_session_context for automatic table registration
                 schema_registry.set_base_session_context(Arc::clone(&base_session_context));
 
                 // Register system schema
-                let system_schema = Arc::new(datafusion::catalog::memory::MemorySchemaProvider::new());
+                let system_schema =
+                    Arc::new(datafusion::catalog::memory::MemorySchemaProvider::new());
                 let catalog_name = base_session_context
                     .catalog_names()
                     .first()
@@ -186,12 +186,12 @@ impl AppContext {
                 let catalog = base_session_context
                     .catalog(&catalog_name)
                     .expect("Failed to get catalog");
-                
+
                 // Register the system schema with the catalog
                 catalog
                     .register_schema("system", system_schema.clone())
                     .expect("Failed to register system schema");
-                
+
                 // Register all system tables in the system schema
                 for (table_name, provider) in system_tables.all_system_providers() {
                     system_schema
@@ -204,7 +204,8 @@ impl AppContext {
                 system_tables.set_information_schema_dependencies(schema_registry.clone());
 
                 // Register information_schema AFTER set_information_schema_dependencies()
-                let info_schema = Arc::new(datafusion::catalog::memory::MemorySchemaProvider::new());
+                let info_schema =
+                    Arc::new(datafusion::catalog::memory::MemorySchemaProvider::new());
                 base_session_context
                     .catalog(&catalog_name)
                     .expect("Failed to get catalog")
@@ -230,11 +231,9 @@ impl AppContext {
 
                 // Create unified job manager (Phase 9, T154)
                 let jobs_provider = system_tables.jobs();
-                let job_manager = Arc::new(crate::jobs::JobsManager::new(
-                    jobs_provider,
-                    job_registry,
-                ));
-                
+                let job_manager =
+                    Arc::new(crate::jobs::JobsManager::new(jobs_provider, job_registry));
+
                 let live_query_manager = Arc::new(LiveQueryManager::new(
                     system_tables.live_queries(),
                     schema_registry.clone(),
@@ -252,14 +251,15 @@ impl AppContext {
                 // Create system columns service (Phase 12, US5, T027)
                 // Extract worker_id from node_id for Snowflake ID generation
                 let worker_id = Self::extract_worker_id(&node_id);
-                let system_columns_service = Arc::new(crate::system_columns::SystemColumnsService::new(worker_id));
+                let system_columns_service =
+                    Arc::new(crate::system_columns::SystemColumnsService::new(worker_id));
 
                 // Create manifest cache service (Phase 4, US6, T074-T080)
                 let manifest_cache_service = Arc::new(crate::manifest::ManifestCacheService::new(
                     storage_backend.clone(),
                     config.manifest_cache.clone(),
                 ));
-                
+
                 // Create manifest service (Phase 5, US2, T107-T113)
                 let base_storage_path = config.storage.default_storage_path.clone();
                 let manifest_service = Arc::new(crate::manifest::ManifestService::new(
@@ -300,13 +300,13 @@ impl AppContext {
     /// Maps node_id string to 10-bit integer (0-1023) using CRC32 hash.
     /// This ensures consistent worker_id across server restarts.
     fn extract_worker_id(node_id: &NodeId) -> u16 {
-        use std::hash::{Hash, Hasher};
         use std::collections::hash_map::DefaultHasher;
-        
+        use std::hash::{Hash, Hasher};
+
         let mut hasher = DefaultHasher::new();
         node_id.as_str().hash(&mut hasher);
         let hash = hasher.finish();
-        
+
         // Map to 10-bit range (0-1023)
         (hash % 1024) as u16
     }
@@ -331,10 +331,10 @@ impl AppContext {
     #[cfg(test)]
     pub fn new_test() -> Self {
         use kalamdb_store::test_utils::InMemoryBackend;
-        
+
         // Create minimal in-memory backend for tests
         let storage_backend: Arc<dyn StorageBackend> = Arc::new(InMemoryBackend::new());
-        
+
         // Create stores
         let user_table_store = Arc::new(UserTableStore::new(
             storage_backend.clone(),
@@ -362,17 +362,15 @@ impl AppContext {
         let schema_registry = Arc::new(SchemaRegistry::new(100));
 
         // Create DataFusion session
-        let session_factory = Arc::new(DataFusionSessionFactory::new()
-            .expect("Failed to create test session factory"));
+        let session_factory = Arc::new(
+            DataFusionSessionFactory::new().expect("Failed to create test session factory"),
+        );
         let base_session_context = Arc::new(session_factory.create_session());
 
         // Create minimal job manager
         let job_registry = Arc::new(JobRegistry::new());
         let jobs_provider = system_tables.jobs();
-        let job_manager = Arc::new(crate::jobs::JobsManager::new(
-            jobs_provider,
-            job_registry,
-        ));
+        let job_manager = Arc::new(crate::jobs::JobsManager::new(jobs_provider, job_registry));
 
         // Create test NodeId
         let node_id = Arc::new(NodeId::new("test-node".to_string()));
@@ -399,7 +397,7 @@ impl AppContext {
             storage_backend.clone(),
             config.manifest_cache.clone(),
         ));
-        
+
         // Create manifest service for tests
         let manifest_service = Arc::new(crate::manifest::ManifestService::new(
             storage_backend.clone(),
@@ -466,9 +464,7 @@ impl AppContext {
         ));
 
         // Create system table providers registry
-        let system_tables = Arc::new(SystemTablesRegistry::new(
-            storage_backend.clone(),
-        ));
+        let system_tables = Arc::new(SystemTablesRegistry::new(storage_backend.clone()));
 
         // Create storage registry
         let storage_registry = Arc::new(StorageRegistry::new(
@@ -480,8 +476,9 @@ impl AppContext {
         let schema_registry = Arc::new(SchemaRegistry::new(10000));
 
         // Register all system tables in DataFusion
-        let session_factory = Arc::new(DataFusionSessionFactory::new()
-            .expect("Failed to create DataFusion session factory"));
+        let session_factory = Arc::new(
+            DataFusionSessionFactory::new().expect("Failed to create DataFusion session factory"),
+        );
         let base_session_context = Arc::new(session_factory.create_session());
 
         // Wire up SchemaRegistry with base_session_context
@@ -537,10 +534,7 @@ impl AppContext {
 
         // Create unified job manager
         let jobs_provider = system_tables.jobs();
-        let job_manager = Arc::new(crate::jobs::JobsManager::new(
-            jobs_provider,
-            job_registry,
-        ));
+        let job_manager = Arc::new(crate::jobs::JobsManager::new(jobs_provider, job_registry));
 
         // Create live query manager
         let live_query_manager = Arc::new(LiveQueryManager::new(
@@ -559,14 +553,15 @@ impl AppContext {
 
         // Create system columns service
         let worker_id = Self::extract_worker_id(&node_id);
-        let system_columns_service = Arc::new(crate::system_columns::SystemColumnsService::new(worker_id));
+        let system_columns_service =
+            Arc::new(crate::system_columns::SystemColumnsService::new(worker_id));
 
         // Create manifest cache service
         let manifest_cache_service = Arc::new(crate::manifest::ManifestCacheService::new(
             storage_backend.clone(),
             config.manifest_cache.clone(),
         ));
-        
+
         // Create manifest service
         let manifest_service = Arc::new(crate::manifest::ManifestService::new(
             storage_backend.clone(),
@@ -604,7 +599,10 @@ impl AppContext {
     /// # Panics
     /// Panics if AppContext::init() has not been called yet
     pub fn get() -> Arc<AppContext> {
-        APP_CONTEXT.get().expect("AppContext not initialized").clone()
+        APP_CONTEXT
+            .get()
+            .expect("AppContext not initialized")
+            .clone()
     }
 
     /// Try to get the AppContext singleton without panicking
@@ -613,7 +611,7 @@ impl AppContext {
     }
 
     // ===== Getters =====
-    
+
     /// Get the server configuration
     ///
     /// Returns an Arc reference for zero-copy sharing. This config is loaded
@@ -621,35 +619,35 @@ impl AppContext {
     pub fn config(&self) -> &Arc<ServerConfig> {
         &self.config
     }
-    
+
     pub fn schema_registry(&self) -> Arc<SchemaRegistry> {
         self.schema_registry.clone()
     }
-    
+
     pub fn user_table_store(&self) -> Arc<UserTableStore> {
         self.user_table_store.clone()
     }
-    
+
     pub fn shared_table_store(&self) -> Arc<SharedTableStore> {
         self.shared_table_store.clone()
     }
-    
+
     pub fn stream_table_store(&self) -> Arc<StreamTableStore> {
         self.stream_table_store.clone()
     }
-    
+
     pub fn storage_backend(&self) -> Arc<dyn StorageBackend> {
         self.storage_backend.clone()
     }
-    
+
     pub fn job_manager(&self) -> Arc<crate::jobs::JobsManager> {
         self.job_manager.clone()
     }
-    
+
     pub fn live_query_manager(&self) -> Arc<LiveQueryManager> {
         self.live_query_manager.clone()
     }
-    
+
     /// Get the NodeId loaded from config.toml (Phase 10, US0, FR-000)
     ///
     /// Returns an Arc reference for zero-copy sharing. This NodeId is allocated
@@ -657,23 +655,23 @@ impl AppContext {
     pub fn node_id(&self) -> &Arc<NodeId> {
         &self.node_id
     }
-    
+
     pub fn storage_registry(&self) -> Arc<StorageRegistry> {
         self.storage_registry.clone()
     }
-    
+
     pub fn session_factory(&self) -> Arc<DataFusionSessionFactory> {
         self.session_factory.clone()
     }
-    
+
     pub fn base_session_context(&self) -> Arc<SessionContext> {
         self.base_session_context.clone()
     }
-    
+
     pub fn system_tables(&self) -> Arc<SystemTablesRegistry> {
         self.system_tables.clone()
     }
-    
+
     /// Get the system columns service (Phase 12, US5, T027)
     ///
     /// Returns an Arc reference to the SystemColumnsService that manages
@@ -681,7 +679,7 @@ impl AppContext {
     pub fn system_columns_service(&self) -> Arc<crate::system_columns::SystemColumnsService> {
         self.system_columns_service.clone()
     }
-    
+
     /// Get the slow query logger
     ///
     /// Returns an Arc reference to the lightweight slow query logger that writes
@@ -689,7 +687,7 @@ impl AppContext {
     pub fn slow_query_logger(&self) -> Arc<crate::slow_query_logger::SlowQueryLogger> {
         self.slow_query_logger.clone()
     }
-    
+
     /// Get the manifest cache service (Phase 4, US6, T074-T080)
     ///
     /// Returns an Arc reference to the ManifestCacheService that provides
@@ -697,7 +695,7 @@ impl AppContext {
     pub fn manifest_cache_service(&self) -> Arc<crate::manifest::ManifestCacheService> {
         self.manifest_cache_service.clone()
     }
-    
+
     /// Get the manifest service (Phase 5, US2, T107-T113)
     ///
     /// Returns an Arc reference to the ManifestService that provides
@@ -705,22 +703,31 @@ impl AppContext {
     pub fn manifest_service(&self) -> Arc<crate::manifest::ManifestService> {
         self.manifest_service.clone()
     }
-    
+
     // ===== Convenience methods for backward compatibility =====
-    
+
     /// Insert a job into the jobs table
-    /// 
+    ///
     /// Convenience wrapper for system_tables().jobs().create_job()
-    pub fn insert_job(&self, job: &kalamdb_commons::system::Job) -> Result<(), crate::error::KalamDbError> {
-        self.system_tables.jobs().create_job(job.clone())
+    pub fn insert_job(
+        &self,
+        job: &kalamdb_commons::system::Job,
+    ) -> Result<(), crate::error::KalamDbError> {
+        self.system_tables
+            .jobs()
+            .create_job(job.clone())
             .map_err(|e| crate::error::KalamDbError::Other(format!("Failed to insert job: {}", e)))
     }
-    
+
     /// Scan all jobs from the jobs table
     ///
     /// Convenience wrapper for system_tables().jobs().list_jobs()
-    pub fn scan_all_jobs(&self) -> Result<Vec<kalamdb_commons::system::Job>, crate::error::KalamDbError> {
-        self.system_tables.jobs().list_jobs()
+    pub fn scan_all_jobs(
+        &self,
+    ) -> Result<Vec<kalamdb_commons::system::Job>, crate::error::KalamDbError> {
+        self.system_tables
+            .jobs()
+            .list_jobs()
             .map_err(|e| crate::error::KalamDbError::Other(format!("Failed to scan jobs: {}", e)))
     }
 }

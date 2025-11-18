@@ -3,9 +3,9 @@
 //! Provides centralized access to storage configurations and path template validation.
 
 use crate::error::KalamDbError;
-use kalamdb_system::StoragesTableProvider;
 use kalamdb_commons::models::StorageId;
 use kalamdb_commons::system::Storage;
+use kalamdb_system::StoragesTableProvider;
 use std::sync::Arc;
 
 /// Registry for managing storage backends
@@ -23,7 +23,10 @@ pub struct StorageRegistry {
 
 impl StorageRegistry {
     /// Create a new StorageRegistry
-    pub fn new(storages_provider: Arc<StoragesTableProvider>, default_storage_path: String) -> Self {
+    pub fn new(
+        storages_provider: Arc<StoragesTableProvider>,
+        default_storage_path: String,
+    ) -> Self {
         use std::path::{Path, PathBuf};
         // Normalize default path: if relative, resolve against current working directory
         let normalized = if Path::new(&default_storage_path).is_absolute() {
@@ -50,7 +53,10 @@ impl StorageRegistry {
     /// * `Ok(Some(Storage))` - Storage found
     /// * `Ok(None)` - Storage not found
     /// * `Err` - Database error
-    pub fn get_storage_by_id(&self, storage_id: &StorageId) -> Result<Option<Storage>, KalamDbError> {
+    pub fn get_storage_by_id(
+        &self,
+        storage_id: &StorageId,
+    ) -> Result<Option<Storage>, KalamDbError> {
         self.storages_provider
             .get_storage(storage_id)
             .map_err(|e| KalamDbError::Other(format!("Failed to get storage: {}", e)))
@@ -352,9 +358,10 @@ mod tests {
 
         let backend: Arc<dyn kalamdb_store::StorageBackend> =
             Arc::new(kalamdb_store::RocksDBBackend::new(db.clone()));
-        
+
         // Create StoragesTableProvider for tests
-        let storages_provider = Arc::new(kalamdb_system::providers::storages::StoragesTableProvider::new(backend));
+        let storages_provider =
+            Arc::new(kalamdb_system::providers::storages::StoragesTableProvider::new(backend));
 
         // Use a temp storage base under the temp dir for tests
         let default_storage_path = db_path

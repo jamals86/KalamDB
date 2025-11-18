@@ -4,19 +4,23 @@ use crate::app_context::AppContext;
 use crate::error::KalamDbError;
 use crate::sql::executor::handlers::typed::TypedStatementHandler;
 use crate::sql::executor::models::{ExecutionContext, ExecutionResult, ScalarValue};
+use kalamdb_commons::types::User;
+use kalamdb_commons::{AuthType, UserId};
 use kalamdb_sql::ddl::CreateUserStatement;
 use std::sync::Arc;
-use kalamdb_commons::{UserId, AuthType};
-use kalamdb_commons::types::User;
 
 /// Handler for CREATE USER
 pub struct CreateUserHandler {
     app_context: Arc<AppContext>,
+    enforce_complexity: bool,
 }
 
 impl CreateUserHandler {
-    pub fn new(app_context: Arc<AppContext>) -> Self {
-        Self { app_context }
+    pub fn new(app_context: Arc<AppContext>, enforce_complexity: bool) -> Self {
+        Self {
+            app_context,
+            enforce_complexity,
+        }
     }
 }
 
@@ -41,8 +45,19 @@ impl TypedStatementHandler<CreateUserStatement> for CreateUserHandler {
         // Hash password if auth_type = Password
         let password_hash = match statement.auth_type {
             AuthType::Password => {
-                let raw = statement.password.clone().ok_or_else(|| KalamDbError::InvalidOperation("Password required for WITH PASSWORD".to_string()))?;
-                bcrypt::hash(raw, bcrypt::DEFAULT_COST).map_err(|e| KalamDbError::Other(format!("Password hash error: {}", e)))?
+                let raw = statement.password.clone().ok_or_else(|| {
+                    KalamDbError::InvalidOperation(
+                        "Password required for WITH PASSWORD".to_string(),
+                    )
+                })?;
+                // Enforce password complexity if enabled in config
+                if self.enforce_complexity
+                    || self.app_context.config().auth.enforce_password_complexity
+                {
+                    validate_password_complexity(&raw)?;
+                }
+                bcrypt::hash(raw, bcrypt::DEFAULT_COST)
+                    .map_err(|e| KalamDbError::Other(format!("Password hash error: {}", e)))?
             }
             _ => "".to_string(),
         };
@@ -66,7 +81,9 @@ impl TypedStatementHandler<CreateUserStatement> for CreateUserHandler {
 
         users.create_user(user)?;
 
-        Ok(ExecutionResult::Success { message: format!("User '{}' created", statement.username) })
+        Ok(ExecutionResult::Success {
+            message: format!("User '{}' created", statement.username),
+        })
     }
 
     async fn check_authorization(
@@ -81,4 +98,34 @@ impl TypedStatementHandler<CreateUserStatement> for CreateUserHandler {
         }
         Ok(())
     }
+}
+
+/// Validate password complexity according to policy
+/// Requires at least one uppercase, one lowercase, one digit, and one special character
+fn validate_password_complexity(pw: &str) -> Result<(), KalamDbError> {
+    let has_upper = pw.chars().any(|c| c.is_ascii_uppercase());
+    if !has_upper {
+        return Err(KalamDbError::InvalidOperation(
+            "Password must include at least one uppercase letter".to_string(),
+        ));
+    }
+    let has_lower = pw.chars().any(|c| c.is_ascii_lowercase());
+    if !has_lower {
+        return Err(KalamDbError::InvalidOperation(
+            "Password must include at least one lowercase letter".to_string(),
+        ));
+    }
+    let has_digit = pw.chars().any(|c| c.is_ascii_digit());
+    if !has_digit {
+        return Err(KalamDbError::InvalidOperation(
+            "Password must include at least one digit".to_string(),
+        ));
+    }
+    let has_special = pw.chars().any(|c| !c.is_ascii_alphanumeric());
+    if !has_special {
+        return Err(KalamDbError::InvalidOperation(
+            "Password must include at least one special character".to_string(),
+        ));
+    }
+    Ok(())
 }

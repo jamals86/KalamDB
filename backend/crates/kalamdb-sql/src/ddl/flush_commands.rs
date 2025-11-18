@@ -199,10 +199,7 @@ impl FlushAllTablesStatement {
     }
 
     /// Parse and fall back to the default namespace when no `IN` clause is provided.
-    pub fn parse_with_default(
-        sql: &str,
-        default_namespace: &NamespaceId,
-    ) -> Result<Self, String> {
+    pub fn parse_with_default(sql: &str, default_namespace: &NamespaceId) -> Result<Self, String> {
         match Self::parse(sql) {
             Ok(stmt) => Ok(stmt),
             Err(err) if err == ERR_EXPECTED_NAMESPACE => {

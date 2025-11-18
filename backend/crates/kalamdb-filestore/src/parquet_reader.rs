@@ -16,13 +16,12 @@ impl ParquetReader {
     }
 
     /// Read RecordBatches from a Parquet file
-    pub fn read_batches(
-        &self,
-        _file_path: &Path,
-    ) -> Result<Vec<RecordBatch>> {
+    pub fn read_batches(&self, _file_path: &Path) -> Result<Vec<RecordBatch>> {
         // TODO: Implement actual Parquet reading
         // This will be moved from kalamdb-core or kalamdb-store
-        log::warn!("ParquetReader::read_batches not yet implemented - needs migration from kalamdb-core");
+        log::warn!(
+            "ParquetReader::read_batches not yet implemented - needs migration from kalamdb-core"
+        );
         Err(FilestoreError::Other("Not yet implemented".to_string()))
     }
 }

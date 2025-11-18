@@ -9,8 +9,8 @@
 #[path = "../../common/mod.rs"]
 mod common;
 
+use common::flush_helpers::{check_user_parquet_files, execute_flush_synchronously};
 use common::{fixtures, TestServer};
-use common::flush_helpers::{execute_flush_synchronously, check_user_parquet_files};
 use std::path::Path;
 
 #[actix_web::test]
@@ -31,14 +31,18 @@ async fn test_drop_user_table_deletes_partitions_and_parquet() {
     // Create user table
     let create_sql = format!(
         r#"CREATE USER TABLE {}.{} (
-            id TEXT,
+            id TEXT PRIMARY KEY,
             content TEXT,
             priority INT
         ) STORAGE local"#,
         namespace, table
     );
     let resp = server.execute_sql_as_user(&create_sql, user1).await;
-    assert_eq!(resp.status, "success", "CREATE USER TABLE failed: {:?}", resp.error);
+    assert_eq!(
+        resp.status, "success",
+        "CREATE USER TABLE failed: {:?}",
+        resp.error
+    );
 
     // Insert data for two users
     let ins1 = server
@@ -68,7 +72,10 @@ async fn test_drop_user_table_deletes_partitions_and_parquet() {
         .await
         .expect("Flush failed");
     // Sanity check: at least some rows were flushed
-    assert!(flush_res.rows_flushed > 0, "Expected at least 1 row flushed");
+    assert!(
+        flush_res.rows_flushed > 0,
+        "Expected at least 1 row flushed"
+    );
 
     // Verify Parquet files exist for both users before DROP
     let files_user1 = check_user_parquet_files(&server, namespace, table, user1);
@@ -100,7 +107,11 @@ async fn test_drop_user_table_deletes_partitions_and_parquet() {
     let drop_resp = server
         .execute_sql_as_user(&format!("DROP TABLE {}.{}", namespace, table), "system")
         .await;
-    assert_eq!(drop_resp.status, "success", "DROP TABLE failed: {:?}", drop_resp.error);
+    assert_eq!(
+        drop_resp.status, "success",
+        "DROP TABLE failed: {:?}",
+        drop_resp.error
+    );
 
     // Verify table metadata removed
     assert!(

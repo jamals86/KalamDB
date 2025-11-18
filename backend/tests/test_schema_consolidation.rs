@@ -27,9 +27,8 @@ async fn test_schema_store_persistence() {
 
     // Register system tables - this populates the schema store
     let system_schema = Arc::new(datafusion::catalog::memory::MemorySchemaProvider::new());
-    let (_jobs_provider, schema_store) =
-        register_system_tables(&system_schema, backend.clone())
-            .expect("Failed to register system tables");
+    let (_jobs_provider, schema_store) = register_system_tables(&system_schema, backend.clone())
+        .expect("Failed to register system tables");
 
     // Verify all 7 system table schemas are persisted
     let system_namespace = NamespaceId::from("system");
@@ -71,8 +70,8 @@ async fn test_schema_store_persistence() {
 
 #[tokio::test]
 async fn test_schema_cache_basic_operations() {
-    use kalamdb_registry::TableSchemaStore;
     use kalamdb_core::schema_registry::SchemaRegistry;
+    use kalamdb_registry::TableSchemaStore;
 
     let temp_dir = TempDir::new().expect("Failed to create temp dir");
     let db = Arc::new(
@@ -82,9 +81,8 @@ async fn test_schema_cache_basic_operations() {
 
     // Register system tables to get populated schema store
     let system_schema = Arc::new(datafusion::catalog::memory::MemorySchemaProvider::new());
-    let (_jobs_provider, schema_store) =
-        register_system_tables(&system_schema, backend.clone())
-            .expect("Failed to register system tables");
+    let (_jobs_provider, schema_store) = register_system_tables(&system_schema, backend.clone())
+        .expect("Failed to register system tables");
 
     let system_namespace = NamespaceId::from("system");
     let users_table_id = TableId::new(system_namespace, TableName::from("users"));
@@ -128,9 +126,8 @@ async fn test_schema_versioning() {
 
     // Register system tables
     let system_schema = Arc::new(datafusion::catalog::memory::MemorySchemaProvider::new());
-    let (_jobs_provider, schema_store) =
-        register_system_tables(&system_schema, backend.clone())
-            .expect("Failed to register system tables");
+    let (_jobs_provider, schema_store) = register_system_tables(&system_schema, backend.clone())
+        .expect("Failed to register system tables");
 
     let system_namespace = NamespaceId::from("system");
     let users_table_id = TableId::new(system_namespace, TableName::from("users"));
@@ -174,9 +171,8 @@ async fn test_all_system_tables_have_schemas() {
 
     // Register system tables
     let system_schema = Arc::new(datafusion::catalog::memory::MemorySchemaProvider::new());
-    let (_jobs_provider, schema_store) =
-        register_system_tables(&system_schema, backend.clone())
-            .expect("Failed to register system tables");
+    let (_jobs_provider, schema_store) = register_system_tables(&system_schema, backend.clone())
+        .expect("Failed to register system tables");
 
     let system_namespace = NamespaceId::from("system");
 
@@ -242,9 +238,8 @@ async fn test_internal_api_schema_matches_describe_table() {
 
     // Register system tables
     let system_schema = Arc::new(datafusion::catalog::memory::MemorySchemaProvider::new());
-    let (_jobs_provider, schema_store) =
-        register_system_tables(&system_schema, backend.clone())
-            .expect("Failed to register system tables");
+    let (_jobs_provider, schema_store) = register_system_tables(&system_schema, backend.clone())
+        .expect("Failed to register system tables");
 
     let system_namespace = NamespaceId::from("system");
     let users_table_id = TableId::new(system_namespace.clone(), TableName::from("users"));
@@ -257,8 +252,16 @@ async fn test_internal_api_schema_matches_describe_table() {
 
     // Verify the API schema has expected structure
     assert!(!api_schema.columns.is_empty(), "Schema should have columns");
-    assert_eq!(api_schema.table_name.as_str(), "users", "Table name should be 'users'");
-    assert_eq!(api_schema.namespace_id.as_str(), "system", "Namespace should be 'system'");
+    assert_eq!(
+        api_schema.table_name.as_str(),
+        "users",
+        "Table name should be 'users'"
+    );
+    assert_eq!(
+        api_schema.namespace_id.as_str(),
+        "system",
+        "Namespace should be 'system'"
+    );
 
     // Verify all columns have correct ordinal positions (1-indexed)
     for (idx, column) in api_schema.columns.iter().enumerate() {
@@ -299,9 +302,8 @@ async fn test_cache_invalidation_on_alter_table() {
 
     // Create schema store and cache
     let system_schema = Arc::new(datafusion::catalog::memory::MemorySchemaProvider::new());
-    let (_jobs_provider, schema_store) =
-        register_system_tables(&system_schema, backend.clone())
-            .expect("Failed to register system tables");
+    let (_jobs_provider, schema_store) = register_system_tables(&system_schema, backend.clone())
+        .expect("Failed to register system tables");
 
     let test_namespace = NamespaceId::from("test_ns");
     let test_table_id = TableId::new(test_namespace.clone(), TableName::from("test_table"));
@@ -426,11 +428,7 @@ async fn test_cache_invalidation_on_alter_table() {
         .expect("Failed to get schema again")
         .expect("Schema should exist");
 
-    assert_eq!(
-        cached_again.columns.len(),
-        3,
-        "Cache should have 3 columns"
-    );
+    assert_eq!(cached_again.columns.len(), 3, "Cache should have 3 columns");
 
     println!("✅ Cache invalidation works correctly");
 }

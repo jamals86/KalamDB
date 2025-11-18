@@ -2,8 +2,8 @@
 //!
 //! Represents a database user with authentication and authorization information.
 
-use crate::models::{ids::UserId, AuthType, Role, StorageId, StorageMode};
 use crate::models::user_name::UserName;
+use crate::models::{ids::UserId, AuthType, Role, StorageId, StorageMode};
 use bincode::{Decode, Encode};
 use serde::{Deserialize, Serialize};
 

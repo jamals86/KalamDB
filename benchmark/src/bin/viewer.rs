@@ -1,7 +1,7 @@
 use actix_files::Files;
 use actix_web::{web, App, HttpResponse, HttpServer};
-use std::path::PathBuf;
 use std::fs;
+use std::path::PathBuf;
 use std::sync::Arc;
 
 struct AppState {
@@ -11,7 +11,7 @@ struct AppState {
 async fn list_results(data: web::Data<Arc<AppState>>) -> HttpResponse {
     eprintln!("📥 API Request: /api/results");
     eprintln!("📂 Reading directory: {}", data.results_dir.display());
-    
+
     match fs::read_dir(&data.results_dir) {
         Ok(entries) => {
             let files: Vec<String> = entries
@@ -29,9 +29,9 @@ async fn list_results(data: web::Data<Arc<AppState>>) -> HttpResponse {
                     }
                 })
                 .collect();
-            
+
             eprintln!("📋 Total JSON files found: {}", files.len());
-            
+
             match serde_json::to_string(&files) {
                 Ok(json_str) => {
                     eprintln!("📤 Sending response: {}", json_str);
@@ -56,15 +56,18 @@ async fn list_results(data: web::Data<Arc<AppState>>) -> HttpResponse {
 async fn main() -> std::io::Result<()> {
     let view_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("view");
     let results_dir = view_dir.join("results");
-    
+
     if !view_dir.exists() {
-        eprintln!("❌ Error: View directory does not exist: {}", view_dir.display());
+        eprintln!(
+            "❌ Error: View directory does not exist: {}",
+            view_dir.display()
+        );
         return Err(std::io::Error::new(
             std::io::ErrorKind::NotFound,
-            format!("View directory not found: {}", view_dir.display())
+            format!("View directory not found: {}", view_dir.display()),
         ));
     }
-    
+
     println!("🚀 KalamDB Benchmark Viewer");
     println!("📊 Starting server at http://localhost:3030");
     println!("🌐 Open your browser and navigate to http://localhost:3030");
@@ -73,25 +76,28 @@ async fn main() -> std::io::Result<()> {
     println!();
     println!("Press Ctrl+C to stop");
     println!();
-    
+
     let app_state = Arc::new(AppState {
         results_dir: results_dir.clone(),
     });
-    
+
     let server = HttpServer::new(move || {
         App::new()
             .app_data(web::Data::new(app_state.clone()))
-            .route("/", web::get().to(|| async {
-                HttpResponse::PermanentRedirect()
-                    .insert_header(("Location", "/index.html"))
-                    .finish()
-            }))
+            .route(
+                "/",
+                web::get().to(|| async {
+                    HttpResponse::PermanentRedirect()
+                        .insert_header(("Location", "/index.html"))
+                        .finish()
+                }),
+            )
             .route("/api/results", web::get().to(list_results))
             .service(Files::new("/", view_dir.clone()).index_file("index.html"))
     })
     .bind(("127.0.0.1", 3030))?;
-    
+
     println!("✅ Server bound to 127.0.0.1:3030");
-    
+
     server.run().await
 }

@@ -2,7 +2,7 @@
 
 use serde::{Deserialize, Serialize};
 
-use crate::{StorageId, TableAccess, schemas::policy::FlushPolicy};
+use crate::{schemas::policy::FlushPolicy, StorageId, TableAccess};
 
 /// **Q: How does per-user storage assignment work with use_user_storage option?** → A: Lookup chain: table.use_user_storage=true → check user.storage_mode → if "region" use user.storage_id, if "table" use table.storage_id fallback
 /// - *Impact*: User Story 2, User Story 10 (user management), new storage assignment logic
@@ -129,7 +129,7 @@ impl TableOptions {
     /// Check if caching is enabled (where applicable)
     pub fn is_cache_enabled(&self) -> bool {
         match self {
-            TableOptions::User(_) => false, // User tables don't cache
+            TableOptions::User(_) => false,   // User tables don't cache
             TableOptions::Shared(_) => false, // Shared tables don't cache
             TableOptions::Stream(_) => false, // Stream tables don't cache
             TableOptions::System(opts) => opts.enable_cache,
@@ -181,7 +181,7 @@ impl Default for SharedTableOptions {
             storage_id: StorageId::default(),
             access_level: None,
             flush_policy: None,
-            compression: default_compression()
+            compression: default_compression(),
         }
     }
 }

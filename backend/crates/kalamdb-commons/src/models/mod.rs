@@ -28,37 +28,37 @@
 //! ```
 
 // Submodules organized into logical groups
-pub mod ids;        // Type-safe identifier wrappers
-pub mod datatypes;  // Unified data type system (KalamDataType)
-pub mod schemas;    // Table and column schema definitions
-pub mod types;      // System table models (User, Job, Namespace, etc.)
+pub mod datatypes; // Unified data type system (KalamDataType)
+pub mod ids; // Type-safe identifier wrappers
+pub mod schemas; // Table and column schema definitions
+pub mod types; // System table models (User, Job, Namespace, etc.)
 
 // Standalone type modules (not IDs, not system tables)
 mod audit_log_key;
-mod table_name;
-mod user_name;
-mod storage_type;
+mod auth_type;
 mod job_status;
 mod job_type;
 mod role;
-mod auth_type;
-mod storage_mode;
-mod table_access;
 mod storage_config;
+mod storage_mode;
+mod storage_type;
+mod table_access;
+mod table_name;
+mod user_name;
 
 // Re-export all types from submodules for convenience
-pub use ids::*;
 pub use audit_log_key::AuditLogKey;
-pub use table_name::TableName;
-pub use user_name::UserName;
-pub use storage_type::StorageType;
+pub use auth_type::AuthType;
+pub use ids::*;
 pub use job_status::JobStatus;
 pub use job_type::JobType;
 pub use role::Role;
-pub use auth_type::AuthType;
-pub use storage_mode::StorageMode;
-pub use table_access::TableAccess;
 pub use storage_config::StorageConfig;
+pub use storage_mode::StorageMode;
+pub use storage_type::StorageType;
+pub use table_access::TableAccess;
+pub use table_name::TableName;
+pub use user_name::UserName;
 
 // Legacy compatibility: re-export system types as `system` module
 // This allows existing code using `kalamdb_commons::system::User` to continue working

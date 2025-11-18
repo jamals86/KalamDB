@@ -1,6 +1,9 @@
 //! Live query subscription entity for system.live_queries table.
 
-use crate::models::{ids::{LiveQueryId, NamespaceId, UserId}, TableName};
+use crate::models::{
+    ids::{LiveQueryId, NamespaceId, UserId},
+    TableName,
+};
 use bincode::{Decode, Encode};
 use serde::{Deserialize, Serialize};
 

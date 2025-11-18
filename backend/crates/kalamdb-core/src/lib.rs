@@ -4,17 +4,17 @@
 // including namespace/table management, Arrow schema handling, RocksDB storage,
 // and live query subscriptions.
 
+pub mod app_context;
 pub mod error;
 pub mod jobs;
 pub mod live;
 pub mod manifest;
 pub mod providers;
+pub mod schema_registry;
 pub mod slow_query_logger;
-pub mod app_context;
 pub mod sql;
 pub mod storage;
 pub mod test_helpers;
-pub mod schema_registry;
 
 // Re-export modules that were moved to other crates
 pub mod auth {

@@ -148,10 +148,14 @@ macro_rules! finish_array {
         Arc::new($builder.finish()) as ArrayRef
     };
     ($builder:ident, Timestamp) => {
-        Arc::new(datafusion::arrow::array::TimestampMillisecondArray::from($builder)) as ArrayRef
+        Arc::new(datafusion::arrow::array::TimestampMillisecondArray::from(
+            $builder,
+        )) as ArrayRef
     };
     ($builder:ident, OptionalTimestamp) => {
-        Arc::new(datafusion::arrow::array::TimestampMillisecondArray::from($builder)) as ArrayRef
+        Arc::new(datafusion::arrow::array::TimestampMillisecondArray::from(
+            $builder,
+        )) as ArrayRef
     };
     ($builder:ident, Int64) => {
         Arc::new(datafusion::arrow::array::Int64Array::from($builder)) as ArrayRef

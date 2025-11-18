@@ -85,7 +85,9 @@ pub fn parse_optional_in_clause(sql: &str, command: &str) -> DdlResult<Option<St
         // Support optional "NAMESPACE" keyword: "IN NAMESPACE <ns>"
         // We operate on the original-cased slice to preserve identifier case
         let mut parts_orig = after_in_orig.split_whitespace();
-        let first_token_orig = parts_orig.next().ok_or_else(|| "Namespace name required after IN".to_string())?;
+        let first_token_orig = parts_orig
+            .next()
+            .ok_or_else(|| "Namespace name required after IN".to_string())?;
 
         if first_token_orig.eq_ignore_ascii_case("NAMESPACE") {
             // Expect a namespace name after the NAMESPACE keyword
@@ -355,7 +357,8 @@ mod tests {
         assert_eq!(result.unwrap(), "myapp");
 
         // With IN NAMESPACE clause
-        let result = parse_optional_in_clause("SHOW TABLES IN NAMESPACE myapp", "SHOW TABLES").unwrap();
+        let result =
+            parse_optional_in_clause("SHOW TABLES IN NAMESPACE myapp", "SHOW TABLES").unwrap();
         assert_eq!(result.unwrap(), "myapp");
 
         // Missing namespace after IN

@@ -80,7 +80,9 @@ impl VirtualView for StatsView {
                 Arc::new(values.finish()) as ArrayRef,
             ],
         )
-        .map_err(|e| super::super::error::RegistryError::Other(format!("Failed to build stats batch: {}", e)))
+        .map_err(|e| {
+            super::super::error::RegistryError::Other(format!("Failed to build stats batch: {}", e))
+        })
     }
 
     fn view_name(&self) -> &str {
@@ -122,7 +124,7 @@ mod tests {
         let provider = StatsTableProvider::new(view);
         use datafusion::datasource::TableProvider;
         use datafusion::datasource::TableType;
-        
+
         assert_eq!(provider.table_type(), TableType::View);
         assert_eq!(provider.schema().fields().len(), 2);
     }

@@ -31,19 +31,19 @@
 //! ```
 
 pub mod batch_manager;
+pub mod cleanup;
 pub mod error;
 pub mod parquet_reader;
 pub mod parquet_writer;
 pub mod path_utils;
-pub mod cleanup;
 
 #[cfg(test)]
 mod tests;
 
 // Re-export commonly used types
-pub use error::{FilestoreError, Result};
 pub use batch_manager::BatchManager;
+pub use cleanup::delete_parquet_tree_for_table;
+pub use error::{FilestoreError, Result};
 pub use parquet_reader::ParquetReader;
 pub use parquet_writer::ParquetWriter;
 pub use path_utils::PathUtils;
-pub use cleanup::delete_parquet_tree_for_table;

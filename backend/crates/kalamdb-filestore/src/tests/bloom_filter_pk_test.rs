@@ -22,9 +22,9 @@ fn test_bloom_filter_for_primary_key_column() {
 
     // Schema with PRIMARY KEY column "id" + _seq system column
     let schema = Arc::new(Schema::new(vec![
-        Field::new("id", DataType::Int64, false),      // PRIMARY KEY
-        Field::new("name", DataType::Utf8, true),       // Regular column
-        Field::new("_seq", DataType::Int64, false),     // System column
+        Field::new("id", DataType::Int64, false),   // PRIMARY KEY
+        Field::new("name", DataType::Utf8, true),   // Regular column
+        Field::new("_seq", DataType::Int64, false), // System column
     ]));
 
     // Create a batch with sample data
@@ -32,7 +32,9 @@ fn test_bloom_filter_for_primary_key_column() {
         schema.clone(),
         vec![
             Arc::new(Int64Array::from(vec![1001, 1002, 1003, 1004, 1005])),
-            Arc::new(StringArray::from(vec!["Alice", "Bob", "Charlie", "Diana", "Eve"])),
+            Arc::new(StringArray::from(vec![
+                "Alice", "Bob", "Charlie", "Diana", "Eve",
+            ])),
             Arc::new(Int64Array::from(vec![
                 1000000, 2000000, 3000000, 4000000, 5000000,
             ])),
@@ -113,10 +115,10 @@ fn test_bloom_filter_for_composite_primary_key() {
 
     // Schema with composite PRIMARY KEY (user_id, order_id) + _seq
     let schema = Arc::new(Schema::new(vec![
-        Field::new("user_id", DataType::Int64, false),  // PRIMARY KEY part 1
+        Field::new("user_id", DataType::Int64, false), // PRIMARY KEY part 1
         Field::new("order_id", DataType::Int64, false), // PRIMARY KEY part 2
-        Field::new("amount", DataType::Int64, true),    // Regular column
-        Field::new("_seq", DataType::Int64, false),     // System column
+        Field::new("amount", DataType::Int64, true),   // Regular column
+        Field::new("_seq", DataType::Int64, false),    // System column
     ]));
 
     // Create batch with sample data
@@ -160,7 +162,10 @@ fn test_bloom_filter_for_composite_primary_key() {
         .position(|col| col.column_path().string() == "user_id")
         .expect("user_id column should exist");
     assert!(
-        row_group.column(user_id_idx).bloom_filter_offset().is_some(),
+        row_group
+            .column(user_id_idx)
+            .bloom_filter_offset()
+            .is_some(),
         "user_id (PRIMARY KEY part 1) should have Bloom filter"
     );
 
@@ -171,7 +176,10 @@ fn test_bloom_filter_for_composite_primary_key() {
         .position(|col| col.column_path().string() == "order_id")
         .expect("order_id column should exist");
     assert!(
-        row_group.column(order_id_idx).bloom_filter_offset().is_some(),
+        row_group
+            .column(order_id_idx)
+            .bloom_filter_offset()
+            .is_some(),
         "order_id (PRIMARY KEY part 2) should have Bloom filter"
     );
 

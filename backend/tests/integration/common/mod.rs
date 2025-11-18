@@ -41,8 +41,8 @@ pub mod stress_utils;
 
 use anyhow::Result;
 use kalamdb_api::models::{QueryResult, SqlResponse};
-use kalamdb_commons::UserId;
 use kalamdb_commons::models::{NamespaceId, StorageId, TableName};
+use kalamdb_commons::UserId;
 use kalamdb_core::app_context::AppContext;
 use kalamdb_core::sql::executor::SqlExecutor;
 use kalamdb_store::{RocksDBBackend, StorageBackend};
@@ -123,13 +123,13 @@ impl TestServer {
     /// * `data_dir` - Optional path to existing database directory
     pub async fn new_with_data_dir(data_dir: Option<String>) -> Self {
         use kalamdb_commons::{AuthType, NodeId, Role, StorageMode, UserId};
-        use std::sync::Mutex;
         use once_cell::sync::Lazy;
-        
+        use std::sync::Mutex;
+
         // Global shared test resources (initialized once for all tests)
-        static TEST_RESOURCES: Lazy<Mutex<Option<(Arc<TempDir>, Arc<rocksdb::DB>, String)>>> = 
+        static TEST_RESOURCES: Lazy<Mutex<Option<(Arc<TempDir>, Arc<rocksdb::DB>, String)>>> =
             Lazy::new(|| Mutex::new(None));
-        
+
         // Get or create shared test resources
         let (temp_dir, db, storage_base_path) = {
             let mut resources = TEST_RESOURCES.lock().unwrap();
@@ -155,9 +155,9 @@ impl TestServer {
                 // Initialize RocksDB with all system tables
                 let db_init = kalamdb_store::RocksDbInit::with_defaults(&db_path);
                 let db_arc = db_init.open().expect("Failed to open RocksDB");
-                
+
                 let storage_path_str = storage_base_path.to_str().unwrap().to_string();
-                
+
                 *resources = Some((temp_dir.clone(), db_arc.clone(), storage_path_str.clone()));
                 (temp_dir, db_arc, storage_path_str)
             }
@@ -173,7 +173,10 @@ impl TestServer {
         test_config.auth.jwt_trusted_issuers = "kalamdb-test".to_string();
         // Expose to extractor via env for JWT path (non-invasive)
         std::env::set_var("KALAMDB_JWT_SECRET", &test_config.auth.jwt_secret);
-        std::env::set_var("KALAMDB_JWT_TRUSTED_ISSUERS", &test_config.auth.jwt_trusted_issuers);
+        std::env::set_var(
+            "KALAMDB_JWT_TRUSTED_ISSUERS",
+            &test_config.auth.jwt_trusted_issuers,
+        );
         test_config.server.node_id = "test-node".to_string();
         test_config.storage.default_storage_path = storage_base_path.clone();
 
@@ -194,9 +197,14 @@ impl TestServer {
             use kalamdb_commons::types::User;
             let sys_id = UserId::new("system");
             let users_provider = app_context.system_tables().users();
-            
+
             // Only create if doesn't exist
-            if users_provider.get_user_by_id(&sys_id).ok().flatten().is_none() {
+            if users_provider
+                .get_user_by_id(&sys_id)
+                .ok()
+                .flatten()
+                .is_none()
+            {
                 let now = chrono::Utc::now().timestamp_millis();
                 let sys_user = User {
                     id: sys_id.clone(),
@@ -222,9 +230,14 @@ impl TestServer {
             use kalamdb_commons::types::Storage;
             let storages_provider = app_context.system_tables().storages();
             let storage_id = StorageId::new("local");
-            
+
             // Only create if doesn't exist
-            if storages_provider.get_storage_by_id(&storage_id).ok().flatten().is_none() {
+            if storages_provider
+                .get_storage_by_id(&storage_id)
+                .ok()
+                .flatten()
+                .is_none()
+            {
                 let now = chrono::Utc::now().timestamp_millis();
                 let default_storage = Storage {
                     storage_id: storage_id.clone(),
@@ -234,7 +247,8 @@ impl TestServer {
                     base_directory: storage_base_path.clone(),
                     credentials: None,
                     shared_tables_template: "shared/{namespace}/{tableName}".to_string(),
-                    user_tables_template: "users/{userId}/tables/{namespace}/{tableName}".to_string(),
+                    user_tables_template: "users/{userId}/tables/{namespace}/{tableName}"
+                        .to_string(),
                     created_at: now,
                     updated_at: now,
                 };
@@ -364,138 +378,176 @@ impl TestServer {
 
         // Try custom DDL/DML execution first (same as REST API)
         // Phase 10: execute() now requires ExecutionContext instead of Option<&UserId>
-    use kalamdb_core::sql::executor::models::ExecutionContext;
         use kalamdb_commons::Role;
-        
+        use kalamdb_core::sql::executor::models::ExecutionContext;
+
         let session = self.app_context.base_session_context();
-        
+
         // Look up user's actual role from the users table
         let exec_ctx = match &user_id_obj {
             Some(user_id) => {
                 // Try to get user's actual role from system tables
-                let role = self.app_context
+                let role = self
+                    .app_context
                     .system_tables()
                     .users()
                     .get_user_by_id(user_id)
                     .ok()
                     .flatten()
                     .map(|user| user.role)
-                    .unwrap_or(Role::System); // Default to System if user not found
-                
+                    .unwrap_or_else(|| {
+                        // For test convenience: auto-escalate based on user ID patterns
+                        let id_lower = user_id.as_str().to_lowercase();
+                        if id_lower == "system" 
+                            || id_lower == "admin" 
+                            || id_lower == "root"
+                            || id_lower.starts_with("e2e_") {
+                            Role::System
+                        } else if id_lower.contains("dba") {
+                            Role::Dba
+                        } else if id_lower.contains("service") || id_lower.starts_with("svc") {
+                            Role::Service
+                        } else {
+                            Role::User
+                        }
+                    });
+
                 ExecutionContext::new(user_id.clone(), role, session.clone())
             }
             None => ExecutionContext::new(UserId::system(), Role::System, session),
         };
-        
-    match self.sql_executor.execute(sql, &exec_ctx, Vec::new()).await {
-        Ok(result) => {
-            println!("[DEBUG TestServer] execute() succeeded, result variant: {:?}", std::mem::discriminant(&result));
-            use kalamdb_core::sql::ExecutionResult;
-            match result {
-                ExecutionResult::Success { message } => SqlResponse {
-                    status: "success".to_string(),
-                    results: vec![QueryResult {
-                        rows: None,
-                        row_count: 0,
-                        columns: vec![],
-                        message: Some(message),
-                    }],
-                    took_ms: 0,
-                    error: None,
-                },
-                ExecutionResult::Rows { batches, .. } => {
-                    if batches.is_empty() {
+
+        match self.sql_executor.execute(sql, &exec_ctx, Vec::new()).await {
+            Ok(result) => {
+                println!(
+                    "[DEBUG TestServer] execute() succeeded, result variant: {:?}",
+                    std::mem::discriminant(&result)
+                );
+                use kalamdb_core::sql::ExecutionResult;
+                match result {
+                    ExecutionResult::Success { message } => SqlResponse {
+                        status: "success".to_string(),
+                        results: vec![QueryResult {
+                            rows: None,
+                            row_count: 0,
+                            columns: vec![],
+                            message: Some(message),
+                        }],
+                        took_ms: 0,
+                        error: None,
+                    },
+                    ExecutionResult::Rows { batches, .. } => {
+                        if batches.is_empty() {
+                            SqlResponse {
+                                status: "success".to_string(),
+                                results: vec![QueryResult {
+                                    rows: Some(vec![]),
+                                    row_count: 0,
+                                    columns: vec![],
+                                    message: None,
+                                }],
+                                took_ms: 0,
+                                error: None,
+                            }
+                        } else {
+                            let results: Vec<_> = batches
+                                .iter()
+                                .map(|batch| record_batch_to_query_result(batch, mask_credentials))
+                                .collect();
+                            SqlResponse {
+                                status: "success".to_string(),
+                                results,
+                                took_ms: 0,
+                                error: None,
+                            }
+                        }
+                    }
+                    ExecutionResult::Subscription {
+                        subscription_id,
+                        channel,
+                        select_query: _,
+                    } => {
+                        let mut row = std::collections::HashMap::new();
+                        row.insert(
+                            "subscription_id".to_string(),
+                            serde_json::Value::String(subscription_id),
+                        );
+                        row.insert("channel".to_string(), serde_json::Value::String(channel));
+                        let query_result = QueryResult {
+                            rows: Some(vec![row]),
+                            row_count: 1,
+                            columns: vec!["subscription_id".to_string(), "channel".to_string()],
+                            message: None,
+                        };
+                        SqlResponse {
+                            status: "success".to_string(),
+                            results: vec![query_result],
+                            took_ms: 0,
+                            error: None,
+                        }
+                    }
+                    ExecutionResult::Inserted { rows_affected }
+                    | ExecutionResult::Updated { rows_affected }
+                    | ExecutionResult::Deleted { rows_affected } => {
+                        println!(
+                            "[DEBUG TestServer] Matched DML variant with rows_affected={}",
+                            rows_affected
+                        );
                         SqlResponse {
                             status: "success".to_string(),
                             results: vec![QueryResult {
-                                rows: Some(vec![]),
-                                row_count: 0,
+                                rows: None,
+                                row_count: rows_affected,
                                 columns: vec![],
-                                message: None,
+                                message: Some(format!("{} row(s) affected", rows_affected)),
                             }],
                             took_ms: 0,
                             error: None,
                         }
-                    } else {
-                        let results: Vec<_> = batches
-                            .iter()
-                            .map(|batch| record_batch_to_query_result(batch, mask_credentials))
-                            .collect();
-                        SqlResponse {
-                            status: "success".to_string(),
-                            results,
-                            took_ms: 0,
-                            error: None,
-                        }
                     }
-                }
-                ExecutionResult::Subscription { subscription_id, channel, select_query: _ } => {
-                    let mut row = std::collections::HashMap::new();
-                    row.insert("subscription_id".to_string(), serde_json::Value::String(subscription_id));
-                    row.insert("channel".to_string(), serde_json::Value::String(channel));
-                    let query_result = QueryResult {
-                        rows: Some(vec![row]),
-                        row_count: 1,
-                        columns: vec!["subscription_id".to_string(), "channel".to_string()],
-                        message: None,
-                    };
-                    SqlResponse {
-                        status: "success".to_string(),
-                        results: vec![query_result],
-                        took_ms: 0,
-                        error: None,
-                    }
-                }
-                ExecutionResult::Inserted { rows_affected }
-                | ExecutionResult::Updated { rows_affected }
-                | ExecutionResult::Deleted { rows_affected } => {
-                    println!("[DEBUG TestServer] Matched DML variant with rows_affected={}", rows_affected);
-                    SqlResponse {
+                    ExecutionResult::Flushed {
+                        tables,
+                        bytes_written,
+                    } => SqlResponse {
                         status: "success".to_string(),
                         results: vec![QueryResult {
-                            rows: None,
-                            row_count: rows_affected,
-                            columns: vec![],
-                            message: Some(format!("{} row(s) affected", rows_affected)),
+                            rows: Some(vec![{
+                                let mut m = std::collections::HashMap::new();
+                                m.insert(
+                                    "tables".to_string(),
+                                    serde_json::Value::String(tables.join(",")),
+                                );
+                                m.insert(
+                                    "bytes_written".to_string(),
+                                    serde_json::Value::Number(bytes_written.into()),
+                                );
+                                m
+                            }]),
+                            row_count: tables.len(),
+                            columns: vec!["tables".to_string(), "bytes_written".to_string()],
+                            message: None,
                         }],
                         took_ms: 0,
                         error: None,
-                    }
+                    },
+                    ExecutionResult::JobKilled { job_id, status } => SqlResponse {
+                        status: "success".to_string(),
+                        results: vec![QueryResult {
+                            rows: Some(vec![{
+                                let mut m = std::collections::HashMap::new();
+                                m.insert("job_id".to_string(), serde_json::Value::String(job_id));
+                                m.insert("status".to_string(), serde_json::Value::String(status));
+                                m
+                            }]),
+                            row_count: 1,
+                            columns: vec!["job_id".to_string(), "status".to_string()],
+                            message: None,
+                        }],
+                        took_ms: 0,
+                        error: None,
+                    },
                 }
-                ExecutionResult::Flushed { tables, bytes_written } => SqlResponse {
-                    status: "success".to_string(),
-                    results: vec![QueryResult {
-                        rows: Some(vec![{
-                            let mut m = std::collections::HashMap::new();
-                            m.insert("tables".to_string(), serde_json::Value::String(tables.join(",")));
-                            m.insert("bytes_written".to_string(), serde_json::Value::Number(bytes_written.into()));
-                            m
-                        }]),
-                        row_count: tables.len(),
-                        columns: vec!["tables".to_string(), "bytes_written".to_string()],
-                        message: None,
-                    }],
-                    took_ms: 0,
-                    error: None,
-                },
-                ExecutionResult::JobKilled { job_id, status } => SqlResponse {
-                    status: "success".to_string(),
-                    results: vec![QueryResult {
-                        rows: Some(vec![{
-                            let mut m = std::collections::HashMap::new();
-                            m.insert("job_id".to_string(), serde_json::Value::String(job_id));
-                            m.insert("status".to_string(), serde_json::Value::String(status));
-                            m
-                        }]),
-                        row_count: 1,
-                        columns: vec!["job_id".to_string(), "status".to_string()],
-                        message: None,
-                    }],
-                    took_ms: 0,
-                    error: None,
-                },
             }
-        }
             Err(kalamdb_core::error::KalamDbError::InvalidSql(_)) => {
                 // Any error from custom executor: fall back to DataFusion using the shared session_context
                 // where providers are registered by SqlExecutor.
@@ -565,7 +617,7 @@ impl TestServer {
                         details: None,
                     }),
                 }
-            },
+            }
         }
     }
 }
@@ -716,7 +768,8 @@ impl TestServer {
         // Convention: tests create namespaces prefixed with 'test', 'tmp', or 'flush_'
         for ns in namespaces {
             let name = ns.namespace_id.as_str();
-            if !(name.starts_with("test") || name.starts_with("tmp") || name.starts_with("flush_")) {
+            if !(name.starts_with("test") || name.starts_with("tmp") || name.starts_with("flush_"))
+            {
                 continue;
             }
             let sql = format!("DROP NAMESPACE {} CASCADE", ns.namespace_id);
@@ -789,7 +842,9 @@ impl TestServer {
     /// * `namespace` - Name of the namespace to check
     pub async fn namespace_exists(&self, namespace: &str) -> bool {
         match self.app_context.system_tables().namespaces().scan_all() {
-            Ok(namespaces) => namespaces.iter().any(|ns| ns.namespace_id.as_str() == namespace),
+            Ok(namespaces) => namespaces
+                .iter()
+                .any(|ns| ns.namespace_id.as_str() == namespace),
             Err(_) => false,
         }
     }
@@ -874,7 +929,9 @@ mod tests {
     #[actix_web::test]
     async fn test_execute_sql() {
         let server = TestServer::new().await;
-        let response = server.execute_sql("CREATE NAMESPACE IF NOT EXISTS test_ns").await;
+        let response = server
+            .execute_sql("CREATE NAMESPACE IF NOT EXISTS test_ns")
+            .await;
         assert_eq!(response.status, "success");
     }
 
@@ -883,7 +940,9 @@ mod tests {
         let server = TestServer::new().await;
 
         // Create namespace
-        server.execute_sql("CREATE NAMESPACE IF NOT EXISTS test_ns").await;
+        server
+            .execute_sql("CREATE NAMESPACE IF NOT EXISTS test_ns")
+            .await;
         assert!(server.namespace_exists("test_ns").await);
 
         // Cleanup
@@ -897,7 +956,9 @@ mod tests {
 
         assert!(!server.namespace_exists("nonexistent").await);
 
-        server.execute_sql("CREATE NAMESPACE IF NOT EXISTS test_ns").await;
+        server
+            .execute_sql("CREATE NAMESPACE IF NOT EXISTS test_ns")
+            .await;
         assert!(server.namespace_exists("test_ns").await);
     }
 }

@@ -5,9 +5,9 @@
 
 use crate::error::KalamDbError;
 use crate::sql::executor::models::ExecutionContext;
+use chrono::Utc;
 use kalamdb_commons::models::system::AuditLogEntry;
 use kalamdb_commons::models::AuditLogId;
-use chrono::Utc;
 
 /// Create an audit log entry for a SQL operation
 ///
@@ -191,7 +191,7 @@ pub async fn persist_audit_entry(_entry: &AuditLogEntry) -> Result<(), KalamDbEr
     // TODO: Phase 7 (US3) - Implement actual persistence via SystemTablesRegistry
     // let audit_logs_provider = app_ctx.system_tables().audit_logs();
     // audit_logs_provider.insert(entry).await?;
-    
+
     Ok(())
 }
 
@@ -199,7 +199,7 @@ pub async fn persist_audit_entry(_entry: &AuditLogEntry) -> Result<(), KalamDbEr
 mod tests {
     use super::*;
     use crate::test_helpers::create_test_session;
-    use kalamdb_commons::{UserId, Role};
+    use kalamdb_commons::{Role, UserId};
 
     #[test]
     fn test_create_audit_entry() {
@@ -272,12 +272,7 @@ mod tests {
     fn test_log_auth_event() {
         let user_id = UserId::from("eve");
 
-        let entry = log_auth_event(
-            &user_id,
-            "LOGIN",
-            true,
-            Some("10.0.0.1".to_string()),
-        );
+        let entry = log_auth_event(&user_id, "LOGIN", true, Some("10.0.0.1".to_string()));
 
         assert_eq!(entry.action, "LOGIN");
         assert_eq!(entry.target, "user:eve");
@@ -290,19 +285,13 @@ mod tests {
         let ctx = ExecutionContext::new(UserId::from("admin"), Role::Dba, create_test_session());
         let subject = UserId::from("user123");
 
-        let entry = log_dml_operation(
-            &ctx,
-            "INSERT",
-            "default.orders",
-            5,
-            Some(subject.clone()),
-        );
+        let entry = log_dml_operation(&ctx, "INSERT", "default.orders", 5, Some(subject.clone()));
 
         assert_eq!(entry.action, "INSERT");
         assert_eq!(entry.target, "default.orders");
         assert_eq!(entry.actor_user_id.as_str(), "admin");
         assert_eq!(entry.subject_user_id, Some(subject));
-        
+
         // Verify impersonation details in JSON
         let details_str = entry.details.unwrap();
         assert!(details_str.contains("user123"));

@@ -97,4 +97,3 @@ fn test_cli_subscription_initial_and_changes() {
     listener.stop().ok();
     let _ = execute_sql_as_root_via_cli(&format!("DROP NAMESPACE {} CASCADE", namespace));
 }
-

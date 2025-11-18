@@ -34,9 +34,7 @@ impl TypedStatementHandler<AlterNamespaceStatement> for AlterNamespaceHandler {
         // Check if namespace exists
         let mut namespace = namespaces_provider
             .get_namespace(&namespace_id)?
-            .ok_or_else(|| {
-                KalamDbError::NotFound(format!("Namespace '{}' not found", name))
-            })?;
+            .ok_or_else(|| KalamDbError::NotFound(format!("Namespace '{}' not found", name)))?;
 
         // Update namespace options (merge with existing options)
         let mut current_options: serde_json::Value = if let Some(ref opts) = namespace.options {
@@ -99,11 +97,11 @@ mod tests {
             name: NamespaceId::new("test"),
             options: std::collections::HashMap::new(),
         };
-        
+
         // Test with non-admin user
         let ctx = ExecutionContext::new(UserId::new("user"), Role::User, create_test_session());
         let result = handler.check_authorization(&stmt, &ctx).await;
-        
+
         assert!(result.is_err());
         assert!(matches!(result.unwrap_err(), KalamDbError::Unauthorized(_)));
     }
@@ -114,7 +112,7 @@ mod tests {
         let handler = AlterNamespaceHandler::new(app_ctx);
         let mut options = std::collections::HashMap::new();
         options.insert("max_tables".to_string(), serde_json::json!(100));
-        
+
         let stmt = AlterNamespaceStatement {
             name: NamespaceId::new("test_namespace"),
             options,
@@ -124,7 +122,7 @@ mod tests {
 
         // Note: This test would need proper setup of test namespace
         let result = handler.execute(stmt, vec![], &ctx).await;
-        
+
         // Would verify result or error based on test setup
         assert!(result.is_ok() || result.is_err());
     }

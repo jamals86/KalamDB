@@ -5,6 +5,7 @@
 //! limited for now; most statements return a structured error until
 //! handler implementations are in place.
 
+pub mod default_evaluator;
 pub mod handler_adapter;
 pub mod handler_registry;
 pub mod handlers;
@@ -12,7 +13,6 @@ pub mod helpers;
 pub mod models;
 pub mod parameter_binding;
 pub mod parameter_validation;
-pub mod default_evaluator;
 
 use crate::error::KalamDbError;
 use crate::sql::executor::handler_registry::HandlerRegistry;
@@ -23,7 +23,10 @@ use kalamdb_sql::statement_classifier::SqlStatement;
 use std::sync::Arc;
 
 // Re-export model types so external callers keep working without changes.
-pub use models::{ExecutionContext as ExecutorContextAlias, ExecutionMetadata as ExecutorMetadataAlias, ExecutionResult as ExecutorResultAlias};
+pub use models::{
+    ExecutionContext as ExecutorContextAlias, ExecutionMetadata as ExecutorMetadataAlias,
+    ExecutionResult as ExecutorResultAlias,
+};
 
 /// Public facade for SQL execution routing.
 pub struct SqlExecutor {
@@ -38,7 +41,10 @@ impl SqlExecutor {
         app_context: Arc<crate::app_context::AppContext>,
         enforce_password_complexity: bool,
     ) -> Self {
-        let handler_registry = Arc::new(HandlerRegistry::new(app_context.clone()));
+        let handler_registry = Arc::new(HandlerRegistry::new(
+            app_context.clone(),
+            enforce_password_complexity,
+        ));
         Self {
             app_context,
             handler_registry,
@@ -59,7 +65,8 @@ impl SqlExecutor {
         exec_ctx: &ExecutionContext,
         params: Vec<ScalarValue>,
     ) -> Result<ExecutionResult, KalamDbError> {
-        self.execute_with_metadata(sql, exec_ctx, None, params).await
+        self.execute_with_metadata(sql, exec_ctx, None, params)
+            .await
     }
 
     /// Execute a statement with optional metadata.
@@ -86,10 +93,8 @@ impl SqlExecutor {
         match classified.kind() {
             // Hot path: SELECT queries use DataFusion
             // Tables are already registered in base session, we just inject user_id
-            SqlStatementKind::Select => {
-                self.execute_via_datafusion(sql, params, exec_ctx).await
-            }
-            
+            SqlStatementKind::Select => self.execute_via_datafusion(sql, params, exec_ctx).await,
+
             // All other statements: Delegate to handler registry
             _ => {
                 self.handler_registry
@@ -115,7 +120,9 @@ impl SqlExecutor {
             // For now, reject queries with parameters
             return Err(KalamDbError::NotImplemented {
                 feature: "Parameter binding".to_string(),
-                message: "Parameter validation is implemented, binding will be added in next iteration".to_string(),
+                message:
+                    "Parameter validation is implemented, binding will be added in next iteration"
+                        .to_string(),
             });
         }
 
@@ -130,10 +137,11 @@ impl SqlExecutor {
             Err(e) => {
                 // Check if this is a table not found error (likely user typo)
                 let error_msg = e.to_string().to_lowercase();
-                let is_table_not_found = error_msg.contains("table") && error_msg.contains("not found")
+                let is_table_not_found = error_msg.contains("table")
+                    && error_msg.contains("not found")
                     || error_msg.contains("relation") && error_msg.contains("does not exist")
                     || error_msg.contains("unknown table");
-                
+
                 if is_table_not_found {
                     // Log as warning for table not found (likely user typo)
                     log::warn!(
@@ -202,22 +210,19 @@ impl SqlExecutor {
     ///
     /// # Returns
     /// Ok on success, error if table loading fails
-    pub async fn load_existing_tables(
-        &self
-    ) -> Result<(), KalamDbError> {
-        use kalamdb_commons::schemas::TableType;
+    pub async fn load_existing_tables(&self) -> Result<(), KalamDbError> {
         use crate::sql::executor::helpers::table_registration::{
+            register_shared_table_provider, register_stream_table_provider,
             register_user_table_provider,
-            register_shared_table_provider,
-            register_stream_table_provider,
         };
+        use kalamdb_commons::schemas::TableType;
 
         let app_context = &self.app_context;
         let schema_registry = app_context.schema_registry();
 
         // Load all table definitions from the store (much cleaner than scanning Arrow batches!)
         let all_table_defs = schema_registry.scan_all_table_definitions()?;
-        
+
         if all_table_defs.is_empty() {
             log::info!("No existing tables to load");
             return Ok(());
@@ -234,7 +239,7 @@ impl SqlExecutor {
                 table_def.namespace_id.clone(),
                 table_def.table_name.clone(),
             );
-            
+
             // Skip system tables (already registered in AppContext)
             if matches!(table_def.table_type, TableType::System) {
                 system_count += 1;
@@ -245,8 +250,12 @@ impl SqlExecutor {
             let arrow_schema = match table_def.to_arrow_schema() {
                 Ok(schema) => schema,
                 Err(e) => {
-                    log::error!("Failed to convert table definition to Arrow schema for {}.{}: {}", 
-                               table_def.namespace_id.as_str(), table_def.table_name.as_str(), e);
+                    log::error!(
+                        "Failed to convert table definition to Arrow schema for {}.{}: {}",
+                        table_def.namespace_id.as_str(),
+                        table_def.table_name.as_str(),
+                        e
+                    );
                     continue;
                 }
             };
@@ -263,12 +272,20 @@ impl SqlExecutor {
                 }
                 TableType::Stream => {
                     // Extract TTL from table_options
-                    let ttl_seconds = if let kalamdb_commons::schemas::TableOptions::Stream(stream_opts) = &table_def.table_options {
-                        Some(stream_opts.ttl_seconds)
-                    } else {
-                        None
-                    };
-                    register_stream_table_provider(&app_context, &table_id, arrow_schema, ttl_seconds)?;
+                    let ttl_seconds =
+                        if let kalamdb_commons::schemas::TableOptions::Stream(stream_opts) =
+                            &table_def.table_options
+                        {
+                            Some(stream_opts.ttl_seconds)
+                        } else {
+                            None
+                        };
+                    register_stream_table_provider(
+                        &app_context,
+                        &table_id,
+                        arrow_schema,
+                        ttl_seconds,
+                    )?;
                     stream_count += 1;
                 }
                 TableType::System => {
@@ -305,11 +322,11 @@ impl SqlExecutor {
     //         .first()
     //         .ok_or_else(|| KalamDbError::InvalidOperation("No catalogs available".to_string()))?
     //         .clone();
-        
+
     //     let catalog = base_session
     //         .catalog(&catalog_name)
     //         .ok_or_else(|| KalamDbError::InvalidOperation(format!("Catalog '{}' not found", catalog_name)))?;
-        
+
     //     // Get or create namespace schema
     //     let schema = catalog
     //         .schema(namespace_id.as_str())
@@ -320,12 +337,12 @@ impl SqlExecutor {
     //                 .expect("Failed to register namespace schema");
     //             new_schema
     //         });
-        
+
     //     // Register table
     //     schema
     //         .register_table(table_name.as_str().to_string(), provider)
     //         .map_err(|e| KalamDbError::InvalidOperation(format!("Failed to register table with DataFusion: {}", e)))?;
-        
+
     //     Ok(())
     // }
 

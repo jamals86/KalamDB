@@ -31,7 +31,9 @@ impl CurrentUserFunction {
 
     /// Create a CURRENT_USER function bound to a specific user id
     pub fn with_user_id(user_id: &str) -> Self {
-        Self { user_id: user_id.to_string() }
+        Self {
+            user_id: user_id.to_string(),
+        }
     }
 }
 

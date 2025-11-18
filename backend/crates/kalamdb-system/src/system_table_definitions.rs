@@ -12,12 +12,12 @@
 //! All schemas are defined using the unified TableDefinition model from
 //! kalamdb-commons, ensuring consistency across the codebase.
 
+use kalamdb_commons::datatypes::KalamDataType;
 use kalamdb_commons::models::TableId;
-use kalamdb_commons::{NamespaceId, TableName};
 use kalamdb_commons::schemas::{
     ColumnDefault, ColumnDefinition, TableDefinition, TableOptions, TableType,
 };
-use kalamdb_commons::datatypes::KalamDataType;
+use kalamdb_commons::{NamespaceId, TableName};
 
 /// Create TableDefinition for system.users table
 ///
@@ -803,7 +803,7 @@ pub fn tables_table_definition() -> TableDefinition {
             "options",
             9,
             KalamDataType::Text, // Stored as JSON string (variant-aware)
-            true, // NULLABLE for forward compatibility (older rows may not have it)
+            true,                // NULLABLE for forward compatibility (older rows may not have it)
             false,
             false,
             ColumnDefault::None,
@@ -1055,8 +1055,8 @@ mod tests {
     #[test]
     fn test_users_table_definition() {
         let def = users_table_definition();
-    assert_eq!(def.namespace_id.as_str(), "system");
-    assert_eq!(def.table_name.as_str(), "users");
+        assert_eq!(def.namespace_id.as_str(), "system");
+        assert_eq!(def.table_name.as_str(), "users");
         assert_eq!(def.table_type, TableType::System);
         assert_eq!(def.columns.len(), 13);
         assert_eq!(def.columns[0].column_name, "user_id");
@@ -1079,8 +1079,8 @@ mod tests {
     #[test]
     fn test_table_schemas_definition() {
         let def = table_schemas_table_definition();
-    assert_eq!(def.namespace_id.as_str(), "system");
-    assert_eq!(def.table_name.as_str(), "table_schemas");
+        assert_eq!(def.namespace_id.as_str(), "system");
+        assert_eq!(def.table_name.as_str(), "table_schemas");
         assert_eq!(def.columns.len(), 5);
         assert_eq!(def.columns[2].column_name, "table_definition");
         assert_eq!(def.columns[2].data_type, KalamDataType::Json);

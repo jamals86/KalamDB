@@ -23,8 +23,8 @@
 use crate::error::KalamDbError;
 use crate::jobs::executors::{JobContext, JobDecision, JobExecutor, JobParams};
 use async_trait::async_trait;
-use kalamdb_commons::{JobType, TableId};
 use kalamdb_commons::schemas::TableType;
+use kalamdb_commons::{JobType, TableId};
 use serde::{Deserialize, Serialize};
 
 /// Typed parameters for compaction operations
@@ -80,13 +80,13 @@ impl JobExecutor for CompactExecutor {
 
     async fn execute(&self, ctx: &JobContext<Self::Params>) -> Result<JobDecision, KalamDbError> {
         ctx.log_warn("CompactExecutor not yet implemented");
-        
+
         // TODO: Implement compaction logic
         // - Identify small Parquet files in table storage
         // - Merge files into larger segments
         // - Update table metadata with new file references
         // - Remove old files after successful merge
-        
+
         Ok(JobDecision::Failed {
             message: "CompactExecutor not yet implemented".to_string(),
             exception_trace: Some("CompactExecutor not yet implemented".to_string()),

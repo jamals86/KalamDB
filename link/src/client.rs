@@ -10,7 +10,10 @@ use crate::{
     query::QueryExecutor,
     subscription::{SubscriptionConfig, SubscriptionManager},
 };
-use std::{sync::Arc, time::{Duration, Instant}};
+use std::{
+    sync::Arc,
+    time::{Duration, Instant},
+};
 use tokio::sync::Mutex;
 
 /// Main KalamDB client.

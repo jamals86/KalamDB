@@ -17,13 +17,13 @@
 mod common;
 
 use actix_web::{test, web, App};
-use std::sync::Arc;
-use kalamdb_api::repositories::user_repo::CoreUsersRepo;
-use kalamdb_auth::UserRepository;
 use common::{auth_helper, TestServer};
 use jsonwebtoken::{encode, Algorithm, EncodingKey, Header};
+use kalamdb_api::repositories::user_repo::CoreUsersRepo;
+use kalamdb_auth::UserRepository;
 use kalamdb_commons::Role;
 use serde::{Deserialize, Serialize};
+use std::sync::Arc;
 
 /// JWT Claims structure for testing
 #[derive(Debug, Serialize, Deserialize)]
@@ -100,7 +100,9 @@ async fn test_jwt_auth_success() {
         .to_request();
 
     // Initialize app with authentication middleware
-    let user_repo: Arc<dyn UserRepository> = Arc::new(CoreUsersRepo::new(server.app_context.system_tables().users()));
+    let user_repo: Arc<dyn UserRepository> = Arc::new(CoreUsersRepo::new(
+        server.app_context.system_tables().users(),
+    ));
     let app = test::init_service(
         App::new()
             .app_data(web::Data::new(server.app_context.clone()))
@@ -158,7 +160,9 @@ async fn test_jwt_auth_expired_token() {
         .to_request();
 
     // Initialize app
-    let user_repo: Arc<dyn UserRepository> = Arc::new(CoreUsersRepo::new(server.app_context.system_tables().users()));
+    let user_repo: Arc<dyn UserRepository> = Arc::new(CoreUsersRepo::new(
+        server.app_context.system_tables().users(),
+    ));
     let app = test::init_service(
         App::new()
             .app_data(web::Data::new(server.app_context.clone()))
@@ -210,7 +214,9 @@ async fn test_jwt_auth_invalid_signature() {
         .to_request();
 
     // Initialize app
-    let user_repo: Arc<dyn UserRepository> = Arc::new(CoreUsersRepo::new(server.app_context.system_tables().users()));
+    let user_repo: Arc<dyn UserRepository> = Arc::new(CoreUsersRepo::new(
+        server.app_context.system_tables().users(),
+    ));
     let app = test::init_service(
         App::new()
             .app_data(web::Data::new(server.app_context.clone()))
@@ -262,7 +268,9 @@ async fn test_jwt_auth_untrusted_issuer() {
         .to_request();
 
     // Initialize app
-    let user_repo: Arc<dyn UserRepository> = Arc::new(CoreUsersRepo::new(server.app_context.system_tables().users()));
+    let user_repo: Arc<dyn UserRepository> = Arc::new(CoreUsersRepo::new(
+        server.app_context.system_tables().users(),
+    ));
     let app = test::init_service(
         App::new()
             .app_data(web::Data::new(server.app_context.clone()))
@@ -329,7 +337,9 @@ async fn test_jwt_auth_missing_sub_claim() {
         .to_request();
 
     // Initialize app
-    let user_repo: Arc<dyn UserRepository> = Arc::new(CoreUsersRepo::new(server.app_context.system_tables().users()));
+    let user_repo: Arc<dyn UserRepository> = Arc::new(CoreUsersRepo::new(
+        server.app_context.system_tables().users(),
+    ));
     let app = test::init_service(
         App::new()
             .app_data(web::Data::new(server.app_context.clone()))

@@ -29,11 +29,7 @@ impl TypedStatementHandler<CreateTableStatement> for CreateTableHandler {
         use crate::sql::executor::helpers::table_creation;
 
         // Delegate to helper function
-        let message = table_creation::create_table(
-            self.app_context.clone(),
-            statement,
-            context,
-        )?;
+        let message = table_creation::create_table(self.app_context.clone(), statement, context)?;
 
         Ok(ExecutionResult::Success { message })
     }
@@ -47,14 +43,14 @@ impl TypedStatementHandler<CreateTableStatement> for CreateTableHandler {
         // (they call can_create_table for each table type)
         // This allows unified error messages
         use crate::auth::rbac::can_create_table;
-        
+
         if !can_create_table(context.user_role, statement.table_type) {
             return Err(KalamDbError::Unauthorized(format!(
                 "Insufficient privileges to create {} tables",
                 statement.table_type
             )));
         }
-        
+
         Ok(())
     }
 }
@@ -77,9 +73,13 @@ mod tests {
         let app_ctx = AppContext::get();
         let storages_provider = app_ctx.system_tables().storages();
         let storage_id = kalamdb_commons::models::StorageId::from("local");
-        
+
         // Check if "local" storage exists, create if not
-        if storages_provider.get_storage_by_id(&storage_id).unwrap().is_none() {
+        if storages_provider
+            .get_storage_by_id(&storage_id)
+            .unwrap()
+            .is_none()
+        {
             use kalamdb_sql::Storage;
             let storage = Storage {
                 storage_id: storage_id.clone(),
@@ -131,17 +131,23 @@ mod tests {
         let app_ctx = AppContext::get();
         let handler = CreateTableHandler::new(app_ctx);
         let stmt = create_test_statement(TableType::User);
-        
+
         // User role CANNOT create tables (DML only)
         let user_ctx = create_test_context(Role::User);
         let result = handler.check_authorization(&stmt, &user_ctx).await;
-        assert!(result.is_ok(), "User role should be able to create USER tables");
-        
+        assert!(
+            result.is_ok(),
+            "User role should be able to create USER tables"
+        );
+
         // User role CANNOT create SHARED tables
         let stmt_shared = create_test_statement(TableType::Shared);
         let result = handler.check_authorization(&stmt_shared, &user_ctx).await;
-        assert!(result.is_err(), "User role should NOT be able to create SHARED tables");
-        
+        assert!(
+            result.is_err(),
+            "User role should NOT be able to create SHARED tables"
+        );
+
         // Dba role CAN create USER tables
         let dba_ctx = create_test_context(Role::Dba);
         let result = handler.check_authorization(&stmt, &dba_ctx).await;
@@ -154,7 +160,7 @@ mod tests {
         let app_ctx = AppContext::get();
         let handler = CreateTableHandler::new(app_ctx);
         let stmt = create_test_statement(TableType::Shared);
-        
+
         // User role CANNOT create SHARED tables
         let user_ctx = create_test_context(Role::User);
         let result = handler.check_authorization(&stmt, &user_ctx).await;
@@ -167,7 +173,7 @@ mod tests {
         let app_ctx = AppContext::get();
         let handler = CreateTableHandler::new(app_ctx);
         let stmt = create_test_statement(TableType::Stream);
-        
+
         // DBA role can create STREAM tables
         let dba_ctx = create_test_context(Role::Dba);
         let result = handler.check_authorization(&stmt, &dba_ctx).await;
@@ -178,12 +184,16 @@ mod tests {
     async fn test_create_user_table_success() {
         init_test_app_context();
         let app_ctx = AppContext::get();
-        
+
         // Ensure default storage and namespace exist
         ensure_default_storage();
         let namespaces_provider = app_ctx.system_tables().namespaces();
         let namespace_id = NamespaceId::new("default");
-        if namespaces_provider.get_namespace(&namespace_id).unwrap().is_none() {
+        if namespaces_provider
+            .get_namespace(&namespace_id)
+            .unwrap()
+            .is_none()
+        {
             let namespace = kalamdb_commons::system::Namespace {
                 namespace_id: namespace_id.clone(),
                 name: "default".to_string(),
@@ -200,7 +210,7 @@ mod tests {
         let _session = SessionContext::new();
 
         let result = handler.execute(stmt, vec![], &ctx).await;
-        
+
         if let Err(e) = &result {
             eprintln!("CREATE TABLE ERROR: {:?}", e);
         }
@@ -214,12 +224,16 @@ mod tests {
     async fn test_create_table_if_not_exists() {
         init_test_app_context();
         let app_ctx = AppContext::get();
-        
+
         // Ensure default storage and namespace exist
         ensure_default_storage();
         let namespaces_provider = app_ctx.system_tables().namespaces();
         let namespace_id = NamespaceId::new("default");
-        if namespaces_provider.get_namespace(&namespace_id).unwrap().is_none() {
+        if namespaces_provider
+            .get_namespace(&namespace_id)
+            .unwrap()
+            .is_none()
+        {
             let namespace = kalamdb_commons::system::Namespace {
                 namespace_id: namespace_id.clone(),
                 name: "default".to_string(),
@@ -232,7 +246,7 @@ mod tests {
 
         let handler = CreateTableHandler::new(app_ctx);
         let table_name = format!("test_ine_{}", chrono::Utc::now().timestamp_millis());
-        
+
         let mut stmt = create_test_statement(TableType::User);
         stmt.table_name = table_name.clone().into();
         let ctx = create_test_context(Role::Dba);

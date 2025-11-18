@@ -5,7 +5,9 @@
 //! with each session for use in SELECT, WHERE, and DEFAULT clauses.
 
 use crate::schema_registry::UserId;
-use crate::sql::functions::{CurrentUserFunction, SnowflakeIdFunction, UlidFunction, UuidV7Function};
+use crate::sql::functions::{
+    CurrentUserFunction, SnowflakeIdFunction, UlidFunction, UuidV7Function,
+};
 use datafusion::error::Result as DataFusionResult;
 use datafusion::execution::context::SessionContext;
 use datafusion::logical_expr::ScalarUDF;

@@ -225,7 +225,7 @@ mod tests {
     fn test_parse_subscribe_with_where() {
         let sql = "SUBSCRIBE TO app.messages WHERE user_id = CURRENT_USER()";
         let result = ExtensionStatement::parse(sql);
-        
+
         assert!(result.is_ok());
         assert!(matches!(result.unwrap(), ExtensionStatement::Subscribe(_)));
     }

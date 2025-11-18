@@ -3,9 +3,9 @@
 //! This module provides a DataFusion TableProvider implementation for the system.live_queries table.
 //! Uses the new EntityStore architecture with LiveQueryId keys.
 
-use crate::system_table_trait::SystemTableProviderExt;
 use super::{new_live_queries_store, LiveQueriesStore, LiveQueriesTableSchema};
 use crate::error::SystemError;
+use crate::system_table_trait::SystemTableProviderExt;
 use async_trait::async_trait;
 use datafusion::arrow::array::{
     ArrayRef, Int64Array, RecordBatch, StringBuilder, TimestampMillisecondArray,
@@ -120,7 +120,10 @@ impl LiveQueriesTableProvider {
         let all_queries = self.list_live_queries()?;
         Ok(all_queries
             .into_iter()
-            .filter(|lq| lq.table_name == *table_id.table_name() && lq.namespace_id == *table_id.namespace_id())
+            .filter(|lq| {
+                lq.table_name == *table_id.table_name()
+                    && lq.namespace_id == *table_id.namespace_id()
+            })
             .collect())
     }
 

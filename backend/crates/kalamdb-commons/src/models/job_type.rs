@@ -36,7 +36,7 @@ impl JobType {
     }
 
     /// Returns the 2-letter uppercase prefix for JobId generation
-    /// 
+    ///
     /// Prefix mapping:
     /// - FL: Flush
     /// - CO: Compact

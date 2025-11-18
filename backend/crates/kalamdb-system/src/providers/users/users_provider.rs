@@ -3,9 +3,9 @@
 //! This module provides a DataFusion TableProvider implementation for the system.users table.
 //! Uses the new EntityStore architecture with type-safe keys (UserId).
 
-use crate::system_table_trait::SystemTableProviderExt;
 use super::{new_username_index, new_users_store, UsernameIndex, UsernameIndexExt, UsersStore};
 use crate::error::SystemError;
+use crate::system_table_trait::SystemTableProviderExt;
 use async_trait::async_trait;
 use datafusion::arrow::array::{ArrayRef, RecordBatch, StringBuilder, TimestampMillisecondArray};
 use datafusion::arrow::datatypes::SchemaRef;

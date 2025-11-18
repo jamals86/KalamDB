@@ -45,8 +45,7 @@ pub mod statement_classifier;
 
 // Re-export system models from kalamdb-commons (single source of truth)
 pub use kalamdb_commons::system::{
-    AuditLogEntry, Job, LiveQuery, Namespace, Storage,
-    User, UserTableCounter,
+    AuditLogEntry, Job, LiveQuery, Namespace, Storage, User, UserTableCounter,
 };
 
 // pub use adapter::StorageAdapter; // PHASE 6: Disabled
@@ -61,11 +60,11 @@ pub use compatibility::{
 };
 pub use ddl::{
     parse_job_command, AlterStorageStatement, CreateStorageStatement, DropStorageStatement,
-    FlushAllTablesStatement, FlushTableStatement, JobCommand, ShowStoragesStatement,
-    SubscribeOptions, SubscribeStatement, ShowManifestStatement,
+    FlushAllTablesStatement, FlushTableStatement, JobCommand, ShowManifestStatement,
+    ShowStoragesStatement, SubscribeOptions, SubscribeStatement,
 };
-pub use parser::SqlParser;
 pub use ddl_parent::DdlAst;
+pub use parser::SqlParser;
 pub use query_cache::{QueryCache, QueryCacheKey, QueryCacheTtlConfig};
 
 // ============================================================================
@@ -75,4 +74,3 @@ pub use query_cache::{QueryCache, QueryCacheKey, QueryCacheTtlConfig};
 // SystemTablesRegistry providers instead.
 // Uncomment to see all places that need migration.
 // ============================================================================
-

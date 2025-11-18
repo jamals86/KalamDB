@@ -3,7 +3,7 @@
 //! This module provides a SystemTableStore<TableId, TableDefinition> wrapper for the system.tables table.
 
 use crate::system_table_store::SystemTableStore;
-use kalamdb_commons::models::{TableId, NamespaceId};
+use kalamdb_commons::models::{NamespaceId, TableId};
 use kalamdb_commons::schemas::TableDefinition;
 use kalamdb_store::StorageBackend;
 use std::sync::Arc;
@@ -25,9 +25,12 @@ pub fn new_tables_store(backend: Arc<dyn StorageBackend>) -> TablesStore {
 /// Helper methods for TablesStore specific operations
 impl TablesStore {
     /// Scan all tables in a specific namespace
-    pub fn scan_namespace(&self, namespace_id: &NamespaceId) -> Result<Vec<(TableId, TableDefinition)>, kalamdb_store::StorageError> {
-        use kalamdb_store::storage_trait::Partition;
+    pub fn scan_namespace(
+        &self,
+        namespace_id: &NamespaceId,
+    ) -> Result<Vec<(TableId, TableDefinition)>, kalamdb_store::StorageError> {
         use kalamdb_store::entity_store::EntityStore;
+        use kalamdb_store::storage_trait::Partition;
 
         // Construct prefix: "{namespace_id}:"
         let prefix = format!("{}:", namespace_id.as_str());
@@ -54,12 +57,12 @@ impl TablesStore {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use kalamdb_commons::{NamespaceId, Role, TableName, TableId};
     use kalamdb_commons::datatypes::KalamDataType;
     use kalamdb_commons::schemas::{ColumnDefinition, TableDefinition, TableOptions, TableType};
+    use kalamdb_commons::{NamespaceId, Role, TableId, TableName};
+    use kalamdb_store::entity_store::EntityStore;
     use kalamdb_store::test_utils::InMemoryBackend;
     use kalamdb_store::CrossUserTableStore;
-    use kalamdb_store::entity_store::EntityStore;
 
     fn create_test_store() -> TablesStore {
         let backend: Arc<dyn StorageBackend> = Arc::new(InMemoryBackend::new());
@@ -70,7 +73,7 @@ mod tests {
         let namespace_id = NamespaceId::new(namespace);
         let table_name_id = TableName::new(table_name);
         let table_id = TableId::new(namespace_id.clone(), table_name_id.clone());
-        
+
         let columns = vec![
             ColumnDefinition::new(
                 "id",
@@ -101,7 +104,8 @@ mod tests {
             columns,
             TableOptions::user(),
             None,
-        ).expect("Failed to create table definition");
+        )
+        .expect("Failed to create table definition");
 
         (table_id, table_def)
     }

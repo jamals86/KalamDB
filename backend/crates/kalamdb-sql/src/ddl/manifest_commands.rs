@@ -26,7 +26,7 @@ impl ShowManifestStatement {
             .collect::<Vec<_>>()
             .join(" ")
             .to_uppercase();
-        
+
         // Validate exact syntax
         if normalized != "SHOW MANIFEST" {
             return Err(format!(
@@ -34,7 +34,7 @@ impl ShowManifestStatement {
                 sql
             ));
         }
-        
+
         Ok(ShowManifestStatement)
     }
 }

@@ -1,14 +1,14 @@
 //! System column injection logic
 //!
 //! This module handles injection of system columns into table schemas.
-//! 
+//!
 //! **NOTE**: This is legacy code. New code should use SystemColumnsService instead.
 
 use arrow::datatypes::{DataType, Field, Schema, SchemaRef};
 use std::sync::Arc;
 
 /// System columns that are automatically added to user and shared tables
-/// 
+///
 /// **DEPRECATED**: Use SystemColumnsService for adding system columns.
 pub struct SystemColumns;
 

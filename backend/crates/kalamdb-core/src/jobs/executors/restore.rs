@@ -24,8 +24,8 @@
 use crate::error::KalamDbError;
 use crate::jobs::executors::{JobContext, JobDecision, JobExecutor, JobParams};
 use async_trait::async_trait;
-use kalamdb_commons::{JobType, TableId};
 use kalamdb_commons::schemas::TableType;
+use kalamdb_commons::{JobType, TableId};
 use serde::{Deserialize, Serialize};
 
 /// Typed parameters for restore operations
@@ -78,12 +78,12 @@ impl JobExecutor for RestoreExecutor {
 
     async fn execute(&self, ctx: &JobContext<Self::Params>) -> Result<JobDecision, KalamDbError> {
         ctx.log_warn("RestoreExecutor not yet implemented");
-        
+
         // TODO: Implement restore logic
         // - Download backup data from external storage
         // - Restore table data from Parquet files
         // - Validate data integrity
-        
+
         Ok(JobDecision::Failed {
             message: "RestoreExecutor not yet implemented".to_string(),
             exception_trace: Some("RestoreExecutor not yet implemented".to_string()),

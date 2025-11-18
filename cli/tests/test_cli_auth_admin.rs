@@ -555,7 +555,10 @@ async fn test_cli_flush_table() {
     let job = if jobs_data[0].is_array() {
         // Build an object map {column_name: value} using returned columns metadata
         let mut obj = serde_json::Map::new();
-        let columns_vec = jobs_result["results"][0]["columns"].as_array().cloned().unwrap_or_default();
+        let columns_vec = jobs_result["results"][0]["columns"]
+            .as_array()
+            .cloned()
+            .unwrap_or_default();
         let values = jobs_data[0].as_array().unwrap();
         for (idx, col) in columns_vec.iter().enumerate() {
             if let Some(col_name) = col.as_str() {
@@ -571,25 +574,25 @@ async fn test_cli_flush_table() {
     // If we extracted a job ID, verify it matches
     if let Some(expected_job_id) = job_id {
         assert_eq!(
-        job["job_id"].as_str().unwrap(),
+            job["job_id"].as_str().unwrap(),
             expected_job_id,
             "Job ID should match the one returned by FLUSH command"
         );
     }
 
     assert_eq!(
-    job["job_type"].as_str().unwrap(),
+        job["job_type"].as_str().unwrap(),
         "flush",
         "Job type should be 'flush'"
     );
     assert_eq!(
-    job["namespace_id"].as_str().unwrap(),
+        job["namespace_id"].as_str().unwrap(),
         &namespace_name,
         "Job should reference correct namespace"
     );
     // table_name stores only the table identifier (namespace is in namespace_id)
     assert_eq!(
-    job["table_name"].as_str().unwrap(),
+        job["table_name"].as_str().unwrap(),
         "metrics",
         "Job should reference correct table name"
     );

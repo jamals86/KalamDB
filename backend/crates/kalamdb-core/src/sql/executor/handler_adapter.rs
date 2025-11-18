@@ -185,24 +185,27 @@ mod tests {
         let handler = CreateNamespaceHandler::new(app_ctx);
 
         let adapter = TypedHandlerAdapter::new(handler, |stmt| match stmt.kind() {
-            kalamdb_sql::statement_classifier::SqlStatementKind::CreateNamespace(s) => Some(s.clone()),
+            kalamdb_sql::statement_classifier::SqlStatementKind::CreateNamespace(s) => {
+                Some(s.clone())
+            }
             _ => None,
         });
 
         let session = SessionContext::new();
-        let ctx = ExecutionContext::new(UserId::from("test_user"), Role::Dba, create_test_session());
+        let ctx =
+            ExecutionContext::new(UserId::from("test_user"), Role::Dba, create_test_session());
 
         let stmt = kalamdb_sql::statement_classifier::SqlStatement::new(
             "CREATE NAMESPACE test_adapter_ns".to_string(),
-            kalamdb_sql::statement_classifier::SqlStatementKind::CreateNamespace(CreateNamespaceStatement {
-                name: NamespaceId::new("test_adapter_ns"),
-                if_not_exists: false,
-            }),
+            kalamdb_sql::statement_classifier::SqlStatementKind::CreateNamespace(
+                CreateNamespaceStatement {
+                    name: NamespaceId::new("test_adapter_ns"),
+                    if_not_exists: false,
+                },
+            ),
         );
 
-        let result = adapter
-            .execute(stmt, vec![], &ctx)
-            .await;
+        let result = adapter.execute(stmt, vec![], &ctx).await;
         assert!(result.is_ok());
     }
 
@@ -213,17 +216,22 @@ mod tests {
         let handler = CreateNamespaceHandler::new(app_ctx);
 
         let adapter = TypedHandlerAdapter::new(handler, |stmt| match stmt.kind() {
-            kalamdb_sql::statement_classifier::SqlStatementKind::CreateNamespace(s) => Some(s.clone()),
+            kalamdb_sql::statement_classifier::SqlStatementKind::CreateNamespace(s) => {
+                Some(s.clone())
+            }
             _ => None,
         });
 
         let session = SessionContext::new();
-        let ctx = ExecutionContext::new(UserId::from("test_user"), Role::Dba, create_test_session());
+        let ctx =
+            ExecutionContext::new(UserId::from("test_user"), Role::Dba, create_test_session());
 
         // Pass wrong statement type (ShowNamespaces instead of CreateNamespace)
         let stmt = kalamdb_sql::statement_classifier::SqlStatement::new(
             "SHOW NAMESPACES".to_string(),
-            kalamdb_sql::statement_classifier::SqlStatementKind::ShowNamespaces(kalamdb_sql::ddl::ShowNamespacesStatement),
+            kalamdb_sql::statement_classifier::SqlStatementKind::ShowNamespaces(
+                kalamdb_sql::ddl::ShowNamespacesStatement,
+            ),
         );
 
         let result = adapter.execute(stmt, vec![], &ctx).await;
@@ -240,4 +248,3 @@ mod tests {
     // and no longer implement StatementHandler trait. The test_generic_adapter test above demonstrates
     // the TypedHandlerAdapter pattern which is the new approach.
 }
-

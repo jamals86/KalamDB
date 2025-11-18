@@ -33,7 +33,7 @@ pub fn resolve_latest_version(
 ) -> Result<RecordBatch, KalamDbError> {
     // TODO: Implement actual version resolution logic
     // For now, return the batch as-is (placeholder)
-    
+
     // Proper implementation steps:
     // 1. Extract _seq column as i64 array
     // 2. Extract _deleted column as bool array
@@ -42,9 +42,9 @@ pub fn resolve_latest_version(
     // 5. Group by PK, find MAX(_seq) indices
     // 6. Filter by _deleted = false
     // 7. Build new RecordBatch with filtered rows
-    
+
     let _ = pk_column; // Silence unused warning for now
-    
+
     Ok(batch)
 }
 
@@ -58,6 +58,7 @@ pub fn resolve_latest_version(
 ///
 /// # Returns
 /// * HashMap<pk_value, (seq_id, fields_json)> with only latest non-deleted versions
+#[cfg_attr(not(test), allow(dead_code))]
 pub fn resolve_latest_version_from_rows(
     rows: Vec<(String, i64, bool, serde_json::Value)>,
 ) -> HashMap<String, (i64, serde_json::Value)> {
@@ -95,10 +96,30 @@ mod tests {
     #[test]
     fn test_resolve_latest_version_from_rows() {
         let rows = vec![
-            ("pk1".to_string(), 100, false, serde_json::json!({"id": 1, "name": "Alice"})),
-            ("pk1".to_string(), 200, false, serde_json::json!({"id": 1, "name": "Alice Updated"})),
-            ("pk2".to_string(), 150, false, serde_json::json!({"id": 2, "name": "Bob"})),
-            ("pk2".to_string(), 250, true, serde_json::json!({"id": 2, "name": "Bob Deleted"})),
+            (
+                "pk1".to_string(),
+                100,
+                false,
+                serde_json::json!({"id": 1, "name": "Alice"}),
+            ),
+            (
+                "pk1".to_string(),
+                200,
+                false,
+                serde_json::json!({"id": 1, "name": "Alice Updated"}),
+            ),
+            (
+                "pk2".to_string(),
+                150,
+                false,
+                serde_json::json!({"id": 2, "name": "Bob"}),
+            ),
+            (
+                "pk2".to_string(),
+                250,
+                true,
+                serde_json::json!({"id": 2, "name": "Bob Deleted"}),
+            ),
         ];
 
         let resolved = resolve_latest_version_from_rows(rows);
@@ -131,7 +152,12 @@ mod tests {
             ("pk1".to_string(), 100, false, serde_json::json!({"id": 1})),
             ("pk2".to_string(), 150, false, serde_json::json!({"id": 2})),
             ("pk3".to_string(), 120, false, serde_json::json!({"id": 3})),
-            ("pk1".to_string(), 300, false, serde_json::json!({"id": 1, "updated": true})),
+            (
+                "pk1".to_string(),
+                300,
+                false,
+                serde_json::json!({"id": 1, "updated": true}),
+            ),
         ];
 
         let resolved = resolve_latest_version_from_rows(rows);

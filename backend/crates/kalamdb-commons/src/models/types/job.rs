@@ -2,10 +2,12 @@
 //!
 //! Represents a background job (flush, retention, cleanup, etc.).
 
-use crate::models::{ids::{JobId, NamespaceId, NodeId}, JobStatus, JobType, TableName};
+use crate::models::{
+    ids::{JobId, NamespaceId, NodeId},
+    JobStatus, JobType, TableName,
+};
 use bincode::{Decode, Encode};
 use serde::{Deserialize, Serialize};
-
 
 /// Job entity for system.jobs table.
 ///
@@ -85,8 +87,8 @@ pub struct Job {
     pub finished_at: Option<i64>,   // Unix timestamp in milliseconds (renamed from completed_at)
     #[bincode(with_serde)]
     pub node_id: NodeId,
-    pub queue: Option<String>,      // Queue name (future use)
-    pub priority: Option<i32>,      // Priority value (future use)
+    pub queue: Option<String>, // Queue name (future use)
+    pub priority: Option<i32>, // Priority value (future use)
 }
 
 impl Job {
@@ -166,16 +168,14 @@ impl Job {
     /// get the parameters as T if possible
     pub fn get_parameters_as<T: for<'de> Deserialize<'de>>(&self) -> Option<T> {
         /*
-                let cleanup_params: CleanupParams = serde_json::from_str(params)
-            .map_err(|e| KalamDbError::InvalidOperation(format!("Failed to parse parameters: {}", e)))?;
+               let cleanup_params: CleanupParams = serde_json::from_str(params)
+           .map_err(|e| KalamDbError::InvalidOperation(format!("Failed to parse parameters: {}", e)))?;
 
-         */
+        */
         match &self.parameters {
-            Some(params) => {
-                serde_json::from_str(params).ok()
-            }
+            Some(params) => serde_json::from_str(params).ok(),
             None => None,
-        }   
+        }
     }
 }
 

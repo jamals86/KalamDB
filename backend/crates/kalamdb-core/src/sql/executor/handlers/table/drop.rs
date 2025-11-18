@@ -5,13 +5,13 @@
 
 use crate::app_context::AppContext;
 use crate::error::KalamDbError;
-use crate::jobs::executors::cleanup::{CleanupParams, CleanupOperation};
+use crate::jobs::executors::cleanup::{CleanupOperation, CleanupParams};
 use crate::schema_registry::SchemaRegistry;
 use crate::sql::executor::handlers::typed::TypedStatementHandler;
 use crate::sql::executor::models::{ExecutionContext, ExecutionResult, ScalarValue};
-use kalamdb_commons::JobType;
 use kalamdb_commons::models::TableId;
 use kalamdb_commons::schemas::TableType;
+use kalamdb_commons::JobType;
 use kalamdb_sql::ddl::DropTableStatement;
 use std::sync::Arc;
 
@@ -31,7 +31,11 @@ pub async fn cleanup_table_data_internal(
     table_id: &TableId,
     table_type: TableType,
 ) -> Result<usize, KalamDbError> {
-    log::info!("[CleanupHelper] Cleaning up table data for {:?} (type: {:?})", table_id, table_type);
+    log::info!(
+        "[CleanupHelper] Cleaning up table data for {:?} (type: {:?})",
+        table_id,
+        table_type
+    );
 
     let rows_deleted = match table_type {
         TableType::User => {
@@ -72,9 +76,7 @@ pub async fn cleanup_table_data_internal(
                     } else {
                         return Err(KalamDbError::Other(format!(
                             "Failed to drop partition '{}' for table {}: {}",
-                            partition_name,
-                            table_id,
-                            e
+                            partition_name, table_id, e
                         )));
                     }
                 }
@@ -117,9 +119,7 @@ pub async fn cleanup_table_data_internal(
                     } else {
                         return Err(KalamDbError::Other(format!(
                             "Failed to drop partition '{}' for table {}: {}",
-                            partition_name,
-                            table_id,
-                            e
+                            partition_name, table_id, e
                         )));
                     }
                 }
@@ -161,9 +161,7 @@ pub async fn cleanup_table_data_internal(
                     } else {
                         return Err(KalamDbError::Other(format!(
                             "Failed to drop partition '{}' for stream table {}: {}",
-                            partition_name,
-                            table_id,
-                            e
+                            partition_name, table_id, e
                         )));
                     }
                 }
@@ -172,12 +170,15 @@ pub async fn cleanup_table_data_internal(
         TableType::System => {
             // System tables cannot be dropped via DDL
             return Err(KalamDbError::InvalidOperation(
-                "Cannot cleanup system table data".to_string()
+                "Cannot cleanup system table data".to_string(),
             ));
         }
     };
 
-    log::info!("[CleanupHelper] Deleted {} rows from table data", rows_deleted);
+    log::info!(
+        "[CleanupHelper] Deleted {} rows from table data",
+        rows_deleted
+    );
     Ok(rows_deleted)
 }
 
@@ -195,7 +196,10 @@ pub async fn cleanup_parquet_files_internal(
     _app_context: &Arc<AppContext>,
     table_id: &TableId,
 ) -> Result<u64, KalamDbError> {
-    log::info!("[CleanupHelper] Cleaning up Parquet files for {:?}", table_id);
+    log::info!(
+        "[CleanupHelper] Cleaning up Parquet files for {:?}",
+        table_id
+    );
 
     // 1) Load table definition to determine type (and ensure it still exists)
     let registry = _app_context.schema_registry();
@@ -235,7 +239,11 @@ pub async fn cleanup_parquet_files_internal(
     let base_dir = match storages.get_storage(&storage_id) {
         Ok(Some(storage)) => {
             let trimmed = storage.base_directory.trim();
-            if trimmed.is_empty() { default_base.clone() } else { trimmed.to_string() }
+            if trimmed.is_empty() {
+                default_base.clone()
+            } else {
+                trimmed.to_string()
+            }
         }
         _ => default_base.clone(),
     };
@@ -245,9 +253,13 @@ pub async fn cleanup_parquet_files_internal(
         &base_dir,
         &relative_template,
         table_def.table_type,
-    ).map_err(|e| KalamDbError::Other(format!("Filestore delete failed: {}", e)))?;
+    )
+    .map_err(|e| KalamDbError::Other(format!("Filestore delete failed: {}", e)))?;
 
-    log::info!("[CleanupHelper] Freed {} bytes from Parquet files", bytes_freed);
+    log::info!(
+        "[CleanupHelper] Freed {} bytes from Parquet files",
+        bytes_freed
+    );
     Ok(bytes_freed)
 }
 
@@ -333,7 +345,7 @@ impl TypedStatementHandler<DropTableStatement> for DropTableHandler {
         let tables = self.app_context.system_tables().tables();
         let table_metadata = tables.get_table_by_id(&table_id)?;
         let exists = table_metadata.is_some();
-        
+
         if !exists {
             if statement.if_exists {
                 log::info!(
@@ -341,11 +353,13 @@ impl TypedStatementHandler<DropTableStatement> for DropTableHandler {
                     statement.namespace_id.as_str(),
                     statement.table_name.as_str()
                 );
-                return Ok(ExecutionResult::Success { message: format!(
-                    "Table {}.{} does not exist (skipped)",
-                    statement.namespace_id.as_str(),
-                    statement.table_name.as_str()
-                )});
+                return Ok(ExecutionResult::Success {
+                    message: format!(
+                        "Table {}.{} does not exist (skipped)",
+                        statement.namespace_id.as_str(),
+                        statement.table_name.as_str()
+                    ),
+                });
             } else {
                 log::warn!(
                     "⚠️  DROP TABLE failed: Table '{}' not found in namespace '{}'",
@@ -382,17 +396,17 @@ impl TypedStatementHandler<DropTableStatement> for DropTableHandler {
             created_after: None,
             created_before: None,
         };
-        
+
         let flush_jobs = job_manager.list_jobs(flush_filter).await?;
         let mut cancelled_count = 0;
-        
+
         for job in flush_jobs {
             // Only cancel jobs that are not already completed/failed/cancelled
             if matches!(
                 job.status,
-                kalamdb_commons::JobStatus::New 
-                | kalamdb_commons::JobStatus::Queued 
-                | kalamdb_commons::JobStatus::Running
+                kalamdb_commons::JobStatus::New
+                    | kalamdb_commons::JobStatus::Queued
+                    | kalamdb_commons::JobStatus::Running
             ) {
                 match job_manager.cancel_job(&job.job_id).await {
                     Ok(_) => {
@@ -416,7 +430,7 @@ impl TypedStatementHandler<DropTableStatement> for DropTableHandler {
                 }
             }
         }
-        
+
         if cancelled_count > 0 {
             log::info!(
                 "🛑 Cancelled {} active flush job(s) for table {}.{}",

@@ -48,20 +48,14 @@ pub mod system_table_store;
 pub mod system_table_trait;
 
 // Re-export main types
-pub use error::{SystemError, Result};
+pub use error::{Result, SystemError};
 pub use initialization::initialize_system_tables;
 pub use registry::SystemTablesRegistry;
 pub use system_table_trait::SystemTableProviderExt;
 
 // Re-export all providers
 pub use providers::{
-    AuditLogsTableProvider,
-    JobsTableProvider,
-    LiveQueriesTableProvider,
-        ManifestTableProvider,
-    NamespacesTableProvider,
-    StoragesTableProvider,
-    StatsTableProvider,
-    TablesTableProvider,
+    AuditLogsTableProvider, JobsTableProvider, LiveQueriesTableProvider, ManifestTableProvider,
+    NamespacesTableProvider, StatsTableProvider, StoragesTableProvider, TablesTableProvider,
     UsersTableProvider,
 };

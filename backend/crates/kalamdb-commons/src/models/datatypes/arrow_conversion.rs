@@ -277,11 +277,17 @@ mod tests {
         // Timestamp without timezone (millisecond precision)
         let ts = KalamDataType::Timestamp;
         let arrow = ts.to_arrow_type().unwrap();
-        assert!(matches!(arrow, ArrowDataType::Timestamp(TimeUnit::Millisecond, None)));
+        assert!(matches!(
+            arrow,
+            ArrowDataType::Timestamp(TimeUnit::Millisecond, None)
+        ));
 
         // DateTime with timezone (microsecond precision UTC)
         let dt = KalamDataType::DateTime;
         let arrow_dt = dt.to_arrow_type().unwrap();
-        assert!(matches!(arrow_dt, ArrowDataType::Timestamp(TimeUnit::Microsecond, Some(_))));
+        assert!(matches!(
+            arrow_dt,
+            ArrowDataType::Timestamp(TimeUnit::Microsecond, Some(_))
+        ));
     }
 }

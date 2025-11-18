@@ -12,7 +12,9 @@ const DEFAULT_ROWS_TO_INSERT: usize = 1000;
 
 fn rows_to_insert() -> usize {
     if let Ok(val) = std::env::var("KBENCH_ROWS") {
-        if let Ok(parsed) = val.parse::<usize>() { return parsed; }
+        if let Ok(parsed) = val.parse::<usize>() {
+            return parsed;
+        }
     }
     DEFAULT_ROWS_TO_INSERT
 }
@@ -79,14 +81,21 @@ fn smoke_queries_benchmark() {
         for i in 0..n {
             let cust = (1000 + ((inserted + i) % 5000)) as i64;
             let sku = format!("SKU{:06}", (inserted + i) % 10_000);
-            let status = match (inserted + i) % 4 { 0 => "new", 1 => "paid", 2 => "shipped", _ => "completed" };
+            let status = match (inserted + i) % 4 {
+                0 => "new",
+                1 => "paid",
+                2 => "shipped",
+                _ => "completed",
+            };
             let qty = ((inserted + i) % 50) as i64;
             let price = 9.99 + (((inserted + i) % 500) as f64) / 10.0;
             let now_ms = chrono::Utc::now().timestamp_millis();
             let paid = ((inserted + i) % 2) == 0;
             let notes = "benchmark";
 
-            if !values.is_empty() { values.push_str(", "); }
+            if !values.is_empty() {
+                values.push_str(", ");
+            }
             values.push_str(&format!(
                 "({}, '{}', '{}', {}, {}, {}, {}, {}, '{}')",
                 cust, sku, status, qty, price, now_ms, now_ms, paid, notes
@@ -112,12 +121,17 @@ fn smoke_queries_benchmark() {
             }
         }
         inserted += n;
-        if Instant::now() > insert_deadline { panic!("Insert phase exceeded timeout"); }
+        if Instant::now() > insert_deadline {
+            panic!("Insert phase exceeded timeout");
+        }
     }
 
     let insert_elapsed = start_insert.elapsed().as_secs_f64();
     let rows_per_sec = (inserted as f64) / insert_elapsed.max(1e-6);
-    println!("Benchmark INSERT: inserted {} rows in {:.3}s → {:.1} rows/sec", inserted, insert_elapsed, rows_per_sec);
+    println!(
+        "Benchmark INSERT: inserted {} rows in {:.3}s → {:.1} rows/sec",
+        inserted, insert_elapsed, rows_per_sec
+    );
 
     // SELECT pagination (cursor-based): 100 rows per page, using order_id > last_id
     let page_size = 100usize; // unchanged

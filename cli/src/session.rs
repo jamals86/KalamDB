@@ -110,15 +110,7 @@ impl CLISession {
         color: bool,
     ) -> Result<Self> {
         Self::with_auth_and_instance(
-            server_url,
-            auth,
-            format,
-            color,
-            None,
-            None,
-            None,
-            true,
-            None,
+            server_url, auth, format, color, None, None, None, true, None,
         )
         .await
     }
@@ -995,7 +987,12 @@ impl CLISession {
 
         let Some(idx) = options_idx else {
             // No OPTIONS found - return SQL as-is with default options
-            return (sql.to_string(), Some(SubscriptionOptions { last_rows: Some(100) }));
+            return (
+                sql.to_string(),
+                Some(SubscriptionOptions {
+                    last_rows: Some(100),
+                }),
+            );
         };
 
         // Split SQL at OPTIONS
@@ -1015,7 +1012,9 @@ impl CLISession {
         // Expected format: (last_rows=N) or ( last_rows = N )
         if !options_str.starts_with('(') || !options_str.ends_with(')') {
             eprintln!("Warning: Invalid OPTIONS format, using defaults");
-            return Some(SubscriptionOptions { last_rows: Some(100) });
+            return Some(SubscriptionOptions {
+                last_rows: Some(100),
+            });
         }
 
         let inner = options_str[1..options_str.len() - 1].trim();
@@ -1027,9 +1026,14 @@ impl CLISession {
 
             if key.to_lowercase() == "last_rows" {
                 if let Ok(last_rows) = value.parse::<usize>() {
-                    return Some(SubscriptionOptions { last_rows: Some(last_rows) });
+                    return Some(SubscriptionOptions {
+                        last_rows: Some(last_rows),
+                    });
                 } else {
-                    eprintln!("Warning: Invalid last_rows value '{}', using default 100", value);
+                    eprintln!(
+                        "Warning: Invalid last_rows value '{}', using default 100",
+                        value
+                    );
                 }
             } else {
                 eprintln!("Warning: Unknown option '{}', ignoring", key);
@@ -1037,7 +1041,9 @@ impl CLISession {
         }
 
         // Default to 100 rows if parsing failed
-        Some(SubscriptionOptions { last_rows: Some(100) })
+        Some(SubscriptionOptions {
+            last_rows: Some(100),
+        })
     }
 
     /// Run a WebSocket subscription
@@ -1347,7 +1353,8 @@ impl CLISession {
             "{}{}{}",
             "║ ".bright_blue().bold(),
             "Commands & Shortcuts".white().bold(),
-            "                                                 ║".to_string()
+            "                                                 ║"
+                .to_string()
                 .bright_blue()
                 .bold()
         );
@@ -1366,10 +1373,7 @@ impl CLISession {
             "║    • Autocomplete: keywords, namespaces, tables, columns  ",
             "(Tab)".dimmed()
         );
-        println!(
-            "{}",
-            "║    • Inline hints and SQL highlighting enabled"
-        );
+        println!("{}", "║    • Inline hints and SQL highlighting enabled");
 
         // Meta-commands (two columns)
         println!(
@@ -1379,18 +1383,22 @@ impl CLISession {
                 .bold()
         );
         println!("{}", "║  Meta-Commands".bright_blue().bold());
-        let left = [("\\help, \\?", "Show this help"),
+        let left = [
+            ("\\help, \\?", "Show this help"),
             ("\\quit, \\q", "Exit CLI"),
             ("\\info", "Session info"),
             ("\\connect <url>", "Connect to server"),
             ("\\config", "Show config"),
-            ("\\format <type>", "table|json|csv")];
-        let right = [("\\dt", "List tables"),
+            ("\\format <type>", "table|json|csv"),
+        ];
+        let right = [
+            ("\\dt", "List tables"),
             ("\\d <table>", "Describe table"),
             ("\\stats", "System stats"),
             ("\\health", "Health check"),
             ("\\refresh-tables", "Refresh autocomplete"),
-            ("\\subscribe <SQL>", "Start live query")];
+            ("\\subscribe <SQL>", "Start live query"),
+        ];
         for i in 0..left.len().max(right.len()) {
             let l = left
                 .get(i)

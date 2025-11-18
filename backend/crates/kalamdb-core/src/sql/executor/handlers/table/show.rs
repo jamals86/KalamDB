@@ -4,7 +4,9 @@ use crate::app_context::AppContext;
 use crate::error::KalamDbError;
 use crate::sql::executor::handlers::typed::TypedStatementHandler;
 use crate::sql::executor::models::{ExecutionContext, ExecutionResult, ScalarValue};
-use datafusion::arrow::array::{ArrayRef, Int32Array, RecordBatch, StringBuilder, TimestampMillisecondArray};
+use datafusion::arrow::array::{
+    ArrayRef, Int32Array, RecordBatch, StringBuilder, TimestampMillisecondArray,
+};
 use kalamdb_commons::schemas::TableDefinition;
 use kalamdb_sql::ddl::ShowTablesStatement;
 use std::sync::Arc;
@@ -33,19 +35,23 @@ impl TypedStatementHandler<ShowTablesStatement> for ShowTablesHandler {
         // If namespace filter provided, build filtered batch manually
         if let Some(ns) = statement.namespace_id {
             let defs = tables_provider.list_tables()?;
-            let filtered: Vec<TableDefinition> = defs
-                .into_iter()
-                .filter(|t| t.namespace_id == ns)
-                .collect();
+            let filtered: Vec<TableDefinition> =
+                defs.into_iter().filter(|t| t.namespace_id == ns).collect();
             let batch = build_tables_batch(filtered)?;
             let row_count = batch.num_rows();
-            return Ok(ExecutionResult::Rows { batches: vec![batch], row_count });
+            return Ok(ExecutionResult::Rows {
+                batches: vec![batch],
+                row_count,
+            });
         }
 
         // Otherwise, reuse provider's batch for all tables
         let batch = tables_provider.scan_all_tables()?;
         let row_count = batch.num_rows();
-        Ok(ExecutionResult::Rows { batches: vec![batch], row_count })
+        Ok(ExecutionResult::Rows {
+            batches: vec![batch],
+            row_count,
+        })
     }
 
     async fn check_authorization(
@@ -60,8 +66,6 @@ impl TypedStatementHandler<ShowTablesStatement> for ShowTablesHandler {
 
 /// Build a RecordBatch for system.tables-like view from definitions
 fn build_tables_batch(tables: Vec<TableDefinition>) -> Result<RecordBatch, KalamDbError> {
-    
-
     let mut table_ids = StringBuilder::new();
     let mut table_names = StringBuilder::new();
     let mut namespaces = StringBuilder::new();
@@ -105,7 +109,6 @@ fn build_tables_batch(tables: Vec<TableDefinition>) -> Result<RecordBatch, Kalam
 
 /// Fetch system.tables schema from provider to ensure column order/types match
 fn self_tables_provider_schema() -> datafusion::arrow::datatypes::SchemaRef {
-    
     use crate::app_context::AppContext;
     use datafusion::datasource::TableProvider;
     let app = AppContext::get();

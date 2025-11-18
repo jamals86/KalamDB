@@ -3,8 +3,8 @@
 //! Logs queries that exceed a configurable threshold to a separate slow.log file.
 //! Designed for minimal performance overhead using async file I/O.
 
-use kalamdb_commons::models::{TableName, UserId};
 use crate::schema_registry::TableType;
+use kalamdb_commons::models::{TableName, UserId};
 use std::fs::OpenOptions;
 use std::io::Write;
 use std::path::Path;
@@ -50,10 +50,8 @@ impl SlowQueryLogger {
                 }
 
                 while let Some(entry) = receiver.recv().await {
-                    if let Ok(mut file) = OpenOptions::new()
-                        .create(true)
-                        .append(true)
-                        .open(&log_path)
+                    if let Ok(mut file) =
+                        OpenOptions::new().create(true).append(true).open(&log_path)
                     {
                         let timestamp = chrono::DateTime::from_timestamp_millis(entry.timestamp)
                             .map(|dt| dt.format("%Y-%m-%d %H:%M:%S%.3f").to_string())
@@ -132,7 +130,7 @@ impl SlowQueryLogger {
     ) {
         // Convert duration to milliseconds for comparison
         let duration_ms = (duration_secs * 1000.0) as u64;
-        
+
         // Fast path: skip if query is faster than threshold (no allocations)
         if duration_ms < self.threshold_ms {
             return;
@@ -143,7 +141,10 @@ impl SlowQueryLogger {
             "SLOW QUERY: {:.3}s | user={} | table={} ({}) | rows={} | query={}",
             duration_secs,
             user_id,
-            table_name.as_ref().map(|t| t.to_string()).unwrap_or_else(|| "unknown".to_string()),
+            table_name
+                .as_ref()
+                .map(|t| t.to_string())
+                .unwrap_or_else(|| "unknown".to_string()),
             table_type,
             row_count,
             query.chars().take(100).collect::<String>()
@@ -167,7 +168,7 @@ impl SlowQueryLogger {
     pub fn threshold_ms(&self) -> u64 {
         self.threshold_ms
     }
-    
+
     /// Get the configured threshold in seconds (for backwards compatibility)
     pub fn threshold_secs(&self) -> f64 {
         self.threshold_ms as f64 / 1000.0

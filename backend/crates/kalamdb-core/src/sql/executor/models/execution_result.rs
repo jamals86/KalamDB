@@ -28,10 +28,7 @@ pub enum ExecutionResult {
         select_query: String,
     },
     /// Job killed result
-    JobKilled {
-        job_id: String,
-        status: String,
-    },
+    JobKilled { job_id: String, status: String },
 }
 
 impl ExecutionResult {

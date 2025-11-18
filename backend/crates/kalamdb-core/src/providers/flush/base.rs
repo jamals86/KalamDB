@@ -20,7 +20,6 @@
 
 use crate::error::KalamDbError;
 use crate::live_query::manager::LiveQueryManager;
-use kalamdb_commons::NamespaceId;
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 
@@ -147,6 +146,7 @@ pub trait TableFlush: Send + Sync {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use kalamdb_commons::NamespaceId;
 
     struct MockFlushJob {
         should_fail: bool,

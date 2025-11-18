@@ -4,8 +4,10 @@
 
 mod cache_service;
 mod flush_helper;
+mod planner;
 mod service;
 
 pub use cache_service::ManifestCacheService;
 pub use flush_helper::FlushManifestHelper;
+pub use planner::{ManifestAccessPlanner, RowGroupSelection};
 pub use service::ManifestService;

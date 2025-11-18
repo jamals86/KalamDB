@@ -5,9 +5,9 @@
 //! - Live query routing
 //! - Distributed coordination
 
-use std::fmt;
-use serde::{Deserialize, Serialize};
 use bincode::{Decode, Encode};
+use serde::{Deserialize, Serialize};
+use std::fmt;
 
 /// Node identifier for cluster deployments
 ///
@@ -95,7 +95,7 @@ mod tests {
         let node1 = NodeId::new("node1".to_string());
         let node2 = NodeId::new("node1".to_string());
         let node3 = NodeId::new("node2".to_string());
-        
+
         assert_eq!(node1, node2);
         assert_ne!(node1, node3);
     }

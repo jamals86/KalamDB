@@ -32,7 +32,9 @@ async fn test_01_list_system_tables() {
     // Query to list all system tables - system tables themselves may not be in system.tables
     // So we query for the user-created tables
     let response = server
-        .execute_sql("SELECT * FROM system.tables WHERE namespace_id = 'test_ns' ORDER BY table_name")
+        .execute_sql(
+            "SELECT * FROM system.tables WHERE namespace_id = 'test_ns' ORDER BY table_name",
+        )
         .await;
 
     assert_eq!(
@@ -361,7 +363,10 @@ async fn test_08_insert_storage_locations() {
     );
 
     if let Some(rows) = &response.results.first().and_then(|r| r.rows.as_ref()) {
-        println!("system.storages rows returned: {} (write support pending)", rows.len());
+        println!(
+            "system.storages rows returned: {} (write support pending)",
+            rows.len()
+        );
     }
 }
 
@@ -738,7 +743,6 @@ async fn test_15_update_multiple_users() {
         }
     }
 }
-
 
 #[actix_web::test]
 #[ignore = "Test uses create_shared_table which requires pre-created column families at DB init."]

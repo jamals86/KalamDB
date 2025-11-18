@@ -20,22 +20,22 @@ use kalamdb_sql::statement_classifier::SqlStatement;
 use std::sync::Arc;
 
 // Import all typed handlers
+use crate::sql::executor::handlers::dml::{DeleteHandler, InsertHandler, UpdateHandler};
+use crate::sql::executor::handlers::flush::{FlushAllTablesHandler, FlushTableHandler};
+use crate::sql::executor::handlers::jobs::{KillJobHandler, KillLiveQueryHandler};
 use crate::sql::executor::handlers::namespace::{
-    CreateNamespaceHandler, AlterNamespaceHandler, DropNamespaceHandler, ShowNamespacesHandler,
+    AlterNamespaceHandler, CreateNamespaceHandler, DropNamespaceHandler, ShowNamespacesHandler,
 };
 use crate::sql::executor::handlers::storage::{
-    CreateStorageHandler, AlterStorageHandler, DropStorageHandler, ShowStoragesHandler,
+    AlterStorageHandler, CreateStorageHandler, DropStorageHandler, ShowStoragesHandler,
 };
+use crate::sql::executor::handlers::subscription::SubscribeHandler;
 use crate::sql::executor::handlers::system::ShowManifestCacheHandler;
 use crate::sql::executor::handlers::table::{
-    CreateTableHandler, AlterTableHandler, DropTableHandler, ShowTablesHandler,
-    DescribeTableHandler, ShowStatsHandler,
+    AlterTableHandler, CreateTableHandler, DescribeTableHandler, DropTableHandler,
+    ShowStatsHandler, ShowTablesHandler,
 };
-use crate::sql::executor::handlers::flush::{FlushTableHandler, FlushAllTablesHandler};
-use crate::sql::executor::handlers::jobs::{KillJobHandler, KillLiveQueryHandler};
-use crate::sql::executor::handlers::user::{CreateUserHandler, AlterUserHandler, DropUserHandler};
-use crate::sql::executor::handlers::subscription::SubscribeHandler;
-use crate::sql::executor::handlers::dml::{InsertHandler, UpdateHandler, DeleteHandler};
+use crate::sql::executor::handlers::user::{AlterUserHandler, CreateUserHandler, DropUserHandler};
 
 /// Trait for handlers that can process any SqlStatement variant
 ///
@@ -104,11 +104,11 @@ impl HandlerRegistry {
     /// Create a new handler registry with all handlers pre-registered
     ///
     /// This is called once during SqlExecutor initialization.
-    pub fn new(app_context: Arc<AppContext>) -> Self {
-        use kalamdb_sql::statement_classifier::SqlStatementKind;
-    use kalamdb_commons::models::{NamespaceId, StorageId};
-    use kalamdb_commons::TableType; // Role not needed here
-        
+    pub fn new(app_context: Arc<AppContext>, enforce_password_complexity: bool) -> Self {
+        use kalamdb_commons::models::{NamespaceId, StorageId};
+        use kalamdb_commons::TableType;
+        use kalamdb_sql::statement_classifier::SqlStatementKind; // Role not needed here
+
         let registry = Self {
             handlers: DashMap::new(),
             app_context: app_context.clone(),
@@ -117,7 +117,7 @@ impl HandlerRegistry {
         // ============================================================================
         // NAMESPACE HANDLERS
         // ============================================================================
-        
+
         registry.register_typed(
             SqlStatementKind::CreateNamespace(kalamdb_sql::ddl::CreateNamespaceStatement {
                 name: NamespaceId::new("_placeholder"),
@@ -166,7 +166,7 @@ impl HandlerRegistry {
         // ============================================================================
         // STORAGE HANDLERS
         // ============================================================================
-        
+
         registry.register_typed(
             SqlStatementKind::CreateStorage(kalamdb_sql::ddl::CreateStorageStatement {
                 storage_id: StorageId::new("_placeholder"),
@@ -202,7 +202,7 @@ impl HandlerRegistry {
 
         registry.register_typed(
             SqlStatementKind::DropStorage(kalamdb_sql::ddl::DropStorageStatement {
-                    storage_id: kalamdb_commons::StorageId::from(""),
+                storage_id: kalamdb_commons::StorageId::from(""),
             }),
             DropStorageHandler::new(app_context.clone()),
             |stmt| match stmt.kind() {
@@ -223,14 +223,17 @@ impl HandlerRegistry {
         // ============================================================================
         // TABLE HANDLERS
         // ============================================================================
-        
+
         // TABLE HANDLERS (Phase 8) - fully implemented
         // Register table handlers with minimal placeholder instances for discriminant extraction
-        use kalamdb_sql::ddl::{CreateTableStatement, AlterTableStatement, DropTableStatement, ShowTablesStatement, DescribeTableStatement, ShowTableStatsStatement};
-    // TableType already imported above; avoid duplicate imports
-    use datafusion::arrow::datatypes::Schema as ArrowSchema;
+        use kalamdb_sql::ddl::{
+            AlterTableStatement, CreateTableStatement, DescribeTableStatement, DropTableStatement,
+            ShowTableStatsStatement, ShowTablesStatement,
+        };
+        // TableType already imported above; avoid duplicate imports
+        use datafusion::arrow::datatypes::Schema as ArrowSchema;
+        use kalamdb_commons::models::TableName;
         use std::collections::HashMap;
-        use kalamdb_commons::models::{TableName};
 
         registry.register_typed(
             SqlStatementKind::CreateTable(CreateTableStatement {
@@ -249,16 +252,24 @@ impl HandlerRegistry {
                 access_level: None,
             }),
             CreateTableHandler::new(app_context.clone()),
-            |stmt| match stmt.kind() { SqlStatementKind::CreateTable(s) => Some(s.clone()), _ => None },
+            |stmt| match stmt.kind() {
+                SqlStatementKind::CreateTable(s) => Some(s.clone()),
+                _ => None,
+            },
         );
         registry.register_typed(
             SqlStatementKind::AlterTable(AlterTableStatement {
                 table_name: TableName::new("_placeholder"),
                 namespace_id: NamespaceId::new("_placeholder"),
-                operation: kalamdb_sql::ddl::ColumnOperation::Drop { column_name: "_placeholder".to_string() },
+                operation: kalamdb_sql::ddl::ColumnOperation::Drop {
+                    column_name: "_placeholder".to_string(),
+                },
             }),
             AlterTableHandler::new(app_context.clone()),
-            |stmt| match stmt.kind() { SqlStatementKind::AlterTable(s) => Some(s.clone()), _ => None },
+            |stmt| match stmt.kind() {
+                SqlStatementKind::AlterTable(s) => Some(s.clone()),
+                _ => None,
+            },
         );
         registry.register_typed(
             SqlStatementKind::DropTable(DropTableStatement {
@@ -268,22 +279,41 @@ impl HandlerRegistry {
                 if_exists: false,
             }),
             DropTableHandler::new(app_context.clone()),
-            |stmt| match stmt.kind() { SqlStatementKind::DropTable(s) => Some(s.clone()), _ => None },
+            |stmt| match stmt.kind() {
+                SqlStatementKind::DropTable(s) => Some(s.clone()),
+                _ => None,
+            },
         );
         registry.register_typed(
             SqlStatementKind::ShowTables(ShowTablesStatement { namespace_id: None }),
             ShowTablesHandler::new(app_context.clone()),
-            |stmt| match stmt.kind() { SqlStatementKind::ShowTables(s) => Some(s.clone()), _ => None },
+            |stmt| match stmt.kind() {
+                SqlStatementKind::ShowTables(s) => Some(s.clone()),
+                _ => None,
+            },
         );
         registry.register_typed(
-            SqlStatementKind::DescribeTable(DescribeTableStatement { namespace_id: None, table_name: TableName::new("_placeholder"), show_history: false }),
+            SqlStatementKind::DescribeTable(DescribeTableStatement {
+                namespace_id: None,
+                table_name: TableName::new("_placeholder"),
+                show_history: false,
+            }),
             DescribeTableHandler::new(app_context.clone()),
-            |stmt| match stmt.kind() { SqlStatementKind::DescribeTable(s) => Some(s.clone()), _ => None },
+            |stmt| match stmt.kind() {
+                SqlStatementKind::DescribeTable(s) => Some(s.clone()),
+                _ => None,
+            },
         );
         registry.register_typed(
-            SqlStatementKind::ShowStats(ShowTableStatsStatement { namespace_id: None, table_name: TableName::new("_placeholder"), }),
+            SqlStatementKind::ShowStats(ShowTableStatsStatement {
+                namespace_id: None,
+                table_name: TableName::new("_placeholder"),
+            }),
             ShowStatsHandler::new(app_context.clone()),
-            |stmt| match stmt.kind() { SqlStatementKind::ShowStats(s) => Some(s.clone()), _ => None },
+            |stmt| match stmt.kind() {
+                SqlStatementKind::ShowStats(s) => Some(s.clone()),
+                _ => None,
+            },
         );
 
         // ============================================================================
@@ -292,7 +322,10 @@ impl HandlerRegistry {
         registry.register_typed(
             SqlStatementKind::ShowManifest(kalamdb_sql::ddl::ShowManifestStatement),
             ShowManifestCacheHandler::new(app_context.clone()),
-            |stmt| match stmt.kind() { SqlStatementKind::ShowManifest(s) => Some(s.clone()), _ => None },
+            |stmt| match stmt.kind() {
+                SqlStatementKind::ShowManifest(s) => Some(s.clone()),
+                _ => None,
+            },
         );
 
         // ============================================================================
@@ -304,7 +337,10 @@ impl HandlerRegistry {
                 table_name: TableName::new("_placeholder"),
             }),
             FlushTableHandler::new(app_context.clone()),
-            |stmt| match stmt.kind() { SqlStatementKind::FlushTable(s) => Some(s.clone()), _ => None },
+            |stmt| match stmt.kind() {
+                SqlStatementKind::FlushTable(s) => Some(s.clone()),
+                _ => None,
+            },
         );
 
         registry.register_typed(
@@ -312,37 +348,57 @@ impl HandlerRegistry {
                 namespace: NamespaceId::new("_placeholder"),
             }),
             FlushAllTablesHandler::new(app_context.clone()),
-            |stmt| match stmt.kind() { SqlStatementKind::FlushAllTables(s) => Some(s.clone()), _ => None },
+            |stmt| match stmt.kind() {
+                SqlStatementKind::FlushAllTables(s) => Some(s.clone()),
+                _ => None,
+            },
         );
 
         // ============================================================================
         // JOB HANDLERS
         // ============================================================================
         registry.register_typed(
-            SqlStatementKind::KillJob(kalamdb_sql::ddl::JobCommand::Kill { job_id: String::new() }),
+            SqlStatementKind::KillJob(kalamdb_sql::ddl::JobCommand::Kill {
+                job_id: String::new(),
+            }),
             KillJobHandler::new(app_context.clone()),
-            |stmt| match stmt.kind() { SqlStatementKind::KillJob(s) => Some(s.clone()), _ => None },
+            |stmt| match stmt.kind() {
+                SqlStatementKind::KillJob(s) => Some(s.clone()),
+                _ => None,
+            },
         );
 
         // For discriminant extraction, we only need a placeholder instance. Use LiveId::from_string.
-        let placeholder_live = kalamdb_commons::models::LiveId::from_string("user123-conn_abc-default:table_q1-q1").unwrap_or_else(|_| {
-            kalamdb_commons::models::LiveId::new(
-                kalamdb_commons::models::ConnectionId::new("user123".to_string(), "conn_abc".to_string()),
-                kalamdb_commons::models::TableId::from_strings("default", "table_q1"),
-                "q1".to_string(),
-            )
-        });
+        let placeholder_live =
+            kalamdb_commons::models::LiveId::from_string("user123-conn_abc-default:table_q1-q1")
+                .unwrap_or_else(|_| {
+                    kalamdb_commons::models::LiveId::new(
+                        kalamdb_commons::models::ConnectionId::new(
+                            "user123".to_string(),
+                            "conn_abc".to_string(),
+                        ),
+                        kalamdb_commons::models::TableId::from_strings("default", "table_q1"),
+                        "q1".to_string(),
+                    )
+                });
         registry.register_typed(
-            SqlStatementKind::KillLiveQuery(kalamdb_sql::ddl::KillLiveQueryStatement { live_id: placeholder_live }),
+            SqlStatementKind::KillLiveQuery(kalamdb_sql::ddl::KillLiveQueryStatement {
+                live_id: placeholder_live,
+            }),
             KillLiveQueryHandler::new(app_context.clone()),
-            |stmt| match stmt.kind() { SqlStatementKind::KillLiveQuery(s) => Some(s.clone()), _ => None },
+            |stmt| match stmt.kind() {
+                SqlStatementKind::KillLiveQuery(s) => Some(s.clone()),
+                _ => None,
+            },
         );
 
         // ============================================================================
         // USER HANDLERS
         // ============================================================================
-    use kalamdb_sql::ddl::{CreateUserStatement, AlterUserStatement, DropUserStatement, UserModification};
-    use kalamdb_commons::AuthType; // Role not needed in placeholder (defaults handled by statement parsing)
+        use kalamdb_commons::AuthType;
+        use kalamdb_sql::ddl::{
+            AlterUserStatement, CreateUserStatement, DropUserStatement, UserModification,
+        }; // Role not needed in placeholder (defaults handled by statement parsing)
         registry.register_typed(
             SqlStatementKind::CreateUser(CreateUserStatement {
                 username: "_placeholder".to_string(),
@@ -351,27 +407,39 @@ impl HandlerRegistry {
                 email: None,
                 password: None,
             }),
-            CreateUserHandler::new(app_context.clone()),
-            |stmt| match stmt.kind() { SqlStatementKind::CreateUser(s) => Some(s.clone()), _ => None },
+            CreateUserHandler::new(app_context.clone(), enforce_password_complexity),
+            |stmt| match stmt.kind() {
+                SqlStatementKind::CreateUser(s) => Some(s.clone()),
+                _ => None,
+            },
         );
         registry.register_typed(
             SqlStatementKind::AlterUser(AlterUserStatement {
                 username: "_placeholder".to_string(),
                 modification: UserModification::SetEmail("_placeholder".to_string()),
             }),
-            AlterUserHandler::new(app_context.clone()),
-            |stmt| match stmt.kind() { SqlStatementKind::AlterUser(s) => Some(s.clone()), _ => None },
+            AlterUserHandler::new(app_context.clone(), enforce_password_complexity),
+            |stmt| match stmt.kind() {
+                SqlStatementKind::AlterUser(s) => Some(s.clone()),
+                _ => None,
+            },
         );
         registry.register_typed(
-            SqlStatementKind::DropUser(DropUserStatement { username: "_placeholder".to_string(), if_exists: false }),
+            SqlStatementKind::DropUser(DropUserStatement {
+                username: "_placeholder".to_string(),
+                if_exists: false,
+            }),
             DropUserHandler::new(app_context.clone()),
-            |stmt| match stmt.kind() { SqlStatementKind::DropUser(s) => Some(s.clone()), _ => None },
+            |stmt| match stmt.kind() {
+                SqlStatementKind::DropUser(s) => Some(s.clone()),
+                _ => None,
+            },
         );
 
         // ============================================================================
         // SUBSCRIPTION HANDLER
         // ============================================================================
-        use kalamdb_sql::ddl::{SubscribeStatement, SubscribeOptions};
+        use kalamdb_sql::ddl::{SubscribeOptions, SubscribeStatement};
         registry.register_typed(
             SqlStatementKind::Subscribe(SubscribeStatement {
                 select_query: "SELECT * FROM _placeholder._placeholder".to_string(),
@@ -380,13 +448,16 @@ impl HandlerRegistry {
                 options: SubscribeOptions::default(),
             }),
             SubscribeHandler::new(app_context.clone()),
-            |stmt| match stmt.kind() { SqlStatementKind::Subscribe(s) => Some(s.clone()), _ => None },
+            |stmt| match stmt.kind() {
+                SqlStatementKind::Subscribe(s) => Some(s.clone()),
+                _ => None,
+            },
         );
 
         // ============================================================================
         // DML HANDLERS (TypedStatementHandler pattern - Phase 7)
         // ============================================================================
-        
+
         // Use dynamic handlers for DML to access original SQL text (required for parsing columns/values)
         registry.register_dynamic(
             SqlStatementKind::Insert(kalamdb_sql::ddl::InsertStatement),
@@ -422,8 +493,7 @@ impl HandlerRegistry {
         placeholder: kalamdb_sql::statement_classifier::SqlStatementKind,
         handler: H,
         extractor: F,
-    )
-    where
+    ) where
         H: crate::sql::executor::handlers::typed::TypedStatementHandler<T> + Send + Sync + 'static,
         T: kalamdb_sql::DdlAst + Send + 'static,
         F: Fn(SqlStatement) -> Option<T> + Send + Sync + 'static,
@@ -456,8 +526,7 @@ impl HandlerRegistry {
         &self,
         placeholder: kalamdb_sql::statement_classifier::SqlStatementKind,
         handler: H,
-    )
-    where
+    ) where
         H: crate::sql::executor::handlers::StatementHandler + Send + Sync + 'static,
     {
         let key = std::mem::discriminant(&placeholder);
@@ -537,10 +606,10 @@ mod tests {
     #[tokio::test]
     async fn test_registry_create_namespace() {
         use kalamdb_sql::statement_classifier::SqlStatementKind;
-        
+
         init_test_app_context();
         let app_ctx = AppContext::get();
-        let registry = HandlerRegistry::new(app_ctx);
+        let registry = HandlerRegistry::new(app_ctx, false);
         let session = SessionContext::new();
         let ctx = test_context();
 
@@ -549,16 +618,14 @@ mod tests {
             SqlStatementKind::CreateNamespace(kalamdb_sql::ddl::CreateNamespaceStatement {
                 name: NamespaceId::new("test_registry_ns"),
                 if_not_exists: false,
-            })
+            }),
         );
 
         // Check handler is registered
         assert!(registry.has_handler(&stmt));
 
         // Execute via registry
-        let result = registry
-            .handle(stmt, vec![], &ctx)
-            .await;
+        let result = registry.handle(stmt, vec![], &ctx).await;
         assert!(result.is_ok());
 
         match result.unwrap() {
@@ -572,10 +639,10 @@ mod tests {
     #[tokio::test]
     async fn test_registry_unregistered_handler() {
         use kalamdb_sql::statement_classifier::SqlStatementKind;
-              
+
         init_test_app_context();
         let app_ctx = AppContext::get();
-        let registry = HandlerRegistry::new(app_ctx);
+        let registry = HandlerRegistry::new(app_ctx, false);
         let session = SessionContext::new();
         let ctx = test_context();
 
@@ -583,16 +650,14 @@ mod tests {
         // For this test, we'll use a deliberately malformed statement kind
         let stmt = SqlStatement::new(
             "SOME UNKNOWN STATEMENT".to_string(),
-            SqlStatementKind::Unknown // This should not have a handler
+            SqlStatementKind::Unknown, // This should not have a handler
         );
 
         // Handler not registered for "Unknown" kind
         assert!(!registry.has_handler(&stmt));
 
         // Should return error
-        let result = registry
-            .handle(stmt, vec![], &ctx)
-            .await;
+        let result = registry.handle(stmt, vec![], &ctx).await;
         assert!(result.is_err());
 
         match result {
@@ -606,25 +671,27 @@ mod tests {
     #[tokio::test]
     async fn test_registry_authorization_check() {
         use kalamdb_sql::statement_classifier::SqlStatementKind;
-        
+
         init_test_app_context();
         let app_ctx = AppContext::get();
-        let registry = HandlerRegistry::new(app_ctx);
+        let registry = HandlerRegistry::new(app_ctx, false);
         let session: SessionContext = SessionContext::new();
-        let user_ctx = ExecutionContext::new(UserId::from("regular_user"), Role::User, create_test_session());
+        let user_ctx = ExecutionContext::new(
+            UserId::from("regular_user"),
+            Role::User,
+            create_test_session(),
+        );
 
         let stmt = SqlStatement::new(
             "CREATE NAMESPACE unauthorized_ns".to_string(),
             SqlStatementKind::CreateNamespace(kalamdb_sql::ddl::CreateNamespaceStatement {
                 name: NamespaceId::new("unauthorized_ns"),
                 if_not_exists: false,
-            })
+            }),
         );
 
         // Should fail authorization
-        let result = registry
-            .handle(stmt, vec![], &user_ctx)
-            .await;
+        let result = registry.handle(stmt, vec![], &user_ctx).await;
         assert!(result.is_err());
 
         match result {
@@ -636,26 +703,25 @@ mod tests {
     #[tokio::test]
     async fn test_registry_insert_handler() {
         use kalamdb_sql::statement_classifier::SqlStatementKind;
-        
+
         init_test_app_context();
         let app_ctx = AppContext::get();
-        let registry = HandlerRegistry::new(app_ctx);
+        let registry = HandlerRegistry::new(app_ctx, false);
         let session = SessionContext::new();
-        let ctx = ExecutionContext::new(UserId::from("test_user"), Role::User, create_test_session());
+        let ctx =
+            ExecutionContext::new(UserId::from("test_user"), Role::User, create_test_session());
 
         let stmt = SqlStatement::new(
             "INSERT INTO test VALUES (1)".to_string(),
-            SqlStatementKind::Insert(kalamdb_sql::ddl::InsertStatement)
+            SqlStatementKind::Insert(kalamdb_sql::ddl::InsertStatement),
         );
 
         // Check handler is registered (T056)
         assert!(registry.has_handler(&stmt));
 
         // Execute via registry - should fail with table not found (handler is implemented)
-        let result = registry
-            .handle(stmt, vec![], &ctx)
-            .await;
-        
+        let result = registry.handle(stmt, vec![], &ctx).await;
+
         // Handler is now fully implemented, expect table not found error
         match result {
             Err(KalamDbError::InvalidOperation(msg)) if msg.contains("does not exist") => {}
@@ -667,26 +733,25 @@ mod tests {
     #[tokio::test]
     async fn test_registry_update_handler() {
         use kalamdb_sql::statement_classifier::SqlStatementKind;
-        
+
         init_test_app_context();
         let app_ctx = AppContext::get();
-        let registry = HandlerRegistry::new(app_ctx);
+        let registry = HandlerRegistry::new(app_ctx, false);
         let _session = SessionContext::new();
-        let ctx = ExecutionContext::new(UserId::from("test_user"), Role::User, create_test_session());
+        let ctx =
+            ExecutionContext::new(UserId::from("test_user"), Role::User, create_test_session());
 
         let stmt = SqlStatement::new(
             "UPDATE test SET x = 1".to_string(),
-            SqlStatementKind::Update(kalamdb_sql::ddl::UpdateStatement)
+            SqlStatementKind::Update(kalamdb_sql::ddl::UpdateStatement),
         );
 
         // Check handler is registered (T057)
         assert!(registry.has_handler(&stmt));
 
         // Execute via registry - should fail with table not found (table doesn't exist)
-        let result = registry
-            .handle(stmt, vec![], &ctx)
-            .await;
-        
+        let result = registry.handle(stmt, vec![], &ctx).await;
+
         // Expect table not found error since test table doesn't exist
         match result {
             Err(KalamDbError::NotFound(msg)) if msg.contains("Table") => {}
@@ -698,26 +763,25 @@ mod tests {
     #[tokio::test]
     async fn test_registry_delete_handler() {
         use kalamdb_sql::statement_classifier::SqlStatementKind;
-        
+
         init_test_app_context();
         let app_ctx = AppContext::get();
-        let registry = HandlerRegistry::new(app_ctx);
+        let registry = HandlerRegistry::new(app_ctx, false);
         let session = SessionContext::new();
-        let ctx = ExecutionContext::new(UserId::from("test_user"), Role::User, create_test_session());
+        let ctx =
+            ExecutionContext::new(UserId::from("test_user"), Role::User, create_test_session());
 
         let stmt = SqlStatement::new(
             "DELETE FROM test WHERE id = 1".to_string(),
-            SqlStatementKind::Delete(kalamdb_sql::ddl::DeleteStatement)
+            SqlStatementKind::Delete(kalamdb_sql::ddl::DeleteStatement),
         );
 
         // Check handler is registered (T058)
         assert!(registry.has_handler(&stmt));
 
         // Execute via registry - should fail with table not found (handler is implemented)
-        let result = registry
-            .handle(stmt, vec![], &ctx)
-            .await;
-        
+        let result = registry.handle(stmt, vec![], &ctx).await;
+
         // Handler is now fully implemented, expect table not found error
         match result {
             Err(KalamDbError::NotFound(msg)) if msg.contains("not found") => {}

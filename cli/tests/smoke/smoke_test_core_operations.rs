@@ -86,8 +86,7 @@ fn test_namespace_operations() {
     // CREATE NAMESPACE
     println!("  Creating namespace: {}", ns_name);
     let create_sql = format!("CREATE NAMESPACE {}", ns_name);
-    execute_sql_as_root_via_cli(&create_sql)
-        .expect("CREATE NAMESPACE should succeed");
+    execute_sql_as_root_via_cli(&create_sql).expect("CREATE NAMESPACE should succeed");
     println!("    ✓ Namespace created");
 
     // SELECT from system.namespaces to verify
@@ -110,8 +109,7 @@ fn test_namespace_operations() {
     // DROP NAMESPACE
     println!("  Dropping namespace: {}", ns_name);
     let drop_sql = format!("DROP NAMESPACE {} CASCADE", ns_name);
-    execute_sql_as_root_via_cli(&drop_sql)
-        .expect("DROP NAMESPACE should succeed");
+    execute_sql_as_root_via_cli(&drop_sql).expect("DROP NAMESPACE should succeed");
     println!("    ✓ Namespace dropped");
 
     // Verify namespace is removed or marked as deleted
@@ -119,8 +117,8 @@ fn test_namespace_operations() {
         "SELECT namespace_id FROM system.namespaces WHERE namespace_id = '{}'",
         ns_name
     );
-    let result = execute_sql_as_root_via_cli(&verify_sql)
-        .expect("SELECT after DROP should succeed");
+    let result =
+        execute_sql_as_root_via_cli(&verify_sql).expect("SELECT after DROP should succeed");
 
     assert!(
         result.contains("(0 rows)") || !result.contains(&ns_name),
@@ -152,8 +150,7 @@ fn test_user_operations() {
         "CREATE USER {} WITH PASSWORD '{}' ROLE 'user'",
         username, password
     );
-    execute_sql_as_root_via_cli(&create_sql)
-        .expect("CREATE USER should succeed");
+    execute_sql_as_root_via_cli(&create_sql).expect("CREATE USER should succeed");
     println!("    ✓ User created");
 
     // SELECT from system.users to verify
@@ -162,8 +159,8 @@ fn test_user_operations() {
         "SELECT username, role FROM system.users WHERE username = '{}'",
         username
     );
-    let result = execute_sql_as_root_via_cli(&select_sql)
-        .expect("SELECT from system.users should succeed");
+    let result =
+        execute_sql_as_root_via_cli(&select_sql).expect("SELECT from system.users should succeed");
 
     assert!(
         result.contains(&username) && (result.contains("user") || result.contains("(1 row)")),
@@ -176,8 +173,7 @@ fn test_user_operations() {
     // DROP USER
     println!("  Dropping user: {}", username);
     let drop_sql = format!("DROP USER '{}'", username);
-    execute_sql_as_root_via_cli(&drop_sql)
-        .expect("DROP USER should succeed");
+    execute_sql_as_root_via_cli(&drop_sql).expect("DROP USER should succeed");
     println!("    ✓ User dropped");
 
     // Verify user is removed or soft-deleted
@@ -185,8 +181,8 @@ fn test_user_operations() {
         "SELECT username, deleted_at FROM system.users WHERE username = '{}'",
         username
     );
-    let result = execute_sql_as_root_via_cli(&verify_sql)
-        .expect("SELECT after DROP should succeed");
+    let result =
+        execute_sql_as_root_via_cli(&verify_sql).expect("SELECT after DROP should succeed");
 
     // User should either be completely removed or have deleted_at timestamp
     let is_removed = result.contains("(0 rows)") || !result.contains(&username);
@@ -222,9 +218,9 @@ fn test_storage_operations() {
         "CREATE STORAGE {} TYPE 'filesystem' BASE_DIRECTORY '/tmp/smoke_test'",
         storage_name
     );
-    
+
     let create_result = execute_sql_as_root_via_cli(&create_sql);
-    
+
     // Storage creation might not be fully implemented, handle gracefully
     match create_result {
         Ok(_) => {
@@ -250,8 +246,7 @@ fn test_storage_operations() {
             // DROP STORAGE
             println!("  Dropping storage: {}", storage_name);
             let drop_sql = format!("DROP STORAGE {}", storage_name);
-            execute_sql_as_root_via_cli(&drop_sql)
-                .expect("DROP STORAGE should succeed");
+            execute_sql_as_root_via_cli(&drop_sql).expect("DROP STORAGE should succeed");
             println!("    ✓ Storage dropped");
 
             // Verify storage is removed
@@ -259,8 +254,8 @@ fn test_storage_operations() {
                 "SELECT storage_id FROM system.storages WHERE storage_id = '{}'",
                 storage_name
             );
-            let result = execute_sql_as_root_via_cli(&verify_sql)
-                .expect("SELECT after DROP should succeed");
+            let result =
+                execute_sql_as_root_via_cli(&verify_sql).expect("SELECT after DROP should succeed");
 
             assert!(
                 result.contains("(0 rows)") || !result.contains(&storage_name),
@@ -273,7 +268,10 @@ fn test_storage_operations() {
             println!("  ✅ Storage operations completed successfully\n");
         }
         Err(e) => {
-            println!("    ⚠️  Storage operations not fully implemented yet: {}", e);
+            println!(
+                "    ⚠️  Storage operations not fully implemented yet: {}",
+                e
+            );
             println!("    Skipping storage verification\n");
         }
     }
@@ -297,13 +295,12 @@ fn test_flush_operations() {
     println!("  Setting up test namespace and table");
     execute_sql_as_root_via_cli(&format!("CREATE NAMESPACE {}", ns_name))
         .expect("CREATE NAMESPACE should succeed");
-    
+
     let create_table_sql = format!(
         "CREATE USER TABLE {} (id INT PRIMARY KEY, value VARCHAR) FLUSH ROWS 100",
         full_table_name
     );
-    execute_sql_as_root_via_cli(&create_table_sql)
-        .expect("CREATE TABLE should succeed");
+    execute_sql_as_root_via_cli(&create_table_sql).expect("CREATE TABLE should succeed");
     println!("    ✓ Test table created: {}", full_table_name);
 
     // Insert test data
@@ -312,8 +309,7 @@ fn test_flush_operations() {
         "INSERT INTO {} (id, value) VALUES (1, 'test_value')",
         full_table_name
     );
-    execute_sql_as_root_via_cli(&insert_sql)
-        .expect("INSERT should succeed");
+    execute_sql_as_root_via_cli(&insert_sql).expect("INSERT should succeed");
     println!("    ✓ Test data inserted");
 
     // Test 5a: FLUSH TABLE
@@ -328,7 +324,10 @@ fn test_flush_operations() {
         }
         Err(e) => {
             // Note: system.jobs may have serialization issues, so flush might fail
-            println!("    ⚠️  FLUSH TABLE failed (may be due to jobs table issues): {}", e);
+            println!(
+                "    ⚠️  FLUSH TABLE failed (may be due to jobs table issues): {}",
+                e
+            );
         }
     }
 
@@ -340,19 +339,19 @@ fn test_flush_operations() {
     match flush_all_result {
         Ok(output) => {
             println!("    ✓ FLUSH ALL TABLES executed");
-            
+
             // Try to parse job IDs from output using common helper
             if let Ok(job_ids) = crate::common::parse_job_ids_from_flush_all_output(&output) {
                 if !job_ids.is_empty() {
                     println!("    Found {} job ID(s): {:?}", job_ids.len(), job_ids);
-                    
+
                     // Verify jobs in system.jobs (with graceful handling)
                     for job_id in &job_ids {
                         let query = format!(
                             "SELECT job_id, status FROM system.jobs WHERE job_id = '{}'",
                             job_id
                         );
-                        
+
                         match execute_sql_as_root_via_cli(&query) {
                             Ok(result) => {
                                 if result.contains("(1 row)") || result.contains(job_id) {
@@ -374,7 +373,10 @@ fn test_flush_operations() {
             }
         }
         Err(e) => {
-            println!("    ⚠️  FLUSH ALL TABLES failed (may be due to jobs table issues): {}", e);
+            println!(
+                "    ⚠️  FLUSH ALL TABLES failed (may be due to jobs table issues): {}",
+                e
+            );
         }
     }
 

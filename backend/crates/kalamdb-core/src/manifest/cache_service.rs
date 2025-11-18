@@ -24,13 +24,13 @@ use std::sync::Arc;
 pub struct ManifestCacheService {
     /// RocksDB-backed persistent store
     store: ManifestStore,
-    
+
     /// In-memory hot cache for fast lookups
     hot_cache: DashMap<String, Arc<ManifestCacheEntry>>,
-    
+
     /// Last access timestamps (in-memory only)
     last_accessed: DashMap<String, i64>,
-    
+
     /// Configuration settings
     config: ManifestCacheSettings,
 }
@@ -61,7 +61,7 @@ impl ManifestCacheService {
         user_id: Option<&UserId>,
     ) -> Result<Option<Arc<ManifestCacheEntry>>, StorageError> {
         let cache_key = ManifestCacheKey::from(self.make_cache_key(namespace, table, user_id));
-        
+
         // 1. Check hot cache
         if let Some(entry) = self.hot_cache.get(cache_key.as_str()) {
             self.update_last_accessed(cache_key.as_str());
@@ -71,7 +71,8 @@ impl ManifestCacheService {
         // 2. Check RocksDB CF
         if let Some(entry) = EntityStore::get(&self.store, &cache_key)? {
             let entry_arc = Arc::new(entry);
-            self.hot_cache.insert(cache_key.as_str().to_string(), Arc::clone(&entry_arc));
+            self.hot_cache
+                .insert(cache_key.as_str().to_string(), Arc::clone(&entry_arc));
             self.update_last_accessed(cache_key.as_str());
             return Ok(Some(entry_arc));
         }
@@ -104,19 +105,15 @@ impl ManifestCacheService {
             StorageError::SerializationError(format!("Failed to serialize ManifestFile: {}", e))
         })?;
 
-        let entry = ManifestCacheEntry::new(
-            manifest_json,
-            etag,
-            now,
-            source_path,
-            SyncState::InSync,
-        );
+        let entry =
+            ManifestCacheEntry::new(manifest_json, etag, now, source_path, SyncState::InSync);
 
         // Write to RocksDB CF
         EntityStore::put(&self.store, &cache_key, &entry)?;
 
         // Update hot cache
-        self.hot_cache.insert(cache_key_str.clone(), Arc::new(entry));
+        self.hot_cache
+            .insert(cache_key_str.clone(), Arc::new(entry));
         self.update_last_accessed(&cache_key_str);
 
         Ok(())
@@ -131,7 +128,9 @@ impl ManifestCacheService {
         if let Some(entry) = self.hot_cache.get(cache_key) {
             let now = chrono::Utc::now().timestamp();
             Ok(!entry.is_stale(self.config.ttl_seconds, now))
-        } else if let Some(entry) = EntityStore::get(&self.store, &ManifestCacheKey::from(cache_key))? {
+        } else if let Some(entry) =
+            EntityStore::get(&self.store, &ManifestCacheKey::from(cache_key))?
+        {
             let now = chrono::Utc::now().timestamp();
             Ok(!entry.is_stale(self.config.ttl_seconds, now))
         } else {
@@ -161,9 +160,7 @@ impl ManifestCacheService {
         // Convert Vec<u8> keys to Strings
         let string_entries = entries
             .into_iter()
-            .filter_map(|(key_bytes, entry)| {
-                String::from_utf8(key_bytes).ok().map(|k| (k, entry))
-            })
+            .filter_map(|(key_bytes, entry)| String::from_utf8(key_bytes).ok().map(|k| (k, entry)))
             .collect();
         Ok(string_entries)
     }
@@ -203,7 +200,12 @@ impl ManifestCacheService {
 
     // Helper methods
 
-    fn make_cache_key(&self, namespace: &NamespaceId, table: &TableName, user_id: Option<&UserId>) -> String {
+    fn make_cache_key(
+        &self,
+        namespace: &NamespaceId,
+        table: &TableName,
+        user_id: Option<&UserId>,
+    ) -> String {
         let scope = user_id.map(|u| u.as_str()).unwrap_or("shared");
         format!("{}:{}:{}", namespace.as_str(), table.as_str(), scope)
     }
@@ -227,6 +229,7 @@ impl ManifestCacheService {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use kalamdb_commons::TableId;
     use kalamdb_store::test_utils::InMemoryBackend;
 
     fn create_test_service() -> ManifestCacheService {
@@ -241,14 +244,9 @@ mod tests {
     }
 
     fn create_test_manifest() -> ManifestFile {
-        ManifestFile {
-            table_id: "test.table".to_string(),
-            scope: "u_123".to_string(),
-            version: 1,
-            generated_at: chrono::Utc::now().timestamp(),
-            max_batch: 0,
-            batches: Vec::new(),
-        }
+        use kalamdb_commons::models::schemas::TableType;
+        let table_id = TableId::new(NamespaceId::new("test"), TableName::new("table"));
+        ManifestFile::new(table_id, TableType::Shared, Some(UserId::from("u_123")))
     }
 
     #[test]
@@ -257,7 +255,9 @@ mod tests {
         let namespace = NamespaceId::new("ns1");
         let table = TableName::new("tbl1");
 
-        let result = service.get_or_load(&namespace, &table, Some(&UserId::from("u_123"))).unwrap();
+        let result = service
+            .get_or_load(&namespace, &table, Some(&UserId::from("u_123")))
+            .unwrap();
         assert!(result.is_none());
     }
 
@@ -280,7 +280,9 @@ mod tests {
             .unwrap();
 
         // Verify cached
-        let cached = service.get_or_load(&namespace, &table, Some(&UserId::from("u_123"))).unwrap();
+        let cached = service
+            .get_or_load(&namespace, &table, Some(&UserId::from("u_123")))
+            .unwrap();
         assert!(cached.is_some());
         let entry = cached.unwrap();
         assert_eq!(entry.etag, Some("etag123".to_string()));
@@ -307,7 +309,9 @@ mod tests {
             .unwrap();
 
         // Second read should hit hot cache
-        let result = service.get_or_load(&namespace, &table, Some(&UserId::from("u_123"))).unwrap();
+        let result = service
+            .get_or_load(&namespace, &table, Some(&UserId::from("u_123")))
+            .unwrap();
         assert!(result.is_some());
 
         // Verify last_accessed updated
@@ -324,17 +328,32 @@ mod tests {
 
         // Add entry
         service
-            .update_after_flush(&namespace, &table, Some(&UserId::from("u_123")), &manifest, None, "path".to_string())
+            .update_after_flush(
+                &namespace,
+                &table,
+                Some(&UserId::from("u_123")),
+                &manifest,
+                None,
+                "path".to_string(),
+            )
             .unwrap();
 
         // Verify cached
-        assert!(service.get_or_load(&namespace, &table, Some(&UserId::from("u_123"))).unwrap().is_some());
+        assert!(service
+            .get_or_load(&namespace, &table, Some(&UserId::from("u_123")))
+            .unwrap()
+            .is_some());
 
         // Invalidate
-        service.invalidate(&namespace, &table, Some(&UserId::from("u_123"))).unwrap();
+        service
+            .invalidate(&namespace, &table, Some(&UserId::from("u_123")))
+            .unwrap();
 
         // Verify removed
-        assert!(service.get_or_load(&namespace, &table, Some(&UserId::from("u_123"))).unwrap().is_none());
+        assert!(service
+            .get_or_load(&namespace, &table, Some(&UserId::from("u_123")))
+            .unwrap()
+            .is_none());
     }
 
     #[test]
@@ -346,11 +365,18 @@ mod tests {
 
         // Add fresh entry
         service
-            .update_after_flush(&namespace, &table, Some(&UserId::from("u_123")), &manifest, None, "path".to_string())
+            .update_after_flush(
+                &namespace,
+                &table,
+                Some(&UserId::from("u_123")),
+                &manifest,
+                None,
+                "path".to_string(),
+            )
             .unwrap();
 
         let cache_key = service.make_cache_key(&namespace, &table, Some(&UserId::from("u_123")));
-        
+
         // Should be fresh
         assert!(service.validate_freshness(&cache_key).unwrap());
     }
@@ -359,7 +385,7 @@ mod tests {
     fn test_restore_from_rocksdb() {
         let backend: Arc<dyn StorageBackend> = Arc::new(InMemoryBackend::new());
         let config = ManifestCacheSettings::default();
-        
+
         let service1 = ManifestCacheService::new(Arc::clone(&backend), config.clone());
         let namespace = NamespaceId::new("ns1");
         let table = TableName::new("tbl1");
@@ -367,7 +393,14 @@ mod tests {
 
         // Add entry
         service1
-            .update_after_flush(&namespace, &table, Some(&UserId::from("u_123")), &manifest, None, "path".to_string())
+            .update_after_flush(
+                &namespace,
+                &table,
+                Some(&UserId::from("u_123")),
+                &manifest,
+                None,
+                "path".to_string(),
+            )
             .unwrap();
 
         // Create new service (simulating restart)
@@ -375,7 +408,9 @@ mod tests {
         service2.restore_from_rocksdb().unwrap();
 
         // Verify entry restored to hot cache
-        let cached = service2.get_or_load(&namespace, &table, Some(&UserId::from("u_123"))).unwrap();
+        let cached = service2
+            .get_or_load(&namespace, &table, Some(&UserId::from("u_123")))
+            .unwrap();
         assert!(cached.is_some());
     }
 
@@ -387,7 +422,14 @@ mod tests {
         let manifest = create_test_manifest();
 
         service
-            .update_after_flush(&namespace, &table, Some(&UserId::from("u_123")), &manifest, None, "path".to_string())
+            .update_after_flush(
+                &namespace,
+                &table,
+                Some(&UserId::from("u_123")),
+                &manifest,
+                None,
+                "path".to_string(),
+            )
             .unwrap();
 
         assert_eq!(service.count().unwrap(), 1);

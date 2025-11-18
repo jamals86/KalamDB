@@ -82,7 +82,10 @@ mod tests {
             KillLiveQueryStatement::parse("KILL LIVE QUERY \"user456-conn_xyz-notifications-q2\"")
                 .unwrap();
         assert_eq!(stmt.live_id.user_id(), "user456");
-        assert_eq!(stmt.live_id.table_id().table_name().as_str(), "notifications");
+        assert_eq!(
+            stmt.live_id.table_id().table_name().as_str(),
+            "notifications"
+        );
     }
 
     #[test]

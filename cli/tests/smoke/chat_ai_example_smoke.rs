@@ -8,7 +8,10 @@ use std::time::Duration;
 #[test]
 fn smoke_chat_ai_example_from_readme() {
     if !is_server_running() {
-        println!("Skipping smoke_chat_ai_example_from_readme: server not running at {}", SERVER_URL);
+        println!(
+            "Skipping smoke_chat_ai_example_from_readme: server not running at {}",
+            SERVER_URL
+        );
         return;
     }
 
@@ -30,7 +33,8 @@ fn smoke_chat_ai_example_from_readme() {
         ) FLUSH ROW_THRESHOLD 1000;",
         conversations_table
     );
-    execute_sql_as_root_via_cli(&create_conversations).expect("failed to create conversations table");
+    execute_sql_as_root_via_cli(&create_conversations)
+        .expect("failed to create conversations table");
 
     let create_messages = format!(
         "CREATE USER TABLE IF NOT EXISTS {} (
@@ -61,8 +65,7 @@ fn smoke_chat_ai_example_from_readme() {
         "INSERT INTO {} (title) VALUES ('Chat with AI');",
         conversations_table
     );
-    execute_sql_as_root_via_cli(&insert_conv_sql)
-        .expect("failed to insert conversation");
+    execute_sql_as_root_via_cli(&insert_conv_sql).expect("failed to insert conversation");
 
     // For smoke purposes, we'll use conversation_id = 1
     // (In production, you'd parse the conversation ID from a query)
@@ -84,12 +87,21 @@ fn smoke_chat_ai_example_from_readme() {
     );
     let history = execute_sql_as_root_via_cli_json(&select_msgs_sql)
         .expect("failed to query message history");
-    
-    assert!(history.contains("Hello, AI!"), "expected user message in history");
-    assert!(history.contains("How can I help"), "expected assistant message in history");
+
+    assert!(
+        history.contains("Hello, AI!"),
+        "expected user message in history"
+    );
+    assert!(
+        history.contains("How can I help"),
+        "expected assistant message in history"
+    );
 
     // 5. Test stream table with subscription
-    let typing_query = format!("SELECT * FROM {} WHERE conversation_id = {}", typing_events_table, conversation_id);
+    let typing_query = format!(
+        "SELECT * FROM {} WHERE conversation_id = {}",
+        typing_events_table, conversation_id
+    );
     let mut listener = SubscriptionListener::start(&typing_query)
         .expect("failed to start subscription for typing events");
 
@@ -117,17 +129,24 @@ fn smoke_chat_ai_example_from_readme() {
     while start.elapsed() < timeout {
         match listener.try_read_line(Duration::from_millis(500)) {
             Ok(Some(line)) => {
-                if !line.trim().is_empty() && (line.contains("typing") || line.contains("thinking") || line.contains("cancelled")) {
+                if !line.trim().is_empty()
+                    && (line.contains("typing")
+                        || line.contains("thinking")
+                        || line.contains("cancelled"))
+                {
                     received_event = true;
                     break;
                 }
             }
-            Ok(None) => break, // EOF
+            Ok(None) => break,  // EOF
             Err(_) => continue, // Timeout, keep trying
         }
     }
 
-    assert!(received_event, "expected to receive at least one typing event via subscription");
+    assert!(
+        received_event,
+        "expected to receive at least one typing event via subscription"
+    );
 
     // Stop subscription
     listener.stop().ok();
@@ -136,7 +155,13 @@ fn smoke_chat_ai_example_from_readme() {
     let verify_events_sql = format!("SELECT * FROM {}", typing_events_table);
     let events_output = execute_sql_as_root_via_cli_json(&verify_events_sql)
         .expect("failed to query typing events");
-    
-    assert!(events_output.contains("typing"), "expected 'typing' event in stream table");
-    assert!(events_output.contains("thinking"), "expected 'thinking' event in stream table");
+
+    assert!(
+        events_output.contains("typing"),
+        "expected 'typing' event in stream table"
+    );
+    assert!(
+        events_output.contains("thinking"),
+        "expected 'thinking' event in stream table"
+    );
 }

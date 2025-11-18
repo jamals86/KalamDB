@@ -8,8 +8,8 @@ pub mod jobs;
 pub mod live_queries;
 pub mod manifest;
 pub mod namespaces;
-pub mod storages;
 pub mod stats;
+pub mod storages;
 pub mod tables;
 pub mod users;
 
@@ -19,7 +19,7 @@ pub use jobs::JobsTableProvider;
 pub use live_queries::LiveQueriesTableProvider;
 pub use manifest::ManifestTableProvider;
 pub use namespaces::NamespacesTableProvider;
-pub use storages::StoragesTableProvider;
 pub use stats::StatsTableProvider;
+pub use storages::StoragesTableProvider;
 pub use tables::TablesTableProvider;
 pub use users::UsersTableProvider;

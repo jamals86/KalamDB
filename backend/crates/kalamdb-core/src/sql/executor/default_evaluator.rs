@@ -5,10 +5,10 @@
 
 use crate::error::KalamDbError;
 use crate::schema_registry::system_columns_service::SystemColumnsService;
-use std::sync::Arc;
 use kalamdb_commons::models::UserId;
 use kalamdb_commons::schemas::ColumnDefault;
 use serde_json::Value as JsonValue;
+use std::sync::Arc;
 
 /// Evaluate a DEFAULT column value
 ///
@@ -84,17 +84,24 @@ fn evaluate_function(
             // Use SystemColumnsService for proper Snowflake ID generation
             match sys_cols {
                 Some(svc) => {
-                    let seq_id = svc.generate_seq_id()
-                        .map_err(|e| KalamDbError::InvalidOperation(format!("Snowflake ID generation failed: {}", e)))?;
+                    let seq_id = svc.generate_seq_id().map_err(|e| {
+                        KalamDbError::InvalidOperation(format!(
+                            "Snowflake ID generation failed: {}",
+                            e
+                        ))
+                    })?;
                     Ok(JsonValue::Number(seq_id.as_i64().into()))
                 }
                 None => {
                     // Fallback: create fresh generator (non-singleton, for testing only)
                     use kalamdb_commons::ids::SnowflakeGenerator;
                     let generator = SnowflakeGenerator::new(0);
-                    let id = generator
-                        .next_id()
-                        .map_err(|e| KalamDbError::InvalidOperation(format!("Snowflake ID generation failed: {}", e)))?;
+                    let id = generator.next_id().map_err(|e| {
+                        KalamDbError::InvalidOperation(format!(
+                            "Snowflake ID generation failed: {}",
+                            e
+                        ))
+                    })?;
                     Ok(JsonValue::Number(id.into()))
                 }
             }
@@ -203,7 +210,10 @@ mod tests {
         let user_id = UserId::from("u_test123");
         let result = evaluate_default(&default, &user_id, None);
         assert!(result.is_err());
-        assert!(result.unwrap_err().to_string().contains("takes no arguments"));
+        assert!(result
+            .unwrap_err()
+            .to_string()
+            .contains("takes no arguments"));
     }
 
     #[test]
@@ -212,6 +222,9 @@ mod tests {
         let user_id = UserId::from("u_test123");
         let result = evaluate_default(&default, &user_id, None);
         assert!(result.is_err());
-        assert!(result.unwrap_err().to_string().contains("Unknown DEFAULT function"));
+        assert!(result
+            .unwrap_err()
+            .to_string()
+            .contains("Unknown DEFAULT function"));
     }
 }

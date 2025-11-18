@@ -206,6 +206,22 @@ Also make sure we dont add the "id" column as we used to do before, we rely sole
 
 155) Whenever we drop a table cancel all jobs for this table which are still running or queued
 
+156) When there is an sql parsing or any error the parser should return a clear error with maybe line or description of what is it
+instead of: 1 failed: Invalid operation: No handler registered for statement type 'UNKNOWN'
+
+
+157) Are we closing all ParquetWriter? whenever we use them?
+158) extract_seq_bounds is duplicated we cna combine it
+159) Add tests to cover the indexes and manifest reading - check if it's actually working and the planner works with indexes now and doesnt read the un-needed parquet files
+
+160) I can see stuck websockets in the server, make sure we have a timeout if no ping recieved from the client for a specific time we close the connection
+[2025-11-17 18:52:28.766] [INFO ] - actix-rt|system:0|arbiter:7 - actix_web::middleware::logger:450 - 127.0.0.1 "GET /v1/ws HTTP/1.1" 101 13659 "-" "-" 69671.679608
+[2025-11-17 18:52:28.766] [INFO ] - actix-rt|system:0|arbiter:8 - actix_web::middleware::logger:450 - 127.0.0.1 "GET /v1/ws HTTP/1.1" 101 13323 "-" "-" 68830.506443
+[2025-11-17 18:52:28.768] [INFO ] - actix-rt|system:0|arbiter:7 - kalamdb_api::actors::ws_session:178 - WebSocket connection closed: baf68a9f-ff08-4ba9-a433-80174dad0d73
+[2025-11-17 18:52:28.768] [INFO ] - actix-rt|system:0|arbiter:8 - kalamdb_api::actors::ws_session:178 - WebSocket connection closed: 81013e3a-e61c-4880-9b2d-eea92a336e3a
+
+
+
 
 
 Here’s the updated 5-line spec with embedding storage inside Parquet and managed HNSW indexing (with delete handling):

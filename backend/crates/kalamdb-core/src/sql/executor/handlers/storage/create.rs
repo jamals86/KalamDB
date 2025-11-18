@@ -3,8 +3,8 @@
 use crate::app_context::AppContext;
 use crate::error::KalamDbError;
 use crate::sql::executor::handlers::typed::TypedStatementHandler;
-use crate::sql::executor::models::{ExecutionContext, ExecutionResult, ScalarValue};
 use crate::sql::executor::helpers::storage::ensure_filesystem_directory;
+use crate::sql::executor::models::{ExecutionContext, ExecutionResult, ScalarValue};
 use kalamdb_commons::models::{StorageId, StorageType};
 use kalamdb_sql::ddl::CreateStorageStatement;
 use std::sync::Arc;
@@ -145,12 +145,12 @@ mod tests {
             shared_tables_template: String::new(),
             user_tables_template: String::new(),
         };
-        
+
         // User role should be denied
         let user_ctx = create_test_context(Role::User);
         let result = handler.check_authorization(&stmt, &user_ctx).await;
         assert!(result.is_err());
-        
+
         // DBA role should be allowed
         let dba_ctx = create_test_context(Role::Dba);
         let result = handler.check_authorization(&stmt, &dba_ctx).await;
@@ -176,7 +176,7 @@ mod tests {
         let session = SessionContext::new();
 
         let result = handler.execute(stmt, vec![], &ctx).await;
-        
+
         assert!(result.is_ok());
         if let Ok(ExecutionResult::Success { message }) = result {
             assert!(message.contains(&storage_id));

@@ -9,12 +9,12 @@ use crate::live_query::manager::{ChangeNotification, LiveQueryManager};
 use crate::manifest::{FlushManifestHelper, ManifestCacheService, ManifestService};
 use crate::schema_registry::SchemaRegistry;
 use crate::storage::ParquetWriter;
-use kalamdb_tables::{SharedTableRow, SharedTableStore};
 use datafusion::arrow::datatypes::SchemaRef;
 use datafusion::arrow::record_batch::RecordBatch;
 use kalamdb_commons::models::{TableId, UserId};
-use kalamdb_commons::{NamespaceId, NodeId, TableName};
+use kalamdb_commons::{NamespaceId, TableName};
 use kalamdb_store::entity_store::EntityStore;
+use kalamdb_tables::{SharedTableRow, SharedTableStore};
 use serde_json::Value as JsonValue;
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -23,11 +23,8 @@ use std::sync::Arc;
 pub struct SharedTableFlushJob {
     store: Arc<SharedTableStore>,
     table_id: Arc<TableId>,
-    namespace_id: NamespaceId,
-    table_name: TableName,
-    schema: SchemaRef, //TODO: needed?
-    unified_cache: Arc<SchemaRegistry>, //TODO: We have AppContext now
-    node_id: NodeId, //TODO: We can pass AppContext and has node_id there
+    schema: SchemaRef,                                 //TODO: needed?
+    unified_cache: Arc<SchemaRegistry>,                //TODO: We have AppContext now
     live_query_manager: Option<Arc<LiveQueryManager>>, //TODO: We can pass AppContext and has live_query_manager there
     manifest_helper: FlushManifestHelper,
 }
@@ -37,23 +34,17 @@ impl SharedTableFlushJob {
     pub fn new(
         table_id: Arc<TableId>,
         store: Arc<SharedTableStore>,
-        namespace_id: NamespaceId,
-        table_name: TableName,
         schema: SchemaRef,
         unified_cache: Arc<SchemaRegistry>,
         manifest_service: Arc<ManifestService>,
         manifest_cache: Arc<ManifestCacheService>,
     ) -> Self {
-        let node_id = NodeId::from(format!("node-{}", std::process::id()));
         let manifest_helper = FlushManifestHelper::new(manifest_service, manifest_cache);
         Self {
             store,
             table_id,
-            namespace_id,
-            table_name,
             schema,
             unified_cache,
-            node_id,
             live_query_manager: None,
             manifest_helper,
         }
@@ -65,29 +56,51 @@ impl SharedTableFlushJob {
         self
     }
 
+    fn namespace_id(&self) -> &NamespaceId {
+        self.table_id.namespace_id()
+    }
+
+    fn table_name(&self) -> &TableName {
+        self.table_id.table_name()
+    }
+
     /// Generate batch filename using manifest max_batch (T115)
     /// Returns (batch_number, filename)
     fn generate_batch_filename(&self) -> Result<(u64, String), KalamDbError> {
-        let batch_number = self.manifest_helper.get_next_batch_number(&self.namespace_id, &self.table_name, None)?;
+        let batch_number = self.manifest_helper.get_next_batch_number(
+            self.namespace_id(),
+            self.table_name(),
+            None,
+        )?;
         let filename = FlushManifestHelper::generate_batch_filename(batch_number);
-        log::debug!("[MANIFEST] Generated batch filename: {} (batch_number={})", filename, batch_number);
+        log::debug!(
+            "[MANIFEST] Generated batch filename: {} (batch_number={})",
+            filename,
+            batch_number
+        );
         Ok((batch_number, filename))
     }
 
     /// Convert JSON rows to Arrow RecordBatch
-    fn rows_to_record_batch(&self, rows: &[(Vec<u8>, JsonValue)]) -> Result<RecordBatch, KalamDbError> {
+    fn rows_to_record_batch(
+        &self,
+        rows: &[(Vec<u8>, JsonValue)],
+    ) -> Result<RecordBatch, KalamDbError> {
         let mut builder = super::util::JsonBatchBuilder::new(self.schema.clone())?;
         for (key_bytes, row) in rows {
             // Ensure system columns are present in the row per schema expectations
             // Parse SeqId from key bytes for _seq if missing
             let mut patched = row.clone();
             if let Some(obj) = patched.as_object_mut() {
-                if !obj.contains_key("_seq") || obj.get("_seq").map(|v| v.is_null()).unwrap_or(true) {
+                if !obj.contains_key("_seq") || obj.get("_seq").map(|v| v.is_null()).unwrap_or(true)
+                {
                     if let Ok(seq_id) = kalamdb_commons::ids::SeqId::from_bytes(key_bytes) {
                         obj.insert("_seq".to_string(), serde_json::json!(seq_id.as_i64()));
                     }
                 }
-                if !obj.contains_key("_deleted") || obj.get("_deleted").map(|v| v.is_null()).unwrap_or(true) {
+                if !obj.contains_key("_deleted")
+                    || obj.get("_deleted").map(|v| v.is_null()).unwrap_or(true)
+                {
                     obj.insert("_deleted".to_string(), serde_json::json!(false));
                 }
             }
@@ -122,37 +135,49 @@ impl SharedTableFlushJob {
 
 impl TableFlush for SharedTableFlushJob {
     fn execute(&self) -> Result<FlushJobResult, KalamDbError> {
-        log::debug!("🔄 Starting shared table flush: table={}.{}", 
-                   self.namespace_id.as_str(), self.table_name.as_str());
+        log::debug!(
+            "🔄 Starting shared table flush: table={}.{}",
+            self.namespace_id().as_str(),
+            self.table_name().as_str()
+        );
 
         // Scan all rows (EntityStore::scan_all returns Vec<(Vec<u8>, V)>)
-        let entries = EntityStore::scan_all(self.store.as_ref())
-            .map_err(|e| {
-                log::error!("❌ Failed to scan rows for shared table={}.{}: {}", 
-                           self.namespace_id.as_str(), self.table_name.as_str(), e);
-                KalamDbError::Other(format!("Failed to scan rows: {}", e))
-            })?;
-        
+        let entries = EntityStore::scan_all(self.store.as_ref()).map_err(|e| {
+            log::error!(
+                "❌ Failed to scan rows for shared table={}.{}: {}",
+                self.namespace_id().as_str(),
+                self.table_name().as_str(),
+                e
+            );
+            KalamDbError::Other(format!("Failed to scan rows: {}", e))
+        })?;
+
         let rows_before_dedup = entries.len();
-        log::info!("📊 [FLUSH DEDUP] Scanned {} total rows from hot storage (table={}.{})",
-                   rows_before_dedup, self.namespace_id.as_str(), self.table_name.as_str());
+        log::info!(
+            "📊 [FLUSH DEDUP] Scanned {} total rows from hot storage (table={}.{})",
+            rows_before_dedup,
+            self.namespace_id().as_str(),
+            self.table_name().as_str()
+        );
 
         // STEP 1: Deduplicate using MAX(_seq) per PK (version resolution)
         use std::collections::HashMap;
-        
+
         // Get primary key field name from schema
-        let pk_field = self.schema.fields()
+        let pk_field = self
+            .schema
+            .fields()
             .iter()
             .find(|f| !f.name().starts_with('_'))
             .map(|f| f.name().clone())
             .unwrap_or_else(|| "id".to_string());
-        
+
         log::debug!("📊 [FLUSH DEDUP] Using primary key field: {}", pk_field);
-        
+
         // Map: pk_value -> (key_bytes, row, _seq)
         let mut latest_versions: HashMap<String, (Vec<u8>, SharedTableRow, i64)> = HashMap::new();
         let mut deleted_count = 0;
-        
+
         for (key_bytes, row) in entries {
             // Extract PK value from fields
             let pk_value = match row.fields.get(&pk_field) {
@@ -162,44 +187,57 @@ impl TableFlush for SharedTableFlushJob {
                     format!("_seq:{}", row._seq.as_i64())
                 }
             };
-            
+
             let seq_val = row._seq.as_i64();
-            
+
             // Track deleted rows
             if row._deleted {
                 deleted_count += 1;
             }
-            
+
             // Keep MAX(_seq) per pk_value
             match latest_versions.get(&pk_value) {
                 Some((_existing_key, _existing_row, existing_seq)) => {
                     if seq_val > *existing_seq {
-                        log::trace!("[FLUSH DEDUP] Replacing pk={}: old_seq={}, new_seq={}, deleted={}",
-                                   pk_value, existing_seq, seq_val, row._deleted);
+                        log::trace!(
+                            "[FLUSH DEDUP] Replacing pk={}: old_seq={}, new_seq={}, deleted={}",
+                            pk_value,
+                            existing_seq,
+                            seq_val,
+                            row._deleted
+                        );
                         latest_versions.insert(pk_value, (key_bytes, row, seq_val));
                     } else {
-                        log::trace!("[FLUSH DEDUP] Keeping existing pk={}: existing_seq={} >= new_seq={}",
-                                   pk_value, existing_seq, seq_val);
+                        log::trace!(
+                            "[FLUSH DEDUP] Keeping existing pk={}: existing_seq={} >= new_seq={}",
+                            pk_value,
+                            existing_seq,
+                            seq_val
+                        );
                     }
                 }
                 None => {
-                    log::trace!("[FLUSH DEDUP] First version pk={}: _seq={}, deleted={}",
-                               pk_value, seq_val, row._deleted);
+                    log::trace!(
+                        "[FLUSH DEDUP] First version pk={}: _seq={}, deleted={}",
+                        pk_value,
+                        seq_val,
+                        row._deleted
+                    );
                     latest_versions.insert(pk_value, (key_bytes, row, seq_val));
                 }
             }
         }
-        
+
         let rows_after_dedup = latest_versions.len();
         let dedup_ratio = if rows_before_dedup > 0 {
             (rows_before_dedup - rows_after_dedup) as f64 / rows_before_dedup as f64 * 100.0
         } else {
             0.0
         };
-        
+
         log::info!("📊 [FLUSH DEDUP] Version resolution complete: {} rows → {} unique (dedup: {:.1}%, deleted: {})",
                    rows_before_dedup, rows_after_dedup, dedup_ratio, deleted_count);
-        
+
         // STEP 2: Filter out deleted rows (tombstones) and convert to JSON
         let mut rows: Vec<(Vec<u8>, JsonValue)> = Vec::new();
         let mut tombstones_filtered = 0;
@@ -214,20 +252,29 @@ impl TableFlush for SharedTableFlushJob {
             // Build JSON object with metadata fields
             let mut json_obj = row.fields.clone();
             if let Some(obj) = json_obj.as_object_mut() {
-                obj.insert("_seq".to_string(), JsonValue::Number(row._seq.as_i64().into()));
+                obj.insert(
+                    "_seq".to_string(),
+                    JsonValue::Number(row._seq.as_i64().into()),
+                );
                 obj.insert("_deleted".to_string(), JsonValue::Bool(false));
             }
 
             rows.push((key_bytes, json_obj));
         }
 
-        log::info!("📊 [FLUSH DEDUP] Final: {} rows to flush ({} tombstones filtered)",
-                   rows.len(), tombstones_filtered);
+        log::info!(
+            "📊 [FLUSH DEDUP] Final: {} rows to flush ({} tombstones filtered)",
+            rows.len(),
+            tombstones_filtered
+        );
 
         // If no rows to flush, return early
         if rows.is_empty() {
-            log::info!("⚠️  No rows to flush for shared table={}.{} (empty table or all deleted)",
-                      self.namespace_id.as_str(), self.table_name.as_str());
+            log::info!(
+                "⚠️  No rows to flush for shared table={}.{} (empty table or all deleted)",
+                self.namespace_id().as_str(),
+                self.table_name().as_str()
+            );
             return Ok(FlushJobResult {
                 rows_flushed: 0,
                 parquet_files: vec![],
@@ -236,15 +283,21 @@ impl TableFlush for SharedTableFlushJob {
         }
 
         let rows_count = rows.len();
-        log::debug!("💾 Flushing {} rows to Parquet for shared table={}.{}",
-                   rows_count, self.namespace_id.as_str(), self.table_name.as_str());
+        log::debug!(
+            "💾 Flushing {} rows to Parquet for shared table={}.{}",
+            rows_count,
+            self.namespace_id().as_str(),
+            self.table_name().as_str()
+        );
 
         // Convert rows to RecordBatch
         let batch = self.rows_to_record_batch(&rows)?;
 
         // T114-T115: Generate batch filename using manifest (sequential numbering)
         let (batch_number, batch_filename) = self.generate_batch_filename()?;
-        let full_path = self.unified_cache.get_storage_path(&*self.table_id, None, None)?;
+        let full_path = self
+            .unified_cache
+            .get_storage_path(&*self.table_id, None, None)?;
         let table_dir = PathBuf::from(full_path);
         let output_path = table_dir.join(&batch_filename);
 
@@ -256,52 +309,80 @@ impl TableFlush for SharedTableFlushJob {
 
         // Extract PRIMARY KEY columns from TableDefinition for Bloom filter optimization (FR-054, FR-055)
         // Fetch once per flush job instead of per-batch for efficiency
-        let bloom_filter_columns = self.unified_cache
+        let bloom_filter_columns = self
+            .unified_cache
             .get_bloom_filter_columns(&*self.table_id)
             .unwrap_or_else(|e| {
-                log::warn!("⚠️  Failed to get Bloom filter columns for {}: {}. Using default (_seq only)", self.table_id, e);
+                log::warn!(
+                    "⚠️  Failed to get Bloom filter columns for {}: {}. Using default (_seq only)",
+                    self.table_id,
+                    e
+                );
                 vec!["_seq".to_string()]
             });
-        
-        log::debug!("🌸 Bloom filters enabled for columns: {:?}", bloom_filter_columns);
+
+        log::debug!(
+            "🌸 Bloom filters enabled for columns: {:?}",
+            bloom_filter_columns
+        );
 
         // Write to Parquet with Bloom filters on PRIMARY KEY + _seq
-        log::debug!("📝 Writing Parquet file: path={}, rows={}", output_path.display(), rows_count);
+        log::debug!(
+            "📝 Writing Parquet file: path={}, rows={}",
+            output_path.display(),
+            rows_count
+        );
         let writer = ParquetWriter::new(output_path.to_str().unwrap());
-        writer.write_with_bloom_filter(self.schema.clone(), vec![batch.clone()], Some(bloom_filter_columns))?;
+        writer.write_with_bloom_filter(
+            self.schema.clone(),
+            vec![batch.clone()],
+            Some(bloom_filter_columns.clone()),
+        )?;
 
-        log::info!("✅ Flushed {} rows for shared table={}.{} to {}", 
-                  rows_count, self.namespace_id.as_str(), self.table_name.as_str(), output_path.display());
+        log::info!(
+            "✅ Flushed {} rows for shared table={}.{} to {}",
+            rows_count,
+            self.namespace_id().as_str(),
+            self.table_name().as_str(),
+            output_path.display()
+        );
 
         // Get file size
         let size_bytes = std::fs::metadata(&output_path)
             .map(|m| m.len())
             .unwrap_or(0);
 
-        // Update manifest and cache using helper
+        // Update manifest and cache using helper (with row-group stats)
         self.manifest_helper.update_manifest_after_flush(
-            &self.namespace_id,
-            &self.table_name,
+            self.namespace_id(),
+            self.table_name(),
+            kalamdb_commons::models::schemas::TableType::Shared,
             None,
             batch_number,
             batch_filename.clone(),
+            &output_path,
             &batch,
             size_bytes,
+            &bloom_filter_columns,
         )?;
 
         // Delete flushed rows from RocksDB
-        log::debug!("🗑️  Deleting {} flushed rows from RocksDB (table={}.{})",
-                   rows_count, self.namespace_id.as_str(), self.table_name.as_str());
+        log::debug!(
+            "🗑️  Deleting {} flushed rows from RocksDB (table={}.{})",
+            rows_count,
+            self.namespace_id().as_str(),
+            self.table_name().as_str()
+        );
         self.delete_flushed_rows(&rows)?;
 
         let parquet_path = output_path.to_string_lossy().to_string();
 
         // Send flush notification if LiveQueryManager configured
         if let Some(manager) = &self.live_query_manager {
-            let table_name = format!("{}.{}", self.namespace_id.as_str(), self.table_name.as_str());
             let parquet_files = vec![parquet_path.clone()];
-            let table_id = TableId::new(self.namespace_id.clone(), self.table_name.clone());
-            let notification = ChangeNotification::flush(table_id.clone(), rows_count, parquet_files.clone());
+            let table_id = self.table_id.as_ref().clone();
+            let notification =
+                ChangeNotification::flush(table_id.clone(), rows_count, parquet_files.clone());
             let system_user = UserId::system();
             manager.notify_table_change_async(system_user, table_id, notification);
         }
@@ -314,7 +395,11 @@ impl TableFlush for SharedTableFlushJob {
     }
 
     fn table_identifier(&self) -> String {
-        format!("{}.{}", self.namespace_id.as_str(), self.table_name.as_str())
+        format!(
+            "{}.{}",
+            self.namespace_id().as_str(),
+            self.table_name().as_str()
+        )
     }
 
     fn live_query_manager(&self) -> Option<&Arc<LiveQueryManager>> {

@@ -16,7 +16,7 @@ pub enum LiveError {
 
     #[error("Serialization error: {0}")]
     SerializationError(String),
-    
+
     #[error("Invalid SQL: {0}")]
     InvalidSql(String),
 

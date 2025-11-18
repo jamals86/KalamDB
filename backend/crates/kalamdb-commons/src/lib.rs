@@ -42,8 +42,8 @@
 //! let id_str: &str = user_id.as_str();
 //! ```
 
-pub mod constants;
 pub mod config;
+pub mod constants;
 pub mod errors;
 pub mod ids;
 pub mod models;
@@ -79,7 +79,7 @@ pub use models::{
     TableId,
     TableName,
     UserId,
-    UserName
+    UserName,
 };
 pub use schemas::TableType;
 pub use storage::{Operation, Partition, StorageBackend, StorageError};

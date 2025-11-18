@@ -8,10 +8,10 @@
 //! - Storage key format: {_seq} (big-endian bytes)
 //! - NO access_level field (cached in schema definition, not per-row)
 
-use kalamdb_system::system_table_store::SystemTableStore;
 use kalamdb_commons::ids::{SeqId, SharedTableRowId};
 use kalamdb_commons::models::{NamespaceId, TableName};
 use kalamdb_store::StorageBackend;
+use kalamdb_system::system_table_store::SystemTableStore;
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 

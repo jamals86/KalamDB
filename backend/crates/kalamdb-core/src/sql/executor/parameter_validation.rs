@@ -135,9 +135,7 @@ mod tests {
 
     #[test]
     fn test_validate_parameters_count_exceeded() {
-        let params: Vec<ScalarValue> = (0..51)
-            .map(|i| ScalarValue::Int32(Some(i)))
-            .collect();
+        let params: Vec<ScalarValue> = (0..51).map(|i| ScalarValue::Int32(Some(i))).collect();
         let limits = ParameterLimits::default();
         let result = validate_parameters(&params, &limits);
         assert!(result.is_err());
@@ -168,7 +166,10 @@ mod tests {
             estimate_scalar_value_size(&ScalarValue::Utf8(Some("hello".to_string()))),
             5
         );
-        assert_eq!(estimate_scalar_value_size(&ScalarValue::Float64(Some(3.14))), 8);
+        assert_eq!(
+            estimate_scalar_value_size(&ScalarValue::Float64(Some(3.14))),
+            8
+        );
     }
 
     #[test]

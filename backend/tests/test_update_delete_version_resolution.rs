@@ -83,7 +83,10 @@ async fn test_update_in_fast_storage() {
         )
         .await;
 
-    println!("Query response: status={}, error={:?}", response.status, response.error);
+    println!(
+        "Query response: status={}, error={:?}",
+        response.status, response.error
+    );
     assert_eq!(
         response.status, "success",
         "Query failed: {:?}",
@@ -128,7 +131,7 @@ async fn test_update_in_parquet() {
         .await;
 
     // Flush to Parquet (moves record to long-term storage)
-        // Flush user table to Parquet
+    // Flush user table to Parquet
     flush_helpers::execute_flush_synchronously(&server, "test_ns", "inventory")
         .await
         .expect("Flush should succeed");
@@ -158,10 +161,17 @@ async fn test_update_in_parquet() {
         )
         .await;
 
-    println!("[DEBUG TEST] SELECT response: status={}, error={:?}", response.status, response.error);
+    println!(
+        "[DEBUG TEST] SELECT response: status={}, error={:?}",
+        response.status, response.error
+    );
     assert_eq!(response.status, "success");
     if let Some(rows) = &response.results[0].rows {
-        assert_eq!(rows.len(), 1, "Should return exactly 1 row (latest version)");
+        assert_eq!(
+            rows.len(),
+            1,
+            "Should return exactly 1 row (latest version)"
+        );
         let row = &rows[0];
         assert_eq!(
             row.get("quantity").unwrap().as_i64().unwrap(),
@@ -301,7 +311,11 @@ async fn test_multi_version_query() {
 
     assert_eq!(response.status, "success");
     if let Some(rows) = &response.results[0].rows {
-        assert_eq!(rows.len(), 1, "Should return exactly 1 row (latest version)");
+        assert_eq!(
+            rows.len(),
+            1,
+            "Should return exactly 1 row (latest version)"
+        );
         let row = &rows[0];
         assert_eq!(
             row.get("value").unwrap().as_i64().unwrap(),
@@ -342,10 +356,7 @@ async fn test_delete_excludes_record() {
 
     // Delete user1
     server
-        .execute_sql_as_user(
-            r#"DELETE FROM test_ns.users WHERE id = 'user1'"#,
-            "user1",
-        )
+        .execute_sql_as_user(r#"DELETE FROM test_ns.users WHERE id = 'user1'"#, "user1")
         .await;
 
     // Query should exclude deleted record
@@ -396,10 +407,7 @@ async fn test_delete_in_parquet() {
 
     // Delete record (creates new version with _deleted=true in fast storage)
     let response = server
-        .execute_sql_as_user(
-            r#"DELETE FROM test_ns.accounts WHERE id = 'acc1'"#,
-            "user1",
-        )
+        .execute_sql_as_user(r#"DELETE FROM test_ns.accounts WHERE id = 'acc1'"#, "user1")
         .await;
 
     assert_eq!(
@@ -415,7 +423,11 @@ async fn test_delete_in_parquet() {
 
     assert_eq!(response.status, "success");
     if let Some(rows) = &response.results[0].rows {
-        assert_eq!(rows.len(), 0, "Deleted record should be excluded from query");
+        assert_eq!(
+            rows.len(),
+            0,
+            "Deleted record should be excluded from query"
+        );
     }
 
     println!("✅ T065: DELETE in Parquet creates new deleted version correctly");

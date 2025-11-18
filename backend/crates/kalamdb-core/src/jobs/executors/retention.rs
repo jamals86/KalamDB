@@ -20,11 +20,11 @@
 //! }
 //! ```
 
-use crate::jobs::executors::{JobContext, JobDecision, JobExecutor, JobParams};
 use crate::error::KalamDbError;
+use crate::jobs::executors::{JobContext, JobDecision, JobExecutor, JobParams};
 use async_trait::async_trait;
-use kalamdb_commons::{JobType, TableId};
 use kalamdb_commons::schemas::TableType;
+use kalamdb_commons::{JobType, TableId};
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 
@@ -122,7 +122,10 @@ impl JobExecutor for RetentionExecutor {
         // For now, return placeholder metrics
         let rows_deleted = 0;
 
-        ctx.log_info(&format!("Retention enforcement completed - {} rows deleted", rows_deleted));
+        ctx.log_info(&format!(
+            "Retention enforcement completed - {} rows deleted",
+            rows_deleted
+        ));
 
         Ok(JobDecision::Completed {
             message: Some(format!(

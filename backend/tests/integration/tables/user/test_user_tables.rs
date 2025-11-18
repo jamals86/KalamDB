@@ -35,7 +35,7 @@ async fn create_user_table(
         .execute_sql_as_user(
             &format!(
                 r#"CREATE USER TABLE {}.{} (
-                id TEXT,
+                id TEXT PRIMARY KEY,
                 content TEXT,
                 priority INT
             ) STORAGE local"#,

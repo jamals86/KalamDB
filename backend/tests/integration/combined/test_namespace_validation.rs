@@ -81,7 +81,7 @@ async fn test_create_table_after_namespace_creation() {
 async fn test_user_table_namespace_validation() {
     let server = TestServer::new().await;
     let sql = r#"CREATE USER TABLE workspace.notes (
-        id INT AUTO_INCREMENT,
+        id INT PRIMARY KEY,
         content TEXT
     )"#;
 

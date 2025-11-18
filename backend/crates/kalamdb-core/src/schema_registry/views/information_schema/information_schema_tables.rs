@@ -17,7 +17,7 @@ use std::sync::Arc;
 /// using the unified VirtualView pattern
 #[derive(Debug)]
 pub struct InformationSchemaTablesView {
-    tables_provider: Arc<TablesTableProvider>,
+    _tables_provider: Arc<TablesTableProvider>,
     // schema_registry: Arc<SchemaRegistry>, // Moved to kalamdb-core
     schema: SchemaRef,
 }
@@ -54,10 +54,10 @@ impl InformationSchemaTablesView {
             Field::new("ttl_seconds", DataType::UInt64, true),             // nullable
         ]));
 
-        Self { 
-            tables_provider,
+        Self {
+            _tables_provider: tables_provider,
             // schema_registry removed
-            schema 
+            schema,
         }
     }
 
@@ -66,9 +66,10 @@ impl InformationSchemaTablesView {
     fn scan_all_tables(&self) -> Result<RecordBatch, RegistryError> {
         // Temporary stub - return empty batch
         return Err(RegistryError::ViewError {
-            message: "information_schema.tables not yet implemented in kalamdb-registry".to_string(),
+            message: "information_schema.tables not yet implemented in kalamdb-registry"
+                .to_string(),
         });
-        
+
         /* TODO: Reimplement with trait abstraction
         // Get table metadata from system.tables
         let tables_batch = self
@@ -78,7 +79,7 @@ impl InformationSchemaTablesView {
 
         // Parse system.tables columns
         use datafusion::arrow::array::{Array, StringArray, Int32Array, Int64Array};
-        
+
         let table_id_col = tables_batch.column(0).as_any().downcast_ref::<StringArray>()
             .ok_or_else(|| RegistryError::Other("table_id column type mismatch".to_string()))?;
         let table_name_col = tables_batch.column(1).as_any().downcast_ref::<StringArray>()
@@ -137,18 +138,18 @@ impl InformationSchemaTablesView {
             // table_id
             let table_id = table_id_col.value(i);
             table_ids.append_value(table_id);
-            
+
             // created_at is already i64 timestamp in milliseconds
             let created_at = created_at_col.value(i);
             created_ats.push(created_at);
-            
+
             // updated_at: use created_at as fallback (system.tables doesn't have updated_at yet)
             updated_ats.push(created_at);
-            
+
             // schema_version
             let schema_ver = schema_version_col.value(i);
             schema_versions.push(schema_ver as u32);
-            
+
             // storage_id
             let storage_id = if storage_id_col.is_null(i) {
                 "default"
@@ -156,11 +157,11 @@ impl InformationSchemaTablesView {
                 storage_id_col.value(i)
             };
             storage_ids.append_value(storage_id);
-            
+
             // use_user_storage
             let use_user_storage = use_user_storage_col.value(i);
             use_user_storages.push(use_user_storage);
-            
+
             // deleted_retention_hours
             let retention = if deleted_retention_col.is_null(i) {
                 None
@@ -168,7 +169,7 @@ impl InformationSchemaTablesView {
                 Some(deleted_retention_col.value(i) as u32)
             };
             deleted_retention_hours_vec.push(retention);
-            
+
             // ttl_seconds: Need to get from TableDefinition for Stream tables
             let ttl = if kalam_type == "Stream" {
                 let tid = TableId::from_strings(namespace, table_name);
@@ -234,7 +235,10 @@ pub fn create_information_schema_tables_provider(
     _schema_registry: Arc<()>,
 ) -> Arc<dyn datafusion::datasource::TableProvider> {
     use super::super::ViewTableProvider;
-    let view = Arc::new(InformationSchemaTablesView::new(tables_provider, Arc::new(())));
+    let view = Arc::new(InformationSchemaTablesView::new(
+        tables_provider,
+        Arc::new(()),
+    ));
     Arc::new(ViewTableProvider::new(view))
 }
 

@@ -19,7 +19,10 @@ pub fn extract_user_pk_value(
     pk_column: &str,
 ) -> Result<String, KalamDbError> {
     let pk_value = fields.get(pk_column).ok_or_else(|| {
-        KalamDbError::InvalidSql(format!("Primary key column '{}' not found in fields", pk_column))
+        KalamDbError::InvalidSql(format!(
+            "Primary key column '{}' not found in fields",
+            pk_column
+        ))
     })?;
 
     if pk_value.is_null() {

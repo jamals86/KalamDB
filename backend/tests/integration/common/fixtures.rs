@@ -29,7 +29,7 @@
 
 use crate::common::TestServer;
 use anyhow::Result;
-use kalamdb_api::models::{SqlResponse, QueryResult};
+use kalamdb_api::models::{QueryResult, SqlResponse};
 use serde_json::json;
 
 /// Execute SQL with a specific user context.
@@ -208,14 +208,14 @@ pub async fn create_shared_table(
 ) -> SqlResponse {
     let columns = if table_name == "config" {
         r#"
-            name TEXT NOT NULL,
+            name TEXT PRIMARY KEY NOT NULL,
             value TEXT,
             description TEXT,
             created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
         "#
     } else {
         r#"
-            conversation_id TEXT NOT NULL,
+            conversation_id TEXT PRIMARY KEY NOT NULL,
             title TEXT,
             status TEXT,
             participant_count BIGINT,

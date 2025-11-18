@@ -83,7 +83,9 @@ impl ArrowSchemaWithOptions {
         // Extract fields
         let fields_json = obj
             .get("fields")
-            .ok_or_else(|| RegistryError::SchemaError("Missing 'fields' field in JSON".to_string()))?
+            .ok_or_else(|| {
+                RegistryError::SchemaError("Missing 'fields' field in JSON".to_string())
+            })?
             .as_array()
             .ok_or_else(|| RegistryError::SchemaError("'fields' must be an array".to_string()))?;
 
@@ -97,7 +99,9 @@ impl ArrowSchemaWithOptions {
                 let name = field_obj
                     .get("name")
                     .and_then(|v| v.as_str())
-                    .ok_or_else(|| RegistryError::SchemaError("Field missing 'name'".to_string()))?;
+                    .ok_or_else(|| {
+                        RegistryError::SchemaError("Field missing 'name'".to_string())
+                    })?;
 
                 let data_type_str = field_obj
                     .get("data_type")

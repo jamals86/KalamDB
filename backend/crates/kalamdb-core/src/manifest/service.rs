@@ -8,7 +8,7 @@
 //! - validate_manifest(): Verify consistency
 
 use kalamdb_commons::types::{BatchFileEntry, ManifestFile};
-use kalamdb_commons::{NamespaceId, TableName, TableId, UserId};
+use kalamdb_commons::{NamespaceId, TableId, TableName, UserId};
 use kalamdb_store::{StorageBackend, StorageError};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -23,7 +23,7 @@ use std::sync::Arc;
 pub struct ManifestService {
     /// Storage backend (filesystem or S3)
     _storage_backend: Arc<dyn StorageBackend>,
-    
+
     /// Base storage path (fallback, but we prefer using SchemaRegistry)
     _base_path: String,
 }
@@ -56,11 +56,11 @@ impl ManifestService {
         &self,
         namespace: &NamespaceId,
         table: &TableName,
+        table_type: kalamdb_commons::models::schemas::TableType,
         user_id: Option<&UserId>,
     ) -> ManifestFile {
-        let table_id = format!("{}.{}", namespace.as_str(), table.as_str());
-        let scope = user_id.map(|u| u.as_str().to_string()).unwrap_or_else(|| "shared".to_string());
-        ManifestFile::new(table_id, scope)
+        let table_id = TableId::new(namespace.clone(), table.clone());
+        ManifestFile::new(table_id, table_type, user_id.cloned())
     }
 
     /// Update manifest: read, increment max_batch, append entry, write atomically (T109).
@@ -84,13 +84,14 @@ impl ManifestService {
         &self,
         namespace: &NamespaceId,
         table: &TableName,
+        table_type: kalamdb_commons::models::schemas::TableType,
         user_id: Option<&UserId>,
         batch_entry: BatchFileEntry,
     ) -> Result<ManifestFile, StorageError> {
         // Read current manifest (or create new if doesn't exist)
         let mut manifest = self
             .read_manifest(namespace, table, user_id)
-            .unwrap_or_else(|_| self.create_manifest(namespace, table, user_id));
+            .unwrap_or_else(|_| self.create_manifest(namespace, table, table_type, user_id));
 
         // Add batch and update metadata
         manifest.add_batch(batch_entry);
@@ -117,7 +118,7 @@ impl ManifestService {
         user_id: Option<&UserId>,
     ) -> Result<ManifestFile, StorageError> {
         let manifest_path = self.get_manifest_path(namespace, table, user_id)?;
-        
+
         // Read file contents
         let json_str = std::fs::read_to_string(&manifest_path).map_err(|e| {
             StorageError::IoError(format!(
@@ -153,13 +154,13 @@ impl ManifestService {
         &self,
         namespace: &NamespaceId,
         table: &TableName,
+        table_type: kalamdb_commons::models::schemas::TableType,
         user_id: Option<&UserId>,
     ) -> Result<ManifestFile, StorageError> {
         let table_dir = self.get_table_directory(namespace, table, user_id)?;
-        let table_id = format!("{}.{}", namespace.as_str(), table.as_str());
-        let scope = user_id.map(|u| u.as_str().to_string()).unwrap_or_else(|| "shared".to_string());
-        
-        let mut manifest = ManifestFile::new(table_id, scope.clone());
+        let table_id = TableId::new(namespace.clone(), table.clone());
+
+        let mut manifest = ManifestFile::new(table_id, table_type, user_id.cloned());
 
         // Scan directory for batch-*.parquet files
         let entries = std::fs::read_dir(&table_dir).map_err(|e| {
@@ -247,22 +248,22 @@ impl ManifestService {
         // Get AppContext to access SchemaRegistry
         let app_ctx = crate::app_context::AppContext::get();
         let schema_registry = app_ctx.schema_registry();
-        
+
         // Build TableId
         let table_id = TableId::new(namespace.clone(), table.clone());
-        
+
         // Resolve storage path using SchemaRegistry (same as flush operations)
         let storage_path = schema_registry.get_storage_path(&table_id, user_id, None);
-        
-        storage_path
-            .map(PathBuf::from)
-            .map_err(|e| StorageError::Other(format!(
+
+        storage_path.map(PathBuf::from).map_err(|e| {
+            StorageError::Other(format!(
                 "Failed to resolve storage path for {}.{} (user_id={:?}): {}",
                 namespace.as_str(),
                 table.as_str(),
                 user_id.map(|u| u.as_str()),
                 e
-            )))
+            ))
+        })
     }
 
     /// Write manifest atomically: manifest.json.tmp → rename to manifest.json (T113).
@@ -317,7 +318,10 @@ impl ManifestService {
     /// Extract metadata from Parquet file footer (helper for rebuild_manifest).
     ///
     /// Returns None if file cannot be parsed (skip corrupted files).
-    fn extract_batch_metadata(&self, batch_path: &Path) -> Result<Option<BatchFileEntry>, StorageError> {
+    fn extract_batch_metadata(
+        &self,
+        batch_path: &Path,
+    ) -> Result<Option<BatchFileEntry>, StorageError> {
         // Extract batch number from filename (e.g., "batch-0.parquet" → 0)
         let file_name = batch_path
             .file_name()
@@ -335,9 +339,7 @@ impl ManifestService {
             })?;
 
         // Get file size
-        let size_bytes = std::fs::metadata(batch_path)
-            .map(|m| m.len())
-            .unwrap_or(0);
+        let size_bytes = std::fs::metadata(batch_path).map(|m| m.len()).unwrap_or(0);
 
         // For now, return a basic entry
         // TODO: Parse Parquet footer to extract min/max _seq and column stats
@@ -346,7 +348,6 @@ impl ManifestService {
             file_name.to_string(),
             0, // min_seq (TODO: extract from Parquet footer)
             0, // max_seq (TODO: extract from Parquet footer)
-            std::collections::HashMap::new(), // column_min_max (TODO: extract)
             0, // row_count (TODO: extract from Parquet footer)
             size_bytes,
             1, // schema_version
@@ -356,8 +357,6 @@ impl ManifestService {
 
 #[cfg(test)]
 mod tests {
-    use crate::sql::executor::handlers::user;
-
     use super::*;
     use kalamdb_store::test_utils::InMemoryBackend;
     use tempfile::TempDir;
@@ -366,23 +365,27 @@ mod tests {
         let temp_dir = TempDir::new().unwrap();
         let backend: Arc<dyn StorageBackend> = Arc::new(InMemoryBackend::new());
         let service = ManifestService::new(backend, temp_dir.path().to_string_lossy().to_string());
-        
+
         // Initialize AppContext for tests (required for SchemaRegistry access)
         crate::test_helpers::init_test_app_context();
-        
+
         (service, temp_dir)
     }
 
     #[test]
     fn test_create_manifest() {
+        use kalamdb_commons::models::schemas::TableType;
+
         let (service, _temp_dir) = create_test_service();
         let namespace = NamespaceId::new("ns1");
         let table = TableName::new("products");
 
-        let manifest = service.create_manifest(&namespace, &table, None);
+        let manifest = service.create_manifest(&namespace, &table, TableType::Shared, None);
 
-        assert_eq!(manifest.table_id, "ns1.products");
-        assert_eq!(manifest.scope, "shared");
+        assert_eq!(manifest.table_id.namespace_id().as_str(), "ns1");
+        assert_eq!(manifest.table_id.table_name().as_str(), "products");
+        assert_eq!(manifest.table_type, TableType::Shared);
+        assert_eq!(manifest.user_id, None);
         assert_eq!(manifest.version, 1);
         assert_eq!(manifest.max_batch, 0);
         assert_eq!(manifest.batches.len(), 0);
@@ -391,24 +394,24 @@ mod tests {
     #[test]
     #[ignore = "Requires SchemaRegistry with registered tables"]
     fn test_update_manifest_creates_if_missing() {
+        use kalamdb_commons::models::schemas::TableType;
+
         let (service, _temp_dir) = create_test_service();
         let namespace = NamespaceId::new("ns1");
         let table = TableName::new("orders");
 
-        let batch_entry = BatchFileEntry::new(
-            0,
-            "batch-0.parquet".to_string(),
-            1000,
-            2000,
-            std::collections::HashMap::new(),
-            100,
-            1024,
-            1,
-        );
+        let batch_entry =
+            BatchFileEntry::new(0, "batch-0.parquet".to_string(), 1000, 2000, 100, 1024, 1);
 
         let user_id = UserId::from("u_123");
         let manifest = service
-            .update_manifest(&namespace, &table, Some(&user_id), batch_entry)
+            .update_manifest(
+                &namespace,
+                &table,
+                TableType::User,
+                Some(&user_id),
+                batch_entry,
+            )
             .unwrap();
 
         assert_eq!(manifest.max_batch, 0);
@@ -418,26 +421,19 @@ mod tests {
 
     #[test]
     fn test_validate_manifest() {
+        use kalamdb_commons::models::schemas::TableType;
+
         let (service, _temp_dir) = create_test_service();
         let namespace = NamespaceId::new("ns1");
         let table = TableName::new("products");
 
-        let mut manifest = service.create_manifest(&namespace, &table, None);
+        let mut manifest = service.create_manifest(&namespace, &table, TableType::Shared, None);
 
         // Valid empty manifest
         assert!(service.validate_manifest(&manifest).is_ok());
 
         // Add batch
-        let batch = BatchFileEntry::new(
-            1,
-            "batch-1.parquet".to_string(),
-            1000,
-            2000,
-            std::collections::HashMap::new(),
-            50,
-            512,
-            1,
-        );
+        let batch = BatchFileEntry::new(1, "batch-1.parquet".to_string(), 1000, 2000, 50, 512, 1);
         manifest.add_batch(batch);
 
         // Valid manifest with batch
@@ -451,31 +447,27 @@ mod tests {
     #[test]
     #[ignore = "Requires SchemaRegistry with registered tables"]
     fn test_write_read_manifest() {
+        use kalamdb_commons::models::schemas::TableType;
+
         let (service, _temp_dir) = create_test_service();
         let namespace = NamespaceId::new("ns1");
         let table = TableName::new("products");
 
-        let batch_entry = BatchFileEntry::new(
-            0,
-            "batch-0.parquet".to_string(),
-            1000,
-            2000,
-            std::collections::HashMap::new(),
-            100,
-            1024,
-            1,
-        );
+        let batch_entry =
+            BatchFileEntry::new(0, "batch-0.parquet".to_string(), 1000, 2000, 100, 1024, 1);
 
         // Update (creates and writes)
         service
-            .update_manifest(&namespace, &table, None, batch_entry)
+            .update_manifest(&namespace, &table, TableType::Shared, None, batch_entry)
             .unwrap();
 
         // Read back
         let manifest = service.read_manifest(&namespace, &table, None).unwrap();
 
-        assert_eq!(manifest.table_id, "ns1.products");
-        assert_eq!(manifest.scope, "shared");
+        assert_eq!(manifest.table_id.namespace_id().as_str(), "ns1");
+        assert_eq!(manifest.table_id.table_name().as_str(), "products");
+        assert_eq!(manifest.table_type, TableType::Shared);
+        assert_eq!(manifest.user_id, None);
         assert_eq!(manifest.max_batch, 0);
         assert_eq!(manifest.batches.len(), 1);
     }

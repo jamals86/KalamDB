@@ -193,10 +193,10 @@ mod tests {
 
         // Verify storage key format
         let key_bytes = row_id.storage_key();
-        
+
         // First byte should be user_id length
         assert_eq!(key_bytes[0], 5); // "user1" = 5 bytes
-        
+
         // Parse back
         let parsed = UserTableRowId::from_bytes(&key_bytes).unwrap();
         assert_eq!(parsed.user_id(), &user_id);
@@ -243,9 +243,9 @@ mod tests {
 
         // Verify storage key format (same as UserTableRowId)
         let key_bytes = row_id.storage_key();
-        
+
         assert_eq!(key_bytes[0], 5); // "user1" = 5 bytes
-        
+
         // Parse back
         let parsed = StreamTableRowId::from_bytes(&key_bytes).unwrap();
         assert_eq!(parsed.user_id(), &user_id);
@@ -266,4 +266,3 @@ mod tests {
         assert_eq!(parsed.seq, seq);
     }
 }
-

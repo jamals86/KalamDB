@@ -26,8 +26,8 @@ pub fn new_live_queries_store(backend: Arc<dyn StorageBackend>) -> LiveQueriesSt
 mod tests {
     use super::*;
     use kalamdb_commons::{NamespaceId, TableName, UserId};
-    use kalamdb_store::test_utils::InMemoryBackend;
     use kalamdb_store::entity_store::EntityStore;
+    use kalamdb_store::test_utils::InMemoryBackend;
 
     fn create_test_store() -> LiveQueriesStore {
         let backend: Arc<dyn StorageBackend> = Arc::new(InMemoryBackend::new());

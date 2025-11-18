@@ -67,7 +67,10 @@ fn test_storage_drop_requires_detached_tables() {
     );
     execute_sql_as_root_via_cli(&create_user_table_sql).expect("user table creation");
     // Insert a row to ensure per-user directory is created (some backends may lazy-create user folder)
-    let _ = execute_sql_as_root_via_cli(&format!("INSERT INTO {}.{} (body) VALUES ('init')", namespace, user_table));
+    let _ = execute_sql_as_root_via_cli(&format!(
+        "INSERT INTO {}.{} (body) VALUES ('init')",
+        namespace, user_table
+    ));
     std::thread::sleep(std::time::Duration::from_millis(50));
 
     // For user tables we only require the table directory itself to exist eagerly; the per-user
@@ -87,7 +90,10 @@ fn test_storage_drop_requires_detached_tables() {
     );
     execute_sql_as_root_via_cli(&create_shared_table_sql).expect("shared table creation");
     // Insert a row to ensure shared directory is fully realized
-    let _ = execute_sql_as_root_via_cli(&format!("INSERT INTO {}.{} (body) VALUES ('init_shared')", namespace, shared_table));
+    let _ = execute_sql_as_root_via_cli(&format!(
+        "INSERT INTO {}.{} (body) VALUES ('init_shared')",
+        namespace, shared_table
+    ));
     std::thread::sleep(std::time::Duration::from_millis(50));
 
     let shared_table_path = base_dir
@@ -100,7 +106,10 @@ fn test_storage_drop_requires_detached_tables() {
     );
 
     let drop_err = execute_sql_as_root_via_cli(&format!("DROP STORAGE {}", storage_id));
-    assert!(drop_err.is_err(), "drop storage should fail while tables exist");
+    assert!(
+        drop_err.is_err(),
+        "drop storage should fail while tables exist"
+    );
     let err_msg = drop_err.err().unwrap().to_string();
     assert!(
         err_msg.contains("Cannot drop storage") && err_msg.contains("table(s) still using it"),

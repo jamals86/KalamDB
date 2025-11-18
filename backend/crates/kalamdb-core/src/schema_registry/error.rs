@@ -7,37 +7,37 @@ use std::fmt;
 pub enum RegistryError {
     /// Table not found in cache
     TableNotFound { namespace: String, table: String },
-    
+
     /// Storage not found
     StorageNotFound { storage_id: String },
-    
+
     /// Schema conversion error
     SchemaConversion { message: String },
-    
+
     /// Schema error (generic)
     SchemaError(String),
-    
+
     /// Arrow error
     ArrowError { message: String },
-    
+
     /// DataFusion error
     DataFusionError { message: String },
-    
+
     /// Storage backend error
     StorageError { message: String },
-    
+
     /// Invalid configuration
     InvalidConfig { message: String },
-    
+
     /// Cache operation failed
     CacheFailed { message: String },
-    
+
     /// View error
     ViewError { message: String },
-    
+
     /// Invalid operation
     InvalidOperation(String),
-    
+
     /// Other errors
     Other(String),
 }

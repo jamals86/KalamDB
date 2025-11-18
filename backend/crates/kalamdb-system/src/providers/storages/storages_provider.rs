@@ -3,9 +3,9 @@
 //! This module provides a DataFusion TableProvider implementation for the system.storages table.
 //! Uses the new EntityStore architecture with StorageId keys.
 
-use crate::system_table_trait::SystemTableProviderExt;
 use super::{new_storages_store, StoragesStore, StoragesTableSchema};
 use crate::error::SystemError;
+use crate::system_table_trait::SystemTableProviderExt;
 use async_trait::async_trait;
 use datafusion::arrow::array::{ArrayRef, RecordBatch, StringBuilder, TimestampMillisecondArray};
 use datafusion::arrow::datatypes::SchemaRef;

@@ -4,8 +4,8 @@
 //! Uses ManifestTableProvider from kalamdb-system for consistent schema.
 
 use crate::error::KalamDbError;
-use crate::sql::executor::models::{ExecutionContext, ExecutionResult, ScalarValue};
 use crate::sql::executor::handlers::TypedStatementHandler;
+use crate::sql::executor::models::{ExecutionContext, ExecutionResult, ScalarValue};
 use async_trait::async_trait;
 use kalamdb_sql::ShowManifestStatement;
 use kalamdb_system::providers::ManifestTableProvider;
@@ -35,7 +35,7 @@ impl TypedStatementHandler<ShowManifestStatement> for ShowManifestCacheHandler {
     ) -> Result<ExecutionResult, KalamDbError> {
         // Use ManifestTableProvider to scan the manifest cache
         let provider = ManifestTableProvider::new(self.app_context.storage_backend());
-        
+
         let batch = provider
             .scan_to_record_batch()
             .map_err(|e| KalamDbError::Other(format!("Failed to read manifest cache: {}", e)))?;
@@ -59,8 +59,8 @@ mod tests {
     #[tokio::test]
     async fn test_show_manifest_cache_empty() {
         use crate::sql::executor::models::ExecutionContext;
-        use kalamdb_commons::models::{UserId, Role};
         use datafusion::prelude::SessionContext;
+        use kalamdb_commons::models::{Role, UserId};
         use std::sync::Arc;
 
         let app_context = Arc::new(AppContext::new_test());
@@ -87,7 +87,7 @@ mod tests {
     #[test]
     fn test_schema_structure() {
         use kalamdb_system::providers::manifest::ManifestTableSchema;
-        
+
         let schema = ManifestTableSchema::schema();
         assert_eq!(schema.fields().len(), 10);
         assert_eq!(schema.field(0).name(), "cache_key");

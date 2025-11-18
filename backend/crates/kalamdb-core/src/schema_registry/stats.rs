@@ -6,7 +6,6 @@
 use super::SchemaRegistry;
 use crate::error::KalamDbError;
 use async_trait::async_trait;
-use kalamdb_system::{SystemError, SystemTableProviderExt};
 use datafusion::arrow::array::{ArrayRef, StringBuilder};
 use datafusion::arrow::datatypes::{DataType, Field, Schema, SchemaRef};
 use datafusion::arrow::record_batch::RecordBatch;
@@ -14,6 +13,7 @@ use datafusion::datasource::{TableProvider, TableType};
 use datafusion::error::{DataFusionError, Result as DataFusionResult};
 use datafusion::logical_expr::Expr;
 use datafusion::physical_plan::ExecutionPlan;
+use kalamdb_system::{SystemError, SystemTableProviderExt};
 use std::any::Any;
 use std::sync::{Arc, OnceLock};
 
@@ -69,7 +69,7 @@ impl StatsTableProvider {
         // Schema cache metrics (unified cache from Phase 10)
         if let Some(cache) = &self.unified_cache {
             let (size, hits, misses, hit_rate) = cache.stats();
-            
+
             names.append_value("schema_cache_hit_rate");
             values.append_value(format!("{:.6}", hit_rate));
 
@@ -119,7 +119,8 @@ impl SystemTableProviderExt for StatsTableProvider {
     }
 
     fn load_batch(&self) -> Result<RecordBatch, SystemError> {
-        self.build_metrics_batch().map_err(|e| SystemError::Other(e.to_string()))
+        self.build_metrics_batch()
+            .map_err(|e| SystemError::Other(e.to_string()))
     }
 }
 
