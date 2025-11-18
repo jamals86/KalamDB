@@ -189,7 +189,7 @@ CREATE USER TABLE chat.conversations (
 CREATE USER TABLE chat.messages (
   id BIGINT PRIMARY KEY DEFAULT SNOWFLAKE_ID(),
   conversation_id BIGINT NOT NULL,
-  role TEXT NOT NULL,
+  role_id TEXT NOT NULL,
   content TEXT NOT NULL,
   created_at TIMESTAMP DEFAULT NOW()
 ) FLUSH ROW_THRESHOLD 1000;

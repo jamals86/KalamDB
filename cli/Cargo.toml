@@ -64,6 +64,9 @@ term_size = { workspace = true }
 chrono = { workspace = true }
 rand.workspace = true
 
+# Base64 encoding for history preservation
+base64 = { workspace = true }
+
 [build-dependencies]
 chrono = { workspace = true }
 

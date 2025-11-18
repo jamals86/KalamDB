@@ -2,6 +2,11 @@
 //!
 //! This module provides validation functions to ensure that user-provided names
 //! comply with KalamDB naming conventions and don't conflict with reserved words.
+//!
+//! SQL keywords are sourced from sqlparser-rs ALL_KEYWORDS constant, which includes
+//! comprehensive coverage of SQL standard keywords plus dialect-specific extensions
+//! (PostgreSQL, MySQL, BigQuery, etc.). This ensures all SQL reserved words are
+//! automatically covered without manual maintenance.
 
 use once_cell::sync::Lazy;
 use std::collections::HashSet;
@@ -34,70 +39,13 @@ pub static RESERVED_COLUMN_NAMES: Lazy<HashSet<&'static str>> = Lazy::new(|| {
 });
 
 /// SQL reserved keywords that cannot be used as identifiers
-pub static RESERVED_SQL_KEYWORDS: Lazy<HashSet<&'static str>> = Lazy::new(|| {
-    let mut set = HashSet::new();
-
-    // ALL_KEYWORDS from sqlparser crate
-
-    // SQL standard keywords
-    set.insert("select");
-    set.insert("from");
-    set.insert("where");
-    set.insert("insert");
-    set.insert("update");
-    set.insert("delete");
-    set.insert("create");
-    set.insert("alter");
-    set.insert("drop");
-    set.insert("table");
-    set.insert("index");
-    set.insert("view");
-    set.insert("join");
-    set.insert("left");
-    set.insert("right");
-    set.insert("inner");
-    set.insert("outer");
-    set.insert("on");
-    set.insert("as");
-    set.insert("and");
-    set.insert("or");
-    set.insert("not");
-    set.insert("null");
-    set.insert("true");
-    set.insert("false");
-    set.insert("order");
-    set.insert("by");
-    set.insert("group");
-    set.insert("having");
-    set.insert("limit");
-    set.insert("offset");
-    set.insert("distinct");
-    set.insert("all");
-    set.insert("exists");
-    set.insert("in");
-    set.insert("between");
-    set.insert("like");
-    set.insert("is");
-    set.insert("case");
-    set.insert("when");
-    set.insert("then");
-    set.insert("else");
-    set.insert("end");
-    set.insert("union");
-    set.insert("intersect");
-    set.insert("except");
-    set.insert("cast");
-    set.insert("using");
-    set.insert("window");
-    set.insert("as");
-    set.insert("user");
-    set.insert("role");
-    set.insert("grant");
-    set.insert("revoke");
-    set.insert("transaction");
-    set.insert("commit");
-    set.insert("rollback");
-    set // Return the HashSet
+/// Uses sqlparser-rs ALL_KEYWORDS constant for comprehensive SQL keyword coverage
+pub static RESERVED_SQL_KEYWORDS: Lazy<HashSet<String>> = Lazy::new(|| {
+    // Use sqlparser's comprehensive keyword list (includes SQL standard + dialect extensions)
+    sqlparser::keywords::ALL_KEYWORDS
+        .iter()
+        .map(|kw| kw.to_lowercase())
+        .collect::<HashSet<String>>()
 });
 
 /// Validation error types
@@ -172,13 +120,13 @@ pub const MAX_NAME_LENGTH: usize = 64;
 /// - Cannot be a reserved namespace
 /// - Cannot be a reserved SQL keyword
 pub fn validate_namespace_name(name: &str) -> Result<(), ValidationError> {
-    validate_identifier_base(name)?;
-
-    // Check if it's a reserved namespace
+    // Check if it's a reserved namespace first (more specific error message)
     let lowercase = name.to_lowercase();
     if RESERVED_NAMESPACES.contains(lowercase.as_str()) {
         return Err(ValidationError::ReservedNamespace(name.to_string()));
     }
+
+    validate_identifier_base(name)?;
 
     Ok(())
 }
@@ -210,13 +158,6 @@ pub fn validate_table_name(name: &str) -> Result<(), ValidationError> {
 /// - Cannot be a reserved SQL keyword
 pub fn validate_column_name(name: &str) -> Result<(), ValidationError> {
     validate_identifier_base(name)?;
-
-    // Check if it's a reserved column name
-    let lowercase = name.to_lowercase();
-    if RESERVED_COLUMN_NAMES.contains(lowercase.as_str()) {
-        return Err(ValidationError::ReservedColumnName(name.to_string()));
-    }
-
     Ok(())
 }
 
@@ -254,7 +195,7 @@ fn validate_identifier_base(name: &str) -> Result<(), ValidationError> {
 
     // Check if it's a reserved SQL keyword
     let lowercase = name.to_lowercase();
-    if RESERVED_SQL_KEYWORDS.contains(lowercase.as_str()) {
+    if RESERVED_SQL_KEYWORDS.contains(&lowercase) {
         return Err(ValidationError::ReservedSqlKeyword(name.to_string()));
     }
 
