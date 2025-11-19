@@ -160,7 +160,13 @@ impl StatementHandler for InsertHandler {
         // T153: Execute native insert with impersonation support (Phase 7)
         // Use as_user_id if present, otherwise use context.user_id
         let rows_affected = self
-            .execute_native_insert(&namespace, &table_name, effective_user_id, json_rows)
+            .execute_native_insert(
+                &namespace,
+                &table_name,
+                effective_user_id,
+                context.user_role,
+                json_rows,
+            )
             .await?;
         Ok(ExecutionResult::Inserted { rows_affected })
     }
@@ -362,6 +368,7 @@ impl InsertHandler {
         namespace: &NamespaceId,
         table_name: &TableName,
         user_id: &kalamdb_commons::models::UserId,
+        role: kalamdb_commons::Role,
         rows: Vec<JsonValue>,
     ) -> Result<usize, KalamDbError> {
         // Get schema registry to access table providers
@@ -407,6 +414,27 @@ impl InsertHandler {
                 }
             }
             TableType::Shared => {
+                // Check write permissions for Shared tables
+                // Public shared tables are read-only for regular users
+                use kalamdb_auth::rbac::can_write_shared_table;
+                use kalamdb_commons::schemas::TableOptions;
+                use kalamdb_commons::TableAccess;
+
+                let access_level = if let TableOptions::Shared(opts) = &table_def.table_options {
+                    opts.access_level.clone().unwrap_or(TableAccess::Private)
+                } else {
+                    TableAccess::Private
+                };
+
+                if !can_write_shared_table(access_level.clone(), false, role) {
+                    return Err(KalamDbError::Unauthorized(format!(
+                        "Insufficient privileges to write to shared table '{}.{}' (Access Level: {:?})",
+                        namespace.as_str(),
+                        table_name.as_str(),
+                        access_level
+                    )));
+                }
+
                 // Downcast to new providers::SharedTableProvider and batch insert
                 let provider_arc = schema_registry.get_provider(&table_id).ok_or_else(|| {
                     KalamDbError::InvalidOperation(format!(

@@ -398,10 +398,11 @@ impl TestServer {
                     .unwrap_or_else(|| {
                         // For test convenience: auto-escalate based on user ID patterns
                         let id_lower = user_id.as_str().to_lowercase();
-                        if id_lower == "system" 
-                            || id_lower == "admin" 
+                        if id_lower == "system"
+                            || id_lower == "admin"
                             || id_lower == "root"
-                            || id_lower.starts_with("e2e_") {
+                            || id_lower.starts_with("e2e_")
+                        {
                             Role::System
                         } else if id_lower.contains("dba") {
                             Role::Dba

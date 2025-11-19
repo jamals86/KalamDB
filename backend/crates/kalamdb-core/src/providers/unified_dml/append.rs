@@ -5,6 +5,7 @@
 
 use crate::app_context::AppContext;
 use crate::error::KalamDbError;
+use crate::providers::arrow_json_conversion::json_to_row;
 use kalamdb_commons::ids::{SeqId, UserTableRowId};
 use kalamdb_commons::models::schemas::TableType;
 use kalamdb_commons::models::{TableId, UserId};
@@ -73,7 +74,9 @@ pub fn append_version_sync(
                 user_id: user_id.clone(),
                 _seq: seq_id,
                 _deleted: deleted,
-                fields: fields.clone(),
+                fields: json_to_row(&fields).ok_or_else(|| {
+                    KalamDbError::InvalidOperation("Invalid JSON fields: must be an object".to_string())
+                })?,
             };
 
             // Create composite key
@@ -104,7 +107,9 @@ pub fn append_version_sync(
             let entity = SharedTableRow {
                 _seq: seq_id,
                 _deleted: deleted,
-                fields: fields.clone(),
+                fields: json_to_row(&fields).ok_or_else(|| {
+                    KalamDbError::InvalidOperation("Invalid JSON fields: must be an object".to_string())
+                })?,
             };
 
             // Key is just the SeqId (SharedTableRowId is a type alias for SeqId)

@@ -37,6 +37,10 @@ pub struct SubscriptionOptions {
     /// Number of recent rows to fetch initially (default: 0, no initial fetch)
     #[serde(default)]
     pub last_rows: Option<usize>,
+
+    /// Optional: Configure batch size for initial data streaming
+    #[serde(default)]
+    pub batch_size: Option<usize>,
 }
 
 /// Array of subscriptions sent during WebSocket connection
@@ -75,6 +79,7 @@ mod tests {
             sql: "SELECT * FROM messages".to_string(),
             options: SubscriptionOptions {
                 last_rows: Some(10),
+                batch_size: None,
             },
         };
 
@@ -96,12 +101,16 @@ mod tests {
                     sql: "SELECT * FROM messages".to_string(),
                     options: SubscriptionOptions {
                         last_rows: Some(10),
+                        batch_size: None,
                     },
                 },
                 Subscription {
                     id: "sub-2".to_string(),
                     sql: "SELECT * FROM notifications".to_string(),
-                    options: SubscriptionOptions { last_rows: Some(5) },
+                    options: SubscriptionOptions {
+                        last_rows: Some(5),
+                        batch_size: None,
+                    },
                 },
             ],
         };

@@ -11,7 +11,10 @@ use chrono::Utc;
 use datafusion::arrow::array::*;
 use datafusion::arrow::datatypes::{DataType, SchemaRef, TimeUnit};
 use datafusion::arrow::record_batch::RecordBatch;
+use datafusion::scalar::ScalarValue;
+use kalamdb_commons::models::Row;
 use serde_json::Value as JsonValue;
+use std::collections::BTreeMap;
 use std::sync::Arc;
 
 /// Type alias for Arc<dyn Array> to improve readability
@@ -180,6 +183,34 @@ pub fn json_rows_to_arrow_batch(
         .map_err(|e| format!("Failed to create RecordBatch: {}", e))
 }
 
+/// Convert Arrow RecordBatch to vector of JSON objects
+///
+/// This is used for converting query results to JSON format for API responses.
+///
+/// # Arguments
+/// * `batch` - Arrow RecordBatch
+///
+/// # Returns
+/// Vector of JSON objects (one per row)
+pub fn record_batch_to_json_rows(
+    batch: &RecordBatch,
+) -> Result<Vec<JsonValue>, datafusion::error::DataFusionError> {
+    let mut rows = Vec::with_capacity(batch.num_rows());
+    let schema = batch.schema();
+
+    for i in 0..batch.num_rows() {
+        let mut row_map = serde_json::Map::new();
+        for (col_idx, field) in schema.fields().iter().enumerate() {
+            let col = batch.column(col_idx);
+            let value = arrow_value_to_json(col.as_ref(), i)?;
+            row_map.insert(field.name().clone(), value);
+        }
+        rows.push(JsonValue::Object(row_map));
+    }
+
+    Ok(rows)
+}
+
 /// Helper function to create an empty array of the given type
 ///
 /// Used for creating empty RecordBatches with correct schema
@@ -294,6 +325,28 @@ mod tests {
             .downcast_ref::<TimestampMillisecondArray>()
             .unwrap();
         assert_eq!(ts_col.value(0), 1609459200000i64);
+    }
+
+    #[test]
+    fn test_record_batch_to_json_rows_basic() {
+        let schema = Arc::new(Schema::new(vec![
+            Field::new("id", DataType::Int64, false),
+            Field::new("name", DataType::Utf8, true),
+        ]));
+
+        let json_rows = vec![
+            json!({"id": 1, "name": "Alice"}),
+            json!({"id": 2, "name": null}),
+            json!({"id": 3, "name": "Charlie"}),
+        ];
+
+        let batch = json_rows_to_arrow_batch(&schema, json_rows).unwrap();
+        let json_output = record_batch_to_json_rows(&batch).unwrap();
+
+        assert_eq!(json_output.len(), 3);
+        assert_eq!(json_output[0], json!({"id": 1, "name": "Alice"}));
+        assert_eq!(json_output[1], json!({"id": 2, "name": null}));
+        assert_eq!(json_output[2], json!({"id": 3, "name": "Charlie"}));
     }
 }
 
@@ -441,5 +494,145 @@ pub fn arrow_value_to_json(
             // Fallback: convert to string representation
             Ok(JsonValue::String(format!("{:?}", array.slice(row_idx, 1))))
         }
+    }
+}
+
+/// Convert Arrow array value at given index to DataFusion ScalarValue
+pub fn arrow_value_to_scalar(
+    array: &dyn datafusion::arrow::array::Array,
+    row_idx: usize,
+) -> Result<ScalarValue, datafusion::error::DataFusionError> {
+    use datafusion::arrow::array::*;
+    use datafusion::arrow::datatypes::*;
+
+    if array.is_null(row_idx) {
+        return Ok(ScalarValue::try_from(array.data_type()).unwrap_or(ScalarValue::Null));
+    }
+
+    match array.data_type() {
+        DataType::Boolean => {
+            let arr = array.as_any().downcast_ref::<BooleanArray>().unwrap();
+            Ok(ScalarValue::Boolean(Some(arr.value(row_idx))))
+        }
+        DataType::Int8 => {
+            let arr = array.as_any().downcast_ref::<Int8Array>().unwrap();
+            Ok(ScalarValue::Int8(Some(arr.value(row_idx))))
+        }
+        DataType::Int16 => {
+            let arr = array.as_any().downcast_ref::<Int16Array>().unwrap();
+            Ok(ScalarValue::Int16(Some(arr.value(row_idx))))
+        }
+        DataType::Int32 => {
+            let arr = array.as_any().downcast_ref::<Int32Array>().unwrap();
+            Ok(ScalarValue::Int32(Some(arr.value(row_idx))))
+        }
+        DataType::Int64 => {
+            let arr = array.as_any().downcast_ref::<Int64Array>().unwrap();
+            Ok(ScalarValue::Int64(Some(arr.value(row_idx))))
+        }
+        DataType::UInt8 => {
+            let arr = array.as_any().downcast_ref::<UInt8Array>().unwrap();
+            Ok(ScalarValue::UInt8(Some(arr.value(row_idx))))
+        }
+        DataType::UInt16 => {
+            let arr = array.as_any().downcast_ref::<UInt16Array>().unwrap();
+            Ok(ScalarValue::UInt16(Some(arr.value(row_idx))))
+        }
+        DataType::UInt32 => {
+            let arr = array.as_any().downcast_ref::<UInt32Array>().unwrap();
+            Ok(ScalarValue::UInt32(Some(arr.value(row_idx))))
+        }
+        DataType::UInt64 => {
+            let arr = array.as_any().downcast_ref::<UInt64Array>().unwrap();
+            Ok(ScalarValue::UInt64(Some(arr.value(row_idx))))
+        }
+        DataType::Float32 => {
+            let arr = array.as_any().downcast_ref::<Float32Array>().unwrap();
+            Ok(ScalarValue::Float32(Some(arr.value(row_idx))))
+        }
+        DataType::Float64 => {
+            let arr = array.as_any().downcast_ref::<Float64Array>().unwrap();
+            Ok(ScalarValue::Float64(Some(arr.value(row_idx))))
+        }
+        DataType::Utf8 => {
+            let arr = array.as_any().downcast_ref::<StringArray>().unwrap();
+            Ok(ScalarValue::Utf8(Some(arr.value(row_idx).to_string())))
+        }
+        DataType::LargeUtf8 => {
+            let arr = array.as_any().downcast_ref::<LargeStringArray>().unwrap();
+            Ok(ScalarValue::LargeUtf8(Some(arr.value(row_idx).to_string())))
+        }
+        DataType::Timestamp(TimeUnit::Millisecond, tz) => {
+            let arr = array
+                .as_any()
+                .downcast_ref::<TimestampMillisecondArray>()
+                .unwrap();
+            Ok(ScalarValue::TimestampMillisecond(
+                Some(arr.value(row_idx)),
+                tz.clone(),
+            ))
+        }
+        DataType::Timestamp(TimeUnit::Microsecond, tz) => {
+            let arr = array
+                .as_any()
+                .downcast_ref::<TimestampMicrosecondArray>()
+                .unwrap();
+            Ok(ScalarValue::TimestampMicrosecond(
+                Some(arr.value(row_idx)),
+                tz.clone(),
+            ))
+        }
+        DataType::Timestamp(TimeUnit::Nanosecond, tz) => {
+            let arr = array
+                .as_any()
+                .downcast_ref::<TimestampNanosecondArray>()
+                .unwrap();
+            Ok(ScalarValue::TimestampNanosecond(
+                Some(arr.value(row_idx)),
+                tz.clone(),
+            ))
+        }
+        _ => {
+            // Fallback: convert to string representation
+            Ok(ScalarValue::Utf8(Some(format!(
+                "{:?}",
+                array.slice(row_idx, 1)
+            ))))
+        }
+    }
+}
+
+/// Convert JSON Object to Row
+///
+/// Used for converting storage JSON rows to Row format for live query notifications.
+pub fn json_to_row(json: &JsonValue) -> Option<Row> {
+    if let JsonValue::Object(map) = json {
+        let mut values = BTreeMap::new();
+        for (k, v) in map {
+            values.insert(k.clone(), json_value_to_scalar(v));
+        }
+        Some(Row::new(values))
+    } else {
+        None
+    }
+}
+
+/// Convert serde_json::Value to DataFusion ScalarValue
+pub fn json_value_to_scalar(v: &JsonValue) -> ScalarValue {
+    match v {
+        JsonValue::Null => ScalarValue::Null,
+        JsonValue::Bool(b) => ScalarValue::Boolean(Some(*b)),
+        JsonValue::Number(n) => {
+            if let Some(i) = n.as_i64() {
+                ScalarValue::Int64(Some(i))
+            } else if let Some(f) = n.as_f64() {
+                ScalarValue::Float64(Some(f))
+            } else {
+                ScalarValue::Float64(None)
+            }
+        }
+        JsonValue::String(s) => ScalarValue::Utf8(Some(s.clone())),
+        JsonValue::Array(_) => ScalarValue::Utf8(Some(v.to_string())), // Fallback for arrays
+        JsonValue::Object(_) => ScalarValue::Utf8(Some(v.to_string())), // Fallback for objects
     }
 }

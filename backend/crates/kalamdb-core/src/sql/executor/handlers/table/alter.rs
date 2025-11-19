@@ -263,17 +263,24 @@ impl TypedStatementHandler<AlterTableStatement> for AlterTableHandler {
 
     async fn check_authorization(
         &self,
-        _statement: &AlterTableStatement,
+        statement: &AlterTableStatement,
         context: &ExecutionContext,
     ) -> Result<(), KalamDbError> {
-        // Delegate to RBAC helper (basic owner flag = false for now)
-        let is_owner = false;
-        let table_type_guess = TableType::User; // Without lookup yet, assume USER for initial auth gate
-        if !crate::auth::rbac::can_alter_table(context.user_role, table_type_guess, is_owner) {
-            return Err(KalamDbError::Unauthorized(
-                "Insufficient privileges to alter table".to_string(),
-            ));
+        // Resolve namespace
+        let namespace_id = &statement.namespace_id;
+        let table_id = TableId::from_strings(namespace_id.as_str(), statement.table_name.as_str());
+
+        // Lookup table to get type for accurate permission check
+        let registry = self.app_context.schema_registry();
+        if let Ok(Some(def)) = registry.get_table_definition(&table_id) {
+            let is_owner = false; // TODO: track ownership
+            if !crate::auth::rbac::can_alter_table(context.user_role, def.table_type, is_owner) {
+                return Err(KalamDbError::Unauthorized(
+                    "Insufficient privileges to alter table".to_string(),
+                ));
+            }
         }
+        // If table not found, let execute() handle the NotFound error
         Ok(())
     }
 }

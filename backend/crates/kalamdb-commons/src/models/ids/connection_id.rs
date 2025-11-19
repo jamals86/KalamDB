@@ -17,6 +17,7 @@ pub struct ConnectionId {
 
 impl ConnectionId {
     /// Create a new connection ID
+    /// TODO: Intsead of String for UserId?
     pub fn new(user_id: String, unique_conn_id: String) -> Self {
         Self {
             user_id: UserId::new(user_id),

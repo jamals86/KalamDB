@@ -117,6 +117,7 @@ impl TablesTableProvider {
         let mut table_comments = StringBuilder::with_capacity(row_count, row_count * 64);
         let mut updated_ats = Vec::with_capacity(row_count);
         let mut options_json = StringBuilder::with_capacity(row_count, row_count * 128);
+        let mut access_levels = StringBuilder::with_capacity(row_count, row_count * 16);
 
         for (_table_id, table_def) in tables {
             // Convert TableId to string format: "namespace:table_name"
@@ -141,6 +142,17 @@ impl TablesTableProvider {
                     e
                 )),
             }
+            // Access Level (only for Shared tables, null otherwise)
+            use kalamdb_commons::schemas::TableOptions;
+            if let TableOptions::Shared(opts) = &table_def.table_options {
+                if let Some(access) = &opts.access_level {
+                    access_levels.append_value(format!("{:?}", access));
+                } else {
+                    access_levels.append_null();
+                }
+            } else {
+                access_levels.append_null();
+            }
         }
 
         let batch = RecordBatch::try_new(
@@ -155,6 +167,7 @@ impl TablesTableProvider {
                 Arc::new(table_comments.finish()) as ArrayRef, // 7 table_comment
                 Arc::new(TimestampMillisecondArray::from(updated_ats)) as ArrayRef, // 8 updated_at
                 Arc::new(options_json.finish()) as ArrayRef, // 9 options
+                Arc::new(access_levels.finish()) as ArrayRef, // 10 access_level
             ],
         )
         .map_err(|e| SystemError::Other(format!("Arrow error: {}", e)))?;

@@ -20,11 +20,16 @@ use crate::schema_registry::TableType;
 use crate::storage::storage_registry::StorageRegistry;
 use async_trait::async_trait;
 use datafusion::arrow::datatypes::SchemaRef;
-use datafusion::arrow::record_batch::RecordBatch;
+use datafusion::arrow::record_batch::{RecordBatch, RecordBatchOptions};
 use datafusion::catalog::Session;
 use datafusion::datasource::TableProvider;
-use datafusion::logical_expr::Expr;
-use kalamdb_commons::models::{NamespaceId, TableName, UserId};
+use datafusion::logical_expr::{Expr, TableProviderFilterPushDown};
+use datafusion::physical_plan::{ExecutionPlan, Statistics};
+use datafusion::datasource::memory::MemTable;
+use datafusion::error::{DataFusionError, Result as DataFusionResult};
+use datafusion::scalar::ScalarValue;
+use kalamdb_commons::ids::SeqId;
+use kalamdb_commons::models::{NamespaceId, Row, TableName, UserId};
 use kalamdb_commons::types::ManifestFile;
 use kalamdb_commons::{StorageKey, TableId};
 use kalamdb_tables::{SharedTableRow, StreamTableRow, UserTableRow};
@@ -34,6 +39,77 @@ use std::path::PathBuf;
 use std::sync::Arc;
 
 static SYSTEM_USER_ID: Lazy<UserId> = Lazy::new(|| UserId::from("_system"));
+
+/// Shared core state for all table providers
+/// Returns (since_seq, until_seq)
+/// since_seq is exclusive (>), until_seq is inclusive (<=)
+pub fn extract_seq_bounds_from_filter(expr: &Expr) -> (Option<SeqId>, Option<SeqId>) {
+    use datafusion::logical_expr::Operator;
+    use datafusion::scalar::ScalarValue;
+
+    match expr {
+        Expr::BinaryExpr(binary) => {
+            match binary.op {
+                Operator::Gt | Operator::GtEq => {
+                    // Handle _seq > X or _seq >= X
+                    if let Expr::Column(col) = &*binary.left {
+                        if col.name == "_seq" {
+                            if let Expr::Literal(ScalarValue::Int64(Some(val)), _) = &*binary.right
+                            {
+                                let seq_val = if binary.op == Operator::Gt {
+                                    *val
+                                } else {
+                                    *val - 1
+                                };
+                                return (Some(SeqId::from(seq_val)), None);
+                            }
+                        }
+                    }
+                    (None, None)
+                }
+                Operator::Lt | Operator::LtEq => {
+                    // Handle _seq < X or _seq <= X
+                    if let Expr::Column(col) = &*binary.left {
+                        if col.name == "_seq" {
+                            if let Expr::Literal(ScalarValue::Int64(Some(val)), _) = &*binary.right
+                            {
+                                let seq_val = if binary.op == Operator::Lt {
+                                    *val - 1
+                                } else {
+                                    *val
+                                };
+                                return (None, Some(SeqId::from(seq_val)));
+                            }
+                        }
+                    }
+                    (None, None)
+                }
+                Operator::And => {
+                    // Combine bounds from AND expressions
+                    let (min_l, max_l) = extract_seq_bounds_from_filter(&binary.left);
+                    let (min_r, max_r) = extract_seq_bounds_from_filter(&binary.right);
+
+                    let min = match (min_l, min_r) {
+                        (Some(a), Some(b)) => Some(if a > b { a } else { b }), // Max of mins
+                        (Some(a), None) => Some(a),
+                        (None, Some(b)) => Some(b),
+                        (None, None) => None,
+                    };
+
+                    let max = match (max_l, max_r) {
+                        (Some(a), Some(b)) => Some(if a < b { a } else { b }), // Min of maxes
+                        (Some(a), None) => Some(a),
+                        (None, Some(b)) => Some(b),
+                        (None, None) => None,
+                    };
+                    (min, max)
+                }
+                _ => (None, None),
+            }
+        }
+        _ => (None, None),
+    }
+}
 
 /// Shared core state for all table providers
 ///
@@ -293,30 +369,29 @@ pub trait BaseTableProvider<K: StorageKey, V>: Send + Sync + TableProvider {
         id_value: &str,
     ) -> Result<Option<K>, KalamDbError> {
         // Default implementation: scan rows with user scoping and version resolution
-        let rows = self.scan_with_version_resolution_to_kvs(user_id, None)?;
+        let rows = self.scan_with_version_resolution_to_kvs(user_id, None, None, None)?;
 
         for (key, row) in rows {
-            if let Some(fields) = Self::extract_fields(&row) {
-                if let Some(id) = fields.get(self.primary_key_field_name()) {
-                    // Compare robustly: support numeric and string IDs
-                    let matches = match id {
-                        serde_json::Value::String(s) => s == id_value,
-                        serde_json::Value::Number(n) => {
-                            // Compare as exact string, and also as i64 if parseable
-                            let num_str = n.to_string();
-                            if num_str == id_value {
-                                true
-                            } else if let Ok(iv) = id_value.parse::<i64>() {
-                                n.as_i64().map(|x| x == iv).unwrap_or(false)
-                            } else {
-                                false
-                            }
+            let fields = Self::extract_row(&row);
+            if let Some(id) = fields.get(self.primary_key_field_name()) {
+                // Compare robustly: support numeric and string IDs
+                let matches = match id {
+                    ScalarValue::Utf8(Some(s)) | ScalarValue::LargeUtf8(Some(s)) => s == id_value,
+                    ScalarValue::Int64(Some(n)) => {
+                        // Compare as exact string, and also as i64 if parseable
+                        let num_str = n.to_string();
+                        if num_str == id_value {
+                            true
+                        } else if let Ok(iv) = id_value.parse::<i64>() {
+                            *n == iv
+                        } else {
+                            false
                         }
-                        _ => false,
-                    };
-                    if matches {
-                        return Ok(Some(key));
                     }
+                    _ => false,
+                };
+                if matches {
+                    return Ok(Some(key));
                 }
             }
         }
@@ -358,6 +433,73 @@ pub trait BaseTableProvider<K: StorageKey, V>: Send + Sync + TableProvider {
     }
 
     // ===========================
+    // DataFusion TableProvider Default Implementations
+    // ===========================
+
+    /// Default implementation for supports_filters_pushdown
+    fn base_supports_filters_pushdown(
+        &self,
+        filters: &[&Expr],
+    ) -> DataFusionResult<Vec<TableProviderFilterPushDown>> {
+        // We support Inexact pushdown for all filters because:
+        // 1. We use them for partition pruning (Parquet)
+        // 2. We use them for prefix scan / range scan (RocksDB)
+        // But we still need DataFusion to apply the filter afterwards to be safe/exact.
+        Ok(vec![TableProviderFilterPushDown::Inexact; filters.len()])
+    }
+
+    /// Default implementation for statistics
+    fn base_statistics(&self) -> Option<Statistics> {
+        // TODO: Implement row count estimation from Manifest + RocksDB stats
+        None
+    }
+
+    /// Default implementation for scan
+    async fn base_scan(
+        &self,
+        state: &dyn Session,
+        projection: Option<&Vec<usize>>,
+        filters: &[Expr],
+        limit: Option<usize>,
+    ) -> DataFusionResult<Arc<dyn ExecutionPlan>> {
+        // Combine filters (AND) for pruning and pass to scan_rows
+        let combined_filter: Option<Expr> = if filters.is_empty() {
+            None
+        } else {
+            let first = filters[0].clone();
+            Some(
+                filters[1..]
+                    .iter()
+                    .cloned()
+                    .fold(first, |acc, e| acc.and(e)),
+            )
+        };
+
+        // Optimization: Pass projection to scan_rows ONLY if filters is empty.
+        // If filters exist, we need all columns involved in the filter.
+        // Since we return Inexact for pushdown, DataFusion adds a FilterExec after the Scan.
+        // So the Scan must return columns needed for the filter.
+        // Safest approach: If filters are present, fetch all columns.
+        let effective_projection = if filters.is_empty() { projection } else { None };
+
+        let batch = self
+            .scan_rows(state, effective_projection, combined_filter.as_ref(), limit)
+            .map_err(|e| DataFusionError::Execution(format!("scan_rows failed: {}", e)))?;
+
+        let mem = MemTable::try_new(batch.schema(), vec![vec![batch]])?;
+
+        // If filters are empty, batch is already projected, so we scan all columns of MemTable.
+        // If filters are present, batch has all columns, so we apply projection in MemTable scan.
+        let final_projection = if filters.is_empty() {
+            None
+        } else {
+            projection
+        };
+
+        mem.scan(state, final_projection, filters, limit).await
+    }
+
+    // ===========================
     // Scan Operations (with version resolution)
     // ===========================
 
@@ -387,7 +529,9 @@ pub trait BaseTableProvider<K: StorageKey, V>: Send + Sync + TableProvider {
     ///
     /// # Arguments
     /// * `state` - DataFusion SessionState (contains SessionUserContext)
+    /// * `projection` - Optional column projection
     /// * `filter` - Optional DataFusion expression for filtering
+    /// * `limit` - Optional limit on number of rows
     ///
     /// # Returns
     /// RecordBatch with resolved, filtered rows
@@ -398,7 +542,9 @@ pub trait BaseTableProvider<K: StorageKey, V>: Send + Sync + TableProvider {
     fn scan_rows(
         &self,
         state: &dyn Session,
+        projection: Option<&Vec<usize>>,
         filter: Option<&Expr>,
+        limit: Option<usize>,
     ) -> Result<RecordBatch, KalamDbError>;
 
     /// Scan with version resolution returning key-value pairs (for internal DML use)
@@ -410,16 +556,20 @@ pub trait BaseTableProvider<K: StorageKey, V>: Send + Sync + TableProvider {
     /// # Arguments
     /// * `user_id` - Subject user ID for RLS scoping
     /// * `filter` - Optional DataFusion expression for filtering
+    /// * `since_seq` - Optional sequence number to start scanning from (optimization)
+    /// * `limit` - Optional limit on number of rows
     fn scan_with_version_resolution_to_kvs(
         &self,
         user_id: &UserId,
         filter: Option<&Expr>,
+        since_seq: Option<SeqId>,
+        limit: Option<usize>,
     ) -> Result<Vec<(K, V)>, KalamDbError>;
 
     /// Extract fields JSON from row (provider-specific)
     ///
     /// Each provider implements this to access the `fields: JsonValue` from their row type.
-    fn extract_fields(row: &V) -> Option<&JsonValue>;
+    fn extract_row(row: &V) -> &Row;
 }
 
 /// Helper function to inject system columns (_seq, _deleted) into JSON object
@@ -452,16 +602,26 @@ pub fn inject_system_columns(
     }
 }
 
+/// Helper to convert Row to JSON Map
+pub fn row_to_json_map(row: &Row) -> Map<String, JsonValue> {
+    let val = serde_json::to_value(row).unwrap_or(JsonValue::Null);
+    if let JsonValue::Object(map) = val {
+        map
+    } else {
+        Map::new()
+    }
+}
+
 /// Trait implemented by provider row types to expose system columns and JSON payload
 pub trait ScanRow {
-    fn field_map(&self) -> Option<&Map<String, JsonValue>>;
+    fn to_json_map(&self) -> Map<String, JsonValue>;
     fn seq_value(&self) -> i64;
     fn deleted_flag(&self) -> bool;
 }
 
 impl ScanRow for SharedTableRow {
-    fn field_map(&self) -> Option<&Map<String, JsonValue>> {
-        self.fields.as_object()
+    fn to_json_map(&self) -> Map<String, JsonValue> {
+        row_to_json_map(&self.fields)
     }
 
     fn seq_value(&self) -> i64 {
@@ -474,8 +634,8 @@ impl ScanRow for SharedTableRow {
 }
 
 impl ScanRow for UserTableRow {
-    fn field_map(&self) -> Option<&Map<String, JsonValue>> {
-        self.fields.as_object()
+    fn to_json_map(&self) -> Map<String, JsonValue> {
+        row_to_json_map(&self.fields)
     }
 
     fn seq_value(&self) -> i64 {
@@ -488,8 +648,8 @@ impl ScanRow for UserTableRow {
 }
 
 impl ScanRow for StreamTableRow {
-    fn field_map(&self) -> Option<&Map<String, JsonValue>> {
-        self.fields.as_object()
+    fn to_json_map(&self) -> Map<String, JsonValue> {
+        row_to_json_map(&self.fields)
     }
 
     fn seq_value(&self) -> i64 {
@@ -505,16 +665,34 @@ impl ScanRow for StreamTableRow {
 pub fn rows_to_arrow_batch<K, R, F>(
     schema: &SchemaRef,
     kvs: Vec<(K, R)>,
+    projection: Option<&Vec<usize>>,
     mut enrich_row: F,
 ) -> Result<RecordBatch, KalamDbError>
 where
     R: ScanRow,
     F: FnMut(&mut Map<String, JsonValue>, &R),
 {
-    let mut rows: Vec<JsonValue> = Vec::with_capacity(kvs.len());
+    let row_count = kvs.len();
+
+    if let Some(proj) = projection {
+        if proj.is_empty() {
+            let empty_fields: Vec<datafusion::arrow::datatypes::Field> = Vec::new();
+            let empty_schema = Arc::new(datafusion::arrow::datatypes::Schema::new(empty_fields));
+            if row_count == 0 {
+                return Ok(RecordBatch::new_empty(empty_schema));
+            }
+
+            let options = RecordBatchOptions::new().with_row_count(Some(row_count));
+            return RecordBatch::try_new_with_options(empty_schema, vec![], &options).map_err(
+                |e| KalamDbError::InvalidOperation(format!("Failed to build Arrow batch: {}", e)),
+            );
+        }
+    }
+
+    let mut rows: Vec<JsonValue> = Vec::with_capacity(row_count);
 
     for (_key, row) in kvs.into_iter() {
-        let mut obj = row.field_map().cloned().unwrap_or_else(|| Map::new());
+        let mut obj = row.to_json_map();
 
         enrich_row(&mut obj, &row);
 
@@ -522,7 +700,21 @@ where
         rows.push(JsonValue::Object(obj));
     }
 
-    json_rows_to_arrow_batch(schema, rows)
+    // If projection is provided, we should project the schema and only convert relevant fields
+    // However, json_rows_to_arrow_batch currently takes the full schema and rows.
+    // For now, we pass the full schema and let DataFusion handle projection later,
+    // OR we can project the schema here.
+    //
+    // Optimization: Project schema here to avoid converting unused fields.
+    let target_schema = if let Some(proj) = projection {
+        let fields: Vec<datafusion::arrow::datatypes::Field> =
+            proj.iter().map(|i| schema.field(*i).clone()).collect();
+        Arc::new(datafusion::arrow::datatypes::Schema::new(fields))
+    } else {
+        schema.clone()
+    };
+
+    json_rows_to_arrow_batch(&target_schema, rows)
         .map_err(|e| KalamDbError::InvalidOperation(format!("Failed to build Arrow batch: {}", e)))
 }
 
@@ -774,11 +966,11 @@ pub fn resolve_user_scope(scope: Option<&UserId>) -> &UserId {
     scope.unwrap_or_else(|| system_user_id())
 }
 
-fn json_value_matches_pk(value: &JsonValue, target: &str) -> bool {
+fn json_value_matches_pk(value: &ScalarValue, target: &str) -> bool {
     match value {
-        JsonValue::String(s) => s == target,
-        JsonValue::Number(n) => n.to_string() == target,
-        JsonValue::Bool(b) => b.to_string() == target,
+        ScalarValue::Utf8(Some(s)) | ScalarValue::LargeUtf8(Some(s)) => s == target,
+        ScalarValue::Int64(Some(n)) => n.to_string() == target,
+        ScalarValue::Boolean(Some(b)) => b.to_string() == target,
         _ => false,
     }
 }
@@ -794,15 +986,14 @@ where
     K: StorageKey,
 {
     let user_scope = resolve_user_scope(scope);
-    let resolved = provider.scan_with_version_resolution_to_kvs(user_scope, None)?;
+    let resolved = provider.scan_with_version_resolution_to_kvs(user_scope, None, None, None)?;
     let pk_name = provider.primary_key_field_name();
 
     for (key, row) in resolved.into_iter() {
-        if let Some(fields) = P::extract_fields(&row) {
-            if let Some(val) = fields.get(pk_name) {
-                if json_value_matches_pk(val, pk_value) {
-                    return Ok(Some((key, row)));
-                }
+        let fields = P::extract_row(&row);
+        if let Some(val) = fields.get(pk_name) {
+            if json_value_matches_pk(val, pk_value) {
+                return Ok(Some((key, row)));
             }
         }
     }

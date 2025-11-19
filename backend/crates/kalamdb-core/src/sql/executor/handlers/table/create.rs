@@ -4,6 +4,8 @@ use crate::app_context::AppContext;
 use crate::error::KalamDbError;
 use crate::sql::executor::handlers::typed::TypedStatementHandler;
 use crate::sql::executor::models::{ExecutionContext, ExecutionResult, ScalarValue};
+use kalamdb_commons::schemas::TableType;
+use kalamdb_commons::Role;
 use kalamdb_sql::ddl::CreateTableStatement;
 use std::sync::Arc;
 
@@ -16,6 +18,20 @@ impl CreateTableHandler {
     pub fn new(app_context: Arc<AppContext>) -> Self {
         Self { app_context }
     }
+
+    fn resolve_table_type(
+        statement: &CreateTableStatement,
+        context: &ExecutionContext,
+    ) -> TableType {
+        if statement.table_type == TableType::Shared
+            && matches!(context.user_role, Role::User | Role::Service)
+            && statement.namespace_id.as_str() == context.user_id.as_str()
+        {
+            TableType::User
+        } else {
+            statement.table_type
+        }
+    }
 }
 
 #[async_trait::async_trait]
@@ -27,6 +43,19 @@ impl TypedStatementHandler<CreateTableStatement> for CreateTableHandler {
         context: &ExecutionContext,
     ) -> Result<ExecutionResult, KalamDbError> {
         use crate::sql::executor::helpers::table_creation;
+
+        let mut statement = statement;
+        let effective_type = Self::resolve_table_type(&statement, context);
+        if effective_type != statement.table_type {
+            log::debug!(
+                "Inferring USER table type for {}.{} issued by {} (role {:?})",
+                statement.namespace_id.as_str(),
+                statement.table_name.as_str(),
+                context.user_id.as_str(),
+                context.user_role
+            );
+            statement.table_type = effective_type;
+        }
 
         // Delegate to helper function
         let message = table_creation::create_table(self.app_context.clone(), statement, context)?;
@@ -44,10 +73,12 @@ impl TypedStatementHandler<CreateTableStatement> for CreateTableHandler {
         // This allows unified error messages
         use crate::auth::rbac::can_create_table;
 
-        if !can_create_table(context.user_role, statement.table_type) {
+        let effective_type = Self::resolve_table_type(statement, context);
+
+        if !can_create_table(context.user_role, effective_type) {
             return Err(KalamDbError::Unauthorized(format!(
                 "Insufficient privileges to create {} tables",
-                statement.table_type
+                effective_type
             )));
         }
 

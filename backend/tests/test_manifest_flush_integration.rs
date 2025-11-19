@@ -77,7 +77,7 @@ fn create_test_service() -> (ManifestService, TempDir) {
         register("test_ns", "orders", TableType::Shared);
         register("prod", "events", TableType::Shared);
         register("test_ns", "persistent_table", TableType::Shared);
-        register("test_ns", "metadata_table", TableType::User);
+        register("test_ns", "metadata_table", TableType::Shared);
         register("ns1", "products", TableType::User);
     }
     (service, temp_dir)

@@ -250,7 +250,7 @@ impl TableFlush for SharedTableFlushJob {
             }
 
             // Build JSON object with metadata fields
-            let mut json_obj = row.fields.clone();
+            let mut json_obj = serde_json::to_value(&row.fields).unwrap_or(JsonValue::Null);
             if let Some(obj) = json_obj.as_object_mut() {
                 obj.insert(
                     "_seq".to_string(),

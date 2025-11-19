@@ -13,6 +13,7 @@ use datafusion::catalog::memory::MemorySchemaProvider;
 use kalamdb_commons::models::datatypes::KalamDataType;
 use kalamdb_commons::models::schemas::{ColumnDefinition, TableDefinition, TableType};
 use kalamdb_commons::{NamespaceId, TableId, TableName};
+use kalamdb_commons::ids::SeqId;
 use kalamdb_core::providers::flush::UserTableFlushJob;
 use kalamdb_core::schema_registry::SchemaRegistry;
 use kalamdb_core::system_table_registration::register_system_tables;
@@ -68,7 +69,7 @@ async fn test_datatypes_preservation_values() {
         ),
         ColumnDefinition::simple("smallint_val", 17, KalamDataType::SmallInt),
         // System columns typically exist; include them explicitly for the flush path
-        ColumnDefinition::simple("_updated", 18, KalamDataType::Timestamp),
+        ColumnDefinition::simple("_seq", 18, KalamDataType::BigInt),
         ColumnDefinition::simple("_deleted", 19, KalamDataType::Boolean),
     ];
 
@@ -156,16 +157,15 @@ async fn test_datatypes_preservation_values() {
             "uuid_val": uuid_str,
             "decimal_val": decimal_val,
             "smallint_val": smallint_val,
-            "_updated": ts,
+            "_seq": ts,
             "_deleted": false,
         });
 
-        let key = UserTableRowId::new(kalamdb_commons::UserId::new(user_id), id.to_string());
+        let key = UserTableRowId::new(kalamdb_commons::UserId::new(user_id), SeqId::new(ts));
         let row = UserTableRow {
-            row_id: id.to_string(),
-            user_id: user_id.to_string(),
+            user_id: kalamdb_commons::UserId::new(user_id),
+            _seq: SeqId::new(ts),
             fields: serde_json::Value::Object(fields.as_object().cloned().unwrap()),
-            _updated: base_ts.to_rfc3339(),
             _deleted: false,
         };
         store.put(&key, &row).expect("insert row failed");

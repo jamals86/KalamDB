@@ -9,6 +9,7 @@
 //! - NO access_level field (cached in schema definition, not per-row)
 
 use kalamdb_commons::ids::{SeqId, SharedTableRowId};
+use kalamdb_commons::models::row::Row;
 use kalamdb_commons::models::{NamespaceId, TableName};
 use kalamdb_store::StorageBackend;
 use kalamdb_system::system_table_store::SystemTableStore;
@@ -24,7 +25,7 @@ use std::sync::Arc;
 pub struct SharedTableRow {
     pub _seq: SeqId,
     pub _deleted: bool,
-    pub fields: serde_json::Value, // All user-defined columns including PK
+    pub fields: Row, // All user-defined columns including PK
 }
 
 /// Type alias for shared table store (extends SystemTableStore)
@@ -83,7 +84,8 @@ mod tests {
         let key = SeqId::new(100);
         let row = SharedTableRow {
             _seq: SeqId::new(100),
-            fields: serde_json::json!({"name": "Public Data", "id": 1}),
+            fields: serde_json::from_value(serde_json::json!({"name": "Public Data", "id": 1}))
+                .unwrap(),
             _deleted: false,
         };
 
@@ -99,7 +101,7 @@ mod tests {
         let key = SeqId::new(200);
         let row = SharedTableRow {
             _seq: SeqId::new(200),
-            fields: serde_json::json!({"data": "test", "id": 2}),
+            fields: serde_json::from_value(serde_json::json!({"data": "test", "id": 2})).unwrap(),
             _deleted: false,
         };
 
@@ -118,7 +120,7 @@ mod tests {
             let key = SeqId::new(i as i64 * 100);
             let row = SharedTableRow {
                 _seq: SeqId::new(i as i64 * 100),
-                fields: serde_json::json!({"id": i}),
+                fields: serde_json::from_value(serde_json::json!({"id": i})).unwrap(),
                 _deleted: false,
             };
             store.put(&key, &row).unwrap();

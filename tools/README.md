@@ -62,7 +62,132 @@ Subsequent runs are much faster as they reuse the cached image.
 
 ---
 
-### `release.sh` (Single Platform)
+### `build-platform.sh` (Platform-Specific Builder)
+
+**NEW!** Builds CLI and server binaries for a **specific platform** with conventional naming.
+
+**Prerequisites:**
+- Rust toolchain installed
+- `cross` tool (auto-installed if needed for cross-compilation)
+- `tar` and `gzip` (for Linux/macOS) or `zip` (for Windows)
+
+**Usage:**
+
+```bash
+./tools/build-platform.sh <version> <platform>
+```
+
+**Supported Platforms:**
+
+- `linux-x86_64` - Linux Intel/AMD 64-bit
+- `linux-aarch64` - Linux ARM 64-bit
+- `macos-x86_64` - macOS Intel
+- `macos-aarch64` - macOS Apple Silicon
+- `windows-x86_64` - Windows 64-bit
+
+**Examples:**
+
+```bash
+# Build for Linux x86_64
+./tools/build-platform.sh 0.1.0 linux-x86_64
+
+# Build for macOS Apple Silicon
+./tools/build-platform.sh 0.1.0 macos-aarch64
+
+# Build for Windows
+./tools/build-platform.sh 0.1.0 windows-x86_64
+```
+
+**What it does:**
+
+1. 🔍 Validates version and platform arguments
+2. 🎯 Adds Rust target for the specified platform
+3. 🔨 Builds CLI and Server using `cargo` or `cross` (for cross-compilation)
+4. 📁 Outputs to `dist/<version>/` with conventional naming:
+   - `kalam-<version>-<platform>` / `kalam-<version>-<platform>.exe`
+   - `kalamdb-server-<version>-<platform>` / `kalamdb-server-<version>-<platform>.exe`
+5. 📦 Creates platform-specific archives (`.tar.gz` or `.zip`)
+6. 🔐 Generates SHA256 checksums for the platform
+
+**Output Structure:**
+
+```
+dist/0.1.0/
+├── kalam-0.1.0-linux-x86_64
+├── kalam-0.1.0-linux-x86_64.tar.gz
+├── kalamdb-server-0.1.0-linux-x86_64
+├── kalamdb-server-0.1.0-linux-x86_64.tar.gz
+└── SHA256SUMS-linux-x86_64
+```
+
+**Cross-Compilation:**
+
+The script automatically uses `cross` for cross-compilation when building:
+- ARM targets from x86_64
+- Windows targets from Linux/macOS
+
+---
+
+### `build-all-platforms.sh` (Multi-Platform Builder)
+
+**NEW!** Builds CLI and server binaries for **all supported platforms** in one command.
+
+**Prerequisites:**
+- Same as `build-platform.sh`
+- Sufficient disk space for multiple platform builds (~2GB)
+
+**Usage:**
+
+```bash
+./tools/build-all-platforms.sh <version>
+```
+
+**Examples:**
+
+```bash
+# Build for all platforms
+./tools/build-all-platforms.sh 0.1.0
+```
+
+**What it does:**
+
+1. 🔄 Iterates through all 5 supported platforms
+2. 🔨 Calls `build-platform.sh` for each platform
+3. 📊 Tracks successful and failed builds
+4. 📦 Generates combined `SHA256SUMS` file
+5. 📈 Shows build summary and total size
+
+**Output Structure:**
+
+```
+dist/0.1.0/
+├── kalam-0.1.0-linux-x86_64
+├── kalam-0.1.0-linux-x86_64.tar.gz
+├── kalam-0.1.0-linux-aarch64
+├── kalam-0.1.0-linux-aarch64.tar.gz
+├── kalam-0.1.0-macos-x86_64
+├── kalam-0.1.0-macos-x86_64.tar.gz
+├── kalam-0.1.0-macos-aarch64
+├── kalam-0.1.0-macos-aarch64.tar.gz
+├── kalam-0.1.0-windows-x86_64.exe
+├── kalam-0.1.0-windows-x86_64.zip
+├── kalamdb-server-0.1.0-linux-x86_64
+├── kalamdb-server-0.1.0-linux-x86_64.tar.gz
+├── kalamdb-server-0.1.0-linux-aarch64
+├── kalamdb-server-0.1.0-linux-aarch64.tar.gz
+├── kalamdb-server-0.1.0-macos-x86_64
+├── kalamdb-server-0.1.0-macos-x86_64.tar.gz
+├── kalamdb-server-0.1.0-macos-aarch64
+├── kalamdb-server-0.1.0-macos-aarch64.tar.gz
+├── kalamdb-server-0.1.0-windows-x86_64.exe
+├── kalamdb-server-0.1.0-windows-x86_64.zip
+├── SHA256SUMS (combined)
+└── SHA256SUMS-<platform> (per-platform)
+```
+
+---
+
+### `release.sh` (Single Platform + GitHub Release)
 
 Automated release script that builds both the CLI and server binaries for your **current platform** and uploads them to GitHub Releases.
 
@@ -126,7 +251,7 @@ The script automatically detects your platform:
 - The script will prompt before deleting an existing release with the same version tag
 - Use `--draft` to review the release before publishing
 - The `dist/` directory can be cleaned up after the release is created
-- This only builds for your current OS - use `release-multiplatform.sh` for cross-platform builds
+- This only builds for your current OS - use `build-all-platforms.sh` for multi-platform builds
 
 ## Docker-based Cross-Compilation
 
@@ -183,20 +308,40 @@ If you haven't set up the GitHub CLI yet:
 
 ## Quick Start
 
-### Multi-Platform Release (Recommended)
+### Build for Specific Platform
 
 ```bash
-# Build everything with Docker
+# Build for Linux x86_64
+./tools/build-platform.sh 0.1.0 linux-x86_64
+
+# Build for macOS Apple Silicon
+./tools/build-platform.sh 0.1.0 macos-aarch64
+
+# Build for Windows
+./tools/build-platform.sh 0.1.0 windows-x86_64
+```
+
+### Build for All Platforms
+
+```bash
+# Build everything (5 platforms)
+./tools/build-all-platforms.sh 0.1.0
+```
+
+### Multi-Platform Release (with GitHub Upload)
+
+```bash
+# Build everything with Docker and upload to GitHub
 ./tools/release-multiplatform.sh v0.1.0
 
 # Or build specific platforms only
 ./tools/release-multiplatform.sh v0.1.0 --platforms=linux-x86_64,darwin-aarch64
 ```
 
-### Single Platform Release
+### Single Platform Release (Current OS only)
 
 ```bash
-# Build only for your current OS
+# Build only for your current OS and upload to GitHub
 ./tools/release.sh v0.1.0
 ```
 
@@ -248,6 +393,23 @@ docker system prune -a
 macOS cross-compilation is complex. If it fails, you can:
 1. Build only other platforms: `--platforms=linux-x86_64,windows-x86_64`
 2. Use GitHub Actions to build on native macOS runners (recommended for production)
+
+### "Library not loaded: libclang.dylib" on macOS
+
+The RocksDB dependency requires libclang for building. The script automatically detects it from:
+1. Xcode Command Line Tools (preferred)
+2. Homebrew LLVM
+
+If you see this error:
+```bash
+# Install Xcode Command Line Tools
+xcode-select --install
+
+# Or install LLVM via Homebrew
+brew install llvm
+```
+
+The script will automatically set `LIBCLANG_PATH` and `DYLD_LIBRARY_PATH` for macOS builds.
 
 ## Contributing
 

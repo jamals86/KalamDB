@@ -220,9 +220,26 @@ instead of: 1 failed: Invalid operation: No handler registered for statement typ
 [2025-11-17 18:52:28.768] [INFO ] - actix-rt|system:0|arbiter:7 - kalamdb_api::actors::ws_session:178 - WebSocket connection closed: baf68a9f-ff08-4ba9-a433-80174dad0d73
 [2025-11-17 18:52:28.768] [INFO ] - actix-rt|system:0|arbiter:8 - kalamdb_api::actors::ws_session:178 - WebSocket connection closed: 81013e3a-e61c-4880-9b2d-eea92a336e3a
 
+162) Whenever we shutdown the server we force all subscrioptions to be closed and websockets as well gracefully with an event set to the user
 
+163) If there is any stuck live_query when starting the server clear them all, might be the server crashed without graceful shutdown
 
+164) Instead of doing this:         let table_name = format!(
+            "{}.{}",
+            table_id.namespace_id().as_str(),
+            table_id.table_name().as_str()
+        );
+      add function which returns this full name directly from TableId
 
+165) No need to have tableType in tableOptions since we already have it as column
+
+166) Add cli clear command which clears the console previous output
+167) create a cli test to cover all InitialDataOptions and InitialDataResult for stream tables/users table as well
+  - last rows limit
+  - with multiple batches
+  - specify batch size and verify it works correctly
+  - with seq bounds
+  - with time bounds in streams with ttl passed
 
 Here’s the updated 5-line spec with embedding storage inside Parquet and managed HNSW indexing (with delete handling):
 	1.	Parquet Storage: All embeddings are stored as regular columns in the Parquet file alongside other table columns to keep data unified and versioned per batch.

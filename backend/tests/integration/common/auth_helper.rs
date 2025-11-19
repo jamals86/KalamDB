@@ -61,6 +61,14 @@ pub async fn create_test_user(
     let system_user_id = UserId::new("system");
     let session = server.app_context.base_session_context();
     let exec_ctx = ExecutionContext::new(system_user_id, Role::System, session);
+
+    // Drop user if exists to ensure clean state (idempotent for tests)
+    let drop_user_sql = format!("DROP USER IF EXISTS '{}'", username);
+    let _ = server
+        .sql_executor
+        .execute(&drop_user_sql.as_str(), &exec_ctx, Vec::new())
+        .await;
+
     let result = server
         .sql_executor
         .execute(&create_user_sql.as_str(), &exec_ctx, Vec::new())

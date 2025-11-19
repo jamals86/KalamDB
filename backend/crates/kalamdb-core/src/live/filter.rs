@@ -32,10 +32,11 @@
 //! }
 /// ```
 use crate::error::KalamDbError;
+use datafusion::scalar::ScalarValue;
 use datafusion::sql::sqlparser::ast::{BinaryOperator, Expr, Statement, Value};
 use datafusion::sql::sqlparser::dialect::PostgreSqlDialect;
 use datafusion::sql::sqlparser::parser::Parser;
-use serde_json::Value as JsonValue;
+use kalamdb_commons::models::Row;
 use std::collections::HashMap;
 use std::sync::Arc;
 
@@ -103,12 +104,12 @@ impl FilterPredicate {
     ///
     /// # Arguments
     ///
-    /// * `row_data` - JSON object representing the row
+    /// * `row_data` - Row object representing the row
     ///
     /// # Returns
     ///
     /// `true` if the row matches the filter, `false` otherwise
-    pub fn matches(&self, row_data: &JsonValue) -> Result<bool, KalamDbError> {
+    pub fn matches(&self, row_data: &Row) -> Result<bool, KalamDbError> {
         self.evaluate_expr(&self.expr, row_data)
     }
 
@@ -118,7 +119,7 @@ impl FilterPredicate {
     }
 
     /// Recursively evaluate an expression against row data
-    fn evaluate_expr(&self, expr: &Expr, row_data: &JsonValue) -> Result<bool, KalamDbError> {
+    fn evaluate_expr(&self, expr: &Expr, row_data: &Row) -> Result<bool, KalamDbError> {
         match expr {
             // Binary operations: AND, OR, =, !=, <, >, <=, >=
             Expr::BinaryOp { left, op, right } => match op {
@@ -133,11 +134,10 @@ impl FilterPredicate {
                     Ok(left_result || right_result)
                 }
                 BinaryOperator::Eq => {
-                    self.evaluate_comparison(left, right, row_data, |a, b| a == b)
+                    self.evaluate_comparison(left, right, row_data, |a, b| self.scalars_equal(a, b))
                 }
-                BinaryOperator::NotEq => {
-                    self.evaluate_comparison(left, right, row_data, |a, b| a != b)
-                }
+                BinaryOperator::NotEq => self
+                    .evaluate_comparison(left, right, row_data, |a, b| !self.scalars_equal(a, b)),
                 BinaryOperator::Lt => {
                     let left_value = self.extract_value(left, row_data)?;
                     let right_value = self.extract_value(right, row_data)?;
@@ -191,49 +191,62 @@ impl FilterPredicate {
         &self,
         left: &Expr,
         right: &Expr,
-        row_data: &JsonValue,
+        row_data: &Row,
         comparator: F,
     ) -> Result<bool, KalamDbError>
     where
-        F: Fn(&JsonValue, &JsonValue) -> bool,
+        F: Fn(&ScalarValue, &ScalarValue) -> bool,
     {
         let left_value = self.extract_value(left, row_data)?;
         let right_value = self.extract_value(right, row_data)?;
 
-        // For numeric comparisons, need special handling since JsonValue doesn't impl PartialOrd
         Ok(comparator(&left_value, &right_value))
     }
 
-    /// Helper to compare two JSON values for numeric comparisons
+    /// Check if two scalars are equal, handling numeric type coercion
+    fn scalars_equal(&self, left: &ScalarValue, right: &ScalarValue) -> bool {
+        if left == right {
+            return true;
+        }
+
+        // Try numeric coercion
+        if let (Some(l), Some(r)) = (Self::as_f64(left), Self::as_f64(right)) {
+            return (l - r).abs() < f64::EPSILON;
+        }
+
+        false
+    }
+
+    /// Helper to convert ScalarValue to f64 if possible
+    fn as_f64(v: &ScalarValue) -> Option<f64> {
+        match v {
+            ScalarValue::Int8(Some(v)) => Some(*v as f64),
+            ScalarValue::Int16(Some(v)) => Some(*v as f64),
+            ScalarValue::Int32(Some(v)) => Some(*v as f64),
+            ScalarValue::Int64(Some(v)) => Some(*v as f64),
+            ScalarValue::UInt8(Some(v)) => Some(*v as f64),
+            ScalarValue::UInt16(Some(v)) => Some(*v as f64),
+            ScalarValue::UInt32(Some(v)) => Some(*v as f64),
+            ScalarValue::UInt64(Some(v)) => Some(*v as f64),
+            ScalarValue::Float32(Some(v)) => Some(*v as f64),
+            ScalarValue::Float64(Some(v)) => Some(*v),
+            _ => None,
+        }
+    }
+
+    /// Helper to compare two ScalarValues for numeric comparisons
     fn compare_numeric(
-        left: &JsonValue,
-        right: &JsonValue,
+        left: &ScalarValue,
+        right: &ScalarValue,
         op: &str,
     ) -> Result<bool, KalamDbError> {
-        // Try to extract numbers
-        let left_num = match left {
-            JsonValue::Number(n) => n.as_f64().ok_or_else(|| {
-                KalamDbError::InvalidOperation("Invalid number in comparison".to_string())
-            })?,
-            _ => {
-                return Err(KalamDbError::InvalidOperation(format!(
-                    "Cannot compare non-numeric values with {}",
-                    op
-                )))
-            }
-        };
+        let left_num = Self::as_f64(left).ok_or_else(|| {
+            KalamDbError::InvalidOperation(format!("Cannot convert {:?} to number", left))
+        })?;
 
-        let right_num = match right {
-            JsonValue::Number(n) => n.as_f64().ok_or_else(|| {
-                KalamDbError::InvalidOperation("Invalid number in comparison".to_string())
-            })?,
-            _ => {
-                return Err(KalamDbError::InvalidOperation(format!(
-                    "Cannot compare non-numeric values with {}",
-                    op
-                )))
-            }
-        };
+        let right_num = Self::as_f64(right).ok_or_else(|| {
+            KalamDbError::InvalidOperation(format!("Cannot convert {:?} to number", right))
+        })?;
 
         Ok(match op {
             "<" => left_num < right_num,
@@ -253,8 +266,8 @@ impl FilterPredicate {
     ///
     /// Handles:
     /// - Column references (e.g., user_id) → lookup in row_data
-    /// - Literals (e.g., 'user1', 123, true) → convert to JsonValue
-    fn extract_value(&self, expr: &Expr, row_data: &JsonValue) -> Result<JsonValue, KalamDbError> {
+    /// - Literals (e.g., 'user1', 123, true) → convert to ScalarValue
+    fn extract_value(&self, expr: &Expr, row_data: &Row) -> Result<ScalarValue, KalamDbError> {
         match expr {
             // Column reference: lookup in row_data
             Expr::Identifier(ident) => {
@@ -267,19 +280,17 @@ impl FilterPredicate {
                 })
             }
 
-            // Literal value: convert to JsonValue
+            // Literal value: convert to ScalarValue
             Expr::Value(v) => match &v.value {
                 Value::SingleQuotedString(s) | Value::DoubleQuotedString(s) => {
-                    Ok(JsonValue::String(s.clone()))
+                    Ok(ScalarValue::Utf8(Some(s.clone())))
                 }
                 Value::Number(n, _) => {
                     // Try parsing as i64 first, then f64
                     if let Ok(i) = n.parse::<i64>() {
-                        Ok(JsonValue::Number(i.into()))
+                        Ok(ScalarValue::Int64(Some(i)))
                     } else if let Ok(f) = n.parse::<f64>() {
-                        Ok(serde_json::Number::from_f64(f)
-                            .map(JsonValue::Number)
-                            .unwrap_or(JsonValue::Null))
+                        Ok(ScalarValue::Float64(Some(f)))
                     } else {
                         Err(KalamDbError::InvalidOperation(format!(
                             "Invalid number: {}",
@@ -287,8 +298,8 @@ impl FilterPredicate {
                         )))
                     }
                 }
-                Value::Boolean(b) => Ok(JsonValue::Bool(*b)),
-                Value::Null => Ok(JsonValue::Null),
+                Value::Boolean(b) => Ok(ScalarValue::Boolean(Some(*b))),
+                Value::Null => Ok(ScalarValue::Null),
                 _ => Err(KalamDbError::InvalidOperation(format!(
                     "Unsupported literal type: {:?}",
                     v
@@ -367,14 +378,18 @@ mod tests {
     use super::*;
     use serde_json::json;
 
+    fn to_row(v: serde_json::Value) -> Row {
+        serde_json::from_value(v).unwrap()
+    }
+
     #[test]
     fn test_simple_equality_filter() {
         let filter = FilterPredicate::new("user_id = 'user1'").unwrap();
 
-        let matching_row = json!({"user_id": "user1", "text": "Hello"});
+        let matching_row = to_row(json!({"user_id": "user1", "text": "Hello"}));
         assert!(filter.matches(&matching_row).unwrap());
 
-        let non_matching_row = json!({"user_id": "user2", "text": "Hello"});
+        let non_matching_row = to_row(json!({"user_id": "user2", "text": "Hello"}));
         assert!(!filter.matches(&non_matching_row).unwrap());
     }
 
@@ -382,13 +397,13 @@ mod tests {
     fn test_and_filter() {
         let filter = FilterPredicate::new("user_id = 'user1' AND read = false").unwrap();
 
-        let matching_row = json!({"user_id": "user1", "read": false});
+        let matching_row = to_row(json!({"user_id": "user1", "read": false}));
         assert!(filter.matches(&matching_row).unwrap());
 
-        let non_matching_row1 = json!({"user_id": "user2", "read": false});
+        let non_matching_row1 = to_row(json!({"user_id": "user2", "read": false}));
         assert!(!filter.matches(&non_matching_row1).unwrap());
 
-        let non_matching_row2 = json!({"user_id": "user1", "read": true});
+        let non_matching_row2 = to_row(json!({"user_id": "user1", "read": true}));
         assert!(!filter.matches(&non_matching_row2).unwrap());
     }
 
@@ -396,13 +411,13 @@ mod tests {
     fn test_or_filter() {
         let filter = FilterPredicate::new("status = 'active' OR status = 'pending'").unwrap();
 
-        let matching_row1 = json!({"status": "active"});
+        let matching_row1 = to_row(json!({"status": "active"}));
         assert!(filter.matches(&matching_row1).unwrap());
 
-        let matching_row2 = json!({"status": "pending"});
+        let matching_row2 = to_row(json!({"status": "pending"}));
         assert!(filter.matches(&matching_row2).unwrap());
 
-        let non_matching_row = json!({"status": "completed"});
+        let non_matching_row = to_row(json!({"status": "completed"}));
         assert!(!filter.matches(&non_matching_row).unwrap());
     }
 
@@ -410,13 +425,13 @@ mod tests {
     fn test_numeric_comparison() {
         let filter = FilterPredicate::new("age >= 18").unwrap();
 
-        let matching_row = json!({"age": 25});
+        let matching_row = to_row(json!({"age": 25}));
         assert!(filter.matches(&matching_row).unwrap());
 
-        let non_matching_row = json!({"age": 15});
+        let non_matching_row = to_row(json!({"age": 15}));
         assert!(!filter.matches(&non_matching_row).unwrap());
 
-        let edge_case = json!({"age": 18});
+        let edge_case = to_row(json!({"age": 18}));
         assert!(filter.matches(&edge_case).unwrap());
     }
 
@@ -424,10 +439,10 @@ mod tests {
     fn test_not_filter() {
         let filter = FilterPredicate::new("NOT (deleted = true)").unwrap();
 
-        let matching_row = json!({"deleted": false});
+        let matching_row = to_row(json!({"deleted": false}));
         assert!(filter.matches(&matching_row).unwrap());
 
-        let non_matching_row = json!({"deleted": true});
+        let non_matching_row = to_row(json!({"deleted": true}));
         assert!(!filter.matches(&non_matching_row).unwrap());
     }
 
@@ -437,16 +452,16 @@ mod tests {
             FilterPredicate::new("(user_id = 'user1' OR user_id = 'user2') AND read = false")
                 .unwrap();
 
-        let matching_row1 = json!({"user_id": "user1", "read": false});
+        let matching_row1 = to_row(json!({"user_id": "user1", "read": false}));
         assert!(filter.matches(&matching_row1).unwrap());
 
-        let matching_row2 = json!({"user_id": "user2", "read": false});
+        let matching_row2 = to_row(json!({"user_id": "user2", "read": false}));
         assert!(filter.matches(&matching_row2).unwrap());
 
-        let non_matching_row1 = json!({"user_id": "user3", "read": false});
+        let non_matching_row1 = to_row(json!({"user_id": "user3", "read": false}));
         assert!(!filter.matches(&non_matching_row1).unwrap());
 
-        let non_matching_row2 = json!({"user_id": "user1", "read": true});
+        let non_matching_row2 = to_row(json!({"user_id": "user1", "read": true}));
         assert!(!filter.matches(&non_matching_row2).unwrap());
     }
 
@@ -462,7 +477,7 @@ mod tests {
         assert_eq!(cache.len(), 2);
 
         let filter1 = cache.get("live1").unwrap();
-        let row = json!({"user_id": "user1"});
+        let row = to_row(json!({"user_id": "user1"}));
         assert!(filter1.matches(&row).unwrap());
 
         cache.remove("live1");

@@ -2,8 +2,16 @@
 //!
 //! This module provides validation functions to ensure that user-provided names
 //! comply with KalamDB naming conventions and don't conflict with reserved words.
+//!
+//! SQL keywords are sourced from sqlparser-rs reserved keyword classifications
+//! (table aliases, column aliases, identifier restrictions, table factors), which
+//! cover the dialect-specific words that cannot safely be used as identifiers.
 
 use once_cell::sync::Lazy;
+use sqlparser::keywords::{
+    Keyword, ALL_KEYWORDS, ALL_KEYWORDS_INDEX, RESERVED_FOR_COLUMN_ALIAS, RESERVED_FOR_IDENTIFIER,
+    RESERVED_FOR_TABLE_ALIAS, RESERVED_FOR_TABLE_FACTOR,
+};
 use std::collections::HashSet;
 
 /// Reserved namespace names that cannot be used by users
@@ -33,71 +41,39 @@ pub static RESERVED_COLUMN_NAMES: Lazy<HashSet<&'static str>> = Lazy::new(|| {
     set
 });
 
-/// SQL reserved keywords that cannot be used as identifiers
-pub static RESERVED_SQL_KEYWORDS: Lazy<HashSet<&'static str>> = Lazy::new(|| {
-    let mut set = HashSet::new();
+/// Additional SQL keywords that must always be rejected as identifiers
+const CRITICAL_RESERVED_KEYWORDS: &[&str] = &[
+    "TABLE",
+    "TABLES",
+    "TABLESPACE",
+    "INDEX",
+    "VIEW",
+    "SCHEMA",
+    "DATABASE",
+    "INSERT",
+    "UPDATE",
+    "DELETE",
+    "CREATE",
+    "DROP",
+    "ALTER",
+];
 
-    // ALL_KEYWORDS from sqlparser crate
+/// SQL keywords that cannot safely be used as identifiers in KalamDB
+pub static RESERVED_SQL_KEYWORDS: Lazy<HashSet<String>> = Lazy::new(|| {
+    let mut keywords: HashSet<String> = RESERVED_FOR_TABLE_ALIAS
+        .iter()
+        .chain(RESERVED_FOR_COLUMN_ALIAS.iter())
+        .chain(RESERVED_FOR_TABLE_FACTOR.iter())
+        .chain(RESERVED_FOR_IDENTIFIER.iter())
+        .map(keyword_to_str)
+        .map(|keyword| keyword.to_ascii_uppercase())
+        .collect();
 
-    // SQL standard keywords
-    set.insert("select");
-    set.insert("from");
-    set.insert("where");
-    set.insert("insert");
-    set.insert("update");
-    set.insert("delete");
-    set.insert("create");
-    set.insert("alter");
-    set.insert("drop");
-    set.insert("table");
-    set.insert("index");
-    set.insert("view");
-    set.insert("join");
-    set.insert("left");
-    set.insert("right");
-    set.insert("inner");
-    set.insert("outer");
-    set.insert("on");
-    set.insert("as");
-    set.insert("and");
-    set.insert("or");
-    set.insert("not");
-    set.insert("null");
-    set.insert("true");
-    set.insert("false");
-    set.insert("order");
-    set.insert("by");
-    set.insert("group");
-    set.insert("having");
-    set.insert("limit");
-    set.insert("offset");
-    set.insert("distinct");
-    set.insert("all");
-    set.insert("exists");
-    set.insert("in");
-    set.insert("between");
-    set.insert("like");
-    set.insert("is");
-    set.insert("case");
-    set.insert("when");
-    set.insert("then");
-    set.insert("else");
-    set.insert("end");
-    set.insert("union");
-    set.insert("intersect");
-    set.insert("except");
-    set.insert("cast");
-    set.insert("using");
-    set.insert("window");
-    set.insert("as");
-    set.insert("user");
-    set.insert("role");
-    set.insert("grant");
-    set.insert("revoke");
-    set.insert("transaction");
-    set.insert("commit");
-    set.insert("rollback");
-    set // Return the HashSet
+    for keyword in CRITICAL_RESERVED_KEYWORDS {
+        keywords.insert(keyword.to_ascii_uppercase());
+    }
+
+    keywords
 });
 
 /// Validation error types
@@ -172,13 +148,14 @@ pub const MAX_NAME_LENGTH: usize = 64;
 /// - Cannot be a reserved namespace
 /// - Cannot be a reserved SQL keyword
 pub fn validate_namespace_name(name: &str) -> Result<(), ValidationError> {
-    validate_identifier_base(name)?;
-
-    // Check if it's a reserved namespace
+    // Check if it's a reserved namespace first (more specific error message)
     let lowercase = name.to_lowercase();
     if RESERVED_NAMESPACES.contains(lowercase.as_str()) {
         return Err(ValidationError::ReservedNamespace(name.to_string()));
     }
+
+    validate_identifier_base(name)?;
+    ensure_not_reserved_sql_keyword(name)?;
 
     Ok(())
 }
@@ -194,6 +171,7 @@ pub fn validate_namespace_name(name: &str) -> Result<(), ValidationError> {
 /// - Cannot be a reserved SQL keyword
 pub fn validate_table_name(name: &str) -> Result<(), ValidationError> {
     validate_identifier_base(name)?;
+    ensure_not_reserved_sql_keyword(name)?;
     Ok(())
 }
 
@@ -210,13 +188,7 @@ pub fn validate_table_name(name: &str) -> Result<(), ValidationError> {
 /// - Cannot be a reserved SQL keyword
 pub fn validate_column_name(name: &str) -> Result<(), ValidationError> {
     validate_identifier_base(name)?;
-
-    // Check if it's a reserved column name
-    let lowercase = name.to_lowercase();
-    if RESERVED_COLUMN_NAMES.contains(lowercase.as_str()) {
-        return Err(ValidationError::ReservedColumnName(name.to_string()));
-    }
-
+    ensure_not_reserved_sql_keyword(name)?;
     Ok(())
 }
 
@@ -252,13 +224,23 @@ fn validate_identifier_base(name: &str) -> Result<(), ValidationError> {
         return Err(ValidationError::InvalidCharacters(name.to_string()));
     }
 
-    // Check if it's a reserved SQL keyword
-    let lowercase = name.to_lowercase();
-    if RESERVED_SQL_KEYWORDS.contains(lowercase.as_str()) {
+    Ok(())
+}
+
+fn ensure_not_reserved_sql_keyword(name: &str) -> Result<(), ValidationError> {
+    let uppercase = name.to_ascii_uppercase();
+    if RESERVED_SQL_KEYWORDS.contains(uppercase.as_str()) {
         return Err(ValidationError::ReservedSqlKeyword(name.to_string()));
     }
-
     Ok(())
+}
+
+fn keyword_to_str(keyword: &Keyword) -> &'static str {
+    let index = ALL_KEYWORDS_INDEX
+        .iter()
+        .position(|entry| entry == keyword)
+        .expect("keyword missing from sqlparser ALL_KEYWORDS_INDEX");
+    ALL_KEYWORDS[index]
 }
 
 #[cfg(test)]
@@ -321,18 +303,6 @@ mod tests {
         );
         assert_eq!(
             validate_column_name("_deleted"),
-            Err(ValidationError::StartsWithUnderscore)
-        );
-        assert_eq!(
-            validate_column_name("_row_id"),
-            Err(ValidationError::StartsWithUnderscore)
-        );
-        assert_eq!(
-            validate_column_name("_id"),
-            Err(ValidationError::StartsWithUnderscore)
-        );
-        assert_eq!(
-            validate_column_name("_updated"),
             Err(ValidationError::StartsWithUnderscore)
         );
     }

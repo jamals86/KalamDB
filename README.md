@@ -8,7 +8,7 @@ Faster operations. Lower infrastructure expenses. Zero waste.
 
 [![Rust](https://img.shields.io/badge/rust-1.90%2B-orange.svg)](https://www.rust-lang.org/)
 [![License](https://img.shields.io/badge/license-Apache%202.0-blue.svg)](https://www.apache.org/licenses/LICENSE-2.0)
-[![Tests](https://img.shields.io/badge/tests-32%20passing-brightgreen.svg)](backend/tests/)
+[![Tests](https://img.shields.io/badge/tests-651%20passing-brightgreen.svg)](backend/tests/)
 [![Docker](https://img.shields.io/badge/docker-ready-blue.svg)](docker/README.md)
 
 ---
@@ -189,7 +189,7 @@ CREATE USER TABLE chat.conversations (
 CREATE USER TABLE chat.messages (
   id BIGINT PRIMARY KEY DEFAULT SNOWFLAKE_ID(),
   conversation_id BIGINT NOT NULL,
-  role TEXT NOT NULL,
+  role_id TEXT NOT NULL,
   content TEXT NOT NULL,
   created_at TIMESTAMP DEFAULT NOW()
 ) FLUSH ROW_THRESHOLD 1000;
@@ -210,12 +210,12 @@ CREATE STREAM TABLE chat.typing_events (
 INSERT INTO chat.conversations (id, title) VALUES (1, 'Chat with AI About KalamDB');
 
 -- Suppose the returned id is 1 – insert user + AI messages
-INSERT INTO chat.messages (conversation_id, role, content) VALUES
+INSERT INTO chat.messages (conversation_id, role_id, content) VALUES
   (1, 'user', 'Hello, AI!'),
   (1, 'assistant', 'Hi! How can I help you today?');
 
 -- Query the conversation history
-SELECT id, role, content, created_at
+SELECT id, role_id, content, created_at
 FROM chat.messages
 WHERE conversation_id = 1
 ORDER BY created_at ASC;

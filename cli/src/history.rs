@@ -44,14 +44,27 @@ impl CommandHistory {
         let contents = std::fs::read_to_string(&self.path)
             .map_err(|e| CLIError::HistoryError(format!("Failed to read history file: {}", e)))?;
 
-        let lines: Vec<String> = contents
-            .lines()
-            .map(|s| s.to_string())
-            .rev()
-            .take(self.max_size)
+        // Use a sentinel delimiter that won't appear in SQL
+        // Each entry is stored as: base64_encoded_command\n---ENTRY---\n
+        let entries: Vec<String> = contents
+            .split("\n---ENTRY---\n")
+            .filter(|s| !s.trim().is_empty())
+            .filter_map(|encoded| {
+                // Decode from base64 to preserve newlines and special characters
+                base64::Engine::decode(&base64::engine::general_purpose::STANDARD, encoded.trim())
+                    .ok()
+                    .and_then(|bytes| String::from_utf8(bytes).ok())
+            })
             .collect();
 
-        Ok(lines.into_iter().rev().collect())
+        // Take last max_size entries
+        let start_idx = if entries.len() > self.max_size {
+            entries.len() - self.max_size
+        } else {
+            0
+        };
+
+        Ok(entries[start_idx..].to_vec())
     }
 
     /// Save history to file
@@ -65,11 +78,15 @@ impl CommandHistory {
         let entries: Vec<&String> = history.iter().rev().take(self.max_size).collect();
         let entries: Vec<&String> = entries.into_iter().rev().collect();
 
+        // Encode each entry in base64 to preserve newlines and special characters
+        // Use a sentinel delimiter between entries
         let contents = entries
             .iter()
-            .map(|s| s.as_str())
+            .map(|s| {
+                base64::Engine::encode(&base64::engine::general_purpose::STANDARD, s.as_bytes())
+            })
             .collect::<Vec<_>>()
-            .join("\n");
+            .join("\n---ENTRY---\n");
 
         std::fs::write(&self.path, contents)
             .map_err(|e| CLIError::HistoryError(format!("Failed to write history file: {}", e)))?;
@@ -173,5 +190,44 @@ mod tests {
 
         history.clear().unwrap();
         assert!(!path.exists());
+    }
+
+    #[test]
+    fn test_multiline_commands() {
+        let dir = tempdir().unwrap();
+        let path = dir.path().join("history");
+        let history = CommandHistory::with_path(&path, 100);
+
+        // Test multiline SQL command with newlines
+        let multiline_cmd =
+            "SELECT id,\n       name,\n       email\nFROM users\nWHERE active = true;";
+
+        history.append(multiline_cmd).unwrap();
+        history.append("SELECT * FROM jobs;").unwrap();
+
+        let loaded = history.load().unwrap();
+        assert_eq!(loaded.len(), 2);
+        assert_eq!(loaded[0], multiline_cmd);
+        assert_eq!(loaded[1], "SELECT * FROM jobs;");
+
+        // Verify the multiline command preserved all newlines
+        assert!(loaded[0].contains("\n"));
+        assert_eq!(loaded[0].matches('\n').count(), 4);
+    }
+
+    #[test]
+    fn test_multiline_with_special_chars() {
+        let dir = tempdir().unwrap();
+        let path = dir.path().join("history");
+        let history = CommandHistory::with_path(&path, 100);
+
+        // Test command with special characters and newlines
+        let special_cmd = "INSERT INTO messages (content)\nVALUES ('Hello\nWorld!'),\n       ('Test\tmessage\nwith\\special chars');";
+
+        history.append(special_cmd).unwrap();
+
+        let loaded = history.load().unwrap();
+        assert_eq!(loaded.len(), 1);
+        assert_eq!(loaded[0], special_cmd);
     }
 }

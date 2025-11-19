@@ -290,7 +290,7 @@ async fn test_websocket_initial_data_snapshot() {
                 {
                     if let Ok(event) = event_result {
                         match event {
-                            ChangeEvent::InitialData { rows, .. } => {
+                            ChangeEvent::InitialDataBatch { rows, .. } => {
                                 assert!(!rows.is_empty(), "Initial snapshot should contain data");
                                 received_initial_data = true;
                                 break;

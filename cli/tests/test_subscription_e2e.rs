@@ -28,7 +28,7 @@ fn test_cli_subscription_initial_and_changes() {
 
     // Insert initial row BEFORE subscribing
     let _ = execute_sql_as_root_via_cli(&format!(
-        "INSERT INTO {} (id, name, _updated, _deleted) VALUES (1, 'Item One', 1730497770045, false)",
+        "INSERT INTO {} (id, name) VALUES (1, 'Item One')",
         table_full
     ));
     std::thread::sleep(Duration::from_millis(150));
@@ -44,10 +44,10 @@ fn test_cli_subscription_initial_and_changes() {
         }
     };
 
-    // Expect a SNAPSHOT line with 1 row
+    // Expect a BATCH line with 1 row
     let snapshot_line = listener
-        .wait_for_event("SNAPSHOT", Duration::from_secs(5))
-        .expect("expected SNAPSHOT line");
+        .wait_for_event("BATCH", Duration::from_secs(5))
+        .expect("expected BATCH line");
     assert!(
         snapshot_line.contains(" 1 rows "),
         "Expected initial snapshot with 1 row, got: {}",
@@ -56,7 +56,7 @@ fn test_cli_subscription_initial_and_changes() {
 
     // Perform INSERT change and wait for INSERT event
     let _ = execute_sql_as_root_via_cli(&format!(
-        "INSERT INTO {} (id, name, _updated, _deleted) VALUES (2, 'Second', 1730497771045, false)",
+        "INSERT INTO {} (id, name) VALUES (2, 'Second')",
         table_full
     ));
     let insert_line = listener

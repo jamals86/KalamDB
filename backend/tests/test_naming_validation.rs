@@ -68,7 +68,7 @@ async fn test_reserved_column_names() {
     fixtures::create_namespace(&server, "test_cols").await;
 
     // Test reserved column names
-    let reserved_columns = vec!["_seq", "_deleted", "_row_id", "_id", "_updated"];
+    let reserved_columns = vec!["_seq", "_deleted"];
 
     for col_name in reserved_columns {
         let table_name = format!("test_{}", col_name.replace("_", ""));

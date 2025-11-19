@@ -6,7 +6,8 @@
 //! - Storage key format: {user_id}:{_seq} (big-endian bytes)
 
 use kalamdb_commons::ids::{SeqId, StreamTableRowId};
-use kalamdb_commons::models::{NamespaceId, TableName, UserId};
+use kalamdb_commons::models::row::Row;
+use kalamdb_commons::models::{KTableRow, NamespaceId, TableName, UserId};
 use kalamdb_store::{test_utils::InMemoryBackend, StorageBackend};
 use kalamdb_system::system_table_store::SystemTableStore;
 use serde::{Deserialize, Serialize};
@@ -22,7 +23,18 @@ use std::sync::Arc;
 pub struct StreamTableRow {
     pub user_id: UserId,
     pub _seq: SeqId,
-    pub fields: serde_json::Value, // All event data
+    pub fields: Row, // All event data
+}
+
+impl From<StreamTableRow> for KTableRow {
+    fn from(row: StreamTableRow) -> Self {
+        KTableRow {
+            user_id: row.user_id,
+            _seq: row._seq,
+            _deleted: false, // Stream tables don't have soft deletes
+            fields: row.fields,
+        }
+    }
 }
 
 /// Type alias for stream table store (in-memory only, ephemeral data)
@@ -64,7 +76,8 @@ mod tests {
         StreamTableRow {
             user_id: UserId::new(user_id),
             _seq: SeqId::new(seq),
-            fields: serde_json::json!({"event": "click", "data": 123}),
+            fields: serde_json::from_value(serde_json::json!({"event": "click", "data": 123}))
+                .unwrap(),
         }
     }
 

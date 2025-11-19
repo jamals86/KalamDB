@@ -3,9 +3,99 @@
 //! Defines request and response structures for query execution and
 //! WebSocket subscription messages.
 
+use crate::seq_id::SeqId;
 use serde::{Deserialize, Serialize};
 use serde_json::Value as JsonValue;
 use std::collections::HashMap;
+
+/// Batch control metadata for paginated initial data loading
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct BatchControl {
+    /// Current batch number (0-indexed)
+    pub batch_num: u32,
+
+    /// Total number of batches available (optional/estimated)
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub total_batches: Option<u32>,
+
+    /// Whether more batches are available to fetch
+    pub has_more: bool,
+
+    /// Loading status for the subscription
+    pub status: BatchStatus,
+
+    /// The SeqId of the last row in this batch (used for subsequent requests)
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub last_seq_id: Option<SeqId>,
+
+    /// Snapshot boundary SeqId captured at subscription time
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub snapshot_end_seq: Option<SeqId>,
+}
+
+/// Status of the initial data loading process
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum BatchStatus {
+    /// Initial batch being loaded
+    Loading,
+
+    /// Subsequent batches being loaded
+    LoadingBatch,
+
+    /// All initial data has been loaded, live updates active
+    Ready,
+}
+
+/// Client-to-server request messages
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(tag = "type", rename_all = "snake_case")]
+pub enum ClientMessage {
+    /// Subscribe to live query updates
+    Subscribe {
+        /// List of subscriptions to register
+        subscriptions: Vec<SubscriptionRequest>,
+    },
+
+    /// Request next batch of initial data
+    NextBatch {
+        /// The subscription ID to fetch the next batch for
+        subscription_id: String,
+        /// The SeqId of the last row received (used for pagination)
+        #[serde(skip_serializing_if = "Option::is_none")]
+        last_seq_id: Option<SeqId>,
+    },
+
+    /// Unsubscribe from live query
+    Unsubscribe {
+        /// The subscription ID to unsubscribe from
+        subscription_id: String,
+    },
+}
+
+/// Subscription request details
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SubscriptionRequest {
+    /// Unique subscription identifier (client-generated)
+    pub id: String,
+    /// SQL query for live updates (must be a SELECT statement)
+    pub sql: String,
+    /// Optional subscription options
+    #[serde(default)]
+    pub options: SubscriptionOptions,
+}
+
+/// Subscription options for a live query
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct SubscriptionOptions {
+    /// Reserved for future use
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub _reserved: Option<String>,
+
+    /// Optional hint for server-side batch sizing
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub batch_size: Option<usize>,
+}
 
 /// WebSocket message types sent from server to client
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -15,18 +105,20 @@ pub enum ServerMessage {
     SubscriptionAck {
         /// The subscription ID that was registered
         subscription_id: String,
-        /// Number of rows in the initial data snapshot
-        last_rows: u32,
+        /// Total number of rows available for initial load
+        total_rows: u32,
+        /// Batch control information
+        batch_control: BatchControl,
     },
 
-    /// Initial data snapshot sent after subscription
-    InitialData {
+    /// Initial data batch sent after subscription or on client request
+    InitialDataBatch {
         /// The subscription ID this data is for
         subscription_id: String,
-        /// The initial rows matching the query
+        /// The rows in this batch
         rows: Vec<HashMap<String, JsonValue>>,
-        /// Number of rows in the snapshot
-        count: usize,
+        /// Batch control information
+        batch_control: BatchControl,
     },
 
     /// Change notification for INSERT/UPDATE/DELETE operations
@@ -158,65 +250,26 @@ pub struct ErrorDetail {
 }
 
 /// Change event received via WebSocket subscription.
-///
-/// Represents an INSERT, UPDATE, or DELETE operation on subscribed data.
-///
-/// # Examples
-///
-/// ```rust
-/// use kalam_link::ChangeEvent;
-/// use serde_json::json;
-///
-/// // Initial snapshot
-/// let snapshot = ChangeEvent::InitialData {
-///     subscription_id: "sub-1".to_string(),
-///     rows: vec![json!({"id": 1, "message": "Hello"})],
-/// };
-///
-/// // INSERT notification
-/// let insert = ChangeEvent::Insert {
-///     subscription_id: "sub-1".to_string(),
-///     rows: vec![json!({"id": 2, "message": "New message"})],
-/// };
-///
-/// // UPDATE notification
-/// let update = ChangeEvent::Update {
-///     subscription_id: "sub-1".to_string(),
-///     rows: vec![json!({"id": 1, "message": "Updated"})],
-///     old_rows: vec![json!({"id": 1, "message": "Hello"})],
-/// };
-///
-/// // DELETE notification
-/// let delete = ChangeEvent::Delete {
-///     subscription_id: "sub-1".to_string(),
-///     old_rows: vec![json!({"id": 2, "message": "New message"})],
-/// };
-/// ```
-/// Subscription options returned by the server for a live query.
-#[derive(Debug, Clone, Default, Serialize, Deserialize)]
-pub struct SubscriptionOptions {
-    /// Number of most recent rows to include in the initial snapshot
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub last_rows: Option<usize>,
-}
-
-/// Change notification received via WebSocket subscription.
 #[derive(Debug, Clone)]
 pub enum ChangeEvent {
-    /// Acknowledgement of subscription registration
+    /// Acknowledgement of subscription registration with batch info
     Ack {
-        /// Subscription ID if provided by the server
-        subscription_id: Option<String>,
-        /// Optional server message
-        message: Option<String>,
+        /// Subscription ID
+        subscription_id: String,
+        /// Total rows available for initial load
+        total_rows: u32,
+        /// Batch control information
+        batch_control: BatchControl,
     },
 
-    /// Initial snapshot of rows matching the subscription query
-    InitialData {
-        /// Subscription ID the snapshot belongs to
+    /// Initial data batch (paginated loading)
+    InitialDataBatch {
+        /// Subscription ID the batch belongs to
         subscription_id: String,
-        /// Snapshot rows
-        rows: Vec<JsonValue>,
+        /// Rows in this batch
+        rows: Vec<HashMap<String, JsonValue>>,
+        /// Batch control information
+        batch_control: BatchControl,
     },
 
     /// Insert notification
@@ -273,8 +326,8 @@ impl ChangeEvent {
         match self {
             Self::Ack {
                 subscription_id, ..
-            } => subscription_id.as_deref(),
-            Self::InitialData {
+            }
+            | Self::InitialDataBatch {
                 subscription_id, ..
             }
             | Self::Insert {
@@ -346,10 +399,18 @@ mod tests {
         assert_eq!(error.subscription_id(), Some("sub-2"));
 
         let ack = ChangeEvent::Ack {
-            subscription_id: None,
-            message: Some("registered".to_string()),
+            subscription_id: "sub-1".to_string(),
+            total_rows: 0,
+            batch_control: BatchControl {
+                batch_num: 0,
+                total_batches: Some(0),
+                has_more: false,
+                status: BatchStatus::Ready,
+                last_seq_id: None,
+                snapshot_end_seq: None,
+            },
         };
-        assert_eq!(ack.subscription_id(), None);
+        assert_eq!(ack.subscription_id(), Some("sub-1"));
         assert!(!ack.is_error());
     }
 }

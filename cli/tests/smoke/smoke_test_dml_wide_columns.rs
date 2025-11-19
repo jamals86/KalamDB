@@ -225,10 +225,10 @@ fn smoke_subscription_update_delete_notifications() {
     let query = format!("SELECT * FROM {}", full);
     let mut listener = SubscriptionListener::start(&query).expect("subscription should start");
 
-    // Expect SNAPSHOT with at least 1 row
+    // Expect BATCH with at least 1 row
     let snapshot_line = listener
-        .wait_for_event("SNAPSHOT", Duration::from_secs(5))
-        .expect("expected SNAPSHOT line");
+        .wait_for_event("BATCH", Duration::from_secs(5))
+        .expect("expected BATCH line");
     assert!(snapshot_line.contains("1 rows") || snapshot_line.contains("1 row"));
 
     // UPDATE

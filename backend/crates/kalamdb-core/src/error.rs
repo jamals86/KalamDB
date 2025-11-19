@@ -79,6 +79,9 @@ pub enum KalamDbError {
     #[error("Backup error: {0}")]
     Backup(#[from] BackupError),
 
+    #[error("Execution error: {0}")]
+    ExecutionError(String),
+
     // Parameter validation errors
     #[error("Parameter count exceeded: maximum {max} parameters allowed, got {actual}")]
     ParamCountExceeded { max: usize, actual: usize },

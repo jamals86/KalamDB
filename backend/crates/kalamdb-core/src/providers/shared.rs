@@ -10,7 +10,8 @@
 //! - NO RLS - ignores user_id parameter (operates on all rows)
 //! - SessionState NOT extracted in scan_rows() (scans all rows)
 
-use super::base::{self, BaseTableProvider, TableProviderCore};
+use crate::providers::arrow_json_conversion::{json_to_row, json_value_to_scalar};
+use crate::providers::base::{self, BaseTableProvider, TableProviderCore};
 use crate::app_context::AppContext;
 use crate::error::KalamDbError;
 use crate::schema_registry::TableType;
@@ -18,18 +19,19 @@ use async_trait::async_trait;
 use datafusion::arrow::datatypes::SchemaRef;
 use datafusion::arrow::record_batch::RecordBatch;
 use datafusion::catalog::Session;
-use datafusion::datasource::memory::MemTable;
 use datafusion::datasource::TableProvider;
-use datafusion::error::{DataFusionError, Result as DataFusionResult};
-use datafusion::logical_expr::Expr;
+use datafusion::error::Result as DataFusionResult;
+use datafusion::logical_expr::{Expr, TableProviderFilterPushDown};
 use datafusion::physical_plan::ExecutionPlan;
+use datafusion::scalar::ScalarValue;
 use kalamdb_commons::ids::SharedTableRowId;
-use kalamdb_commons::models::UserId;
+use kalamdb_commons::models::{Row, UserId};
 use kalamdb_commons::TableId;
 use kalamdb_store::entity_store::EntityStore;
 use kalamdb_tables::{SharedTableRow, SharedTableStore};
 use serde_json::Value as JsonValue;
 use std::any::Any;
+use std::collections::BTreeMap;
 use std::sync::Arc;
 
 // Arrow <-> JSON helpers
@@ -144,7 +146,9 @@ impl BaseTableProvider<SharedTableRowId, SharedTableRow> for SharedTableProvider
         let entity = SharedTableRow {
             _seq: seq_id,
             _deleted: false,
-            fields: row_data,
+            fields: json_to_row(&row_data).ok_or_else(|| {
+                KalamDbError::InvalidOperation("Failed to convert JSON to Row".to_string())
+            })?,
         };
 
         // Key is just the SeqId (SharedTableRowId is type alias for SeqId)
@@ -177,19 +181,22 @@ impl BaseTableProvider<SharedTableRowId, SharedTableRow> for SharedTableProvider
         let prior = EntityStore::get(&*self.store, key)
             .map_err(|e| KalamDbError::Other(format!("Failed to load prior version: {}", e)))?
             .ok_or_else(|| KalamDbError::NotFound("Row not found for update".to_string()))?;
-        let pk_value =
-            crate::providers::unified_dml::extract_user_pk_value(&prior.fields, &pk_name)?;
+        
+        let pk_value = prior.fields.get(&pk_name).map(|v| v.to_string()).ok_or_else(|| {
+             KalamDbError::InvalidOperation(format!("Prior row missing PK {}", pk_name))
+        })?;
+
         // Resolve latest per PK
         let (_latest_key, latest_row) =
             base::find_row_by_pk(self, None, &pk_value)?.ok_or_else(|| {
                 KalamDbError::NotFound(format!("Row with {}={} not found", pk_name, pk_value))
             })?;
 
-        let mut merged = latest_row.fields.as_object().cloned().unwrap_or_default();
+        let mut merged = latest_row.fields.values.clone();
         for (k, v) in update_obj.into_iter() {
-            merged.insert(k, v);
+            merged.insert(k, json_value_to_scalar(&v));
         }
-        let new_fields = JsonValue::Object(merged);
+        let new_fields = Row::new(merged);
 
         let sys_cols = self.core.system_columns.clone();
         let seq_id = sys_cols.generate_seq_id()?;
@@ -214,19 +221,22 @@ impl BaseTableProvider<SharedTableRowId, SharedTableRow> for SharedTableProvider
 
         let pk_name = self.primary_key_field_name().to_string();
         // Preserve existing PK value if present; may be null if malformed
-        let pk_json_val = prior
+        let pk_val = prior
             .fields
             .get(&pk_name)
             .cloned()
-            .unwrap_or(serde_json::Value::Null);
+            .unwrap_or(ScalarValue::Null);
 
         let sys_cols = self.core.system_columns.clone();
         let seq_id = sys_cols.generate_seq_id()?;
         // Include PK in tombstone fields so version resolution collapses correctly
+        let mut values = BTreeMap::new();
+        values.insert(pk_name, pk_val);
+        
         let entity = SharedTableRow {
             _seq: seq_id,
             _deleted: true,
-            fields: serde_json::json!({ pk_name: pk_json_val }),
+            fields: Row::new(values),
         };
         let row_key = seq_id;
         self.store.put(&row_key, &entity).map_err(|e| {
@@ -238,28 +248,62 @@ impl BaseTableProvider<SharedTableRowId, SharedTableRow> for SharedTableProvider
     fn scan_rows(
         &self,
         _state: &dyn Session,
+        projection: Option<&Vec<usize>>,
         filter: Option<&Expr>,
+        limit: Option<usize>,
     ) -> Result<RecordBatch, KalamDbError> {
+        // Extract sequence bounds from filter to optimize RocksDB scan
+        let (since_seq, _until_seq) = if let Some(expr) = filter {
+            base::extract_seq_bounds_from_filter(expr)
+        } else {
+            (None, None)
+        };
+
         // NO user_id extraction - shared tables scan ALL rows
-        let kvs = self.scan_with_version_resolution_to_kvs(base::system_user_id(), filter)?;
+        let kvs = self.scan_with_version_resolution_to_kvs(
+            base::system_user_id(),
+            filter,
+            since_seq,
+            limit,
+        )?;
 
         // Convert to JSON rows aligned with schema
         let schema = self.schema_ref();
-        crate::providers::base::rows_to_arrow_batch(&schema, kvs, |_, _| {})
+        crate::providers::base::rows_to_arrow_batch(&schema, kvs, projection, |_, _| {})
     }
 
     fn scan_with_version_resolution_to_kvs(
         &self,
         _user_id: &UserId,
         _filter: Option<&Expr>,
+        since_seq: Option<kalamdb_commons::ids::SeqId>,
+        limit: Option<usize>,
     ) -> Result<Vec<(SharedTableRowId, SharedTableRow)>, KalamDbError> {
         // IGNORE user_id parameter - scan ALL rows (hot storage)
-        let raw = self.store.scan_all().map_err(|e| {
-            KalamDbError::InvalidOperation(format!(
-                "Failed to scan shared table hot storage: {}",
-                e
-            ))
-        })?;
+
+        // Construct start_key if since_seq is provided
+        let start_key_bytes = if let Some(seq) = since_seq {
+            // since_seq is exclusive, so start at seq + 1
+            let start_seq = kalamdb_commons::ids::SeqId::from(seq.as_i64() + 1);
+            Some(kalamdb_commons::StorageKey::storage_key(&start_seq))
+        } else {
+            None
+        };
+
+        // Use limit if provided, otherwise default to 100,000
+        // Note: We might need to scan more than limit to account for version resolution/tombstones
+        // For now, let's use limit * 2 + 1000 as a heuristic if limit is small, or just 100,000
+        let scan_limit = limit.map(|l| std::cmp::max(l * 2, 1000)).unwrap_or(100_000);
+
+        let raw = self
+            .store
+            .scan_limited_with_prefix_and_start(None, start_key_bytes.as_deref(), scan_limit)
+            .map_err(|e| {
+                KalamDbError::InvalidOperation(format!(
+                    "Failed to scan shared table hot storage: {}",
+                    e
+                ))
+            })?;
         log::debug!("[SharedProvider] RocksDB scan returned {} rows", raw.len());
 
         // Scan cold storage (Parquet files)
@@ -290,13 +334,21 @@ impl BaseTableProvider<SharedTableRowId, SharedTableRow> for SharedTableProvider
                         SharedTableRow {
                             _seq: seq_id,
                             _deleted: row_data.deleted,
-                            fields: JsonValue::Object(row_data.fields),
+                            fields: row_data.fields,
                         },
                     )
                 })
                 .collect();
 
-        let result = merge_versioned_rows(&pk_name, hot_rows, cold_rows);
+        let mut result = merge_versioned_rows(&pk_name, hot_rows, cold_rows);
+
+        // Apply limit after resolution
+        if let Some(l) = limit {
+            if result.len() > l {
+                result.truncate(l);
+            }
+        }
+
         log::debug!(
             "[SharedProvider] Version-resolved rows (post-tombstone filter): {}",
             result.len()
@@ -304,8 +356,8 @@ impl BaseTableProvider<SharedTableRowId, SharedTableRow> for SharedTableProvider
         Ok(result)
     }
 
-    fn extract_fields(row: &SharedTableRow) -> Option<&JsonValue> {
-        Some(&row.fields)
+    fn extract_row(row: &SharedTableRow) -> &Row {
+        &row.fields
     }
 }
 
@@ -343,84 +395,17 @@ impl TableProvider for SharedTableProvider {
         filters: &[Expr],
         limit: Option<usize>,
     ) -> DataFusionResult<Arc<dyn ExecutionPlan>> {
-        // Combine filters (AND) for pruning and pass to scan_rows
-        let combined_filter: Option<Expr> = if filters.is_empty() {
-            None
-        } else {
-            let first = filters[0].clone();
-            Some(
-                filters[1..]
-                    .iter()
-                    .cloned()
-                    .fold(first, |acc, e| acc.and(e)),
-            )
-        };
+        self.base_scan(state, projection, filters, limit).await
+    }
 
-        // Current implementation: Unified MemTable (hot RocksDB + cold Parquet)
-        // scan_rows() already uses ManifestAccessPlanner.scan_parquet_files() for file-level pruning
-        //
-        // TODO: NEXT PHASE - DataFusion Native ParquetExec Integration
-        // Goal: Replace MemTable with hybrid approach for optimal performance:
-        //
-        // STEP 1: Split data sources
-        //   - Cold data: Use ParquetExec with manifest-driven row-group pruning
-        //   - Hot data: Use MemTable for RocksDB records
-        //
-        // STEP 2: Build ParquetExec with row-group selections
-        //   ```rust
-        //   use datafusion::datasource::physical_plan::parquet::ParquetExec;
-        //   use datafusion_physical_plan::parquet::ParquetAccessPlan;
-        //
-        //   let planner = ManifestAccessPlanner::new();
-        //   let selections = planner.plan_by_seq_range(&manifest, min_seq, max_seq);
-        //
-        //   // Build file-level ParquetAccessPlan
-        //   let mut file_groups = Vec::new();
-        //   for selection in selections {
-        //       let file_path = storage_dir.join(&selection.file_path);
-        //       let partitioned_file = PartitionedFile::new(file_path, file_size);
-        //
-        //       // Row-group access plan per file
-        //       let rg_access = if selection.row_groups.is_empty() {
-        //           RowGroupAccess::Scan  // No metadata, scan all
-        //       } else {
-        //           RowGroupAccess::Selection(selection.row_groups.into_iter().collect())
-        //       };
-        //
-        //       file_groups.push((partitioned_file, vec![rg_access]));
-        //   }
-        //
-        //   let parquet_exec = ParquetExec::builder(file_scan_config)
-        //       .with_parquet_access_plan(ParquetAccessPlan::new(file_groups))
-        //       .build();
-        //   ```
-        //
-        // STEP 3: Union cold + hot
-        //   ```rust
-        //   use datafusion::physical_plan::union::UnionExec;
-        //   let hot_batch = self.scan_hot_data(state, &combined_filter)?;
-        //   let hot_mem = MemTable::try_new(schema, vec![vec![hot_batch]])?;
-        //   let hot_exec = hot_mem.scan(state, projection, filters, limit).await?;
-        //
-        //   let union_exec = UnionExec::new(vec![parquet_exec, hot_exec]);
-        //   return Ok(Arc::new(union_exec));
-        //   ```
-        //
-        // STEP 4: Enable page-level pruning (when has_page_index=true)
-        //   - Use RowSelection API for sub-row-group pruning
-        //   - Leverage Parquet page index statistics
-        //
-        // Benefits:
-        //   - True DataFusion-native row-group/page pruning
-        //   - Streaming execution (no full Parquet load into memory)
-        //   - Parallel file reads via DataFusion scheduler
-        //   - Automatic predicate pushdown to Parquet reader
-        //
-        let batch = self
-            .scan_rows(state, combined_filter.as_ref())
-            .map_err(|e| DataFusionError::Execution(format!("scan_rows failed: {}", e)))?;
+    fn supports_filters_pushdown(
+        &self,
+        filters: &[&Expr],
+    ) -> DataFusionResult<Vec<TableProviderFilterPushDown>> {
+        self.base_supports_filters_pushdown(filters)
+    }
 
-        let mem = MemTable::try_new(self.schema_ref(), vec![vec![batch]])?;
-        mem.scan(state, projection, filters, limit).await
+    fn statistics(&self) -> Option<datafusion::physical_plan::Statistics> {
+        self.base_statistics()
     }
 }

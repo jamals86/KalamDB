@@ -38,7 +38,7 @@ impl TablesStore {
 
         // Use backend's scan method with prefix
         let partition = Partition::new(EntityStore::partition(self));
-        let iter = EntityStore::backend(self).scan(&partition, Some(prefix_bytes), None)?;
+        let iter = EntityStore::backend(self).scan(&partition, Some(prefix_bytes), None, None)?;
 
         // Parse TableId from key bytes and deserialize TableDefinition
         let mut result = Vec::new();

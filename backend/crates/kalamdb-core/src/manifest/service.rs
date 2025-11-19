@@ -10,6 +10,7 @@
 use kalamdb_commons::types::{BatchFileEntry, ManifestFile};
 use kalamdb_commons::{NamespaceId, TableId, TableName, UserId};
 use kalamdb_store::{StorageBackend, StorageError};
+use log::warn;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
@@ -253,17 +254,35 @@ impl ManifestService {
         let table_id = TableId::new(namespace.clone(), table.clone());
 
         // Resolve storage path using SchemaRegistry (same as flush operations)
-        let storage_path = schema_registry.get_storage_path(&table_id, user_id, None);
+        match schema_registry.get_storage_path(&table_id, user_id, None) {
+            Ok(path) => Ok(PathBuf::from(path)),
+            Err(err) => {
+                warn!(
+                    "[ManifestService] Falling back to base path for {}.{} (user_id={:?}): {}",
+                    namespace.as_str(),
+                    table.as_str(),
+                    user_id.map(|u| u.as_str()),
+                    err
+                );
+                Ok(self.build_fallback_path(namespace, table, user_id))
+            }
+        }
+    }
 
-        storage_path.map(PathBuf::from).map_err(|e| {
-            StorageError::Other(format!(
-                "Failed to resolve storage path for {}.{} (user_id={:?}): {}",
-                namespace.as_str(),
-                table.as_str(),
-                user_id.map(|u| u.as_str()),
-                e
-            ))
-        })
+    /// Build a deterministic fallback path when the SchemaRegistry is missing metadata.
+    fn build_fallback_path(
+        &self,
+        namespace: &NamespaceId,
+        table: &TableName,
+        user_id: Option<&UserId>,
+    ) -> PathBuf {
+        let mut path = PathBuf::from(&self._base_path);
+        path.push(namespace.as_str());
+        path.push(table.as_str());
+        if let Some(uid) = user_id {
+            path.push(uid.as_str());
+        }
+        path
     }
 
     /// Write manifest atomically: manifest.json.tmp → rename to manifest.json (T113).

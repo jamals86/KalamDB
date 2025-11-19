@@ -105,6 +105,7 @@ impl StorageBackend for RocksDBBackend {
         &self,
         partition: &Partition,
         prefix: Option<&[u8]>,
+        start_key: Option<&[u8]>,
         limit: Option<usize>,
     ) -> Result<Box<dyn Iterator<Item = (Vec<u8>, Vec<u8>)> + '_>> {
         use rocksdb::Direction;
@@ -115,9 +116,14 @@ impl StorageBackend for RocksDBBackend {
         let snapshot = self.db.snapshot();
 
         let prefix_vec = prefix.map(|p| p.to_vec());
-        let iter_mode = match &prefix_vec {
-            Some(p) => IteratorMode::From(p.as_slice(), Direction::Forward),
-            None => IteratorMode::Start,
+
+        // Determine start position
+        let iter_mode = if let Some(start) = start_key {
+            IteratorMode::From(start, Direction::Forward)
+        } else if let Some(p) = &prefix_vec {
+            IteratorMode::From(p.as_slice(), Direction::Forward)
+        } else {
+            IteratorMode::Start
         };
 
         // RocksDB iterator over the snapshot: bind snapshot to ReadOptions
@@ -348,7 +354,10 @@ mod tests {
         backend.put(&partition, b"key2", b"value2").unwrap();
         backend.put(&partition, b"key3", b"value3").unwrap();
 
-        let results: Vec<_> = backend.scan(&partition, None, None).unwrap().collect();
+        let results: Vec<_> = backend
+            .scan(&partition, None, None, None)
+            .unwrap()
+            .collect();
 
         assert_eq!(results.len(), 3);
     }
@@ -366,7 +375,7 @@ mod tests {
         backend.put(&partition, b"admin:1", b"value3").unwrap();
 
         let results: Vec<_> = backend
-            .scan(&partition, Some(b"user:"), None)
+            .scan(&partition, Some(b"user:"), None, None)
             .unwrap()
             .collect();
 
@@ -385,7 +394,10 @@ mod tests {
         backend.put(&partition, b"key2", b"value2").unwrap();
         backend.put(&partition, b"key3", b"value3").unwrap();
 
-        let results: Vec<_> = backend.scan(&partition, None, Some(2)).unwrap().collect();
+        let results: Vec<_> = backend
+            .scan(&partition, None, None, Some(2))
+            .unwrap()
+            .collect();
 
         assert_eq!(results.len(), 2);
     }

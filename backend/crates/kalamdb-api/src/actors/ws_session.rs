@@ -8,15 +8,17 @@ use actix::{
 use actix_web_actors::ws;
 use kalamdb_commons::models::UserId;
 use kalamdb_commons::WebSocketMessage;
+use kalamdb_core::error::KalamDbError;
 use log::{debug, error, info, warn};
-use std::convert::TryFrom;
+use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use crate::models::{Notification, SubscriptionRequest};
 use crate::rate_limiter::RateLimiter;
 use kalamdb_core::live_query::{
-    ConnectionId as LiveConnectionId, InitialDataOptions, LiveQueryManager, LiveQueryOptions,
+    ConnectionId as LiveConnectionId, InitialDataOptions, InitialDataResult, LiveQueryManager,
+    LiveQueryOptions,
 };
 // UserId is from kalamdb_commons, not from live_query
 type LiveUserId = UserId;
@@ -62,6 +64,11 @@ pub struct WebSocketSession {
 
     /// List of active subscription IDs for this connection
     pub subscriptions: Vec<String>,
+
+    /// Subscription metadata cache for batch fetching
+    /// Maps subscription_id -> (sql, user_id, snapshot_end_seq, batch_size)
+    pub subscription_metadata:
+        HashMap<String, (String, UserId, Option<kalamdb_commons::ids::SeqId>, usize)>,
 }
 
 impl WebSocketSession {
@@ -86,6 +93,7 @@ impl WebSocketSession {
             live_user_id: None,
             hb: Instant::now(),
             subscriptions: Vec::new(),
+            subscription_metadata: HashMap::new(),
         }
     }
 
@@ -237,236 +245,46 @@ impl StreamHandler<Result<ws::Message, ws::ProtocolError>> for WebSocketSession 
                     }
                 }
 
-                // Parse subscription request
-                match serde_json::from_str::<SubscriptionRequest>(&text) {
-                    Ok(sub_req) => {
-                        info!("Registering {} subscriptions", sub_req.subscriptions.len());
-
-                        // Ensure connection registered with live query manager
-                        let live_connection_id = match self.live_connection_id.clone() {
-                            Some(conn_id) => conn_id,
-                            None => {
-                                error!(
-                                    "Live query manager connection missing for {}",
-                                    self.connection_id
-                                );
-                                let error_msg = Notification::error(
-                                    "connection".to_string(),
-                                    "CONNECTION_NOT_READY".to_string(),
-                                    "Live query manager is not ready for subscriptions".to_string(),
-                                );
-                                if let Ok(json) = serde_json::to_string(&error_msg) {
-                                    ctx.text(json);
-                                }
-                                return;
-                            }
-                        };
-
-                        // Register each subscription
-                        for subscription in sub_req.subscriptions {
-                            let user_id = match self.user_id.clone() {
-                                Some(uid) => uid,
-                                None => {
-                                    error!(
-                                        "Subscription rejected: unauthenticated (subscription_id={})",
-                                        subscription.id
-                                    );
-                                    let error_msg = Notification::error(
-                                        subscription.id.clone(),
-                                        "UNAUTHORIZED".to_string(),
-                                        "User authentication required for subscriptions"
-                                            .to_string(),
-                                    );
-                                    if let Ok(json) = serde_json::to_string(&error_msg) {
-                                        ctx.text(json);
-                                    }
-                                    continue;
-                                }
-                            };
-
-                            // Rate limiting: Check subscription limit per user
-                            if let Some(ref limiter) = self.rate_limiter {
-                                if !limiter.check_subscription_limit(&user_id) {
-                                    warn!(
-                                        "Subscription limit exceeded: user_id={}, subscription_id={}",
-                                        user_id.as_str(),
-                                        subscription.id
-                                    );
-                                    let error_msg = Notification::error(
-                                        subscription.id.clone(),
-                                        "SUBSCRIPTION_LIMIT_EXCEEDED".to_string(),
-                                        "Maximum number of subscriptions reached for this user."
-                                            .to_string(),
-                                    );
-                                    if let Ok(json) = serde_json::to_string(&error_msg) {
-                                        ctx.text(json);
-                                    }
-                                    continue;
-                                }
-                            }
-
-                            // Convert last_rows option and validate bounds
-                            let last_rows_u32 = match subscription.options.last_rows {
-                                Some(value) => match u32::try_from(value) {
-                                    Ok(v) => Some(v),
-                                    Err(_) => {
-                                        let error_msg = Notification::error(
-                                            subscription.id.clone(),
-                                            "INVALID_OPTION".to_string(),
-                                            "last_rows must be between 0 and 4,294,967,295"
-                                                .to_string(),
-                                        );
-                                        if let Ok(json) = serde_json::to_string(&error_msg) {
-                                            ctx.text(json);
-                                        }
-                                        continue;
-                                    }
-                                },
-                                None => None,
-                            };
-
-                            debug!(
-                                "Subscription options: last_rows_u32={:?}, raw last_rows={:?}",
-                                last_rows_u32, subscription.options.last_rows
-                            );
-
-                            let initial_data_options =
-                                Some(if let Some(last_rows) = last_rows_u32 {
-                                    InitialDataOptions::last(last_rows as usize)
-                                } else {
-                                    // Default: fetch up to 100 recent rows for initial data
-                                    InitialDataOptions::last(100)
-                                });
-
-                            debug!(
-                                "Initial data options: {:?} (will fetch: {})",
-                                initial_data_options,
-                                initial_data_options.is_some()
-                            );
-
-                            let manager = self.live_query_manager.clone();
-                            let rate_limiter = self.rate_limiter.clone();
-                            let subscription_id = subscription.id.clone();
-                            let sql = subscription.sql.clone();
-                            let live_conn_clone = live_connection_id.clone();
-                            let user_clone = user_id.clone();
-
-                            ctx.wait(
-                                fut::wrap_future(async move {
-                                    match manager
-                                        .register_subscription_with_initial_data(
-                                            live_conn_clone,
-                                            subscription_id.clone(),
-                                            sql.clone(),
-                                            LiveQueryOptions {
-                                                last_rows: last_rows_u32,
+                // Parse incoming message using typed ClientMessage enum
+                match serde_json::from_str::<kalamdb_commons::websocket::ClientMessage>(&text) {
+                    Ok(client_msg) => {
+                        use kalamdb_commons::websocket::ClientMessage;
+                        match client_msg {
+                            ClientMessage::Subscribe { subscriptions } => {
+                                let sub_req = crate::models::SubscriptionRequest {
+                                    subscriptions: subscriptions
+                                        .into_iter()
+                                        .map(|s| crate::models::Subscription {
+                                            id: s.id,
+                                            sql: s.sql,
+                                            options: crate::models::SubscriptionOptions {
+                                                last_rows: None,
+                                                batch_size: s.options.batch_size,
                                             },
-                                            initial_data_options,
-                                        )
-                                        .await
-                                    {
-                                        Ok(result) => Ok((result, subscription_id.clone(), last_rows_u32)),
-                                        Err(err) => Err((err, subscription_id.clone())),
-                                    }
-                                })
-                                .map(move |outcome, act: &mut Self, ctx| {
-                                    match outcome {
-                                        Ok((sub_result, sub_id, last_rows_opt)) => {
-                                            info!(
-                                                "Subscription registered: id={}, user_id={}",
-                                                sub_id,
-                                                user_clone.as_str()
-                                            );
-                                            act.subscriptions.push(sub_id.clone());
-
-                                            if let Some(ref limiter) = rate_limiter {
-                                                limiter.increment_subscription(&user_clone);
-                                            }
-
-                                            // Send subscription acknowledgement using typed model
-                                            let ack = WebSocketMessage::subscription_ack(
-                                                sub_id.clone(),
-                                                last_rows_opt.unwrap_or(0),
-                                            );
-                                            if let Ok(json) = serde_json::to_string(&ack) {
-                                                ctx.text(json);
-                                            }
-
-                                            // Send initial data if available using typed model
-                                            if let Some(initial) = sub_result.initial_data {
-                                                info!(
-                                                    "Sending initial data for subscription {}: {} rows",
-                                                    sub_id,
-                                                    initial.rows.len()
-                                                );
-
-                                                // Convert Vec<JsonValue> to Vec<HashMap<String, JsonValue>>
-                                                let rows: Vec<std::collections::HashMap<String, serde_json::Value>> = initial.rows
-                                                    .into_iter()
-                                                    .filter_map(|v| {
-                                                        if let serde_json::Value::Object(map) = v {
-                                                            Some(map.into_iter().collect())
-                                                        } else {
-                                                            None
-                                                        }
-                                                    })
-                                                    .collect();
-
-                                                debug!("Converted {} JSON values to HashMap rows", rows.len());
-
-                                                let initial_data = WebSocketMessage::initial_data(
-                                                    sub_id.clone(),
-                                                    rows,
-                                                );
-                                                if let Ok(json) = serde_json::to_string(&initial_data) {
-                                                    debug!("Sending initial_data message: {} bytes", json.len());
-                                                    ctx.text(json);
-                                                } else {
-                                                    error!("Failed to serialize initial data for subscription {}", sub_id);
-                                                }
-                                            } else {
-                                                debug!("No initial data for subscription {}", sub_id);
-                                            }
-                                        }
-                                        Err((err, sub_id)) => {
-                                            error!(
-                                                "Failed to register subscription {}: {}",
-                                                sub_id, err
-                                            );
-                                            let error_msg = Notification::error(
-                                                sub_id.clone(),
-                                                "SUBSCRIPTION_FAILED".to_string(),
-                                                err.to_string(),
-                                            );
-                                            if let Ok(json) = serde_json::to_string(&error_msg) {
-                                                ctx.text(json);
-                                            }
-
-                                            // Close WebSocket connection after sending error
-                                            warn!(
-                                                "Closing WebSocket connection {} due to subscription failure",
-                                                act.connection_id
-                                            );
-                                            ctx.close(Some(ws::CloseReason {
-                                                code: ws::CloseCode::Normal,
-                                                description: Some(format!("Subscription failed: {}", err)),
-                                            }));
-                                            ctx.stop();
-                                        }
-                                    }
-                                }),
-                            );
+                                        })
+                                        .collect(),
+                                };
+                                self.handle_subscription_request(ctx, sub_req);
+                            }
+                            ClientMessage::NextBatch {
+                                subscription_id,
+                                last_seq_id,
+                            } => {
+                                self.handle_next_batch_request(ctx, subscription_id, last_seq_id);
+                            }
+                            ClientMessage::Unsubscribe { subscription_id } => {
+                                // TODO: Implement unsubscribe logic
+                                warn!("Unsubscribe not yet implemented: {}", subscription_id);
+                            }
                         }
                     }
                     Err(e) => {
-                        error!("Failed to parse subscription request: {}", e);
-
+                        error!("Failed to parse client message: {}", e);
                         let error_msg = Notification::error(
                             "unknown".to_string(),
-                            "INVALID_SUBSCRIPTION".to_string(),
-                            format!("Failed to parse subscription request: {}", e),
+                            "INVALID_MESSAGE".to_string(),
+                            format!("Failed to parse message: {}", e),
                         );
-
                         if let Ok(json) = serde_json::to_string(&error_msg) {
                             ctx.text(json);
                         }
@@ -487,6 +305,341 @@ impl StreamHandler<Result<ws::Message, ws::ProtocolError>> for WebSocketSession 
             }
             _ => {}
         }
+    }
+}
+
+impl WebSocketSession {
+    /// Handle subscription request message
+    fn handle_subscription_request(
+        &mut self,
+        ctx: &mut ws::WebsocketContext<Self>,
+        sub_req: SubscriptionRequest,
+    ) {
+        info!("Registering {} subscriptions", sub_req.subscriptions.len());
+
+        // Ensure connection registered with live query manager
+        let live_connection_id = match self.live_connection_id.clone() {
+            Some(conn_id) => conn_id,
+            None => {
+                error!(
+                    "Live query manager connection missing for {}",
+                    self.connection_id
+                );
+                let error_msg = Notification::error(
+                    "connection".to_string(),
+                    "CONNECTION_NOT_READY".to_string(),
+                    "Live query manager is not ready for subscriptions".to_string(),
+                );
+                if let Ok(json) = serde_json::to_string(&error_msg) {
+                    ctx.text(json);
+                }
+                return;
+            }
+        };
+
+        // Register each subscription
+        for subscription in sub_req.subscriptions {
+            self.process_single_subscription(ctx, &live_connection_id, subscription);
+        }
+    }
+
+    /// Process a single subscription registration with batched initial data
+    fn process_single_subscription(
+        &mut self,
+        ctx: &mut ws::WebsocketContext<Self>,
+        live_connection_id: &LiveConnectionId,
+        subscription: crate::models::Subscription,
+    ) {
+        use kalamdb_commons::websocket::{BatchControl, BatchStatus, MAX_ROWS_PER_BATCH};
+
+        let user_id = match self.user_id.clone() {
+            Some(uid) => uid,
+            None => {
+                error!(
+                    "Subscription rejected: unauthenticated (subscription_id={})",
+                    subscription.id
+                );
+                let error_msg = Notification::error(
+                    subscription.id.clone(),
+                    "UNAUTHORIZED".to_string(),
+                    "User authentication required for subscriptions".to_string(),
+                );
+                if let Ok(json) = serde_json::to_string(&error_msg) {
+                    ctx.text(json);
+                }
+                return;
+            }
+        };
+
+        // Rate limiting: Check subscription limit per user
+        if let Some(ref limiter) = self.rate_limiter {
+            if !limiter.check_subscription_limit(&user_id) {
+                warn!(
+                    "Subscription limit exceeded: user_id={}, subscription_id={}",
+                    user_id.as_str(),
+                    subscription.id
+                );
+                let error_msg = Notification::error(
+                    subscription.id.clone(),
+                    "SUBSCRIPTION_LIMIT_EXCEEDED".to_string(),
+                    "Maximum number of subscriptions reached for this user.".to_string(),
+                );
+                if let Ok(json) = serde_json::to_string(&error_msg) {
+                    ctx.text(json);
+                }
+                return;
+            }
+        }
+
+        // Use batch-based loading: first batch only
+        // We pass None for since_seq and until_seq to start from beginning and determine snapshot boundary
+        let batch_size = subscription
+            .options
+            .batch_size
+            .unwrap_or(MAX_ROWS_PER_BATCH);
+        let initial_data_options = Some(InitialDataOptions::batch(None, None, batch_size));
+
+        let manager = self.live_query_manager.clone();
+        let rate_limiter = self.rate_limiter.clone();
+        let subscription_id = subscription.id.clone();
+        let sql = subscription.sql.clone();
+        let sql_for_metadata = sql.clone(); // Clone for metadata storage
+        let live_conn_clone = live_connection_id.clone();
+        let user_clone = user_id.clone();
+
+        ctx.wait(
+            fut::wrap_future(async move {
+                match manager
+                    .register_subscription_with_initial_data(
+                        live_conn_clone,
+                        subscription_id.clone(),
+                        sql.clone(),
+                        LiveQueryOptions { last_rows: None },
+                        initial_data_options,
+                    )
+                    .await
+                {
+                    Ok(result) => Ok((result, subscription_id.clone())),
+                    Err(err) => Err((err, subscription_id.clone())),
+                }
+            })
+            .map(move |outcome, act: &mut Self, ctx| {
+                match outcome {
+                    Ok((sub_result, sub_id)) => {
+                        info!(
+                            "Subscription registered: id={}, user_id={}",
+                            sub_id,
+                            user_clone.as_str()
+                        );
+                        act.subscriptions.push(sub_id.clone());
+
+                        // Store subscription metadata for batch fetching
+                        // We store the snapshot_end_seq returned by the first fetch
+                        let snapshot_end_seq = sub_result
+                            .initial_data
+                            .as_ref()
+                            .and_then(|d| d.snapshot_end_seq);
+                        act.subscription_metadata.insert(
+                            sub_id.clone(),
+                            (
+                                sql_for_metadata,
+                                user_clone.clone(),
+                                snapshot_end_seq,
+                                batch_size,
+                            ),
+                        );
+
+                        if let Some(ref limiter) = rate_limiter {
+                            limiter.increment_subscription(&user_clone);
+                        }
+
+                        // Send subscription acknowledgement with batch control
+                        if let Some(initial) = sub_result.initial_data {
+                            // total_rows is unknown with lazy loading, set to 0
+                            let total_rows = 0;
+                            let batch_control = BatchControl {
+                                batch_num: 0,
+                                total_batches: None,
+                                has_more: initial.has_more,
+                                status: if initial.has_more {
+                                    BatchStatus::Loading
+                                } else {
+                                    BatchStatus::Ready
+                                },
+                                last_seq_id: initial.last_seq,
+                                snapshot_end_seq: initial.snapshot_end_seq,
+                            };
+
+                            let ack = WebSocketMessage::subscription_ack(
+                                sub_id.clone(),
+                                total_rows,
+                                batch_control.clone(),
+                            );
+                            if let Ok(json) = serde_json::to_string(&ack) {
+                                ctx.text(json);
+                            }
+
+                            // Send first batch of initial data
+                            let batch_msg = WebSocketMessage::initial_data_batch(
+                                sub_id.clone(),
+                                initial.rows,
+                                batch_control,
+                            );
+                            if let Ok(json) = serde_json::to_string(&batch_msg) {
+                                debug!("Sending first batch: {} bytes", json.len());
+                                ctx.text(json);
+                            }
+                        } else {
+                            // No initial data (empty table)
+                            let batch_control = BatchControl {
+                                batch_num: 0,
+                                total_batches: Some(0),
+                                has_more: false,
+                                status: BatchStatus::Ready,
+                                last_seq_id: None,
+                                snapshot_end_seq: None,
+                            };
+                            let ack = WebSocketMessage::subscription_ack(
+                                sub_id.clone(),
+                                0,
+                                batch_control,
+                            );
+                            if let Ok(json) = serde_json::to_string(&ack) {
+                                ctx.text(json);
+                            }
+                        }
+                    }
+                    Err((err, sub_id)) => {
+                        error!("Failed to register subscription {}: {}", sub_id, err);
+                        let error_msg = Notification::error(
+                            sub_id.clone(),
+                            "SUBSCRIPTION_FAILED".to_string(),
+                            err.to_string(),
+                        );
+                        if let Ok(json) = serde_json::to_string(&error_msg) {
+                            ctx.text(json);
+                        }
+                    }
+                }
+            }),
+        );
+    }
+
+    /// Handle next batch request from client
+    fn handle_next_batch_request(
+        &mut self,
+        ctx: &mut ws::WebsocketContext<Self>,
+        subscription_id: String,
+        last_seq_id: Option<kalamdb_commons::ids::SeqId>,
+    ) {
+        use kalamdb_commons::websocket::{BatchControl, BatchStatus};
+
+        info!(
+            "Next batch request: sub_id={}, last_seq_id={:?}",
+            subscription_id, last_seq_id
+        );
+
+        // Verify subscription exists
+        if !self.subscriptions.contains(&subscription_id) {
+            warn!(
+                "Next batch request for unknown subscription: {}",
+                subscription_id
+            );
+            let error_msg = Notification::error(
+                subscription_id.clone(),
+                "SUBSCRIPTION_NOT_FOUND".to_string(),
+                "Subscription not found for this connection".to_string(),
+            );
+            if let Ok(json) = serde_json::to_string(&error_msg) {
+                ctx.text(json);
+            }
+            return;
+        }
+
+        // Fetch the requested batch via LiveQueryManager
+        let manager = self.live_query_manager.clone();
+        let sub_id = subscription_id.clone();
+        let sub_id_for_result = sub_id.clone();
+
+        // Get subscription metadata
+        let metadata = match self.subscription_metadata.get(&sub_id).cloned() {
+            Some(m) => m,
+            None => {
+                error!("Subscription metadata not found for: {}", sub_id);
+                let error_msg = Notification::error(
+                    sub_id.clone(),
+                    "SUBSCRIPTION_NOT_FOUND".to_string(),
+                    "Subscription metadata not found".to_string(),
+                );
+                if let Ok(json) = serde_json::to_string(&error_msg) {
+                    ctx.text(json);
+                }
+                return;
+            }
+        };
+
+        let (sql, user_id, snapshot_end_seq, batch_size) = metadata;
+
+        ctx.wait(
+            fut::wrap_future(async move {
+                // Fetch next batch of data
+                let initial_data_options = Some(InitialDataOptions::batch(
+                    last_seq_id,
+                    snapshot_end_seq,
+                    batch_size,
+                ));
+                let result = manager
+                    .fetch_initial_data_batch(&sql, &user_id, initial_data_options)
+                    .await?;
+
+                Ok((result, sub_id_for_result.clone()))
+            })
+            .map(
+                move |result: Result<(InitialDataResult, String), KalamDbError>,
+                      _act: &mut Self,
+                      ctx| {
+                    match result {
+                        Ok((initial, sub_id)) => {
+                            // Send the batch data
+                            let batch_control = BatchControl {
+                                batch_num: 0, // Dummy value
+                                total_batches: None,
+                                has_more: initial.has_more,
+                                status: if initial.has_more {
+                                    BatchStatus::LoadingBatch
+                                } else {
+                                    BatchStatus::Ready
+                                },
+                                last_seq_id: initial.last_seq,
+                                snapshot_end_seq: initial.snapshot_end_seq,
+                            };
+
+                            let batch_msg = WebSocketMessage::initial_data_batch(
+                                sub_id.clone(),
+                                initial.rows,
+                                batch_control,
+                            );
+
+                            if let Ok(json) = serde_json::to_string(&batch_msg) {
+                                debug!("Sending batch: {} bytes", json.len());
+                                ctx.text(json);
+                            }
+                        }
+                        Err(err) => {
+                            error!("Failed to fetch next batch: {}", err);
+                            let error_msg = Notification::error(
+                                sub_id.clone(),
+                                "BATCH_FETCH_FAILED".to_string(),
+                                err.to_string(),
+                            );
+                            if let Ok(json) = serde_json::to_string(&error_msg) {
+                                ctx.text(json);
+                            }
+                        }
+                    }
+                },
+            ),
+        );
     }
 }
 

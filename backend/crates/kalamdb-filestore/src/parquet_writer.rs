@@ -188,7 +188,7 @@ mod tests {
     }
 
     #[test]
-    fn test_bloom_filter_enabled_for_updated_column() {
+    fn test_bloom_filter_enabled_for_seq_column() {
         let temp_dir = env::temp_dir().join("kalamdb_filestore_bloom_filter_test");
         let _ = fs::remove_dir_all(&temp_dir);
         fs::create_dir_all(&temp_dir).unwrap();
@@ -246,7 +246,7 @@ mod tests {
     }
 
     #[test]
-    fn test_no_bloom_filter_without_updated_column() {
+    fn test_no_bloom_filter_without_seq_column() {
         let temp_dir = env::temp_dir().join("kalamdb_filestore_no_bloom_filter_test");
         let _ = fs::remove_dir_all(&temp_dir);
         fs::create_dir_all(&temp_dir).unwrap();

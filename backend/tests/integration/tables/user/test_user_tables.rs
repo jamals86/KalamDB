@@ -328,7 +328,7 @@ async fn test_user_table_system_columns() {
     // Select with system columns
     let response = server
         .execute_sql_as_user(
-            "SELECT id, content, _updated, _deleted FROM test_ns.notes WHERE id = 'note1'",
+            "SELECT id, content, _seq, _deleted FROM test_ns.notes WHERE id = 'note1'",
             "user1",
         )
         .await;
@@ -344,7 +344,7 @@ async fn test_user_table_system_columns() {
 
         let row = &rows[0];
         // Verify system columns exist
-        assert!(row.contains_key("_updated"), "_updated column should exist");
+        assert!(row.contains_key("_seq"), "_seq column should exist");
         assert!(row.contains_key("_deleted"), "_deleted column should exist");
 
         // _deleted should be false for new rows
