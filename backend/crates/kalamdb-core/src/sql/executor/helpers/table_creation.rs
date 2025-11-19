@@ -622,6 +622,29 @@ pub fn create_stream_table(
             KalamDbError::Other(format!("Failed to insert table into system catalog: {}", e))
         })?;
 
+    // Prime cache entry with storage path template + storage id (needed for flush path resolution)
+    {
+        use crate::schema_registry::CachedTableData;
+        // Stream tables use default storage
+        let storage_id = StorageId::from("local");
+        let template = schema_registry.resolve_storage_path_template(
+            &table_id.namespace_id(),
+            &table_id.table_name(),
+            TableType::Stream,
+            &storage_id,
+        )?;
+        let mut data = CachedTableData::new(Arc::clone(&table_def));
+        data.storage_id = Some(storage_id.clone());
+        data.storage_path_template = template.clone();
+        schema_registry.insert(table_id.clone(), Arc::new(data));
+        log::debug!(
+            "Primed cache for stream table {}.{} with template: {}",
+            stmt.namespace_id.as_str(),
+            stmt.table_name.as_str(),
+            template
+        );
+    }
+
     // Register StreamTableProvider for event operations (distinct from SHARED)
     register_stream_table_provider(&app_context, &table_id, schema.clone(), Some(ttl_seconds))?;
 

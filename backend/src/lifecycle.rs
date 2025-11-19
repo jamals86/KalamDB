@@ -179,7 +179,7 @@ pub async fn bootstrap(
 
     // JWT authentication
     use jsonwebtoken::Algorithm;
-    let jwt_secret = "kalamdb-dev-secret-key-change-in-production".to_string();
+    let jwt_secret = config.auth.jwt_secret.clone();
     let jwt_auth = Arc::new(JwtAuth::new(jwt_secret, Algorithm::HS256));
     info!("JWT authentication initialized (HS256)");
 

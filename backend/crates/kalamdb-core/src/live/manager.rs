@@ -157,6 +157,30 @@ impl LiveQueryManager {
             ));
         }
 
+        // Security Check: Enforce table access permissions
+        let user_id_str = connection_id.user_id();
+        let is_admin = Self::is_admin_user(user_id_str);
+
+        match table_def.table_type {
+            TableType::User => {
+                if !is_admin && namespace != user_id_str {
+                    return Err(KalamDbError::Unauthorized(format!(
+                        "Insufficient privileges to subscribe to user table '{}.{}'",
+                        namespace, table
+                    )));
+                }
+            }
+            TableType::System => {
+                if !is_admin {
+                    return Err(KalamDbError::Unauthorized(format!(
+                        "Insufficient privileges to subscribe to system table '{}.{}'",
+                        namespace, table
+                    )));
+                }
+            }
+            _ => {}
+        }
+
         let mut where_clause = self.extract_where_clause(&query);
 
         // Generate LiveId

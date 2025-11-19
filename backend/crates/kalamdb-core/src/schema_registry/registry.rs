@@ -863,13 +863,47 @@ impl SchemaRegistry {
         &self,
         table_id: &TableId,
     ) -> Result<Arc<arrow::datatypes::Schema>, KalamDbError> {
-        // Get cached table data
-        let cached_data = self
-            .get(table_id)
-            .ok_or_else(|| KalamDbError::TableNotFound(format!("Table not found: {}", table_id)))?;
+        // Fast path: check cache
+        if let Some(cached) = self.get(table_id) {
+            return cached.arrow_schema();
+        }
 
-        // Delegate to CachedTableData's double-check locking implementation
-        cached_data.arrow_schema()
+        // Slow path: try to load from persistence (lazy loading)
+        if let Some(table_def) = self.get_table_definition(table_id)? {
+            log::debug!("Lazy loading table definition for {}", table_id);
+            
+            // Reconstruct CachedTableData
+            // Extract storage_id from options
+            let storage_id = match &table_def.table_options {
+                kalamdb_commons::models::schemas::TableOptions::User(opts) => Some(opts.storage_id.clone()),
+                kalamdb_commons::models::schemas::TableOptions::Shared(opts) => Some(opts.storage_id.clone()),
+                kalamdb_commons::models::schemas::TableOptions::Stream(_) => Some(kalamdb_commons::models::StorageId::from("local")), // Default for streams
+                kalamdb_commons::models::schemas::TableOptions::System(_) => None,
+            };
+
+            let mut data = CachedTableData::new(table_def.clone());
+            
+            if let Some(sid) = storage_id {
+                data.storage_id = Some(sid.clone());
+                // Resolve template
+                match self.resolve_storage_path_template(
+                    &table_id.namespace_id(),
+                    &table_id.table_name(),
+                    table_def.table_type,
+                    &sid,
+                ) {
+                    Ok(template) => data.storage_path_template = template,
+                    Err(e) => log::warn!("Failed to resolve storage path template during lazy load for {}: {}", table_id, e),
+                }
+            }
+
+            let data_arc = Arc::new(data);
+            self.insert(table_id.clone(), data_arc.clone());
+            
+            return data_arc.arrow_schema();
+        }
+
+        Err(KalamDbError::TableNotFound(format!("Table not found: {}", table_id)))
     }
 
     /// Get Bloom filter column names for a table (PRIMARY KEY columns + _seq)
