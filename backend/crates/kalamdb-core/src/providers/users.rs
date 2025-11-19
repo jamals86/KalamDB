@@ -24,8 +24,8 @@ use datafusion::error::{DataFusionError, Result as DataFusionResult};
 use datafusion::logical_expr::Expr;
 use datafusion::physical_plan::ExecutionPlan;
 use kalamdb_commons::ids::UserTableRowId;
-use kalamdb_commons::models::UserId;
-use kalamdb_commons::{Role, TableId};
+use kalamdb_commons::models::{KTableRow, UserId};
+use kalamdb_commons::{Role, StorageKey, TableId};
 use kalamdb_store::entity_store::EntityStore;
 use kalamdb_tables::{UserTableRow, UserTableStore};
 use serde_json::Value as JsonValue;
@@ -78,41 +78,6 @@ impl UserTableProvider {
     /// Get the primary key field name
     pub fn primary_key_field_name(&self) -> &str {
         &self.primary_key_field_name
-    }
-
-    /// Return a snapshot of all rows as JSON objects (no RLS filtering)
-    ///
-    /// Used by live initial snapshot where we need table-wide data. RLS is
-    /// enforced at the WebSocket layer so this method intentionally returns
-    /// all rows for the table.
-    ///
-    /// Returns rows with user_id field injected, matching notification format.
-    pub fn snapshot_all_rows_json(&self) -> Result<Vec<JsonValue>, KalamDbError> {
-        use kalamdb_store::entity_store::EntityStore;
-        let rows = self.store.scan_all().map_err(|e| {
-            KalamDbError::InvalidOperation(format!("Failed to scan user table store: {}", e))
-        })?;
-        let count = rows.len();
-        let table_id = self.core.table_id();
-        log::debug!(
-            "[UserTableProvider] snapshot_all_rows_json: table={}.{} rows={}",
-            table_id.namespace_id().as_str(),
-            table_id.table_name().as_str(),
-            count
-        );
-
-        // Build flat row JSON: fields + user_id (matching notification format)
-        Ok(rows
-            .into_iter()
-            .map(|(_k, row)| {
-                let mut obj = row.fields.as_object().cloned().unwrap_or_default();
-                obj.insert(
-                    "user_id".to_string(),
-                    serde_json::json!(row.user_id.as_str()),
-                );
-                serde_json::Value::Object(obj)
-            })
-            .collect())
     }
 
     /// Extract user context from DataFusion SessionState
@@ -173,11 +138,15 @@ impl UserTableProvider {
     fn scan_all_users_with_version_resolution(
         &self,
         _filter: Option<&Expr>,
+        limit: Option<usize>,
     ) -> Result<Vec<(UserTableRowId, UserTableRow)>, KalamDbError> {
         let table_id = self.core.table_id();
         
         // 1) Scan ALL hot storage (RocksDB) without per-user filtering
-        let raw_all = self.store.scan_all().map_err(|e| {
+        // Use limit if provided, otherwise default to 100,000
+        let scan_limit = limit.map(|l| std::cmp::max(l * 2, 1000)).unwrap_or(100_000);
+        
+        let raw_all = self.store.scan_limited_with_prefix_and_start(None, None, scan_limit).map_err(|e| {
             KalamDbError::InvalidOperation(format!("Failed to scan user table hot storage: {}", e))
         })?;
         let hot_rows: Vec<(UserTableRowId, UserTableRow)> = raw_all
@@ -244,7 +213,14 @@ impl UserTableProvider {
 
         // 3) Version resolution: keep MAX(_seq) per primary key; honor tombstones
         let pk_name = self.primary_key_field_name().to_string();
-        let result = merge_versioned_rows(&pk_name, hot_rows, all_cold_rows);
+        let mut result = merge_versioned_rows(&pk_name, hot_rows, all_cold_rows);
+
+        // Apply limit after resolution
+        if let Some(l) = limit {
+            if result.len() > l {
+                result.truncate(l);
+            }
+        }
 
         if log::log_enabled!(log::Level::Trace) {
             log::trace!(
@@ -490,18 +466,27 @@ impl BaseTableProvider<UserTableRowId, UserTableRow> for UserTableProvider {
     fn scan_rows(
         &self,
         state: &dyn Session,
+        projection: Option<&Vec<usize>>,
         filter: Option<&Expr>,
+        limit: Option<usize>,
     ) -> Result<RecordBatch, KalamDbError> {
         // Extract user_id and role from SessionState for RLS
         let (user_id, role) = Self::extract_user_context(state)?;
 
+        // Extract sequence bounds from filter to optimize RocksDB scan
+        let (since_seq, _until_seq) = if let Some(expr) = filter {
+            base::extract_seq_bounds_from_filter(expr)
+        } else {
+            (None, None)
+        };
+
         // Service/DBA/System role sees all users' data; regular users only see their own
         let kvs = if matches!(role, Role::Service | Role::Dba | Role::System) {
             // Service/admin roles: scan ALL users (no RLS filtering)
-            self.scan_all_users_with_version_resolution(filter)?
+            self.scan_all_users_with_version_resolution(filter, limit)?
         } else {
             // Regular user: scan only their own data (RLS enforced)
-            self.scan_with_version_resolution_to_kvs(&user_id, filter)?
+            self.scan_with_version_resolution_to_kvs(&user_id, filter, since_seq, limit)?
         };
 
         let table_id = self.core.table_id();
@@ -514,24 +499,51 @@ impl BaseTableProvider<UserTableRowId, UserTableRow> for UserTableProvider {
             table_id.table_name().as_str()
         );
 
-        // Convert rows to JSON values aligned with current schema
+        // Convert rows to JSON values aligned with schema
         let schema = self.schema_ref();
-        crate::providers::base::rows_to_arrow_batch(&schema, kvs, |_, _| {})
+        crate::providers::base::rows_to_arrow_batch(&schema, kvs, projection, |_, _| {})
     }
 
     fn scan_with_version_resolution_to_kvs(
         &self,
         user_id: &UserId,
         _filter: Option<&Expr>,
+        since_seq: Option<kalamdb_commons::ids::SeqId>,
+        limit: Option<usize>,
     ) -> Result<Vec<(UserTableRowId, UserTableRow)>, KalamDbError> {
         let table_id = self.core.table_id();
-        // 1) Scan hot storage (RocksDB) with per-user filtering
-        let raw_all = self.store.scan_all().map_err(|e| {
-            KalamDbError::InvalidOperation(format!("Failed to scan user table hot storage: {}", e))
-        })?;
+        // 1) Scan hot storage (RocksDB) with per-user filtering using prefix scan
+        let user_bytes = user_id.as_str().as_bytes();
+        let len = (user_bytes.len().min(255)) as u8;
+        let mut prefix = Vec::with_capacity(1 + len as usize);
+        prefix.push(len);
+        prefix.extend_from_slice(&user_bytes[..len as usize]);
+
+        // Construct start_key if since_seq is provided
+        let start_key_bytes = if let Some(seq) = since_seq {
+            // since_seq is exclusive, so start at seq + 1
+            let start_seq = kalamdb_commons::ids::SeqId::from(seq.as_i64() + 1);
+            let key = UserTableRowId::new(user_id.clone(), start_seq);
+            Some(key.storage_key())
+        } else {
+            None
+        };
+
+        // Use limit if provided, otherwise default to 100,000
+        let scan_limit = limit.map(|l| std::cmp::max(l * 2, 1000)).unwrap_or(100_000);
+
+        let raw_all = self
+            .store
+            .scan_limited_with_prefix_and_start(Some(&prefix), start_key_bytes.as_deref(), scan_limit)
+            .map_err(|e| {
+                KalamDbError::InvalidOperation(format!(
+                    "Failed to scan user table hot storage: {}",
+                    e
+                ))
+            })?;
+
         let hot_rows: Vec<(UserTableRowId, UserTableRow)> = raw_all
             .into_iter()
-            .filter(|(_k, r)| &r.user_id == user_id)
             .filter_map(|(key_bytes, row)| {
                 match kalamdb_commons::ids::UserTableRowId::from_bytes(&key_bytes) {
                     Ok(k) => Some((k, row)),
@@ -582,7 +594,14 @@ impl BaseTableProvider<UserTableRowId, UserTableRow> for UserTableProvider {
 
         // 3) Version resolution: keep MAX(_seq) per primary key; honor tombstones
         let pk_name = self.primary_key_field_name().to_string();
-        let result = merge_versioned_rows(&pk_name, hot_rows, cold_rows);
+        let mut result = merge_versioned_rows(&pk_name, hot_rows, cold_rows);
+
+        // Apply limit after resolution
+        if let Some(l) = limit {
+            if result.len() > l {
+                result.truncate(l);
+            }
+        }
 
         if log::log_enabled!(log::Level::Trace) {
             log::trace!(
@@ -674,11 +693,26 @@ impl TableProvider for UserTableProvider {
         // Note: RLS enforcement happens at file selection level (user_id directory path)
         // and at RocksDB scan level (prefix scan by user_id)
         //
+        
+        // Optimization: Pass projection to scan_rows ONLY if filters is empty.
+        let effective_projection = if filters.is_empty() {
+            projection
+        } else {
+            None
+        };
+
         let batch = self
-            .scan_rows(state, combined_filter.as_ref())
+            .scan_rows(state, effective_projection, combined_filter.as_ref(), limit)
             .map_err(|e| DataFusionError::Execution(format!("scan_rows failed: {}", e)))?;
 
-        let mem = MemTable::try_new(self.schema_ref(), vec![vec![batch]])?;
-        mem.scan(state, projection, filters, limit).await
+        let mem = MemTable::try_new(batch.schema(), vec![vec![batch]])?;
+        
+        let final_projection = if filters.is_empty() {
+            None
+        } else {
+            projection
+        };
+
+        mem.scan(state, final_projection, filters, limit).await
     }
 }

@@ -295,6 +295,28 @@ mod tests {
             .unwrap();
         assert_eq!(ts_col.value(0), 1609459200000i64);
     }
+
+    #[test]
+    fn test_record_batch_to_json_rows_basic() {
+        let schema = Arc::new(Schema::new(vec![
+            Field::new("id", DataType::Int64, false),
+            Field::new("name", DataType::Utf8, true),
+        ]));
+
+        let json_rows = vec![
+            json!({"id": 1, "name": "Alice"}),
+            json!({"id": 2, "name": null}),
+            json!({"id": 3, "name": "Charlie"}),
+        ];
+
+        let batch = json_rows_to_arrow_batch(&schema, json_rows).unwrap();
+        let json_output = record_batch_to_json_rows(&batch).unwrap();
+
+        assert_eq!(json_output.len(), 3);
+        assert_eq!(json_output[0], json!({"id": 1, "name": "Alice"}));
+        assert_eq!(json_output[1], json!({"id": 2, "name": null}));
+        assert_eq!(json_output[2], json!({"id": 3, "name": "Charlie"}));
+    }
 }
 
 /// Add system columns to an Arrow schema if they don't already exist
@@ -442,4 +464,38 @@ pub fn arrow_value_to_json(
             Ok(JsonValue::String(format!("{:?}", array.slice(row_idx, 1))))
         }
     }
+}
+
+/// Convert Arrow RecordBatch to vector of JSON objects
+///
+/// This is used for converting query results back to JSON format
+/// for API responses or internal processing.
+///
+/// # Arguments
+/// * `batch` - Arrow RecordBatch
+///
+/// # Returns
+/// Vector of JSON objects (one per row)
+pub fn record_batch_to_json_rows(
+    batch: &RecordBatch,
+) -> Result<Vec<JsonValue>, datafusion::error::DataFusionError> {
+    let mut rows = Vec::with_capacity(batch.num_rows());
+    let schema = batch.schema();
+    let num_rows = batch.num_rows();
+    let num_cols = batch.num_columns();
+
+    for row_idx in 0..num_rows {
+        let mut row_map = serde_json::Map::with_capacity(num_cols);
+
+        for col_idx in 0..num_cols {
+            let field = schema.field(col_idx);
+            let col = batch.column(col_idx);
+            let value = arrow_value_to_json(col.as_ref(), row_idx)?;
+            row_map.insert(field.name().clone(), value);
+        }
+
+        rows.push(JsonValue::Object(row_map));
+    }
+
+    Ok(rows)
 }

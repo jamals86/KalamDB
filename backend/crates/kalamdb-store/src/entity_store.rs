@@ -233,7 +233,7 @@ where
         let partition = Partition::new(self.partition());
         let iter = self
             .backend()
-            .scan(&partition, Some(&prefix.storage_key()), None)?;
+            .scan(&partition, Some(&prefix.storage_key()), None, None)?;
 
         let mut results = Vec::new();
         for (key_bytes, value_bytes) in iter {
@@ -258,7 +258,7 @@ where
         // Place a hard limit to bypass scanning massive tables into memory
         const MAX_SCAN_LIMIT: usize = 100000;
         let partition = Partition::new(self.partition());
-        let iter = self.backend().scan(&partition, None, None)?;
+        let iter = self.backend().scan(&partition, None, None, None)?;
 
         let mut count = 0;
         let mut results = Vec::new();
@@ -292,8 +292,20 @@ where
         prefix: Option<&[u8]>,
         limit: usize,
     ) -> Result<Vec<(Vec<u8>, V)>> {
+        self.scan_limited_with_prefix_and_start(prefix, None, limit)
+    }
+
+    /// Scans entities with limit, optional prefix, and optional start key.
+    fn scan_limited_with_prefix_and_start(
+        &self,
+        prefix: Option<&[u8]>,
+        start_key: Option<&[u8]>,
+        limit: usize,
+    ) -> Result<Vec<(Vec<u8>, V)>> {
         let partition = Partition::new(self.partition());
-        let iter = self.backend().scan(&partition, prefix, Some(limit))?;
+        let iter = self
+            .backend()
+            .scan(&partition, prefix, start_key, Some(limit))?;
 
         let mut results = Vec::with_capacity(limit);
         for (key_bytes, value_bytes) in iter {

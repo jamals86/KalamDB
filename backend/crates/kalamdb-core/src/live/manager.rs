@@ -9,6 +9,8 @@ use super::connection_registry::{
 use super::filter::{FilterCache, FilterPredicate};
 use super::initial_data::{InitialDataFetcher, InitialDataOptions, InitialDataResult};
 use crate::error::KalamDbError;
+use crate::sql::executor::SqlExecutor;
+use datafusion::execution::context::SessionContext;
 use kalamdb_commons::models::{NamespaceId, TableId, TableName, UserId};
 use kalamdb_system::LiveQueriesTableProvider;
 // SchemaRegistry will be passed as Arc parameter from kalamdb-core
@@ -34,14 +36,14 @@ impl LiveQueryManager {
         live_queries_provider: Arc<LiveQueriesTableProvider>,
         schema_registry: Arc<crate::schema_registry::SchemaRegistry>,
         node_id: NodeId,
-        backend: Option<Arc<dyn kalamdb_store::StorageBackend>>,
+        base_session_context: Arc<SessionContext>,
     ) -> Self {
         let registry = Arc::new(tokio::sync::RwLock::new(LiveQueryRegistry::new(
             node_id.clone(),
         )));
         let filter_cache = Arc::new(tokio::sync::RwLock::new(FilterCache::new()));
         let initial_data_fetcher =
-            Arc::new(InitialDataFetcher::new(backend, schema_registry.clone()));
+            Arc::new(InitialDataFetcher::new(base_session_context, schema_registry.clone()));
 
         Self {
             registry,
@@ -56,6 +58,11 @@ impl LiveQueryManager {
     /// Get the node_id for this manager
     pub fn node_id(&self) -> &NodeId {
         &self.node_id
+    }
+
+    /// Provide shared SqlExecutor so initial data fetches reuse common execution path
+    pub fn set_sql_executor(&self, executor: Arc<SqlExecutor>) {
+        self.initial_data_fetcher.set_sql_executor(executor);
     }
 
     /// Get current timestamp in milliseconds
@@ -952,8 +959,10 @@ pub struct RegistryStats {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::app_context::AppContext;
     use crate::schema_registry::SchemaRegistry;
-    use crate::test_helpers::init_test_app_context;
+    use crate::sql::executor::SqlExecutor;
+    use crate::test_helpers::{create_test_session, init_test_app_context};
     use kalamdb_commons::datatypes::KalamDataType;
     use kalamdb_commons::models::TableId;
     use kalamdb_commons::schemas::{ColumnDefinition, TableDefinition, TableOptions, TableType};
@@ -973,6 +982,8 @@ mod tests {
 
         let live_queries_provider = Arc::new(LiveQueriesTableProvider::new(backend.clone()));
         let schema_registry = Arc::new(SchemaRegistry::new(128));
+        let base_session_context = create_test_session();
+        schema_registry.set_base_session_context(Arc::clone(&base_session_context));
 
         // Create table stores for testing (using default namespace and table)
         let test_namespace = NamespaceId::new("user1");
@@ -1070,8 +1081,11 @@ mod tests {
             live_queries_provider,
             schema_registry,
             NodeId::from("test_node"),
-            Some(backend.clone()),
+            base_session_context,
         );
+        let app_ctx = AppContext::get();
+        let sql_executor = Arc::new(SqlExecutor::new(app_ctx, false));
+        manager.set_sql_executor(sql_executor);
         (manager, temp_dir)
     }
 

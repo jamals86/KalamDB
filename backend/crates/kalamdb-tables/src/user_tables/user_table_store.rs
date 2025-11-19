@@ -8,7 +8,7 @@
 //! - Storage key format: {user_id}:{_seq} (big-endian bytes)
 
 use kalamdb_commons::ids::{SeqId, UserTableRowId};
-use kalamdb_commons::models::{NamespaceId, TableName, UserId};
+use kalamdb_commons::models::{KTableRow, NamespaceId, TableName, UserId};
 use kalamdb_store::StorageBackend;
 use kalamdb_system::system_table_store::SystemTableStore;
 use serde::{Deserialize, Serialize};
@@ -25,6 +25,17 @@ pub struct UserTableRow {
     pub _seq: SeqId,
     pub _deleted: bool,
     pub fields: serde_json::Value, // All user-defined columns including PK
+}
+
+impl From<UserTableRow> for KTableRow {
+    fn from(row: UserTableRow) -> Self {
+        KTableRow {
+            user_id: row.user_id,
+            _seq: row._seq,
+            _deleted: row._deleted,
+            fields: row.fields,
+        }
+    }
 }
 
 /// Type alias for user table store (extends SystemTableStore)

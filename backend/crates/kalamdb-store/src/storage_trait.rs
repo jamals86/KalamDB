@@ -224,11 +224,13 @@ pub trait StorageBackend: Send + Sync {
     ///
     /// ## Parameters
     /// - `prefix`: If Some, only return keys starting with this prefix
+    /// - `start_key`: If Some, start scanning from this key (inclusive). Must be >= prefix if both are set.
     /// - `limit`: If Some, return at most this many entries
     fn scan(
         &self,
         partition: &Partition,
         prefix: Option<&[u8]>,
+        start_key: Option<&[u8]>,
         limit: Option<usize>,
     ) -> Result<kalamdb_commons::storage::KvIterator<'_>>;
 

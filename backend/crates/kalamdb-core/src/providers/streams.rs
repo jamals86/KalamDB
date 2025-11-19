@@ -11,7 +11,10 @@
 //! - HOT-ONLY storage (RocksDB, no Parquet merging)
 //! - TTL-based eviction in scan operations
 
-use super::base::{BaseTableProvider, TableProviderCore};
+use super::base::{
+    extract_seq_bounds_from_filter, inject_system_columns, BaseTableProvider, ScanRow,
+    TableProviderCore,
+};
 use crate::app_context::AppContext;
 use crate::error::KalamDbError;
 use crate::schema_registry::TableType;
@@ -25,8 +28,8 @@ use datafusion::error::{DataFusionError, Result as DataFusionResult};
 use datafusion::logical_expr::Expr;
 use datafusion::physical_plan::ExecutionPlan;
 use kalamdb_commons::ids::StreamTableRowId;
-use kalamdb_commons::models::UserId;
-use kalamdb_commons::{Role, TableId};
+use kalamdb_commons::models::{KTableRow, UserId};
+use kalamdb_commons::{Role, StorageKey, TableId};
 use kalamdb_store::entity_store::EntityStore;
 use kalamdb_tables::{StreamTableRow, StreamTableStore};
 use serde_json::Value as JsonValue;
@@ -86,28 +89,6 @@ impl StreamTableProvider {
     /// Expose the underlying store (used by maintenance jobs such as stream eviction)
     pub fn store_arc(&self) -> Arc<StreamTableStore> {
         self.store.clone()
-    }
-
-    /// Return a snapshot of all rows as JSON objects (no RLS filtering)
-    ///
-    /// Used by live initial snapshot where we need table-wide data. RLS is
-    /// enforced at the WebSocket layer so this method intentionally returns
-    /// all rows for the table.
-    pub fn snapshot_all_rows_json(&self) -> Result<Vec<JsonValue>, KalamDbError> {
-        use kalamdb_store::entity_store::EntityStore;
-        let rows = self.store.scan_all().map_err(|e| {
-            KalamDbError::InvalidOperation(format!("Failed to scan stream store: {}", e))
-        })?;
-        let count = rows.len();
-        let table_id = self.core.table_id();
-        log::debug!(
-            "[StreamProvider] snapshot_all_rows_json: table={}.{} rows={} ttl={:?}",
-            table_id.namespace_id().as_str(),
-            table_id.table_name().as_str(),
-            count,
-            self.ttl_seconds
-        );
-        Ok(rows.into_iter().map(|(_k, r)| r.fields).collect())
     }
 
     /// Extract user context from DataFusion SessionState
@@ -309,13 +290,22 @@ impl BaseTableProvider<StreamTableRowId, StreamTableRow> for StreamTableProvider
     fn scan_rows(
         &self,
         state: &dyn Session,
+        projection: Option<&Vec<usize>>,
         filter: Option<&Expr>,
+        limit: Option<usize>,
     ) -> Result<RecordBatch, KalamDbError> {
         // Extract user_id from SessionState for RLS
         let (user_id, _role) = Self::extract_user_context(state)?;
 
+        // Extract sequence bounds from filter to optimize RocksDB scan
+        let (since_seq, _until_seq) = if let Some(expr) = filter {
+            extract_seq_bounds_from_filter(expr)
+        } else {
+            (None, None)
+        };
+
         // Perform KV scan (hot-only) and convert to batch
-        let kvs = self.scan_with_version_resolution_to_kvs(&user_id, filter)?;
+        let kvs = self.scan_with_version_resolution_to_kvs(&user_id, filter, since_seq, limit)?;
         let table_id = self.core.table_id();
         log::debug!(
             "[StreamProvider] scan_rows: table={} rows={} user={} ttl={:?}",
@@ -331,7 +321,7 @@ impl BaseTableProvider<StreamTableRowId, StreamTableRow> for StreamTableProvider
 
         let schema = self.schema_ref();
         let has_user = schema.field_with_name("user_id").is_ok();
-        crate::providers::base::rows_to_arrow_batch(&schema, kvs, |obj, row| {
+        crate::providers::base::rows_to_arrow_batch(&schema, kvs, projection, |obj, row| {
             if has_user {
                 obj.insert("user_id".to_string(), json!(row.user_id.as_str()));
             }
@@ -342,6 +332,8 @@ impl BaseTableProvider<StreamTableRowId, StreamTableRow> for StreamTableProvider
         &self,
         user_id: &UserId,
         _filter: Option<&Expr>,
+        since_seq: Option<kalamdb_commons::ids::SeqId>,
+        limit: Option<usize>,
     ) -> Result<Vec<(StreamTableRowId, StreamTableRow)>, KalamDbError> {
         let table_id = self.core.table_id();
         // 1) Scan ONLY RocksDB (hot storage) with user_id prefix filter
@@ -350,6 +342,16 @@ impl BaseTableProvider<StreamTableRowId, StreamTableRow> for StreamTableProvider
         let mut prefix = Vec::with_capacity(1 + len as usize);
         prefix.push(len);
         prefix.extend_from_slice(&user_bytes[..len as usize]);
+
+        // Construct start_key if since_seq is provided
+        let start_key_bytes = if let Some(seq) = since_seq {
+            // since_seq is exclusive, so start at seq + 1
+            let start_seq = kalamdb_commons::ids::SeqId::from(seq.as_i64() + 1);
+            let key = StreamTableRowId::new(user_id.clone(), start_seq);
+            Some(key.storage_key())
+        } else {
+            None
+        };
 
         let ttl_ms = self.ttl_seconds.map(|s| s * 1000);
         let now_ms = std::time::SystemTime::now()
@@ -366,9 +368,12 @@ impl BaseTableProvider<StreamTableRowId, StreamTableRow> for StreamTableProvider
             now_ms
         );
 
+        // Use limit if provided, otherwise default to 100,000
+        let scan_limit = limit.map(|l| std::cmp::max(l * 2, 1000)).unwrap_or(100_000);
+
         let raw = self
             .store
-            .scan_limited_with_prefix_bytes(Some(&prefix), 100_000)
+            .scan_limited_with_prefix_and_start(Some(&prefix), start_key_bytes.as_deref(), scan_limit)
             .map_err(|e| {
                 KalamDbError::InvalidOperation(format!(
                     "Failed to scan stream table hot storage: {}",
@@ -411,6 +416,13 @@ impl BaseTableProvider<StreamTableRowId, StreamTableRow> for StreamTableProvider
 
             if keep {
                 results.push((key, row));
+            }
+        }
+
+        // Apply limit after TTL filtering
+        if let Some(l) = limit {
+            if results.len() > l {
+                results.truncate(l);
             }
         }
 
@@ -474,12 +486,40 @@ impl TableProvider for StreamTableProvider {
             filters.len(),
             limit
         );
+
+        // Combine filters (AND) for pruning and pass to scan_rows
+        let combined_filter: Option<Expr> = if filters.is_empty() {
+            None
+        } else {
+            let first = filters[0].clone();
+            Some(
+                filters[1..]
+                    .iter()
+                    .cloned()
+                    .fold(first, |acc, e| acc.and(e)),
+            )
+        };
+        
+        // Optimization: Pass projection to scan_rows ONLY if filters is empty.
+        let effective_projection = if filters.is_empty() {
+            projection
+        } else {
+            None
+        };
+
         let batch = self
-            .scan_rows(state, None)
+            .scan_rows(state, effective_projection, combined_filter.as_ref(), limit)
             .map_err(|e| DataFusionError::Execution(format!("scan_rows failed: {}", e)))?;
 
-        let mem = MemTable::try_new(self.schema_ref(), vec![vec![batch]])?;
-        let plan = mem.scan(state, projection, filters, limit).await?;
+        let mem = MemTable::try_new(batch.schema(), vec![vec![batch]])?;
+        
+        let final_projection = if filters.is_empty() {
+            None
+        } else {
+            projection
+        };
+
+        let plan = mem.scan(state, final_projection, filters, limit).await?;
         log::debug!(
             "[StreamProvider] scan planned: table={}.{}",
             self.core.table_id().namespace_id().as_str(),

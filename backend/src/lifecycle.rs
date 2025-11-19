@@ -164,6 +164,9 @@ pub async fn bootstrap(
         config.auth.enforce_password_complexity,
     ));
 
+    app_context.set_sql_executor(sql_executor.clone());
+    live_query_manager.set_sql_executor(sql_executor.clone());
+
     info!(
         "SqlExecutor initialized with DROP TABLE support, storage registry, job manager, and table registration"
     );

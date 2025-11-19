@@ -104,6 +104,7 @@ impl StorageBackend for InMemoryBackend {
         &self,
         partition: &Partition,
         prefix: Option<&[u8]>,
+        start_key: Option<&[u8]>,
         limit: Option<usize>,
     ) -> crate::storage_trait::Result<kalamdb_commons::storage::KvIterator<'_>> {
         let data = self.data.read().unwrap();
@@ -113,11 +114,17 @@ impl StorageBackend for InMemoryBackend {
                 let mut items: Vec<_> = map
                     .iter()
                     .filter(|(k, _)| {
-                        if let Some(prefix) = prefix {
+                        let prefix_match = if let Some(prefix) = prefix {
                             k.starts_with(prefix)
                         } else {
                             true
-                        }
+                        };
+                        let start_match = if let Some(start) = start_key {
+                            k.as_slice() >= start
+                        } else {
+                            true
+                        };
+                        prefix_match && start_match
                     })
                     .map(|(k, v)| (k.clone(), v.clone()))
                     .collect();

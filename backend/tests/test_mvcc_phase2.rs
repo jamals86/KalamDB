@@ -158,14 +158,14 @@ async fn test_insert_storage_key_format() {
         )
         .await;
 
-    // Create shared table
+    // Create shared table with system privileges
     server
         .execute_sql_as_user(
             r#"CREATE SHARED TABLE test_ns.shared_data (
                 id TEXT PRIMARY KEY,
                 content TEXT
             ) STORAGE local"#,
-            "user1",
+            "system",
         )
         .await;
 
@@ -297,7 +297,7 @@ async fn test_user_table_row_structure() {
 async fn test_shared_table_row_structure() {
     let server = TestServer::new().await;
 
-    // Setup
+    // Setup - namespace and shared table created via system user
     fixtures::create_namespace(&server, "test_ns").await;
     server
         .execute_sql_as_user(
@@ -306,7 +306,7 @@ async fn test_shared_table_row_structure() {
                 value TEXT,
                 enabled BOOLEAN
             ) STORAGE local"#,
-            "user1",
+            "system",
         )
         .await;
 

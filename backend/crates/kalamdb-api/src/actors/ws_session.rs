@@ -66,8 +66,8 @@ pub struct WebSocketSession {
     pub subscriptions: Vec<String>,
 
     /// Subscription metadata cache for batch fetching
-    /// Maps subscription_id -> (sql, user_id)
-    pub subscription_metadata: HashMap<String, (String, UserId)>,
+    /// Maps subscription_id -> (sql, user_id, snapshot_end_seq, batch_size)
+    pub subscription_metadata: HashMap<String, (String, UserId, Option<kalamdb_commons::ids::SeqId>, usize)>,
 }
 
 impl WebSocketSession {
@@ -256,7 +256,10 @@ impl StreamHandler<Result<ws::Message, ws::ProtocolError>> for WebSocketSession 
                                         .map(|s| crate::models::Subscription {
                                             id: s.id,
                                             sql: s.sql,
-                                            options: crate::models::SubscriptionOptions::default(),
+                                            options: crate::models::SubscriptionOptions {
+                                                last_rows: None,
+                                                batch_size: s.options.batch_size,
+                                            },
                                         })
                                         .collect(),
                                 };
@@ -264,14 +267,9 @@ impl StreamHandler<Result<ws::Message, ws::ProtocolError>> for WebSocketSession 
                             }
                             ClientMessage::NextBatch {
                                 subscription_id,
-                                batch_num,
+                                last_seq_id,
                             } => {
-                                #[allow(deprecated)]
-                                let batch_req = kalamdb_commons::websocket::NextBatchRequest {
-                                    subscription_id,
-                                    batch_num,
-                                };
-                                self.handle_next_batch_request(ctx, batch_req);
+                                self.handle_next_batch_request(ctx, subscription_id, last_seq_id);
                             }
                             ClientMessage::Unsubscribe { subscription_id } => {
                                 // TODO: Implement unsubscribe logic
@@ -393,7 +391,9 @@ impl WebSocketSession {
         }
 
         // Use batch-based loading: first batch only
-        let initial_data_options = Some(InitialDataOptions::batch(0, MAX_ROWS_PER_BATCH));
+        // We pass None for since_seq and until_seq to start from beginning and determine snapshot boundary
+        let batch_size = subscription.options.batch_size.unwrap_or(MAX_ROWS_PER_BATCH);
+        let initial_data_options = Some(InitialDataOptions::batch(None, None, batch_size));
 
         let manager = self.live_query_manager.clone();
         let rate_limiter = self.rate_limiter.clone();
@@ -430,7 +430,9 @@ impl WebSocketSession {
                         act.subscriptions.push(sub_id.clone());
 
                         // Store subscription metadata for batch fetching
-                        act.subscription_metadata.insert(sub_id.clone(), (sql_for_metadata, user_clone.clone()));
+                        // We store the snapshot_end_seq returned by the first fetch
+                        let snapshot_end_seq = sub_result.initial_data.as_ref().and_then(|d| d.snapshot_end_seq);
+                        act.subscription_metadata.insert(sub_id.clone(), (sql_for_metadata, user_clone.clone(), snapshot_end_seq, batch_size));
 
                         if let Some(ref limiter) = rate_limiter {
                             limiter.increment_subscription(&user_clone);
@@ -438,11 +440,16 @@ impl WebSocketSession {
 
                         // Send subscription acknowledgement with batch control
                         if let Some(initial) = sub_result.initial_data {
-                            let total_rows = initial.total_available as u32;
-                            let batch_control = BatchControl::for_batch(
-                                initial.batch_num.unwrap_or(0),
-                                initial.total_batches.unwrap_or(1),
-                            );
+                            // total_rows is unknown with lazy loading, set to 0
+                            let total_rows = 0;
+                            let batch_control = BatchControl {
+                                batch_num: 0,
+                                total_batches: None,
+                                has_more: initial.has_more,
+                                status: if initial.has_more { BatchStatus::Loading } else { BatchStatus::Ready },
+                                last_seq_id: initial.last_seq,
+                                snapshot_end_seq: initial.snapshot_end_seq,
+                            };
 
                             let ack = WebSocketMessage::subscription_ack(
                                 sub_id.clone(),
@@ -480,9 +487,11 @@ impl WebSocketSession {
                             // No initial data (empty table)
                             let batch_control = BatchControl {
                                 batch_num: 0,
-                                total_batches: 0,
+                                total_batches: Some(0),
                                 has_more: false,
                                 status: BatchStatus::Ready,
+                                last_seq_id: None,
+                                snapshot_end_seq: None,
                             };
                             let ack = WebSocketMessage::subscription_ack(
                                 sub_id.clone(),
@@ -514,23 +523,24 @@ impl WebSocketSession {
     fn handle_next_batch_request(
         &mut self,
         ctx: &mut ws::WebsocketContext<Self>,
-        batch_req: kalamdb_commons::websocket::NextBatchRequest,
+        subscription_id: String,
+        last_seq_id: Option<kalamdb_commons::ids::SeqId>,
     ) {
-        use kalamdb_commons::websocket::{BatchControl, MAX_ROWS_PER_BATCH};
+        use kalamdb_commons::websocket::{BatchControl, BatchStatus};
 
         info!(
-            "Next batch request: sub_id={}, batch_num={}",
-            batch_req.subscription_id, batch_req.batch_num
+            "Next batch request: sub_id={}, last_seq_id={:?}",
+            subscription_id, last_seq_id
         );
 
         // Verify subscription exists
-        if !self.subscriptions.contains(&batch_req.subscription_id) {
+        if !self.subscriptions.contains(&subscription_id) {
             warn!(
                 "Next batch request for unknown subscription: {}",
-                batch_req.subscription_id
+                subscription_id
             );
             let error_msg = Notification::error(
-                batch_req.subscription_id.clone(),
+                subscription_id.clone(),
                 "SUBSCRIPTION_NOT_FOUND".to_string(),
                 "Subscription not found for this connection".to_string(),
             );
@@ -542,9 +552,8 @@ impl WebSocketSession {
 
         // Fetch the requested batch via LiveQueryManager
         let manager = self.live_query_manager.clone();
-        let sub_id = batch_req.subscription_id.clone();
+        let sub_id = subscription_id.clone();
         let sub_id_for_result = sub_id.clone();
-        let batch_num = batch_req.batch_num;
 
         // Get subscription metadata
         let metadata = match self.subscription_metadata.get(&sub_id).cloned() {
@@ -563,12 +572,12 @@ impl WebSocketSession {
             }
         };
 
-        let (sql, user_id) = metadata;
+        let (sql, user_id, snapshot_end_seq, batch_size) = metadata;
 
         ctx.wait(
             fut::wrap_future(async move {
                 // Fetch next batch of data
-                let initial_data_options = Some(InitialDataOptions::batch(batch_num, MAX_ROWS_PER_BATCH));
+                let initial_data_options = Some(InitialDataOptions::batch(last_seq_id, snapshot_end_seq, batch_size));
                 let result = manager
                     .fetch_initial_data_batch(
                         &sql,
@@ -583,10 +592,14 @@ impl WebSocketSession {
                 match result {
                     Ok((initial, sub_id)) => {
                         // Send the batch data
-                        let batch_control = BatchControl::for_batch(
-                            initial.batch_num.unwrap_or(batch_num),
-                            initial.total_batches.unwrap_or(1),
-                        );
+                        let batch_control = BatchControl {
+                            batch_num: 0, // Dummy value
+                            total_batches: None,
+                            has_more: initial.has_more,
+                            status: if initial.has_more { BatchStatus::LoadingBatch } else { BatchStatus::Ready },
+                            last_seq_id: initial.last_seq,
+                            snapshot_end_seq: initial.snapshot_end_seq,
+                        };
 
                         let rows: Vec<std::collections::HashMap<String, serde_json::Value>> =
                             initial
@@ -609,8 +622,7 @@ impl WebSocketSession {
                         
                         if let Ok(json) = serde_json::to_string(&batch_msg) {
                             debug!(
-                                "Sending batch {}: {} bytes",
-                                batch_num,
+                                "Sending batch: {} bytes",
                                 json.len()
                             );
                             ctx.text(json);

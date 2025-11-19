@@ -14,6 +14,7 @@
 //! cd cli/kalam-link && cargo test --test integration_tests
 //! ```
 
+use kalam_link::models::{BatchControl, BatchStatus};
 use kalam_link::{AuthProvider, ChangeEvent, KalamLinkClient, KalamLinkError, SubscriptionConfig};
 use std::time::Duration;
 use tokio::time::{sleep, timeout};
@@ -303,6 +304,15 @@ async fn test_subscription_with_custom_config() {
 // Change Event Tests
 // =============================================================================
 
+fn sample_batch_control() -> BatchControl {
+    BatchControl {
+        batch_num: 0,
+        total_batches: 0,
+        has_more: false,
+        status: BatchStatus::Ready,
+    }
+}
+
 #[test]
 fn test_change_event_is_error() {
     let error_event = ChangeEvent::Error {
@@ -328,16 +338,16 @@ fn test_change_event_subscription_id() {
     assert_eq!(insert.subscription_id(), Some("sub-123"));
 
     let ack = ChangeEvent::Ack {
-        subscription_id: None,
-        message: None,
+        subscription_id: "sub-ack".to_string(),
+        total_rows: 0,
+        batch_control: sample_batch_control(),
     };
-    assert_eq!(ack.subscription_id(), None);
+    assert_eq!(ack.subscription_id(), Some("sub-ack"));
 
-    let ack_with_id = ChangeEvent::Ack {
-        subscription_id: Some("sub-456".to_string()),
-        message: None,
+    let unknown = ChangeEvent::Unknown {
+        raw: serde_json::Value::Null,
     };
-    assert_eq!(ack_with_id.subscription_id(), Some("sub-456"));
+    assert_eq!(unknown.subscription_id(), None);
 }
 
 // =============================================================================

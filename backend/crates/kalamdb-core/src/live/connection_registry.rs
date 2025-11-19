@@ -59,7 +59,7 @@ pub struct LiveQueryOptions {
 /// - Changes counter stored in system.live_queries only (persistent storage)
 #[derive(Debug, Clone)]
 pub struct SubscriptionHandle {
-    pub live_id: LiveId,
+    pub live_id: LiveId, //TODO: We already have UserId and TableId separately inside LiveId
     pub user_id: UserId,
     pub table_id: TableId,
     pub connection_id: ConnectionId,

@@ -238,28 +238,57 @@ impl BaseTableProvider<SharedTableRowId, SharedTableRow> for SharedTableProvider
     fn scan_rows(
         &self,
         _state: &dyn Session,
+        projection: Option<&Vec<usize>>,
         filter: Option<&Expr>,
+        limit: Option<usize>,
     ) -> Result<RecordBatch, KalamDbError> {
+        // Extract sequence bounds from filter to optimize RocksDB scan
+        let (since_seq, _until_seq) = if let Some(expr) = filter {
+            base::extract_seq_bounds_from_filter(expr)
+        } else {
+            (None, None)
+        };
+
         // NO user_id extraction - shared tables scan ALL rows
-        let kvs = self.scan_with_version_resolution_to_kvs(base::system_user_id(), filter)?;
+        let kvs = self.scan_with_version_resolution_to_kvs(base::system_user_id(), filter, since_seq, limit)?;
 
         // Convert to JSON rows aligned with schema
         let schema = self.schema_ref();
-        crate::providers::base::rows_to_arrow_batch(&schema, kvs, |_, _| {})
+        crate::providers::base::rows_to_arrow_batch(&schema, kvs, projection, |_, _| {})
     }
 
     fn scan_with_version_resolution_to_kvs(
         &self,
         _user_id: &UserId,
         _filter: Option<&Expr>,
+        since_seq: Option<kalamdb_commons::ids::SeqId>,
+        limit: Option<usize>,
     ) -> Result<Vec<(SharedTableRowId, SharedTableRow)>, KalamDbError> {
         // IGNORE user_id parameter - scan ALL rows (hot storage)
-        let raw = self.store.scan_all().map_err(|e| {
-            KalamDbError::InvalidOperation(format!(
-                "Failed to scan shared table hot storage: {}",
-                e
-            ))
-        })?;
+        
+        // Construct start_key if since_seq is provided
+        let start_key_bytes = if let Some(seq) = since_seq {
+            // since_seq is exclusive, so start at seq + 1
+            let start_seq = kalamdb_commons::ids::SeqId::from(seq.as_i64() + 1);
+            Some(kalamdb_commons::StorageKey::storage_key(&start_seq))
+        } else {
+            None
+        };
+
+        // Use limit if provided, otherwise default to 100,000
+        // Note: We might need to scan more than limit to account for version resolution/tombstones
+        // For now, let's use limit * 2 + 1000 as a heuristic if limit is small, or just 100,000
+        let scan_limit = limit.map(|l| std::cmp::max(l * 2, 1000)).unwrap_or(100_000);
+
+        let raw = self
+            .store
+            .scan_limited_with_prefix_and_start(None, start_key_bytes.as_deref(), scan_limit)
+            .map_err(|e| {
+                KalamDbError::InvalidOperation(format!(
+                    "Failed to scan shared table hot storage: {}",
+                    e
+                ))
+            })?;
         log::debug!("[SharedProvider] RocksDB scan returned {} rows", raw.len());
 
         // Scan cold storage (Parquet files)
@@ -296,7 +325,15 @@ impl BaseTableProvider<SharedTableRowId, SharedTableRow> for SharedTableProvider
                 })
                 .collect();
 
-        let result = merge_versioned_rows(&pk_name, hot_rows, cold_rows);
+        let mut result = merge_versioned_rows(&pk_name, hot_rows, cold_rows);
+
+        // Apply limit after resolution
+        if let Some(l) = limit {
+            if result.len() > l {
+                result.truncate(l);
+            }
+        }
+
         log::debug!(
             "[SharedProvider] Version-resolved rows (post-tombstone filter): {}",
             result.len()
@@ -416,11 +453,31 @@ impl TableProvider for SharedTableProvider {
         //   - Parallel file reads via DataFusion scheduler
         //   - Automatic predicate pushdown to Parquet reader
         //
+        
+        // Optimization: Pass projection to scan_rows ONLY if filters is empty.
+        // If filters exist, we need all columns to evaluate them (unless we analyze filters).
+        let effective_projection = if filters.is_empty() {
+            projection
+        } else {
+            None
+        };
+
         let batch = self
-            .scan_rows(state, combined_filter.as_ref())
+            .scan_rows(state, effective_projection, combined_filter.as_ref(), limit)
             .map_err(|e| DataFusionError::Execution(format!("scan_rows failed: {}", e)))?;
 
-        let mem = MemTable::try_new(self.schema_ref(), vec![vec![batch]])?;
-        mem.scan(state, projection, filters, limit).await
+        let mem = MemTable::try_new(batch.schema(), vec![vec![batch]])?;
+        
+        // If we used effective_projection = projection, then batch already has the final schema.
+        // So we pass None to mem.scan.
+        // If we used effective_projection = None, then batch has full schema.
+        // So we pass projection to mem.scan.
+        let final_projection = if filters.is_empty() {
+            None
+        } else {
+            projection
+        };
+
+        mem.scan(state, final_projection, filters, limit).await
     }
 }

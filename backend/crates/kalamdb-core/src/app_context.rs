@@ -10,6 +10,7 @@ use crate::jobs::executors::{
 use crate::live_query::LiveQueryManager;
 use crate::schema_registry::SchemaRegistry;
 use crate::sql::datafusion_session::DataFusionSessionFactory;
+use crate::sql::executor::SqlExecutor;
 use crate::storage::storage_registry::StorageRegistry;
 use datafusion::catalog::SchemaProvider;
 use datafusion::prelude::SessionContext;
@@ -17,6 +18,7 @@ use kalamdb_commons::{constants::ColumnFamilyNames, NodeId, ServerConfig};
 use kalamdb_store::StorageBackend;
 use kalamdb_system::SystemTablesRegistry;
 use kalamdb_tables::{SharedTableStore, StreamTableStore, UserTableStore};
+use once_cell::sync::OnceCell;
 use std::sync::{Arc, OnceLock};
 
 static APP_CONTEXT: OnceLock<Arc<AppContext>> = OnceLock::new();
@@ -74,6 +76,9 @@ pub struct AppContext {
 
     // ===== Manifest Service (Phase 5, US2, T107-T113) =====
     manifest_service: Arc<crate::manifest::ManifestService>,
+
+    // ===== Shared SqlExecutor =====
+    sql_executor: OnceCell<Arc<SqlExecutor>>,
 }
 
 impl std::fmt::Debug for AppContext {
@@ -94,6 +99,7 @@ impl std::fmt::Debug for AppContext {
             .field("slow_query_logger", &"Arc<SlowQueryLogger>")
             .field("manifest_cache_service", &"Arc<ManifestCacheService>")
             .field("manifest_service", &"Arc<ManifestService>")
+            .field("sql_executor", &"OnceCell<Arc<SqlExecutor>>")
             .finish()
     }
 }
@@ -238,7 +244,7 @@ impl AppContext {
                     system_tables.live_queries(),
                     schema_registry.clone(),
                     (*node_id).clone(), // Dereference Arc<NodeId> to NodeId for LiveQueryManager
-                    Some(storage_backend.clone()),
+                    Arc::clone(&base_session_context),
                 ));
 
                 // Create slow query logger (Phase 11)
@@ -285,6 +291,7 @@ impl AppContext {
                     slow_query_logger,
                     manifest_cache_service,
                     manifest_service,
+                    sql_executor: OnceCell::new(),
                 });
 
                 // Attach AppContext to components that require it (JobsManager)
@@ -380,7 +387,7 @@ impl AppContext {
             system_tables.live_queries(),
             schema_registry.clone(),
             (*node_id).clone(),
-            Some(storage_backend.clone()),
+            Arc::clone(&base_session_context),
         ));
 
         // Create test config
@@ -422,6 +429,7 @@ impl AppContext {
             slow_query_logger,
             manifest_cache_service,
             manifest_service,
+            sql_executor: OnceCell::new(),
         }
     }
 
@@ -541,7 +549,7 @@ impl AppContext {
             system_tables.live_queries(),
             schema_registry.clone(),
             (*node_id).clone(),
-            Some(storage_backend.clone()),
+            Arc::clone(&base_session_context),
         ));
 
         // Create slow query logger
@@ -586,6 +594,7 @@ impl AppContext {
             slow_query_logger,
             manifest_cache_service,
             manifest_service,
+            sql_executor: OnceCell::new(),
         });
 
         // Attach AppContext to job_manager
@@ -702,6 +711,24 @@ impl AppContext {
     /// read/write access to manifest.json files in storage backends.
     pub fn manifest_service(&self) -> Arc<crate::manifest::ManifestService> {
         self.manifest_service.clone()
+    }
+
+    /// Register the shared SqlExecutor (called once during bootstrap)
+    pub fn set_sql_executor(&self, executor: Arc<SqlExecutor>) {
+        if self.sql_executor.set(executor).is_err() {
+            log::warn!("SqlExecutor already initialized in AppContext; ignoring duplicate registration");
+        }
+    }
+
+    /// Try to access the shared SqlExecutor if initialized
+    pub fn try_sql_executor(&self) -> Option<Arc<SqlExecutor>> {
+        self.sql_executor.get().map(Arc::clone)
+    }
+
+    /// Get the shared SqlExecutor (panics if not yet initialized)
+    pub fn sql_executor(&self) -> Arc<SqlExecutor> {
+        self.try_sql_executor()
+            .expect("SqlExecutor not initialized in AppContext")
     }
 
     // ===== Convenience methods for backward compatibility =====

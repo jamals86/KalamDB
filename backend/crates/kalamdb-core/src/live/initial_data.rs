@@ -7,78 +7,76 @@
 use super::filter::FilterPredicate;
 use crate::error::KalamDbError;
 use crate::schema_registry::TableType;
-// Removed unused store imports after provider-based snapshots for streams
-use kalamdb_commons::models::TableId;
+use crate::sql::executor::models::{ExecutionContext, ExecutionResult, ScalarValue};
+use crate::sql::executor::SqlExecutor;
+use datafusion::execution::context::SessionContext;
+use kalamdb_commons::ids::SeqId;
+use kalamdb_commons::models::{TableId, UserId};
+use kalamdb_commons::Role;
+use once_cell::sync::OnceCell;
 use serde_json::Value as JsonValue;
 use std::sync::Arc;
 
 /// Options for fetching initial data when subscribing to a live query
 #[derive(Debug, Clone)]
 pub struct InitialDataOptions {
-    /// Fetch changes since this timestamp (milliseconds since Unix epoch)
-    /// If None, returns last N rows instead
-    pub since_timestamp: Option<i64>, //TODO: Use SeqId
+    /// Fetch changes since this sequence ID (exclusive)
+    /// If None, starts from the beginning (or end, depending on strategy)
+    pub since_seq: Option<SeqId>,
 
-    /// Maximum number of rows to return
+    /// Fetch changes up to this sequence ID (inclusive)
+    /// Used to define the snapshot boundary
+    pub until_seq: Option<SeqId>,
+
+    /// Maximum number of rows to return (batch size)
     /// Default: 100
     pub limit: usize,
 
     /// Include soft-deleted rows (_deleted=true)
     /// Default: false
     pub include_deleted: bool,
-
-    /// For batched loading: fetch a specific batch number
-    /// If Some, overrides limit and uses batch-based pagination
-    pub batch_num: Option<u32>,
-
-    /// For batched loading: maximum rows per batch
-    /// Default: 1000
-    pub batch_size: usize,
 }
 
 impl Default for InitialDataOptions {
     fn default() -> Self {
         Self {
-            since_timestamp: None,
+            since_seq: None,
+            until_seq: None,
             limit: 100,
             include_deleted: false,
-            batch_num: None,
-            batch_size: kalamdb_commons::websocket::MAX_ROWS_PER_BATCH,
         }
     }
 }
 
 impl InitialDataOptions {
-    /// Create options to fetch changes since a specific timestamp
-    pub fn since(timestamp_ms: i64) -> Self {
+    /// Create options to fetch changes since a specific sequence ID
+    pub fn since(seq: SeqId) -> Self {
         Self {
-            since_timestamp: Some(timestamp_ms),
+            since_seq: Some(seq),
+            until_seq: None,
             limit: 100,
             include_deleted: false,
-            batch_num: None,
-            batch_size: kalamdb_commons::websocket::MAX_ROWS_PER_BATCH,
         }
     }
 
-    /// Create options to fetch the last N rows
+    /// Create options to fetch the last N rows (legacy/simple mode)
+    /// Note: This might need adjustment for SeqId-based logic
     pub fn last(limit: usize) -> Self {
         Self {
-            since_timestamp: None,
+            since_seq: None,
+            until_seq: None,
             limit,
             include_deleted: false,
-            batch_num: None,
-            batch_size: kalamdb_commons::websocket::MAX_ROWS_PER_BATCH,
         }
     }
 
-    /// Create options for batch-based fetching (used for large initial loads)
-    pub fn batch(batch_num: u32, batch_size: usize) -> Self {
+    /// Create options for batch-based fetching
+    pub fn batch(since_seq: Option<SeqId>, until_seq: Option<SeqId>, batch_size: usize) -> Self {
         Self {
-            since_timestamp: None,
-            limit: usize::MAX, // No global limit for batch mode
+            since_seq,
+            until_seq,
+            limit: batch_size,
             include_deleted: false,
-            batch_num: Some(batch_num),
-            batch_size,
         }
     }
 
@@ -101,38 +99,41 @@ pub struct InitialDataResult {
     /// The fetched rows (as JSON objects)
     pub rows: Vec<JsonValue>,
 
-    /// Timestamp of the most recent row in the result
-    /// Can be used as the starting point for real-time notifications
-    pub latest_timestamp: Option<i64>, //TODO: Use SeqId
+    /// Sequence ID of the last row in the result
+    /// Used for pagination (passed as since_seq in next request)
+    pub last_seq: Option<SeqId>,
 
-    /// Total number of rows available (may exceed limit)
-    pub total_available: usize,
-
-    /// Whether there are more rows beyond the limit
+    /// Whether there are more rows available in the snapshot range
     pub has_more: bool,
 
-    /// For batched loading: current batch number
-    pub batch_num: Option<u32>,
-
-    /// For batched loading: total number of batches
-    pub total_batches: Option<u32>,
+    /// The snapshot boundary used for this fetch
+    pub snapshot_end_seq: Option<SeqId>,
 }
 
 /// Service for fetching initial data when subscribing to live queries
 pub struct InitialDataFetcher {
-    _backend: Option<Arc<dyn kalamdb_store::StorageBackend>>,
+    base_session_context: Arc<SessionContext>,
     schema_registry: Arc<crate::schema_registry::SchemaRegistry>,
+    sql_executor: OnceCell<Arc<SqlExecutor>>,
 }
 
 impl InitialDataFetcher {
     /// Create a new initial data fetcher
     pub fn new(
-        backend: Option<Arc<dyn kalamdb_store::StorageBackend>>,
+        base_session_context: Arc<SessionContext>,
         schema_registry: Arc<crate::schema_registry::SchemaRegistry>,
     ) -> Self {
         Self {
-            _backend: backend,
+            base_session_context,
             schema_registry,
+            sql_executor: OnceCell::new(),
+        }
+    }
+
+    /// Wire up the shared SqlExecutor so all queries reuse the same execution path
+    pub fn set_sql_executor(&self, executor: Arc<SqlExecutor>) {
+        if self.sql_executor.set(executor).is_err() {
+            log::warn!("SqlExecutor already set for InitialDataFetcher; ignoring duplicate assignment");
         }
     }
 
@@ -147,7 +148,7 @@ impl InitialDataFetcher {
     /// InitialDataResult with rows and metadata
     pub async fn fetch_initial_data(
         &self,
-        _live_id: &super::connection_registry::LiveId,
+        live_id: &super::connection_registry::LiveId,
         table_id: &TableId,
         table_type: TableType,
         options: InitialDataOptions,
@@ -158,7 +159,7 @@ impl InitialDataFetcher {
             table_id,
             table_type,
             options.limit,
-            options.since_timestamp
+            options.since_seq
         );
 
         let limit = options.limit;
@@ -166,184 +167,158 @@ impl InitialDataFetcher {
             log::debug!("Limit is 0, returning empty result");
             return Ok(InitialDataResult {
                 rows: Vec::new(),
-                latest_timestamp: None,
-                total_available: 0,
+                last_seq: None,
                 has_more: false,
-                batch_num: options.batch_num,
-                total_batches: Some(0),
+                snapshot_end_seq: None,
             });
         }
 
-        let since_timestamp = options.since_timestamp;
-        let include_deleted = options.include_deleted;
+        // Extract user_id from LiveId for RLS
+        let user_id = UserId::new(live_id.user_id().to_string());
+        
 
-        let mut rows_with_ts: Vec<(i64, JsonValue)> = match table_type {
-            TableType::User => {
-                // Use the registered provider to avoid creating a fresh store
-                let provider = self.schema_registry.get_provider(table_id).ok_or_else(|| {
-                    KalamDbError::Other(format!("Provider not found for user table {}", table_id))
-                })?;
+        let sql_executor = self
+            .sql_executor
+            .get()
+            .cloned()
+            .ok_or_else(|| KalamDbError::InvalidOperation("SqlExecutor not configured for InitialDataFetcher".to_string()))?;
 
-                // Downcast to UserTableProvider
-                if let Some(user_provider) = provider
-                    .as_any()
-                    .downcast_ref::<crate::providers::UserTableProvider>()
-                {
-                    let mut rows = Vec::new();
-                    for row_fields in user_provider.snapshot_all_rows_json()? {
-                        // Extract timestamp from _seq field (Snowflake ID has embedded timestamp)
-                        let timestamp = Self::extract_seq_timestamp(&row_fields);
+        // Create execution context with user scope for row-level security
+        let exec_ctx = ExecutionContext::new(
+            user_id.clone(),
+            Role::User,
+            Arc::clone(&self.base_session_context),
+        );
 
-                        // Check if deleted (skip if include_deleted is false)
-                        if !include_deleted {
-                            if let Some(deleted) =
-                                row_fields.get("_deleted").and_then(|v| v.as_bool())
-                            {
-                                if deleted {
-                                    continue;
-                                }
-                            }
-                        }
+        // Construct SQL query
+        let table_name = format!("{}.{}", table_id.namespace_id().as_str(), table_id.table_name().as_str());
+        let mut sql = format!("SELECT * FROM {}", table_name);
+        
+        let mut where_clauses = Vec::new();
 
-                        if let Some(since) = since_timestamp {
-                            if timestamp < since {
-                                continue;
-                            }
-                        }
+        // Add _seq filters
+        if let Some(since) = options.since_seq {
+            where_clauses.push(format!("_seq > {}", since.as_i64()));
+        }
+        if let Some(until) = options.until_seq {
+            where_clauses.push(format!("_seq <= {}", until.as_i64()));
+        }
 
-                        if let Some(predicate) = filter.as_ref() {
-                            if !predicate
-                                .matches(&row_fields)
-                                .map_err(|e| KalamDbError::Other(e.to_string()))?
-                            {
-                                continue;
-                            }
-                        }
-
-                        rows.push((timestamp, row_fields));
-                    }
-                    rows
-                } else {
-                    return Err(KalamDbError::Other(
-                        "Cached provider type mismatch for user table".to_string(),
-                    ));
-                }
+        // Add deleted filter
+        if !options.include_deleted {
+            if matches!(table_type, TableType::User | TableType::Shared)
+                && self.table_has_column(table_id, "_deleted")?
+            {
+                where_clauses.push("_deleted = false".to_string());
             }
-            TableType::Stream => {
-                // Use the registered provider to avoid creating a fresh in-memory store
-                let provider = self.schema_registry.get_provider(table_id).ok_or_else(|| {
-                    KalamDbError::Other(format!("Provider not found for stream table {}", table_id))
-                })?;
+        }
 
-                // Downcast to StreamTableProvider
-                if let Some(stream_provider) = provider
-                    .as_any()
-                    .downcast_ref::<crate::providers::StreamTableProvider>(
-                ) {
-                    let mut rows = Vec::new();
-                    for row_fields in stream_provider.snapshot_all_rows_json()? {
-                        // Extract timestamp from _seq (Snowflake ID has embedded timestamp)
-                        let timestamp = Self::extract_seq_timestamp(&row_fields);
+        // Add custom filter from subscription
+        if let Some(predicate) = filter {
+            where_clauses.push(predicate.sql().to_string());
+        }
 
-                        if let Some(since) = since_timestamp {
-                            if timestamp < since {
-                                continue;
-                            }
-                        }
+        if !where_clauses.is_empty() {
+            sql.push_str(" WHERE ");
+            sql.push_str(&where_clauses.join(" AND "));
+        }
 
-                        if let Some(predicate) = filter.as_ref() {
-                            if !predicate
-                                .matches(&row_fields)
-                                .map_err(|e| KalamDbError::Other(e.to_string()))?
-                            {
-                                continue;
-                            }
-                        }
+        // Add ORDER BY _seq ASC
+        sql.push_str(" ORDER BY _seq ASC");
 
-                        rows.push((timestamp, row_fields));
-                    }
-                    rows
-                } else {
-                    return Err(KalamDbError::Other(
-                        "Cached provider type mismatch for stream table".to_string(),
-                    ));
-                }
-            }
-            TableType::Shared | TableType::System => {
-                return Err(KalamDbError::InvalidOperation(format!(
-                    "Initial data fetch is not supported for {:?} tables",
-                    table_type
-                )));
+        // Add LIMIT (fetch limit + 1 to check has_more)
+        sql.push_str(&format!(" LIMIT {}", limit + 1));
+
+        log::debug!("Executing initial data SQL via SqlExecutor: {}", sql);
+
+        let execution_result = sql_executor
+            .execute(&sql, &exec_ctx, Vec::<ScalarValue>::new())
+            .await?;
+
+        let batches = match execution_result {
+            ExecutionResult::Rows { batches, .. } => batches,
+            other => {
+                return Err(KalamDbError::ExecutionError(format!(
+                    "Initial data query returned non-row result: {:?}",
+                    other
+                )))
             }
         };
 
-        rows_with_ts.sort_by(|a, b| b.0.cmp(&a.0));
+        // Convert batches to JSON rows
+        let mut rows_with_seq: Vec<(SeqId, JsonValue)> = Vec::new();
+        
+        for batch in batches {
+            let schema = batch.schema();
+            let seq_col_idx = schema.index_of("_seq").map_err(|_| {
+                KalamDbError::Other("Result missing _seq column".to_string())
+            })?;
+            
+            let seq_col = batch.column(seq_col_idx);
+            let seq_array = seq_col.as_any().downcast_ref::<datafusion::arrow::array::Int64Array>().ok_or_else(|| {
+                KalamDbError::Other("_seq column is not Int64".to_string())
+            })?;
 
-        let total_available = rows_with_ts.len();
+            // Convert row to JSON
+            let json_rows = crate::providers::arrow_json_conversion::record_batch_to_json_rows(&batch).map_err(|e| {
+                KalamDbError::SerializationError(format!("Failed to convert batch to JSON: {}", e))
+            })?;
+
+            for (i, row_value) in json_rows.into_iter().enumerate() {
+                let seq_val = seq_array.value(i);
+                let seq_id = SeqId::from(seq_val);
+                
+                if let JsonValue::Object(map) = row_value {
+                    rows_with_seq.push((seq_id, JsonValue::Object(map)));
+                } else {
+                    // Should not happen if record_batch_to_json_rows works correctly
+                    log::warn!("Expected JSON object, got {:?}", row_value);
+                }
+            }
+        }
+
+        // Determine has_more and slice to limit
+        let total_fetched = rows_with_seq.len();
+        let has_more = total_fetched > limit;
         
-        // Extract latest timestamp before consuming rows_with_ts
-        let latest_timestamp = rows_with_ts.first().map(|(ts, _)| *ts);
-        
-        // Handle batch-based pagination if requested
-        let (rows, has_more, batch_num, total_batches) = if let Some(batch_idx) = options.batch_num {
-            let batch_size = options.batch_size;
-            let total_batches = ((total_available + batch_size - 1) / batch_size) as u32;
-            let start = (batch_idx as usize) * batch_size;
-            let end = ((batch_idx as usize + 1) * batch_size).min(total_available);
-            
-            let batch_rows = if start < total_available {
-                rows_with_ts[start..end].iter().map(|(_, row)| row.clone()).collect()
-            } else {
-                Vec::new()
-            };
-            
-            let has_more = batch_idx + 1 < total_batches;
-            (batch_rows, has_more, Some(batch_idx), Some(total_batches))
+        let batch_rows = if has_more {
+            rows_with_seq.into_iter().take(limit).collect::<Vec<_>>()
         } else {
-            // Legacy single-fetch mode
-            let has_more = total_available > limit;
-            if has_more {
-                rows_with_ts.truncate(limit);
-            }
-            let rows = rows_with_ts.into_iter().map(|(_, row)| row).collect();
-            (rows, has_more, None, None)
+            rows_with_seq
         };
+
+        // Determine snapshot boundary
+        let last_seq = batch_rows.last().map(|(seq, _)| *seq);
+        let snapshot_end_seq = options.until_seq.or(last_seq);
+
+        let rows: Vec<JsonValue> = batch_rows.into_iter().map(|(_, row)| row).collect();
 
         log::info!(
-            "fetch_initial_data complete: table={}, returned {} rows (total available: {}, has_more: {}, batch: {:?})",
+            "fetch_initial_data complete: table={}, returned {} rows (has_more: {}, last_seq: {:?})",
             table_id,
             rows.len(),
-            total_available,
             has_more,
-            batch_num
+            last_seq
         );
 
         Ok(InitialDataResult {
             rows,
-            latest_timestamp,
-            total_available,
+            last_seq,
             has_more,
-            batch_num,
-            total_batches,
+            snapshot_end_seq,
         })
     }
 
-    fn extract_seq_timestamp(row: &JsonValue) -> i64 {
-        // Extract timestamp from _seq Snowflake ID (timestamp is in upper 41 bits)
-        row.get("_seq")
-            .and_then(JsonValue::as_i64)
-            .map(|seq| {
-                // Snowflake ID format: timestamp (41 bits) + machine (10 bits) + sequence (12 bits)
-                // Shift right 22 bits to get timestamp in milliseconds
-                (seq >> 22) + 1609459200000 // Add epoch offset (2021-01-01 00:00:00 UTC)
-            })
-            .unwrap_or(0)
+    fn table_has_column(&self, table_id: &TableId, column_name: &str) -> Result<bool, KalamDbError> {
+        let schema = self.schema_registry.get_arrow_schema(table_id)?;
+        Ok(schema.field_with_name(column_name).is_ok())
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::sql::executor::SqlExecutor;
     use kalamdb_commons::ids::{SeqId, UserTableRowId};
     use kalamdb_commons::models::{ConnectionId as ConnId, LiveId as CommonsLiveId};
     use kalamdb_commons::models::{NamespaceId, TableName};
@@ -352,19 +327,24 @@ mod tests {
     use kalamdb_store::test_utils::InMemoryBackend;
     use kalamdb_tables::user_tables::user_table_store::{new_user_table_store, UserTableRow};
     use std::sync::Arc;
+    use tokio::sync::Mutex;
+
+    static INITIAL_DATA_TEST_GUARD: once_cell::sync::Lazy<Mutex<()>> =
+        once_cell::sync::Lazy::new(|| Mutex::new(()));
 
     #[test]
     fn test_initial_data_options_default() {
         let options = InitialDataOptions::default();
-        assert_eq!(options.since_timestamp, None);
+        assert_eq!(options.since_seq, None);
         assert_eq!(options.limit, 100);
         assert!(!options.include_deleted);
     }
 
     #[test]
     fn test_initial_data_options_since() {
-        let options = InitialDataOptions::since(1729468800000);
-        assert_eq!(options.since_timestamp, Some(1729468800000));
+        let seq = SeqId::new(12345);
+        let options = InitialDataOptions::since(seq);
+        assert_eq!(options.since_seq, Some(seq));
         assert_eq!(options.limit, 100);
         assert!(!options.include_deleted);
     }
@@ -372,26 +352,43 @@ mod tests {
     #[test]
     fn test_initial_data_options_last() {
         let options = InitialDataOptions::last(50);
-        assert_eq!(options.since_timestamp, None);
+        assert_eq!(options.since_seq, None);
         assert_eq!(options.limit, 50);
         assert!(!options.include_deleted);
     }
 
     #[test]
     fn test_initial_data_options_builder() {
-        let options = InitialDataOptions::since(1729468800000)
+        let seq = SeqId::new(12345);
+        let options = InitialDataOptions::since(seq)
             .with_limit(200)
             .with_deleted();
 
-        assert_eq!(options.since_timestamp, Some(1729468800000));
+        assert_eq!(options.since_seq, Some(seq));
         assert_eq!(options.limit, 200);
         assert!(options.include_deleted);
     }
 
     #[tokio::test]
     async fn test_user_table_initial_fetch_returns_rows() {
-        // Setup in-memory user table with one row (userA)
+        let _guard = INITIAL_DATA_TEST_GUARD.lock().await;
+        // Initialize global AppContext for the test (idempotent)
         let backend: Arc<dyn kalamdb_store::StorageBackend> = Arc::new(InMemoryBackend::new());
+        let node_id = kalamdb_commons::NodeId::new("test-node".to_string());
+        let config = kalamdb_commons::ServerConfig::default();
+        
+        // We use init() which uses get_or_init() internally, so it's safe to call multiple times
+        // (subsequent calls return the existing instance)
+        let app_context = crate::app_context::AppContext::init(
+            backend.clone(),
+            node_id,
+            "/tmp/kalamdb-test".to_string(),
+            config,
+        );
+        
+        let schema_registry = app_context.schema_registry();
+
+        // Setup in-memory user table with one row (userA)
         let ns = NamespaceId::new("batch_test");
         let tbl = TableName::new("items");
         let table_id = kalamdb_commons::models::TableId::new(ns.clone(), tbl.clone());
@@ -411,12 +408,50 @@ mod tests {
         // Insert row using EntityStore trait
         EntityStore::put(&*store, &row_id, &row).expect("put row");
 
-        // Build schema registry and register provider
-        let schema_registry = Arc::new(crate::schema_registry::SchemaRegistry::new(100));
+        // Register table definition so get_arrow_schema works
+        use kalamdb_commons::models::schemas::column_default::ColumnDefault;
+        use kalamdb_commons::models::schemas::{TableDefinition, ColumnDefinition};
+        use kalamdb_commons::models::datatypes::KalamDataType;
+        use crate::schema_registry::CachedTableData;
 
-        // Create a minimal AppContext for the test
-        use crate::app_context::AppContext;
-        let app_context = Arc::new(AppContext::new_test());
+        let columns = vec![
+            ColumnDefinition::primary_key("id", 1, KalamDataType::Int),
+            ColumnDefinition::simple("name", 2, KalamDataType::Text),
+            ColumnDefinition::new(
+                "_seq",
+                3,
+                KalamDataType::BigInt,
+                false,
+                false,
+                false,
+                ColumnDefault::None,
+                None,
+            ),
+            ColumnDefinition::new(
+                "_deleted",
+                4,
+                KalamDataType::Boolean,
+                false,
+                false,
+                false,
+                ColumnDefault::literal(serde_json::json!(false)),
+                None,
+            ),
+        ];
+
+        let table_def = TableDefinition::new_with_defaults(
+            ns.clone(),
+            tbl.clone(),
+            kalamdb_commons::TableType::User,
+            columns,
+            None,
+        ).expect("create table def");
+
+        // Insert into cache directly (bypassing persistence which might not be mocked)
+        schema_registry.insert(
+            table_id.clone(), 
+            Arc::new(CachedTableData::new(Arc::new(table_def)))
+        );
 
         // Create a mock provider with the store
         use crate::providers::base::TableProviderCore;
@@ -433,10 +468,12 @@ mod tests {
             .insert_provider(table_id.clone(), provider)
             .expect("register provider");
 
-        let fetcher = InitialDataFetcher::new(Some(backend), schema_registry);
+        let fetcher = InitialDataFetcher::new(app_context.base_session_context(), schema_registry.clone());
+        let sql_executor = Arc::new(SqlExecutor::new(app_context.clone(), false));
+        fetcher.set_sql_executor(sql_executor);
 
-        // LiveId for connection user 'root' (distinct from row.user_id)
-        let conn = ConnId::new("root".to_string(), "conn1".to_string());
+        // LiveId for connection user 'userA' (RLS enforced)
+        let conn = ConnId::new("userA".to_string(), "conn1".to_string());
         let live = CommonsLiveId::new(conn, table_id.clone(), "q1".to_string());
 
         // Fetch initial data (default options: last 100)
@@ -452,5 +489,164 @@ mod tests {
             .expect("initial fetch");
 
         assert_eq!(res.rows.len(), 1, "Expected one row in initial snapshot");
+        
+        // Verify the row content
+        let row_json = &res.rows[0];
+        assert_eq!(row_json["id"], 1);
+        assert_eq!(row_json["name"], "Item One");
+    }
+
+    #[tokio::test]
+    async fn test_user_table_batch_fetching() {
+        let _guard = INITIAL_DATA_TEST_GUARD.lock().await;
+        // Initialize global AppContext for the test (idempotent)
+        let backend: Arc<dyn kalamdb_store::StorageBackend> = Arc::new(InMemoryBackend::new());
+        let node_id = kalamdb_commons::NodeId::new("test-node-batch".to_string());
+        let config = kalamdb_commons::ServerConfig::default();
+        
+        let app_context = crate::app_context::AppContext::init(
+            backend.clone(),
+            node_id,
+            "/tmp/kalamdb-test-batch".to_string(),
+            config,
+        );
+        
+        let schema_registry = app_context.schema_registry();
+
+        // Setup in-memory user table
+        let ns = NamespaceId::new("batch_test");
+        let tbl = TableName::new("batch_items");
+        let table_id = kalamdb_commons::models::TableId::new(ns.clone(), tbl.clone());
+        let store = Arc::new(new_user_table_store(backend.clone(), &ns, &tbl));
+
+        let user_id = UserId::from("userB");
+
+        // Insert 3 rows with increasing seq
+        for i in 1..=3 {
+            let seq = SeqId::new(i);
+            let row_id = UserTableRowId::new(user_id.clone(), seq);
+            let row = UserTableRow {
+                user_id: user_id.clone(),
+                _seq: seq,
+                fields: serde_json::json!({"id": i, "val": format!("Item {}", i)}),
+                _deleted: false,
+            };
+            EntityStore::put(&*store, &row_id, &row).expect("put row");
+        }
+
+        // Register table definition
+        use kalamdb_commons::models::schemas::column_default::ColumnDefault;
+        use kalamdb_commons::models::schemas::{TableDefinition, ColumnDefinition};
+        use kalamdb_commons::models::datatypes::KalamDataType;
+        use crate::schema_registry::CachedTableData;
+
+        let columns = vec![
+            ColumnDefinition::primary_key("id", 1, KalamDataType::Int),
+            ColumnDefinition::simple("val", 2, KalamDataType::Text),
+            ColumnDefinition::new(
+                "_seq",
+                3,
+                KalamDataType::BigInt,
+                false,
+                false,
+                false,
+                ColumnDefault::None,
+                None,
+            ),
+            ColumnDefinition::new(
+                "_deleted",
+                4,
+                KalamDataType::Boolean,
+                false,
+                false,
+                false,
+                ColumnDefault::literal(serde_json::json!(false)),
+                None,
+            ),
+        ];
+
+        let table_def = TableDefinition::new_with_defaults(
+            ns.clone(),
+            tbl.clone(),
+            kalamdb_commons::TableType::User,
+            columns,
+            None,
+        ).expect("create table def");
+
+        schema_registry.insert(
+            table_id.clone(), 
+            Arc::new(CachedTableData::new(Arc::new(table_def)))
+        );
+
+        // Create and register provider
+        use crate::providers::base::TableProviderCore;
+        use crate::providers::UserTableProvider;
+        let core = Arc::new(TableProviderCore::from_app_context(
+            &app_context,
+            table_id.clone(),
+            TableType::User,
+        ));
+        let provider = Arc::new(UserTableProvider::new(core, store, "id".to_string()));
+
+        schema_registry
+            .insert_provider(table_id.clone(), provider)
+            .expect("register provider");
+
+        let fetcher = InitialDataFetcher::new(app_context.base_session_context(), schema_registry.clone());
+        let sql_executor = Arc::new(SqlExecutor::new(app_context.clone(), false));
+        fetcher.set_sql_executor(sql_executor);
+        let conn = ConnId::new("userB".to_string(), "conn2".to_string());
+        let live = CommonsLiveId::new(conn, table_id.clone(), "q2".to_string());
+
+        // 1. Fetch first batch (limit 1)
+        let res1 = fetcher
+            .fetch_initial_data(
+                &live,
+                &table_id,
+                TableType::User,
+                InitialDataOptions::default().with_limit(1),
+                None,
+            )
+            .await
+            .expect("fetch batch 1");
+
+        assert_eq!(res1.rows.len(), 1);
+        assert_eq!(res1.rows[0]["id"], 1);
+        assert!(res1.has_more);
+        assert_eq!(res1.last_seq, Some(SeqId::new(1)));
+
+        // 2. Fetch second batch (since_seq=1, limit 1)
+        let res2 = fetcher
+            .fetch_initial_data(
+                &live,
+                &table_id,
+                TableType::User,
+                InitialDataOptions::since(res1.last_seq.unwrap()).with_limit(1),
+                None,
+            )
+            .await
+            .expect("fetch batch 2");
+
+        assert_eq!(res2.rows.len(), 1);
+        assert_eq!(res2.rows[0]["id"], 2);
+        assert!(res2.has_more);
+        assert_eq!(res2.last_seq, Some(SeqId::new(2)));
+
+        // 3. Fetch third batch (since_seq=2, limit 1)
+        let res3 = fetcher
+            .fetch_initial_data(
+                &live,
+                &table_id,
+                TableType::User,
+                InitialDataOptions::since(res2.last_seq.unwrap()).with_limit(1),
+                None,
+            )
+            .await
+            .expect("fetch batch 3");
+
+        assert_eq!(res3.rows.len(), 1);
+        assert_eq!(res3.rows[0]["id"], 3);
+        assert!(!res3.has_more); // Should be false as we fetched the last one
+        assert_eq!(res3.last_seq, Some(SeqId::new(3)));
     }
 }

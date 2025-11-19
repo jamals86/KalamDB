@@ -98,6 +98,7 @@
 
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
+use crate::ids::SeqId;
 
 /// Batch size in bytes (8KB) for chunking large initial data payloads
 pub const BATCH_SIZE_BYTES: usize = 8 * 1024;
@@ -163,8 +164,8 @@ pub enum ClientMessage {
     NextBatch {
         /// The subscription ID to fetch the next batch for
         subscription_id: String,
-        /// The batch number to fetch (should be current_batch + 1)
-        batch_num: u32,
+        /// The SeqId of the last row received (for pagination)
+        last_seq_id: Option<SeqId>,
     },
 
     /// Unsubscribe from live query
@@ -194,6 +195,10 @@ pub struct SubscriptionOptions {
     /// Reserved for future use (filtering, sorting, etc.)
     #[serde(skip_serializing_if = "Option::is_none")]
     pub _reserved: Option<String>,
+    
+    /// Optional: Configure batch size for initial data streaming
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub batch_size: Option<usize>,
 }
 
 /// Batch control metadata for paginated initial data loading
@@ -205,14 +210,20 @@ pub struct BatchControl {
     /// Current batch number (0-indexed)
     pub batch_num: u32,
     
-    /// Total number of batches available
-    pub total_batches: u32,
+    /// Total number of batches available (optional/estimated)
+    pub total_batches: Option<u32>,
     
     /// Whether more batches are available to fetch
     pub has_more: bool,
     
     /// Loading status for the subscription
     pub status: BatchStatus,
+
+    /// The SeqId of the last row in this batch (used for next request)
+    pub last_seq_id: Option<SeqId>,
+
+    /// The snapshot boundary (max SeqId at start of load)
+    pub snapshot_end_seq: Option<SeqId>,
 }
 
 /// Status of the initial data loading process
@@ -380,10 +391,10 @@ impl ClientMessage {
     }
 
     /// Create a next batch request message
-    pub fn next_batch(subscription_id: String, batch_num: u32) -> Self {
+    pub fn next_batch(subscription_id: String, last_seq_id: Option<SeqId>) -> Self {
         Self::NextBatch {
             subscription_id,
-            batch_num,
+            last_seq_id,
         }
     }
 
@@ -398,9 +409,11 @@ impl BatchControl {
     pub fn first(total_batches: u32) -> Self {
         Self {
             batch_num: 0,
-            total_batches,
+            total_batches: Some(total_batches),
             has_more: total_batches > 1,
             status: BatchStatus::Loading,
+            last_seq_id: None,
+            snapshot_end_seq: None,
         }
     }
 
@@ -408,9 +421,11 @@ impl BatchControl {
     pub fn middle(batch_num: u32, total_batches: u32) -> Self {
         Self {
             batch_num,
-            total_batches,
+            total_batches: Some(total_batches),
             has_more: batch_num + 1 < total_batches,
             status: BatchStatus::LoadingBatch,
+            last_seq_id: None,
+            snapshot_end_seq: None,
         }
     }
 
@@ -418,9 +433,11 @@ impl BatchControl {
     pub fn last(batch_num: u32, total_batches: u32) -> Self {
         Self {
             batch_num,
-            total_batches,
+            total_batches: Some(total_batches),
             has_more: false,
             status: BatchStatus::Ready,
+            last_seq_id: None,
+            snapshot_end_seq: None,
         }
     }
 
@@ -437,9 +454,11 @@ impl BatchControl {
 
         Self {
             batch_num,
-            total_batches,
+            total_batches: Some(total_batches),
             has_more,
             status,
+            last_seq_id: None,
+            snapshot_end_seq: None,
         }
     }
 }
@@ -514,12 +533,13 @@ mod tests {
     #[test]
     fn test_next_batch_request() {
         use crate::websocket::ClientMessage;
+        use crate::ids::SeqId;
         
-        let msg = ClientMessage::next_batch("sub-1".to_string(), 1);
+        let msg = ClientMessage::next_batch("sub-1".to_string(), Some(SeqId::new(100)));
         let json = serde_json::to_string(&msg).unwrap();
         
         assert!(json.contains("\"type\":\"next_batch\""));
-        assert!(json.contains("\"batch_num\":1"));
+        assert!(json.contains("\"last_seq_id\":100"));
     }
 
     #[test]
@@ -528,7 +548,7 @@ mod tests {
         
         let first = BatchControl::first(5);
         assert_eq!(first.batch_num, 0);
-        assert_eq!(first.total_batches, 5);
+        assert_eq!(first.total_batches, Some(5));
         assert!(first.has_more);
         
         let last = BatchControl::last(4, 5);

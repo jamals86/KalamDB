@@ -1,7 +1,7 @@
 //! Type-safe wrapper types for KalamDB identifiers and enums.
 //!
 //! This module provides newtype wrappers around String to enforce type safety
-//! at compile time, preventing accidental mixing of user IDs, namespace IDs,
+//! at compile time, preventing accidental mixing of user IDs, namespace ID,
 //! and table names.
 //!
 //! ## System Table Models
@@ -38,6 +38,7 @@ mod audit_log_key;
 mod auth_type;
 mod job_status;
 mod job_type;
+mod k_table_row;
 mod role;
 mod storage_config;
 mod storage_mode;
@@ -52,6 +53,7 @@ pub use auth_type::AuthType;
 pub use ids::*;
 pub use job_status::JobStatus;
 pub use job_type::JobType;
+pub use k_table_row::KTableRow;
 pub use role::Role;
 pub use storage_config::StorageConfig;
 pub use storage_mode::StorageMode;
