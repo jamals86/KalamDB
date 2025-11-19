@@ -498,6 +498,21 @@ fn record_batch_to_query_result(
                     }
                 }
             }
+
+            // Mask password_hash column
+            if let Some(pwd_col) = column_names
+                .iter()
+                .position(|name| name.eq_ignore_ascii_case("password_hash"))
+            {
+                let key = column_names[pwd_col].clone();
+                for row in rows.iter_mut() {
+                    if let Some(value) = row.get_mut(&key) {
+                        if !value.is_null() {
+                            *value = serde_json::Value::String("***".to_string());
+                        }
+                    }
+                }
+            }
         }
     }
 

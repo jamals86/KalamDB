@@ -418,6 +418,34 @@ impl SqlExecutor {
                                 access_level
                             )));
                         }
+                    } else if matches!(def.table_type, TableType::User) {
+                        // Enforce namespace isolation: User tables can only be accessed by their owner
+                        // (unless user is admin/system)
+                        let is_admin = matches!(
+                            exec_ctx.user_role,
+                            kalamdb_commons::Role::System | kalamdb_commons::Role::Dba
+                        );
+                        if !is_admin && ns.as_str() != exec_ctx.user_id.as_str() {
+                            return Err(KalamDbError::Unauthorized(format!(
+                                "Insufficient privileges to access user table '{}.{}'",
+                                ns.as_str(),
+                                tbl.as_str()
+                            )));
+                        }
+                    } else if matches!(def.table_type, TableType::System) {
+                        // Enforce system table restrictions
+                        // Only admins can access system tables directly
+                        let is_admin = matches!(
+                            exec_ctx.user_role,
+                            kalamdb_commons::Role::System | kalamdb_commons::Role::Dba
+                        );
+                        if !is_admin {
+                            return Err(KalamDbError::Unauthorized(format!(
+                                "Insufficient privileges to access system table '{}.{}'",
+                                ns.as_str(),
+                                tbl.as_str()
+                            )));
+                        }
                     }
                 }
             }

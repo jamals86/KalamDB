@@ -258,7 +258,7 @@ impl StreamHandler<Result<ws::Message, ws::ProtocolError>> for WebSocketSession 
                                             id: s.id,
                                             sql: s.sql,
                                             options: crate::models::SubscriptionOptions {
-                                                last_rows: None,
+                                                last_rows: s.options.last_rows.map(|n| n as usize),
                                                 batch_size: s.options.batch_size,
                                             },
                                         })
@@ -397,7 +397,12 @@ impl WebSocketSession {
             .options
             .batch_size
             .unwrap_or(MAX_ROWS_PER_BATCH);
-        let initial_data_options = Some(InitialDataOptions::batch(None, None, batch_size));
+
+        let initial_data_options = if let Some(last_n) = subscription.options.last_rows {
+            Some(InitialDataOptions::last(last_n))
+        } else {
+            Some(InitialDataOptions::batch(None, None, batch_size))
+        };
 
         let manager = self.live_query_manager.clone();
         let rate_limiter = self.rate_limiter.clone();

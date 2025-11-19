@@ -240,6 +240,8 @@ instead of: 1 failed: Invalid operation: No handler registered for statement typ
   - specify batch size and verify it works correctly
   - with seq bounds
   - with time bounds in streams with ttl passed
+  - Check the order of the recieved rows is correct in the batch
+  - Check if the rows is correct in the changes notification as well
 
 Here’s the updated 5-line spec with embedding storage inside Parquet and managed HNSW indexing (with delete handling):
 	1.	Parquet Storage: All embeddings are stored as regular columns in the Parquet file alongside other table columns to keep data unified and versioned per batch.

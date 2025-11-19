@@ -199,6 +199,10 @@ pub struct SubscriptionOptions {
     /// Optional: Configure batch size for initial data streaming
     #[serde(skip_serializing_if = "Option::is_none")]
     pub batch_size: Option<usize>,
+
+    /// Optional: Number of last rows to fetch for initial data
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub last_rows: Option<u32>,
 }
 
 /// Batch control metadata for paginated initial data loading
