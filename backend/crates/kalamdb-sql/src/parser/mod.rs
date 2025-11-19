@@ -18,10 +18,8 @@
 //! 4. **Type-safe AST**: Strongly typed statement representations
 
 pub mod extensions;
-pub mod standard;
 pub mod system;
 pub mod utils;
 
 pub use extensions::*;
-pub use standard::*;
 pub use system::*;

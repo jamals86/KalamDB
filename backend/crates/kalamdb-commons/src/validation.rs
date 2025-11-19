@@ -38,16 +38,6 @@ pub static RESERVED_COLUMN_NAMES: Lazy<HashSet<&'static str>> = Lazy::new(|| {
     set
 });
 
-/// SQL reserved keywords that cannot be used as identifiers
-/// Uses sqlparser-rs ALL_KEYWORDS constant for comprehensive SQL keyword coverage
-pub static RESERVED_SQL_KEYWORDS: Lazy<HashSet<String>> = Lazy::new(|| {
-    // Use sqlparser's comprehensive keyword list (includes SQL standard + dialect extensions)
-    sqlparser::keywords::ALL_KEYWORDS
-        .iter()
-        .map(|kw| kw.to_lowercase())
-        .collect::<HashSet<String>>()
-});
-
 /// Validation error types
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ValidationError {
@@ -191,12 +181,6 @@ fn validate_identifier_base(name: &str) -> Result<(), ValidationError> {
     // Check for invalid characters (only alphanumeric and underscore allowed)
     if !name.chars().all(|c| c.is_ascii_alphanumeric() || c == '_') {
         return Err(ValidationError::InvalidCharacters(name.to_string()));
-    }
-
-    // Check if it's a reserved SQL keyword
-    let lowercase = name.to_lowercase();
-    if RESERVED_SQL_KEYWORDS.contains(&lowercase) {
-        return Err(ValidationError::ReservedSqlKeyword(name.to_string()));
     }
 
     Ok(())

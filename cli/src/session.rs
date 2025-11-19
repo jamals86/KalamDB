@@ -310,11 +310,11 @@ impl CLISession {
         }
 
         if let Some(options_obj) = subscription_obj.get("options").and_then(|v| v.as_object()) {
-            let mut options = SubscriptionOptions::default();
+            let options = SubscriptionOptions::default();
             let mut has_options = false;
 
-            if let Some(last_rows) = options_obj.get("last_rows").and_then(|v| v.as_u64()) {
-                options.last_rows = Some(last_rows as usize);
+            if let Some(_last_rows) = options_obj.get("last_rows").and_then(|v| v.as_u64()) {
+                // Deprecated: batch streaming configured server-side
                 has_options = true;
             }
 
@@ -990,7 +990,7 @@ impl CLISession {
             return (
                 sql.to_string(),
                 Some(SubscriptionOptions {
-                    last_rows: Some(100),
+                    _reserved: None,
                 }),
             );
         };
@@ -1013,7 +1013,7 @@ impl CLISession {
         if !options_str.starts_with('(') || !options_str.ends_with(')') {
             eprintln!("Warning: Invalid OPTIONS format, using defaults");
             return Some(SubscriptionOptions {
-                last_rows: Some(100),
+                _reserved: None,
             });
         }
 
@@ -1025,13 +1025,13 @@ impl CLISession {
             let value = inner[equals_idx + 1..].trim();
 
             if key.to_lowercase() == "last_rows" {
-                if let Ok(last_rows) = value.parse::<usize>() {
+                if let Ok(_last_rows) = value.parse::<usize>() {
                     return Some(SubscriptionOptions {
-                        last_rows: Some(last_rows),
+                        _reserved: None,
                     });
                 } else {
                     eprintln!(
-                        "Warning: Invalid last_rows value '{}', using default 100",
+                        "Warning: Invalid last_rows value '{}', using default",
                         value
                     );
                 }
@@ -1040,9 +1040,9 @@ impl CLISession {
             }
         }
 
-        // Default to 100 rows if parsing failed
+        // Default if parsing failed
         Some(SubscriptionOptions {
-            last_rows: Some(100),
+            _reserved: None,
         })
     }
 
@@ -1140,53 +1140,93 @@ impl CLISession {
     /// Display a change event with formatting
     ///
     /// **Implements T102**: Change indicators (INSERT/UPDATE/DELETE)
-    fn display_change_event(&self, subscription_sql: &str, event: &kalam_link::ChangeEvent) {
+    fn display_change_event(&self, _subscription_sql: &str, event: &kalam_link::ChangeEvent) {
         use chrono::Local;
         let timestamp = Local::now().format("%H:%M:%S%.3f");
 
         match event {
             kalam_link::ChangeEvent::Ack {
                 subscription_id,
-                message: _,
+                total_rows,
+                batch_control,
             } => {
-                let id_display = subscription_id.as_deref().unwrap_or("<pending-id>");
                 if self.color {
                     println!(
-                        "\x1b[36m[{}] ✓ SUBSCRIBED\x1b[0m [{}] Listening for changes...",
-                        timestamp, id_display
+                        "\x1b[36m[{}] ✓ SUBSCRIBED\x1b[0m [{}] {} total rows, batch {}/{} {}",
+                        timestamp,
+                        subscription_id,
+                        total_rows,
+                        batch_control.batch_num + 1,
+                        batch_control.total_batches,
+                        if batch_control.has_more {
+                            "(loading...)"
+                        } else {
+                            "(ready)"
+                        }
                     );
                 } else {
                     println!(
-                        "[{}] ✓ SUBSCRIBED [{}] Listening for changes...",
-                        timestamp, id_display
+                        "[{}] ✓ SUBSCRIBED [{}] {} total rows, batch {}/{} {}",
+                        timestamp,
+                        subscription_id,
+                        total_rows,
+                        batch_control.batch_num + 1,
+                        batch_control.total_batches,
+                        if batch_control.has_more {
+                            "(loading...)"
+                        } else {
+                            "(ready)"
+                        }
                     );
                 }
             }
-            kalam_link::ChangeEvent::InitialData {
+            kalam_link::ChangeEvent::InitialDataBatch {
                 subscription_id,
                 rows,
+                batch_control,
             } => {
                 let count = rows.len();
                 if self.color {
                     println!(
-                        "\x1b[34m[{}] SNAPSHOT\x1b[0m [{}] {} rows for {}",
-                        timestamp, subscription_id, count, subscription_sql
+                        "\x1b[34m[{}] BATCH {}/{}\x1b[0m [{}] {} rows {}",
+                        timestamp,
+                        batch_control.batch_num + 1,
+                        batch_control.total_batches,
+                        subscription_id,
+                        count,
+                        if batch_control.has_more {
+                            "(more pending)"
+                        } else {
+                            "(complete)"
+                        }
                     );
                 } else {
                     println!(
-                        "[{}] SNAPSHOT [{}] {} rows for {}",
-                        timestamp, subscription_id, count, subscription_sql
+                        "[{}] BATCH {}/{} [{}] {} rows {}",
+                        timestamp,
+                        batch_control.batch_num + 1,
+                        batch_control.total_batches,
+                        subscription_id,
+                        count,
+                        if batch_control.has_more {
+                            "(more pending)"
+                        } else {
+                            "(complete)"
+                        }
                     );
                 }
 
-                let preview = rows.iter().take(5);
-                for row in preview {
-                    println!("    {}", Self::format_json(row));
-                }
-                if rows.len() > 5 {
-                    println!("    ... ({} more rows)", rows.len() - 5);
+                // Display rows in the same format as snapshots
+                for row in rows {
+                    let formatted = serde_json::to_string_pretty(&row).unwrap_or_default();
+                    if self.color {
+                        println!("  \x1b[90m{}\x1b[0m", formatted);
+                    } else {
+                        println!("  {}", formatted);
+                    }
                 }
             }
+
             kalam_link::ChangeEvent::Insert {
                 subscription_id,
                 rows,
@@ -1805,7 +1845,8 @@ impl SqlHighlighter {
             if ch == '-' {
                 if let Some('-') = iter.peek().copied() {
                     result.push_str(&self.collect_comment(&mut iter));
-                    break;
+                    // Comment consumes rest of line, so we're done with this line
+                    return result;
                 } else {
                     result.push(ch);
                     continue;

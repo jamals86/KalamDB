@@ -26,6 +26,14 @@ pub struct InitialDataOptions {
     /// Include soft-deleted rows (_deleted=true)
     /// Default: false
     pub include_deleted: bool,
+
+    /// For batched loading: fetch a specific batch number
+    /// If Some, overrides limit and uses batch-based pagination
+    pub batch_num: Option<u32>,
+
+    /// For batched loading: maximum rows per batch
+    /// Default: 1000
+    pub batch_size: usize,
 }
 
 impl Default for InitialDataOptions {
@@ -34,6 +42,8 @@ impl Default for InitialDataOptions {
             since_timestamp: None,
             limit: 100,
             include_deleted: false,
+            batch_num: None,
+            batch_size: kalamdb_commons::websocket::MAX_ROWS_PER_BATCH,
         }
     }
 }
@@ -45,6 +55,8 @@ impl InitialDataOptions {
             since_timestamp: Some(timestamp_ms),
             limit: 100,
             include_deleted: false,
+            batch_num: None,
+            batch_size: kalamdb_commons::websocket::MAX_ROWS_PER_BATCH,
         }
     }
 
@@ -54,6 +66,19 @@ impl InitialDataOptions {
             since_timestamp: None,
             limit,
             include_deleted: false,
+            batch_num: None,
+            batch_size: kalamdb_commons::websocket::MAX_ROWS_PER_BATCH,
+        }
+    }
+
+    /// Create options for batch-based fetching (used for large initial loads)
+    pub fn batch(batch_num: u32, batch_size: usize) -> Self {
+        Self {
+            since_timestamp: None,
+            limit: usize::MAX, // No global limit for batch mode
+            include_deleted: false,
+            batch_num: Some(batch_num),
+            batch_size,
         }
     }
 
@@ -85,6 +110,12 @@ pub struct InitialDataResult {
 
     /// Whether there are more rows beyond the limit
     pub has_more: bool,
+
+    /// For batched loading: current batch number
+    pub batch_num: Option<u32>,
+
+    /// For batched loading: total number of batches
+    pub total_batches: Option<u32>,
 }
 
 /// Service for fetching initial data when subscribing to live queries
@@ -138,6 +169,8 @@ impl InitialDataFetcher {
                 latest_timestamp: None,
                 total_available: 0,
                 has_more: false,
+                batch_num: options.batch_num,
+                total_batches: Some(0),
             });
         }
 
@@ -247,20 +280,42 @@ impl InitialDataFetcher {
         rows_with_ts.sort_by(|a, b| b.0.cmp(&a.0));
 
         let total_available = rows_with_ts.len();
-        let has_more = total_available > limit;
-        if has_more {
-            rows_with_ts.truncate(limit);
-        }
-
+        
+        // Extract latest timestamp before consuming rows_with_ts
         let latest_timestamp = rows_with_ts.first().map(|(ts, _)| *ts);
-        let rows = rows_with_ts.into_iter().map(|(_, row)| row).collect();
+        
+        // Handle batch-based pagination if requested
+        let (rows, has_more, batch_num, total_batches) = if let Some(batch_idx) = options.batch_num {
+            let batch_size = options.batch_size;
+            let total_batches = ((total_available + batch_size - 1) / batch_size) as u32;
+            let start = (batch_idx as usize) * batch_size;
+            let end = ((batch_idx as usize + 1) * batch_size).min(total_available);
+            
+            let batch_rows = if start < total_available {
+                rows_with_ts[start..end].iter().map(|(_, row)| row.clone()).collect()
+            } else {
+                Vec::new()
+            };
+            
+            let has_more = batch_idx + 1 < total_batches;
+            (batch_rows, has_more, Some(batch_idx), Some(total_batches))
+        } else {
+            // Legacy single-fetch mode
+            let has_more = total_available > limit;
+            if has_more {
+                rows_with_ts.truncate(limit);
+            }
+            let rows = rows_with_ts.into_iter().map(|(_, row)| row).collect();
+            (rows, has_more, None, None)
+        };
 
         log::info!(
-            "fetch_initial_data complete: table={}, returned {} rows (total available: {}, has_more: {})",
+            "fetch_initial_data complete: table={}, returned {} rows (total available: {}, has_more: {}, batch: {:?})",
             table_id,
-            total_available.min(limit),
+            rows.len(),
             total_available,
-            has_more
+            has_more,
+            batch_num
         );
 
         Ok(InitialDataResult {
@@ -268,6 +323,8 @@ impl InitialDataFetcher {
             latest_timestamp,
             total_available,
             has_more,
+            batch_num,
+            total_batches,
         })
     }
 

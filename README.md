@@ -210,12 +210,12 @@ CREATE STREAM TABLE chat.typing_events (
 INSERT INTO chat.conversations (id, title) VALUES (1, 'Chat with AI About KalamDB');
 
 -- Suppose the returned id is 1 – insert user + AI messages
-INSERT INTO chat.messages (conversation_id, role, content) VALUES
+INSERT INTO chat.messages (conversation_id, role_id, content) VALUES
   (1, 'user', 'Hello, AI!'),
   (1, 'assistant', 'Hi! How can I help you today?');
 
 -- Query the conversation history
-SELECT id, role, content, created_at
+SELECT id, role_id, content, created_at
 FROM chat.messages
 WHERE conversation_id = 1
 ORDER BY created_at ASC;

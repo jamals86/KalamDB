@@ -88,6 +88,6 @@ pub use string_interner::{intern, stats as interner_stats, SystemColumns, SYSTEM
 pub use system_tables::{StoragePartition, SystemTable};
 pub use validation::{
     validate_column_name, validate_namespace_name, validate_table_name, ValidationError,
-    RESERVED_COLUMN_NAMES, RESERVED_NAMESPACES, RESERVED_SQL_KEYWORDS,
+    RESERVED_COLUMN_NAMES, RESERVED_NAMESPACES
 };
 pub use websocket::{ChangeType as WsChangeType, Notification, WebSocketMessage};

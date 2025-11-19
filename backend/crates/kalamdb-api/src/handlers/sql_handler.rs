@@ -227,6 +227,11 @@ pub async fn execute_sql_v1(
     let mut results = Vec::new();
     let sql_executor: Option<&Arc<SqlExecutor>> = Some(sql_executor.get_ref());
 
+    // Track accumulated row counts for multi-statement DML batches (INSERT, UPDATE, DELETE)
+    let mut total_inserted = 0usize;
+    let mut total_updated = 0usize;
+    let mut total_deleted = 0usize;
+
     // Phase 3 (T033): Extract request_id and ip_address for ExecutionContext
     let request_id = http_req
         .headers()
@@ -275,6 +280,23 @@ pub async fn execute_sql_v1(
                     None, // Table name could be extracted from SQL parsing
                 );
 
+                // For multi-statement batches, accumulate DML row counts
+                if statements.len() > 1 {
+                    // Check if this is a DML statement by looking at the message
+                    if let Some(ref msg) = result.message {
+                        if msg.contains("Inserted") {
+                            total_inserted += result.row_count;
+                            continue; // Skip pushing individual results for batches
+                        } else if msg.contains("Updated") {
+                            total_updated += result.row_count;
+                            continue;
+                        } else if msg.contains("Deleted") {
+                            total_deleted += result.row_count;
+                            continue;
+                        }
+                    }
+                }
+
                 results.push(result);
             }
             Err(err) => {
@@ -286,6 +308,28 @@ pub async fn execute_sql_v1(
                     took_ms,
                 ));
             }
+        }
+    }
+
+    // Add accumulated DML results if we processed multiple statements
+    if statements.len() > 1 {
+        if total_inserted > 0 {
+            results.push(QueryResult::with_affected_rows(
+                total_inserted,
+                Some(format!("Inserted {} row(s)", total_inserted)),
+            ));
+        }
+        if total_updated > 0 {
+            results.push(QueryResult::with_affected_rows(
+                total_updated,
+                Some(format!("Updated {} row(s)", total_updated)),
+            ));
+        }
+        if total_deleted > 0 {
+            results.push(QueryResult::with_affected_rows(
+                total_deleted,
+                Some(format!("Deleted {} row(s)", total_deleted)),
+            ));
         }
     }
 

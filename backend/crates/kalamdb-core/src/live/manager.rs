@@ -6,7 +6,7 @@
 use super::connection_registry::{
     ConnectionId, LiveId, LiveQueryOptions, LiveQueryRegistry, NodeId,
 };
-use super::filter::FilterCache;
+use super::filter::{FilterCache, FilterPredicate};
 use super::initial_data::{InitialDataFetcher, InitialDataOptions, InitialDataResult};
 use crate::error::KalamDbError;
 use kalamdb_commons::models::{NamespaceId, TableId, TableName, UserId};
@@ -296,6 +296,68 @@ impl LiveQueryManager {
             live_id,
             initial_data,
         })
+    }
+
+    /// Fetch a batch of initial data for an existing subscription
+    ///
+    /// This method is used to fetch subsequent batches after the initial subscription.
+    pub async fn fetch_initial_data_batch(
+        &self,
+        sql: &str,
+        user_id: &UserId,
+        initial_data_options: Option<InitialDataOptions>,
+    ) -> Result<InitialDataResult, KalamDbError> {
+        let fetch_options = initial_data_options.ok_or_else(|| {
+            KalamDbError::InvalidOperation("Batch options are required".to_string())
+        })?;
+
+        // Extract table info from SQL
+        let raw_table = self.extract_table_name_from_query(sql)?;
+        let (namespace, table) = raw_table.split_once('.').ok_or_else(|| {
+            KalamDbError::InvalidSql(format!(
+                "Query must reference table as namespace.table: {}",
+                raw_table
+            ))
+        })?;
+
+        let namespace_id = NamespaceId::from(namespace);
+        let table_name = TableName::from(table);
+        let table_id = TableId::new(namespace_id.clone(), table_name.clone());
+        
+        let table_def = self
+            .schema_registry
+            .get_table_definition(&table_id)?
+            .ok_or_else(|| {
+                KalamDbError::NotFound(format!(
+                    "Table {}.{} not found for batch fetch",
+                    namespace, table
+                ))
+            })?;
+
+        // Create a temporary LiveId for fetching (not actually used by fetcher for filtering)
+        let temp_conn_id = ConnectionId::new(
+            user_id.as_str().to_string(),
+            format!("batch-{}", uuid::Uuid::new_v4()),
+        );
+        let temp_live_id = LiveId::new(
+            temp_conn_id,
+            table_id.clone(),
+            format!("batch-query-{}", uuid::Uuid::new_v4()),
+        );
+
+        // Extract filter predicate from SQL WHERE clause if present
+        // For now, we pass None as filter (TODO: parse WHERE clause into FilterPredicate)
+        let filter_predicate: Option<Arc<FilterPredicate>> = None;
+
+        self.initial_data_fetcher
+            .fetch_initial_data(
+                &temp_live_id,
+                &table_id,
+                table_def.table_type,
+                fetch_options,
+                filter_predicate,
+            )
+            .await
     }
 
     // /// Determine whether any active subscriptions reference the specified table.
