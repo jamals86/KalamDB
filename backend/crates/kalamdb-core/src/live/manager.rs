@@ -11,12 +11,15 @@ use super::initial_data::{InitialDataFetcher, InitialDataOptions, InitialDataRes
 use crate::error::KalamDbError;
 use crate::sql::executor::SqlExecutor;
 use datafusion::execution::context::SessionContext;
-use kalamdb_commons::models::{NamespaceId, TableId, TableName, UserId};
+use datafusion::scalar::ScalarValue;
+use kalamdb_commons::constants::AuthConstants;
+use kalamdb_commons::models::{NamespaceId, Row, TableId, TableName, UserId};
 use kalamdb_system::LiveQueriesTableProvider;
 // SchemaRegistry will be passed as Arc parameter from kalamdb-core
 use kalamdb_commons::schemas::TableType;
 use kalamdb_commons::system::LiveQuery as SystemLiveQuery;
 use kalamdb_commons::LiveQueryId;
+use std::collections::BTreeMap;
 use std::sync::Arc;
 use std::time::{SystemTime, UNIX_EPOCH};
 
@@ -31,6 +34,13 @@ pub struct LiveQueryManager {
 }
 
 impl LiveQueryManager {
+    fn is_admin_user(user_id: &str) -> bool {
+        const ADMIN_IDS: [&str; 3] = ["root", "system", AuthConstants::DEFAULT_SYSTEM_USER_ID];
+        ADMIN_IDS
+            .iter()
+            .any(|admin_id| user_id.eq_ignore_ascii_case(admin_id))
+    }
+
     /// Create a new live query manager
     pub fn new(
         live_queries_provider: Arc<LiveQueriesTableProvider>,
@@ -42,8 +52,10 @@ impl LiveQueryManager {
             node_id.clone(),
         )));
         let filter_cache = Arc::new(tokio::sync::RwLock::new(FilterCache::new()));
-        let initial_data_fetcher =
-            Arc::new(InitialDataFetcher::new(base_session_context, schema_registry.clone()));
+        let initial_data_fetcher = Arc::new(InitialDataFetcher::new(
+            base_session_context,
+            schema_registry.clone(),
+        ));
 
         Self {
             registry,
@@ -154,9 +166,7 @@ impl LiveQueryManager {
         // Skip injection for admin/system users so they can observe all rows.
         if table_def.table_type == TableType::User {
             let user_id = connection_id.user_id();
-            let is_admin_like =
-                user_id.eq_ignore_ascii_case("root") || user_id.eq_ignore_ascii_case("system");
-            if !is_admin_like {
+            if !Self::is_admin_user(user_id) {
                 let user_filter = format!("user_id = '{}'", user_id);
                 where_clause = if let Some(existing_clause) = where_clause {
                     Some(format!("{} AND {}", user_filter, existing_clause))
@@ -330,7 +340,7 @@ impl LiveQueryManager {
         let namespace_id = NamespaceId::from(namespace);
         let table_name = TableName::from(table);
         let table_id = TableId::new(namespace_id.clone(), table_name.clone());
-        
+
         let table_def = self
             .schema_registry
             .get_table_definition(&table_id)?
@@ -696,6 +706,9 @@ impl LiveQueryManager {
             let mut ids = Vec::new();
             let mut seen = HashSet::new();
 
+            // Define filtering_row for filter evaluation
+            let filtering_row = &change_notification.row_data;
+
             // Iterate only through subscriptions for this specific table - O(k)
             for handle in all_handles {
                 log::info!("📢 Evaluating subscription live_id={}", handle.live_id);
@@ -715,8 +728,8 @@ impl LiveQueryManager {
 
                 // Check filter if one exists (for INSERT/UPDATE/DELETE only)
                 if let Some(filter) = filter_cache.get(&handle.live_id.to_string()) {
-                    // Apply filter to row data
-                    match filter.matches(&change_notification.row_data) {
+                    // Apply filter to row data (using the enriched filtering_row)
+                    match filter.matches(filtering_row) {
                         Ok(true) => {
                             // Filter matched, include this subscriber
                             if seen.insert(handle.live_id.to_string()) {
@@ -760,21 +773,12 @@ impl LiveQueryManager {
         // MEMORY FIX: Build notification data ONCE, not per subscriber
         // Old code cloned row_data for every subscriber (N × row_size memory)
         // New code: Convert once, reference for all subscribers (1 × row_size memory)
-        let row_map = if let Some(obj) = change_notification.row_data.as_object() {
-            obj.iter().map(|(k, v)| (k.clone(), v.clone())).collect()
-        } else {
-            std::collections::HashMap::new()
-        };
-
-        let old_map = if let Some(old_data) = &change_notification.old_data {
-            if let Some(obj) = old_data.as_object() {
-                obj.iter().map(|(k, v)| (k.clone(), v.clone())).collect()
-            } else {
-                std::collections::HashMap::new()
-            }
-        } else {
-            std::collections::HashMap::new()
-        };
+        // With Row, we can just clone the Row which is relatively cheap (Arc inside ScalarValue for large data?)
+        // ScalarValue clones are deep clones usually, but strings are String.
+        // But Row is what we have.
+        
+        let row_data = change_notification.row_data.clone();
+        let old_data = change_notification.old_data.clone();
 
         // Now send notifications and increment changes for each live_id
         let notification_count = live_ids_to_notify.len();
@@ -785,22 +789,22 @@ impl LiveQueryManager {
                 let notification = match change_notification.change_type {
                     ChangeType::Insert => kalamdb_commons::Notification::insert(
                         live_id.to_string(),
-                        vec![row_map.clone()],
+                        vec![row_data.clone()],
                     ),
                     ChangeType::Update => kalamdb_commons::Notification::update(
                         live_id.to_string(),
-                        vec![row_map.clone()],
-                        vec![old_map.clone()],
+                        vec![row_data.clone()],
+                        vec![old_data.clone().unwrap_or_else(|| Row::new(BTreeMap::new()))],
                     ),
                     ChangeType::Delete => kalamdb_commons::Notification::delete(
                         live_id.to_string(),
-                        vec![row_map.clone()],
+                        vec![row_data.clone()],
                     ),
                     ChangeType::Flush => {
                         // For flush, we use insert type with flush metadata
                         kalamdb_commons::Notification::insert(
                             live_id.to_string(),
-                            vec![row_map.clone()],
+                            vec![row_data.clone()],
                         )
                     }
                 };
@@ -852,14 +856,14 @@ impl LiveQueryManager {
 pub struct ChangeNotification {
     pub change_type: ChangeType,
     pub table_id: kalamdb_commons::models::TableId,
-    pub row_data: serde_json::Value,
-    pub old_data: Option<serde_json::Value>, // For UPDATE notifications
+    pub row_data: Row,
+    pub old_data: Option<Row>, // For UPDATE notifications
     pub row_id: Option<String>,              // For DELETE notifications (hard delete)
 }
 
 impl ChangeNotification {
     /// Create an INSERT notification
-    pub fn insert(table_id: kalamdb_commons::models::TableId, row_data: serde_json::Value) -> Self {
+    pub fn insert(table_id: kalamdb_commons::models::TableId, row_data: Row) -> Self {
         Self {
             change_type: ChangeType::Insert,
             table_id,
@@ -872,8 +876,8 @@ impl ChangeNotification {
     /// Create an UPDATE notification with old and new values
     pub fn update(
         table_id: kalamdb_commons::models::TableId,
-        old_data: serde_json::Value,
-        new_data: serde_json::Value,
+        old_data: Row,
+        new_data: Row,
     ) -> Self {
         Self {
             change_type: ChangeType::Update,
@@ -887,7 +891,7 @@ impl ChangeNotification {
     /// Create a DELETE notification (soft delete with data)
     pub fn delete_soft(
         table_id: kalamdb_commons::models::TableId,
-        row_data: serde_json::Value,
+        row_data: Row,
     ) -> Self {
         Self {
             change_type: ChangeType::Delete,
@@ -900,10 +904,24 @@ impl ChangeNotification {
 
     /// Create a DELETE notification (hard delete, row_id only)
     pub fn delete_hard(table_id: kalamdb_commons::models::TableId, row_id: String) -> Self {
+        // For hard delete, we create a dummy row with just ID for notification purposes
+        // or we might need to change how delete notifications work.
+        // For now, let's create a minimal Row with just ID if possible, or empty.
+        let mut values = BTreeMap::new();
+        // Assuming we can't easily reconstruct the row, we might send just the ID.
+        // But Row expects ScalarValues.
+        // Let's assume the caller handles this or we just send empty row with ID in metadata?
+        // Actually, delete_hard is usually for when we don't have the full row.
+        // But Notification::delete expects Vec<Row>.
+        // Let's create a Row with just "id" column if we can.
+        // But we don't know the column name for ID (it might be "user_id", "uuid", etc).
+        // So we'll just put "row_id" as a special field.
+        values.insert("row_id".to_string(), ScalarValue::Utf8(Some(row_id.clone())));
+        
         Self {
             change_type: ChangeType::Delete,
             table_id,
-            row_data: serde_json::Value::Null,
+            row_data: Row::new(values),
             old_data: None,
             row_id: Some(row_id),
         }
@@ -915,14 +933,16 @@ impl ChangeNotification {
         row_count: usize,
         parquet_files: Vec<String>,
     ) -> Self {
+        let mut values = BTreeMap::new();
+        values.insert("row_count".to_string(), ScalarValue::Int64(Some(row_count as i64)));
+        let files_json = serde_json::to_string(&parquet_files).unwrap_or_default();
+        values.insert("parquet_files".to_string(), ScalarValue::Utf8(Some(files_json)));
+        values.insert("flushed_at".to_string(), ScalarValue::Int64(Some(chrono::Utc::now().timestamp_millis())));
+
         Self {
             change_type: ChangeType::Flush,
             table_id,
-            row_data: serde_json::json!({
-                "row_count": row_count,
-                "parquet_files": parquet_files,
-                "flushed_at": chrono::Utc::now().timestamp_millis(),
-            }),
+            row_data: Row::new(values),
             old_data: None,
             row_id: None,
         }
@@ -969,8 +989,13 @@ mod tests {
     use kalamdb_commons::{NamespaceId, TableName};
     use kalamdb_store::RocksDbInit;
     use kalamdb_system::providers::live_queries::LiveQueriesTableProvider;
-    use kalamdb_tables::{new_shared_table_store, new_stream_table_store, new_user_table_store};
+    use kalamdb_tables::{new_user_table_store, new_shared_table_store, new_stream_table_store};
+    use crate::providers::arrow_json_conversion::json_to_row;
     use tempfile::TempDir;
+
+    fn to_row(v: serde_json::Value) -> Row {
+        json_to_row(&v).unwrap()
+    }
 
     async fn create_test_manager() -> (LiveQueryManager, TempDir) {
         init_test_app_context();
@@ -1087,6 +1112,16 @@ mod tests {
         let sql_executor = Arc::new(SqlExecutor::new(app_ctx, false));
         manager.set_sql_executor(sql_executor);
         (manager, temp_dir)
+    }
+
+    #[test]
+    fn test_admin_detection_matches_sys_root() {
+        assert!(LiveQueryManager::is_admin_user("root"));
+        assert!(LiveQueryManager::is_admin_user("ROOT"));
+        assert!(LiveQueryManager::is_admin_user("system"));
+        assert!(LiveQueryManager::is_admin_user("sys_root"));
+        assert!(!LiveQueryManager::is_admin_user("sys_user"));
+        assert!(!LiveQueryManager::is_admin_user("user1"));
     }
 
     #[tokio::test]
@@ -1441,7 +1476,7 @@ mod tests {
         // Matching notification
         let matching_change = ChangeNotification::insert(
             TableId::from_strings("user1", "messages"),
-            serde_json::json!({"user_id": "user1", "text": "Hello"}),
+            to_row(serde_json::json!({"user_id": "user1", "text": "Hello"})),
         );
 
         let table_id = TableId::from_strings("user1", "messages");
@@ -1454,7 +1489,7 @@ mod tests {
         // Non-matching notification
         let non_matching_change = ChangeNotification::insert(
             TableId::from_strings("user1", "messages"),
-            serde_json::json!({"user_id": "user2", "text": "Hello"}),
+            to_row(serde_json::json!({"user_id": "user2", "text": "Hello"})),
         );
 
         let notified = manager

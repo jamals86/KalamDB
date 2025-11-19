@@ -132,6 +132,26 @@ impl StatementHandler for UpdateHandler {
                 }
             }
             kalamdb_commons::schemas::TableType::Shared => {
+                // Check write permissions for Shared tables
+                use kalamdb_auth::rbac::can_write_shared_table;
+                use kalamdb_commons::schemas::TableOptions;
+                use kalamdb_commons::TableAccess;
+
+                let access_level = if let TableOptions::Shared(opts) = &def.table_options {
+                    opts.access_level.clone().unwrap_or(TableAccess::Private)
+                } else {
+                    TableAccess::Private
+                };
+
+                if !can_write_shared_table(access_level.clone(), false, context.user_role) {
+                    return Err(KalamDbError::Unauthorized(format!(
+                        "Insufficient privileges to write to shared table '{}.{}' (Access Level: {:?})",
+                        namespace.as_str(),
+                        table_name.as_str(),
+                        access_level
+                    )));
+                }
+
                 // For SHARED tables, also require WHERE on the actual PK column
                 let provider_arc = schema_registry.get_provider(&table_id).ok_or_else(|| {
                     KalamDbError::InvalidOperation("Shared table provider not found".into())

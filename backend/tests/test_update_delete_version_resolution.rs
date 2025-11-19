@@ -4,7 +4,7 @@
 //! - T060: UPDATE record in fast storage (RocksDB)
 //! - T061: UPDATE record in Parquet (long-term storage)
 //! - T062: INSERT → FLUSH → UPDATE → query returns latest version
-//! - T063: Multiple updates → all versions flushed → query returns MAX(_updated)
+//! - T063: Multiple updates → all versions flushed → query returns MAX(_seq)
 //! - T064: DELETE → _deleted = true set → query excludes record
 //! - T065: DELETE record in Parquet → new version with _deleted = true in fast storage
 //! - T066: Concurrent updates → all succeed, final query returns latest
@@ -245,7 +245,7 @@ async fn test_full_workflow_insert_flush_update() {
     println!("✅ T062: INSERT → FLUSH → UPDATE workflow works correctly");
 }
 
-/// T063: Integration test - record updated 3 times → all versions flushed → query returns MAX(_updated)
+/// T063: Integration test - record updated 3 times → all versions flushed → query returns MAX(_seq)
 #[actix_web::test]
 async fn test_multi_version_query() {
     let server = TestServer::new().await;
@@ -324,7 +324,7 @@ async fn test_multi_version_query() {
         );
     }
 
-    println!("✅ T063: Multi-version query returns MAX(_updated) correctly");
+    println!("✅ T063: Multi-version query returns MAX(_seq) correctly");
 }
 
 /// T064: Integration test - DELETE → _deleted = true set → query excludes record

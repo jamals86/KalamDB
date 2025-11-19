@@ -1,18 +1,20 @@
 // T052-T054: Version Resolution using Arrow Compute Kernels
 //
-// Selects MAX(_updated) per row_id with tie-breaker: FastStorage (priority=2) > Parquet (priority=1)
+// Selects MAX(_seq) per row_id with tie-breaker: FastStorage (priority=2) > Parquet (priority=1)
 
-use super::arrow_json_conversion::arrow_value_to_json;
+use super::arrow_json_conversion::arrow_value_to_scalar;
 use crate::error::KalamDbError;
 use datafusion::arrow::array::{
-    Array, ArrayRef, BooleanArray, Int32Array, RecordBatch, StringArray, UInt64Array,
+    Array, ArrayRef, BooleanArray, Int32Array, Int64Array, RecordBatch, StringArray, UInt64Array,
 };
 use datafusion::arrow::compute;
 use datafusion::arrow::datatypes::{DataType, Field, Schema};
+use datafusion::scalar::ScalarValue;
+use kalamdb_commons::constants::SystemColumnNames;
 use kalamdb_commons::ids::SeqId;
+use kalamdb_commons::models::Row;
 use kalamdb_tables::{SharedTableRow, UserTableRow};
-use serde_json::{Map, Value as JsonValue};
-use std::collections::HashMap;
+use std::collections::{BTreeMap, HashMap};
 use std::sync::Arc;
 
 pub async fn resolve_latest_version(
@@ -25,7 +27,7 @@ pub async fn resolve_latest_version(
         return create_empty_batch(&schema);
     }
 
-    // If only one batch has data, still project it to ensure type conversions (e.g., String→Timestamp for _updated)
+    // If only one batch has data, still project it to ensure schema alignment
     if fast_batch.num_rows() == 0 {
         return project_to_target_schema(long_batch, schema);
     }
@@ -46,11 +48,11 @@ pub async fn resolve_latest_version(
         .iter()
         .position(|f| f.name() == "row_id")
         .ok_or_else(|| KalamDbError::Other("Missing row_id".into()))?;
-    let updated_idx = combined_schema
+    let seq_idx = combined_schema
         .fields()
         .iter()
-        .position(|f| f.name() == "_updated")
-        .ok_or_else(|| KalamDbError::Other("Missing _updated".into()))?;
+        .position(|f| f.name() == SystemColumnNames::SEQ)
+        .ok_or_else(|| KalamDbError::Other("Missing _seq".into()))?;
     let priority_idx = combined_schema
         .fields()
         .iter()
@@ -62,11 +64,11 @@ pub async fn resolve_latest_version(
         .as_any()
         .downcast_ref::<StringArray>()
         .ok_or_else(|| KalamDbError::Other("row_id not StringArray".into()))?;
-    let updated_array = combined
-        .column(updated_idx)
+    let seq_array = combined
+        .column(seq_idx)
         .as_any()
-        .downcast_ref::<StringArray>()
-        .ok_or_else(|| KalamDbError::Other("_updated not StringArray".into()))?;
+        .downcast_ref::<Int64Array>()
+        .ok_or_else(|| KalamDbError::Other("_seq not Int64Array".into()))?;
     let priority_array = combined
         .column(priority_idx)
         .as_any()
@@ -88,14 +90,14 @@ pub async fn resolve_latest_version(
             continue;
         }
         let mut best_idx = indices[0];
-        let mut best_updated = updated_array.value(best_idx);
+        let mut best_seq = seq_array.value(best_idx);
         let mut best_priority = priority_array.value(best_idx);
         for &idx in &indices[1..] {
-            let updated = updated_array.value(idx);
+            let seq = seq_array.value(idx);
             let priority = priority_array.value(idx);
-            if updated > best_updated || (updated == best_updated && priority > best_priority) {
+            if seq > best_seq || (seq == best_seq && priority > best_priority) {
                 best_idx = idx;
-                best_updated = updated;
+                best_seq = seq;
                 best_priority = priority;
             }
         }
@@ -124,7 +126,6 @@ pub async fn resolve_latest_version(
 /// Project RecordBatch to target schema with type conversions
 ///
 /// Handles type conversions needed after version resolution:
-/// - _updated: String (RFC3339) → Timestamp(Millisecond) if schema expects Timestamp
 /// - _deleted: Should already be Boolean, but verify and convert if needed
 fn project_to_target_schema(
     batch: RecordBatch,
@@ -137,30 +138,8 @@ fn project_to_target_schema(
             KalamDbError::Other(format!("Missing column {} in batch", field.name()))
         })?;
 
-        // Convert _updated from String back to Timestamp(Millisecond) if needed
-        if field.name() == "_updated"
-            && field.data_type()
-                == &DataType::Timestamp(datafusion::arrow::datatypes::TimeUnit::Millisecond, None)
-        {
-            if let Some(string_array) = col.as_any().downcast_ref::<StringArray>() {
-                // Convert RFC3339 strings back to millisecond timestamps
-                use chrono::DateTime;
-                let millis: Vec<i64> = (0..string_array.len())
-                    .map(|i| {
-                        DateTime::parse_from_rfc3339(string_array.value(i))
-                            .map(|dt| dt.timestamp_millis())
-                            .unwrap_or(0)
-                    })
-                    .collect();
-                final_columns.push(Arc::new(
-                    datafusion::arrow::array::TimestampMillisecondArray::from(millis),
-                ) as ArrayRef);
-                continue;
-            }
-        }
-
         // Ensure _deleted remains Boolean (should already be, but verify)
-        if field.name() == "_deleted" && field.data_type() == &DataType::Boolean {
+        if field.name() == SystemColumnNames::DELETED && field.data_type() == &DataType::Boolean {
             // _deleted should already be BooleanArray, but double-check
             if col.as_any().downcast_ref::<BooleanArray>().is_none() {
                 log::warn!(
@@ -224,14 +203,14 @@ mod tests {
     async fn test_empty() {
         let s = Arc::new(Schema::new(vec![
             Field::new("row_id", DataType::Utf8, false),
-            Field::new("_updated", DataType::Utf8, false),
+            Field::new(SystemColumnNames::SEQ, DataType::Int64, false),
             Field::new("name", DataType::Utf8, true),
         ]));
         let e = RecordBatch::try_new(
             s.clone(),
             vec![
                 Arc::new(StringArray::from(Vec::<&str>::new())),
-                Arc::new(StringArray::from(Vec::<&str>::new())),
+                Arc::new(Int64Array::from(Vec::<i64>::new())),
                 Arc::new(StringArray::from(Vec::<&str>::new())),
             ],
         )
@@ -245,17 +224,17 @@ mod tests {
         );
     }
     #[tokio::test]
-    async fn test_max_updated() {
+    async fn test_max_seq() {
         let s = Arc::new(Schema::new(vec![
             Field::new("row_id", DataType::Utf8, false),
-            Field::new("_updated", DataType::Utf8, false),
+            Field::new(SystemColumnNames::SEQ, DataType::Int64, false),
             Field::new("name", DataType::Utf8, true),
         ]));
         let f = RecordBatch::try_new(
             s.clone(),
             vec![
                 Arc::new(StringArray::from(vec!["1"])),
-                Arc::new(StringArray::from(vec!["2025-01-15T10:01:00Z"])),
+                Arc::new(Int64Array::from(vec![2])),
                 Arc::new(StringArray::from(vec!["Alice_v2"])),
             ],
         )
@@ -264,7 +243,7 @@ mod tests {
             s.clone(),
             vec![
                 Arc::new(StringArray::from(vec!["1"])),
-                Arc::new(StringArray::from(vec!["2025-01-15T10:00:00Z"])),
+                Arc::new(Int64Array::from(vec![1])),
                 Arc::new(StringArray::from(vec!["Alice_v1"])),
             ],
         )
@@ -284,14 +263,14 @@ mod tests {
     async fn test_tie_breaker() {
         let s = Arc::new(Schema::new(vec![
             Field::new("row_id", DataType::Utf8, false),
-            Field::new("_updated", DataType::Utf8, false),
+            Field::new(SystemColumnNames::SEQ, DataType::Int64, false),
             Field::new("name", DataType::Utf8, true),
         ]));
         let f = RecordBatch::try_new(
             s.clone(),
             vec![
                 Arc::new(StringArray::from(vec!["1"])),
-                Arc::new(StringArray::from(vec!["2025-01-15T10:00:00Z"])),
+                Arc::new(Int64Array::from(vec![1])),
                 Arc::new(StringArray::from(vec!["Fast"])),
             ],
         )
@@ -300,7 +279,7 @@ mod tests {
             s.clone(),
             vec![
                 Arc::new(StringArray::from(vec!["1"])),
-                Arc::new(StringArray::from(vec!["2025-01-15T10:00:00Z"])),
+                Arc::new(Int64Array::from(vec![1])),
                 Arc::new(StringArray::from(vec!["Parquet"])),
             ],
         )
@@ -322,7 +301,7 @@ mod tests {
 ///
 /// This is a generic helper for UPDATE/DELETE operations that need to:
 /// 1. Scan both RocksDB (fast storage) and Parquet (flushed storage)
-/// 2. Apply version resolution (latest _updated wins)
+/// 2. Apply version resolution (latest _seq wins)
 /// 3. Filter out deleted records (_deleted = true)
 /// 4. Convert Arrow RecordBatch back to row structures
 ///
@@ -378,7 +357,7 @@ where
     // Step 2: Scan Parquet files (flushed storage)
     let parquet_batch = scan_parquet.await?;
 
-    // Step 3: Apply version resolution (latest _updated wins)
+    // Step 3: Apply version resolution (latest _seq wins)
     let resolved_batch = resolve_latest_version(rocksdb_batch, parquet_batch, schema.clone())
         .await
         .map_err(|e| {
@@ -428,7 +407,7 @@ where
 pub struct ParquetRowData {
     pub seq_id: SeqId,
     pub deleted: bool,
-    pub fields: Map<String, JsonValue>,
+    pub fields: Row,
 }
 
 /// Convert Parquet RecordBatch rows into SeqId + JSON field maps
@@ -469,7 +448,7 @@ pub fn parquet_batch_to_rows(batch: &RecordBatch) -> Result<Vec<ParquetRowData>,
             })
             .unwrap_or(false);
 
-        let mut json_row = Map::new();
+        let mut values = BTreeMap::new();
         for (col_idx, field) in schema.fields().iter().enumerate() {
             let col_name = field.name();
             if col_name == "_seq" || col_name == "_deleted" {
@@ -477,9 +456,9 @@ pub fn parquet_batch_to_rows(batch: &RecordBatch) -> Result<Vec<ParquetRowData>,
             }
 
             let array = batch.column(col_idx);
-            match arrow_value_to_json(array.as_ref(), row_idx) {
+            match arrow_value_to_scalar(array.as_ref(), row_idx) {
                 Ok(val) => {
-                    json_row.insert(col_name.clone(), val);
+                    values.insert(col_name.clone(), val);
                 }
                 Err(e) => {
                     log::warn!(
@@ -495,7 +474,7 @@ pub fn parquet_batch_to_rows(batch: &RecordBatch) -> Result<Vec<ParquetRowData>,
         rows.push(ParquetRowData {
             seq_id,
             deleted,
-            fields: json_row,
+            fields: Row::new(values),
         });
     }
 
@@ -519,11 +498,16 @@ impl VersionedRow for SharedTableRow {
     }
 
     fn pk_value(&self, pk_name: &str) -> Option<String> {
-        self.fields
-            .as_object()
-            .and_then(|obj| obj.get(pk_name))
-            .filter(|val| !val.is_null())
-            .map(|val| val.to_string())
+        self.fields.get(pk_name).and_then(|val| {
+            if val.is_null() {
+                None
+            } else {
+                match val {
+                    ScalarValue::Utf8(Some(s)) | ScalarValue::LargeUtf8(Some(s)) => Some(s.clone()),
+                    _ => Some(val.to_string()),
+                }
+            }
+        })
     }
 }
 
@@ -537,11 +521,16 @@ impl VersionedRow for UserTableRow {
     }
 
     fn pk_value(&self, pk_name: &str) -> Option<String> {
-        self.fields
-            .as_object()
-            .and_then(|obj| obj.get(pk_name))
-            .filter(|val| !val.is_null())
-            .map(|val| val.to_string())
+        self.fields.get(pk_name).and_then(|val| {
+            if val.is_null() {
+                None
+            } else {
+                match val {
+                    ScalarValue::Utf8(Some(s)) | ScalarValue::LargeUtf8(Some(s)) => Some(s.clone()),
+                    _ => Some(val.to_string()),
+                }
+            }
+        })
     }
 }
 

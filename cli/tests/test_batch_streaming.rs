@@ -13,7 +13,7 @@ use common::*;
 use std::time::Duration;
 
 /// Test batch streaming with 5000 rows via WebSocket subscription
-/// 
+///
 /// This test:
 /// 1. Creates a table with substantial text columns
 /// 2. Inserts 5000 rows in batches of 500 (10 batches total)
@@ -66,10 +66,10 @@ fn test_websocket_batch_streaming_5k_rows() {
 
     for batch_num in 0..10 {
         let mut values = Vec::new();
-        
+
         for i in 0..500 {
             let row_id = batch_num * 500 + i;
-            
+
             // Create substantial data (~300 bytes per row) to exceed 8KB batch size
             let long_data = format!(
                 "Row {} with substantial text content that ensures each record is large enough \
@@ -78,12 +78,12 @@ fn test_websocket_batch_streaming_5k_rows() {
                  single 8KB transmission. Additional padding to reach ~300 bytes total.",
                 row_id
             );
-            
+
             let description = format!(
                 "Detailed description and metadata for record number {} in the batch streaming test",
                 row_id
             );
-            
+
             let category = match row_id % 5 {
                 0 => "alpha",
                 1 => "beta",
@@ -91,7 +91,7 @@ fn test_websocket_batch_streaming_5k_rows() {
                 3 => "delta",
                 _ => "epsilon",
             };
-            
+
             values.push(format!(
                 "({}, '{}', '{}', '{}', {})",
                 row_id,
@@ -120,7 +120,7 @@ fn test_websocket_batch_streaming_5k_rows() {
         }
 
         total_inserted += 500;
-        
+
         if (batch_num + 1) % 2 == 0 {
             println!("  ✓ Inserted {} rows so far...", total_inserted);
         }
@@ -149,7 +149,7 @@ fn test_websocket_batch_streaming_5k_rows() {
     // Test WebSocket subscription to verify batch streaming
     println!("\nTesting WebSocket subscription with batch streaming...");
     let subscribe_query = format!("SELECT id, data, category FROM {}", table_name);
-    
+
     let mut listener = match SubscriptionListener::start(&subscribe_query) {
         Ok(l) => l,
         Err(e) => {
@@ -170,7 +170,7 @@ fn test_websocket_batch_streaming_5k_rows() {
     for _ in 0..50 {
         if let Ok(Some(line)) = listener.try_read_line(Duration::from_millis(200)) {
             received_lines.push(line.clone());
-            
+
             // Look for subscription acknowledgment or batch info
             if line.contains("SUBSCRIBED") || line.contains("BATCH") {
                 println!("  Received: {}", line);
@@ -202,10 +202,7 @@ fn test_websocket_batch_streaming_5k_rows() {
 
     // Verify data integrity with SELECT
     println!("\nVerifying data integrity with SELECT query...");
-    let select_sql = format!(
-        "SELECT id FROM {} ORDER BY id LIMIT 10",
-        table_name
-    );
+    let select_sql = format!("SELECT id FROM {} ORDER BY id LIMIT 10", table_name);
 
     let select_result = execute_sql_as_root_via_cli_json(&select_sql);
     match select_result {
@@ -213,11 +210,14 @@ fn test_websocket_batch_streaming_5k_rows() {
             // Check for presence of first few IDs
             let has_id_0 = output.contains("\"id\":0") || output.contains("\"id\": 0");
             let has_id_9 = output.contains("\"id\":9") || output.contains("\"id\": 9");
-            
+
             if has_id_0 && has_id_9 {
                 println!("✓ Data integrity check passed: Found ID 0 through ID 9");
             } else {
-                println!("⚠️  Data integrity check: has_id_0={}, has_id_9={}", has_id_0, has_id_9);
+                println!(
+                    "⚠️  Data integrity check: has_id_0={}, has_id_9={}",
+                    has_id_0, has_id_9
+                );
                 // Output is likely truncated, but the COUNT query already verified all rows exist
                 println!("✓ COUNT query already confirmed all 5000 rows exist");
             }

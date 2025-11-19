@@ -12,7 +12,7 @@
 //! - TTL-based eviction in scan operations
 
 use super::base::{
-    extract_seq_bounds_from_filter, inject_system_columns, BaseTableProvider, ScanRow,
+    extract_seq_bounds_from_filter, BaseTableProvider,
     TableProviderCore,
 };
 use crate::app_context::AppContext;
@@ -22,13 +22,12 @@ use async_trait::async_trait;
 use datafusion::arrow::datatypes::SchemaRef;
 use datafusion::arrow::record_batch::RecordBatch;
 use datafusion::catalog::Session;
-use datafusion::datasource::memory::MemTable;
 use datafusion::datasource::TableProvider;
-use datafusion::error::{DataFusionError, Result as DataFusionResult};
-use datafusion::logical_expr::Expr;
+use datafusion::error::Result as DataFusionResult;
+use datafusion::logical_expr::{Expr, TableProviderFilterPushDown};
 use datafusion::physical_plan::ExecutionPlan;
 use kalamdb_commons::ids::StreamTableRowId;
-use kalamdb_commons::models::{KTableRow, UserId};
+use kalamdb_commons::models::UserId;
 use kalamdb_commons::{Role, StorageKey, TableId};
 use kalamdb_store::entity_store::EntityStore;
 use kalamdb_tables::{StreamTableRow, StreamTableStore};
@@ -38,6 +37,8 @@ use std::sync::Arc;
 
 // Arrow <-> JSON helpers
 use crate::live_query::manager::ChangeNotification;
+use crate::providers::arrow_json_conversion::json_to_row;
+use kalamdb_commons::models::Row;
 use serde_json::json;
 
 /// Stream table provider with RLS and TTL filtering
@@ -200,7 +201,9 @@ impl BaseTableProvider<StreamTableRowId, StreamTableRow> for StreamTableProvider
         let entity = StreamTableRow {
             user_id: user_id.clone(),
             _seq: seq_id,
-            fields: row_data,
+            fields: json_to_row(&row_data).ok_or_else(|| {
+                KalamDbError::InvalidOperation("Failed to convert JSON to Row".to_string())
+            })?,
         };
 
         // Create composite key
@@ -231,13 +234,11 @@ impl BaseTableProvider<StreamTableRowId, StreamTableRow> for StreamTableProvider
                 table_id.table_name().as_str()
             );
 
-            //TODO: Should we keep the user_id in the row JSON?
-            // Flatten event fields and include user_id
-            let mut obj = entity.fields.as_object().cloned().unwrap_or_default();
-            obj.insert("user_id".to_string(), json!(user_id.as_str()));
-            let row_json = JsonValue::Object(obj);
+            // Flatten event fields (user_id injected by manager)
+            let obj = entity.fields.values.clone();
+            let row = Row::new(obj);
 
-            let notification = ChangeNotification::insert(table_id.clone(), row_json);
+            let notification = ChangeNotification::insert(table_id.clone(), row);
             log::debug!(
                 "[StreamProvider] Notifying change: table={} type=INSERT user={} seq={}",
                 table_name,
@@ -373,7 +374,11 @@ impl BaseTableProvider<StreamTableRowId, StreamTableRow> for StreamTableProvider
 
         let raw = self
             .store
-            .scan_limited_with_prefix_and_start(Some(&prefix), start_key_bytes.as_deref(), scan_limit)
+            .scan_limited_with_prefix_and_start(
+                Some(&prefix),
+                start_key_bytes.as_deref(),
+                scan_limit,
+            )
             .map_err(|e| {
                 KalamDbError::InvalidOperation(format!(
                     "Failed to scan stream table hot storage: {}",
@@ -438,8 +443,8 @@ impl BaseTableProvider<StreamTableRowId, StreamTableRow> for StreamTableProvider
         Ok(results)
     }
 
-    fn extract_fields(row: &StreamTableRow) -> Option<&JsonValue> {
-        Some(&row.fields)
+    fn extract_row(row: &StreamTableRow) -> &Row {
+        &row.fields
     }
 }
 
@@ -478,53 +483,17 @@ impl TableProvider for StreamTableProvider {
         filters: &[Expr],
         limit: Option<usize>,
     ) -> DataFusionResult<Arc<dyn ExecutionPlan>> {
-        log::debug!(
-            "[StreamProvider] scan start: table={}.{} projection={:?} filters={} limit={:?}",
-            self.core.table_id().namespace_id().as_str(),
-            self.core.table_id().table_name().as_str(),
-            projection,
-            filters.len(),
-            limit
-        );
+        self.base_scan(state, projection, filters, limit).await
+    }
 
-        // Combine filters (AND) for pruning and pass to scan_rows
-        let combined_filter: Option<Expr> = if filters.is_empty() {
-            None
-        } else {
-            let first = filters[0].clone();
-            Some(
-                filters[1..]
-                    .iter()
-                    .cloned()
-                    .fold(first, |acc, e| acc.and(e)),
-            )
-        };
-        
-        // Optimization: Pass projection to scan_rows ONLY if filters is empty.
-        let effective_projection = if filters.is_empty() {
-            projection
-        } else {
-            None
-        };
+    fn supports_filters_pushdown(
+        &self,
+        filters: &[&Expr],
+    ) -> DataFusionResult<Vec<TableProviderFilterPushDown>> {
+        self.base_supports_filters_pushdown(filters)
+    }
 
-        let batch = self
-            .scan_rows(state, effective_projection, combined_filter.as_ref(), limit)
-            .map_err(|e| DataFusionError::Execution(format!("scan_rows failed: {}", e)))?;
-
-        let mem = MemTable::try_new(batch.schema(), vec![vec![batch]])?;
-        
-        let final_projection = if filters.is_empty() {
-            None
-        } else {
-            projection
-        };
-
-        let plan = mem.scan(state, final_projection, filters, limit).await?;
-        log::debug!(
-            "[StreamProvider] scan planned: table={}.{}",
-            self.core.table_id().namespace_id().as_str(),
-            self.core.table_id().table_name().as_str()
-        );
-        Ok(plan)
+    fn statistics(&self) -> Option<datafusion::physical_plan::Statistics> {
+        self.base_statistics()
     }
 }

@@ -6,10 +6,11 @@
 use crate::{
     auth::AuthProvider,
     error::{KalamLinkError, Result},
-    models::{BatchControl, BatchStatus, ChangeEvent, ServerMessage, SubscriptionOptions},
+    models::{BatchStatus, ChangeEvent, ServerMessage, SubscriptionOptions},
 };
 use futures_util::{SinkExt, StreamExt};
-use serde_json::{json, Value};
+use serde_json::Value;
+use std::collections::VecDeque;
 use tokio_tungstenite::{
     connect_async,
     tungstenite::{
@@ -146,8 +147,9 @@ async fn send_subscription_request(
         subscriptions: vec![subscription_req],
     };
 
-    let payload = serde_json::to_string(&message)
-        .map_err(|e| KalamLinkError::WebSocketError(format!("Failed to serialize subscription: {}", e)))?;
+    let payload = serde_json::to_string(&message).map_err(|e| {
+        KalamLinkError::WebSocketError(format!("Failed to serialize subscription: {}", e))
+    })?;
 
     ws_stream
         .send(Message::Text(payload.into()))
@@ -155,8 +157,8 @@ async fn send_subscription_request(
         .map_err(|e| KalamLinkError::WebSocketError(format!("Failed to subscribe: {}", e)))
 }
 
-fn parse_message(text: &str, fallback_subscription_id: &str) -> Result<Option<ChangeEvent>> {
-    // First try to parse as ServerMessage (typed)
+fn parse_message(text: &str) -> Result<Option<ChangeEvent>> {
+    // Parse as ServerMessage (typed)
     match serde_json::from_str::<ServerMessage>(text) {
         Ok(msg) => {
             let event = match msg {
@@ -227,244 +229,21 @@ fn parse_message(text: &str, fallback_subscription_id: &str) -> Result<Option<Ch
                     message,
                 },
             };
-            return Ok(Some(event));
+            Ok(Some(event))
         }
-        Err(_) => {
-            // Fall back to manual parsing for backwards compatibility
+        Err(e) => {
+            // If strict parsing fails, check if it's a ping/pong which might not match ServerMessage structure
+            // or just return error.
+            // However, tokio-tungstenite handles ping/pong frames at protocol level.
+            // If the server sends a text message "ping", we might need to handle it.
+            // But usually ping/pong are control frames.
+            // Let's assume strict typing.
+            Err(KalamLinkError::SerializationError(format!(
+                "Failed to parse message as ServerMessage: {}",
+                e
+            )))
         }
     }
-
-    // Fallback: Parse as generic JSON (for legacy messages or unknown formats)
-    let value: Value = serde_json::from_str(text).map_err(|e| {
-        KalamLinkError::SerializationError(format!("Failed to parse message: {}", e))
-    })?;
-
-    let object = match value.as_object() {
-        Some(obj) => obj,
-        None => return Ok(Some(ChangeEvent::Unknown { raw: value })),
-    };
-
-    let msg_type = object
-        .get("type")
-        .and_then(|v| v.as_str())
-        .unwrap_or("")
-        .to_lowercase();
-
-    // Ignore ping/pong
-    if matches!(msg_type.as_str(), "ping" | "pong") {
-        return Ok(None);
-    }
-
-    // Legacy message handling for backwards compatibility
-    if msg_type == "ack" || msg_type == "subscribed" {
-        let subscription_id = extract_subscription_id(object, fallback_subscription_id);
-        let total_rows = object
-            .get("total_rows")
-            .and_then(|v| v.as_u64())
-            .unwrap_or(0) as u32;
-        let batch_control = object
-            .get("batch_control")
-            .and_then(|v| serde_json::from_value(v.clone()).ok())
-            .unwrap_or(crate::models::BatchControl {
-                batch_num: 0,
-                total_batches: 0,
-                has_more: false,
-                status: crate::models::BatchStatus::Ready,
-            });
-
-        return Ok(Some(ChangeEvent::Ack {
-            subscription_id,
-            total_rows,
-            batch_control,
-        }));
-    }
-
-    if msg_type == "snapshot" {
-        let subscription_id = extract_subscription_id(object, fallback_subscription_id);
-        let rows = object
-            .get("rows")
-            .and_then(|v| v.as_array())
-            .cloned()
-            .unwrap_or_default();
-
-        // Legacy snapshot messages - convert to batch format
-        eprintln!("Warning: Received legacy 'snapshot' message type, converting to InitialDataBatch");
-        use std::collections::HashMap;
-        let event = ChangeEvent::InitialDataBatch {
-            subscription_id,
-            rows: rows.into_iter().filter_map(|v| {
-                if let Value::Object(map) = v {
-                    let hash_map: HashMap<String, Value> = map.into_iter().collect();
-                    Some(hash_map)
-                } else {
-                    None
-                }
-            }).collect(),
-            batch_control: BatchControl {
-                batch_num: 0,
-                total_batches: 1,
-                has_more: false,
-                status: BatchStatus::Ready,
-            },
-        };
-        return Ok(Some(event));
-    }
-
-    if msg_type == "notification" {
-        let subscription_id = extract_subscription_id(object, fallback_subscription_id);
-        let change_type = object
-            .get("change_type")
-            .and_then(|v| v.as_str())
-            .unwrap_or("")
-            .to_lowercase();
-        let rows = object
-            .get("rows")
-            .and_then(|v| v.as_array())
-            .cloned()
-            .unwrap_or_default();
-        let old_rows = object
-            .get("old_values")
-            .and_then(|v| v.as_array())
-            .cloned()
-            .unwrap_or_default();
-
-        return Ok(Some(match change_type.as_str() {
-            "insert" => ChangeEvent::Insert {
-                subscription_id,
-                rows,
-            },
-            "update" => ChangeEvent::Update {
-                subscription_id,
-                rows,
-                old_rows,
-            },
-            "delete" => ChangeEvent::Delete {
-                subscription_id,
-                old_rows,
-            },
-            _ => ChangeEvent::Unknown {
-                raw: Value::Object(object.clone()),
-            },
-        }));
-    }
-
-    // More legacy backwards compatibility
-    let legacy_type = object
-        .get("type")
-        .and_then(|v| v.as_str())
-        .unwrap_or("")
-        .to_uppercase();
-
-    let subscription_id = extract_subscription_id(object, fallback_subscription_id);
-
-    let legacy_event = match legacy_type.as_str() {
-        "INSERT" => {
-            let row = object.get("row").cloned().unwrap_or(Value::Null);
-            let rows = if row.is_null() { Vec::new() } else { vec![row] };
-            ChangeEvent::Insert {
-                subscription_id,
-                rows,
-            }
-        }
-        "UPDATE" => {
-            let new_row = object.get("new_row").cloned().unwrap_or(Value::Null);
-            let old_row = object.get("old_row").cloned().unwrap_or(Value::Null);
-            ChangeEvent::Update {
-                subscription_id,
-                rows: if new_row.is_null() {
-                    Vec::new()
-                } else {
-                    vec![new_row]
-                },
-                old_rows: if old_row.is_null() {
-                    Vec::new()
-                } else {
-                    vec![old_row]
-                },
-            }
-        }
-        "DELETE" => {
-            let row = object.get("row").cloned().unwrap_or(Value::Null);
-            ChangeEvent::Delete {
-                subscription_id,
-                old_rows: if row.is_null() { Vec::new() } else { vec![row] },
-            }
-        }
-        "SNAPSHOT" => {
-            let rows = object
-                .get("rows")
-                .and_then(|v| v.as_array())
-                .cloned()
-                .unwrap_or_default();
-            let batch_control = object
-                .get("batch_control")
-                .and_then(|v| serde_json::from_value(v.clone()).ok())
-                .unwrap_or(crate::models::BatchControl {
-                    batch_num: 0,
-                    total_batches: 1,
-                    has_more: false,
-                    status: crate::models::BatchStatus::Ready,
-                });
-            
-            use std::collections::HashMap;
-            let converted_rows: Vec<HashMap<String, Value>> = rows.into_iter().filter_map(|v| {
-                if let Value::Object(map) = v {
-                    let hash_map: HashMap<String, Value> = map.into_iter().collect();
-                    Some(hash_map)
-                } else {
-                    None
-                }
-            }).collect();
-            
-            ChangeEvent::InitialDataBatch {
-                subscription_id,
-                rows: converted_rows,
-                batch_control,
-            }
-        }
-        "ACK" => {
-            let _message = object
-                .get("query")
-                .and_then(|v| v.as_str())
-                .map(|s| format!("Subscribed to {}", s));
-            ChangeEvent::Ack {
-                subscription_id,
-                total_rows: 0,
-                batch_control: crate::models::BatchControl {
-                    batch_num: 0,
-                    total_batches: 0,
-                    has_more: false,
-                    status: crate::models::BatchStatus::Ready,
-                },
-            }
-        }
-        "ERROR" => {
-            let message = object
-                .get("message")
-                .and_then(|v| v.as_str())
-                .unwrap_or("Subscription error")
-                .to_string();
-            ChangeEvent::Error {
-                subscription_id,
-                code: "ERROR".to_string(),
-                message,
-            }
-        }
-        _ => ChangeEvent::Unknown {
-            raw: Value::Object(object.clone()),
-        },
-    };
-
-    Ok(Some(legacy_event))
-}
-
-fn extract_subscription_id(object: &serde_json::Map<String, Value>, fallback: &str) -> String {
-    object
-        .get("subscription_id")
-        .and_then(|v| v.as_str())
-        .or_else(|| object.get("query_id").and_then(|v| v.as_str()))
-        .unwrap_or(fallback)
-        .to_string()
 }
 
 impl SubscriptionConfig {
@@ -477,6 +256,7 @@ impl SubscriptionConfig {
             sql: sql.into(),
             options: Some(SubscriptionOptions {
                 _reserved: None,
+                batch_size: None,
             }),
             ws_url: None,
         }
@@ -503,7 +283,12 @@ impl SubscriptionConfig {
 pub struct SubscriptionManager {
     ws_stream: WebSocketStream,
     subscription_id: String,
+    event_queue: VecDeque<ChangeEvent>,
+    buffered_changes: Vec<ChangeEvent>,
+    is_loading: bool,
 }
+
+
 
 impl SubscriptionManager {
     /// Create a new WebSocket subscription
@@ -577,7 +362,16 @@ impl SubscriptionManager {
         Ok(Self {
             ws_stream,
             subscription_id,
+            event_queue: VecDeque::new(),
+            buffered_changes: Vec::new(),
+            is_loading: true,
         })
+    }
+
+    fn flush_buffered_changes(&mut self) {
+        for change in self.buffered_changes.drain(..) {
+            self.event_queue.push_back(change);
+        }
     }
 
     /// Receive the next change event from the subscription
@@ -588,37 +382,65 @@ impl SubscriptionManager {
     /// Automatically requests next batches when initial data has more batches available.
     pub async fn next(&mut self) -> Option<Result<ChangeEvent>> {
         loop {
+            // 1. Drain event queue first
+            if let Some(event) = self.event_queue.pop_front() {
+                return Some(Ok(event));
+            }
+
             match self.ws_stream.next().await {
                 Some(Ok(Message::Text(text))) => {
-                    match parse_message(&text, &self.subscription_id) {
+                    match parse_message(&text) {
                         Ok(Some(event)) => {
                             if let Some(id) = event.subscription_id() {
                                 if id != self.subscription_id {
                                     self.subscription_id = id.to_string();
                                 }
                             }
-                            
+
                             // Check if this is an initial data batch with more batches pending
                             // and automatically request the next batch
-                            if let ChangeEvent::InitialDataBatch { ref batch_control, .. } = event {
+                            if let ChangeEvent::InitialDataBatch {
+                                ref batch_control, ..
+                            } = event
+                            {
                                 if batch_control.has_more {
-                                    let next_batch_num = batch_control.batch_num + 1;
-                                    if let Err(e) = self.request_next_batch(next_batch_num).await {
+                                    if let Err(e) =
+                                        self.request_next_batch(batch_control.last_seq_id).await
+                                    {
                                         return Some(Err(e));
                                     }
                                 }
                             }
-                            // Similar check for SubscriptionAck
-                            else if let ChangeEvent::Ack { ref batch_control, .. } = event {
-                                if batch_control.has_more {
-                                    let next_batch_num = batch_control.batch_num + 1;
-                                    if let Err(e) = self.request_next_batch(next_batch_num).await {
-                                        return Some(Err(e));
+
+                            // Handle buffering logic
+                            match event {
+                                ChangeEvent::Ack { ref batch_control, .. } => {
+                                    self.is_loading = batch_control.status != BatchStatus::Ready;
+                                    self.event_queue.push_back(event);
+                                    if !self.is_loading {
+                                        self.flush_buffered_changes();
                                     }
                                 }
+                                ChangeEvent::InitialDataBatch { ref batch_control, .. } => {
+                                    self.is_loading = batch_control.status != BatchStatus::Ready;
+                                    self.event_queue.push_back(event);
+                                    if !self.is_loading {
+                                        self.flush_buffered_changes();
+                                    }
+                                }
+                                ChangeEvent::Insert { .. }
+                                | ChangeEvent::Update { .. }
+                                | ChangeEvent::Delete { .. } => {
+                                    if self.is_loading {
+                                        self.buffered_changes.push(event);
+                                    } else {
+                                        self.event_queue.push_back(event);
+                                    }
+                                }
+                                _ => {
+                                    self.event_queue.push_back(event);
+                                }
                             }
-                            
-                            return Some(Ok(event));
                         }
                         Ok(None) => continue,
                         Err(e) => return Some(Err(e)),
@@ -655,17 +477,21 @@ impl SubscriptionManager {
     }
 
     /// Request the next batch of initial data
-    async fn request_next_batch(&mut self, batch_num: u32) -> Result<()> {
+    async fn request_next_batch(
+        &mut self,
+        last_seq_id: Option<crate::seq_id::SeqId>,
+    ) -> Result<()> {
         use crate::models::ClientMessage;
-        
+
         let message = ClientMessage::NextBatch {
             subscription_id: self.subscription_id.clone(),
-            batch_num,
+            last_seq_id,
         };
-        
-        let payload = serde_json::to_string(&message)
-            .map_err(|e| KalamLinkError::WebSocketError(format!("Failed to serialize NextBatch: {}", e)))?;
-        
+
+        let payload = serde_json::to_string(&message).map_err(|e| {
+            KalamLinkError::WebSocketError(format!("Failed to serialize NextBatch: {}", e))
+        })?;
+
         self.ws_stream
             .send(Message::Text(payload.into()))
             .await
@@ -679,15 +505,21 @@ impl SubscriptionManager {
 
     /// Close the subscription gracefully
     pub async fn close(mut self) -> Result<()> {
+        use crate::models::ClientMessage;
+
         // Attempt best-effort unsubscribe before closing
-        let unsubscribe_message = json!({
-            "type": "unsubscribe",
-            "subscription_ids": [self.subscription_id.clone()],
-        });
-        let _ = self
-            .ws_stream
-            .send(Message::Text(unsubscribe_message.to_string().into()))
-            .await;
+        let message = ClientMessage::Unsubscribe {
+            subscription_id: self.subscription_id.clone(),
+        };
+
+        let payload = serde_json::to_string(&message).unwrap_or_default();
+
+        if !payload.is_empty() {
+            let _ = self
+                .ws_stream
+                .send(Message::Text(payload.into()))
+                .await;
+        }
 
         // Close WebSocket connection
         self.ws_stream

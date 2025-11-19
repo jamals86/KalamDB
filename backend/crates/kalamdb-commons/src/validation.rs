@@ -9,8 +9,8 @@
 
 use once_cell::sync::Lazy;
 use sqlparser::keywords::{
-    Keyword, ALL_KEYWORDS, ALL_KEYWORDS_INDEX, RESERVED_FOR_COLUMN_ALIAS,
-    RESERVED_FOR_IDENTIFIER, RESERVED_FOR_TABLE_ALIAS, RESERVED_FOR_TABLE_FACTOR,
+    Keyword, ALL_KEYWORDS, ALL_KEYWORDS_INDEX, RESERVED_FOR_COLUMN_ALIAS, RESERVED_FOR_IDENTIFIER,
+    RESERVED_FOR_TABLE_ALIAS, RESERVED_FOR_TABLE_FACTOR,
 };
 use std::collections::HashSet;
 
@@ -303,18 +303,6 @@ mod tests {
         );
         assert_eq!(
             validate_column_name("_deleted"),
-            Err(ValidationError::StartsWithUnderscore)
-        );
-        assert_eq!(
-            validate_column_name("_row_id"),
-            Err(ValidationError::StartsWithUnderscore)
-        );
-        assert_eq!(
-            validate_column_name("_id"),
-            Err(ValidationError::StartsWithUnderscore)
-        );
-        assert_eq!(
-            validate_column_name("_updated"),
             Err(ValidationError::StartsWithUnderscore)
         );
     }

@@ -116,7 +116,7 @@ impl StorageBackend for RocksDBBackend {
         let snapshot = self.db.snapshot();
 
         let prefix_vec = prefix.map(|p| p.to_vec());
-        
+
         // Determine start position
         let iter_mode = if let Some(start) = start_key {
             IteratorMode::From(start, Direction::Forward)

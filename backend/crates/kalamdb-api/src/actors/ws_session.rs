@@ -67,7 +67,8 @@ pub struct WebSocketSession {
 
     /// Subscription metadata cache for batch fetching
     /// Maps subscription_id -> (sql, user_id, snapshot_end_seq, batch_size)
-    pub subscription_metadata: HashMap<String, (String, UserId, Option<kalamdb_commons::ids::SeqId>, usize)>,
+    pub subscription_metadata:
+        HashMap<String, (String, UserId, Option<kalamdb_commons::ids::SeqId>, usize)>,
 }
 
 impl WebSocketSession {
@@ -392,7 +393,10 @@ impl WebSocketSession {
 
         // Use batch-based loading: first batch only
         // We pass None for since_seq and until_seq to start from beginning and determine snapshot boundary
-        let batch_size = subscription.options.batch_size.unwrap_or(MAX_ROWS_PER_BATCH);
+        let batch_size = subscription
+            .options
+            .batch_size
+            .unwrap_or(MAX_ROWS_PER_BATCH);
         let initial_data_options = Some(InitialDataOptions::batch(None, None, batch_size));
 
         let manager = self.live_query_manager.clone();
@@ -431,8 +435,19 @@ impl WebSocketSession {
 
                         // Store subscription metadata for batch fetching
                         // We store the snapshot_end_seq returned by the first fetch
-                        let snapshot_end_seq = sub_result.initial_data.as_ref().and_then(|d| d.snapshot_end_seq);
-                        act.subscription_metadata.insert(sub_id.clone(), (sql_for_metadata, user_clone.clone(), snapshot_end_seq, batch_size));
+                        let snapshot_end_seq = sub_result
+                            .initial_data
+                            .as_ref()
+                            .and_then(|d| d.snapshot_end_seq);
+                        act.subscription_metadata.insert(
+                            sub_id.clone(),
+                            (
+                                sql_for_metadata,
+                                user_clone.clone(),
+                                snapshot_end_seq,
+                                batch_size,
+                            ),
+                        );
 
                         if let Some(ref limiter) = rate_limiter {
                             limiter.increment_subscription(&user_clone);
@@ -446,7 +461,11 @@ impl WebSocketSession {
                                 batch_num: 0,
                                 total_batches: None,
                                 has_more: initial.has_more,
-                                status: if initial.has_more { BatchStatus::Loading } else { BatchStatus::Ready },
+                                status: if initial.has_more {
+                                    BatchStatus::Loading
+                                } else {
+                                    BatchStatus::Ready
+                                },
                                 last_seq_id: initial.last_seq,
                                 snapshot_end_seq: initial.snapshot_end_seq,
                             };
@@ -461,22 +480,9 @@ impl WebSocketSession {
                             }
 
                             // Send first batch of initial data
-                            let rows: Vec<std::collections::HashMap<String, serde_json::Value>> =
-                                initial
-                                    .rows
-                                    .into_iter()
-                                    .filter_map(|v| {
-                                        if let serde_json::Value::Object(map) = v {
-                                            Some(map.into_iter().collect())
-                                        } else {
-                                            None
-                                        }
-                                    })
-                                    .collect();
-
                             let batch_msg = WebSocketMessage::initial_data_batch(
                                 sub_id.clone(),
-                                rows,
+                                initial.rows,
                                 batch_control,
                             );
                             if let Ok(json) = serde_json::to_string(&batch_msg) {
@@ -577,70 +583,62 @@ impl WebSocketSession {
         ctx.wait(
             fut::wrap_future(async move {
                 // Fetch next batch of data
-                let initial_data_options = Some(InitialDataOptions::batch(last_seq_id, snapshot_end_seq, batch_size));
+                let initial_data_options = Some(InitialDataOptions::batch(
+                    last_seq_id,
+                    snapshot_end_seq,
+                    batch_size,
+                ));
                 let result = manager
-                    .fetch_initial_data_batch(
-                        &sql,
-                        &user_id,
-                        initial_data_options,
-                    )
+                    .fetch_initial_data_batch(&sql, &user_id, initial_data_options)
                     .await?;
 
                 Ok((result, sub_id_for_result.clone()))
             })
-            .map(move |result: Result<(InitialDataResult, String), KalamDbError>, _act: &mut Self, ctx| {
-                match result {
-                    Ok((initial, sub_id)) => {
-                        // Send the batch data
-                        let batch_control = BatchControl {
-                            batch_num: 0, // Dummy value
-                            total_batches: None,
-                            has_more: initial.has_more,
-                            status: if initial.has_more { BatchStatus::LoadingBatch } else { BatchStatus::Ready },
-                            last_seq_id: initial.last_seq,
-                            snapshot_end_seq: initial.snapshot_end_seq,
-                        };
+            .map(
+                move |result: Result<(InitialDataResult, String), KalamDbError>,
+                      _act: &mut Self,
+                      ctx| {
+                    match result {
+                        Ok((initial, sub_id)) => {
+                            // Send the batch data
+                            let batch_control = BatchControl {
+                                batch_num: 0, // Dummy value
+                                total_batches: None,
+                                has_more: initial.has_more,
+                                status: if initial.has_more {
+                                    BatchStatus::LoadingBatch
+                                } else {
+                                    BatchStatus::Ready
+                                },
+                                last_seq_id: initial.last_seq,
+                                snapshot_end_seq: initial.snapshot_end_seq,
+                            };
 
-                        let rows: Vec<std::collections::HashMap<String, serde_json::Value>> =
-                            initial
-                                .rows
-                                .into_iter()
-                                .filter_map(|v| {
-                                    if let serde_json::Value::Object(map) = v {
-                                        Some(map.into_iter().collect())
-                                    } else {
-                                        None
-                                    }
-                                })
-                                .collect();
-
-                        let batch_msg = WebSocketMessage::initial_data_batch(
-                            sub_id.clone(),
-                            rows,
-                            batch_control,
-                        );
-                        
-                        if let Ok(json) = serde_json::to_string(&batch_msg) {
-                            debug!(
-                                "Sending batch: {} bytes",
-                                json.len()
+                            let batch_msg = WebSocketMessage::initial_data_batch(
+                                sub_id.clone(),
+                                initial.rows,
+                                batch_control,
                             );
-                            ctx.text(json);
+
+                            if let Ok(json) = serde_json::to_string(&batch_msg) {
+                                debug!("Sending batch: {} bytes", json.len());
+                                ctx.text(json);
+                            }
+                        }
+                        Err(err) => {
+                            error!("Failed to fetch next batch: {}", err);
+                            let error_msg = Notification::error(
+                                sub_id.clone(),
+                                "BATCH_FETCH_FAILED".to_string(),
+                                err.to_string(),
+                            );
+                            if let Ok(json) = serde_json::to_string(&error_msg) {
+                                ctx.text(json);
+                            }
                         }
                     }
-                    Err(err) => {
-                        error!("Failed to fetch next batch: {}", err);
-                        let error_msg = Notification::error(
-                            sub_id.clone(),
-                            "BATCH_FETCH_FAILED".to_string(),
-                            err.to_string(),
-                        );
-                        if let Ok(json) = serde_json::to_string(&error_msg) {
-                            ctx.text(json);
-                        }
-                    }
-                }
-            }),
+                },
+            ),
         );
     }
 }

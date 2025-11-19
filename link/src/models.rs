@@ -3,6 +3,7 @@
 //! Defines request and response structures for query execution and
 //! WebSocket subscription messages.
 
+use crate::seq_id::SeqId;
 use serde::{Deserialize, Serialize};
 use serde_json::Value as JsonValue;
 use std::collections::HashMap;
@@ -12,15 +13,24 @@ use std::collections::HashMap;
 pub struct BatchControl {
     /// Current batch number (0-indexed)
     pub batch_num: u32,
-    
-    /// Total number of batches available
-    pub total_batches: u32,
-    
+
+    /// Total number of batches available (optional/estimated)
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub total_batches: Option<u32>,
+
     /// Whether more batches are available to fetch
     pub has_more: bool,
-    
+
     /// Loading status for the subscription
     pub status: BatchStatus,
+
+    /// The SeqId of the last row in this batch (used for subsequent requests)
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub last_seq_id: Option<SeqId>,
+
+    /// Snapshot boundary SeqId captured at subscription time
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub snapshot_end_seq: Option<SeqId>,
 }
 
 /// Status of the initial data loading process
@@ -29,10 +39,10 @@ pub struct BatchControl {
 pub enum BatchStatus {
     /// Initial batch being loaded
     Loading,
-    
+
     /// Subsequent batches being loaded
     LoadingBatch,
-    
+
     /// All initial data has been loaded, live updates active
     Ready,
 }
@@ -51,8 +61,9 @@ pub enum ClientMessage {
     NextBatch {
         /// The subscription ID to fetch the next batch for
         subscription_id: String,
-        /// The batch number to fetch (should be current_batch + 1)
-        batch_num: u32,
+        /// The SeqId of the last row received (used for pagination)
+        #[serde(skip_serializing_if = "Option::is_none")]
+        last_seq_id: Option<SeqId>,
     },
 
     /// Unsubscribe from live query
@@ -80,6 +91,10 @@ pub struct SubscriptionOptions {
     /// Reserved for future use
     #[serde(skip_serializing_if = "Option::is_none")]
     pub _reserved: Option<String>,
+
+    /// Optional hint for server-side batch sizing
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub batch_size: Option<usize>,
 }
 
 /// WebSocket message types sent from server to client
@@ -388,9 +403,11 @@ mod tests {
             total_rows: 0,
             batch_control: BatchControl {
                 batch_num: 0,
-                total_batches: 0,
+                total_batches: Some(0),
                 has_more: false,
                 status: BatchStatus::Ready,
+                last_seq_id: None,
+                snapshot_end_seq: None,
             },
         };
         assert_eq!(ack.subscription_id(), Some("sub-1"));

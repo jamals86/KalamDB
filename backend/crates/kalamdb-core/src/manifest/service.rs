@@ -9,8 +9,8 @@
 
 use kalamdb_commons::types::{BatchFileEntry, ManifestFile};
 use kalamdb_commons::{NamespaceId, TableId, TableName, UserId};
-use log::warn;
 use kalamdb_store::{StorageBackend, StorageError};
+use log::warn;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 

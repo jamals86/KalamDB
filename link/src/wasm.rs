@@ -3,6 +3,9 @@
 
 #![cfg(feature = "wasm")]
 
+use crate::models::{
+    ClientMessage, QueryRequest, ServerMessage, SubscriptionOptions, SubscriptionRequest,
+};
 use base64::{engine::general_purpose, Engine as _};
 use std::cell::RefCell;
 use std::collections::HashMap;
@@ -152,13 +155,26 @@ impl KalamClient {
                 ));
 
                 // Parse message and invoke callbacks
-                if let Ok(event) = serde_json::from_str::<serde_json::Value>(&message) {
+                if let Ok(event) = serde_json::from_str::<ServerMessage>(&message) {
                     // Look for subscription_id in the event
-                    if let Some(subscription_id) =
-                        event.get("subscription_id").and_then(|t| t.as_str())
-                    {
+                    let subscription_id = match event {
+                        ServerMessage::SubscriptionAck {
+                            subscription_id, ..
+                        } => Some(subscription_id),
+                        ServerMessage::InitialDataBatch {
+                            subscription_id, ..
+                        } => Some(subscription_id),
+                        ServerMessage::Change {
+                            subscription_id, ..
+                        } => Some(subscription_id),
+                        ServerMessage::Error {
+                            subscription_id, ..
+                        } => Some(subscription_id),
+                    };
+
+                    if let Some(id) = subscription_id {
                         let subs = subscriptions.borrow();
-                        if let Some(callback) = subs.get(subscription_id) {
+                        if let Some(callback) = subs.get(&id) {
                             let _ = callback.call1(&JsValue::NULL, &JsValue::from_str(&message));
                         }
                     }
@@ -283,16 +299,18 @@ impl KalamClient {
             .insert(subscription_id.clone(), callback);
 
         // Send subscribe message via WebSocket
-        // Server expects: {"subscriptions": [{"id": "sub-1", "sql": "SELECT * FROM ...", "options": {}}]}
+        // Server expects: {"type": "subscribe", "subscriptions": [{"id": "sub-1", "sql": "SELECT * FROM ...", "options": {}}]}
         if let Some(ws) = self.ws.borrow().as_ref() {
-            let subscribe_msg = serde_json::json!({
-                "subscriptions": [{
-                    "id": subscription_id,
-                    "sql": format!("SELECT * FROM {}", table_name),
-                    "options": {}
-                }]
-            });
-            ws.send_with_str(&subscribe_msg.to_string())?;
+            let subscribe_msg = ClientMessage::Subscribe {
+                subscriptions: vec![SubscriptionRequest {
+                    id: subscription_id.clone(),
+                    sql: format!("SELECT * FROM {}", table_name),
+                    options: SubscriptionOptions::default(),
+                }],
+            };
+            let payload = serde_json::to_string(&subscribe_msg)
+                .map_err(|e| JsValue::from_str(&format!("Serialization error: {}", e)))?;
+            ws.send_with_str(&payload)?;
         }
 
         console_log(&format!("KalamClient: Subscribed to table: {}", table_name));
@@ -316,10 +334,12 @@ impl KalamClient {
         // Send unsubscribe message via WebSocket
         // Note: Current server doesn't have unsubscribe - connection close will clean up
         if let Some(ws) = self.ws.borrow().as_ref() {
-            let unsubscribe_msg = serde_json::json!({
-                "unsubscribe": [subscription_id.clone()]
-            });
-            ws.send_with_str(&unsubscribe_msg.to_string())?;
+            let unsubscribe_msg = ClientMessage::Unsubscribe {
+                subscription_id: subscription_id.clone(),
+            };
+            let payload = serde_json::to_string(&unsubscribe_msg)
+                .map_err(|e| JsValue::from_str(&format!("Serialization error: {}", e)))?;
+            ws.send_with_str(&payload)?;
         }
 
         console_log(&format!(
@@ -351,9 +371,13 @@ impl KalamClient {
         opts.set_headers(&headers);
 
         // Set body
-        let body = serde_json::json!({ "sql": sql });
-        let body_str = JsValue::from_str(&body.to_string());
-        opts.set_body(&body_str);
+        let body = QueryRequest {
+            sql: sql.to_string(),
+            params: None,
+        };
+        let body_str = serde_json::to_string(&body)
+            .map_err(|e| JsValue::from_str(&format!("Serialization error: {}", e)))?;
+        opts.set_body(&JsValue::from_str(&body_str));
 
         let url = format!("{}/v1/api/sql", self.url);
         let request = Request::new_with_str_and_init(&url, &opts)?;

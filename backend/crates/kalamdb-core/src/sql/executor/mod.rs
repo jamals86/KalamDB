@@ -167,6 +167,9 @@ impl SqlExecutor {
             }
         };
 
+        // Check permissions on the logical plan
+        self.check_select_permissions(df.logical_plan(), exec_ctx)?;
+
         // Execute and collect results (log execution errors)
         let batches = match df.collect().await {
             Ok(batches) => batches,
@@ -349,5 +352,81 @@ impl SqlExecutor {
     /// Expose the shared `AppContext` for upcoming migrations.
     pub fn app_context(&self) -> &Arc<crate::app_context::AppContext> {
         &self.app_context
+    }
+
+    fn check_select_permissions(
+        &self,
+        plan: &datafusion::logical_expr::LogicalPlan,
+        exec_ctx: &ExecutionContext,
+    ) -> Result<(), KalamDbError> {
+        self.check_plan_permissions(plan, exec_ctx)
+    }
+
+    fn check_plan_permissions(
+        &self,
+        plan: &datafusion::logical_expr::LogicalPlan,
+        exec_ctx: &ExecutionContext,
+    ) -> Result<(), KalamDbError> {
+        use datafusion::logical_expr::LogicalPlan;
+        use kalamdb_auth::rbac::can_access_shared_table;
+        use kalamdb_commons::models::{NamespaceId, TableId, TableName};
+        use kalamdb_commons::schemas::TableOptions;
+        use kalamdb_commons::schemas::TableType;
+        use kalamdb_commons::TableAccess;
+
+        match plan {
+            LogicalPlan::TableScan(scan) => {
+                // Resolve table reference to TableId
+                let (ns, tbl) = match &scan.table_name {
+                    datafusion::common::TableReference::Bare { table } => (
+                        NamespaceId::new("default"),
+                        TableName::new(table.to_string()),
+                    ),
+                    datafusion::common::TableReference::Partial { schema, table } => (
+                        NamespaceId::new(schema.to_string()),
+                        TableName::new(table.to_string()),
+                    ),
+                    datafusion::common::TableReference::Full { schema, table, .. } => (
+                        NamespaceId::new(schema.to_string()),
+                        TableName::new(table.to_string()),
+                    ),
+                };
+
+                let table_id = TableId::new(ns.clone(), tbl.clone());
+
+                // Get table definition
+                let schema_registry = self.app_context.schema_registry();
+                if let Ok(Some(def)) = schema_registry.get_table_definition(&table_id) {
+                    if matches!(def.table_type, TableType::Shared) {
+                        let access_level = if let TableOptions::Shared(opts) = &def.table_options {
+                            opts.access_level
+                                .clone()
+                                .unwrap_or(TableAccess::Private)
+                        } else {
+                            TableAccess::Private
+                        };
+
+                        if !can_access_shared_table(
+                            access_level.clone(),
+                            false,
+                            exec_ctx.user_role,
+                        ) {
+                            return Err(KalamDbError::Unauthorized(format!(
+                                "Insufficient privileges to read shared table '{}.{}' (Access Level: {:?})",
+                                ns.as_str(),
+                                tbl.as_str(),
+                                access_level
+                            )));
+                        }
+                    }
+                }
+            }
+            _ => {
+                for input in plan.inputs() {
+                    self.check_plan_permissions(input, exec_ctx)?;
+                }
+            }
+        }
+        Ok(())
     }
 }

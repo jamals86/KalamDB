@@ -85,7 +85,10 @@ impl TypedStatementHandler<FlushAllTablesStatement> for FlushAllTablesHandler {
     ) -> Result<(), KalamDbError> {
         use kalamdb_commons::Role;
         // Allow Service, DBA, and System roles to flush tables
-        if !matches!(context.user_role(), Role::Service | Role::Dba | Role::System) {
+        if !matches!(
+            context.user_role(),
+            Role::Service | Role::Dba | Role::System
+        ) {
             return Err(KalamDbError::Unauthorized(
                 "FLUSH ALL TABLES requires Service, DBA, or System role".to_string(),
             ));

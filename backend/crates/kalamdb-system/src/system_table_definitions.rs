@@ -809,6 +809,17 @@ pub fn tables_table_definition() -> TableDefinition {
             ColumnDefault::None,
             Some("Serialized table options (JSON)".to_string()),
         ),
+        // New in Phase 16: expose access_level for Shared tables
+        ColumnDefinition::new(
+            "access_level",
+            10,
+            KalamDataType::Text,
+            true, // NULLABLE (only for Shared tables)
+            false,
+            false,
+            ColumnDefault::None,
+            Some("Access level for Shared tables: public, private, protected".to_string()),
+        ),
     ];
 
     TableDefinition::new(

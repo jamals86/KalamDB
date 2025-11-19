@@ -96,9 +96,9 @@
 //! }
 //! ```
 
-use serde::{Deserialize, Serialize};
-use std::collections::HashMap;
 use crate::ids::SeqId;
+use crate::models::Row;
+use serde::{Deserialize, Serialize};
 
 /// Batch size in bytes (8KB) for chunking large initial data payloads
 pub const BATCH_SIZE_BYTES: usize = 8 * 1024;
@@ -131,7 +131,7 @@ pub enum WebSocketMessage {
         /// The subscription ID this data is for
         subscription_id: String,
         /// The rows in this batch
-        rows: Vec<HashMap<String, serde_json::Value>>,
+        rows: Vec<Row>,
         /// Batch control information
         batch_control: BatchControl,
     },
@@ -195,7 +195,7 @@ pub struct SubscriptionOptions {
     /// Reserved for future use (filtering, sorting, etc.)
     #[serde(skip_serializing_if = "Option::is_none")]
     pub _reserved: Option<String>,
-    
+
     /// Optional: Configure batch size for initial data streaming
     #[serde(skip_serializing_if = "Option::is_none")]
     pub batch_size: Option<usize>,
@@ -209,13 +209,13 @@ pub struct SubscriptionOptions {
 pub struct BatchControl {
     /// Current batch number (0-indexed)
     pub batch_num: u32,
-    
+
     /// Total number of batches available (optional/estimated)
     pub total_batches: Option<u32>,
-    
+
     /// Whether more batches are available to fetch
     pub has_more: bool,
-    
+
     /// Loading status for the subscription
     pub status: BatchStatus,
 
@@ -234,10 +234,10 @@ pub struct BatchControl {
 pub enum BatchStatus {
     /// Initial batch being loaded (batch_num == 0)
     Loading,
-    
+
     /// Subsequent batches being loaded (batch_num > 0, has_more == true)
     LoadingBatch,
-    
+
     /// All initial data has been loaded, live updates active (has_more == false)
     Ready,
 }
@@ -250,7 +250,7 @@ pub enum BatchStatus {
 pub struct NextBatchRequest {
     /// The subscription ID to fetch the next batch for
     pub subscription_id: String,
-    
+
     /// The batch number to fetch (should be current_batch + 1)
     pub batch_num: u32,
 }
@@ -322,11 +322,11 @@ pub enum Notification {
 
         /// New/current row values (for INSERT and UPDATE)
         #[serde(skip_serializing_if = "Option::is_none")]
-        rows: Option<Vec<HashMap<String, serde_json::Value>>>,
+        rows: Option<Vec<Row>>,
 
         /// Previous row values (for UPDATE and DELETE)
         #[serde(skip_serializing_if = "Option::is_none")]
-        old_values: Option<Vec<HashMap<String, serde_json::Value>>>,
+        old_values: Option<Vec<Row>>,
     },
 
     /// Error notification (e.g., subscription query failed)
@@ -373,7 +373,7 @@ impl WebSocketMessage {
     /// Create an initial data batch message
     pub fn initial_data_batch(
         subscription_id: String,
-        rows: Vec<HashMap<String, serde_json::Value>>,
+        rows: Vec<Row>,
         batch_control: BatchControl,
     ) -> Self {
         Self::InitialDataBatch {
@@ -465,7 +465,7 @@ impl BatchControl {
 
 impl Notification {
     /// Create an INSERT change notification
-    pub fn insert(subscription_id: String, rows: Vec<HashMap<String, serde_json::Value>>) -> Self {
+    pub fn insert(subscription_id: String, rows: Vec<Row>) -> Self {
         Self::Change {
             subscription_id,
             change_type: ChangeType::Insert,
@@ -477,8 +477,8 @@ impl Notification {
     /// Create an UPDATE change notification
     pub fn update(
         subscription_id: String,
-        new_rows: Vec<HashMap<String, serde_json::Value>>,
-        old_rows: Vec<HashMap<String, serde_json::Value>>,
+        new_rows: Vec<Row>,
+        old_rows: Vec<Row>,
     ) -> Self {
         Self::Change {
             subscription_id,
@@ -491,7 +491,7 @@ impl Notification {
     /// Create a DELETE change notification
     pub fn delete(
         subscription_id: String,
-        old_rows: Vec<HashMap<String, serde_json::Value>>,
+        old_rows: Vec<Row>,
     ) -> Self {
         Self::Change {
             subscription_id,
@@ -514,11 +514,20 @@ impl Notification {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::collections::BTreeMap;
+    use datafusion::scalar::ScalarValue;
+
+    fn create_test_row(id: i64, message: &str) -> Row {
+        let mut values = BTreeMap::new();
+        values.insert("id".to_string(), ScalarValue::Int64(Some(id)));
+        values.insert("message".to_string(), ScalarValue::Utf8(Some(message.to_string())));
+        Row::new(values)
+    }
 
     #[test]
     fn test_client_message_serialization() {
-        use crate::websocket::{ClientMessage, SubscriptionRequest, SubscriptionOptions};
-        
+        use crate::websocket::{ClientMessage, SubscriptionOptions, SubscriptionRequest};
+
         let msg = ClientMessage::subscribe(vec![SubscriptionRequest {
             id: "sub-1".to_string(),
             sql: "SELECT * FROM messages".to_string(),
@@ -532,12 +541,12 @@ mod tests {
 
     #[test]
     fn test_next_batch_request() {
-        use crate::websocket::ClientMessage;
         use crate::ids::SeqId;
-        
+        use crate::websocket::ClientMessage;
+
         let msg = ClientMessage::next_batch("sub-1".to_string(), Some(SeqId::new(100)));
         let json = serde_json::to_string(&msg).unwrap();
-        
+
         assert!(json.contains("\"type\":\"next_batch\""));
         assert!(json.contains("\"last_seq_id\":100"));
     }
@@ -545,12 +554,12 @@ mod tests {
     #[test]
     fn test_batch_control_helpers() {
         use crate::websocket::BatchControl;
-        
+
         let first = BatchControl::first(5);
         assert_eq!(first.batch_num, 0);
         assert_eq!(first.total_batches, Some(5));
         assert!(first.has_more);
-        
+
         let last = BatchControl::last(4, 5);
         assert_eq!(last.batch_num, 4);
         assert!(!last.has_more);
@@ -558,10 +567,7 @@ mod tests {
 
     #[test]
     fn test_insert_notification() {
-        let mut row = HashMap::new();
-        row.insert("id".to_string(), serde_json::json!(1));
-        row.insert("message".to_string(), serde_json::json!("Hello"));
-
+        let row = create_test_row(1, "Hello");
         let notification = Notification::insert("sub-1".to_string(), vec![row]);
 
         let json = serde_json::to_string(&notification).unwrap();
@@ -573,13 +579,8 @@ mod tests {
 
     #[test]
     fn test_update_notification() {
-        let mut new_row = HashMap::new();
-        new_row.insert("id".to_string(), serde_json::json!(1));
-        new_row.insert("message".to_string(), serde_json::json!("Updated"));
-
-        let mut old_row = HashMap::new();
-        old_row.insert("id".to_string(), serde_json::json!(1));
-        old_row.insert("message".to_string(), serde_json::json!("Original"));
+        let new_row = create_test_row(1, "Updated");
+        let old_row = create_test_row(1, "Original");
 
         let notification = Notification::update("sub-1".to_string(), vec![new_row], vec![old_row]);
 
@@ -591,8 +592,7 @@ mod tests {
 
     #[test]
     fn test_delete_notification() {
-        let mut old_row = HashMap::new();
-        old_row.insert("id".to_string(), serde_json::json!(1));
+        let old_row = create_test_row(1, "Hello");
 
         let notification = Notification::delete("sub-1".to_string(), vec![old_row]);
 

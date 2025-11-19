@@ -458,10 +458,7 @@ impl TableFlush for UserTableFlushJob {
             }
 
             // Convert to JSON and inject system columns
-            let mut row_data = match row.fields {
-                serde_json::Value::Object(map) => JsonValue::Object(map),
-                other => other,
-            };
+            let mut row_data = serde_json::to_value(&row.fields).unwrap_or(JsonValue::Null);
             if let Some(obj) = row_data.as_object_mut() {
                 obj.insert(
                     "_seq".to_string(),

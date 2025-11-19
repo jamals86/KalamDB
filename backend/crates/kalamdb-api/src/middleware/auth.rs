@@ -178,10 +178,16 @@ where
             if auth_header.starts_with("Basic ") {
                 // Extract username from Basic auth header
                 let encoded = auth_header.trim_start_matches("Basic ").trim();
-                let username = if let Ok(decoded_bytes) = base64::engine::general_purpose::STANDARD.decode(encoded) {
+                let username = if let Ok(decoded_bytes) =
+                    base64::engine::general_purpose::STANDARD.decode(encoded)
+                {
                     if let Ok(decoded) = String::from_utf8(decoded_bytes) {
                         // Basic auth format is "username:password"
-                        decoded.split(':').next().unwrap_or("default_user").to_string()
+                        decoded
+                            .split(':')
+                            .next()
+                            .unwrap_or("default_user")
+                            .to_string()
                     } else {
                         "default_user".to_string()
                     }
@@ -189,15 +195,19 @@ where
                     "default_user".to_string()
                 };
 
-                debug!("Basic authentication attempted from {:?} as user '{}'", remote_addr, username);
+                debug!(
+                    "Basic authentication attempted from {:?} as user '{}'",
+                    remote_addr, username
+                );
 
                 // Auto-escalate certain users for development/testing convenience
                 let user_id = kalamdb_commons::UserId::new(&username);
                 let username_lower = username.to_lowercase();
-                let role = if username_lower == "root" 
-                    || username_lower == "system" 
+                let role = if username_lower == "root"
+                    || username_lower == "system"
                     || username_lower == "admin"
-                    || username_lower.starts_with("e2e_") {
+                    || username_lower.starts_with("e2e_")
+                {
                     kalamdb_commons::Role::System
                 } else if username_lower.contains("dba") {
                     kalamdb_commons::Role::Dba
@@ -207,13 +217,8 @@ where
                     kalamdb_commons::Role::User
                 };
 
-                let auth_user = AuthenticatedUser::new(
-                    user_id,
-                    username,
-                    role,
-                    None,
-                    connection_info,
-                );
+                let auth_user =
+                    AuthenticatedUser::new(user_id, username, role, None, connection_info);
 
                 req.extensions_mut().insert(auth_user);
                 service.call(req).await

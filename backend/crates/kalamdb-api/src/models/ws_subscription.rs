@@ -107,7 +107,7 @@ mod tests {
                 Subscription {
                     id: "sub-2".to_string(),
                     sql: "SELECT * FROM notifications".to_string(),
-                    options: SubscriptionOptions { 
+                    options: SubscriptionOptions {
                         last_rows: Some(5),
                         batch_size: None,
                     },

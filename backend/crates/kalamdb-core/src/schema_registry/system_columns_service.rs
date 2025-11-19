@@ -40,6 +40,7 @@
 //! ```
 
 use super::error::RegistryError;
+use kalamdb_commons::constants::SystemColumnNames;
 use kalamdb_commons::ids::snowflake::SnowflakeGenerator;
 use kalamdb_commons::ids::SeqId;
 use kalamdb_commons::models::schemas::{ColumnDefault, ColumnDefinition, TableDefinition};
@@ -58,10 +59,6 @@ pub struct SystemColumnsService {
 }
 
 impl SystemColumnsService {
-    /// System column names (MVCC Architecture)
-    pub const COL_SEQ: &'static str = "_seq";
-    pub const COL_DELETED: &'static str = "_deleted";
-
     /// Create a new SystemColumnsService
     ///
     /// # Arguments
@@ -112,7 +109,9 @@ impl SystemColumnsService {
     pub fn add_system_columns(&self, table_def: &mut TableDefinition) -> Result<(), RegistryError> {
         // Check for conflicts
         for col in &table_def.columns {
-            if col.column_name == Self::COL_SEQ || col.column_name == Self::COL_DELETED {
+            if col.column_name == SystemColumnNames::SEQ
+                || col.column_name == SystemColumnNames::DELETED
+            {
                 return Err(RegistryError::InvalidOperation(format!(
                     "Column name '{}' is reserved for system columns",
                     col.column_name
@@ -126,7 +125,7 @@ impl SystemColumnsService {
         // Note: _seq is NOT a primary key - user must define their own PK
         // _seq contains embedded timestamp (Snowflake ID format)
         table_def.columns.push(ColumnDefinition {
-            column_name: Self::COL_SEQ.to_string(),
+            column_name: SystemColumnNames::SEQ.to_string(),
             ordinal_position: next_ordinal,
             data_type: kalamdb_commons::models::datatypes::KalamDataType::BigInt,
             is_nullable: false,
@@ -141,7 +140,7 @@ impl SystemColumnsService {
 
         // Add _deleted column (BOOLEAN, NOT NULL, DEFAULT FALSE)
         table_def.columns.push(ColumnDefinition {
-            column_name: Self::COL_DELETED.to_string(),
+            column_name: SystemColumnNames::DELETED.to_string(),
             ordinal_position: next_ordinal + 1,
             data_type: kalamdb_commons::models::datatypes::KalamDataType::Boolean,
             is_nullable: false,
@@ -223,7 +222,7 @@ impl SystemColumnsService {
         if include_deleted {
             None
         } else {
-            Some(format!("{} = false", Self::COL_DELETED))
+            Some(format!("{} = false", SystemColumnNames::DELETED))
         }
     }
 

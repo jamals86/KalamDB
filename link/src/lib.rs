@@ -93,6 +93,7 @@
 
 pub mod error;
 pub mod models;
+pub mod seq_id;
 #[cfg(feature = "tokio-runtime")]
 mod normalize;
 
@@ -124,6 +125,7 @@ pub use error::{KalamLinkError, Result};
 pub use models::{
     ChangeEvent, ErrorDetail, HealthCheckResponse, QueryRequest, QueryResponse, SubscriptionOptions,
 };
+pub use seq_id::SeqId;
 
 #[cfg(feature = "tokio-runtime")]
 pub use query::QueryExecutor;

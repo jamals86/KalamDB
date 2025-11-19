@@ -46,8 +46,13 @@ pub fn can_access_table_type(role: Role, table_type: TableType) -> bool {
 pub fn can_create_table(role: Role, table_type: TableType) -> bool {
     match role {
         Role::System | Role::Dba => true,
-        // Allow Service & User roles to create USER and STREAM tables (not SHARED or SYSTEM)
-        Role::Service | Role::User => matches!(table_type, TableType::User | TableType::Stream),
+        // Allow Service role to create SHARED tables as well
+        Role::Service => matches!(
+            table_type,
+            TableType::User | TableType::Stream | TableType::Shared
+        ),
+        // User role can only create USER and STREAM tables
+        Role::User => matches!(table_type, TableType::User | TableType::Stream),
     }
 }
 
@@ -102,8 +107,13 @@ pub fn can_delete_table(role: Role, _table_type: TableType, _is_owner: bool) -> 
 ///
 /// # Returns
 /// True if modification is allowed, false otherwise
-pub fn can_alter_table(role: Role, _table_type: TableType, _is_owner: bool) -> bool {
-    matches!(role, Role::System | Role::Dba)
+pub fn can_alter_table(role: Role, table_type: TableType, _is_owner: bool) -> bool {
+    match role {
+        Role::System | Role::Dba => true,
+        // Allow Service role to alter SHARED tables (e.g. changing access level)
+        Role::Service => matches!(table_type, TableType::Shared),
+        _ => false,
+    }
 }
 
 /// Check if a role can execute administrative operations.

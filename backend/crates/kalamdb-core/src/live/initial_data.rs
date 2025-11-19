@@ -11,10 +11,11 @@ use crate::sql::executor::models::{ExecutionContext, ExecutionResult, ScalarValu
 use crate::sql::executor::SqlExecutor;
 use datafusion::execution::context::SessionContext;
 use kalamdb_commons::ids::SeqId;
+use kalamdb_commons::models::row::Row;
 use kalamdb_commons::models::{TableId, UserId};
 use kalamdb_commons::Role;
 use once_cell::sync::OnceCell;
-use serde_json::Value as JsonValue;
+use std::collections::BTreeMap;
 use std::sync::Arc;
 
 /// Options for fetching initial data when subscribing to a live query
@@ -35,6 +36,10 @@ pub struct InitialDataOptions {
     /// Include soft-deleted rows (_deleted=true)
     /// Default: false
     pub include_deleted: bool,
+
+    /// Fetch the last N rows (newest first) instead of from the beginning
+    /// Default: false
+    pub fetch_last: bool,
 }
 
 impl Default for InitialDataOptions {
@@ -44,6 +49,7 @@ impl Default for InitialDataOptions {
             until_seq: None,
             limit: 100,
             include_deleted: false,
+            fetch_last: false,
         }
     }
 }
@@ -56,6 +62,7 @@ impl InitialDataOptions {
             until_seq: None,
             limit: 100,
             include_deleted: false,
+            fetch_last: false,
         }
     }
 
@@ -67,6 +74,7 @@ impl InitialDataOptions {
             until_seq: None,
             limit,
             include_deleted: false,
+            fetch_last: true,
         }
     }
 
@@ -77,6 +85,7 @@ impl InitialDataOptions {
             until_seq,
             limit: batch_size,
             include_deleted: false,
+            fetch_last: false,
         }
     }
 
@@ -96,8 +105,8 @@ impl InitialDataOptions {
 /// Result of an initial data fetch
 #[derive(Debug, Clone)]
 pub struct InitialDataResult {
-    /// The fetched rows (as JSON objects)
-    pub rows: Vec<JsonValue>,
+    /// The fetched rows (as Row objects)
+    pub rows: Vec<Row>,
 
     /// Sequence ID of the last row in the result
     /// Used for pagination (passed as since_seq in next request)
@@ -133,7 +142,9 @@ impl InitialDataFetcher {
     /// Wire up the shared SqlExecutor so all queries reuse the same execution path
     pub fn set_sql_executor(&self, executor: Arc<SqlExecutor>) {
         if self.sql_executor.set(executor).is_err() {
-            log::warn!("SqlExecutor already set for InitialDataFetcher; ignoring duplicate assignment");
+            log::warn!(
+                "SqlExecutor already set for InitialDataFetcher; ignoring duplicate assignment"
+            );
         }
     }
 
@@ -175,13 +186,12 @@ impl InitialDataFetcher {
 
         // Extract user_id from LiveId for RLS
         let user_id = UserId::new(live_id.user_id().to_string());
-        
 
-        let sql_executor = self
-            .sql_executor
-            .get()
-            .cloned()
-            .ok_or_else(|| KalamDbError::InvalidOperation("SqlExecutor not configured for InitialDataFetcher".to_string()))?;
+        let sql_executor = self.sql_executor.get().cloned().ok_or_else(|| {
+            KalamDbError::InvalidOperation(
+                "SqlExecutor not configured for InitialDataFetcher".to_string(),
+            )
+        })?;
 
         // Create execution context with user scope for row-level security
         let exec_ctx = ExecutionContext::new(
@@ -191,9 +201,13 @@ impl InitialDataFetcher {
         );
 
         // Construct SQL query
-        let table_name = format!("{}.{}", table_id.namespace_id().as_str(), table_id.table_name().as_str());
+        let table_name = format!(
+            "{}.{}",
+            table_id.namespace_id().as_str(),
+            table_id.table_name().as_str()
+        );
         let mut sql = format!("SELECT * FROM {}", table_name);
-        
+
         let mut where_clauses = Vec::new();
 
         // Add _seq filters
@@ -223,8 +237,12 @@ impl InitialDataFetcher {
             sql.push_str(&where_clauses.join(" AND "));
         }
 
-        // Add ORDER BY _seq ASC
-        sql.push_str(" ORDER BY _seq ASC");
+        // Add ORDER BY
+        if options.fetch_last {
+            sql.push_str(" ORDER BY _seq DESC");
+        } else {
+            sql.push_str(" ORDER BY _seq ASC");
+        }
 
         // Add LIMIT (fetch limit + 1 to check has_more)
         sql.push_str(&format!(" LIMIT {}", limit + 1));
@@ -245,53 +263,64 @@ impl InitialDataFetcher {
             }
         };
 
-        // Convert batches to JSON rows
-        let mut rows_with_seq: Vec<(SeqId, JsonValue)> = Vec::new();
-        
+        // Convert batches to Rows
+        let mut rows_with_seq: Vec<(SeqId, Row)> = Vec::new();
+
         for batch in batches {
             let schema = batch.schema();
-            let seq_col_idx = schema.index_of("_seq").map_err(|_| {
-                KalamDbError::Other("Result missing _seq column".to_string())
-            })?;
-            
+            let seq_col_idx = schema
+                .index_of("_seq")
+                .map_err(|_| KalamDbError::Other("Result missing _seq column".to_string()))?;
+
             let seq_col = batch.column(seq_col_idx);
-            let seq_array = seq_col.as_any().downcast_ref::<datafusion::arrow::array::Int64Array>().ok_or_else(|| {
-                KalamDbError::Other("_seq column is not Int64".to_string())
-            })?;
+            let seq_array = seq_col
+                .as_any()
+                .downcast_ref::<datafusion::arrow::array::Int64Array>()
+                .ok_or_else(|| KalamDbError::Other("_seq column is not Int64".to_string()))?;
 
-            // Convert row to JSON
-            let json_rows = crate::providers::arrow_json_conversion::record_batch_to_json_rows(&batch).map_err(|e| {
-                KalamDbError::SerializationError(format!("Failed to convert batch to JSON: {}", e))
-            })?;
+            let num_rows = batch.num_rows();
+            let num_cols = batch.num_columns();
 
-            for (i, row_value) in json_rows.into_iter().enumerate() {
-                let seq_val = seq_array.value(i);
-                let seq_id = SeqId::from(seq_val);
-                
-                if let JsonValue::Object(map) = row_value {
-                    rows_with_seq.push((seq_id, JsonValue::Object(map)));
-                } else {
-                    // Should not happen if record_batch_to_json_rows works correctly
-                    log::warn!("Expected JSON object, got {:?}", row_value);
+            for row_idx in 0..num_rows {
+                let mut row_map = BTreeMap::new();
+                for col_idx in 0..num_cols {
+                    let col_name = schema.field(col_idx).name();
+                    let col_array = batch.column(col_idx);
+                    let value = ScalarValue::try_from_array(col_array, row_idx).map_err(|e| {
+                        KalamDbError::SerializationError(format!(
+                            "Failed to convert to ScalarValue: {}",
+                            e
+                        ))
+                    })?;
+                    row_map.insert(col_name.clone(), value);
                 }
+
+                let seq_val = seq_array.value(row_idx);
+                let seq_id = SeqId::from(seq_val);
+                rows_with_seq.push((seq_id, Row::new(row_map)));
             }
         }
 
         // Determine has_more and slice to limit
         let total_fetched = rows_with_seq.len();
         let has_more = total_fetched > limit;
-        
-        let batch_rows = if has_more {
+
+        let mut batch_rows = if has_more {
             rows_with_seq.into_iter().take(limit).collect::<Vec<_>>()
         } else {
             rows_with_seq
         };
 
+        // If we fetched last rows (DESC), we need to reverse them to return in chronological order
+        if options.fetch_last {
+            batch_rows.reverse();
+        }
+
         // Determine snapshot boundary
         let last_seq = batch_rows.last().map(|(seq, _)| *seq);
         let snapshot_end_seq = options.until_seq.or(last_seq);
 
-        let rows: Vec<JsonValue> = batch_rows.into_iter().map(|(_, row)| row).collect();
+        let rows: Vec<Row> = batch_rows.into_iter().map(|(_, row)| row).collect();
 
         log::info!(
             "fetch_initial_data complete: table={}, returned {} rows (has_more: {}, last_seq: {:?})",
@@ -309,7 +338,11 @@ impl InitialDataFetcher {
         })
     }
 
-    fn table_has_column(&self, table_id: &TableId, column_name: &str) -> Result<bool, KalamDbError> {
+    fn table_has_column(
+        &self,
+        table_id: &TableId,
+        column_name: &str,
+    ) -> Result<bool, KalamDbError> {
         let schema = self.schema_registry.get_arrow_schema(table_id)?;
         Ok(schema.field_with_name(column_name).is_ok())
     }
@@ -318,6 +351,7 @@ impl InitialDataFetcher {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::providers::arrow_json_conversion::json_to_row;
     use crate::sql::executor::SqlExecutor;
     use kalamdb_commons::ids::{SeqId, UserTableRowId};
     use kalamdb_commons::models::{ConnectionId as ConnId, LiveId as CommonsLiveId};
@@ -338,6 +372,7 @@ mod tests {
         assert_eq!(options.since_seq, None);
         assert_eq!(options.limit, 100);
         assert!(!options.include_deleted);
+        assert!(!options.fetch_last);
     }
 
     #[test]
@@ -347,6 +382,7 @@ mod tests {
         assert_eq!(options.since_seq, Some(seq));
         assert_eq!(options.limit, 100);
         assert!(!options.include_deleted);
+        assert!(!options.fetch_last);
     }
 
     #[test]
@@ -355,6 +391,7 @@ mod tests {
         assert_eq!(options.since_seq, None);
         assert_eq!(options.limit, 50);
         assert!(!options.include_deleted);
+        assert!(options.fetch_last);
     }
 
     #[test]
@@ -376,7 +413,7 @@ mod tests {
         let backend: Arc<dyn kalamdb_store::StorageBackend> = Arc::new(InMemoryBackend::new());
         let node_id = kalamdb_commons::NodeId::new("test-node".to_string());
         let config = kalamdb_commons::ServerConfig::default();
-        
+
         // We use init() which uses get_or_init() internally, so it's safe to call multiple times
         // (subsequent calls return the existing instance)
         let app_context = crate::app_context::AppContext::init(
@@ -385,7 +422,7 @@ mod tests {
             "/tmp/kalamdb-test".to_string(),
             config,
         );
-        
+
         let schema_registry = app_context.schema_registry();
 
         // Setup in-memory user table with one row (userA)
@@ -401,7 +438,7 @@ mod tests {
         let row = UserTableRow {
             user_id: user_id.clone(),
             _seq: seq,
-            fields: serde_json::json!({"id": 1, "name": "Item One"}),
+            fields: json_to_row(&serde_json::json!({"id": 1, "name": "Item One"})).unwrap(),
             _deleted: false,
         };
 
@@ -409,10 +446,10 @@ mod tests {
         EntityStore::put(&*store, &row_id, &row).expect("put row");
 
         // Register table definition so get_arrow_schema works
-        use kalamdb_commons::models::schemas::column_default::ColumnDefault;
-        use kalamdb_commons::models::schemas::{TableDefinition, ColumnDefinition};
-        use kalamdb_commons::models::datatypes::KalamDataType;
         use crate::schema_registry::CachedTableData;
+        use kalamdb_commons::models::datatypes::KalamDataType;
+        use kalamdb_commons::models::schemas::column_default::ColumnDefault;
+        use kalamdb_commons::models::schemas::{ColumnDefinition, TableDefinition};
 
         let columns = vec![
             ColumnDefinition::primary_key("id", 1, KalamDataType::Int),
@@ -445,12 +482,13 @@ mod tests {
             kalamdb_commons::TableType::User,
             columns,
             None,
-        ).expect("create table def");
+        )
+        .expect("create table def");
 
         // Insert into cache directly (bypassing persistence which might not be mocked)
         schema_registry.insert(
-            table_id.clone(), 
-            Arc::new(CachedTableData::new(Arc::new(table_def)))
+            table_id.clone(),
+            Arc::new(CachedTableData::new(Arc::new(table_def))),
         );
 
         // Create a mock provider with the store
@@ -468,7 +506,8 @@ mod tests {
             .insert_provider(table_id.clone(), provider)
             .expect("register provider");
 
-        let fetcher = InitialDataFetcher::new(app_context.base_session_context(), schema_registry.clone());
+        let fetcher =
+            InitialDataFetcher::new(app_context.base_session_context(), schema_registry.clone());
         let sql_executor = Arc::new(SqlExecutor::new(app_context.clone(), false));
         fetcher.set_sql_executor(sql_executor);
 
@@ -489,11 +528,14 @@ mod tests {
             .expect("initial fetch");
 
         assert_eq!(res.rows.len(), 1, "Expected one row in initial snapshot");
-        
+
         // Verify the row content
-        let row_json = &res.rows[0];
-        assert_eq!(row_json["id"], 1);
-        assert_eq!(row_json["name"], "Item One");
+        let row = &res.rows[0];
+        assert_eq!(row.get("id").unwrap(), &ScalarValue::Int32(Some(1)));
+        assert_eq!(
+            row.get("name").unwrap(),
+            &ScalarValue::Utf8(Some("Item One".to_string()))
+        );
     }
 
     #[tokio::test]
@@ -503,14 +545,14 @@ mod tests {
         let backend: Arc<dyn kalamdb_store::StorageBackend> = Arc::new(InMemoryBackend::new());
         let node_id = kalamdb_commons::NodeId::new("test-node-batch".to_string());
         let config = kalamdb_commons::ServerConfig::default();
-        
+
         let app_context = crate::app_context::AppContext::init(
             backend.clone(),
             node_id,
             "/tmp/kalamdb-test-batch".to_string(),
             config,
         );
-        
+
         let schema_registry = app_context.schema_registry();
 
         // Setup in-memory user table
@@ -525,20 +567,23 @@ mod tests {
         for i in 1..=3 {
             let seq = SeqId::new(i);
             let row_id = UserTableRowId::new(user_id.clone(), seq);
+            let fields = json_to_row(&serde_json::json!({"id": i, "val": format!("Item {}", i)})).unwrap();
+            
             let row = UserTableRow {
                 user_id: user_id.clone(),
                 _seq: seq,
-                fields: serde_json::json!({"id": i, "val": format!("Item {}", i)}),
+                fields,
                 _deleted: false,
             };
+            
             EntityStore::put(&*store, &row_id, &row).expect("put row");
         }
 
         // Register table definition
-        use kalamdb_commons::models::schemas::column_default::ColumnDefault;
-        use kalamdb_commons::models::schemas::{TableDefinition, ColumnDefinition};
-        use kalamdb_commons::models::datatypes::KalamDataType;
         use crate::schema_registry::CachedTableData;
+        use kalamdb_commons::models::datatypes::KalamDataType;
+        use kalamdb_commons::models::schemas::column_default::ColumnDefault;
+        use kalamdb_commons::models::schemas::{ColumnDefinition, TableDefinition};
 
         let columns = vec![
             ColumnDefinition::primary_key("id", 1, KalamDataType::Int),
@@ -571,11 +616,12 @@ mod tests {
             kalamdb_commons::TableType::User,
             columns,
             None,
-        ).expect("create table def");
+        )
+        .expect("create table def");
 
         schema_registry.insert(
-            table_id.clone(), 
-            Arc::new(CachedTableData::new(Arc::new(table_def)))
+            table_id.clone(),
+            Arc::new(CachedTableData::new(Arc::new(table_def))),
         );
 
         // Create and register provider
@@ -592,7 +638,8 @@ mod tests {
             .insert_provider(table_id.clone(), provider)
             .expect("register provider");
 
-        let fetcher = InitialDataFetcher::new(app_context.base_session_context(), schema_registry.clone());
+        let fetcher =
+            InitialDataFetcher::new(app_context.base_session_context(), schema_registry.clone());
         let sql_executor = Arc::new(SqlExecutor::new(app_context.clone(), false));
         fetcher.set_sql_executor(sql_executor);
         let conn = ConnId::new("userB".to_string(), "conn2".to_string());
@@ -611,7 +658,7 @@ mod tests {
             .expect("fetch batch 1");
 
         assert_eq!(res1.rows.len(), 1);
-        assert_eq!(res1.rows[0]["id"], 1);
+        assert_eq!(res1.rows[0].get("id").unwrap(), &ScalarValue::Int32(Some(1)));
         assert!(res1.has_more);
         assert_eq!(res1.last_seq, Some(SeqId::new(1)));
 
@@ -628,7 +675,7 @@ mod tests {
             .expect("fetch batch 2");
 
         assert_eq!(res2.rows.len(), 1);
-        assert_eq!(res2.rows[0]["id"], 2);
+        assert_eq!(res2.rows[0].get("id").unwrap(), &ScalarValue::Int32(Some(2)));
         assert!(res2.has_more);
         assert_eq!(res2.last_seq, Some(SeqId::new(2)));
 
@@ -645,8 +692,136 @@ mod tests {
             .expect("fetch batch 3");
 
         assert_eq!(res3.rows.len(), 1);
-        assert_eq!(res3.rows[0]["id"], 3);
+        assert_eq!(res3.rows[0].get("id").unwrap(), &ScalarValue::Int32(Some(3)));
         assert!(!res3.has_more); // Should be false as we fetched the last one
         assert_eq!(res3.last_seq, Some(SeqId::new(3)));
+    }
+
+    #[tokio::test]
+    async fn test_user_table_fetch_last_rows() {
+        let _guard = INITIAL_DATA_TEST_GUARD.lock().await;
+        // Initialize global AppContext for the test (idempotent)
+        let backend: Arc<dyn kalamdb_store::StorageBackend> = Arc::new(InMemoryBackend::new());
+        let node_id = kalamdb_commons::NodeId::new("test-node-last".to_string());
+        let config = kalamdb_commons::ServerConfig::default();
+
+        let app_context = crate::app_context::AppContext::init(
+            backend.clone(),
+            node_id,
+            "/tmp/kalamdb-test-last".to_string(),
+            config,
+        );
+
+        let schema_registry = app_context.schema_registry();
+
+        // Setup in-memory user table
+        let ns = NamespaceId::new("last_test");
+        let tbl = TableName::new("last_items");
+        let table_id = kalamdb_commons::models::TableId::new(ns.clone(), tbl.clone());
+        let store = Arc::new(new_user_table_store(backend.clone(), &ns, &tbl));
+
+        let user_id = UserId::from("userC");
+
+        // Insert 10 rows with increasing seq
+        for i in 1..=10 {
+            let seq = SeqId::new(i);
+            let row_id = UserTableRowId::new(user_id.clone(), seq);
+            let fields = json_to_row(&serde_json::json!({"id": i, "val": format!("Item {}", i)})).unwrap();
+            
+            let row = UserTableRow {
+                user_id: user_id.clone(),
+                _seq: seq,
+                fields,
+                _deleted: false,
+            };
+            
+            EntityStore::put(&*store, &row_id, &row).expect("put row");
+        }
+
+        // Register table definition
+        use crate::schema_registry::CachedTableData;
+        use kalamdb_commons::models::datatypes::KalamDataType;
+        use kalamdb_commons::models::schemas::column_default::ColumnDefault;
+        use kalamdb_commons::models::schemas::{ColumnDefinition, TableDefinition};
+
+        let columns = vec![
+            ColumnDefinition::primary_key("id", 1, KalamDataType::Int),
+            ColumnDefinition::simple("val", 2, KalamDataType::Text),
+            ColumnDefinition::new(
+                "_seq",
+                3,
+                KalamDataType::BigInt,
+                false,
+                false,
+                false,
+                ColumnDefault::None,
+                None,
+            ),
+            ColumnDefinition::new(
+                "_deleted",
+                4,
+                KalamDataType::Boolean,
+                false,
+                false,
+                false,
+                ColumnDefault::literal(serde_json::json!(false)),
+                None,
+            ),
+        ];
+
+        let table_def = TableDefinition::new_with_defaults(
+            ns.clone(),
+            tbl.clone(),
+            kalamdb_commons::TableType::User,
+            columns,
+            None,
+        )
+        .expect("create table def");
+
+        schema_registry.insert(
+            table_id.clone(),
+            Arc::new(CachedTableData::new(Arc::new(table_def))),
+        );
+
+        // Create and register provider
+        use crate::providers::base::TableProviderCore;
+        use crate::providers::UserTableProvider;
+        let core = Arc::new(TableProviderCore::from_app_context(
+            &app_context,
+            table_id.clone(),
+            TableType::User,
+        ));
+        let provider = Arc::new(UserTableProvider::new(core, store, "id".to_string()));
+
+        schema_registry
+            .insert_provider(table_id.clone(), provider)
+            .expect("register provider");
+
+        let fetcher =
+            InitialDataFetcher::new(app_context.base_session_context(), schema_registry.clone());
+        let sql_executor = Arc::new(SqlExecutor::new(app_context.clone(), false));
+        fetcher.set_sql_executor(sql_executor);
+        let conn = ConnId::new("userC".to_string(), "conn3".to_string());
+        let live = CommonsLiveId::new(conn, table_id.clone(), "q3".to_string());
+
+        // Fetch last 3 rows
+        let res = fetcher
+            .fetch_initial_data(
+                &live,
+                &table_id,
+                TableType::User,
+                InitialDataOptions::last(3),
+                None,
+            )
+            .await
+            .expect("fetch last 3");
+
+        assert_eq!(res.rows.len(), 3);
+        // Should be 8, 9, 10 in that order
+        assert_eq!(res.rows[0].get("id").unwrap(), &ScalarValue::Int32(Some(8)));
+        assert_eq!(res.rows[1].get("id").unwrap(), &ScalarValue::Int32(Some(9)));
+        assert_eq!(res.rows[2].get("id").unwrap(), &ScalarValue::Int32(Some(10)));
+        
+        assert!(res.has_more);
     }
 }

@@ -19,6 +19,7 @@ toml = { workspace = true }
 anyhow = { workspace = true }
 num_cpus = { workspace = true }
 sqlparser = { workspace = true }
+datafusion = { workspace = true }
 # Optional dependencies - only enabled via features
 serde = { workspace = true, optional = true }
 serde_json = { workspace = true, optional = true }

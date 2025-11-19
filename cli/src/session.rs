@@ -990,6 +990,7 @@ impl CLISession {
             return (
                 sql.to_string(),
                 Some(SubscriptionOptions {
+                    batch_size: None,
                     _reserved: None,
                 }),
             );
@@ -1013,6 +1014,7 @@ impl CLISession {
         if !options_str.starts_with('(') || !options_str.ends_with(')') {
             eprintln!("Warning: Invalid OPTIONS format, using defaults");
             return Some(SubscriptionOptions {
+                batch_size: None,
                 _reserved: None,
             });
         }
@@ -1027,6 +1029,7 @@ impl CLISession {
             if key.to_lowercase() == "last_rows" {
                 if let Ok(_last_rows) = value.parse::<usize>() {
                     return Some(SubscriptionOptions {
+                        batch_size: None,
                         _reserved: None,
                     });
                 } else {
@@ -1042,6 +1045,7 @@ impl CLISession {
 
         // Default if parsing failed
         Some(SubscriptionOptions {
+            batch_size: None,
             _reserved: None,
         })
     }
@@ -1150,6 +1154,10 @@ impl CLISession {
                 total_rows,
                 batch_control,
             } => {
+                let total_batches_display = batch_control
+                    .total_batches
+                    .map(|v| v.to_string())
+                    .unwrap_or_else(|| "?".to_string());
                 if self.color {
                     println!(
                         "\x1b[36m[{}] ✓ SUBSCRIBED\x1b[0m [{}] {} total rows, batch {}/{} {}",
@@ -1157,7 +1165,7 @@ impl CLISession {
                         subscription_id,
                         total_rows,
                         batch_control.batch_num + 1,
-                        batch_control.total_batches,
+                        total_batches_display,
                         if batch_control.has_more {
                             "(loading...)"
                         } else {
@@ -1171,7 +1179,7 @@ impl CLISession {
                         subscription_id,
                         total_rows,
                         batch_control.batch_num + 1,
-                        batch_control.total_batches,
+                        total_batches_display,
                         if batch_control.has_more {
                             "(loading...)"
                         } else {
@@ -1186,12 +1194,16 @@ impl CLISession {
                 batch_control,
             } => {
                 let count = rows.len();
+                let total_batches_display = batch_control
+                    .total_batches
+                    .map(|v| v.to_string())
+                    .unwrap_or_else(|| "?".to_string());
                 if self.color {
                     println!(
                         "\x1b[34m[{}] BATCH {}/{}\x1b[0m [{}] {} rows {}",
                         timestamp,
                         batch_control.batch_num + 1,
-                        batch_control.total_batches,
+                        total_batches_display,
                         subscription_id,
                         count,
                         if batch_control.has_more {
@@ -1205,7 +1217,7 @@ impl CLISession {
                         "[{}] BATCH {}/{} [{}] {} rows {}",
                         timestamp,
                         batch_control.batch_num + 1,
-                        batch_control.total_batches,
+                        total_batches_display,
                         subscription_id,
                         count,
                         if batch_control.has_more {

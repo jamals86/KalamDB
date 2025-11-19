@@ -57,12 +57,10 @@ pub struct LiveQueryOptions {
 /// - Uses Arc for zero-copy sharing of notification channel
 /// - Query string stored in system.live_queries only (persistent storage)
 /// - Changes counter stored in system.live_queries only (persistent storage)
+/// - Removed redundant UserId, TableId, ConnectionId (stored in LiveId)
 #[derive(Debug, Clone)]
 pub struct SubscriptionHandle {
-    pub live_id: LiveId, //TODO: We already have UserId and TableId separately inside LiveId
-    pub user_id: UserId,
-    pub table_id: TableId,
-    pub connection_id: ConnectionId,
+    pub live_id: LiveId,
     pub options: LiveQueryOptions,
     /// Shared notification channel (Arc for zero-copy)
     pub notification_tx: Arc<NotificationSender>,
@@ -145,9 +143,6 @@ impl LiveQueryRegistry {
 
         let handle = SubscriptionHandle {
             live_id: live_id.clone(),
-            user_id: user_id.clone(),
-            table_id: table_id.clone(),
-            connection_id,
             options,
             notification_tx,
         };
@@ -196,7 +191,7 @@ impl LiveQueryRegistry {
         // Note: This is O(n) where n = total subscriptions, but it's rare (only on disconnect)
         self.subscriptions.retain(|_key, handles| {
             handles.retain(|handle| {
-                if &handle.connection_id == connection_id {
+                if &handle.live_id.connection_id == connection_id {
                     removed_live_ids.push(handle.live_id.clone());
                     false // Remove this handle
                 } else {
@@ -228,7 +223,7 @@ impl LiveQueryRegistry {
         let connection_id = self.subscriptions.get_mut(&key).and_then(|mut handles| {
             if let Some(pos) = handles.iter().position(|h| &h.live_id == live_id) {
                 let handle = handles.remove(pos);
-                Some(handle.connection_id.clone())
+                Some(handle.live_id.connection_id.clone())
             } else {
                 None
             }

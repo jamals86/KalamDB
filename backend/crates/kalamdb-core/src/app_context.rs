@@ -716,7 +716,9 @@ impl AppContext {
     /// Register the shared SqlExecutor (called once during bootstrap)
     pub fn set_sql_executor(&self, executor: Arc<SqlExecutor>) {
         if self.sql_executor.set(executor).is_err() {
-            log::warn!("SqlExecutor already initialized in AppContext; ignoring duplicate registration");
+            log::warn!(
+                "SqlExecutor already initialized in AppContext; ignoring duplicate registration"
+            );
         }
     }
 

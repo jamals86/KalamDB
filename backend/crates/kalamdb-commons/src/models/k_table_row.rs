@@ -1,4 +1,5 @@
 use crate::ids::SeqId;
+use crate::models::row::Row;
 use crate::models::UserId;
 use serde::{Deserialize, Serialize};
 
@@ -14,11 +15,11 @@ pub struct KTableRow {
     /// Soft delete flag (always false for stream tables)
     pub _deleted: bool,
     /// Row data (JSON)
-    pub fields: serde_json::Value,
+    pub fields: Row,
 }
 
 impl KTableRow {
-    pub fn new(user_id: UserId, _seq: SeqId, fields: serde_json::Value, _deleted: bool) -> Self {
+    pub fn new(user_id: UserId, _seq: SeqId, fields: Row, _deleted: bool) -> Self {
         Self {
             user_id,
             _seq,

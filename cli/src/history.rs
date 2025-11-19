@@ -199,16 +199,17 @@ mod tests {
         let history = CommandHistory::with_path(&path, 100);
 
         // Test multiline SQL command with newlines
-        let multiline_cmd = "SELECT id,\n       name,\n       email\nFROM users\nWHERE active = true;";
-        
+        let multiline_cmd =
+            "SELECT id,\n       name,\n       email\nFROM users\nWHERE active = true;";
+
         history.append(multiline_cmd).unwrap();
         history.append("SELECT * FROM jobs;").unwrap();
-        
+
         let loaded = history.load().unwrap();
         assert_eq!(loaded.len(), 2);
         assert_eq!(loaded[0], multiline_cmd);
         assert_eq!(loaded[1], "SELECT * FROM jobs;");
-        
+
         // Verify the multiline command preserved all newlines
         assert!(loaded[0].contains("\n"));
         assert_eq!(loaded[0].matches('\n').count(), 4);
@@ -222,9 +223,9 @@ mod tests {
 
         // Test command with special characters and newlines
         let special_cmd = "INSERT INTO messages (content)\nVALUES ('Hello\nWorld!'),\n       ('Test\tmessage\nwith\\special chars');";
-        
+
         history.append(special_cmd).unwrap();
-        
+
         let loaded = history.load().unwrap();
         assert_eq!(loaded.len(), 1);
         assert_eq!(loaded[0], special_cmd);

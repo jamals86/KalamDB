@@ -40,10 +40,10 @@ async fn main() -> Result<()> {
     };
 
     // Logging before any other side effects
-    let app_log_path = format!("{}/app.log", config.logging.logs_path);
+    let server_log_path = format!("{}/server.log", config.logging.logs_path);
     logging::init_logging(
         &config.logging.level,
-        &app_log_path,
+        &server_log_path,
         config.logging.log_to_console,
         Some(&config.logging.targets),
     )?;

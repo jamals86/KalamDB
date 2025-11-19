@@ -18,13 +18,12 @@ use async_trait::async_trait;
 use datafusion::arrow::datatypes::SchemaRef;
 use datafusion::arrow::record_batch::RecordBatch;
 use datafusion::catalog::Session;
-use datafusion::datasource::memory::MemTable;
 use datafusion::datasource::TableProvider;
-use datafusion::error::{DataFusionError, Result as DataFusionResult};
-use datafusion::logical_expr::Expr;
-use datafusion::physical_plan::ExecutionPlan;
+use datafusion::error::Result as DataFusionResult;
+use datafusion::logical_expr::{Expr, TableProviderFilterPushDown};
+use datafusion::physical_plan::{ExecutionPlan, Statistics};
 use kalamdb_commons::ids::UserTableRowId;
-use kalamdb_commons::models::{KTableRow, UserId};
+use kalamdb_commons::models::UserId;
 use kalamdb_commons::{Role, StorageKey, TableId};
 use kalamdb_store::entity_store::EntityStore;
 use kalamdb_tables::{UserTableRow, UserTableStore};
@@ -34,8 +33,11 @@ use std::sync::Arc;
 
 // Arrow <-> JSON helpers
 use crate::live_query::manager::ChangeNotification;
+use crate::providers::arrow_json_conversion::{json_to_row, json_value_to_scalar};
 use crate::providers::version_resolution::{merge_versioned_rows, parquet_batch_to_rows};
-use serde_json::json;
+use datafusion::scalar::ScalarValue;
+use kalamdb_commons::models::Row;
+use std::collections::BTreeMap;
 
 /// User table provider with RLS
 ///
@@ -141,14 +143,20 @@ impl UserTableProvider {
         limit: Option<usize>,
     ) -> Result<Vec<(UserTableRowId, UserTableRow)>, KalamDbError> {
         let table_id = self.core.table_id();
-        
+
         // 1) Scan ALL hot storage (RocksDB) without per-user filtering
         // Use limit if provided, otherwise default to 100,000
         let scan_limit = limit.map(|l| std::cmp::max(l * 2, 1000)).unwrap_or(100_000);
-        
-        let raw_all = self.store.scan_limited_with_prefix_and_start(None, None, scan_limit).map_err(|e| {
-            KalamDbError::InvalidOperation(format!("Failed to scan user table hot storage: {}", e))
-        })?;
+
+        let raw_all = self
+            .store
+            .scan_limited_with_prefix_and_start(None, None, scan_limit)
+            .map_err(|e| {
+                KalamDbError::InvalidOperation(format!(
+                    "Failed to scan user table hot storage: {}",
+                    e
+                ))
+            })?;
         let hot_rows: Vec<(UserTableRowId, UserTableRow)> = raw_all
             .into_iter()
             .filter_map(|(key_bytes, row)| {
@@ -177,7 +185,7 @@ impl UserTableProvider {
             .iter()
             .map(|(_, row)| row.user_id.clone())
             .collect();
-        
+
         // Also get users from cold storage (by scanning the table directory for user subdirectories)
         if let Ok(cold_users) = self.get_users_from_cold_storage() {
             all_users.extend(cold_users);
@@ -186,19 +194,20 @@ impl UserTableProvider {
         let mut all_cold_rows: Vec<(UserTableRowId, UserTableRow)> = Vec::new();
         for user_id in all_users {
             let parquet_batch = self.scan_parquet_files_as_batch(&user_id, _filter)?;
-            let user_cold_rows: Vec<(UserTableRowId, UserTableRow)> = parquet_batch_to_rows(&parquet_batch)?
-                .into_iter()
-                .map(|row_data| {
-                    let seq_id = row_data.seq_id;
-                    let row = UserTableRow {
-                        user_id: user_id.clone(),
-                        _seq: seq_id,
-                        _deleted: row_data.deleted,
-                        fields: JsonValue::Object(row_data.fields),
-                    };
-                    (UserTableRowId::new(user_id.clone(), seq_id), row)
-                })
-                .collect();
+            let user_cold_rows: Vec<(UserTableRowId, UserTableRow)> =
+                parquet_batch_to_rows(&parquet_batch)?
+                    .into_iter()
+                    .map(|row_data| {
+                        let seq_id = row_data.seq_id;
+                        let row = UserTableRow {
+                            user_id: user_id.clone(),
+                            _seq: seq_id,
+                            _deleted: row_data.deleted,
+                            fields: row_data.fields,
+                        };
+                        (UserTableRowId::new(user_id.clone(), seq_id), row)
+                    })
+                    .collect();
             all_cold_rows.extend(user_cold_rows);
         }
 
@@ -233,24 +242,25 @@ impl UserTableProvider {
 
         Ok(result)
     }
-    
+
     /// Get list of users that have data in cold storage (Parquet files).
     /// Scans the table directory for user subdirectories.
     fn get_users_from_cold_storage(&self) -> Result<Vec<UserId>, KalamDbError> {
         use std::fs;
         use std::path::PathBuf;
-        
+
         let table_id = self.core.table_id();
         let namespace = table_id.namespace_id();
         let table = table_id.table_name();
-        
+
         // Build table directory path: ./data/storage/{namespace}/{table}
-        let mut table_dir = PathBuf::from(&self.core.app_context.config().storage.default_storage_path);
+        let mut table_dir =
+            PathBuf::from(&self.core.app_context.config().storage.default_storage_path);
         table_dir.push(namespace.as_str());
         table_dir.push(table.as_str());
-        
+
         let mut users = Vec::new();
-        
+
         // Read directory entries (each subdirectory is a user_id)
         if let Ok(entries) = fs::read_dir(&table_dir) {
             for entry in entries.flatten() {
@@ -263,7 +273,7 @@ impl UserTableProvider {
                 }
             }
         }
-        
+
         Ok(users)
     }
 }
@@ -311,7 +321,9 @@ impl BaseTableProvider<UserTableRowId, UserTableRow> for UserTableProvider {
             user_id: user_id.clone(),
             _seq: seq_id,
             _deleted: false,
-            fields: row_data,
+            fields: json_to_row(&row_data).ok_or_else(|| {
+                KalamDbError::InvalidOperation("Failed to convert JSON to Row".to_string())
+            })?,
         };
 
         // Create composite key
@@ -332,13 +344,11 @@ impl BaseTableProvider<UserTableRowId, UserTableRow> for UserTableProvider {
         if let Some(manager) = &self.core.live_query_manager {
             let table_id = self.core.table_id().clone();
 
-            //TODO: Should we keep the user_id in the row JSON?
-            // Flatten row fields and include user_id for filter matching
-            let mut obj = entity.fields.as_object().cloned().unwrap_or_default();
-            obj.insert("user_id".to_string(), json!(user_id.as_str()));
-            let row_json = JsonValue::Object(obj);
+            // Flatten row fields (user_id is injected by manager for filtering)
+            let obj = entity.fields.values.clone();
+            let row = Row::new(obj);
 
-            let notification = ChangeNotification::insert(table_id.clone(), row_json);
+            let notification = ChangeNotification::insert(table_id.clone(), row);
             manager.notify_table_change_async(user_id.clone(), table_id, notification);
         }
 
@@ -361,8 +371,9 @@ impl BaseTableProvider<UserTableRowId, UserTableRow> for UserTableProvider {
             .ok_or_else(|| KalamDbError::NotFound("Row not found for update".to_string()))?;
 
         let pk_name = self.primary_key_field_name().to_string();
-        let pk_value =
-            crate::providers::unified_dml::extract_user_pk_value(&prior.fields, &pk_name)?;
+        let pk_value = prior.fields.get(&pk_name).map(|v| v.to_string()).ok_or_else(|| {
+             KalamDbError::InvalidOperation(format!("Prior row missing PK {}", pk_name))
+        })?;
 
         // Find latest resolved row for this PK under same user
         let (_latest_key, latest_row) = base::find_row_by_pk(self, Some(user_id), &pk_value)?
@@ -371,12 +382,12 @@ impl BaseTableProvider<UserTableRowId, UserTableRow> for UserTableProvider {
             })?;
 
         // Merge updates onto latest
-        let mut merged = latest_row.fields.as_object().cloned().unwrap_or_default();
+        let mut merged = latest_row.fields.values.clone();
         for (k, v) in update_obj.into_iter() {
-            merged.insert(k, v);
+            merged.insert(k, json_value_to_scalar(&v));
         }
 
-        let new_fields = JsonValue::Object(merged);
+        let new_fields = Row::new(merged);
         let sys_cols = self.core.system_columns.clone();
         let seq_id = sys_cols.generate_seq_id()?;
         let entity = UserTableRow {
@@ -394,18 +405,15 @@ impl BaseTableProvider<UserTableRowId, UserTableRow> for UserTableProvider {
         if let Some(manager) = &self.core.live_query_manager {
             let table_id = self.core.table_id().clone();
 
-            //TODO: Should we keep the user_id in the row JSON?
             // Old data: latest prior resolved row
-            let mut old_obj = latest_row.fields.as_object().cloned().unwrap_or_default();
-            old_obj.insert("user_id".to_string(), json!(user_id.as_str()));
-            let old_json = JsonValue::Object(old_obj);
+            let old_obj = latest_row.fields.values.clone();
+            let old_row = Row::new(old_obj);
 
             // New data: merged entity
-            let mut new_obj = entity.fields.as_object().cloned().unwrap_or_default();
-            new_obj.insert("user_id".to_string(), json!(user_id.as_str()));
-            let new_json = JsonValue::Object(new_obj);
+            let new_obj = entity.fields.values.clone();
+            let new_row = Row::new(new_obj);
 
-            let notification = ChangeNotification::update(table_id.clone(), old_json, new_json);
+            let notification = ChangeNotification::update(table_id.clone(), old_row, new_row);
             manager.notify_table_change_async(user_id.clone(), table_id, notification);
         }
         Ok(row_key)
@@ -417,23 +425,25 @@ impl BaseTableProvider<UserTableRowId, UserTableRow> for UserTableProvider {
             .map_err(|e| KalamDbError::Other(format!("Failed to load prior version: {}", e)))?
             .ok_or_else(|| KalamDbError::NotFound("Row not found for delete".to_string()))?;
         let pk_name = self.primary_key_field_name().to_string();
-        let _pk_value =
-            crate::providers::unified_dml::extract_user_pk_value(&prior.fields, &pk_name)?;
-
+        
         let sys_cols = self.core.system_columns.clone();
         let seq_id = sys_cols.generate_seq_id()?;
         // Preserve the primary key value in the tombstone so version resolution groups
         // the tombstone with the same logical row and suppresses older versions.
-        let pk_json_val = prior
+        let pk_val = prior
             .fields
             .get(&pk_name)
             .cloned()
-            .unwrap_or(serde_json::Value::Null);
+            .unwrap_or(ScalarValue::Null);
+        
+        let mut values = BTreeMap::new();
+        values.insert(pk_name.clone(), pk_val.clone());
+
         let entity = UserTableRow {
             user_id: user_id.clone(),
             _seq: seq_id,
             _deleted: true,
-            fields: serde_json::json!({ pk_name.clone(): pk_json_val.clone() }),
+            fields: Row::new(values),
         };
         let row_key = UserTableRowId::new(user_id.clone(), seq_id);
         log::info!(
@@ -441,7 +451,7 @@ impl BaseTableProvider<UserTableRowId, UserTableRow> for UserTableProvider {
             user_id.as_str(),
             seq_id.as_i64(),
             pk_name,
-            pk_json_val
+            pk_val
         );
         self.store.put(&row_key, &entity).map_err(|e| {
             KalamDbError::InvalidOperation(format!("Failed to delete user table row: {}", e))
@@ -451,13 +461,11 @@ impl BaseTableProvider<UserTableRowId, UserTableRow> for UserTableProvider {
         if let Some(manager) = &self.core.live_query_manager {
             let table_id = self.core.table_id().clone();
 
-            //TODO: Should we keep the user_id in the row JSON?
-            // Provide prior fields for filter matching, include user_id
-            let mut obj = prior.fields.as_object().cloned().unwrap_or_default();
-            obj.insert("user_id".to_string(), json!(user_id.as_str()));
-            let row_json = JsonValue::Object(obj);
+            // Provide prior fields for filter matching (user_id injected by manager)
+            let obj = prior.fields.values.clone();
+            let row = Row::new(obj);
 
-            let notification = ChangeNotification::delete_soft(table_id.clone(), row_json);
+            let notification = ChangeNotification::delete_soft(table_id.clone(), row);
             manager.notify_table_change_async(user_id.clone(), table_id, notification);
         }
         Ok(())
@@ -534,7 +542,11 @@ impl BaseTableProvider<UserTableRowId, UserTableRow> for UserTableProvider {
 
         let raw_all = self
             .store
-            .scan_limited_with_prefix_and_start(Some(&prefix), start_key_bytes.as_deref(), scan_limit)
+            .scan_limited_with_prefix_and_start(
+                Some(&prefix),
+                start_key_bytes.as_deref(),
+                scan_limit,
+            )
             .map_err(|e| {
                 KalamDbError::InvalidOperation(format!(
                     "Failed to scan user table hot storage: {}",
@@ -576,7 +588,7 @@ impl BaseTableProvider<UserTableRowId, UserTableRow> for UserTableProvider {
                     user_id: user_id.clone(),
                     _seq: seq_id,
                     _deleted: row_data.deleted,
-                    fields: JsonValue::Object(row_data.fields),
+                    fields: row_data.fields,
                 };
                 (UserTableRowId::new(user_id.clone(), seq_id), row)
             })
@@ -616,8 +628,8 @@ impl BaseTableProvider<UserTableRowId, UserTableRow> for UserTableProvider {
         Ok(result)
     }
 
-    fn extract_fields(row: &UserTableRow) -> Option<&JsonValue> {
-        Some(&row.fields)
+    fn extract_row(row: &UserTableRow) -> &Row {
+        &row.fields
     }
 }
 
@@ -647,6 +659,17 @@ impl TableProvider for UserTableProvider {
         datafusion::logical_expr::TableType::Base
     }
 
+    fn supports_filters_pushdown(
+        &self,
+        filters: &[&Expr],
+    ) -> DataFusionResult<Vec<TableProviderFilterPushDown>> {
+        self.base_supports_filters_pushdown(filters)
+    }
+
+    fn statistics(&self) -> Option<Statistics> {
+        self.base_statistics()
+    }
+
     async fn scan(
         &self,
         state: &dyn Session,
@@ -654,65 +677,6 @@ impl TableProvider for UserTableProvider {
         filters: &[Expr],
         limit: Option<usize>,
     ) -> DataFusionResult<Arc<dyn ExecutionPlan>> {
-        // log::info!(
-        //     "[UserTableProvider::scan] INVOKED for table {}.{}",
-        //     self.table_id.namespace_id().as_str(),
-        //     self.table_id.table_name().as_str()
-        // );
-        // Combine filters (AND) for pruning and pass to scan_rows
-        let combined_filter: Option<Expr> = if filters.is_empty() {
-            None
-        } else {
-            let first = filters[0].clone();
-            Some(
-                filters[1..]
-                    .iter()
-                    .cloned()
-                    .fold(first, |acc, e| acc.and(e)),
-            )
-        };
-
-        // Current implementation: Unified MemTable (hot RocksDB + cold Parquet) with RLS
-        // scan_rows() → scan_parquet_files_as_batch() uses ManifestAccessPlanner.scan_parquet_files()
-        //
-        // TODO: NEXT PHASE - DataFusion Native ParquetExec Integration with RLS
-        // Same pattern as SharedTableProvider but with user_id filtering:
-        //
-        // STEP 1: Build ParquetExec for user's cold data
-        //   - Filter manifest by user_id (already done in scan_parquet_files_as_batch)
-        //   - Apply row-group selections from ManifestAccessPlanner
-        //
-        // STEP 2: Build MemTable for user's hot RocksDB data
-        //   - scan_hot_data_for_user(user_id, filter)
-        //
-        // STEP 3: Union cold + hot with consistent RLS
-        //   ```rust
-        //   let union_exec = UnionExec::new(vec![parquet_exec, hot_exec]);
-        //   ```
-        //
-        // Note: RLS enforcement happens at file selection level (user_id directory path)
-        // and at RocksDB scan level (prefix scan by user_id)
-        //
-        
-        // Optimization: Pass projection to scan_rows ONLY if filters is empty.
-        let effective_projection = if filters.is_empty() {
-            projection
-        } else {
-            None
-        };
-
-        let batch = self
-            .scan_rows(state, effective_projection, combined_filter.as_ref(), limit)
-            .map_err(|e| DataFusionError::Execution(format!("scan_rows failed: {}", e)))?;
-
-        let mem = MemTable::try_new(batch.schema(), vec![vec![batch]])?;
-        
-        let final_projection = if filters.is_empty() {
-            None
-        } else {
-            projection
-        };
-
-        mem.scan(state, final_projection, filters, limit).await
+        self.base_scan(state, projection, filters, limit).await
     }
 }

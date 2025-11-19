@@ -305,7 +305,7 @@ async fn test_shared_table_system_columns() {
 
     // Query including system columns
     let response = server
-        .execute_sql("SELECT conversation_id, title, _updated, _deleted FROM test_ns.conversations")
+        .execute_sql("SELECT conversation_id, title, _seq, _deleted FROM test_ns.conversations")
         .await;
 
     assert_eq!(
