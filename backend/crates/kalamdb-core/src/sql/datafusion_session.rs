@@ -4,7 +4,6 @@
 //! Custom SQL functions (SNOWFLAKE_ID, UUID_V7, ULID, CURRENT_USER) are registered
 //! with each session for use in SELECT, WHERE, and DEFAULT clauses.
 
-use crate::schema_registry::UserId;
 use crate::sql::functions::{
     CurrentUserFunction, SnowflakeIdFunction, UlidFunction, UuidV7Function,
 };
@@ -28,13 +27,15 @@ impl DataFusionSessionFactory {
     pub fn create_session(&self) -> SessionContext {
         let config = SessionConfig::new()
             .with_information_schema(true)
+            .with_parquet_bloom_filter_pruning(true)
+            .with_parquet_page_index_pruning(true)
             .with_default_catalog_and_schema("kalam", "default");
 
         let ctx = SessionContext::new_with_config(config);
 
         // Register custom functions that are not built-in to DataFusion
         // Note: NOW() and CURRENT_TIMESTAMP() are already built-in to DataFusion
-        self.register_custom_functions(&ctx, None);
+        self.register_custom_functions(&ctx);
 
         ctx
     }
@@ -50,7 +51,7 @@ impl DataFusionSessionFactory {
     /// DataFusion built-in functions already available:
     /// - NOW() - Current timestamp
     /// - CURRENT_TIMESTAMP() - Alias for NOW()
-    fn register_custom_functions(&self, ctx: &SessionContext, user_id: Option<&UserId>) {
+    fn register_custom_functions(&self, ctx: &SessionContext) {
         // Register SNOWFLAKE_ID() function
         let snowflake_fn = SnowflakeIdFunction::new();
         ctx.register_udf(ScalarUDF::from(snowflake_fn));
@@ -64,17 +65,7 @@ impl DataFusionSessionFactory {
         ctx.register_udf(ScalarUDF::from(ulid_fn));
 
         // Register CURRENT_USER() function with user context if available
-        let current_user_fn = if let Some(uid) = user_id {
-            CurrentUserFunction::with_user_id(uid.as_str())
-        } else {
-            CurrentUserFunction::new()
-        };
-        ctx.register_udf(ScalarUDF::from(current_user_fn));
-    }
-
-    /// Create a session with custom configuration
-    pub fn create_session_with_config(&self, config: SessionConfig) -> SessionContext {
-        SessionContext::new_with_config(config)
+        ctx.register_udf(ScalarUDF::from(CurrentUserFunction::new()));
     }
 }
 

@@ -18,6 +18,7 @@
 //!
 //! Tests will be skipped if the server is not running.
 
+use kalam_link::models::ResponseStatus;
 use kalam_link::{ChangeEvent, KalamLinkClient, QueryResponse, SubscriptionConfig};
 use std::time::Duration;
 use tokio::time::{sleep, timeout};
@@ -121,7 +122,7 @@ async fn test_kalam_link_query_execution() {
 
     assert!(result.is_ok(), "Query should execute successfully");
     let response = result.unwrap();
-    assert_eq!(response.status, "success");
+    assert_eq!(response.status, ResponseStatus::Success);
     assert!(!response.results.is_empty());
 }
 
@@ -172,7 +173,7 @@ async fn test_kalam_link_parametrized_query() {
 
     assert!(query_result.is_ok(), "Query should succeed");
     let response = query_result.unwrap();
-    assert_eq!(response.status, "success");
+    assert_eq!(response.status, ResponseStatus::Success);
 
     cleanup_test_data(&table).await.ok();
 }
@@ -700,7 +701,7 @@ async fn test_sql_insert_select() {
     assert!(select.is_ok(), "SELECT should succeed");
 
     let response = select.unwrap();
-    assert_eq!(response.status, "success");
+    assert_eq!(response.status, ResponseStatus::Success);
     assert!(!response.results.is_empty());
 
     cleanup_test_data(&table).await.ok();
@@ -963,7 +964,7 @@ async fn test_error_invalid_sql() {
 
     let result = client.execute_query("INVALID SQL STATEMENT").await;
     assert!(
-        result.is_err() || result.unwrap().status == "error",
+        result.is_err() || result.unwrap().status == ResponseStatus::Error,
         "Invalid SQL should return error"
     );
 }
@@ -981,7 +982,7 @@ async fn test_error_table_not_found() {
         .execute_query("SELECT * FROM nonexistent.table")
         .await;
     assert!(
-        result.is_err() || result.unwrap().status == "error",
+        result.is_err() || result.unwrap().status == ResponseStatus::Error,
         "Querying non-existent table should return error"
     );
 }

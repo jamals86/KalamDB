@@ -43,6 +43,7 @@ impl TypedStatementHandler<CreateTableStatement> for CreateTableHandler {
         context: &ExecutionContext,
     ) -> Result<ExecutionResult, KalamDbError> {
         use crate::sql::executor::helpers::table_creation;
+        use crate::sql::executor::helpers::audit;
 
         let mut statement = statement;
         let effective_type = Self::resolve_table_type(&statement, context);
@@ -57,8 +58,24 @@ impl TypedStatementHandler<CreateTableStatement> for CreateTableHandler {
             statement.table_type = effective_type;
         }
 
+        // Capture details for audit log before moving statement
+        let namespace_id = statement.namespace_id.clone();
+        let table_name = statement.table_name.clone();
+        let table_type = statement.table_type;
+
         // Delegate to helper function
         let message = table_creation::create_table(self.app_context.clone(), statement, context)?;
+
+        // Log DDL operation
+        let audit_entry = audit::log_ddl_operation(
+            context,
+            "CREATE",
+            "TABLE",
+            &format!("{}.{}", namespace_id, table_name),
+            Some(format!("Type: {}", table_type)),
+            None,
+        );
+        audit::persist_audit_entry(&self.app_context, &audit_entry).await?;
 
         Ok(ExecutionResult::Success { message })
     }

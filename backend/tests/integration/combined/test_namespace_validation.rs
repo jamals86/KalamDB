@@ -9,6 +9,7 @@ mod common;
 use std::time::Duration;
 
 use common::{fixtures, TestServer};
+use kalamdb_api::models::ResponseStatus;
 
 #[actix_web::test]
 async fn test_create_table_nonexistent_namespace_error() {
@@ -24,7 +25,8 @@ async fn test_create_table_nonexistent_namespace_error() {
         .await;
 
     assert_eq!(
-        response.status, "error",
+        response.status,
+        ResponseStatus::Error,
         "Expected namespace validation failure"
     );
     let error = response.error.expect("Expected an error payload");
@@ -54,20 +56,23 @@ async fn test_create_table_after_namespace_creation() {
     // First attempt should fail because namespace is missing.
     let initial = server.execute_sql(create_sql).await;
     assert_eq!(
-        initial.status, "error",
+        initial.status,
+        ResponseStatus::Error,
         "Expected failure when namespace missing"
     );
 
     // Create the namespace and retry.
     let ns_response = fixtures::create_namespace(&server, "audit").await;
     assert_eq!(
-        ns_response.status, "success",
+        ns_response.status,
+        ResponseStatus::Success,
         "Namespace creation should succeed"
     );
 
     let retry = server.execute_sql(create_sql).await;
     assert_eq!(
-        retry.status, "success",
+        retry.status,
+        ResponseStatus::Success,
         "Retry should succeed once namespace exists: {:?}",
         retry.error
     );
@@ -87,14 +92,16 @@ async fn test_user_table_namespace_validation() {
 
     let response = server.execute_sql_as_user(sql, "user123").await;
     assert_eq!(
-        response.status, "error",
+        response.status,
+        ResponseStatus::Error,
         "User table creation should fail without namespace"
     );
 
     fixtures::create_namespace(&server, "workspace").await;
     let retry = server.execute_sql_as_user(sql, "user123").await;
     assert_eq!(
-        retry.status, "success",
+        retry.status,
+        ResponseStatus::Success,
         "User table creation should succeed once namespace exists: {:?}",
         retry.error
     );
@@ -114,7 +121,8 @@ async fn test_shared_table_namespace_validation() {
         )
         .await;
     assert_eq!(
-        response.status, "error",
+        response.status,
+        ResponseStatus::Error,
         "Shared table creation should fail without namespace"
     );
 
@@ -128,7 +136,8 @@ async fn test_shared_table_namespace_validation() {
         )
         .await;
     assert_eq!(
-        retry.status, "success",
+        retry.status,
+        ResponseStatus::Success,
         "Shared table creation should succeed once namespace exists: {:?}",
         retry.error
     );
@@ -147,7 +156,8 @@ async fn test_stream_table_namespace_validation() {
         )
         .await;
     assert_eq!(
-        response.status, "error",
+        response.status,
+        ResponseStatus::Error,
         "Stream table creation should fail without namespace"
     );
 
@@ -161,7 +171,8 @@ async fn test_stream_table_namespace_validation() {
         )
         .await;
     assert_eq!(
-        retry.status, "success",
+        retry.status,
+        ResponseStatus::Success,
         "Stream table creation should succeed once namespace exists: {:?}",
         retry.error
     );
@@ -191,19 +202,22 @@ async fn test_namespace_validation_race_condition() {
     let namespace_result = create_namespace.await.expect("namespace task panicked");
 
     assert_eq!(
-        namespace_result.status, "success",
+        namespace_result.status,
+        ResponseStatus::Success,
         "Namespace creation should succeed in concurrent scenario: {:?}",
         namespace_result.error
     );
     assert_eq!(
-        table_result.status, "error",
+        table_result.status,
+        ResponseStatus::Error,
         "Table creation should fail if namespace does not exist at submission time"
     );
 
     // Retry after namespace exists to confirm success.
     let retry = server.execute_sql(table_sql).await;
     assert_eq!(
-        retry.status, "success",
+        retry.status,
+        ResponseStatus::Success,
         "Retry should succeed once namespace creation completes: {:?}",
         retry.error
     );

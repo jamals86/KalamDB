@@ -395,6 +395,7 @@ impl TypedStatementHandler<DropTableStatement> for DropTableHandler {
             limit: None,
             created_after: None,
             created_before: None,
+            ..Default::default()
         };
 
         let flush_jobs = job_manager.list_jobs(flush_filter).await?;
@@ -472,6 +473,18 @@ impl TypedStatementHandler<DropTableStatement> for DropTableHandler {
                 None,
             )
             .await?;
+
+        // Log DDL operation
+        use crate::sql::executor::helpers::audit;
+        let audit_entry = audit::log_ddl_operation(
+            context,
+            "DROP",
+            "TABLE",
+            &format!("{}.{}", statement.namespace_id.as_str(), statement.table_name.as_str()),
+            Some(format!("Type: {:?}, Cleanup Job: {}", actual_type, job_id.as_str())),
+            None,
+        );
+        audit::persist_audit_entry(&self.app_context, &audit_entry).await?;
 
         log::info!(
             "✅ DROP TABLE succeeded: {}.{} (type: {:?}) - Cleanup job: {}",

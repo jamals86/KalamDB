@@ -7,6 +7,7 @@
 mod common;
 
 use common::{fixtures, TestServer};
+use kalamdb_api::models::ResponseStatus;
 
 #[actix_web::test]
 async fn test_reserved_namespace_names() {
@@ -20,7 +21,8 @@ async fn test_reserved_namespace_names() {
         let response = server.execute_sql(&sql).await;
 
         assert_eq!(
-            response.status, "error",
+            response.status,
+            ResponseStatus::Error,
             "Should reject reserved namespace name '{}', but got status: {}",
             name, response.status
         );
@@ -51,7 +53,8 @@ async fn test_valid_namespace_names() {
         let response = server.execute_sql(&sql).await;
 
         assert_eq!(
-            response.status, "success",
+            response.status,
+            ResponseStatus::Success,
             "Should accept valid namespace name '{}', but got error: {:?}",
             name, response.error
         );
@@ -79,7 +82,8 @@ async fn test_reserved_column_names() {
         let response = server.execute_sql(&sql).await;
 
         assert_eq!(
-            response.status, "error",
+            response.status,
+            ResponseStatus::Error,
             "Should reject reserved column name '{}', but got success",
             col_name
         );
@@ -105,7 +109,8 @@ async fn test_valid_column_names() {
         let response = server.execute_sql(&sql).await;
 
         assert_eq!(
-            response.status, "success",
+            response.status,
+            ResponseStatus::Success,
             "Should accept valid column name '{}', but got error: {:?}",
             col_name, response.error
         );
@@ -124,12 +129,20 @@ async fn test_no_auto_id_column_injection() {
     // Create a table with only user-defined columns
     let sql = "CREATE USER TABLE test_no_id.messages (message TEXT PRIMARY KEY, content TEXT)";
     let response = server.execute_sql(sql).await;
-    assert_eq!(response.status, "success", "Should create table");
+    assert_eq!(
+        response.status,
+        ResponseStatus::Success,
+        "Should create table"
+    );
 
     // Insert a row to verify table works
     let insert_sql = "INSERT INTO test_no_id.messages (message, content) VALUES ('msg1', 'Hello')";
     let response = server.execute_sql_as_user(insert_sql, "user_001").await;
-    assert_eq!(response.status, "success", "Should insert row");
+    assert_eq!(
+        response.status,
+        ResponseStatus::Success,
+        "Should insert row"
+    );
     // Targeted cleanup for this namespace
     let _ = server.cleanup_namespace("test_no_id").await;
 }
@@ -146,7 +159,8 @@ async fn test_user_can_use_id_as_column_name() {
     let response = server.execute_sql(sql).await;
 
     assert_eq!(
-        response.status, "success",
+        response.status,
+        ResponseStatus::Success,
         "Should allow user to define 'id' column themselves, but got error: {:?}",
         response.error
     );

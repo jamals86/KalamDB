@@ -98,7 +98,7 @@ impl NamespacesTableProvider {
 
     /// List all namespaces
     pub fn list_namespaces(&self) -> Result<Vec<Namespace>, SystemError> {
-        let namespaces = self.store.scan_all()?;
+        let namespaces = self.store.scan_all(None, None, None)?;
         Ok(namespaces.into_iter().map(|(_, ns)| ns).collect())
     }
 
@@ -109,7 +109,7 @@ impl NamespacesTableProvider {
 
     /// Scan all namespaces and return as RecordBatch
     pub fn scan_all_namespaces(&self) -> Result<RecordBatch, SystemError> {
-        let namespaces = self.store.scan_all()?;
+        let namespaces = self.store.scan_all(None, None, None)?;
         let row_count = namespaces.len();
 
         // Pre-allocate builders for optimal performance

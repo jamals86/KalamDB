@@ -244,33 +244,44 @@ where
         Ok(results)
     }
 
-    /// Scans all entities in the partition.
+    /// Scans entities in the partition with optional limit, prefix, and start key.
     ///
-    /// **Warning**: This loads all entities into memory. Use with caution on large datasets.
+    /// **Warning**: If limit is None, this loads all entities into memory (up to a hard limit).
+    /// Use with caution on large datasets.
     ///
     /// ## Example
     ///
     /// ```rust,ignore
-    /// let all_users = store.scan_all()?;
+    /// let all_users = store.scan_all(None, None, None)?;
     /// println!("Total users: {}", all_users.len());
     /// ```
-    fn scan_all(&self) -> Result<Vec<(Vec<u8>, V)>> {
+    fn scan_all(
+        &self,
+        limit: Option<usize>,
+        prefix: Option<&K>,
+        start_key: Option<&K>,
+    ) -> Result<Vec<(Vec<u8>, V)>> {
         // Place a hard limit to bypass scanning massive tables into memory
         const MAX_SCAN_LIMIT: usize = 100000;
+        let effective_limit = limit.unwrap_or(MAX_SCAN_LIMIT);
+        
         let partition = Partition::new(self.partition());
-        let iter = self.backend().scan(&partition, None, None, None)?;
+        
+        let prefix_bytes = prefix.map(|k| k.storage_key());
+        let start_key_bytes = start_key.map(|k| k.storage_key());
+        
+        let iter = self.backend().scan(
+            &partition, 
+            prefix_bytes.as_deref(), 
+            start_key_bytes.as_deref(), 
+            Some(effective_limit)
+        )?;
 
-        let mut count = 0;
         let mut results = Vec::new();
         for (key_bytes, value_bytes) in iter {
             let entity = self.deserialize(&value_bytes)?;
             results.push((key_bytes, entity));
-            count += 1;
-            if count >= MAX_SCAN_LIMIT {
-                log::warn!(
-                    "Scan all reached max limit of {} entries, stopping early",
-                    MAX_SCAN_LIMIT
-                );
+            if results.len() >= effective_limit {
                 break;
             }
         }

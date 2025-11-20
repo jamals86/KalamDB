@@ -24,12 +24,25 @@ impl TypedStatementHandler<ShowNamespacesStatement> for ShowNamespacesHandler {
         &self,
         _statement: ShowNamespacesStatement,
         _params: Vec<ScalarValue>,
-        _context: &ExecutionContext,
+        context: &ExecutionContext,
     ) -> Result<ExecutionResult, KalamDbError> {
+        let start_time = std::time::Instant::now();
         let namespaces_provider = self.app_context.system_tables().namespaces();
 
         // Query all namespaces via the table provider (returns RecordBatch)
         let batches = namespaces_provider.scan_all_namespaces()?;
+
+        // Log query operation
+        let duration = start_time.elapsed().as_secs_f64() * 1000.0;
+        use crate::sql::executor::helpers::audit;
+        let audit_entry = audit::log_query_operation(
+            context,
+            "SHOW",
+            "NAMESPACES",
+            duration,
+            None,
+        );
+        audit::persist_audit_entry(&self.app_context, &audit_entry).await?;
 
         // Return as query result
         let row_count = batches.num_rows();

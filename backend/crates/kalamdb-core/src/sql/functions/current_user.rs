@@ -9,6 +9,7 @@ use datafusion::error::{DataFusionError, Result as DataFusionResult};
 use datafusion::logical_expr::{
     ColumnarValue, ScalarFunctionArgs, ScalarUDFImpl, Signature, Volatility,
 };
+use kalamdb_commons::UserId;
 use std::any::Any;
 use std::sync::Arc;
 
@@ -18,21 +19,21 @@ use std::sync::Arc;
 /// This function takes no arguments and returns a String (Utf8).
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct CurrentUserFunction {
-    user_id: String,
+    user_id: Option<UserId>,
 }
 
 impl CurrentUserFunction {
-    /// Create a new CURRENT_USER function with a default user
+    /// Create a new CURRENT_USER function with no user bound
     pub fn new() -> Self {
         Self {
-            user_id: "default_user".to_string(),
+            user_id: None,
         }
     }
 
     /// Create a CURRENT_USER function bound to a specific user id
-    pub fn with_user_id(user_id: &str) -> Self {
+    pub fn with_user_id(user_id: &UserId) -> Self {
         Self {
-            user_id: user_id.to_string(),
+            user_id: Some(user_id.clone()),
         }
     }
 }
@@ -68,7 +69,12 @@ impl ScalarUDFImpl for CurrentUserFunction {
                 "CURRENT_USER() takes no arguments".to_string(),
             ));
         }
-        let array = StringArray::from(vec![self.user_id.as_str()]);
+
+        let user_id = self.user_id.as_ref().ok_or_else(|| {
+            DataFusionError::Execution("CURRENT_USER() failed: User ID must not be null or empty".to_string())
+        })?;
+
+        let array = StringArray::from(vec![user_id.as_str()]);
         Ok(ColumnarValue::Array(Arc::new(array) as ArrayRef))
     }
 }
@@ -88,12 +94,13 @@ mod tests {
 
     #[test]
     fn test_current_user_with_user_id() {
-        let func_impl = CurrentUserFunction::with_user_id("test_user");
+        let user_id = UserId::new("test_user");
+        let func_impl = CurrentUserFunction::with_user_id(&user_id);
         let func = ScalarUDF::new_from_impl(func_impl.clone());
         assert_eq!(func.name(), "CURRENT_USER");
 
         // Verify configured user_id
-        assert_eq!(func_impl.user_id, "test_user");
+        assert_eq!(func_impl.user_id, Some(user_id));
     }
 
     // Test removed - testing internal DataFusion behavior that changed in newer versions

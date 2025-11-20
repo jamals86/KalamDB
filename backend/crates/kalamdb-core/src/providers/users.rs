@@ -32,7 +32,7 @@ use std::any::Any;
 use std::sync::Arc;
 
 // Arrow <-> JSON helpers
-use crate::live_query::manager::ChangeNotification;
+use crate::live_query::ChangeNotification;
 use crate::providers::arrow_json_conversion::{json_to_row, json_value_to_scalar};
 use crate::providers::version_resolution::{merge_versioned_rows, parquet_batch_to_rows};
 use datafusion::scalar::ScalarValue;
@@ -55,6 +55,9 @@ pub struct UserTableProvider {
 
     /// Cached primary key field name
     primary_key_field_name: String,
+
+    /// Cached Arrow schema (prevents panics if table is dropped while provider is in use)
+    schema: SchemaRef,
 }
 
 impl UserTableProvider {
@@ -70,10 +73,19 @@ impl UserTableProvider {
         store: Arc<UserTableStore>,
         primary_key_field_name: String,
     ) -> Self {
+        // Cache schema at creation time to avoid "Table not found" panics if table is dropped
+        // while provider is still in use by a query plan
+        let schema = core
+            .app_context
+            .schema_registry()
+            .get_arrow_schema(core.table_id())
+            .expect("Failed to get Arrow schema from registry during provider creation");
+
         Self {
             core,
             store,
             primary_key_field_name,
+            schema,
         }
     }
 
@@ -193,6 +205,18 @@ impl UserTableProvider {
 
         let mut all_cold_rows: Vec<(UserTableRowId, UserTableRow)> = Vec::new();
         for user_id in all_users {
+            // Optimization: Stop scanning if we've collected enough rows to satisfy the limit
+            // We use a multiplier (2x) to account for potential version resolution merges/deletes
+            if let Some(l) = limit {
+                if hot_rows.len() + all_cold_rows.len() >= std::cmp::max(l * 2, 1000) {
+                    log::debug!(
+                        "[UserProvider] Hit scan limit safeguard ({} rows), stopping cold scan early",
+                        hot_rows.len() + all_cold_rows.len()
+                    );
+                    break;
+                }
+            }
+
             let parquet_batch = self.scan_parquet_files_as_batch(&user_id, _filter)?;
             let user_cold_rows: Vec<(UserTableRowId, UserTableRow)> =
                 parquet_batch_to_rows(&parquet_batch)?
@@ -284,12 +308,8 @@ impl BaseTableProvider<UserTableRowId, UserTableRow> for UserTableProvider {
     }
 
     fn schema_ref(&self) -> SchemaRef {
-        // Get memoized Arrow schema from SchemaRegistry via AppContext
-        self.core
-            .app_context
-            .schema_registry()
-            .get_arrow_schema(self.core.table_id())
-            .expect("Failed to get Arrow schema from registry")
+        // Return cached schema
+        self.schema.clone()
     }
 
     fn provider_table_type(&self) -> TableType {

@@ -222,9 +222,9 @@ mod tests {
         assert!(can_create_table(Role::Dba, TableType::User));
         assert!(can_create_table(Role::Dba, TableType::Shared));
 
-        // Service and User cannot create any tables (DML only)
+        // Service can create User, Stream and Shared tables
         assert!(can_create_table(Role::Service, TableType::User));
-        assert!(!can_create_table(Role::Service, TableType::Shared));
+        assert!(can_create_table(Role::Service, TableType::Shared));
         assert!(can_create_table(Role::User, TableType::User));
         assert!(!can_create_table(Role::User, TableType::System));
     }

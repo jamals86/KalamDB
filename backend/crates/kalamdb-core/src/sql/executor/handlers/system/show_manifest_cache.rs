@@ -31,8 +31,9 @@ impl TypedStatementHandler<ShowManifestStatement> for ShowManifestCacheHandler {
         &self,
         _stmt: ShowManifestStatement,
         _params: Vec<ScalarValue>,
-        _exec_ctx: &ExecutionContext,
+        context: &ExecutionContext,
     ) -> Result<ExecutionResult, KalamDbError> {
+        let start_time = std::time::Instant::now();
         // Use ManifestTableProvider to scan the manifest cache
         let provider = ManifestTableProvider::new(self.app_context.storage_backend());
 
@@ -43,6 +44,18 @@ impl TypedStatementHandler<ShowManifestStatement> for ShowManifestCacheHandler {
         let row_count = batch.num_rows();
 
         log::info!("SHOW MANIFEST CACHE returned {} entries", row_count);
+
+        // Log query operation
+        let duration = start_time.elapsed().as_secs_f64() * 1000.0;
+        use crate::sql::executor::helpers::audit;
+        let audit_entry = audit::log_query_operation(
+            context,
+            "SHOW",
+            "MANIFEST CACHE",
+            duration,
+            None,
+        );
+        audit::persist_audit_entry(&self.app_context, &audit_entry).await?;
 
         Ok(ExecutionResult::Rows {
             batches: vec![batch],

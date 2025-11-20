@@ -14,7 +14,7 @@
 //! cd cli/kalam-link && cargo test --test integration_tests
 //! ```
 
-use kalam_link::models::{BatchControl, BatchStatus};
+use kalam_link::models::{BatchControl, BatchStatus, ResponseStatus};
 use kalam_link::{AuthProvider, ChangeEvent, KalamLinkClient, KalamLinkError, SubscriptionConfig};
 use std::time::Duration;
 use tokio::time::{sleep, timeout};
@@ -130,7 +130,7 @@ async fn test_execute_simple_query() {
 
     assert!(result.is_ok(), "Simple query should succeed");
     let response = result.unwrap();
-    assert_eq!(response.status, "success");
+    assert_eq!(response.status, ResponseStatus::Success);
     assert!(!response.results.is_empty());
 }
 
@@ -159,7 +159,7 @@ async fn test_execute_query_with_results() {
 
     assert!(result.is_ok());
     let response = result.unwrap();
-    assert_eq!(response.status, "success");
+    assert_eq!(response.status, ResponseStatus::Success);
     assert!(!response.results.is_empty());
 
     if let Some(rows) = &response.results[0].rows {
@@ -179,7 +179,7 @@ async fn test_execute_query_error_handling() {
 
     // Should either return Err or success with error status
     if let Ok(response) = result {
-        assert_eq!(response.status, "error");
+        assert_eq!(response.status, ResponseStatus::Error);
         assert!(response.error.is_some());
     }
 }
@@ -446,7 +446,7 @@ async fn test_insert_and_select() {
     assert!(select.is_ok(), "SELECT should succeed");
 
     let response = select.unwrap();
-    assert_eq!(response.status, "success");
+    assert_eq!(response.status, ResponseStatus::Success);
     if let Some(rows) = &response.results[0].rows {
         assert!(!rows.is_empty(), "Should have results");
     }
@@ -522,7 +522,7 @@ async fn test_query_system_users() {
 
     assert!(result.is_ok(), "Should query system.users");
     let response = result.unwrap();
-    assert_eq!(response.status, "success");
+    assert_eq!(response.status, ResponseStatus::Success);
 }
 
 #[tokio::test]

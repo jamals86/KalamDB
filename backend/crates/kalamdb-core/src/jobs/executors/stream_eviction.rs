@@ -152,7 +152,7 @@ impl JobExecutor for StreamEvictionExecutor {
         let store = stream_provider.store_arc();
 
         // Scan all rows (no prefix filter - evict for ALL users)
-        let all_rows = store.scan_all().map_err(|e| {
+        let all_rows = store.scan_all(None, None, None).map_err(|e| {
             KalamDbError::InvalidOperation(format!("Failed to scan stream store: {}", e))
         })?;
 
@@ -446,7 +446,7 @@ mod tests {
 
         let remaining = provider
             .store_arc()
-            .scan_all()
+            .scan_all(None, None, None)
             .expect("scan store after eviction");
         assert!(remaining.is_empty(), "All expired rows should be removed");
     }

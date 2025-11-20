@@ -14,6 +14,7 @@
 mod common;
 
 use common::{fixtures, TestServer};
+use kalamdb_api::models::ResponseStatus;
 
 #[actix_web::test]
 #[ignore = "Shared tables require pre-created column families at DB init. TestServer::new() creates in-memory DB without these CFs."]
@@ -23,7 +24,7 @@ async fn test_shared_table_create_and_drop() {
     // Create namespace first
     let response = fixtures::create_namespace(&server, "test_ns").await;
     assert_eq!(
-        response.status, "success",
+        response.status, ResponseStatus::Success,
         "Failed to create namespace: {:?}",
         response.error
     );
@@ -31,7 +32,7 @@ async fn test_shared_table_create_and_drop() {
     // Create shared table
     let response = fixtures::create_shared_table(&server, "test_ns", "conversations").await;
     assert_eq!(
-        response.status, "success",
+        response.status, ResponseStatus::Success,
         "Failed to create shared table: {:?}",
         response.error
     );
@@ -45,7 +46,7 @@ async fn test_shared_table_create_and_drop() {
     // Drop table
     let response = fixtures::drop_table(&server, "test_ns", "conversations").await;
     assert_eq!(
-        response.status, "success",
+        response.status, ResponseStatus::Success,
         "Failed to drop table: {:?}",
         response.error
     );
@@ -75,7 +76,7 @@ async fn test_shared_table_insert_and_select() {
         .await;
 
     assert_eq!(
-        response.status, "success",
+        response.status, ResponseStatus::Success,
         "Failed to insert: {:?}",
         response.error
     );
@@ -86,7 +87,7 @@ async fn test_shared_table_insert_and_select() {
     ).await;
 
     assert_eq!(
-        response.status, "success",
+        response.status, ResponseStatus::Success,
         "Failed to select: {:?}",
         response.error
     );
@@ -126,7 +127,7 @@ async fn test_shared_table_multiple_inserts() {
         )
         .await;
     assert_eq!(
-        response.status, "success",
+        response.status, ResponseStatus::Success,
         "Failed to insert multiple rows: {:?}",
         response.error
     );
@@ -138,7 +139,7 @@ async fn test_shared_table_multiple_inserts() {
         )
         .await;
 
-    assert_eq!(response.status, "success");
+    assert_eq!(response.status, ResponseStatus::Success);
     if let Some(rows) = &response.results[0].rows {
         assert_eq!(rows.len(), 3, "Expected 3 rows");
         assert_eq!(
@@ -174,7 +175,7 @@ async fn test_shared_table_update() {
     "#,
         )
         .await;
-    assert_eq!(response.status, "success");
+    assert_eq!(response.status, ResponseStatus::Success);
 
     // Update the row
     let response = server
@@ -187,7 +188,7 @@ async fn test_shared_table_update() {
         )
         .await;
     assert_eq!(
-        response.status, "success",
+        response.status, ResponseStatus::Success,
         "Failed to update: {:?}",
         response.error
     );
@@ -199,7 +200,7 @@ async fn test_shared_table_update() {
         )
         .await;
 
-    assert_eq!(response.status, "success");
+    assert_eq!(response.status, ResponseStatus::Success);
     if let Some(rows) = &response.results[0].rows {
         assert_eq!(rows.len(), 1);
         assert_eq!(
@@ -237,7 +238,7 @@ async fn test_shared_table_select() {
         .await;
 
     assert_eq!(
-        response.status, "success",
+        response.status, ResponseStatus::Success,
         "Failed to select: {:?}",
         response.error
     );
@@ -276,7 +277,7 @@ async fn test_shared_table_delete() {
         .await;
 
     assert_eq!(
-        response.status, "success",
+        response.status, ResponseStatus::Success,
         "Failed to delete: {:?}",
         response.error
     );
@@ -286,7 +287,7 @@ async fn test_shared_table_delete() {
         .execute_sql("SELECT conversation_id FROM test_ns.conversations ORDER BY conversation_id")
         .await;
 
-    assert_eq!(response.status, "success");
+    assert_eq!(response.status, ResponseStatus::Success);
 }
 
 #[actix_web::test]
@@ -309,7 +310,7 @@ async fn test_shared_table_system_columns() {
         .await;
 
     assert_eq!(
-        response.status, "success",
+        response.status, ResponseStatus::Success,
         "Failed to query system columns: {:?}",
         response.error
     );
@@ -338,12 +339,12 @@ async fn test_shared_table_if_not_exists() {
 
     // First create should succeed
     let response = server.execute_sql(create_sql).await;
-    assert_eq!(response.status, "success");
+    assert_eq!(response.status, ResponseStatus::Success);
 
     // Second create with IF NOT EXISTS should also succeed (no-op)
     let response = server.execute_sql(create_sql).await;
     assert_eq!(
-        response.status, "success",
+        response.status, ResponseStatus::Success,
         "IF NOT EXISTS should not fail on duplicate: {:?}",
         response.error
     );
@@ -365,7 +366,7 @@ async fn test_shared_table_flush_policy_rows() {
 
     let response = server.execute_sql(create_sql).await;
     assert_eq!(
-        response.status, "success",
+        response.status, ResponseStatus::Success,
         "Failed to create table with FLUSH ROWS: {:?}",
         response.error
     );
@@ -397,7 +398,7 @@ async fn test_shared_table_query_filtering() {
         .await;
 
     assert_eq!(
-        response.status, "success",
+        response.status, ResponseStatus::Success,
         "Failed to query with filter: {:?}",
         response.error
     );
@@ -437,7 +438,7 @@ async fn test_shared_table_ordering() {
         .await;
 
     assert_eq!(
-        response.status, "success",
+        response.status, ResponseStatus::Success,
         "Failed to query with ORDER BY: {:?}",
         response.error
     );
@@ -465,7 +466,7 @@ async fn test_shared_table_drop_with_data() {
     // Drop table with data
     let response = fixtures::drop_table(&server, "test_ns", "conversations").await;
     assert_eq!(
-        response.status, "success",
+        response.status, ResponseStatus::Success,
         "Failed to drop table with data: {:?}",
         response.error
     );
@@ -507,8 +508,8 @@ async fn test_shared_table_multiple_tables_same_namespace() {
         .await;
     let response2 = server.execute_sql("SELECT * FROM test_ns.config").await;
 
-    assert_eq!(response1.status, "success");
-    assert_eq!(response2.status, "success");
+    assert_eq!(response1.status, ResponseStatus::Success);
+    assert_eq!(response2.status, ResponseStatus::Success);
 }
 
 #[actix_web::test]
@@ -536,7 +537,7 @@ async fn test_shared_table_complete_lifecycle() {
     let response = server
         .execute_sql("SELECT * FROM lifecycle_test.conversations")
         .await;
-    assert_eq!(response.status, "success");
+    assert_eq!(response.status, ResponseStatus::Success);
 
     // 5. Update data
     server

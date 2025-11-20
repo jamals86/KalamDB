@@ -15,6 +15,7 @@ mod common;
 
 use common::{fixtures, TestServer};
 use std::time::Instant;
+use kalamdb_api::models::ResponseStatus;
 
 #[actix_web::test]
 async fn test_01_create_namespace() {
@@ -24,7 +25,8 @@ async fn test_01_create_namespace() {
         .execute_sql("CREATE NAMESPACE IF NOT EXISTS app")
         .await;
     assert_eq!(
-        response.status, "success",
+        response.status,
+        ResponseStatus::Success,
         "Failed to create namespace: {:?}",
         response.error
     );
@@ -49,7 +51,8 @@ async fn test_02_create_user_table() {
     let response = fixtures::create_messages_table(&server, "app", Some("user123")).await;
 
     assert_eq!(
-        response.status, "success",
+        response.status,
+        ResponseStatus::Success,
         "Failed to create user table: {:?}",
         response.error
     );
@@ -75,7 +78,8 @@ async fn test_03_insert_data() {
     // Verify all inserts succeeded
     for (i, response) in responses.iter().enumerate() {
         assert_eq!(
-            response.status, "success",
+            response.status,
+            ResponseStatus::Success,
             "Insert {} failed: {:?}",
             i, response.error
         );
@@ -100,7 +104,8 @@ async fn test_04_query_data() {
     let response = fixtures::query_user_messages(&server, "app", "user123").await;
 
     assert_eq!(
-        response.status, "success",
+        response.status,
+        ResponseStatus::Success,
         "Query failed: {:?}",
         response.error
     );
@@ -130,7 +135,8 @@ async fn test_05_update_data() {
         )
         .await;
     assert_eq!(
-        select_resp.status, "success",
+        select_resp.status,
+        ResponseStatus::Success,
         "Query for id failed: {:?}",
         select_resp.error
     );
@@ -155,7 +161,8 @@ async fn test_05_update_data() {
         .await;
 
     assert_eq!(
-        response.status, "success",
+        response.status,
+        ResponseStatus::Success,
         "Update failed: {:?}",
         response.error
     );
@@ -171,7 +178,8 @@ async fn test_05_update_data() {
         )
         .await;
     assert_eq!(
-        verify_resp.status, "success",
+        verify_resp.status,
+        ResponseStatus::Success,
         "Verification SELECT failed: {:?}",
         verify_resp.error
     );
@@ -201,7 +209,8 @@ async fn test_06_delete_data() {
         )
         .await;
     assert_eq!(
-        select_resp.status, "success",
+        select_resp.status,
+        ResponseStatus::Success,
         "Query for id failed: {:?}",
         select_resp.error
     );
@@ -222,7 +231,8 @@ async fn test_06_delete_data() {
         .await;
 
     assert_eq!(
-        response.status, "success",
+        response.status,
+        ResponseStatus::Success,
         "Delete failed: {:?}",
         response.error
     );
@@ -238,7 +248,8 @@ async fn test_07_create_shared_table() {
     let response = fixtures::create_shared_table(&server, "app", "config").await;
 
     assert_eq!(
-        response.status, "success",
+        response.status,
+        ResponseStatus::Success,
         "Failed to create shared table: {:?}",
         response.error
     );
@@ -263,7 +274,8 @@ async fn test_08_insert_into_shared_table() {
         .await;
 
     assert_eq!(
-        response.status, "success",
+        response.status,
+        ResponseStatus::Success,
         "Insert into shared table failed: {:?}",
         response.error
     );
@@ -273,7 +285,7 @@ async fn test_08_insert_into_shared_table() {
         .execute_sql("SELECT * FROM app.config WHERE name = 'max_connections'")
         .await;
 
-    assert_eq!(query_response.status, "success");
+    assert_eq!(query_response.status, ResponseStatus::Success);
 }
 
 #[actix_web::test]
@@ -285,7 +297,8 @@ async fn test_09_create_stream_table() {
     let response = fixtures::create_stream_table(&server, "app", "events", 3600).await;
 
     assert_eq!(
-        response.status, "success",
+        response.status,
+        ResponseStatus::Success,
         "Failed to create stream table: {:?}",
         response.error
     );
@@ -309,7 +322,8 @@ async fn test_10_insert_into_stream_table() {
     ).await;
 
     assert_eq!(
-        response.status, "success",
+        response.status,
+        ResponseStatus::Success,
         "Insert into stream table failed: {:?}",
         response.error
     );
@@ -325,7 +339,8 @@ async fn test_11_list_namespaces() {
     let response = server.execute_sql("SELECT * FROM system.namespaces").await;
 
     assert_eq!(
-        response.status, "success",
+        response.status,
+        ResponseStatus::Success,
         "Failed to query namespaces: {:?}",
         response.error
     );
@@ -344,7 +359,8 @@ async fn test_12_list_tables() {
         .await;
 
     assert_eq!(
-        response.status, "success",
+        response.status,
+        ResponseStatus::Success,
         "Failed to query tables: {:?}",
         response.error
     );
@@ -358,7 +374,8 @@ async fn test_13_query_system_users() {
     let response = server.execute_sql("SELECT * FROM system.users").await;
 
     assert_eq!(
-        response.status, "success",
+        response.status,
+        ResponseStatus::Success,
         "Failed to query users: {:?}",
         response.error
     );
@@ -377,7 +394,8 @@ async fn test_14_drop_table() {
     let response = fixtures::drop_table(&server, "app", "messages").await;
 
     assert_eq!(
-        response.status, "success",
+        response.status,
+        ResponseStatus::Success,
         "Failed to drop table: {:?}",
         response.error
     );
@@ -412,7 +430,8 @@ async fn test_15_drop_namespace() {
     let response = fixtures::drop_namespace(&server, "app").await;
 
     assert_eq!(
-        response.status, "success",
+        response.status,
+        ResponseStatus::Success,
         "Failed to drop namespace: {:?}",
         response.error
     );
@@ -432,25 +451,25 @@ async fn test_16_complete_workflow() {
 
     // 1. Create namespace
     let response = fixtures::create_namespace(&server, "qs_workflow").await;
-    assert_eq!(response.status, "success");
+    assert_eq!(response.status, ResponseStatus::Success);
 
     // 2. Create user table
     let response = fixtures::create_messages_table(&server, "qs_workflow", Some("user123")).await;
-    assert_eq!(response.status, "success");
+    assert_eq!(response.status, ResponseStatus::Success);
 
     // 3. Insert data
     let responses = fixtures::insert_sample_messages(&server, "qs_workflow", "user123", 10).await;
     for response in responses {
-        assert_eq!(response.status, "success");
+        assert_eq!(response.status, ResponseStatus::Success);
     }
 
     // 4. Query data
     let response = fixtures::query_user_messages(&server, "qs_workflow", "user123").await;
-    assert_eq!(response.status, "success");
+    assert_eq!(response.status, ResponseStatus::Success);
 
     // 5. Cleanup this namespace explicitly to avoid cross-test cleanup races
     let drop_resp = fixtures::drop_namespace(&server, "qs_workflow").await;
-    assert_eq!(drop_resp.status, "success");
+    assert_eq!(drop_resp.status, ResponseStatus::Success);
     assert!(!server.namespace_exists("qs_workflow").await);
 }
 
@@ -470,7 +489,7 @@ async fn test_17_performance_write_latency() {
             fixtures::insert_message(&server, "perf", "user123", &format!("Message {}", i)).await;
         let duration = start.elapsed();
 
-        assert_eq!(response.status, "success");
+        assert_eq!(response.status, ResponseStatus::Success);
         total_duration += duration;
     }
 
@@ -499,7 +518,7 @@ async fn test_18_performance_query_latency() {
     let response = fixtures::query_user_messages(&server, "perf", "user123").await;
     let duration = start.elapsed();
 
-    assert_eq!(response.status, "success");
+    assert_eq!(response.status, ResponseStatus::Success);
 
     // Target: <200ms for 100 rows
     assert!(
@@ -518,7 +537,7 @@ async fn test_19_multiple_namespaces() {
     // Create multiple namespaces
     for ns in ["test_app1", "test_app2", "test_app3"] {
         let response = fixtures::create_namespace(&server, ns).await;
-        assert_eq!(response.status, "success");
+        assert_eq!(response.status, ResponseStatus::Success);
         assert!(server.namespace_exists(ns).await);
     }
 

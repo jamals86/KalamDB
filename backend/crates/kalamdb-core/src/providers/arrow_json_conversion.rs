@@ -68,8 +68,13 @@ pub fn json_rows_to_arrow_batch(
                 let values: Vec<Option<String>> = rows
                     .iter()
                     .map(|row| {
-                        row.get(field.name())
-                            .and_then(|v| v.as_str().map(|s| s.to_string()))
+                        row.get(field.name()).and_then(|v| match v {
+                            JsonValue::String(s) => Some(s.clone()),
+                            JsonValue::Null => None,
+                            JsonValue::Number(n) => Some(n.to_string()),
+                            JsonValue::Bool(b) => Some(b.to_string()),
+                            _ => v.as_str().map(|s| s.to_string()),
+                        })
                     })
                     .collect();
                 Arc::new(StringArray::from(values)) as ArrayRef
@@ -78,8 +83,11 @@ pub fn json_rows_to_arrow_batch(
                 let values: Vec<Option<i32>> = rows
                     .iter()
                     .map(|row| {
-                        row.get(field.name())
-                            .and_then(|v| v.as_i64().map(|i| i as i32))
+                        row.get(field.name()).and_then(|v| {
+                            v.as_i64().map(|i| i as i32).or_else(|| {
+                                v.as_str().and_then(|s| s.parse::<i32>().ok())
+                            })
+                        })
                     })
                     .collect();
                 Arc::new(Int32Array::from(values)) as ArrayRef
@@ -87,7 +95,13 @@ pub fn json_rows_to_arrow_batch(
             DataType::Int64 => {
                 let values: Vec<Option<i64>> = rows
                     .iter()
-                    .map(|row| row.get(field.name()).and_then(|v| v.as_i64()))
+                    .map(|row| {
+                        row.get(field.name()).and_then(|v| {
+                            v.as_i64().or_else(|| {
+                                v.as_str().and_then(|s| s.parse::<i64>().ok())
+                            })
+                        })
+                    })
                     .collect();
                 Arc::new(Int64Array::from(values)) as ArrayRef
             }

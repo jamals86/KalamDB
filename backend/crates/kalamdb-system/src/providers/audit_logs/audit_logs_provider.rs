@@ -70,9 +70,8 @@ impl AuditLogsTableProvider {
         Ok(self.store.get(audit_id)?)
     }
 
-    /// Scan all audit log entries and return as RecordBatch
-    pub fn scan_all_entries(&self) -> Result<RecordBatch, SystemError> {
-        let entries = self.store.scan_all()?;
+    /// Helper to create RecordBatch from entries
+    fn create_batch(&self, entries: Vec<(Vec<u8>, AuditLogEntry)>) -> Result<RecordBatch, SystemError> {
         let row_count = entries.len();
 
         // Pre-allocate builders for optimal performance
@@ -114,49 +113,17 @@ impl AuditLogsTableProvider {
         Ok(batch)
     }
 
+    /// Scan all audit log entries and return as RecordBatch
+    pub fn scan_all_entries(&self) -> Result<RecordBatch, SystemError> {
+        let entries = self.store.scan_all(None, None, None)?;
+        self.create_batch(entries)
+    }
+
     /// Scan up to `limit` audit log entries and return as RecordBatch
     pub fn scan_entries_limited(&self, limit: usize) -> Result<RecordBatch, SystemError> {
         use kalamdb_store::entity_store::EntityStore;
-        let entries = self.store.scan_limited(limit)?;
-        let row_count = entries.len();
-
-        // Pre-allocate builders for optimal performance
-        let mut audit_ids = StringBuilder::with_capacity(row_count, row_count * 16);
-        let mut timestamps = Vec::with_capacity(row_count);
-        let mut actor_user_ids = StringBuilder::with_capacity(row_count, row_count * 16);
-        let mut actor_usernames = StringBuilder::with_capacity(row_count, row_count * 32);
-        let mut actions = StringBuilder::with_capacity(row_count, row_count * 32);
-        let mut targets = StringBuilder::with_capacity(row_count, row_count * 64);
-        let mut details_list = StringBuilder::with_capacity(row_count, row_count * 128);
-        let mut ip_addresses = StringBuilder::with_capacity(row_count, row_count * 16);
-
-        for (_key, entry) in entries {
-            audit_ids.append_value(entry.audit_id.as_str());
-            timestamps.push(Some(entry.timestamp));
-            actor_user_ids.append_value(entry.actor_user_id.as_str());
-            actor_usernames.append_value(entry.actor_username.as_str());
-            actions.append_value(&entry.action);
-            targets.append_value(&entry.target);
-            details_list.append_option(entry.details.as_deref());
-            ip_addresses.append_option(entry.ip_address.as_deref());
-        }
-
-        let batch = RecordBatch::try_new(
-            self.schema.clone(),
-            vec![
-                Arc::new(audit_ids.finish()) as ArrayRef,
-                Arc::new(TimestampMillisecondArray::from(timestamps)) as ArrayRef,
-                Arc::new(actor_user_ids.finish()) as ArrayRef,
-                Arc::new(actor_usernames.finish()) as ArrayRef,
-                Arc::new(actions.finish()) as ArrayRef,
-                Arc::new(targets.finish()) as ArrayRef,
-                Arc::new(details_list.finish()) as ArrayRef,
-                Arc::new(ip_addresses.finish()) as ArrayRef,
-            ],
-        )
-        .map_err(|e| SystemError::Other(format!("Failed to create RecordBatch: {}", e)))?;
-
-        Ok(batch)
+        let entries = self.store.scan_all(Some(limit), None, None)?;
+        self.create_batch(entries)
     }
 }
 
@@ -192,22 +159,51 @@ impl TableProvider for AuditLogsTableProvider {
         &self,
         _state: &dyn datafusion::catalog::Session,
         projection: Option<&Vec<usize>>,
-        _filters: &[Expr],
+        filters: &[Expr],
         limit: Option<usize>,
     ) -> DataFusionResult<Arc<dyn ExecutionPlan>> {
         use datafusion::datasource::MemTable;
+        use datafusion::logical_expr::Operator;
+        use datafusion::scalar::ScalarValue;
+
+        let mut start_key = None;
+        let mut prefix = None;
+
+        // Extract start_key/prefix from filters
+        for expr in filters {
+            if let Expr::BinaryExpr(binary) = expr {
+                // Note: Expr::Literal might have 1 or 2 fields depending on DataFusion version.
+                // Based on base.rs, it seems to have 2 fields? Or maybe 1?
+                // Let's try matching just the value and ignoring the rest if any.
+                // Actually, let's try to match separately to avoid tuple issues.
+                if let Expr::Column(col) = binary.left.as_ref() {
+                    // Expr::Literal has 2 fields in this DataFusion version
+                    if let Expr::Literal(val, _) = binary.right.as_ref() {
+                        if col.name == "audit_id" {
+                            if let ScalarValue::Utf8(Some(s)) = val {
+                                match binary.op {
+                                    Operator::Eq => {
+                                        prefix = Some(AuditLogId::new(s));
+                                    }
+                                    Operator::Gt | Operator::GtEq => {
+                                        start_key = Some(AuditLogId::new(s));
+                                    }
+                                    _ => {}
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
         let schema = self.schema.clone();
-        let batch = match limit {
-            Some(lim) => self.scan_entries_limited(lim).map_err(|e| {
-                DataFusionError::Execution(format!(
-                    "Failed to build limited audit log batch: {}",
-                    e
-                ))
-            })?,
-            None => self.scan_all_entries().map_err(|e| {
-                DataFusionError::Execution(format!("Failed to build audit log batch: {}", e))
-            })?,
-        };
+        let entries = self.store.scan_all(limit, prefix.as_ref(), start_key.as_ref())
+            .map_err(|e| DataFusionError::Execution(format!("Failed to scan audit logs: {}", e)))?;
+
+        let batch = self.create_batch(entries)
+            .map_err(|e| DataFusionError::Execution(format!("Failed to build audit log batch: {}", e)))?;
+
         let partitions = vec![vec![batch]];
         let table = MemTable::try_new(schema, partitions)
             .map_err(|e| DataFusionError::Execution(format!("Failed to create MemTable: {}", e)))?;

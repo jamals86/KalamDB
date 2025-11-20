@@ -16,6 +16,7 @@
 mod common;
 
 use common::{fixtures, TestServer};
+use kalamdb_api::models::ResponseStatus;
 
 // ============================================================================
 // Test 1: List System Tables
@@ -38,7 +39,8 @@ async fn test_01_list_system_tables() {
         .await;
 
     assert_eq!(
-        response.status, "success",
+        response.status,
+        ResponseStatus::Success,
         "Failed to list tables from system.tables: {:?}",
         response.error
     );
@@ -66,7 +68,8 @@ async fn test_01_list_system_tables() {
         .await;
 
     assert_eq!(
-        response.status, "success",
+        response.status,
+        ResponseStatus::Success,
         "Failed to list namespaces: {:?}",
         response.error
     );
@@ -92,7 +95,8 @@ async fn test_02_query_system_table_schemas() {
             .await;
 
         assert_eq!(
-            response.status, "success",
+            response.status,
+            ResponseStatus::Success,
             "Failed to query {}: {:?}",
             table, response.error
         );
@@ -111,7 +115,8 @@ async fn test_03_query_system_users_basic() {
         .await;
 
     assert_eq!(
-        response.status, "success",
+        response.status,
+        ResponseStatus::Success,
         "Failed to query system.users: {:?}",
         response.error
     );
@@ -136,7 +141,8 @@ async fn test_04_query_system_namespaces() {
         .await;
 
     assert_eq!(
-        response.status, "success",
+        response.status,
+        ResponseStatus::Success,
         "Failed to query namespaces: {:?}",
         response.error
     );
@@ -147,7 +153,8 @@ async fn test_04_query_system_namespaces() {
         .await;
 
     assert_eq!(
-        response.status, "success",
+        response.status,
+        ResponseStatus::Success,
         "Failed to query with WHERE: {:?}",
         response.error
     );
@@ -158,7 +165,8 @@ async fn test_04_query_system_namespaces() {
         .await;
 
     assert_eq!(
-        response.status, "success",
+        response.status,
+        ResponseStatus::Success,
         "Failed to query with LIMIT: {:?}",
         response.error
     );
@@ -188,7 +196,8 @@ async fn test_05_query_system_tables() {
         .await;
 
     assert_eq!(
-        response.status, "success",
+        response.status,
+        ResponseStatus::Success,
         "Failed to query system.tables: {:?}",
         response.error
     );
@@ -234,7 +243,8 @@ async fn test_06_query_system_users_with_filters() {
         .await;
 
     assert_eq!(
-        response.status, "success",
+        response.status,
+        ResponseStatus::Success,
         "Failed to query users with WHERE: {:?}",
         response.error
     );
@@ -245,7 +255,8 @@ async fn test_06_query_system_users_with_filters() {
         .await;
 
     assert_eq!(
-        response.status, "success",
+        response.status,
+        ResponseStatus::Success,
         "Failed to query users with ORDER BY LIMIT: {:?}",
         response.error
     );
@@ -277,7 +288,7 @@ async fn test_07_insert_users_into_system_table() {
 
     // Note: INSERT into system tables may not be implemented yet
     // This test documents the expected behavior
-    if response.status == "error" {
+    if response.status == kalamdb_api::models::ResponseStatus::Error {
         println!(
             "INSERT into system.users not yet implemented: {:?}",
             response.error
@@ -286,7 +297,8 @@ async fn test_07_insert_users_into_system_table() {
     }
 
     assert_eq!(
-        response.status, "success",
+        response.status,
+        ResponseStatus::Success,
         "Failed to insert user: {:?}",
         response.error
     );
@@ -299,7 +311,8 @@ async fn test_07_insert_users_into_system_table() {
         .await;
 
     assert_eq!(
-        response.status, "success",
+        response.status,
+        ResponseStatus::Success,
         "Failed to query inserted user: {:?}",
         response.error
     );
@@ -334,7 +347,7 @@ async fn test_08_insert_storage_locations() {
         .await;
 
     // Note: INSERT into system tables may not be fully implemented yet
-    if response.status == "error" {
+    if response.status == kalamdb_api::models::ResponseStatus::Error {
         println!(
             "INSERT into system.storage_locations not yet implemented: {:?}",
             response.error
@@ -343,7 +356,8 @@ async fn test_08_insert_storage_locations() {
     }
 
     assert_eq!(
-        response.status, "success",
+        response.status,
+        ResponseStatus::Success,
         "Failed to insert storage location: {:?}",
         response.error
     );
@@ -357,7 +371,8 @@ async fn test_08_insert_storage_locations() {
         .await;
 
     assert_eq!(
-        response.status, "success",
+        response.status,
+        ResponseStatus::Success,
         "Failed to query storage locations: {:?}",
         response.error
     );
@@ -388,7 +403,8 @@ async fn test_09_query_table_schemas() {
         .await;
 
     assert_eq!(
-        response.status, "success",
+        response.status,
+        ResponseStatus::Success,
         "Failed to query current schema version: {:?}",
         response.error
     );
@@ -421,7 +437,8 @@ async fn test_10_query_table_metadata() {
         .await;
 
     assert_eq!(
-        response.status, "success",
+        response.status,
+        ResponseStatus::Success,
         "Failed to query table metadata: {:?}",
         response.error
     );
@@ -462,7 +479,7 @@ async fn test_11_drop_table_and_verify_cleanup() {
         .execute_sql("SELECT table_name FROM system.tables WHERE namespace_id = 'drop_test' AND table_name = 'messages'")
         .await;
 
-    assert_eq!(response.status, "success");
+    assert_eq!(response.status, ResponseStatus::Success);
     if let Some(rows) = &response.results.first().and_then(|r| r.rows.as_ref()) {
         assert_eq!(rows.len(), 1, "Table should exist before drop");
     }
@@ -470,7 +487,8 @@ async fn test_11_drop_table_and_verify_cleanup() {
     // Drop the table
     let response = fixtures::drop_table(&server, "drop_test", "messages").await;
     assert_eq!(
-        response.status, "success",
+        response.status,
+        ResponseStatus::Success,
         "Failed to drop table: {:?}",
         response.error
     );
@@ -480,7 +498,7 @@ async fn test_11_drop_table_and_verify_cleanup() {
         .execute_sql("SELECT table_name FROM system.tables WHERE namespace_id = 'drop_test' AND table_name = 'messages'")
         .await;
 
-    assert_eq!(response.status, "success");
+    assert_eq!(response.status, ResponseStatus::Success);
     if let Some(rows) = &response.results.first().and_then(|r| r.rows.as_ref()) {
         assert_eq!(rows.len(), 0, "Table should be removed from system.tables");
     }
@@ -514,7 +532,7 @@ async fn test_12_view_table_types_from_system_tables() {
         .await;
 
     // Note: STREAM TABLE may not be fully implemented yet
-    if response.status == "error" {
+    if response.status == kalamdb_api::models::ResponseStatus::Error {
         println!(
             "CREATE STREAM TABLE not yet fully implemented: {:?}",
             response.error
@@ -528,7 +546,8 @@ async fn test_12_view_table_types_from_system_tables() {
         .await;
 
     assert_eq!(
-        response.status, "success",
+        response.status,
+        ResponseStatus::Success,
         "Failed to query table types: {:?}",
         response.error
     );
@@ -597,7 +616,8 @@ async fn test_13_filter_tables_by_type() {
         .await;
 
     assert_eq!(
-        response.status, "success",
+        response.status,
+        ResponseStatus::Success,
         "Failed to filter shared tables: {:?}",
         response.error
     );
@@ -620,7 +640,8 @@ async fn test_13_filter_tables_by_type() {
         .await;
 
     assert_eq!(
-        response.status, "success",
+        response.status,
+        ResponseStatus::Success,
         "Failed to filter user tables: {:?}",
         response.error
     );
@@ -654,7 +675,7 @@ async fn test_14_update_system_users() {
         .await;
 
     // Note: UPDATE on system tables may not be implemented yet
-    if response.status == "error" {
+    if response.status == kalamdb_api::models::ResponseStatus::Error {
         println!(
             "UPDATE system.users not yet implemented: {:?}",
             response.error
@@ -663,7 +684,8 @@ async fn test_14_update_system_users() {
     }
 
     assert_eq!(
-        response.status, "success",
+        response.status,
+        ResponseStatus::Success,
         "Failed to update user: {:?}",
         response.error
     );
@@ -675,7 +697,7 @@ async fn test_14_update_system_users() {
         )
         .await;
 
-    assert_eq!(response.status, "success");
+    assert_eq!(response.status, ResponseStatus::Success);
 
     if let Some(rows) = &response.results.first().and_then(|r| r.rows.as_ref()) {
         assert_eq!(rows.len(), 1, "Expected 1 user row");
@@ -715,7 +737,7 @@ async fn test_15_update_multiple_users() {
         .await;
 
     // Note: UPDATE on system tables may not be implemented yet
-    if response.status == "error" {
+    if response.status == kalamdb_api::models::ResponseStatus::Error {
         println!(
             "UPDATE system.users not yet implemented: {:?}",
             response.error
@@ -724,7 +746,8 @@ async fn test_15_update_multiple_users() {
     }
 
     assert_eq!(
-        response.status, "success",
+        response.status,
+        ResponseStatus::Success,
         "Failed to batch update users: {:?}",
         response.error
     );
@@ -762,7 +785,8 @@ async fn test_20_complex_system_queries() {
         .await;
 
     assert_eq!(
-        response.status, "success",
+        response.status,
+        ResponseStatus::Success,
         "Failed complex query: {:?}",
         response.error
     );
@@ -778,7 +802,8 @@ async fn test_20_complex_system_queries() {
         .await;
 
     assert_eq!(
-        response.status, "success",
+        response.status,
+        ResponseStatus::Success,
         "Failed join query: {:?}",
         response.error
     );

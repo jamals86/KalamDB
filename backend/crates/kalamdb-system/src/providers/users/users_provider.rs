@@ -163,9 +163,8 @@ impl UsersTableProvider {
         }
     }
 
-    /// Scan all users and return as RecordBatch
-    pub fn scan_all_users(&self) -> Result<RecordBatch, SystemError> {
-        let users = self.store.scan_all()?;
+    /// Helper to create RecordBatch from users
+    fn create_batch(&self, users: Vec<(Vec<u8>, User)>) -> Result<RecordBatch, SystemError> {
         let row_count = users.len();
 
         // Pre-allocate builders for optimal performance
@@ -221,6 +220,12 @@ impl UsersTableProvider {
 
         Ok(batch)
     }
+
+    /// Scan all users and return as RecordBatch
+    pub fn scan_all_users(&self) -> Result<RecordBatch, SystemError> {
+        let users = self.store.scan_all(None, None, None)?;
+        self.create_batch(users)
+    }
 }
 
 impl SystemTableProviderExt for UsersTableProvider {
@@ -255,18 +260,50 @@ impl TableProvider for UsersTableProvider {
         &self,
         _state: &dyn datafusion::catalog::Session,
         projection: Option<&Vec<usize>>,
-        _filters: &[Expr],
-        _limit: Option<usize>,
+        filters: &[Expr],
+        limit: Option<usize>,
     ) -> DataFusionResult<Arc<dyn ExecutionPlan>> {
         use datafusion::datasource::MemTable;
+        use datafusion::logical_expr::Operator;
+        use datafusion::scalar::ScalarValue;
+
+        let mut start_key = None;
+        let mut prefix = None;
+
+        // Extract start_key/prefix from filters
+        for expr in filters {
+            if let Expr::BinaryExpr(binary) = expr {
+                if let Expr::Column(col) = binary.left.as_ref() {
+                    if let Expr::Literal(val, _) = binary.right.as_ref() {
+                        if col.name == "user_id" {
+                            if let ScalarValue::Utf8(Some(s)) = val {
+                                match binary.op {
+                                    Operator::Eq => {
+                                        prefix = Some(UserId::new(s));
+                                    }
+                                    Operator::Gt | Operator::GtEq => {
+                                        start_key = Some(UserId::new(s));
+                                    }
+                                    _ => {}
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
         let schema = self.schema.clone();
-        let batch = self.scan_all_users().map_err(|e| {
-            DataFusionError::Execution(format!("Failed to build users batch: {}", e))
-        })?;
+        let users = self.store.scan_all(limit, prefix.as_ref(), start_key.as_ref())
+            .map_err(|e| DataFusionError::Execution(format!("Failed to scan users: {}", e)))?;
+
+        let batch = self.create_batch(users)
+            .map_err(|e| DataFusionError::Execution(format!("Failed to build users batch: {}", e)))?;
+
         let partitions = vec![vec![batch]];
         let table = MemTable::try_new(schema, partitions)
             .map_err(|e| DataFusionError::Execution(format!("Failed to create MemTable: {}", e)))?;
-        table.scan(_state, projection, &[], _limit).await
+        table.scan(_state, projection, &[], limit).await
     }
 }
 

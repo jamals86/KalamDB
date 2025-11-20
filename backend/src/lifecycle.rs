@@ -379,7 +379,7 @@ async fn create_default_system_user(
         }
         Ok(None) | Err(_) => {
             // User doesn't exist, create new system user
-            let user_id = UserId::new(AuthConstants::DEFAULT_SYSTEM_USER_ID);
+            let user_id = UserId::root();
             let username = AuthConstants::DEFAULT_SYSTEM_USERNAME.to_string();
             let email = format!("{}@localhost", AuthConstants::DEFAULT_SYSTEM_USERNAME);
             let role = Role::System; // Highest privilege level

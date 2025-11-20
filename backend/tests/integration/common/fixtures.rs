@@ -29,7 +29,7 @@
 
 use crate::common::TestServer;
 use anyhow::Result;
-use kalamdb_api::models::{QueryResult, SqlResponse};
+use kalamdb_api::models::{QueryResult, ResponseStatus, SqlResponse};
 use serde_json::json;
 
 /// Execute SQL with a specific user context.
@@ -69,7 +69,7 @@ pub async fn create_namespace(server: &TestServer, namespace: &str) -> SqlRespon
     let sql = format!("CREATE NAMESPACE IF NOT EXISTS {}", namespace);
     // Perform namespace creation as 'system' admin user for RBAC enforcement
     let resp = server.execute_sql_as_user(&sql, "system").await;
-    if resp.status != "success" {
+    if resp.status != kalamdb_api::models::ResponseStatus::Success {
         eprintln!(
             "CREATE NAMESPACE failed: ns={}, error={:?}",
             namespace, resp.error
@@ -139,7 +139,7 @@ pub async fn create_messages_table(
     );
     // Use system user since only System/Dba roles can create tables
     let resp = server.execute_sql_as_user(&sql, "system").await;
-    if resp.status != "success" {
+    if resp.status != kalamdb_api::models::ResponseStatus::Success {
         // Treat already-exists as success for idempotent tests
         let already_exists = resp
             .error
@@ -148,14 +148,14 @@ pub async fn create_messages_table(
             .unwrap_or(false);
         if already_exists {
             return SqlResponse {
-                status: "success".to_string(),
+                status: ResponseStatus::Success,
                 results: vec![QueryResult {
                     rows: None,
                     row_count: 0,
                     columns: vec![],
                     message: Some("Table already existed".to_string()),
                 }],
-                took_ms: 0,
+                took: 0.0,
                 error: None,
             };
         } else {
@@ -254,7 +254,7 @@ pub async fn create_stream_table(
         namespace, table_name, ttl_seconds
     );
     let resp = server.execute_sql(&sql).await;
-    if resp.status != "success" {
+    if resp.status != kalamdb_api::models::ResponseStatus::Success {
         let already_exists = resp
             .error
             .as_ref()
@@ -262,14 +262,14 @@ pub async fn create_stream_table(
             .unwrap_or(false);
         if already_exists {
             return SqlResponse {
-                status: "success".to_string(),
+                status: ResponseStatus::Success,
                 results: vec![QueryResult {
                     rows: None,
                     row_count: 0,
                     columns: vec![],
                     message: Some("Table already existed".to_string()),
                 }],
-                took_ms: 0,
+                took: 0.0,
                 error: None,
             };
         }
@@ -291,7 +291,7 @@ pub async fn drop_table(server: &TestServer, namespace: &str, table_name: &str) 
     );
     let lookup_response = server.execute_sql(&lookup_sql).await;
 
-    let table_type = if lookup_response.status == "success" {
+    let table_type = if lookup_response.status == kalamdb_api::models::ResponseStatus::Success {
         lookup_response
             .results
             .get(0)
@@ -364,7 +364,7 @@ pub async fn insert_message(
         namespace, user_id, content
     );
     let resp = server.execute_sql_as_user(&sql, user_id).await;
-    if resp.status != "success" {
+    if resp.status != kalamdb_api::models::ResponseStatus::Success {
         eprintln!(
             "INSERT MESSAGE failed: ns={}, user={}, error={:?}",
             namespace, user_id, resp.error
@@ -423,7 +423,7 @@ pub async fn query_user_messages(
         namespace, user_id
     );
     let resp = server.execute_sql_as_user(&sql, user_id).await;
-    if resp.status != "success" {
+    if resp.status != kalamdb_api::models::ResponseStatus::Success {
         eprintln!(
             "QUERY USER MESSAGES failed: ns={}, user={}, error={:?}",
             namespace, user_id, resp.error
@@ -495,25 +495,25 @@ pub fn generate_stream_events(count: usize) -> Vec<(String, String)> {
 pub async fn setup_complete_environment(server: &TestServer, namespace: &str) -> Result<()> {
     // Create namespace
     let resp = create_namespace(server, namespace).await;
-    if resp.status != "success" {
+    if resp.status != kalamdb_api::models::ResponseStatus::Success {
         anyhow::bail!("Failed to create namespace: {:?}", resp.error);
     }
 
     // Create user table
     let resp = create_messages_table(server, namespace, Some("user123")).await;
-    if resp.status != "success" {
+    if resp.status != kalamdb_api::models::ResponseStatus::Success {
         anyhow::bail!("Failed to create messages table: {:?}", resp.error);
     }
 
     // Create shared table
     let resp = create_shared_table(server, namespace, "config").await;
-    if resp.status != "success" {
+    if resp.status != kalamdb_api::models::ResponseStatus::Success {
         anyhow::bail!("Failed to create shared table: {:?}", resp.error);
     }
 
     // Create stream table
     let resp = create_stream_table(server, namespace, "events", 3600).await;
-    if resp.status != "success" {
+    if resp.status != kalamdb_api::models::ResponseStatus::Success {
         anyhow::bail!("Failed to create stream table: {:?}", resp.error);
     }
 
@@ -529,7 +529,7 @@ mod tests {
     async fn test_create_namespace() {
         let server = TestServer::new().await;
         let response = create_namespace(&server, "test_ns").await;
-        assert_eq!(response.status, "success");
+        assert_eq!(response.status, ResponseStatus::Success);
         assert!(server.namespace_exists("test_ns").await);
     }
 
@@ -539,7 +539,7 @@ mod tests {
         create_namespace(&server, "app").await;
 
         let response = create_messages_table(&server, "app", Some("user123")).await;
-        if response.status != "success" {
+        if response.status != kalamdb_api::models::ResponseStatus::Success {
             // In shared TestServer runs, provider may already be registered; accept idempotent already-exists
             let msg = response
                 .error
@@ -565,14 +565,14 @@ mod tests {
         assert_eq!(responses.len(), 5);
 
         for (i, response) in responses.iter().enumerate() {
-            if response.status != "success" {
+            if response.status != kalamdb_api::models::ResponseStatus::Success {
                 eprintln!(
                     "Response {}: status={}, error={:?}",
                     i, response.status, response.error
                 );
             }
             assert_eq!(
-                response.status, "success",
+                response.status, ResponseStatus::Success,
                 "Insert {} failed: {:?}",
                 i, response.error
             );

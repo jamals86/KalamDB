@@ -55,7 +55,7 @@ mod user;
 mod user_table_counter;
 
 pub use audit_log::AuditLogEntry;
-pub use job::{Job, JobFilter, JobOptions};
+pub use job::{Job, JobFilter, JobOptions, JobSortField, SortOrder};
 pub use live_query::LiveQuery;
 pub use manifest::{
     BatchFileEntry, BatchStatus, ManifestCacheEntry, ManifestFile, RowGroupPruningStats, SyncState,

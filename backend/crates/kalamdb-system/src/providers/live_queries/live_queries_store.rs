@@ -54,7 +54,7 @@ mod tests {
     #[test]
     fn test_create_store() {
         let store = create_test_store();
-        assert!(EntityStore::scan_all(&store).unwrap().is_empty());
+        assert!(EntityStore::scan_all(&store, None, None, None).unwrap().is_empty());
     }
 
     #[test]
@@ -95,7 +95,7 @@ mod tests {
             EntityStore::put(&store, &live_query.live_id, &live_query).unwrap();
         }
 
-        let all = EntityStore::scan_all(&store).unwrap();
+        let all = EntityStore::scan_all(&store, None, None, None).unwrap();
         assert_eq!(all.len(), 3);
     }
 

@@ -9,6 +9,7 @@
 mod common;
 
 use common::{fixtures, flush_helpers, TestServer};
+use kalamdb_api::models::ResponseStatus;
 use kalamdb_store::entity_store::EntityStore;
 
 /// Create a user table with `FLUSH ROWS`, insert data, invoke a manual flush,
@@ -32,7 +33,8 @@ async fn test_manual_flush_respects_row_threshold() {
     );
     let response = server.execute_sql_as_user(&create_sql, user_id).await;
     assert_eq!(
-        response.status, "success",
+        response.status,
+        ResponseStatus::Success,
         "Failed to create table: {:?}",
         response
     );
@@ -44,7 +46,8 @@ async fn test_manual_flush_respects_row_threshold() {
         );
         let response = server.execute_sql_as_user(&insert_sql, user_id).await;
         assert_eq!(
-            response.status, "success",
+            response.status,
+            ResponseStatus::Success,
             "Insert failed: {:?}",
             response.error
         );
@@ -83,7 +86,8 @@ async fn test_manual_flush_multiple_batches() {
     );
     let response = server.execute_sql_as_user(&create_sql, user_id).await;
     assert_eq!(
-        response.status, "success",
+        response.status,
+        ResponseStatus::Success,
         "Failed to create table: {:?}",
         response
     );
@@ -102,7 +106,8 @@ async fn test_manual_flush_multiple_batches() {
             );
             let response = server.execute_sql_as_user(&insert_sql, user_id).await;
             assert_eq!(
-                response.status, "success",
+                response.status,
+                ResponseStatus::Success,
                 "Insert failed: {:?}",
                 response.error
             );
@@ -122,7 +127,7 @@ async fn test_manual_flush_multiple_batches() {
             let store =
                 kalamdb_tables::new_user_table_store(backend, &model_namespace, &model_table);
             let buffered_rows =
-                EntityStore::scan_all(&store).expect("scan_all should succeed before flush");
+                EntityStore::scan_all(&store, None, None, None).expect("scan_all should succeed before flush");
             assert_eq!(
                 buffered_rows.len(),
                 10,

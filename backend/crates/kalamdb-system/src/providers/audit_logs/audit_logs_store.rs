@@ -91,7 +91,7 @@ mod tests {
         }
 
         // Verify all entries exist
-        let entries = EntityStore::scan_all(&store).unwrap();
+        let entries = EntityStore::scan_all(&store, None, None, None).unwrap();
         assert_eq!(entries.len(), 3);
     }
 
@@ -111,7 +111,7 @@ mod tests {
         }
 
         // Scan all
-        let entries = EntityStore::scan_all(&store).unwrap();
+        let entries = EntityStore::scan_all(&store, None, None, None).unwrap();
         assert_eq!(entries.len(), 5);
 
         // Verify actions
@@ -134,7 +134,7 @@ mod tests {
         }
 
         // Scan all entries
-        let mut entries = EntityStore::scan_all(&store).unwrap();
+        let mut entries = EntityStore::scan_all(&store, None, None, None).unwrap();
         assert_eq!(entries.len(), 3);
 
         // Sort by timestamp to verify ordering capability
@@ -175,7 +175,7 @@ mod tests {
         }
 
         // Verify all 100 entries were written
-        let entries = EntityStore::scan_all(&*store).unwrap();
+        let entries = EntityStore::scan_all(&*store, None, None, None).unwrap();
         assert_eq!(entries.len(), 100);
     }
 

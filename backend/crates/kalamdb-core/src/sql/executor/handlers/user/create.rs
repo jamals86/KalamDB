@@ -30,7 +30,7 @@ impl TypedStatementHandler<CreateUserStatement> for CreateUserHandler {
         &self,
         statement: CreateUserStatement,
         _params: Vec<ScalarValue>,
-        _context: &ExecutionContext,
+        context: &ExecutionContext,
     ) -> Result<ExecutionResult, KalamDbError> {
         let users = self.app_context.system_tables().users();
 
@@ -80,6 +80,18 @@ impl TypedStatementHandler<CreateUserStatement> for CreateUserHandler {
         };
 
         users.create_user(user)?;
+
+        // Log DDL operation
+        use crate::sql::executor::helpers::audit;
+        let audit_entry = audit::log_ddl_operation(
+            context,
+            "CREATE",
+            "USER",
+            &statement.username,
+            Some(format!("Role: {:?}", statement.role)),
+            None,
+        );
+        audit::persist_audit_entry(&self.app_context, &audit_entry).await?;
 
         Ok(ExecutionResult::Success {
             message: format!("User '{}' created", statement.username),

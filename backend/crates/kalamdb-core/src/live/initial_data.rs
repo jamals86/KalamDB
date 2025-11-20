@@ -10,6 +10,7 @@ use crate::schema_registry::TableType;
 use crate::sql::executor::models::{ExecutionContext, ExecutionResult, ScalarValue};
 use crate::sql::executor::SqlExecutor;
 use datafusion::execution::context::SessionContext;
+use kalamdb_commons::constants::AuthConstants;
 use kalamdb_commons::ids::SeqId;
 use kalamdb_commons::models::row::Row;
 use kalamdb_commons::models::{TableId, UserId};
@@ -187,6 +188,13 @@ impl InitialDataFetcher {
         // Extract user_id from LiveId for RLS
         let user_id = UserId::new(live_id.user_id().to_string());
 
+        // Determine role based on user_id
+        let role = if user_id.as_str() == AuthConstants::DEFAULT_ROOT_USER_ID {
+            Role::System
+        } else {
+            Role::User
+        };
+
         let sql_executor = self.sql_executor.get().cloned().ok_or_else(|| {
             KalamDbError::InvalidOperation(
                 "SqlExecutor not configured for InitialDataFetcher".to_string(),
@@ -196,7 +204,7 @@ impl InitialDataFetcher {
         // Create execution context with user scope for row-level security
         let exec_ctx = ExecutionContext::new(
             user_id.clone(),
-            Role::User,
+            role,
             Arc::clone(&self.base_session_context),
         );
 
@@ -426,12 +434,13 @@ mod tests {
         let schema_registry = app_context.schema_registry();
 
         // Setup in-memory user table with one row (userA)
-        let ns = NamespaceId::new("batch_test");
+        // For User tables, namespace must match user_id
+        let user_id = UserId::from("usera");
+        let ns = NamespaceId::new(user_id.as_str());
         let tbl = TableName::new("items");
         let table_id = kalamdb_commons::models::TableId::new(ns.clone(), tbl.clone());
         let store = Arc::new(new_user_table_store(backend.clone(), &ns, &tbl));
 
-        let user_id = UserId::from("userA");
         let seq = SeqId::new(1234567890);
         let row_id = UserTableRowId::new(user_id.clone(), seq);
 
@@ -512,7 +521,7 @@ mod tests {
         fetcher.set_sql_executor(sql_executor);
 
         // LiveId for connection user 'userA' (RLS enforced)
-        let conn = ConnId::new("userA".to_string(), "conn1".to_string());
+        let conn = ConnId::new("usera".to_string(), "conn1".to_string());
         let live = CommonsLiveId::new(conn, table_id.clone(), "q1".to_string());
 
         // Fetch initial data (default options: last 100)
@@ -556,12 +565,12 @@ mod tests {
         let schema_registry = app_context.schema_registry();
 
         // Setup in-memory user table
-        let ns = NamespaceId::new("batch_test");
+        // For User tables, namespace must match user_id
+        let user_id = UserId::from("userb");
+        let ns = NamespaceId::new(user_id.as_str());
         let tbl = TableName::new("batch_items");
         let table_id = kalamdb_commons::models::TableId::new(ns.clone(), tbl.clone());
         let store = Arc::new(new_user_table_store(backend.clone(), &ns, &tbl));
-
-        let user_id = UserId::from("userB");
 
         // Insert 3 rows with increasing seq
         for i in 1..=3 {
@@ -642,7 +651,7 @@ mod tests {
             InitialDataFetcher::new(app_context.base_session_context(), schema_registry.clone());
         let sql_executor = Arc::new(SqlExecutor::new(app_context.clone(), false));
         fetcher.set_sql_executor(sql_executor);
-        let conn = ConnId::new("userB".to_string(), "conn2".to_string());
+        let conn = ConnId::new("userb".to_string(), "conn2".to_string());
         let live = CommonsLiveId::new(conn, table_id.clone(), "q2".to_string());
 
         // 1. Fetch first batch (limit 1)
@@ -715,12 +724,12 @@ mod tests {
         let schema_registry = app_context.schema_registry();
 
         // Setup in-memory user table
-        let ns = NamespaceId::new("last_test");
+        // For User tables, namespace must match user_id
+        let user_id = UserId::from("userc");
+        let ns = NamespaceId::new(user_id.as_str());
         let tbl = TableName::new("last_items");
         let table_id = kalamdb_commons::models::TableId::new(ns.clone(), tbl.clone());
         let store = Arc::new(new_user_table_store(backend.clone(), &ns, &tbl));
-
-        let user_id = UserId::from("userC");
 
         // Insert 10 rows with increasing seq
         for i in 1..=10 {
@@ -801,7 +810,7 @@ mod tests {
             InitialDataFetcher::new(app_context.base_session_context(), schema_registry.clone());
         let sql_executor = Arc::new(SqlExecutor::new(app_context.clone(), false));
         fetcher.set_sql_executor(sql_executor);
-        let conn = ConnId::new("userC".to_string(), "conn3".to_string());
+        let conn = ConnId::new("userc".to_string(), "conn3".to_string());
         let live = CommonsLiveId::new(conn, table_id.clone(), "q3".to_string());
 
         // Fetch last 3 rows

@@ -5,7 +5,7 @@ use std::fmt;
 #[cfg(feature = "serde")]
 use serde::{Deserialize, Serialize};
 
-use crate::StorageKey;
+use crate::{StorageKey, constants::AuthConstants};
 
 /// Type-safe wrapper for user identifiers.
 ///
@@ -32,14 +32,18 @@ impl UserId {
         self.0
     }
 
-    /// Creates a default 'system' user ID.
-    pub fn system() -> Self {
-        Self("system".to_string())
+    /// Creates a default 'root' user ID.
+    pub fn root() -> Self {
+        Self(AuthConstants::DEFAULT_ROOT_USER_ID.to_string())
     }
 
-    pub fn root() -> Self {
-        Self("root".to_string())
+    /// Is admin user?
+    pub fn is_admin(&self) -> bool {
+        self.as_str() == AuthConstants::DEFAULT_ROOT_USER_ID || self.as_str() == "sys_root"
     }
+    // pub fn root() -> Self {
+    //     Self("root".to_string())
+    // }
 }
 
 impl fmt::Display for UserId {

@@ -159,7 +159,7 @@ fn smoke_storage_custom_templates() {
     // ----- User table scenario -----
     let create_user_table_sql = format!(
         "CREATE USER TABLE {table_user_full} (
-            id INT AUTO_INCREMENT PRIMARY KEY,
+            id BIGINT AUTO_INCREMENT PRIMARY KEY,
             body TEXT
                 ) STORAGE '{storage_id}'
           FLUSH ROWS 10"
@@ -250,7 +250,7 @@ fn smoke_storage_custom_templates() {
     // ----- Shared table scenario -----
     let create_shared_table_sql = format!(
         "CREATE SHARED TABLE {table_shared_full} (
-            id INT AUTO_INCREMENT PRIMARY KEY,
+            id BIGINT AUTO_INCREMENT PRIMARY KEY,
             body TEXT
                 ) STORAGE '{storage_id}'
           FLUSH ROWS 10"

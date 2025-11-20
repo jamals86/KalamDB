@@ -20,6 +20,7 @@
 mod common;
 
 use common::{fixtures, flush_helpers, TestServer};
+use kalamdb_api::models::ResponseStatus;
 use std::collections::HashMap;
 use std::path::PathBuf;
 
@@ -54,7 +55,7 @@ async fn test_01_combined_data_count_and_select() {
     );
 
     let response = server.execute_sql_as_user(&create_sql, user_id).await;
-    assert_eq!(response.status, "success", "Failed to create table");
+    assert_eq!(response.status, ResponseStatus::Success, "Failed to create table");
 
     // Insert first batch of 10 rows (these will be flushed to Parquet)
     println!("Inserting first batch of 10 rows (to be flushed)...");
@@ -70,10 +71,10 @@ async fn test_01_combined_data_count_and_select() {
             100.0 + (i as f64 * 10.0)
         );
         let response = server.execute_sql_as_user(&insert_sql, user_id).await;
-        if response.status != "success" {
+        if response.status != kalamdb_api::models::ResponseStatus::Success {
             eprintln!("Insert failed for row {}: {:?}", i, response);
         }
-        assert_eq!(response.status, "success");
+        assert_eq!(response.status, ResponseStatus::Success);
     }
 
     // Give a small delay for data to be fully written
@@ -138,7 +139,7 @@ async fn test_01_combined_data_count_and_select() {
             100.0 + (i as f64 * 10.0)
         );
         let response = server.execute_sql_as_user(&insert_sql, user_id).await;
-        assert_eq!(response.status, "success");
+        assert_eq!(response.status, ResponseStatus::Success);
     }
 
     // Query total count - should return 15 (10 from Parquet + 5 from RocksDB)
@@ -151,7 +152,7 @@ async fn test_01_combined_data_count_and_select() {
         .await;
 
     assert_eq!(
-        count_response.status, "success",
+        count_response.status, ResponseStatus::Success,
         "SQL failed: {:?}",
         count_response.error
     );
@@ -181,7 +182,7 @@ async fn test_01_combined_data_count_and_select() {
         .await;
 
     assert_eq!(
-        select_response.status, "success",
+        select_response.status, ResponseStatus::Success,
         "SQL failed: {:?}",
         select_response.error
     );
@@ -613,7 +614,7 @@ async fn test_04_combined_data_integrity_verification() {
         .await;
 
     assert_eq!(
-        query_response.status, "success",
+        query_response.status, ResponseStatus::Success,
         "SQL failed: {:?}",
         query_response.error
     );
@@ -789,7 +790,7 @@ async fn test_06_soft_delete_operations() {
             user_id,
         )
         .await;
-    assert_eq!(delete1.status, "success", "Delete failed: {:?}", delete1);
+    assert_eq!(delete1.status, ResponseStatus::Success, "Delete failed: {:?}", delete1);
 
     println!("Soft deleting task2...");
     let delete2 = server
@@ -801,7 +802,7 @@ async fn test_06_soft_delete_operations() {
             user_id,
         )
         .await;
-    assert_eq!(delete2.status, "success", "Delete failed: {:?}", delete2);
+    assert_eq!(delete2.status, ResponseStatus::Success, "Delete failed: {:?}", delete2);
 
     // Query should only show 3 tasks (task3, task4, task5)
     println!("Querying after soft deletes...");

@@ -5,7 +5,7 @@
 
 use super::base::{FlushJobResult, FlushMetadata, TableFlush};
 use crate::error::KalamDbError;
-use crate::live_query::manager::{ChangeNotification, LiveQueryManager};
+use crate::live_query::{ChangeNotification, LiveQueryManager};
 use crate::manifest::{FlushManifestHelper, ManifestCacheService, ManifestService};
 use crate::schema_registry::SchemaRegistry;
 use crate::storage::ParquetWriter;
@@ -88,15 +88,19 @@ impl SharedTableFlushJob {
     ) -> Result<RecordBatch, KalamDbError> {
         let mut builder = super::util::JsonBatchBuilder::new(self.schema.clone())?;
         for (key_bytes, row) in rows {
-            // Ensure system columns are present in the row per schema expectations
-            // Parse SeqId from key bytes for _seq if missing
             let mut patched = row.clone();
             if let Some(obj) = patched.as_object_mut() {
+                // Extract seq_id from key
+                let seq_id = if let Ok(sid) = kalamdb_commons::ids::SeqId::from_bytes(key_bytes) {
+                    sid.as_i64()
+                } else {
+                    0
+                };
+
+                // Ensure system columns are present
                 if !obj.contains_key("_seq") || obj.get("_seq").map(|v| v.is_null()).unwrap_or(true)
                 {
-                    if let Ok(seq_id) = kalamdb_commons::ids::SeqId::from_bytes(key_bytes) {
-                        obj.insert("_seq".to_string(), serde_json::json!(seq_id.as_i64()));
-                    }
+                    obj.insert("_seq".to_string(), serde_json::json!(seq_id));
                 }
                 if !obj.contains_key("_deleted")
                     || obj.get("_deleted").map(|v| v.is_null()).unwrap_or(true)
@@ -142,7 +146,7 @@ impl TableFlush for SharedTableFlushJob {
         );
 
         // Scan all rows (EntityStore::scan_all returns Vec<(Vec<u8>, V)>)
-        let entries = EntityStore::scan_all(self.store.as_ref()).map_err(|e| {
+        let entries = EntityStore::scan_all(self.store.as_ref(), None, None, None).map_err(|e| {
             log::error!(
                 "❌ Failed to scan rows for shared table={}.{}: {}",
                 self.namespace_id().as_str(),
@@ -383,7 +387,7 @@ impl TableFlush for SharedTableFlushJob {
             let table_id = self.table_id.as_ref().clone();
             let notification =
                 ChangeNotification::flush(table_id.clone(), rows_count, parquet_files.clone());
-            let system_user = UserId::system();
+            let system_user = UserId::root();
             manager.notify_table_change_async(system_user, table_id, notification);
         }
 

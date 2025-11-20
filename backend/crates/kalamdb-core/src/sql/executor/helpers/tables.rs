@@ -72,6 +72,11 @@ pub fn save_table_definition(
                 .map(|pk| pk == field.name())
                 .unwrap_or(false);
 
+            let default_val = stmt.column_defaults
+                .get(field.name())
+                .cloned()
+                .unwrap_or(ColumnDefault::None);
+
             Ok(ColumnDefinition::new(
                 field.name().clone(),
                 (idx + 1) as u32, // ordinal_position is 1-indexed
@@ -79,10 +84,7 @@ pub fn save_table_definition(
                 field.is_nullable(),
                 is_pk, // is_primary_key (T060: determined from stmt.primary_key_column)
                 false, // is_partition_key (not used yet)
-                stmt.column_defaults
-                    .get(field.name())
-                    .cloned()
-                    .unwrap_or(ColumnDefault::None),
+                default_val,
                 None, // column_comment
             ))
         })

@@ -29,7 +29,7 @@ impl TypedStatementHandler<CreateNamespaceStatement> for CreateNamespaceHandler 
         &self,
         statement: CreateNamespaceStatement,
         _params: Vec<ScalarValue>,
-        _context: &ExecutionContext,
+        context: &ExecutionContext,
     ) -> Result<ExecutionResult, KalamDbError> {
         let namespaces_provider = self.app_context.system_tables().namespaces();
         let name = statement.name.as_str();
@@ -58,6 +58,18 @@ impl TypedStatementHandler<CreateNamespaceStatement> for CreateNamespaceHandler 
 
         // Insert namespace via provider
         namespaces_provider.create_namespace(namespace)?;
+
+        // Log DDL operation
+        use crate::sql::executor::helpers::audit;
+        let audit_entry = audit::log_ddl_operation(
+            context,
+            "CREATE",
+            "NAMESPACE",
+            name,
+            None,
+            None,
+        );
+        audit::persist_audit_entry(&self.app_context, &audit_entry).await?;
 
         let message = format!("Namespace '{}' created successfully", name);
         Ok(ExecutionResult::Success { message })

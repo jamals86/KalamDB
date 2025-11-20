@@ -5,6 +5,23 @@
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 
+/// Execution status enum
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "lowercase")]
+pub enum ResponseStatus {
+    Success,
+    Error,
+}
+
+impl std::fmt::Display for ResponseStatus {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            ResponseStatus::Success => write!(f, "success"),
+            ResponseStatus::Error => write!(f, "error"),
+        }
+    }
+}
+
 /// Response from SQL execution via REST API
 ///
 /// Contains execution status, results, timing information, and any errors that occurred.
@@ -23,7 +40,7 @@ use std::collections::HashMap;
 ///       "columns": ["id", "name"]
 ///     }
 ///   ],
-///   "took_ms": 15,
+///   "took": 15.0,
 ///   "error": null
 /// }
 /// ```
@@ -33,7 +50,7 @@ use std::collections::HashMap;
 /// {
 ///   "status": "error",
 ///   "results": [],
-///   "took_ms": 5,
+///   "took": 5.0,
 ///   "error": {
 ///     "code": "INVALID_SQL",
 ///     "message": "Syntax error near 'SELCT'"
@@ -43,14 +60,13 @@ use std::collections::HashMap;
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SqlResponse {
     /// Overall execution status: "success" or "error"
-    /// TODO: Consider using an enum instead of string for stronger typing
-    pub status: String,
+    pub status: ResponseStatus,
 
     /// Array of result sets, one per executed statement
     pub results: Vec<QueryResult>,
 
-    /// Total execution time in milliseconds
-    pub took_ms: u64,
+    /// Total execution time in milliseconds (with fractional precision)
+    pub took: f64,
 
     /// Error details if status is "error", otherwise null
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -93,21 +109,21 @@ pub struct ErrorDetail {
 
 impl SqlResponse {
     /// Create a successful response with results
-    pub fn success(results: Vec<QueryResult>, took_ms: u64) -> Self {
+    pub fn success(results: Vec<QueryResult>, took: f64) -> Self {
         Self {
-            status: "success".to_string(),
+            status: ResponseStatus::Success,
             results,
-            took_ms,
+            took,
             error: None,
         }
     }
 
     /// Create an error response
-    pub fn error(code: &str, message: &str, took_ms: u64) -> Self {
+    pub fn error(code: &str, message: &str, took: f64) -> Self {
         Self {
-            status: "error".to_string(),
+            status: ResponseStatus::Error,
             results: Vec::new(),
-            took_ms,
+            took,
             error: Some(ErrorDetail {
                 code: code.to_string(),
                 message: message.to_string(),
@@ -117,11 +133,11 @@ impl SqlResponse {
     }
 
     /// Create an error response with additional details
-    pub fn error_with_details(code: &str, message: &str, details: &str, took_ms: u64) -> Self {
+    pub fn error_with_details(code: &str, message: &str, details: &str, took: f64) -> Self {
         Self {
-            status: "error".to_string(),
+            status: ResponseStatus::Error,
             results: Vec::new(),
-            took_ms,
+            took,
             error: Some(ErrorDetail {
                 code: code.to_string(),
                 message: message.to_string(),
@@ -201,7 +217,7 @@ mod tests {
 
         let result = QueryResult::with_rows(vec![row1], vec!["id".to_string(), "name".to_string()]);
 
-        let response = SqlResponse::success(vec![result], 15);
+        let response = SqlResponse::success(vec![result], 15.0);
 
         let json = serde_json::to_string(&response).unwrap();
         assert!(json.contains("success"));
@@ -211,7 +227,7 @@ mod tests {
 
     #[test]
     fn test_error_response_serialization() {
-        let response = SqlResponse::error("INVALID_SQL", "Syntax error", 5);
+        let response = SqlResponse::error("INVALID_SQL", "Syntax error", 5.0);
 
         let json = serde_json::to_string(&response).unwrap();
         assert!(json.contains("error"));

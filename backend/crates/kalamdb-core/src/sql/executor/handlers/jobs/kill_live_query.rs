@@ -24,10 +24,23 @@ impl TypedStatementHandler<KillLiveQueryStatement> for KillLiveQueryHandler {
         &self,
         statement: KillLiveQueryStatement,
         _params: Vec<ScalarValue>,
-        _context: &ExecutionContext,
+        context: &ExecutionContext,
     ) -> Result<ExecutionResult, KalamDbError> {
         let manager = self.app_context.live_query_manager();
         manager.unregister_subscription(&statement.live_id).await?;
+
+        // Log DDL operation
+        use crate::sql::executor::helpers::audit;
+        let audit_entry = audit::log_ddl_operation(
+            context,
+            "KILL",
+            "LIVE_QUERY",
+            &statement.live_id.to_string(),
+            None,
+            None,
+        );
+        audit::persist_audit_entry(&self.app_context, &audit_entry).await?;
+
         Ok(ExecutionResult::Success {
             message: format!("Live query killed: {}", statement.live_id),
         })

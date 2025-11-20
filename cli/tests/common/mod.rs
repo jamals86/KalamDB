@@ -330,19 +330,36 @@ pub fn verify_job_completed(
             job_id
         );
 
-        match execute_sql_as_root_via_cli(&query) {
+        match execute_sql_as_root_via_cli_json(&query) {
             Ok(output) => {
-                // Check if output contains the job and its status
-                if output.to_lowercase().contains("completed") {
-                    return Ok(());
-                }
+                println!("Query output: {}", output); // DEBUG
+                // Parse JSON output
+                let json: serde_json::Value = serde_json::from_str(&output)
+                    .map_err(|e| format!("Failed to parse JSON output: {}. Output: {}", e, output))?;
 
-                if output.to_lowercase().contains("failed") {
-                    // Try to extract error message if present
-                    return Err(format!("Job {} failed. Query output: {}", job_id, output).into());
-                }
+                // Navigate to results[0].rows[0]
+                let row = json.get("results")
+                    .and_then(|v| v.as_array())
+                    .and_then(|arr| arr.first())
+                    .and_then(|res| res.get("rows"))
+                    .and_then(|v| v.as_array())
+                    .and_then(|arr| arr.first());
 
-                // Job might still be running or pending, continue polling
+                if let Some(row) = row {
+                    let status = row.get("status").and_then(|v| v.as_str()).unwrap_or("");
+                    let error_message = row.get("error_message").and_then(|v| v.as_str()).unwrap_or("");
+
+                    // Debug print status
+                    println!("Job {} status: {}", job_id, status);
+
+                    if status.eq_ignore_ascii_case("completed") {
+                        return Ok(());
+                    }
+
+                    if status.eq_ignore_ascii_case("failed") {
+                        return Err(format!("Job {} failed. Error: {}", job_id, error_message).into());
+                    }
+                }
             }
             Err(e) => {
                 // If we can't query the jobs table, that's an error

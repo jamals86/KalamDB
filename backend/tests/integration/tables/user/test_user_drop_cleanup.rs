@@ -11,6 +11,7 @@ mod common;
 
 use common::flush_helpers::{check_user_parquet_files, execute_flush_synchronously};
 use common::{fixtures, TestServer};
+use kalamdb_api::models::ResponseStatus;
 use std::path::Path;
 
 #[actix_web::test]
@@ -39,7 +40,8 @@ async fn test_drop_user_table_deletes_partitions_and_parquet() {
     );
     let resp = server.execute_sql_as_user(&create_sql, user1).await;
     assert_eq!(
-        resp.status, "success",
+        resp.status,
+        ResponseStatus::Success,
         "CREATE USER TABLE failed: {:?}",
         resp.error
     );
@@ -54,7 +56,7 @@ async fn test_drop_user_table_deletes_partitions_and_parquet() {
             user1,
         )
         .await;
-    assert_eq!(ins1.status, "success");
+    assert_eq!(ins1.status, ResponseStatus::Success);
 
     let ins2 = server
         .execute_sql_as_user(
@@ -65,7 +67,7 @@ async fn test_drop_user_table_deletes_partitions_and_parquet() {
             user2,
         )
         .await;
-    assert_eq!(ins2.status, "success");
+    assert_eq!(ins2.status, ResponseStatus::Success);
 
     // Flush synchronously so Parquet files exist for each user
     let flush_res = execute_flush_synchronously(&server, namespace, table)
@@ -108,7 +110,8 @@ async fn test_drop_user_table_deletes_partitions_and_parquet() {
         .execute_sql_as_user(&format!("DROP TABLE {}.{}", namespace, table), "system")
         .await;
     assert_eq!(
-        drop_resp.status, "success",
+        drop_resp.status,
+        ResponseStatus::Success,
         "DROP TABLE failed: {:?}",
         drop_resp.error
     );

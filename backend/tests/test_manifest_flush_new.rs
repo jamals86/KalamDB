@@ -5,6 +5,7 @@ mod common;
 
 use common::fixtures::{create_namespace, execute_sql};
 use common::{flush_helpers, TestServer};
+use kalamdb_api::models::ResponseStatus;
 use kalamdb_commons::types::ManifestFile;
 use kalamdb_commons::{NamespaceId, TableName};
 
@@ -165,6 +166,6 @@ async fn test_manifest_cache_works() {
     .await
     .unwrap();
 
-    assert_eq!(resp.status, "success");
+    assert_eq!(resp.status, ResponseStatus::Success);
     println!("✅ Query executed with manifest cache");
 }

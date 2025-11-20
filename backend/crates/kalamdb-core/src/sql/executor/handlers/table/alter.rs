@@ -241,6 +241,18 @@ impl TypedStatementHandler<AlterTableStatement> for AlterTableHandler {
             );
         }
 
+        // Log DDL operation
+        use crate::sql::executor::helpers::audit;
+        let audit_entry = audit::log_ddl_operation(
+            context,
+            "ALTER",
+            "TABLE",
+            &format!("{}.{}", namespace_id.as_str(), statement.table_name.as_str()),
+            Some(format!("Operation: {}, New Version: {}", change_desc, table_def.schema_version)),
+            None,
+        );
+        audit::persist_audit_entry(&self.app_context, &audit_entry).await?;
+
         log::info!(
             "✅ ALTER TABLE succeeded: {}.{} | operation: {} | new_version: {} | table_type: {:?}",
             namespace_id.as_str(),

@@ -9,6 +9,7 @@ use std::fmt;
 /// but serializes to clean, standard JSON for clients.
 #[derive(Debug, Clone, PartialEq)]
 pub struct Row {
+    // RowEnvelope values as column name -> ScalarValue map
     pub values: BTreeMap<String, ScalarValue>,
 }
 

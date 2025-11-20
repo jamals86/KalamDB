@@ -5,6 +5,7 @@
 
 use crate::error::KalamDbError;
 use crate::schema_registry::system_columns_service::SystemColumnsService;
+use datafusion_common::ScalarValue;
 use kalamdb_commons::models::UserId;
 use kalamdb_commons::schemas::ColumnDefault;
 use serde_json::Value as JsonValue;

@@ -41,7 +41,7 @@ impl TypedStatementHandler<AlterUserStatement> for AlterUserHandler {
         let mut updated = existing.clone();
 
         match statement.modification {
-            UserModification::SetPassword(new_pw) => {
+            UserModification::SetPassword(ref new_pw) => {
                 // Self-service allowed: user modifying own password
                 let is_self = context.user_id.as_str() == updated.id.as_str();
                 if !is_self && !context.is_admin() {
@@ -53,7 +53,7 @@ impl TypedStatementHandler<AlterUserStatement> for AlterUserHandler {
                 if self.enforce_complexity
                     || self.app_context.config().auth.enforce_password_complexity
                 {
-                    validate_password_complexity(&new_pw)?;
+                    validate_password_complexity(new_pw)?;
                 }
                 updated.password_hash = bcrypt::hash(new_pw, bcrypt::DEFAULT_COST)
                     .map_err(|e| KalamDbError::Other(format!("Password hash error: {}", e)))?;
@@ -66,19 +66,31 @@ impl TypedStatementHandler<AlterUserStatement> for AlterUserHandler {
                 }
                 updated.role = new_role;
             }
-            UserModification::SetEmail(new_email) => {
+            UserModification::SetEmail(ref new_email) => {
                 let is_self = context.user_id.as_str() == updated.id.as_str();
                 if !is_self && !context.is_admin() {
                     return Err(KalamDbError::Unauthorized(
                         "Only admins can update other users' emails".to_string(),
                     ));
                 }
-                updated.email = Some(new_email);
+                updated.email = Some(new_email.clone());
             }
         }
 
         updated.updated_at = chrono::Utc::now().timestamp_millis();
         users.update_user(updated)?;
+
+        // Log DDL operation
+        use crate::sql::executor::helpers::audit;
+        let audit_entry = audit::log_ddl_operation(
+            context,
+            "ALTER",
+            "USER",
+            &statement.username,
+            Some(format!("Modification: {:?}", statement.modification)),
+            None,
+        );
+        audit::persist_audit_entry(&self.app_context, &audit_entry).await?;
 
         Ok(ExecutionResult::Success {
             message: format!("User '{}' updated", statement.username),

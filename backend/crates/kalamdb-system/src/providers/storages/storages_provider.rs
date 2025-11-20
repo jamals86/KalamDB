@@ -93,13 +93,13 @@ impl StoragesTableProvider {
 
     /// List all storages
     pub fn list_storages(&self) -> Result<Vec<Storage>, SystemError> {
-        let storages = self.store.scan_all()?;
+        let storages = self.store.scan_all(None, None, None)?;
         Ok(storages.into_iter().map(|(_, s)| s).collect())
     }
 
     /// Scan all storages and return as RecordBatch
     pub fn scan_all_storages(&self) -> Result<RecordBatch, SystemError> {
-        let storages = self.store.scan_all()?;
+        let storages = self.store.scan_all(None, None, None)?;
         let row_count = storages.len();
 
         // Pre-allocate builders for optimal performance

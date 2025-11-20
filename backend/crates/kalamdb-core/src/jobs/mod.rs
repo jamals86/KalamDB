@@ -43,8 +43,12 @@
 // PHASE 9: UNIFIED JOB MANAGEMENT (PRODUCTION-READY)
 // ============================================================================
 pub mod executors;
+pub mod health_monitor;
 pub mod jobs_manager;
+pub mod stream_eviction;
 
 // Phase 9 exports (production API)
 pub use executors::{JobContext, JobDecision, JobExecutor as JobExecutorTrait, JobRegistry};
+pub use health_monitor::HealthMonitor;
 pub use jobs_manager::JobsManager;
+pub use stream_eviction::StreamEvictionScheduler;

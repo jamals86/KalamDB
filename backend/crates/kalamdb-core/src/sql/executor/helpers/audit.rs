@@ -123,17 +123,17 @@ pub fn log_dml_operation(
 /// * `context` - Execution context
 /// * `query_type` - Query type (SELECT, DESCRIBE, SHOW)
 /// * `target` - Query target
-/// * `execution_time_ms` - Execution time in milliseconds
+/// * `took` - Execution time in milliseconds
 /// * `subject_user_id` - Optional subject for AS USER impersonation
 pub fn log_query_operation(
     context: &ExecutionContext,
     query_type: &str,
     target: &str,
-    execution_time_ms: u64,
+    took: f64,
     subject_user_id: Option<kalamdb_commons::UserId>,
 ) -> AuditLogEntry {
     let details = serde_json::json!({
-        "execution_time_ms": execution_time_ms,
+        "took": took,
     })
     .to_string();
 
@@ -176,22 +176,13 @@ pub fn log_auth_event(
     }
 }
 
-/// Persist audit log entry to storage
-///
-/// **Note**: This is a placeholder. Actual implementation will use
-/// AuditLogsTableProvider to persist entries to system.audit_logs.
-///
-/// # Arguments
-/// * `entry` - Audit log entry to persist
-///
-/// # Returns
-/// * `Ok(())` - Entry persisted successfully
-/// * `Err(KalamDbError)` - Persistence failed
-pub async fn persist_audit_entry(_entry: &AuditLogEntry) -> Result<(), KalamDbError> {
-    // TODO: Phase 7 (US3) - Implement actual persistence via SystemTablesRegistry
-    // let audit_logs_provider = app_ctx.system_tables().audit_logs();
-    // audit_logs_provider.insert(entry).await?;
+use std::sync::Arc;
+use crate::app_context::AppContext;
 
+/// Persist an audit entry to the system.audit_logs table
+pub async fn persist_audit_entry(app_context: &Arc<AppContext>, entry: &AuditLogEntry) -> Result<(), KalamDbError> {
+    let audit_logs_provider = app_context.system_tables().audit_logs();
+    audit_logs_provider.append(entry.clone()).map_err(|e| KalamDbError::from(e))?;
     Ok(())
 }
 
@@ -261,7 +252,7 @@ mod tests {
     fn test_log_query_operation() {
         let ctx = ExecutionContext::new(UserId::from("dave"), Role::User, create_test_session());
 
-        let entry = log_query_operation(&ctx, "SELECT", "default.users", 150, None);
+        let entry = log_query_operation(&ctx, "SELECT", "default.users", 150.0, None);
 
         assert_eq!(entry.action, "SELECT");
         assert_eq!(entry.target, "default.users");

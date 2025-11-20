@@ -45,8 +45,8 @@ impl TypedStatementHandler<AlterNamespaceStatement> for AlterNamespaceHandler {
 
         // Merge new options
         if let Some(obj) = current_options.as_object_mut() {
-            for (key, value) in statement.options {
-                obj.insert(key, value);
+            for (key, value) in &statement.options {
+                obj.insert(key.clone(), value.clone());
             }
         }
 
@@ -57,6 +57,18 @@ impl TypedStatementHandler<AlterNamespaceStatement> for AlterNamespaceHandler {
 
         // Save updated namespace
         namespaces_provider.update_namespace(namespace)?;
+
+        // Log DDL operation
+        use crate::sql::executor::helpers::audit;
+        let audit_entry = audit::log_ddl_operation(
+            _context,
+            "ALTER",
+            "NAMESPACE",
+            name,
+            Some(format!("Options updated: {:?}", statement.options)),
+            None,
+        );
+        audit::persist_audit_entry(&self.app_context, &audit_entry).await?;
 
         let message = format!("Namespace '{}' altered successfully", name);
         Ok(ExecutionResult::Success { message })

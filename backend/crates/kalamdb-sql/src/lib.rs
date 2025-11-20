@@ -36,6 +36,7 @@
 // pub mod adapter; // PHASE 6: Disabled - file renamed to adapter.rs.disabled
 
 pub mod batch_execution;
+pub mod classifier;
 pub mod compatibility;
 pub mod ddl;
 pub mod ddl_parent;

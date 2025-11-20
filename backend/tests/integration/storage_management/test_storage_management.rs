@@ -17,6 +17,7 @@
 mod common;
 
 use common::{fixtures, TestServer};
+use kalamdb_api::models::ResponseStatus;
 
 // ============================================================================
 // Test 1: Default Storage Creation
@@ -31,7 +32,8 @@ async fn test_01_default_storage_exists() {
     let response = server.execute_sql("SHOW STORAGES").await;
 
     assert_eq!(
-        response.status, "success",
+        response.status,
+        ResponseStatus::Success,
         "Failed to execute SHOW STORAGES: {:?}",
         response.error
     );
@@ -74,7 +76,8 @@ async fn test_02_show_storages_basic() {
     let response = server.execute_sql("SHOW STORAGES").await;
 
     assert_eq!(
-        response.status, "success",
+        response.status,
+        ResponseStatus::Success,
         "SHOW STORAGES failed: {:?}",
         response.error
     );
@@ -118,7 +121,8 @@ async fn test_03_create_storage_filesystem() {
     let response = server.execute_sql(sql).await;
 
     assert_eq!(
-        response.status, "success",
+        response.status,
+        ResponseStatus::Success,
         "CREATE STORAGE failed: {:?}",
         response.error
     );
@@ -129,7 +133,8 @@ async fn test_03_create_storage_filesystem() {
         .await;
 
     assert_eq!(
-        response.status, "success",
+        response.status,
+        ResponseStatus::Success,
         "Failed to query system.storages: {:?}",
         response.error
     );
@@ -183,7 +188,8 @@ async fn test_04_create_storage_s3() {
     let response = server.execute_sql(sql).await;
 
     assert_eq!(
-        response.status, "success",
+        response.status,
+        ResponseStatus::Success,
         "CREATE STORAGE (S3) failed: {:?}",
         response.error
     );
@@ -194,7 +200,8 @@ async fn test_04_create_storage_s3() {
         .await;
 
     assert_eq!(
-        response.status, "success",
+        response.status,
+        ResponseStatus::Success,
         "Failed to query system.storages: {:?}",
         response.error
     );
@@ -236,7 +243,8 @@ async fn test_05_create_storage_duplicate_error() {
     let response = server.execute_sql(sql).await;
 
     assert_eq!(
-        response.status, "error",
+        response.status,
+        ResponseStatus::Error,
         "CREATE STORAGE should fail with duplicate storage_id"
     );
 
@@ -273,7 +281,8 @@ async fn test_06_create_storage_invalid_template() {
     let response = server.execute_sql(sql).await;
 
     assert_eq!(
-        response.status, "error",
+        response.status,
+        ResponseStatus::Error,
         "CREATE STORAGE should fail with invalid template"
     );
 
@@ -310,7 +319,8 @@ async fn test_07_alter_storage_all_fields() {
 
     let response = server.execute_sql(create_sql).await;
     assert_eq!(
-        response.status, "success",
+        response.status,
+        ResponseStatus::Success,
         "CREATE STORAGE failed: {:?}",
         response.error
     );
@@ -326,7 +336,8 @@ async fn test_07_alter_storage_all_fields() {
 
     let response = server.execute_sql(alter_sql).await;
     assert_eq!(
-        response.status, "success",
+        response.status,
+        ResponseStatus::Success,
         "ALTER STORAGE failed: {:?}",
         response.error
     );
@@ -337,7 +348,8 @@ async fn test_07_alter_storage_all_fields() {
         .await;
 
     assert_eq!(
-        response.status, "success",
+        response.status,
+        ResponseStatus::Success,
         "Failed to query: {:?}",
         response.error
     );
@@ -383,7 +395,8 @@ async fn test_08_alter_storage_partial() {
 
     let response = server.execute_sql(create_sql).await;
     assert_eq!(
-        response.status, "success",
+        response.status,
+        ResponseStatus::Success,
         "CREATE STORAGE failed: {:?}",
         response.error
     );
@@ -393,7 +406,8 @@ async fn test_08_alter_storage_partial() {
 
     let response = server.execute_sql(alter_sql).await;
     assert_eq!(
-        response.status, "success",
+        response.status,
+        ResponseStatus::Success,
         "ALTER STORAGE failed: {:?}",
         response.error
     );
@@ -437,7 +451,8 @@ async fn test_09_alter_storage_invalid_template() {
 
     let response = server.execute_sql(create_sql).await;
     assert_eq!(
-        response.status, "success",
+        response.status,
+        ResponseStatus::Success,
         "CREATE STORAGE failed: {:?}",
         response.error
     );
@@ -450,7 +465,8 @@ async fn test_09_alter_storage_invalid_template() {
 
     let response = server.execute_sql(alter_sql).await;
     assert_eq!(
-        response.status, "error",
+        response.status,
+        ResponseStatus::Error,
         "ALTER STORAGE should fail with invalid template"
     );
 
@@ -482,7 +498,8 @@ async fn test_10_drop_storage_basic() {
 
     let response = server.execute_sql(create_sql).await;
     assert_eq!(
-        response.status, "success",
+        response.status,
+        ResponseStatus::Success,
         "CREATE STORAGE failed: {:?}",
         response.error
     );
@@ -491,7 +508,8 @@ async fn test_10_drop_storage_basic() {
     let drop_sql = "DROP STORAGE drop_test";
     let response = server.execute_sql(drop_sql).await;
     assert_eq!(
-        response.status, "success",
+        response.status,
+        ResponseStatus::Success,
         "DROP STORAGE failed: {:?}",
         response.error
     );
@@ -524,7 +542,8 @@ async fn test_11_drop_storage_referential_integrity() {
     let response = server.execute_sql(drop_sql).await;
 
     assert_eq!(
-        response.status, "error",
+        response.status,
+        ResponseStatus::Error,
         "DROP STORAGE should fail when tables reference it"
     );
 
@@ -553,7 +572,8 @@ async fn test_12_drop_storage_not_exists() {
     let response = server.execute_sql(drop_sql).await;
 
     assert_eq!(
-        response.status, "error",
+        response.status,
+        ResponseStatus::Error,
         "DROP STORAGE should fail for non-existent storage"
     );
 
@@ -586,7 +606,8 @@ async fn test_13_template_validation_correct_order() {
 
     let response = server.execute_sql(sql).await;
     assert_eq!(
-        response.status, "success",
+        response.status,
+        ResponseStatus::Success,
         "Valid template should succeed: {:?}",
         response.error
     );
@@ -611,7 +632,7 @@ async fn test_14_template_validation_invalid_order() {
     "#;
 
     let response = server.execute_sql(sql).await;
-    assert_eq!(response.status, "error", "Invalid template should fail");
+    assert_eq!(response.status, ResponseStatus::Error, "Invalid template should fail");
 }
 
 // ============================================================================
@@ -647,7 +668,8 @@ async fn test_15_storage_lookup_table_level() {
 
     let response = server.execute_sql(create_table).await;
     assert_eq!(
-        response.status, "success",
+        response.status,
+        ResponseStatus::Success,
         "CREATE TABLE with storage failed: {:?}",
         response.error
     );
@@ -696,7 +718,8 @@ async fn test_16_show_storages_ordered() {
     // Show storages (should be ordered with 'local' first, then alphabetically)
     let response = server.execute_sql("SHOW STORAGES").await;
     assert_eq!(
-        response.status, "success",
+        response.status,
+        ResponseStatus::Success,
         "SHOW STORAGES failed: {:?}",
         response.error
     );
@@ -755,12 +778,14 @@ async fn test_17_concurrent_storage_operations() {
     let response2 = server.execute_sql(alter2).await;
 
     assert_eq!(
-        response1.status, "success",
+        response1.status,
+        ResponseStatus::Success,
         "First ALTER failed: {:?}",
         response1.error
     );
     assert_eq!(
-        response2.status, "success",
+        response2.status,
+        ResponseStatus::Success,
         "Second ALTER failed: {:?}",
         response2.error
     );
@@ -802,7 +827,8 @@ async fn test_18_invalid_storage_type() {
 
     let response = server.execute_sql(sql).await;
     assert_eq!(
-        response.status, "error",
+        response.status,
+        ResponseStatus::Error,
         "CREATE STORAGE should fail with invalid type"
     );
 
@@ -836,7 +862,8 @@ async fn test_19_minimal_storage_config() {
 
     let response = server.execute_sql(sql).await;
     assert_eq!(
-        response.status, "success",
+        response.status,
+        ResponseStatus::Success,
         "Minimal storage config should succeed: {:?}",
         response.error
     );
@@ -892,7 +919,8 @@ async fn test_20_storage_with_namespace() {
 
     let response = server.execute_sql(create_table).await;
     assert_eq!(
-        response.status, "success",
+        response.status,
+        ResponseStatus::Success,
         "CREATE shared table failed: {:?}",
         response.error
     );
@@ -928,7 +956,8 @@ async fn test_22_credentials_column_exists() {
         .await;
 
     assert_eq!(
-        response.status, "success",
+        response.status,
+        ResponseStatus::Success,
         "Failed to query credentials column: {:?}",
         response.error
     );
@@ -968,7 +997,8 @@ async fn test_23_storage_with_credentials() {
 
     let response = server.execute_sql(create_storage).await;
     assert_eq!(
-        response.status, "success",
+        response.status,
+        ResponseStatus::Success,
         "CREATE STORAGE with credentials failed: {:?}",
         response.error
     );
@@ -979,7 +1009,8 @@ async fn test_23_storage_with_credentials() {
     let response = server.execute_sql(query).await;
 
     assert_eq!(
-        response.status, "success",
+        response.status,
+        ResponseStatus::Success,
         "Query failed: {:?}",
         response.error
     );
@@ -1076,7 +1107,8 @@ async fn test_25_create_table_with_storage() {
 
     let response = server.execute_sql(create_table).await;
     assert_eq!(
-        response.status, "success",
+        response.status,
+        ResponseStatus::Success,
         "CREATE TABLE with STORAGE failed: {:?}",
         response.error
     );
@@ -1116,7 +1148,8 @@ async fn test_26_create_table_default_storage() {
 
     let response = server.execute_sql(create_table).await;
     assert_eq!(
-        response.status, "success",
+        response.status,
+        ResponseStatus::Success,
         "CREATE TABLE failed: {:?}",
         response.error
     );
@@ -1162,7 +1195,7 @@ async fn test_27_create_table_invalid_storage() {
     // Current implementation allows table creation with invalid storage
     // Validation happens at flush time, not creation time
     // This test documents current behavior
-    if response.status == "error" {
+    if response.status == kalamdb_api::models::ResponseStatus::Error {
         // If validation is added in future, check error message
         assert!(
             response.error.as_ref().unwrap().message.contains("storage")
@@ -1183,7 +1216,7 @@ async fn test_27_create_table_invalid_storage() {
         );
     } else {
         // Table created successfully - storage will be validated at flush time
-        assert_eq!(response.status, "success");
+        assert_eq!(response.status, ResponseStatus::Success);
     }
 }
 
@@ -1208,7 +1241,8 @@ async fn test_28_table_storage_assignment() {
 
     let response = server.execute_sql(create_table).await;
     assert_eq!(
-        response.status, "success",
+        response.status,
+        ResponseStatus::Success,
         "CREATE TABLE failed: {:?}",
         response.error
     );
@@ -1266,7 +1300,8 @@ async fn test_29_delete_storage_with_tables() {
     let response = server.execute_sql(drop_storage).await;
 
     assert_eq!(
-        response.status, "error",
+        response.status,
+        ResponseStatus::Error,
         "Should not allow deleting storage with dependent tables"
     );
 
@@ -1298,7 +1333,8 @@ async fn test_30_delete_storage_local_protected() {
     let response = server.execute_sql(drop_storage).await;
 
     assert_eq!(
-        response.status, "error",
+        response.status,
+        ResponseStatus::Error,
         "'local' storage should be protected from deletion"
     );
 
@@ -1339,7 +1375,8 @@ async fn test_31_delete_storage_no_dependencies() {
     let response = server.execute_sql(drop_storage).await;
 
     assert_eq!(
-        response.status, "success",
+        response.status,
+        ResponseStatus::Success,
         "Should allow deleting storage with no dependencies: {:?}",
         response.error
     );
@@ -1376,7 +1413,8 @@ async fn test_32_show_storages_ordering() {
     // Query SHOW STORAGES
     let response = server.execute_sql("SHOW STORAGES").await;
     assert_eq!(
-        response.status, "success",
+        response.status,
+        ResponseStatus::Success,
         "SHOW STORAGES failed: {:?}",
         response.error
     );
@@ -1435,7 +1473,7 @@ async fn test_33_storage_template_validation() {
 
     // Current implementation may allow this - template validation happens at different stages
     // This test documents expected behavior for future implementation
-    if response.status == "error" {
+    if response.status == kalamdb_api::models::ResponseStatus::Error {
         assert!(
             response
                 .error
@@ -1477,7 +1515,8 @@ async fn test_34_shared_table_template_ordering() {
 
     let response = server.execute_sql(create_storage).await;
     assert_eq!(
-        response.status, "success",
+        response.status,
+        ResponseStatus::Success,
         "CREATE STORAGE with correct template order should succeed: {:?}",
         response.error
     );
@@ -1512,7 +1551,8 @@ async fn test_35_user_table_template_ordering() {
 
     let response = server.execute_sql(create_storage).await;
     assert_eq!(
-        response.status, "success",
+        response.status,
+        ResponseStatus::Success,
         "CREATE STORAGE with correct user template order should succeed: {:?}",
         response.error
     );
@@ -1540,7 +1580,7 @@ async fn test_36_user_table_template_requires_userId() {
 
     // Current implementation may allow this - validation happens at flush time
     // This test documents expected behavior
-    if response.status == "error" {
+    if response.status == kalamdb_api::models::ResponseStatus::Error {
         assert!(
             response.error.as_ref().unwrap().message.contains("userId")
                 || response
@@ -1595,7 +1635,8 @@ async fn test_37_flush_with_use_user_storage() {
 
     let response = server.execute_sql(create_table).await;
     assert_eq!(
-        response.status, "success",
+        response.status,
+        ResponseStatus::Success,
         "CREATE TABLE with custom storage should succeed: {:?}",
         response.error
     );
@@ -1637,7 +1678,8 @@ async fn test_38_user_storage_mode_region() {
 
     let response = server.execute_sql(create_table).await;
     assert_eq!(
-        response.status, "success",
+        response.status,
+        ResponseStatus::Success,
         "CREATE TABLE failed: {:?}",
         response.error
     );
@@ -1668,7 +1710,8 @@ async fn test_39_user_storage_mode_table() {
 
     let response = server.execute_sql(create_table).await;
     assert_eq!(
-        response.status, "success",
+        response.status,
+        ResponseStatus::Success,
         "CREATE TABLE failed: {:?}",
         response.error
     );
@@ -1718,7 +1761,8 @@ async fn test_40_flush_resolves_s3_storage() {
 
     let response = server.execute_sql(create_table).await;
     assert_eq!(
-        response.status, "success",
+        response.status,
+        ResponseStatus::Success,
         "CREATE TABLE failed: {:?}",
         response.error
     );

@@ -10,12 +10,18 @@ pub mod error;
 pub mod filter;
 pub mod initial_data;
 pub mod manager;
+pub mod notification;
+pub mod query_parser;
+pub mod subscription;
+pub mod types;
 
 pub use connection_registry::{
     ConnectionId, LiveId, LiveQueryOptions, LiveQueryRegistry, NodeId, SubscriptionHandle, UserId,
 };
 pub use filter::{FilterCache, FilterPredicate};
 pub use initial_data::{InitialDataFetcher, InitialDataOptions, InitialDataResult};
-pub use manager::{
-    ChangeNotification, ChangeType, LiveQueryManager, RegistryStats, SubscriptionResult,
-};
+pub use manager::LiveQueryManager;
+pub use notification::NotificationService;
+pub use query_parser::QueryParser;
+pub use subscription::SubscriptionService;
+pub use types::{ChangeNotification, ChangeType, RegistryStats, SubscriptionResult};

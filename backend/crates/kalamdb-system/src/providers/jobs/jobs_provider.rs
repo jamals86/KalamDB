@@ -15,9 +15,12 @@ use datafusion::datasource::{TableProvider, TableType};
 use datafusion::error::{DataFusionError, Result as DataFusionResult};
 use datafusion::logical_expr::Expr;
 use datafusion::physical_plan::ExecutionPlan;
-use kalamdb_commons::{system::Job, JobId, JobStatus};
+use kalamdb_commons::{
+    system::{Job, JobFilter, JobSortField, SortOrder},
+    JobId, JobStatus, StoragePartition,
+};
 use kalamdb_store::entity_store::EntityStore;
-use kalamdb_store::StorageBackend;
+use kalamdb_store::{Partition, StorageBackend};
 use std::any::Any;
 use std::sync::Arc;
 
@@ -50,6 +53,15 @@ impl JobsTableProvider {
 
     /// Create a new job entry
     pub fn create_job(&self, job: Job) -> Result<(), SystemError> {
+        // Maintain index: Status + CreatedAt + JobId
+        let index_key = make_status_index_key(job.status, job.created_at, &job.job_id);
+        let partition = Partition::new(StoragePartition::SystemJobsStatusIdx.name());
+        self.store.backend().put(
+            &partition,
+            &index_key,
+            job.job_id.as_bytes(),
+        )?;
+
         self.store.put(&job.job_id, &job)?;
         Ok(())
     }
@@ -72,28 +84,208 @@ impl JobsTableProvider {
     /// Update an existing job entry
     pub fn update_job(&self, job: Job) -> Result<(), SystemError> {
         // Check if job exists
-        if self.store.get(&job.job_id)?.is_none() {
+        let old_job = self.store.get(&job.job_id)?;
+        if old_job.is_none() {
             return Err(SystemError::NotFound(format!(
                 "Job not found: {}",
                 job.job_id
             )));
         }
+        let old_job = old_job.unwrap();
 
         validate_job_update(&job)?;
+
+        // Maintain index if status or created_at changed (created_at shouldn't change, but just in case)
+        if old_job.status != job.status || old_job.created_at != job.created_at {
+            let partition = Partition::new(StoragePartition::SystemJobsStatusIdx.name());
+            
+            // Remove old index entry
+            let old_index_key =
+                make_status_index_key(old_job.status, old_job.created_at, &old_job.job_id);
+            self.store
+                .backend()
+                .delete(&partition, &old_index_key)?;
+
+            // Add new index entry
+            let new_index_key = make_status_index_key(job.status, job.created_at, &job.job_id);
+            self.store.backend().put(
+                &partition,
+                &new_index_key,
+                job.job_id.as_bytes(),
+            )?;
+        }
+
         self.store.put(&job.job_id, &job)?;
         Ok(())
     }
 
     /// Delete a job entry
     pub fn delete_job(&self, job_id: &JobId) -> Result<(), SystemError> {
+        // Get job to remove index entry
+        if let Some(job) = self.store.get(job_id)? {
+            let index_key = make_status_index_key(job.status, job.created_at, &job.job_id);
+            let partition = Partition::new(StoragePartition::SystemJobsStatusIdx.name());
+            self.store
+                .backend()
+                .delete(&partition, &index_key)?;
+        }
+
         self.store.delete(job_id)?;
         Ok(())
     }
 
     /// List all jobs
     pub fn list_jobs(&self) -> Result<Vec<Job>, SystemError> {
-        let jobs = self.store.scan_all()?;
-        Ok(jobs.into_iter().map(|(_, job)| job).collect())
+        self.list_jobs_filtered(&JobFilter::default())
+    }
+
+    /// List jobs with filter
+    pub fn list_jobs_filtered(&self, filter: &JobFilter) -> Result<Vec<Job>, SystemError> {
+        // Optimization: If filtering by status(es) and sorting by CreatedAt ASC, use the index
+        let use_index = filter.sort_by == Some(JobSortField::CreatedAt)
+            && filter.sort_order == Some(SortOrder::Asc)
+            && (filter.status.is_some() || filter.statuses.is_some());
+
+        if use_index {
+            let mut jobs = Vec::new();
+            let limit = filter.limit.unwrap_or(usize::MAX);
+
+            // Collect statuses to scan
+            let mut statuses = Vec::new();
+            if let Some(s) = filter.status {
+                statuses.push(s);
+            }
+            if let Some(ref s_list) = filter.statuses {
+                statuses.extend(s_list.iter().cloned());
+            }
+            // Deduplicate and sort statuses to scan in order (New=0, Queued=1, etc.)
+            statuses.sort_by_key(|s| status_to_u8(*s));
+            statuses.dedup();
+
+            let partition = Partition::new(StoragePartition::SystemJobsStatusIdx.name());
+
+            for status in statuses {
+                if jobs.len() >= limit {
+                    break;
+                }
+
+                // Prefix for this status: [status_byte]
+                let prefix = vec![status_to_u8(status)];
+                
+                // Scan index
+                let index_entries = self.store.backend().scan(
+                    &partition,
+                    Some(&prefix),
+                    None, // Start key (could optimize created_after here)
+                    Some(limit - jobs.len()), // Remaining limit
+                )?;
+
+                for (_, job_id_bytes) in index_entries {
+                    let job_id_str = String::from_utf8(job_id_bytes).map_err(|e| {
+                        SystemError::Other(format!("Invalid JobId in index: {}", e))
+                    })?;
+                    let job_id = JobId::new(job_id_str);
+
+                    if let Some(job) = self.store.get(&job_id)? {
+                        // Apply other filters that index doesn't cover
+                        if self.matches_filter(&job, filter) {
+                            jobs.push(job);
+                        }
+                    }
+                }
+            }
+            
+            return Ok(jobs);
+        }
+
+        // Fallback to full scan
+        let all_jobs = self.store.scan_all(None, None, None)?;
+        let mut jobs: Vec<Job> = all_jobs.into_iter().map(|(_, job)| job).collect();
+
+        // Apply filters in memory
+        jobs.retain(|job| self.matches_filter(job, filter));
+
+        // Sort
+        if let Some(sort_by) = filter.sort_by {
+            match sort_by {
+                JobSortField::CreatedAt => jobs.sort_by_key(|j| j.created_at),
+                JobSortField::UpdatedAt => jobs.sort_by_key(|j| j.updated_at),
+                JobSortField::Priority => jobs.sort_by_key(|j| j.priority.unwrap_or(0)),
+            }
+            
+            if filter.sort_order == Some(SortOrder::Desc) {
+                jobs.reverse();
+            }
+        }
+
+        // Limit
+        if let Some(limit) = filter.limit {
+            if jobs.len() > limit {
+                jobs.truncate(limit);
+            }
+        }
+
+        Ok(jobs)
+    }
+
+    fn matches_filter(&self, job: &Job, filter: &JobFilter) -> bool {
+        // Filter by status (single)
+        if let Some(ref status) = filter.status {
+            if status != &job.status {
+                return false;
+            }
+        }
+
+        // Filter by statuses (multiple)
+        if let Some(ref statuses) = filter.statuses {
+            if !statuses.contains(&job.status) {
+                return false;
+            }
+        }
+
+        // Filter by job type
+        if let Some(ref job_type) = filter.job_type {
+            if job_type != &job.job_type {
+                return false;
+            }
+        }
+
+        // Filter by namespace
+        if let Some(ref namespace) = filter.namespace_id {
+            if namespace != &job.namespace_id {
+                return false;
+            }
+        }
+
+        // Filter by table name
+        if let Some(ref table_name) = filter.table_name {
+            if job.table_name.as_ref() != Some(table_name) {
+                return false;
+            }
+        }
+
+        // Filter by idempotency key
+        if let Some(ref key) = filter.idempotency_key {
+            if job.idempotency_key.as_ref() != Some(key) {
+                return false;
+            }
+        }
+        
+        // Filter by created_after
+        if let Some(after) = filter.created_after {
+            if job.created_at < after {
+                return false;
+            }
+        }
+
+        // Filter by created_before
+        if let Some(before) = filter.created_before {
+            if job.created_at >= before {
+                return false;
+            }
+        }
+
+        true
     }
 
     /// Cancel a running job
@@ -153,9 +345,8 @@ impl JobsTableProvider {
         Ok(deleted)
     }
 
-    /// Scan all jobs and return as RecordBatch
-    pub fn scan_all_jobs(&self) -> Result<RecordBatch, SystemError> {
-        let jobs = self.store.scan_all()?;
+    /// Helper to create RecordBatch from jobs
+    fn create_batch(&self, jobs: Vec<(Vec<u8>, Job)>) -> Result<RecordBatch, SystemError> {
         let row_count = jobs.len();
 
         // Pre-allocate builders for optimal performance
@@ -218,6 +409,12 @@ impl JobsTableProvider {
 
         Ok(batch)
     }
+
+    /// Scan all jobs and return as RecordBatch
+    pub fn scan_all_jobs(&self) -> Result<RecordBatch, SystemError> {
+        let jobs = self.store.scan_all(None, None, None)?;
+        self.create_batch(jobs)
+    }
 }
 
 fn validate_job_update(job: &Job) -> Result<(), SystemError> {
@@ -259,6 +456,28 @@ fn validate_job_update(job: &Job) -> Result<(), SystemError> {
     Ok(())
 }
 
+fn status_to_u8(status: JobStatus) -> u8 {
+    match status {
+        JobStatus::New => 0,
+        JobStatus::Queued => 1,
+        JobStatus::Running => 2,
+        JobStatus::Retrying => 3,
+        JobStatus::Completed => 4,
+        JobStatus::Failed => 5,
+        JobStatus::Cancelled => 6,
+    }
+}
+
+fn make_status_index_key(status: JobStatus, created_at: i64, job_id: &JobId) -> Vec<u8> {
+    let status_byte = status_to_u8(status);
+    
+    let mut key = Vec::with_capacity(1 + 8 + job_id.as_bytes().len());
+    key.push(status_byte);
+    key.extend_from_slice(&created_at.to_be_bytes());
+    key.extend_from_slice(job_id.as_bytes());
+    key
+}
+
 #[async_trait]
 impl TableProvider for JobsTableProvider {
     fn as_any(&self) -> &dyn Any {
@@ -277,18 +496,50 @@ impl TableProvider for JobsTableProvider {
         &self,
         _state: &dyn datafusion::catalog::Session,
         projection: Option<&Vec<usize>>,
-        _filters: &[Expr],
-        _limit: Option<usize>,
+        filters: &[Expr],
+        limit: Option<usize>,
     ) -> DataFusionResult<Arc<dyn ExecutionPlan>> {
         use datafusion::datasource::MemTable;
+        use datafusion::logical_expr::Operator;
+        use datafusion::scalar::ScalarValue;
+
+        let mut start_key = None;
+        let mut prefix = None;
+
+        // Extract start_key/prefix from filters
+        for expr in filters {
+            if let Expr::BinaryExpr(binary) = expr {
+                if let Expr::Column(col) = binary.left.as_ref() {
+                    if let Expr::Literal(val, _) = binary.right.as_ref() {
+                        if col.name == "job_id" {
+                            if let ScalarValue::Utf8(Some(s)) = val {
+                                match binary.op {
+                                    Operator::Eq => {
+                                        prefix = Some(JobId::new(s));
+                                    }
+                                    Operator::Gt | Operator::GtEq => {
+                                        start_key = Some(JobId::new(s));
+                                    }
+                                    _ => {}
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
         let schema = self.schema.clone();
-        let batch = self.scan_all_jobs().map_err(|e| {
-            DataFusionError::Execution(format!("Failed to build jobs batch: {}", e))
-        })?;
+        let jobs = self.store.scan_all(limit, prefix.as_ref(), start_key.as_ref())
+            .map_err(|e| DataFusionError::Execution(format!("Failed to scan jobs: {}", e)))?;
+
+        let batch = self.create_batch(jobs)
+            .map_err(|e| DataFusionError::Execution(format!("Failed to build jobs batch: {}", e)))?;
+
         let partitions = vec![vec![batch]];
         let table = MemTable::try_new(schema, partitions)
             .map_err(|e| DataFusionError::Execution(format!("Failed to create MemTable: {}", e)))?;
-        table.scan(_state, projection, &[], _limit).await
+        table.scan(_state, projection, &[], limit).await
     }
 }
 

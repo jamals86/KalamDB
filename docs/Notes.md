@@ -243,6 +243,15 @@ instead of: 1 failed: Invalid operation: No handler registered for statement typ
   - Check the order of the recieved rows is correct in the batch
   - Check if the rows is correct in the changes notification as well
 
+
+
+169) clear_plan_cache should be called in any DDL that is happening
+170) Make a way to set the namespace once per session and then we can use it in the next queries
+
+171) Use sqlparser-rs for CREATE TABLE parsing as well instead of our own custom parser
+172) instead of returning: (NamespaceId, TableName) return TableId directly
+
+
 Here’s the updated 5-line spec with embedding storage inside Parquet and managed HNSW indexing (with delete handling):
 	1.	Parquet Storage: All embeddings are stored as regular columns in the Parquet file alongside other table columns to keep data unified and versioned per batch.
 	2.	Temp Indexing: On each row insert/update, serialize embeddings into a temporary .hnsw file under /tmp/kalamdb/{namespace}/{table}/{column}-hot_index.hnsw for fast incremental indexing.
