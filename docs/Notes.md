@@ -247,6 +247,10 @@ instead of: 1 failed: Invalid operation: No handler registered for statement typ
 
 168) CurrentUserFunction is not being registered corectly it should look at the sessionstate and not like this: CurrentUserFunction::with_user_id(uid.as_str()) so we register it one time and it read from the sessionstate directly
 
+169) clear_plan_cache should be called in any DDL that is happening
+170) Make a way to set the namespace once per session and then we can use it in the next queries
+
+
 
 
 Here’s the updated 5-line spec with embedding storage inside Parquet and managed HNSW indexing (with delete handling):
