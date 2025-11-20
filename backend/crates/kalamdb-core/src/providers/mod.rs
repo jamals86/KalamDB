@@ -24,7 +24,11 @@
 
 pub mod arrow_json_conversion; // Shared Arrow<->JSON utilities used by providers and flush
 pub mod base;
+pub mod core;
 pub mod flush; // Phase 13.7: Consolidated flush logic from tables/
+pub mod helpers;
+pub mod parquet;
+pub mod scan_row;
 pub mod shared;
 pub mod streams;
 pub mod unified_dml; // Phase 13.6: Moved from tables/

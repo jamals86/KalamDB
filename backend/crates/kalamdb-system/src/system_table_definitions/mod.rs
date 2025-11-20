@@ -1,29 +1,21 @@
-//! System table schema definitions using consolidated TableDefinition models.
-//!
-//! This module defines the schemas for all KalamDB system tables:
-//! - system.users
-//! - system.jobs
-//! - system.namespaces
-//! - system.storages
-//! - system.live_queries
-//! - system.tables
-//! - system.table_schemas (new)
-//!
-//! All schemas are defined using the unified TableDefinition model from
-//! kalamdb-commons, ensuring consistency across the codebase.
+pub mod jobs;
+pub mod live_queries;
+pub mod manifest;
+pub mod namespaces;
+pub mod storages;
+pub mod tables;
+pub mod users;
+
+pub use jobs::jobs_table_definition;
+pub use live_queries::live_queries_table_definition;
+pub use manifest::manifest_table_definition;
+pub use namespaces::namespaces_table_definition;
+pub use storages::storages_table_definition;
+pub use tables::{table_schemas_table_definition, tables_table_definition};
+pub use users::users_table_definition;
 
 use kalamdb_commons::models::TableId;
 use kalamdb_commons::schemas::TableDefinition;
-
-pub mod definitions;
-
-pub use definitions::jobs::jobs_table_definition;
-pub use definitions::live_queries::live_queries_table_definition;
-pub use definitions::manifest::manifest_table_definition;
-pub use definitions::namespaces::namespaces_table_definition;
-pub use definitions::storages::storages_table_definition;
-pub use definitions::tables::{table_schemas_table_definition, tables_table_definition};
-pub use definitions::users::users_table_definition;
 
 /// Get TableId for a system table
 pub fn system_table_id(table_name: &str) -> TableId {

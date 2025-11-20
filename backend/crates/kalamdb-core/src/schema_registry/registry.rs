@@ -16,114 +16,16 @@
 //! - Better performance (single lookup instead of potentially two)
 
 use crate::error::KalamDbError;
-use dashmap::DashMap;
+use crate::schema_registry::cached_table_data::CachedTableData;
+use crate::schema_registry::path_resolver::PathResolver;
+use crate::schema_registry::persistence::SchemaPersistence;
+use crate::schema_registry::provider_registry::ProviderRegistry;
+use crate::schema_registry::table_cache::TableCache;
 use datafusion::datasource::TableProvider;
 use kalamdb_commons::models::schemas::TableDefinition;
 use kalamdb_commons::models::{NamespaceId, StorageId, TableId, TableName, UserId};
 use kalamdb_commons::schemas::TableType;
-use std::sync::atomic::{AtomicU64, Ordering};
-use std::sync::{Arc, OnceLock, RwLock};
-
-/// Cached table data containing all metadata and schema information
-///
-/// This struct consolidates data previously split between separate caches
-/// to eliminate duplication.
-///
-/// **Performance Note**: `last_accessed` timestamp is stored separately in SchemaRegistry
-/// to avoid cloning this entire struct on every cache access.
-///
-/// **Clone Semantics**: Clone is cheap (O(1)) because all owned data is behind Arc pointers.
-/// Cloning only increments Arc reference counts without copying the underlying TableDefinition.
-/// This enables zero-copy sharing of table metadata across multiple threads and components.
-#[derive(Debug, Clone)]
-pub struct CachedTableData {
-    /// Full schema definition with all columns
-    pub table: Arc<TableDefinition>,
-
-    /// Reference to storage configuration in system.storages
-    pub storage_id: Option<StorageId>,
-
-    /// Partially-resolved storage path template
-    /// Static placeholders substituted ({namespace}, {tableName}), dynamic ones remain ({userId}, {shard})
-    pub storage_path_template: String, //TODO: Use PathBuf instead of String
-
-    /// Current schema version number
-    pub schema_version: u32,
-
-    /// Memoized Arrow schema for DataFusion integration (Phase 10, US1, FR-002)
-    ///
-    /// Computed once on first access via lazy initialization with double-check locking.
-    /// Eliminates repeated `to_arrow_schema()` calls (50-100μs each) after initial computation.
-    ///
-    /// **Performance**: 50-100× speedup for repeated schema access (75μs → 1.5μs)
-    /// **Thread Safety**: RwLock allows concurrent reads, exclusive writes for initialization
-    arrow_schema: Arc<RwLock<Option<Arc<datafusion::arrow::datatypes::Schema>>>>,
-}
-
-impl CachedTableData {
-    /// Create new cached table data
-    #[allow(clippy::too_many_arguments)]
-    pub fn new(schema: Arc<TableDefinition>) -> Self {
-        let schema_version = schema.schema_version;
-        Self {
-            table: schema,
-            storage_id: None,
-            storage_path_template: String::new(),
-            schema_version,
-            arrow_schema: Arc::new(RwLock::new(None)), // Phase 10, US1, FR-002: Lazy init on first access
-        }
-    }
-
-    /// Get or compute Arrow schema with double-check locking (Phase 10, US1, FR-003)
-    ///
-    /// **Performance**: First call computes schema (~75μs), subsequent calls return cached Arc (~1.5μs)
-    /// This achieves 50-100× speedup for repeated access.
-    ///
-    /// **Thread Safety**: Uses double-check locking pattern:
-    /// 1. Fast path: Read lock → check if Some → return Arc::clone (concurrent reads)
-    /// 2. Slow path: Write lock → double-check → compute → cache → return (exclusive write)
-    ///
-    /// # Returns
-    /// Arc-wrapped Arrow Schema for zero-copy sharing across TableProvider instances
-    ///
-    /// # Panics
-    /// Panics if RwLock is poisoned (unrecoverable lock corruption)
-    pub fn arrow_schema(&self) -> Result<Arc<datafusion::arrow::datatypes::Schema>, KalamDbError> {
-        // Fast path: Check if already computed (concurrent reads allowed)
-        {
-            let read_guard = self
-                .arrow_schema
-                .read()
-                .expect("RwLock poisoned: arrow_schema read lock failed");
-            if let Some(schema) = read_guard.as_ref() {
-                return Ok(Arc::clone(schema)); // 1.5μs cached access
-            }
-        }
-
-        // Slow path: Compute and cache (exclusive write)
-        {
-            let mut write_guard = self
-                .arrow_schema
-                .write()
-                .expect("RwLock poisoned: arrow_schema write lock failed");
-
-            // Double-check: Another thread may have computed while we waited for write lock
-            if let Some(schema) = write_guard.as_ref() {
-                return Ok(Arc::clone(schema));
-            }
-
-            // Compute Arrow schema from TableDefinition (~75μs first time)
-            let arrow_schema = self.table.to_arrow_schema().map_err(|e| {
-                KalamDbError::SchemaError(format!("Failed to convert to Arrow schema: {}", e))
-            })?;
-
-            // Cache for future access
-            *write_guard = Some(Arc::clone(&arrow_schema));
-
-            Ok(arrow_schema)
-        }
-    }
-}
+use std::sync::Arc;
 
 /// Unified schema cache for table metadata and schemas
 ///
@@ -131,263 +33,55 @@ impl CachedTableData {
 ///
 /// **Performance Optimization**: LRU timestamps are stored separately to avoid
 /// cloning large CachedTableData structs on every access.
+#[derive(Debug)]
 pub struct SchemaRegistry {
-    /// Cached table data indexed by TableId
-    cache: DashMap<TableId, Arc<CachedTableData>>,
+    /// Cache for table data
+    table_cache: TableCache,
 
-    /// LRU timestamps indexed by TableId (separate to avoid cloning CachedTableData)
-    lru_timestamps: DashMap<TableId, AtomicU64>,
-
-    /// Cached DataFusion providers per table (shared/stream safe to reuse)
-    providers: DashMap<TableId, Arc<dyn TableProvider + Send + Sync>>,
-
-    /// DataFusion base session context for table registration (set once during init)
-    base_session_context: OnceLock<Arc<datafusion::prelude::SessionContext>>,
-
-    /// Maximum number of entries before LRU eviction
-    max_size: usize,
-
-    /// Storage registry for resolving path templates
-    /// TODO: Replace with trait abstraction after extracting to kalamdb-registry
-    // storage_registry: Option<Arc<dyn StorageRegistryTrait>>,
-
-    /// Cache hit count (for metrics)
-    hits: AtomicU64,
-
-    /// Cache miss count (for metrics)
-    misses: AtomicU64,
-}
-
-impl std::fmt::Debug for SchemaRegistry {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("SchemaRegistry")
-            .field("cache_entries", &self.cache.len())
-            .field("provider_entries", &self.providers.len())
-            .field("max_size", &self.max_size)
-            .field("hits", &self.hits.load(Ordering::Relaxed))
-            .field("misses", &self.misses.load(Ordering::Relaxed))
-            .finish()
-    }
+    /// Registry for DataFusion providers
+    provider_registry: ProviderRegistry,
 }
 
 impl SchemaRegistry {
     /// Create a new schema cache with specified maximum size
-    ///
-    /// # Arguments
-    /// * `max_size` - Maximum number of table entries before LRU eviction (0 = unlimited)
-    /// * `storage_registry` - Optional storage registry for path template resolution
-    ///
-    /// # Example
-    /// ```ignore
-    /// // Creating a SchemaRegistry without a StorageRegistry (path resolution disabled)
-    /// use kalamdb_core::schema_registry::SchemaRegistry;
-    /// let registry = SchemaRegistry::new(10_000);
-    ///
-    /// // If you need storage path template resolution, construct a StorageRegistry
-    /// // with the required dependencies and pass `Some(Arc<StorageRegistry>)` instead.
-    /// ```
     pub fn new(max_size: usize) -> Self {
         Self {
-            cache: DashMap::new(),
-            lru_timestamps: DashMap::new(),
-            providers: DashMap::new(),
-            base_session_context: OnceLock::new(),
-            max_size,
-            // storage_registry,
-            hits: AtomicU64::new(0),
-            misses: AtomicU64::new(0),
+            table_cache: TableCache::new(max_size),
+            provider_registry: ProviderRegistry::new(),
         }
     }
 
     /// Set the DataFusion base session context for table registration
-    ///
-    /// This must be called during AppContext initialization, after the base session is created.
-    /// Can only be called once - subsequent calls are ignored.
     pub fn set_base_session_context(&self, session: Arc<datafusion::prelude::SessionContext>) {
-        let _ = self.base_session_context.set(session);
-    }
-
-    /// Get current Unix timestamp in milliseconds
-    fn current_timestamp() -> u64 {
-        use std::time::{SystemTime, UNIX_EPOCH};
-        SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .unwrap()
-            .as_millis() as u64
+        self.provider_registry.set_base_session_context(session);
     }
 
     /// Get cached table data by TableId
-    ///
-    /// Updates LRU timestamp on cache hit.
-    ///
-    /// # Arguments
-    /// * `table_id` - Composite table identifier
-    ///
-    /// # Returns
-    /// `Some(Arc<CachedTableData>)` if found, `None` otherwise
-    ///
-    /// # Example
-    /// ```no_run
-    /// # use kalamdb_core::schema_registry::SchemaRegistry;
-    /// # use kalamdb_commons::models::{TableId, NamespaceId, TableName};
-    /// # let cache = SchemaRegistry::new(1000);
-    /// let table_id = TableId::new(
-    ///     NamespaceId::new("my_namespace"),
-    ///     TableName::new("my_table")
-    /// );
-    /// if let Some(data) = cache.get(&table_id) {
-    ///     println!("Found table: {:?}", data.schema);
-    /// }
-    /// ```
     pub fn get(&self, table_id: &TableId) -> Option<Arc<CachedTableData>> {
-        if let Some(entry) = self.cache.get(table_id) {
-            self.hits.fetch_add(1, Ordering::Relaxed);
-
-            // Update LRU timestamp in separate map (avoids cloning CachedTableData)
-            if let Some(timestamp) = self.lru_timestamps.get(table_id) {
-                timestamp.store(Self::current_timestamp(), Ordering::Relaxed);
-            }
-
-            // Return Arc clone (cheap - just increments reference count)
-            Some(Arc::clone(entry.value()))
-        } else {
-            self.misses.fetch_add(1, Ordering::Relaxed);
-            None
-        }
+        self.table_cache.get(table_id)
     }
 
     /// Get cached table data by namespace and table name
-    ///
-    /// Convenience method that creates TableId internally.
-    ///
-    /// # Arguments
-    /// * `namespace` - Namespace identifier
-    /// * `table_name` - Table name
-    ///
-    /// # Returns
-    /// `Some(Arc<CachedTableData>)` if found, `None` otherwise
-    ///
-    /// # Example
-    /// ```no_run
-    /// # use kalamdb_core::schema_registry::SchemaRegistry;
-    /// # use kalamdb_commons::models::{NamespaceId, TableName};
-    /// # let cache = SchemaRegistry::new(1000);
-    /// if let Some(data) = cache.get_by_name(
-    ///     &NamespaceId::new("my_namespace"),
-    ///     &TableName::new("my_table")
-    /// ) {
-    ///     println!("Found table type: {:?}", data.table_type);
-    /// }
-    /// ```
     pub fn get_by_name(
         &self,
         namespace: &NamespaceId,
         table_name: &TableName,
     ) -> Option<Arc<CachedTableData>> {
-        let table_id = TableId::new(namespace.clone(), table_name.clone());
-        self.get(&table_id)
+        self.table_cache.get_by_name(namespace, table_name)
     }
 
     /// Insert or update cached table data
-    ///
-    /// Performs LRU eviction if max_size is exceeded.
-    ///
-    /// # Arguments
-    /// * `table_id` - Composite table identifier
-    /// * `data` - Table data to cache
-    ///
-    /// # Example
-    /// ```ignore
-    /// // Create `CachedTableData` with your real TableDefinition and insert it.
-    /// // See unit tests in this file for a complete, compiling example.
-    /// ```
     pub fn insert(&self, table_id: TableId, data: Arc<CachedTableData>) {
-        // Check if we need to evict before inserting
-        if self.max_size > 0 && self.cache.len() >= self.max_size {
-            self.evict_lru();
-        }
-
-        // Insert data and initialize LRU timestamp
-        self.lru_timestamps
-            .insert(table_id.clone(), AtomicU64::new(Self::current_timestamp()));
-        self.cache.insert(table_id, data);
+        self.table_cache.insert(table_id, data);
     }
 
     /// Invalidate (remove) cached table data
-    ///
-    /// Used when table is dropped or altered.
-    ///
-    /// # Arguments
-    /// * `table_id` - Composite table identifier
-    ///
-    /// # Example
-    /// ```no_run
-    /// # use kalamdb_core::schema_registry::SchemaRegistry;
-    /// # use kalamdb_commons::models::{TableId, NamespaceId, TableName};
-    /// # let cache = SchemaRegistry::new(1000);
-    /// let table_id = TableId::new(
-    ///     NamespaceId::new("my_namespace"),
-    ///     TableName::new("my_table")
-    /// );
-    /// cache.invalidate(&table_id);
-    /// ```
     pub fn invalidate(&self, table_id: &TableId) {
-        self.cache.remove(table_id);
-        self.lru_timestamps.remove(table_id);
-        self.providers.remove(table_id);
-    }
-
-    /// Evict least-recently-used entry from cache
-    ///
-    /// Scans LRU timestamps to find oldest entry.
-    /// This is O(n) but only called when max_size is exceeded.
-    fn evict_lru(&self) {
-        let mut oldest_key: Option<TableId> = None;
-        let mut oldest_timestamp = u64::MAX;
-
-        // Find entry with oldest last_accessed timestamp
-        for entry in self.lru_timestamps.iter() {
-            let timestamp = entry.value().load(Ordering::Relaxed);
-            if timestamp < oldest_timestamp {
-                oldest_timestamp = timestamp;
-                oldest_key = Some(entry.key().clone());
-            }
-        }
-
-        // Remove oldest entry from both maps
-        if let Some(key) = oldest_key {
-            self.cache.remove(&key);
-            self.lru_timestamps.remove(&key);
-        }
+        self.table_cache.invalidate(table_id);
+        let _ = self.provider_registry.remove_provider(table_id);
     }
 
     /// Resolve storage path with dynamic placeholders substituted
-    ///
-    /// Takes partially-resolved template from CachedTableData and substitutes
-    /// dynamic placeholders ({userId}, {shard}) for final path.
-    ///
-    /// # Arguments
-    /// * `table_id` - Composite table identifier
-    /// * `user_id` - User ID for {userId} placeholder (optional)
-    /// * `shard` - Shard number for {shard} placeholder (optional)
-    ///
-    /// # Returns
-    /// `Ok(String)` with fully-resolved path, or `Err(KalamDbError)` if table not found
-    ///
-    /// # Example
-    /// ```no_run
-    /// # use kalamdb_core::schema_registry::SchemaRegistry;
-    /// # use kalamdb_commons::models::{TableId, NamespaceId, TableName, UserId};
-    /// # let cache = SchemaRegistry::new(1000);
-    /// # let table_id = TableId::new(NamespaceId::new("ns"), TableName::new("tbl"));
-    /// let path = cache.get_storage_path(
-    ///     &table_id,
-    ///     Some(&UserId::new("alice")),
-    ///     Some(0)
-    /// );
-    /// // Returns: "/data/ns/tbl/alice/shard_0/"
-    /// ```
-    /// TODO: Make this return PathBuf instead of String
     pub fn get_storage_path(
         &self,
         table_id: &TableId,
@@ -398,281 +92,56 @@ impl SchemaRegistry {
             .get(table_id)
             .ok_or_else(|| KalamDbError::TableNotFound(format!("Table not found: {}", table_id)))?;
 
-        // Start with the stored template and substitute dynamic placeholders
-        let mut relative = data.storage_path_template.clone();
-
-        // Substitute {userId} placeholder
-        if let Some(uid) = user_id {
-            relative = relative.replace("{userId}", uid.as_str());
-        }
-
-        // Substitute {shard} placeholder
-        if let Some(shard_num) = shard {
-            relative = relative.replace("{shard}", &format!("shard_{}", shard_num));
-        }
-
-        // Resolve base directory from storage configuration or default storage path
-        let app_ctx = crate::app_context::AppContext::get();
-        let default_base = app_ctx
-            .storage_registry()
-            .default_storage_path()
-            .to_string();
-
-        let base_dir = if let Some(storage_id) = data.storage_id.clone() {
-            let storages = app_ctx.system_tables().storages();
-            match storages.get_storage(&storage_id) {
-                Ok(Some(storage)) => {
-                    let trimmed = storage.base_directory.trim();
-                    if trimmed.is_empty() {
-                        default_base.clone()
-                    } else {
-                        trimmed.to_string()
-                    }
-                }
-                _ => default_base.clone(),
-            }
-        } else {
-            default_base.clone()
-        };
-
-        // Join base directory with relative path (normalize leading slashes)
-        let mut rel = relative;
-        if rel.starts_with('/') {
-            rel = rel.trim_start_matches('/').to_string();
-        }
-
-        let full_path = std::path::PathBuf::from(base_dir).join(rel);
-        Ok(full_path.to_string_lossy().to_string())
+        PathResolver::get_storage_path(&data, user_id, shard)
     }
 
     /// Get cache hit rate (for metrics)
-    ///
-    /// # Returns
-    /// Hit rate as percentage (0.0 to 1.0)
     pub fn hit_rate(&self) -> f64 {
-        let hits = self.hits.load(Ordering::Relaxed);
-        let misses = self.misses.load(Ordering::Relaxed);
-        let total = hits + misses;
-
-        if total == 0 {
-            0.0
-        } else {
-            hits as f64 / total as f64
-        }
+        self.table_cache.hit_rate()
     }
 
     /// Get cache statistics
-    ///
-    /// # Returns
-    /// Tuple of (size, hits, misses, hit_rate)
     pub fn stats(&self) -> (usize, u64, u64, f64) {
-        let size = self.cache.len();
-        let hits = self.hits.load(Ordering::Relaxed);
-        let misses = self.misses.load(Ordering::Relaxed);
-        let hit_rate = self.hit_rate();
-
-        (size, hits, misses, hit_rate)
+        self.table_cache.stats()
     }
 
     /// Clear all cached data
-    ///
-    /// Useful for testing or manual cache invalidation.
     pub fn clear(&self) {
-        self.cache.clear();
-        self.lru_timestamps.clear();
-        self.providers.clear();
-        self.hits.store(0, Ordering::Relaxed);
-        self.misses.store(0, Ordering::Relaxed);
+        self.table_cache.clear();
+        self.provider_registry.clear();
     }
 
     /// Get number of cached entries
     pub fn len(&self) -> usize {
-        self.cache.len()
+        self.table_cache.len()
     }
 
     /// Check if cache is empty
     pub fn is_empty(&self) -> bool {
-        self.cache.is_empty()
+        self.table_cache.is_empty()
     }
 
     /// Insert a DataFusion provider into the cache for a table
-    ///
-    /// Automatically registers the table with DataFusion's catalog if base_session_context is set.
-    /// Creates the namespace schema if it doesn't exist.
-    ///
-    /// # Arguments
-    /// * `table_id` - Table identifier (contains namespace and table name)
-    /// * `provider` - TableProvider implementation to register
-    ///
-    /// # Errors
-    /// Returns error if DataFusion registration fails (e.g., duplicate table name)
     pub fn insert_provider(
         &self,
         table_id: TableId,
         provider: Arc<dyn TableProvider + Send + Sync>,
     ) -> Result<(), KalamDbError> {
-        log::info!(
-            "[SchemaRegistry] Inserting provider for table {}.{}",
-            table_id.namespace_id().as_str(),
-            table_id.table_name().as_str()
-        );
-        // Store in our cache
-        self.providers.insert(table_id.clone(), provider.clone());
-
-        // Also register with DataFusion's catalog if available
-        if let Some(base_session) = self.base_session_context.get() {
-            let catalog_name = base_session
-                .catalog_names()
-                .first()
-                .ok_or_else(|| KalamDbError::InvalidOperation("No catalogs available".to_string()))?
-                .clone();
-
-            let catalog = base_session.catalog(&catalog_name).ok_or_else(|| {
-                KalamDbError::InvalidOperation(format!("Catalog '{}' not found", catalog_name))
-            })?;
-
-            // Get or create namespace schema
-            let schema = catalog
-                .schema(table_id.namespace_id().as_str())
-                .unwrap_or_else(|| {
-                    // Create namespace schema if it doesn't exist
-                    let new_schema =
-                        Arc::new(datafusion::catalog::memory::MemorySchemaProvider::new());
-                    catalog
-                        .register_schema(table_id.namespace_id().as_str(), new_schema.clone())
-                        .expect("Failed to register namespace schema");
-                    new_schema
-                });
-
-            // Register table with DataFusion, tolerate duplicates
-            match schema.register_table(table_id.table_name().as_str().to_string(), provider) {
-                Ok(_) => {}
-                Err(e) => {
-                    let msg = e.to_string();
-                    // If the table already exists, treat as idempotent success
-                    if msg.to_lowercase().contains("already exists")
-                        || msg.to_lowercase().contains("exists")
-                    {
-                        log::warn!(
-                            "[SchemaRegistry] Table {}.{} already registered in DataFusion; continuing",
-                            table_id.namespace_id().as_str(),
-                            table_id.table_name().as_str()
-                        );
-                    } else {
-                        return Err(KalamDbError::InvalidOperation(format!(
-                            "Failed to register table with DataFusion: {}",
-                            e
-                        )));
-                    }
-                }
-            }
-
-            log::info!(
-                "[SchemaRegistry] Registered table {}.{} with DataFusion catalog",
-                table_id.namespace_id().as_str(),
-                table_id.table_name().as_str()
-            );
-        }
-
-        Ok(())
+        self.provider_registry
+            .insert_provider(table_id, provider)
     }
 
     /// Remove a cached DataFusion provider for a table and unregister from DataFusion
-    ///
-    /// Removes from internal cache and DataFusion's catalog.
-    /// Used during DROP TABLE operations.
-    ///
-    /// # Arguments
-    /// * `table_id` - Table identifier
-    ///
-    /// # Returns
-    /// Ok on success, error if unregistration fails
     pub fn remove_provider(&self, table_id: &TableId) -> Result<(), KalamDbError> {
-        // Remove from internal cache
-        let _ = self.providers.remove(table_id);
-
-        // Unregister from DataFusion if base_session_context is set
-        if let Some(base_session) = self.base_session_context.get() {
-            let catalog_name = base_session
-                .state()
-                .config()
-                .options()
-                .catalog
-                .default_catalog
-                .clone();
-
-            let catalog = base_session.catalog(&catalog_name).ok_or_else(|| {
-                KalamDbError::InvalidOperation(format!("Catalog '{}' not found", catalog_name))
-            })?;
-
-            // Get namespace schema
-            if let Some(schema) = catalog.schema(table_id.namespace_id().as_str()) {
-                // Deregister table from DataFusion
-                schema
-                    .deregister_table(table_id.table_name().as_str())
-                    .map_err(|e| {
-                        KalamDbError::InvalidOperation(format!(
-                            "Failed to deregister table from DataFusion: {}",
-                            e
-                        ))
-                    })?;
-
-                log::debug!(
-                    "Unregistered table {}.{} from DataFusion catalog",
-                    table_id.namespace_id().as_str(),
-                    table_id.table_name().as_str()
-                );
-            }
-        }
-
-        Ok(())
+        self.provider_registry.remove_provider(table_id)
     }
 
     /// Get a cached DataFusion provider for a table
     pub fn get_provider(&self, table_id: &TableId) -> Option<Arc<dyn TableProvider + Send + Sync>> {
-        let result = self.providers.get(table_id).map(|e| Arc::clone(e.value()));
-        if result.is_some() {
-            log::debug!(
-                "[SchemaRegistry] Retrieved provider for table {}.{}",
-                table_id.namespace_id().as_str(),
-                table_id.table_name().as_str()
-            );
-        } else {
-            log::warn!(
-                "[SchemaRegistry] Provider NOT FOUND for table {}.{}",
-                table_id.namespace_id().as_str(),
-                table_id.table_name().as_str()
-            );
-        }
-        result
+        self.provider_registry.get_provider(table_id)
     }
 
     /// Resolve partial storage path template for a table
-    ///
-    /// Substitutes static placeholders ({namespace}, {tableName}) and leaves
-    /// dynamic placeholders ({userId}, {shard}) for per-request substitution.
-    ///
-    /// # Arguments
-    /// * `namespace` - Namespace identifier
-    /// * `table_name` - Table name
-    /// * `table_type` - Table type (determines template selection)
-    /// * `storage_id` - Storage configuration reference
-    ///
-    /// # Returns
-    /// Partially-resolved template path with static placeholders substituted
-    ///
-    /// # Example
-    /// ```ignore
-    /// // Requires a properly constructed StorageRegistry; see crate docs for setup.
-    /// // let registry = SchemaRegistry::new(1000);
-    /// // let template = cache.resolve_storage_path_template(
-    /// //     &NamespaceId::new("my_ns"),
-    /// //     &TableName::new("messages"),
-    /// //     TableType::User,
-    /// //     &StorageId::local()
-    /// // )?;
-    /// // Returns: "/data/my_ns/messages/{userId}/"
-    /// ```
     pub fn resolve_storage_path_template(
         &self,
         namespace: &NamespaceId,
@@ -680,249 +149,52 @@ impl SchemaRegistry {
         table_type: TableType,
         storage_id: &StorageId,
     ) -> Result<String, KalamDbError> {
-        // Fetch storage configuration from system.storages
-        let app_ctx = crate::app_context::AppContext::get();
-        let storages_provider = app_ctx.system_tables().storages();
-        let storage = storages_provider
-            .get_storage(storage_id)
-            .map_err(|e| {
-                KalamDbError::Other(format!(
-                    "Failed to load storage configuration '{}': {}",
-                    storage_id.as_str(),
-                    e
-                ))
-            })?
-            .ok_or_else(|| {
-                KalamDbError::InvalidOperation(format!(
-                    "Storage '{}' not found while resolving path template",
-                    storage_id.as_str()
-                ))
-            })?;
-
-        let raw_template = match table_type {
-            TableType::User => storage.user_tables_template,
-            TableType::Shared | TableType::Stream => storage.shared_tables_template,
-            TableType::System => "system/{namespace}/{tableName}".to_string(),
-        };
-
-        // Normalize legacy placeholder variants to canonical names
-        let canonical = Self::normalize_template_placeholders(&raw_template);
-
-        // Substitute static placeholders while leaving dynamic ones ({userId}, {shard}) for later
-        let resolved = canonical
-            .replace("{namespace}", namespace.as_str())
-            .replace("{tableName}", table_name.as_str());
-
-        Ok(resolved)
-    }
-
-    fn normalize_template_placeholders(template: &str) -> String {
-        template
-            .replace("{table_name}", "{tableName}")
-            .replace("{namespace_id}", "{namespace}")
-            .replace("{namespaceId}", "{namespace}")
-            .replace("{table-id}", "{tableName}")
-            .replace("{namespace-id}", "{namespace}")
-            .replace("{user_id}", "{userId}")
-            .replace("{user-id}", "{userId}")
-            .replace("{shard_id}", "{shard}")
-            .replace("{shard-id}", "{shard}")
+        PathResolver::resolve_storage_path_template(namespace, table_name, table_type, storage_id)
     }
 
     // ===== Persistence Methods (Phase 5: SchemaRegistry Consolidation) =====
 
     /// Get table definition from persistence layer (read-through pattern)
-    ///
-    /// Checks cache first, falls back to TablesTableProvider via AppContext if not cached.
-    /// This is the Phase 5 read-through pattern that consolidates TableSchemaStore into SchemaRegistry.
-    ///
-    /// # Arguments
-    /// * `table_id` - Table identifier
-    ///
-    /// # Returns
-    /// Table definition if found, None otherwise
     pub fn get_table_definition(
         &self,
         table_id: &TableId,
     ) -> Result<Option<Arc<TableDefinition>>, KalamDbError> {
-        // Fast path: check cache
-        if let Some(cached) = self.get(table_id) {
-            return Ok(Some(Arc::clone(&cached.table)));
-        }
-
-        // Slow path: query persistence layer via AppContext
-        let app_ctx = crate::app_context::AppContext::get();
-        let tables_provider = app_ctx.system_tables().tables();
-
-        match tables_provider.get_table_by_id(table_id)? {
-            Some(table_def) => Ok(Some(Arc::new(table_def))),
-            None => Ok(None),
-        }
+        SchemaPersistence::get_table_definition(&self.table_cache, table_id)
     }
 
     /// Store table definition to persistence layer (write-through pattern)
-    ///
-    /// Persists to TablesTableProvider and invalidates cache to force reload.
-    /// This is the Phase 5 write-through pattern.
-    ///
-    /// # Arguments
-    /// * `table_id` - Table identifier
-    /// * `table_def` - Table definition to store
     pub fn put_table_definition(
         &self,
         table_id: &TableId,
         table_def: &TableDefinition,
     ) -> Result<(), KalamDbError> {
-        // Get tables provider via AppContext
-        let app_ctx = crate::app_context::AppContext::get();
-        let tables_provider = app_ctx.system_tables().tables();
-
-        // Persist to storage
-        tables_provider.create_table(table_id, table_def)?;
-
-        // Invalidate cache to force reload on next access
-        self.invalidate(table_id);
-
-        Ok(())
+        SchemaPersistence::put_table_definition(&self.table_cache, table_id, table_def)
     }
 
     /// Delete table definition from persistence layer (delete-through pattern)
-    ///
-    /// Removes from TablesTableProvider and invalidates cache.
-    /// This is the Phase 5 delete-through pattern.
-    ///
-    /// # Arguments
-    /// * `table_id` - Table identifier
     pub fn delete_table_definition(&self, table_id: &TableId) -> Result<(), KalamDbError> {
-        // Get tables provider via AppContext
-        let app_ctx = crate::app_context::AppContext::get();
-        let tables_provider = app_ctx.system_tables().tables();
-
-        // Delete from storage
-        tables_provider.delete_table(table_id)?;
-
-        // Invalidate cache
-        self.invalidate(table_id);
-
-        Ok(())
+        SchemaPersistence::delete_table_definition(&self.table_cache, table_id)
     }
 
     /// Scan all table definitions from persistence layer
-    ///
-    /// Returns all table definitions from TablesTableProvider.
-    /// Used during server startup to load existing tables.
-    ///
-    /// # Returns
-    /// Vec of all table definitions
     pub fn scan_all_table_definitions(&self) -> Result<Vec<TableDefinition>, KalamDbError> {
-        // Get tables provider via AppContext
-        let app_ctx = crate::app_context::AppContext::get();
-        let tables_provider = app_ctx.system_tables().tables();
-
-        // Scan all tables from storage
-        tables_provider
-            .scan_all()
-            .map_err(|e| KalamDbError::Other(format!("Failed to scan tables: {}", e)))
+        SchemaPersistence::scan_all_table_definitions()
     }
 
     /// Check if table exists in persistence layer
-    ///
-    /// Checks cache first for performance, falls back to persistence.
-    ///
-    /// # Arguments
-    /// * `table_id` - Table identifier
-    ///
-    /// # Returns
-    /// true if table exists, false otherwise
     pub fn table_exists(&self, table_id: &TableId) -> Result<bool, KalamDbError> {
-        // Fast path: check cache
-        if self.get(table_id).is_some() {
-            return Ok(true);
-        }
-
-        // Slow path: query persistence via AppContext
-        let app_ctx = crate::app_context::AppContext::get();
-        let tables_provider = app_ctx.system_tables().tables();
-
-        Ok(tables_provider.get_table_by_id(table_id)?.is_some())
+        SchemaPersistence::table_exists(&self.table_cache, table_id)
     }
 
     /// Get Arrow schema for a table (Phase 10: Arrow Schema Memoization)
-    ///
-    /// This method will be implemented in Phase 10 to provide memoized Arrow schemas.
-    /// For now, it returns an error to unblock compilation.
-    ///
-    /// # Arguments
-    /// * `table_id` - Table identifier
-    ///
-    /// # Returns
-    /// Memoized Arrow schema wrapped in Arc
-    ///
-    /// **Implementation**: Phase 10, US1, FR-003 - Delegating to CachedTableData.arrow_schema()
     pub fn get_arrow_schema(
         &self,
         table_id: &TableId,
     ) -> Result<Arc<arrow::datatypes::Schema>, KalamDbError> {
-        // Fast path: check cache
-        if let Some(cached) = self.get(table_id) {
-            return cached.arrow_schema();
-        }
-
-        // Slow path: try to load from persistence (lazy loading)
-        if let Some(table_def) = self.get_table_definition(table_id)? {
-            log::debug!("Lazy loading table definition for {}", table_id);
-            
-            // Reconstruct CachedTableData
-            // Extract storage_id from options
-            let storage_id = match &table_def.table_options {
-                kalamdb_commons::models::schemas::TableOptions::User(opts) => Some(opts.storage_id.clone()),
-                kalamdb_commons::models::schemas::TableOptions::Shared(opts) => Some(opts.storage_id.clone()),
-                kalamdb_commons::models::schemas::TableOptions::Stream(_) => Some(kalamdb_commons::models::StorageId::from("local")), // Default for streams
-                kalamdb_commons::models::schemas::TableOptions::System(_) => None,
-            };
-
-            let mut data = CachedTableData::new(table_def.clone());
-            
-            if let Some(sid) = storage_id {
-                data.storage_id = Some(sid.clone());
-                // Resolve template
-                match self.resolve_storage_path_template(
-                    &table_id.namespace_id(),
-                    &table_id.table_name(),
-                    table_def.table_type,
-                    &sid,
-                ) {
-                    Ok(template) => data.storage_path_template = template,
-                    Err(e) => log::warn!("Failed to resolve storage path template during lazy load for {}: {}", table_id, e),
-                }
-            }
-
-            let data_arc = Arc::new(data);
-            self.insert(table_id.clone(), data_arc.clone());
-            
-            return data_arc.arrow_schema();
-        }
-
-        Err(KalamDbError::TableNotFound(format!("Table not found: {}", table_id)))
+        SchemaPersistence::get_arrow_schema(&self.table_cache, table_id)
     }
 
     /// Get Bloom filter column names for a table (PRIMARY KEY columns + _seq)
-    ///
-    /// Returns a Vec of column names that should have Bloom filters enabled
-    /// for optimal point query performance (FR-054, FR-055).
-    ///
-    /// # Arguments
-    /// * `table_id` - Table identifier
-    ///
-    /// # Returns
-    /// Vec of column names: PRIMARY KEY columns + "_seq" system column
-    ///
-    /// # Example
-    /// ```rust,ignore
-    /// let bloom_cols = registry.get_bloom_filter_columns(&table_id)?;
-    /// // Returns: vec!["id", "_seq"] for table with PRIMARY KEY "id"
-    /// writer.write_with_bloom_filter(schema, batches, Some(bloom_cols))?;
-    /// ```
     pub fn get_bloom_filter_columns(
         &self,
         table_id: &TableId,

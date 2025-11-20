@@ -32,7 +32,7 @@ use std::any::Any;
 use std::sync::Arc;
 
 // Arrow <-> JSON helpers
-use crate::live_query::manager::ChangeNotification;
+use crate::live_query::ChangeNotification;
 use crate::providers::arrow_json_conversion::{json_to_row, json_value_to_scalar};
 use crate::providers::version_resolution::{merge_versioned_rows, parquet_batch_to_rows};
 use datafusion::scalar::ScalarValue;

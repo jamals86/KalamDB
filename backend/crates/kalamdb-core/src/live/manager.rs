@@ -8,20 +8,17 @@ use super::connection_registry::{
 };
 use super::filter::{FilterCache, FilterPredicate};
 use super::initial_data::{InitialDataFetcher, InitialDataOptions, InitialDataResult};
+use super::notification::NotificationService;
+use super::query_parser::QueryParser;
+use super::subscription::SubscriptionService;
+use super::types::{ChangeNotification, RegistryStats, SubscriptionResult};
 use crate::error::KalamDbError;
 use crate::sql::executor::SqlExecutor;
 use datafusion::execution::context::SessionContext;
-use datafusion::scalar::ScalarValue;
-use kalamdb_commons::constants::AuthConstants;
-use kalamdb_commons::models::{NamespaceId, Row, TableId, TableName, UserId};
-use kalamdb_system::LiveQueriesTableProvider;
-// SchemaRegistry will be passed as Arc parameter from kalamdb-core
-use kalamdb_commons::schemas::TableType;
+use kalamdb_commons::models::{NamespaceId, TableId, TableName, UserId};
 use kalamdb_commons::system::LiveQuery as SystemLiveQuery;
-use kalamdb_commons::LiveQueryId;
-use std::collections::BTreeMap;
+use kalamdb_system::LiveQueriesTableProvider;
 use std::sync::Arc;
-use std::time::{SystemTime, UNIX_EPOCH};
 
 /// Live query manager
 pub struct LiveQueryManager {
@@ -31,16 +28,13 @@ pub struct LiveQueryManager {
     initial_data_fetcher: Arc<InitialDataFetcher>,
     schema_registry: Arc<crate::schema_registry::SchemaRegistry>,
     node_id: NodeId,
+
+    // Delegated services
+    subscription_service: Arc<SubscriptionService>,
+    notification_service: Arc<NotificationService>,
 }
 
 impl LiveQueryManager {
-    fn is_admin_user(user_id: &str) -> bool {
-        const ADMIN_IDS: [&str; 3] = ["root", "system", AuthConstants::DEFAULT_SYSTEM_USER_ID];
-        ADMIN_IDS
-            .iter()
-            .any(|admin_id| user_id.eq_ignore_ascii_case(admin_id))
-    }
-
     /// Create a new live query manager
     pub fn new(
         live_queries_provider: Arc<LiveQueriesTableProvider>,
@@ -57,6 +51,20 @@ impl LiveQueryManager {
             schema_registry.clone(),
         ));
 
+        let subscription_service = Arc::new(SubscriptionService::new(
+            registry.clone(),
+            filter_cache.clone(),
+            live_queries_provider.clone(),
+            schema_registry.clone(),
+            node_id.clone(),
+        ));
+
+        let notification_service = Arc::new(NotificationService::new(
+            registry.clone(),
+            filter_cache.clone(),
+            live_queries_provider.clone(),
+        ));
+
         Self {
             registry,
             live_queries_provider,
@@ -64,6 +72,8 @@ impl LiveQueryManager {
             initial_data_fetcher,
             schema_registry,
             node_id,
+            subscription_service,
+            notification_service,
         }
     }
 
@@ -77,18 +87,7 @@ impl LiveQueryManager {
         self.initial_data_fetcher.set_sql_executor(executor);
     }
 
-    /// Get current timestamp in milliseconds
-    fn current_timestamp_ms() -> i64 {
-        SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .unwrap()
-            .as_millis() as i64
-    }
-
     /// Register a new WebSocket connection
-    ///
-    /// This should be called when a WebSocket connection is established.
-    /// It creates a new connection entry in the in-memory registry.
     pub async fn register_connection(
         &self,
         user_id: UserId,
@@ -110,18 +109,6 @@ impl LiveQueryManager {
     }
 
     /// Register a live query subscription
-    ///
-    /// This is called when a client subscribes to a query. It:
-    /// 1. Generates a LiveId
-    /// 2. Registers in system.live_queries table
-    /// 3. Adds to in-memory registry
-    /// 4. Compiles and caches the WHERE clause filter
-    ///
-    /// # Arguments
-    /// * `connection_id` - The WebSocket connection ID
-    /// * `query_id` - User-chosen identifier for this subscription
-    /// * `query` - SQL SELECT query
-    /// * `options` - Subscription options (e.g., last_rows for initial data)
     pub async fn register_subscription(
         &self,
         connection_id: ConnectionId,
@@ -129,152 +116,12 @@ impl LiveQueryManager {
         query: String,
         options: LiveQueryOptions,
     ) -> Result<LiveId, KalamDbError> {
-        // Parse SQL to extract table reference and WHERE clause
-        let raw_table = self.extract_table_name_from_query(&query)?;
-        let (namespace, table) = raw_table.split_once('.').ok_or_else(|| {
-            KalamDbError::InvalidSql(format!(
-                "Query must reference table as namespace.table: {}",
-                raw_table
-            ))
-        })?;
-
-        let namespace_id = NamespaceId::from(namespace);
-        let table_name = TableName::from(table);
-        let table_id = TableId::new(namespace_id.clone(), table_name.clone());
-        let table_def = self
-            .schema_registry
-            .get_table_definition(&table_id)?
-            .ok_or_else(|| {
-                KalamDbError::NotFound(format!(
-                    "Table {}.{} not found for subscription",
-                    namespace, table
-                ))
-            })?;
-
-        if table_def.table_type == TableType::Shared {
-            return Err(KalamDbError::InvalidOperation(
-                "Shared table subscriptions are not supported".to_string(),
-            ));
-        }
-
-        // Security Check: Enforce table access permissions
-        let user_id_str = connection_id.user_id();
-        let is_admin = Self::is_admin_user(user_id_str);
-
-        match table_def.table_type {
-            TableType::User => {
-                if !is_admin && namespace != user_id_str {
-                    return Err(KalamDbError::Unauthorized(format!(
-                        "Insufficient privileges to subscribe to user table '{}.{}'",
-                        namespace, table
-                    )));
-                }
-            }
-            TableType::System => {
-                if !is_admin {
-                    return Err(KalamDbError::Unauthorized(format!(
-                        "Insufficient privileges to subscribe to system table '{}.{}'",
-                        namespace, table
-                    )));
-                }
-            }
-            _ => {}
-        }
-
-        let mut where_clause = self.extract_where_clause(&query);
-
-        // Generate LiveId
-        let live_id = LiveId::new(connection_id.clone(), table_id.clone(), query_id);
-
-        // Auto-inject user_id filter for user tables (row-level security)
-        // Skip injection for admin/system users so they can observe all rows.
-        if table_def.table_type == TableType::User {
-            let user_id = connection_id.user_id();
-            if !Self::is_admin_user(user_id) {
-                let user_filter = format!("user_id = '{}'", user_id);
-                where_clause = if let Some(existing_clause) = where_clause {
-                    Some(format!("{} AND {}", user_filter, existing_clause))
-                } else {
-                    Some(user_filter)
-                };
-            }
-        }
-
-        // Compile and cache the filter if WHERE clause exists
-        if let Some(clause) = where_clause {
-            let resolved_clause = Self::resolve_where_clause_placeholders(
-                &clause,
-                &UserId::new(connection_id.user_id().to_string()),
-            );
-            let mut filter_cache = self.filter_cache.write().await;
-            filter_cache.insert(live_id.to_string(), &resolved_clause)?;
-        }
-
-        let timestamp = Self::current_timestamp_ms();
-
-        // Serialize options to JSON
-        let options_json = serde_json::to_string(&options).map_err(|e| {
-            KalamDbError::SerializationError(format!("Failed to serialize options: {}", e))
-        })?;
-
-        // Create record for system.live_queries
-        let live_query_record = SystemLiveQuery {
-            live_id: LiveQueryId::new(live_id.to_string()),
-            connection_id: connection_id.to_string(),
-            namespace_id: table_id.namespace_id().clone(),
-            table_name: table_id.table_name().clone(),
-            query_id: live_id.query_id().to_string(),
-            user_id: kalamdb_commons::UserId::new(connection_id.user_id().to_string()),
-            query: query.clone(),
-            options: Some(options_json),
-            created_at: timestamp,
-            last_update: timestamp,
-            changes: 0,
-            node: self.node_id.as_str().to_string(),
-        };
-
-        // Insert into system.live_queries
-        self.live_queries_provider
-            .insert_live_query(live_query_record)?;
-
-        // Add to in-memory registry
-        let user_id = UserId::new(connection_id.user_id().to_string());
-
-        // Register subscription in in-memory registry
-        let registry = self.registry.read().await;
-        registry.register_subscription(
-            user_id.clone(),
-            table_id.clone(),
-            live_id.clone(),
-            connection_id.clone(),
-            options,
-        )?;
-
-        Ok(live_id)
-    }
-
-    fn resolve_where_clause_placeholders(clause: &str, user_id: &UserId) -> String {
-        let replacement = format!("'{}'", user_id.as_str());
-        clause
-            .replace("CURRENT_USER()", &replacement)
-            .replace("current_user()", &replacement)
+        self.subscription_service
+            .register_subscription(connection_id, query_id, query, options)
+            .await
     }
 
     /// Register a live query subscription with optional initial data fetch
-    ///
-    /// This is the enhanced version that can fetch initial data before
-    /// starting real-time notifications. Use this when clients need to
-    /// populate their state before receiving live updates.
-    ///
-    /// # Arguments
-    /// * `connection_id` - The WebSocket connection ID
-    /// * `query_id` - User-chosen identifier for this subscription
-    /// * `query` - SQL SELECT query
-    /// * `options` - Subscription options (user_id filter, etc.)
-    /// * `initial_data_options` - Options for initial data fetch (if Some)
-    ///
-    /// # Returns
-    /// SubscriptionResult with LiveId and optional initial data
     pub async fn register_subscription_with_initial_data(
         &self,
         connection_id: ConnectionId,
@@ -283,7 +130,7 @@ impl LiveQueryManager {
         options: LiveQueryOptions,
         initial_data_options: Option<InitialDataOptions>,
     ) -> Result<SubscriptionResult, KalamDbError> {
-        // First register the subscription (reuse existing method)
+        // First register the subscription
         let live_id = self
             .register_subscription(connection_id, query_id, query.clone(), options)
             .await?;
@@ -291,7 +138,7 @@ impl LiveQueryManager {
         // Fetch initial data if requested
         let initial_data = if let Some(fetch_options) = initial_data_options {
             // Extract table info for initial data fetch
-            let raw_table = self.extract_table_name_from_query(&query)?;
+            let raw_table = QueryParser::extract_table_name(&query)?;
             let (namespace, table) = raw_table.split_once('.').ok_or_else(|| {
                 KalamDbError::InvalidSql(format!(
                     "Query must reference table as namespace.table: {}",
@@ -340,8 +187,6 @@ impl LiveQueryManager {
     }
 
     /// Fetch a batch of initial data for an existing subscription
-    ///
-    /// This method is used to fetch subsequent batches after the initial subscription.
     pub async fn fetch_initial_data_batch(
         &self,
         sql: &str,
@@ -353,7 +198,7 @@ impl LiveQueryManager {
         })?;
 
         // Extract table info from SQL
-        let raw_table = self.extract_table_name_from_query(sql)?;
+        let raw_table = QueryParser::extract_table_name(sql)?;
         let (namespace, table) = raw_table.split_once('.').ok_or_else(|| {
             KalamDbError::InvalidSql(format!(
                 "Query must reference table as namespace.table: {}",
@@ -401,148 +246,32 @@ impl LiveQueryManager {
             .await
     }
 
-    // /// Determine whether any active subscriptions reference the specified table.
-    // pub async fn has_active_subscriptions_for(&self, table_ref: &str) -> bool {
-    //     let registry = self.registry.read().await;
-    //     registry.has_subscriptions_for_table(table_ref)
-    // }
-
     /// Extract table name from SQL query
-    ///
-    /// This is a simple implementation that looks for "FROM table_name"
-    /// TODO: Replace with proper DataFusion SQL parsing
-    fn extract_table_name_from_query(&self, query: &str) -> Result<String, KalamDbError> {
-        let query_upper = query.to_uppercase();
-        let from_pos = query_upper.find(" FROM ").ok_or_else(|| {
-            KalamDbError::InvalidSql("Query must contain FROM clause".to_string())
-        })?;
-
-        let after_from = &query[(from_pos + 6)..]; // Skip " FROM "
-        let table_name = after_from
-            .split_whitespace()
-            .next()
-            .ok_or_else(|| KalamDbError::InvalidSql("Invalid table name after FROM".to_string()))?
-            .trim_matches(|c| c == '"' || c == '\'' || c == '`')
-            .to_string();
-
-        Ok(table_name)
-    }
-
-    /// Extract WHERE clause from SQL query
-    ///
-    /// Returns None if no WHERE clause exists.
-    /// This is a simple implementation that looks for "WHERE ..."
-    fn extract_where_clause(&self, query: &str) -> Option<String> {
-        let query_upper = query.to_uppercase();
-        let where_pos = query_upper.find(" WHERE ")?;
-
-        // Get everything after WHERE, handling potential ORDER BY, LIMIT, etc.
-        let after_where = &query[(where_pos + 7)..]; // Skip " WHERE "
-
-        // Find the end of the WHERE clause (before ORDER BY, LIMIT, etc.)
-        let end_keywords = [" ORDER BY", " LIMIT", " OFFSET", " GROUP BY"];
-        let mut end_pos = after_where.len();
-
-        for keyword in &end_keywords {
-            if let Some(pos) = after_where.to_uppercase().find(keyword) {
-                if pos < end_pos {
-                    end_pos = pos;
-                }
-            }
-        }
-
-        Some(after_where[..end_pos].trim().to_string())
+    pub fn extract_table_name_from_query(&self, query: &str) -> Result<String, KalamDbError> {
+        QueryParser::extract_table_name(query)
     }
 
     /// Unregister a WebSocket connection
-    ///
-    /// This should be called when a WebSocket disconnects. It:
-    /// 1. Collects all live_ids for this connection
-    /// 2. Deletes from system.live_queries
-    /// 3. Removes from in-memory registry
-    /// 4. Cleans up cached filters
     pub async fn unregister_connection(
         &self,
-        _user_id: &UserId,
+        user_id: &UserId,
         connection_id: &ConnectionId,
     ) -> Result<Vec<LiveId>, KalamDbError> {
-        // Remove from in-memory registry and get all live_ids
-        let live_ids = {
-            let registry = self.registry.read().await;
-            registry.unregister_connection(connection_id)
-        };
-
-        // Remove cached filters for all live queries
-        {
-            let mut filter_cache = self.filter_cache.write().await;
-            for live_id in &live_ids {
-                filter_cache.remove(&live_id.to_string());
-            }
-        }
-
-        // Delete from system.live_queries
-        self.live_queries_provider
-            .delete_by_connection_id(&connection_id.to_string())?;
-
-        Ok(live_ids)
+        self.subscription_service
+            .unregister_connection(user_id, connection_id)
+            .await
     }
 
     /// Unregister a single live query subscription
-    ///
-    /// This is used by the KILL LIVE QUERY command. It:
-    /// 1. Removes cached filter
-    /// 2. Removes from in-memory registry
-    /// 3. Deletes from system.live_queries
     pub async fn unregister_subscription(&self, live_id: &LiveId) -> Result<(), KalamDbError> {
-        eprintln!(
-            "[LiveQueryManager] unregister_subscription start: {}",
-            live_id
-        );
-        // Remove cached filter first (even before checking if live_id exists)
-        {
-            let mut filter_cache = self.filter_cache.write().await;
-            filter_cache.remove(&live_id.to_string());
-        }
-        eprintln!("[LiveQueryManager] filter removed: {}", live_id);
-
-        // Remove from in-memory registry
-        let connection_id = {
-            let registry = self.registry.write().await;
-            registry.unregister_subscription(live_id)
-        };
-        eprintln!(
-            "[LiveQueryManager] registry.unregister_subscription done: {:?}",
-            connection_id.is_some()
-        );
-
-        if connection_id.is_none() {
-            return Err(KalamDbError::NotFound(format!(
-                "Live query not found: {}",
-                live_id
-            )));
-        }
-
-        // Best-effort cleanup: skip persistent delete to avoid blocking in tests
-        eprintln!(
-            "[LiveQueryManager] unregister_subscription end: {}",
-            live_id
-        );
-        Ok(())
+        self.subscription_service
+            .unregister_subscription(live_id)
+            .await
     }
 
     /// Increment the changes counter for a live query
-    ///
-    /// This should be called each time a notification is sent.
-    /// MEMORY FIX: Only updates system.live_queries (persistent storage), not in-memory registry
     pub async fn increment_changes(&self, live_id: &LiveId) -> Result<(), KalamDbError> {
-        let timestamp = Self::current_timestamp_ms();
-        self.live_queries_provider
-            .increment_changes(&live_id.to_string(), timestamp)?;
-
-        // Removed in-memory counter update (no longer exists in LiveQuery struct)
-        // Changes are tracked only in system.live_queries now
-
-        Ok(())
+        self.notification_service.increment_changes(live_id).await
     }
 
     /// Get all subscriptions for a user
@@ -580,424 +309,28 @@ impl LiveQueryManager {
         Arc::clone(&self.registry)
     }
 
-    /// Notify subscribers about a change to a table (T154)
-    ///
-    /// This is called after data changes (INSERT/UPDATE/DELETE) to deliver
-    /// real-time notifications to subscribed WebSocket connections.
-    ///
-    /// # Arguments
-    /// * `table_name` - The table that changed
-    /// * `change_notification` - The change details to send to subscribers
-    ///
-    /// # Returns
-    /// Number of notifications delivered
-    ///
-    /// # Note
-    /// This is a simplified implementation for Phase 12 T154.
-    /// Full filtering and WebSocket delivery will be implemented in Phase 14.
-
     /// Notify subscribers about a table change (fire-and-forget async)
-    ///
-    /// **PRIMARY ENTRY POINT**: Use this method from all DML/flush operations.
-    /// Handles tokio::spawn internally to eliminate code duplication.
-    ///
-    /// # Arguments
-    /// * `user_id` - User ID whose subscriptions should be notified (for O(1) lookup)
-    /// * `table_id` - Composite key (NamespaceId, TableName) for O(1) subscription lookup
-    /// * `notification` - Change notification to send to subscribers
-    ///
-    /// # Design Pattern
-    /// - **Fire-and-forget**: Spawns async task, doesn't block caller
-    /// - **Error isolation**: Logs errors, never propagates to caller
-    /// - **Future-proof**: Single place to add batching/buffering later
-    /// - **Optimization**: Checks for subscriptions before spawning thread (avoids unnecessary spawns)
-    ///
-    /// # Performance
-    /// Uses composite key `(UserId, TableId)` for O(1) lookup instead of O(n) iteration.
-    /// Pre-check prevents spawning threads when no subscribers exist (zero-cost in no-subscriber case).
-    ///
-    /// # Example
-    /// ```rust,ignore
-    /// // Before (10 lines per call site):
-    /// let mgr = Arc::clone(manager);
-    /// let user_id_copy = user_id.clone();
-    /// let table_id = TableId::new(namespace_id.clone(), table_name.clone());
-    /// tokio::spawn(async move {
-    ///     if let Err(e) = mgr.notify_table_change(&user_id_copy, &table_id, notification).await {
-    ///         log::warn!("Failed to notify: {}", e);
-    ///     }
-    /// });
-    ///
-    /// // After (1 line):
-    /// manager.notify_table_change_async(user_id, table_id, notification);
-    /// ```
     pub fn notify_table_change_async(
         self: &Arc<Self>,
         user_id: UserId,
         table_id: TableId,
         notification: ChangeNotification,
     ) {
-        // Check if there are any subscriptions for this user_id and table_id
-        // This avoids spawning unnecessary threads when no subscribers exist
-        let has_subscriptions = {
-            // Use try_read() to avoid blocking (returns None if lock is held)
-            // If we can't acquire the lock immediately, conservatively assume subscriptions exist
-            if let Ok(registry) = self.registry.try_read() {
-                let subscriptions = registry.get_subscriptions_for_table(&user_id, &table_id);
-                !subscriptions.is_empty()
-            } else {
-                // Lock is held, conservatively assume subscriptions exist
-                true
-            }
-        };
-
-        // Only spawn thread if there are subscribers (or if we couldn't check)
-        if has_subscriptions {
-            let manager = Arc::clone(self);
-            tokio::spawn(async move {
-                if let Err(e) = manager
-                    .notify_table_change(&user_id, &table_id, notification)
-                    .await
-                {
-                    log::warn!(
-                        "Failed to notify subscribers for table {}.{}: {}",
-                        table_id.namespace_id().as_str(),
-                        table_id.table_name().as_str(),
-                        e
-                    );
-                }
-            });
-        }
+        self.notification_service
+            .notify_async(user_id, table_id, notification)
     }
 
     /// Notify live query subscribers of a table change
-    ///
-    /// **INTERNAL METHOD**: Called by notify_table_change_async().
-    /// Direct callers should use notify_table_change_async() instead for fire-and-forget behavior.
-    ///
-    /// This method is called by change detectors when a row is inserted, updated, or deleted.
-    /// It applies filters and only notifies subscribers whose WHERE clause matches the changed row.
-    ///
-    /// # Arguments
-    /// * `user_id` - The user who owns the table (for USER tables) or None (for SHARED/STREAM tables)
-    /// * `table_id` - The TableId of the table that changed
-    /// * `change_notification` - Details about the change (type, row data)
-    ///
-    /// # Returns
-    /// Number of subscribers notified (after filtering)
     pub async fn notify_table_change(
         &self,
         user_id: &UserId,
         table_id: &TableId,
         change_notification: ChangeNotification,
     ) -> Result<usize, KalamDbError> {
-        let table_name = format!(
-            "{}.{}",
-            table_id.namespace_id().as_str(),
-            table_id.table_name().as_str()
-        );
-
-        log::info!(
-            "📢 notify_table_change called for table: '{}', user: '{}', change_type: {:?}",
-            table_name,
-            user_id.as_str(),
-            change_notification.change_type
-        );
-
-        // Get filter cache for matching
-        let filter_cache = self.filter_cache.read().await;
-
-        // Gather subscriptions for the specific user AND admin/system observers
-        let live_ids_to_notify: Vec<LiveId> = {
-            use std::collections::HashSet;
-            let registry = self.registry.read().await;
-            let mut all_handles = Vec::new();
-            // Exact user subscriptions
-            all_handles.extend(registry.get_subscriptions_for_table(user_id, table_id));
-            // Admin-like observers (observe all users)
-            let root = kalamdb_commons::models::UserId::root();
-            let system = kalamdb_commons::models::UserId::system();
-            all_handles.extend(registry.get_subscriptions_for_table(&root, table_id));
-            all_handles.extend(registry.get_subscriptions_for_table(&system, table_id));
-
-            log::info!(
-                "📢 Found {} total candidate subscriptions for user={}, table={}",
-                all_handles.len(),
-                user_id.as_str(),
-                table_name
-            );
-
-            let mut ids = Vec::new();
-            let mut seen = HashSet::new();
-
-            // Define filtering_row for filter evaluation
-            let filtering_row = &change_notification.row_data;
-
-            // Iterate only through subscriptions for this specific table - O(k)
-            for handle in all_handles {
-                log::info!("📢 Evaluating subscription live_id={}", handle.live_id);
-
-                // FLUSH notifications are metadata events (not row-level changes)
-                // Skip filter evaluation for FLUSH - notify all subscribers
-                if matches!(change_notification.change_type, ChangeType::Flush) {
-                    log::info!(
-                        "📢 FLUSH notification - skipping filter evaluation for live_id={}",
-                        handle.live_id
-                    );
-                    if seen.insert(handle.live_id.to_string()) {
-                        ids.push(handle.live_id.clone());
-                    }
-                    continue;
-                }
-
-                // Check filter if one exists (for INSERT/UPDATE/DELETE only)
-                if let Some(filter) = filter_cache.get(&handle.live_id.to_string()) {
-                    // Apply filter to row data (using the enriched filtering_row)
-                    match filter.matches(filtering_row) {
-                        Ok(true) => {
-                            // Filter matched, include this subscriber
-                            if seen.insert(handle.live_id.to_string()) {
-                                ids.push(handle.live_id.clone());
-                            }
-                        }
-                        Ok(false) => {
-                            // Filter didn't match, skip this subscriber
-                            log::trace!(
-                                "Filter didn't match for live_id={}, skipping notification",
-                                handle.live_id
-                            );
-                        }
-                        Err(e) => {
-                            // Filter evaluation error, log and skip
-                            log::error!(
-                                "Filter evaluation error for live_id={}: {}",
-                                handle.live_id,
-                                e
-                            );
-                        }
-                    }
-                } else {
-                    // No filter, notify all subscribers
-                    log::info!(
-                        "📢 No filter - adding subscriber live_id={}",
-                        handle.live_id
-                    );
-                    if seen.insert(handle.live_id.to_string()) {
-                        ids.push(handle.live_id.clone());
-                    }
-                }
-            }
-
-            ids
-        }; // registry read lock is dropped here
-
-        // Drop filter cache read lock before acquiring write locks
-        drop(filter_cache);
-
-        // MEMORY FIX: Build notification data ONCE, not per subscriber
-        // Old code cloned row_data for every subscriber (N × row_size memory)
-        // New code: Convert once, reference for all subscribers (1 × row_size memory)
-        // With Row, we can just clone the Row which is relatively cheap (Arc inside ScalarValue for large data?)
-        // ScalarValue clones are deep clones usually, but strings are String.
-        // But Row is what we have.
-        
-        let row_data = change_notification.row_data.clone();
-        let old_data = change_notification.old_data.clone();
-
-        // Now send notifications and increment changes for each live_id
-        let notification_count = live_ids_to_notify.len();
-        for live_id in live_ids_to_notify.iter() {
-            // Send notification to WebSocket client
-            if let Some(tx) = self.get_notification_sender(live_id).await {
-                // Build the typed notification (cheap - just wraps references)
-                let notification = match change_notification.change_type {
-                    ChangeType::Insert => kalamdb_commons::Notification::insert(
-                        live_id.to_string(),
-                        vec![row_data.clone()],
-                    ),
-                    ChangeType::Update => kalamdb_commons::Notification::update(
-                        live_id.to_string(),
-                        vec![row_data.clone()],
-                        vec![old_data.clone().unwrap_or_else(|| Row::new(BTreeMap::new()))],
-                    ),
-                    ChangeType::Delete => kalamdb_commons::Notification::delete(
-                        live_id.to_string(),
-                        vec![row_data.clone()],
-                    ),
-                    ChangeType::Flush => {
-                        // For flush, we use insert type with flush metadata
-                        kalamdb_commons::Notification::insert(
-                            live_id.to_string(),
-                            vec![row_data.clone()],
-                        )
-                    }
-                };
-
-                // Send notification through channel (non-blocking)
-                if let Err(e) = tx.send((live_id.clone(), notification)) {
-                    log::error!(
-                        "Failed to send notification to WebSocket client for live_id={}: {}",
-                        live_id,
-                        e
-                    );
-                } else {
-                    log::debug!(
-                        "Notification sent to WebSocket client for live_id={}",
-                        live_id
-                    );
-                }
-            } else {
-                log::warn!("No notification sender found for live_id={}", live_id);
-            }
-
-            self.increment_changes(live_id).await?;
-
-            // Log notification (in production, use proper logging)
-            #[cfg(debug_assertions)]
-            eprintln!(
-                "Notified subscriber: live_id={}, change_type={:?}",
-                live_id, change_notification.change_type
-            );
-        }
-
-        Ok(notification_count)
+        self.notification_service
+            .notify_table_change(user_id, table_id, change_notification)
+            .await
     }
-
-    /// Get the notification sender for a specific live query
-    async fn get_notification_sender(
-        &self,
-        live_id: &LiveId,
-    ) -> Option<super::connection_registry::NotificationSender> {
-        let registry = self.registry.read().await;
-        registry
-            .get_notification_sender(&live_id.connection_id)
-            .map(|arc| (*arc).clone())
-    }
-}
-
-/// Change notification for live query subscribers
-#[derive(Debug, Clone)]
-pub struct ChangeNotification {
-    pub change_type: ChangeType,
-    pub table_id: kalamdb_commons::models::TableId,
-    pub row_data: Row,
-    pub old_data: Option<Row>, // For UPDATE notifications
-    pub row_id: Option<String>,              // For DELETE notifications (hard delete)
-}
-
-impl ChangeNotification {
-    /// Create an INSERT notification
-    pub fn insert(table_id: kalamdb_commons::models::TableId, row_data: Row) -> Self {
-        Self {
-            change_type: ChangeType::Insert,
-            table_id,
-            row_data,
-            old_data: None,
-            row_id: None,
-        }
-    }
-
-    /// Create an UPDATE notification with old and new values
-    pub fn update(
-        table_id: kalamdb_commons::models::TableId,
-        old_data: Row,
-        new_data: Row,
-    ) -> Self {
-        Self {
-            change_type: ChangeType::Update,
-            table_id,
-            row_data: new_data,
-            old_data: Some(old_data),
-            row_id: None,
-        }
-    }
-
-    /// Create a DELETE notification (soft delete with data)
-    pub fn delete_soft(
-        table_id: kalamdb_commons::models::TableId,
-        row_data: Row,
-    ) -> Self {
-        Self {
-            change_type: ChangeType::Delete,
-            table_id,
-            row_data,
-            old_data: None,
-            row_id: None,
-        }
-    }
-
-    /// Create a DELETE notification (hard delete, row_id only)
-    pub fn delete_hard(table_id: kalamdb_commons::models::TableId, row_id: String) -> Self {
-        // For hard delete, we create a dummy row with just ID for notification purposes
-        // or we might need to change how delete notifications work.
-        // For now, let's create a minimal Row with just ID if possible, or empty.
-        let mut values = BTreeMap::new();
-        // Assuming we can't easily reconstruct the row, we might send just the ID.
-        // But Row expects ScalarValues.
-        // Let's assume the caller handles this or we just send empty row with ID in metadata?
-        // Actually, delete_hard is usually for when we don't have the full row.
-        // But Notification::delete expects Vec<Row>.
-        // Let's create a Row with just "id" column if we can.
-        // But we don't know the column name for ID (it might be "user_id", "uuid", etc).
-        // So we'll just put "row_id" as a special field.
-        values.insert("row_id".to_string(), ScalarValue::Utf8(Some(row_id.clone())));
-        
-        Self {
-            change_type: ChangeType::Delete,
-            table_id,
-            row_data: Row::new(values),
-            old_data: None,
-            row_id: Some(row_id),
-        }
-    }
-
-    /// Create a FLUSH notification (Parquet flush completion)
-    pub fn flush(
-        table_id: kalamdb_commons::models::TableId,
-        row_count: usize,
-        parquet_files: Vec<String>,
-    ) -> Self {
-        let mut values = BTreeMap::new();
-        values.insert("row_count".to_string(), ScalarValue::Int64(Some(row_count as i64)));
-        let files_json = serde_json::to_string(&parquet_files).unwrap_or_default();
-        values.insert("parquet_files".to_string(), ScalarValue::Utf8(Some(files_json)));
-        values.insert("flushed_at".to_string(), ScalarValue::Int64(Some(chrono::Utc::now().timestamp_millis())));
-
-        Self {
-            change_type: ChangeType::Flush,
-            table_id,
-            row_data: Row::new(values),
-            old_data: None,
-            row_id: None,
-        }
-    }
-}
-
-/// Result of registering a live query subscription with initial data
-#[derive(Debug, Clone)]
-pub struct SubscriptionResult {
-    /// The generated LiveId for the subscription
-    pub live_id: LiveId,
-
-    /// Initial data returned with the subscription (if requested)
-    pub initial_data: Option<InitialDataResult>,
-}
-
-/// Type of change that occurred
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum ChangeType {
-    Insert,
-    Update,
-    Delete,
-    Flush, // Parquet flush completion
-}
-
-/// Registry statistics
-#[derive(Debug, Clone)]
-pub struct RegistryStats {
-    pub total_connections: usize,
-    pub total_subscriptions: usize,
-    pub node_id: String,
 }
 
 #[cfg(test)]
@@ -1013,8 +346,10 @@ mod tests {
     use kalamdb_commons::{NamespaceId, TableName};
     use kalamdb_store::RocksDbInit;
     use kalamdb_system::providers::live_queries::LiveQueriesTableProvider;
-    use kalamdb_tables::{new_user_table_store, new_shared_table_store, new_stream_table_store};
+    use kalamdb_tables::{new_shared_table_store, new_stream_table_store, new_user_table_store};
+    // use crate::providers::arrow_json_conversion::json_to_row;
     use crate::providers::arrow_json_conversion::json_to_row;
+    use kalamdb_commons::models::Row;
     use tempfile::TempDir;
 
     fn to_row(v: serde_json::Value) -> Row {
@@ -1037,17 +372,17 @@ mod tests {
         // Create table stores for testing (using default namespace and table)
         let test_namespace = NamespaceId::new("user1");
         let test_table = TableName::new("messages");
-        let user_table_store = Arc::new(new_user_table_store(
+        let _user_table_store = Arc::new(new_user_table_store(
             backend.clone(),
             &test_namespace,
             &test_table,
         ));
-        let shared_table_store = Arc::new(new_shared_table_store(
+        let _shared_table_store = Arc::new(new_shared_table_store(
             backend.clone(),
             &test_namespace,
             &test_table,
         ));
-        let stream_table_store = Arc::new(new_stream_table_store(&test_namespace, &test_table));
+        let _stream_table_store = Arc::new(new_stream_table_store(&test_namespace, &test_table));
 
         // Create test table definitions via SchemaRegistry
         let messages_table = TableDefinition::new(

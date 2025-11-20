@@ -36,7 +36,7 @@ use std::any::Any;
 use std::sync::Arc;
 
 // Arrow <-> JSON helpers
-use crate::live_query::manager::ChangeNotification;
+use crate::live_query::ChangeNotification;
 use crate::providers::arrow_json_conversion::json_to_row;
 use kalamdb_commons::models::Row;
 use serde_json::json;
