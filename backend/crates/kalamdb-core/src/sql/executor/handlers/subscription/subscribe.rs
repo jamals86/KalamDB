@@ -39,6 +39,17 @@ impl TypedStatementHandler<SubscribeStatement> for SubscribeHandler {
         // Channel placeholder (could read from config.toml later)
         let channel = "ws://localhost:8080/ws".to_string();
 
+        // Log query operation
+        use crate::sql::executor::helpers::audit;
+        let audit_entry = audit::log_query_operation(
+            _context,
+            "SUBSCRIBE",
+            &format!("{}.{}", statement.namespace.as_str(), statement.table_name.as_str()),
+            0, // Duration is negligible for registration
+            None,
+        );
+        audit::persist_audit_entry(&self._app_context, &audit_entry).await?;
+
         // Return subscription metadata with the SELECT query
         Ok(ExecutionResult::Subscription {
             subscription_id,

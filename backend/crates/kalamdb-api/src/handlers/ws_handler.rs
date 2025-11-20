@@ -5,6 +5,8 @@
 
 use actix_web::{get, web, Error, HttpRequest, HttpResponse};
 use actix_web_actors::ws;
+use kalamdb_commons::models::UserId;
+use kalamdb_core::sql::executor::helpers::audit;
 use log::{error, info};
 use std::sync::Arc;
 use uuid::Uuid;
@@ -62,6 +64,7 @@ pub async fn websocket_handler_v1(
     req: HttpRequest,
     stream: web::Payload,
     _query: web::Query<std::collections::HashMap<String, String>>,
+    app_context: web::Data<Arc<kalamdb_core::app_context::AppContext>>,
     rate_limiter: web::Data<Arc<RateLimiter>>,
     live_query_manager: web::Data<Arc<LiveQueryManager>>,
     user_repo: web::Data<Arc<dyn UserRepository>>,
@@ -70,6 +73,18 @@ pub async fn websocket_handler_v1(
     let connection_id = Uuid::new_v4().to_string();
 
     info!("New WebSocket connection request: {}", connection_id);
+
+    let resolved_ip = req
+        .headers()
+        .get("X-Forwarded-For")
+        .and_then(|h| h.to_str().ok())
+        .and_then(|raw| raw.split(',').next().map(|s| s.trim().to_string()))
+        .filter(|s| !s.is_empty())
+        .or_else(|| {
+            req.connection_info()
+                .realip_remote_addr()
+                .map(|s| s.to_string())
+        });
 
     // Authenticate using centralized extract_auth function (repo-based)
     let auth_result = match extract_auth_with_repo(&req, user_repo.get_ref()).await {
@@ -80,6 +95,26 @@ pub async fn websocket_handler_v1(
                 auth.user_id.as_str(),
                 auth.username
             );
+
+            // Log successful login if using Basic Auth
+            if let Some(auth_val) = req.headers().get("Authorization") {
+                if let Ok(h) = auth_val.to_str() {
+                    if h.starts_with("Basic ") {
+                        let entry = audit::log_auth_event(
+                            &auth.user_id,
+                            "LOGIN_WS",
+                            true,
+                            resolved_ip.clone(),
+                        );
+                        if let Err(e) =
+                            audit::persist_audit_entry(app_context.get_ref(), &entry).await
+                        {
+                            error!("Failed to persist audit log: {}", e);
+                        }
+                    }
+                }
+            }
+
             auth
         }
         Err(e) => {
@@ -87,6 +122,35 @@ pub async fn websocket_handler_v1(
                 "WebSocket connection rejected: connection_id={}, error={}",
                 connection_id, e
             );
+
+            // Log failed login if using Basic Auth
+            if let Some(auth_val) = req.headers().get("Authorization") {
+                if let Ok(h) = auth_val.to_str() {
+                    if h.starts_with("Basic ") {
+                        // Try to extract username to log who failed
+                        let username = if let Ok((u, _)) =
+                            kalamdb_auth::basic_auth::parse_basic_auth_header(h)
+                        {
+                            u
+                        } else {
+                            "unknown".to_string()
+                        };
+
+                        let entry = audit::log_auth_event(
+                            &UserId::new(username),
+                            "LOGIN_WS",
+                            false,
+                            resolved_ip.clone(),
+                        );
+                        if let Err(e) =
+                            audit::persist_audit_entry(app_context.get_ref(), &entry).await
+                        {
+                            error!("Failed to persist audit log: {}", e);
+                        }
+                    }
+                }
+            }
+
             return Ok(HttpResponse::Unauthorized().json(serde_json::json!({
                 "error": "AUTHENTICATION_FAILED",
                 "message": format!("{}", e)

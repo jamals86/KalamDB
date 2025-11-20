@@ -25,7 +25,7 @@ impl TypedStatementHandler<DropUserStatement> for DropUserHandler {
         &self,
         statement: DropUserStatement,
         _params: Vec<ScalarValue>,
-        _context: &ExecutionContext,
+        context: &ExecutionContext,
     ) -> Result<ExecutionResult, KalamDbError> {
         let users = self.app_context.system_tables().users();
         let existing = users.get_user_by_username(&statement.username)?;
@@ -42,6 +42,19 @@ impl TypedStatementHandler<DropUserStatement> for DropUserHandler {
         }
         let user = existing.unwrap();
         users.delete_user(&user.id)?;
+
+        // Log DDL operation
+        use crate::sql::executor::helpers::audit;
+        let audit_entry = audit::log_ddl_operation(
+            context,
+            "DROP",
+            "USER",
+            &statement.username,
+            None,
+            None,
+        );
+        audit::persist_audit_entry(&self.app_context, &audit_entry).await?;
+
         Ok(ExecutionResult::Success {
             message: format!("User '{}' dropped (soft delete)", statement.username),
         })

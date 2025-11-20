@@ -24,7 +24,7 @@ impl TypedStatementHandler<DropNamespaceStatement> for DropNamespaceHandler {
         &self,
         statement: DropNamespaceStatement,
         _params: Vec<ScalarValue>,
-        _context: &ExecutionContext,
+        context: &ExecutionContext,
     ) -> Result<ExecutionResult, KalamDbError> {
         // Extract namespace provider from AppContext
         let namespaces_provider = self.app_context.system_tables().namespaces();
@@ -57,6 +57,18 @@ impl TypedStatementHandler<DropNamespaceStatement> for DropNamespaceHandler {
 
         // Delete namespace via provider
         namespaces_provider.delete_namespace(&namespace_id)?;
+
+        // Log DDL operation
+        use crate::sql::executor::helpers::audit;
+        let audit_entry = audit::log_ddl_operation(
+            context,
+            "DROP",
+            "NAMESPACE",
+            namespace_id.as_str(),
+            None,
+            None,
+        );
+        audit::persist_audit_entry(&self.app_context, &audit_entry).await?;
 
         let message = format!("Namespace '{}' dropped successfully", namespace.name);
         Ok(ExecutionResult::Success { message })

@@ -25,13 +25,26 @@ impl TypedStatementHandler<JobCommand> for KillJobHandler {
         &self,
         statement: JobCommand,
         _params: Vec<ScalarValue>,
-        _context: &ExecutionContext,
+        context: &ExecutionContext,
     ) -> Result<ExecutionResult, KalamDbError> {
         let job_manager = self.app_context.job_manager();
         match statement {
             JobCommand::Kill { job_id } => {
                 let job_id_typed = JobId::new(job_id.clone());
                 job_manager.cancel_job(&job_id_typed).await?;
+
+                // Log DDL operation (treating KILL JOB as an admin operation)
+                use crate::sql::executor::helpers::audit;
+                let audit_entry = audit::log_ddl_operation(
+                    context,
+                    "KILL",
+                    "JOB",
+                    &job_id,
+                    None,
+                    None,
+                );
+                audit::persist_audit_entry(&self.app_context, &audit_entry).await?;
+
                 Ok(ExecutionResult::JobKilled {
                     job_id,
                     status: "cancelled".to_string(),

@@ -5,10 +5,11 @@
 use actix_web::{post, web, HttpRequest, HttpResponse, Responder};
 use kalamdb_auth::{extract_auth_with_repo, UserRepository};
 use kalamdb_commons::models::UserId;
+use kalamdb_core::sql::executor::helpers::audit;
 use kalamdb_core::sql::executor::models::{ExecutionContext, ScalarValue};
 use kalamdb_core::sql::executor::{ExecutorMetadataAlias, SqlExecutor};
 use kalamdb_core::sql::ExecutionResult;
-use log::warn;
+use log::{error, warn};
 use serde_json::Value as JsonValue;
 use std::sync::Arc;
 use std::time::Instant;
@@ -119,10 +120,72 @@ pub async fn execute_sql_v1(
         )) as Arc<dyn UserRepository>
     };
 
+    // Phase 3 (T033): Extract request_id and ip_address for ExecutionContext
+    let request_id = http_req
+        .headers()
+        .get("X-Request-ID")
+        .and_then(|h| h.to_str().ok())
+        .map(|s| s.to_string());
+
+    let resolved_ip = http_req
+        .headers()
+        .get("X-Forwarded-For")
+        .and_then(|h| h.to_str().ok())
+        .and_then(|raw| raw.split(',').next().map(|s| s.trim().to_string()))
+        .filter(|s| !s.is_empty())
+        .or_else(|| {
+            http_req
+                .connection_info()
+                .realip_remote_addr()
+                .map(|s| s.to_string())
+        });
+
     // Extract and validate authentication from request using repo
     let auth_result = match extract_auth_with_repo(&http_req, &repo).await {
-        Ok(auth) => auth,
+        Ok(auth) => {
+            // Log successful login if using Basic Auth (explicit credentials)
+            if let Some(auth_val) = http_req.headers().get("Authorization") {
+                if let Ok(h) = auth_val.to_str() {
+                    if h.starts_with("Basic ") {
+                        let entry = audit::log_auth_event(
+                            &auth.user_id,
+                            "LOGIN",
+                            true,
+                            resolved_ip.clone(),
+                        );
+                        if let Err(e) = audit::persist_audit_entry(app_context.get_ref(), &entry).await {
+                            error!("Failed to persist audit log: {}", e);
+                        }
+                    }
+                }
+            }
+            auth
+        }
         Err(e) => {
+            // Log failed login if using Basic Auth
+            if let Some(auth_val) = http_req.headers().get("Authorization") {
+                if let Ok(h) = auth_val.to_str() {
+                    if h.starts_with("Basic ") {
+                        // Try to extract username to log who failed
+                        let username = if let Ok((u, _)) = kalamdb_auth::basic_auth::parse_basic_auth_header(h) {
+                            u
+                        } else {
+                            "unknown".to_string()
+                        };
+
+                        let entry = audit::log_auth_event(
+                            &UserId::new(username),
+                            "LOGIN",
+                            false,
+                            resolved_ip.clone(),
+                        );
+                        if let Err(e) = audit::persist_audit_entry(app_context.get_ref(), &entry).await {
+                            error!("Failed to persist audit log: {}", e);
+                        }
+                    }
+                }
+            }
+
             let took_ms = start_time.elapsed().as_millis() as u64;
             let (code, message) = match e {
                 kalamdb_auth::AuthError::MissingAuthorization(msg) => {
@@ -231,26 +294,6 @@ pub async fn execute_sql_v1(
     let mut total_inserted = 0usize;
     let mut total_updated = 0usize;
     let mut total_deleted = 0usize;
-
-    // Phase 3 (T033): Extract request_id and ip_address for ExecutionContext
-    let request_id = http_req
-        .headers()
-        .get("X-Request-ID")
-        .and_then(|h| h.to_str().ok())
-        .map(|s| s.to_string());
-
-    let resolved_ip = http_req
-        .headers()
-        .get("X-Forwarded-For")
-        .and_then(|h| h.to_str().ok())
-        .and_then(|raw| raw.split(',').next().map(|s| s.trim().to_string()))
-        .filter(|s| !s.is_empty())
-        .or_else(|| {
-            http_req
-                .connection_info()
-                .realip_remote_addr()
-                .map(|s| s.to_string())
-        });
 
     for (idx, sql) in statements.iter().enumerate() {
         let stmt_start = std::time::Instant::now();

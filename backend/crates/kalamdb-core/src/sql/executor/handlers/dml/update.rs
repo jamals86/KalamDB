@@ -84,7 +84,7 @@ impl StatementHandler for UpdateHandler {
             ));
         }
 
-        match def.table_type {
+        let result = match def.table_type {
             kalamdb_commons::schemas::TableType::User => {
                 // Get provider from unified cache and downcast to UserTableProvider
                 let provider_arc = schema_registry.get_provider(&table_id).ok_or_else(|| {
@@ -185,7 +185,23 @@ impl StatementHandler for UpdateHandler {
             kalamdb_commons::schemas::TableType::System => Err(KalamDbError::InvalidOperation(
                 "Cannot UPDATE SYSTEM tables".into(),
             )),
+        };
+
+        // Log DML operation if successful
+        if let Ok(ExecutionResult::Updated { rows_affected }) = &result {
+            use crate::sql::executor::helpers::audit;
+            let subject_user_id = statement.as_user_id().cloned();
+            let audit_entry = audit::log_dml_operation(
+                context,
+                "UPDATE",
+                &format!("{}.{}", namespace.as_str(), table_name.as_str()),
+                *rows_affected,
+                subject_user_id,
+            );
+            audit::persist_audit_entry(&app_context, &audit_entry).await?;
         }
+
+        result
     }
 
     async fn check_authorization(

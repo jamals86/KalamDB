@@ -176,22 +176,13 @@ pub fn log_auth_event(
     }
 }
 
-/// Persist audit log entry to storage
-///
-/// **Note**: This is a placeholder. Actual implementation will use
-/// AuditLogsTableProvider to persist entries to system.audit_logs.
-///
-/// # Arguments
-/// * `entry` - Audit log entry to persist
-///
-/// # Returns
-/// * `Ok(())` - Entry persisted successfully
-/// * `Err(KalamDbError)` - Persistence failed
-pub async fn persist_audit_entry(_entry: &AuditLogEntry) -> Result<(), KalamDbError> {
-    // TODO: Phase 7 (US3) - Implement actual persistence via SystemTablesRegistry
-    // let audit_logs_provider = app_ctx.system_tables().audit_logs();
-    // audit_logs_provider.insert(entry).await?;
+use std::sync::Arc;
+use crate::app_context::AppContext;
 
+/// Persist an audit entry to the system.audit_logs table
+pub async fn persist_audit_entry(app_context: &Arc<AppContext>, entry: &AuditLogEntry) -> Result<(), KalamDbError> {
+    let audit_logs_provider = app_context.system_tables().audit_logs();
+    audit_logs_provider.append(entry.clone()).map_err(|e| KalamDbError::from(e))?;
     Ok(())
 }
 

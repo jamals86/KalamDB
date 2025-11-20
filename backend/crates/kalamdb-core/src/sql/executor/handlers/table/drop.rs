@@ -473,6 +473,18 @@ impl TypedStatementHandler<DropTableStatement> for DropTableHandler {
             )
             .await?;
 
+        // Log DDL operation
+        use crate::sql::executor::helpers::audit;
+        let audit_entry = audit::log_ddl_operation(
+            context,
+            "DROP",
+            "TABLE",
+            &format!("{}.{}", statement.namespace_id.as_str(), statement.table_name.as_str()),
+            Some(format!("Type: {:?}, Cleanup Job: {}", actual_type, job_id.as_str())),
+            None,
+        );
+        audit::persist_audit_entry(&self.app_context, &audit_entry).await?;
+
         log::info!(
             "✅ DROP TABLE succeeded: {}.{} (type: {:?}) - Cleanup job: {}",
             statement.namespace_id.as_str(),

@@ -28,30 +28,45 @@ impl TypedStatementHandler<ShowTablesStatement> for ShowTablesHandler {
         &self,
         statement: ShowTablesStatement,
         _params: Vec<ScalarValue>,
-        _context: &ExecutionContext,
+        context: &ExecutionContext,
     ) -> Result<ExecutionResult, KalamDbError> {
+        let start_time = std::time::Instant::now();
         let tables_provider = self.app_context.system_tables().tables();
 
         // If namespace filter provided, build filtered batch manually
-        if let Some(ns) = statement.namespace_id {
+        let result = if let Some(ns) = statement.namespace_id {
             let defs = tables_provider.list_tables()?;
             let filtered: Vec<TableDefinition> =
                 defs.into_iter().filter(|t| t.namespace_id == ns).collect();
             let batch = build_tables_batch(filtered)?;
             let row_count = batch.num_rows();
-            return Ok(ExecutionResult::Rows {
+            Ok(ExecutionResult::Rows {
                 batches: vec![batch],
                 row_count,
-            });
-        }
+            })
+        } else {
+            // Otherwise, reuse provider's batch for all tables
+            let batch = tables_provider.scan_all_tables()?;
+            let row_count = batch.num_rows();
+            Ok(ExecutionResult::Rows {
+                batches: vec![batch],
+                row_count,
+            })
+        };
 
-        // Otherwise, reuse provider's batch for all tables
-        let batch = tables_provider.scan_all_tables()?;
-        let row_count = batch.num_rows();
-        Ok(ExecutionResult::Rows {
-            batches: vec![batch],
-            row_count,
-        })
+        // Log query operation
+        let duration = start_time.elapsed().as_millis() as u64;
+        use crate::sql::executor::helpers::audit;
+        let audit_entry = audit::log_query_operation(
+            context,
+            "SHOW",
+            "TABLES",
+            duration,
+            None,
+        );
+        audit::persist_audit_entry(&self.app_context, &audit_entry).await?;
+
+        result
     }
 
     async fn check_authorization(

@@ -27,12 +27,12 @@ impl TypedStatementHandler<ShowTableStatsStatement> for ShowStatsHandler {
         &self,
         statement: ShowTableStatsStatement,
         _params: Vec<ScalarValue>,
-        _context: &ExecutionContext,
+        context: &ExecutionContext,
     ) -> Result<ExecutionResult, KalamDbError> {
-        // For now we surface basic logical stats from system tables registry.
-        // Future: integrate storage layer (Parquet segments, RocksDB mem stats, eviction metrics).
+        let start_time = std::time::Instant::now();
         let ns = statement
             .namespace_id
+            .clone()
             .unwrap_or_else(|| NamespaceId::new("default"));
         let table_id = TableId::from_strings(ns.as_str(), statement.table_name.as_str());
 
@@ -79,6 +79,18 @@ impl TypedStatementHandler<ShowTableStatsStatement> for ShowStatsHandler {
             ],
         )
         .map_err(|e| KalamDbError::Other(format!("Arrow error: {}", e)))?;
+
+        // Log query operation
+        let duration = start_time.elapsed().as_millis() as u64;
+        use crate::sql::executor::helpers::audit;
+        let audit_entry = audit::log_query_operation(
+            context,
+            "SHOW",
+            &format!("STATS {}.{}", ns.as_str(), statement.table_name.as_str()),
+            duration,
+            None,
+        );
+        audit::persist_audit_entry(&self.app_context, &audit_entry).await?;
 
         Ok(ExecutionResult::Rows {
             batches: vec![batch],
