@@ -13,7 +13,7 @@ use kalamdb_api::models::SqlResponse;
 
 fn assert_row_count(response: &SqlResponse, expected: usize, verbs: &[&str]) {
     assert_eq!(
-        response.status, "success",
+        response.status, kalamdb_api::models::ResponseStatus::Success,
         "DML execution failed: {:?}",
         response.error
     );

@@ -203,13 +203,30 @@ impl Default for JobOptions {
     }
 }
 
+/// Sort order for job queries
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum SortOrder {
+    Asc,
+    Desc,
+}
+
+/// Fields to sort jobs by
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum JobSortField {
+    CreatedAt,
+    UpdatedAt,
+    Priority,
+}
+
 /// Filter criteria for job queries
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct JobFilter {
     /// Filter by job type
     pub job_type: Option<JobType>,
-    /// Filter by job status
+    /// Filter by job status (single) - Deprecated, use statuses
     pub status: Option<JobStatus>,
+    /// Filter by multiple job statuses
+    pub statuses: Option<Vec<JobStatus>>,
     /// Filter by namespace
     pub namespace_id: Option<NamespaceId>,
     /// Filter by table name
@@ -222,6 +239,10 @@ pub struct JobFilter {
     pub created_after: Option<i64>,
     /// End at created_at timestamp (exclusive)
     pub created_before: Option<i64>,
+    /// Sort field
+    pub sort_by: Option<JobSortField>,
+    /// Sort order
+    pub sort_order: Option<SortOrder>,
 }
 
 impl Default for JobFilter {
@@ -229,12 +250,15 @@ impl Default for JobFilter {
         Self {
             job_type: None,
             status: None,
+            statuses: None,
             namespace_id: None,
             table_name: None,
             idempotency_key: None,
             limit: Some(100),
             created_after: None,
             created_before: None,
+            sort_by: None,
+            sort_order: None,
         }
     }
 }

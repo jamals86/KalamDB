@@ -204,7 +204,6 @@ where
                 let user_id = kalamdb_commons::UserId::new(&username);
                 let username_lower = username.to_lowercase();
                 let role = if username_lower == "root"
-                    || username_lower == "system"
                     || username_lower == "admin"
                     || username_lower.starts_with("e2e_")
                 {

@@ -14,7 +14,7 @@
 mod common;
 
 use common::{fixtures, TestServer};
-use kalamdb_api::models::SqlResponse;
+use kalamdb_api::models::{ResponseStatus, SqlResponse};
 
 /// Helper to create a user table for testing
 async fn create_user_table(
@@ -53,7 +53,7 @@ async fn test_user_table_create_and_basic_insert() {
     // Create namespace first
     let response = fixtures::create_namespace(&server, "test_ns").await;
     assert_eq!(
-        response.status, "success",
+        response.status, ResponseStatus::Success,
         "Failed to create namespace: {:?}",
         response.error
     );
@@ -61,7 +61,7 @@ async fn test_user_table_create_and_basic_insert() {
     // Create user table as user1
     let response = create_user_table(&server, "test_ns", "notes", "user1").await;
     assert_eq!(
-        response.status, "success",
+        response.status, ResponseStatus::Success,
         "Failed to create user table: {:?}",
         response.error
     );
@@ -76,7 +76,7 @@ async fn test_user_table_create_and_basic_insert() {
         .await;
 
     assert_eq!(
-        response.status, "success",
+        response.status, ResponseStatus::Success,
         "Failed to insert: {:?}",
         response.error
     );
@@ -120,7 +120,7 @@ async fn test_user_table_data_isolation() {
         .await;
 
     assert_eq!(
-        response.status, "success",
+        response.status, ResponseStatus::Success,
         "Failed to select as user1: {:?}",
         response.error
     );
@@ -142,7 +142,7 @@ async fn test_user_table_data_isolation() {
         .await;
 
     assert_eq!(
-        response.status, "success",
+        response.status, ResponseStatus::Success,
         "Failed to select as user2: {:?}",
         response.error
     );
@@ -194,7 +194,7 @@ async fn test_user_table_update_with_isolation() {
         .await;
 
     assert_eq!(
-        response.status, "success",
+        response.status, ResponseStatus::Success,
         "Failed to update: {:?}",
         response.error
     );
@@ -263,7 +263,7 @@ async fn test_user_table_delete_with_isolation() {
         .await;
 
     assert_eq!(
-        response.status, "success",
+        response.status, ResponseStatus::Success,
         "Failed to delete: {:?}",
         response.error
     );
@@ -277,7 +277,7 @@ async fn test_user_table_delete_with_isolation() {
         .await;
 
     assert_eq!(
-        response.status, "success",
+        response.status, ResponseStatus::Success,
         "SELECT after DELETE failed: {:?}",
         response.error
     );
@@ -295,7 +295,7 @@ async fn test_user_table_delete_with_isolation() {
         .await;
 
     assert_eq!(
-        response.status, "success",
+        response.status, ResponseStatus::Success,
         "SELECT user2 data failed: {:?}",
         response.error
     );
@@ -334,7 +334,7 @@ async fn test_user_table_system_columns() {
         .await;
 
     assert_eq!(
-        response.status, "success",
+        response.status, ResponseStatus::Success,
         "Failed to select system columns: {:?}",
         response.error
     );
@@ -381,7 +381,7 @@ async fn test_user_table_multiple_inserts() {
         .execute_sql_as_user("SELECT id, content FROM test_ns.notes", "user1")
         .await;
 
-    assert_eq!(response.status, "success");
+    assert_eq!(response.status, ResponseStatus::Success);
 
     if let Some(rows) = &response.results[0].rows {
         assert_eq!(rows.len(), 5, "Should have 5 rows");
@@ -410,7 +410,7 @@ async fn test_user_table_user_cannot_access_other_users_data() {
         .execute_sql_as_user("SELECT id, content FROM test_ns.notes", "user2")
         .await;
 
-    assert_eq!(response.status, "success");
+    assert_eq!(response.status, ResponseStatus::Success);
 
     if let Some(rows) = &response.results[0].rows {
         assert_eq!(
@@ -429,7 +429,7 @@ async fn test_user_table_user_cannot_access_other_users_data() {
         .await;
 
     // Update might succeed but should affect 0 rows
-    assert_eq!(response.status, "success");
+    assert_eq!(response.status, ResponseStatus::Success);
 
     // Verify user1's data unchanged
     let response = server

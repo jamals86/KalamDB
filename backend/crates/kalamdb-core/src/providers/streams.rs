@@ -62,6 +62,9 @@ pub struct StreamTableProvider {
 
     /// Cached primary key field name
     primary_key_field_name: String,
+
+    /// Cached Arrow schema (prevents panics if table is dropped while provider is in use)
+    schema: SchemaRef,
 }
 
 impl StreamTableProvider {
@@ -79,11 +82,20 @@ impl StreamTableProvider {
         ttl_seconds: Option<u64>,
         primary_key_field_name: String,
     ) -> Self {
+        // Cache schema at creation time to avoid "Table not found" panics if table is dropped
+        // while provider is still in use by a query plan
+        let schema = core
+            .app_context
+            .schema_registry()
+            .get_arrow_schema(core.table_id())
+            .expect("Failed to get Arrow schema from registry during provider creation");
+
         Self {
             core,
             store,
             ttl_seconds,
             primary_key_field_name,
+            schema,
         }
     }
 
@@ -127,12 +139,8 @@ impl BaseTableProvider<StreamTableRowId, StreamTableRow> for StreamTableProvider
     }
 
     fn schema_ref(&self) -> SchemaRef {
-        // Get memoized Arrow schema from SchemaRegistry via AppContext
-        self.core
-            .app_context
-            .schema_registry()
-            .get_arrow_schema(self.core.table_id())
-            .expect("Failed to get Arrow schema from registry")
+        // Return cached schema
+        self.schema.clone()
     }
 
     fn provider_table_type(&self) -> TableType {

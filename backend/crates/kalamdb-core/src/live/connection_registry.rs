@@ -289,7 +289,7 @@ mod tests {
     fn test_connection_id_format() {
         let conn_id = ConnectionId::new("user123".to_string(), "conn_abc".to_string());
         assert_eq!(conn_id.to_string(), "user123-conn_abc");
-        assert_eq!(conn_id.user_id(), "user123");
+        assert_eq!(conn_id.user_id().as_str(), "user123");
         assert_eq!(conn_id.unique_conn_id(), "conn_abc");
     }
 

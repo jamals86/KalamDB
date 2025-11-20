@@ -4,7 +4,6 @@
 //! Custom SQL functions (SNOWFLAKE_ID, UUID_V7, ULID, CURRENT_USER) are registered
 //! with each session for use in SELECT, WHERE, and DEFAULT clauses.
 
-use crate::schema_registry::UserId;
 use crate::sql::functions::{
     CurrentUserFunction, SnowflakeIdFunction, UlidFunction, UuidV7Function,
 };

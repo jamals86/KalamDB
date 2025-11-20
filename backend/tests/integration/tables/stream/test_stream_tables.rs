@@ -11,6 +11,7 @@ mod common;
 
 use common::fixtures;
 use common::TestServer;
+use kalamdb_api::models::ResponseStatus;
 
 /// Helper function to create a stream table
 async fn create_stream_table(server: &TestServer, namespace: &str, table_name: &str) {
@@ -25,7 +26,7 @@ async fn create_stream_table(server: &TestServer, namespace: &str, table_name: &
 
     let response = server.execute_sql(&create_sql).await;
     assert_eq!(
-        response.status, "success",
+        response.status, ResponseStatus::Success,
         "Failed to create stream table: {:?}",
         response.error
     );
@@ -48,7 +49,7 @@ async fn test_stream_table_create_and_basic_insert() {
         .await;
 
     assert_eq!(
-        response.status, "success",
+        response.status, ResponseStatus::Success,
         "Failed to insert event: {:?}",
         response.error
     );
@@ -72,7 +73,7 @@ async fn test_stream_table_multiple_inserts() {
                VALUES (1, 'user_login', 'user_123')"#,
         )
         .await;
-    assert_eq!(response.status, "success");
+    assert_eq!(response.status, ResponseStatus::Success);
 
     let response = server
         .execute_sql(
@@ -80,7 +81,7 @@ async fn test_stream_table_multiple_inserts() {
                VALUES (2, 'page_view', 'page_home')"#,
         )
         .await;
-    assert_eq!(response.status, "success");
+    assert_eq!(response.status, ResponseStatus::Success);
 
     let response = server
         .execute_sql(
@@ -88,7 +89,7 @@ async fn test_stream_table_multiple_inserts() {
                VALUES (3, 'user_logout', 'user_123')"#,
         )
         .await;
-    assert_eq!(response.status, "success");
+    assert_eq!(response.status, ResponseStatus::Success);
 }
 
 #[actix_web::test]
@@ -108,7 +109,7 @@ async fn test_stream_table_no_system_columns() {
         .await;
 
     assert_eq!(
-        response.status, "success",
+        response.status, ResponseStatus::Success,
         "Stream table INSERT should not require system columns: {:?}",
         response.error
     );

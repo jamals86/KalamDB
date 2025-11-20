@@ -363,7 +363,7 @@ impl TestServer {
                 || sql_u.starts_with("ALTER NAMESPACE")
                 || sql_u.starts_with("DROP NAMESPACE")
             {
-                user_id_obj = Some(UserId::system());
+                user_id_obj = Some(UserId::root());
             }
         }
 
@@ -415,7 +415,7 @@ impl TestServer {
 
                 ExecutionContext::new(user_id.clone(), role, session.clone())
             }
-            None => ExecutionContext::new(UserId::system(), Role::System, session),
+            None => ExecutionContext::new(UserId::root(), Role::System, session),
         };
 
         match self.sql_executor.execute(sql, &exec_ctx, Vec::new()).await {
@@ -933,7 +933,7 @@ mod tests {
         let response = server
             .execute_sql("CREATE NAMESPACE IF NOT EXISTS test_ns")
             .await;
-        assert_eq!(response.status, "success");
+        assert_eq!(response.status, ResponseStatus::Success);
     }
 
     #[actix_web::test]

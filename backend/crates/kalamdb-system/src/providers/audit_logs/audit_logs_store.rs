@@ -175,7 +175,7 @@ mod tests {
         }
 
         // Verify all 100 entries were written
-        let entries = EntityStore::scan_all(&*store).unwrap();
+        let entries = EntityStore::scan_all(&*store, None, None, None).unwrap();
         assert_eq!(entries.len(), 100);
     }
 

@@ -157,7 +157,7 @@ mod tests {
         }
 
         // Scan all
-        let tables = store.scan_all().unwrap();
+        let tables = store.scan_all(None, None, None).unwrap();
         assert_eq!(tables.len(), 3);
     }
 

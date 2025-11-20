@@ -124,7 +124,7 @@ impl StatementHandler for InsertHandler {
                 )));
             }
             for (col, expr) in columns.iter().zip(row_exprs.iter()) {
-                let value = self.expr_to_json(expr, &params)?;
+                let value = self.expr_to_json(expr, &params, effective_user_id)?;
                 obj.insert(col.clone(), value);
             }
 
@@ -293,7 +293,12 @@ impl InsertHandler {
     }
 
     /// Convert sqlparser Expr to JSON value, binding parameters as needed
-    fn expr_to_json(&self, expr: &Expr, params: &[ScalarValue]) -> Result<JsonValue, KalamDbError> {
+    fn expr_to_json(
+        &self,
+        expr: &Expr,
+        params: &[ScalarValue],
+        user_id: &kalamdb_commons::models::UserId,
+    ) -> Result<JsonValue, KalamDbError> {
         match expr {
             Expr::Value(val_with_span) => {
                 match &val_with_span.value {
@@ -338,6 +343,58 @@ impl InsertHandler {
                 }
 
                 self.scalar_value_to_json(&params[param_num - 1])
+            }
+            Expr::Function(func) => {
+                // Handle function calls (e.g. SNOWFLAKE_ID(), NOW(), etc.)
+                let name = func.name.to_string();
+                let mut args = Vec::new();
+
+                match &func.args {
+                    sqlparser::ast::FunctionArguments::List(arg_list) => {
+                        for arg in &arg_list.args {
+                            match arg {
+                                sqlparser::ast::FunctionArg::Named { .. } => {
+                                    return Err(KalamDbError::InvalidOperation(
+                                        "Named function arguments not supported".into(),
+                                    ));
+                                }
+                                sqlparser::ast::FunctionArg::Unnamed(arg_expr) => {
+                                    match arg_expr {
+                                        sqlparser::ast::FunctionArgExpr::Expr(expr) => {
+                                            args.push(self.expr_to_json(expr, params, user_id)?);
+                                        }
+                                        _ => {
+                                            return Err(KalamDbError::InvalidOperation(
+                                                "Unsupported function argument expression type".into(),
+                                            ));
+                                        }
+                                    }
+                                }
+                                _ => {
+                                    return Err(KalamDbError::InvalidOperation(
+                                        "Unsupported function argument type".into(),
+                                    ));
+                                }
+                            }
+                        }
+                    }
+                    sqlparser::ast::FunctionArguments::None => {
+                        // No arguments
+                    }
+                    _ => {
+                        return Err(KalamDbError::InvalidOperation(
+                            "Unsupported function argument format".into(),
+                        ));
+                    }
+                }
+
+                use crate::sql::executor::default_evaluator::evaluate_default;
+                use kalamdb_commons::schemas::ColumnDefault;
+
+                let col_default = ColumnDefault::FunctionCall { name, args };
+                let sys_cols = self.app_context.system_columns_service();
+
+                evaluate_default(&col_default, user_id, Some(sys_cols))
             }
             _ => {
                 // For other expressions, convert to string (fallback)

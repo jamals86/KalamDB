@@ -138,7 +138,7 @@ mod tests {
     fn test_connection_id_helper() {
         let stmt = KillLiveQueryStatement::parse("KILL LIVE QUERY 'user123-conn_abc-messages-q1'")
             .unwrap();
-        assert_eq!(stmt.connection_id().user_id(), "user123");
+        assert_eq!(stmt.connection_id().user_id().as_str(), "user123");
         assert_eq!(stmt.connection_id().unique_conn_id(), "conn_abc");
     }
 }

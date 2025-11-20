@@ -7,7 +7,6 @@ use super::connection_registry::{ConnectionId, LiveId, LiveQueryOptions, LiveQue
 use super::filter::FilterCache;
 use super::query_parser::QueryParser;
 use crate::error::KalamDbError;
-use kalamdb_commons::constants::AuthConstants;
 use kalamdb_commons::models::{NamespaceId, TableId, TableName, UserId};
 use kalamdb_commons::schemas::TableType;
 use kalamdb_commons::system::LiveQuery as SystemLiveQuery;
@@ -40,13 +39,6 @@ impl SubscriptionService {
             schema_registry,
             node_id,
         }
-    }
-
-    fn is_admin_user(user_id: &str) -> bool {
-        const ADMIN_IDS: [&str; 3] = ["root", "system", AuthConstants::DEFAULT_SYSTEM_USER_ID];
-        ADMIN_IDS
-            .iter()
-            .any(|admin_id| user_id.eq_ignore_ascii_case(admin_id))
     }
 
     /// Get current timestamp in milliseconds
@@ -94,12 +86,12 @@ impl SubscriptionService {
         }
 
         // Security Check: Enforce table access permissions
-        let user_id_str = connection_id.user_id();
-        let is_admin = Self::is_admin_user(user_id_str);
+        let user_id = connection_id.user_id();
+        let is_admin = user_id.is_admin();
 
         match table_def.table_type {
             TableType::User => {
-                if !is_admin && namespace != user_id_str {
+                if !is_admin && namespace != user_id.as_str() {
                     return Err(KalamDbError::Unauthorized(format!(
                         "Insufficient privileges to subscribe to user table '{}.{}'",
                         namespace, table
@@ -125,8 +117,8 @@ impl SubscriptionService {
         // Auto-inject user_id filter for user tables (row-level security)
         if table_def.table_type == TableType::User {
             let user_id = connection_id.user_id();
-            if !Self::is_admin_user(user_id) {
-                let user_filter = format!("user_id = '{}'", user_id);
+            if !is_admin {
+                let user_filter = format!("user_id = '{}'", user_id.as_str());
                 where_clause = if let Some(existing_clause) = where_clause {
                     Some(format!("{} AND {}", user_filter, existing_clause))
                 } else {

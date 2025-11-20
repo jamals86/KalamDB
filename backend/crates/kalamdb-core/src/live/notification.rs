@@ -115,9 +115,7 @@ impl NotificationService {
             all_handles.extend(registry.get_subscriptions_for_table(user_id, table_id));
             // Admin-like observers (observe all users)
             let root = kalamdb_commons::models::UserId::root();
-            let system = kalamdb_commons::models::UserId::system();
             all_handles.extend(registry.get_subscriptions_for_table(&root, table_id));
-            all_handles.extend(registry.get_subscriptions_for_table(&system, table_id));
 
             let mut ids = Vec::new();
             let mut seen = HashSet::new();

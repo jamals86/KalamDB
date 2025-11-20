@@ -1,9 +1,14 @@
 use super::*;
 use kalamdb_commons::datatypes::KalamDataType;
 use kalamdb_commons::models::schemas::{ColumnDefinition, TableDefinition};
+use kalamdb_commons::models::{NamespaceId, TableId, TableName, UserId};
+use kalamdb_commons::schemas::TableType;
+use std::sync::Arc;
 use std::sync::atomic::AtomicU64;
 use std::thread;
 use std::time::Duration;
+use crate::schema_registry::CachedTableData;
+use datafusion::catalog::TableProvider;
 
 fn create_test_schema() -> Arc<TableDefinition> {
     use kalamdb_commons::schemas::{ColumnDefault, TableOptions};
@@ -665,7 +670,7 @@ fn test_get_bloom_filter_columns_composite_pk() {
         KalamDataType::BigInt,
         false, // not nullable
         true,  // is_primary_key
-        false, // not partition key
+        false,
         kalamdb_commons::models::schemas::ColumnDefault::None,
         None,
     );

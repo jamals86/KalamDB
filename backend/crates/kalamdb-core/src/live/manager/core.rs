@@ -306,6 +306,12 @@ impl LiveQueryManager {
         Arc::clone(&self.registry)
     }
 
+    /// Get the filter cache (for testing)
+    #[cfg(test)]
+    pub fn filter_cache(&self) -> Arc<tokio::sync::RwLock<FilterCache>> {
+        Arc::clone(&self.filter_cache)
+    }
+
     /// Notify subscribers about a table change (fire-and-forget async)
     pub fn notify_table_change_async(
         self: &Arc<Self>,

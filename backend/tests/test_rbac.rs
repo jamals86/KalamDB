@@ -7,6 +7,7 @@ mod common;
 
 use common::{fixtures, TestServer};
 use kalamdb_commons::models::{AuthType, Role, StorageMode, UserId, UserName};
+use kalamdb_api::models::ResponseStatus;
 
 async fn insert_user(server: &TestServer, username: &str, role: Role) -> UserId {
     // Note: Users provider treats user_id as username key; keep them equal
@@ -45,34 +46,39 @@ async fn test_user_role_own_tables_access_and_isolation() {
 
     // Create namespace and table
     let ns_resp = server.execute_sql("CREATE NAMESPACE rbac_user").await;
-    if ns_resp.status != kalamdb_api::models::ResponseStatus::Success {
+    if ns_resp.status != ResponseStatus::Success {
         eprintln!("Create namespace error: {:?}", ns_resp.error);
     }
-    assert_eq!(ns_resp.status, "success");
+    assert_eq!(ns_resp.status, ResponseStatus::Success);
     let create = format!(
         "CREATE USER TABLE {}.notes (id INT PRIMARY KEY, content TEXT)",
         ns
     );
     let resp = server.execute_sql_as_user(&create, u1.as_str()).await;
     println!("create user table resp = {:?}", resp);
-    assert_eq!(resp.status, "success", "create user table resp: {:?}", resp);
+    assert_eq!(
+        resp.status,
+        ResponseStatus::Success,
+        "create user table resp: {:?}",
+        resp
+    );
 
     // Insert a row as u1
     let ins = format!("INSERT INTO {}.notes (id, content) VALUES (1, 'hi')", ns);
     let resp = server.execute_sql_as_user(&ins, u1.as_str()).await;
-    assert_eq!(resp.status, "success");
+    assert_eq!(resp.status, ResponseStatus::Success);
 
     // Read as u1 → sees 1 row
     let sel = format!("SELECT * FROM {}.notes", ns);
     let resp = server.execute_sql_as_user(&sel, u1.as_str()).await;
     println!("select as u1 resp = {:?}", resp);
-    assert_eq!(resp.status, "success");
+    assert_eq!(resp.status, ResponseStatus::Success);
     let rows = resp.results[0].rows.as_ref().unwrap();
     assert_eq!(rows.len(), 1, "u1 should see own rows");
 
     // Read as u2 → per-user isolation should show 0 rows
     let resp = server.execute_sql_as_user(&sel, u2.as_str()).await;
-    assert_eq!(resp.status, "success");
+    assert_eq!(resp.status, ResponseStatus::Success);
     let total = resp
         .results
         .first()
@@ -98,7 +104,8 @@ async fn test_service_role_cross_user_access() {
     );
     let resp = server.execute_sql_as_user(&create, alice.as_str()).await;
     assert_eq!(
-        resp.status, "success",
+        resp.status,
+        ResponseStatus::Success,
         "user should be able to create table"
     );
 
@@ -117,7 +124,11 @@ async fn test_service_role_cross_user_access() {
 
     let select = format!("SELECT content FROM {}.orders ORDER BY content", ns);
     let resp = server.execute_sql_as_user(&select, svc.as_str()).await;
-    assert_eq!(resp.status, "success", "service select should succeed");
+    assert_eq!(
+        resp.status,
+        ResponseStatus::Success,
+        "service select should succeed"
+    );
 
     let rows = resp.results[0]
         .rows
@@ -147,7 +158,11 @@ async fn test_service_role_flush_operations() {
         ns
     );
     let resp = server.execute_sql_as_user(&create, svc.as_str()).await;
-    assert_eq!(resp.status, "success", "service should create user table");
+    assert_eq!(
+        resp.status,
+        ResponseStatus::Success,
+        "service should create user table"
+    );
 
     for i in 0..3 {
         let insert = format!(
@@ -159,7 +174,11 @@ async fn test_service_role_flush_operations() {
 
     let flush = format!("FLUSH TABLE {}.events", ns);
     let resp = server.execute_sql_as_user(&flush, svc.as_str()).await;
-    assert_eq!(resp.status, "success", "service flush should succeed");
+    assert_eq!(
+        resp.status,
+        ResponseStatus::Success,
+        "service flush should succeed"
+    );
     assert!(resp
         .results
         .first()
@@ -175,7 +194,11 @@ async fn test_service_role_cannot_manage_users() {
 
     let sql = "CREATE USER 'managed' WITH PASSWORD 'StrongPass123!' ROLE user";
     let resp = server.execute_sql_as_user(sql, svc.as_str()).await;
-    assert_eq!(resp.status, "error", "service should not manage users");
+    assert_eq!(
+        resp.status,
+        ResponseStatus::Error,
+        "service should not manage users"
+    );
 }
 
 #[actix_web::test]
@@ -186,11 +209,12 @@ async fn test_user_cannot_manage_users() {
     // Regular user cannot CREATE USER
     let sql = "CREATE USER 'eve' WITH PASSWORD 'x' ROLE user";
     let resp = server.execute_sql_as_user(sql, user.as_str()).await;
-    if resp.status != kalamdb_api::models::ResponseStatus::Error {
+    if resp.status != ResponseStatus::Error {
         eprintln!("Unexpected status for user create: {:?}", resp);
     }
     assert_eq!(
-        resp.status, "error",
+        resp.status,
+        ResponseStatus::Error,
         "user should be forbidden to manage users"
     );
 }
@@ -202,10 +226,14 @@ async fn test_dba_can_manage_users() {
 
     let sql = "CREATE USER 'svc1' WITH PASSWORD 'StrongPass123!' ROLE service";
     let resp = server.execute_sql_as_user(sql, dba.as_str()).await;
-    if resp.status != kalamdb_api::models::ResponseStatus::Success {
+    if resp.status != ResponseStatus::Success {
         eprintln!("DBA create user error: {:?}", resp.error);
     }
-    assert_eq!(resp.status, "success", "dba can create users");
+    assert_eq!(
+        resp.status,
+        ResponseStatus::Success,
+        "dba can create users"
+    );
 }
 
 #[actix_web::test]
@@ -221,7 +249,7 @@ async fn test_system_role_all_access_smoke() {
         "System CREATE NAMESPACE resp: status={} error={:?}",
         resp.status, resp.error
     );
-    assert_eq!(resp.status, "success");
+    assert_eq!(resp.status, ResponseStatus::Success);
 
     // CREATE USER should work
     let resp = server
@@ -230,5 +258,5 @@ async fn test_system_role_all_access_smoke() {
             sys.as_str(),
         )
         .await;
-    assert_eq!(resp.status, "success");
+    assert_eq!(resp.status, ResponseStatus::Success);
 }

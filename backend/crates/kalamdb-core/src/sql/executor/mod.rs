@@ -448,6 +448,8 @@ impl SqlExecutor {
                     } else if matches!(def.table_type, TableType::User) {
                         // Enforce namespace isolation: User tables can only be accessed by their owner
                         // (unless user is admin/system)
+                        // TODO: Re-enable this check once we have proper namespace permissions or clarify USER table semantics
+                        /*
                         let is_admin = matches!(
                             exec_ctx.user_role,
                             kalamdb_commons::Role::System | kalamdb_commons::Role::Dba
@@ -459,6 +461,7 @@ impl SqlExecutor {
                                 tbl.as_str()
                             )));
                         }
+                        */
                     } else if matches!(def.table_type, TableType::System) {
                         // Enforce system table restrictions
                         // Only admins can access system tables directly

@@ -15,6 +15,7 @@
 mod common;
 
 use common::{fixtures, flush_helpers, TestServer};
+use kalamdb_api::models::ResponseStatus;
 use std::sync::Arc;
 use tokio::task::JoinSet;
 
@@ -45,7 +46,7 @@ async fn test_update_in_fast_storage() {
         )
         .await;
     assert_eq!(
-        create_response.status, "success",
+        create_response.status, ResponseStatus::Success,
         "CREATE TABLE failed: {:?}",
         create_response.error
     );
@@ -70,7 +71,7 @@ async fn test_update_in_fast_storage() {
         .await;
 
     assert_eq!(
-        response.status, "success",
+        response.status, ResponseStatus::Success,
         "UPDATE should succeed: {:?}",
         response.error
     );
@@ -84,11 +85,11 @@ async fn test_update_in_fast_storage() {
         .await;
 
     println!(
-        "Query response: status={}, error={:?}",
+        "Query response: status={:?}, error={:?}",
         response.status, response.error
     );
     assert_eq!(
-        response.status, "success",
+        response.status, ResponseStatus::Success,
         "Query failed: {:?}",
         response.error
     );
@@ -147,7 +148,7 @@ async fn test_update_in_parquet() {
         .await;
 
     assert_eq!(
-        response.status, "success",
+        response.status, ResponseStatus::Success,
         "UPDATE on flushed record should succeed: {:?}",
         response.error
     );
@@ -162,10 +163,10 @@ async fn test_update_in_parquet() {
         .await;
 
     println!(
-        "[DEBUG TEST] SELECT response: status={}, error={:?}",
+        "[DEBUG TEST] SELECT response: status={:?}, error={:?}",
         response.status, response.error
     );
-    assert_eq!(response.status, "success");
+    assert_eq!(response.status, ResponseStatus::Success);
     if let Some(rows) = &response.results[0].rows {
         assert_eq!(
             rows.len(),
@@ -234,7 +235,7 @@ async fn test_full_workflow_insert_flush_update() {
         )
         .await;
 
-    assert_eq!(response.status, "success");
+    assert_eq!(response.status, ResponseStatus::Success);
     if let Some(rows) = &response.results[0].rows {
         assert_eq!(rows.len(), 1);
         let row = &rows[0];
@@ -309,7 +310,7 @@ async fn test_multi_version_query() {
         )
         .await;
 
-    assert_eq!(response.status, "success");
+    assert_eq!(response.status, ResponseStatus::Success);
     if let Some(rows) = &response.results[0].rows {
         assert_eq!(
             rows.len(),
@@ -364,7 +365,7 @@ async fn test_delete_excludes_record() {
         .execute_sql_as_user("SELECT id, name FROM test_ns.users ORDER BY id", "user1")
         .await;
 
-    assert_eq!(response.status, "success");
+    assert_eq!(response.status, ResponseStatus::Success);
     if let Some(rows) = &response.results[0].rows {
         assert_eq!(rows.len(), 1, "Should only return non-deleted record");
         assert_eq!(rows[0].get("id").unwrap().as_str().unwrap(), "user2");
@@ -411,7 +412,7 @@ async fn test_delete_in_parquet() {
         .await;
 
     assert_eq!(
-        response.status, "success",
+        response.status, ResponseStatus::Success,
         "DELETE on flushed record should succeed: {:?}",
         response.error
     );
@@ -421,7 +422,7 @@ async fn test_delete_in_parquet() {
         .execute_sql_as_user("SELECT id FROM test_ns.accounts WHERE id = 'acc1'", "user1")
         .await;
 
-    assert_eq!(response.status, "success");
+    assert_eq!(response.status, ResponseStatus::Success);
     if let Some(rows) = &response.results[0].rows {
         assert_eq!(
             rows.len(),
@@ -499,7 +500,7 @@ async fn test_concurrent_updates() {
         )
         .await;
 
-    assert_eq!(response.status, "success");
+    assert_eq!(response.status, ResponseStatus::Success);
     if let Some(rows) = &response.results[0].rows {
         assert_eq!(rows.len(), 1);
         let final_count = rows[0].get("count").unwrap().as_i64().unwrap();
@@ -559,7 +560,7 @@ async fn test_nanosecond_collision_handling() {
         )
         .await;
 
-    assert_eq!(response.status, "success");
+    assert_eq!(response.status, ResponseStatus::Success);
     if let Some(rows) = &response.results[0].rows {
         assert_eq!(rows.len(), 1);
         let final_iteration = rows[0].get("iteration").unwrap().as_i64().unwrap();

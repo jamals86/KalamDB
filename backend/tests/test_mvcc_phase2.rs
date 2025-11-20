@@ -16,6 +16,7 @@
 mod common;
 
 use common::{fixtures, TestServer};
+use kalamdb_api::models::ResponseStatus;
 
 /// T051: CREATE TABLE without PK should be rejected
 #[actix_web::test]
@@ -39,7 +40,7 @@ async fn test_create_table_without_pk_rejected() {
 
     // Should fail with error about missing primary key
     assert_eq!(
-        response.status, "error",
+        response.status, ResponseStatus::Error,
         "CREATE TABLE without PK should fail, got: {:?}",
         response
     );
@@ -79,7 +80,7 @@ async fn test_create_table_auto_adds_system_columns() {
         .await;
 
     assert_eq!(
-        response.status, "success",
+        response.status, ResponseStatus::Success,
         "CREATE TABLE should succeed: {:?}",
         response.error
     );
@@ -101,7 +102,7 @@ async fn test_create_table_auto_adds_system_columns() {
         )
         .await;
 
-    assert_eq!(response.status, "success");
+    assert_eq!(response.status, ResponseStatus::Success);
     if let Some(rows) = &response.results[0].rows {
         assert_eq!(rows.len(), 1, "Should return exactly 1 row");
         let row = &rows[0];
@@ -179,7 +180,7 @@ async fn test_insert_storage_key_format() {
         .await;
 
     assert_eq!(
-        response.status, "success",
+        response.status, ResponseStatus::Success,
         "User table INSERT should succeed: {:?}",
         response.error
     );
@@ -194,7 +195,7 @@ async fn test_insert_storage_key_format() {
         .await;
 
     assert_eq!(
-        response.status, "success",
+        response.status, ResponseStatus::Success,
         "Shared table INSERT should succeed: {:?}",
         response.error
     );
@@ -204,7 +205,7 @@ async fn test_insert_storage_key_format() {
         .execute_sql_as_user("SELECT id, content FROM test_ns.user_data", "user1")
         .await;
 
-    assert_eq!(response.status, "success");
+    assert_eq!(response.status, ResponseStatus::Success);
     if let Some(rows) = &response.results[0].rows {
         assert_eq!(rows.len(), 1, "Should retrieve user table record");
     }
@@ -213,7 +214,7 @@ async fn test_insert_storage_key_format() {
         .execute_sql_as_user("SELECT id, content FROM test_ns.shared_data", "user1")
         .await;
 
-    assert_eq!(response.status, "success");
+    assert_eq!(response.status, ResponseStatus::Success);
     if let Some(rows) = &response.results[0].rows {
         assert_eq!(rows.len(), 1, "Should retrieve shared table record");
     }
@@ -256,7 +257,7 @@ async fn test_user_table_row_structure() {
         )
         .await;
 
-    assert_eq!(response.status, "success");
+    assert_eq!(response.status, ResponseStatus::Success);
     if let Some(rows) = &response.results[0].rows {
         assert_eq!(rows.len(), 1);
         let row = &rows[0];
@@ -327,7 +328,7 @@ async fn test_shared_table_row_structure() {
         )
         .await;
 
-    assert_eq!(response.status, "success");
+    assert_eq!(response.status, ResponseStatus::Success);
     if let Some(rows) = &response.results[0].rows {
         assert_eq!(rows.len(), 1);
         let row = &rows[0];
@@ -397,7 +398,7 @@ async fn test_insert_duplicate_pk_rejected() {
         )
         .await;
 
-    assert_eq!(response.status, "success", "First INSERT should succeed");
+    assert_eq!(response.status, ResponseStatus::Success, "First INSERT should succeed");
 
     // Try to insert duplicate PK (should fail - user provided explicit PK value)
     let response = server
@@ -410,7 +411,7 @@ async fn test_insert_duplicate_pk_rejected() {
 
     // Should fail with uniqueness constraint error
     assert_eq!(
-        response.status, "error",
+        response.status, ResponseStatus::Error,
         "Duplicate PK INSERT should fail when user provides explicit PK value"
     );
 
@@ -432,7 +433,7 @@ async fn test_insert_duplicate_pk_rejected() {
         .execute_sql_as_user("SELECT item_id, name FROM test_ns.unique_items", "user1")
         .await;
 
-    assert_eq!(response.status, "success");
+    assert_eq!(response.status, ResponseStatus::Success);
     if let Some(rows) = &response.results[0].rows {
         assert_eq!(
             rows.len(),
@@ -456,7 +457,7 @@ async fn test_insert_duplicate_pk_rejected() {
         .await;
 
     assert_eq!(
-        response.status, "success",
+        response.status, ResponseStatus::Success,
         "INSERT with different PK should succeed"
     );
 
@@ -510,7 +511,7 @@ async fn test_incremental_sync_seq_threshold() {
         )
         .await;
 
-    assert_eq!(response.status, "success");
+    assert_eq!(response.status, ResponseStatus::Success);
     let all_rows = response.results[0].rows.as_ref().unwrap();
     assert_eq!(all_rows.len(), 3);
 
@@ -528,7 +529,7 @@ async fn test_incremental_sync_seq_threshold() {
         )
         .await;
 
-    assert_eq!(response.status, "success");
+    assert_eq!(response.status, ResponseStatus::Success);
     if let Some(rows) = &response.results[0].rows {
         assert_eq!(rows.len(), 1, "Should return only records after threshold");
         assert_eq!(
@@ -598,7 +599,7 @@ async fn test_rocksdb_prefix_scan_user_isolation() {
         )
         .await;
 
-    assert_eq!(response.status, "success");
+    assert_eq!(response.status, ResponseStatus::Success);
     if let Some(rows) = &response.results[0].rows {
         assert_eq!(rows.len(), 2, "User1 should only see their own 2 notes");
         assert_eq!(
@@ -619,7 +620,7 @@ async fn test_rocksdb_prefix_scan_user_isolation() {
         )
         .await;
 
-    assert_eq!(response.status, "success");
+    assert_eq!(response.status, ResponseStatus::Success);
     if let Some(rows) = &response.results[0].rows {
         assert_eq!(rows.len(), 1, "User2 should only see their own 1 note");
         assert_eq!(
@@ -700,7 +701,7 @@ async fn test_rocksdb_range_scan_efficiency() {
         )
         .await;
 
-    assert_eq!(response.status, "success");
+    assert_eq!(response.status, ResponseStatus::Success);
     if let Some(rows) = &response.results[0].rows {
         // Should return the latest version (value=3) since version resolution
         // applies MAX(_seq) AFTER the range filter

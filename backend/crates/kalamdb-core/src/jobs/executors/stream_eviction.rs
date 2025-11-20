@@ -446,7 +446,7 @@ mod tests {
 
         let remaining = provider
             .store_arc()
-            .scan_all()
+            .scan_all(None, None, None)
             .expect("scan store after eviction");
         assert!(remaining.is_empty(), "All expired rows should be removed");
     }

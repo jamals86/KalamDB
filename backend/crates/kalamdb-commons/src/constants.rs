@@ -127,7 +127,7 @@ impl AuthConstants {
     pub const DEFAULT_SYSTEM_USERNAME: &'static str = "root";
 
     /// Default system user ID created on first database initialization
-    pub const DEFAULT_SYSTEM_USER_ID: &'static str = "sys_root";
+    pub const DEFAULT_ROOT_USER_ID: &'static str = "root";
 }
 
 /// Global instance of authentication constants.

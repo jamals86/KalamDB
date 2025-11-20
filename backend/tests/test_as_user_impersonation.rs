@@ -12,6 +12,7 @@ mod common;
 
 use common::TestServer;
 use kalamdb_commons::models::{AuthType, Role, StorageMode, UserId, UserName};
+use kalamdb_api::models::ResponseStatus;
 
 async fn insert_user(server: &TestServer, username: &str, role: Role) -> UserId {
     let user_id = UserId::new(username);
@@ -76,7 +77,8 @@ async fn test_as_user_blocked_for_regular_user() {
 
     // MUST fail with authorization error
     assert_eq!(
-        resp.status, "error",
+        resp.status,
+        ResponseStatus::Error,
         "Regular user should not be able to use AS USER"
     );
     let error_msg = resp.error.as_ref().unwrap().message.as_str();
@@ -121,7 +123,8 @@ async fn test_as_user_with_service_role() {
         .await;
 
     assert_eq!(
-        resp.status, "success",
+        resp.status,
+        ResponseStatus::Success,
         "Service role should be able to use AS USER"
     );
     assert_eq!(resp.results[0].row_count, 1);
@@ -132,7 +135,7 @@ async fn test_as_user_with_service_role() {
         .execute_sql_as_user(&select_sql, target_user.as_str())
         .await;
 
-    assert_eq!(resp.status, "success");
+    assert_eq!(resp.status, ResponseStatus::Success);
     assert_eq!(
         resp.results[0].rows.as_ref().unwrap().len(),
         1,
@@ -173,7 +176,8 @@ async fn test_as_user_with_dba_role() {
         .await;
 
     assert_eq!(
-        resp.status, "success",
+        resp.status,
+        ResponseStatus::Success,
         "DBA role should be able to use AS USER"
     );
     assert_eq!(resp.results[0].row_count, 1);
@@ -210,14 +214,14 @@ async fn test_insert_as_user_ownership() {
     let resp = server
         .execute_sql_as_user(&insert_sql, admin_user.as_str())
         .await;
-    assert_eq!(resp.status, "success");
+    assert_eq!(resp.status, ResponseStatus::Success);
 
     // Alice can see the record
     let select_sql = format!("SELECT * FROM {}.messages", ns);
     let resp = server
         .execute_sql_as_user(&select_sql, user_alice.as_str())
         .await;
-    assert_eq!(resp.status, "success");
+    assert_eq!(resp.status, ResponseStatus::Success);
     assert_eq!(
         resp.results[0].rows.as_ref().unwrap().len(),
         1,
@@ -228,7 +232,7 @@ async fn test_insert_as_user_ownership() {
     let resp = server
         .execute_sql_as_user(&select_sql, user_bob.as_str())
         .await;
-    assert_eq!(resp.status, "success");
+    assert_eq!(resp.status, ResponseStatus::Success);
     assert_eq!(
         resp.results[0].rows.as_ref().unwrap().len(),
         0,
@@ -273,7 +277,7 @@ async fn test_update_as_user() {
         .execute_sql_as_user(&update_sql, admin_user.as_str())
         .await;
 
-    assert_eq!(resp.status, "success");
+    assert_eq!(resp.status, ResponseStatus::Success);
     assert_eq!(resp.results[0].row_count, 1);
 
     // Verify update via charlie's credentials
@@ -285,7 +289,7 @@ async fn test_update_as_user() {
         .execute_sql_as_user(&select_sql, user_charlie.as_str())
         .await;
 
-    assert_eq!(resp.status, "success");
+    assert_eq!(resp.status, ResponseStatus::Success);
     let rows = resp.results[0].rows.as_ref().unwrap();
     assert_eq!(rows.len(), 1);
     // Note: DataFusion returns columns as arrays, check the status value
@@ -328,7 +332,7 @@ async fn test_delete_as_user() {
         .execute_sql_as_user(&delete_sql, admin_user.as_str())
         .await;
 
-    assert_eq!(resp.status, "success");
+    assert_eq!(resp.status, ResponseStatus::Success);
     assert_eq!(resp.results[0].row_count, 1);
 
     // Verify deletion
@@ -337,7 +341,7 @@ async fn test_delete_as_user() {
         .execute_sql_as_user(&select_sql, user_dave.as_str())
         .await;
 
-    assert_eq!(resp.status, "success");
+    assert_eq!(resp.status, ResponseStatus::Success);
     assert_eq!(
         resp.results[0].rows.as_ref().unwrap().len(),
         0,
@@ -377,7 +381,8 @@ async fn test_as_user_on_shared_table_rejected() {
         .await;
 
     assert_eq!(
-        resp.status, "error",
+        resp.status,
+        ResponseStatus::Error,
         "AS USER should be rejected on SHARED tables"
     );
     let error_msg = resp.error.as_ref().unwrap().message.as_str();
@@ -463,7 +468,7 @@ async fn test_as_user_performance() {
         let duration = start.elapsed();
 
         durations.push(duration.as_millis());
-        assert_eq!(resp.status, "success");
+        assert_eq!(resp.status, ResponseStatus::Success);
     }
 
     // Average should be reasonable (allowing for test overhead)

@@ -395,6 +395,7 @@ impl TypedStatementHandler<DropTableStatement> for DropTableHandler {
             limit: None,
             created_after: None,
             created_before: None,
+            ..Default::default()
         };
 
         let flush_jobs = job_manager.list_jobs(flush_filter).await?;

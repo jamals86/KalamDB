@@ -4,6 +4,7 @@
 mod common;
 
 use common::{fixtures, flush_helpers, TestServer};
+use kalamdb_api::models::ResponseStatus;
 
 /// Issue `FLUSH TABLE`, wait for the job to complete, and ensure Parquet files appear.
 #[actix_web::test]
@@ -25,7 +26,8 @@ async fn test_flush_table_command_creates_parquet() {
     );
     let response = server.execute_sql_as_user(&create_sql, user_id).await;
     assert_eq!(
-        response.status, "success",
+        response.status,
+        ResponseStatus::Success,
         "Failed to create table: {:?}",
         response
     );
@@ -37,7 +39,8 @@ async fn test_flush_table_command_creates_parquet() {
         );
         let response = server.execute_sql_as_user(&insert_sql, user_id).await;
         assert_eq!(
-            response.status, "success",
+            response.status,
+            ResponseStatus::Success,
             "Insert failed: {:?}",
             response.error
         );
@@ -46,7 +49,8 @@ async fn test_flush_table_command_creates_parquet() {
     let flush_sql = format!("FLUSH TABLE {}.{}", namespace, table_name);
     let flush_response = server.execute_sql_as_user(&flush_sql, "system").await;
     assert_eq!(
-        flush_response.status, "success",
+        flush_response.status,
+        ResponseStatus::Success,
         "FLUSH TABLE failed: {:?}",
         flush_response.error
     );

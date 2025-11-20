@@ -127,7 +127,7 @@ mod tests {
         }
 
         // Scan all
-        let all_rows = store.scan_all().unwrap();
+        let all_rows = store.scan_all(None, None, None).unwrap();
         assert_eq!(all_rows.len(), 5);
     }
 }

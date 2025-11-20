@@ -157,6 +157,8 @@ pub enum StoragePartition {
     SystemUsersDeletedAtIdx,
     /// Manifest cache for query optimization (Phase 4 - US6)
     ManifestCache,
+    /// Status + CreatedAt index for system.jobs (non-unique index)
+    SystemJobsStatusIdx,
 }
 
 impl StoragePartition {
@@ -170,6 +172,7 @@ impl StoragePartition {
             StoragePartition::SystemUsersRoleIdx => "system_users_role_idx",
             StoragePartition::SystemUsersDeletedAtIdx => "system_users_deleted_at_idx",
             StoragePartition::ManifestCache => "manifest_cache",
+            StoragePartition::SystemJobsStatusIdx => "system_jobs_status_idx",
         }
     }
 
@@ -192,6 +195,8 @@ impl StoragePartition {
             Lazy::new(|| Partition::new(StoragePartition::SystemUsersDeletedAtIdx.name()));
         static MANIFEST_CACHE: Lazy<Partition> =
             Lazy::new(|| Partition::new(StoragePartition::ManifestCache.name()));
+        static JOBS_STATUS_IDX: Lazy<Partition> =
+            Lazy::new(|| Partition::new(StoragePartition::SystemJobsStatusIdx.name()));
 
         match self {
             StoragePartition::InformationSchemaTables => &INFO,
@@ -201,6 +206,7 @@ impl StoragePartition {
             StoragePartition::SystemUsersRoleIdx => &ROLE_IDX,
             StoragePartition::SystemUsersDeletedAtIdx => &DELETED_AT_IDX,
             StoragePartition::ManifestCache => &MANIFEST_CACHE,
+            StoragePartition::SystemJobsStatusIdx => &JOBS_STATUS_IDX,
         }
     }
 }

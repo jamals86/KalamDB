@@ -8,6 +8,7 @@ mod common;
 
 use common::{fixtures, flush_helpers, TestServer};
 use kalamdb_commons::models::JobStatus;
+use kalamdb_api::models::ResponseStatus;
 
 /// Insert data for multiple users, flush, and ensure each user gets dedicated Parquet files.
 #[tokio::test]
@@ -29,7 +30,8 @@ async fn test_manual_flush_multi_user_partitions() {
     );
     let response = server.execute_sql_as_user(&create_sql, "alice").await;
     assert_eq!(
-        response.status, "success",
+        response.status,
+        ResponseStatus::Success,
         "Failed to create table: {:?}",
         response.error
     );
@@ -42,7 +44,8 @@ async fn test_manual_flush_multi_user_partitions() {
             );
             let response = server.execute_sql_as_user(&insert_sql, user).await;
             assert_eq!(
-                response.status, "success",
+                response.status,
+                ResponseStatus::Success,
                 "Insert failed: {:?}",
                 response.error
             );
@@ -86,7 +89,8 @@ async fn test_flush_table_sql_job_and_files() {
     );
     let response = server.execute_sql_as_user(&create_sql, user_id).await;
     assert_eq!(
-        response.status, "success",
+        response.status,
+        ResponseStatus::Success,
         "Failed to create table: {:?}",
         response.error
     );
@@ -98,7 +102,8 @@ async fn test_flush_table_sql_job_and_files() {
         );
         let response = server.execute_sql_as_user(&insert_sql, user_id).await;
         assert_eq!(
-            response.status, "success",
+            response.status,
+            ResponseStatus::Success,
             "Insert failed: {:?}",
             response.error
         );
@@ -107,7 +112,8 @@ async fn test_flush_table_sql_job_and_files() {
     let flush_sql = format!("FLUSH TABLE {}.{}", namespace, table_name);
     let flush_response = server.execute_sql_as_user(&flush_sql, "system").await;
     assert_eq!(
-        flush_response.status, "success",
+        flush_response.status,
+        ResponseStatus::Success,
         "FLUSH TABLE command failed: {:?}",
         flush_response.error
     );
@@ -136,7 +142,8 @@ async fn test_flush_table_sql_job_and_files() {
     let job_query = format!("SELECT status FROM system.jobs WHERE job_id = '{}'", job_id);
     let job_response = server.execute_sql(&job_query).await;
     assert_eq!(
-        job_response.status, "success",
+        job_response.status,
+        ResponseStatus::Success,
         "Failed to query system.jobs"
     );
     if let Some(rows) = job_response.results.first().and_then(|r| r.rows.as_ref()) {

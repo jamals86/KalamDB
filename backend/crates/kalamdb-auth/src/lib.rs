@@ -13,7 +13,7 @@ pub mod password;
 pub mod rbac;
 pub mod roles;
 // TODO: service.rs needs refactoring to remove RocksDbAdapter dependencies
-// pub mod service;
+pub mod service;
 pub mod user_repo;
 
 // Re-export commonly used types
@@ -21,5 +21,5 @@ pub use context::AuthenticatedUser;
 pub use error::AuthError;
 pub use extractor::{extract_auth_with_repo, AuthenticatedRequest};
 pub use impersonation::{ImpersonationContext, ImpersonationOrigin};
-// pub use service::AuthService; // Temporarily disabled - needs refactoring
+pub use service::AuthService; // Temporarily disabled - needs refactoring
 pub use user_repo::UserRepository;

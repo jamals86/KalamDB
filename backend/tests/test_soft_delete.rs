@@ -10,6 +10,7 @@
 mod common;
 
 use common::{fixtures, TestServer};
+use kalamdb_api::models::ResponseStatus;
 
 #[actix_web::test]
 async fn test_soft_delete_hides_rows() {
@@ -50,7 +51,7 @@ async fn test_soft_delete_hides_rows() {
         .execute_sql_as_user("SELECT id FROM test_hide.tasks ORDER BY id", "user1")
         .await;
 
-    assert_eq!(response.status, "success");
+    assert_eq!(response.status, ResponseStatus::Success);
     if let Some(rows) = &response.results[0].rows {
         assert_eq!(rows.len(), 2, "Should have 2 tasks");
     }
@@ -61,7 +62,7 @@ async fn test_soft_delete_hides_rows() {
         .await;
 
     assert_eq!(
-        response.status, "success",
+        response.status, ResponseStatus::Success,
         "DELETE should succeed: {:?}",
         response.error
     );
@@ -71,7 +72,7 @@ async fn test_soft_delete_hides_rows() {
         .execute_sql_as_user("SELECT id FROM test_hide.tasks ORDER BY id", "user1")
         .await;
 
-    assert_eq!(response.status, "success");
+    assert_eq!(response.status, ResponseStatus::Success);
     if let Some(rows) = &response.results[0].rows {
         assert_eq!(rows.len(), 1, "Should only see 1 task after soft delete");
         assert_eq!(
@@ -122,7 +123,7 @@ async fn test_soft_delete_preserves_data() {
         )
         .await;
 
-    assert_eq!(response.status, "success");
+    assert_eq!(response.status, ResponseStatus::Success);
 
     // Note: The soft delete filter is applied before projection, so deleted rows won't appear
     // This is the expected behavior - soft deleted rows are hidden even when selecting _deleted
@@ -167,7 +168,7 @@ async fn test_deleted_field_default_false() {
         .execute_sql_as_user("SELECT id, title, _deleted FROM test_ns.tasks", "user1")
         .await;
 
-    assert_eq!(response.status, "success");
+    assert_eq!(response.status, ResponseStatus::Success);
     if let Some(rows) = &response.results[0].rows {
         assert_eq!(rows.len(), 1);
 
@@ -225,7 +226,7 @@ async fn test_multiple_deletes() {
         .execute_sql_as_user("SELECT id FROM test_ns.tasks ORDER BY id", "user1")
         .await;
 
-    assert_eq!(response.status, "success");
+    assert_eq!(response.status, ResponseStatus::Success);
     if let Some(rows) = &response.results[0].rows {
         assert_eq!(rows.len(), 3, "Should have 3 tasks after deleting 2");
 
@@ -287,14 +288,14 @@ async fn test_delete_with_where_clause() {
         .execute_sql_as_user("DELETE FROM test_ns.tasks WHERE priority = 1", "user1")
         .await;
 
-    assert_eq!(response.status, "success");
+    assert_eq!(response.status, ResponseStatus::Success);
 
     // Verify only high priority task remains
     let response = server
         .execute_sql_as_user("SELECT id FROM test_ns.tasks", "user1")
         .await;
 
-    assert_eq!(response.status, "success");
+    assert_eq!(response.status, ResponseStatus::Success);
     if let Some(rows) = &response.results[0].rows {
         assert_eq!(rows.len(), 1, "Should have 1 task after conditional delete");
         assert_eq!(rows[0].get("id").unwrap().as_str().unwrap(), "task2");
@@ -337,7 +338,7 @@ async fn test_count_excludes_deleted_rows() {
         .execute_sql_as_user("SELECT COUNT(*) as count FROM test_ns.tasks", "user1")
         .await;
 
-    assert_eq!(response.status, "success");
+    assert_eq!(response.status, ResponseStatus::Success);
     if let Some(rows) = &response.results[0].rows {
         let count = rows[0].get("count").unwrap().as_i64().unwrap();
         assert_eq!(count, 5, "Should count 5 tasks before delete");
@@ -356,7 +357,7 @@ async fn test_count_excludes_deleted_rows() {
         .execute_sql_as_user("SELECT COUNT(*) as count FROM test_ns.tasks", "user1")
         .await;
 
-    assert_eq!(response.status, "success");
+    assert_eq!(response.status, ResponseStatus::Success);
     if let Some(rows) = &response.results[0].rows {
         let count = rows[0].get("count").unwrap().as_i64().unwrap();
         assert_eq!(count, 3, "Should count 3 tasks after soft delete");

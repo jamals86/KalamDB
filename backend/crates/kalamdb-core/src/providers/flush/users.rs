@@ -122,90 +122,14 @@ impl UserTableFlushJob {
 
         for (key_bytes, row) in rows.iter() {
             let key_str = String::from_utf8_lossy(key_bytes).to_string();
-            let (_user_from_key, row_id_from_key) = self
+            let (_user_from_key, _row_id_from_key) = self
                 .parse_user_key(&key_str)
                 .unwrap_or_else(|_| (String::new(), String::new()));
 
-            let mut patched = row.clone();
-            if let Some(obj) = patched.as_object_mut() {
-                // Backfill missing required fields
-                self.backfill_required_fields(obj, &row_id_from_key);
-            }
+            let patched = row.clone();
             builder.push_object_row(&patched)?;
         }
         builder.finish()
-    }
-
-    /// Backfill required fields (id, created_at) if missing
-    fn backfill_required_fields(
-        &self,
-        obj: &mut serde_json::Map<String, JsonValue>,
-        row_id_from_key: &str,
-    ) {
-        use datafusion::arrow::datatypes::DataType;
-
-        for field in self.schema.fields() {
-            let name = field.name();
-            let missing =
-                !obj.contains_key(name) || obj.get(name).map(|v| v.is_null()).unwrap_or(true);
-
-            if !missing || field.is_nullable() {
-                continue;
-            }
-
-            match name.as_str() {
-                "id" => match field.data_type() {
-                    DataType::Int64 => {
-                        let value = row_id_from_key
-                            .parse::<i64>()
-                            .unwrap_or_else(|_| Self::generate_numeric_id());
-                        obj.insert(name.to_string(), serde_json::json!(value));
-                    }
-                    DataType::Utf8 => {
-                        let value = if !row_id_from_key.is_empty() {
-                            row_id_from_key.to_string()
-                        } else {
-                            Self::generate_numeric_id().to_string()
-                        };
-                        obj.insert(name.to_string(), serde_json::json!(value));
-                    }
-                    _ => {}
-                },
-                "created_at" => {
-                    let now_ms = chrono::Utc::now().timestamp_millis();
-                    match field.data_type() {
-                        DataType::Int64 => {
-                            obj.insert(name.to_string(), serde_json::json!(now_ms));
-                        }
-                        DataType::Utf8 => {
-                            obj.insert(
-                                name.to_string(),
-                                serde_json::json!(chrono::Utc::now().to_rfc3339()),
-                            );
-                        }
-                        DataType::Timestamp(_, _) => {
-                            obj.insert(name.to_string(), serde_json::json!(now_ms));
-                        }
-                        _ => {}
-                    }
-                }
-                _ => {}
-            }
-        }
-    }
-
-    /// Generate numeric ID (timestamp-based)
-    fn generate_numeric_id() -> i64 {
-        use std::sync::atomic::{AtomicU64, Ordering};
-        use std::time::{SystemTime, UNIX_EPOCH};
-        static COUNTER: AtomicU64 = AtomicU64::new(0);
-
-        let now_ms = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .unwrap_or_default()
-            .as_millis() as u64;
-        let c = COUNTER.fetch_add(1, Ordering::SeqCst) % 4096;
-        now_ms.saturating_mul(1000).saturating_add(c) as i64
     }
 
     /// Flush accumulated rows for a single user to Parquet
@@ -558,8 +482,8 @@ impl TableFlush for UserTableFlushJob {
                 total_rows_flushed,
                 parquet_files.clone(),
             );
-            let system_user = UserId::system();
-            manager.notify_table_change_async(system_user, table_id, notification);
+            let root_user = UserId::root();
+            manager.notify_table_change_async(root_user, table_id, notification);
         }
 
         Ok(FlushJobResult {

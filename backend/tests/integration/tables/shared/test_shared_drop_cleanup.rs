@@ -9,6 +9,7 @@ mod common;
 use common::flush_helpers::{check_shared_parquet_files, execute_shared_flush_synchronously};
 use common::{fixtures, TestServer};
 use std::path::Path;
+use kalamdb_api::models::ResponseStatus;
 
 #[actix_web::test]
 #[ignore = "Shared tables require pre-created column families at DB init. TestServer::new() creates in-memory DB without these CFs."]
@@ -35,7 +36,8 @@ async fn test_drop_shared_table_deletes_partitions_and_parquet() {
     );
     let resp = server.execute_sql(&create_sql).await;
     assert_eq!(
-        resp.status, "success",
+        resp.status,
+        ResponseStatus::Success,
         "CREATE TABLE failed: {:?}",
         resp.error
     );
@@ -48,7 +50,7 @@ async fn test_drop_shared_table_deletes_partitions_and_parquet() {
                 namespace, table, i, i, i + 1
             ))
             .await;
-        assert_eq!(ins.status, "success");
+        assert_eq!(ins.status, ResponseStatus::Success);
     }
 
     // Flush synchronously so Parquet files exist
@@ -77,7 +79,8 @@ async fn test_drop_shared_table_deletes_partitions_and_parquet() {
         .execute_sql(&format!("DROP TABLE {}.{}", namespace, table))
         .await;
     assert_eq!(
-        drop_resp.status, "success",
+        drop_resp.status,
+        ResponseStatus::Success,
         "DROP TABLE failed: {:?}",
         drop_resp.error
     );

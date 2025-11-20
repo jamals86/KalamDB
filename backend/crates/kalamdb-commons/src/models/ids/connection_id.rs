@@ -40,8 +40,8 @@ impl ConnectionId {
         })
     }
 
-    pub fn user_id(&self) -> &str {
-        self.user_id.as_str()
+    pub fn user_id(&self) -> &UserId {
+        &self.user_id
     }
     pub fn unique_conn_id(&self) -> &str {
         &self.unique_conn_id

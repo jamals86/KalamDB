@@ -529,7 +529,7 @@ mod tests {
     async fn test_create_namespace() {
         let server = TestServer::new().await;
         let response = create_namespace(&server, "test_ns").await;
-        assert_eq!(response.status, "success");
+        assert_eq!(response.status, ResponseStatus::Success);
         assert!(server.namespace_exists("test_ns").await);
     }
 
@@ -572,7 +572,7 @@ mod tests {
                 );
             }
             assert_eq!(
-                response.status, "success",
+                response.status, ResponseStatus::Success,
                 "Insert {} failed: {:?}",
                 i, response.error
             );
