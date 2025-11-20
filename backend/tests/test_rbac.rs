@@ -45,7 +45,7 @@ async fn test_user_role_own_tables_access_and_isolation() {
 
     // Create namespace and table
     let ns_resp = server.execute_sql("CREATE NAMESPACE rbac_user").await;
-    if ns_resp.status != "success" {
+    if ns_resp.status != kalamdb_api::models::ResponseStatus::Success {
         eprintln!("Create namespace error: {:?}", ns_resp.error);
     }
     assert_eq!(ns_resp.status, "success");
@@ -186,7 +186,7 @@ async fn test_user_cannot_manage_users() {
     // Regular user cannot CREATE USER
     let sql = "CREATE USER 'eve' WITH PASSWORD 'x' ROLE user";
     let resp = server.execute_sql_as_user(sql, user.as_str()).await;
-    if resp.status != "error" {
+    if resp.status != kalamdb_api::models::ResponseStatus::Error {
         eprintln!("Unexpected status for user create: {:?}", resp);
     }
     assert_eq!(
@@ -202,7 +202,7 @@ async fn test_dba_can_manage_users() {
 
     let sql = "CREATE USER 'svc1' WITH PASSWORD 'StrongPass123!' ROLE service";
     let resp = server.execute_sql_as_user(sql, dba.as_str()).await;
-    if resp.status != "success" {
+    if resp.status != kalamdb_api::models::ResponseStatus::Success {
         eprintln!("DBA create user error: {:?}", resp.error);
     }
     assert_eq!(resp.status, "success", "dba can create users");

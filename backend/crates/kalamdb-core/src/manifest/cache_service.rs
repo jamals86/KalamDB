@@ -156,7 +156,7 @@ impl ManifestCacheService {
 
     /// Get all cache entries (for SHOW MANIFEST CACHE).
     pub fn get_all(&self) -> Result<Vec<(String, ManifestCacheEntry)>, StorageError> {
-        let entries = EntityStore::scan_all(&self.store)?;
+        let entries = EntityStore::scan_all(&self.store, None, None, None)?;
         // Convert Vec<u8> keys to Strings
         let string_entries = entries
             .into_iter()
@@ -168,7 +168,7 @@ impl ManifestCacheService {
     /// Get total count of cached entries (hot cache + RocksDB)
     pub fn count(&self) -> Result<usize, StorageError> {
         // Get all keys from RocksDB
-        let all_entries = EntityStore::scan_all(&self.store)?;
+        let all_entries = EntityStore::scan_all(&self.store, None, None, None)?;
         Ok(all_entries.len())
     }
 
@@ -176,7 +176,7 @@ impl ManifestCacheService {
     pub fn clear(&self) -> Result<(), StorageError> {
         self.hot_cache.clear();
         self.last_accessed.clear();
-        let keys = EntityStore::scan_all(&self.store)?;
+        let keys = EntityStore::scan_all(&self.store, None, None, None)?;
         for (key_bytes, _) in keys {
             let key = ManifestCacheKey::from(String::from_utf8_lossy(&key_bytes).to_string());
             EntityStore::delete(&self.store, &key)?;
@@ -189,7 +189,7 @@ impl ManifestCacheService {
     /// Loads all entries from RocksDB CF into hot cache.
     /// Called during AppContext initialization.
     pub fn restore_from_rocksdb(&self) -> Result<(), StorageError> {
-        let entries = EntityStore::scan_all(&self.store)?;
+        let entries = EntityStore::scan_all(&self.store, None, None, None)?;
         for (key_bytes, entry) in entries {
             if let Ok(key_str) = String::from_utf8(key_bytes) {
                 self.hot_cache.insert(key_str, Arc::new(entry));

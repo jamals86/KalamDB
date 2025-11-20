@@ -115,7 +115,7 @@ mod tests {
         }
 
         // Scan all
-        let jobs = EntityStore::scan_all(&store).unwrap();
+        let jobs = EntityStore::scan_all(&store, None, None, None).unwrap();
         assert_eq!(jobs.len(), 3);
     }
 

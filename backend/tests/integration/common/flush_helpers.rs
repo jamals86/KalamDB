@@ -182,7 +182,7 @@ pub async fn wait_for_flush_job_completion(
 
         let response = server.execute_sql(&query).await;
 
-        if response.status != "success" {
+        if response.status != kalamdb_api::models::ResponseStatus::Success {
             // system.jobs might not be accessible in some test setups
             // Just wait the full duration and return success
             println!("  ℹ Cannot query system.jobs (not an error in test env), waiting for job to execute...");
@@ -211,7 +211,7 @@ pub async fn wait_for_flush_job_completion(
                         continue;
                     }
                     "completed" => {
-                        // Verify took_ms is calculated (not 0)
+                        // Verify duration_ms is calculated (not 0)
                         let started_at = job.get("started_at").and_then(|v| v.as_i64());
                         // Some providers use finished_at; fall back if completed_at is missing
                         let completed_at = job
@@ -220,16 +220,16 @@ pub async fn wait_for_flush_job_completion(
                             .or_else(|| job.get("finished_at").and_then(|v| v.as_i64()));
 
                         if let (Some(start), Some(end)) = (started_at, completed_at) {
-                            let took_ms = end - start;
-                            if took_ms == 0 {
+                            let duration_ms = end - start;
+                            if duration_ms == 0 {
                                 return Err(format!(
-                                    "Job {} completed but took_ms = 0 (started_at: {}, completed_at: {}), which indicates a failure or instant completion bug",
+                                    "Job {} completed but duration_ms = 0 (started_at: {}, completed_at: {}), which indicates a failure or instant completion bug",
                                     job_id, start, end
                                 ));
                             }
                             println!(
                                 "  ✓ Job {} completed successfully in {} ms",
-                                job_id, took_ms
+                                job_id, duration_ms
                             );
                         }
 

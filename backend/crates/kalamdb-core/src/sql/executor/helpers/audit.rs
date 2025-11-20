@@ -123,17 +123,17 @@ pub fn log_dml_operation(
 /// * `context` - Execution context
 /// * `query_type` - Query type (SELECT, DESCRIBE, SHOW)
 /// * `target` - Query target
-/// * `execution_time_ms` - Execution time in milliseconds
+/// * `took` - Execution time in milliseconds
 /// * `subject_user_id` - Optional subject for AS USER impersonation
 pub fn log_query_operation(
     context: &ExecutionContext,
     query_type: &str,
     target: &str,
-    execution_time_ms: u64,
+    took: f64,
     subject_user_id: Option<kalamdb_commons::UserId>,
 ) -> AuditLogEntry {
     let details = serde_json::json!({
-        "execution_time_ms": execution_time_ms,
+        "took": took,
     })
     .to_string();
 
@@ -252,7 +252,7 @@ mod tests {
     fn test_log_query_operation() {
         let ctx = ExecutionContext::new(UserId::from("dave"), Role::User, create_test_session());
 
-        let entry = log_query_operation(&ctx, "SELECT", "default.users", 150, None);
+        let entry = log_query_operation(&ctx, "SELECT", "default.users", 150.0, None);
 
         assert_eq!(entry.action, "SELECT");
         assert_eq!(entry.target, "default.users");

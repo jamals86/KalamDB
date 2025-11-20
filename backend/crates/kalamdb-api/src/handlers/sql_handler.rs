@@ -14,6 +14,7 @@ use serde_json::Value as JsonValue;
 use std::sync::Arc;
 use std::time::Instant;
 
+use crate::models::sql_response::ResponseStatus;
 use crate::models::{QueryResult, SqlRequest, SqlResponse};
 use crate::rate_limiter::RateLimiter;
 
@@ -67,7 +68,7 @@ fn json_to_scalar_value(value: &JsonValue) -> Result<ScalarValue, String> {
 ///       "columns": ["id", "name"]
 ///     }
 ///   ],
-///   "took_ms": 15
+///   "took": 15.0
 /// }
 /// ```
 ///
@@ -76,7 +77,7 @@ fn json_to_scalar_value(value: &JsonValue) -> Result<ScalarValue, String> {
 /// {
 ///   "status": "error",
 ///   "results": [],
-///   "took_ms": 5,
+///   "took": 5.0,
 ///   "error": {
 ///     "code": "INVALID_SQL",
 ///     "message": "Syntax error near 'SELCT'"
@@ -99,11 +100,11 @@ pub async fn execute_sql_v1(
     if let Some(auth_val) = http_req.headers().get("Authorization") {
         if let Ok(h) = auth_val.to_str() {
             if h == "Bearer" || h == "Bearer " {
-                let took_ms = start_time.elapsed().as_millis() as u64;
+                let took = start_time.elapsed().as_secs_f64() * 1000.0;
                 return HttpResponse::Unauthorized().json(SqlResponse::error(
                     "MALFORMED_AUTHORIZATION",
                     "Bearer token missing",
-                    took_ms,
+                    took,
                 ));
             }
         }
@@ -186,7 +187,7 @@ pub async fn execute_sql_v1(
                 }
             }
 
-            let took_ms = start_time.elapsed().as_millis() as u64;
+            let took = start_time.elapsed().as_secs_f64() * 1000.0;
             let (code, message) = match e {
                 kalamdb_auth::AuthError::MissingAuthorization(msg) => {
                     ("MISSING_AUTHORIZATION", msg)
@@ -213,14 +214,14 @@ pub async fn execute_sql_v1(
                 ),
                 _ => ("AUTHENTICATION_ERROR", format!("{:?}", e)),
             };
-            return HttpResponse::Unauthorized().json(SqlResponse::error(code, &message, took_ms));
+            return HttpResponse::Unauthorized().json(SqlResponse::error(code, &message, took));
         }
     };
 
     // Rate limiting: Check if user can execute query
     if let Some(ref limiter) = rate_limiter {
         if !limiter.check_query_rate(&auth_result.user_id) {
-            let took_ms = start_time.elapsed().as_millis() as u64;
+            let took = start_time.elapsed().as_secs_f64() * 1000.0;
             warn!(
                 "Rate limit exceeded for user: {} (queries per second)",
                 auth_result.user_id.as_str()
@@ -228,7 +229,7 @@ pub async fn execute_sql_v1(
             return HttpResponse::TooManyRequests().json(SqlResponse::error(
                 "RATE_LIMIT_EXCEEDED",
                 "Too many queries per second. Please slow down.",
-                took_ms,
+                took,
             ));
         }
     }
@@ -241,11 +242,11 @@ pub async fn execute_sql_v1(
                 match json_to_scalar_value(json_val) {
                     Ok(scalar) => scalar_params.push(scalar),
                     Err(err) => {
-                        let took_ms = start_time.elapsed().as_millis() as u64;
+                        let took = start_time.elapsed().as_secs_f64() * 1000.0;
                         return HttpResponse::BadRequest().json(SqlResponse::error(
                             "INVALID_PARAMETER",
                             &format!("Parameter ${} invalid: {}", idx + 1, err),
-                            took_ms,
+                            took,
                         ));
                     }
                 }
@@ -258,31 +259,31 @@ pub async fn execute_sql_v1(
     let statements = match kalamdb_sql::split_statements(&req.sql) {
         Ok(stmts) => stmts,
         Err(err) => {
-            let took_ms = start_time.elapsed().as_millis() as u64;
+            let took = start_time.elapsed().as_secs_f64() * 1000.0;
             return HttpResponse::BadRequest().json(SqlResponse::error(
                 "BATCH_PARSE_ERROR",
                 &format!("Failed to parse SQL batch: {}", err),
-                took_ms,
+                took,
             ));
         }
     };
 
     if statements.is_empty() {
-        let took_ms = start_time.elapsed().as_millis() as u64;
+        let took = start_time.elapsed().as_secs_f64() * 1000.0;
         return HttpResponse::BadRequest().json(SqlResponse::error(
             "EMPTY_SQL",
             "No SQL statements provided",
-            took_ms,
+            took,
         ));
     }
 
     // Reject multi-statement batches with parameters (simplifies implementation)
     if params.len() > 0 && statements.len() > 1 {
-        let took_ms = start_time.elapsed().as_millis() as u64;
+        let took = start_time.elapsed().as_secs_f64() * 1000.0;
         return HttpResponse::BadRequest().json(SqlResponse::error(
             "PARAMS_WITH_BATCH",
             "Parameters not supported with multi-statement batches",
-            took_ms,
+            took,
         ));
     }
 
@@ -343,12 +344,12 @@ pub async fn execute_sql_v1(
                 results.push(result);
             }
             Err(err) => {
-                let took_ms = start_time.elapsed().as_millis() as u64;
+                let took = start_time.elapsed().as_secs_f64() * 1000.0;
                 return HttpResponse::BadRequest().json(SqlResponse::error_with_details(
                     "SQL_EXECUTION_ERROR",
                     &format!("Statement {} failed: {}", idx + 1, err),
                     sql,
-                    took_ms,
+                    took,
                 ));
             }
         }
@@ -376,8 +377,8 @@ pub async fn execute_sql_v1(
         }
     }
 
-    let took_ms = start_time.elapsed().as_millis() as u64;
-    HttpResponse::Ok().json(SqlResponse::success(results, took_ms))
+    let took = start_time.elapsed().as_secs_f64() * 1000.0;
+    HttpResponse::Ok().json(SqlResponse::success(results, took))
 }
 
 /// Execute a single SQL statement
@@ -615,7 +616,7 @@ mod tests {
         // Parse the response body to verify structure
         let body = test::read_body(resp).await;
         let response: SqlResponse = serde_json::from_slice(&body).unwrap();
-        assert_eq!(response.status, "success");
+        assert_eq!(response.status, ResponseStatus::Success);
         assert_eq!(response.results.len(), 1);
     }
 
@@ -679,7 +680,7 @@ mod tests {
         // Parse response and verify we got 2 result sets
         let body = test::read_body(resp).await;
         let response: SqlResponse = serde_json::from_slice(&body).unwrap();
-        assert_eq!(response.status, "success");
+        assert_eq!(response.status, ResponseStatus::Success);
         assert_eq!(response.results.len(), 2);
     }
 }

@@ -184,7 +184,7 @@ async fn test_delete_returns_correct_row_count() {
         .execute_sql_as_user("DELETE FROM test_ns.tasks WHERE id = 'task999'", "user1")
         .await;
 
-    if response.status == "success" {
+    if response.status == kalamdb_api::models::ResponseStatus::Success {
         assert_row_count(&response, 0, &["Deleted"]);
     } else {
         let err = response
@@ -238,7 +238,7 @@ async fn test_delete_already_deleted_returns_zero() {
         .execute_sql_as_user("DELETE FROM test_ns.tasks WHERE id = 'task1'", "user1")
         .await;
 
-    if response.status == "success" {
+    if response.status == kalamdb_api::models::ResponseStatus::Success {
         assert_row_count(&response, 0, &["Deleted"]);
     } else {
         let err = response
@@ -302,7 +302,7 @@ async fn test_delete_multiple_rows_count() {
         .execute_sql_as_user("DELETE FROM test_ns.tasks WHERE priority = 1", "user1")
         .await;
 
-    if response.status != "success" {
+    if response.status != kalamdb_api::models::ResponseStatus::Success {
         let err = response
             .error
             .as_ref()

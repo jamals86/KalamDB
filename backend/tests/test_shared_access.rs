@@ -18,12 +18,12 @@ use uuid::Uuid;
 
 /// Helper function to check if SQL response is successful
 fn is_success(response: &SqlResponse) -> bool {
-    response.status == "success"
+    response.status == kalamdb_api::models::ResponseStatus::Success
 }
 
 /// Helper function to check if SQL response is error
 fn is_error(response: &SqlResponse) -> bool {
-    response.status == "error"
+    response.status == kalamdb_api::models::ResponseStatus::Error
 }
 
 /// Helper function to create column family for shared table

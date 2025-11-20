@@ -92,7 +92,7 @@ impl JobsTableProvider {
 
     /// List all jobs
     pub fn list_jobs(&self) -> Result<Vec<Job>, SystemError> {
-        let jobs = self.store.scan_all()?;
+        let jobs = self.store.scan_all(None, None, None)?;
         Ok(jobs.into_iter().map(|(_, job)| job).collect())
     }
 
@@ -153,9 +153,8 @@ impl JobsTableProvider {
         Ok(deleted)
     }
 
-    /// Scan all jobs and return as RecordBatch
-    pub fn scan_all_jobs(&self) -> Result<RecordBatch, SystemError> {
-        let jobs = self.store.scan_all()?;
+    /// Helper to create RecordBatch from jobs
+    fn create_batch(&self, jobs: Vec<(Vec<u8>, Job)>) -> Result<RecordBatch, SystemError> {
         let row_count = jobs.len();
 
         // Pre-allocate builders for optimal performance
@@ -218,6 +217,12 @@ impl JobsTableProvider {
 
         Ok(batch)
     }
+
+    /// Scan all jobs and return as RecordBatch
+    pub fn scan_all_jobs(&self) -> Result<RecordBatch, SystemError> {
+        let jobs = self.store.scan_all(None, None, None)?;
+        self.create_batch(jobs)
+    }
 }
 
 fn validate_job_update(job: &Job) -> Result<(), SystemError> {
@@ -277,18 +282,50 @@ impl TableProvider for JobsTableProvider {
         &self,
         _state: &dyn datafusion::catalog::Session,
         projection: Option<&Vec<usize>>,
-        _filters: &[Expr],
-        _limit: Option<usize>,
+        filters: &[Expr],
+        limit: Option<usize>,
     ) -> DataFusionResult<Arc<dyn ExecutionPlan>> {
         use datafusion::datasource::MemTable;
+        use datafusion::logical_expr::Operator;
+        use datafusion::scalar::ScalarValue;
+
+        let mut start_key = None;
+        let mut prefix = None;
+
+        // Extract start_key/prefix from filters
+        for expr in filters {
+            if let Expr::BinaryExpr(binary) = expr {
+                if let Expr::Column(col) = binary.left.as_ref() {
+                    if let Expr::Literal(val, _) = binary.right.as_ref() {
+                        if col.name == "job_id" {
+                            if let ScalarValue::Utf8(Some(s)) = val {
+                                match binary.op {
+                                    Operator::Eq => {
+                                        prefix = Some(JobId::new(s));
+                                    }
+                                    Operator::Gt | Operator::GtEq => {
+                                        start_key = Some(JobId::new(s));
+                                    }
+                                    _ => {}
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
         let schema = self.schema.clone();
-        let batch = self.scan_all_jobs().map_err(|e| {
-            DataFusionError::Execution(format!("Failed to build jobs batch: {}", e))
-        })?;
+        let jobs = self.store.scan_all(limit, prefix.as_ref(), start_key.as_ref())
+            .map_err(|e| DataFusionError::Execution(format!("Failed to scan jobs: {}", e)))?;
+
+        let batch = self.create_batch(jobs)
+            .map_err(|e| DataFusionError::Execution(format!("Failed to build jobs batch: {}", e)))?;
+
         let partitions = vec![vec![batch]];
         let table = MemTable::try_new(schema, partitions)
             .map_err(|e| DataFusionError::Execution(format!("Failed to create MemTable: {}", e)))?;
-        table.scan(_state, projection, &[], _limit).await
+        table.scan(_state, projection, &[], limit).await
     }
 }
 

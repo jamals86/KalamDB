@@ -343,7 +343,7 @@ impl TableFlush for UserTableFlushJob {
         );
 
         // Scan all rows (EntityStore::scan_all returns Vec<(Vec<u8>, V)>)
-        let entries = EntityStore::scan_all(self.store.as_ref()).map_err(|e| {
+        let entries = EntityStore::scan_all(self.store.as_ref(), None, None, None).map_err(|e| {
             log::error!(
                 "❌ Failed to scan table={}.{}: {}",
                 self.namespace_id().as_str(),

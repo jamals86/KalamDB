@@ -1162,7 +1162,7 @@ async fn test_27_create_table_invalid_storage() {
     // Current implementation allows table creation with invalid storage
     // Validation happens at flush time, not creation time
     // This test documents current behavior
-    if response.status == "error" {
+    if response.status == kalamdb_api::models::ResponseStatus::Error {
         // If validation is added in future, check error message
         assert!(
             response.error.as_ref().unwrap().message.contains("storage")
@@ -1435,7 +1435,7 @@ async fn test_33_storage_template_validation() {
 
     // Current implementation may allow this - template validation happens at different stages
     // This test documents expected behavior for future implementation
-    if response.status == "error" {
+    if response.status == kalamdb_api::models::ResponseStatus::Error {
         assert!(
             response
                 .error
@@ -1540,7 +1540,7 @@ async fn test_36_user_table_template_requires_userId() {
 
     // Current implementation may allow this - validation happens at flush time
     // This test documents expected behavior
-    if response.status == "error" {
+    if response.status == kalamdb_api::models::ResponseStatus::Error {
         assert!(
             response.error.as_ref().unwrap().message.contains("userId")
                 || response

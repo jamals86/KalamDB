@@ -58,7 +58,7 @@ pub trait SharedTableStoreExt {
 impl SharedTableStoreExt for SharedTableStore {
     fn scan_all_shared(&self) -> Result<Vec<(SharedTableRowId, SharedTableRow)>, TableError> {
         let raw_results =
-            EntityStore::scan_all(self).map_err(|e| TableError::Storage(e.to_string()))?;
+            EntityStore::scan_all(self, None, None, None).map_err(|e| TableError::Storage(e.to_string()))?;
 
         // Deserialize Vec<u8> keys back to SharedTableRowId (SeqId)
         raw_results
@@ -81,7 +81,7 @@ pub trait StreamTableStoreExt {
 impl StreamTableStoreExt for StreamTableStore {
     fn scan_all_stream(&self) -> Result<Vec<(StreamTableRowId, StreamTableRow)>, TableError> {
         let raw_results =
-            EntityStore::scan_all(self).map_err(|e| TableError::Storage(e.to_string()))?;
+            EntityStore::scan_all(self, None, None, None).map_err(|e| TableError::Storage(e.to_string()))?;
 
         // Deserialize Vec<u8> keys back to StreamTableRowId
         raw_results

@@ -81,7 +81,7 @@ impl TypedStatementHandler<ShowTableStatsStatement> for ShowStatsHandler {
         .map_err(|e| KalamDbError::Other(format!("Arrow error: {}", e)))?;
 
         // Log query operation
-        let duration = start_time.elapsed().as_millis() as u64;
+        let duration = start_time.elapsed().as_secs_f64() * 1000.0;
         use crate::sql::executor::helpers::audit;
         let audit_entry = audit::log_query_operation(
             context,

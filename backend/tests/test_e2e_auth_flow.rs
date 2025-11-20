@@ -63,7 +63,7 @@ async fn test_e2e_auth_flow() {
     let response = server
         .execute_sql_as_user(&create_table_sql, user.id.as_str())
         .await;
-    if response.status != "success" {
+    if response.status != kalamdb_api::models::ResponseStatus::Success {
         eprintln!("❌ CREATE TABLE failed: {:?}", response.error);
     }
     assert_eq!(
@@ -81,7 +81,7 @@ async fn test_e2e_auth_flow() {
     let response = server
         .execute_sql_as_user(&insert_sql, user.id.as_str())
         .await;
-    if response.status != "success" {
+    if response.status != kalamdb_api::models::ResponseStatus::Success {
         eprintln!("❌ INSERT failed: {:?}", response.error);
         eprintln!("   SQL: {}", insert_sql);
         eprintln!("   User ID: {}", user.id.as_str());
@@ -221,7 +221,7 @@ async fn test_role_based_auth_e2e() {
     let response = server
         .execute_sql_as_user(&user_table_sql, user_user.id.as_str())
         .await;
-    if response.status != "success" {
+    if response.status != kalamdb_api::models::ResponseStatus::Success {
         eprintln!("❌ CREATE TABLE (user table) failed: {:?}", response.error);
         eprintln!("   SQL: {}", user_table_sql);
         eprintln!("   User ID: {}", user_user.id.as_str());
@@ -284,7 +284,7 @@ async fn test_password_security_e2e() {
         user.id.as_str()
     );
     let response = server.execute_sql_as_user(&query_sql, "system").await;
-    if response.status == "success" {
+    if response.status == kalamdb_api::models::ResponseStatus::Success {
         println!(
             "✅ User found in system.users: {:?}",
             response.results[0].rows
@@ -303,7 +303,7 @@ async fn test_password_security_e2e() {
     let response = server
         .execute_sql_as_user(&change_password_sql, "system")
         .await;
-    if response.status != "success" {
+    if response.status != kalamdb_api::models::ResponseStatus::Success {
         eprintln!("❌ ALTER USER failed: {:?}", response.error);
         eprintln!("   SQL: {}", change_password_sql);
     }
