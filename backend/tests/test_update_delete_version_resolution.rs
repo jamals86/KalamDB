@@ -480,7 +480,7 @@ async fn test_concurrent_updates() {
     let mut success_count = 0;
     while let Some(result) = tasks.join_next().await {
         if let Ok(response) = result {
-            if response.status == "success" {
+            if response.status == kalamdb_api::models::ResponseStatus::Success {
                 success_count += 1;
             }
         }

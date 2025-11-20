@@ -40,7 +40,7 @@ pub mod flush_helpers;
 pub mod stress_utils;
 
 use anyhow::Result;
-use kalamdb_api::models::{QueryResult, SqlResponse};
+use kalamdb_api::models::{QueryResult, ResponseStatus, SqlResponse};
 use kalamdb_commons::models::{NamespaceId, StorageId, TableName};
 use kalamdb_commons::UserId;
 use kalamdb_core::app_context::AppContext;
@@ -427,27 +427,27 @@ impl TestServer {
                 use kalamdb_core::sql::ExecutionResult;
                 match result {
                     ExecutionResult::Success { message } => SqlResponse {
-                        status: "success".to_string(),
+                        status: ResponseStatus::Success,
                         results: vec![QueryResult {
                             rows: None,
                             row_count: 0,
                             columns: vec![],
                             message: Some(message),
                         }],
-                        took_ms: 0,
+                        took: 0.0,
                         error: None,
                     },
                     ExecutionResult::Rows { batches, .. } => {
                         if batches.is_empty() {
                             SqlResponse {
-                                status: "success".to_string(),
+                                status: ResponseStatus::Success,
                                 results: vec![QueryResult {
                                     rows: Some(vec![]),
                                     row_count: 0,
                                     columns: vec![],
                                     message: None,
                                 }],
-                                took_ms: 0,
+                                took: 0.0,
                                 error: None,
                             }
                         } else {
@@ -456,9 +456,9 @@ impl TestServer {
                                 .map(|batch| record_batch_to_query_result(batch, mask_credentials))
                                 .collect();
                             SqlResponse {
-                                status: "success".to_string(),
+                                status: ResponseStatus::Success,
                                 results,
-                                took_ms: 0,
+                                took: 0.0,
                                 error: None,
                             }
                         }
@@ -481,9 +481,9 @@ impl TestServer {
                             message: None,
                         };
                         SqlResponse {
-                            status: "success".to_string(),
+                            status: ResponseStatus::Success,
                             results: vec![query_result],
-                            took_ms: 0,
+                            took: 0.0,
                             error: None,
                         }
                     }
@@ -495,14 +495,14 @@ impl TestServer {
                             rows_affected
                         );
                         SqlResponse {
-                            status: "success".to_string(),
+                            status: ResponseStatus::Success,
                             results: vec![QueryResult {
                                 rows: None,
                                 row_count: rows_affected,
                                 columns: vec![],
                                 message: Some(format!("{} row(s) affected", rows_affected)),
                             }],
-                            took_ms: 0,
+                            took: 0.0,
                             error: None,
                         }
                     }
@@ -510,7 +510,7 @@ impl TestServer {
                         tables,
                         bytes_written,
                     } => SqlResponse {
-                        status: "success".to_string(),
+                        status: ResponseStatus::Success,
                         results: vec![QueryResult {
                             rows: Some(vec![{
                                 let mut m = std::collections::HashMap::new();
@@ -528,11 +528,11 @@ impl TestServer {
                             columns: vec!["tables".to_string(), "bytes_written".to_string()],
                             message: None,
                         }],
-                        took_ms: 0,
+                        took: 0.0,
                         error: None,
                     },
                     ExecutionResult::JobKilled { job_id, status } => SqlResponse {
-                        status: "success".to_string(),
+                        status: ResponseStatus::Success,
                         results: vec![QueryResult {
                             rows: Some(vec![{
                                 let mut m = std::collections::HashMap::new();
@@ -544,7 +544,7 @@ impl TestServer {
                             columns: vec!["job_id".to_string(), "status".to_string()],
                             message: None,
                         }],
-                        took_ms: 0,
+                        took: 0.0,
                         error: None,
                     },
                 }
@@ -558,14 +558,14 @@ impl TestServer {
                             if batches.is_empty() {
                                 // Return empty result with 0 rows instead of empty results array
                                 SqlResponse {
-                                    status: "success".to_string(),
+                                    status: ResponseStatus::Success,
                                     results: vec![QueryResult {
                                         rows: Some(vec![]),
                                         row_count: 0,
                                         columns: vec![],
                                         message: None,
                                     }],
-                                    took_ms: 0,
+                                    took: 0.0,
                                     error: None,
                                 }
                             } else {
@@ -576,17 +576,17 @@ impl TestServer {
                                     })
                                     .collect();
                                 SqlResponse {
-                                    status: "success".to_string(),
+                                    status: ResponseStatus::Success,
                                     results,
-                                    took_ms: 0,
+                                    took: 0.0,
                                     error: None,
                                 }
                             }
                         }
                         Err(e) => SqlResponse {
-                            status: "error".to_string(),
+                            status: ResponseStatus::Error,
                             results: vec![],
-                            took_ms: 0,
+                            took: 0.0,
                             error: Some(kalamdb_api::models::ErrorDetail {
                                 code: "SQL_EXECUTION_ERROR".to_string(),
                                 message: format!("Error executing query: {}", e),
@@ -595,9 +595,9 @@ impl TestServer {
                         },
                     },
                     Err(e) => SqlResponse {
-                        status: "error".to_string(),
+                        status: ResponseStatus::Error,
                         results: vec![],
-                        took_ms: 0,
+                        took: 0.0,
                         error: Some(kalamdb_api::models::ErrorDetail {
                             code: "SQL_PARSE_ERROR".to_string(),
                             message: format!("Error parsing SQL: {}", e),
@@ -609,9 +609,9 @@ impl TestServer {
             Err(e) => {
                 eprintln!("[DEBUG TestServer] execute() error: {:?}", e);
                 SqlResponse {
-                    status: "error".to_string(),
+                    status: ResponseStatus::Error,
                     results: vec![],
-                    took_ms: 0,
+                    took: 0.0,
                     error: Some(kalamdb_api::models::ErrorDetail {
                         code: "EXECUTION_ERROR".to_string(),
                         message: format!("{:?}", e),
@@ -775,7 +775,7 @@ impl TestServer {
             }
             let sql = format!("DROP NAMESPACE {} CASCADE", ns.namespace_id);
             let response = self.execute_sql(&sql).await;
-            if response.status != "success" {
+            if response.status != kalamdb_api::models::ResponseStatus::Success {
                 eprintln!(
                     "Warning: Failed to drop namespace {}: {:?}",
                     ns.namespace_id, response.error
@@ -810,7 +810,7 @@ impl TestServer {
         for table in ns_tables {
             let sql = format!("DROP TABLE {}.{}", namespace, table.table_name);
             let response = self.execute_sql(&sql).await;
-            if response.status != "success" {
+            if response.status != kalamdb_api::models::ResponseStatus::Success {
                 eprintln!(
                     "Warning: Failed to drop table {}.{}: {:?}",
                     namespace, table.table_name, response.error

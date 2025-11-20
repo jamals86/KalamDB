@@ -277,7 +277,7 @@ async fn test_07_insert_users_into_system_table() {
 
     // Note: INSERT into system tables may not be implemented yet
     // This test documents the expected behavior
-    if response.status == "error" {
+    if response.status == kalamdb_api::models::ResponseStatus::Error {
         println!(
             "INSERT into system.users not yet implemented: {:?}",
             response.error
@@ -334,7 +334,7 @@ async fn test_08_insert_storage_locations() {
         .await;
 
     // Note: INSERT into system tables may not be fully implemented yet
-    if response.status == "error" {
+    if response.status == kalamdb_api::models::ResponseStatus::Error {
         println!(
             "INSERT into system.storage_locations not yet implemented: {:?}",
             response.error
@@ -514,7 +514,7 @@ async fn test_12_view_table_types_from_system_tables() {
         .await;
 
     // Note: STREAM TABLE may not be fully implemented yet
-    if response.status == "error" {
+    if response.status == kalamdb_api::models::ResponseStatus::Error {
         println!(
             "CREATE STREAM TABLE not yet fully implemented: {:?}",
             response.error
@@ -654,7 +654,7 @@ async fn test_14_update_system_users() {
         .await;
 
     // Note: UPDATE on system tables may not be implemented yet
-    if response.status == "error" {
+    if response.status == kalamdb_api::models::ResponseStatus::Error {
         println!(
             "UPDATE system.users not yet implemented: {:?}",
             response.error
@@ -715,7 +715,7 @@ async fn test_15_update_multiple_users() {
         .await;
 
     // Note: UPDATE on system tables may not be implemented yet
-    if response.status == "error" {
+    if response.status == kalamdb_api::models::ResponseStatus::Error {
         println!(
             "UPDATE system.users not yet implemented: {:?}",
             response.error

@@ -3,6 +3,7 @@
 pub mod datafusion_session;
 pub mod executor;
 pub mod functions;
+pub mod plan_cache;
 
 pub use datafusion_session::DataFusionSessionFactory; // KalamSessionState removed in v3 refactor
 pub use executor::handlers::ExecutionResult;

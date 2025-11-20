@@ -197,20 +197,37 @@ pub struct QueryRequest {
 
 /// Response from SQL query execution.
 ///
+/// Execution status enum
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "lowercase")]
+pub enum ResponseStatus {
+    Success,
+    Error,
+}
+
+impl std::fmt::Display for ResponseStatus {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            ResponseStatus::Success => write!(f, "success"),
+            ResponseStatus::Error => write!(f, "error"),
+        }
+    }
+}
+
 /// Contains query results, execution metadata, and optional error information.
 /// Matches the server's SqlResponse structure.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct QueryResponse {
     /// Query execution status ("success" or "error")
-    pub status: String,
+    pub status: ResponseStatus,
 
     /// Array of result sets, one per executed statement
     #[serde(default)]
     pub results: Vec<QueryResult>,
 
-    /// Query execution time in milliseconds
+    /// Query execution time in milliseconds (with fractional precision)
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub took_ms: Option<u64>,
+    pub took: Option<f64>,
 
     /// Error details if status is "error"
     #[serde(skip_serializing_if = "Option::is_none")]

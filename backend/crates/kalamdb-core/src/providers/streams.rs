@@ -164,12 +164,12 @@ impl BaseTableProvider<StreamTableRowId, StreamTableRow> for StreamTableProvider
             let cutoff_ms = now_ms.saturating_sub(ttl_ms);
 
             // Scan for expired rows (limit to 100 per insert to avoid blocking)
-            let all_rows = self.store.scan_all().map_err(|e| {
+            let all_rows = self.store.scan_all(Some(100), None, None).map_err(|e| {
                 KalamDbError::InvalidOperation(format!("Failed to scan for TTL cleanup: {}", e))
             })?;
 
             let mut deleted_count = 0;
-            for (key_bytes, row) in all_rows.iter().take(100) {
+            for (key_bytes, row) in all_rows.iter() {
                 let row_ts = row._seq.timestamp_millis();
                 if row_ts < cutoff_ms {
                     // Parse key from bytes

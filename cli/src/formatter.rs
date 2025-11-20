@@ -64,7 +64,7 @@ impl OutputFormatter {
     /// Format as table
     fn format_table(&self, response: &QueryResponse) -> Result<String> {
         if response.results.is_empty() {
-            let exec_time_ms = response.took_ms.unwrap_or(0) as f64;
+            let exec_time_ms = response.took.unwrap_or(0.0);
             return Ok(format!(
                 "Query OK, 0 rows affected\n\nTook: {:.3} ms",
                 exec_time_ms
@@ -72,7 +72,7 @@ impl OutputFormatter {
         }
 
         let result = &response.results[0];
-        let exec_time_ms = response.took_ms.unwrap_or(0) as f64;
+        let exec_time_ms = response.took.unwrap_or(0.0);
 
         // Check if this is a message-only result (DDL statements)
         if let Some(ref message) = result.message {
@@ -228,14 +228,14 @@ impl OutputFormatter {
             // Add blank line for psql-style formatting
             output.push('\n');
             // Display timing in milliseconds like psql
-            let exec_time_ms = response.took_ms.unwrap_or(0) as f64;
+            let exec_time_ms = response.took.unwrap_or(0.0);
             output.push_str(&format!("Took: {:.3} ms", exec_time_ms));
 
             Ok(output)
         } else {
             // Non-query statement (INSERT, UPDATE, DELETE)
             let row_count = result.row_count;
-            let exec_time_ms = response.took_ms.unwrap_or(0) as f64;
+            let exec_time_ms = response.took.unwrap_or(0.0);
             Ok(format!(
                 "Query OK, {} rows affected\n\nTook: {:.3} ms",
                 row_count, exec_time_ms

@@ -102,7 +102,7 @@ impl LiveQueriesTableProvider {
 
     /// List all live queries
     pub fn list_live_queries(&self) -> Result<Vec<LiveQuery>, SystemError> {
-        let live_queries = self.store.scan_all()?;
+        let live_queries = self.store.scan_all(None, None, None)?;
         Ok(live_queries.into_iter().map(|(_, lq)| lq).collect())
     }
 
@@ -153,7 +153,7 @@ impl LiveQueriesTableProvider {
 
     /// Scan all live queries and return as RecordBatch
     pub fn scan_all_live_queries(&self) -> Result<RecordBatch, SystemError> {
-        let live_queries = self.store.scan_all()?;
+        let live_queries = self.store.scan_all(None, None, None)?;
         let row_count = live_queries.len();
 
         // Pre-allocate builders for optimal performance

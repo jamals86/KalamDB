@@ -104,7 +104,7 @@ mod tests {
         }
 
         // Scan all
-        let users = EntityStore::scan_all(&store).unwrap();
+        let users = EntityStore::scan_all(&store, None, None, None).unwrap();
         assert_eq!(users.len(), 3);
     }
 

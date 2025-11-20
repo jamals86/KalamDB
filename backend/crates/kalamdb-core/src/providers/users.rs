@@ -193,6 +193,18 @@ impl UserTableProvider {
 
         let mut all_cold_rows: Vec<(UserTableRowId, UserTableRow)> = Vec::new();
         for user_id in all_users {
+            // Optimization: Stop scanning if we've collected enough rows to satisfy the limit
+            // We use a multiplier (2x) to account for potential version resolution merges/deletes
+            if let Some(l) = limit {
+                if hot_rows.len() + all_cold_rows.len() >= std::cmp::max(l * 2, 1000) {
+                    log::debug!(
+                        "[UserProvider] Hit scan limit safeguard ({} rows), stopping cold scan early",
+                        hot_rows.len() + all_cold_rows.len()
+                    );
+                    break;
+                }
+            }
+
             let parquet_batch = self.scan_parquet_files_as_batch(&user_id, _filter)?;
             let user_cold_rows: Vec<(UserTableRowId, UserTableRow)> =
                 parquet_batch_to_rows(&parquet_batch)?

@@ -45,7 +45,7 @@ impl TypedStatementHandler<SubscribeStatement> for SubscribeHandler {
             _context,
             "SUBSCRIBE",
             &format!("{}.{}", statement.namespace.as_str(), statement.table_name.as_str()),
-            0, // Duration is negligible for registration
+            0.0, // Duration is negligible for registration
             None,
         );
         audit::persist_audit_entry(&self._app_context, &audit_entry).await?;

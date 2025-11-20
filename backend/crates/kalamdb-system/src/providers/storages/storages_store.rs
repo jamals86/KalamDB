@@ -100,7 +100,7 @@ mod tests {
         }
 
         // Scan all
-        let storages = EntityStore::scan_all(&store).unwrap();
+        let storages = EntityStore::scan_all(&store, None, None, None).unwrap();
         assert_eq!(storages.len(), 3);
     }
 

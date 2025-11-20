@@ -55,7 +55,7 @@ impl TypedStatementHandler<ShowTablesStatement> for ShowTablesHandler {
         };
 
         // Log query operation
-        let duration = start_time.elapsed().as_millis() as u64;
+        let duration = start_time.elapsed().as_secs_f64() * 1000.0;
         use crate::sql::executor::helpers::audit;
         let audit_entry = audit::log_query_operation(
             context,

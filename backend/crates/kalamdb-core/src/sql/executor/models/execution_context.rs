@@ -1,7 +1,9 @@
 use datafusion::prelude::SessionContext;
 use datafusion::scalar::ScalarValue;
+use datafusion::logical_expr::ScalarUDF;
 use datafusion_common::config::{ConfigExtension, ExtensionOptions};
 use kalamdb_commons::{NamespaceId, Role, UserId};
+use crate::sql::CurrentUserFunction;
 use std::sync::Arc;
 use std::time::SystemTime;
 
@@ -242,6 +244,13 @@ impl ExecutionContext {
             });
 
         // Create SessionContext from the per-user state
-        SessionContext::new_with_state(session_state)
+        let ctx = SessionContext::new_with_state(session_state);
+
+        // Register CURRENT_USER() function with user context
+        // This overrides the default CURRENT_USER() registered in base session
+        let current_user_fn = CurrentUserFunction::with_user_id(self.user_id());
+        ctx.register_udf(ScalarUDF::from(current_user_fn));
+        
+        ctx
     }
 }

@@ -70,7 +70,7 @@ async fn test_01_combined_data_count_and_select() {
             100.0 + (i as f64 * 10.0)
         );
         let response = server.execute_sql_as_user(&insert_sql, user_id).await;
-        if response.status != "success" {
+        if response.status != kalamdb_api::models::ResponseStatus::Success {
             eprintln!("Insert failed for row {}: {:?}", i, response);
         }
         assert_eq!(response.status, "success");

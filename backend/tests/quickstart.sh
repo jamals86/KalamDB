@@ -72,7 +72,7 @@ execute_sql() {
         
         # Show response summary
         local row_count=$(jq -r '.results[0].row_count // .results[0].rows | length // 0' "$RESPONSE_FILE" 2>/dev/null)
-        local exec_time=$(jq -r '.took_ms // "N/A"' "$RESPONSE_FILE" 2>/dev/null)
+        local exec_time=$(jq -r '.took // "N/A"' "$RESPONSE_FILE" 2>/dev/null)
         echo "Rows: $row_count | Execution time: ${exec_time}ms"
         
         # Show first few rows if present

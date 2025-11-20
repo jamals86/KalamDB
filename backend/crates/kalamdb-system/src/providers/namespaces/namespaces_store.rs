@@ -95,7 +95,7 @@ mod tests {
         }
 
         // Scan all
-        let namespaces = EntityStore::scan_all(&store).unwrap();
+        let namespaces = EntityStore::scan_all(&store, None, None, None).unwrap();
         assert_eq!(namespaces.len(), 3);
     }
 

@@ -53,7 +53,7 @@ impl ManifestTableProvider {
     ///
     /// Uses schema-driven array building for optimal performance and correctness.
     pub fn scan_to_record_batch(&self) -> Result<RecordBatch, SystemError> {
-        let entries = self.store.scan_all()?;
+        let entries = self.store.scan_all(None, None, None)?;
         let row_count = entries.len();
 
         // Pre-allocate builders based on schema field order
