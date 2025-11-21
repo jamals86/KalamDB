@@ -159,7 +159,8 @@ async fn test_user_can_use_id_as_column_name() {
     fixtures::create_namespace(&server, "test_user_id").await;
 
     // Users should be able to define their own "id" column if they want
-    let sql = "CREATE TABLE test_user_id.products (id TEXT PRIMARY KEY, name TEXT) WITH (TYPE = 'USER')";
+    let sql =
+        "CREATE TABLE test_user_id.products (id TEXT PRIMARY KEY, name TEXT) WITH (TYPE = 'USER')";
     let response = server.execute_sql(sql).await;
 
     assert_eq!(

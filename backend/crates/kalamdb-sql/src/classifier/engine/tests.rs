@@ -37,7 +37,8 @@ mod tests {
 
     #[test]
     fn test_classify_create_user_table_with_flush_policy() {
-        let sql = "CREATE TABLE users (id INT, name VARCHAR) WITH (TYPE='USER', FLUSH_POLICY='rows:100')";
+        let sql =
+            "CREATE TABLE users (id INT, name VARCHAR) WITH (TYPE='USER', FLUSH_POLICY='rows:100')";
         let stmt = SqlStatement::classify(sql);
         assert!(matches!(stmt.kind, SqlStatementKind::CreateTable(_)));
     }
@@ -51,7 +52,8 @@ mod tests {
 
     #[test]
     fn test_classify_create_shared_table_with_access_level() {
-        let sql = "CREATE TABLE users (id INT, name VARCHAR) WITH (TYPE='SHARED', ACCESS_LEVEL='public')";
+        let sql =
+            "CREATE TABLE users (id INT, name VARCHAR) WITH (TYPE='SHARED', ACCESS_LEVEL='public')";
         let stmt = SqlStatement::classify(sql);
         assert!(matches!(stmt.kind, SqlStatementKind::CreateTable(_)));
     }

@@ -13,9 +13,8 @@ use std::sync::Arc;
 
 static RE_ALPHANUMERIC: Lazy<Regex> = Lazy::new(|| Regex::new(r"^[a-zA-Z0-9_]+$").unwrap());
 static RE_STORAGE_ID: Lazy<Regex> = Lazy::new(|| Regex::new(r"^[a-zA-Z0-9_-]+$").unwrap());
-static LEGACY_CREATE_PREFIX_RE: Lazy<Regex> = Lazy::new(|| {
-    Regex::new(r"(?i)^\s*CREATE\s+(USER|SHARED|STREAM)\s+TABLE").unwrap()
-});
+static LEGACY_CREATE_PREFIX_RE: Lazy<Regex> =
+    Lazy::new(|| Regex::new(r"(?i)^\s*CREATE\s+(USER|SHARED|STREAM)\s+TABLE").unwrap());
 
 impl CreateTableStatement {
     /// Parse a SQL statement into a CreateTableStatement
@@ -97,9 +96,9 @@ impl CreateTableStatement {
                                     "STREAM" => TableType::Stream,
                                     _ => {
                                         return Err(format!(
-                                            "Invalid table TYPE '{}'. Supported: USER, SHARED, STREAM",
-                                            value_str
-                                        ))
+                                        "Invalid table TYPE '{}'. Supported: USER, SHARED, STREAM",
+                                        value_str
+                                    ))
                                     }
                                 };
 
@@ -522,7 +521,10 @@ WITH (
         assert_eq!(stmt.table_name.as_str(), "orders2");
         assert_eq!(stmt.namespace_id.as_str(), "sales");
         assert_eq!(stmt.storage_id.unwrap().as_str(), "s3-us");
-        assert!(matches!(stmt.flush_policy, Some(FlushPolicy::Combined { .. })));
+        assert!(matches!(
+            stmt.flush_policy,
+            Some(FlushPolicy::Combined { .. })
+        ));
     }
 
     #[test]

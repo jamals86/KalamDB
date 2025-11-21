@@ -8,7 +8,7 @@ use dashmap::DashMap;
 use kalamdb_commons::{
     config::ManifestCacheSettings,
     types::{ManifestCacheEntry, ManifestFile, SyncState},
-    NamespaceId, TableName, UserId,
+    NamespaceId, TableId, TableName, UserId,
 };
 use kalamdb_store::{entity_store::EntityStore, StorageBackend, StorageError};
 use kalamdb_system::providers::manifest::{new_manifest_store, ManifestCacheKey, ManifestStore};
@@ -56,11 +56,10 @@ impl ManifestCacheService {
     /// Updates last_accessed timestamp on cache hit.
     pub fn get_or_load(
         &self,
-        namespace: &NamespaceId,
-        table: &TableName,
+        table_id: &TableId,
         user_id: Option<&UserId>,
     ) -> Result<Option<Arc<ManifestCacheEntry>>, StorageError> {
-        let cache_key = ManifestCacheKey::from(self.make_cache_key(namespace, table, user_id));
+        let cache_key = ManifestCacheKey::from(self.make_cache_key(table_id, user_id));
 
         // 1. Check hot cache
         if let Some(entry) = self.hot_cache.get(cache_key.as_str()) {
@@ -81,42 +80,41 @@ impl ManifestCacheService {
         Ok(None)
     }
 
-    /// Update manifest cache after successful flush.
-    ///
-    /// Atomically writes to:
-    /// - RocksDB manifest_cache CF
-    /// - Hot cache (DashMap)
-    ///
-    /// Caller must ensure manifest.json has already been written to storage backend.
+    /// Update manifest cache after successful flush (writes manifest to storage, marks entry in sync).
     pub fn update_after_flush(
         &self,
-        namespace: &NamespaceId,
-        table: &TableName,
+        table_id: &TableId,
         user_id: Option<&UserId>,
         manifest: &ManifestFile,
         etag: Option<String>,
         source_path: String,
     ) -> Result<(), StorageError> {
-        let cache_key_str = self.make_cache_key(namespace, table, user_id);
-        let cache_key = ManifestCacheKey::from(cache_key_str.clone());
-        let now = chrono::Utc::now().timestamp();
+        self.upsert_cache_entry(
+            table_id,
+            user_id,
+            manifest,
+            etag,
+            source_path,
+            SyncState::InSync,
+        )
+    }
 
-        let manifest_json = manifest.to_json().map_err(|e| {
-            StorageError::SerializationError(format!("Failed to serialize ManifestFile: {}", e))
-        })?;
-
-        let entry =
-            ManifestCacheEntry::new(manifest_json, etag, now, source_path, SyncState::InSync);
-
-        // Write to RocksDB CF
-        EntityStore::put(&self.store, &cache_key, &entry)?;
-
-        // Update hot cache
-        self.hot_cache
-            .insert(cache_key_str.clone(), Arc::new(entry));
-        self.update_last_accessed(&cache_key_str);
-
-        Ok(())
+    /// Stage manifest metadata in the cache before the first flush writes manifest.json to disk.
+    pub fn stage_before_flush(
+        &self,
+        table_id: &TableId,
+        user_id: Option<&UserId>,
+        manifest: &ManifestFile,
+        source_path: String,
+    ) -> Result<(), StorageError> {
+        self.upsert_cache_entry(
+            table_id,
+            user_id,
+            manifest,
+            None,
+            source_path,
+            SyncState::InSync,
+        )
     }
 
     /// Validate freshness of cached entry based on TTL.
@@ -147,7 +145,8 @@ impl ManifestCacheService {
         table: &TableName,
         user_id: Option<&UserId>,
     ) -> Result<(), StorageError> {
-        let cache_key_str = self.make_cache_key(namespace, table, user_id);
+        let table_id = TableId::new(namespace.clone(), table.clone());
+        let cache_key_str = self.make_cache_key(&table_id, user_id);
         let cache_key = ManifestCacheKey::from(cache_key_str.clone());
         self.hot_cache.remove(&cache_key_str);
         self.last_accessed.remove(&cache_key_str);
@@ -200,14 +199,42 @@ impl ManifestCacheService {
 
     // Helper methods
 
-    fn make_cache_key(
-        &self,
-        namespace: &NamespaceId,
-        table: &TableName,
-        user_id: Option<&UserId>,
-    ) -> String {
+    fn make_cache_key(&self, table_id: &TableId, user_id: Option<&UserId>) -> String {
         let scope = user_id.map(|u| u.as_str()).unwrap_or("shared");
-        format!("{}:{}:{}", namespace.as_str(), table.as_str(), scope)
+        format!(
+            "{}:{}:{}",
+            table_id.namespace_id().as_str(),
+            table_id.table_name().as_str(),
+            scope
+        )
+    }
+
+    fn upsert_cache_entry(
+        &self,
+        table_id: &TableId,
+        user_id: Option<&UserId>,
+        manifest: &ManifestFile,
+        etag: Option<String>,
+        source_path: String,
+        sync_state: SyncState,
+    ) -> Result<(), StorageError> {
+        let cache_key_str = self.make_cache_key(table_id, user_id);
+        let cache_key = ManifestCacheKey::from(cache_key_str.clone());
+        let now = chrono::Utc::now().timestamp();
+
+        let manifest_json = manifest.to_json().map_err(|e| {
+            StorageError::SerializationError(format!("Failed to serialize ManifestFile: {}", e))
+        })?;
+
+        let entry = ManifestCacheEntry::new(manifest_json, etag, now, source_path, sync_state);
+
+        EntityStore::put(&self.store, &cache_key, &entry)?;
+
+        self.hot_cache
+            .insert(cache_key_str.clone(), Arc::new(entry));
+        self.update_last_accessed(&cache_key_str);
+
+        Ok(())
     }
 
     fn update_last_accessed(&self, cache_key: &str) {
@@ -254,9 +281,10 @@ mod tests {
         let service = create_test_service();
         let namespace = NamespaceId::new("ns1");
         let table = TableName::new("tbl1");
+        let table_id = TableId::new(namespace.clone(), table.clone());
 
         let result = service
-            .get_or_load(&namespace, &table, Some(&UserId::from("u_123")))
+            .get_or_load(&table_id, Some(&UserId::from("u_123")))
             .unwrap();
         assert!(result.is_none());
     }
@@ -266,12 +294,12 @@ mod tests {
         let service = create_test_service();
         let namespace = NamespaceId::new("ns1");
         let table = TableName::new("tbl1");
+        let table_id = TableId::new(namespace.clone(), table.clone());
         let manifest = create_test_manifest();
 
         service
             .update_after_flush(
-                &namespace,
-                &table,
+                &table_id,
                 Some(&UserId::from("u_123")),
                 &manifest,
                 Some("etag123".to_string()),
@@ -281,7 +309,7 @@ mod tests {
 
         // Verify cached
         let cached = service
-            .get_or_load(&namespace, &table, Some(&UserId::from("u_123")))
+            .get_or_load(&table_id, Some(&UserId::from("u_123")))
             .unwrap();
         assert!(cached.is_some());
         let entry = cached.unwrap();
@@ -294,13 +322,13 @@ mod tests {
         let service = create_test_service();
         let namespace = NamespaceId::new("ns1");
         let table = TableName::new("tbl1");
+        let table_id = TableId::new(namespace.clone(), table.clone());
         let manifest = create_test_manifest();
 
         // Prime cache
         service
             .update_after_flush(
-                &namespace,
-                &table,
+                &table_id,
                 Some(&UserId::from("u_123")),
                 &manifest,
                 None,
@@ -310,12 +338,12 @@ mod tests {
 
         // Second read should hit hot cache
         let result = service
-            .get_or_load(&namespace, &table, Some(&UserId::from("u_123")))
+            .get_or_load(&table_id, Some(&UserId::from("u_123")))
             .unwrap();
         assert!(result.is_some());
 
         // Verify last_accessed updated
-        let cache_key = service.make_cache_key(&namespace, &table, Some(&UserId::from("u_123")));
+        let cache_key = service.make_cache_key(&table_id, Some(&UserId::from("u_123")));
         assert!(service.get_last_accessed(&cache_key).is_some());
     }
 
@@ -324,13 +352,13 @@ mod tests {
         let service = create_test_service();
         let namespace = NamespaceId::new("ns1");
         let table = TableName::new("tbl1");
+        let table_id = TableId::new(namespace.clone(), table.clone());
         let manifest = create_test_manifest();
 
         // Add entry
         service
             .update_after_flush(
-                &namespace,
-                &table,
+                &table_id,
                 Some(&UserId::from("u_123")),
                 &manifest,
                 None,
@@ -340,7 +368,7 @@ mod tests {
 
         // Verify cached
         assert!(service
-            .get_or_load(&namespace, &table, Some(&UserId::from("u_123")))
+            .get_or_load(&table_id, Some(&UserId::from("u_123")))
             .unwrap()
             .is_some());
 
@@ -351,7 +379,7 @@ mod tests {
 
         // Verify removed
         assert!(service
-            .get_or_load(&namespace, &table, Some(&UserId::from("u_123")))
+            .get_or_load(&table_id, Some(&UserId::from("u_123")))
             .unwrap()
             .is_none());
     }
@@ -361,13 +389,13 @@ mod tests {
         let service = create_test_service();
         let namespace = NamespaceId::new("ns1");
         let table = TableName::new("tbl1");
+        let table_id = TableId::new(namespace.clone(), table.clone());
         let manifest = create_test_manifest();
 
         // Add fresh entry
         service
             .update_after_flush(
-                &namespace,
-                &table,
+                &table_id,
                 Some(&UserId::from("u_123")),
                 &manifest,
                 None,
@@ -375,7 +403,7 @@ mod tests {
             )
             .unwrap();
 
-        let cache_key = service.make_cache_key(&namespace, &table, Some(&UserId::from("u_123")));
+        let cache_key = service.make_cache_key(&table_id, Some(&UserId::from("u_123")));
 
         // Should be fresh
         assert!(service.validate_freshness(&cache_key).unwrap());
@@ -389,13 +417,13 @@ mod tests {
         let service1 = ManifestCacheService::new(Arc::clone(&backend), config.clone());
         let namespace = NamespaceId::new("ns1");
         let table = TableName::new("tbl1");
+        let table_id = TableId::new(namespace.clone(), table.clone());
         let manifest = create_test_manifest();
 
         // Add entry
         service1
             .update_after_flush(
-                &namespace,
-                &table,
+                &table_id,
                 Some(&UserId::from("u_123")),
                 &manifest,
                 None,
@@ -409,7 +437,7 @@ mod tests {
 
         // Verify entry restored to hot cache
         let cached = service2
-            .get_or_load(&namespace, &table, Some(&UserId::from("u_123")))
+            .get_or_load(&table_id, Some(&UserId::from("u_123")))
             .unwrap();
         assert!(cached.is_some());
     }
@@ -419,12 +447,12 @@ mod tests {
         let service = create_test_service();
         let namespace = NamespaceId::new("ns1");
         let table = TableName::new("tbl1");
+        let table_id = TableId::new(namespace.clone(), table.clone());
         let manifest = create_test_manifest();
 
         service
             .update_after_flush(
-                &namespace,
-                &table,
+                &table_id,
                 Some(&UserId::from("u_123")),
                 &manifest,
                 None,

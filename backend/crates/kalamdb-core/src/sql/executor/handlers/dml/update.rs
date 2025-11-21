@@ -9,9 +9,9 @@ use crate::sql::executor::handlers::StatementHandler;
 use crate::sql::executor::models::{ExecutionContext, ExecutionResult, ScalarValue};
 use crate::sql::executor::parameter_validation::{validate_parameters, ParameterLimits};
 use async_trait::async_trait;
-use kalamdb_commons::models::{NamespaceId, TableName};
+use kalamdb_commons::models::{NamespaceId, Row, TableName};
 use kalamdb_sql::statement_classifier::{SqlStatement, SqlStatementKind};
-use serde_json::Value as JsonValue;
+use std::collections::BTreeMap;
 
 /// Handler for UPDATE statements
 ///
@@ -52,12 +52,12 @@ impl StatementHandler for UpdateHandler {
         let sql = statement.as_str();
         let (namespace, table_name, assignments, where_pair) = self.simple_parse_update(sql)?;
 
-        let mut obj = serde_json::Map::new();
+        let mut values = BTreeMap::new();
         for (col, token) in assignments {
-            let val = self.token_to_json(&token, &params)?;
-            obj.insert(col, val);
+            let val = self.token_to_scalar_value(&token, &params)?;
+            values.insert(col, val);
         }
-        let updates = JsonValue::Object(obj);
+        let updates = Row::new(values);
 
         // T153: Use effective user_id for impersonation support (Phase 7)
         let effective_user_id = statement.as_user_id().unwrap_or(&context.user_id);
@@ -84,8 +84,8 @@ impl StatementHandler for UpdateHandler {
             ));
         }
 
-        let result = match def.table_type {
-            kalamdb_commons::schemas::TableType::User => {
+        let result = match (def.table_type, updates) {
+            (kalamdb_commons::schemas::TableType::User, updates) => {
                 // Get provider from unified cache and downcast to UserTableProvider
                 let provider_arc = schema_registry.get_provider(&table_id).ok_or_else(|| {
                     KalamDbError::InvalidOperation("User table provider not found".into())
@@ -131,7 +131,7 @@ impl StatementHandler for UpdateHandler {
                     ))
                 }
             }
-            kalamdb_commons::schemas::TableType::Shared => {
+            (kalamdb_commons::schemas::TableType::Shared, updates) => {
                 // Check write permissions for Shared tables
                 use kalamdb_auth::rbac::can_write_shared_table;
                 use kalamdb_commons::schemas::TableOptions;
@@ -179,12 +179,12 @@ impl StatementHandler for UpdateHandler {
                     ))
                 }
             }
-            kalamdb_commons::schemas::TableType::Stream => Err(KalamDbError::InvalidOperation(
-                "UPDATE not supported for STREAM tables".into(),
-            )),
-            kalamdb_commons::schemas::TableType::System => Err(KalamDbError::InvalidOperation(
-                "Cannot UPDATE SYSTEM tables".into(),
-            )),
+            (kalamdb_commons::schemas::TableType::Stream, _) => Err(
+                KalamDbError::InvalidOperation("UPDATE not supported for STREAM tables".into()),
+            ),
+            (kalamdb_commons::schemas::TableType::System, _) => Err(
+                KalamDbError::InvalidOperation("Cannot UPDATE SYSTEM tables".into()),
+            ),
         };
 
         // Log DML operation if successful
@@ -351,11 +351,11 @@ impl UpdateHandler {
         Ok(None)
     }
 
-    fn token_to_json(
+    fn token_to_scalar_value(
         &self,
         token: &str,
         params: &[ScalarValue],
-    ) -> Result<JsonValue, KalamDbError> {
+    ) -> Result<ScalarValue, KalamDbError> {
         let t = token.trim();
 
         // Check for placeholder ($1, $2, etc.)
@@ -372,28 +372,20 @@ impl UpdateHandler {
                 )));
             }
 
-            let sv = &params[param_num - 1];
-            return match sv {
-                ScalarValue::Int64(Some(i)) => Ok(JsonValue::Number((*i).into())),
-                ScalarValue::Utf8(Some(s)) => Ok(JsonValue::String(s.clone())),
-                ScalarValue::Boolean(Some(b)) => Ok(JsonValue::Bool(*b)),
-                _ => Err(KalamDbError::InvalidOperation(
-                    "Unsupported ScalarValue in placeholder".into(),
-                )),
-            };
+            return Ok(params[param_num - 1].clone());
         }
 
         // Check for NULL
         if t.eq_ignore_ascii_case("NULL") {
-            return Ok(JsonValue::Null);
+            return Ok(ScalarValue::Null);
         }
 
         // Check for boolean
         if t.eq_ignore_ascii_case("TRUE") {
-            return Ok(JsonValue::Bool(true));
+            return Ok(ScalarValue::Boolean(Some(true)));
         }
         if t.eq_ignore_ascii_case("FALSE") {
-            return Ok(JsonValue::Bool(false));
+            return Ok(ScalarValue::Boolean(Some(false)));
         }
 
         // Check for quoted string
@@ -402,21 +394,19 @@ impl UpdateHandler {
             || (t.starts_with('`') && t.ends_with('`'))
         {
             let unquoted = &t[1..t.len() - 1];
-            return Ok(JsonValue::String(unquoted.to_string()));
+            return Ok(ScalarValue::Utf8(Some(unquoted.to_string())));
         }
 
         // Try parsing as number
         if let Ok(i) = t.parse::<i64>() {
-            return Ok(JsonValue::Number(i.into()));
+            return Ok(ScalarValue::Int64(Some(i)));
         }
         if let Ok(f) = t.parse::<f64>() {
-            return serde_json::Number::from_f64(f)
-                .map(JsonValue::Number)
-                .ok_or_else(|| KalamDbError::InvalidOperation("Invalid float value".into()));
+            return Ok(ScalarValue::Float64(Some(f)));
         }
 
         // Default to string
-        Ok(JsonValue::String(t.to_string()))
+        Ok(ScalarValue::Utf8(Some(t.to_string())))
     }
 }
 

@@ -21,7 +21,7 @@ fn test_datatypes_json_preservation() {
         namespace
     ));
 
-        // Create test table with multiple datatypes
+    // Create test table with multiple datatypes
     let create_sql = format!(
         r#"CREATE TABLE {}.{} (
             id BIGINT PRIMARY KEY AUTO_INCREMENT,
@@ -63,7 +63,7 @@ fn test_datatypes_json_preservation() {
         "Should query data successfully: {:?}",
         result.err()
     );
-    
+
     let output = result.unwrap();
     println!("Query output: {}", output);
 
@@ -84,7 +84,7 @@ fn test_datatypes_json_preservation() {
     let row = rows.first().expect("Should have a first row");
 
     // Verify values and types
-    
+
     // String
     let col_string = row.get("col_string").expect("Missing col_string");
     assert!(col_string.is_string(), "col_string should be a string");
@@ -113,12 +113,18 @@ fn test_datatypes_json_preservation() {
     // Adjust expectation based on actual behavior. Assuming string for now as it's common.
     // If it fails, we'll see the output and adjust.
     if col_timestamp.is_string() {
-         // It might be formatted differently, e.g., with 'T' or 'Z'
-         let ts_val = col_timestamp.as_str().unwrap();
-         assert!(ts_val.contains("2023-01-01"), "Timestamp should contain date part");
-         assert!(ts_val.contains("12:00:00"), "Timestamp should contain time part");
+        // It might be formatted differently, e.g., with 'T' or 'Z'
+        let ts_val = col_timestamp.as_str().unwrap();
+        assert!(
+            ts_val.contains("2023-01-01"),
+            "Timestamp should contain date part"
+        );
+        assert!(
+            ts_val.contains("12:00:00"),
+            "Timestamp should contain time part"
+        );
     } else if col_timestamp.is_number() {
-        // If it's a number (epoch), we would check that range. 
+        // If it's a number (epoch), we would check that range.
         // But let's assume string first as SQL usually returns string representation in JSON unless typed otherwise.
         println!("Timestamp returned as number: {}", col_timestamp);
     } else {

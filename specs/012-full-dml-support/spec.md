@@ -876,7 +876,7 @@ schema_registry.register_entity_store("manifest_cache", manifest_cache_store);
 
 // Usage in query planner
 let manifest_cache = app_context.schema_registry().get_manifest_cache();
-let manifest = manifest_cache.get_or_load(namespace, table, user_id).await?;
+let manifest = manifest_cache.get_or_load(&table_id, user_id).await?;
 ```
 
 **Benefits of This Architecture**:

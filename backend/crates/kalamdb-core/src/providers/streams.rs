@@ -29,13 +29,11 @@ use kalamdb_commons::models::UserId;
 use kalamdb_commons::{Role, StorageKey, TableId};
 use kalamdb_store::entity_store::EntityStore;
 use kalamdb_tables::{StreamTableRow, StreamTableStore};
-use serde_json::Value as JsonValue;
 use std::any::Any;
 use std::sync::Arc;
 
 // Arrow <-> JSON helpers
 use crate::live_query::ChangeNotification;
-use crate::providers::arrow_json_conversion::json_to_row;
 use kalamdb_commons::models::Row;
 
 /// Stream table provider with RLS and TTL filtering
@@ -152,11 +150,7 @@ impl BaseTableProvider<StreamTableRowId, StreamTableRow> for StreamTableProvider
         &self.primary_key_field_name
     }
 
-    fn insert(
-        &self,
-        user_id: &UserId,
-        row_data: JsonValue,
-    ) -> Result<StreamTableRowId, KalamDbError> {
+    fn insert(&self, user_id: &UserId, row_data: Row) -> Result<StreamTableRowId, KalamDbError> {
         let table_id = self.core.table_id();
         // Lazy TTL cleanup: delete expired rows BEFORE inserting new one
         // This ensures storage doesn't grow unbounded without background jobs
@@ -206,9 +200,7 @@ impl BaseTableProvider<StreamTableRowId, StreamTableRow> for StreamTableProvider
         let entity = StreamTableRow {
             user_id: user_id.clone(),
             _seq: seq_id,
-            fields: json_to_row(&row_data).ok_or_else(|| {
-                KalamDbError::InvalidOperation("Failed to convert JSON to Row".to_string())
-            })?,
+            fields: row_data,
         };
 
         // Create composite key
@@ -260,7 +252,7 @@ impl BaseTableProvider<StreamTableRowId, StreamTableRow> for StreamTableProvider
         &self,
         user_id: &UserId,
         _key: &StreamTableRowId,
-        updates: JsonValue,
+        updates: Row,
     ) -> Result<StreamTableRowId, KalamDbError> {
         // TODO: Implement full UPDATE logic for stream tables
         // 1. Scan ONLY RocksDB (hot storage, no Parquet)

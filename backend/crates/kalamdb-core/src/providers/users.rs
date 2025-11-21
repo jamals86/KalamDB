@@ -27,13 +27,11 @@ use kalamdb_commons::models::UserId;
 use kalamdb_commons::{Role, StorageKey, TableId};
 use kalamdb_store::entity_store::EntityStore;
 use kalamdb_tables::{UserTableRow, UserTableStore};
-use serde_json::Value as JsonValue;
 use std::any::Any;
 use std::sync::Arc;
 
 // Arrow <-> JSON helpers
 use crate::live_query::ChangeNotification;
-use crate::providers::arrow_json_conversion::{json_to_row, json_value_to_scalar};
 use crate::providers::version_resolution::{merge_versioned_rows, parquet_batch_to_rows};
 use datafusion::scalar::ScalarValue;
 use kalamdb_commons::models::Row;
@@ -145,126 +143,42 @@ impl UserTableProvider {
         )
     }
 
-    /// Scan all users' data with version resolution (for Service/DBA/System roles)
-    ///
-    /// Similar to scan_with_version_resolution_to_kvs but without RLS filtering.
-    /// Returns all rows from all users in the table.
-    fn scan_all_users_with_version_resolution(
-        &self,
-        _filter: Option<&Expr>,
-        limit: Option<usize>,
-    ) -> Result<Vec<(UserTableRowId, UserTableRow)>, KalamDbError> {
+    /// Ensure manifest.json exists (and is cached) for the current user scope before hot writes
+    fn ensure_manifest_ready(&self, user_id: &UserId) -> Result<(), KalamDbError> {
         let table_id = self.core.table_id();
+        let namespace = table_id.namespace_id().clone();
+        let table = table_id.table_name().clone();
+        let manifest_cache = self.core.app_context.manifest_cache_service();
 
-        // 1) Scan ALL hot storage (RocksDB) without per-user filtering
-        // Use limit if provided, otherwise default to 100,000
-        let scan_limit = limit.map(|l| std::cmp::max(l * 2, 1000)).unwrap_or(100_000);
-
-        let raw_all = self
-            .store
-            .scan_limited_with_prefix_and_start(None, None, scan_limit)
-            .map_err(|e| {
-                KalamDbError::InvalidOperation(format!(
-                    "Failed to scan user table hot storage: {}",
+        match manifest_cache.get_or_load(table_id, Some(user_id)) {
+            Ok(Some(_)) => return Ok(()),
+            Ok(None) => {}
+            Err(e) => {
+                log::warn!(
+                    "[UserTableProvider] Manifest cache lookup failed for {}.{} user={} err={}",
+                    namespace.as_str(),
+                    table.as_str(),
+                    user_id.as_str(),
                     e
-                ))
-            })?;
-        let hot_rows: Vec<(UserTableRowId, UserTableRow)> = raw_all
-            .into_iter()
-            .filter_map(|(key_bytes, row)| {
-                match kalamdb_commons::ids::UserTableRowId::from_bytes(&key_bytes) {
-                    Ok(k) => Some((k, row)),
-                    Err(err) => {
-                        log::warn!("Skipping invalid UserTableRowId key bytes: {}", err);
-                        None
-                    }
-                }
-            })
-            .collect();
-
-        if log::log_enabled!(log::Level::Trace) {
-            log::trace!(
-                "[UserProvider] Hot scan (ALL users): {} rows (table={}.{})",
-                hot_rows.len(),
-                table_id.namespace_id().as_str(),
-                table_id.table_name().as_str()
-            );
-        }
-
-        // 2) Scan cold storage (Parquet files) for ALL users (from hot storage + cold storage)
-        // Collect unique user_ids from hot storage
-        let mut all_users: std::collections::HashSet<UserId> = hot_rows
-            .iter()
-            .map(|(_, row)| row.user_id.clone())
-            .collect();
-
-        // Also get users from cold storage (by scanning the table directory for user subdirectories)
-        if let Ok(cold_users) = self.get_users_from_cold_storage() {
-            all_users.extend(cold_users);
-        }
-
-        let mut all_cold_rows: Vec<(UserTableRowId, UserTableRow)> = Vec::new();
-        for user_id in all_users {
-            // Optimization: Stop scanning if we've collected enough rows to satisfy the limit
-            // We use a multiplier (2x) to account for potential version resolution merges/deletes
-            if let Some(l) = limit {
-                if hot_rows.len() + all_cold_rows.len() >= std::cmp::max(l * 2, 1000) {
-                    log::debug!(
-                        "[UserProvider] Hit scan limit safeguard ({} rows), stopping cold scan early",
-                        hot_rows.len() + all_cold_rows.len()
-                    );
-                    break;
-                }
-            }
-
-            let parquet_batch = self.scan_parquet_files_as_batch(&user_id, _filter)?;
-            let user_cold_rows: Vec<(UserTableRowId, UserTableRow)> =
-                parquet_batch_to_rows(&parquet_batch)?
-                    .into_iter()
-                    .map(|row_data| {
-                        let seq_id = row_data.seq_id;
-                        let row = UserTableRow {
-                            user_id: user_id.clone(),
-                            _seq: seq_id,
-                            _deleted: row_data.deleted,
-                            fields: row_data.fields,
-                        };
-                        (UserTableRowId::new(user_id.clone(), seq_id), row)
-                    })
-                    .collect();
-            all_cold_rows.extend(user_cold_rows);
-        }
-
-        if log::log_enabled!(log::Level::Trace) {
-            log::trace!(
-                "[UserProvider] Cold scan (ALL users): {} Parquet rows (table={}.{})",
-                all_cold_rows.len(),
-                table_id.namespace_id().as_str(),
-                table_id.table_name().as_str()
-            );
-        }
-
-        // 3) Version resolution: keep MAX(_seq) per primary key; honor tombstones
-        let pk_name = self.primary_key_field_name().to_string();
-        let mut result = merge_versioned_rows(&pk_name, hot_rows, all_cold_rows);
-
-        // Apply limit after resolution
-        if let Some(l) = limit {
-            if result.len() > l {
-                result.truncate(l);
+                );
             }
         }
 
-        if log::log_enabled!(log::Level::Trace) {
-            log::trace!(
-                "[UserProvider] Final version-resolved (ALL users, post-tombstone): {} rows (table={}.{})",
-                result.len(),
-                table_id.namespace_id().as_str(),
-                table_id.table_name().as_str()
-            );
-        }
+        let manifest_service = self.core.app_context.manifest_service();
+        let manifest = manifest_service.ensure_manifest_initialized(
+            table_id,
+            self.core.table_type(),
+            Some(user_id),
+        )?;
 
-        Ok(result)
+        let manifest_path = manifest_service
+            .manifest_path(table_id, Some(user_id))?
+            .to_string_lossy()
+            .to_string();
+
+        manifest_cache.stage_before_flush(table_id, Some(user_id), &manifest, manifest_path)?;
+
+        Ok(())
     }
 
     /// Get list of users that have data in cold storage (Parquet files).
@@ -324,11 +238,9 @@ impl BaseTableProvider<UserTableRowId, UserTableRow> for UserTableProvider {
         &self.primary_key_field_name
     }
 
-    fn insert(
-        &self,
-        user_id: &UserId,
-        row_data: JsonValue,
-    ) -> Result<UserTableRowId, KalamDbError> {
+    fn insert(&self, user_id: &UserId, row_data: Row) -> Result<UserTableRowId, KalamDbError> {
+        self.ensure_manifest_ready(user_id)?;
+
         // Validate PRIMARY KEY uniqueness if user provided PK value
         base::ensure_unique_pk_value(self, Some(user_id), &row_data)?;
 
@@ -341,9 +253,7 @@ impl BaseTableProvider<UserTableRowId, UserTableRow> for UserTableProvider {
             user_id: user_id.clone(),
             _seq: seq_id,
             _deleted: false,
-            fields: json_to_row(&row_data).ok_or_else(|| {
-                KalamDbError::InvalidOperation("Failed to convert JSON to Row".to_string())
-            })?,
+            fields: row_data,
         };
 
         // Create composite key
@@ -379,12 +289,8 @@ impl BaseTableProvider<UserTableRowId, UserTableRow> for UserTableProvider {
         &self,
         user_id: &UserId,
         key: &UserTableRowId,
-        updates: JsonValue,
+        updates: Row,
     ) -> Result<UserTableRowId, KalamDbError> {
-        let update_obj = updates.as_object().cloned().ok_or_else(|| {
-            KalamDbError::InvalidSql("UPDATE requires object of column assignments".to_string())
-        })?;
-
         // Load referenced version to extract PK
         let prior = EntityStore::get(&*self.store, key)
             .map_err(|e| KalamDbError::Other(format!("Failed to load prior version: {}", e)))?
@@ -407,8 +313,8 @@ impl BaseTableProvider<UserTableRowId, UserTableRow> for UserTableProvider {
 
         // Merge updates onto latest
         let mut merged = latest_row.fields.values.clone();
-        for (k, v) in update_obj.into_iter() {
-            merged.insert(k, json_value_to_scalar(&v));
+        for (k, v) in &updates.values {
+            merged.insert(k.clone(), v.clone());
         }
 
         let new_fields = Row::new(merged);
@@ -512,14 +418,9 @@ impl BaseTableProvider<UserTableRowId, UserTableRow> for UserTableProvider {
             (None, None)
         };
 
-        // Service/DBA/System role sees all users' data; regular users only see their own
-        let kvs = if matches!(role, Role::Service | Role::Dba | Role::System) {
-            // Service/admin roles: scan ALL users (no RLS filtering)
-            self.scan_all_users_with_version_resolution(filter, limit)?
-        } else {
-            // Regular user: scan only their own data (RLS enforced)
-            self.scan_with_version_resolution_to_kvs(&user_id, filter, since_seq, limit)?
-        };
+        // All roles operate within the current effective user scope. Admins must use AS USER to
+        // impersonate other users instead of bypassing RLS.
+        let kvs = self.scan_with_version_resolution_to_kvs(&user_id, filter, since_seq, limit)?;
 
         let table_id = self.core.table_id();
         log::debug!(

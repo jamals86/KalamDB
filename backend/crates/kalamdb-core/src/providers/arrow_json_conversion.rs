@@ -7,6 +7,7 @@
 //! These utilities are used by user_table_provider, shared_table_provider,
 //! and stream_table_provider to avoid code duplication.
 
+use crate::error::KalamDbError;
 use chrono::Utc;
 use datafusion::arrow::array::*;
 use datafusion::arrow::datatypes::{DataType, Field, SchemaRef, TimeUnit};
@@ -351,5 +352,34 @@ pub fn json_value_to_scalar(v: &JsonValue) -> ScalarValue {
         JsonValue::String(s) => ScalarValue::Utf8(Some(s.clone())),
         JsonValue::Array(_) => ScalarValue::Utf8(Some(v.to_string())), // Fallback for arrays
         JsonValue::Object(_) => ScalarValue::Utf8(Some(v.to_string())), // Fallback for objects
+    }
+}
+
+/// Convert DataFusion ScalarValue to serde_json::Value
+pub fn scalar_value_to_json(value: &ScalarValue) -> Result<JsonValue, KalamDbError> {
+    match value {
+        ScalarValue::Null => Ok(JsonValue::Null),
+        ScalarValue::Boolean(Some(b)) => Ok(JsonValue::Bool(*b)),
+        ScalarValue::Int8(Some(i)) => Ok(JsonValue::Number((*i).into())),
+        ScalarValue::Int16(Some(i)) => Ok(JsonValue::Number((*i).into())),
+        ScalarValue::Int32(Some(i)) => Ok(JsonValue::Number((*i).into())),
+        ScalarValue::Int64(Some(i)) => Ok(JsonValue::Number((*i).into())),
+        ScalarValue::UInt8(Some(i)) => Ok(JsonValue::Number((*i).into())),
+        ScalarValue::UInt16(Some(i)) => Ok(JsonValue::Number((*i).into())),
+        ScalarValue::UInt32(Some(i)) => Ok(JsonValue::Number((*i).into())),
+        ScalarValue::UInt64(Some(i)) => Ok(JsonValue::Number((*i).into())),
+        ScalarValue::Float32(Some(f)) => serde_json::Number::from_f64(*f as f64)
+            .map(JsonValue::Number)
+            .ok_or_else(|| KalamDbError::InvalidOperation("Invalid float value".into())),
+        ScalarValue::Float64(Some(f)) => serde_json::Number::from_f64(*f)
+            .map(JsonValue::Number)
+            .ok_or_else(|| KalamDbError::InvalidOperation("Invalid float value".into())),
+        ScalarValue::Utf8(Some(s)) | ScalarValue::LargeUtf8(Some(s)) => {
+            Ok(JsonValue::String(s.clone()))
+        }
+        _ => Err(KalamDbError::InvalidOperation(format!(
+            "Unsupported ScalarValue conversion to JSON: {:?}",
+            value
+        ))),
     }
 }

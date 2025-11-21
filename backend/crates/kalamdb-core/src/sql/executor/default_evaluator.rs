@@ -4,6 +4,7 @@
 //! Supports literal values and function calls (NOW, CURRENT_USER, SNOWFLAKE_ID, UUID_V7, ULID).
 
 use crate::error::KalamDbError;
+use crate::providers::arrow_json_conversion::json_value_to_scalar;
 use crate::schema_registry::system_columns_service::SystemColumnsService;
 use datafusion_common::ScalarValue;
 use kalamdb_commons::models::UserId;
@@ -19,13 +20,13 @@ use std::sync::Arc;
 /// - `sys_cols`: Optional SystemColumnsService for SNOWFLAKE_ID generation (uses fresh generator if None)
 ///
 /// # Returns
-/// - `Ok(JsonValue)`: Evaluated default value
+/// - `Ok(ScalarValue)`: Evaluated default value ready for Row construction
 /// - `Err(KalamDbError)`: If function evaluation fails
 pub fn evaluate_default(
     default: &ColumnDefault,
     user_id: &UserId,
     sys_cols: Option<Arc<SystemColumnsService>>,
-) -> Result<JsonValue, KalamDbError> {
+) -> Result<ScalarValue, KalamDbError> {
     match default {
         ColumnDefault::None => {
             // No default - should not be called for this case
@@ -34,8 +35,8 @@ pub fn evaluate_default(
             ))
         }
         ColumnDefault::Literal(value) => {
-            // Return literal value as-is
-            Ok(value.clone())
+            // Convert literal JSON to ScalarValue
+            Ok(json_value_to_scalar(value))
         }
         ColumnDefault::FunctionCall { name, args } => {
             evaluate_function(name, args, user_id, sys_cols)
@@ -49,7 +50,7 @@ fn evaluate_function(
     args: &[JsonValue],
     user_id: &UserId,
     sys_cols: Option<Arc<SystemColumnsService>>,
-) -> Result<JsonValue, KalamDbError> {
+) -> Result<ScalarValue, KalamDbError> {
     let func_upper = func_name.to_uppercase();
 
     match func_upper.as_str() {
@@ -60,7 +61,7 @@ fn evaluate_function(
                     "CURRENT_USER() takes no arguments".to_string(),
                 ));
             }
-            Ok(JsonValue::String(user_id.as_str().to_string()))
+            Ok(ScalarValue::Utf8(Some(user_id.as_str().to_string())))
         }
 
         "NOW" | "CURRENT_TIMESTAMP" => {
@@ -72,7 +73,7 @@ fn evaluate_function(
                 )));
             }
             let now = chrono::Utc::now();
-            Ok(JsonValue::String(now.to_rfc3339()))
+            Ok(ScalarValue::Utf8(Some(now.to_rfc3339())))
         }
 
         "SNOWFLAKE_ID" => {
@@ -91,7 +92,7 @@ fn evaluate_function(
                             e
                         ))
                     })?;
-                    Ok(JsonValue::Number(seq_id.as_i64().into()))
+                    Ok(ScalarValue::Int64(Some(seq_id.as_i64())))
                 }
                 None => {
                     // Fallback: create fresh generator (non-singleton, for testing only)
@@ -103,7 +104,7 @@ fn evaluate_function(
                             e
                         ))
                     })?;
-                    Ok(JsonValue::Number(id.into()))
+                    Ok(ScalarValue::Int64(Some(id)))
                 }
             }
         }
@@ -117,7 +118,7 @@ fn evaluate_function(
             }
             use uuid::Uuid;
             let uuid = Uuid::now_v7();
-            Ok(JsonValue::String(uuid.to_string()))
+            Ok(ScalarValue::Utf8(Some(uuid.to_string())))
         }
 
         "ULID" => {
@@ -133,7 +134,7 @@ fn evaluate_function(
             let uuid = Uuid::now_v7();
             // Convert to uppercase hex without dashes (ULID format)
             let ulid_like = uuid.to_string().replace('-', "").to_uppercase();
-            Ok(JsonValue::String(ulid_like))
+            Ok(ScalarValue::Utf8(Some(ulid_like)))
         }
 
         _ => Err(KalamDbError::InvalidOperation(format!(
@@ -152,7 +153,7 @@ mod tests {
         let default = ColumnDefault::literal(serde_json::json!(42));
         let user_id = UserId::from("u_test123");
         let result = evaluate_default(&default, &user_id, None).unwrap();
-        assert_eq!(result, serde_json::json!(42));
+        assert_eq!(result, ScalarValue::Int64(Some(42)));
     }
 
     #[test]
@@ -160,7 +161,7 @@ mod tests {
         let default = ColumnDefault::function("CURRENT_USER", vec![]);
         let user_id = UserId::from("u_test123");
         let result = evaluate_default(&default, &user_id, None).unwrap();
-        assert_eq!(result, serde_json::json!("u_test123"));
+        assert_eq!(result, ScalarValue::Utf8(Some("u_test123".to_string())));
     }
 
     #[test]
@@ -169,9 +170,11 @@ mod tests {
         let user_id = UserId::from("u_test123");
         let result = evaluate_default(&default, &user_id, None).unwrap();
         // Should be a valid RFC3339 timestamp string
-        assert!(result.is_string());
-        let timestamp_str = result.as_str().unwrap();
-        assert!(chrono::DateTime::parse_from_rfc3339(timestamp_str).is_ok());
+        if let ScalarValue::Utf8(Some(ts)) = result {
+            assert!(chrono::DateTime::parse_from_rfc3339(&ts).is_ok());
+        } else {
+            panic!("NOW() default must return Utf8 scalar");
+        }
     }
 
     #[test]
@@ -179,9 +182,11 @@ mod tests {
         let default = ColumnDefault::function("SNOWFLAKE_ID", vec![]);
         let user_id = UserId::from("u_test123");
         let result = evaluate_default(&default, &user_id, None).unwrap();
-        assert!(result.is_number());
-        let id = result.as_i64().unwrap();
-        assert!(id > 0);
+        if let ScalarValue::Int64(Some(id)) = result {
+            assert!(id > 0);
+        } else {
+            panic!("SNOWFLAKE_ID() default must return Int64 scalar");
+        }
     }
 
     #[test]
@@ -189,10 +194,12 @@ mod tests {
         let default = ColumnDefault::function("UUID_V7", vec![]);
         let user_id = UserId::from("u_test123");
         let result = evaluate_default(&default, &user_id, None).unwrap();
-        assert!(result.is_string());
-        let uuid_str = result.as_str().unwrap();
-        assert_eq!(uuid_str.len(), 36); // UUID format: 8-4-4-4-12
-        assert!(uuid::Uuid::parse_str(uuid_str).is_ok());
+        if let ScalarValue::Utf8(Some(uuid_str)) = result {
+            assert_eq!(uuid_str.len(), 36); // UUID format: 8-4-4-4-12
+            assert!(uuid::Uuid::parse_str(&uuid_str).is_ok());
+        } else {
+            panic!("UUID_V7() default must return Utf8 scalar");
+        }
     }
 
     #[test]
@@ -200,9 +207,11 @@ mod tests {
         let default = ColumnDefault::function("ULID", vec![]);
         let user_id = UserId::from("u_test123");
         let result = evaluate_default(&default, &user_id, None).unwrap();
-        assert!(result.is_string());
-        let ulid_str = result.as_str().unwrap();
-        assert_eq!(ulid_str.len(), 32); // 32 hex chars (UUID without dashes)
+        if let ScalarValue::Utf8(Some(ulid_str)) = result {
+            assert_eq!(ulid_str.len(), 32); // 32 hex chars (UUID without dashes)
+        } else {
+            panic!("ULID() default must return Utf8 scalar");
+        }
     }
 
     #[test]

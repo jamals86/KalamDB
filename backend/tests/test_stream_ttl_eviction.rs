@@ -17,6 +17,7 @@ use kalamdb_commons::models::schemas::{
 };
 use kalamdb_commons::models::{NamespaceId, Role, TableId, TableName, UserId};
 use kalamdb_core::app_context::AppContext;
+use kalamdb_core::providers::arrow_json_conversion::json_to_row;
 use kalamdb_core::providers::base::{BaseTableProvider, TableProviderCore};
 use kalamdb_core::providers::StreamTableProvider;
 use kalamdb_core::schema_registry::CachedTableData;
@@ -125,21 +126,24 @@ async fn test_stream_table_ttl_eviction_with_select() {
         .expect("Failed to register table");
 
     // Insert test data using the provider directly
-    let event1 = serde_json::json!({
+    let event1 = json_to_row(&serde_json::json!({
         "event_id": "evt1",
         "event_type": "click",
         "value": 100
-    });
-    let event2 = serde_json::json!({
+    }))
+    .unwrap();
+    let event2 = json_to_row(&serde_json::json!({
         "event_id": "evt2",
         "event_type": "view",
         "value": 200
-    });
-    let event3 = serde_json::json!({
+    }))
+    .unwrap();
+    let event3 = json_to_row(&serde_json::json!({
         "event_id": "evt3",
         "event_type": "purchase",
         "value": 300
-    });
+    }))
+    .unwrap();
 
     provider
         .insert(&UserId::new("u1"), event1)
@@ -279,11 +283,12 @@ async fn test_stream_table_select_with_projection() {
         .expect("Failed to register table");
 
     // Insert test data
-    let event1 = serde_json::json!({
+    let event1 = json_to_row(&serde_json::json!({
         "event_id": "evt1",
         "event_type": "click",
         "value": 100
-    });
+    }))
+    .unwrap();
 
     provider
         .insert(&UserId::new("u1"), event1)
@@ -391,10 +396,11 @@ async fn test_stream_table_select_with_limit() {
 
     // Insert multiple events
     for i in 1..=5 {
-        let event = serde_json::json!({
+        let event = json_to_row(&serde_json::json!({
             "event_id": format!("evt{}", i),
             "value": i * 100
-        });
+        }))
+        .unwrap();
         provider
             .insert(&UserId::new("u1"), event)
             .expect("Failed to insert event");
