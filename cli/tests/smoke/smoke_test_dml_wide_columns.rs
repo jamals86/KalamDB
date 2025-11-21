@@ -145,7 +145,7 @@ fn smoke_user_table_dml_wide_columns() {
 
     // create USER table with 8+ columns of various types
     let create_sql = format!(
-        r#"CREATE USER TABLE {} (
+        r#"CREATE TABLE {} (
             id BIGINT AUTO_INCREMENT PRIMARY KEY,
             name VARCHAR NOT NULL,
             age INT,
@@ -154,7 +154,10 @@ fn smoke_user_table_dml_wide_columns() {
             balance BIGINT,
             created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
             note VARCHAR
-        ) FLUSH ROWS 10"#,
+        ) WITH (
+            TYPE = 'USER',
+            FLUSH_POLICY = 'rows:10'
+        )"#,
         full
     );
     execute_sql_as_root_via_cli(&create_sql).expect("create user table should succeed");
@@ -177,7 +180,7 @@ fn smoke_shared_table_dml_wide_columns() {
 
     // create SHARED table with the same schema
     let create_sql = format!(
-        r#"CREATE SHARED TABLE {} (
+        r#"CREATE TABLE {} (
             id BIGINT AUTO_INCREMENT PRIMARY KEY,
             name VARCHAR NOT NULL,
             age INT,
@@ -186,7 +189,10 @@ fn smoke_shared_table_dml_wide_columns() {
             balance BIGINT,
             created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
             note VARCHAR
-        ) FLUSH ROWS 10"#,
+        ) WITH (
+            TYPE = 'SHARED',
+            FLUSH_POLICY = 'rows:10'
+        )"#,
         full
     );
     execute_sql_as_root_via_cli(&create_sql).expect("create shared table should succeed");
@@ -210,7 +216,7 @@ fn smoke_subscription_update_delete_notifications() {
     create_namespace(&namespace);
 
     let create_sql = format!(
-        "CREATE USER TABLE {} (id INT PRIMARY KEY, name VARCHAR, updated_at TIMESTAMP, is_deleted BOOLEAN, note VARCHAR)",
+        "CREATE TABLE {} (id INT PRIMARY KEY, name VARCHAR, updated_at TIMESTAMP, is_deleted BOOLEAN, note VARCHAR) WITH (TYPE = 'USER')",
         full
     );
     execute_sql_as_root_via_cli(&create_sql).expect("create user table should succeed");

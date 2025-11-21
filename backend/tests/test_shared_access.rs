@@ -93,10 +93,13 @@ async fn test_public_table_read_only_for_users() {
     // Create a public shared table (as service user with correct user_id)
     let create_table_sql = format!(
         r#"
-        CREATE SHARED TABLE {}.messages (
+        CREATE TABLE {}.messages (
             id BIGINT PRIMARY KEY,
             content TEXT NOT NULL
-        ) ACCESS LEVEL public
+        ) WITH (
+            TYPE = 'SHARED',
+            ACCESS_LEVEL = 'PUBLIC'
+        )
     "#,
         namespace
     );
@@ -192,10 +195,13 @@ async fn test_private_table_service_dba_only() {
     // Create a private shared table (as service user)
     let create_table_sql = format!(
         r#"
-        CREATE SHARED TABLE {}.sensitive_data (
+        CREATE TABLE {}.sensitive_data (
             id BIGINT PRIMARY KEY,
             secret TEXT NOT NULL
-        ) ACCESS LEVEL private
+        ) WITH (
+            TYPE = 'SHARED',
+            ACCESS_LEVEL = 'PRIVATE'
+        )
     "#,
         namespace
     );
@@ -269,9 +275,11 @@ async fn test_shared_table_defaults_to_private() {
     // Create shared table WITHOUT specifying ACCESS LEVEL
     let create_table_sql = format!(
         r#"
-        CREATE SHARED TABLE {}.default_access (
+        CREATE TABLE {}.default_access (
             id BIGINT PRIMARY KEY,
             data TEXT
+        ) WITH (
+            TYPE = 'SHARED'
         )
     "#,
         namespace
@@ -363,10 +371,13 @@ async fn test_change_access_level_requires_privileges() {
     // Create a private shared table
     let create_table_sql = format!(
         r#"
-        CREATE SHARED TABLE {}.config (
+        CREATE TABLE {}.config (
             id BIGINT PRIMARY KEY,
             value TEXT
-        ) ACCESS LEVEL private
+        ) WITH (
+            TYPE = 'SHARED',
+            ACCESS_LEVEL = 'PRIVATE'
+        )
     "#,
         namespace
     );
@@ -476,10 +487,13 @@ async fn test_user_cannot_modify_public_table() {
 
     let create_table_sql = format!(
         r#"
-        CREATE SHARED TABLE {}.announcements (
+        CREATE TABLE {}.announcements (
             id BIGINT PRIMARY KEY,
             message TEXT NOT NULL
-        ) ACCESS LEVEL public
+        ) WITH (
+            TYPE = 'SHARED',
+            ACCESS_LEVEL = 'PUBLIC'
+        )
     "#,
         namespace
     );
@@ -589,10 +603,10 @@ async fn test_access_level_only_on_shared_tables() {
 
     // Test 1: USER table with ACCESS LEVEL should fail
     let create_user_table_sql = r#"
-        CREATE USER TABLE my_data (
+        CREATE TABLE my_data (
             id BIGINT PRIMARY KEY,
             data TEXT
-        ) ACCESS LEVEL public
+        ) WITH (TYPE = 'USER') ACCESS LEVEL public
     "#;
     let result = server
         .execute_sql_as_user(create_user_table_sql, &service_username)
@@ -604,10 +618,14 @@ async fn test_access_level_only_on_shared_tables() {
 
     // Test 2: STREAM table with ACCESS LEVEL should fail
     let create_stream_table_sql = r#"
-        CREATE STREAM TABLE events (
+        CREATE TABLE events (
             id BIGINT PRIMARY KEY,
             event_type TEXT
-        ) ACCESS LEVEL public TTL 3600
+        ) WITH (
+            TYPE = 'STREAM',
+            TTL_SECONDS = 3600,
+            ACCESS_LEVEL = 'PUBLIC'
+        )
     "#;
     let result = server
         .execute_sql_as_user(create_stream_table_sql, &service_username)
@@ -633,10 +651,10 @@ async fn test_alter_access_level_only_on_shared_tables() {
     // Create a USER table
     let create_user_table_sql = format!(
         r#"
-        CREATE USER TABLE {}.personal_notes (
+        CREATE TABLE {}.personal_notes (
             id BIGINT PRIMARY KEY,
             note TEXT
-        )
+        ) WITH (TYPE = 'USER')
     "#,
         namespace
     );

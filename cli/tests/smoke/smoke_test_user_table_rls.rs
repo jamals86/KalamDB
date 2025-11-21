@@ -38,12 +38,12 @@ fn smoke_user_table_rls_isolation() -> Result<(), Box<dyn std::error::Error>> {
 
     // 1) As root: create a user table
     let create_table_sql = format!(
-        r#"CREATE USER TABLE {} (
+        r#"CREATE TABLE {} (
             id BIGINT AUTO_INCREMENT PRIMARY KEY,
             content TEXT NOT NULL,
             updated INT DEFAULT 0,
             created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-        )"#,
+        ) WITH (TYPE='USER', FLUSH_POLICY='rows:10')"#,
         full_table
     );
     execute_sql_as_root_via_cli(&create_table_sql)?;

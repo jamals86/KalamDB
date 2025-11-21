@@ -20,11 +20,14 @@ async fn test_soft_delete_hides_rows() {
     fixtures::create_namespace(&server, "test_hide").await;
     server
         .execute_sql_as_user(
-            r#"CREATE USER TABLE test_hide.tasks (
+            r#"CREATE TABLE test_hide.tasks (
                 id TEXT PRIMARY KEY,
                 title TEXT,
                 completed BOOLEAN
-            ) STORAGE local"#,
+            ) WITH (
+                TYPE = 'USER',
+                STORAGE_ID = 'local'
+            )"#,
             "user1",
         )
         .await;
@@ -94,11 +97,14 @@ async fn test_soft_delete_preserves_data() {
     fixtures::create_namespace(&server, "test_ns").await;
     server
         .execute_sql_as_user(
-            r#"CREATE USER TABLE test_ns.tasks (
+            r#"CREATE TABLE test_ns.tasks (
                 id TEXT PRIMARY KEY,
                 title TEXT,
                 completed BOOLEAN
-            ) STORAGE local"#,
+            ) WITH (
+                TYPE = 'USER',
+                STORAGE_ID = 'local'
+            )"#,
             "user1",
         )
         .await;
@@ -147,10 +153,13 @@ async fn test_deleted_field_default_false() {
     fixtures::create_namespace(&server, "test_ns").await;
     server
         .execute_sql_as_user(
-            r#"CREATE USER TABLE test_ns.tasks (
+            r#"CREATE TABLE test_ns.tasks (
                 id TEXT PRIMARY KEY,
                 title TEXT
-            ) STORAGE local"#,
+            ) WITH (
+                TYPE = 'USER',
+                STORAGE_ID = 'local'
+            )"#,
             "user1",
         )
         .await;
@@ -192,10 +201,13 @@ async fn test_multiple_deletes() {
     fixtures::create_namespace(&server, "test_ns").await;
     server
         .execute_sql_as_user(
-            r#"CREATE USER TABLE test_ns.tasks (
+            r#"CREATE TABLE test_ns.tasks (
                 id TEXT PRIMARY KEY,
                 title TEXT
-            ) STORAGE local"#,
+            ) WITH (
+                TYPE = 'USER',
+                STORAGE_ID = 'local'
+            )"#,
             "user1",
         )
         .await;
@@ -250,11 +262,14 @@ async fn test_delete_with_where_clause() {
     fixtures::create_namespace(&server, "test_ns").await;
     server
         .execute_sql_as_user(
-            r#"CREATE USER TABLE test_ns.tasks (
+            r#"CREATE TABLE test_ns.tasks (
                 id TEXT PRIMARY KEY,
                 title TEXT,
                 priority INT
-            ) STORAGE local"#,
+            ) WITH (
+                TYPE = 'USER',
+                STORAGE_ID = 'local'
+            )"#,
             "user1",
         )
         .await;
@@ -313,10 +328,13 @@ async fn test_count_excludes_deleted_rows() {
     fixtures::create_namespace(&server, "test_ns").await;
     server
         .execute_sql_as_user(
-            r#"CREATE USER TABLE test_ns.tasks (
+            r#"CREATE TABLE test_ns.tasks (
                 id TEXT PRIMARY KEY,
                 title TEXT
-            ) STORAGE local"#,
+            ) WITH (
+                TYPE = 'USER',
+                STORAGE_ID = 'local'
+            )"#,
             "user1",
         )
         .await;

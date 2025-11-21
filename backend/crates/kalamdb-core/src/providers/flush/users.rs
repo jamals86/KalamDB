@@ -356,10 +356,9 @@ impl TableFlush for UserTableFlushJob {
                 "_seq".to_string(),
                 ScalarValue::Int64(Some(row._seq.as_i64())),
             );
-            row_data.values.insert(
-                "_deleted".to_string(),
-                ScalarValue::Boolean(Some(false)),
-            );
+            row_data
+                .values
+                .insert("_deleted".to_string(), ScalarValue::Boolean(Some(false)));
 
             rows_by_user
                 .entry(user_id)

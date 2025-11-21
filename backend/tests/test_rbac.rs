@@ -51,7 +51,7 @@ async fn test_user_role_own_tables_access_and_isolation() {
     }
     assert_eq!(ns_resp.status, ResponseStatus::Success);
     let create = format!(
-        "CREATE USER TABLE {}.notes (id INT PRIMARY KEY, content TEXT)",
+        "CREATE TABLE {}.notes (id INT PRIMARY KEY, content TEXT) WITH (TYPE = 'USER')",
         ns
     );
     let resp = server.execute_sql_as_user(&create, u1.as_str()).await;
@@ -99,7 +99,7 @@ async fn test_service_role_cross_user_access() {
     fixtures::create_namespace(&server, ns).await;
 
     let create = format!(
-        "CREATE USER TABLE {}.orders (id INT PRIMARY KEY, content TEXT)",
+        "CREATE TABLE {}.orders (id INT PRIMARY KEY, content TEXT) WITH (TYPE = 'USER')",
         ns
     );
     let resp = server.execute_sql_as_user(&create, alice.as_str()).await;
@@ -154,7 +154,7 @@ async fn test_service_role_flush_operations() {
     fixtures::create_namespace(&server, ns).await;
 
     let create = format!(
-        "CREATE USER TABLE {}.events (id INT PRIMARY KEY, message TEXT)",
+        "CREATE TABLE {}.events (id INT PRIMARY KEY, message TEXT) WITH (TYPE = 'USER')",
         ns
     );
     let resp = server.execute_sql_as_user(&create, svc.as_str()).await;

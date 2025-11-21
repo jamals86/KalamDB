@@ -44,13 +44,13 @@ async fn test_01_combined_data_count_and_select() {
 
     // Create user table
     let create_sql = format!(
-        "CREATE USER TABLE {}.{} (
+        "CREATE TABLE {}.{} (
             order_id BIGINT PRIMARY KEY,
             customer_name TEXT,
             amount DOUBLE,
             status TEXT,
             created_at TIMESTAMP
-        )",
+        ) WITH (TYPE = 'USER')",
         namespace, table_name
     );
 
@@ -234,13 +234,13 @@ async fn test_02_combined_data_aggregations() {
     fixtures::create_namespace(&server, namespace).await;
 
     let create_sql = format!(
-        "CREATE USER TABLE {}.{} (
+        "CREATE TABLE {}.{} (
             sale_id BIGINT PRIMARY KEY,
             product TEXT,
             quantity INT,
             price DOUBLE,
             sale_date TIMESTAMP
-        )",
+        ) WITH (TYPE = 'USER')",
         namespace, table_name
     );
     server.execute_sql_as_user(&create_sql, user_id).await;
@@ -381,13 +381,13 @@ async fn test_03_combined_data_filtering() {
     fixtures::create_namespace(&server, namespace).await;
 
     let create_sql = format!(
-        "CREATE USER TABLE {}.{} (
+        "CREATE TABLE {}.{} (
             product_id BIGINT PRIMARY KEY,
             name TEXT,
             category TEXT,
             price DOUBLE,
             in_stock BOOLEAN
-        )",
+        ) WITH (TYPE = 'USER')",
         namespace, table_name
     );
     server.execute_sql_as_user(&create_sql, user_id).await;
@@ -558,12 +558,12 @@ async fn test_04_combined_data_integrity_verification() {
     fixtures::create_namespace(&server, namespace).await;
 
     let create_sql = format!(
-        "CREATE USER TABLE {}.{} (
+        "CREATE TABLE {}.{} (
             record_id BIGINT PRIMARY KEY,
             data TEXT,
             value DOUBLE,
             created_at TIMESTAMP
-        )",
+        ) WITH (TYPE = 'USER')",
         namespace, table_name
     );
     server.execute_sql_as_user(&create_sql, user_id).await;
@@ -684,11 +684,11 @@ async fn test_05_multiple_flush_cycles() {
     fixtures::create_namespace(&server, namespace).await;
 
     let create_sql = format!(
-        "CREATE USER TABLE {}.{} (
+        "CREATE TABLE {}.{} (
             event_id BIGINT PRIMARY KEY,
             event_type TEXT,
             timestamp TIMESTAMP
-        )",
+        ) WITH (TYPE = 'USER')",
         namespace, table_name
     );
     server.execute_sql_as_user(&create_sql, user_id).await;
@@ -755,10 +755,10 @@ async fn test_06_soft_delete_operations() {
     fixtures::create_namespace(&server, namespace).await;
 
     let create_sql = format!(
-        "CREATE USER TABLE {}.{} (
+        "CREATE TABLE {}.{} (
             task_id TEXT PRIMARY KEY,
             title TEXT
-        )",
+        ) WITH (TYPE = 'USER')",
         namespace, table_name
     );
     server.execute_sql_as_user(&create_sql, user_id).await;

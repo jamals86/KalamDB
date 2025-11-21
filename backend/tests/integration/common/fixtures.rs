@@ -129,12 +129,15 @@ pub async fn create_messages_table(
     _user_id: Option<&str>,
 ) -> SqlResponse {
     let sql = format!(
-        r#"CREATE USER TABLE IF NOT EXISTS {}.messages (
+        r#"CREATE TABLE IF NOT EXISTS {}.messages (
             id BIGINT PRIMARY KEY DEFAULT SNOWFLAKE_ID(),
             user_id VARCHAR NOT NULL,
             content VARCHAR NOT NULL,
             created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-        ) FLUSH ROWS 100"#,
+        ) WITH (
+            TYPE = 'USER',
+            FLUSH_POLICY = 'rows:100'
+        )"#,
         namespace
     );
     // Use system user since only System/Dba roles can create tables
@@ -183,12 +186,15 @@ pub async fn create_user_table_with_flush(
     flush_rows: u32,
 ) -> SqlResponse {
     let sql = format!(
-        r#"CREATE USER TABLE IF NOT EXISTS {}.{} (
+        r#"CREATE TABLE IF NOT EXISTS {}.{} (
             id BIGINT PRIMARY KEY DEFAULT SNOWFLAKE_ID(),
             user_id VARCHAR NOT NULL,
             data VARCHAR,
             created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-        ) FLUSH ROWS {}"#,
+        ) WITH (
+            TYPE = 'USER',
+            FLUSH_POLICY = 'rows:{}'
+        )"#,
         namespace, table_name, flush_rows
     );
     server.execute_sql_as_user(&sql, "system").await
@@ -224,7 +230,7 @@ pub async fn create_shared_table(
     };
 
     let sql = format!(
-        "CREATE SHARED TABLE {}.{} ({}) FLUSH ROWS 50",
+        "CREATE TABLE {}.{} ({}) WITH (TYPE = 'SHARED', FLUSH_POLICY = 'rows:50')",
         namespace, table_name, columns
     );
     server.execute_sql(&sql).await
@@ -245,12 +251,15 @@ pub async fn create_stream_table(
     ttl_seconds: u32,
 ) -> SqlResponse {
     let sql = format!(
-        r#"CREATE STREAM TABLE IF NOT EXISTS {}.{} (
+        r#"CREATE TABLE IF NOT EXISTS {}.{} (
             event_id TEXT NOT NULL,
             event_type TEXT,
             payload TEXT,
             timestamp TIMESTAMP
-        ) TTL {}"#,
+        ) WITH (
+            TYPE = 'STREAM',
+            TTL_SECONDS = {}
+        )"#,
         namespace, table_name, ttl_seconds
     );
     let resp = server.execute_sql(&sql).await;

@@ -48,11 +48,11 @@ fn test_basic_table_creation_and_access() {
 
     // Create test table
     let create_sql = format!(
-        r#"CREATE USER TABLE {}.{} (
+        r#"CREATE TABLE {}.{} (
             id INT PRIMARY KEY AUTO_INCREMENT,
             content VARCHAR NOT NULL,
             created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-        ) FLUSH ROWS 10"#,
+        ) WITH (TYPE='USER', FLUSH_POLICY='rows:10')"#,
         namespace, table_name
     );
 

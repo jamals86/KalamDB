@@ -1,4 +1,4 @@
 pub mod engine;
 pub mod types;
 
-pub use types::{SqlStatement, SqlStatementKind};
+pub use types::{SqlStatement, SqlStatementKind, StatementClassificationError};

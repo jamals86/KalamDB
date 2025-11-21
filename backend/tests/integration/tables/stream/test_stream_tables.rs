@@ -16,11 +16,14 @@ use kalamdb_api::models::ResponseStatus;
 /// Helper function to create a stream table
 async fn create_stream_table(server: &TestServer, namespace: &str, table_name: &str) {
     let create_sql = format!(
-        r#"CREATE STREAM TABLE {}.{} (
+        r#"CREATE TABLE {}.{} (
             id INT,
             event_type VARCHAR,
             data VARCHAR
-        ) TTL 3600"#,
+        ) WITH (
+            TYPE = 'STREAM',
+            TTL_SECONDS = 3600
+        )"#,
         namespace, table_name
     );
 

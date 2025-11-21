@@ -82,7 +82,7 @@ pub fn create_user_table(
     // RBAC check
     if !crate::auth::rbac::can_create_table(exec_ctx.user_role, TableType::User) {
         log::error!(
-            "❌ CREATE USER TABLE {}.{}: Insufficient privileges (user: {}, role: {:?})",
+            "❌ CREATE TABLE (TYPE='USER') {}.{}: Insufficient privileges (user: {}, role: {:?})",
             stmt.namespace_id.as_str(),
             stmt.table_name.as_str(),
             exec_ctx.user_id.as_str(),
@@ -94,7 +94,7 @@ pub fn create_user_table(
     }
 
     log::debug!(
-        "📋 CREATE USER TABLE {}.{}: columns={}, storage={:?}, ttl={:?}",
+        "📋 CREATE TABLE (TYPE='USER') {}.{}: columns={}, storage={:?}, ttl={:?}",
         stmt.namespace_id.as_str(),
         stmt.table_name.as_str(),
         stmt.schema.fields().len(),
@@ -110,7 +110,7 @@ pub fn create_user_table(
     let namespace_id = NamespaceId::new(stmt.namespace_id.as_str());
     if namespaces_provider.get_namespace(&namespace_id)?.is_none() {
         log::error!(
-            "❌ CREATE USER TABLE failed: Namespace '{}' does not exist. Create it first with CREATE NAMESPACE {}",
+            "❌ CREATE TABLE (TYPE='USER') failed: Namespace '{}' does not exist. Create it first with CREATE NAMESPACE {}",
             stmt.namespace_id.as_str(),
             stmt.namespace_id.as_str()
         );
@@ -124,7 +124,7 @@ pub fn create_user_table(
     // PRIMARY KEY validation - USER tables MUST have PRIMARY KEY
     if stmt.primary_key_column.is_none() {
         log::error!(
-            "❌ CREATE USER TABLE {}.{}: PRIMARY KEY is required",
+            "❌ CREATE TABLE (TYPE='USER') {}.{}: PRIMARY KEY is required",
             stmt.namespace_id.as_str(),
             stmt.table_name.as_str()
         );
@@ -154,7 +154,7 @@ pub fn create_user_table(
             ));
         } else {
             log::warn!(
-                "❌ CREATE USER TABLE failed: {}.{} already exists",
+                "❌ CREATE TABLE (TYPE='USER') failed: {}.{} already exists",
                 stmt.namespace_id.as_str(),
                 stmt.table_name.as_str()
             );
@@ -171,7 +171,7 @@ pub fn create_user_table(
     let namespace_id = NamespaceId::new(stmt.namespace_id.as_str());
     if namespaces_provider.get_namespace(&namespace_id)?.is_none() {
         log::error!(
-            "❌ CREATE USER TABLE failed: Namespace '{}' does not exist",
+            "❌ CREATE TABLE (TYPE='USER') failed: Namespace '{}' does not exist",
             stmt.namespace_id.as_str()
         );
         return Err(KalamDbError::InvalidOperation(format!(
@@ -280,7 +280,7 @@ pub fn create_shared_table(
     // RBAC check
     if !crate::auth::rbac::can_create_table(exec_ctx.user_role, TableType::Shared) {
         log::error!(
-            "❌ CREATE SHARED TABLE {}.{}: Insufficient privileges (user: {}, role: {:?})",
+            "❌ CREATE TABLE (TYPE='SHARED') {}.{}: Insufficient privileges (user: {}, role: {:?})",
             stmt.namespace_id.as_str(),
             stmt.table_name.as_str(),
             exec_ctx.user_id.as_str(),
@@ -292,7 +292,7 @@ pub fn create_shared_table(
     }
 
     log::debug!(
-        "📋 CREATE SHARED TABLE {}.{}: columns={}, storage={:?}, access_level={:?}",
+        "📋 CREATE TABLE (TYPE='SHARED') {}.{}: columns={}, storage={:?}, access_level={:?}",
         stmt.namespace_id.as_str(),
         stmt.table_name.as_str(),
         stmt.schema.fields().len(),
@@ -308,7 +308,7 @@ pub fn create_shared_table(
     let namespace_id = NamespaceId::new(stmt.namespace_id.as_str());
     if namespaces_provider.get_namespace(&namespace_id)?.is_none() {
         log::error!(
-            "❌ CREATE SHARED TABLE failed: Namespace '{}' does not exist. Create it first with CREATE NAMESPACE {}",
+            "❌ CREATE TABLE (TYPE='SHARED') failed: Namespace '{}' does not exist. Create it first with CREATE NAMESPACE {}",
             stmt.namespace_id.as_str(),
             stmt.namespace_id.as_str()
         );
@@ -322,7 +322,7 @@ pub fn create_shared_table(
     // PRIMARY KEY validation - SHARED tables MUST have PRIMARY KEY
     if stmt.primary_key_column.is_none() {
         log::error!(
-            "❌ CREATE SHARED TABLE {}.{}: PRIMARY KEY is required",
+            "❌ CREATE TABLE (TYPE='SHARED') {}.{}: PRIMARY KEY is required",
             stmt.namespace_id.as_str(),
             stmt.table_name.as_str()
         );
@@ -352,7 +352,7 @@ pub fn create_shared_table(
             ));
         } else {
             log::warn!(
-                "❌ CREATE SHARED TABLE failed: {}.{} already exists",
+                "❌ CREATE TABLE (TYPE='SHARED') failed: {}.{} already exists",
                 stmt.namespace_id.as_str(),
                 stmt.table_name.as_str()
             );
@@ -507,7 +507,7 @@ pub fn create_stream_table(
     // RBAC check
     if !crate::auth::rbac::can_create_table(exec_ctx.user_role, TableType::Stream) {
         log::error!(
-            "❌ CREATE STREAM TABLE {}.{}: Insufficient privileges (user: {}, role: {:?})",
+            "❌ CREATE TABLE (TYPE='STREAM') {}.{}: Insufficient privileges (user: {}, role: {:?})",
             stmt.namespace_id.as_str(),
             stmt.table_name.as_str(),
             exec_ctx.user_id.as_str(),
@@ -519,7 +519,7 @@ pub fn create_stream_table(
     }
 
     log::debug!(
-        "📋 CREATE STREAM TABLE {}.{}: columns={}, ttl={:?}s",
+        "📋 CREATE TABLE (TYPE='STREAM') {}.{}: columns={}, ttl={:?}s",
         stmt.namespace_id.as_str(),
         stmt.table_name.as_str(),
         stmt.schema.fields().len(),
@@ -550,7 +550,7 @@ pub fn create_stream_table(
             ));
         } else {
             log::warn!(
-                "❌ CREATE STREAM TABLE failed: {}.{} already exists",
+                "❌ CREATE TABLE (TYPE='STREAM') failed: {}.{} already exists",
                 stmt.namespace_id.as_str(),
                 stmt.table_name.as_str()
             );
@@ -567,7 +567,7 @@ pub fn create_stream_table(
     let namespace_id = NamespaceId::new(stmt.namespace_id.as_str());
     if namespaces_provider.get_namespace(&namespace_id)?.is_none() {
         log::error!(
-            "❌ CREATE STREAM TABLE failed: Namespace '{}' does not exist. Create it first with CREATE NAMESPACE {}",
+            "❌ CREATE TABLE (TYPE='STREAM') failed: Namespace '{}' does not exist. Create it first with CREATE NAMESPACE {}",
             stmt.namespace_id.as_str(),
             stmt.namespace_id.as_str()
         );
@@ -584,7 +584,7 @@ pub fn create_stream_table(
     // Validate TTL is specified
     if stmt.ttl_seconds.is_none() {
         log::error!(
-            "❌ CREATE STREAM TABLE failed: {}.{} - TTL clause is required",
+            "❌ CREATE TABLE (TYPE='STREAM') failed: {}.{} - TTL clause is required",
             stmt.namespace_id.as_str(),
             stmt.table_name.as_str()
         );

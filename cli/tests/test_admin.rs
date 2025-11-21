@@ -29,11 +29,11 @@ fn test_cli_list_tables() {
 
     // Create test table
     let create_sql = format!(
-        r#"CREATE USER TABLE {}.{} (
+        r#"CREATE TABLE {}.{} (
             id INT PRIMARY KEY AUTO_INCREMENT,
             content VARCHAR NOT NULL,
             created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-        ) FLUSH ROWS 10"#,
+        ) WITH (TYPE='USER', FLUSH_POLICY='rows:10')"#,
         namespace, table_name
     );
 
@@ -76,11 +76,11 @@ fn test_cli_describe_table() {
 
     // Create test table
     let create_sql = format!(
-        r#"CREATE USER TABLE {}.{} (
+        r#"CREATE TABLE {}.{} (
             id INT PRIMARY KEY AUTO_INCREMENT,
             content VARCHAR NOT NULL,
             created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-        ) FLUSH ROWS 10"#,
+        ) WITH (TYPE='USER', FLUSH_POLICY='rows:10')"#,
         namespace, table_name
     );
 
@@ -140,7 +140,7 @@ fn test_cli_batch_file_execution() {
         &sql_file,
         format!(
             r#"CREATE NAMESPACE batch_test;
-CREATE USER TABLE batch_test.items (id BIGINT PRIMARY KEY, name VARCHAR) FLUSH ROWS 10;
+CREATE TABLE batch_test.items (id BIGINT PRIMARY KEY, name VARCHAR) WITH (TYPE='USER', FLUSH_POLICY='rows:10');
 INSERT INTO batch_test.items (id, name) VALUES ({}, 'Item One');
 SELECT * FROM batch_test.items;"#,
             unique_id

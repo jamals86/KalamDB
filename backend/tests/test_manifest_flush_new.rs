@@ -20,7 +20,7 @@ async fn test_shared_table_flush_creates_manifest() {
     create_namespace(&server, namespace.as_str()).await;
 
     let create_sql = format!(
-        "CREATE SHARED TABLE {}.{} (id INT PRIMARY KEY, name TEXT) FLUSH ROWS 5",
+        "CREATE TABLE {}.{} (id INT PRIMARY KEY, name TEXT) WITH (TYPE = 'SHARED', FLUSH_POLICY = 'rows:5')",
         namespace.as_str(),
         table.as_str()
     );
@@ -126,7 +126,7 @@ async fn test_manifest_cache_works() {
     execute_sql(
         &server,
         &format!(
-            "CREATE SHARED TABLE {}.{} (id INT PRIMARY KEY) FLUSH ROWS 3",
+            "CREATE TABLE {}.{} (id INT PRIMARY KEY) WITH (TYPE = 'SHARED', FLUSH_POLICY = 'rows:3')",
             namespace.as_str(),
             table.as_str()
         ),

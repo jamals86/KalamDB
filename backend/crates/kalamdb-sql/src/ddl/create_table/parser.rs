@@ -13,116 +13,17 @@ use std::sync::Arc;
 
 static RE_ALPHANUMERIC: Lazy<Regex> = Lazy::new(|| Regex::new(r"^[a-zA-Z0-9_]+$").unwrap());
 static RE_STORAGE_ID: Lazy<Regex> = Lazy::new(|| Regex::new(r"^[a-zA-Z0-9_-]+$").unwrap());
-static RE_FLUSH_ROWS: Lazy<Regex> =
-    Lazy::new(|| Regex::new(r"(?i)\s+FLUSH\s+(?:ROWS|ROW_THRESHOLD)\s+(\d+)").unwrap());
-static RE_FLUSH_INTERVAL: Lazy<Regex> =
-    Lazy::new(|| Regex::new(r"(?i)\s+FLUSH\s+INTERVAL\s+(\d+)s?").unwrap());
-static RE_CREATE_TYPE: Lazy<Regex> =
-    Lazy::new(|| Regex::new(r"(?i)^\s*CREATE\s+(USER|SHARED|STREAM)\s+TABLE").unwrap());
-static RE_TTL: Lazy<Regex> = Lazy::new(|| Regex::new(r"(?i)\s+TTL\s+(\d+)").unwrap());
-static RE_STORAGE: Lazy<Regex> = Lazy::new(|| Regex::new(r"(?i)\s+STORAGE\s+'([^']+)'").unwrap());
+static LEGACY_CREATE_PREFIX_RE: Lazy<Regex> = Lazy::new(|| {
+    Regex::new(r"(?i)^\s*CREATE\s+(USER|SHARED|STREAM)\s+TABLE").unwrap()
+});
 
 impl CreateTableStatement {
-    /// Pre-process SQL to handle custom syntax:
-    /// 1. FLUSH ROWS/INTERVAL
-    /// 2. CREATE [USER|SHARED|STREAM] TABLE -> CREATE TABLE
-    /// 3. TTL <seconds>
-    /// 4. STORAGE '<storage_id>'
-    fn preprocess_create_table(
-        sql: &str,
-    ) -> (
-        String,
-        Option<u64>,
-        Option<u64>,
-        Option<TableType>,
-        Option<u64>,
-        Option<StorageId>,
-    ) {
-        let mut sql_string = sql.to_string();
-        let mut rows = None;
-        let mut interval = None;
-        let mut table_type = None;
-        let mut ttl_seconds = None;
-        let mut storage_id = None;
-
-        // 1. Handle FLUSH options
-        if let Some(caps) = RE_FLUSH_ROWS.captures(&sql_string) {
-            if let Some(m) = caps.get(1) {
-                if let Ok(val) = m.as_str().parse::<u64>() {
-                    rows = Some(val);
-                }
-            }
-            sql_string = RE_FLUSH_ROWS.replace(&sql_string, "").to_string();
-        }
-
-        if let Some(caps) = RE_FLUSH_INTERVAL.captures(&sql_string) {
-            if let Some(m) = caps.get(1) {
-                if let Ok(val) = m.as_str().parse::<u64>() {
-                    interval = Some(val);
-                }
-            }
-            sql_string = RE_FLUSH_INTERVAL.replace(&sql_string, "").to_string();
-        }
-
-        // Handle TTL
-        if let Some(caps) = RE_TTL.captures(&sql_string) {
-            if let Some(m) = caps.get(1) {
-                if let Ok(val) = m.as_str().parse::<u64>() {
-                    ttl_seconds = Some(val);
-                }
-            }
-            sql_string = RE_TTL.replace(&sql_string, "").to_string();
-        }
-
-        // Handle STORAGE
-        if let Some(caps) = RE_STORAGE.captures(&sql_string) {
-            if let Some(m) = caps.get(1) {
-                storage_id = Some(StorageId::from(m.as_str()));
-            }
-            sql_string = RE_STORAGE.replace(&sql_string, "").to_string();
-        }
-
-        // 2. Handle Table Type syntax
-        if let Some(caps) = RE_CREATE_TYPE.captures(&sql_string) {
-            if let Some(m) = caps.get(1) {
-                let type_str = m.as_str().to_uppercase();
-                match type_str.as_str() {
-                    "USER" => table_type = Some(TableType::User),
-                    "SHARED" => table_type = Some(TableType::Shared),
-                    "STREAM" => table_type = Some(TableType::Stream),
-                    _ => {}
-                }
-            }
-            // Replace with CREATE TABLE
-            sql_string = RE_CREATE_TYPE
-                .replace(&sql_string, "CREATE TABLE")
-                .to_string();
-        }
-
-        (
-            sql_string,
-            rows,
-            interval,
-            table_type,
-            ttl_seconds,
-            storage_id,
-        )
-    }
-
     /// Parse a SQL statement into a CreateTableStatement
     pub fn parse(sql: &str, default_namespace: &str) -> Result<Self, String> {
-        // Pre-process SQL to handle custom syntax
-        let (
-            cleaned_sql,
-            flush_rows_custom,
-            flush_interval_custom,
-            explicit_type,
-            ttl_custom,
-            storage_custom,
-        ) = Self::preprocess_create_table(sql);
+        let (normalized_sql, legacy_table_type) = normalize_create_table_sql(sql);
 
         let dialect = sqlparser::dialect::GenericDialect {};
-        let mut statements = sqlparser::parser::Parser::parse_sql(&dialect, &cleaned_sql)
+        let mut statements = sqlparser::parser::Parser::parse_sql(&dialect, &normalized_sql)
             .map_err(|e| e.to_string())?;
         if statements.len() != 1 {
             return Err("Expected exactly one statement".to_string());
@@ -168,12 +69,12 @@ impl CreateTableStatement {
                 }
 
                 // 2. Parse options (TYPE, STORAGE, FLUSH_POLICY, etc.)
-                let mut table_type = explicit_type.unwrap_or(TableType::User);
-                let mut storage_id = storage_custom;
+                let mut table_type = legacy_table_type.clone().unwrap_or(TableType::Shared);
+                let mut storage_id = None;
                 let mut use_user_storage = false;
                 let mut flush_policy = None;
                 let mut deleted_retention_hours = None;
-                let mut ttl_seconds = ttl_custom;
+                let mut ttl_seconds = None;
                 let mut access_level = None;
 
                 // Handle options (was with_options)
@@ -190,17 +91,28 @@ impl CreateTableStatement {
 
                         match key_str.as_str() {
                             "TYPE" => {
-                                table_type = match value_str.to_uppercase().as_str() {
+                                let requested_type = match value_str.to_uppercase().as_str() {
                                     "USER" => TableType::User,
                                     "SHARED" => TableType::Shared,
                                     "STREAM" => TableType::Stream,
                                     _ => {
                                         return Err(format!(
-                                        "Invalid table TYPE '{}'. Supported: USER, SHARED, STREAM",
-                                        value_str
-                                    ))
+                                            "Invalid table TYPE '{}'. Supported: USER, SHARED, STREAM",
+                                            value_str
+                                        ))
                                     }
                                 };
+
+                                if let Some(ref legacy_type) = legacy_table_type {
+                                    if requested_type != *legacy_type {
+                                        return Err(format!(
+                                            "Conflicting table type definitions: legacy prefix {:?} vs TYPE option {:?}",
+                                            legacy_type, requested_type
+                                        ));
+                                    }
+                                }
+
+                                table_type = requested_type;
                             }
                             "STORAGE_ID" => {
                                 if !RE_STORAGE_ID.is_match(&value_str) {
@@ -286,33 +198,6 @@ impl CreateTableStatement {
                             _ => return Err(format!("Unknown table option '{}'", key_str)),
                         }
                     }
-                }
-
-                // Merge extracted flush options if not already set by WITH clause
-                if flush_policy.is_none()
-                    && (flush_rows_custom.is_some() || flush_interval_custom.is_some())
-                {
-                    let rows = flush_rows_custom.unwrap_or(0) as u32;
-                    let interval = flush_interval_custom.unwrap_or(0) as u32;
-
-                    let policy = if rows > 0 && interval > 0 {
-                        FlushPolicy::Combined {
-                            row_limit: rows,
-                            interval_seconds: interval,
-                        }
-                    } else if rows > 0 {
-                        FlushPolicy::RowLimit { row_limit: rows }
-                    } else if interval > 0 {
-                        FlushPolicy::TimeInterval {
-                            interval_seconds: interval,
-                        }
-                    } else {
-                        // Should not happen given the check above
-                        return Err("Invalid flush options".to_string());
-                    };
-
-                    policy.validate()?;
-                    flush_policy = Some(policy);
                 }
 
                 // 3. Validate options based on table type
@@ -559,7 +444,27 @@ impl CreateTableStatement {
     }
 }
 
-fn convert_sql_type_to_arrow(sql_type: &SqlDataType) -> Result<(DataType, bool), String> {
+fn normalize_create_table_sql(sql: &str) -> (String, Option<TableType>) {
+    if let Some(caps) = LEGACY_CREATE_PREFIX_RE.captures(sql) {
+        let requested_type = caps[1].to_ascii_uppercase();
+        let table_type = match requested_type.as_str() {
+            "USER" => TableType::User,
+            "SHARED" => TableType::Shared,
+            "STREAM" => TableType::Stream,
+            _ => TableType::User,
+        };
+        let normalized = LEGACY_CREATE_PREFIX_RE
+            .replace(sql, "CREATE TABLE ")
+            .into_owned();
+        (normalized, Some(table_type))
+    } else {
+        (sql.to_string(), None)
+    }
+}
+
+pub(crate) fn convert_sql_type_to_arrow(
+    sql_type: &SqlDataType,
+) -> Result<(DataType, bool), String> {
     match sql_type {
         SqlDataType::Boolean => Ok((DataType::Boolean, true)),
         SqlDataType::TinyInt(_) => Ok((DataType::Int8, true)),
@@ -588,5 +493,50 @@ fn convert_sql_type_to_arrow(sql_type: &SqlDataType) -> Result<(DataType, bool),
             Ok((DataType::Binary, true))
         }
         _ => Err(format!("Unsupported SQL data type: {:?}", sql_type)),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    const DEFAULT_NS: &str = "sales";
+
+    #[test]
+    fn modern_create_table_parses() {
+        let sql = r#"
+CREATE TABLE sales.orders2 (
+    order_id        INT,
+    customer_id     STRING NOT NULL,
+    ordered_at      TIMESTAMP
+)
+WITH (
+    TYPE = 'USER',
+    STORAGE_ID = 's3-us',
+    FLUSH_POLICY = 'rows:1000,interval:60'
+);
+"#;
+
+        let stmt = CreateTableStatement::parse(sql, DEFAULT_NS).unwrap();
+        assert_eq!(stmt.table_type, TableType::User);
+        assert_eq!(stmt.table_name.as_str(), "orders2");
+        assert_eq!(stmt.namespace_id.as_str(), "sales");
+        assert_eq!(stmt.storage_id.unwrap().as_str(), "s3-us");
+        assert!(matches!(stmt.flush_policy, Some(FlushPolicy::Combined { .. })));
+    }
+
+    #[test]
+    fn stream_table_requires_ttl() {
+        let sql = r#"
+CREATE TABLE sales.activity (
+    event_id STRING PRIMARY KEY,
+    payload STRING
+) WITH (
+    TYPE = 'STREAM'
+);
+"#;
+
+        let err = CreateTableStatement::parse(sql, DEFAULT_NS).unwrap_err();
+        assert!(err.contains("STREAM tables must specify"));
     }
 }

@@ -662,12 +662,14 @@ async fn test_15_storage_lookup_table_level() {
 
     // Create table with explicit storage
     let create_table = r#"
-        CREATE USER TABLE lookup_ns.lookup_table (
+        CREATE TABLE lookup_ns.lookup_table (
             id BIGINT,
             message TEXT
+        ) WITH (
+            TYPE = 'USER',
+            STORAGE_ID = 'table_storage',
+            USE_USER_STORAGE = true
         )
-        STORAGE 'table_storage'
-        USE_USER_STORAGE
     "#;
 
     let response = server.execute_sql(create_table).await;

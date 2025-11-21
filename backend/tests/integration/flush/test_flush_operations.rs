@@ -18,11 +18,11 @@ async fn test_user_table_manual_flush_creates_parquet() {
     fixtures::create_namespace(&server, namespace).await;
 
     let create_sql = format!(
-        "CREATE USER TABLE {}.{} (
+        "CREATE TABLE {}.{} (
             id BIGINT PRIMARY KEY,
             metric TEXT,
             value DOUBLE
-        ) FLUSH ROWS 5",
+        ) WITH (TYPE = 'USER', FLUSH_POLICY = 'rows:5')",
         namespace, table_name
     );
     let response = server.execute_sql_as_user(&create_sql, user_id).await;

@@ -1,4 +1,4 @@
-use crate::classifier::types::{SqlStatement, SqlStatementKind};
+use crate::classifier::types::{SqlStatement, SqlStatementKind, StatementClassificationError};
 use crate::ddl::*;
 use kalamdb_commons::models::{NamespaceId, UserId};
 use kalamdb_commons::Role;
@@ -99,7 +99,7 @@ impl SqlStatement {
         sql: &str,
         default_namespace: &NamespaceId,
         role: Role,
-    ) -> Result<Self, String> {
+    ) -> Result<Self, StatementClassificationError> {
         // Use sqlparser's tokenizer to get the first keyword (skips comments automatically)
         let dialect = sqlparser::dialect::GenericDialect {};
         let mut tokenizer = sqlparser::tokenizer::Tokenizer::new(&dialect, sql);
@@ -223,10 +223,10 @@ impl SqlStatement {
             // Namespace operations - require admin
             ["CREATE", "NAMESPACE", ..] => {
                 if !is_admin {
-                    return Err(
+                    return Err(StatementClassificationError::Unauthorized(
                         "Admin privileges (DBA or System role) required for namespace operations"
                             .to_string(),
-                    );
+                    ));
                 }
                 Ok(Self::wrap(sql, || {
                     CreateNamespaceStatement::parse(sql)
@@ -236,10 +236,10 @@ impl SqlStatement {
             }
             ["ALTER", "NAMESPACE", ..] => {
                 if !is_admin {
-                    return Err(
+                    return Err(StatementClassificationError::Unauthorized(
                         "Admin privileges (DBA or System role) required for namespace operations"
                             .to_string(),
-                    );
+                    ));
                 }
                 Ok(Self::wrap(sql, || {
                     AlterNamespaceStatement::parse(sql)
@@ -249,10 +249,10 @@ impl SqlStatement {
             }
             ["DROP", "NAMESPACE", ..] => {
                 if !is_admin {
-                    return Err(
+                    return Err(StatementClassificationError::Unauthorized(
                         "Admin privileges (DBA or System role) required for namespace operations"
                             .to_string(),
-                    );
+                    ));
                 }
                 Ok(Self::wrap(sql, || {
                     DropNamespaceStatement::parse(sql)
@@ -272,10 +272,10 @@ impl SqlStatement {
             // Storage operations - require admin
             ["CREATE", "STORAGE", ..] => {
                 if !is_admin {
-                    return Err(
+                    return Err(StatementClassificationError::Unauthorized(
                         "Admin privileges (DBA or System role) required for storage operations"
                             .to_string(),
-                    );
+                    ));
                 }
                 Ok(Self::wrap(sql, || {
                     CreateStorageStatement::parse(sql)
@@ -285,10 +285,10 @@ impl SqlStatement {
             }
             ["ALTER", "STORAGE", ..] => {
                 if !is_admin {
-                    return Err(
+                    return Err(StatementClassificationError::Unauthorized(
                         "Admin privileges (DBA or System role) required for storage operations"
                             .to_string(),
-                    );
+                    ));
                 }
                 Ok(Self::wrap(sql, || {
                     AlterStorageStatement::parse(sql)
@@ -298,10 +298,10 @@ impl SqlStatement {
             }
             ["DROP", "STORAGE", ..] => {
                 if !is_admin {
-                    return Err(
+                    return Err(StatementClassificationError::Unauthorized(
                         "Admin privileges (DBA or System role) required for storage operations"
                             .to_string(),
-                    );
+                    ));
                 }
                 Ok(Self::wrap(sql, || {
                     DropStorageStatement::parse(sql)
@@ -316,6 +316,28 @@ impl SqlStatement {
                         .ok()
                         .map(SqlStatementKind::ShowStorages)
                 }))
+            }
+
+            // View operations - DataFusion compatibility (authorization handled in handler)
+            _ if is_create_view(&word_refs) => {
+                match CreateViewStatement::parse(sql, default_namespace) {
+                    Ok(stmt) => Ok(Self::new(
+                        sql.to_string(),
+                        SqlStatementKind::CreateView(stmt),
+                    )),
+                    Err(e) => {
+                        log::error!(
+                            target: "sql::parse",
+                            "❌ CREATE VIEW parsing failed | sql='{}' | error='{}'",
+                            sql,
+                            e
+                        );
+                        Err(StatementClassificationError::InvalidSql {
+                            sql: sql.to_string(),
+                            message: format!("Invalid CREATE VIEW statement: {}", e),
+                        })
+                    }
+                }
             }
 
             // Table operations - authorization deferred to table ownership checks
@@ -336,7 +358,11 @@ impl SqlStatement {
                             sql,
                             e
                         );
-                        Ok(Self::new(sql.to_string(), SqlStatementKind::Unknown))
+                        // Return the error to the user instead of Unknown
+                        Err(StatementClassificationError::InvalidSql {
+                            sql: sql.to_string(),
+                            message: format!("Invalid CREATE TABLE statement: {}", e),
+                        })
                     }
                 }
             }
@@ -412,10 +438,10 @@ impl SqlStatement {
             // Job management - require admin
             ["KILL", "JOB", ..] => {
                 if !is_admin {
-                    return Err(
+                    return Err(StatementClassificationError::Unauthorized(
                         "Admin privileges (DBA or System role) required for job management"
                             .to_string(),
-                    );
+                    ));
                 }
                 Ok(Self::wrap(sql, || {
                     parse_job_command(sql).ok().map(SqlStatementKind::KillJob)
@@ -454,10 +480,10 @@ impl SqlStatement {
             // User management - require admin (except ALTER USER for self)
             ["CREATE", "USER", ..] => {
                 if !is_admin {
-                    return Err(
+                    return Err(StatementClassificationError::Unauthorized(
                         "Admin privileges (DBA or System role) required for user management"
                             .to_string(),
-                    );
+                    ));
                 }
                 Ok(Self::wrap(sql, || {
                     CreateUserStatement::parse(sql)
@@ -475,10 +501,10 @@ impl SqlStatement {
             }
             ["DROP", "USER", ..] => {
                 if !is_admin {
-                    return Err(
+                    return Err(StatementClassificationError::Unauthorized(
                         "Admin privileges (DBA or System role) required for user management"
                             .to_string(),
-                    );
+                    ));
                 }
                 Ok(Self::wrap(sql, || {
                     DropUserStatement::parse(sql)
@@ -556,8 +582,9 @@ impl SqlStatement {
             | SqlStatementKind::ShowManifest(_)
             | SqlStatementKind::DescribeTable(_) => Ok(()),
 
-            // CREATE TABLE, DROP TABLE, FLUSH TABLE, ALTER TABLE - defer to table ownership checks
+            // CREATE TABLE/VIEW, DROP TABLE, FLUSH TABLE, ALTER TABLE - defer to ownership checks
             SqlStatementKind::CreateTable(_)
+            | SqlStatementKind::CreateView(_)
             | SqlStatementKind::AlterTable(_)
             | SqlStatementKind::DropTable(_)
             | SqlStatementKind::FlushTable(_)
@@ -593,4 +620,21 @@ impl SqlStatement {
             }
         }
     }
+}
+
+fn is_create_view(tokens: &[&str]) -> bool {
+    if tokens.first().map(|t| *t) != Some("CREATE") {
+        return false;
+    }
+
+    let Some(view_pos) = tokens.iter().position(|t| *t == "VIEW") else {
+        return false;
+    };
+
+    tokens[1..view_pos].iter().all(|token| {
+        matches!(
+            *token,
+            "OR" | "REPLACE" | "TEMP" | "TEMPORARY" | "MATERIALIZED"
+        )
+    })
 }

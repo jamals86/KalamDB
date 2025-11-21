@@ -29,11 +29,14 @@ async fn test_create_table_without_pk_rejected() {
     // Try to create table without PRIMARY KEY specification
     let response = server
         .execute_sql_as_user(
-            r#"CREATE USER TABLE test_ns.invalid_table (
+            r#"CREATE TABLE test_ns.invalid_table (
                 id TEXT,
                 name TEXT,
                 value INT
-            ) STORAGE local"#,
+            ) WITH (
+                TYPE = 'USER',
+                STORAGE_ID = 'local'
+            )"#,
             "user1",
         )
         .await;
@@ -71,11 +74,14 @@ async fn test_create_table_auto_adds_system_columns() {
     // Create table with user-defined PK
     let response = server
         .execute_sql_as_user(
-            r#"CREATE USER TABLE test_ns.products (
+            r#"CREATE TABLE test_ns.products (
                 id TEXT PRIMARY KEY,
                 name TEXT,
                 price INT
-            ) STORAGE local"#,
+            ) WITH (
+                TYPE = 'USER',
+                STORAGE_ID = 'local'
+            )"#,
             "user1",
         )
         .await;
@@ -153,10 +159,13 @@ async fn test_insert_storage_key_format() {
     // Create user table
     server
         .execute_sql_as_user(
-            r#"CREATE USER TABLE test_ns.user_data (
+            r#"CREATE TABLE test_ns.user_data (
                 id TEXT PRIMARY KEY,
                 content TEXT
-            ) STORAGE local"#,
+            ) WITH (
+                TYPE = 'USER',
+                STORAGE_ID = 'local'
+            )"#,
             "user1",
         )
         .await;
@@ -164,10 +173,13 @@ async fn test_insert_storage_key_format() {
     // Create shared table with system privileges
     server
         .execute_sql_as_user(
-            r#"CREATE SHARED TABLE test_ns.shared_data (
+            r#"CREATE TABLE test_ns.shared_data (
                 id TEXT PRIMARY KEY,
                 content TEXT
-            ) STORAGE local"#,
+            ) WITH (
+                TYPE = 'SHARED',
+                STORAGE_ID = 'local'
+            )"#,
             "system",
         )
         .await;
@@ -235,11 +247,14 @@ async fn test_user_table_row_structure() {
     fixtures::create_namespace(&server, "test_ns").await;
     server
         .execute_sql_as_user(
-            r#"CREATE USER TABLE test_ns.user_records (
+            r#"CREATE TABLE test_ns.user_records (
                 record_id TEXT PRIMARY KEY,
                 title TEXT,
                 priority INT
-            ) STORAGE local"#,
+            ) WITH (
+                TYPE = 'USER',
+                STORAGE_ID = 'local'
+            )"#,
             "user1",
         )
         .await;
@@ -306,11 +321,14 @@ async fn test_shared_table_row_structure() {
     fixtures::create_namespace(&server, "test_ns").await;
     server
         .execute_sql_as_user(
-            r#"CREATE SHARED TABLE test_ns.shared_config (
+            r#"CREATE TABLE test_ns.shared_config (
                 key TEXT PRIMARY KEY,
                 value TEXT,
                 enabled BOOLEAN
-            ) STORAGE local"#,
+            ) WITH (
+                TYPE = 'SHARED',
+                STORAGE_ID = 'local'
+            )"#,
             "system",
         )
         .await;
@@ -385,10 +403,13 @@ async fn test_insert_duplicate_pk_rejected() {
     fixtures::create_namespace(&server, "test_ns").await;
     server
         .execute_sql_as_user(
-            r#"CREATE USER TABLE test_ns.unique_items (
+            r#"CREATE TABLE test_ns.unique_items (
                 item_id TEXT PRIMARY KEY,
                 name TEXT
-            ) STORAGE local"#,
+            ) WITH (
+                TYPE = 'USER',
+                STORAGE_ID = 'local'
+            )"#,
             "user1",
         )
         .await;
@@ -483,10 +504,13 @@ async fn test_incremental_sync_seq_threshold() {
     fixtures::create_namespace(&server, "test_ns").await;
     server
         .execute_sql_as_user(
-            r#"CREATE USER TABLE test_ns.sync_records (
+            r#"CREATE TABLE test_ns.sync_records (
                 id TEXT PRIMARY KEY,
                 version INT
-            ) STORAGE local"#,
+            ) WITH (
+                TYPE = 'USER',
+                STORAGE_ID = 'local'
+            )"#,
             "user1",
         )
         .await;
@@ -567,10 +591,13 @@ async fn test_rocksdb_prefix_scan_user_isolation() {
     fixtures::create_namespace(&server, "test_ns").await;
     server
         .execute_sql_as_user(
-            r#"CREATE USER TABLE test_ns.user_notes (
+            r#"CREATE TABLE test_ns.user_notes (
                 note_id TEXT PRIMARY KEY,
                 content TEXT
-            ) STORAGE local"#,
+            ) WITH (
+                TYPE = 'USER',
+                STORAGE_ID = 'local'
+            )"#,
             "user1",
         )
         .await;
@@ -654,10 +681,13 @@ async fn test_rocksdb_range_scan_efficiency() {
     fixtures::create_namespace(&server, "test_ns").await;
     server
         .execute_sql_as_user(
-            r#"CREATE USER TABLE test_ns.versioned_data (
+            r#"CREATE TABLE test_ns.versioned_data (
                 id TEXT PRIMARY KEY,
                 value INT
-            ) STORAGE local"#,
+            ) WITH (
+                TYPE = 'USER',
+                STORAGE_ID = 'local'
+            )"#,
             "user1",
         )
         .await;

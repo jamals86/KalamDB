@@ -36,6 +36,7 @@ use crate::sql::executor::handlers::table::{
     ShowStatsHandler, ShowTablesHandler,
 };
 use crate::sql::executor::handlers::user::{AlterUserHandler, CreateUserHandler, DropUserHandler};
+use crate::sql::executor::handlers::view::CreateViewHandler;
 
 /// Trait for handlers that can process any SqlStatement variant
 ///
@@ -227,8 +228,8 @@ impl HandlerRegistry {
         // TABLE HANDLERS (Phase 8) - fully implemented
         // Register table handlers with minimal placeholder instances for discriminant extraction
         use kalamdb_sql::ddl::{
-            AlterTableStatement, CreateTableStatement, DescribeTableStatement, DropTableStatement,
-            ShowTableStatsStatement, ShowTablesStatement,
+            AlterTableStatement, CreateTableStatement, CreateViewStatement, DescribeTableStatement,
+            DropTableStatement, ShowTableStatsStatement, ShowTablesStatement,
         };
         // TableType already imported above; avoid duplicate imports
         use datafusion::arrow::datatypes::Schema as ArrowSchema;
@@ -254,6 +255,22 @@ impl HandlerRegistry {
             CreateTableHandler::new(app_context.clone()),
             |stmt| match stmt.kind() {
                 SqlStatementKind::CreateTable(s) => Some(s.clone()),
+                _ => None,
+            },
+        );
+        registry.register_typed(
+            SqlStatementKind::CreateView(CreateViewStatement {
+                namespace_id: NamespaceId::new("_placeholder"),
+                view_name: TableName::new("_placeholder"),
+                or_replace: false,
+                if_not_exists: false,
+                columns: Vec::new(),
+                query_sql: String::new(),
+                original_sql: String::new(),
+            }),
+            CreateViewHandler::new(app_context.clone()),
+            |stmt| match stmt.kind() {
+                SqlStatementKind::CreateView(s) => Some(s.clone()),
                 _ => None,
             },
         );

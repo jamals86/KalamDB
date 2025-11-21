@@ -58,7 +58,7 @@ fn test_concurrent_users_isolation() {
     }
 
     let create_table_sql = format!(
-        "CREATE USER TABLE {} (id INTEGER, message TEXT, timestamp BIGINT, current_user_id TEXT DEFAULT CURRENT_USER()) FLUSH ROWS 100",
+        "CREATE TABLE {} (id INTEGER, message TEXT, timestamp BIGINT, current_user_id TEXT DEFAULT CURRENT_USER()) WITH (TYPE='USER', FLUSH_POLICY='rows:100')",
         full_table
     );
     if let Err(e) = execute_sql_as_root_via_cli(&create_table_sql) {

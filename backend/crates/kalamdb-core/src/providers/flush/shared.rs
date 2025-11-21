@@ -231,9 +231,10 @@ impl TableFlush for SharedTableFlushJob {
             }
 
             let mut row_data = row.fields.clone();
-            row_data
-                .values
-                .insert("_seq".to_string(), ScalarValue::Int64(Some(row._seq.as_i64())));
+            row_data.values.insert(
+                "_seq".to_string(),
+                ScalarValue::Int64(Some(row._seq.as_i64())),
+            );
             row_data
                 .values
                 .insert("_deleted".to_string(), ScalarValue::Boolean(Some(false)));

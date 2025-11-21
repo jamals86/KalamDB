@@ -89,7 +89,15 @@ impl SqlExecutor {
             &NamespaceId::new("default"),
             exec_ctx.user_role.clone(),
         )
-        .map_err(|msg| KalamDbError::Unauthorized(msg))?;
+        .map_err(|e| match e {
+            kalamdb_sql::classifier::StatementClassificationError::Unauthorized(msg) => {
+                KalamDbError::Unauthorized(msg)
+            }
+            kalamdb_sql::classifier::StatementClassificationError::InvalidSql {
+                sql: _,
+                message,
+            } => KalamDbError::InvalidSql(message),
+        })?;
 
         // Step 2: Route based on statement type
         use kalamdb_sql::statement_classifier::SqlStatementKind;

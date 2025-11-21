@@ -41,21 +41,21 @@ fn smoke_all_datatypes_user_shared_stream() {
 
     // 1) Create USER table with all datatypes
     let create_user_sql = format!(
-        "CREATE USER TABLE {} ({}) FLUSH ROWS 10",
+        "CREATE TABLE {} ({}) WITH (TYPE = 'USER', FLUSH_POLICY = 'rows:10')",
         user_full, all_columns
     );
     execute_sql_as_root_via_cli(&create_user_sql).expect("create user table should succeed");
 
     // 2) Create SHARED table with all datatypes
     let create_shared_sql = format!(
-        "CREATE SHARED TABLE {} ({}) FLUSH ROWS 10",
+        "CREATE TABLE {} ({}) WITH (TYPE = 'SHARED', FLUSH_POLICY = 'rows:10')",
         shared_full, all_columns
     );
     execute_sql_as_root_via_cli(&create_shared_sql).expect("create shared table should succeed");
 
     // 3) Create STREAM table (same columns but requires TTL clause)
     let create_stream_sql = format!(
-        "CREATE STREAM TABLE {} ({}) TTL 60",
+        "CREATE TABLE {} ({}) WITH (TYPE = 'STREAM', TTL_SECONDS = 60)",
         stream_full, all_columns
     );
     execute_sql_as_root_via_cli(&create_stream_sql).expect("create stream table should succeed");

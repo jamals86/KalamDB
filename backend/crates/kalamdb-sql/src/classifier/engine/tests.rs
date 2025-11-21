@@ -30,21 +30,42 @@ mod tests {
 
     #[test]
     fn test_classify_create_user_table() {
-        let sql = "CREATE USER TABLE users (id INT, name VARCHAR)";
+        let sql = "CREATE TABLE users (id INT, name VARCHAR) WITH (TYPE='USER')";
+        let stmt = SqlStatement::classify(sql);
+        assert!(matches!(stmt.kind, SqlStatementKind::CreateTable(_)));
+    }
+
+    #[test]
+    fn test_classify_create_user_table_with_flush_policy() {
+        let sql = "CREATE TABLE users (id INT, name VARCHAR) WITH (TYPE='USER', FLUSH_POLICY='rows:100')";
         let stmt = SqlStatement::classify(sql);
         assert!(matches!(stmt.kind, SqlStatementKind::CreateTable(_)));
     }
 
     #[test]
     fn test_classify_create_shared_table() {
-        let sql = "CREATE SHARED TABLE users (id INT, name VARCHAR)";
+        let sql = "CREATE TABLE users (id INT, name VARCHAR) WITH (TYPE='SHARED')";
+        let stmt = SqlStatement::classify(sql);
+        assert!(matches!(stmt.kind, SqlStatementKind::CreateTable(_)));
+    }
+
+    #[test]
+    fn test_classify_create_shared_table_with_access_level() {
+        let sql = "CREATE TABLE users (id INT, name VARCHAR) WITH (TYPE='SHARED', ACCESS_LEVEL='public')";
         let stmt = SqlStatement::classify(sql);
         assert!(matches!(stmt.kind, SqlStatementKind::CreateTable(_)));
     }
 
     #[test]
     fn test_classify_create_stream_table() {
-        let sql = "CREATE STREAM TABLE users (id INT, name VARCHAR) TTL 60";
+        let sql = "CREATE TABLE users (id INT, name VARCHAR) WITH (TYPE='STREAM', TTL_SECONDS=60)";
+        let stmt = SqlStatement::classify(sql);
+        assert!(matches!(stmt.kind, SqlStatementKind::CreateTable(_)));
+    }
+
+    #[test]
+    fn test_classify_create_stream_table_with_retention() {
+        let sql = "CREATE TABLE users (id INT, name VARCHAR) WITH (TYPE='STREAM', TTL_SECONDS=60, MAX_BUFFERED_ROWS=1000)";
         let stmt = SqlStatement::classify(sql);
         assert!(matches!(stmt.kind, SqlStatementKind::CreateTable(_)));
     }
@@ -82,6 +103,13 @@ mod tests {
         let sql = "CREATE STORAGE s3_storage TYPE 's3' NAME 'S3 Storage' BASE_DIRECTORY 's3://bucket/' SHARED_TABLES_TEMPLATE '{ns}/{table}' USER_TABLES_TEMPLATE '{ns}/{table}/{user}'";
         let stmt = SqlStatement::classify(sql);
         assert!(matches!(stmt.kind, SqlStatementKind::CreateStorage(_)));
+    }
+
+    #[test]
+    fn test_classify_create_view() {
+        let sql = "CREATE VIEW default.simple_view AS SELECT 1";
+        let stmt = SqlStatement::classify(sql);
+        assert!(matches!(stmt.kind, SqlStatementKind::CreateView(_)));
     }
 
     #[test]
@@ -198,7 +226,12 @@ mod tests {
         let err =
             SqlStatement::classify_and_parse("CREATE NAMESPACE test", &default_ns, Role::User)
                 .unwrap_err();
-        assert!(err.contains("Admin privileges"));
+        match err {
+            crate::classifier::types::StatementClassificationError::Unauthorized(msg) => {
+                assert!(msg.contains("Admin privileges"));
+            }
+            _ => panic!("Expected Unauthorized error"),
+        }
 
         // Regular user - can select
         let stmt = SqlStatement::classify_and_parse("SELECT * FROM users", &default_ns, Role::User)

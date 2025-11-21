@@ -31,20 +31,15 @@ KalamDB is a **SQL-first database** built for real-time chat and AI message hist
 5. [System Columns](#system-columns) - Auto-managed metadata columns
 
 ### II. Table Operations
-6. [User Table Operations](#user-table-operations) - Per-user isolated tables
-7. [Shared Table Operations](#shared-table-operations) - Global shared tables
-8. [Stream Table Operations](#stream-table-operations) - Ephemeral real-time tables
-9. [Schema Evolution](#schema-evolution) - ALTER TABLE operations
+6. [Table Operations](#table-operations) - CREATE, DROP, ALTER TABLE
+7. [Data Manipulation (DML)](#data-manipulation) - INSERT, UPDATE, DELETE, SELECT
+8. [Manual Flushing](#manual-flushing) - Explicit hot-to-cold tier migration
+9. [Live Query Subscriptions](#live-query-subscriptions) - Real-time WebSocket subscriptions
 
-### III. Data Manipulation
-10. [Data Manipulation (DML)](#data-manipulation) - INSERT, UPDATE, DELETE, SELECT
-11. [Manual Flushing](#manual-flushing) - Explicit hot-to-cold tier migration
-12. [Live Query Subscriptions](#live-query-subscriptions) - Real-time WebSocket subscriptions
-
-### IV. Administration
-13. [Backup and Restore](#backup-and-restore) - Database backup and recovery
-14. [Catalog Browsing](#catalog-browsing) - SHOW, DESCRIBE commands
-15. [Custom Functions](#kalamdb-custom-functions) - SNOWFLAKE_ID, UUID_V7, ULID, CURRENT_USER
+### III. Administration
+10. [Backup and Restore](#backup-and-restore) - Database backup and recovery
+11. [Catalog Browsing](#catalog-browsing) - SHOW, DESCRIBE commands
+12. [Custom Functions](#kalamdb-custom-functions) - SNOWFLAKE_ID, UUID_V7, ULID, CURRENT_USER
 
 ---
 
@@ -125,28 +120,35 @@ Storage locations define where table data (Parquet files) are stored. Each table
 
 ```sql
 CREATE STORAGE <storage_id>
-TYPE <filesystem|s3|azure_blob|gcs>
-PATH '<storage_path>'
-[CREDENTIALS <credentials_json>];
+TYPE '<filesystem|s3>'
+[NAME '<human_readable_name>']
+[DESCRIPTION '<description>']
+BASE_DIRECTORY '<path_or_bucket_url>'
+[SHARED_TABLES_TEMPLATE '<template>']
+[USER_TABLES_TEMPLATE '<template>']
+[CREDENTIALS '<json_credentials>'];
 ```
 
-**Storage Types**:
-- `filesystem`: Local or network filesystem storage
-- `s3`: Amazon S3 or S3-compatible storage (MinIO, etc.)
-- `azure_blob`: Azure Blob Storage
-- `gcs`: Google Cloud Storage
+**Parameters**:
+- `TYPE`: `filesystem` or `s3`. (Azure Blob and GCS are not currently supported).
+- `BASE_DIRECTORY`: Root path (e.g., `/data` or `s3://bucket/prefix`).
+- `SHARED_TABLES_TEMPLATE`: Path template for shared tables (default: `{namespace}/{tableName}/`).
+- `USER_TABLES_TEMPLATE`: Path template for user tables (default: `{namespace}/{tableName}/{userId}/`).
+- `CREDENTIALS`: JSON string containing credentials (e.g., access_key, secret_key, region).
 
 **Examples**:
+
 ```sql
 -- Local filesystem storage (default)
 CREATE STORAGE local
-TYPE filesystem
-PATH './data';
+TYPE 'filesystem'
+BASE_DIRECTORY './data';
 
 -- S3 storage with credentials
 CREATE STORAGE s3_prod
-TYPE s3
-PATH 's3://my-bucket/kalamdb-data'
+TYPE 's3'
+NAME 'Production S3'
+BASE_DIRECTORY 's3://my-bucket/kalamdb-data'
 CREDENTIALS '{
   "access_key_id": "AKIAIOSFODNN7EXAMPLE",
   "secret_access_key": "wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY",
@@ -155,37 +157,19 @@ CREDENTIALS '{
 
 -- S3-compatible storage (MinIO)
 CREATE STORAGE minio_local
-TYPE s3
-PATH 's3://kalamdb/data'
+TYPE 's3'
+BASE_DIRECTORY 's3://kalamdb/data'
 CREDENTIALS '{
   "access_key_id": "minioadmin",
   "secret_access_key": "minioadmin",
   "endpoint": "http://localhost:9000",
   "region": "us-east-1"
 }';
-
--- Azure Blob Storage
-CREATE STORAGE azure_prod
-TYPE azure_blob
-PATH 'azure://container-name/kalamdb'
-CREDENTIALS '{
-  "account_name": "mystorageaccount",
-  "account_key": "base64-encoded-key"
-}';
-
--- Google Cloud Storage
-CREATE STORAGE gcs_backup
-TYPE gcs
-PATH 'gs://my-bucket/kalamdb-backups'
-CREDENTIALS '{
-  "service_account_key": "path/to/service-account.json"
-}';
 ```
 
 **Notes**:
-- Storage ID 'local' is pre-configured and always available
-- Credentials are stored encrypted in `system.storages`
-- Path supports template variables: `${namespace}`, `${table_name}`, `${user_id}`
+- Storage ID 'local' is pre-configured and always available.
+- Credentials are stored encrypted in `system.storages`.
 
 ---
 
@@ -193,31 +177,21 @@ CREDENTIALS '{
 
 ```sql
 ALTER STORAGE <storage_id>
-[SET PATH '<new_path>']
-[SET CREDENTIALS <credentials_json>];
+[SET NAME '<new_name>']
+[SET DESCRIPTION '<new_desc>']
+[SET SHARED_TABLES_TEMPLATE '<new_template>']
+[SET USER_TABLES_TEMPLATE '<new_template>'];
 ```
 
 **Examples**:
 ```sql
--- Update S3 path
-ALTER STORAGE s3_prod
-SET PATH 's3://new-bucket/kalamdb';
+-- Update description
+ALTER STORAGE local
+SET DESCRIPTION 'Primary local storage';
 
--- Rotate credentials
+-- Update templates
 ALTER STORAGE s3_prod
-SET CREDENTIALS '{
-  "access_key_id": "NEW_ACCESS_KEY",
-  "secret_access_key": "NEW_SECRET_KEY",
-  "region": "us-west-2"
-}';
-
--- Update both
-ALTER STORAGE azure_prod
-SET PATH 'azure://new-container/kalamdb'
-SET CREDENTIALS '{
-  "account_name": "newaccount",
-  "account_key": "new-key"
-}';
+SET USER_TABLES_TEMPLATE '{namespace}/users/{userId}/{tableName}/';
 ```
 
 ---
@@ -226,25 +200,16 @@ SET CREDENTIALS '{
 
 ```sql
 DROP STORAGE <storage_id>;
-DROP STORAGE IF EXISTS <storage_id>;
 ```
 
 **Examples**:
 ```sql
 DROP STORAGE old_s3_storage;
-DROP STORAGE IF EXISTS temp_storage;
 ```
 
 **Restrictions**:
-- Cannot drop 'local' storage (system reserved)
-- Cannot drop storage if tables are using it (check `system.tables` first)
-
-**Error Handling**:
-```sql
-DROP STORAGE s3_prod;
--- ERROR: Cannot drop storage 's3_prod': 3 table(s) still reference it
--- Hint: DROP tables first or migrate them to different storage
-```
+- Cannot drop 'local' storage (system reserved).
+- Cannot drop storage if tables are using it.
 
 ---
 
@@ -256,17 +221,11 @@ SHOW STORAGES;
 
 **Example Output**:
 ```
-storage_id   | type       | path                          | table_count
+storage_id   | type       | base_directory                | table_count
 -------------|------------|-------------------------------|------------
 local        | filesystem | ./data                        | 5
 s3_prod      | s3         | s3://my-bucket/kalamdb-data  | 12
-minio_local  | s3         | s3://kalamdb/data            | 3
 ```
-
-**Notes**:
-- Credentials are not displayed (security)
-- `table_count` shows how many tables reference each storage
-- Query `system.storages` table directly for full details
 
 ---
 
@@ -276,125 +235,53 @@ User management commands allow creation, modification, and deletion of user acco
 
 ### CREATE USER
 
-Create a new user account with authentication credentials and role.
-
-**Basic Password Authentication**:
 ```sql
-CREATE USER '<username>' 
-  WITH PASSWORD '<password>' 
-  ROLE '<user|service|dba|system>';
+CREATE USER '<username>'
+  WITH <PASSWORD 'password' | OAUTH | INTERNAL>
+  ROLE <user|service|dba|system>
+  [EMAIL '<email>'];
 ```
 
-**With Email and Metadata**:
-```sql
-CREATE USER 'alice' 
-  WITH PASSWORD 'secure_password_123!' 
-  ROLE 'user'
-  EMAIL 'alice@company.com'
-  METADATA '{"department": "engineering", "team": "backend"}';
-```
+**Authentication Types**:
+- `WITH PASSWORD '...'`: Standard password authentication.
+- `WITH OAUTH`: OAuth authentication (credentials managed externally).
+- `WITH INTERNAL`: Internal system user (no password, localhost only).
 
-**OAuth Authentication**:
-```sql
-CREATE USER 'backup_service'
-  WITH OAUTH PROVIDER 'google'
-  SUBJECT 'backup@service.account'
-  ROLE 'service';
-```
-
-**Internal System User (Localhost-Only)**:
-```sql
-CREATE USER 'replicator'
-  WITH INTERNAL
-  ROLE 'system';
--- No password required, localhost-only access
-```
-
-**System User with Remote Access**:
-```sql
-CREATE USER 'emergency_admin'
-  WITH PASSWORD 'strong_password_123!'
-  ROLE 'system'
-  ALLOW_REMOTE true;
--- Password REQUIRED when allow_remote is enabled
-```
-
-**With IF NOT EXISTS**:
-```sql
-CREATE USER IF NOT EXISTS 'alice' WITH PASSWORD 'secret' ROLE 'user';
-```
-
-**Parameters**:
-- `user_id`: Auto-generated from username (prefixed with role: usr_, svc_, dba_, sys_)
-- `PASSWORD`: Hashed with bcrypt cost 12 (min 8 chars, max 1024 chars)
-  - **REQUIRED** for `role='system'` when `ALLOW_REMOTE true`
-  - **REQUIRED** for `role='user'`, `'service'`, `'dba'`
-  - **OPTIONAL** for `role='system'` when localhost-only
-- `ROLE`: One of `'user'`, `'service'`, `'dba'`, `'system'` (default: `'user'`)
-- `EMAIL`: Optional email address
-- `METADATA`: Optional JSON object
-- `OAUTH PROVIDER`: OAuth provider name (e.g., 'google', 'github', 'azure')
-- `SUBJECT`: OAuth subject identifier
-- `INTERNAL`: Mark as internal system user (localhost-only, no password needed)
-- `ALLOW_REMOTE`: Allow remote connections (only for `role='system'`, requires password)
-
-**Authorization**: Only `dba` and `system` roles can execute CREATE USER
-
-**Validation**:
-- If `ROLE='system'` AND `ALLOW_REMOTE=true` → `PASSWORD` is **REQUIRED**
-- If `ROLE='system'` AND `ALLOW_REMOTE=true` AND no password → **ERROR**: "System users with remote access must have a password"
+**Roles**:
+- `user`: Standard user.
+- `service`: Service account (automation).
+- `dba`: Database administrator.
+- `system`: System internal role.
 
 **Examples**:
+
 ```sql
 -- Standard user account
-CREATE USER 'alice' WITH PASSWORD 'Secret123!' ROLE 'user';
+CREATE USER 'alice' WITH PASSWORD 'Secret123!' ROLE user EMAIL 'alice@example.com';
 
--- Service account for automation
-CREATE USER 'etl_service' WITH PASSWORD 'ServiceKey456!' ROLE 'service';
-
--- Database administrator
-CREATE USER 'db_admin' WITH PASSWORD 'AdminPass789!' ROLE 'dba' EMAIL 'admin@company.com';
+-- Service account
+CREATE USER 'etl_service' WITH PASSWORD 'ServiceKey456!' ROLE service;
 
 -- OAuth-based user
-CREATE USER 'google_sync' WITH OAUTH PROVIDER 'google' SUBJECT 'sync@example.com' ROLE 'service';
+CREATE USER 'google_sync' WITH OAUTH ROLE user EMAIL 'sync@example.com';
 
--- Internal system user (localhost only, no password)
-CREATE USER 'compaction_job' WITH INTERNAL ROLE 'system';
-
--- Emergency admin with remote access
-CREATE USER 'emergency_dba' 
-  WITH PASSWORD 'EmergencyAccess123!' 
-  ROLE 'system' 
-  ALLOW_REMOTE true
-  METADATA '{"purpose": "emergency_access", "created_by": "db_admin"}';
+-- Internal system user
+CREATE USER 'compaction_job' WITH INTERNAL ROLE system;
 ```
+
+**Authorization**: Only `dba` and `system` roles can execute CREATE USER.
 
 ---
 
 ### ALTER USER
 
-Modify existing user credentials, role, or metadata.
+Modify existing user credentials, role, or email.
 
-**Change Password**:
 ```sql
 ALTER USER '<username>' SET PASSWORD '<new_password>';
+ALTER USER '<username>' SET ROLE <new_role>;
+ALTER USER '<username>' SET EMAIL '<new_email>';
 ```
-
-**Change Role** (DBA only):
-```sql
-ALTER USER '<username>' SET ROLE '<new_role>';
-```
-
-**Update Email and Metadata**:
-```sql
-ALTER USER '<username>' SET 
-  EMAIL '<new_email>',
-  METADATA '<json_metadata>';
-```
-
-**Authorization**: 
-- Users can change their own password
-- Only `dba` and `system` can change roles and other user attributes
 
 **Examples**:
 ```sql
@@ -402,53 +289,32 @@ ALTER USER '<username>' SET
 ALTER USER 'alice' SET PASSWORD 'NewPassword123!';
 
 -- DBA promotes user to service role
-ALTER USER 'integration_bot' SET ROLE 'service';
+ALTER USER 'integration_bot' SET ROLE service;
 
--- Update user metadata
-ALTER USER 'alice' SET 
-  EMAIL 'alice.new@company.com',
-  METADATA '{"department": "frontend", "level": "senior"}';
-
--- Update multiple fields
-ALTER USER 'bob' SET 
-  PASSWORD 'UpdatedPass456!',
-  EMAIL 'bob@newcompany.com',
-  METADATA '{"status": "active"}';
+-- Update user email
+ALTER USER 'alice' SET EMAIL 'alice.new@company.com';
 ```
 
 ---
 
 ### DROP USER
 
-Soft delete a user account (sets deleted_at timestamp, allows recovery within grace period).
+Soft delete a user account.
 
-**Basic Syntax**:
 ```sql
-DROP USER '<username>';
+DROP USER [IF EXISTS] '<username>';
 ```
-
-**With IF EXISTS**:
-```sql
-DROP USER IF EXISTS '<username>';
-```
-
-**Behavior**:
-- Sets `deleted_at` to current timestamp
-- User becomes hidden from default queries
-- User's tables remain accessible during grace period
-- Scheduled cleanup job deletes user permanently after grace period (default: 30 days)
-- User can be restored by DBA within grace period
-
-**Authorization**: Only `dba` and `system` roles
 
 **Examples**:
 ```sql
--- Soft delete user
 DROP USER 'alice';
-
--- Soft delete with error suppression
 DROP USER IF EXISTS 'old_user';
 ```
+
+**Behavior**:
+- Sets `deleted_at` to current timestamp.
+- User becomes hidden from default queries.
+- User can be restored by DBA within grace period.
 
 ---
 
@@ -457,26 +323,9 @@ DROP USER IF EXISTS 'old_user';
 Restore a soft-deleted user within the grace period (DBA only).
 
 ```sql
-UPDATE system.users 
-SET deleted_at = NULL 
+UPDATE system.users
+SET deleted_at = NULL
 WHERE user_id = '<user_id>';
-```
-
-**Requirements**:
-- Must be within grace period (default: 30 days from deletion)
-- Only `dba` and `system` roles can restore users
-
-**Example**:
-```sql
--- Restore user by user_id
-UPDATE system.users 
-SET deleted_at = NULL 
-WHERE user_id = 'usr_alice123';
-
--- Restore user by username
-UPDATE system.users 
-SET deleted_at = NULL 
-WHERE username = 'alice';
 ```
 
 ---
@@ -485,356 +334,140 @@ WHERE username = 'alice';
 
 Standard SQL SELECT on `system.users` table.
 
-**List all active users** (excludes soft-deleted):
 ```sql
-SELECT user_id, username, email, role, created_at 
-FROM system.users 
+SELECT user_id, username, email, role, created_at
+FROM system.users
 WHERE deleted_at IS NULL;
 ```
 
-**List deleted users** (within grace period):
-```sql
-SELECT user_id, username, deleted_at, role 
-FROM system.users 
-WHERE deleted_at IS NOT NULL;
-```
-
-**Filter by role**:
-```sql
-SELECT username, email, created_at 
-FROM system.users 
-WHERE role = 'service' AND deleted_at IS NULL;
-```
-
-**Find specific user**:
-```sql
-SELECT * FROM system.users WHERE username = 'alice';
-```
-
 ---
 
-## User Table Operations
+## Table Operations
 
-User tables create one table instance per user with isolated storage.
+KalamDB supports three table types: **USER**, **SHARED**, and **STREAM**. All tables are created using the `CREATE TABLE` statement, either with a specific prefix or using the `TYPE` option.
 
-### CREATE USER TABLE
+**Important**: All tables **MUST** have a `PRIMARY KEY` defined.
 
+### CREATE TABLE
+
+**Unified Syntax**:
 ```sql
-CREATE USER TABLE [<namespace>.]<table_name> (
-  <column_name> <data_type> [NOT NULL] [DEFAULT <value|function>],
+CREATE [USER|SHARED|STREAM] TABLE [IF NOT EXISTS] [<namespace>.]<table_name> (
+  <column_name> <data_type> [NOT NULL|NULL] [DEFAULT <expr>] [PRIMARY KEY],
   ...
-) [STORAGE <storage_id>] [USE_USER_STORAGE] [FLUSH <flush_policy>];
-```
-
-**Storage Options**:
-- `STORAGE <storage_id>`: Storage location reference from `system.storages` (defaults to `local`).
-- `USE_USER_STORAGE`: Opt-in flag telling KalamDB to prefer each caller's storage preference (when defined) and fall back to the table storage otherwise. The flag is already persisted; the flush path will start honoring it once the per-user resolver ships.
-- Storage IDs must be pre-configured via `CREATE STORAGE` command.
-
-**Flush Policies** (new syntax):
-- `FLUSH ROW_THRESHOLD <n>`: Flush after `n` rows inserted
-- `FLUSH INTERVAL <seconds>s`: Flush every `<seconds>` seconds
-- `FLUSH INTERVAL <s>s ROW_THRESHOLD <n>`: Flush when either condition is met (combined)
-
-**Legacy Flush Syntax** (still supported):
-- `FLUSH ROWS <n>`: Same as `ROW_THRESHOLD`
-- `FLUSH SECONDS <s>`: Same as `INTERVAL`
-
-**Examples**:
-```sql
--- Simple user table with row-based flush (new syntax)
-CREATE USER TABLE app.messages2 (
-  id BIGINT NOT NULL DEFAULT SNOWFLAKE_ID(),
-  content TEXT,
-  author TEXT,
-  timestamp TIMESTAMP
-) STORAGE local FLUSH ROW_THRESHOLD 1000;
-
--- Table that opts into per-user storage preferences
-CREATE USER TABLE app.user_events (
-  event_id BIGINT NOT NULL DEFAULT SNOWFLAKE_ID(),
-  payload JSON,
-  created_at TIMESTAMP DEFAULT NOW()
-) STORAGE s3_us USE_USER_STORAGE FLUSH ROW_THRESHOLD 5000;
-
--- Time-based flush (every 5 minutes)
-CREATE USER TABLE app.events (
-  event_id TEXT NOT NULL,
-  event_type TEXT,
-  data TEXT
-) STORAGE local FLUSH INTERVAL 300s;
-
--- Combined flush (flush when either 5000 rows OR 10 minutes)
-CREATE USER TABLE app.analytics (
-  metric_name TEXT NOT NULL,
-  value DOUBLE,
-  tags TEXT
-) STORAGE s3_prod FLUSH INTERVAL 600s ROW_THRESHOLD 5000;
-
--- With DEFAULT values (auto-generated IDs and timestamps)
-CREATE USER TABLE app.users (
-  id BIGINT DEFAULT SNOWFLAKE_ID(),
-  username TEXT NOT NULL,
-  email TEXT,
-  created_at TIMESTAMP DEFAULT NOW()
-) STORAGE local FLUSH ROW_THRESHOLD 1000;
-
--- Legacy syntax (still works)
-CREATE USER TABLE app.logs (
-  id BIGINT,
-  message TEXT
-) STORAGE local FLUSH ROWS 500;
-```
-
-**System Columns** (automatically added):
-- `_updated TIMESTAMP`: Last update timestamp (indexed for time-range queries)
-- `_deleted BOOLEAN`: Soft delete flag (default: false)
-
-**Storage**:
-- Hot tier: `RocksDB column family: user_table:{table_name}`
-- Cold tier (after flush): `{storage_path}/users/{user_id}/{namespace}/{table_name}/batch-{timestamp}-{uuid}.parquet`
-- Storage path determined by storage_id from system.storages
-
-**DEFAULT Functions**:
-- `NOW()`: Current timestamp (for TIMESTAMP columns)
-- `SNOWFLAKE_ID()`: Distributed unique ID (for BIGINT columns)
-- `UUID_V7()`: Time-ordered UUID v7 (for TEXT/VARCHAR columns)
-- `ULID()`: Universally unique lexicographically sortable ID (for TEXT/VARCHAR columns)
-
-**Notes**:
-- Storage defaults to 'local' if not specified
-- Flush policy is optional (no auto-flush if not specified)
-- User tables create isolated storage per user_id
-- System columns cannot be specified in INSERT/UPDATE
-- Pair `USE_USER_STORAGE` tables with per-user preferences (next section) to keep each tenant's data in their chosen region
-
-### Per-user storage preferences
-
-User rows in `system.users` expose two columns that control routing when `USE_USER_STORAGE` is enabled:
-
-- `storage_mode`: `table` (default) or `region`. `region` tells KalamDB to try the user's own storage first.
-- `storage_id`: optional reference to `system.storages`.
-
-Example assignments:
-
-```sql
-UPDATE system.users
-SET storage_mode = 'region', storage_id = 's3_eu'
-WHERE username = 'alice';
-
-UPDATE system.users
-SET storage_mode = 'table', storage_id = NULL
-WHERE username = 'bob';
-```
-
-Only `dba`/`system` roles should modify these columns. A dedicated `ALTER USER` syntax is planned. See `docs/how-to/user-table-storage.md` for a deeper walkthrough and current limitations.
-
----
-
-### DROP USER TABLE
-
-```sql
-DROP TABLE [<namespace>.]<table_name>;
-DROP TABLE IF EXISTS [<namespace>.]<table_name>;
-```
-
-**Examples**:
-```sql
-DROP TABLE app.messages;
-DROP TABLE IF EXISTS app.old_table;
-```
-
-**Warning**: Deletes RocksDB column family and all Parquet files for all users.
-
----
-
-## Shared Table Operations
-
-Shared tables are accessible to all users with centralized storage.
-
-### CREATE SHARED TABLE
-
-```sql
-CREATE SHARED TABLE [<namespace>.]<table_name> (
-  <column_name> <data_type> [NOT NULL] [DEFAULT <value|function>],
-  ...
-) [STORAGE <storage_id>] [FLUSH <flush_policy>];
-```
-
-**Examples**:
-```sql
--- Global configuration table
-CREATE SHARED TABLE app.config (
-  config_key TEXT NOT NULL,
-  config_value TEXT,
-  updated_at TIMESTAMP DEFAULT NOW()
-) STORAGE local FLUSH ROW_THRESHOLD 100;
-
--- Shared analytics with combined flush
-CREATE SHARED TABLE app.global_metrics (
-  metric_name TEXT NOT NULL,
-  value DOUBLE,
-  timestamp TIMESTAMP DEFAULT NOW()
-) STORAGE s3_shared FLUSH INTERVAL 60s ROW_THRESHOLD 1000;
-
--- Simple shared table (no auto-flush)
-CREATE SHARED TABLE app.settings (
-  setting_key TEXT NOT NULL,
-  setting_value TEXT
-) STORAGE local;
-```
-
-**System Columns** (automatically added):
-- `_updated TIMESTAMP`: Last update timestamp
-- `_deleted BOOLEAN`: Soft delete flag
-
-**Storage**:
-- Hot tier: `RocksDB column family: shared_table:{table_name}`
-- Cold tier (after flush): `{storage_path}/shared/{namespace}/{table_name}/batch-{timestamp}-{uuid}.parquet`
-- Accessible to all users (no per-user isolation)
-
----
-
-### DROP SHARED TABLE
-
-```sql
-DROP TABLE [<namespace>.]<table_name>;
-```
-
-**Warning**: Deletes RocksDB column family and all Parquet files (global data).
-
----
-
-## Stream Table Operations
-
-Stream tables are ephemeral with TTL-based eviction. Data is memory-only (no Parquet files).
-
-### CREATE STREAM TABLE
-
-```sql
-CREATE STREAM TABLE [<namespace>.]<table_name> (
-  <column_name> <data_type> [NOT NULL],
-  ...
-) TTL <seconds>;
+  [CONSTRAINT <name> PRIMARY KEY (<column_name>)]
+)
+[WITH (
+  TYPE = '<USER|SHARED|STREAM>',
+  STORAGE_ID = '<storage_id>',
+  USE_USER_STORAGE = <TRUE|FALSE>,
+  FLUSH_POLICY = '<policy_string>',
+  DELETED_RETENTION_HOURS = <hours>,
+  TTL_SECONDS = <seconds>,
+  ACCESS_LEVEL = '<PUBLIC|PRIVATE|RESTRICTED>'
+)];
 ```
 
 **Options**:
-- `TTL <seconds>`: **Required** - Time-to-live in seconds (rows expire after this duration)
+- `TYPE`: Table type (`USER`, `SHARED`, `STREAM`). Defaults to `USER` if not specified.
+- `STORAGE_ID`: Storage location reference from `system.storages`.
+- `USE_USER_STORAGE`: (User tables only) Opt-in to per-user storage preferences.
+- `FLUSH_POLICY`: Flush configuration (User/Shared only). Format: `'rows:N'`, `'interval:N'`, or `'rows:N,interval:N'`.
+- `DELETED_RETENTION_HOURS`: Retention period for soft-deleted rows.
+- `TTL_SECONDS`: (Stream tables only) Time-to-live in seconds.
+- `ACCESS_LEVEL`: (Shared tables only) Access control level (`PUBLIC`, `PRIVATE`, `RESTRICTED`).
 
-**Note**: `EPHEMERAL` and `MAX_BUFFER` options shown in examples are **not yet implemented**. Currently only `TTL` is supported.
+**Legacy Syntax** (Supported):
+The legacy syntax `CREATE USER TABLE ... FLUSH ...` is normalized to the unified syntax internally.
 
-**Examples**:
+#### User Tables
+Isolated storage per user.
+
 ```sql
--- Live events with 10-second TTL
-CREATE STREAM TABLE app.live_events (
-  event_id TEXT NOT NULL,
-  event_type TEXT,
+CREATE USER TABLE app.messages (
+  id BIGINT PRIMARY KEY DEFAULT SNOWFLAKE_ID(),
+  content TEXT,
+  created_at TIMESTAMP DEFAULT NOW()
+) WITH (
+  STORAGE_ID = 'local',
+  FLUSH_POLICY = 'rows:1000,interval:60'
+);
+```
+
+#### Shared Tables
+Global storage accessible to all users.
+
+```sql
+CREATE SHARED TABLE app.config (
+  key TEXT PRIMARY KEY,
+  value TEXT,
+  updated_at TIMESTAMP DEFAULT NOW()
+) WITH (
+  ACCESS_LEVEL = 'PUBLIC',
+  FLUSH_POLICY = 'rows:100'
+);
+```
+
+#### Stream Tables
+Ephemeral, memory-only tables with TTL.
+
+```sql
+CREATE STREAM TABLE app.events (
+  event_id TEXT PRIMARY KEY,
   payload TEXT,
   timestamp TIMESTAMP
-) TTL 10;
-
--- Sensor data with 60-second TTL
-CREATE STREAM TABLE app.sensor_data (
-  sensor_id TEXT NOT NULL,
-  temperature DOUBLE,
-  humidity DOUBLE,
-  timestamp TIMESTAMP
-) TTL 60;
-
--- Notifications with 5-second TTL
-CREATE STREAM TABLE app.notifications (
-  user_id TEXT NOT NULL,
-  message TEXT,
-  timestamp TIMESTAMP
-) TTL 5;
+) WITH (
+  TTL_SECONDS = 10
+);
 ```
 
-**Important**:
-- **No system columns**: Stream tables do NOT have `_updated` or `_deleted` columns
-- **Memory-only**: Data stored ONLY in memory (no RocksDB, no Parquet files)
-- **Data lost on restart**: All stream table data is cleared when server restarts (ephemeral by design)
-- **TTL-based eviction**: Old rows automatically deleted when TTL expires
-- **Future features**: `EPHEMERAL` mode and `MAX_BUFFER` limits are planned but not yet implemented
-
-**Storage**:
-- **In-memory only**: Stored in `DashMap<table_key, BTreeMap<event_key, event_data>>`
-- **No persistence**: No RocksDB column families, no Parquet files
-- **No cold tier**: All data is ephemeral and memory-resident
-- **Server restart**: All stream table data is lost (expected behavior)
-
----
-
-### DROP STREAM TABLE
+### DROP TABLE
 
 ```sql
-DROP TABLE [<namespace>.]<table_name>;
+DROP TABLE [IF EXISTS] [<namespace>.]<table_name>;
 ```
-
----
-
-## Schema Evolution
 
 ### ALTER TABLE
 
-Modify table schema (user tables and shared tables only - stream tables are immutable).
+Modify table schema or properties.
 
-#### ADD COLUMN
-
+**Syntax**:
 ```sql
-ALTER TABLE [<namespace>.]<table_name> ADD COLUMN <column_name> <data_type>;
+ALTER TABLE [<namespace>.]<table_name> <operation>;
 ```
+
+**Operations**:
+
+1.  **Add Column**:
+    ```sql
+    ADD COLUMN <name> <type> [NOT NULL|NULL] [DEFAULT <value>]
+    ```
+    *Note: `NOT NULL` columns must have a `DEFAULT` value if table is not empty.*
+
+2.  **Drop Column**:
+    ```sql
+    DROP COLUMN <name>
+    ```
+
+3.  **Modify Column**:
+    ```sql
+    MODIFY COLUMN <name> <type> [NOT NULL|NULL]
+    ```
+
+4.  **Set Access Level** (Shared tables only):
+    ```sql
+    SET TBLPROPERTIES (ACCESS_LEVEL = '<PUBLIC|PRIVATE|RESTRICTED>')
+    -- Legacy syntax also supported:
+    -- SET ACCESS LEVEL <PUBLIC|PRIVATE|RESTRICTED>
+    ```
 
 **Examples**:
 ```sql
-ALTER TABLE app.messages ADD COLUMN reaction TEXT;
-ALTER TABLE app.events ADD COLUMN priority INT;
+ALTER TABLE app.messages ADD COLUMN status TEXT DEFAULT 'sent';
+ALTER TABLE app.messages DROP COLUMN old_field;
+ALTER TABLE app.messages MODIFY COLUMN content TEXT NOT NULL;
+ALTER TABLE app.config SET TBLPROPERTIES (ACCESS_LEVEL = 'RESTRICTED');
 ```
-
-**Notes**:
-- New column is nullable by default
-- Increments schema version
-- Old Parquet files projected to new schema (new column filled with NULL)
-
----
-
-#### DROP COLUMN
-
-```sql
-ALTER TABLE [<namespace>.]<table_name> DROP COLUMN <column_name>;
-```
-
-**Examples**:
-```sql
-ALTER TABLE app.messages DROP COLUMN reaction;
-```
-
-**Restrictions**:
-- Cannot drop system columns (`_updated`, `_deleted`)
-- Cannot drop required columns (would break existing queries)
-
----
-
-#### RENAME COLUMN
-
-```sql
-ALTER TABLE [<namespace>.]<table_name> RENAME COLUMN <old_name> TO <new_name>;
-```
-
-**Examples**:
-```sql
-ALTER TABLE app.messages RENAME COLUMN content TO message_text;
-```
-
-**Restrictions**:
-- Cannot rename system columns (`_updated`, `_deleted`)
-
----
-
-### Restrictions
-
-- **Stream tables**: Schema is immutable (cannot ALTER STREAM TABLE)
-- **System columns**: Cannot alter `_updated` or `_deleted` columns
-- **Active live queries**: ALTER TABLE fails if live queries are subscribed (prevents breaking changes)
 
 ---
 
@@ -993,14 +626,15 @@ Manual flushing allows you to explicitly trigger the flush of data from RocksDB 
 ### FLUSH TABLE
 
 ```sql
-FLUSH TABLE [<namespace>.]<table_name>;
+FLUSH TABLE <namespace>.<table_name>;
 ```
 
 **Behavior**:
-- Triggers asynchronous flush job (returns immediately with job_id)
-- Flush executes in background via JobManager
-- Only works for USER and SHARED tables (not STREAM tables)
-- Prevents concurrent flushes on the same table
+- Triggers asynchronous flush job (returns immediately with job_id).
+- Flush executes in background via JobManager.
+- Only works for USER and SHARED tables (not STREAM tables).
+- Prevents concurrent flushes on the same table.
+- **Namespace is required**.
 
 **Examples**:
 ```sql
@@ -1037,24 +671,22 @@ ORDER BY created_at DESC;
 ### FLUSH ALL TABLES
 
 ```sql
-FLUSH ALL TABLES [IN <namespace>];
+FLUSH ALL TABLES [IN [NAMESPACE] <namespace>];
 ```
 
 **Behavior**:
-- Triggers flush for all USER and SHARED tables in namespace
-- Each table gets its own async flush job
-- Returns array of job_ids (one per table)
-- When the `IN` clause is omitted, the command uses the current session namespace (defaults to `default`)
+- Triggers flush for all USER and SHARED tables in namespace.
+- Each table gets its own async flush job.
+- Returns array of job_ids (one per table).
+- When the `IN` clause is omitted, the command uses the current session namespace (defaults to `default`).
 
 **Examples**:
 ```sql
 -- Flush all tables in app namespace
 FLUSH ALL TABLES IN app;
+FLUSH ALL TABLES IN NAMESPACE app;
 
--- Flush all tables in production namespace
-FLUSH ALL TABLES IN production;
-
--- Use current session namespace (e.g., after `USE analytics;`)
+-- Use current session namespace
 FLUSH ALL TABLES;
 ```
 

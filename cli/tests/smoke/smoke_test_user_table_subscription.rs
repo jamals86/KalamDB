@@ -24,11 +24,11 @@ fn smoke_user_table_subscription_lifecycle() {
 
     // 2) Create user table
     let create_sql = format!(
-        r#"CREATE USER TABLE {} (
+        r#"CREATE TABLE {} (
             id BIGINT AUTO_INCREMENT PRIMARY KEY,
             name VARCHAR NOT NULL,
             created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-        ) FLUSH ROWS 10"#,
+        ) WITH (TYPE='USER', FLUSH_POLICY='rows:10')"#,
         full
     );
     execute_sql_as_root_via_cli(&create_sql).expect("create user table should succeed");

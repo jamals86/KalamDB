@@ -524,10 +524,10 @@ async fn test_access_level_only_on_shared_tables() {
 
     // Test 1: USER table with ACCESS LEVEL should fail
     let create_user_table_sql = r#"
-        CREATE USER TABLE my_data (
+        CREATE TABLE my_data (
             id BIGINT PRIMARY KEY,
             data TEXT
-        ) ACCESS LEVEL public
+        ) WITH (TYPE = 'USER') ACCESS LEVEL public
     "#;
     let result = server
         .execute_sql_as_user(create_user_table_sql, service_username)
@@ -564,10 +564,10 @@ async fn test_alter_access_level_only_on_shared_tables() {
 
     // Create a USER table
     let create_user_table_sql = r#"
-        CREATE USER TABLE personal_notes (
+        CREATE TABLE personal_notes (
             id BIGINT PRIMARY KEY,
             note TEXT
-        )
+        ) WITH (TYPE = 'USER')
     "#;
     let result = server
         .execute_sql_as_user(create_user_table_sql, service_username)

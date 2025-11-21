@@ -47,7 +47,7 @@ fn smoke_queries_benchmark() {
     // order_id BIGINT (PK), customer_id BIGINT, sku TEXT, status TEXT, quantity INT,
     // price DOUBLE, created_at TIMESTAMP, updated_at TIMESTAMP, paid BOOLEAN, notes TEXT
     let create_sql = format!(
-        r#"CREATE USER TABLE {} (
+        r#"CREATE TABLE {} (
             order_id BIGINT AUTO_INCREMENT PRIMARY KEY,
             customer_id BIGINT,
             sku TEXT,
@@ -58,7 +58,7 @@ fn smoke_queries_benchmark() {
             updated_at TIMESTAMP,
             paid BOOLEAN,
             notes TEXT
-        )"#,
+        ) WITH (TYPE = 'USER')"#,
         full
     );
     execute_sql_as_root_via_cli(&create_sql).expect("create user table");

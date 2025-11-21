@@ -21,11 +21,11 @@ async fn test_manual_flush_multi_user_partitions() {
     fixtures::create_namespace(&server, namespace).await;
 
     let create_sql = format!(
-        "CREATE USER TABLE {}.{} (
+        "CREATE TABLE {}.{} (
             id BIGINT PRIMARY KEY,
             message_id BIGINT,
             body TEXT
-        ) FLUSH ROWS 20",
+        ) WITH (TYPE = 'USER', FLUSH_POLICY = 'rows:20')",
         namespace, table_name
     );
     let response = server.execute_sql_as_user(&create_sql, "alice").await;
@@ -81,10 +81,10 @@ async fn test_flush_table_sql_job_and_files() {
     fixtures::create_namespace(&server, namespace).await;
 
     let create_sql = format!(
-        "CREATE USER TABLE {}.{} (
+        "CREATE TABLE {}.{} (
             id BIGINT PRIMARY KEY,
             entry TEXT
-        ) FLUSH ROWS 50",
+        ) WITH (TYPE = 'USER', FLUSH_POLICY = 'rows:50')",
         namespace, table_name
     );
     let response = server.execute_sql_as_user(&create_sql, user_id).await;

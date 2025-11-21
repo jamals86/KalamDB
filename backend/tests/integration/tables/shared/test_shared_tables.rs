@@ -341,11 +341,14 @@ async fn test_shared_table_if_not_exists() {
     // Setup
     fixtures::create_namespace(&server, "test_ns").await;
 
-    let create_sql = r#"CREATE SHARED TABLE IF NOT EXISTS test_ns.conversations (
+    let create_sql = r#"CREATE TABLE IF NOT EXISTS test_ns.conversations (
         id INT AUTO_INCREMENT,
         name VARCHAR NOT NULL,
         value VARCHAR
-    ) FLUSH ROWS 50"#;
+    ) WITH (
+        TYPE='SHARED',
+        FLUSH_POLICY='rows:50'
+    )"#;
 
     // First create should succeed
     let response = server.execute_sql(create_sql).await;
@@ -369,11 +372,14 @@ async fn test_shared_table_flush_policy_rows() {
     // Setup
     fixtures::create_namespace(&server, "test_ns").await;
 
-    let create_sql = r#"CREATE SHARED TABLE test_ns.conversations (
+    let create_sql = r#"CREATE TABLE test_ns.conversations (
         id INT AUTO_INCREMENT,
         name VARCHAR NOT NULL,
         value VARCHAR
-    ) FLUSH ROWS 500"#;
+    ) WITH (
+        TYPE='SHARED',
+        FLUSH_POLICY='rows:500'
+    )"#;
 
     let response = server.execute_sql(create_sql).await;
     assert_eq!(

@@ -121,7 +121,7 @@ async fn test_flush_all_tables_persists_jobs() {
     // Create multiple user tables
     executor
         .execute(
-            "CREATE USER TABLE app.table1 (id INT, data VARCHAR)",
+            "CREATE TABLE app.table1 (id INT, data VARCHAR) WITH (TYPE = 'USER')",
             Some(&admin_id),
         )
         .await
@@ -129,7 +129,7 @@ async fn test_flush_all_tables_persists_jobs() {
 
     executor
         .execute(
-            "CREATE USER TABLE app.table2 (id INT, data VARCHAR)",
+            "CREATE TABLE app.table2 (id INT, data VARCHAR) WITH (TYPE = 'USER')",
             Some(&admin_id),
         )
         .await

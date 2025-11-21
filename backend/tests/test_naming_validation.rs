@@ -78,7 +78,7 @@ async fn test_reserved_column_names() {
     for col_name in reserved_columns {
         let table_name = format!("test_{}", col_name.replace("_", ""));
         let sql = format!(
-            "CREATE USER TABLE test_cols.{} ({} TEXT PRIMARY KEY)",
+            "CREATE TABLE test_cols.{} ({} TEXT PRIMARY KEY) WITH (TYPE = 'USER')",
             table_name, col_name
         );
         let response = server.execute_sql(&sql).await;
@@ -105,7 +105,7 @@ async fn test_valid_column_names() {
 
     for (col_name, table_name) in valid_columns {
         let sql = format!(
-            "CREATE USER TABLE test_valid_cols.{} ({} TEXT PRIMARY KEY)",
+            "CREATE TABLE test_valid_cols.{} ({} TEXT PRIMARY KEY) WITH (TYPE = 'USER')",
             table_name, col_name
         );
         let response = server.execute_sql(&sql).await;
@@ -130,7 +130,8 @@ async fn test_no_auto_id_column_injection() {
     fixtures::create_namespace(&server, "test_no_id").await;
 
     // Create a table with only user-defined columns
-    let sql = "CREATE USER TABLE test_no_id.messages (message TEXT PRIMARY KEY, content TEXT)";
+    let sql =
+        "CREATE TABLE test_no_id.messages (message TEXT PRIMARY KEY, content TEXT) WITH (TYPE = 'USER')";
     let response = server.execute_sql(sql).await;
     assert_eq!(
         response.status,
@@ -158,7 +159,7 @@ async fn test_user_can_use_id_as_column_name() {
     fixtures::create_namespace(&server, "test_user_id").await;
 
     // Users should be able to define their own "id" column if they want
-    let sql = "CREATE USER TABLE test_user_id.products (id TEXT PRIMARY KEY, name TEXT)";
+    let sql = "CREATE TABLE test_user_id.products (id TEXT PRIMARY KEY, name TEXT) WITH (TYPE = 'USER')";
     let response = server.execute_sql(sql).await;
 
     assert_eq!(

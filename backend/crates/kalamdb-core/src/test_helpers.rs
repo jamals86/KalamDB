@@ -37,6 +37,7 @@ pub fn init_test_app_context() -> Arc<TestDb> {
         let test_db = Arc::new(
             TestDb::new(&[
                 "system_tables",
+                "system_audit_log",
                 "system_namespaces",
                 "system_storages",
                 "system_users",

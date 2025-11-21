@@ -24,11 +24,11 @@ async fn test_manual_flush_respects_row_threshold() {
     fixtures::create_namespace(&server, namespace).await;
 
     let create_sql = format!(
-        "CREATE USER TABLE {}.{} (
+        "CREATE TABLE {}.{} (
             id BIGINT PRIMARY KEY,
             content TEXT,
             created_at TIMESTAMP
-        ) FLUSH ROWS 25",
+        ) WITH (TYPE = 'USER', FLUSH_POLICY = 'rows:25')",
         namespace, table_name
     );
     let response = server.execute_sql_as_user(&create_sql, user_id).await;
@@ -76,12 +76,12 @@ async fn test_manual_flush_multiple_batches() {
     fixtures::create_namespace(&server, namespace).await;
 
     let create_sql = format!(
-        "CREATE USER TABLE {}.{} (
+        "CREATE TABLE {}.{} (
             id BIGINT PRIMARY KEY,
             event_id BIGINT,
             category TEXT,
             payload TEXT
-        ) FLUSH ROWS 100 INTERVAL 30s",
+        ) WITH (TYPE = 'USER', FLUSH_POLICY = 'rows:100,interval:30')",
         namespace, table_name
     );
     let response = server.execute_sql_as_user(&create_sql, user_id).await;

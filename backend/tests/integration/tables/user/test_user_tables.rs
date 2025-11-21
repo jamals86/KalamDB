@@ -1,7 +1,7 @@
 //! Integration tests for User Table functionality (Phase 18 - T234-T236, T241)
 //!
 //! Tests the complete lifecycle of user tables:
-//! - CREATE USER TABLE with user_id scoping
+//! - CREATE TABLE (TYPE = 'USER') with user_id scoping
 //! - INSERT operations with user isolation
 //! - UPDATE operations with user isolation
 //! - DELETE operations (soft delete) with user isolation
@@ -34,11 +34,14 @@ async fn create_user_table(
     server
         .execute_sql_as_user(
             &format!(
-                r#"CREATE USER TABLE {}.{} (
+                r#"CREATE TABLE {}.{} (
                 id TEXT PRIMARY KEY,
                 content TEXT,
                 priority INT
-            ) STORAGE local"#,
+            ) WITH (
+                TYPE = 'USER',
+                STORAGE_ID = 'local'
+            )"#,
                 namespace, table_name
             ),
             user_id,
