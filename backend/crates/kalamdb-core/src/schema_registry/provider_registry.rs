@@ -17,7 +17,10 @@ impl std::fmt::Debug for ProviderRegistry {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("ProviderRegistry")
             .field("providers_count", &self.providers.len())
-            .field("base_session_context", &self.base_session_context.get().is_some())
+            .field(
+                "base_session_context",
+                &self.base_session_context.get().is_some(),
+            )
             .finish()
     }
 }

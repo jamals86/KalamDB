@@ -1,6 +1,6 @@
 //! Type-safe table options for different table types
 
-use serde::{Deserialize, Serialize};
+use serde::{Deserialize, Deserializer, Serialize, Serializer};
 
 use crate::{schemas::policy::FlushPolicy, StorageId, TableAccess};
 
@@ -83,13 +83,101 @@ pub struct SystemTableOptions {
 }
 
 /// Union type for all table options
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-#[serde(tag = "table_type", rename_all = "UPPERCASE")]
+#[derive(Debug, Clone, PartialEq)]
 pub enum TableOptions {
     User(UserTableOptions),
     Shared(SharedTableOptions),
     Stream(StreamTableOptions),
     System(SystemTableOptions),
+}
+
+#[derive(Serialize, Deserialize)]
+#[serde(tag = "table_type", rename_all = "UPPERCASE")]
+enum TableOptionsHuman {
+    User(UserTableOptions),
+    Shared(SharedTableOptions),
+    Stream(StreamTableOptions),
+    System(SystemTableOptions),
+}
+
+#[derive(Serialize, Deserialize)]
+enum TableOptionsBinary {
+    User(UserTableOptions),
+    Shared(SharedTableOptions),
+    Stream(StreamTableOptions),
+    System(SystemTableOptions),
+}
+
+impl From<&TableOptions> for TableOptionsHuman {
+    fn from(value: &TableOptions) -> Self {
+        match value {
+            TableOptions::User(opts) => TableOptionsHuman::User(opts.clone()),
+            TableOptions::Shared(opts) => TableOptionsHuman::Shared(opts.clone()),
+            TableOptions::Stream(opts) => TableOptionsHuman::Stream(opts.clone()),
+            TableOptions::System(opts) => TableOptionsHuman::System(opts.clone()),
+        }
+    }
+}
+
+impl From<TableOptionsHuman> for TableOptions {
+    fn from(value: TableOptionsHuman) -> Self {
+        match value {
+            TableOptionsHuman::User(opts) => TableOptions::User(opts),
+            TableOptionsHuman::Shared(opts) => TableOptions::Shared(opts),
+            TableOptionsHuman::Stream(opts) => TableOptions::Stream(opts),
+            TableOptionsHuman::System(opts) => TableOptions::System(opts),
+        }
+    }
+}
+
+impl From<&TableOptions> for TableOptionsBinary {
+    fn from(value: &TableOptions) -> Self {
+        match value {
+            TableOptions::User(opts) => TableOptionsBinary::User(opts.clone()),
+            TableOptions::Shared(opts) => TableOptionsBinary::Shared(opts.clone()),
+            TableOptions::Stream(opts) => TableOptionsBinary::Stream(opts.clone()),
+            TableOptions::System(opts) => TableOptionsBinary::System(opts.clone()),
+        }
+    }
+}
+
+impl From<TableOptionsBinary> for TableOptions {
+    fn from(value: TableOptionsBinary) -> Self {
+        match value {
+            TableOptionsBinary::User(opts) => TableOptions::User(opts),
+            TableOptionsBinary::Shared(opts) => TableOptions::Shared(opts),
+            TableOptionsBinary::Stream(opts) => TableOptions::Stream(opts),
+            TableOptionsBinary::System(opts) => TableOptions::System(opts),
+        }
+    }
+}
+
+impl Serialize for TableOptions {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: Serializer,
+    {
+        if serializer.is_human_readable() {
+            TableOptionsHuman::from(self).serialize(serializer)
+        } else {
+            TableOptionsBinary::from(self).serialize(serializer)
+        }
+    }
+}
+
+impl<'de> Deserialize<'de> for TableOptions {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        if deserializer.is_human_readable() {
+            let human = TableOptionsHuman::deserialize(deserializer)?;
+            Ok(human.into())
+        } else {
+            let binary = TableOptionsBinary::deserialize(deserializer)?;
+            Ok(binary.into())
+        }
+    }
 }
 
 impl TableOptions {

@@ -288,8 +288,6 @@ pub struct SubscriptionManager {
     is_loading: bool,
 }
 
-
-
 impl SubscriptionManager {
     /// Create a new WebSocket subscription
     ///
@@ -414,14 +412,18 @@ impl SubscriptionManager {
 
                             // Handle buffering logic
                             match event {
-                                ChangeEvent::Ack { ref batch_control, .. } => {
+                                ChangeEvent::Ack {
+                                    ref batch_control, ..
+                                } => {
                                     self.is_loading = batch_control.status != BatchStatus::Ready;
                                     self.event_queue.push_back(event);
                                     if !self.is_loading {
                                         self.flush_buffered_changes();
                                     }
                                 }
-                                ChangeEvent::InitialDataBatch { ref batch_control, .. } => {
+                                ChangeEvent::InitialDataBatch {
+                                    ref batch_control, ..
+                                } => {
                                     self.is_loading = batch_control.status != BatchStatus::Ready;
                                     self.event_queue.push_back(event);
                                     if !self.is_loading {
@@ -515,10 +517,7 @@ impl SubscriptionManager {
         let payload = serde_json::to_string(&message).unwrap_or_default();
 
         if !payload.is_empty() {
-            let _ = self
-                .ws_stream
-                .send(Message::Text(payload.into()))
-                .await;
+            let _ = self.ws_stream.send(Message::Text(payload.into())).await;
         }
 
         // Close WebSocket connection

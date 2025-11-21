@@ -480,8 +480,16 @@ impl TypedStatementHandler<DropTableStatement> for DropTableHandler {
             context,
             "DROP",
             "TABLE",
-            &format!("{}.{}", statement.namespace_id.as_str(), statement.table_name.as_str()),
-            Some(format!("Type: {:?}, Cleanup Job: {}", actual_type, job_id.as_str())),
+            &format!(
+                "{}.{}",
+                statement.namespace_id.as_str(),
+                statement.table_name.as_str()
+            ),
+            Some(format!(
+                "Type: {:?}, Cleanup Job: {}",
+                actual_type,
+                job_id.as_str()
+            )),
             None,
         );
         audit::persist_audit_entry(&self.app_context, &audit_entry).await?;

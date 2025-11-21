@@ -358,18 +358,16 @@ impl InsertHandler {
                                         "Named function arguments not supported".into(),
                                     ));
                                 }
-                                sqlparser::ast::FunctionArg::Unnamed(arg_expr) => {
-                                    match arg_expr {
-                                        sqlparser::ast::FunctionArgExpr::Expr(expr) => {
-                                            args.push(self.expr_to_json(expr, params, user_id)?);
-                                        }
-                                        _ => {
-                                            return Err(KalamDbError::InvalidOperation(
-                                                "Unsupported function argument expression type".into(),
-                                            ));
-                                        }
+                                sqlparser::ast::FunctionArg::Unnamed(arg_expr) => match arg_expr {
+                                    sqlparser::ast::FunctionArgExpr::Expr(expr) => {
+                                        args.push(self.expr_to_json(expr, params, user_id)?);
                                     }
-                                }
+                                    _ => {
+                                        return Err(KalamDbError::InvalidOperation(
+                                            "Unsupported function argument expression type".into(),
+                                        ));
+                                    }
+                                },
                                 _ => {
                                     return Err(KalamDbError::InvalidOperation(
                                         "Unsupported function argument type".into(),

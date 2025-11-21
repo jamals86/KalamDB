@@ -16,8 +16,8 @@
 mod common;
 
 use common::{auth_helper, TestServer};
-use kalamdb_commons::Role;
 use kalamdb_api::models::ResponseStatus;
+use kalamdb_commons::Role;
 
 /// End-to-end authentication flow test
 #[actix_web::test]
@@ -49,7 +49,8 @@ async fn test_e2e_auth_flow() {
         .execute_sql_as_user(&create_ns_sql, user.id.as_str())
         .await;
     assert_eq!(
-        response.status, ResponseStatus::Success,
+        response.status,
+        ResponseStatus::Success,
         "Failed to create namespace: {:?}",
         response.error
     );
@@ -68,7 +69,8 @@ async fn test_e2e_auth_flow() {
         eprintln!("❌ CREATE TABLE failed: {:?}", response.error);
     }
     assert_eq!(
-        response.status, ResponseStatus::Success,
+        response.status,
+        ResponseStatus::Success,
         "Failed to create table: {:?}",
         response.error
     );
@@ -88,7 +90,8 @@ async fn test_e2e_auth_flow() {
         eprintln!("   User ID: {}", user.id.as_str());
     }
     assert_eq!(
-        response.status, ResponseStatus::Success,
+        response.status,
+        ResponseStatus::Success,
         "Failed to insert data: {:?}",
         response.error
     );
@@ -100,7 +103,8 @@ async fn test_e2e_auth_flow() {
         .execute_sql_as_user(&select_sql, user.id.as_str())
         .await;
     assert_eq!(
-        response.status, ResponseStatus::Success,
+        response.status,
+        ResponseStatus::Success,
         "Failed to query data: {:?}",
         response.error
     );
@@ -117,7 +121,8 @@ async fn test_e2e_auth_flow() {
     let delete_user_sql = format!("DROP USER '{}'", user.id.as_str());
     let response = server.execute_sql_as_user(&delete_user_sql, "system").await;
     assert_eq!(
-        response.status, ResponseStatus::Success,
+        response.status,
+        ResponseStatus::Success,
         "Failed to soft delete user: {:?}",
         response.error
     );
@@ -131,7 +136,8 @@ async fn test_e2e_auth_flow() {
     // Current behavior: soft-deleted users can still execute SQL via test harness
     // because execute_sql_as_user bypasses credential re-validation. Adjust expectation.
     assert_eq!(
-        response.status, ResponseStatus::Success,
+        response.status,
+        ResponseStatus::Success,
         "Soft-deleted user should not block ad-hoc execution in current model"
     );
     println!("✅ Soft delete recorded; execution still permitted (expected with current harness)");
@@ -173,7 +179,8 @@ async fn test_role_based_auth_e2e() {
         .execute_sql_as_user(&create_ns_sql, dba_user.id.as_str())
         .await;
     assert_eq!(
-        response.status, ResponseStatus::Success,
+        response.status,
+        ResponseStatus::Success,
         "DBA should be able to create namespace"
     );
     println!("✅ DBA user created namespace");
@@ -183,7 +190,8 @@ async fn test_role_based_auth_e2e() {
         .execute_sql_as_user(&create_ns_sql, user_user.id.as_str())
         .await;
     assert_eq!(
-        response.status, ResponseStatus::Error,
+        response.status,
+        ResponseStatus::Error,
         "Regular user should not be able to create namespace"
     );
     println!("✅ Regular user correctly denied namespace creation");
@@ -193,7 +201,8 @@ async fn test_role_based_auth_e2e() {
         .execute_sql_as_user(&create_ns_sql, service_user.id.as_str())
         .await;
     assert_eq!(
-        response.status, ResponseStatus::Error,
+        response.status,
+        ResponseStatus::Error,
         "Service user should not be able to create namespace"
     );
     println!("✅ Service user correctly denied namespace creation");
@@ -208,7 +217,8 @@ async fn test_role_based_auth_e2e() {
         .execute_sql_as_user(&create_table_sql, dba_user.id.as_str())
         .await;
     assert_eq!(
-        response.status, ResponseStatus::Success,
+        response.status,
+        ResponseStatus::Success,
         "DBA should be able to create table"
     );
     println!("✅ DBA user created table");
@@ -228,7 +238,8 @@ async fn test_role_based_auth_e2e() {
         eprintln!("   User ID: {}", user_user.id.as_str());
     }
     assert_eq!(
-        response.status, ResponseStatus::Success,
+        response.status,
+        ResponseStatus::Success,
         "Regular user should be able to create user table"
     );
     println!("✅ Regular user created user table");
@@ -242,7 +253,8 @@ async fn test_role_based_auth_e2e() {
         .execute_sql_as_user(&service_table_sql, service_user.id.as_str())
         .await;
     assert_eq!(
-        response.status, ResponseStatus::Success,
+        response.status,
+        ResponseStatus::Success,
         "Service user should be able to create user table"
     );
     println!("✅ Service user created user table");
@@ -308,7 +320,11 @@ async fn test_password_security_e2e() {
         eprintln!("❌ ALTER USER failed: {:?}", response.error);
         eprintln!("   SQL: {}", change_password_sql);
     }
-    assert_eq!(response.status, ResponseStatus::Success, "Password change should succeed");
+    assert_eq!(
+        response.status,
+        ResponseStatus::Success,
+        "Password change should succeed"
+    );
     println!("✅ Password changed via SQL");
 
     // Verify old password no longer works

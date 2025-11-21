@@ -116,11 +116,7 @@ impl SqlStatement {
     }
 
     /// Create a SqlStatement with AS USER impersonation
-    pub fn with_as_user(
-        sql_text: String,
-        kind: SqlStatementKind,
-        as_user_id: UserId,
-    ) -> Self {
+    pub fn with_as_user(sql_text: String, kind: SqlStatementKind, as_user_id: UserId) -> Self {
         Self {
             sql_text,
             kind,

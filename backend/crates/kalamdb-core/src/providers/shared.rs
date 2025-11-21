@@ -10,10 +10,10 @@
 //! - NO RLS - ignores user_id parameter (operates on all rows)
 //! - SessionState NOT extracted in scan_rows() (scans all rows)
 
-use crate::providers::arrow_json_conversion::{json_to_row, json_value_to_scalar};
-use crate::providers::base::{self, BaseTableProvider, TableProviderCore};
 use crate::app_context::AppContext;
 use crate::error::KalamDbError;
+use crate::providers::arrow_json_conversion::{json_to_row, json_value_to_scalar};
+use crate::providers::base::{self, BaseTableProvider, TableProviderCore};
 use crate::schema_registry::TableType;
 use async_trait::async_trait;
 use datafusion::arrow::datatypes::SchemaRef;
@@ -189,10 +189,14 @@ impl BaseTableProvider<SharedTableRowId, SharedTableRow> for SharedTableProvider
         let prior = EntityStore::get(&*self.store, key)
             .map_err(|e| KalamDbError::Other(format!("Failed to load prior version: {}", e)))?
             .ok_or_else(|| KalamDbError::NotFound("Row not found for update".to_string()))?;
-        
-        let pk_value = prior.fields.get(&pk_name).map(|v| v.to_string()).ok_or_else(|| {
-             KalamDbError::InvalidOperation(format!("Prior row missing PK {}", pk_name))
-        })?;
+
+        let pk_value = prior
+            .fields
+            .get(&pk_name)
+            .map(|v| v.to_string())
+            .ok_or_else(|| {
+                KalamDbError::InvalidOperation(format!("Prior row missing PK {}", pk_name))
+            })?;
 
         // Resolve latest per PK
         let (_latest_key, latest_row) =
@@ -240,7 +244,7 @@ impl BaseTableProvider<SharedTableRowId, SharedTableRow> for SharedTableProvider
         // Include PK in tombstone fields so version resolution collapses correctly
         let mut values = BTreeMap::new();
         values.insert(pk_name, pk_val);
-        
+
         let entity = SharedTableRow {
             _seq: seq_id,
             _deleted: true,

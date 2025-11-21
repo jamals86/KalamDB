@@ -479,11 +479,7 @@ impl Notification {
     }
 
     /// Create an UPDATE change notification
-    pub fn update(
-        subscription_id: String,
-        new_rows: Vec<Row>,
-        old_rows: Vec<Row>,
-    ) -> Self {
+    pub fn update(subscription_id: String, new_rows: Vec<Row>, old_rows: Vec<Row>) -> Self {
         Self::Change {
             subscription_id,
             change_type: ChangeType::Update,
@@ -493,10 +489,7 @@ impl Notification {
     }
 
     /// Create a DELETE change notification
-    pub fn delete(
-        subscription_id: String,
-        old_rows: Vec<Row>,
-    ) -> Self {
+    pub fn delete(subscription_id: String, old_rows: Vec<Row>) -> Self {
         Self::Change {
             subscription_id,
             change_type: ChangeType::Delete,
@@ -518,13 +511,16 @@ impl Notification {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::collections::BTreeMap;
     use datafusion::scalar::ScalarValue;
+    use std::collections::BTreeMap;
 
     fn create_test_row(id: i64, message: &str) -> Row {
         let mut values = BTreeMap::new();
         values.insert("id".to_string(), ScalarValue::Int64(Some(id)));
-        values.insert("message".to_string(), ScalarValue::Utf8(Some(message.to_string())));
+        values.insert(
+            "message".to_string(),
+            ScalarValue::Utf8(Some(message.to_string())),
+        );
         Row::new(values)
     }
 

@@ -176,13 +176,18 @@ pub fn log_auth_event(
     }
 }
 
-use std::sync::Arc;
 use crate::app_context::AppContext;
+use std::sync::Arc;
 
 /// Persist an audit entry to the system.audit_logs table
-pub async fn persist_audit_entry(app_context: &Arc<AppContext>, entry: &AuditLogEntry) -> Result<(), KalamDbError> {
+pub async fn persist_audit_entry(
+    app_context: &Arc<AppContext>,
+    entry: &AuditLogEntry,
+) -> Result<(), KalamDbError> {
     let audit_logs_provider = app_context.system_tables().audit_logs();
-    audit_logs_provider.append(entry.clone()).map_err(|e| KalamDbError::from(e))?;
+    audit_logs_provider
+        .append(entry.clone())
+        .map_err(|e| KalamDbError::from(e))?;
     Ok(())
 }
 

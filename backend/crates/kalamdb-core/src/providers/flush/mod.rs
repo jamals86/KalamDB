@@ -21,7 +21,6 @@
 pub mod base;
 pub mod shared;
 pub mod users;
-pub mod util;
 
 // Re-export common types
 pub use base::{
@@ -29,4 +28,3 @@ pub use base::{
 };
 pub use shared::SharedTableFlushJob;
 pub use users::UserTableFlushJob;
-pub use util::JsonBatchBuilder;

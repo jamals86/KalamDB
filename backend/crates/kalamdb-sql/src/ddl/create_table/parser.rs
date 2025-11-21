@@ -5,15 +5,20 @@ use kalamdb_commons::schemas::policy::FlushPolicy;
 use kalamdb_commons::schemas::{ColumnDefault, TableType};
 use once_cell::sync::Lazy;
 use regex::Regex;
-use sqlparser::ast::{ColumnOption, CreateTable, DataType as SqlDataType, Statement, TableConstraint};
+use sqlparser::ast::{
+    ColumnOption, CreateTable, DataType as SqlDataType, Statement, TableConstraint,
+};
 use std::collections::HashMap;
 use std::sync::Arc;
 
 static RE_ALPHANUMERIC: Lazy<Regex> = Lazy::new(|| Regex::new(r"^[a-zA-Z0-9_]+$").unwrap());
 static RE_STORAGE_ID: Lazy<Regex> = Lazy::new(|| Regex::new(r"^[a-zA-Z0-9_-]+$").unwrap());
-static RE_FLUSH_ROWS: Lazy<Regex> = Lazy::new(|| Regex::new(r"(?i)\s+FLUSH\s+(?:ROWS|ROW_THRESHOLD)\s+(\d+)").unwrap());
-static RE_FLUSH_INTERVAL: Lazy<Regex> = Lazy::new(|| Regex::new(r"(?i)\s+FLUSH\s+INTERVAL\s+(\d+)s?").unwrap());
-static RE_CREATE_TYPE: Lazy<Regex> = Lazy::new(|| Regex::new(r"(?i)^\s*CREATE\s+(USER|SHARED|STREAM)\s+TABLE").unwrap());
+static RE_FLUSH_ROWS: Lazy<Regex> =
+    Lazy::new(|| Regex::new(r"(?i)\s+FLUSH\s+(?:ROWS|ROW_THRESHOLD)\s+(\d+)").unwrap());
+static RE_FLUSH_INTERVAL: Lazy<Regex> =
+    Lazy::new(|| Regex::new(r"(?i)\s+FLUSH\s+INTERVAL\s+(\d+)s?").unwrap());
+static RE_CREATE_TYPE: Lazy<Regex> =
+    Lazy::new(|| Regex::new(r"(?i)^\s*CREATE\s+(USER|SHARED|STREAM)\s+TABLE").unwrap());
 static RE_TTL: Lazy<Regex> = Lazy::new(|| Regex::new(r"(?i)\s+TTL\s+(\d+)").unwrap());
 static RE_STORAGE: Lazy<Regex> = Lazy::new(|| Regex::new(r"(?i)\s+STORAGE\s+'([^']+)'").unwrap());
 
@@ -23,7 +28,16 @@ impl CreateTableStatement {
     /// 2. CREATE [USER|SHARED|STREAM] TABLE -> CREATE TABLE
     /// 3. TTL <seconds>
     /// 4. STORAGE '<storage_id>'
-    fn preprocess_create_table(sql: &str) -> (String, Option<u64>, Option<u64>, Option<TableType>, Option<u64>, Option<StorageId>) {
+    fn preprocess_create_table(
+        sql: &str,
+    ) -> (
+        String,
+        Option<u64>,
+        Option<u64>,
+        Option<TableType>,
+        Option<u64>,
+        Option<StorageId>,
+    ) {
         let mut sql_string = sql.to_string();
         let mut rows = None;
         let mut interval = None;
@@ -80,16 +94,32 @@ impl CreateTableStatement {
                 }
             }
             // Replace with CREATE TABLE
-            sql_string = RE_CREATE_TYPE.replace(&sql_string, "CREATE TABLE").to_string();
+            sql_string = RE_CREATE_TYPE
+                .replace(&sql_string, "CREATE TABLE")
+                .to_string();
         }
 
-        (sql_string, rows, interval, table_type, ttl_seconds, storage_id)
+        (
+            sql_string,
+            rows,
+            interval,
+            table_type,
+            ttl_seconds,
+            storage_id,
+        )
     }
 
     /// Parse a SQL statement into a CreateTableStatement
     pub fn parse(sql: &str, default_namespace: &str) -> Result<Self, String> {
         // Pre-process SQL to handle custom syntax
-        let (cleaned_sql, flush_rows_custom, flush_interval_custom, explicit_type, ttl_custom, storage_custom) = Self::preprocess_create_table(sql);
+        let (
+            cleaned_sql,
+            flush_rows_custom,
+            flush_interval_custom,
+            explicit_type,
+            ttl_custom,
+            storage_custom,
+        ) = Self::preprocess_create_table(sql);
 
         let dialect = sqlparser::dialect::GenericDialect {};
         let mut statements = sqlparser::parser::Parser::parse_sql(&dialect, &cleaned_sql)
@@ -164,7 +194,12 @@ impl CreateTableStatement {
                                     "USER" => TableType::User,
                                     "SHARED" => TableType::Shared,
                                     "STREAM" => TableType::Stream,
-                                    _ => return Err(format!("Invalid table TYPE '{}'. Supported: USER, SHARED, STREAM", value_str)),
+                                    _ => {
+                                        return Err(format!(
+                                        "Invalid table TYPE '{}'. Supported: USER, SHARED, STREAM",
+                                        value_str
+                                    ))
+                                    }
                                 };
                             }
                             "STORAGE_ID" => {
@@ -189,12 +224,21 @@ impl CreateTableStatement {
                                     }
                                     match kv[0].to_uppercase().as_str() {
                                         "ROWS" => {
-                                            rows = kv[1].parse().map_err(|_| "Invalid row limit in FLUSH_POLICY")?;
+                                            rows = kv[1]
+                                                .parse()
+                                                .map_err(|_| "Invalid row limit in FLUSH_POLICY")?;
                                         }
                                         "INTERVAL" => {
-                                            interval = kv[1].parse().map_err(|_| "Invalid interval in FLUSH_POLICY")?;
+                                            interval = kv[1]
+                                                .parse()
+                                                .map_err(|_| "Invalid interval in FLUSH_POLICY")?;
                                         }
-                                        _ => return Err(format!("Unknown FLUSH_POLICY key '{}'", kv[0])),
+                                        _ => {
+                                            return Err(format!(
+                                                "Unknown FLUSH_POLICY key '{}'",
+                                                kv[0]
+                                            ))
+                                        }
                                     }
                                 }
 
@@ -210,19 +254,25 @@ impl CreateTableStatement {
                                         interval_seconds: interval,
                                     }
                                 } else {
-                                    return Err("FLUSH_POLICY must specify 'rows' or 'interval' > 0".to_string());
+                                    return Err(
+                                        "FLUSH_POLICY must specify 'rows' or 'interval' > 0"
+                                            .to_string(),
+                                    );
                                 };
-                                
+
                                 // Validate policy immediately
                                 policy.validate()?;
                                 flush_policy = Some(policy);
                             }
                             "DELETED_RETENTION_HOURS" => {
-                                let hours: u32 = value_str.parse().map_err(|_| "Invalid DELETED_RETENTION_HOURS")?;
+                                let hours: u32 = value_str
+                                    .parse()
+                                    .map_err(|_| "Invalid DELETED_RETENTION_HOURS")?;
                                 deleted_retention_hours = Some(hours);
                             }
                             "TTL_SECONDS" => {
-                                let seconds: u64 = value_str.parse().map_err(|_| "Invalid TTL_SECONDS")?;
+                                let seconds: u64 =
+                                    value_str.parse().map_err(|_| "Invalid TTL_SECONDS")?;
                                 ttl_seconds = Some(seconds);
                             }
                             "ACCESS_LEVEL" => {
@@ -239,10 +289,12 @@ impl CreateTableStatement {
                 }
 
                 // Merge extracted flush options if not already set by WITH clause
-                if flush_policy.is_none() && (flush_rows_custom.is_some() || flush_interval_custom.is_some()) {
+                if flush_policy.is_none()
+                    && (flush_rows_custom.is_some() || flush_interval_custom.is_some())
+                {
                     let rows = flush_rows_custom.unwrap_or(0) as u32;
                     let interval = flush_interval_custom.unwrap_or(0) as u32;
-                    
+
                     let policy = if rows > 0 && interval > 0 {
                         FlushPolicy::Combined {
                             row_limit: rows,
@@ -258,7 +310,7 @@ impl CreateTableStatement {
                         // Should not happen given the check above
                         return Err("Invalid flush options".to_string());
                     };
-                    
+
                     policy.validate()?;
                     flush_policy = Some(policy);
                 }
@@ -298,7 +350,9 @@ impl CreateTableStatement {
                         }
                         TableConstraint::PrimaryKey { columns, .. } => {
                             if columns.len() != 1 {
-                                return Err("Composite PRIMARY KEYs are not supported yet".to_string());
+                                return Err(
+                                    "Composite PRIMARY KEYs are not supported yet".to_string()
+                                );
                             }
                             if primary_key_column.is_some() {
                                 return Err("Multiple PRIMARY KEY definitions found".to_string());
@@ -308,7 +362,9 @@ impl CreateTableStatement {
                             if let sqlparser::ast::Expr::Identifier(ident) = col_expr {
                                 primary_key_column = Some(ident.value.clone());
                             } else {
-                                return Err("Complex expressions in PRIMARY KEY not supported".to_string());
+                                return Err(
+                                    "Complex expressions in PRIMARY KEY not supported".to_string()
+                                );
                             }
                         }
                         _ => {}
@@ -325,16 +381,18 @@ impl CreateTableStatement {
                     }
 
                     let (data_type, is_nullable) = convert_sql_type_to_arrow(&col.data_type)?;
-                    
+
                     // Check column options (PRIMARY KEY, DEFAULT, NOT NULL)
                     let mut col_is_nullable = is_nullable; // Default from type mapping
-                    
+
                     for option in col.options {
                         match option.option {
                             ColumnOption::Unique { is_primary, .. } => {
                                 if is_primary {
                                     if primary_key_column.is_some() {
-                                        return Err("Multiple PRIMARY KEY definitions found".to_string());
+                                        return Err(
+                                            "Multiple PRIMARY KEY definitions found".to_string()
+                                        );
                                     }
                                     primary_key_column = Some(col_name.clone());
                                     col_is_nullable = false; // PKs cannot be null
@@ -352,40 +410,48 @@ impl CreateTableStatement {
                                     sqlparser::ast::Expr::Function(func) => {
                                         let name = func.name.to_string().to_uppercase();
                                         match name.as_str() {
-                                            "NOW" | "CURRENT_TIMESTAMP" | "SNOWFLAKE_ID" | "UUID_V7" | "ULID" | "CURRENT_USER" => {
+                                            "NOW" | "CURRENT_TIMESTAMP" | "SNOWFLAKE_ID"
+                                            | "UUID_V7" | "ULID" | "CURRENT_USER" => {
                                                 ColumnDefault::function(&name, vec![])
                                             }
                                             _ => {
                                                 // Fallback to string literal for unknown functions
-                                                ColumnDefault::literal(serde_json::Value::String(func.to_string()))
+                                                ColumnDefault::literal(serde_json::Value::String(
+                                                    func.to_string(),
+                                                ))
                                             }
                                         }
-                                    },
+                                    }
                                     // Handle literals
-                                    sqlparser::ast::Expr::Value(val) => {
-                                        match &val.value {
-                                            sqlparser::ast::Value::Number(n, _) => {
-                                                if let Ok(i) = n.parse::<i64>() {
-                                                    ColumnDefault::literal(serde_json::Value::Number(i.into()))
-                                                } else if let Ok(f) = n.parse::<f64>() {
-                                                    ColumnDefault::literal(serde_json::json!(f))
-                                                } else {
-                                                    ColumnDefault::literal(serde_json::Value::String(n.clone()))
-                                                }
-                                            },
-                                            sqlparser::ast::Value::SingleQuotedString(s) | sqlparser::ast::Value::DoubleQuotedString(s) => {
-                                                ColumnDefault::literal(serde_json::Value::String(s.clone()))
-                                            },
-                                            sqlparser::ast::Value::Boolean(b) => {
-                                                ColumnDefault::literal(serde_json::Value::Bool(*b))
-                                            },
-                                            sqlparser::ast::Value::Null => {
-                                                ColumnDefault::literal(serde_json::Value::Null)
-                                            },
-                                            _ => {
-                                                ColumnDefault::literal(serde_json::Value::String(val.to_string()))
+                                    sqlparser::ast::Expr::Value(val) => match &val.value {
+                                        sqlparser::ast::Value::Number(n, _) => {
+                                            if let Ok(i) = n.parse::<i64>() {
+                                                ColumnDefault::literal(serde_json::Value::Number(
+                                                    i.into(),
+                                                ))
+                                            } else if let Ok(f) = n.parse::<f64>() {
+                                                ColumnDefault::literal(serde_json::json!(f))
+                                            } else {
+                                                ColumnDefault::literal(serde_json::Value::String(
+                                                    n.clone(),
+                                                ))
                                             }
                                         }
+                                        sqlparser::ast::Value::SingleQuotedString(s)
+                                        | sqlparser::ast::Value::DoubleQuotedString(s) => {
+                                            ColumnDefault::literal(serde_json::Value::String(
+                                                s.clone(),
+                                            ))
+                                        }
+                                        sqlparser::ast::Value::Boolean(b) => {
+                                            ColumnDefault::literal(serde_json::Value::Bool(*b))
+                                        }
+                                        sqlparser::ast::Value::Null => {
+                                            ColumnDefault::literal(serde_json::Value::Null)
+                                        }
+                                        _ => ColumnDefault::literal(serde_json::Value::String(
+                                            val.to_string(),
+                                        )),
                                     },
                                     // Handle identifiers (e.g. CURRENT_TIMESTAMP without parens)
                                     sqlparser::ast::Expr::Identifier(ident) => {
@@ -395,14 +461,18 @@ impl CreateTableStatement {
                                         } else if s == "NULL" {
                                             ColumnDefault::literal(serde_json::Value::Null)
                                         } else {
-                                            ColumnDefault::literal(serde_json::Value::String(ident.value))
+                                            ColumnDefault::literal(serde_json::Value::String(
+                                                ident.value,
+                                            ))
                                         }
-                                    },
+                                    }
                                     _ => {
                                         let default_val = expr.to_string();
                                         if default_val.to_uppercase() == "NULL" {
                                             ColumnDefault::literal(serde_json::Value::Null)
-                                        } else if default_val.to_uppercase() == "CURRENT_TIMESTAMP" || default_val.to_uppercase() == "NOW()" {
+                                        } else if default_val.to_uppercase() == "CURRENT_TIMESTAMP"
+                                            || default_val.to_uppercase() == "NOW()"
+                                        {
                                             ColumnDefault::function("NOW", vec![])
                                         } else {
                                             // Strip quotes if present
@@ -415,12 +485,25 @@ impl CreateTableStatement {
                             }
                             ColumnOption::DialectSpecific(tokens) => {
                                 // Check for AUTO_INCREMENT
-                                let s = tokens.iter().map(|t| t.to_string()).collect::<Vec<_>>().join(" ");
-                                println!("DEBUG: DialectSpecific tokens for column {}: {}", col_name, s);
+                                let s = tokens
+                                    .iter()
+                                    .map(|t| t.to_string())
+                                    .collect::<Vec<_>>()
+                                    .join(" ");
+                                println!(
+                                    "DEBUG: DialectSpecific tokens for column {}: {}",
+                                    col_name, s
+                                );
                                 if s.to_uppercase().contains("AUTO_INCREMENT") {
-                                    println!("DEBUG: Detected AUTO_INCREMENT for column {}", col_name);
+                                    println!(
+                                        "DEBUG: Detected AUTO_INCREMENT for column {}",
+                                        col_name
+                                    );
                                     // Set default to SNOWFLAKE_ID()
-                                    column_defaults.insert(col_name.clone(), ColumnDefault::function("SNOWFLAKE_ID", vec![]));
+                                    column_defaults.insert(
+                                        col_name.clone(),
+                                        ColumnDefault::function("SNOWFLAKE_ID", vec![]),
+                                    );
                                 }
                             }
                             _ => {} // Ignore other options for now
@@ -448,7 +531,10 @@ impl CreateTableStatement {
                         }
                     }
                     if !found {
-                        return Err(format!("PRIMARY KEY column '{}' not found in column list", pk));
+                        return Err(format!(
+                            "PRIMARY KEY column '{}' not found in column list",
+                            pk
+                        ));
                     }
                 }
 
@@ -482,9 +568,10 @@ fn convert_sql_type_to_arrow(sql_type: &SqlDataType) -> Result<(DataType, bool),
         SqlDataType::BigInt(_) => Ok((DataType::Int64, true)),
         SqlDataType::Float(_) => Ok((DataType::Float32, true)),
         SqlDataType::Double(_) | SqlDataType::Real => Ok((DataType::Float64, true)),
-        SqlDataType::Text | SqlDataType::String(_) | SqlDataType::Varchar(_) | SqlDataType::Char(_) => {
-            Ok((DataType::Utf8, true))
-        }
+        SqlDataType::Text
+        | SqlDataType::String(_)
+        | SqlDataType::Varchar(_)
+        | SqlDataType::Char(_) => Ok((DataType::Utf8, true)),
         SqlDataType::Timestamp(precision, _) => {
             // Default to Microsecond precision if not specified
             // Note: DataFusion often prefers Nanosecond, but we use Microsecond for compatibility
@@ -497,8 +584,9 @@ fn convert_sql_type_to_arrow(sql_type: &SqlDataType) -> Result<(DataType, bool),
             Ok((DataType::Timestamp(unit, None), true))
         }
         SqlDataType::Date => Ok((DataType::Date32, true)),
-        SqlDataType::Binary(_) | SqlDataType::Blob(_) | SqlDataType::Bytea => Ok((DataType::Binary, true)),
+        SqlDataType::Binary(_) | SqlDataType::Blob(_) | SqlDataType::Bytea => {
+            Ok((DataType::Binary, true))
+        }
         _ => Err(format!("Unsupported SQL data type: {:?}", sql_type)),
     }
 }
-

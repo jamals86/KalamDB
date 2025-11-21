@@ -22,7 +22,6 @@
 
 use crate::error::KalamDbError;
 use crate::jobs::executors::{JobContext, JobDecision, JobExecutor, JobParams};
-use crate::providers::arrow_json_conversion; // For schema_with_system_columns
 use crate::providers::flush::{SharedTableFlushJob, TableFlush, UserTableFlushJob};
 use async_trait::async_trait;
 use kalamdb_commons::schemas::TableType;
@@ -96,7 +95,7 @@ impl JobExecutor for FlushExecutor {
         // The authoritative Arrow schema should include system columns already
         // because SystemColumnsService injected them into the TableDefinition.
         // Use schema from schema_history if available to avoid stale cache.
-        let base_schema = if let Some(latest) = table_def.schema_history.last() {
+        let schema = if let Some(latest) = table_def.schema_history.last() {
             crate::schema_registry::arrow_schema::ArrowSchemaWithOptions::from_json_string(
                 &latest.arrow_schema_json,
             )
@@ -109,9 +108,6 @@ impl JobExecutor for FlushExecutor {
                 KalamDbError::NotFound(format!("Arrow schema not found for {}: {}", table_id, e))
             })?
         };
-
-        // Ensure system columns are present or add if missing (idempotent)
-        let schema = arrow_json_conversion::schema_with_system_columns(&base_schema);
 
         // Execute flush based on table type
         let result = match table_type {

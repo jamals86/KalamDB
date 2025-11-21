@@ -188,7 +188,9 @@ impl NotificationService {
                     ChangeType::Update => kalamdb_commons::Notification::update(
                         live_id.to_string(),
                         vec![row_data.clone()],
-                        vec![old_data.clone().unwrap_or_else(|| Row::new(BTreeMap::new()))],
+                        vec![old_data
+                            .clone()
+                            .unwrap_or_else(|| Row::new(BTreeMap::new()))],
                     ),
                     ChangeType::Delete => kalamdb_commons::Notification::delete(
                         live_id.to_string(),

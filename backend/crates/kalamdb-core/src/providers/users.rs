@@ -391,9 +391,13 @@ impl BaseTableProvider<UserTableRowId, UserTableRow> for UserTableProvider {
             .ok_or_else(|| KalamDbError::NotFound("Row not found for update".to_string()))?;
 
         let pk_name = self.primary_key_field_name().to_string();
-        let pk_value = prior.fields.get(&pk_name).map(|v| v.to_string()).ok_or_else(|| {
-             KalamDbError::InvalidOperation(format!("Prior row missing PK {}", pk_name))
-        })?;
+        let pk_value = prior
+            .fields
+            .get(&pk_name)
+            .map(|v| v.to_string())
+            .ok_or_else(|| {
+                KalamDbError::InvalidOperation(format!("Prior row missing PK {}", pk_name))
+            })?;
 
         // Find latest resolved row for this PK under same user
         let (_latest_key, latest_row) = base::find_row_by_pk(self, Some(user_id), &pk_value)?
@@ -445,7 +449,7 @@ impl BaseTableProvider<UserTableRowId, UserTableRow> for UserTableProvider {
             .map_err(|e| KalamDbError::Other(format!("Failed to load prior version: {}", e)))?
             .ok_or_else(|| KalamDbError::NotFound("Row not found for delete".to_string()))?;
         let pk_name = self.primary_key_field_name().to_string();
-        
+
         let sys_cols = self.core.system_columns.clone();
         let seq_id = sys_cols.generate_seq_id()?;
         // Preserve the primary key value in the tombstone so version resolution groups
@@ -455,7 +459,7 @@ impl BaseTableProvider<UserTableRowId, UserTableRow> for UserTableProvider {
             .get(&pk_name)
             .cloned()
             .unwrap_or(ScalarValue::Null);
-        
+
         let mut values = BTreeMap::new();
         values.insert(pk_name.clone(), pk_val.clone());
 

@@ -294,11 +294,14 @@ impl TableProvider for UsersTableProvider {
         }
 
         let schema = self.schema.clone();
-        let users = self.store.scan_all(limit, prefix.as_ref(), start_key.as_ref())
+        let users = self
+            .store
+            .scan_all(limit, prefix.as_ref(), start_key.as_ref())
             .map_err(|e| DataFusionError::Execution(format!("Failed to scan users: {}", e)))?;
 
-        let batch = self.create_batch(users)
-            .map_err(|e| DataFusionError::Execution(format!("Failed to build users batch: {}", e)))?;
+        let batch = self.create_batch(users).map_err(|e| {
+            DataFusionError::Execution(format!("Failed to build users batch: {}", e))
+        })?;
 
         let partitions = vec![vec![batch]];
         let table = MemTable::try_new(schema, partitions)

@@ -25,9 +25,7 @@ pub struct CurrentUserFunction {
 impl CurrentUserFunction {
     /// Create a new CURRENT_USER function with no user bound
     pub fn new() -> Self {
-        Self {
-            user_id: None,
-        }
+        Self { user_id: None }
     }
 
     /// Create a CURRENT_USER function bound to a specific user id
@@ -71,7 +69,9 @@ impl ScalarUDFImpl for CurrentUserFunction {
         }
 
         let user_id = self.user_id.as_ref().ok_or_else(|| {
-            DataFusionError::Execution("CURRENT_USER() failed: User ID must not be null or empty".to_string())
+            DataFusionError::Execution(
+                "CURRENT_USER() failed: User ID must not be null or empty".to_string(),
+            )
         })?;
 
         let array = StringArray::from(vec![user_id.as_str()]);

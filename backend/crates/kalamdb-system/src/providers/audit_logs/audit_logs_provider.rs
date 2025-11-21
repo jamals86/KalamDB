@@ -71,7 +71,10 @@ impl AuditLogsTableProvider {
     }
 
     /// Helper to create RecordBatch from entries
-    fn create_batch(&self, entries: Vec<(Vec<u8>, AuditLogEntry)>) -> Result<RecordBatch, SystemError> {
+    fn create_batch(
+        &self,
+        entries: Vec<(Vec<u8>, AuditLogEntry)>,
+    ) -> Result<RecordBatch, SystemError> {
         let row_count = entries.len();
 
         // Pre-allocate builders for optimal performance
@@ -198,11 +201,14 @@ impl TableProvider for AuditLogsTableProvider {
         }
 
         let schema = self.schema.clone();
-        let entries = self.store.scan_all(limit, prefix.as_ref(), start_key.as_ref())
+        let entries = self
+            .store
+            .scan_all(limit, prefix.as_ref(), start_key.as_ref())
             .map_err(|e| DataFusionError::Execution(format!("Failed to scan audit logs: {}", e)))?;
 
-        let batch = self.create_batch(entries)
-            .map_err(|e| DataFusionError::Execution(format!("Failed to build audit log batch: {}", e)))?;
+        let batch = self.create_batch(entries).map_err(|e| {
+            DataFusionError::Execution(format!("Failed to build audit log batch: {}", e))
+        })?;
 
         let partitions = vec![vec![batch]];
         let table = MemTable::try_new(schema, partitions)

@@ -10,6 +10,6 @@ pub mod ws_subscription;
 
 // Re-export commonly used types
 pub use sql_request::SqlRequest;
-pub use sql_response::{ErrorDetail, QueryResult, SqlResponse, ResponseStatus};
+pub use sql_response::{ErrorDetail, QueryResult, ResponseStatus, SqlResponse};
 pub use ws_notification::{ChangeType, Notification};
 pub use ws_subscription::{Subscription, SubscriptionOptions, SubscriptionRequest};

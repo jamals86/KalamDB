@@ -112,8 +112,7 @@ impl SchemaRegistry {
         table_id: TableId,
         provider: Arc<dyn TableProvider + Send + Sync>,
     ) -> Result<(), KalamDbError> {
-        self.provider_registry
-            .insert_provider(table_id, provider)
+        self.provider_registry.insert_provider(table_id, provider)
     }
 
     /// Remove a cached DataFusion provider for a table and unregister from DataFusion

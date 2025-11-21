@@ -7,8 +7,8 @@
 mod common;
 
 use common::{fixtures, flush_helpers, TestServer};
-use kalamdb_commons::models::JobStatus;
 use kalamdb_api::models::ResponseStatus;
+use kalamdb_commons::models::JobStatus;
 
 /// Insert data for multiple users, flush, and ensure each user gets dedicated Parquet files.
 #[tokio::test]

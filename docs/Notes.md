@@ -250,6 +250,9 @@ instead of: 1 failed: Invalid operation: No handler registered for statement typ
 
 171) Use sqlparser-rs for CREATE TABLE parsing as well instead of our own custom parser
 172) instead of returning: (NamespaceId, TableName) return TableId directly
+173) Make sure all keys stored inside rocksdb are big-endian for better range scans and ordering
+174) Make sure we flush the table before we alter it to avoid any data loss from a previous schema, also make sure we lock the table for writing/reading while it is being altered
+175) When altering a table to add/remove columns we need to update the manifest file as well
 
 
 Here’s the updated 5-line spec with embedding storage inside Parquet and managed HNSW indexing (with delete handling):

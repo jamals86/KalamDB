@@ -333,12 +333,14 @@ pub fn verify_job_completed(
         match execute_sql_as_root_via_cli_json(&query) {
             Ok(output) => {
                 println!("Query output: {}", output); // DEBUG
-                // Parse JSON output
-                let json: serde_json::Value = serde_json::from_str(&output)
-                    .map_err(|e| format!("Failed to parse JSON output: {}. Output: {}", e, output))?;
+                                                      // Parse JSON output
+                let json: serde_json::Value = serde_json::from_str(&output).map_err(|e| {
+                    format!("Failed to parse JSON output: {}. Output: {}", e, output)
+                })?;
 
                 // Navigate to results[0].rows[0]
-                let row = json.get("results")
+                let row = json
+                    .get("results")
                     .and_then(|v| v.as_array())
                     .and_then(|arr| arr.first())
                     .and_then(|res| res.get("rows"))
@@ -347,7 +349,10 @@ pub fn verify_job_completed(
 
                 if let Some(row) = row {
                     let status = row.get("status").and_then(|v| v.as_str()).unwrap_or("");
-                    let error_message = row.get("error_message").and_then(|v| v.as_str()).unwrap_or("");
+                    let error_message = row
+                        .get("error_message")
+                        .and_then(|v| v.as_str())
+                        .unwrap_or("");
 
                     // Debug print status
                     println!("Job {} status: {}", job_id, status);
@@ -357,7 +362,9 @@ pub fn verify_job_completed(
                     }
 
                     if status.eq_ignore_ascii_case("failed") {
-                        return Err(format!("Job {} failed. Error: {}", job_id, error_message).into());
+                        return Err(
+                            format!("Job {} failed. Error: {}", job_id, error_message).into()
+                        );
                     }
                 }
             }

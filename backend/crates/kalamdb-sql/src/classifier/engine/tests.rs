@@ -189,39 +189,25 @@ mod tests {
         let default_ns = NamespaceId::new("default");
 
         // Admin user (System) - can do anything
-        let stmt = SqlStatement::classify_and_parse(
-            "CREATE NAMESPACE test",
-            &default_ns,
-            Role::System,
-        )
-        .unwrap();
+        let stmt =
+            SqlStatement::classify_and_parse("CREATE NAMESPACE test", &default_ns, Role::System)
+                .unwrap();
         assert!(matches!(stmt.kind, SqlStatementKind::CreateNamespace(_)));
 
         // Regular user - cannot create namespace
-        let err = SqlStatement::classify_and_parse(
-            "CREATE NAMESPACE test",
-            &default_ns,
-            Role::User,
-        )
-        .unwrap_err();
+        let err =
+            SqlStatement::classify_and_parse("CREATE NAMESPACE test", &default_ns, Role::User)
+                .unwrap_err();
         assert!(err.contains("Admin privileges"));
 
         // Regular user - can select
-        let stmt = SqlStatement::classify_and_parse(
-            "SELECT * FROM users",
-            &default_ns,
-            Role::User,
-        )
-        .unwrap();
+        let stmt = SqlStatement::classify_and_parse("SELECT * FROM users", &default_ns, Role::User)
+            .unwrap();
         assert!(matches!(stmt.kind, SqlStatementKind::Select));
 
         // Regular user - can show tables
-        let stmt = SqlStatement::classify_and_parse(
-            "SHOW TABLES",
-            &default_ns,
-            Role::User,
-        )
-        .unwrap();
+        let stmt =
+            SqlStatement::classify_and_parse("SHOW TABLES", &default_ns, Role::User).unwrap();
         assert!(matches!(stmt.kind, SqlStatementKind::ShowTables(_)));
     }
 

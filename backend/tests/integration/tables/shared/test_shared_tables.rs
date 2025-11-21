@@ -24,7 +24,8 @@ async fn test_shared_table_create_and_drop() {
     // Create namespace first
     let response = fixtures::create_namespace(&server, "test_ns").await;
     assert_eq!(
-        response.status, ResponseStatus::Success,
+        response.status,
+        ResponseStatus::Success,
         "Failed to create namespace: {:?}",
         response.error
     );
@@ -32,7 +33,8 @@ async fn test_shared_table_create_and_drop() {
     // Create shared table
     let response = fixtures::create_shared_table(&server, "test_ns", "conversations").await;
     assert_eq!(
-        response.status, ResponseStatus::Success,
+        response.status,
+        ResponseStatus::Success,
         "Failed to create shared table: {:?}",
         response.error
     );
@@ -46,7 +48,8 @@ async fn test_shared_table_create_and_drop() {
     // Drop table
     let response = fixtures::drop_table(&server, "test_ns", "conversations").await;
     assert_eq!(
-        response.status, ResponseStatus::Success,
+        response.status,
+        ResponseStatus::Success,
         "Failed to drop table: {:?}",
         response.error
     );
@@ -76,7 +79,8 @@ async fn test_shared_table_insert_and_select() {
         .await;
 
     assert_eq!(
-        response.status, ResponseStatus::Success,
+        response.status,
+        ResponseStatus::Success,
         "Failed to insert: {:?}",
         response.error
     );
@@ -87,7 +91,8 @@ async fn test_shared_table_insert_and_select() {
     ).await;
 
     assert_eq!(
-        response.status, ResponseStatus::Success,
+        response.status,
+        ResponseStatus::Success,
         "Failed to select: {:?}",
         response.error
     );
@@ -127,7 +132,8 @@ async fn test_shared_table_multiple_inserts() {
         )
         .await;
     assert_eq!(
-        response.status, ResponseStatus::Success,
+        response.status,
+        ResponseStatus::Success,
         "Failed to insert multiple rows: {:?}",
         response.error
     );
@@ -188,7 +194,8 @@ async fn test_shared_table_update() {
         )
         .await;
     assert_eq!(
-        response.status, ResponseStatus::Success,
+        response.status,
+        ResponseStatus::Success,
         "Failed to update: {:?}",
         response.error
     );
@@ -238,7 +245,8 @@ async fn test_shared_table_select() {
         .await;
 
     assert_eq!(
-        response.status, ResponseStatus::Success,
+        response.status,
+        ResponseStatus::Success,
         "Failed to select: {:?}",
         response.error
     );
@@ -277,7 +285,8 @@ async fn test_shared_table_delete() {
         .await;
 
     assert_eq!(
-        response.status, ResponseStatus::Success,
+        response.status,
+        ResponseStatus::Success,
         "Failed to delete: {:?}",
         response.error
     );
@@ -310,7 +319,8 @@ async fn test_shared_table_system_columns() {
         .await;
 
     assert_eq!(
-        response.status, ResponseStatus::Success,
+        response.status,
+        ResponseStatus::Success,
         "Failed to query system columns: {:?}",
         response.error
     );
@@ -344,7 +354,8 @@ async fn test_shared_table_if_not_exists() {
     // Second create with IF NOT EXISTS should also succeed (no-op)
     let response = server.execute_sql(create_sql).await;
     assert_eq!(
-        response.status, ResponseStatus::Success,
+        response.status,
+        ResponseStatus::Success,
         "IF NOT EXISTS should not fail on duplicate: {:?}",
         response.error
     );
@@ -366,7 +377,8 @@ async fn test_shared_table_flush_policy_rows() {
 
     let response = server.execute_sql(create_sql).await;
     assert_eq!(
-        response.status, ResponseStatus::Success,
+        response.status,
+        ResponseStatus::Success,
         "Failed to create table with FLUSH ROWS: {:?}",
         response.error
     );
@@ -398,7 +410,8 @@ async fn test_shared_table_query_filtering() {
         .await;
 
     assert_eq!(
-        response.status, ResponseStatus::Success,
+        response.status,
+        ResponseStatus::Success,
         "Failed to query with filter: {:?}",
         response.error
     );
@@ -438,7 +451,8 @@ async fn test_shared_table_ordering() {
         .await;
 
     assert_eq!(
-        response.status, ResponseStatus::Success,
+        response.status,
+        ResponseStatus::Success,
         "Failed to query with ORDER BY: {:?}",
         response.error
     );
@@ -466,7 +480,8 @@ async fn test_shared_table_drop_with_data() {
     // Drop table with data
     let response = fixtures::drop_table(&server, "test_ns", "conversations").await;
     assert_eq!(
-        response.status, ResponseStatus::Success,
+        response.status,
+        ResponseStatus::Success,
         "Failed to drop table with data: {:?}",
         response.error
     );

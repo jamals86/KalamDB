@@ -17,9 +17,7 @@
 
 use clap::Parser;
 
-use kalam_cli::{
-    CLIConfiguration, CLIError, FileCredentialStore, Result,
-};
+use kalam_cli::{CLIConfiguration, CLIError, FileCredentialStore, Result};
 
 mod args;
 mod commands;

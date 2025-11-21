@@ -158,6 +158,8 @@ impl ColumnDefinition {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use bincode::config::standard;
+    use bincode::serde::{decode_from_slice, encode_to_vec};
     use serde_json::json;
 
     #[test]
@@ -242,5 +244,26 @@ mod tests {
         );
         assert!(col.is_partition_key);
         assert!(!col.is_primary_key);
+    }
+
+    #[test]
+    fn test_bincode_roundtrip() {
+        let column = ColumnDefinition::new(
+            "status",
+            5,
+            KalamDataType::Text,
+            false,
+            false,
+            false,
+            ColumnDefault::literal(json!({"state": "active"})),
+            Some("Status column".to_string()),
+        );
+
+        let config = standard();
+        let bytes = encode_to_vec(&column, config).expect("encode column definition");
+        let (decoded, _): (ColumnDefinition, usize) =
+            decode_from_slice(&bytes, config).expect("decode column definition");
+
+        assert_eq!(decoded, column);
     }
 }

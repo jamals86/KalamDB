@@ -56,7 +56,6 @@ impl SqlExecutor {
         }
     }
 
-
     /// Clear the plan cache (e.g., after DDL operations)
     pub fn clear_plan_cache(&self) {
         self.plan_cache.clear();
@@ -426,18 +425,13 @@ impl SqlExecutor {
                 if let Ok(Some(def)) = schema_registry.get_table_definition(&table_id) {
                     if matches!(def.table_type, TableType::Shared) {
                         let access_level = if let TableOptions::Shared(opts) = &def.table_options {
-                            opts.access_level
-                                .clone()
-                                .unwrap_or(TableAccess::Private)
+                            opts.access_level.clone().unwrap_or(TableAccess::Private)
                         } else {
                             TableAccess::Private
                         };
 
-                        if !can_access_shared_table(
-                            access_level.clone(),
-                            false,
-                            exec_ctx.user_role,
-                        ) {
+                        if !can_access_shared_table(access_level.clone(), false, exec_ctx.user_role)
+                        {
                             return Err(KalamDbError::Unauthorized(format!(
                                 "Insufficient privileges to read shared table '{}.{}' (Access Level: {:?})",
                                 ns.as_str(),

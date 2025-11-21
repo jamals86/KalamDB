@@ -40,7 +40,8 @@ async fn test_create_table_without_pk_rejected() {
 
     // Should fail with error about missing primary key
     assert_eq!(
-        response.status, ResponseStatus::Error,
+        response.status,
+        ResponseStatus::Error,
         "CREATE TABLE without PK should fail, got: {:?}",
         response
     );
@@ -80,7 +81,8 @@ async fn test_create_table_auto_adds_system_columns() {
         .await;
 
     assert_eq!(
-        response.status, ResponseStatus::Success,
+        response.status,
+        ResponseStatus::Success,
         "CREATE TABLE should succeed: {:?}",
         response.error
     );
@@ -180,7 +182,8 @@ async fn test_insert_storage_key_format() {
         .await;
 
     assert_eq!(
-        response.status, ResponseStatus::Success,
+        response.status,
+        ResponseStatus::Success,
         "User table INSERT should succeed: {:?}",
         response.error
     );
@@ -195,7 +198,8 @@ async fn test_insert_storage_key_format() {
         .await;
 
     assert_eq!(
-        response.status, ResponseStatus::Success,
+        response.status,
+        ResponseStatus::Success,
         "Shared table INSERT should succeed: {:?}",
         response.error
     );
@@ -398,7 +402,11 @@ async fn test_insert_duplicate_pk_rejected() {
         )
         .await;
 
-    assert_eq!(response.status, ResponseStatus::Success, "First INSERT should succeed");
+    assert_eq!(
+        response.status,
+        ResponseStatus::Success,
+        "First INSERT should succeed"
+    );
 
     // Try to insert duplicate PK (should fail - user provided explicit PK value)
     let response = server
@@ -411,7 +419,8 @@ async fn test_insert_duplicate_pk_rejected() {
 
     // Should fail with uniqueness constraint error
     assert_eq!(
-        response.status, ResponseStatus::Error,
+        response.status,
+        ResponseStatus::Error,
         "Duplicate PK INSERT should fail when user provides explicit PK value"
     );
 
@@ -457,7 +466,8 @@ async fn test_insert_duplicate_pk_rejected() {
         .await;
 
     assert_eq!(
-        response.status, ResponseStatus::Success,
+        response.status,
+        ResponseStatus::Success,
         "INSERT with different PK should succeed"
     );
 

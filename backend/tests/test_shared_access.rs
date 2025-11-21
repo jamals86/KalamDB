@@ -50,11 +50,12 @@ async fn init_server() -> (TestServer, String) {
 
     // Create namespace as system user (system user is bootstrapped by TestServer)
     let create_ns_sql = format!("CREATE NAMESPACE {}", namespace);
-    let result = server
-        .execute_sql_as_user(&create_ns_sql, "system")
-        .await;
+    let result = server.execute_sql_as_user(&create_ns_sql, "system").await;
     if !is_success(&result) {
-        panic!("Failed to create namespace {}: {:?}", namespace, result.error);
+        panic!(
+            "Failed to create namespace {}: {:?}",
+            namespace, result.error
+        );
     }
 
     (server, namespace)
@@ -86,15 +87,19 @@ async fn test_public_table_read_only_for_users() {
             .await;
 
     // Create column family for the shared table
-    create_shared_table_cf(&server, &namespace, "messages").expect("Failed to create column family");
+    create_shared_table_cf(&server, &namespace, "messages")
+        .expect("Failed to create column family");
 
     // Create a public shared table (as service user with correct user_id)
-    let create_table_sql = format!(r#"
+    let create_table_sql = format!(
+        r#"
         CREATE SHARED TABLE {}.messages (
             id BIGINT PRIMARY KEY,
             content TEXT NOT NULL
         ) ACCESS LEVEL public
-    "#, namespace);
+    "#,
+        namespace
+    );
     let result = server
         .execute_sql_as_user(&create_table_sql, service_user.id.as_str())
         .await;
@@ -123,7 +128,10 @@ async fn test_public_table_read_only_for_users() {
     );
 
     // Test 2: Regular user CANNOT insert into public table (read-only)
-    let insert_sql = format!("INSERT INTO {}.messages (id, content) VALUES (1, 'test')", namespace);
+    let insert_sql = format!(
+        "INSERT INTO {}.messages (id, content) VALUES (1, 'test')",
+        namespace
+    );
     let result = server
         .execute_sql_as_user(&insert_sql, regular_user.id.as_str())
         .await;
@@ -133,7 +141,10 @@ async fn test_public_table_read_only_for_users() {
     );
 
     // Test 3: Regular user CANNOT update public table
-    let update_sql = format!("UPDATE {}.messages SET content = 'updated' WHERE id = 1", namespace);
+    let update_sql = format!(
+        "UPDATE {}.messages SET content = 'updated' WHERE id = 1",
+        namespace
+    );
     let result = server
         .execute_sql_as_user(&update_sql, regular_user.id.as_str())
         .await;
@@ -179,12 +190,15 @@ async fn test_private_table_service_dba_only() {
             .await;
 
     // Create a private shared table (as service user)
-    let create_table_sql = format!(r#"
+    let create_table_sql = format!(
+        r#"
         CREATE SHARED TABLE {}.sensitive_data (
             id BIGINT PRIMARY KEY,
             secret TEXT NOT NULL
         ) ACCESS LEVEL private
-    "#, namespace);
+    "#,
+        namespace
+    );
     let result = server
         .execute_sql_as_user(&create_table_sql, service_user.id.as_str())
         .await;
@@ -225,7 +239,10 @@ async fn test_private_table_service_dba_only() {
     );
 
     // Test 4: Service user CAN modify private table
-    let insert_sql = format!("INSERT INTO {}.sensitive_data (id, secret) VALUES (1, 'confidential')", namespace);
+    let insert_sql = format!(
+        "INSERT INTO {}.sensitive_data (id, secret) VALUES (1, 'confidential')",
+        namespace
+    );
     let result = server
         .execute_sql_as_user(&insert_sql, service_user.id.as_str())
         .await;
@@ -246,15 +263,19 @@ async fn test_shared_table_defaults_to_private() {
     // Create a service user
     let service_username = format!("service_{}", suffix);
     let service_password = "ServicePass123!";
-    auth_helper::create_test_user(&server, &service_username, service_password, Role::Service).await;
+    auth_helper::create_test_user(&server, &service_username, service_password, Role::Service)
+        .await;
 
     // Create shared table WITHOUT specifying ACCESS LEVEL
-    let create_table_sql = format!(r#"
+    let create_table_sql = format!(
+        r#"
         CREATE SHARED TABLE {}.default_access (
             id BIGINT PRIMARY KEY,
             data TEXT
         )
-    "#, namespace);
+    "#,
+        namespace
+    );
     let result = server
         .execute_sql_as_user(&create_table_sql, &service_username)
         .await;
@@ -340,12 +361,15 @@ async fn test_change_access_level_requires_privileges() {
             .await;
 
     // Create a private shared table
-    let create_table_sql = format!(r#"
+    let create_table_sql = format!(
+        r#"
         CREATE SHARED TABLE {}.config (
             id BIGINT PRIMARY KEY,
             value TEXT
         ) ACCESS LEVEL private
-    "#, namespace);
+    "#,
+        namespace
+    );
     let result = server
         .execute_sql_as_user(&create_table_sql, service_user.id.as_str())
         .await;
@@ -450,12 +474,15 @@ async fn test_user_cannot_modify_public_table() {
         auth_helper::create_test_user(&server, &service_username, service_password, Role::Service)
             .await;
 
-    let create_table_sql = format!(r#"
+    let create_table_sql = format!(
+        r#"
         CREATE SHARED TABLE {}.announcements (
             id BIGINT PRIMARY KEY,
             message TEXT NOT NULL
         ) ACCESS LEVEL public
-    "#, namespace);
+    "#,
+        namespace
+    );
     let result = server
         .execute_sql_as_user(&create_table_sql, service_user.id.as_str())
         .await;
@@ -466,7 +493,10 @@ async fn test_user_cannot_modify_public_table() {
     );
 
     // Service user adds some data
-    let insert_sql = format!("INSERT INTO {}.announcements (id, message) VALUES (1, 'Welcome')", namespace);
+    let insert_sql = format!(
+        "INSERT INTO {}.announcements (id, message) VALUES (1, 'Welcome')",
+        namespace
+    );
     let result = server
         .execute_sql_as_user(&insert_sql, service_user.id.as_str())
         .await;
@@ -495,7 +525,10 @@ async fn test_user_cannot_modify_public_table() {
     );
 
     // Test 2: Regular user CANNOT insert
-    let insert_sql = format!("INSERT INTO {}.announcements (id, message) VALUES (2, 'Hacked')", namespace);
+    let insert_sql = format!(
+        "INSERT INTO {}.announcements (id, message) VALUES (2, 'Hacked')",
+        namespace
+    );
     let result = server
         .execute_sql_as_user(&insert_sql, regular_user.id.as_str())
         .await;
@@ -505,7 +538,10 @@ async fn test_user_cannot_modify_public_table() {
     );
 
     // Test 3: Regular user CANNOT update
-    let update_sql = format!("UPDATE {}.announcements SET message = 'Modified' WHERE id = 1", namespace);
+    let update_sql = format!(
+        "UPDATE {}.announcements SET message = 'Modified' WHERE id = 1",
+        namespace
+    );
     let result = server
         .execute_sql_as_user(&update_sql, regular_user.id.as_str())
         .await;
@@ -525,7 +561,10 @@ async fn test_user_cannot_modify_public_table() {
     );
 
     // Test 5: Service user CAN still modify (verification)
-    let update_sql = format!("UPDATE {}.announcements SET message = 'Updated by service' WHERE id = 1", namespace);
+    let update_sql = format!(
+        "UPDATE {}.announcements SET message = 'Updated by service' WHERE id = 1",
+        namespace
+    );
     let result = server
         .execute_sql_as_user(&update_sql, service_user.id.as_str())
         .await;
@@ -545,7 +584,8 @@ async fn test_access_level_only_on_shared_tables() {
 
     let service_username = format!("service_{}", suffix);
     let service_password = "ServicePass123!";
-    auth_helper::create_test_user(&server, &service_username, service_password, Role::Service).await;
+    auth_helper::create_test_user(&server, &service_username, service_password, Role::Service)
+        .await;
 
     // Test 1: USER table with ACCESS LEVEL should fail
     let create_user_table_sql = r#"
@@ -587,15 +627,19 @@ async fn test_alter_access_level_only_on_shared_tables() {
 
     let service_username = format!("service_{}", suffix);
     let service_password = "ServicePass123!";
-    auth_helper::create_test_user(&server, &service_username, service_password, Role::Service).await;
+    auth_helper::create_test_user(&server, &service_username, service_password, Role::Service)
+        .await;
 
     // Create a USER table
-    let create_user_table_sql = format!(r#"
+    let create_user_table_sql = format!(
+        r#"
         CREATE USER TABLE {}.personal_notes (
             id BIGINT PRIMARY KEY,
             note TEXT
         )
-    "#, namespace);
+    "#,
+        namespace
+    );
     let result = server
         .execute_sql_as_user(&create_user_table_sql, &service_username)
         .await;
@@ -606,7 +650,10 @@ async fn test_alter_access_level_only_on_shared_tables() {
     );
 
     // Try to set ACCESS LEVEL on USER table - should fail
-    let alter_sql = format!("ALTER TABLE {}.personal_notes SET ACCESS LEVEL public", namespace);
+    let alter_sql = format!(
+        "ALTER TABLE {}.personal_notes SET ACCESS LEVEL public",
+        namespace
+    );
     let result = server
         .execute_sql_as_user(&alter_sql, &service_username)
         .await;

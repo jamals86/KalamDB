@@ -45,14 +45,8 @@ impl TypedStatementHandler<DropUserStatement> for DropUserHandler {
 
         // Log DDL operation
         use crate::sql::executor::helpers::audit;
-        let audit_entry = audit::log_ddl_operation(
-            context,
-            "DROP",
-            "USER",
-            &statement.username,
-            None,
-            None,
-        );
+        let audit_entry =
+            audit::log_ddl_operation(context, "DROP", "USER", &statement.username, None, None);
         audit::persist_audit_entry(&self.app_context, &audit_entry).await?;
 
         Ok(ExecutionResult::Success {

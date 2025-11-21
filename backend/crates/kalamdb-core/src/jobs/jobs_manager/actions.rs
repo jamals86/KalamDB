@@ -1,8 +1,8 @@
 use super::types::JobsManager;
-use kalamdb_commons::{JobId, JobStatus, JobType, NamespaceId};
-use kalamdb_commons::system::{Job, JobOptions};
 use crate::error::KalamDbError;
 use crate::jobs::executors::JobParams;
+use kalamdb_commons::system::{Job, JobOptions};
+use kalamdb_commons::{JobId, JobStatus, JobType, NamespaceId};
 
 impl JobsManager {
     /// Create a new job
@@ -80,9 +80,9 @@ impl JobsManager {
         }
 
         // Persist job
-        self.jobs_provider.insert_job(job.clone()).map_err(|e| {
-            KalamDbError::IoError(format!("Failed to create job: {}", e))
-        })?;
+        self.jobs_provider
+            .insert_job(job.clone())
+            .map_err(|e| KalamDbError::IoError(format!("Failed to create job: {}", e)))?;
 
         // Log job creation
         self.log_job_event(
@@ -148,9 +148,7 @@ impl JobsManager {
             .jobs_provider
             .get_job(job_id)
             .map_err(|e| KalamDbError::IoError(format!("Failed to get job: {}", e)))?
-            .ok_or_else(|| {
-                KalamDbError::NotFound(format!("Job {} not found", job_id))
-            })?;
+            .ok_or_else(|| KalamDbError::NotFound(format!("Job {} not found", job_id)))?;
 
         // Can only cancel New, Queued, or Running jobs
         if !matches!(
@@ -168,9 +166,7 @@ impl JobsManager {
 
         self.jobs_provider
             .update_job(cancelled_job.clone())
-            .map_err(|e| {
-                KalamDbError::IoError(format!("Failed to cancel job: {}", e))
-            })?;
+            .map_err(|e| KalamDbError::IoError(format!("Failed to cancel job: {}", e)))?;
 
         // Log cancellation
         self.log_job_event(job_id, "warn", "Job cancelled by user");
@@ -191,9 +187,10 @@ impl JobsManager {
         job_id: &JobId,
         message: Option<String>,
     ) -> Result<(), KalamDbError> {
-        let mut job = self.get_job(job_id).await?.ok_or_else(|| {
-            KalamDbError::Other(format!("Job {} not found", job_id))
-        })?;
+        let mut job = self
+            .get_job(job_id)
+            .await?
+            .ok_or_else(|| KalamDbError::Other(format!("Job {} not found", job_id)))?;
 
         // Update job to completed status
         let now_ms = chrono::Utc::now().timestamp_millis();
@@ -204,9 +201,9 @@ impl JobsManager {
         job.updated_at = now_ms;
         job.finished_at = Some(now_ms);
 
-        self.jobs_provider.update_job(job.clone()).map_err(|e| {
-            KalamDbError::Other(format!("Failed to complete job: {}", e))
-        })?;
+        self.jobs_provider
+            .update_job(job.clone())
+            .map_err(|e| KalamDbError::Other(format!("Failed to complete job: {}", e)))?;
 
         self.log_job_event(job_id, "info", &format!("{}", success_message));
         Ok(())
@@ -225,9 +222,10 @@ impl JobsManager {
         job_id: &JobId,
         error_message: String,
     ) -> Result<(), KalamDbError> {
-        let mut job = self.get_job(job_id).await?.ok_or_else(|| {
-            KalamDbError::Other(format!("Job {} not found", job_id))
-        })?;
+        let mut job = self
+            .get_job(job_id)
+            .await?
+            .ok_or_else(|| KalamDbError::Other(format!("Job {} not found", job_id)))?;
 
         // Manually update job to failed state
         let now_ms = chrono::Utc::now().timestamp_millis();
@@ -238,9 +236,9 @@ impl JobsManager {
         job.updated_at = now_ms;
         job.finished_at = Some(now_ms);
 
-        self.jobs_provider.update_job(job).map_err(|e| {
-            KalamDbError::Other(format!("Failed to mark job as failed: {}", e))
-        })?;
+        self.jobs_provider
+            .update_job(job)
+            .map_err(|e| KalamDbError::Other(format!("Failed to mark job as failed: {}", e)))?;
 
         self.log_job_event(job_id, "error", &format!("Job failed: {}", error_message));
         Ok(())

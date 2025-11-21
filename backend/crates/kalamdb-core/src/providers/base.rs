@@ -18,11 +18,11 @@ use async_trait::async_trait;
 use datafusion::arrow::datatypes::SchemaRef;
 use datafusion::arrow::record_batch::RecordBatch;
 use datafusion::catalog::Session;
+use datafusion::datasource::memory::MemTable;
 use datafusion::datasource::TableProvider;
+use datafusion::error::{DataFusionError, Result as DataFusionResult};
 use datafusion::logical_expr::{Expr, TableProviderFilterPushDown};
 use datafusion::physical_plan::{ExecutionPlan, Statistics};
-use datafusion::datasource::memory::MemTable;
-use datafusion::error::{DataFusionError, Result as DataFusionResult};
 use datafusion::scalar::ScalarValue;
 use kalamdb_commons::ids::SeqId;
 use kalamdb_commons::models::{NamespaceId, Row, TableName, UserId};
@@ -32,13 +32,11 @@ use std::sync::Arc;
 
 // Re-export types moved to submodules
 pub use crate::providers::core::TableProviderCore;
-pub use crate::providers::scan_row::{
-    inject_system_columns, row_to_json_map, rows_to_arrow_batch, ScanRow,
-};
 pub use crate::providers::helpers::{
     extract_seq_bounds_from_filter, resolve_user_scope, system_user_id,
 };
 pub(crate) use crate::providers::parquet::scan_parquet_files_as_batch;
+pub use crate::providers::scan_row::{inject_system_columns, rows_to_arrow_batch, ScanRow};
 
 /// Unified trait for all table providers with generic storage abstraction
 ///
@@ -332,11 +330,7 @@ pub trait BaseTableProvider<K: StorageKey, V>: Send + Sync + TableProvider {
 
         // If filters are empty, batch is already projected, so we scan all columns of MemTable.
         // If filters are present, batch has all columns, so we apply projection in MemTable scan.
-        let final_projection = if filters.is_empty() {
-            None
-        } else {
-            projection
-        };
+        let final_projection = if filters.is_empty() { None } else { projection };
 
         mem.scan(state, final_projection, filters, limit).await
     }

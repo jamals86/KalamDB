@@ -24,7 +24,8 @@ async fn test_reserved_namespace_names() {
             response.status,
             ResponseStatus::Error,
             "Should reject reserved namespace name '{}', but got status: {}",
-            name, response.status
+            name,
+            response.status
         );
 
         if let Some(error) = &response.error {
@@ -56,7 +57,8 @@ async fn test_valid_namespace_names() {
             response.status,
             ResponseStatus::Success,
             "Should accept valid namespace name '{}', but got error: {:?}",
-            name, response.error
+            name,
+            response.error
         );
         // Targeted cleanup to avoid cross-test interference
         let _ = server.cleanup_namespace(name).await;
@@ -112,7 +114,8 @@ async fn test_valid_column_names() {
             response.status,
             ResponseStatus::Success,
             "Should accept valid column name '{}', but got error: {:?}",
-            col_name, response.error
+            col_name,
+            response.error
         );
     }
     // Targeted cleanup for this namespace

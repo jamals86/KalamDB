@@ -247,8 +247,15 @@ impl TypedStatementHandler<AlterTableStatement> for AlterTableHandler {
             context,
             "ALTER",
             "TABLE",
-            &format!("{}.{}", namespace_id.as_str(), statement.table_name.as_str()),
-            Some(format!("Operation: {}, New Version: {}", change_desc, table_def.schema_version)),
+            &format!(
+                "{}.{}",
+                namespace_id.as_str(),
+                statement.table_name.as_str()
+            ),
+            Some(format!(
+                "Operation: {}, New Version: {}",
+                change_desc, table_def.schema_version
+            )),
             None,
         );
         audit::persist_audit_entry(&self.app_context, &audit_entry).await?;

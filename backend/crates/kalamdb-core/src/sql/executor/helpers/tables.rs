@@ -72,7 +72,8 @@ pub fn save_table_definition(
                 .map(|pk| pk == field.name())
                 .unwrap_or(false);
 
-            let default_val = stmt.column_defaults
+            let default_val = stmt
+                .column_defaults
                 .get(field.name())
                 .cloned()
                 .unwrap_or(ColumnDefault::None);

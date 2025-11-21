@@ -632,7 +632,11 @@ async fn test_14_template_validation_invalid_order() {
     "#;
 
     let response = server.execute_sql(sql).await;
-    assert_eq!(response.status, ResponseStatus::Error, "Invalid template should fail");
+    assert_eq!(
+        response.status,
+        ResponseStatus::Error,
+        "Invalid template should fail"
+    );
 }
 
 // ============================================================================

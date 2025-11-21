@@ -62,7 +62,8 @@ async fn test_soft_delete_hides_rows() {
         .await;
 
     assert_eq!(
-        response.status, ResponseStatus::Success,
+        response.status,
+        ResponseStatus::Success,
         "DELETE should succeed: {:?}",
         response.error
     );

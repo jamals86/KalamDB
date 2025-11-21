@@ -3,7 +3,9 @@
 //! Handles registration and unregistration of live query subscriptions,
 //! including permission checks, filter compilation, and system table updates.
 
-use super::connection_registry::{ConnectionId, LiveId, LiveQueryOptions, LiveQueryRegistry, NodeId};
+use super::connection_registry::{
+    ConnectionId, LiveId, LiveQueryOptions, LiveQueryRegistry, NodeId,
+};
 use super::filter::FilterCache;
 use super::query_parser::QueryParser;
 use crate::error::KalamDbError;

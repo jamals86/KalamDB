@@ -6,8 +6,8 @@
 mod common;
 
 use common::{fixtures, TestServer};
-use kalamdb_commons::models::{AuthType, Role, StorageMode, UserId, UserName};
 use kalamdb_api::models::ResponseStatus;
+use kalamdb_commons::models::{AuthType, Role, StorageMode, UserId, UserName};
 
 async fn insert_user(server: &TestServer, username: &str, role: Role) -> UserId {
     // Note: Users provider treats user_id as username key; keep them equal
@@ -229,11 +229,7 @@ async fn test_dba_can_manage_users() {
     if resp.status != ResponseStatus::Success {
         eprintln!("DBA create user error: {:?}", resp.error);
     }
-    assert_eq!(
-        resp.status,
-        ResponseStatus::Success,
-        "dba can create users"
-    );
+    assert_eq!(resp.status, ResponseStatus::Success, "dba can create users");
 }
 
 #[actix_web::test]

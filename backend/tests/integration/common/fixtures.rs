@@ -572,9 +572,11 @@ mod tests {
                 );
             }
             assert_eq!(
-                response.status, ResponseStatus::Success,
+                response.status,
+                ResponseStatus::Success,
                 "Insert {} failed: {:?}",
-                i, response.error
+                i,
+                response.error
             );
         }
     }

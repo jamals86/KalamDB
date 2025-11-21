@@ -154,7 +154,9 @@ pub async fn execute_sql_v1(
                             true,
                             resolved_ip.clone(),
                         );
-                        if let Err(e) = audit::persist_audit_entry(app_context.get_ref(), &entry).await {
+                        if let Err(e) =
+                            audit::persist_audit_entry(app_context.get_ref(), &entry).await
+                        {
                             error!("Failed to persist audit log: {}", e);
                         }
                     }
@@ -168,7 +170,9 @@ pub async fn execute_sql_v1(
                 if let Ok(h) = auth_val.to_str() {
                     if h.starts_with("Basic ") {
                         // Try to extract username to log who failed
-                        let username = if let Ok((u, _)) = kalamdb_auth::basic_auth::parse_basic_auth_header(h) {
+                        let username = if let Ok((u, _)) =
+                            kalamdb_auth::basic_auth::parse_basic_auth_header(h)
+                        {
                             u
                         } else {
                             "unknown".to_string()
@@ -180,7 +184,9 @@ pub async fn execute_sql_v1(
                             false,
                             resolved_ip.clone(),
                         );
-                        if let Err(e) = audit::persist_audit_entry(app_context.get_ref(), &entry).await {
+                        if let Err(e) =
+                            audit::persist_audit_entry(app_context.get_ref(), &entry).await
+                        {
                             error!("Failed to persist audit log: {}", e);
                         }
                     }

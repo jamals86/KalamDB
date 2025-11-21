@@ -7,14 +7,15 @@ use super::base::{FlushJobResult, FlushMetadata, TableFlush};
 use crate::error::KalamDbError;
 use crate::live_query::{ChangeNotification, LiveQueryManager};
 use crate::manifest::{FlushManifestHelper, ManifestCacheService, ManifestService};
+use crate::providers::arrow_json_conversion::json_rows_to_arrow_batch;
 use crate::schema_registry::SchemaRegistry;
 use crate::storage::ParquetWriter;
 use datafusion::arrow::datatypes::SchemaRef;
 use datafusion::arrow::record_batch::RecordBatch;
-use kalamdb_commons::models::{TableId, UserId};
+use datafusion::scalar::ScalarValue;
+use kalamdb_commons::models::{Row, TableId, UserId};
 use kalamdb_store::entity_store::EntityStore;
 use kalamdb_tables::UserTableStore;
-use serde_json::Value as JsonValue;
 use std::path::PathBuf;
 use std::sync::Arc;
 
@@ -92,51 +93,18 @@ impl UserTableFlushJob {
             .get_storage_path(&*self.table_id, Some(user_id), None)?)
     }
 
-    /// Parse user key to extract user_id and row_id
-    fn parse_user_key(&self, key_str: &str) -> Result<(String, String), KalamDbError> {
-        let delimiter = if key_str.contains('#') { '#' } else { ':' };
-
-        let mut parts = key_str.splitn(2, delimiter);
-        let user_id = parts
-            .next()
-            .ok_or_else(|| {
-                KalamDbError::Other(format!("Invalid user table key format: {}", key_str))
-            })?
-            .to_string();
-        let row_id = parts
-            .next()
-            .ok_or_else(|| {
-                KalamDbError::Other(format!("Invalid user table key format: {}", key_str))
-            })?
-            .to_string();
-
-        Ok((user_id, row_id))
-    }
-
     /// Convert JSON rows to Arrow RecordBatch
-    fn rows_to_record_batch(
-        &self,
-        rows: &[(Vec<u8>, JsonValue)],
-    ) -> Result<RecordBatch, KalamDbError> {
-        let mut builder = super::util::JsonBatchBuilder::new(self.schema.clone())?;
-
-        for (key_bytes, row) in rows.iter() {
-            let key_str = String::from_utf8_lossy(key_bytes).to_string();
-            let (_user_from_key, _row_id_from_key) = self
-                .parse_user_key(&key_str)
-                .unwrap_or_else(|_| (String::new(), String::new()));
-
-            let patched = row.clone();
-            builder.push_object_row(&patched)?;
-        }
-        builder.finish()
+    fn rows_to_record_batch(&self, rows: &[(Vec<u8>, Row)]) -> Result<RecordBatch, KalamDbError> {
+        let arrow_rows: Vec<Row> = rows.iter().map(|(_, row)| row.clone()).collect();
+        json_rows_to_arrow_batch(&self.schema, arrow_rows)
+            .map_err(|e| KalamDbError::Other(format!("Failed to build RecordBatch: {}", e)))
     }
 
     /// Flush accumulated rows for a single user to Parquet
     fn flush_user_data(
         &self,
         user_id: &str,
-        rows: &[(Vec<u8>, JsonValue)],
+        rows: &[(Vec<u8>, Row)],
         parquet_files: &mut Vec<String>,
         bloom_filter_columns: &[String],
     ) -> Result<usize, KalamDbError> {
@@ -267,15 +235,16 @@ impl TableFlush for UserTableFlushJob {
         );
 
         // Scan all rows (EntityStore::scan_all returns Vec<(Vec<u8>, V)>)
-        let entries = EntityStore::scan_all(self.store.as_ref(), None, None, None).map_err(|e| {
-            log::error!(
-                "❌ Failed to scan table={}.{}: {}",
-                self.namespace_id().as_str(),
-                self.table_name().as_str(),
-                e
-            );
-            KalamDbError::Other(format!("Failed to scan table: {}", e))
-        })?;
+        let entries =
+            EntityStore::scan_all(self.store.as_ref(), None, None, None).map_err(|e| {
+                log::error!(
+                    "❌ Failed to scan table={}.{}: {}",
+                    self.namespace_id().as_str(),
+                    self.table_name().as_str(),
+                    e
+                );
+                KalamDbError::Other(format!("Failed to scan table: {}", e))
+            })?;
 
         let rows_before_dedup = entries.len();
         log::info!(
@@ -371,7 +340,7 @@ impl TableFlush for UserTableFlushJob {
                    rows_before_dedup, rows_after_dedup, dedup_ratio, deleted_count);
 
         // STEP 2: Filter out deleted rows (tombstones)
-        let mut rows_by_user: HashMap<String, Vec<(Vec<u8>, JsonValue)>> = HashMap::new();
+        let mut rows_by_user: HashMap<String, Vec<(Vec<u8>, Row)>> = HashMap::new();
         let mut tombstones_filtered = 0;
 
         for ((user_id, _pk_value), (key_bytes, row, _seq)) in latest_versions {
@@ -382,14 +351,15 @@ impl TableFlush for UserTableFlushJob {
             }
 
             // Convert to JSON and inject system columns
-            let mut row_data = serde_json::to_value(&row.fields).unwrap_or(JsonValue::Null);
-            if let Some(obj) = row_data.as_object_mut() {
-                obj.insert(
-                    "_seq".to_string(),
-                    JsonValue::Number(row._seq.as_i64().into()),
-                );
-                obj.insert("_deleted".to_string(), JsonValue::Bool(false));
-            }
+            let mut row_data = row.fields.clone();
+            row_data.values.insert(
+                "_seq".to_string(),
+                ScalarValue::Int64(Some(row._seq.as_i64())),
+            );
+            row_data.values.insert(
+                "_deleted".to_string(),
+                ScalarValue::Boolean(Some(false)),
+            );
 
             rows_by_user
                 .entry(user_id)

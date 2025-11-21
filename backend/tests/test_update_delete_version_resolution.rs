@@ -46,7 +46,8 @@ async fn test_update_in_fast_storage() {
         )
         .await;
     assert_eq!(
-        create_response.status, ResponseStatus::Success,
+        create_response.status,
+        ResponseStatus::Success,
         "CREATE TABLE failed: {:?}",
         create_response.error
     );
@@ -71,7 +72,8 @@ async fn test_update_in_fast_storage() {
         .await;
 
     assert_eq!(
-        response.status, ResponseStatus::Success,
+        response.status,
+        ResponseStatus::Success,
         "UPDATE should succeed: {:?}",
         response.error
     );
@@ -89,7 +91,8 @@ async fn test_update_in_fast_storage() {
         response.status, response.error
     );
     assert_eq!(
-        response.status, ResponseStatus::Success,
+        response.status,
+        ResponseStatus::Success,
         "Query failed: {:?}",
         response.error
     );
@@ -148,7 +151,8 @@ async fn test_update_in_parquet() {
         .await;
 
     assert_eq!(
-        response.status, ResponseStatus::Success,
+        response.status,
+        ResponseStatus::Success,
         "UPDATE on flushed record should succeed: {:?}",
         response.error
     );
@@ -412,7 +416,8 @@ async fn test_delete_in_parquet() {
         .await;
 
     assert_eq!(
-        response.status, ResponseStatus::Success,
+        response.status,
+        ResponseStatus::Success,
         "DELETE on flushed record should succeed: {:?}",
         response.error
     );

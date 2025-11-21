@@ -11,10 +11,7 @@
 //! - HOT-ONLY storage (RocksDB, no Parquet merging)
 //! - TTL-based eviction in scan operations
 
-use super::base::{
-    extract_seq_bounds_from_filter, BaseTableProvider,
-    TableProviderCore,
-};
+use super::base::{extract_seq_bounds_from_filter, BaseTableProvider, TableProviderCore};
 use crate::app_context::AppContext;
 use crate::error::KalamDbError;
 use crate::schema_registry::TableType;
@@ -26,6 +23,7 @@ use datafusion::datasource::TableProvider;
 use datafusion::error::Result as DataFusionResult;
 use datafusion::logical_expr::{Expr, TableProviderFilterPushDown};
 use datafusion::physical_plan::ExecutionPlan;
+use datafusion::scalar::ScalarValue;
 use kalamdb_commons::ids::StreamTableRowId;
 use kalamdb_commons::models::UserId;
 use kalamdb_commons::{Role, StorageKey, TableId};
@@ -39,7 +37,6 @@ use std::sync::Arc;
 use crate::live_query::ChangeNotification;
 use crate::providers::arrow_json_conversion::json_to_row;
 use kalamdb_commons::models::Row;
-use serde_json::json;
 
 /// Stream table provider with RLS and TTL filtering
 ///
@@ -330,9 +327,12 @@ impl BaseTableProvider<StreamTableRowId, StreamTableRow> for StreamTableProvider
 
         let schema = self.schema_ref();
         let has_user = schema.field_with_name("user_id").is_ok();
-        crate::providers::base::rows_to_arrow_batch(&schema, kvs, projection, |obj, row| {
+        crate::providers::base::rows_to_arrow_batch(&schema, kvs, projection, |row_values, row| {
             if has_user {
-                obj.insert("user_id".to_string(), json!(row.user_id.as_str()));
+                row_values.values.insert(
+                    "user_id".to_string(),
+                    ScalarValue::Utf8(Some(row.user_id.as_str().to_string())),
+                );
             }
         })
     }

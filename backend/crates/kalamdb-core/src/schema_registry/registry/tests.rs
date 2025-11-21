@@ -1,14 +1,14 @@
 use super::*;
+use crate::schema_registry::CachedTableData;
+use datafusion::catalog::TableProvider;
 use kalamdb_commons::datatypes::KalamDataType;
 use kalamdb_commons::models::schemas::{ColumnDefinition, TableDefinition};
 use kalamdb_commons::models::{NamespaceId, TableId, TableName, UserId};
 use kalamdb_commons::schemas::TableType;
-use std::sync::Arc;
 use std::sync::atomic::AtomicU64;
+use std::sync::Arc;
 use std::thread;
 use std::time::Duration;
-use crate::schema_registry::CachedTableData;
-use datafusion::catalog::TableProvider;
 
 fn create_test_schema() -> Arc<TableDefinition> {
     use kalamdb_commons::schemas::{ColumnDefault, TableOptions};
@@ -516,8 +516,7 @@ fn test_provider_cache_insert_and_get() {
     use kalamdb_system::providers::stats::StatsTableProvider;
     let cache = SchemaRegistry::new(1000);
     let table_id = TableId::new(NamespaceId::new("ns1"), TableName::new("stats"));
-    let provider =
-        Arc::new(StatsTableProvider::new(None)) as Arc<dyn TableProvider + Send + Sync>;
+    let provider = Arc::new(StatsTableProvider::new(None)) as Arc<dyn TableProvider + Send + Sync>;
 
     cache
         .insert_provider(table_id.clone(), Arc::clone(&provider))

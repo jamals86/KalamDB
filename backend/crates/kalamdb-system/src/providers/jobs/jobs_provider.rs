@@ -56,11 +56,9 @@ impl JobsTableProvider {
         // Maintain index: Status + CreatedAt + JobId
         let index_key = make_status_index_key(job.status, job.created_at, &job.job_id);
         let partition = Partition::new(StoragePartition::SystemJobsStatusIdx.name());
-        self.store.backend().put(
-            &partition,
-            &index_key,
-            job.job_id.as_bytes(),
-        )?;
+        self.store
+            .backend()
+            .put(&partition, &index_key, job.job_id.as_bytes())?;
 
         self.store.put(&job.job_id, &job)?;
         Ok(())
@@ -98,21 +96,17 @@ impl JobsTableProvider {
         // Maintain index if status or created_at changed (created_at shouldn't change, but just in case)
         if old_job.status != job.status || old_job.created_at != job.created_at {
             let partition = Partition::new(StoragePartition::SystemJobsStatusIdx.name());
-            
+
             // Remove old index entry
             let old_index_key =
                 make_status_index_key(old_job.status, old_job.created_at, &old_job.job_id);
-            self.store
-                .backend()
-                .delete(&partition, &old_index_key)?;
+            self.store.backend().delete(&partition, &old_index_key)?;
 
             // Add new index entry
             let new_index_key = make_status_index_key(job.status, job.created_at, &job.job_id);
-            self.store.backend().put(
-                &partition,
-                &new_index_key,
-                job.job_id.as_bytes(),
-            )?;
+            self.store
+                .backend()
+                .put(&partition, &new_index_key, job.job_id.as_bytes())?;
         }
 
         self.store.put(&job.job_id, &job)?;
@@ -125,9 +119,7 @@ impl JobsTableProvider {
         if let Some(job) = self.store.get(job_id)? {
             let index_key = make_status_index_key(job.status, job.created_at, &job.job_id);
             let partition = Partition::new(StoragePartition::SystemJobsStatusIdx.name());
-            self.store
-                .backend()
-                .delete(&partition, &index_key)?;
+            self.store.backend().delete(&partition, &index_key)?;
         }
 
         self.store.delete(job_id)?;
@@ -171,12 +163,12 @@ impl JobsTableProvider {
 
                 // Prefix for this status: [status_byte]
                 let prefix = vec![status_to_u8(status)];
-                
+
                 // Scan index
                 let index_entries = self.store.backend().scan(
                     &partition,
                     Some(&prefix),
-                    None, // Start key (could optimize created_after here)
+                    None,                     // Start key (could optimize created_after here)
                     Some(limit - jobs.len()), // Remaining limit
                 )?;
 
@@ -194,7 +186,7 @@ impl JobsTableProvider {
                     }
                 }
             }
-            
+
             return Ok(jobs);
         }
 
@@ -212,7 +204,7 @@ impl JobsTableProvider {
                 JobSortField::UpdatedAt => jobs.sort_by_key(|j| j.updated_at),
                 JobSortField::Priority => jobs.sort_by_key(|j| j.priority.unwrap_or(0)),
             }
-            
+
             if filter.sort_order == Some(SortOrder::Desc) {
                 jobs.reverse();
             }
@@ -270,7 +262,7 @@ impl JobsTableProvider {
                 return false;
             }
         }
-        
+
         // Filter by created_after
         if let Some(after) = filter.created_after {
             if job.created_at < after {
@@ -470,7 +462,7 @@ fn status_to_u8(status: JobStatus) -> u8 {
 
 fn make_status_index_key(status: JobStatus, created_at: i64, job_id: &JobId) -> Vec<u8> {
     let status_byte = status_to_u8(status);
-    
+
     let mut key = Vec::with_capacity(1 + 8 + job_id.as_bytes().len());
     key.push(status_byte);
     key.extend_from_slice(&created_at.to_be_bytes());
@@ -530,11 +522,14 @@ impl TableProvider for JobsTableProvider {
         }
 
         let schema = self.schema.clone();
-        let jobs = self.store.scan_all(limit, prefix.as_ref(), start_key.as_ref())
+        let jobs = self
+            .store
+            .scan_all(limit, prefix.as_ref(), start_key.as_ref())
             .map_err(|e| DataFusionError::Execution(format!("Failed to scan jobs: {}", e)))?;
 
-        let batch = self.create_batch(jobs)
-            .map_err(|e| DataFusionError::Execution(format!("Failed to build jobs batch: {}", e)))?;
+        let batch = self.create_batch(jobs).map_err(|e| {
+            DataFusionError::Execution(format!("Failed to build jobs batch: {}", e))
+        })?;
 
         let partitions = vec![vec![batch]];
         let table = MemTable::try_new(schema, partitions)

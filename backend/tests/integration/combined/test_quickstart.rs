@@ -14,8 +14,8 @@
 mod common;
 
 use common::{fixtures, TestServer};
-use std::time::Instant;
 use kalamdb_api::models::ResponseStatus;
+use std::time::Instant;
 
 #[actix_web::test]
 async fn test_01_create_namespace() {
@@ -81,7 +81,8 @@ async fn test_03_insert_data() {
             response.status,
             ResponseStatus::Success,
             "Insert {} failed: {:?}",
-            i, response.error
+            i,
+            response.error
         );
     }
 

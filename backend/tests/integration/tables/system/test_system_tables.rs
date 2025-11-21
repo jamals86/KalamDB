@@ -98,7 +98,8 @@ async fn test_02_query_system_table_schemas() {
             response.status,
             ResponseStatus::Success,
             "Failed to query {}: {:?}",
-            table, response.error
+            table,
+            response.error
         );
     }
 }

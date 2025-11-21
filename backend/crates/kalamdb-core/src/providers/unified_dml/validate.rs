@@ -44,7 +44,6 @@ pub fn extract_user_pk_value(
     }
 }
 
-
 /// Validate primary key for INSERT operation
 ///
 /// **MVCC Architecture**: This function checks:

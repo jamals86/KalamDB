@@ -75,7 +75,9 @@ pub fn append_version_sync(
                 _seq: seq_id,
                 _deleted: deleted,
                 fields: json_to_row(&fields).ok_or_else(|| {
-                    KalamDbError::InvalidOperation("Invalid JSON fields: must be an object".to_string())
+                    KalamDbError::InvalidOperation(
+                        "Invalid JSON fields: must be an object".to_string(),
+                    )
                 })?,
             };
 
@@ -108,7 +110,9 @@ pub fn append_version_sync(
                 _seq: seq_id,
                 _deleted: deleted,
                 fields: json_to_row(&fields).ok_or_else(|| {
-                    KalamDbError::InvalidOperation("Invalid JSON fields: must be an object".to_string())
+                    KalamDbError::InvalidOperation(
+                        "Invalid JSON fields: must be an object".to_string(),
+                    )
                 })?,
             };
 

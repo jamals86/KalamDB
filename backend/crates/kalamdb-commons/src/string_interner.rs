@@ -22,6 +22,7 @@
 //! ```
 
 use crate::constants::SystemColumnNames;
+use dashmap::mapref::entry::Entry;
 use dashmap::DashMap;
 use once_cell::sync::Lazy;
 use std::sync::Arc;
@@ -48,10 +49,15 @@ pub fn intern(s: &str) -> Arc<str> {
         return entry.key().clone();
     }
 
-    // Insert new string and return it
-    let arc: Arc<str> = Arc::from(s);
-    INTERNER.insert(arc.clone(), ());
-    arc
+    // Insert new string or reuse canonical entry (handles concurrent inserts)
+    match INTERNER.entry(Arc::<str>::from(s)) {
+        Entry::Occupied(existing) => existing.key().clone(),
+        Entry::Vacant(vacant) => {
+            let key = vacant.key().clone();
+            vacant.insert(());
+            key
+        }
+    }
 }
 
 /// Pre-interned system column names
