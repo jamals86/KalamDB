@@ -394,33 +394,42 @@ pub fn setup_benchmark_tables() -> anyhow::Result<()> {
 
     // Create user table
     let user_table_sql = r#"
-        CREATE USER TABLE IF NOT EXISTS bench_user.items (
+        CREATE TABLE IF NOT EXISTS bench_user.items (
             id BIGINT PRIMARY KEY DEFAULT SNOWFLAKE_ID(),
             value TEXT,
             timestamp TIMESTAMP DEFAULT NOW()
-        ) FLUSH ROWS 100000
+        ) WITH (
+            TYPE='USER',
+            FLUSH_POLICY='rows:100000'
+        )
     "#;
     execute_cli_timed_root(user_table_sql)?;
     std::thread::sleep(Duration::from_millis(100));
 
     // Create shared table
     let shared_table_sql = r#"
-        CREATE SHARED TABLE IF NOT EXISTS bench_shared.items (
+        CREATE TABLE IF NOT EXISTS bench_shared.items (
             id BIGINT PRIMARY KEY DEFAULT SNOWFLAKE_ID(),
             value TEXT,
             timestamp TIMESTAMP DEFAULT NOW()
-        ) FLUSH ROWS 100000
+        ) WITH (
+            TYPE='SHARED',
+            FLUSH_POLICY='rows:100000'
+        )
     "#;
     execute_cli_timed_root(shared_table_sql)?;
     std::thread::sleep(Duration::from_millis(100));
 
     // Create stream table
     let stream_table_sql = r#"
-        CREATE STREAM TABLE IF NOT EXISTS bench_stream.events (
+        CREATE TABLE IF NOT EXISTS bench_stream.events (
             id BIGINT PRIMARY KEY DEFAULT SNOWFLAKE_ID(),
             value TEXT,
             timestamp TIMESTAMP DEFAULT NOW()
-        ) TTL 10
+        ) WITH (
+            TYPE='STREAM',
+            TTL_SECONDS=10
+        )
     "#;
     execute_cli_timed_root(stream_table_sql)?;
     std::thread::sleep(Duration::from_millis(100));

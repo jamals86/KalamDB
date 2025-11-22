@@ -1,13 +1,13 @@
 //! Column default value specification
 
-use serde::{Deserialize, Serialize};
+use serde::de::Error as DeError;
+use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use serde_json::Value as JsonValue;
 
 /// Represents the default value for a column
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Default)]
+#[derive(Debug, Clone, PartialEq)]
 pub enum ColumnDefault {
     /// No default value - column must be specified in INSERT
-    #[default]
     None,
 
     /// Literal value as JSON (supports all KalamDataTypes)
@@ -22,6 +22,121 @@ pub enum ColumnDefault {
         /// Function arguments (empty for no-arg functions)
         args: Vec<JsonValue>,
     },
+}
+
+impl Serialize for ColumnDefault {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: Serializer,
+    {
+        if serializer.is_human_readable() {
+            let repr = ColumnDefaultRepr::from(self);
+            repr.serialize(serializer)
+        } else {
+            let stored = StoredColumnDefault::from(self);
+            stored.serialize(serializer)
+        }
+    }
+}
+
+impl<'de> Deserialize<'de> for ColumnDefault {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        if deserializer.is_human_readable() {
+            let repr = ColumnDefaultRepr::deserialize(deserializer)?;
+            Ok(repr.into())
+        } else {
+            let stored = StoredColumnDefault::deserialize(deserializer)?;
+            ColumnDefault::try_from(stored).map_err(DeError::custom)
+        }
+    }
+}
+
+impl Default for ColumnDefault {
+    fn default() -> Self {
+        ColumnDefault::None
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+enum ColumnDefaultRepr {
+    None,
+    Literal(JsonValue),
+    FunctionCall { name: String, args: Vec<JsonValue> },
+}
+
+impl From<&ColumnDefault> for ColumnDefaultRepr {
+    fn from(value: &ColumnDefault) -> Self {
+        match value {
+            ColumnDefault::None => ColumnDefaultRepr::None,
+            ColumnDefault::Literal(json) => ColumnDefaultRepr::Literal(json.clone()),
+            ColumnDefault::FunctionCall { name, args } => ColumnDefaultRepr::FunctionCall {
+                name: name.clone(),
+                args: args.clone(),
+            },
+        }
+    }
+}
+
+impl From<ColumnDefaultRepr> for ColumnDefault {
+    fn from(value: ColumnDefaultRepr) -> Self {
+        match value {
+            ColumnDefaultRepr::None => ColumnDefault::None,
+            ColumnDefaultRepr::Literal(json) => ColumnDefault::Literal(json),
+            ColumnDefaultRepr::FunctionCall { name, args } => {
+                ColumnDefault::FunctionCall { name, args }
+            }
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+enum StoredColumnDefault {
+    None,
+    Literal(String),
+    FunctionCall { name: String, args: Vec<String> },
+}
+
+impl From<&ColumnDefault> for StoredColumnDefault {
+    fn from(value: &ColumnDefault) -> Self {
+        match value {
+            ColumnDefault::None => StoredColumnDefault::None,
+            ColumnDefault::Literal(json) => StoredColumnDefault::Literal(json.to_string()),
+            ColumnDefault::FunctionCall { name, args } => {
+                let serialized_args = args.iter().map(|arg| arg.to_string()).collect();
+                StoredColumnDefault::FunctionCall {
+                    name: name.clone(),
+                    args: serialized_args,
+                }
+            }
+        }
+    }
+}
+
+impl TryFrom<StoredColumnDefault> for ColumnDefault {
+    type Error = serde_json::Error;
+
+    fn try_from(value: StoredColumnDefault) -> Result<Self, Self::Error> {
+        match value {
+            StoredColumnDefault::None => Ok(ColumnDefault::None),
+            StoredColumnDefault::Literal(json) => {
+                let parsed = serde_json::from_str(&json)?;
+                Ok(ColumnDefault::Literal(parsed))
+            }
+            StoredColumnDefault::FunctionCall { name, args } => {
+                let mut parsed_args = Vec::with_capacity(args.len());
+                for arg in args {
+                    parsed_args.push(serde_json::from_str(&arg)?);
+                }
+                Ok(ColumnDefault::FunctionCall {
+                    name,
+                    args: parsed_args,
+                })
+            }
+        }
+    }
 }
 
 impl ColumnDefault {
@@ -86,6 +201,8 @@ impl ColumnDefault {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use bincode::config::standard;
+    use bincode::serde::{decode_from_slice, encode_to_vec};
     use serde_json::json;
 
     #[test]
@@ -139,6 +256,23 @@ mod tests {
         for original in defaults {
             let json = serde_json::to_string(&original).unwrap();
             let decoded: ColumnDefault = serde_json::from_str(&json).unwrap();
+            assert_eq!(original, decoded);
+        }
+    }
+
+    #[test]
+    fn test_bincode_roundtrip() {
+        let defaults = vec![
+            ColumnDefault::none(),
+            ColumnDefault::literal(json!({"key": "value", "nested": [1, 2, 3]})),
+            ColumnDefault::function("CONCAT", vec![json!("prefix"), json!({"expr": "value"})]),
+        ];
+
+        let config = standard();
+        for original in defaults {
+            let bytes = encode_to_vec(&original, config).expect("encode to bincode");
+            let (decoded, _): (ColumnDefault, usize) =
+                decode_from_slice(&bytes, config).expect("decode from bincode");
             assert_eq!(original, decoded);
         }
     }

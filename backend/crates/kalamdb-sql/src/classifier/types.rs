@@ -1,6 +1,30 @@
 use crate::ddl::*;
 use kalamdb_commons::models::UserId;
 
+/// Error returned when classifying or parsing SQL statements.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum StatementClassificationError {
+    /// Statement failed authorization prior to parsing.
+    Unauthorized(String),
+    /// SQL parsing failed; message contains the parser error.
+    InvalidSql { sql: String, message: String },
+}
+
+impl std::fmt::Display for StatementClassificationError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            StatementClassificationError::Unauthorized(msg) => {
+                write!(f, "Unauthorized statement: {}", msg)
+            }
+            StatementClassificationError::InvalidSql { sql, message } => {
+                write!(f, "Invalid SQL '{}': {}", sql, message)
+            }
+        }
+    }
+}
+
+impl std::error::Error for StatementClassificationError {}
+
 /// Comprehensive SQL statement classification for KalamDB
 ///
 /// Each variant either holds a parsed AST (for DDL) or is a marker (for DataFusion queries).
@@ -45,6 +69,8 @@ pub enum SqlStatementKind {
     // ===== Table Operations =====
     /// CREATE [USER|SHARED|STREAM] TABLE ...
     CreateTable(CreateTableStatement),
+    /// CREATE VIEW ...
+    CreateView(CreateViewStatement),
     /// ALTER TABLE <namespace>.<table> ...
     AlterTable(AlterTableStatement),
     /// DROP [USER|SHARED|STREAM] TABLE ...
@@ -116,11 +142,7 @@ impl SqlStatement {
     }
 
     /// Create a SqlStatement with AS USER impersonation
-    pub fn with_as_user(
-        sql_text: String,
-        kind: SqlStatementKind,
-        as_user_id: UserId,
-    ) -> Self {
+    pub fn with_as_user(sql_text: String, kind: SqlStatementKind, as_user_id: UserId) -> Self {
         Self {
             sql_text,
             kind,
@@ -185,6 +207,7 @@ impl SqlStatement {
             SqlStatementKind::DropStorage(_) => "DROP STORAGE",
             SqlStatementKind::ShowStorages(_) => "SHOW STORAGES",
             SqlStatementKind::CreateTable(_) => "CREATE TABLE",
+            SqlStatementKind::CreateView(_) => "CREATE VIEW",
             SqlStatementKind::AlterTable(_) => "ALTER TABLE",
             SqlStatementKind::DropTable(_) => "DROP TABLE",
             SqlStatementKind::ShowTables(_) => "SHOW TABLES",

@@ -2,32 +2,22 @@
 //!
 //! Tests that SELECT * returns columns in ordinal_position order
 
-use kalamdb_commons::schemas::{ColumnDefinition, TableDefinition, TableType};
+#[path = "integration/common/mod.rs"]
+mod common;
+
+use common::TestServer;
 use kalamdb_commons::models::datatypes::KalamDataType;
-use kalamdb_commons::{NamespaceId, TableId, TableName};
-use kalamdb_core::system_table_registration::register_system_tables;
-use kalamdb_store::{EntityStoreV2, RocksDBBackend};
-use rocksdb::DB;
-use std::sync::Arc;
-use tempfile::TempDir;
+use kalamdb_commons::models::schemas::{ColumnDefinition, TableDefinition, TableType};
+use kalamdb_commons::models::{NamespaceId, TableId, TableName};
 
 #[tokio::test]
 async fn test_select_star_returns_columns_in_ordinal_order() {
-    let temp_dir = TempDir::new().expect("Failed to create temp dir");
-    let db = Arc::new(
-        DB::open_default(temp_dir.path().to_str().unwrap()).expect("Failed to create RocksDB"),
-    );
-    let backend: Arc<dyn kalamdb_store::StorageBackend> = Arc::new(RocksDBBackend::new(db));
-
-    // Register system tables
-    let system_schema = Arc::new(datafusion::catalog::memory::MemorySchemaProvider::new());
-    let system_tables_registry =
-        register_system_tables(&system_schema, backend.clone())
-            .expect("Failed to register system tables");
+    let server = TestServer::new().await;
 
     // Create a table with columns defined out of order
     let test_namespace = NamespaceId::from("test_ns");
-    let test_table_id = TableId::new(test_namespace.clone(), TableName::from("test_table"));
+    let table_name = TableName::new("test_table");
+    let table_id = TableId::new(test_namespace.clone(), table_name.clone());
 
     let columns_out_of_order = vec![
         ColumnDefinition::simple("email", 3, KalamDataType::Text),
@@ -38,21 +28,32 @@ async fn test_select_star_returns_columns_in_ordinal_order() {
 
     let table_def = TableDefinition::new_with_defaults(
         test_namespace.clone(),
-        TableName::new("test_table"),
+        table_name.clone(),
         TableType::User,
         columns_out_of_order,
         None,
     )
     .expect("Failed to create table definition");
 
-    // Store the table definition
-    schema_store
-        .put(&test_table_id, &table_def)
-        .expect("Failed to store table definition");
+    // Create namespace first
+    server
+        .execute_sql("CREATE NAMESPACE test_ns")
+        .await;
+
+    // Store the table definition using system tables provider
+    server
+        .app_context
+        .system_tables()
+        .tables()
+        .create_table(&table_id, &table_def)
+        .expect("Failed to create table");
 
     // Get the table definition back
-    let retrieved = schema_store
-        .get(&test_table_id)
+    let retrieved = server
+        .app_context
+        .system_tables()
+        .tables()
+        .get_table_by_id(&table_id)
         .expect("Failed to get table")
         .expect("Table not found");
 
@@ -82,19 +83,16 @@ async fn test_select_star_returns_columns_in_ordinal_order() {
 
 #[tokio::test]
 async fn test_alter_table_add_column_assigns_next_ordinal() {
-    let temp_dir = TempDir::new().expect("Failed to create temp dir");
-    let db = Arc::new(
-        DB::open_default(temp_dir.path().to_str().unwrap()).expect("Failed to create RocksDB"),
-    );
-    let backend: Arc<dyn kalamdb_store::StorageBackend> = Arc::new(RocksDBBackend::new(db));
-
-    let system_schema = Arc::new(datafusion::catalog::memory::MemorySchemaProvider::new());
-    let system_tables_registry =
-        register_system_tables(&system_schema, backend.clone())
-            .expect("Failed to register system tables");
+    let server = TestServer::new().await;
 
     let test_namespace = NamespaceId::from("test_ns");
-    let test_table_id = TableId::new(test_namespace.clone(), TableName::from("test_table"));
+    let table_name = TableName::new("test_table");
+    let table_id = TableId::new(test_namespace.clone(), table_name.clone());
+
+    // Create namespace first
+    server
+        .execute_sql("CREATE NAMESPACE test_ns")
+        .await;
 
     // Create initial table with 2 columns
     let initial_columns = vec![
@@ -104,16 +102,19 @@ async fn test_alter_table_add_column_assigns_next_ordinal() {
 
     let mut table_def = TableDefinition::new_with_defaults(
         test_namespace.clone(),
-        TableName::new("test_table"),
+        table_name.clone(),
         TableType::User,
         initial_columns,
         None,
     )
     .expect("Failed to create table definition");
 
-    schema_store
-        .put(&test_table_id, &table_def)
-        .expect("Failed to store initial table");
+    server
+        .app_context
+        .system_tables()
+        .tables()
+        .create_table(&table_id, &table_def)
+        .expect("Failed to create table");
 
     // Simulate ALTER TABLE ADD COLUMN
     let new_column = ColumnDefinition::simple("email", 3, KalamDataType::Text);
@@ -121,13 +122,19 @@ async fn test_alter_table_add_column_assigns_next_ordinal() {
         .add_column(new_column)
         .expect("Failed to add column");
 
-    schema_store
-        .put(&test_table_id, &table_def)
+    server
+        .app_context
+        .system_tables()
+        .tables()
+        .update_table(&table_id, &table_def)
         .expect("Failed to update table");
 
     // Verify the new column has ordinal_position = 3
-    let updated = schema_store
-        .get(&test_table_id)
+    let updated = server
+        .app_context
+        .system_tables()
+        .tables()
+        .get_table_by_id(&table_id)
         .expect("Failed to get table")
         .expect("Table not found");
 
@@ -140,19 +147,16 @@ async fn test_alter_table_add_column_assigns_next_ordinal() {
 
 #[tokio::test]
 async fn test_alter_table_drop_column_preserves_ordinals() {
-    let temp_dir = TempDir::new().expect("Failed to create temp dir");
-    let db = Arc::new(
-        DB::open_default(temp_dir.path().to_str().unwrap()).expect("Failed to create RocksDB"),
-    );
-    let backend: Arc<dyn kalamdb_store::StorageBackend> = Arc::new(RocksDBBackend::new(db));
-
-    let system_schema = Arc::new(datafusion::catalog::memory::MemorySchemaProvider::new());
-    let system_tables_registry =
-        register_system_tables(&system_schema, backend.clone())
-            .expect("Failed to register system tables");
+    let server = TestServer::new().await;
 
     let test_namespace = NamespaceId::from("test_ns");
-    let test_table_id = TableId::new(test_namespace.clone(), TableName::from("test_table"));
+    let table_name = TableName::new("test_table");
+    let table_id = TableId::new(test_namespace.clone(), table_name.clone());
+
+    // Create namespace first
+    server
+        .execute_sql("CREATE NAMESPACE test_ns")
+        .await;
 
     // Create table with 4 columns
     let initial_columns = vec![
@@ -164,29 +168,38 @@ async fn test_alter_table_drop_column_preserves_ordinals() {
 
     let mut table_def = TableDefinition::new_with_defaults(
         test_namespace.clone(),
-        TableName::new("test_table"),
+        table_name.clone(),
         TableType::User,
         initial_columns,
         None,
     )
     .expect("Failed to create table definition");
 
-    schema_store
-        .put(&test_table_id, &table_def)
-        .expect("Failed to store initial table");
+    server
+        .app_context
+        .system_tables()
+        .tables()
+        .create_table(&table_id, &table_def)
+        .expect("Failed to create table");
 
     // Simulate ALTER TABLE DROP COLUMN email (position 3)
     table_def
         .drop_column("email")
         .expect("Failed to drop column");
 
-    schema_store
-        .put(&test_table_id, &table_def)
+    server
+        .app_context
+        .system_tables()
+        .tables()
+        .update_table(&table_id, &table_def)
         .expect("Failed to update table");
 
     // Verify remaining columns preserve their original ordinal_positions
-    let updated = schema_store
-        .get(&test_table_id)
+    let updated = server
+        .app_context
+        .system_tables()
+        .tables()
+        .get_table_by_id(&table_id)
         .expect("Failed to get table")
         .expect("Table not found");
 
@@ -204,48 +217,46 @@ async fn test_alter_table_drop_column_preserves_ordinals() {
 
 #[tokio::test]
 async fn test_system_tables_have_correct_column_ordering() {
-    let temp_dir = TempDir::new().expect("Failed to create temp dir");
-    let db = Arc::new(
-        DB::open_default(temp_dir.path().to_str().unwrap()).expect("Failed to create RocksDB"),
-    );
-    let backend: Arc<dyn kalamdb_store::StorageBackend> = Arc::new(RocksDBBackend::new(db));
-
-    let system_schema = Arc::new(datafusion::catalog::memory::MemorySchemaProvider::new());
-    let system_tables_registry =
-        register_system_tables(&system_schema, backend.clone())
-            .expect("Failed to register system tables");
-
-    let system_namespace = NamespaceId::from("system");
+    use datafusion::datasource::TableProvider;
+    let server = TestServer::new().await;
 
     // Test system.users table
-    let users_table_id = TableId::new(system_namespace.clone(), TableName::from("users"));
-    let users_schema = schema_store
-        .get(&users_table_id)
-        .expect("Failed to get users table")
-        .expect("Users table not found");
+    // Note: System tables are not stored in system.tables, so we access the provider directly
+    let users_provider = server.app_context.system_tables().users();
+    let arrow_schema = users_provider.schema();
 
-    // Verify all columns have sequential ordinal_positions starting from 1
-    for (idx, column) in users_schema.columns.iter().enumerate() {
+    // Expected columns in order (based on UsersTableSchema)
+    let expected_columns = vec![
+        "user_id",
+        "username",
+        "password_hash",
+        "role",
+        "email",
+        "auth_type",
+        "auth_data",
+        "storage_mode",
+        "storage_id",
+        "created_at",
+        "updated_at",
+        "last_seen",
+        "deleted_at",
+    ];
+
+    // Verify Arrow schema matches expected column order
+    assert_eq!(
+        arrow_schema.fields().len(),
+        expected_columns.len(),
+        "Column count mismatch"
+    );
+
+    for (idx, expected_name) in expected_columns.iter().enumerate() {
+        let field = arrow_schema.field(idx);
         assert_eq!(
-            column.ordinal_position as usize,
+            field.name(),
+            expected_name,
+            "Column at position {} should be '{}'",
             idx + 1,
-            "Column '{}' should have ordinal_position {}",
-            column.column_name,
-            idx + 1
-        );
-    }
-
-    // Verify Arrow schema matches column order
-    let arrow_schema = users_schema
-        .to_arrow_schema()
-        .expect("Failed to convert to Arrow");
-    for (idx, column) in users_schema.columns.iter().enumerate() {
-        assert_eq!(
-            arrow_schema.field(idx).name(),
-            &column.column_name,
-            "Arrow field at position {} should match column '{}'",
-            idx,
-            column.column_name
+            expected_name
         );
     }
 

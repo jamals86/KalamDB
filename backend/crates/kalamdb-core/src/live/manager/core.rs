@@ -1,5 +1,6 @@
 //! Live query manager core implementation
 
+use crate::error::KalamDbError;
 use crate::live::connection_registry::{
     ConnectionId, LiveId, LiveQueryOptions, LiveQueryRegistry, NodeId, NotificationSender,
 };
@@ -9,7 +10,6 @@ use crate::live::notification::NotificationService;
 use crate::live::query_parser::QueryParser;
 use crate::live::subscription::SubscriptionService;
 use crate::live::types::{ChangeNotification, RegistryStats, SubscriptionResult};
-use crate::error::KalamDbError;
 use crate::sql::executor::SqlExecutor;
 use datafusion::execution::context::SessionContext;
 use kalamdb_commons::models::{NamespaceId, TableId, TableName, UserId};

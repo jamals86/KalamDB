@@ -84,7 +84,7 @@ async fn test_rocksdb_implements_storage_trait() {
     let response = client
         .post(&format!("{}/v1/api/sql", BASE_URL))
         .json(&json!({
-            "sql": "CREATE USER TABLE test_rocksdb_trait.test_table (id BIGINT PRIMARY KEY, name STRING)",
+            "sql": "CREATE TABLE test_rocksdb_trait.test_table (id BIGINT PRIMARY KEY, name STRING) WITH (TYPE = 'USER')",
             "user_id": "test_user"
         }))
         .send()
@@ -264,7 +264,7 @@ async fn test_column_family_abstraction() {
     let response = client
         .post(&format!("{}/v1/api/sql", BASE_URL))
         .json(&json!({
-            "sql": "CREATE USER TABLE test_partition_ns.table1 (id BIGINT PRIMARY KEY, data STRING)",
+            "sql": "CREATE TABLE test_partition_ns.table1 (id BIGINT PRIMARY KEY, data STRING) WITH (TYPE = 'USER')",
             "user_id": "test_user"
         }))
         .send()
@@ -276,7 +276,7 @@ async fn test_column_family_abstraction() {
     let response = client
         .post(&format!("{}/v1/api/sql", BASE_URL))
         .json(&json!({
-            "sql": "CREATE USER TABLE test_partition_ns.table2 (id BIGINT PRIMARY KEY, value BIGINT)",
+            "sql": "CREATE TABLE test_partition_ns.table2 (id BIGINT PRIMARY KEY, value BIGINT) WITH (TYPE = 'USER')",
             "user_id": "test_user"
         }))
         .send()

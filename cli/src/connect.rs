@@ -1,5 +1,7 @@
 use crate::args::Cli;
-use kalam_cli::{CLIConfiguration, CLIError, CLISession, FileCredentialStore, OutputFormat, Result};
+use kalam_cli::{
+    CLIConfiguration, CLIError, CLISession, FileCredentialStore, OutputFormat, Result,
+};
 use kalam_link::credentials::CredentialStore;
 use kalam_link::AuthProvider;
 use std::time::Duration;

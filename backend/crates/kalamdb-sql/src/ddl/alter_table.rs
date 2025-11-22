@@ -7,9 +7,18 @@
 //! - ALTER USER TABLE messages ADD COLUMN age INT
 //! - ALTER SHARED TABLE messages ADD COLUMN age INT
 
+use crate::ddl::create_table::parser::convert_sql_type_to_arrow;
 use crate::ddl::DdlResult;
 
 use kalamdb_commons::models::{NamespaceId, TableAccess, TableName};
+use once_cell::sync::Lazy;
+use regex::{Captures, Regex};
+use sqlparser::ast::{
+    AlterTableOperation, ColumnDef, ColumnOption, ColumnOptionDef, DropBehavior, Expr, Ident,
+    ObjectName, SqlOption, Statement, Value,
+};
+use sqlparser::dialect::GenericDialect;
+use sqlparser::parser::Parser;
 
 /// Column alteration operation
 #[derive(Debug, Clone, PartialEq)]
@@ -33,6 +42,12 @@ pub enum ColumnOperation {
     SetAccessLevel { access_level: TableAccess },
 }
 
+static LEGACY_ALTER_PREFIX_RE: Lazy<Regex> =
+    Lazy::new(|| Regex::new(r"(?i)^\s*ALTER\s+(USER|SHARED|STREAM)\s+TABLE\s+").unwrap());
+
+static SET_ACCESS_LEVEL_RE: Lazy<Regex> =
+    Lazy::new(|| Regex::new(r"(?i)SET\s+ACCESS\s+LEVEL\s+(PUBLIC|PRIVATE|RESTRICTED)").unwrap());
+
 /// ALTER TABLE statement
 #[derive(Debug, Clone, PartialEq)]
 pub struct AlterTableStatement {
@@ -47,212 +62,255 @@ pub struct AlterTableStatement {
 }
 
 impl AlterTableStatement {
-    /// Parse an ALTER TABLE statement from SQL (optimized)
-    ///
-    /// Supports syntax:
-    /// - ALTER TABLE name ADD COLUMN col_name data_type [NULL | NOT NULL] [DEFAULT value]
-    /// - ALTER TABLE name DROP COLUMN col_name
-    /// - ALTER TABLE name MODIFY COLUMN col_name new_data_type [NULL | NOT NULL]
-    /// - ALTER USER TABLE ... (explicitly specify table type)
-    /// - ALTER SHARED TABLE ... (explicitly specify table type)
+    /// Parse an ALTER TABLE statement from SQL (sqlparser-backed)
     pub fn parse(sql: &str, current_namespace: &NamespaceId) -> DdlResult<Self> {
-        let tokens: Vec<&str> = sql.split_whitespace().collect();
+        let normalized_sql = normalize_alter_sql(sql);
+        let dialect = GenericDialect {};
+        let mut statements =
+            Parser::parse_sql(&dialect, &normalized_sql).map_err(|e| e.to_string())?;
 
-        if tokens.is_empty() || !tokens[0].eq_ignore_ascii_case("ALTER") {
-            return Err("Expected ALTER TABLE statement".to_string());
+        if statements.len() != 1 {
+            return Err("Expected exactly one ALTER TABLE statement".to_string());
         }
 
-        // Extract table name (handles ALTER TABLE, ALTER USER TABLE, ALTER SHARED TABLE)
-        let table_name_raw = Self::extract_table_name_from_tokens(&tokens)?;
-
-        // Parse qualified table name (namespace.table or just table)
-        let (namespace, table_name) = if let Some(dot_pos) = table_name_raw.find('.') {
-            let ns = &table_name_raw[..dot_pos];
-            let tbl = &table_name_raw[dot_pos + 1..];
-            (NamespaceId::new(ns), tbl.to_string())
-        } else {
-            (current_namespace.clone(), table_name_raw)
+        let statement = statements.remove(0);
+        let Statement::AlterTable {
+            name, operations, ..
+        } = statement
+        else {
+            return Err("Expected ALTER TABLE statement".to_string());
         };
 
-        // Find operation keyword position
-        let op_pos = tokens
-            .iter()
-            .position(|&t| matches!(t.to_uppercase().as_str(), "ADD" | "DROP" | "MODIFY" | "SET"))
-            .ok_or_else(|| {
-                "Expected ADD COLUMN, DROP COLUMN, MODIFY COLUMN, or SET ACCESS LEVEL operation"
-                    .to_string()
-            })?;
+        if operations.len() != 1 {
+            return Err("Only one ALTER TABLE operation is supported per statement".to_string());
+        }
 
-        let operation_upper = tokens[op_pos].to_uppercase();
-        let operation = match operation_upper.as_str() {
-            "ADD" => Self::parse_add_column_from_tokens(&tokens[op_pos..])?,
-            "DROP" => Self::parse_drop_column_from_tokens(&tokens[op_pos..])?,
-            "MODIFY" => Self::parse_modify_column_from_tokens(&tokens[op_pos..])?,
-            "SET" => Self::parse_set_access_level_from_tokens(&tokens[op_pos..])?,
-            _ => return Err(
-                "Expected ADD COLUMN, DROP COLUMN, MODIFY COLUMN, or SET ACCESS LEVEL operation"
-                    .to_string(),
-            ),
-        };
+        let (namespace_id, table_name) = resolve_table_reference(name, current_namespace)?;
+        let operation = convert_operation(&operations[0])?;
 
         Ok(Self {
-            table_name: TableName::new(&table_name),
-            namespace_id: namespace,
+            table_name,
+            namespace_id,
             operation,
         })
     }
+}
 
-    /// Extract table name from ALTER TABLE statement tokens (optimized)
-    fn extract_table_name_from_tokens(tokens: &[&str]) -> DdlResult<String> {
-        // Skip ALTER, then check for USER/SHARED TABLE or just TABLE
-        let skip = if tokens.len() >= 3 {
-            let second = tokens[1].to_uppercase();
-            if second == "USER" || second == "SHARED" {
-                3 // Skip "ALTER USER/SHARED TABLE"
-            } else if second == "TABLE" {
-                2 // Skip "ALTER TABLE"
-            } else {
-                return Err("Expected TABLE keyword".to_string());
-            }
-        } else {
-            return Err("Table name is required".to_string());
-        };
+fn normalize_alter_sql(sql: &str) -> String {
+    let trimmed = sql.trim().trim_end_matches(';');
+    let without_legacy = LEGACY_ALTER_PREFIX_RE
+        .replace(trimmed, "ALTER TABLE ")
+        .into_owned();
+    SET_ACCESS_LEVEL_RE
+        .replace(&without_legacy, |caps: &Captures| {
+            format!(
+                "SET TBLPROPERTIES (ACCESS_LEVEL = '{}')",
+                caps[1].to_uppercase()
+            )
+        })
+        .into_owned()
+}
 
-        tokens
-            .get(skip)
-            .map(|s| s.to_string())
-            .ok_or_else(|| "Table name is required".to_string())
-    }
-
-    /// Parse ADD COLUMN operation from tokens (optimized)
-    fn parse_add_column_from_tokens(tokens: &[&str]) -> DdlResult<ColumnOperation> {
-        // Expect: ADD [COLUMN] col_name data_type [NOT NULL] [DEFAULT value]
-        let start_idx = if tokens.len() > 1 && tokens[1].eq_ignore_ascii_case("COLUMN") {
-            2
-        } else {
-            1
-        };
-
-        if tokens.len() < start_idx + 2 {
-            return Err("Column definition requires name and data type".to_string());
+fn resolve_table_reference(
+    name: ObjectName,
+    current_namespace: &NamespaceId,
+) -> DdlResult<(NamespaceId, TableName)> {
+    let parts = name.0;
+    match parts.len() {
+        1 => {
+            let table_ident = parts[0]
+                .as_ident()
+                .ok_or_else(|| "Function-based table references are not supported".to_string())?;
+            Ok((
+                current_namespace.clone(),
+                TableName::from(table_ident.value.as_str()),
+            ))
         }
+        2 => {
+            let namespace_ident = parts[0].as_ident().ok_or_else(|| {
+                "Function-based namespace references are not supported".to_string()
+            })?;
+            let table_ident = parts[1]
+                .as_ident()
+                .ok_or_else(|| "Function-based table references are not supported".to_string())?;
+            Ok((
+                NamespaceId::from(namespace_ident.value.as_str()),
+                TableName::from(table_ident.value.as_str()),
+            ))
+        }
+        _ => Err("Invalid table reference. Use 'table' or 'namespace.table'".to_string()),
+    }
+}
 
-        let column_name = tokens[start_idx].to_string();
-        let data_type = tokens[start_idx + 1].to_string();
-
-        // Check for NOT NULL
-        let nullable = !tokens[start_idx + 2..]
-            .windows(2)
-            .any(|w| w[0].eq_ignore_ascii_case("NOT") && w[1].eq_ignore_ascii_case("NULL"));
-
-        // Extract default value if present
-        let default_value = tokens[start_idx + 2..]
-            .windows(2)
-            .find(|w| w[0].eq_ignore_ascii_case("DEFAULT"))
-            .map(|w| w[1].trim_matches('\'').trim_matches('"').to_string());
-
-        Ok(ColumnOperation::Add {
-            column_name,
+fn convert_operation(operation: &AlterTableOperation) -> DdlResult<ColumnOperation> {
+    match operation {
+        AlterTableOperation::AddColumn {
+            column_def,
+            column_position,
+            ..
+        } => {
+            if column_position.is_some() {
+                return Err("Column position modifiers (FIRST/AFTER) are not supported".to_string());
+            }
+            build_add_column_operation(column_def)
+        }
+        AlterTableOperation::DropColumn {
+            column_names,
+            drop_behavior,
+            ..
+        } => build_drop_column_operation(column_names, drop_behavior),
+        AlterTableOperation::ModifyColumn {
+            col_name,
             data_type,
-            nullable,
-            default_value,
-        })
-    }
-
-    /// Parse DROP COLUMN operation from tokens (optimized)
-    fn parse_drop_column_from_tokens(tokens: &[&str]) -> DdlResult<ColumnOperation> {
-        // Expect: DROP [COLUMN] col_name
-        let col_idx = if tokens.len() > 1 && tokens[1].eq_ignore_ascii_case("COLUMN") {
-            2
-        } else {
-            1
-        };
-
-        let column_name = tokens
-            .get(col_idx)
-            .ok_or_else(|| "Column name is required".to_string())?
-            .to_string();
-
-        Ok(ColumnOperation::Drop { column_name })
-    }
-
-    /// Parse MODIFY COLUMN operation from tokens (optimized)
-    fn parse_modify_column_from_tokens(tokens: &[&str]) -> DdlResult<ColumnOperation> {
-        // Expect: MODIFY [COLUMN] col_name new_data_type [NOT NULL]
-        let start_idx = if tokens.len() > 1 && tokens[1].eq_ignore_ascii_case("COLUMN") {
-            2
-        } else {
-            1
-        };
-
-        if tokens.len() < start_idx + 2 {
-            return Err("Column modification requires name and new data type".to_string());
-        }
-
-        let column_name = tokens[start_idx].to_string();
-        let new_data_type = tokens[start_idx + 1].to_string();
-
-        // Check for NULL/NOT NULL
-        let nullable = if tokens.len() > start_idx + 2 {
-            let has_null = tokens[start_idx + 2..]
-                .iter()
-                .any(|&t| t.eq_ignore_ascii_case("NULL"));
-            let has_not_null = tokens[start_idx + 2..]
-                .windows(2)
-                .any(|w| w[0].eq_ignore_ascii_case("NOT") && w[1].eq_ignore_ascii_case("NULL"));
-
-            if has_not_null {
-                Some(false)
-            } else if has_null {
-                Some(true)
-            } else {
-                None
+            options,
+            column_position,
+        } => {
+            if column_position.is_some() {
+                return Err("Column position modifiers (FIRST/AFTER) are not supported".to_string());
             }
-        } else {
-            None
-        };
+            build_modify_column_operation(col_name, data_type, options)
+        }
+        AlterTableOperation::SetTblProperties { table_properties } => {
+            build_set_access_level_operation(table_properties)
+        }
+        _ => Err("Unsupported ALTER TABLE operation".to_string()),
+    }
+}
 
-        Ok(ColumnOperation::Modify {
-            column_name,
-            new_data_type,
-            nullable,
-        })
+fn build_add_column_operation(column_def: &ColumnDef) -> DdlResult<ColumnOperation> {
+    let (_, default_nullable) = convert_sql_type_to_arrow(&column_def.data_type)?;
+    let column_name = column_def.name.value.clone();
+    let data_type = column_def.data_type.to_string();
+    let (nullable, default_value) = extract_column_options(&column_def.options, default_nullable);
+
+    Ok(ColumnOperation::Add {
+        column_name,
+        data_type,
+        nullable,
+        default_value,
+    })
+}
+
+fn build_drop_column_operation(
+    column_names: &[Ident],
+    drop_behavior: &Option<DropBehavior>,
+) -> DdlResult<ColumnOperation> {
+    if column_names.len() != 1 {
+        return Err("ALTER TABLE only supports dropping one column at a time".to_string());
+    }
+    if drop_behavior.is_some() {
+        return Err("DROP COLUMN CASCADE/RESTRICT is not supported".to_string());
+    }
+    Ok(ColumnOperation::Drop {
+        column_name: column_names[0].value.clone(),
+    })
+}
+
+fn build_modify_column_operation(
+    column_name: &Ident,
+    data_type: &sqlparser::ast::DataType,
+    options: &[ColumnOption],
+) -> DdlResult<ColumnOperation> {
+    // Validate the requested type using the shared CREATE TABLE conversion logic.
+    let _ = convert_sql_type_to_arrow(data_type)?;
+    let mut nullable: Option<bool> = None;
+    for option in options {
+        match option {
+            ColumnOption::NotNull => nullable = Some(false),
+            ColumnOption::Null => nullable = Some(true),
+            _ => {}
+        }
     }
 
-    /// Parse SET ACCESS LEVEL operation from tokens
-    /// Expects: SET ACCESS LEVEL public|private|restricted
-    fn parse_set_access_level_from_tokens(tokens: &[&str]) -> DdlResult<ColumnOperation> {
-        // Expect: SET ACCESS LEVEL {access_level}
-        if tokens.len() < 4 {
-            return Err("Expected SET ACCESS LEVEL {public|private|restricted}".to_string());
+    Ok(ColumnOperation::Modify {
+        column_name: column_name.value.clone(),
+        new_data_type: data_type.to_string(),
+        nullable,
+    })
+}
+
+fn build_set_access_level_operation(table_properties: &[SqlOption]) -> DdlResult<ColumnOperation> {
+    for option in table_properties {
+        if let Some(access_level) = extract_access_level(option)? {
+            return Ok(ColumnOperation::SetAccessLevel { access_level });
         }
-
-        if !tokens[1].eq_ignore_ascii_case("ACCESS") {
-            return Err("Expected ACCESS keyword after SET".to_string());
-        }
-
-        if !tokens[2].eq_ignore_ascii_case("LEVEL") {
-            return Err("Expected LEVEL keyword after ACCESS".to_string());
-        }
-
-        let access_level_str = tokens[3].to_lowercase();
-
-        // Validate before converting
-        if !matches!(
-            access_level_str.as_str(),
-            "public" | "private" | "restricted"
-        ) {
-            return Err(format!(
-                "Invalid access level: {}. Must be public, private, or restricted",
-                access_level_str
-            ));
-        }
-
-        // Convert to TableAccess enum
-        let access_level: TableAccess = access_level_str.as_str().into();
-
-        Ok(ColumnOperation::SetAccessLevel { access_level })
     }
+    Err("ACCESS_LEVEL property is required for SET ACCESS LEVEL".to_string())
+}
+
+fn extract_column_options(
+    options: &[ColumnOptionDef],
+    default_nullable: bool,
+) -> (bool, Option<String>) {
+    let mut nullable = default_nullable;
+    let mut default_value = None;
+
+    for option in options {
+        match &option.option {
+            ColumnOption::NotNull => nullable = false,
+            ColumnOption::Null => nullable = true,
+            ColumnOption::Default(expr) => {
+                default_value = Some(expr_to_literal(expr));
+            }
+            _ => {}
+        }
+    }
+
+    (nullable, default_value)
+}
+
+fn expr_to_literal(expr: &Expr) -> String {
+    match expr {
+        Expr::Value(value) => value_to_string(&value.value),
+        _ => expr.to_string(),
+    }
+}
+
+fn value_to_string(value: &Value) -> String {
+    match value {
+        Value::Number(n, _) => n.clone(),
+        Value::SingleQuotedString(s)
+        | Value::DoubleQuotedString(s)
+        | Value::TripleSingleQuotedString(s)
+        | Value::TripleDoubleQuotedString(s)
+        | Value::SingleQuotedByteStringLiteral(s)
+        | Value::DoubleQuotedByteStringLiteral(s)
+        | Value::TripleSingleQuotedByteStringLiteral(s)
+        | Value::TripleDoubleQuotedByteStringLiteral(s)
+        | Value::SingleQuotedRawStringLiteral(s)
+        | Value::DoubleQuotedRawStringLiteral(s)
+        | Value::TripleSingleQuotedRawStringLiteral(s)
+        | Value::TripleDoubleQuotedRawStringLiteral(s)
+        | Value::EscapedStringLiteral(s)
+        | Value::UnicodeStringLiteral(s)
+        | Value::NationalStringLiteral(s)
+        | Value::HexStringLiteral(s) => s.clone(),
+        Value::DollarQuotedString(s) => s.value.clone(),
+        Value::Boolean(b) => b.to_string(),
+        Value::Null => "NULL".to_string(),
+        Value::Placeholder(p) => p.clone(),
+    }
+}
+
+fn extract_access_level(option: &SqlOption) -> DdlResult<Option<TableAccess>> {
+    if let SqlOption::KeyValue { key, value } = option {
+        if key.value.eq_ignore_ascii_case("ACCESS_LEVEL") {
+            let normalized = expr_to_literal(value).to_uppercase();
+            let access_level = match normalized.as_str() {
+                "PUBLIC" => TableAccess::Public,
+                "PRIVATE" => TableAccess::Private,
+                "RESTRICTED" => TableAccess::Restricted,
+                other => {
+                    return Err(format!(
+                        "Invalid ACCESS_LEVEL '{}'. Supported values: PUBLIC, PRIVATE, RESTRICTED",
+                        other
+                    ))
+                }
+            };
+            return Ok(Some(access_level));
+        }
+    }
+    Ok(None)
 }
 
 #[cfg(test)]

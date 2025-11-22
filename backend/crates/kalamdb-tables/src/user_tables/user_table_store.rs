@@ -10,7 +10,7 @@
 use kalamdb_commons::ids::{SeqId, UserTableRowId};
 use kalamdb_commons::models::row::Row;
 use kalamdb_commons::models::{KTableRow, NamespaceId, TableName, UserId};
-use kalamdb_store::StorageBackend;
+use kalamdb_store::{entity_store::KSerializable, StorageBackend};
 use kalamdb_system::system_table_store::SystemTableStore;
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
@@ -27,6 +27,8 @@ pub struct UserTableRow {
     pub _deleted: bool,
     pub fields: Row, // All user-defined columns including PK
 }
+
+impl KSerializable for UserTableRow {}
 
 impl From<UserTableRow> for KTableRow {
     fn from(row: UserTableRow) -> Self {

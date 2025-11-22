@@ -36,17 +36,21 @@ async fn test_update_in_fast_storage() {
     fixtures::create_namespace(&server, "test_ns").await;
     let create_response = server
         .execute_sql_as_user(
-            r#"CREATE USER TABLE test_ns.products (
+            r#"CREATE TABLE test_ns.products (
                 id TEXT PRIMARY KEY,
                 name TEXT,
                 price INT,
                 stock INT
-            ) STORAGE local"#,
+            ) WITH (
+                TYPE = 'USER',
+                STORAGE_ID = 'local'
+            )"#,
             "user1",
         )
         .await;
     assert_eq!(
-        create_response.status, ResponseStatus::Success,
+        create_response.status,
+        ResponseStatus::Success,
         "CREATE TABLE failed: {:?}",
         create_response.error
     );
@@ -71,7 +75,8 @@ async fn test_update_in_fast_storage() {
         .await;
 
     assert_eq!(
-        response.status, ResponseStatus::Success,
+        response.status,
+        ResponseStatus::Success,
         "UPDATE should succeed: {:?}",
         response.error
     );
@@ -89,7 +94,8 @@ async fn test_update_in_fast_storage() {
         response.status, response.error
     );
     assert_eq!(
-        response.status, ResponseStatus::Success,
+        response.status,
+        ResponseStatus::Success,
         "Query failed: {:?}",
         response.error
     );
@@ -113,11 +119,14 @@ async fn test_update_in_parquet() {
     fixtures::create_namespace(&server, "test_ns").await;
     server
         .execute_sql_as_user(
-            r#"CREATE USER TABLE test_ns.inventory (
+            r#"CREATE TABLE test_ns.inventory (
                 id TEXT PRIMARY KEY,
                 item TEXT,
                 quantity INT
-            ) STORAGE local"#,
+            ) WITH (
+                TYPE = 'USER',
+                STORAGE_ID = 'local'
+            )"#,
             "user1",
         )
         .await;
@@ -148,7 +157,8 @@ async fn test_update_in_parquet() {
         .await;
 
     assert_eq!(
-        response.status, ResponseStatus::Success,
+        response.status,
+        ResponseStatus::Success,
         "UPDATE on flushed record should succeed: {:?}",
         response.error
     );
@@ -193,12 +203,14 @@ async fn test_full_workflow_insert_flush_update() {
     fixtures::create_namespace(&server, "test_ns").await;
     server
         .execute_sql_as_user(
-            r#"CREATE USER TABLE test_ns.orders (
-                id TEXT PRIMARY KEY,
-                customer TEXT,
-                total INT,
+            r#"CREATE TABLE test_ns.users (
+                user_id TEXT PRIMARY KEY,
+                name TEXT,
                 status TEXT
-            ) STORAGE local"#,
+            ) WITH (
+                TYPE = 'USER',
+                STORAGE_ID = 'local'
+            )"#,
             "user1",
         )
         .await;
@@ -255,10 +267,13 @@ async fn test_multi_version_query() {
     fixtures::create_namespace(&server, "test_ns").await;
     server
         .execute_sql_as_user(
-            r#"CREATE USER TABLE test_ns.counters (
+            r#"CREATE TABLE test_ns.counters (
                 id TEXT PRIMARY KEY,
                 value INT
-            ) STORAGE local"#,
+            ) WITH (
+                TYPE = 'USER',
+                STORAGE_ID = 'local'
+            )"#,
             "user1",
         )
         .await;
@@ -337,11 +352,14 @@ async fn test_delete_excludes_record() {
     fixtures::create_namespace(&server, "test_ns").await;
     server
         .execute_sql_as_user(
-            r#"CREATE USER TABLE test_ns.users (
+            r#"CREATE TABLE test_ns.users (
                 id TEXT PRIMARY KEY,
                 name TEXT,
                 active BOOLEAN
-            ) STORAGE local"#,
+            ) WITH (
+                TYPE = 'USER',
+                STORAGE_ID = 'local'
+            )"#,
             "user1",
         )
         .await;
@@ -383,11 +401,14 @@ async fn test_delete_in_parquet() {
     fixtures::create_namespace(&server, "test_ns").await;
     server
         .execute_sql_as_user(
-            r#"CREATE USER TABLE test_ns.accounts (
+            r#"CREATE TABLE test_ns.accounts (
                 id TEXT PRIMARY KEY,
                 email TEXT,
                 balance INT
-            ) STORAGE local"#,
+            ) WITH (
+                TYPE = 'USER',
+                STORAGE_ID = 'local'
+            )"#,
             "user1",
         )
         .await;
@@ -412,7 +433,8 @@ async fn test_delete_in_parquet() {
         .await;
 
     assert_eq!(
-        response.status, ResponseStatus::Success,
+        response.status,
+        ResponseStatus::Success,
         "DELETE on flushed record should succeed: {:?}",
         response.error
     );
@@ -443,10 +465,13 @@ async fn test_concurrent_updates() {
     fixtures::create_namespace(&server, "test_ns").await;
     server
         .execute_sql_as_user(
-            r#"CREATE USER TABLE test_ns.shared_counter (
+            r#"CREATE TABLE test_ns.shared_counter (
                 id TEXT PRIMARY KEY,
                 count INT
-            ) STORAGE local"#,
+            ) WITH (
+                TYPE = 'USER',
+                STORAGE_ID = 'local'
+            )"#,
             "user1",
         )
         .await;
@@ -523,10 +548,13 @@ async fn test_nanosecond_collision_handling() {
     fixtures::create_namespace(&server, "test_ns").await;
     server
         .execute_sql_as_user(
-            r#"CREATE USER TABLE test_ns.rapid_updates (
+            r#"CREATE TABLE test_ns.rapid_updates (
                 id TEXT PRIMARY KEY,
                 iteration INT
-            ) STORAGE local"#,
+            ) WITH (
+                TYPE = 'USER',
+                STORAGE_ID = 'local'
+            )"#,
             "user1",
         )
         .await;
@@ -582,10 +610,13 @@ async fn test_query_performance_with_multiple_versions() {
     fixtures::create_namespace(&server, "test_ns").await;
     server
         .execute_sql_as_user(
-            r#"CREATE USER TABLE test_ns.perf_test (
+            r#"CREATE TABLE test_ns.perf_test (
                 id TEXT PRIMARY KEY,
                 version INT
-            ) STORAGE local"#,
+            ) WITH (
+                TYPE = 'USER',
+                STORAGE_ID = 'local'
+            )"#,
             "user1",
         )
         .await;

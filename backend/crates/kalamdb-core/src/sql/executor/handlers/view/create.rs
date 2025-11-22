@@ -1,0 +1,196 @@
+//! Typed handler for CREATE VIEW statements
+//!
+//! VIEWs are currently backed entirely by DataFusion. We delegate the actual
+//! registration to the shared base SessionContext so subsequent per-user
+//! sessions inherit the view definition.
+
+use crate::app_context::AppContext;
+use crate::error::KalamDbError;
+use crate::sql::executor::handlers::typed::TypedStatementHandler;
+use crate::sql::executor::models::{ExecutionContext, ExecutionResult, ScalarValue};
+use kalamdb_commons::models::NamespaceId;
+use kalamdb_commons::Role;
+use kalamdb_sql::ddl::CreateViewStatement;
+use std::sync::Arc;
+
+/// Handler for CREATE VIEW statements
+pub struct CreateViewHandler {
+    app_context: Arc<AppContext>,
+}
+
+impl CreateViewHandler {
+    pub fn new(app_context: Arc<AppContext>) -> Self {
+        Self { app_context }
+    }
+
+    fn build_create_sql(statement: &CreateViewStatement) -> String {
+        let mut sql = String::from("CREATE ");
+        if statement.or_replace {
+            sql.push_str("OR REPLACE ");
+        }
+        sql.push_str("VIEW ");
+        if statement.if_not_exists {
+            sql.push_str("IF NOT EXISTS ");
+        }
+
+        sql.push_str(statement.namespace_id.as_str());
+        sql.push('.');
+        sql.push_str(statement.view_name.as_str());
+
+        if !statement.columns.is_empty() {
+            sql.push('(');
+            sql.push_str(&statement.columns.join(", "));
+            sql.push(')');
+        }
+
+        sql.push_str(" AS ");
+        sql.push_str(statement.query_sql.trim());
+
+        sql
+    }
+
+    fn ensure_namespace_schema(&self, namespace: &NamespaceId) -> Result<(), KalamDbError> {
+        let session = self.app_context.base_session_context();
+        let catalog_name =
+            session.catalog_names().first().cloned().ok_or_else(|| {
+                KalamDbError::InvalidOperation("No catalogs available".to_string())
+            })?;
+
+        let catalog = session.catalog(&catalog_name).ok_or_else(|| {
+            KalamDbError::InvalidOperation(format!("Catalog '{}' not found", catalog_name))
+        })?;
+
+        if catalog.schema(namespace.as_str()).is_none() {
+            let schema = Arc::new(datafusion::catalog::memory::MemorySchemaProvider::new());
+            catalog
+                .register_schema(namespace.as_str(), schema)
+                .map_err(|e| {
+                    KalamDbError::InvalidOperation(format!(
+                        "Failed to register namespace schema '{}': {}",
+                        namespace.as_str(),
+                        e
+                    ))
+                })?;
+        }
+
+        Ok(())
+    }
+}
+
+#[async_trait::async_trait]
+impl TypedStatementHandler<CreateViewStatement> for CreateViewHandler {
+    async fn execute(
+        &self,
+        statement: CreateViewStatement,
+        _params: Vec<ScalarValue>,
+        _context: &ExecutionContext,
+    ) -> Result<ExecutionResult, KalamDbError> {
+        self.ensure_namespace_schema(&statement.namespace_id)?;
+        let create_sql = Self::build_create_sql(&statement);
+        let session = self.app_context.base_session_context();
+
+        log::info!(
+            "Running DataFusion CREATE VIEW for {}.{}",
+            statement.namespace_id.as_str(),
+            statement.view_name.as_str()
+        );
+
+        let df = session.sql(&create_sql).await.map_err(|e| {
+            KalamDbError::InvalidSql(format!("Failed to parse CREATE VIEW statement: {}", e))
+        })?;
+
+        // DataFusion returns a DataFrame for DDL; collecting executes the command
+        df.collect()
+            .await
+            .map_err(|e| KalamDbError::ExecutionError(format!("Failed to create view: {}", e)))?;
+
+        Ok(ExecutionResult::Success {
+            message: format!(
+                "View {}.{} created successfully",
+                statement.namespace_id.as_str(),
+                statement.view_name.as_str()
+            ),
+        })
+    }
+
+    async fn check_authorization(
+        &self,
+        _statement: &CreateViewStatement,
+        context: &ExecutionContext,
+    ) -> Result<(), KalamDbError> {
+        match context.user_role {
+            Role::System | Role::Dba => Ok(()),
+            _ => Err(KalamDbError::Unauthorized(
+                "Only DBA or System roles can create views".to_string(),
+            )),
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::test_helpers::init_test_app_context;
+    use arrow::array::Int64Array;
+    use kalamdb_commons::models::{NamespaceId, UserId};
+
+    #[tokio::test]
+    async fn create_view_registers_and_is_queryable() {
+        init_test_app_context();
+        let app_ctx = AppContext::get();
+        let handler = CreateViewHandler::new(app_ctx.clone());
+
+        let stmt = CreateViewStatement::parse(
+            "CREATE VIEW default.test_view AS SELECT 1 AS value",
+            &NamespaceId::new("default"),
+        )
+        .expect("parse view");
+
+        let exec_ctx = ExecutionContext::new(
+            UserId::new("tester"),
+            Role::Dba,
+            app_ctx.base_session_context(),
+        );
+
+        handler
+            .execute(stmt, vec![], &exec_ctx)
+            .await
+            .expect("create view executed");
+
+        let session = exec_ctx.create_session_with_user();
+        let df = session
+            .sql("SELECT value FROM default.test_view")
+            .await
+            .expect("select view");
+        let batches = df.collect().await.expect("collect view");
+        assert_eq!(batches.len(), 1);
+        assert_eq!(batches[0].num_rows(), 1);
+        let column = batches[0].column(0);
+        let values = column
+            .as_any()
+            .downcast_ref::<Int64Array>()
+            .expect("int64 array");
+        assert_eq!(values.value(0), 1);
+    }
+
+    #[tokio::test]
+    async fn non_admin_cannot_create_view() {
+        init_test_app_context();
+        let app_ctx = AppContext::get();
+        let handler = CreateViewHandler::new(app_ctx.clone());
+        let stmt = CreateViewStatement::parse(
+            "CREATE VIEW default.restricted_view AS SELECT 1",
+            &NamespaceId::new("default"),
+        )
+        .expect("parse view");
+
+        let exec_ctx = ExecutionContext::new(
+            UserId::new("tester"),
+            Role::User,
+            app_ctx.base_session_context(),
+        );
+
+        let result = handler.check_authorization(&stmt, &exec_ctx).await;
+        assert!(matches!(result, Err(KalamDbError::Unauthorized(_))));
+    }
+}

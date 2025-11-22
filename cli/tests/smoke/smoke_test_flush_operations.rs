@@ -47,12 +47,15 @@ fn smoke_test_user_table_flush() {
 
     // Create USER table with flush policy
     let create_sql = format!(
-        r#"CREATE USER TABLE {} (
+        r#"CREATE TABLE {} (
             id BIGINT AUTO_INCREMENT PRIMARY KEY,
             content VARCHAR NOT NULL,
             sequence INT NOT NULL,
             created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-        ) FLUSH ROWS {}"#,
+        ) WITH (
+            TYPE = 'USER',
+            FLUSH_POLICY = 'rows:{}'
+        )"#,
         full_table_name, FLUSH_POLICY_ROWS
     );
 
@@ -196,12 +199,15 @@ fn smoke_test_shared_table_flush() {
 
     // Create SHARED table with flush policy
     let create_sql = format!(
-        r#"CREATE SHARED TABLE {} (
+        r#"CREATE TABLE {} (
             id BIGINT AUTO_INCREMENT PRIMARY KEY,
             content VARCHAR NOT NULL,
             sequence INT NOT NULL,
             created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-        ) FLUSH ROWS {}"#,
+        ) WITH (
+            TYPE = 'SHARED',
+            FLUSH_POLICY = 'rows:{}'
+        )"#,
         full_table_name, FLUSH_POLICY_ROWS
     );
 
@@ -349,11 +355,14 @@ fn smoke_test_mixed_source_query() {
 
     // Create table with small flush policy
     let create_sql = format!(
-        r#"CREATE USER TABLE {} (
+        r#"CREATE TABLE {} (
             id BIGINT AUTO_INCREMENT PRIMARY KEY,
             content VARCHAR NOT NULL,
             sequence INT NOT NULL
-        ) FLUSH ROWS 30"#,
+        ) WITH (
+            TYPE = 'USER',
+            FLUSH_POLICY = 'rows:30'
+        )"#,
         full_table_name
     );
 

@@ -1,6 +1,3 @@
-// TODO: Migrate to Phase 10 AppContext pattern
-// This test uses deprecated kalamdb_core::services or kalamdb_auth::service::AuthService
-#[cfg(feature = "phase10-migration-todo")]
 //! Performance benchmarks for authentication endpoints
 //!
 //! This module provides performance testing for authentication operations:
@@ -312,6 +309,9 @@ async fn test_concurrent_auth_load() {
     use base64::Engine;
     use kalamdb_auth::connection::ConnectionInfo;
     use kalamdb_auth::service::AuthService;
+    use kalamdb_auth::UserRepository;
+    use kalamdb_api::repositories::user_repo::CoreUsersRepo;
+    use std::sync::Arc;
 
     let server = TestServer::new().await;
 
@@ -327,14 +327,18 @@ async fn test_concurrent_auth_load() {
     }
 
     // Create auth service
-    let auth_service = std::sync::Arc::new(AuthService::new(
+    let auth_service = Arc::new(AuthService::new(
         "test-secret".to_string(),
         vec!["kalamdb-test".to_string()],
         false,
         false,
         Role::User,
     ));
-    let adapter = std::sync::Arc::new(server.kalam_sql.adapter().clone());
+    
+    // Create user repository adapter
+    let user_repo: Arc<dyn UserRepository> = Arc::new(CoreUsersRepo::new(
+        server.app_context.system_tables().users()
+    ));
 
     // Concurrent authentication test
     let num_concurrent_requests = 50;
@@ -342,7 +346,7 @@ async fn test_concurrent_auth_load() {
 
     for i in 0..num_concurrent_requests {
         let auth_service_clone = auth_service.clone();
-        let adapter_clone = adapter.clone();
+        let user_repo_clone = user_repo.clone();
         let users_clone = users.clone();
 
         let handle = tokio::spawn(async move {
@@ -358,7 +362,7 @@ async fn test_concurrent_auth_load() {
             let connection_info = ConnectionInfo::new(Some("127.0.0.1".to_string()));
 
             let result = auth_service_clone
-                .authenticate(&auth_header, &connection_info, &adapter_clone)
+                .authenticate_with_repo(&auth_header, &connection_info, &user_repo_clone)
                 .await;
 
             let end = Instant::now();

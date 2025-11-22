@@ -42,8 +42,8 @@ impl TypedStatementHandler<CreateTableStatement> for CreateTableHandler {
         _params: Vec<ScalarValue>,
         context: &ExecutionContext,
     ) -> Result<ExecutionResult, KalamDbError> {
-        use crate::sql::executor::helpers::table_creation;
         use crate::sql::executor::helpers::audit;
+        use crate::sql::executor::helpers::table_creation;
 
         let mut statement = statement;
         let effective_type = Self::resolve_table_type(&statement, context);

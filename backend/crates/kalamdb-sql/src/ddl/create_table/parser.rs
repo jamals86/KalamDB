@@ -5,94 +5,24 @@ use kalamdb_commons::schemas::policy::FlushPolicy;
 use kalamdb_commons::schemas::{ColumnDefault, TableType};
 use once_cell::sync::Lazy;
 use regex::Regex;
-use sqlparser::ast::{ColumnOption, CreateTable, DataType as SqlDataType, Statement, TableConstraint};
+use sqlparser::ast::{
+    ColumnOption, CreateTable, DataType as SqlDataType, Statement, TableConstraint,
+};
 use std::collections::HashMap;
 use std::sync::Arc;
 
 static RE_ALPHANUMERIC: Lazy<Regex> = Lazy::new(|| Regex::new(r"^[a-zA-Z0-9_]+$").unwrap());
 static RE_STORAGE_ID: Lazy<Regex> = Lazy::new(|| Regex::new(r"^[a-zA-Z0-9_-]+$").unwrap());
-static RE_FLUSH_ROWS: Lazy<Regex> = Lazy::new(|| Regex::new(r"(?i)\s+FLUSH\s+(?:ROWS|ROW_THRESHOLD)\s+(\d+)").unwrap());
-static RE_FLUSH_INTERVAL: Lazy<Regex> = Lazy::new(|| Regex::new(r"(?i)\s+FLUSH\s+INTERVAL\s+(\d+)s?").unwrap());
-static RE_CREATE_TYPE: Lazy<Regex> = Lazy::new(|| Regex::new(r"(?i)^\s*CREATE\s+(USER|SHARED|STREAM)\s+TABLE").unwrap());
-static RE_TTL: Lazy<Regex> = Lazy::new(|| Regex::new(r"(?i)\s+TTL\s+(\d+)").unwrap());
-static RE_STORAGE: Lazy<Regex> = Lazy::new(|| Regex::new(r"(?i)\s+STORAGE\s+'([^']+)'").unwrap());
+static LEGACY_CREATE_PREFIX_RE: Lazy<Regex> =
+    Lazy::new(|| Regex::new(r"(?i)^\s*CREATE\s+(USER|SHARED|STREAM)\s+TABLE").unwrap());
 
 impl CreateTableStatement {
-    /// Pre-process SQL to handle custom syntax:
-    /// 1. FLUSH ROWS/INTERVAL
-    /// 2. CREATE [USER|SHARED|STREAM] TABLE -> CREATE TABLE
-    /// 3. TTL <seconds>
-    /// 4. STORAGE '<storage_id>'
-    fn preprocess_create_table(sql: &str) -> (String, Option<u64>, Option<u64>, Option<TableType>, Option<u64>, Option<StorageId>) {
-        let mut sql_string = sql.to_string();
-        let mut rows = None;
-        let mut interval = None;
-        let mut table_type = None;
-        let mut ttl_seconds = None;
-        let mut storage_id = None;
-
-        // 1. Handle FLUSH options
-        if let Some(caps) = RE_FLUSH_ROWS.captures(&sql_string) {
-            if let Some(m) = caps.get(1) {
-                if let Ok(val) = m.as_str().parse::<u64>() {
-                    rows = Some(val);
-                }
-            }
-            sql_string = RE_FLUSH_ROWS.replace(&sql_string, "").to_string();
-        }
-
-        if let Some(caps) = RE_FLUSH_INTERVAL.captures(&sql_string) {
-            if let Some(m) = caps.get(1) {
-                if let Ok(val) = m.as_str().parse::<u64>() {
-                    interval = Some(val);
-                }
-            }
-            sql_string = RE_FLUSH_INTERVAL.replace(&sql_string, "").to_string();
-        }
-
-        // Handle TTL
-        if let Some(caps) = RE_TTL.captures(&sql_string) {
-            if let Some(m) = caps.get(1) {
-                if let Ok(val) = m.as_str().parse::<u64>() {
-                    ttl_seconds = Some(val);
-                }
-            }
-            sql_string = RE_TTL.replace(&sql_string, "").to_string();
-        }
-
-        // Handle STORAGE
-        if let Some(caps) = RE_STORAGE.captures(&sql_string) {
-            if let Some(m) = caps.get(1) {
-                storage_id = Some(StorageId::from(m.as_str()));
-            }
-            sql_string = RE_STORAGE.replace(&sql_string, "").to_string();
-        }
-
-        // 2. Handle Table Type syntax
-        if let Some(caps) = RE_CREATE_TYPE.captures(&sql_string) {
-            if let Some(m) = caps.get(1) {
-                let type_str = m.as_str().to_uppercase();
-                match type_str.as_str() {
-                    "USER" => table_type = Some(TableType::User),
-                    "SHARED" => table_type = Some(TableType::Shared),
-                    "STREAM" => table_type = Some(TableType::Stream),
-                    _ => {}
-                }
-            }
-            // Replace with CREATE TABLE
-            sql_string = RE_CREATE_TYPE.replace(&sql_string, "CREATE TABLE").to_string();
-        }
-
-        (sql_string, rows, interval, table_type, ttl_seconds, storage_id)
-    }
-
     /// Parse a SQL statement into a CreateTableStatement
     pub fn parse(sql: &str, default_namespace: &str) -> Result<Self, String> {
-        // Pre-process SQL to handle custom syntax
-        let (cleaned_sql, flush_rows_custom, flush_interval_custom, explicit_type, ttl_custom, storage_custom) = Self::preprocess_create_table(sql);
+        let (normalized_sql, legacy_table_type) = normalize_create_table_sql(sql);
 
         let dialect = sqlparser::dialect::GenericDialect {};
-        let mut statements = sqlparser::parser::Parser::parse_sql(&dialect, &cleaned_sql)
+        let mut statements = sqlparser::parser::Parser::parse_sql(&dialect, &normalized_sql)
             .map_err(|e| e.to_string())?;
         if statements.len() != 1 {
             return Err("Expected exactly one statement".to_string());
@@ -138,12 +68,12 @@ impl CreateTableStatement {
                 }
 
                 // 2. Parse options (TYPE, STORAGE, FLUSH_POLICY, etc.)
-                let mut table_type = explicit_type.unwrap_or(TableType::User);
-                let mut storage_id = storage_custom;
+                let mut table_type = legacy_table_type.clone().unwrap_or(TableType::Shared);
+                let mut storage_id = None;
                 let mut use_user_storage = false;
                 let mut flush_policy = None;
                 let mut deleted_retention_hours = None;
-                let mut ttl_seconds = ttl_custom;
+                let mut ttl_seconds = None;
                 let mut access_level = None;
 
                 // Handle options (was with_options)
@@ -160,12 +90,28 @@ impl CreateTableStatement {
 
                         match key_str.as_str() {
                             "TYPE" => {
-                                table_type = match value_str.to_uppercase().as_str() {
+                                let requested_type = match value_str.to_uppercase().as_str() {
                                     "USER" => TableType::User,
                                     "SHARED" => TableType::Shared,
                                     "STREAM" => TableType::Stream,
-                                    _ => return Err(format!("Invalid table TYPE '{}'. Supported: USER, SHARED, STREAM", value_str)),
+                                    _ => {
+                                        return Err(format!(
+                                        "Invalid table TYPE '{}'. Supported: USER, SHARED, STREAM",
+                                        value_str
+                                    ))
+                                    }
                                 };
+
+                                if let Some(ref legacy_type) = legacy_table_type {
+                                    if requested_type != *legacy_type {
+                                        return Err(format!(
+                                            "Conflicting table type definitions: legacy prefix {:?} vs TYPE option {:?}",
+                                            legacy_type, requested_type
+                                        ));
+                                    }
+                                }
+
+                                table_type = requested_type;
                             }
                             "STORAGE_ID" => {
                                 if !RE_STORAGE_ID.is_match(&value_str) {
@@ -189,12 +135,21 @@ impl CreateTableStatement {
                                     }
                                     match kv[0].to_uppercase().as_str() {
                                         "ROWS" => {
-                                            rows = kv[1].parse().map_err(|_| "Invalid row limit in FLUSH_POLICY")?;
+                                            rows = kv[1]
+                                                .parse()
+                                                .map_err(|_| "Invalid row limit in FLUSH_POLICY")?;
                                         }
                                         "INTERVAL" => {
-                                            interval = kv[1].parse().map_err(|_| "Invalid interval in FLUSH_POLICY")?;
+                                            interval = kv[1]
+                                                .parse()
+                                                .map_err(|_| "Invalid interval in FLUSH_POLICY")?;
                                         }
-                                        _ => return Err(format!("Unknown FLUSH_POLICY key '{}'", kv[0])),
+                                        _ => {
+                                            return Err(format!(
+                                                "Unknown FLUSH_POLICY key '{}'",
+                                                kv[0]
+                                            ))
+                                        }
                                     }
                                 }
 
@@ -210,19 +165,25 @@ impl CreateTableStatement {
                                         interval_seconds: interval,
                                     }
                                 } else {
-                                    return Err("FLUSH_POLICY must specify 'rows' or 'interval' > 0".to_string());
+                                    return Err(
+                                        "FLUSH_POLICY must specify 'rows' or 'interval' > 0"
+                                            .to_string(),
+                                    );
                                 };
-                                
+
                                 // Validate policy immediately
                                 policy.validate()?;
                                 flush_policy = Some(policy);
                             }
                             "DELETED_RETENTION_HOURS" => {
-                                let hours: u32 = value_str.parse().map_err(|_| "Invalid DELETED_RETENTION_HOURS")?;
+                                let hours: u32 = value_str
+                                    .parse()
+                                    .map_err(|_| "Invalid DELETED_RETENTION_HOURS")?;
                                 deleted_retention_hours = Some(hours);
                             }
                             "TTL_SECONDS" => {
-                                let seconds: u64 = value_str.parse().map_err(|_| "Invalid TTL_SECONDS")?;
+                                let seconds: u64 =
+                                    value_str.parse().map_err(|_| "Invalid TTL_SECONDS")?;
                                 ttl_seconds = Some(seconds);
                             }
                             "ACCESS_LEVEL" => {
@@ -236,31 +197,6 @@ impl CreateTableStatement {
                             _ => return Err(format!("Unknown table option '{}'", key_str)),
                         }
                     }
-                }
-
-                // Merge extracted flush options if not already set by WITH clause
-                if flush_policy.is_none() && (flush_rows_custom.is_some() || flush_interval_custom.is_some()) {
-                    let rows = flush_rows_custom.unwrap_or(0) as u32;
-                    let interval = flush_interval_custom.unwrap_or(0) as u32;
-                    
-                    let policy = if rows > 0 && interval > 0 {
-                        FlushPolicy::Combined {
-                            row_limit: rows,
-                            interval_seconds: interval,
-                        }
-                    } else if rows > 0 {
-                        FlushPolicy::RowLimit { row_limit: rows }
-                    } else if interval > 0 {
-                        FlushPolicy::TimeInterval {
-                            interval_seconds: interval,
-                        }
-                    } else {
-                        // Should not happen given the check above
-                        return Err("Invalid flush options".to_string());
-                    };
-                    
-                    policy.validate()?;
-                    flush_policy = Some(policy);
                 }
 
                 // 3. Validate options based on table type
@@ -298,7 +234,9 @@ impl CreateTableStatement {
                         }
                         TableConstraint::PrimaryKey { columns, .. } => {
                             if columns.len() != 1 {
-                                return Err("Composite PRIMARY KEYs are not supported yet".to_string());
+                                return Err(
+                                    "Composite PRIMARY KEYs are not supported yet".to_string()
+                                );
                             }
                             if primary_key_column.is_some() {
                                 return Err("Multiple PRIMARY KEY definitions found".to_string());
@@ -308,7 +246,9 @@ impl CreateTableStatement {
                             if let sqlparser::ast::Expr::Identifier(ident) = col_expr {
                                 primary_key_column = Some(ident.value.clone());
                             } else {
-                                return Err("Complex expressions in PRIMARY KEY not supported".to_string());
+                                return Err(
+                                    "Complex expressions in PRIMARY KEY not supported".to_string()
+                                );
                             }
                         }
                         _ => {}
@@ -325,16 +265,18 @@ impl CreateTableStatement {
                     }
 
                     let (data_type, is_nullable) = convert_sql_type_to_arrow(&col.data_type)?;
-                    
+
                     // Check column options (PRIMARY KEY, DEFAULT, NOT NULL)
                     let mut col_is_nullable = is_nullable; // Default from type mapping
-                    
+
                     for option in col.options {
                         match option.option {
                             ColumnOption::Unique { is_primary, .. } => {
                                 if is_primary {
                                     if primary_key_column.is_some() {
-                                        return Err("Multiple PRIMARY KEY definitions found".to_string());
+                                        return Err(
+                                            "Multiple PRIMARY KEY definitions found".to_string()
+                                        );
                                     }
                                     primary_key_column = Some(col_name.clone());
                                     col_is_nullable = false; // PKs cannot be null
@@ -347,80 +289,30 @@ impl CreateTableStatement {
                                 col_is_nullable = true;
                             }
                             ColumnOption::Default(expr) => {
-                                let default_spec = match expr {
-                                    // Handle function calls
-                                    sqlparser::ast::Expr::Function(func) => {
-                                        let name = func.name.to_string().to_uppercase();
-                                        match name.as_str() {
-                                            "NOW" | "CURRENT_TIMESTAMP" | "SNOWFLAKE_ID" | "UUID_V7" | "ULID" | "CURRENT_USER" => {
-                                                ColumnDefault::function(&name, vec![])
-                                            }
-                                            _ => {
-                                                // Fallback to string literal for unknown functions
-                                                ColumnDefault::literal(serde_json::Value::String(func.to_string()))
-                                            }
-                                        }
-                                    },
-                                    // Handle literals
-                                    sqlparser::ast::Expr::Value(val) => {
-                                        match &val.value {
-                                            sqlparser::ast::Value::Number(n, _) => {
-                                                if let Ok(i) = n.parse::<i64>() {
-                                                    ColumnDefault::literal(serde_json::Value::Number(i.into()))
-                                                } else if let Ok(f) = n.parse::<f64>() {
-                                                    ColumnDefault::literal(serde_json::json!(f))
-                                                } else {
-                                                    ColumnDefault::literal(serde_json::Value::String(n.clone()))
-                                                }
-                                            },
-                                            sqlparser::ast::Value::SingleQuotedString(s) | sqlparser::ast::Value::DoubleQuotedString(s) => {
-                                                ColumnDefault::literal(serde_json::Value::String(s.clone()))
-                                            },
-                                            sqlparser::ast::Value::Boolean(b) => {
-                                                ColumnDefault::literal(serde_json::Value::Bool(*b))
-                                            },
-                                            sqlparser::ast::Value::Null => {
-                                                ColumnDefault::literal(serde_json::Value::Null)
-                                            },
-                                            _ => {
-                                                ColumnDefault::literal(serde_json::Value::String(val.to_string()))
-                                            }
-                                        }
-                                    },
-                                    // Handle identifiers (e.g. CURRENT_TIMESTAMP without parens)
-                                    sqlparser::ast::Expr::Identifier(ident) => {
-                                        let s = ident.value.to_uppercase();
-                                        if s == "CURRENT_TIMESTAMP" {
-                                            ColumnDefault::function("NOW", vec![])
-                                        } else if s == "NULL" {
-                                            ColumnDefault::literal(serde_json::Value::Null)
-                                        } else {
-                                            ColumnDefault::literal(serde_json::Value::String(ident.value))
-                                        }
-                                    },
-                                    _ => {
-                                        let default_val = expr.to_string();
-                                        if default_val.to_uppercase() == "NULL" {
-                                            ColumnDefault::literal(serde_json::Value::Null)
-                                        } else if default_val.to_uppercase() == "CURRENT_TIMESTAMP" || default_val.to_uppercase() == "NOW()" {
-                                            ColumnDefault::function("NOW", vec![])
-                                        } else {
-                                            // Strip quotes if present
-                                            let val = default_val.trim_matches('\'').to_string();
-                                            ColumnDefault::literal(serde_json::Value::String(val))
-                                        }
-                                    }
-                                };
+                                let default_spec = expr_to_column_default(&expr);
                                 column_defaults.insert(col_name.clone(), default_spec);
                             }
                             ColumnOption::DialectSpecific(tokens) => {
                                 // Check for AUTO_INCREMENT
-                                let s = tokens.iter().map(|t| t.to_string()).collect::<Vec<_>>().join(" ");
-                                println!("DEBUG: DialectSpecific tokens for column {}: {}", col_name, s);
+                                let s = tokens
+                                    .iter()
+                                    .map(|t| t.to_string())
+                                    .collect::<Vec<_>>()
+                                    .join(" ");
+                                println!(
+                                    "DEBUG: DialectSpecific tokens for column {}: {}",
+                                    col_name, s
+                                );
                                 if s.to_uppercase().contains("AUTO_INCREMENT") {
-                                    println!("DEBUG: Detected AUTO_INCREMENT for column {}", col_name);
+                                    println!(
+                                        "DEBUG: Detected AUTO_INCREMENT for column {}",
+                                        col_name
+                                    );
                                     // Set default to SNOWFLAKE_ID()
-                                    column_defaults.insert(col_name.clone(), ColumnDefault::function("SNOWFLAKE_ID", vec![]));
+                                    column_defaults.insert(
+                                        col_name.clone(),
+                                        ColumnDefault::function("SNOWFLAKE_ID", vec![]),
+                                    );
                                 }
                             }
                             _ => {} // Ignore other options for now
@@ -448,7 +340,10 @@ impl CreateTableStatement {
                         }
                     }
                     if !found {
-                        return Err(format!("PRIMARY KEY column '{}' not found in column list", pk));
+                        return Err(format!(
+                            "PRIMARY KEY column '{}' not found in column list",
+                            pk
+                        ));
                     }
                 }
 
@@ -473,7 +368,94 @@ impl CreateTableStatement {
     }
 }
 
-fn convert_sql_type_to_arrow(sql_type: &SqlDataType) -> Result<(DataType, bool), String> {
+fn normalize_create_table_sql(sql: &str) -> (String, Option<TableType>) {
+    // Replace CURRENT_USER() with CURRENT_USER to satisfy sqlparser GenericDialect
+    // which doesn't support function calls for this keyword in DEFAULT clause
+    let re_current_user = Regex::new(r"(?i)CURRENT_USER\s*\(\s*\)").unwrap();
+    let sql_cow = re_current_user.replace_all(sql, "CURRENT_USER");
+    let sql_ref = sql_cow.as_ref();
+
+    if let Some(caps) = LEGACY_CREATE_PREFIX_RE.captures(sql_ref) {
+        let requested_type = caps[1].to_ascii_uppercase();
+        let table_type = match requested_type.as_str() {
+            "USER" => TableType::User,
+            "SHARED" => TableType::Shared,
+            "STREAM" => TableType::Stream,
+            _ => TableType::User,
+        };
+        let normalized = LEGACY_CREATE_PREFIX_RE
+            .replace(sql_ref, "CREATE TABLE ")
+            .into_owned();
+        (normalized, Some(table_type))
+    } else {
+        (sql_ref.to_string(), None)
+    }
+}
+
+fn expr_to_column_default(expr: &sqlparser::ast::Expr) -> ColumnDefault {
+    match expr {
+        // Handle function calls
+        sqlparser::ast::Expr::Function(func) => {
+            let name = func.name.to_string().to_uppercase();
+            match name.as_str() {
+                "NOW" | "CURRENT_TIMESTAMP" | "SNOWFLAKE_ID" | "UUID_V7" | "ULID"
+                | "CURRENT_USER" => ColumnDefault::function(&name, vec![]),
+                _ => {
+                    // Fallback to string literal for unknown functions
+                    ColumnDefault::literal(serde_json::Value::String(func.to_string()))
+                }
+            }
+        }
+        // Handle literals
+        sqlparser::ast::Expr::Value(val) => match &val.value {
+            sqlparser::ast::Value::Number(n, _) => {
+                if let Ok(i) = n.parse::<i64>() {
+                    ColumnDefault::literal(serde_json::Value::Number(i.into()))
+                } else if let Ok(f) = n.parse::<f64>() {
+                    ColumnDefault::literal(serde_json::json!(f))
+                } else {
+                    ColumnDefault::literal(serde_json::Value::String(n.clone()))
+                }
+            }
+            sqlparser::ast::Value::SingleQuotedString(s)
+            | sqlparser::ast::Value::DoubleQuotedString(s) => {
+                ColumnDefault::literal(serde_json::Value::String(s.clone()))
+            }
+            sqlparser::ast::Value::Boolean(b) => {
+                ColumnDefault::literal(serde_json::Value::Bool(*b))
+            }
+            sqlparser::ast::Value::Null => ColumnDefault::literal(serde_json::Value::Null),
+            _ => ColumnDefault::literal(serde_json::Value::String(val.to_string())),
+        },
+        // Handle identifiers (e.g. CURRENT_TIMESTAMP without parens)
+        sqlparser::ast::Expr::Identifier(ident) => {
+            let s = ident.value.to_uppercase();
+            match s.as_str() {
+                "CURRENT_TIMESTAMP" => ColumnDefault::function("NOW", vec![]),
+                "CURRENT_USER" => ColumnDefault::function("CURRENT_USER", vec![]),
+                "NULL" => ColumnDefault::literal(serde_json::Value::Null),
+                _ => ColumnDefault::literal(serde_json::Value::String(ident.value.clone())),
+            }
+        }
+        _ => {
+            let default_val = expr.to_string();
+            let upper_val = default_val.to_uppercase();
+            if upper_val == "NULL" {
+                ColumnDefault::literal(serde_json::Value::Null)
+            } else if upper_val == "CURRENT_TIMESTAMP" || upper_val == "NOW()" {
+                ColumnDefault::function("NOW", vec![])
+            } else {
+                // Strip quotes if present
+                let val = default_val.trim_matches('\'').to_string();
+                ColumnDefault::literal(serde_json::Value::String(val))
+            }
+        }
+    }
+}
+
+pub(crate) fn convert_sql_type_to_arrow(
+    sql_type: &SqlDataType,
+) -> Result<(DataType, bool), String> {
     match sql_type {
         SqlDataType::Boolean => Ok((DataType::Boolean, true)),
         SqlDataType::TinyInt(_) => Ok((DataType::Int8, true)),
@@ -482,9 +464,10 @@ fn convert_sql_type_to_arrow(sql_type: &SqlDataType) -> Result<(DataType, bool),
         SqlDataType::BigInt(_) => Ok((DataType::Int64, true)),
         SqlDataType::Float(_) => Ok((DataType::Float32, true)),
         SqlDataType::Double(_) | SqlDataType::Real => Ok((DataType::Float64, true)),
-        SqlDataType::Text | SqlDataType::String(_) | SqlDataType::Varchar(_) | SqlDataType::Char(_) => {
-            Ok((DataType::Utf8, true))
-        }
+        SqlDataType::Text
+        | SqlDataType::String(_)
+        | SqlDataType::Varchar(_)
+        | SqlDataType::Char(_) => Ok((DataType::Utf8, true)),
         SqlDataType::Timestamp(precision, _) => {
             // Default to Microsecond precision if not specified
             // Note: DataFusion often prefers Nanosecond, but we use Microsecond for compatibility
@@ -496,9 +479,101 @@ fn convert_sql_type_to_arrow(sql_type: &SqlDataType) -> Result<(DataType, bool),
             };
             Ok((DataType::Timestamp(unit, None), true))
         }
+        SqlDataType::Datetime(_) => {
+            Ok((DataType::Timestamp(TimeUnit::Microsecond, Some("UTC".into())), true))
+        }
         SqlDataType::Date => Ok((DataType::Date32, true)),
-        SqlDataType::Binary(_) | SqlDataType::Blob(_) | SqlDataType::Bytea => Ok((DataType::Binary, true)),
+        SqlDataType::Time(_, _) => Ok((DataType::Time64(TimeUnit::Microsecond), true)),
+        SqlDataType::Binary(_) | SqlDataType::Blob(_) | SqlDataType::Bytea => {
+            Ok((DataType::Binary, true))
+        }
+        SqlDataType::Uuid => Ok((DataType::FixedSizeBinary(16), true)),
+        SqlDataType::JSON => Ok((DataType::Utf8, true)),
+        SqlDataType::Decimal(info) => match info {
+            sqlparser::ast::ExactNumberInfo::PrecisionAndScale(p, s) => {
+                Ok((DataType::Decimal128(*p as u8, *s as i8), true))
+            }
+            sqlparser::ast::ExactNumberInfo::Precision(p) => {
+                Ok((DataType::Decimal128(*p as u8, 0), true))
+            }
+            sqlparser::ast::ExactNumberInfo::None => Ok((DataType::Decimal128(38, 10), true)),
+        },
         _ => Err(format!("Unsupported SQL data type: {:?}", sql_type)),
     }
 }
 
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    const DEFAULT_NS: &str = "sales";
+
+    #[test]
+    fn modern_create_table_parses() {
+        let sql = r#"
+CREATE TABLE sales.orders2 (
+    order_id        INT,
+    customer_id     STRING NOT NULL,
+    ordered_at      TIMESTAMP
+)
+WITH (
+    TYPE = 'USER',
+    STORAGE_ID = 's3-us',
+    FLUSH_POLICY = 'rows:1000,interval:60'
+);
+"#;
+
+        let stmt = CreateTableStatement::parse(sql, DEFAULT_NS).unwrap();
+        assert_eq!(stmt.table_type, TableType::User);
+        assert_eq!(stmt.table_name.as_str(), "orders2");
+        assert_eq!(stmt.namespace_id.as_str(), "sales");
+        assert_eq!(stmt.storage_id.unwrap().as_str(), "s3-us");
+        assert!(matches!(
+            stmt.flush_policy,
+            Some(FlushPolicy::Combined { .. })
+        ));
+    }
+
+    #[test]
+    fn stream_table_requires_ttl() {
+        let sql = r#"
+CREATE TABLE sales.activity (
+    event_id STRING PRIMARY KEY,
+    payload STRING
+) WITH (
+    TYPE = 'STREAM'
+);
+"#;
+
+        let err = CreateTableStatement::parse(sql, DEFAULT_NS).unwrap_err();
+        assert!(err.contains("STREAM tables must specify"));
+    }
+
+    #[test]
+    fn test_current_user_default() {
+        let sql = r#"
+CREATE TABLE concurrent.user_data (
+    id INTEGER,
+    message TEXT,
+    timestamp BIGINT,
+    current_user_id TEXT DEFAULT CURRENT_USER()
+) WITH (TYPE='USER', FLUSH_POLICY='rows:100')
+"#;
+        let stmt = CreateTableStatement::parse(sql, DEFAULT_NS).unwrap();
+        assert!(stmt.column_defaults.contains_key("current_user_id"));
+    }
+
+    #[test]
+    fn test_current_user_no_parens() {
+        let sql = r#"
+CREATE TABLE concurrent.user_data_no_parens (
+    id INTEGER,
+    message TEXT,
+    timestamp BIGINT,
+    current_user_id TEXT DEFAULT CURRENT_USER
+) WITH (TYPE='USER')
+"#;
+        let stmt = CreateTableStatement::parse(sql, DEFAULT_NS).unwrap();
+        assert!(stmt.column_defaults.contains_key("current_user_id"));
+    }
+}

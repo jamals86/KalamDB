@@ -44,13 +44,13 @@ fn test_websocket_batch_streaming_5k_rows() {
     // Create table with long text columns to ensure data exceeds batch size
     println!("Creating table {}...", table_name);
     let create_sql = format!(
-        "CREATE USER TABLE {} (
+        "CREATE TABLE {} (
             id BIGINT PRIMARY KEY,
             data TEXT,
             description TEXT,
             category TEXT,
             timestamp BIGINT
-        )",
+        ) WITH (TYPE='USER', FLUSH_POLICY='rows:10')",
         table_name
     );
 

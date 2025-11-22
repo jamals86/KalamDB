@@ -97,10 +97,10 @@ impl SchemaPersistence {
     pub fn get_arrow_schema(
         cache: &TableCache,
         table_id: &TableId,
-    ) -> Result<Arc<arrow::datatypes::Schema>, KalamDbError> {
+    ) -> Result<(Arc<arrow::datatypes::Schema>, Option<TableId>), KalamDbError> {
         // Fast path: check cache
         if let Some(cached) = cache.get(table_id) {
-            return cached.arrow_schema();
+            return Ok((cached.arrow_schema()?, None));
         }
 
         // Slow path: try to load from persistence (lazy loading)
@@ -128,8 +128,7 @@ impl SchemaPersistence {
                 data.storage_id = Some(sid.clone());
                 // Resolve template
                 match PathResolver::resolve_storage_path_template(
-                    &table_id.namespace_id(),
-                    &table_id.table_name(),
+                    table_id,
                     table_def.table_type,
                     &sid,
                 ) {
@@ -143,9 +142,9 @@ impl SchemaPersistence {
             }
 
             let data_arc = Arc::new(data);
-            cache.insert(table_id.clone(), data_arc.clone());
+            let evicted = cache.insert(table_id.clone(), data_arc.clone());
 
-            return data_arc.arrow_schema();
+            return Ok((data_arc.arrow_schema()?, evicted));
         }
 
         Err(KalamDbError::TableNotFound(format!(

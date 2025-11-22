@@ -43,12 +43,15 @@ async fn setup_http_server_and_table(
 
     // Create user table with appropriate schema
     let create_table = format!(
-        r#"CREATE USER TABLE {}.{} (
+        r#"CREATE TABLE {}.{} (
             id TEXT,
             content TEXT,
             priority INT,
             created_at BIGINT
-        ) STORAGE local"#,
+        ) WITH (
+            TYPE = 'USER',
+            STORAGE_ID = 'local'
+        )"#,
         namespace, table_name
     );
 
@@ -69,12 +72,15 @@ async fn setup_test_table(server: &TestServer, namespace: &str, table_name: &str
 
     // Create user table with appropriate schema
     let create_table = format!(
-        r#"CREATE USER TABLE {}.{} (
+        r#"CREATE TABLE {}.{} (
             id TEXT,
             content TEXT,
             priority INT,
             created_at BIGINT
-        ) STORAGE local"#,
+        ) WITH (
+            TYPE = 'USER',
+            STORAGE_ID = 'local'
+        )"#,
         namespace, table_name
     );
 

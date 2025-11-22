@@ -77,11 +77,7 @@ fn test_namespace_operations() {
     println!("=============================");
 
     // Generate unique namespace name
-    let timestamp = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .unwrap()
-        .as_millis();
-    let ns_name = format!("smoke_ns_{}", timestamp);
+    let ns_name = generate_unique_namespace("smoke_core_ops");
 
     // CREATE NAMESPACE
     println!("  Creating namespace: {}", ns_name);
@@ -137,11 +133,7 @@ fn test_user_operations() {
     println!("=======================");
 
     // Generate unique username
-    let timestamp = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .unwrap()
-        .as_millis();
-    let username = format!("smoke_user_{}", timestamp);
+    let username = generate_unique_namespace("smoke_user");
     let password = "S3cur3P@ssw0rd!";
 
     // CREATE USER
@@ -205,11 +197,7 @@ fn test_storage_operations() {
     println!("===========================");
 
     // Generate unique storage name
-    let timestamp = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .unwrap()
-        .as_millis();
-    let storage_name = format!("smoke_storage_{}", timestamp);
+    let storage_name = generate_unique_namespace("smoke_storage");
 
     // CREATE STORAGE
     println!("  Creating storage: {}", storage_name);
@@ -283,12 +271,8 @@ fn test_flush_operations() {
     println!("============================================");
 
     // Create a test namespace and table for flush testing
-    let timestamp = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .unwrap()
-        .as_millis();
-    let ns_name = format!("smoke_flush_ns_{}", timestamp);
-    let table_name = format!("test_table_{}", timestamp);
+    let ns_name = generate_unique_namespace("smoke_flush_ns");
+    let table_name = generate_unique_table("test_table");
     let full_table_name = format!("{}.{}", ns_name, table_name);
 
     // Setup: Create namespace and table
@@ -297,7 +281,7 @@ fn test_flush_operations() {
         .expect("CREATE NAMESPACE should succeed");
 
     let create_table_sql = format!(
-        "CREATE USER TABLE {} (id INT PRIMARY KEY, value VARCHAR) FLUSH ROWS 100",
+        "CREATE TABLE {} (id INT PRIMARY KEY, value VARCHAR) WITH (TYPE = 'USER', FLUSH_POLICY = 'rows:100')",
         full_table_name
     );
     execute_sql_as_root_via_cli(&create_table_sql).expect("CREATE TABLE should succeed");

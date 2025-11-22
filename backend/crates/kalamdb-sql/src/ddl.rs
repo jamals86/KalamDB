@@ -10,6 +10,7 @@ pub mod alter_table;
 pub mod backup_namespace;
 pub mod create_namespace;
 pub mod create_table; // Unified parser for all table types (USER, SHARED, STREAM)
+pub mod create_view;
 pub mod describe_table;
 pub mod drop_namespace;
 pub mod drop_table;
@@ -35,6 +36,7 @@ pub use alter_table::{AlterTableStatement, ColumnOperation};
 pub use backup_namespace::BackupDatabaseStatement;
 pub use create_namespace::CreateNamespaceStatement;
 pub use create_table::CreateTableStatement;
+pub use create_view::CreateViewStatement;
 pub use describe_table::DescribeTableStatement;
 pub use drop_namespace::DropNamespaceStatement;
 pub use drop_table::{DropTableStatement, TableKind};

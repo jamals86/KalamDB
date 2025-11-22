@@ -44,18 +44,22 @@ async fn test_01_combined_data_count_and_select() {
 
     // Create user table
     let create_sql = format!(
-        "CREATE USER TABLE {}.{} (
+        "CREATE TABLE {}.{} (
             order_id BIGINT PRIMARY KEY,
             customer_name TEXT,
             amount DOUBLE,
             status TEXT,
             created_at TIMESTAMP
-        )",
+        ) WITH (TYPE = 'USER')",
         namespace, table_name
     );
 
     let response = server.execute_sql_as_user(&create_sql, user_id).await;
-    assert_eq!(response.status, ResponseStatus::Success, "Failed to create table");
+    assert_eq!(
+        response.status,
+        ResponseStatus::Success,
+        "Failed to create table"
+    );
 
     // Insert first batch of 10 rows (these will be flushed to Parquet)
     println!("Inserting first batch of 10 rows (to be flushed)...");
@@ -152,7 +156,8 @@ async fn test_01_combined_data_count_and_select() {
         .await;
 
     assert_eq!(
-        count_response.status, ResponseStatus::Success,
+        count_response.status,
+        ResponseStatus::Success,
         "SQL failed: {:?}",
         count_response.error
     );
@@ -182,7 +187,8 @@ async fn test_01_combined_data_count_and_select() {
         .await;
 
     assert_eq!(
-        select_response.status, ResponseStatus::Success,
+        select_response.status,
+        ResponseStatus::Success,
         "SQL failed: {:?}",
         select_response.error
     );
@@ -228,13 +234,13 @@ async fn test_02_combined_data_aggregations() {
     fixtures::create_namespace(&server, namespace).await;
 
     let create_sql = format!(
-        "CREATE USER TABLE {}.{} (
+        "CREATE TABLE {}.{} (
             sale_id BIGINT PRIMARY KEY,
             product TEXT,
             quantity INT,
             price DOUBLE,
             sale_date TIMESTAMP
-        )",
+        ) WITH (TYPE = 'USER')",
         namespace, table_name
     );
     server.execute_sql_as_user(&create_sql, user_id).await;
@@ -375,13 +381,13 @@ async fn test_03_combined_data_filtering() {
     fixtures::create_namespace(&server, namespace).await;
 
     let create_sql = format!(
-        "CREATE USER TABLE {}.{} (
+        "CREATE TABLE {}.{} (
             product_id BIGINT PRIMARY KEY,
             name TEXT,
             category TEXT,
             price DOUBLE,
             in_stock BOOLEAN
-        )",
+        ) WITH (TYPE = 'USER')",
         namespace, table_name
     );
     server.execute_sql_as_user(&create_sql, user_id).await;
@@ -552,12 +558,12 @@ async fn test_04_combined_data_integrity_verification() {
     fixtures::create_namespace(&server, namespace).await;
 
     let create_sql = format!(
-        "CREATE USER TABLE {}.{} (
+        "CREATE TABLE {}.{} (
             record_id BIGINT PRIMARY KEY,
             data TEXT,
             value DOUBLE,
             created_at TIMESTAMP
-        )",
+        ) WITH (TYPE = 'USER')",
         namespace, table_name
     );
     server.execute_sql_as_user(&create_sql, user_id).await;
@@ -614,7 +620,8 @@ async fn test_04_combined_data_integrity_verification() {
         .await;
 
     assert_eq!(
-        query_response.status, ResponseStatus::Success,
+        query_response.status,
+        ResponseStatus::Success,
         "SQL failed: {:?}",
         query_response.error
     );
@@ -677,11 +684,11 @@ async fn test_05_multiple_flush_cycles() {
     fixtures::create_namespace(&server, namespace).await;
 
     let create_sql = format!(
-        "CREATE USER TABLE {}.{} (
+        "CREATE TABLE {}.{} (
             event_id BIGINT PRIMARY KEY,
             event_type TEXT,
             timestamp TIMESTAMP
-        )",
+        ) WITH (TYPE = 'USER')",
         namespace, table_name
     );
     server.execute_sql_as_user(&create_sql, user_id).await;
@@ -748,10 +755,10 @@ async fn test_06_soft_delete_operations() {
     fixtures::create_namespace(&server, namespace).await;
 
     let create_sql = format!(
-        "CREATE USER TABLE {}.{} (
+        "CREATE TABLE {}.{} (
             task_id TEXT PRIMARY KEY,
             title TEXT
-        )",
+        ) WITH (TYPE = 'USER')",
         namespace, table_name
     );
     server.execute_sql_as_user(&create_sql, user_id).await;
@@ -790,7 +797,12 @@ async fn test_06_soft_delete_operations() {
             user_id,
         )
         .await;
-    assert_eq!(delete1.status, ResponseStatus::Success, "Delete failed: {:?}", delete1);
+    assert_eq!(
+        delete1.status,
+        ResponseStatus::Success,
+        "Delete failed: {:?}",
+        delete1
+    );
 
     println!("Soft deleting task2...");
     let delete2 = server
@@ -802,7 +814,12 @@ async fn test_06_soft_delete_operations() {
             user_id,
         )
         .await;
-    assert_eq!(delete2.status, ResponseStatus::Success, "Delete failed: {:?}", delete2);
+    assert_eq!(
+        delete2.status,
+        ResponseStatus::Success,
+        "Delete failed: {:?}",
+        delete2
+    );
 
     // Query should only show 3 tasks (task3, task4, task5)
     println!("Querying after soft deletes...");

@@ -7,15 +7,16 @@ use super::base::{FlushJobResult, FlushMetadata, TableFlush};
 use crate::error::KalamDbError;
 use crate::live_query::{ChangeNotification, LiveQueryManager};
 use crate::manifest::{FlushManifestHelper, ManifestCacheService, ManifestService};
+use crate::providers::arrow_json_conversion::json_rows_to_arrow_batch;
 use crate::schema_registry::SchemaRegistry;
 use crate::storage::ParquetWriter;
 use datafusion::arrow::datatypes::SchemaRef;
 use datafusion::arrow::record_batch::RecordBatch;
-use kalamdb_commons::models::{TableId, UserId};
+use datafusion::scalar::ScalarValue;
+use kalamdb_commons::models::{Row, TableId, UserId};
 use kalamdb_commons::{NamespaceId, TableName};
 use kalamdb_store::entity_store::EntityStore;
 use kalamdb_tables::{SharedTableRow, SharedTableStore};
-use serde_json::Value as JsonValue;
 use std::path::PathBuf;
 use std::sync::Arc;
 
@@ -81,40 +82,15 @@ impl SharedTableFlushJob {
         Ok((batch_number, filename))
     }
 
-    /// Convert JSON rows to Arrow RecordBatch
-    fn rows_to_record_batch(
-        &self,
-        rows: &[(Vec<u8>, JsonValue)],
-    ) -> Result<RecordBatch, KalamDbError> {
-        let mut builder = super::util::JsonBatchBuilder::new(self.schema.clone())?;
-        for (key_bytes, row) in rows {
-            let mut patched = row.clone();
-            if let Some(obj) = patched.as_object_mut() {
-                // Extract seq_id from key
-                let seq_id = if let Ok(sid) = kalamdb_commons::ids::SeqId::from_bytes(key_bytes) {
-                    sid.as_i64()
-                } else {
-                    0
-                };
-
-                // Ensure system columns are present
-                if !obj.contains_key("_seq") || obj.get("_seq").map(|v| v.is_null()).unwrap_or(true)
-                {
-                    obj.insert("_seq".to_string(), serde_json::json!(seq_id));
-                }
-                if !obj.contains_key("_deleted")
-                    || obj.get("_deleted").map(|v| v.is_null()).unwrap_or(true)
-                {
-                    obj.insert("_deleted".to_string(), serde_json::json!(false));
-                }
-            }
-            builder.push_object_row(&patched)?;
-        }
-        builder.finish()
+    /// Convert stored rows to Arrow RecordBatch without JSON round-trips
+    fn rows_to_record_batch(&self, rows: &[(Vec<u8>, Row)]) -> Result<RecordBatch, KalamDbError> {
+        let arrow_rows: Vec<Row> = rows.iter().map(|(_, row)| row.clone()).collect();
+        json_rows_to_arrow_batch(&self.schema, arrow_rows)
+            .map_err(|e| KalamDbError::Other(format!("Failed to build RecordBatch: {}", e)))
     }
 
     /// Delete flushed rows from RocksDB after successful Parquet write
-    fn delete_flushed_rows(&self, rows: &[(Vec<u8>, JsonValue)]) -> Result<(), KalamDbError> {
+    fn delete_flushed_rows(&self, rows: &[(Vec<u8>, Row)]) -> Result<(), KalamDbError> {
         let mut parsed_keys = Vec::new();
         for (key_bytes, _) in rows {
             let key = kalamdb_commons::ids::SharedTableRowId::from_bytes(key_bytes)
@@ -146,15 +122,16 @@ impl TableFlush for SharedTableFlushJob {
         );
 
         // Scan all rows (EntityStore::scan_all returns Vec<(Vec<u8>, V)>)
-        let entries = EntityStore::scan_all(self.store.as_ref(), None, None, None).map_err(|e| {
-            log::error!(
-                "❌ Failed to scan rows for shared table={}.{}: {}",
-                self.namespace_id().as_str(),
-                self.table_name().as_str(),
-                e
-            );
-            KalamDbError::Other(format!("Failed to scan rows: {}", e))
-        })?;
+        let entries =
+            EntityStore::scan_all(self.store.as_ref(), None, None, None).map_err(|e| {
+                log::error!(
+                    "❌ Failed to scan rows for shared table={}.{}: {}",
+                    self.namespace_id().as_str(),
+                    self.table_name().as_str(),
+                    e
+                );
+                KalamDbError::Other(format!("Failed to scan rows: {}", e))
+            })?;
 
         let rows_before_dedup = entries.len();
         log::info!(
@@ -242,8 +219,8 @@ impl TableFlush for SharedTableFlushJob {
         log::info!("📊 [FLUSH DEDUP] Version resolution complete: {} rows → {} unique (dedup: {:.1}%, deleted: {})",
                    rows_before_dedup, rows_after_dedup, dedup_ratio, deleted_count);
 
-        // STEP 2: Filter out deleted rows (tombstones) and convert to JSON
-        let mut rows: Vec<(Vec<u8>, JsonValue)> = Vec::new();
+        // STEP 2: Filter out deleted rows (tombstones) and convert to Rows
+        let mut rows: Vec<(Vec<u8>, Row)> = Vec::new();
         let mut tombstones_filtered = 0;
 
         for (_pk_value, (key_bytes, row, _seq)) in latest_versions {
@@ -253,17 +230,16 @@ impl TableFlush for SharedTableFlushJob {
                 continue;
             }
 
-            // Build JSON object with metadata fields
-            let mut json_obj = serde_json::to_value(&row.fields).unwrap_or(JsonValue::Null);
-            if let Some(obj) = json_obj.as_object_mut() {
-                obj.insert(
-                    "_seq".to_string(),
-                    JsonValue::Number(row._seq.as_i64().into()),
-                );
-                obj.insert("_deleted".to_string(), JsonValue::Bool(false));
-            }
+            let mut row_data = row.fields.clone();
+            row_data.values.insert(
+                "_seq".to_string(),
+                ScalarValue::Int64(Some(row._seq.as_i64())),
+            );
+            row_data
+                .values
+                .insert("_deleted".to_string(), ScalarValue::Boolean(Some(false)));
 
-            rows.push((key_bytes, json_obj));
+            rows.push((key_bytes, row_data));
         }
 
         log::info!(

@@ -71,7 +71,10 @@ impl AuditLogsTableProvider {
     }
 
     /// Helper to create RecordBatch from entries
-    fn create_batch(&self, entries: Vec<(Vec<u8>, AuditLogEntry)>) -> Result<RecordBatch, SystemError> {
+    fn create_batch(
+        &self,
+        entries: Vec<(Vec<u8>, AuditLogEntry)>,
+    ) -> Result<RecordBatch, SystemError> {
         let row_count = entries.len();
 
         // Pre-allocate builders for optimal performance
@@ -124,6 +127,14 @@ impl AuditLogsTableProvider {
         use kalamdb_store::entity_store::EntityStore;
         let entries = self.store.scan_all(Some(limit), None, None)?;
         self.create_batch(entries)
+    }
+
+    /// Scan all audit log entries and return as Vec<AuditLogEntry>
+    /// Useful for testing and internal usage where RecordBatch is not needed
+    pub fn scan_all(&self) -> Result<Vec<AuditLogEntry>, SystemError> {
+        use kalamdb_store::entity_store::EntityStore;
+        let entries = self.store.scan_all(None, None, None)?;
+        Ok(entries.into_iter().map(|(_, entry)| entry).collect())
     }
 }
 
@@ -198,11 +209,14 @@ impl TableProvider for AuditLogsTableProvider {
         }
 
         let schema = self.schema.clone();
-        let entries = self.store.scan_all(limit, prefix.as_ref(), start_key.as_ref())
+        let entries = self
+            .store
+            .scan_all(limit, prefix.as_ref(), start_key.as_ref())
             .map_err(|e| DataFusionError::Execution(format!("Failed to scan audit logs: {}", e)))?;
 
-        let batch = self.create_batch(entries)
-            .map_err(|e| DataFusionError::Execution(format!("Failed to build audit log batch: {}", e)))?;
+        let batch = self.create_batch(entries).map_err(|e| {
+            DataFusionError::Execution(format!("Failed to build audit log batch: {}", e))
+        })?;
 
         let partitions = vec![vec![batch]];
         let table = MemTable::try_new(schema, partitions)

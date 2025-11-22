@@ -42,7 +42,7 @@ pub(crate) fn scan_parquet_files_as_batch(
     }
 
     let manifest_cache_service = core.app_context.manifest_cache_service();
-    let cache_result = manifest_cache_service.get_or_load(namespace, table, user_id);
+    let cache_result = manifest_cache_service.get_or_load(table_id, user_id);
     let mut manifest_opt: Option<ManifestFile> = None;
     let mut use_degraded_mode = false;
 
@@ -64,6 +64,7 @@ pub(crate) fn scan_parquet_files_as_batch(
                     let uid = user_id.cloned();
                     let scope_for_spawn = scope_label.clone();
                     let manifest_table_type = table_type.clone();
+                    let table_id_for_spawn = table_id.clone();
                     tokio::spawn(async move {
                         log::info!(
                             "🔧 [MANIFEST REBUILD STARTED] table={}.{} {}",
@@ -72,8 +73,7 @@ pub(crate) fn scan_parquet_files_as_batch(
                             scope_for_spawn
                         );
                         match manifest_service.rebuild_manifest(
-                            &ns,
-                            &tbl,
+                            &table_id_for_spawn,
                             manifest_table_type,
                             uid.as_ref(),
                         ) {
@@ -132,14 +132,14 @@ pub(crate) fn scan_parquet_files_as_batch(
         }
     }
 
-    if let Some(ref manifest) = manifest_opt {
-        log::debug!(
-            "✅ Manifest cache HIT | table={}.{} | {} | batches={}",
-            namespace.as_str(),
-            table.as_str(),
-            scope_label,
-            manifest.batches.len()
-        );
+    if let Some(ref _manifest) = manifest_opt {
+        // log::debug!(
+        //     "✅ Manifest cache HIT | table={}.{} | {} | batches={}",
+        //     namespace.as_str(),
+        //     table.as_str(),
+        //     scope_label,
+        //     manifest.batches.len()
+        // );
     }
 
     let planner = ManifestAccessPlanner::new();

@@ -26,10 +26,18 @@ serde_json = { workspace = true, optional = true }
 arrow-schema = { workspace = true, optional = true }
 bincode = { workspace = true, optional = true }
 chrono = { workspace = true, optional = true }
+arrow = { workspace = true, optional = true }
 
 [features]
 # Feature to enable serde support for serialization
-serde = ["dep:serde", "dep:serde_json", "dep:arrow-schema", "dep:bincode", "dep:chrono"]
+serde = [
+	"dep:serde",
+	"dep:serde_json",
+	"dep:arrow",
+	"dep:arrow-schema",
+	"dep:bincode",
+	"dep:chrono",
+]
 default = ["serde"]
 
 [lib]

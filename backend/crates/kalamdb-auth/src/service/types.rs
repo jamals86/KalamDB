@@ -1,7 +1,7 @@
-use moka::future::Cache;
-use kalamdb_commons::system::User;
 use crate::jwt_auth::JwtClaims;
+use kalamdb_commons::system::User;
 use kalamdb_commons::Role;
+use moka::future::Cache;
 
 /// User cache statistics for monitoring and performance tracking
 #[derive(Debug, Clone)]

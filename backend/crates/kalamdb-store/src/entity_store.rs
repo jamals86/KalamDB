@@ -47,7 +47,16 @@
 //! ```
 
 use crate::storage_trait::{Partition, Result, StorageBackend, StorageError};
-use kalamdb_commons::StorageKey;
+use bincode::config::standard;
+use bincode::serde::{decode_from_slice, encode_to_vec};
+use kalamdb_commons::{
+    schemas::TableDefinition,
+    system::{
+        AuditLogEntry, Job, LiveQuery, ManifestCacheEntry, Namespace, Storage as SystemStorage,
+        User,
+    },
+    StorageKey, UserId,
+};
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 
@@ -65,9 +74,9 @@ use std::sync::Arc;
 /// - `backend()`: Returns reference to the storage backend
 /// - `partition()`: Returns partition name for this entity type
 ///
-/// ## Provided Methods (with default JSON serialization)
-/// - `serialize()`: Entity → bytes (default: JSON, override for bincode)
-/// - `deserialize()`: bytes → Entity (default: JSON, override for bincode)
+/// ## Provided Methods (with [`KSerializable`] delegation)
+/// - `serialize()`: Entity → bytes (delegates to [`KSerializable::encode`])
+/// - `deserialize()`: bytes → Entity (delegates to [`KSerializable::decode`])
 /// - `put()`: Store an entity by key
 /// - `get()`: Retrieve an entity by key
 /// - `delete()`: Remove an entity by key
@@ -84,10 +93,54 @@ use std::sync::Arc;
 /// user_store.get(&user_id)   // ✓ Compiles
 /// user_store.get(&table_id)  // ✗ Compile error - wrong key type!
 /// ```
+/// Trait implemented by values that can be stored in an [`EntityStore`].
+///
+/// Types can override `encode`/`decode` for custom storage formats (e.g.,
+/// row envelopes vs. JSON). The default implementation uses bincode.
+pub trait KSerializable: Serialize + for<'de> Deserialize<'de> + Send + Sync {
+    fn encode(&self) -> Result<Vec<u8>> {
+        let config = standard();
+        encode_to_vec(self, config)
+            .map_err(|e| StorageError::SerializationError(format!("bincode encode failed: {}", e)))
+    }
+
+    fn decode(bytes: &[u8]) -> Result<Self>
+    where
+        Self: Sized,
+    {
+        let config = standard();
+        decode_from_slice(bytes, config)
+            .map(|(entity, _)| entity)
+            .map_err(|e| StorageError::SerializationError(format!("bincode decode failed: {}", e)))
+    }
+}
+
+impl KSerializable for String {}
+
+impl KSerializable for kalamdb_commons::models::Row {}
+
+impl KSerializable for User {}
+
+impl KSerializable for Namespace {}
+
+impl KSerializable for SystemStorage {}
+
+impl KSerializable for TableDefinition {}
+
+impl KSerializable for ManifestCacheEntry {}
+
+impl KSerializable for AuditLogEntry {}
+
+impl KSerializable for Job {}
+
+impl KSerializable for LiveQuery {}
+
+impl KSerializable for UserId {}
+
 pub trait EntityStore<K, V>
 where
     K: StorageKey,
-    V: Serialize + for<'de> Deserialize<'de> + Send + Sync,
+    V: KSerializable,
 {
     /// Returns a reference to the storage backend.
     fn backend(&self) -> &Arc<dyn StorageBackend>;
@@ -99,27 +152,16 @@ where
 
     /// Serializes an entity to bytes.
     ///
-    /// Default implementation uses JSON. Override this method to use
-    /// bincode or other serialization formats.
-    ///
-    /// ## Example Override for Bincode
-    ///
-    /// ```rust,ignore
-    /// fn serialize(&self, entity: &V) -> Result<Vec<u8>> {
-    ///     bincode::serialize(entity)
-    ///         .map_err(|e| StorageError::SerializationError(e.to_string()))
-    /// }
-    /// ```
+    /// Default implementation delegates to [`KSerializable::encode`].
     fn serialize(&self, entity: &V) -> Result<Vec<u8>> {
-        serde_json::to_vec(entity).map_err(|e| StorageError::SerializationError(e.to_string()))
+        entity.encode()
     }
 
     /// Deserializes bytes to an entity.
     ///
-    /// Default implementation uses JSON. Override this method to use
-    /// bincode or other serialization formats.
+    /// Default implementation delegates to [`KSerializable::decode`].
     fn deserialize(&self, bytes: &[u8]) -> Result<V> {
-        serde_json::from_slice(bytes).map_err(|e| StorageError::SerializationError(e.to_string()))
+        V::decode(bytes)
     }
 
     /// Stores an entity with the given key.
@@ -264,17 +306,17 @@ where
         // Place a hard limit to bypass scanning massive tables into memory
         const MAX_SCAN_LIMIT: usize = 100000;
         let effective_limit = limit.unwrap_or(MAX_SCAN_LIMIT);
-        
+
         let partition = Partition::new(self.partition());
-        
+
         let prefix_bytes = prefix.map(|k| k.storage_key());
         let start_key_bytes = start_key.map(|k| k.storage_key());
-        
+
         let iter = self.backend().scan(
-            &partition, 
-            prefix_bytes.as_deref(), 
-            start_key_bytes.as_deref(), 
-            Some(effective_limit)
+            &partition,
+            prefix_bytes.as_deref(),
+            start_key_bytes.as_deref(),
+            Some(effective_limit),
         )?;
 
         let mut results = Vec::new();
@@ -371,7 +413,7 @@ where
 pub trait CrossUserTableStore<K, V>: EntityStore<K, V>
 where
     K: StorageKey,
-    V: Serialize + for<'de> Deserialize<'de> + Send + Sync,
+    V: KSerializable,
 {
     /// Returns the table access level, if any.
     ///
@@ -421,6 +463,7 @@ use kalamdb_commons::models::{Role, TableAccess};
 mod tests {
     use super::*;
     use kalamdb_commons::models::{Role, TableAccess, UserId};
+    use serde_json::Value as JsonValue;
     use std::sync::Arc;
 
     // Mock implementation for testing
@@ -442,6 +485,21 @@ mod tests {
     impl CrossUserTableStore<UserId, String> for MockStore {
         fn table_access(&self) -> Option<TableAccess> {
             self.access
+        }
+    }
+
+    struct BinaryStore {
+        backend: Arc<dyn StorageBackend>,
+        partition: String,
+    }
+
+    impl EntityStore<UserId, String> for BinaryStore {
+        fn backend(&self) -> &Arc<dyn StorageBackend> {
+            &self.backend
+        }
+
+        fn partition(&self) -> &str {
+            &self.partition
         }
     }
 
@@ -496,5 +554,31 @@ mod tests {
         assert!(store.can_read(&Role::Service));
         assert!(store.can_read(&Role::Dba));
         assert!(store.can_read(&Role::System));
+    }
+
+    #[test]
+    fn default_kserializable_is_bincode() {
+        let backend: Arc<dyn StorageBackend> = Arc::new(crate::test_utils::InMemoryBackend::new());
+        let store = BinaryStore {
+            backend,
+            partition: "any_partition".to_string(),
+        };
+
+        let partition = Partition::new(store.partition().to_string());
+        store.backend().create_partition(&partition).unwrap();
+
+        let key = UserId::new("user1");
+        let value = "hello".to_string();
+        store.put(&key, &value).unwrap();
+
+        let raw = store
+            .backend()
+            .get(&partition, &key.storage_key())
+            .unwrap()
+            .expect("value stored");
+
+        assert!(serde_json::from_slice::<JsonValue>(&raw).is_err());
+        let roundtrip = String::decode(&raw).unwrap();
+        assert_eq!(roundtrip, value);
     }
 }

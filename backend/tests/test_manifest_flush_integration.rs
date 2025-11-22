@@ -12,7 +12,7 @@
 use kalamdb_commons::models::schemas::TableType;
 use kalamdb_commons::types::{BatchFileEntry, ManifestFile};
 use kalamdb_commons::UserId;
-use kalamdb_commons::{NamespaceId, TableName};
+use kalamdb_commons::{NamespaceId, TableId, TableName};
 use kalamdb_core::manifest::ManifestService;
 use kalamdb_store::{test_utils::InMemoryBackend, StorageBackend};
 use std::sync::Arc;
@@ -89,7 +89,8 @@ fn test_create_manifest_generates_valid_json() {
     let (service, _temp_dir) = create_test_service();
     let namespace = NamespaceId::new("test_ns");
     let table = TableName::new("test_table");
-    let manifest = service.create_manifest(&namespace, &table, TableType::Shared, None);
+    let table_id = TableId::new(namespace.clone(), table.clone());
+    let manifest = service.create_manifest(&table_id, TableType::Shared, None);
 
     // Verify structure
     assert_eq!(manifest.table_id.namespace_id().as_str(), "test_ns");
@@ -125,6 +126,7 @@ fn test_update_manifest_increments_max_batch() {
         Some(UserId::from(scope))
     };
     let scope_user_ref: Option<&UserId> = scope_user.as_ref();
+    let table_id = TableId::new(namespace.clone(), table.clone());
 
     // Create first batch entry
     let batch_entry_0 =
@@ -132,13 +134,7 @@ fn test_update_manifest_increments_max_batch() {
 
     // First update (creates manifest if doesn't exist)
     let manifest_v1 = service
-        .update_manifest(
-            &namespace,
-            &table,
-            TableType::Shared,
-            scope_user_ref,
-            batch_entry_0,
-        )
+        .update_manifest(&table_id, TableType::Shared, scope_user_ref, batch_entry_0)
         .unwrap();
 
     assert_eq!(manifest_v1.max_batch, 0, "First batch should be batch-0");
@@ -151,13 +147,7 @@ fn test_update_manifest_increments_max_batch() {
 
     // Second update
     let manifest_v2 = service
-        .update_manifest(
-            &namespace,
-            &table,
-            TableType::Shared,
-            scope_user_ref,
-            batch_entry_1,
-        )
+        .update_manifest(&table_id, TableType::Shared, scope_user_ref, batch_entry_1)
         .unwrap();
 
     assert_eq!(
@@ -173,13 +163,7 @@ fn test_update_manifest_increments_max_batch() {
 
     // Third update
     let manifest_v3 = service
-        .update_manifest(
-            &namespace,
-            &table,
-            TableType::Shared,
-            scope_user_ref,
-            batch_entry_2,
-        )
+        .update_manifest(&table_id, TableType::Shared, scope_user_ref, batch_entry_2)
         .unwrap();
 
     assert_eq!(
@@ -200,6 +184,7 @@ fn test_flush_five_batches_manifest_tracking() {
     let (service, _temp_dir) = create_test_service();
     let namespace = NamespaceId::new("prod");
     let table = TableName::new("events");
+    let table_id = TableId::new(namespace.clone(), table.clone());
     let scope = "shared";
     let scope_user: Option<UserId> = if scope == "shared" {
         None
@@ -229,20 +214,12 @@ fn test_flush_five_batches_manifest_tracking() {
         );
 
         service
-            .update_manifest(
-                &namespace,
-                &table,
-                TableType::Shared,
-                scope_user_ref,
-                batch_entry,
-            )
+            .update_manifest(&table_id, TableType::Shared, scope_user_ref, batch_entry)
             .unwrap();
     }
 
     // Read final manifest
-    let final_manifest = service
-        .read_manifest(&namespace, &table, scope_user_ref)
-        .unwrap();
+    let final_manifest = service.read_manifest(&table_id, scope_user_ref).unwrap();
 
     // Verify all batches are tracked
     assert_eq!(final_manifest.max_batch, 4, "Final max_batch should be 4");
@@ -284,28 +261,19 @@ fn test_manifest_persistence_across_reads() {
         Some(UserId::from(scope))
     };
     let scope_user_ref: Option<&UserId> = scope_user.as_ref();
+    let table_id = TableId::new(namespace.clone(), table.clone());
 
     // Create and write manifest
     let batch_entry =
         BatchFileEntry::new(0, "batch-0.parquet".to_string(), 1000, 2000, 100, 1024, 1);
 
     service
-        .update_manifest(
-            &namespace,
-            &table,
-            TableType::Shared,
-            scope_user_ref,
-            batch_entry,
-        )
+        .update_manifest(&table_id, TableType::Shared, scope_user_ref, batch_entry)
         .unwrap();
 
     // Read it back multiple times
-    let read1 = service
-        .read_manifest(&namespace, &table, scope_user_ref)
-        .unwrap();
-    let read2 = service
-        .read_manifest(&namespace, &table, scope_user_ref)
-        .unwrap();
+    let read1 = service.read_manifest(&table_id, scope_user_ref).unwrap();
+    let read2 = service.read_manifest(&table_id, scope_user_ref).unwrap();
 
     assert_eq!(read1.max_batch, read2.max_batch);
     assert_eq!(read1.batches.len(), read2.batches.len());
@@ -322,6 +290,7 @@ fn test_batch_entry_metadata_preservation() {
     let scope = "shared";
     let scope_user: Option<UserId> = None;
     let scope_user_ref: Option<&UserId> = None;
+    let table_id = TableId::new(namespace.clone(), table.clone());
 
     // Create batch entry with rich metadata
     let batch_entry = BatchFileEntry::new(
@@ -335,19 +304,11 @@ fn test_batch_entry_metadata_preservation() {
     );
 
     service
-        .update_manifest(
-            &namespace,
-            &table,
-            TableType::Shared,
-            scope_user_ref,
-            batch_entry,
-        )
+        .update_manifest(&table_id, TableType::Shared, scope_user_ref, batch_entry)
         .unwrap();
 
     // Read back and verify
-    let manifest = service
-        .read_manifest(&namespace, &table, scope_user_ref)
-        .unwrap();
+    let manifest = service.read_manifest(&table_id, scope_user_ref).unwrap();
     let saved_batch = &manifest.batches[0];
 
     assert_eq!(saved_batch.batch_number, 0);

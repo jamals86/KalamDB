@@ -78,3 +78,4 @@ reqwest = { workspace = true }
 base64 = { workspace = true }
 tokio-tungstenite = { workspace = true }
 futures-util = { workspace = true }
+regex = { workspace = true }

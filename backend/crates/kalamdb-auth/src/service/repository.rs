@@ -1,15 +1,15 @@
+use super::types::AuthService;
+use crate::basic_auth;
 use crate::connection::ConnectionInfo;
 use crate::context::AuthenticatedUser;
 use crate::error::{AuthError, AuthResult};
-use crate::user_repo::UserRepository;
-use std::sync::Arc;
-use log::warn;
-use chrono::{DateTime, Utc};
-use crate::basic_auth;
-use crate::password;
 use crate::jwt_auth;
 use crate::oauth;
-use super::types::AuthService;
+use crate::password;
+use crate::user_repo::UserRepository;
+use chrono::{DateTime, Utc};
+use log::warn;
+use std::sync::Arc;
 
 impl AuthService {
     /// Authenticate using a repository abstraction (provider-ready).
@@ -23,8 +23,7 @@ impl AuthService {
         repo: &Arc<dyn UserRepository>,
     ) -> AuthResult<AuthenticatedUser> {
         if auth_header.starts_with("Basic ") {
-            self
-                .authenticate_basic_with_repo(auth_header, connection_info, repo)
+            self.authenticate_basic_with_repo(auth_header, connection_info, repo)
                 .await
         } else if auth_header.starts_with("Bearer ") {
             match self
@@ -32,9 +31,10 @@ impl AuthService {
                 .await
             {
                 Ok(user) => Ok(user),
-                Err(_) => self
-                    .authenticate_oauth_with_repo(auth_header, connection_info, repo)
-                    .await,
+                Err(_) => {
+                    self.authenticate_oauth_with_repo(auth_header, connection_info, repo)
+                        .await
+                }
             }
         } else {
             Err(AuthError::MalformedAuthorization(
@@ -63,7 +63,8 @@ impl AuthService {
 
         if user.auth_type == kalamdb_commons::AuthType::OAuth {
             return Err(AuthError::AuthenticationFailed(
-                "OAuth users cannot authenticate with password. Use OAuth token instead.".to_string(),
+                "OAuth users cannot authenticate with password. Use OAuth token instead."
+                    .to_string(),
             ));
         }
 
@@ -179,8 +180,9 @@ impl AuthService {
             .strip_prefix("Bearer ")
             .ok_or_else(|| AuthError::MalformedAuthorization("Bearer token missing".to_string()))?;
 
-        let _header = jsonwebtoken::decode_header(token)
-            .map_err(|e| AuthError::MalformedAuthorization(format!("Invalid token header: {}", e)))?;
+        let _header = jsonwebtoken::decode_header(token).map_err(|e| {
+            AuthError::MalformedAuthorization(format!("Invalid token header: {}", e))
+        })?;
 
         let claims = oauth::validate_oauth_token(token, &self.jwt_secret, "")
             .map_err(|_| AuthError::InvalidSignature)?;

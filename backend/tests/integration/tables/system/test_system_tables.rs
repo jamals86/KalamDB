@@ -98,7 +98,8 @@ async fn test_02_query_system_table_schemas() {
             response.status,
             ResponseStatus::Success,
             "Failed to query {}: {:?}",
-            table, response.error
+            table,
+            response.error
         );
     }
 }
@@ -523,10 +524,13 @@ async fn test_12_view_table_types_from_system_tables() {
     // Create a STREAM table (simplified syntax)
     let response = server
         .execute_sql(
-            r#"CREATE STREAM TABLE multi_type.events (
+            r#"CREATE TABLE multi_type.events (
                 event_id VARCHAR,
                 event_type VARCHAR,
                 payload VARCHAR
+            ) WITH (
+                TYPE = 'STREAM',
+                TTL_SECONDS = 3600
             )"#,
         )
         .await;
@@ -534,7 +538,7 @@ async fn test_12_view_table_types_from_system_tables() {
     // Note: STREAM TABLE may not be fully implemented yet
     if response.status == kalamdb_api::models::ResponseStatus::Error {
         println!(
-            "CREATE STREAM TABLE not yet fully implemented: {:?}",
+            "CREATE TABLE (TYPE='STREAM') not yet fully implemented: {:?}",
             response.error
         );
         // Continue with 2 tables instead of 3

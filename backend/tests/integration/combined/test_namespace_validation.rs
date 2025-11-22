@@ -85,9 +85,11 @@ async fn test_create_table_after_namespace_creation() {
 #[actix_web::test]
 async fn test_user_table_namespace_validation() {
     let server = TestServer::new().await;
-    let sql = r#"CREATE USER TABLE workspace.notes (
+    let sql = r#"CREATE TABLE workspace.notes (
         id INT PRIMARY KEY,
         content TEXT
+    ) WITH (
+        TYPE = 'USER'
     )"#;
 
     let response = server.execute_sql_as_user(sql, "user123").await;
@@ -108,15 +110,17 @@ async fn test_user_table_namespace_validation() {
 }
 
 #[actix_web::test]
-#[ignore = "CREATE SHARED TABLE requires pre-created column families at DB init"]
+#[ignore = "Shared table creation requires pre-created column families at DB init"]
 async fn test_shared_table_namespace_validation() {
     let server = TestServer::new().await;
 
     let response = server
         .execute_sql(
-            r#"CREATE SHARED TABLE ops.config (
+            r#"CREATE TABLE ops.config (
                 setting TEXT,
                 value TEXT
+            ) WITH (
+                TYPE = 'SHARED'
             )"#,
         )
         .await;
@@ -129,9 +133,11 @@ async fn test_shared_table_namespace_validation() {
     fixtures::create_namespace(&server, "ops").await;
     let retry = server
         .execute_sql(
-            r#"CREATE SHARED TABLE ops.config (
+            r#"CREATE TABLE ops.config (
                 setting TEXT,
                 value TEXT
+            ) WITH (
+                TYPE = 'SHARED'
             )"#,
         )
         .await;
@@ -149,10 +155,13 @@ async fn test_stream_table_namespace_validation() {
 
     let response = server
         .execute_sql(
-            r#"CREATE STREAM TABLE telemetry.events (
+            r#"CREATE TABLE telemetry.events (
                 event_id TEXT,
                 payload TEXT
-            ) TTL 60"#,
+            ) WITH (
+                TYPE = 'STREAM',
+                TTL_SECONDS = 60
+            )"#,
         )
         .await;
     assert_eq!(
@@ -164,10 +173,13 @@ async fn test_stream_table_namespace_validation() {
     fixtures::create_namespace(&server, "telemetry").await;
     let retry = server
         .execute_sql(
-            r#"CREATE STREAM TABLE telemetry.events (
+            r#"CREATE TABLE telemetry.events (
                 event_id TEXT,
                 payload TEXT
-            ) TTL 60"#,
+            ) WITH (
+                TYPE = 'STREAM',
+                TTL_SECONDS = 60
+            )"#,
         )
         .await;
     assert_eq!(

@@ -56,11 +56,9 @@ impl JobsTableProvider {
         // Maintain index: Status + CreatedAt + JobId
         let index_key = make_status_index_key(job.status, job.created_at, &job.job_id);
         let partition = Partition::new(StoragePartition::SystemJobsStatusIdx.name());
-        self.store.backend().put(
-            &partition,
-            &index_key,
-            job.job_id.as_bytes(),
-        )?;
+        self.store
+            .backend()
+            .put(&partition, &index_key, job.job_id.as_bytes())?;
 
         self.store.put(&job.job_id, &job)?;
         Ok(())
@@ -98,21 +96,17 @@ impl JobsTableProvider {
         // Maintain index if status or created_at changed (created_at shouldn't change, but just in case)
         if old_job.status != job.status || old_job.created_at != job.created_at {
             let partition = Partition::new(StoragePartition::SystemJobsStatusIdx.name());
-            
+
             // Remove old index entry
             let old_index_key =
                 make_status_index_key(old_job.status, old_job.created_at, &old_job.job_id);
-            self.store
-                .backend()
-                .delete(&partition, &old_index_key)?;
+            self.store.backend().delete(&partition, &old_index_key)?;
 
             // Add new index entry
             let new_index_key = make_status_index_key(job.status, job.created_at, &job.job_id);
-            self.store.backend().put(
-                &partition,
-                &new_index_key,
-                job.job_id.as_bytes(),
-            )?;
+            self.store
+                .backend()
+                .put(&partition, &new_index_key, job.job_id.as_bytes())?;
         }
 
         self.store.put(&job.job_id, &job)?;
@@ -125,9 +119,7 @@ impl JobsTableProvider {
         if let Some(job) = self.store.get(job_id)? {
             let index_key = make_status_index_key(job.status, job.created_at, &job.job_id);
             let partition = Partition::new(StoragePartition::SystemJobsStatusIdx.name());
-            self.store
-                .backend()
-                .delete(&partition, &index_key)?;
+            self.store.backend().delete(&partition, &index_key)?;
         }
 
         self.store.delete(job_id)?;
@@ -171,12 +163,12 @@ impl JobsTableProvider {
 
                 // Prefix for this status: [status_byte]
                 let prefix = vec![status_to_u8(status)];
-                
+
                 // Scan index
                 let index_entries = self.store.backend().scan(
                     &partition,
                     Some(&prefix),
-                    None, // Start key (could optimize created_after here)
+                    None,                     // Start key (could optimize created_after here)
                     Some(limit - jobs.len()), // Remaining limit
                 )?;
 
@@ -194,7 +186,7 @@ impl JobsTableProvider {
                     }
                 }
             }
-            
+
             return Ok(jobs);
         }
 
@@ -212,7 +204,7 @@ impl JobsTableProvider {
                 JobSortField::UpdatedAt => jobs.sort_by_key(|j| j.updated_at),
                 JobSortField::Priority => jobs.sort_by_key(|j| j.priority.unwrap_or(0)),
             }
-            
+
             if filter.sort_order == Some(SortOrder::Desc) {
                 jobs.reverse();
             }
@@ -270,7 +262,7 @@ impl JobsTableProvider {
                 return false;
             }
         }
-        
+
         // Filter by created_after
         if let Some(after) = filter.created_after {
             if job.created_at < after {
@@ -323,22 +315,66 @@ impl JobsTableProvider {
     }
 
     /// Delete jobs older than retention period (in days)
+    ///
+    /// Optimized to use the status index to avoid full table scan.
     pub fn cleanup_old_jobs(&self, retention_days: i64) -> Result<usize, SystemError> {
         let now = chrono::Utc::now().timestamp_millis();
         let retention_ms = retention_days * 24 * 60 * 60 * 1000;
+        let cutoff_time = now - retention_ms;
 
-        let jobs = self.list_jobs()?;
         let mut deleted = 0;
+        let partition = Partition::new(StoragePartition::SystemJobsStatusIdx.name());
 
-        for job in jobs {
-            if job.status == JobStatus::Running {
-                continue;
-            }
+        // Only clean up terminal statuses
+        let target_statuses = [
+            JobStatus::Completed,
+            JobStatus::Failed,
+            JobStatus::Cancelled,
+        ];
 
-            let reference_time = job.finished_at.or(job.started_at).unwrap_or(job.created_at);
-            if now - reference_time > retention_ms {
-                self.delete_job(&job.job_id)?;
-                deleted += 1;
+        for status in target_statuses {
+            let status_byte = status_to_u8(status);
+            let prefix = vec![status_byte];
+
+            // Scan index for this status
+            // Keys are [status_byte][created_at_be][job_id_bytes]
+            // Sorted by created_at ASC
+            let iter = self.store.backend().scan(&partition, Some(&prefix), None, None)?;
+
+            for (key_bytes, job_id_bytes) in iter {
+                // Extract created_at (bytes 1..9)
+                if key_bytes.len() < 9 {
+                    continue;
+                }
+                
+                let mut created_at_bytes = [0u8; 8];
+                created_at_bytes.copy_from_slice(&key_bytes[1..9]);
+                let created_at = i64::from_be_bytes(created_at_bytes);
+
+                // Optimization: Since index is sorted by created_at, if we encounter
+                // a job created AFTER the cutoff, we can stop scanning this status.
+                // Note: We use a safety margin because we really want to check finished_at,
+                // and a job created before cutoff might have finished after cutoff.
+                // But if created_at is WAY after cutoff (e.g. > retention period), we can stop.
+                // For safety, we just check all candidates <= cutoff_time based on created_at.
+                if created_at > cutoff_time {
+                    break;
+                }
+
+                let job_id_str = String::from_utf8(job_id_bytes).map_err(|e| {
+                    SystemError::Other(format!("Invalid JobId in index: {}", e))
+                })?;
+                let job_id = JobId::new(job_id_str);
+
+                // Load job to check actual finished_at
+                if let Some(job) = self.store.get(&job_id)? {
+                    let reference_time = job.finished_at.or(job.started_at).unwrap_or(job.created_at);
+                    
+                    if reference_time < cutoff_time {
+                        self.delete_job(&job.job_id)?;
+                        deleted += 1;
+                    }
+                }
             }
         }
 
@@ -470,7 +506,7 @@ fn status_to_u8(status: JobStatus) -> u8 {
 
 fn make_status_index_key(status: JobStatus, created_at: i64, job_id: &JobId) -> Vec<u8> {
     let status_byte = status_to_u8(status);
-    
+
     let mut key = Vec::with_capacity(1 + 8 + job_id.as_bytes().len());
     key.push(status_byte);
     key.extend_from_slice(&created_at.to_be_bytes());
@@ -530,11 +566,14 @@ impl TableProvider for JobsTableProvider {
         }
 
         let schema = self.schema.clone();
-        let jobs = self.store.scan_all(limit, prefix.as_ref(), start_key.as_ref())
+        let jobs = self
+            .store
+            .scan_all(limit, prefix.as_ref(), start_key.as_ref())
             .map_err(|e| DataFusionError::Execution(format!("Failed to scan jobs: {}", e)))?;
 
-        let batch = self.create_batch(jobs)
-            .map_err(|e| DataFusionError::Execution(format!("Failed to build jobs batch: {}", e)))?;
+        let batch = self.create_batch(jobs).map_err(|e| {
+            DataFusionError::Execution(format!("Failed to build jobs batch: {}", e))
+        })?;
 
         let partitions = vec![vec![batch]];
         let table = MemTable::try_new(schema, partitions)

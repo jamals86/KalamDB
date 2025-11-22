@@ -15,14 +15,10 @@ fn test_storage_drop_requires_detached_tables() {
         return;
     }
 
-    let unique_suffix = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .unwrap()
-        .as_millis();
-    let storage_id = format!("cli_storage_drop_{}", unique_suffix);
+    let storage_id = generate_unique_namespace("cli_storage_drop");
     let namespace = generate_unique_namespace("storage_guard_ns");
-    let user_table = format!("stor_user_{}", unique_suffix);
-    let shared_table = format!("stor_shared_{}", unique_suffix);
+    let user_table = generate_unique_table("stor_user");
+    let shared_table = generate_unique_table("stor_shared");
 
     let temp_dir = TempDir::new().expect("create temp dir for storage path");
     let base_dir = temp_dir.path().join("storage_root");
@@ -62,7 +58,7 @@ fn test_storage_drop_requires_detached_tables() {
     );
 
     let create_user_table_sql = format!(
-        "CREATE USER TABLE {}.{} (id INT PRIMARY KEY AUTO_INCREMENT, body TEXT) STORAGE '{}' FLUSH ROWS 5",
+        "CREATE TABLE {}.{} (id INT PRIMARY KEY AUTO_INCREMENT, body TEXT) WITH (TYPE='USER', STORAGE_ID='{}', FLUSH_POLICY='rows:5')",
         namespace, user_table, storage_id
     );
     execute_sql_as_root_via_cli(&create_user_table_sql).expect("user table creation");
@@ -85,7 +81,7 @@ fn test_storage_drop_requires_detached_tables() {
     );
 
     let create_shared_table_sql = format!(
-        "CREATE SHARED TABLE {}.{} (id INT PRIMARY KEY AUTO_INCREMENT, body TEXT) STORAGE '{}' FLUSH ROWS 5",
+        "CREATE TABLE {}.{} (id INT PRIMARY KEY AUTO_INCREMENT, body TEXT) WITH (TYPE='SHARED', STORAGE_ID='{}', FLUSH_POLICY='rows:5')",
         namespace, shared_table, storage_id
     );
     execute_sql_as_root_via_cli(&create_shared_table_sql).expect("shared table creation");

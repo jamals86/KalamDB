@@ -1,7 +1,7 @@
 use super::types::JobsManager;
+use crate::error::KalamDbError;
 use kalamdb_commons::system::{Job, JobFilter};
 use kalamdb_commons::{JobId, JobStatus};
-use crate::error::KalamDbError;
 
 impl JobsManager {
     /// Get job details
@@ -24,13 +24,10 @@ impl JobsManager {
     ///
     /// # Returns
     /// Vector of matching jobs
-    pub async fn list_jobs(
-        &self,
-        filter: JobFilter,
-    ) -> Result<Vec<Job>, KalamDbError> {
-        self.jobs_provider.list_jobs_filtered(&filter).map_err(|e| {
-            KalamDbError::IoError(format!("Failed to list jobs: {}", e))
-        })
+    pub async fn list_jobs(&self, filter: JobFilter) -> Result<Vec<Job>, KalamDbError> {
+        self.jobs_provider
+            .list_jobs_filtered(&filter)
+            .map_err(|e| KalamDbError::IoError(format!("Failed to list jobs: {}", e)))
     }
 
     /// Check if active job with idempotency key exists

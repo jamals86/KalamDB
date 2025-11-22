@@ -1,6 +1,6 @@
 use crate::schema_registry::cached_table_data::CachedTableData;
 use dashmap::DashMap;
-use kalamdb_commons::models::{NamespaceId, TableId, TableName};
+use kalamdb_commons::models::TableId;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
 
@@ -67,27 +67,21 @@ impl TableCache {
         }
     }
 
-    /// Get cached table data by namespace and table name
-    pub fn get_by_name(
-        &self,
-        namespace: &NamespaceId,
-        table_name: &TableName,
-    ) -> Option<Arc<CachedTableData>> {
-        let table_id = TableId::new(namespace.clone(), table_name.clone());
-        self.get(&table_id)
-    }
-
     /// Insert or update cached table data
-    pub fn insert(&self, table_id: TableId, data: Arc<CachedTableData>) {
+    /// Returns the TableId of the evicted entry, if any
+    pub fn insert(&self, table_id: TableId, data: Arc<CachedTableData>) -> Option<TableId> {
+        let mut evicted = None;
         // Check if we need to evict before inserting
         if self.max_size > 0 && self.cache.len() >= self.max_size {
-            self.evict_lru();
+            evicted = self.evict_lru();
         }
 
         // Insert data and initialize LRU timestamp
         self.lru_timestamps
             .insert(table_id.clone(), AtomicU64::new(Self::current_timestamp()));
         self.cache.insert(table_id, data);
+
+        evicted
     }
 
     /// Invalidate (remove) cached table data
@@ -97,7 +91,7 @@ impl TableCache {
     }
 
     /// Evict least-recently-used entry from cache
-    fn evict_lru(&self) {
+    fn evict_lru(&self) -> Option<TableId> {
         let mut oldest_key: Option<TableId> = None;
         let mut oldest_timestamp = u64::MAX;
 
@@ -111,10 +105,12 @@ impl TableCache {
         }
 
         // Remove oldest entry from both maps
-        if let Some(key) = oldest_key {
-            self.cache.remove(&key);
-            self.lru_timestamps.remove(&key);
+        if let Some(key) = &oldest_key {
+            self.cache.remove(key);
+            self.lru_timestamps.remove(key);
         }
+
+        oldest_key
     }
 
     /// Get cache hit rate (for metrics)

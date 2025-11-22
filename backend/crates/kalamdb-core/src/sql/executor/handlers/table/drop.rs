@@ -224,8 +224,7 @@ pub async fn cleanup_parquet_files_internal(
     // Resolve relative template: substitutes {namespace} and {tableName};
     // leaves {userId}/{shard} placeholders intact for expansion below.
     let relative_template = registry.resolve_storage_path_template(
-        &table_def.namespace_id,
-        &table_def.table_name,
+        table_id,
         table_def.table_type,
         &storage_id,
     )?;
@@ -480,8 +479,16 @@ impl TypedStatementHandler<DropTableStatement> for DropTableHandler {
             context,
             "DROP",
             "TABLE",
-            &format!("{}.{}", statement.namespace_id.as_str(), statement.table_name.as_str()),
-            Some(format!("Type: {:?}, Cleanup Job: {}", actual_type, job_id.as_str())),
+            &format!(
+                "{}.{}",
+                statement.namespace_id.as_str(),
+                statement.table_name.as_str()
+            ),
+            Some(format!(
+                "Type: {:?}, Cleanup Job: {}",
+                actual_type,
+                job_id.as_str()
+            )),
             None,
         );
         audit::persist_audit_entry(&self.app_context, &audit_entry).await?;

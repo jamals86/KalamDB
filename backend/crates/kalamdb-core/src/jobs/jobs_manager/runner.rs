@@ -1,9 +1,9 @@
 use super::types::JobsManager;
-use crate::jobs::{HealthMonitor, StreamEvictionScheduler};
+use crate::error::KalamDbError;
 use crate::jobs::executors::JobDecision;
+use crate::jobs::{HealthMonitor, StreamEvictionScheduler};
 use kalamdb_commons::system::{Job, JobFilter, JobSortField, SortOrder};
 use kalamdb_commons::JobStatus;
-use crate::error::KalamDbError;
 use tokio::time::{sleep, Duration, Instant};
 
 impl JobsManager {
@@ -60,9 +60,7 @@ impl JobsManager {
                 && last_stream_eviction.elapsed() >= stream_eviction_interval
             {
                 let app_ctx = self.get_attached_app_context();
-                if let Err(e) =
-                    StreamEvictionScheduler::check_and_schedule(&app_ctx, self).await
-                {
+                if let Err(e) = StreamEvictionScheduler::check_and_schedule(&app_ctx, self).await {
                     log::warn!("Failed to check stream eviction: {}", e);
                 }
                 last_stream_eviction = Instant::now();
@@ -107,7 +105,7 @@ impl JobsManager {
         filter.sort_by = Some(JobSortField::CreatedAt);
         filter.sort_order = Some(SortOrder::Asc);
         filter.limit = Some(1);
-        
+
         let jobs = self.list_jobs(filter).await?;
 
         Ok(jobs.into_iter().next())
@@ -124,9 +122,9 @@ impl JobsManager {
         job.started_at = Some(chrono::Utc::now().timestamp_millis());
         job.updated_at = chrono::Utc::now().timestamp_millis();
 
-        self.jobs_provider.update_job(job.clone()).map_err(|e| {
-            KalamDbError::IoError(format!("Failed to start job: {}", e))
-        })?;
+        self.jobs_provider
+            .update_job(job.clone())
+            .map_err(|e| KalamDbError::IoError(format!("Failed to start job: {}", e)))?;
 
         self.log_job_event(&job_id, "info", "Job started");
 
@@ -173,9 +171,9 @@ impl JobsManager {
                 job.updated_at = now_ms;
                 job.finished_at = Some(now_ms);
 
-                self.jobs_provider.update_job(job.clone()).map_err(|e| {
-                    KalamDbError::IoError(format!("Failed to complete job: {}", e))
-                })?;
+                self.jobs_provider
+                    .update_job(job.clone())
+                    .map_err(|e| KalamDbError::IoError(format!("Failed to complete job: {}", e)))?;
 
                 self.log_job_event(
                     &job_id,
@@ -219,9 +217,9 @@ impl JobsManager {
                     job.updated_at = now_ms;
                     job.finished_at = Some(now_ms);
 
-                    self.jobs_provider.update_job(job.clone()).map_err(|e| {
-                        KalamDbError::IoError(format!("Failed to fail job: {}", e))
-                    })?;
+                    self.jobs_provider
+                        .update_job(job.clone())
+                        .map_err(|e| KalamDbError::IoError(format!("Failed to fail job: {}", e)))?;
 
                     self.log_job_event(&job_id, "error", "Job failed: max retries exceeded");
                 }
@@ -238,9 +236,9 @@ impl JobsManager {
                 job.updated_at = now_ms;
                 job.finished_at = Some(now_ms);
 
-                self.jobs_provider.update_job(job.clone()).map_err(|e| {
-                    KalamDbError::IoError(format!("Failed to fail job: {}", e))
-                })?;
+                self.jobs_provider
+                    .update_job(job.clone())
+                    .map_err(|e| KalamDbError::IoError(format!("Failed to fail job: {}", e)))?;
 
                 self.log_job_event(&job_id, "error", &format!("Job failed: {}", message));
             }

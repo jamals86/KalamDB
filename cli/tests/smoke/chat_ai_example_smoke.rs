@@ -26,36 +26,36 @@ fn smoke_chat_ai_example_from_readme() {
     execute_sql_as_root_via_cli(&ns_sql).expect("failed to create namespace");
 
     let create_conversations = format!(
-        "CREATE USER TABLE IF NOT EXISTS {} (
+        "CREATE TABLE IF NOT EXISTS {} (
             id BIGINT PRIMARY KEY DEFAULT SNOWFLAKE_ID(),
             title TEXT NOT NULL,
             created_at TIMESTAMP DEFAULT NOW()
-        ) FLUSH ROW_THRESHOLD 1000;",
+        ) WITH (TYPE = 'USER', FLUSH_POLICY = 'rows:1000');",
         conversations_table
     );
     execute_sql_as_root_via_cli(&create_conversations)
         .expect("failed to create conversations table");
 
     let create_messages = format!(
-        "CREATE USER TABLE IF NOT EXISTS {} (
+        "CREATE TABLE IF NOT EXISTS {} (
             id BIGINT PRIMARY KEY DEFAULT SNOWFLAKE_ID(),
             conversation_id BIGINT NOT NULL,
             message_role TEXT NOT NULL,
             content TEXT NOT NULL,
             created_at TIMESTAMP DEFAULT NOW()
-        ) FLUSH ROW_THRESHOLD 1000;",
+        ) WITH (TYPE = 'USER', FLUSH_POLICY = 'rows:1000');",
         messages_table
     );
     execute_sql_as_root_via_cli(&create_messages).expect("failed to create messages table");
 
     let create_typing = format!(
-        "CREATE STREAM TABLE IF NOT EXISTS {} (
+        "CREATE TABLE IF NOT EXISTS {} (
             id BIGINT PRIMARY KEY DEFAULT SNOWFLAKE_ID(),
             conversation_id BIGINT NOT NULL,
             user_id TEXT NOT NULL,
             event_type TEXT NOT NULL,
             created_at TIMESTAMP DEFAULT NOW()
-        ) TTL 30;",
+        ) WITH (TYPE = 'STREAM', TTL_SECONDS = 30);",
         typing_events_table
     );
     execute_sql_as_root_via_cli(&create_typing).expect("failed to create typing_events table");

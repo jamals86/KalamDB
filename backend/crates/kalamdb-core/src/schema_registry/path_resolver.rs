@@ -1,6 +1,6 @@
 use crate::error::KalamDbError;
 use crate::schema_registry::cached_table_data::CachedTableData;
-use kalamdb_commons::models::{NamespaceId, StorageId, TableName, UserId};
+use kalamdb_commons::models::{StorageId, TableId, UserId};
 use kalamdb_commons::schemas::TableType;
 use std::sync::Arc;
 
@@ -63,8 +63,7 @@ impl PathResolver {
 
     /// Resolve partial storage path template for a table
     pub fn resolve_storage_path_template(
-        namespace: &NamespaceId,
-        table_name: &TableName,
+        table_id: &TableId,
         table_type: TableType,
         storage_id: &StorageId,
     ) -> Result<String, KalamDbError> {
@@ -98,8 +97,8 @@ impl PathResolver {
 
         // Substitute static placeholders while leaving dynamic ones ({userId}, {shard}) for later
         let resolved = canonical
-            .replace("{namespace}", namespace.as_str())
-            .replace("{tableName}", table_name.as_str());
+            .replace("{namespace}", table_id.namespace_id().as_str())
+            .replace("{tableName}", table_id.table_name().as_str());
 
         Ok(resolved)
     }

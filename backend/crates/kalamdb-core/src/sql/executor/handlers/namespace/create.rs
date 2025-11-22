@@ -61,14 +61,8 @@ impl TypedStatementHandler<CreateNamespaceStatement> for CreateNamespaceHandler 
 
         // Log DDL operation
         use crate::sql::executor::helpers::audit;
-        let audit_entry = audit::log_ddl_operation(
-            context,
-            "CREATE",
-            "NAMESPACE",
-            name,
-            None,
-            None,
-        );
+        let audit_entry =
+            audit::log_ddl_operation(context, "CREATE", "NAMESPACE", name, None, None);
         audit::persist_audit_entry(&self.app_context, &audit_entry).await?;
 
         let message = format!("Namespace '{}' created successfully", name);

@@ -26,13 +26,7 @@ fn smoke_system_tables_and_user_lifecycle() {
     }
 
     // 2) CREATE USER and verify present in system.users
-    let uname = format!(
-        "smoke_user_{}",
-        std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .unwrap()
-            .as_millis()
-    );
+    let uname = generate_unique_namespace("smoke_user");
     let pass = "S1mpleP@ss!";
     let create_user = format!("CREATE USER {} WITH PASSWORD '{}' ROLE 'user'", uname, pass);
     execute_sql_as_root_via_cli(&create_user).expect("create user should succeed");
@@ -75,7 +69,7 @@ fn smoke_system_tables_and_user_lifecycle() {
     let unique_tbl = generate_unique_table("test_flush_table");
     let test_table = format!("{}.{}", test_ns, unique_tbl);
     let create_table_sql = format!(
-        "CREATE USER TABLE {} (id INT PRIMARY KEY, value VARCHAR) FLUSH ROWS 100",
+        "CREATE TABLE {} (id INT PRIMARY KEY, value VARCHAR) WITH (TYPE = 'USER', FLUSH_POLICY = 'rows:100')",
         test_table
     );
     execute_sql_as_root_via_cli(&create_table_sql).expect("create test table should succeed");

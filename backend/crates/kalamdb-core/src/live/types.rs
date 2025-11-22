@@ -10,8 +10,8 @@ pub struct ChangeNotification {
     pub change_type: ChangeType,
     pub table_id: kalamdb_commons::models::TableId,
     pub row_data: Row,
-    pub old_data: Option<Row>, // For UPDATE notifications
-    pub row_id: Option<String>,              // For DELETE notifications (hard delete)
+    pub old_data: Option<Row>,  // For UPDATE notifications
+    pub row_id: Option<String>, // For DELETE notifications (hard delete)
 }
 
 impl ChangeNotification {
@@ -42,10 +42,7 @@ impl ChangeNotification {
     }
 
     /// Create a DELETE notification (soft delete with data)
-    pub fn delete_soft(
-        table_id: kalamdb_commons::models::TableId,
-        row_data: Row,
-    ) -> Self {
+    pub fn delete_soft(table_id: kalamdb_commons::models::TableId, row_data: Row) -> Self {
         Self {
             change_type: ChangeType::Delete,
             table_id,
@@ -61,8 +58,11 @@ impl ChangeNotification {
         // or we might need to change how delete notifications work.
         // For now, let's create a minimal Row with just ID if possible, or empty.
         let mut values = BTreeMap::new();
-        values.insert("row_id".to_string(), ScalarValue::Utf8(Some(row_id.clone())));
-        
+        values.insert(
+            "row_id".to_string(),
+            ScalarValue::Utf8(Some(row_id.clone())),
+        );
+
         Self {
             change_type: ChangeType::Delete,
             table_id,
@@ -79,10 +79,19 @@ impl ChangeNotification {
         parquet_files: Vec<String>,
     ) -> Self {
         let mut values = BTreeMap::new();
-        values.insert("row_count".to_string(), ScalarValue::Int64(Some(row_count as i64)));
+        values.insert(
+            "row_count".to_string(),
+            ScalarValue::Int64(Some(row_count as i64)),
+        );
         let files_json = serde_json::to_string(&parquet_files).unwrap_or_default();
-        values.insert("parquet_files".to_string(), ScalarValue::Utf8(Some(files_json)));
-        values.insert("flushed_at".to_string(), ScalarValue::Int64(Some(chrono::Utc::now().timestamp_millis())));
+        values.insert(
+            "parquet_files".to_string(),
+            ScalarValue::Utf8(Some(files_json)),
+        );
+        values.insert(
+            "flushed_at".to_string(),
+            ScalarValue::Int64(Some(chrono::Utc::now().timestamp_millis())),
+        );
 
         Self {
             change_type: ChangeType::Flush,

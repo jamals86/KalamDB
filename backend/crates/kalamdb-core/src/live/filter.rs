@@ -377,9 +377,37 @@ impl Default for FilterCache {
 mod tests {
     use super::*;
     use serde_json::json;
+    use std::collections::BTreeMap;
 
-    fn to_row(v: serde_json::Value) -> Row {
-        serde_json::from_value(v).unwrap()
+    fn to_row(value: serde_json::Value) -> Row {
+        let object = value
+            .as_object()
+            .expect("test rows must be JSON objects")
+            .clone();
+
+        let mut values = BTreeMap::new();
+        for (key, value) in object {
+            let scalar = match value {
+                serde_json::Value::Null => ScalarValue::Null,
+                serde_json::Value::Bool(b) => ScalarValue::Boolean(Some(b)),
+                serde_json::Value::Number(n) => {
+                    if let Some(i) = n.as_i64() {
+                        ScalarValue::Int64(Some(i))
+                    } else if let Some(u) = n.as_u64() {
+                        ScalarValue::UInt64(Some(u))
+                    } else if let Some(f) = n.as_f64() {
+                        ScalarValue::Float64(Some(f))
+                    } else {
+                        panic!("unsupported numeric literal in test row")
+                    }
+                }
+                serde_json::Value::String(s) => ScalarValue::Utf8(Some(s)),
+                other => panic!("unsupported value in test row: {:?}", other),
+            };
+            values.insert(key, scalar);
+        }
+
+        Row::new(values)
     }
 
     #[test]

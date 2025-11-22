@@ -146,7 +146,7 @@ impl TablesTableProvider {
             use kalamdb_commons::schemas::TableOptions;
             if let TableOptions::Shared(opts) = &table_def.table_options {
                 if let Some(access) = &opts.access_level {
-                    access_levels.append_value(format!("{:?}", access));
+                    access_levels.append_value(access.as_str());
                 } else {
                     access_levels.append_null();
                 }
@@ -333,7 +333,7 @@ mod tests {
         // Scan
         let batch = provider.scan_all_tables().unwrap();
         assert_eq!(batch.num_rows(), 3);
-        assert_eq!(batch.num_columns(), 9); // Schema has 9 fields (no storage_id; storage_id is inside options JSON)
+        assert_eq!(batch.num_columns(), 10); // Schema exposes 10 fields including access_level metadata
     }
 
     #[tokio::test]

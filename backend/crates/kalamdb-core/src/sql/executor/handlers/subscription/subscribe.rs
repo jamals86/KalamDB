@@ -44,7 +44,11 @@ impl TypedStatementHandler<SubscribeStatement> for SubscribeHandler {
         let audit_entry = audit::log_query_operation(
             _context,
             "SUBSCRIBE",
-            &format!("{}.{}", statement.namespace.as_str(), statement.table_name.as_str()),
+            &format!(
+                "{}.{}",
+                statement.namespace.as_str(),
+                statement.table_name.as_str()
+            ),
             0.0, // Duration is negligible for registration
             None,
         );

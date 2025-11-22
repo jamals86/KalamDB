@@ -6,7 +6,7 @@ use crate::app_context::AppContext;
 use crate::error::KalamDbError;
 use crate::sql::executor::models::ExecutionContext;
 use kalamdb_commons::models::StorageType;
-use kalamdb_commons::models::{NamespaceId, StorageId, TableId, UserId};
+use kalamdb_commons::models::{NamespaceId, StorageId, TableAccess, TableId, UserId};
 use kalamdb_commons::schemas::TableType;
 use kalamdb_sql::ddl::CreateTableStatement;
 use std::sync::Arc;
@@ -82,7 +82,7 @@ pub fn create_user_table(
     // RBAC check
     if !crate::auth::rbac::can_create_table(exec_ctx.user_role, TableType::User) {
         log::error!(
-            "❌ CREATE USER TABLE {}.{}: Insufficient privileges (user: {}, role: {:?})",
+            "❌ CREATE TABLE (TYPE='USER') {}.{}: Insufficient privileges (user: {}, role: {:?})",
             stmt.namespace_id.as_str(),
             stmt.table_name.as_str(),
             exec_ctx.user_id.as_str(),
@@ -94,7 +94,7 @@ pub fn create_user_table(
     }
 
     log::debug!(
-        "📋 CREATE USER TABLE {}.{}: columns={}, storage={:?}, ttl={:?}",
+        "📋 CREATE TABLE (TYPE='USER') {}.{}: columns={}, storage={:?}, ttl={:?}",
         stmt.namespace_id.as_str(),
         stmt.table_name.as_str(),
         stmt.schema.fields().len(),
@@ -110,7 +110,7 @@ pub fn create_user_table(
     let namespace_id = NamespaceId::new(stmt.namespace_id.as_str());
     if namespaces_provider.get_namespace(&namespace_id)?.is_none() {
         log::error!(
-            "❌ CREATE USER TABLE failed: Namespace '{}' does not exist. Create it first with CREATE NAMESPACE {}",
+            "❌ CREATE TABLE (TYPE='USER') failed: Namespace '{}' does not exist. Create it first with CREATE NAMESPACE {}",
             stmt.namespace_id.as_str(),
             stmt.namespace_id.as_str()
         );
@@ -124,7 +124,7 @@ pub fn create_user_table(
     // PRIMARY KEY validation - USER tables MUST have PRIMARY KEY
     if stmt.primary_key_column.is_none() {
         log::error!(
-            "❌ CREATE USER TABLE {}.{}: PRIMARY KEY is required",
+            "❌ CREATE TABLE (TYPE='USER') {}.{}: PRIMARY KEY is required",
             stmt.namespace_id.as_str(),
             stmt.table_name.as_str()
         );
@@ -142,6 +142,24 @@ pub fn create_user_table(
 
     if table_exists {
         if stmt.if_not_exists {
+            // Ensure provider is registered even if table exists
+            // This handles cases where table exists in storage but provider is missing from cache
+            // (e.g. after restart or in test environments with shared storage)
+            if schema_registry.get_provider(&table_id).is_none() {
+                log::info!(
+                    "Table {}.{} exists but provider missing - registering now",
+                    stmt.namespace_id.as_str(),
+                    stmt.table_name.as_str()
+                );
+
+                if let Some(def) = schema_registry.get_table_definition(&table_id)? {
+                    let arrow_schema = def.to_arrow_schema().map_err(|e| {
+                        KalamDbError::SchemaError(format!("Failed to build Arrow schema: {}", e))
+                    })?;
+                    register_user_table_provider(&app_context, &table_id, arrow_schema)?;
+                }
+            }
+
             log::info!(
                 "ℹ️  USER TABLE {}.{} already exists (IF NOT EXISTS - skipping)",
                 stmt.namespace_id.as_str(),
@@ -154,7 +172,7 @@ pub fn create_user_table(
             ));
         } else {
             log::warn!(
-                "❌ CREATE USER TABLE failed: {}.{} already exists",
+                "❌ CREATE TABLE (TYPE='USER') failed: {}.{} already exists",
                 stmt.namespace_id.as_str(),
                 stmt.table_name.as_str()
             );
@@ -171,7 +189,7 @@ pub fn create_user_table(
     let namespace_id = NamespaceId::new(stmt.namespace_id.as_str());
     if namespaces_provider.get_namespace(&namespace_id)?.is_none() {
         log::error!(
-            "❌ CREATE USER TABLE failed: Namespace '{}' does not exist",
+            "❌ CREATE TABLE (TYPE='USER') failed: Namespace '{}' does not exist",
             stmt.namespace_id.as_str()
         );
         return Err(KalamDbError::InvalidOperation(format!(
@@ -223,8 +241,7 @@ pub fn create_user_table(
         use crate::schema_registry::CachedTableData;
         use kalamdb_commons::schemas::TableType;
         let template = schema_registry.resolve_storage_path_template(
-            &table_id.namespace_id(),
-            &table_id.table_name(),
+            &table_id,
             TableType::User,
             &storage_id,
         )?;
@@ -272,15 +289,20 @@ pub fn create_user_table(
 /// Create SHARED table (single-tenant with access control)
 pub fn create_shared_table(
     app_context: Arc<AppContext>,
-    stmt: CreateTableStatement,
+    mut stmt: CreateTableStatement,
     exec_ctx: &ExecutionContext,
 ) -> Result<String, KalamDbError> {
     use super::tables::{save_table_definition, validate_table_name};
 
+    // Set default access level if not provided
+    if stmt.access_level.is_none() {
+        stmt.access_level = Some(TableAccess::Private);
+    }
+
     // RBAC check
     if !crate::auth::rbac::can_create_table(exec_ctx.user_role, TableType::Shared) {
         log::error!(
-            "❌ CREATE SHARED TABLE {}.{}: Insufficient privileges (user: {}, role: {:?})",
+            "❌ CREATE TABLE (TYPE='SHARED') {}.{}: Insufficient privileges (user: {}, role: {:?})",
             stmt.namespace_id.as_str(),
             stmt.table_name.as_str(),
             exec_ctx.user_id.as_str(),
@@ -292,7 +314,7 @@ pub fn create_shared_table(
     }
 
     log::debug!(
-        "📋 CREATE SHARED TABLE {}.{}: columns={}, storage={:?}, access_level={:?}",
+        "📋 CREATE TABLE (TYPE='SHARED') {}.{}: columns={}, storage={:?}, access_level={:?}",
         stmt.namespace_id.as_str(),
         stmt.table_name.as_str(),
         stmt.schema.fields().len(),
@@ -308,7 +330,7 @@ pub fn create_shared_table(
     let namespace_id = NamespaceId::new(stmt.namespace_id.as_str());
     if namespaces_provider.get_namespace(&namespace_id)?.is_none() {
         log::error!(
-            "❌ CREATE SHARED TABLE failed: Namespace '{}' does not exist. Create it first with CREATE NAMESPACE {}",
+            "❌ CREATE TABLE (TYPE='SHARED') failed: Namespace '{}' does not exist. Create it first with CREATE NAMESPACE {}",
             stmt.namespace_id.as_str(),
             stmt.namespace_id.as_str()
         );
@@ -322,7 +344,7 @@ pub fn create_shared_table(
     // PRIMARY KEY validation - SHARED tables MUST have PRIMARY KEY
     if stmt.primary_key_column.is_none() {
         log::error!(
-            "❌ CREATE SHARED TABLE {}.{}: PRIMARY KEY is required",
+            "❌ CREATE TABLE (TYPE='SHARED') {}.{}: PRIMARY KEY is required",
             stmt.namespace_id.as_str(),
             stmt.table_name.as_str()
         );
@@ -340,6 +362,22 @@ pub fn create_shared_table(
 
     if table_exists {
         if stmt.if_not_exists {
+            // Ensure provider is registered even if table exists
+            if schema_registry.get_provider(&table_id).is_none() {
+                log::info!(
+                    "Table {}.{} exists but provider missing - registering now",
+                    stmt.namespace_id.as_str(),
+                    stmt.table_name.as_str()
+                );
+
+                if let Some(def) = schema_registry.get_table_definition(&table_id)? {
+                    let arrow_schema = def.to_arrow_schema().map_err(|e| {
+                        KalamDbError::SchemaError(format!("Failed to build Arrow schema: {}", e))
+                    })?;
+                    register_shared_table_provider(&app_context, &table_id, arrow_schema)?;
+                }
+            }
+
             log::info!(
                 "ℹ️  SHARED TABLE {}.{} already exists (IF NOT EXISTS - skipping)",
                 stmt.namespace_id.as_str(),
@@ -352,7 +390,7 @@ pub fn create_shared_table(
             ));
         } else {
             log::warn!(
-                "❌ CREATE SHARED TABLE failed: {}.{} already exists",
+                "❌ CREATE TABLE (TYPE='SHARED') failed: {}.{} already exists",
                 stmt.namespace_id.as_str(),
                 stmt.table_name.as_str()
             );
@@ -411,8 +449,7 @@ pub fn create_shared_table(
     {
         use crate::schema_registry::CachedTableData;
         let template = schema_registry.resolve_storage_path_template(
-            &table_id.namespace_id(),
-            &table_id.table_name(),
+            &table_id,
             TableType::Shared,
             &storage_id,
         )?;
@@ -507,7 +544,7 @@ pub fn create_stream_table(
     // RBAC check
     if !crate::auth::rbac::can_create_table(exec_ctx.user_role, TableType::Stream) {
         log::error!(
-            "❌ CREATE STREAM TABLE {}.{}: Insufficient privileges (user: {}, role: {:?})",
+            "❌ CREATE TABLE (TYPE='STREAM') {}.{}: Insufficient privileges (user: {}, role: {:?})",
             stmt.namespace_id.as_str(),
             stmt.table_name.as_str(),
             exec_ctx.user_id.as_str(),
@@ -519,7 +556,7 @@ pub fn create_stream_table(
     }
 
     log::debug!(
-        "📋 CREATE STREAM TABLE {}.{}: columns={}, ttl={:?}s",
+        "📋 CREATE TABLE (TYPE='STREAM') {}.{}: columns={}, ttl={:?}s",
         stmt.namespace_id.as_str(),
         stmt.table_name.as_str(),
         stmt.schema.fields().len(),
@@ -538,6 +575,30 @@ pub fn create_stream_table(
 
     if table_exists {
         if stmt.if_not_exists {
+            // Ensure provider is registered even if table exists
+            if schema_registry.get_provider(&table_id).is_none() {
+                log::info!(
+                    "Table {}.{} exists but provider missing - registering now",
+                    stmt.namespace_id.as_str(),
+                    stmt.table_name.as_str()
+                );
+
+                if let Some(def) = schema_registry.get_table_definition(&table_id)? {
+                    let arrow_schema = def.to_arrow_schema().map_err(|e| {
+                        KalamDbError::SchemaError(format!("Failed to build Arrow schema: {}", e))
+                    })?;
+                    
+                    // Extract TTL from table options if available, otherwise use default
+                    let ttl_seconds = if let kalamdb_commons::schemas::TableOptions::Stream(opts) = &def.table_options {
+                        Some(opts.ttl_seconds)
+                    } else {
+                        stmt.ttl_seconds
+                    };
+                    
+                    register_stream_table_provider(&app_context, &table_id, arrow_schema, ttl_seconds)?;
+                }
+            }
+
             log::info!(
                 "ℹ️  STREAM TABLE {}.{} already exists (IF NOT EXISTS - skipping)",
                 stmt.namespace_id.as_str(),
@@ -550,7 +611,7 @@ pub fn create_stream_table(
             ));
         } else {
             log::warn!(
-                "❌ CREATE STREAM TABLE failed: {}.{} already exists",
+                "❌ CREATE TABLE (TYPE='STREAM') failed: {}.{} already exists",
                 stmt.namespace_id.as_str(),
                 stmt.table_name.as_str()
             );
@@ -567,7 +628,7 @@ pub fn create_stream_table(
     let namespace_id = NamespaceId::new(stmt.namespace_id.as_str());
     if namespaces_provider.get_namespace(&namespace_id)?.is_none() {
         log::error!(
-            "❌ CREATE STREAM TABLE failed: Namespace '{}' does not exist. Create it first with CREATE NAMESPACE {}",
+            "❌ CREATE TABLE (TYPE='STREAM') failed: Namespace '{}' does not exist. Create it first with CREATE NAMESPACE {}",
             stmt.namespace_id.as_str(),
             stmt.namespace_id.as_str()
         );
@@ -584,7 +645,7 @@ pub fn create_stream_table(
     // Validate TTL is specified
     if stmt.ttl_seconds.is_none() {
         log::error!(
-            "❌ CREATE STREAM TABLE failed: {}.{} - TTL clause is required",
+            "❌ CREATE TABLE (TYPE='STREAM') failed: {}.{} - TTL clause is required",
             stmt.namespace_id.as_str(),
             stmt.table_name.as_str()
         );
@@ -628,8 +689,7 @@ pub fn create_stream_table(
         // Stream tables use default storage
         let storage_id = StorageId::from("local");
         let template = schema_registry.resolve_storage_path_template(
-            &table_id.namespace_id(),
-            &table_id.table_name(),
+            &table_id,
             TableType::Stream,
             &storage_id,
         )?;

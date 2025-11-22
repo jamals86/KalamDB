@@ -11,8 +11,8 @@
 mod common;
 
 use common::TestServer;
-use kalamdb_commons::models::{AuthType, Role, StorageMode, UserId, UserName};
 use kalamdb_api::models::ResponseStatus;
+use kalamdb_commons::models::{AuthType, Role, StorageMode, UserId, UserName};
 
 async fn insert_user(server: &TestServer, username: &str, role: Role) -> UserId {
     let user_id = UserId::new(username);
@@ -60,7 +60,7 @@ async fn test_as_user_blocked_for_regular_user() {
         .execute_sql(&format!("CREATE NAMESPACE {}", ns))
         .await;
     let create_table = format!(
-        "CREATE USER TABLE {}.items (item_id VARCHAR PRIMARY KEY, name VARCHAR) STORAGE local",
+        "CREATE TABLE {}.items (item_id VARCHAR PRIMARY KEY, name VARCHAR) WITH (TYPE = 'USER', STORAGE_ID = 'local')",
         ns
     );
     server.execute_sql(&create_table).await; // Use default system user for table creation
@@ -105,7 +105,7 @@ async fn test_as_user_with_service_role() {
         .execute_sql(&format!("CREATE NAMESPACE {}", ns))
         .await;
     let create_table = format!(
-        "CREATE USER TABLE {}.orders (order_id VARCHAR PRIMARY KEY, amount VARCHAR) STORAGE local",
+        "CREATE TABLE {}.orders (order_id VARCHAR PRIMARY KEY, amount VARCHAR) WITH (TYPE = 'USER', STORAGE_ID = 'local')",
         ns
     );
     server
@@ -158,7 +158,7 @@ async fn test_as_user_with_dba_role() {
         .execute_sql(&format!("CREATE NAMESPACE {}", ns))
         .await;
     let create_table = format!(
-        "CREATE USER TABLE {}.logs (log_id VARCHAR PRIMARY KEY, message VARCHAR) STORAGE local",
+        "CREATE TABLE {}.logs (log_id VARCHAR PRIMARY KEY, message VARCHAR) WITH (TYPE = 'USER', STORAGE_ID = 'local')",
         ns
     );
     server
@@ -198,7 +198,7 @@ async fn test_insert_as_user_ownership() {
         .execute_sql(&format!("CREATE NAMESPACE {}", ns))
         .await;
     let create_table = format!(
-        "CREATE USER TABLE {}.messages (msg_id VARCHAR PRIMARY KEY, content VARCHAR) STORAGE local",
+        "CREATE TABLE {}.messages (msg_id VARCHAR PRIMARY KEY, content VARCHAR) WITH (TYPE = 'USER', STORAGE_ID = 'local')",
         ns
     );
     server
@@ -253,7 +253,7 @@ async fn test_update_as_user() {
     server
         .execute_sql(&format!("CREATE NAMESPACE {}", ns))
         .await;
-    let create_table = format!("CREATE USER TABLE {}.profiles (profile_id VARCHAR PRIMARY KEY, status VARCHAR) STORAGE local", ns);
+    let create_table = format!("CREATE TABLE {}.profiles (profile_id VARCHAR PRIMARY KEY, status VARCHAR) WITH (TYPE = 'USER', STORAGE_ID = 'local')", ns);
     server
         .execute_sql_as_user(&create_table, admin_user.as_str())
         .await;
@@ -308,7 +308,7 @@ async fn test_delete_as_user() {
     server
         .execute_sql(&format!("CREATE NAMESPACE {}", ns))
         .await;
-    let create_table = format!("CREATE USER TABLE {}.sessions (session_id VARCHAR PRIMARY KEY, active BOOLEAN) STORAGE local", ns);
+    let create_table = format!("CREATE TABLE {}.sessions (session_id VARCHAR PRIMARY KEY, active BOOLEAN) WITH (TYPE = 'USER', STORAGE_ID = 'local')", ns);
     server
         .execute_sql_as_user(&create_table, admin_user.as_str())
         .await;
@@ -363,16 +363,22 @@ async fn test_as_user_on_shared_table_rejected() {
         .execute_sql(&format!("CREATE NAMESPACE {}", ns))
         .await;
     let create_table = format!(
-        "CREATE SHARED TABLE {}.global_config (key VARCHAR PRIMARY KEY, value VARCHAR)",
+        "CREATE TABLE {}.global_config (config_key VARCHAR PRIMARY KEY, value VARCHAR) WITH (TYPE = 'SHARED')",
         ns
     );
-    server
+    let create_resp = server
         .execute_sql_as_user(&create_table, admin_user.as_str())
         .await;
+    assert_eq!(
+        create_resp.status,
+        ResponseStatus::Success,
+        "Failed to create SHARED table: {:?}",
+        create_resp.error
+    );
 
     // INSERT AS USER on SHARED table (should fail)
     let insert_sql = format!(
-        "INSERT INTO {}.global_config (key, value) VALUES ('setting1', 'value1') AS USER '{}'",
+        "INSERT INTO {}.global_config (config_key, value) VALUES ('setting1', 'value1') AS USER '{}'",
         ns,
         user_eve.as_str()
     );
@@ -406,7 +412,7 @@ async fn test_as_user_nonexistent_user() {
         .execute_sql(&format!("CREATE NAMESPACE {}", ns))
         .await;
     let create_table = format!(
-        "CREATE USER TABLE {}.logs (log_id VARCHAR PRIMARY KEY, message VARCHAR) STORAGE local",
+        "CREATE TABLE {}.logs (log_id VARCHAR PRIMARY KEY, message VARCHAR) WITH (TYPE = 'USER', STORAGE_ID = 'local')",
         ns
     );
     server
@@ -444,7 +450,7 @@ async fn test_as_user_performance() {
         .execute_sql(&format!("CREATE NAMESPACE {}", ns))
         .await;
     let create_table = format!(
-        "CREATE USER TABLE {}.perf_test (id VARCHAR PRIMARY KEY, data VARCHAR) STORAGE local",
+        "CREATE TABLE {}.perf_test (id VARCHAR PRIMARY KEY, data VARCHAR) WITH (TYPE = 'USER', STORAGE_ID = 'local')",
         ns
     );
     server

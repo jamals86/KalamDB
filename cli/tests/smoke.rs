@@ -6,8 +6,16 @@ mod common;
 mod smoke_test_all_datatypes;
 #[path = "smoke/smoke_test_core_operations.rs"]
 mod smoke_test_core_operations;
+#[path = "smoke/smoke_test_custom_functions.rs"]
+mod smoke_test_custom_functions;
+#[path = "smoke/smoke_test_ddl_alter.rs"]
+mod smoke_test_ddl_alter;
+#[path = "smoke/smoke_test_dml_extended.rs"]
+mod smoke_test_dml_extended;
 #[path = "smoke/smoke_test_dml_wide_columns.rs"]
 mod smoke_test_dml_wide_columns;
+#[path = "smoke/smoke_test_flush_manifest.rs"]
+mod smoke_test_flush_manifest;
 #[path = "smoke/smoke_test_flush_operations.rs"]
 mod smoke_test_flush_operations;
 #[path = "smoke/smoke_test_queries_benchmark.rs"]
@@ -20,6 +28,10 @@ mod smoke_test_storage_templates;
 mod smoke_test_stream_subscription;
 #[path = "smoke/smoke_test_system_and_users.rs"]
 mod smoke_test_system_and_users;
+#[path = "smoke/smoke_test_system_tables_extended.rs"]
+mod smoke_test_system_tables_extended;
+#[path = "smoke/smoke_test_timing_output.rs"]
+mod smoke_test_timing_output;
 #[path = "smoke/smoke_test_user_table_rls.rs"]
 mod smoke_test_user_table_rls;
 #[path = "smoke/smoke_test_user_table_subscription.rs"]

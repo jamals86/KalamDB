@@ -73,10 +73,11 @@ pub fn handle_credentials(cli: &Cli, credential_store: &mut FileCredentialStore)
                 .map_err(|e| CLIError::FileError(format!("Failed to read password: {}", e)))?
         };
 
-        let server_url = cli
-            .url
-            .clone()
-            .or_else(|| cli.host.as_ref().map(|h| format!("http://{}:{}", h, cli.port)));
+        let server_url = cli.url.clone().or_else(|| {
+            cli.host
+                .as_ref()
+                .map(|h| format!("http://{}:{}", h, cli.port))
+        });
 
         let creds = if let Some(url) = server_url {
             Credentials::with_server_url(cli.instance.clone(), username, password, url)

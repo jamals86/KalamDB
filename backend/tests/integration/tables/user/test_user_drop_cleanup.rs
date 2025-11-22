@@ -31,18 +31,21 @@ async fn test_drop_user_table_deletes_partitions_and_parquet() {
 
     // Create user table
     let create_sql = format!(
-        r#"CREATE USER TABLE {}.{} (
+        r#"CREATE TABLE {}.{} (
             id TEXT PRIMARY KEY,
             content TEXT,
             priority INT
-        ) STORAGE local"#,
+        ) WITH (
+            TYPE = 'USER',
+            STORAGE_ID = 'local'
+        )"#,
         namespace, table
     );
     let resp = server.execute_sql_as_user(&create_sql, user1).await;
     assert_eq!(
         resp.status,
         ResponseStatus::Success,
-        "CREATE USER TABLE failed: {:?}",
+        "CREATE TABLE failed: {:?}",
         resp.error
     );
 

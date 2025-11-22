@@ -29,6 +29,7 @@ pub mod system;
 pub mod table;
 pub mod typed;
 pub mod user;
+pub mod view;
 
 // Re-export core types from executor/models for convenience
 pub use crate::sql::executor::models::{

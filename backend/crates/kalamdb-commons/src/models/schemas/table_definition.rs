@@ -5,7 +5,7 @@ use crate::models::schemas::{ColumnDefinition, SchemaVersion, TableOptions, Tabl
 use crate::{NamespaceId, TableName};
 use arrow_schema::{Field, Schema as ArrowSchema};
 use chrono::{DateTime, Utc};
-use serde::{Deserialize, Serialize};
+use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use std::sync::Arc;
 
 /// Complete definition of a table including schema, history, and options
@@ -13,7 +13,7 @@ use std::sync::Arc;
 /// **Phase 15 Consolidation**: This is now the SINGLE SOURCE OF TRUTH for all table metadata.
 /// Previously split between SystemTable (registry metadata) and TableDefinition (schema).
 /// Now unified to eliminate duplication and simplify architecture.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct TableDefinition {
     /// Namespace ID (e.g., "default", "user_123")
     pub namespace_id: NamespaceId,
@@ -45,6 +45,130 @@ pub struct TableDefinition {
 
     /// Last modification timestamp
     pub updated_at: DateTime<Utc>,
+}
+
+#[derive(Serialize, Deserialize)]
+struct TableDefinitionRepr {
+    namespace_id: NamespaceId,
+    table_name: TableName,
+    table_type: TableType,
+    columns: Vec<ColumnDefinition>,
+    schema_version: u32,
+    schema_history: Vec<SchemaVersion>,
+    table_options: TableOptions,
+    table_comment: Option<String>,
+    created_at: DateTime<Utc>,
+    updated_at: DateTime<Utc>,
+}
+
+impl From<&TableDefinition> for TableDefinitionRepr {
+    fn from(table: &TableDefinition) -> Self {
+        Self {
+            namespace_id: table.namespace_id.clone(),
+            table_name: table.table_name.clone(),
+            table_type: table.table_type,
+            columns: table.columns.clone(),
+            schema_version: table.schema_version,
+            schema_history: table.schema_history.clone(),
+            table_options: table.table_options.clone(),
+            table_comment: table.table_comment.clone(),
+            created_at: table.created_at,
+            updated_at: table.updated_at,
+        }
+    }
+}
+
+impl From<TableDefinitionRepr> for TableDefinition {
+    fn from(value: TableDefinitionRepr) -> Self {
+        Self {
+            namespace_id: value.namespace_id,
+            table_name: value.table_name,
+            table_type: value.table_type,
+            columns: value.columns,
+            schema_version: value.schema_version,
+            schema_history: value.schema_history,
+            table_options: value.table_options,
+            table_comment: value.table_comment,
+            created_at: value.created_at,
+            updated_at: value.updated_at,
+        }
+    }
+}
+
+impl Serialize for TableDefinition {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: Serializer,
+    {
+        if serializer.is_human_readable() {
+            TableDefinitionRepr::from(self).serialize(serializer)
+        } else {
+            (
+                &self.namespace_id,
+                &self.table_name,
+                &self.table_type,
+                &self.columns,
+                self.schema_version,
+                &self.schema_history,
+                &self.table_options,
+                &self.table_comment,
+                &self.created_at,
+                &self.updated_at,
+            )
+                .serialize(serializer)
+        }
+    }
+}
+
+impl<'de> Deserialize<'de> for TableDefinition {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        if deserializer.is_human_readable() {
+            let repr = TableDefinitionRepr::deserialize(deserializer)?;
+            Ok(repr.into())
+        } else {
+            type BinaryTuple = (
+                NamespaceId,
+                TableName,
+                TableType,
+                Vec<ColumnDefinition>,
+                u32,
+                Vec<SchemaVersion>,
+                TableOptions,
+                Option<String>,
+                DateTime<Utc>,
+                DateTime<Utc>,
+            );
+
+            let (
+                namespace_id,
+                table_name,
+                table_type,
+                columns,
+                schema_version,
+                schema_history,
+                table_options,
+                table_comment,
+                created_at,
+                updated_at,
+            ): BinaryTuple = BinaryTuple::deserialize(deserializer)?;
+
+            Ok(Self {
+                namespace_id,
+                table_name,
+                table_type,
+                columns,
+                schema_version,
+                schema_history,
+                table_options,
+                table_comment,
+                created_at,
+                updated_at,
+            })
+        }
+    }
 }
 
 impl TableDefinition {
@@ -271,7 +395,10 @@ impl TableDefinition {
 mod tests {
     use super::*;
     use crate::models::datatypes::KalamDataType;
+    use crate::models::schemas::ColumnDefault;
     use crate::{NamespaceId, TableName};
+    use bincode::config::standard;
+    use bincode::serde::{decode_from_slice, encode_to_vec};
 
     fn sample_columns() -> Vec<ColumnDefinition> {
         vec![
@@ -557,5 +684,110 @@ mod tests {
         } else {
             panic!("Expected Stream options");
         }
+    }
+
+    #[test]
+    fn test_bincode_roundtrip() {
+        let mut columns = sample_columns();
+        columns[1].default_value = ColumnDefault::literal(serde_json::json!({
+            "kind": "text",
+            "value": "default",
+        }));
+
+        let table = TableDefinition::new(
+            NamespaceId::new("default"),
+            TableName::new("users"),
+            TableType::Shared,
+            columns,
+            TableOptions::shared(),
+            Some("Test table".to_string()),
+        )
+        .unwrap();
+
+        let config = standard();
+
+        // Validate individual components roundtrip independently to isolate failures
+        let column_bytes = encode_to_vec(&table.columns, config).expect("encode columns");
+        let (decoded_columns, _): (Vec<ColumnDefinition>, usize) =
+            decode_from_slice(&column_bytes, config).expect("decode columns");
+        assert_eq!(decoded_columns, table.columns);
+
+        let options_bytes =
+            encode_to_vec(&table.table_options, config).expect("encode table options");
+        let (decoded_options, _): (TableOptions, usize) =
+            decode_from_slice(&options_bytes, config).expect("decode table options");
+        assert_eq!(decoded_options, table.table_options);
+
+        let timestamp_bytes = encode_to_vec(&table.created_at, config).expect("encode timestamp");
+        let (decoded_ts, _): (chrono::DateTime<chrono::Utc>, usize) =
+            decode_from_slice(&timestamp_bytes, config).expect("decode timestamp");
+        assert_eq!(decoded_ts, table.created_at);
+
+        let namespace_bytes = encode_to_vec(&table.namespace_id, config).expect("encode namespace");
+        let (decoded_ns, _): (NamespaceId, usize) =
+            decode_from_slice(&namespace_bytes, config).expect("decode namespace");
+        assert_eq!(decoded_ns, table.namespace_id);
+
+        let name_bytes = encode_to_vec(&table.table_name, config).expect("encode name");
+        let (decoded_name, _): (TableName, usize) =
+            decode_from_slice(&name_bytes, config).expect("decode name");
+        assert_eq!(decoded_name, table.table_name);
+
+        let comment_bytes = encode_to_vec(&table.table_comment, config).expect("encode comment");
+        let (decoded_comment, _): (Option<String>, usize) =
+            decode_from_slice(&comment_bytes, config).expect("decode comment");
+        assert_eq!(decoded_comment, table.table_comment);
+
+        let history_bytes = encode_to_vec(&table.schema_history, config).expect("encode history");
+        let (decoded_history, _): (Vec<SchemaVersion>, usize) =
+            decode_from_slice(&history_bytes, config).expect("decode history");
+        assert_eq!(decoded_history, table.schema_history);
+
+        // Encoding tuple across all fields succeeds, so failure is specific to TableDefinition
+        // implementation. This tuple test helps ensure serde data layout remains stable.
+        let tuple = (
+            table.namespace_id.clone(),
+            table.table_name.clone(),
+            table.table_type,
+            table.columns.clone(),
+            table.schema_version,
+            table.schema_history.clone(),
+            table.table_options.clone(),
+            table.table_comment.clone(),
+            table.created_at,
+            table.updated_at,
+        );
+        let tuple_bytes = encode_to_vec(&tuple, config).expect("encode tuple");
+        let (decoded_tuple, _): (
+            (
+                NamespaceId,
+                TableName,
+                TableType,
+                Vec<ColumnDefinition>,
+                u32,
+                Vec<SchemaVersion>,
+                TableOptions,
+                Option<String>,
+                chrono::DateTime<chrono::Utc>,
+                chrono::DateTime<chrono::Utc>,
+            ),
+            usize,
+        ) = decode_from_slice(&tuple_bytes, config).expect("decode tuple");
+        assert_eq!(decoded_tuple, tuple);
+
+        // Full struct still fails today (tracked via kalamdb-system tests), but regression
+        // coverage ensures intermediate components remain bincode-safe.
+        let bytes = encode_to_vec(&table, config).expect("encode table definition");
+        let (decoded, _): (TableDefinition, usize) =
+            decode_from_slice(&bytes, config).expect("decode table definition");
+
+        assert_eq!(decoded.table_name, table.table_name);
+        assert_eq!(decoded.columns.len(), table.columns.len());
+        assert_eq!(decoded.table_options, table.table_options);
+        assert_eq!(decoded.table_comment, table.table_comment);
+        assert_eq!(
+            decoded.columns[1].default_value,
+            table.columns[1].default_value
+        );
     }
 }

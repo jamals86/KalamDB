@@ -40,9 +40,10 @@ pub fn create_audit_entry(
     details: Option<String>,
     subject_user_id: Option<kalamdb_commons::UserId>,
 ) -> AuditLogEntry {
-    // Generate a unique audit ID (timestamp-based)
+    // Generate a unique audit ID (timestamp + random suffix to prevent collisions)
     let timestamp = Utc::now().timestamp_millis();
-    let audit_id = AuditLogId::from(format!("audit_{}", timestamp));
+    let uuid = uuid::Uuid::new_v4().simple();
+    let audit_id = AuditLogId::from(format!("audit_{}_{}", timestamp, uuid));
 
     AuditLogEntry {
         audit_id,
@@ -176,13 +177,18 @@ pub fn log_auth_event(
     }
 }
 
-use std::sync::Arc;
 use crate::app_context::AppContext;
+use std::sync::Arc;
 
 /// Persist an audit entry to the system.audit_logs table
-pub async fn persist_audit_entry(app_context: &Arc<AppContext>, entry: &AuditLogEntry) -> Result<(), KalamDbError> {
+pub async fn persist_audit_entry(
+    app_context: &Arc<AppContext>,
+    entry: &AuditLogEntry,
+) -> Result<(), KalamDbError> {
     let audit_logs_provider = app_context.system_tables().audit_logs();
-    audit_logs_provider.append(entry.clone()).map_err(|e| KalamDbError::from(e))?;
+    audit_logs_provider
+        .append(entry.clone())
+        .map_err(|e| KalamDbError::from(e))?;
     Ok(())
 }
 

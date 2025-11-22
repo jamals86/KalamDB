@@ -48,13 +48,8 @@ impl TypedStatementHandler<ShowManifestStatement> for ShowManifestCacheHandler {
         // Log query operation
         let duration = start_time.elapsed().as_secs_f64() * 1000.0;
         use crate::sql::executor::helpers::audit;
-        let audit_entry = audit::log_query_operation(
-            context,
-            "SHOW",
-            "MANIFEST CACHE",
-            duration,
-            None,
-        );
+        let audit_entry =
+            audit::log_query_operation(context, "SHOW", "MANIFEST CACHE", duration, None);
         audit::persist_audit_entry(&self.app_context, &audit_entry).await?;
 
         Ok(ExecutionResult::Rows {

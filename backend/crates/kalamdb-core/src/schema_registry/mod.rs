@@ -12,7 +12,6 @@ pub mod projection;
 pub mod provider_registry;
 pub mod registry;
 pub mod stats;
-pub mod system_columns_metadata;
 pub mod system_columns_service;
 pub mod table_cache;
 pub mod traits;
@@ -27,7 +26,7 @@ pub use projection::{project_batch, schemas_compatible};
 pub use provider_registry::ProviderRegistry;
 pub use registry::SchemaRegistry;
 pub use stats::StatsTableProvider;
-pub use system_columns_metadata::SystemColumns;
+pub use kalamdb_commons::string_interner::SystemColumns;
 pub use system_columns_service::SystemColumnsService;
 pub use table_cache::TableCache;
 

@@ -8,11 +8,10 @@ mod common;
 
 use common::flush_helpers::{check_shared_parquet_files, execute_shared_flush_synchronously};
 use common::{fixtures, TestServer};
-use std::path::Path;
 use kalamdb_api::models::ResponseStatus;
+use std::path::Path;
 
 #[actix_web::test]
-#[ignore = "Shared tables require pre-created column families at DB init. TestServer::new() creates in-memory DB without these CFs."]
 async fn test_drop_shared_table_deletes_partitions_and_parquet() {
     let server = TestServer::new().await;
 

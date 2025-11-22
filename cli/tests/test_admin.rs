@@ -29,11 +29,11 @@ fn test_cli_list_tables() {
 
     // Create test table
     let create_sql = format!(
-        r#"CREATE USER TABLE {}.{} (
+        r#"CREATE TABLE {}.{} (
             id INT PRIMARY KEY AUTO_INCREMENT,
             content VARCHAR NOT NULL,
             created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-        ) FLUSH ROWS 10"#,
+        ) WITH (TYPE='USER', FLUSH_POLICY='rows:10')"#,
         namespace, table_name
     );
 
@@ -76,11 +76,11 @@ fn test_cli_describe_table() {
 
     // Create test table
     let create_sql = format!(
-        r#"CREATE USER TABLE {}.{} (
+        r#"CREATE TABLE {}.{} (
             id INT PRIMARY KEY AUTO_INCREMENT,
             content VARCHAR NOT NULL,
             created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-        ) FLUSH ROWS 10"#,
+        ) WITH (TYPE='USER', FLUSH_POLICY='rows:10')"#,
         namespace, table_name
     );
 
@@ -123,27 +123,28 @@ fn test_cli_batch_file_execution() {
     let temp_dir = tempfile::TempDir::new().unwrap();
     let sql_file = temp_dir.path().join("test.sql");
 
+    let namespace = generate_unique_namespace("batch_test");
+    let table_name = "items";
+    let full_table_name = format!("{}.{}", namespace, table_name);
+
     // Cleanup first in case namespace/table exists from previous run
     // Note: DROP NAMESPACE CASCADE doesn't properly cascade to tables yet, so drop table first
-    let _ = execute_sql_as_root_via_cli("DROP TABLE IF EXISTS batch_test.items");
+    let _ = execute_sql_as_root_via_cli(&format!("DROP TABLE IF EXISTS {}", full_table_name));
     std::thread::sleep(std::time::Duration::from_millis(200));
-    let _ = execute_sql_as_root_via_cli("DROP NAMESPACE IF EXISTS batch_test");
+    let _ = execute_sql_as_root_via_cli(&format!("DROP NAMESPACE IF EXISTS {}", namespace));
     std::thread::sleep(std::time::Duration::from_millis(500));
 
     // Use a unique ID based on timestamp to avoid conflicts
-    let unique_id = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .unwrap()
-        .as_millis() as i64;
+    let unique_id = rand::random::<i64>().abs();
 
     std::fs::write(
         &sql_file,
         format!(
-            r#"CREATE NAMESPACE batch_test;
-CREATE USER TABLE batch_test.items (id BIGINT PRIMARY KEY, name VARCHAR) FLUSH ROWS 10;
-INSERT INTO batch_test.items (id, name) VALUES ({}, 'Item One');
-SELECT * FROM batch_test.items;"#,
-            unique_id
+            r#"CREATE NAMESPACE {};
+CREATE TABLE {} (id BIGINT PRIMARY KEY, name VARCHAR) WITH (TYPE='USER', FLUSH_POLICY='rows:10');
+INSERT INTO {} (id, name) VALUES ({}, 'Item One');
+SELECT * FROM {};"#,
+            namespace, full_table_name, full_table_name, unique_id, full_table_name
         ),
     )
     .unwrap();
@@ -168,7 +169,7 @@ SELECT * FROM batch_test.items;"#,
     );
 
     // Cleanup
-    let _ = execute_sql_as_root_via_cli("DROP NAMESPACE batch_test CASCADE");
+    let _ = execute_sql_as_root_via_cli(&format!("DROP NAMESPACE {} CASCADE", namespace));
 }
 
 /// T056: Test syntax error handling

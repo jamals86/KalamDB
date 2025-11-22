@@ -129,12 +129,15 @@ pub async fn create_messages_table(
     _user_id: Option<&str>,
 ) -> SqlResponse {
     let sql = format!(
-        r#"CREATE USER TABLE IF NOT EXISTS {}.messages (
+        r#"CREATE TABLE IF NOT EXISTS {}.messages (
             id BIGINT PRIMARY KEY DEFAULT SNOWFLAKE_ID(),
             user_id VARCHAR NOT NULL,
             content VARCHAR NOT NULL,
             created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-        ) FLUSH ROWS 100"#,
+        ) WITH (
+            TYPE = 'USER',
+            FLUSH_POLICY = 'rows:100'
+        )"#,
         namespace
     );
     // Use system user since only System/Dba roles can create tables
@@ -183,12 +186,15 @@ pub async fn create_user_table_with_flush(
     flush_rows: u32,
 ) -> SqlResponse {
     let sql = format!(
-        r#"CREATE USER TABLE IF NOT EXISTS {}.{} (
+        r#"CREATE TABLE IF NOT EXISTS {}.{} (
             id BIGINT PRIMARY KEY DEFAULT SNOWFLAKE_ID(),
             user_id VARCHAR NOT NULL,
             data VARCHAR,
             created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-        ) FLUSH ROWS {}"#,
+        ) WITH (
+            TYPE = 'USER',
+            FLUSH_POLICY = 'rows:{}'
+        )"#,
         namespace, table_name, flush_rows
     );
     server.execute_sql_as_user(&sql, "system").await
@@ -224,7 +230,7 @@ pub async fn create_shared_table(
     };
 
     let sql = format!(
-        "CREATE SHARED TABLE {}.{} ({}) FLUSH ROWS 50",
+        "CREATE TABLE {}.{} ({}) WITH (TYPE = 'SHARED', FLUSH_POLICY = 'rows:50')",
         namespace, table_name, columns
     );
     server.execute_sql(&sql).await
@@ -245,12 +251,15 @@ pub async fn create_stream_table(
     ttl_seconds: u32,
 ) -> SqlResponse {
     let sql = format!(
-        r#"CREATE STREAM TABLE IF NOT EXISTS {}.{} (
+        r#"CREATE TABLE IF NOT EXISTS {}.{} (
             event_id TEXT NOT NULL,
             event_type TEXT,
             payload TEXT,
             timestamp TIMESTAMP
-        ) TTL {}"#,
+        ) WITH (
+            TYPE = 'STREAM',
+            TTL_SECONDS = {}
+        )"#,
         namespace, table_name, ttl_seconds
     );
     let resp = server.execute_sql(&sql).await;
@@ -572,9 +581,11 @@ mod tests {
                 );
             }
             assert_eq!(
-                response.status, ResponseStatus::Success,
+                response.status,
+                ResponseStatus::Success,
                 "Insert {} failed: {:?}",
-                i, response.error
+                i,
+                response.error
             );
         }
     }
@@ -589,19 +600,23 @@ mod tests {
     }
 
     #[actix_web::test]
-    #[ignore = "Shared tables require pre-created column families at DB init"]
     async fn test_setup_complete_environment() {
         let server = TestServer::new().await;
-        let result = setup_complete_environment(&server, "test_env").await;
+        // Use a unique namespace to avoid collision with parallel cleanup tests
+        let ns = "unique_setup_env";
+        let result = setup_complete_environment(&server, ns).await;
         if let Err(e) = &result {
             eprintln!("Setup failed with error: {}", e);
         }
         assert!(result.is_ok(), "Setup failed: {:?}", result.err());
 
         // Verify all components exist
-        assert!(server.namespace_exists("test_env").await);
-        assert!(server.table_exists("test_env", "messages").await);
-        assert!(server.table_exists("test_env", "config").await);
-        assert!(server.table_exists("test_env", "events").await);
+        assert!(server.namespace_exists(ns).await);
+        assert!(server.table_exists(ns, "messages").await);
+        assert!(server.table_exists(ns, "config").await);
+        assert!(server.table_exists(ns, "events").await);
+        
+        // Manual cleanup
+        let _ = drop_namespace(&server, ns).await;
     }
 }

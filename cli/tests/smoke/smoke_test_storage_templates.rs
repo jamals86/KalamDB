@@ -48,26 +48,21 @@ fn smoke_storage_custom_templates() {
         return;
     }
 
-    let timestamp = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .unwrap()
-        .as_millis();
-
-    let storage_id = format!("smk_storage_tpl_{}", timestamp);
-    let namespace_user = format!("smk_tpl_ns_u_{}", timestamp);
-    let namespace_shared = format!("smk_tpl_ns_s_{}", timestamp);
-    let user_table = format!("tpl_user_table_{}", timestamp);
-    let shared_table = format!("tpl_shared_table_{}", timestamp);
+    let storage_id = generate_unique_namespace("smk_storage_tpl");
+    let namespace_user = generate_unique_namespace("smk_tpl_ns_u");
+    let namespace_shared = generate_unique_namespace("smk_tpl_ns_s");
+    let user_table = generate_unique_table("tpl_user_table");
+    let shared_table = generate_unique_table("tpl_shared_table");
     let table_user_full = format!("{}.{}", namespace_user, user_table);
     let table_shared_full = format!("{}.{}", namespace_shared, shared_table);
-    let test_user = format!("tpl_owner_{}", timestamp);
-    let test_password = format!("Tpl{}Aa!", timestamp);
+    let test_user = generate_unique_namespace("tpl_owner");
+    let test_password = "TplPassword123!";
 
     let base_dir = std::env::current_dir()
         .expect("current dir")
         .join("data")
         .join("storage")
-        .join(format!("tpl_smoke_{}", timestamp));
+        .join(generate_unique_namespace("tpl_smoke"));
     if base_dir.exists() {
         let _ = fs::remove_dir_all(&base_dir);
     }
@@ -158,11 +153,14 @@ fn smoke_storage_custom_templates() {
 
     // ----- User table scenario -----
     let create_user_table_sql = format!(
-        "CREATE USER TABLE {table_user_full} (
+        "CREATE TABLE {table_user_full} (
             id BIGINT AUTO_INCREMENT PRIMARY KEY,
             body TEXT
-                ) STORAGE '{storage_id}'
-          FLUSH ROWS 10"
+                ) WITH (
+                    TYPE = 'USER',
+                    STORAGE_ID = '{storage_id}',
+                    FLUSH_POLICY = 'rows:10'
+                )"
     );
     execute_sql_as_root_via_cli(&create_user_table_sql).expect("create user table");
     assert_table_storage(&namespace_user, &user_table, &storage_id);
@@ -249,11 +247,14 @@ fn smoke_storage_custom_templates() {
 
     // ----- Shared table scenario -----
     let create_shared_table_sql = format!(
-        "CREATE SHARED TABLE {table_shared_full} (
+        "CREATE TABLE {table_shared_full} (
             id BIGINT AUTO_INCREMENT PRIMARY KEY,
             body TEXT
-                ) STORAGE '{storage_id}'
-          FLUSH ROWS 10"
+                ) WITH (
+                    TYPE = 'SHARED',
+                    STORAGE_ID = '{storage_id}',
+                    FLUSH_POLICY = 'rows:10'
+                )"
     );
     execute_sql_as_root_via_cli(&create_shared_table_sql).expect("create shared table");
     assert_table_storage(&namespace_shared, &shared_table, &storage_id);

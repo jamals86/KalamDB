@@ -17,14 +17,14 @@ use common::{fixtures, TestServer};
 use kalamdb_api::models::ResponseStatus;
 
 #[actix_web::test]
-#[ignore = "Shared tables require pre-created column families at DB init. TestServer::new() creates in-memory DB without these CFs."]
 async fn test_shared_table_create_and_drop() {
     let server = TestServer::new().await;
 
     // Create namespace first
     let response = fixtures::create_namespace(&server, "test_ns").await;
     assert_eq!(
-        response.status, ResponseStatus::Success,
+        response.status,
+        ResponseStatus::Success,
         "Failed to create namespace: {:?}",
         response.error
     );
@@ -32,7 +32,8 @@ async fn test_shared_table_create_and_drop() {
     // Create shared table
     let response = fixtures::create_shared_table(&server, "test_ns", "conversations").await;
     assert_eq!(
-        response.status, ResponseStatus::Success,
+        response.status,
+        ResponseStatus::Success,
         "Failed to create shared table: {:?}",
         response.error
     );
@@ -46,7 +47,8 @@ async fn test_shared_table_create_and_drop() {
     // Drop table
     let response = fixtures::drop_table(&server, "test_ns", "conversations").await;
     assert_eq!(
-        response.status, ResponseStatus::Success,
+        response.status,
+        ResponseStatus::Success,
         "Failed to drop table: {:?}",
         response.error
     );
@@ -59,7 +61,6 @@ async fn test_shared_table_create_and_drop() {
 }
 
 #[actix_web::test]
-#[ignore = "Shared tables require pre-created column families at DB init. TestServer::new() creates in-memory DB without these CFs."]
 async fn test_shared_table_insert_and_select() {
     let server = TestServer::new().await;
 
@@ -76,7 +77,8 @@ async fn test_shared_table_insert_and_select() {
         .await;
 
     assert_eq!(
-        response.status, ResponseStatus::Success,
+        response.status,
+        ResponseStatus::Success,
         "Failed to insert: {:?}",
         response.error
     );
@@ -87,7 +89,8 @@ async fn test_shared_table_insert_and_select() {
     ).await;
 
     assert_eq!(
-        response.status, ResponseStatus::Success,
+        response.status,
+        ResponseStatus::Success,
         "Failed to select: {:?}",
         response.error
     );
@@ -107,7 +110,6 @@ async fn test_shared_table_insert_and_select() {
 }
 
 #[actix_web::test]
-#[ignore = "Shared tables require pre-created column families at DB init. TestServer::new() creates in-memory DB without these CFs."]
 async fn test_shared_table_multiple_inserts() {
     let server = TestServer::new().await;
 
@@ -127,7 +129,8 @@ async fn test_shared_table_multiple_inserts() {
         )
         .await;
     assert_eq!(
-        response.status, ResponseStatus::Success,
+        response.status,
+        ResponseStatus::Success,
         "Failed to insert multiple rows: {:?}",
         response.error
     );
@@ -158,7 +161,6 @@ async fn test_shared_table_multiple_inserts() {
 }
 
 #[actix_web::test]
-#[ignore = "Shared tables require pre-created column families at DB init. TestServer::new() creates in-memory DB without these CFs."]
 async fn test_shared_table_update() {
     let server = TestServer::new().await;
 
@@ -188,7 +190,8 @@ async fn test_shared_table_update() {
         )
         .await;
     assert_eq!(
-        response.status, ResponseStatus::Success,
+        response.status,
+        ResponseStatus::Success,
         "Failed to update: {:?}",
         response.error
     );
@@ -212,7 +215,6 @@ async fn test_shared_table_update() {
 }
 
 #[actix_web::test]
-#[ignore = "Shared tables require pre-created column families at DB init. TestServer::new() creates in-memory DB without these CFs."]
 async fn test_shared_table_select() {
     let server = TestServer::new().await;
 
@@ -238,7 +240,8 @@ async fn test_shared_table_select() {
         .await;
 
     assert_eq!(
-        response.status, ResponseStatus::Success,
+        response.status,
+        ResponseStatus::Success,
         "Failed to select: {:?}",
         response.error
     );
@@ -251,7 +254,6 @@ async fn test_shared_table_select() {
 }
 
 #[actix_web::test]
-#[ignore = "Shared tables require pre-created column families at DB init. TestServer::new() creates in-memory DB without these CFs."]
 async fn test_shared_table_delete() {
     let server = TestServer::new().await;
 
@@ -277,7 +279,8 @@ async fn test_shared_table_delete() {
         .await;
 
     assert_eq!(
-        response.status, ResponseStatus::Success,
+        response.status,
+        ResponseStatus::Success,
         "Failed to delete: {:?}",
         response.error
     );
@@ -291,7 +294,6 @@ async fn test_shared_table_delete() {
 }
 
 #[actix_web::test]
-#[ignore = "Shared tables require pre-created column families at DB init. TestServer::new() creates in-memory DB without these CFs."]
 async fn test_shared_table_system_columns() {
     let server = TestServer::new().await;
 
@@ -310,7 +312,8 @@ async fn test_shared_table_system_columns() {
         .await;
 
     assert_eq!(
-        response.status, ResponseStatus::Success,
+        response.status,
+        ResponseStatus::Success,
         "Failed to query system columns: {:?}",
         response.error
     );
@@ -324,18 +327,20 @@ async fn test_shared_table_system_columns() {
 }
 
 #[actix_web::test]
-#[ignore = "Shared tables require pre-created column families at DB init. TestServer::new() creates in-memory DB without these CFs."]
 async fn test_shared_table_if_not_exists() {
     let server = TestServer::new().await;
 
     // Setup
     fixtures::create_namespace(&server, "test_ns").await;
 
-    let create_sql = r#"CREATE SHARED TABLE IF NOT EXISTS test_ns.conversations (
+    let create_sql = r#"CREATE TABLE IF NOT EXISTS test_ns.conversations (
         id INT AUTO_INCREMENT,
         name VARCHAR NOT NULL,
         value VARCHAR
-    ) FLUSH ROWS 50"#;
+    ) WITH (
+        TYPE='SHARED',
+        FLUSH_POLICY='rows:50'
+    )"#;
 
     // First create should succeed
     let response = server.execute_sql(create_sql).await;
@@ -344,29 +349,33 @@ async fn test_shared_table_if_not_exists() {
     // Second create with IF NOT EXISTS should also succeed (no-op)
     let response = server.execute_sql(create_sql).await;
     assert_eq!(
-        response.status, ResponseStatus::Success,
+        response.status,
+        ResponseStatus::Success,
         "IF NOT EXISTS should not fail on duplicate: {:?}",
         response.error
     );
 }
 
 #[actix_web::test]
-#[ignore = "Shared tables require pre-created column families at DB init. TestServer::new() creates in-memory DB without these CFs."]
 async fn test_shared_table_flush_policy_rows() {
     let server = TestServer::new().await;
 
     // Setup
     fixtures::create_namespace(&server, "test_ns").await;
 
-    let create_sql = r#"CREATE SHARED TABLE test_ns.conversations (
+    let create_sql = r#"CREATE TABLE test_ns.conversations (
         id INT AUTO_INCREMENT,
         name VARCHAR NOT NULL,
         value VARCHAR
-    ) FLUSH ROWS 500"#;
+    ) WITH (
+        TYPE='SHARED',
+        FLUSH_POLICY='rows:500'
+    )"#;
 
     let response = server.execute_sql(create_sql).await;
     assert_eq!(
-        response.status, ResponseStatus::Success,
+        response.status,
+        ResponseStatus::Success,
         "Failed to create table with FLUSH ROWS: {:?}",
         response.error
     );
@@ -376,7 +385,6 @@ async fn test_shared_table_flush_policy_rows() {
 }
 
 #[actix_web::test]
-#[ignore = "Shared tables require pre-created column families at DB init. TestServer::new() creates in-memory DB without these CFs."]
 async fn test_shared_table_query_filtering() {
     let server = TestServer::new().await;
 
@@ -398,14 +406,14 @@ async fn test_shared_table_query_filtering() {
         .await;
 
     assert_eq!(
-        response.status, ResponseStatus::Success,
+        response.status,
+        ResponseStatus::Success,
         "Failed to query with filter: {:?}",
         response.error
     );
 }
 
 #[actix_web::test]
-#[ignore = "Shared tables require pre-created column families at DB init. TestServer::new() creates in-memory DB without these CFs."]
 async fn test_shared_table_ordering() {
     let server = TestServer::new().await;
 
@@ -438,14 +446,14 @@ async fn test_shared_table_ordering() {
         .await;
 
     assert_eq!(
-        response.status, ResponseStatus::Success,
+        response.status,
+        ResponseStatus::Success,
         "Failed to query with ORDER BY: {:?}",
         response.error
     );
 }
 
 #[actix_web::test]
-#[ignore = "Shared tables require pre-created column families at DB init. TestServer::new() creates in-memory DB without these CFs."]
 async fn test_shared_table_drop_with_data() {
     let server = TestServer::new().await;
 
@@ -466,7 +474,8 @@ async fn test_shared_table_drop_with_data() {
     // Drop table with data
     let response = fixtures::drop_table(&server, "test_ns", "conversations").await;
     assert_eq!(
-        response.status, ResponseStatus::Success,
+        response.status,
+        ResponseStatus::Success,
         "Failed to drop table with data: {:?}",
         response.error
     );
@@ -479,7 +488,6 @@ async fn test_shared_table_drop_with_data() {
 }
 
 #[actix_web::test]
-#[ignore = "Shared tables require pre-created column families at DB init. TestServer::new() creates in-memory DB without these CFs."]
 async fn test_shared_table_multiple_tables_same_namespace() {
     let server = TestServer::new().await;
 
@@ -513,7 +521,6 @@ async fn test_shared_table_multiple_tables_same_namespace() {
 }
 
 #[actix_web::test]
-#[ignore = "Shared tables require pre-created column families at DB init. TestServer::new() creates in-memory DB without these CFs."]
 async fn test_shared_table_complete_lifecycle() {
     let server = TestServer::new().await;
 

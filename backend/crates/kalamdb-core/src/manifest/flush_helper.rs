@@ -8,8 +8,9 @@ use crate::error::KalamDbError;
 use datafusion::arrow::array::*;
 use datafusion::arrow::record_batch::RecordBatch;
 use datafusion::parquet::arrow::arrow_reader::ParquetRecordBatchReaderBuilder;
+use kalamdb_commons::constants::SystemColumnNames;
 use kalamdb_commons::types::{BatchFileEntry, ManifestFile, RowGroupPruningStats};
-use kalamdb_commons::{NamespaceId, TableName, UserId};
+use kalamdb_commons::{NamespaceId, TableId, TableName, UserId};
 use std::collections::HashMap;
 use std::path::Path;
 use std::sync::Arc;
@@ -41,10 +42,8 @@ impl FlushManifestHelper {
         table: &TableName,
         user_id: Option<&UserId>,
     ) -> Result<u64, KalamDbError> {
-        match self
-            .manifest_service
-            .read_manifest(namespace, table, user_id)
-        {
+        let table_id = TableId::new(namespace.clone(), table.clone());
+        match self.manifest_service.read_manifest(&table_id, user_id) {
             Ok(manifest) => Ok(manifest.max_batch + 1),
             Err(_) => Ok(0), // No manifest exists yet, start with batch 0
         }
@@ -60,7 +59,7 @@ impl FlushManifestHelper {
     /// Returns (min_seq, max_seq) tuple
     pub fn extract_seq_range(batch: &RecordBatch) -> (i64, i64) {
         let seq_column = batch
-            .column_by_name("_seq")
+            .column_by_name(SystemColumnNames::SEQ)
             .and_then(|col| col.as_any().downcast_ref::<Int64Array>());
 
         if let Some(seq_arr) = seq_column {
@@ -210,6 +209,7 @@ impl FlushManifestHelper {
         file_size_bytes: u64,
         indexed_columns: &[String],
     ) -> Result<ManifestFile, KalamDbError> {
+        let table_id = TableId::new(namespace.clone(), table.clone());
         // Extract metadata from batch (batch-level)
         let (min_seq, max_seq) = Self::extract_seq_range(batch);
 
@@ -243,7 +243,7 @@ impl FlushManifestHelper {
         // Update manifest on disk
         let updated_manifest = self
             .manifest_service
-            .update_manifest(namespace, table, table_type, user_id, batch_entry)
+            .update_manifest(&table_id, table_type, user_id, batch_entry)
             .map_err(|e| {
                 KalamDbError::Other(format!(
                     "Failed to update manifest for {}.{} (user_id={:?}): {}",
@@ -265,14 +265,7 @@ impl FlushManifestHelper {
             scope_str
         );
         self.manifest_cache
-            .update_after_flush(
-                namespace,
-                table,
-                user_id,
-                &updated_manifest,
-                None,
-                manifest_path,
-            )
+            .update_after_flush(&table_id, user_id, &updated_manifest, None, manifest_path)
             .map_err(|e| {
                 KalamDbError::Other(format!(
                     "Failed to update manifest cache for {}.{} (user_id={:?}): {}",

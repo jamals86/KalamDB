@@ -24,12 +24,15 @@ fn smoke_shared_table_crud() {
 
     // 1) Create shared table
     let create_sql = format!(
-        r#"CREATE SHARED TABLE {} (
+        r#"CREATE TABLE {} (
             id BIGINT AUTO_INCREMENT PRIMARY KEY,
             name VARCHAR NOT NULL,
             status VARCHAR,
             created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-        ) FLUSH ROWS 10"#,
+        ) WITH (
+            TYPE = 'SHARED',
+            FLUSH_POLICY = 'rows:10'
+        )"#,
         full
     );
     execute_sql_as_root_via_cli(&create_sql).expect("create shared table should succeed");

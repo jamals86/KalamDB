@@ -4,8 +4,8 @@
 mod common;
 
 use common::{fixtures, flush_helpers, TestServer};
-use std::sync::Arc;
 use kalamdb_api::models::ResponseStatus;
+use std::sync::Arc;
 
 /// Manual flush on a user table should create Parquet files under the configured storage path.
 #[actix_web::test]
@@ -18,16 +18,17 @@ async fn test_user_table_manual_flush_creates_parquet() {
     fixtures::create_namespace(&server, namespace).await;
 
     let create_sql = format!(
-        "CREATE USER TABLE {}.{} (
+        "CREATE TABLE {}.{} (
             id BIGINT PRIMARY KEY,
             metric TEXT,
             value DOUBLE
-        ) FLUSH ROWS 5",
+        ) WITH (TYPE = 'USER', FLUSH_POLICY = 'rows:5')",
         namespace, table_name
     );
     let response = server.execute_sql_as_user(&create_sql, user_id).await;
     assert_eq!(
-        response.status, ResponseStatus::Success,
+        response.status,
+        ResponseStatus::Success,
         "Failed to create table: {:?}",
         response
     );
@@ -48,7 +49,8 @@ async fn test_user_table_manual_flush_creates_parquet() {
         );
         let response = server.execute_sql_as_user(&insert_sql, user_id).await;
         assert_eq!(
-            response.status, ResponseStatus::Success,
+            response.status,
+            ResponseStatus::Success,
             "Insert failed: {:?}",
             response.error
         );
@@ -57,7 +59,8 @@ async fn test_user_table_manual_flush_creates_parquet() {
     let count_sql = format!("SELECT COUNT(*) AS cnt FROM {}.{}", namespace, table_name);
     let count_response = server.execute_sql_as_user(&count_sql, user_id).await;
     assert_eq!(
-        count_response.status, ResponseStatus::Success,
+        count_response.status,
+        ResponseStatus::Success,
         "Count query failed: {:?}",
         count_response.error
     );
@@ -83,7 +86,8 @@ async fn test_user_table_manual_flush_creates_parquet() {
         let model_table = ModelTableName::new(table_name);
         let store = kalamdb_tables::new_user_table_store(backend, &model_namespace, &model_table);
         use kalamdb_store::entity_store::EntityStore;
-        let buffered_rows = EntityStore::scan_all(&store, None, None, None).expect("scan_all() should succeed");
+        let buffered_rows =
+            EntityStore::scan_all(&store, None, None, None).expect("scan_all() should succeed");
         assert_eq!(
             buffered_rows.len(),
             5,
@@ -100,7 +104,8 @@ async fn test_user_table_manual_flush_creates_parquet() {
     let flush_sql = format!("FLUSH TABLE {}.{}", namespace, table_name);
     let flush_response = server.execute_sql_as_user(&flush_sql, "system").await;
     assert_eq!(
-        flush_response.status, ResponseStatus::Success,
+        flush_response.status,
+        ResponseStatus::Success,
         "FLUSH TABLE failed: {:?}",
         flush_response.error
     );
@@ -169,7 +174,8 @@ async fn test_shared_table_manual_flush_creates_parquet() {
         .await
         .expect("failed to register tables");
     assert_eq!(
-        create_resp.status, ResponseStatus::Success,
+        create_resp.status,
+        ResponseStatus::Success,
         "Failed to create shared table: {:?}",
         create_resp.error
     );
@@ -186,7 +192,8 @@ async fn test_shared_table_manual_flush_creates_parquet() {
         );
         let response = server.execute_sql_as_user(&insert_sql, "system").await;
         assert_eq!(
-            response.status, ResponseStatus::Success,
+            response.status,
+            ResponseStatus::Success,
             "Insert failed: {:?}",
             response.error
         );

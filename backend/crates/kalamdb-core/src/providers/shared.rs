@@ -10,10 +10,9 @@
 //! - NO RLS - ignores user_id parameter (operates on all rows)
 //! - SessionState NOT extracted in scan_rows() (scans all rows)
 
-use crate::providers::arrow_json_conversion::{json_to_row, json_value_to_scalar};
-use crate::providers::base::{self, BaseTableProvider, TableProviderCore};
 use crate::app_context::AppContext;
 use crate::error::KalamDbError;
+use crate::providers::base::{self, BaseTableProvider, TableProviderCore};
 use crate::schema_registry::TableType;
 use async_trait::async_trait;
 use datafusion::arrow::datatypes::SchemaRef;
@@ -27,9 +26,9 @@ use datafusion::scalar::ScalarValue;
 use kalamdb_commons::ids::SharedTableRowId;
 use kalamdb_commons::models::{Row, UserId};
 use kalamdb_commons::TableId;
+use kalamdb_commons::constants::SystemColumnNames;
 use kalamdb_store::entity_store::EntityStore;
 use kalamdb_tables::{SharedTableRow, SharedTableStore};
-use serde_json::Value as JsonValue;
 use std::any::Any;
 use std::collections::BTreeMap;
 use std::sync::Arc;
@@ -114,6 +113,59 @@ impl SharedTableProvider {
             filter,
         )
     }
+
+    fn ensure_manifest_ready(&self) -> Result<(), KalamDbError> {
+        let table_id = self.core.table_id();
+        let namespace = table_id.namespace_id().clone();
+        let table = table_id.table_name().clone();
+        let manifest_cache = self.core.app_context.manifest_cache_service();
+
+        match manifest_cache.get_or_load(table_id, None) {
+            Ok(Some(_)) => return Ok(()),
+            Ok(None) => {}
+            Err(e) => {
+                log::warn!(
+                    "[SharedTableProvider] Manifest cache lookup failed for {}.{} err={}",
+                    namespace.as_str(),
+                    table.as_str(),
+                    e
+                );
+            }
+        }
+
+        let manifest_service = self.core.app_context.manifest_service();
+        let manifest =
+            manifest_service.ensure_manifest_initialized(table_id, self.core.table_type(), None)?;
+
+        let manifest_path = manifest_service
+            .manifest_path(table_id, None)?
+            .to_string_lossy()
+            .to_string();
+
+        manifest_cache.stage_before_flush(table_id, None, &manifest, manifest_path)?;
+
+        Ok(())
+    }
+    /// Retrieve a specific row version from Parquet storage by SeqId
+    fn get_row_from_parquet(
+        &self,
+        seq_id: kalamdb_commons::ids::SeqId,
+    ) -> Result<Option<SharedTableRow>, KalamDbError> {
+        use datafusion::prelude::{col, lit};
+        let filter = col(SystemColumnNames::SEQ).eq(lit(seq_id.as_i64()));
+        let batch = self.scan_parquet_files_as_batch(Some(&filter))?;
+        let rows = parquet_batch_to_rows(&batch)?;
+
+        if let Some(row_data) = rows.into_iter().next() {
+            Ok(Some(SharedTableRow {
+                _seq: row_data.seq_id,
+                _deleted: row_data.deleted,
+                fields: row_data.fields,
+            }))
+        } else {
+            Ok(None)
+        }
+    }
 }
 
 impl BaseTableProvider<SharedTableRowId, SharedTableRow> for SharedTableProvider {
@@ -138,11 +190,9 @@ impl BaseTableProvider<SharedTableRowId, SharedTableRow> for SharedTableProvider
         &self.primary_key_field_name
     }
 
-    fn insert(
-        &self,
-        _user_id: &UserId,
-        row_data: JsonValue,
-    ) -> Result<SharedTableRowId, KalamDbError> {
+    fn insert(&self, _user_id: &UserId, row_data: Row) -> Result<SharedTableRowId, KalamDbError> {
+        self.ensure_manifest_ready()?;
+
         // IGNORE user_id parameter - no RLS for shared tables
         base::ensure_unique_pk_value(self, None, &row_data)?;
 
@@ -154,9 +204,7 @@ impl BaseTableProvider<SharedTableRowId, SharedTableRow> for SharedTableProvider
         let entity = SharedTableRow {
             _seq: seq_id,
             _deleted: false,
-            fields: json_to_row(&row_data).ok_or_else(|| {
-                KalamDbError::InvalidOperation("Failed to convert JSON to Row".to_string())
-            })?,
+            fields: row_data,
         };
 
         // Key is just the SeqId (SharedTableRowId is type alias for SeqId)
@@ -176,23 +224,30 @@ impl BaseTableProvider<SharedTableRowId, SharedTableRow> for SharedTableProvider
         &self,
         _user_id: &UserId,
         key: &SharedTableRowId,
-        updates: JsonValue,
+        updates: Row,
     ) -> Result<SharedTableRowId, KalamDbError> {
         // IGNORE user_id parameter - no RLS for shared tables
         // Merge updates onto latest resolved row by PK
-        let update_obj = updates.as_object().cloned().ok_or_else(|| {
-            KalamDbError::InvalidSql("UPDATE requires object of column assignments".to_string())
-        })?;
-
         let pk_name = self.primary_key_field_name().to_string();
         // Load referenced prior version to derive PK value if not present in updates
-        let prior = EntityStore::get(&*self.store, key)
-            .map_err(|e| KalamDbError::Other(format!("Failed to load prior version: {}", e)))?
-            .ok_or_else(|| KalamDbError::NotFound("Row not found for update".to_string()))?;
-        
-        let pk_value = prior.fields.get(&pk_name).map(|v| v.to_string()).ok_or_else(|| {
-             KalamDbError::InvalidOperation(format!("Prior row missing PK {}", pk_name))
-        })?;
+        // Try RocksDB first, then Parquet
+        let prior_opt = EntityStore::get(&*self.store, key)
+            .map_err(|e| KalamDbError::Other(format!("Failed to load prior version: {}", e)))?;
+
+        let prior = if let Some(p) = prior_opt {
+            p
+        } else {
+            self.get_row_from_parquet(key.clone())?
+                .ok_or_else(|| KalamDbError::NotFound("Row not found for update".to_string()))?
+        };
+
+        let pk_value = prior
+            .fields
+            .get(&pk_name)
+            .map(|v| v.to_string())
+            .ok_or_else(|| {
+                KalamDbError::InvalidOperation(format!("Prior row missing PK {}", pk_name))
+            })?;
 
         // Resolve latest per PK
         let (_latest_key, latest_row) =
@@ -201,8 +256,8 @@ impl BaseTableProvider<SharedTableRowId, SharedTableRow> for SharedTableProvider
             })?;
 
         let mut merged = latest_row.fields.values.clone();
-        for (k, v) in update_obj.into_iter() {
-            merged.insert(k, json_value_to_scalar(&v));
+        for (k, v) in &updates.values {
+            merged.insert(k.clone(), v.clone());
         }
         let new_fields = Row::new(merged);
 
@@ -223,9 +278,16 @@ impl BaseTableProvider<SharedTableRowId, SharedTableRow> for SharedTableProvider
     fn delete(&self, _user_id: &UserId, key: &SharedTableRowId) -> Result<(), KalamDbError> {
         // IGNORE user_id parameter - no RLS for shared tables
         // Load referenced version to extract PK so tombstone groups with same logical row
-        let prior = EntityStore::get(&*self.store, key)
-            .map_err(|e| KalamDbError::Other(format!("Failed to load prior version: {}", e)))?
-            .ok_or_else(|| KalamDbError::NotFound("Row not found for delete".to_string()))?;
+        // Try RocksDB first, then Parquet
+        let prior_opt = EntityStore::get(&*self.store, key)
+            .map_err(|e| KalamDbError::Other(format!("Failed to load prior version: {}", e)))?;
+
+        let prior = if let Some(p) = prior_opt {
+            p
+        } else {
+            self.get_row_from_parquet(key.clone())?
+                .ok_or_else(|| KalamDbError::NotFound("Row not found for delete".to_string()))?
+        };
 
         let pk_name = self.primary_key_field_name().to_string();
         // Preserve existing PK value if present; may be null if malformed
@@ -240,7 +302,7 @@ impl BaseTableProvider<SharedTableRowId, SharedTableRow> for SharedTableProvider
         // Include PK in tombstone fields so version resolution collapses correctly
         let mut values = BTreeMap::new();
         values.insert(pk_name, pk_val);
-        
+
         let entity = SharedTableRow {
             _seq: seq_id,
             _deleted: true,

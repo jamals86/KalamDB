@@ -1,4 +1,4 @@
-use super::types::{AuthService, UserCacheStats, JwtCacheStats};
+use super::types::{AuthService, JwtCacheStats, UserCacheStats};
 
 impl AuthService {
     /// Invalidate user cache entry for a specific username.

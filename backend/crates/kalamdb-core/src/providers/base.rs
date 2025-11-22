@@ -18,27 +18,24 @@ use async_trait::async_trait;
 use datafusion::arrow::datatypes::SchemaRef;
 use datafusion::arrow::record_batch::RecordBatch;
 use datafusion::catalog::Session;
+use datafusion::datasource::memory::MemTable;
 use datafusion::datasource::TableProvider;
+use datafusion::error::{DataFusionError, Result as DataFusionResult};
 use datafusion::logical_expr::{Expr, TableProviderFilterPushDown};
 use datafusion::physical_plan::{ExecutionPlan, Statistics};
-use datafusion::datasource::memory::MemTable;
-use datafusion::error::{DataFusionError, Result as DataFusionResult};
 use datafusion::scalar::ScalarValue;
 use kalamdb_commons::ids::SeqId;
 use kalamdb_commons::models::{NamespaceId, Row, TableName, UserId};
 use kalamdb_commons::{StorageKey, TableId};
-use serde_json::Value as JsonValue;
 use std::sync::Arc;
 
 // Re-export types moved to submodules
 pub use crate::providers::core::TableProviderCore;
-pub use crate::providers::scan_row::{
-    inject_system_columns, row_to_json_map, rows_to_arrow_batch, ScanRow,
-};
 pub use crate::providers::helpers::{
     extract_seq_bounds_from_filter, resolve_user_scope, system_user_id,
 };
 pub(crate) use crate::providers::parquet::scan_parquet_files_as_batch;
+pub use crate::providers::scan_row::{inject_system_columns, rows_to_arrow_batch, ScanRow};
 
 /// Unified trait for all table providers with generic storage abstraction
 ///
@@ -119,7 +116,7 @@ pub trait BaseTableProvider<K: StorageKey, V>: Send + Sync + TableProvider {
     ///
     /// # Arguments
     /// * `user_id` - Subject user ID for RLS (User/Stream use it, Shared ignores it)
-    /// * `row_data` - JSON object containing user-defined columns
+    /// * `row_data` - Row containing user-defined columns
     ///
     /// # Returns
     /// Generated storage key (UserTableRowId, SharedTableRowId, or StreamTableRowId)
@@ -130,18 +127,18 @@ pub trait BaseTableProvider<K: StorageKey, V>: Send + Sync + TableProvider {
     /// - AS USER impersonation (executor passes subject_user_id)
     /// - Per-request user scoping without per-user provider instances
     /// - Clean separation: executor handles auth/context, provider handles storage
-    fn insert(&self, user_id: &UserId, row_data: JsonValue) -> Result<K, KalamDbError>;
+    fn insert(&self, user_id: &UserId, row_data: Row) -> Result<K, KalamDbError>;
 
     /// Insert multiple rows in a batch (optimized for bulk operations)
     ///
     /// # Arguments
     /// * `user_id` - Subject user ID for RLS
-    /// * `rows` - Vector of JSON objects
+    /// * `rows` - Vector of Row objects
     ///
     /// # Default Implementation
     /// Iterates over rows and calls insert() for each. Providers may override
     /// with batch-optimized implementation.
-    fn insert_batch(&self, user_id: &UserId, rows: Vec<JsonValue>) -> Result<Vec<K>, KalamDbError> {
+    fn insert_batch(&self, user_id: &UserId, rows: Vec<Row>) -> Result<Vec<K>, KalamDbError> {
         rows.into_iter()
             .map(|row| self.insert(user_id, row))
             .collect()
@@ -154,11 +151,11 @@ pub trait BaseTableProvider<K: StorageKey, V>: Send + Sync + TableProvider {
     /// # Arguments
     /// * `user_id` - Subject user ID for RLS
     /// * `key` - Storage key identifying the row
-    /// * `updates` - JSON object with column updates
+    /// * `updates` - Row object with column updates
     ///
     /// # Returns
     /// New storage key (new SeqId for versioning)
-    fn update(&self, user_id: &UserId, key: &K, updates: JsonValue) -> Result<K, KalamDbError>;
+    fn update(&self, user_id: &UserId, key: &K, updates: Row) -> Result<K, KalamDbError>;
 
     /// Delete a row by key (appends tombstone with _deleted=true)
     ///
@@ -173,7 +170,7 @@ pub trait BaseTableProvider<K: StorageKey, V>: Send + Sync + TableProvider {
     fn update_batch(
         &self,
         user_id: &UserId,
-        updates: Vec<(K, JsonValue)>,
+        updates: Vec<(K, Row)>,
     ) -> Result<Vec<K>, KalamDbError> {
         updates
             .into_iter()
@@ -246,7 +243,7 @@ pub trait BaseTableProvider<K: StorageKey, V>: Send + Sync + TableProvider {
         &self,
         user_id: &UserId,
         id_value: &str,
-        updates: JsonValue,
+        updates: Row,
     ) -> Result<K, KalamDbError> {
         let key = self
             .find_row_key_by_id_field(user_id, id_value)?
@@ -332,11 +329,7 @@ pub trait BaseTableProvider<K: StorageKey, V>: Send + Sync + TableProvider {
 
         // If filters are empty, batch is already projected, so we scan all columns of MemTable.
         // If filters are present, batch has all columns, so we apply projection in MemTable scan.
-        let final_projection = if filters.is_empty() {
-            None
-        } else {
-            projection
-        };
+        let final_projection = if filters.is_empty() { None } else { projection };
 
         mem.scan(state, final_projection, filters, limit).await
     }
@@ -408,9 +401,9 @@ pub trait BaseTableProvider<K: StorageKey, V>: Send + Sync + TableProvider {
         limit: Option<usize>,
     ) -> Result<Vec<(K, V)>, KalamDbError>;
 
-    /// Extract fields JSON from row (provider-specific)
+    /// Extract row fields from provider-specific value type
     ///
-    /// Each provider implements this to access the `fields: JsonValue` from their row type.
+    /// Each provider implements this to access the internal `Row` stored on their row type.
     fn extract_row(row: &V) -> &Row;
 }
 
@@ -453,7 +446,7 @@ where
 pub fn ensure_unique_pk_value<P, K, V>(
     provider: &P,
     scope: Option<&UserId>,
-    row_data: &JsonValue,
+    row_data: &Row,
 ) -> Result<(), KalamDbError>
 where
     P: BaseTableProvider<K, V>,
@@ -461,7 +454,7 @@ where
 {
     let pk_name = provider.primary_key_field_name();
     if let Some(pk_value) = row_data.get(pk_name) {
-        if !pk_value.is_null() {
+        if !matches!(pk_value, ScalarValue::Null) {
             let pk_str = unified_dml::extract_user_pk_value(row_data, pk_name)?;
             if find_row_by_pk(provider, scope, &pk_str)?.is_some() {
                 return Err(KalamDbError::AlreadyExists(format!(

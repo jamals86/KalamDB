@@ -10,10 +10,10 @@ use arrow::array::Array; // for is_valid()
 use base64::{engine::general_purpose, Engine as _};
 use chrono::{Duration, TimeZone, Utc};
 use datafusion::catalog::memory::MemorySchemaProvider;
+use kalamdb_commons::ids::SeqId;
 use kalamdb_commons::models::datatypes::KalamDataType;
 use kalamdb_commons::models::schemas::{ColumnDefinition, TableDefinition, TableType};
 use kalamdb_commons::{NamespaceId, TableId, TableName};
-use kalamdb_commons::ids::SeqId;
 use kalamdb_core::providers::flush::UserTableFlushJob;
 use kalamdb_core::schema_registry::SchemaRegistry;
 use kalamdb_core::system_table_registration::register_system_tables;

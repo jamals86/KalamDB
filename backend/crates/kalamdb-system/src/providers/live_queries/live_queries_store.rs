@@ -54,7 +54,9 @@ mod tests {
     #[test]
     fn test_create_store() {
         let store = create_test_store();
-        assert!(EntityStore::scan_all(&store, None, None, None).unwrap().is_empty());
+        assert!(EntityStore::scan_all(&store, None, None, None)
+            .unwrap()
+            .is_empty());
     }
 
     #[test]

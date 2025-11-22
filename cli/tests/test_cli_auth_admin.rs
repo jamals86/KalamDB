@@ -69,13 +69,7 @@ async fn test_root_can_create_namespace() {
     }
 
     // Use unique namespace name to avoid conflicts
-    let namespace_name = format!(
-        "test_root_ns_{}",
-        std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .unwrap()
-            .as_millis()
-    );
+    let namespace_name = generate_unique_namespace("test_root_ns");
 
     // Clean up any existing namespace (just in case)
     let _ = execute_sql_as_root(&format!(
@@ -142,7 +136,7 @@ async fn test_root_can_create_drop_tables() {
 
     // Create table as root
     let result = execute_sql_as_root(
-        "CREATE USER TABLE test_tables_ns.test_table (id INT PRIMARY KEY, name VARCHAR) FLUSH ROWS 10",
+        "CREATE TABLE test_tables_ns.test_table (id INT PRIMARY KEY, name VARCHAR) WITH (TYPE='USER', FLUSH_POLICY='rows:10')",
     )
     .await
     .unwrap();
@@ -176,13 +170,7 @@ async fn test_cli_create_namespace_as_root() {
     }
 
     // Use unique namespace name to avoid conflicts
-    let namespace_name = format!(
-        "cli_test_ns_{}",
-        std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .unwrap()
-            .as_millis()
-    );
+    let namespace_name = generate_unique_namespace("cli_test_ns");
 
     // Clean up any existing namespace
     let drop_result =
@@ -314,13 +302,7 @@ async fn test_cli_admin_operations() {
     }
 
     // Use unique namespace name to avoid conflicts
-    let namespace_name = format!(
-        "admin_ops_test_{}",
-        std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .unwrap()
-            .as_millis()
-    );
+    let namespace_name = generate_unique_namespace("admin_ops_test");
 
     // Clean up
     let _ = execute_sql_as_root(&format!(
@@ -334,7 +316,7 @@ async fn test_cli_admin_operations() {
     let sql_batch = format!(
         r#"
 CREATE NAMESPACE {};
-CREATE USER TABLE {}.users (id INT PRIMARY KEY, name VARCHAR) FLUSH ROWS 10;
+CREATE TABLE {}.users (id INT PRIMARY KEY, name VARCHAR) WITH (TYPE='USER', FLUSH_POLICY='rows:10');
 INSERT INTO {}.users (id, name) VALUES (1, 'Alice');
 SELECT * FROM {}.users;
 "#,
@@ -409,13 +391,7 @@ async fn test_cli_flush_table() {
     }
 
     // Use unique namespace name to avoid conflicts
-    let namespace_name = format!(
-        "flush_test_ns_{}",
-        std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .unwrap()
-            .as_millis()
-    );
+    let namespace_name = generate_unique_namespace("flush_test_ns");
 
     // Setup: Create namespace and user table
     let _ = execute_sql_as_root(&format!(
@@ -430,7 +406,7 @@ async fn test_cli_flush_table() {
 
     // Create a USER table with flush policy (SHARED tables cannot be flushed)
     let result = execute_sql_as_root(&format!(
-        "CREATE USER TABLE {}.metrics (timestamp BIGINT PRIMARY KEY, value DOUBLE) FLUSH ROWS 5",
+        "CREATE TABLE {}.metrics (timestamp BIGINT PRIMARY KEY, value DOUBLE) WITH (TYPE='USER', FLUSH_POLICY='rows:5')",
         namespace_name
     ))
     .await
@@ -666,29 +642,32 @@ async fn test_cli_flush_all_tables() {
         return;
     }
 
+    // Use unique namespace name to avoid conflicts
+    let namespace_name = generate_unique_namespace("flush_all_test");
+
     // Setup: Create namespace with multiple tables
-    let _ = execute_sql_as_root("DROP NAMESPACE IF EXISTS flush_all_test CASCADE").await;
+    let _ = execute_sql_as_root(&format!("DROP NAMESPACE IF EXISTS {} CASCADE", namespace_name)).await;
     tokio::time::sleep(Duration::from_millis(300)).await;
 
-    let _ = execute_sql_as_root("CREATE NAMESPACE flush_all_test").await;
+    let _ = execute_sql_as_root(&format!("CREATE NAMESPACE {}", namespace_name)).await;
     tokio::time::sleep(Duration::from_millis(200)).await;
 
     // Create multiple USER tables (SHARED tables cannot be flushed)
     let _ = execute_sql_as_root(
-        "CREATE USER TABLE flush_all_test.table1 (id INT PRIMARY KEY, data VARCHAR) FLUSH ROWS 10",
+        &format!("CREATE TABLE {}.table1 (id INT PRIMARY KEY, data VARCHAR) WITH (TYPE='USER', FLUSH_POLICY='rows:10')", namespace_name),
     )
     .await;
     let _ = execute_sql_as_root(
-        "CREATE USER TABLE flush_all_test.table2 (id INT PRIMARY KEY, value DOUBLE) FLUSH ROWS 10",
+        &format!("CREATE TABLE {}.table2 (id INT PRIMARY KEY, value DOUBLE) WITH (TYPE='USER', FLUSH_POLICY='rows:10')", namespace_name),
     )
     .await;
     tokio::time::sleep(Duration::from_millis(100)).await;
 
     // Insert some data
-    let _ = execute_sql_as_root("INSERT INTO flush_all_test.table1 (id, data) VALUES (1, 'test')")
+    let _ = execute_sql_as_root(&format!("INSERT INTO {}.table1 (id, data) VALUES (1, 'test')", namespace_name))
         .await;
     let _ =
-        execute_sql_as_root("INSERT INTO flush_all_test.table2 (id, value) VALUES (1, 42.0)").await;
+        execute_sql_as_root(&format!("INSERT INTO {}.table2 (id, value) VALUES (1, 42.0)", namespace_name)).await;
     tokio::time::sleep(Duration::from_millis(100)).await;
 
     // Execute FLUSH ALL TABLES via CLI
@@ -696,7 +675,7 @@ async fn test_cli_flush_all_tables() {
     cmd.arg("-u")
         .arg(SERVER_URL)
         .arg("--command")
-        .arg("FLUSH ALL TABLES IN flush_all_test")
+        .arg(&format!("FLUSH ALL TABLES IN {}", namespace_name))
         .timeout(TEST_TIMEOUT);
 
     let output = cmd.output().unwrap();
@@ -761,10 +740,9 @@ async fn test_cli_flush_all_tables() {
         )
     } else {
         // Fallback to querying by namespace
-        "SELECT job_id, job_type, status, namespace_id, table_name, result FROM system.jobs \
-         WHERE job_type = 'flush' AND namespace_id = 'flush_all_test' \
-         ORDER BY created_at DESC"
-            .to_string()
+        format!("SELECT job_id, job_type, status, namespace_id, table_name, result FROM system.jobs \
+         WHERE job_type = 'flush' AND namespace_id = '{}' \
+         ORDER BY created_at DESC", namespace_name)
     };
 
     let jobs_result = execute_sql_as_root(&jobs_query).await.unwrap();
@@ -859,5 +837,5 @@ async fn test_cli_flush_all_tables() {
     }
 
     // Cleanup
-    let _ = execute_sql_as_root("DROP NAMESPACE flush_all_test CASCADE").await;
+    let _ = execute_sql_as_root(&format!("DROP NAMESPACE {} CASCADE", namespace_name)).await;
 }

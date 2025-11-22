@@ -10,7 +10,7 @@ use crate::schema_registry::TableType;
 use crate::sql::executor::models::{ExecutionContext, ExecutionResult, ScalarValue};
 use crate::sql::executor::SqlExecutor;
 use datafusion::execution::context::SessionContext;
-use kalamdb_commons::constants::AuthConstants;
+use kalamdb_commons::constants::{AuthConstants, SystemColumnNames};
 use kalamdb_commons::ids::SeqId;
 use kalamdb_commons::models::row::Row;
 use kalamdb_commons::models::{TableId, UserId};
@@ -220,18 +220,18 @@ impl InitialDataFetcher {
 
         // Add _seq filters
         if let Some(since) = options.since_seq {
-            where_clauses.push(format!("_seq > {}", since.as_i64()));
+            where_clauses.push(format!("{} > {}", SystemColumnNames::SEQ, since.as_i64()));
         }
         if let Some(until) = options.until_seq {
-            where_clauses.push(format!("_seq <= {}", until.as_i64()));
+            where_clauses.push(format!("{} <= {}", SystemColumnNames::SEQ, until.as_i64()));
         }
 
         // Add deleted filter
         if !options.include_deleted {
             if matches!(table_type, TableType::User | TableType::Shared)
-                && self.table_has_column(table_id, "_deleted")?
+                && self.table_has_column(table_id, SystemColumnNames::DELETED)?
             {
-                where_clauses.push("_deleted = false".to_string());
+                where_clauses.push(format!("{} = false", SystemColumnNames::DELETED));
             }
         }
 
@@ -247,9 +247,9 @@ impl InitialDataFetcher {
 
         // Add ORDER BY
         if options.fetch_last {
-            sql.push_str(" ORDER BY _seq DESC");
+            sql.push_str(&format!(" ORDER BY {} DESC", SystemColumnNames::SEQ));
         } else {
-            sql.push_str(" ORDER BY _seq ASC");
+            sql.push_str(&format!(" ORDER BY {} ASC", SystemColumnNames::SEQ));
         }
 
         // Add LIMIT (fetch limit + 1 to check has_more)
@@ -277,14 +277,14 @@ impl InitialDataFetcher {
         for batch in batches {
             let schema = batch.schema();
             let seq_col_idx = schema
-                .index_of("_seq")
-                .map_err(|_| KalamDbError::Other("Result missing _seq column".to_string()))?;
+                .index_of(SystemColumnNames::SEQ)
+                .map_err(|_| KalamDbError::Other(format!("Result missing {} column", SystemColumnNames::SEQ)))?;
 
             let seq_col = batch.column(seq_col_idx);
             let seq_array = seq_col
                 .as_any()
                 .downcast_ref::<datafusion::arrow::array::Int64Array>()
-                .ok_or_else(|| KalamDbError::Other("_seq column is not Int64".to_string()))?;
+                .ok_or_else(|| KalamDbError::Other(format!("{} column is not Int64", SystemColumnNames::SEQ)))?;
 
             let num_rows = batch.num_rows();
             let num_cols = batch.num_columns();
@@ -576,15 +576,16 @@ mod tests {
         for i in 1..=3 {
             let seq = SeqId::new(i);
             let row_id = UserTableRowId::new(user_id.clone(), seq);
-            let fields = json_to_row(&serde_json::json!({"id": i, "val": format!("Item {}", i)})).unwrap();
-            
+            let fields =
+                json_to_row(&serde_json::json!({"id": i, "val": format!("Item {}", i)})).unwrap();
+
             let row = UserTableRow {
                 user_id: user_id.clone(),
                 _seq: seq,
                 fields,
                 _deleted: false,
             };
-            
+
             EntityStore::put(&*store, &row_id, &row).expect("put row");
         }
 
@@ -667,7 +668,10 @@ mod tests {
             .expect("fetch batch 1");
 
         assert_eq!(res1.rows.len(), 1);
-        assert_eq!(res1.rows[0].get("id").unwrap(), &ScalarValue::Int32(Some(1)));
+        assert_eq!(
+            res1.rows[0].get("id").unwrap(),
+            &ScalarValue::Int32(Some(1))
+        );
         assert!(res1.has_more);
         assert_eq!(res1.last_seq, Some(SeqId::new(1)));
 
@@ -684,7 +688,10 @@ mod tests {
             .expect("fetch batch 2");
 
         assert_eq!(res2.rows.len(), 1);
-        assert_eq!(res2.rows[0].get("id").unwrap(), &ScalarValue::Int32(Some(2)));
+        assert_eq!(
+            res2.rows[0].get("id").unwrap(),
+            &ScalarValue::Int32(Some(2))
+        );
         assert!(res2.has_more);
         assert_eq!(res2.last_seq, Some(SeqId::new(2)));
 
@@ -701,7 +708,10 @@ mod tests {
             .expect("fetch batch 3");
 
         assert_eq!(res3.rows.len(), 1);
-        assert_eq!(res3.rows[0].get("id").unwrap(), &ScalarValue::Int32(Some(3)));
+        assert_eq!(
+            res3.rows[0].get("id").unwrap(),
+            &ScalarValue::Int32(Some(3))
+        );
         assert!(!res3.has_more); // Should be false as we fetched the last one
         assert_eq!(res3.last_seq, Some(SeqId::new(3)));
     }
@@ -735,15 +745,16 @@ mod tests {
         for i in 1..=10 {
             let seq = SeqId::new(i);
             let row_id = UserTableRowId::new(user_id.clone(), seq);
-            let fields = json_to_row(&serde_json::json!({"id": i, "val": format!("Item {}", i)})).unwrap();
-            
+            let fields =
+                json_to_row(&serde_json::json!({"id": i, "val": format!("Item {}", i)})).unwrap();
+
             let row = UserTableRow {
                 user_id: user_id.clone(),
                 _seq: seq,
                 fields,
                 _deleted: false,
             };
-            
+
             EntityStore::put(&*store, &row_id, &row).expect("put row");
         }
 
@@ -829,8 +840,11 @@ mod tests {
         // Should be 8, 9, 10 in that order
         assert_eq!(res.rows[0].get("id").unwrap(), &ScalarValue::Int32(Some(8)));
         assert_eq!(res.rows[1].get("id").unwrap(), &ScalarValue::Int32(Some(9)));
-        assert_eq!(res.rows[2].get("id").unwrap(), &ScalarValue::Int32(Some(10)));
-        
+        assert_eq!(
+            res.rows[2].get("id").unwrap(),
+            &ScalarValue::Int32(Some(10))
+        );
+
         assert!(res.has_more);
     }
 }

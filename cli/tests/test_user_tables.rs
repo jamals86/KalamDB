@@ -28,11 +28,11 @@ fn test_cli_basic_query_execution() {
     // Create namespace and table via CLI
     let _ = execute_sql_via_cli(&format!("CREATE NAMESPACE IF NOT EXISTS {}", namespace));
     let _ = execute_sql_via_cli(&format!(
-        r#"CREATE USER TABLE {} (
-            id INT PRIMARY KEY AUTO_INCREMENT,
+        r#"CREATE TABLE {} (
+            id BIGINT PRIMARY KEY AUTO_INCREMENT,
             content VARCHAR NOT NULL,
             created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-        ) FLUSH ROWS 10"#,
+        ) WITH (TYPE='USER', FLUSH_POLICY='rows:10')"#,
         full_table_name
     ));
 
@@ -55,12 +55,13 @@ fn test_cli_basic_query_execution() {
 
     let output = cmd.output().unwrap();
     let stdout = String::from_utf8_lossy(&output.stdout);
+    let stderr = String::from_utf8_lossy(&output.stderr);
 
     // Verify output contains the inserted data and row count
     assert!(
         stdout.contains("Test Message") && output.status.success(),
-        "Output should contain query results: {}",
-        stdout
+        "Output should contain query results: stdout='{}', stderr='{}'",
+        stdout, stderr
     );
 
     // Cleanup
@@ -82,10 +83,10 @@ fn test_cli_table_output_formatting() {
     // Setup table and data via CLI
     let _ = execute_sql_via_cli(&format!("CREATE NAMESPACE IF NOT EXISTS {}", namespace));
     let _ = execute_sql_via_cli(&format!(
-        r#"CREATE USER TABLE {} (
-            id INT PRIMARY KEY AUTO_INCREMENT,
+        r#"CREATE TABLE {} (
+            id BIGINT PRIMARY KEY AUTO_INCREMENT,
             content VARCHAR NOT NULL
-        ) FLUSH ROWS 10"#,
+        ) WITH (TYPE='USER', FLUSH_POLICY='rows:10')"#,
         full_table_name
     ));
 
@@ -136,10 +137,10 @@ fn test_cli_json_output_format() {
     // Setup table and data via CLI
     let _ = execute_sql_via_cli(&format!("CREATE NAMESPACE IF NOT EXISTS {}", namespace));
     let _ = execute_sql_via_cli(&format!(
-        r#"CREATE USER TABLE {} (
-            id INT PRIMARY KEY AUTO_INCREMENT,
+        r#"CREATE TABLE {} (
+            id BIGINT PRIMARY KEY AUTO_INCREMENT,
             content VARCHAR NOT NULL
-        ) FLUSH ROWS 10"#,
+        ) WITH (TYPE='USER', FLUSH_POLICY='rows:10')"#,
         full_table_name
     ));
 
@@ -193,10 +194,10 @@ fn test_cli_csv_output_format() {
     // Setup table and data via CLI
     let _ = execute_sql_via_cli(&format!("CREATE NAMESPACE IF NOT EXISTS {}", namespace));
     let _ = execute_sql_via_cli(&format!(
-        r#"CREATE USER TABLE {} (
-            id INT PRIMARY KEY AUTO_INCREMENT,
+        r#"CREATE TABLE {} (
+            id BIGINT PRIMARY KEY AUTO_INCREMENT,
             content VARCHAR NOT NULL
-        ) FLUSH ROWS 10"#,
+        ) WITH (TYPE='USER', FLUSH_POLICY='rows:10')"#,
         full_table_name
     ));
 
@@ -249,10 +250,10 @@ fn test_cli_multiline_query() {
     // Setup table via CLI
     let _ = execute_sql_via_cli(&format!("CREATE NAMESPACE IF NOT EXISTS {}", namespace));
     let _ = execute_sql_via_cli(&format!(
-        r#"CREATE USER TABLE {} (
-            id INT PRIMARY KEY AUTO_INCREMENT,
+        r#"CREATE TABLE {} (
+            id BIGINT PRIMARY KEY AUTO_INCREMENT,
             content VARCHAR NOT NULL
-        ) FLUSH ROWS 10"#,
+        ) WITH (TYPE='USER', FLUSH_POLICY='rows:10')"#,
         full_table_name
     ));
 
@@ -351,10 +352,10 @@ fn test_cli_result_pagination() {
     // Setup table via CLI
     let _ = execute_sql_via_cli(&format!("CREATE NAMESPACE IF NOT EXISTS {}", namespace));
     let _ = execute_sql_via_cli(&format!(
-        r#"CREATE USER TABLE {} (
-            id INT PRIMARY KEY AUTO_INCREMENT,
+        r#"CREATE TABLE {} (
+            id BIGINT PRIMARY KEY AUTO_INCREMENT,
             content VARCHAR NOT NULL
-        ) FLUSH ROWS 10"#,
+        ) WITH (TYPE='USER', FLUSH_POLICY='rows:10')"#,
         full_table_name
     ));
 

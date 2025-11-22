@@ -13,6 +13,7 @@ use sqlparser::keywords::{
     RESERVED_FOR_TABLE_ALIAS, RESERVED_FOR_TABLE_FACTOR,
 };
 use std::collections::HashSet;
+use crate::constants::SystemColumnNames;
 
 /// Reserved namespace names that cannot be used by users
 pub static RESERVED_NAMESPACES: Lazy<HashSet<&'static str>> = Lazy::new(|| {
@@ -36,8 +37,8 @@ pub static RESERVED_NAMESPACES: Lazy<HashSet<&'static str>> = Lazy::new(|| {
 pub static RESERVED_COLUMN_NAMES: Lazy<HashSet<&'static str>> = Lazy::new(|| {
     let mut set = HashSet::new();
     // Current system columns
-    set.insert("_seq");
-    set.insert("_deleted");
+    set.insert(SystemColumnNames::SEQ);
+    set.insert(SystemColumnNames::DELETED);
     set
 });
 
@@ -298,11 +299,11 @@ mod tests {
     fn test_reserved_column_names() {
         // All reserved column names start with underscore, so they get caught by StartsWithUnderscore check
         assert_eq!(
-            validate_column_name("_seq"),
+            validate_column_name(SystemColumnNames::SEQ),
             Err(ValidationError::StartsWithUnderscore)
         );
         assert_eq!(
-            validate_column_name("_deleted"),
+            validate_column_name(SystemColumnNames::DELETED),
             Err(ValidationError::StartsWithUnderscore)
         );
     }

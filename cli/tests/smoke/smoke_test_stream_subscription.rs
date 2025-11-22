@@ -24,12 +24,12 @@ fn smoke_stream_table_subscription() {
 
     // 2) Create stream table with 30-second TTL
     let create_sql = format!(
-        r#"CREATE STREAM TABLE {} (
+        r#"CREATE TABLE {} (
             event_id TEXT NOT NULL,
             event_type TEXT,
             payload TEXT,
             timestamp TIMESTAMP
-        ) TTL 10"#,
+        ) WITH (TYPE = 'STREAM', TTL_SECONDS = 10)"#,
         full
     );
     execute_sql_as_root_via_cli(&create_sql).expect("create stream table should succeed");

@@ -6,8 +6,8 @@
 mod common;
 
 use common::{fixtures, TestServer};
-use kalamdb_commons::models::{AuthType, Role, StorageMode, UserId, UserName};
 use kalamdb_api::models::ResponseStatus;
+use kalamdb_commons::models::{AuthType, Role, StorageMode, UserId, UserName};
 
 async fn insert_user(server: &TestServer, username: &str, role: Role) -> UserId {
     // Note: Users provider treats user_id as username key; keep them equal
@@ -51,7 +51,7 @@ async fn test_user_role_own_tables_access_and_isolation() {
     }
     assert_eq!(ns_resp.status, ResponseStatus::Success);
     let create = format!(
-        "CREATE USER TABLE {}.notes (id INT PRIMARY KEY, content TEXT)",
+        "CREATE TABLE {}.notes (id INT PRIMARY KEY, content TEXT) WITH (TYPE = 'USER')",
         ns
     );
     let resp = server.execute_sql_as_user(&create, u1.as_str()).await;
@@ -99,7 +99,7 @@ async fn test_service_role_cross_user_access() {
     fixtures::create_namespace(&server, ns).await;
 
     let create = format!(
-        "CREATE USER TABLE {}.orders (id INT PRIMARY KEY, content TEXT)",
+        "CREATE TABLE {}.orders (id INT PRIMARY KEY, content TEXT) WITH (TYPE = 'USER')",
         ns
     );
     let resp = server.execute_sql_as_user(&create, alice.as_str()).await;
@@ -154,7 +154,7 @@ async fn test_service_role_flush_operations() {
     fixtures::create_namespace(&server, ns).await;
 
     let create = format!(
-        "CREATE USER TABLE {}.events (id INT PRIMARY KEY, message TEXT)",
+        "CREATE TABLE {}.events (id INT PRIMARY KEY, message TEXT) WITH (TYPE = 'USER')",
         ns
     );
     let resp = server.execute_sql_as_user(&create, svc.as_str()).await;
@@ -229,11 +229,7 @@ async fn test_dba_can_manage_users() {
     if resp.status != ResponseStatus::Success {
         eprintln!("DBA create user error: {:?}", resp.error);
     }
-    assert_eq!(
-        resp.status,
-        ResponseStatus::Success,
-        "dba can create users"
-    );
+    assert_eq!(resp.status, ResponseStatus::Success, "dba can create users");
 }
 
 #[actix_web::test]

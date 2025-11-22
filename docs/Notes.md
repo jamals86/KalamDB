@@ -248,8 +248,13 @@ instead of: 1 failed: Invalid operation: No handler registered for statement typ
 169) clear_plan_cache should be called in any DDL that is happening
 170) Make a way to set the namespace once per session and then we can use it in the next queries
 
-171) Use sqlparser-rs for CREATE TABLE parsing as well instead of our own custom parser
 172) instead of returning: (NamespaceId, TableName) return TableId directly
+174) Make sure we flush the table before we alter it to avoid any data loss from a previous schema, also make sure we lock the table for writing/reading while it is being altered
+175) When altering a table to add/remove columns we need to update the manifest file as well
+176) Add a test to chekc if we can kill a live_query and verify the user's socket got closed and user disconnected
+
+177) The loading of tables and registering its providers is scattered, i want to make it one place for on server starts and on create table
+
 
 
 Here’s the updated 5-line spec with embedding storage inside Parquet and managed HNSW indexing (with delete handling):
@@ -268,16 +273,24 @@ IMPORTANT:
 4) Add manifest file for each user table, that will help us locate which parquet files we need to read in each query, and if in fact we need to read parquet files at all, since sometimes the data will be only inside rocksdb and no need for file io
 4) Done - Support update/deleted as a separate join table per user by MAX(_updated)
 5) Storage files compaction
-6) AS USER support for DML statements - to be able to insert/update/delete as a specific user_id (Only service/admin roles can do that)
+6) Done - AS USER support for DML statements - to be able to insert/update/delete as a specific user_id (Only service/admin roles can do that)
 7) Vector Search + HNSW indexing with deletes support
 8) Now configs are centralized inside AppContext and accessible everywhere easily, we need to check:
   - All places where we read config from file directly and change them to read from AppContext
   - Remove any duplicate config models which is a dto and use only the configs instead of mirroring it to different structs
 
-9) in impl JobExecutor for FlushExecutor add generic to the model instead of having json parameters we can have T: DeserializeOwned + Send + Sync + 'static and then we can deserialize into the right struct directly instead of having to parse json each time
+9) Partial - In impl JobExecutor for FlushExecutor add generic to the model instead of having json parameters we can have T: DeserializeOwned + Send + Sync + 'static and then we can deserialize into the right struct directly instead of having to parse json each time
 
 10) use hashbrown instead of hashmap for better performance where possible
 11) Investigate using vortex instead of parquet or as an option for the user to choose which format to use for storing flushed data
+12) aDD objectstore for storing files in s3/azure/gcs compatible storages
+13) add BEGIN TRANSACTION / COMMIT TRANSACTION support for multiple statements in one transaction, This will make the insert batch faster
+14) Add upsert support
+15) Support postgress protocol
+16) Add file DataType for storing files/blobs next to the storage parquet files
+17) Persist views in the system_views table and load them on database starts
+
+
 
 
 Key Findings
@@ -288,11 +301,9 @@ Parquet Querying Limitation: After flush, data is removed from RocksDB but queri
 
 
 Code Cleanup Operations:
-1) Remove all occurrences of _row_id, _id, _updated system columns from the codebase
 2) Replace all instances of String types for namespace/table names with their respective NamespaceId/TableName
 3) Instead of passing to a method both NamespaceId and TableName, pass only TableId
 4) Make sure all using UserId/NamespaceId/TableName/TableId/StorageId types instead of raw strings across the codebase
-5) Instead of using "_seq","_deleted" use a SystemColumnNames constant or static function to get the name from one place only
 6) Remove un-needed imports across the codebase
 7) Fix all clippy warnings and errors
 8) Check where we use AppContext::get() multiple times in the same struct and make it a member of the struct instead, or if the code already have AppContext as a member use it directly

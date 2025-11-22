@@ -1,7 +1,7 @@
 use super::types::JobsManager;
-use kalamdb_commons::{JobId, JobStatus, JobType};
-use kalamdb_commons::system::JobFilter;
 use crate::error::KalamDbError;
+use kalamdb_commons::system::JobFilter;
+use kalamdb_commons::{JobId, JobStatus, JobType};
 
 impl JobsManager {
     /// Generate typed JobId with prefix
@@ -70,9 +70,9 @@ impl JobsManager {
             job.updated_at = now_ms;
             job.finished_at = Some(now_ms);
 
-            self.jobs_provider.update_job(job.clone()).map_err(|e| {
-                KalamDbError::IoError(format!("Failed to recover job: {}", e))
-            })?;
+            self.jobs_provider
+                .update_job(job.clone())
+                .map_err(|e| KalamDbError::IoError(format!("Failed to recover job: {}", e)))?;
 
             self.log_job_event(
                 &job.job_id,

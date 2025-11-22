@@ -34,7 +34,6 @@ pub struct SqlExecutor {
     app_context: Arc<crate::app_context::AppContext>,
     handler_registry: Arc<HandlerRegistry>,
     plan_cache: Arc<PlanCache>,
-    enforce_password_complexity: bool,
 }
 
 impl SqlExecutor {
@@ -52,10 +51,8 @@ impl SqlExecutor {
             app_context,
             handler_registry,
             plan_cache,
-            enforce_password_complexity,
         }
     }
-
 
     /// Clear the plan cache (e.g., after DDL operations)
     pub fn clear_plan_cache(&self) {
@@ -90,7 +87,15 @@ impl SqlExecutor {
             &NamespaceId::new("default"),
             exec_ctx.user_role.clone(),
         )
-        .map_err(|msg| KalamDbError::Unauthorized(msg))?;
+        .map_err(|e| match e {
+            kalamdb_sql::classifier::StatementClassificationError::Unauthorized(msg) => {
+                KalamDbError::Unauthorized(msg)
+            }
+            kalamdb_sql::classifier::StatementClassificationError::InvalidSql {
+                sql: _,
+                message,
+            } => KalamDbError::InvalidSql(message),
+        })?;
 
         // Step 2: Route based on statement type
         use kalamdb_sql::statement_classifier::SqlStatementKind;
@@ -426,18 +431,13 @@ impl SqlExecutor {
                 if let Ok(Some(def)) = schema_registry.get_table_definition(&table_id) {
                     if matches!(def.table_type, TableType::Shared) {
                         let access_level = if let TableOptions::Shared(opts) = &def.table_options {
-                            opts.access_level
-                                .clone()
-                                .unwrap_or(TableAccess::Private)
+                            opts.access_level.clone().unwrap_or(TableAccess::Private)
                         } else {
                             TableAccess::Private
                         };
 
-                        if !can_access_shared_table(
-                            access_level.clone(),
-                            false,
-                            exec_ctx.user_role,
-                        ) {
+                        if !can_access_shared_table(access_level.clone(), false, exec_ctx.user_role)
+                        {
                             return Err(KalamDbError::Unauthorized(format!(
                                 "Insufficient privileges to read shared table '{}.{}' (Access Level: {:?})",
                                 ns.as_str(),

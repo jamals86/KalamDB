@@ -3,7 +3,7 @@
 //! This module manages flush policies for tables, determining when to flush
 //! RocksDB buffer to Parquet files.
 
-use serde::{Deserialize, Serialize};
+use serde::{Deserialize, Deserializer, Serialize, Serializer};
 
 /// Flush policy for table data
 ///
@@ -17,8 +17,7 @@ use serde::{Deserialize, Serialize};
 /// let row_policy = FlushPolicy::RowLimit { row_limit: 10000 };
 /// let time_policy = FlushPolicy::TimeInterval { interval_seconds: 300 };
 /// ```
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(tag = "type", rename_all = "snake_case")]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum FlushPolicy {
     /// Flush after N rows inserted
     RowLimit {
@@ -37,6 +36,139 @@ pub enum FlushPolicy {
         /// Interval in seconds (must be > 0 and < 86400 = 24 hours)
         interval_seconds: u32,
     },
+}
+
+#[derive(Serialize, Deserialize)]
+#[serde(tag = "type", rename_all = "snake_case")]
+enum FlushPolicyHuman {
+    RowLimit {
+        row_limit: u32,
+    },
+    TimeInterval {
+        interval_seconds: u32,
+    },
+    Combined {
+        row_limit: u32,
+        interval_seconds: u32,
+    },
+}
+
+#[derive(Serialize, Deserialize)]
+enum FlushPolicyBinary {
+    RowLimit {
+        row_limit: u32,
+    },
+    TimeInterval {
+        interval_seconds: u32,
+    },
+    Combined {
+        row_limit: u32,
+        interval_seconds: u32,
+    },
+}
+
+impl From<&FlushPolicy> for FlushPolicyHuman {
+    fn from(policy: &FlushPolicy) -> Self {
+        match policy {
+            FlushPolicy::RowLimit { row_limit } => FlushPolicyHuman::RowLimit {
+                row_limit: *row_limit,
+            },
+            FlushPolicy::TimeInterval { interval_seconds } => FlushPolicyHuman::TimeInterval {
+                interval_seconds: *interval_seconds,
+            },
+            FlushPolicy::Combined {
+                row_limit,
+                interval_seconds,
+            } => FlushPolicyHuman::Combined {
+                row_limit: *row_limit,
+                interval_seconds: *interval_seconds,
+            },
+        }
+    }
+}
+
+impl From<FlushPolicyHuman> for FlushPolicy {
+    fn from(value: FlushPolicyHuman) -> Self {
+        match value {
+            FlushPolicyHuman::RowLimit { row_limit } => FlushPolicy::RowLimit { row_limit },
+            FlushPolicyHuman::TimeInterval { interval_seconds } => {
+                FlushPolicy::TimeInterval { interval_seconds }
+            }
+            FlushPolicyHuman::Combined {
+                row_limit,
+                interval_seconds,
+            } => FlushPolicy::Combined {
+                row_limit,
+                interval_seconds,
+            },
+        }
+    }
+}
+
+impl From<&FlushPolicy> for FlushPolicyBinary {
+    fn from(policy: &FlushPolicy) -> Self {
+        match policy {
+            FlushPolicy::RowLimit { row_limit } => FlushPolicyBinary::RowLimit {
+                row_limit: *row_limit,
+            },
+            FlushPolicy::TimeInterval { interval_seconds } => FlushPolicyBinary::TimeInterval {
+                interval_seconds: *interval_seconds,
+            },
+            FlushPolicy::Combined {
+                row_limit,
+                interval_seconds,
+            } => FlushPolicyBinary::Combined {
+                row_limit: *row_limit,
+                interval_seconds: *interval_seconds,
+            },
+        }
+    }
+}
+
+impl From<FlushPolicyBinary> for FlushPolicy {
+    fn from(value: FlushPolicyBinary) -> Self {
+        match value {
+            FlushPolicyBinary::RowLimit { row_limit } => FlushPolicy::RowLimit { row_limit },
+            FlushPolicyBinary::TimeInterval { interval_seconds } => {
+                FlushPolicy::TimeInterval { interval_seconds }
+            }
+            FlushPolicyBinary::Combined {
+                row_limit,
+                interval_seconds,
+            } => FlushPolicy::Combined {
+                row_limit,
+                interval_seconds,
+            },
+        }
+    }
+}
+
+impl Serialize for FlushPolicy {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: Serializer,
+    {
+        if serializer.is_human_readable() {
+            FlushPolicyHuman::from(self).serialize(serializer)
+        } else {
+            FlushPolicyBinary::from(self).serialize(serializer)
+        }
+    }
+}
+
+impl<'de> Deserialize<'de> for FlushPolicy {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        if deserializer.is_human_readable() {
+            let human = FlushPolicyHuman::deserialize(deserializer)?;
+            Ok(human.into())
+        } else {
+            let binary = FlushPolicyBinary::deserialize(deserializer)?;
+            Ok(binary.into())
+        }
+    }
 }
 
 impl FlushPolicy {

@@ -32,29 +32,32 @@ CREATE STORAGE s3_prod
 ```sql
 -- Implicitly uses 'local' storage
 CREATE TABLE config (
-    key TEXT NOT NULL,
+    key TEXT PRIMARY KEY,
     value TEXT
-);
+) WITH (TYPE = 'SHARED');
 ```
 
 ### Specifying Storage Explicitly
 ```sql
 -- Use specific storage
 CREATE TABLE config (
-    key TEXT NOT NULL,
+    key TEXT PRIMARY KEY,
     value TEXT
-) STORAGE s3_prod;
+) WITH (TYPE = 'SHARED', STORAGE_ID = 's3_prod');
 ```
 
 ### With Other Options
 ```sql
 -- Storage with flush policy
 CREATE TABLE events (
-    event_id BIGINT AUTO_INCREMENT,
+    event_id BIGINT PRIMARY KEY DEFAULT SNOWFLAKE_ID(),
     event_type TEXT,
     timestamp TIMESTAMP
-) STORAGE s3_prod
-  FLUSH ROWS 10000;
+) WITH (
+    TYPE = 'SHARED',
+    STORAGE_ID = 's3_prod',
+    FLUSH_POLICY = 'rows:10000'
+);
 ```
 
 ## Creating User Tables with Storage ID
@@ -62,42 +65,48 @@ CREATE TABLE events (
 ### Using Default Storage (local)
 ```sql
 -- Implicitly uses 'local' storage
-CREATE USER TABLE messages (
-    id BIGINT AUTO_INCREMENT,
+CREATE TABLE messages (
+    id BIGINT PRIMARY KEY DEFAULT SNOWFLAKE_ID(),
     content TEXT,
     created_at TIMESTAMP
-);
+) WITH (TYPE = 'USER');
 ```
 
 ### Specifying Storage Explicitly
 ```sql
 -- Use specific storage
-CREATE USER TABLE messages (
-    id BIGINT AUTO_INCREMENT,
+CREATE TABLE messages (
+    id BIGINT PRIMARY KEY DEFAULT SNOWFLAKE_ID(),
     content TEXT,
     created_at TIMESTAMP
-) STORAGE s3_prod;
+) WITH (TYPE = 'USER', STORAGE_ID = 's3_prod');
 ```
 
 ### With Flush Policy
 ```sql
 -- Storage with flush policy
-CREATE USER TABLE activity_log (
-    id BIGINT AUTO_INCREMENT,
+CREATE TABLE activity_log (
+    id BIGINT PRIMARY KEY DEFAULT SNOWFLAKE_ID(),
     action TEXT,
     timestamp TIMESTAMP
-) STORAGE s3_prod
-  FLUSH ROWS 5000;
+) WITH (
+    TYPE = 'USER',
+    STORAGE_ID = 's3_prod',
+    FLUSH_POLICY = 'rows:5000'
+);
 ```
 
 ### Opting into per-user storage preferences
 ```sql
-CREATE USER TABLE geo_events (
-        event_id BIGINT DEFAULT SNOWFLAKE_ID(),
+CREATE TABLE geo_events (
+        event_id BIGINT PRIMARY KEY DEFAULT SNOWFLAKE_ID(),
         payload JSON,
         created_at TIMESTAMP DEFAULT NOW()
-) STORAGE s3_us
-    USE_USER_STORAGE;
+) WITH (
+    TYPE = 'USER',
+    STORAGE_ID = 's3_us',
+    USE_USER_STORAGE = true
+);
 
 -- Pin specific users to regional storage
 UPDATE system.users
@@ -132,7 +141,7 @@ Expected output:
 
 ### Storage Not Found
 ```sql
-CREATE TABLE config (key TEXT) STORAGE nonexistent;
+CREATE TABLE config (key TEXT PRIMARY KEY) WITH (TYPE='SHARED', STORAGE_ID='nonexistent');
 ```
 
 Error:
@@ -153,7 +162,7 @@ CREATE STORAGE my_storage
     USER_TABLES_TEMPLATE '{namespace}/users/{tableName}/{userId}/';
 
 -- 2. Create the table
-CREATE TABLE config (key TEXT) STORAGE my_storage;
+CREATE TABLE config (key TEXT PRIMARY KEY) WITH (TYPE='SHARED', STORAGE_ID='my_storage');
 ```
 
 ## Best Practices
@@ -180,13 +189,13 @@ Moving from default to explicit storage:
 
 ```sql
 -- Old way (implicit local)
-CREATE TABLE metrics (id BIGINT, value DOUBLE);
+CREATE TABLE metrics (id BIGINT PRIMARY KEY, value DOUBLE) WITH (TYPE='SHARED');
 
 -- New way (explicit)
-CREATE TABLE metrics (id BIGINT, value DOUBLE) STORAGE local;
+CREATE TABLE metrics (id BIGINT PRIMARY KEY, value DOUBLE) WITH (TYPE='SHARED', STORAGE_ID='local');
 
 -- Or use a different storage
-CREATE TABLE metrics (id BIGINT, value DOUBLE) STORAGE s3_prod;
+CREATE TABLE metrics (id BIGINT PRIMARY KEY, value DOUBLE) WITH (TYPE='SHARED', STORAGE_ID='s3_prod');
 ```
 
 Both approaches work, but explicit is clearer and allows for easier future changes.

@@ -180,27 +180,27 @@ Now inside the `kalam>` prompt:
 -- Create namespace and tables
 CREATE NAMESPACE IF NOT EXISTS chat;
 
-CREATE USER TABLE chat.conversations (
+CREATE TABLE chat.conversations (
   id BIGINT PRIMARY KEY DEFAULT SNOWFLAKE_ID(),
   title TEXT NOT NULL,
   created_at TIMESTAMP DEFAULT NOW()
-) FLUSH ROW_THRESHOLD 1000;
+) WITH (TYPE = 'USER', FLUSH_POLICY = 'rows:1000');
 
-CREATE USER TABLE chat.messages (
+CREATE TABLE chat.messages (
   id BIGINT PRIMARY KEY DEFAULT SNOWFLAKE_ID(),
   conversation_id BIGINT NOT NULL,
   role_id TEXT NOT NULL,
   content TEXT NOT NULL,
   created_at TIMESTAMP DEFAULT NOW()
-) FLUSH ROW_THRESHOLD 1000;
+) WITH (TYPE = 'USER', FLUSH_POLICY = 'rows:1000');
 
-CREATE STREAM TABLE chat.typing_events (
+CREATE TABLE chat.typing_events (
   id BIGINT PRIMARY KEY DEFAULT SNOWFLAKE_ID(),
   conversation_id BIGINT NOT NULL,
   user_id TEXT NOT NULL,
   event_type TEXT NOT NULL,
   created_at TIMESTAMP DEFAULT NOW()
-) TTL 30;
+) WITH (TYPE = 'STREAM', TTL_SECONDS = 30);
 ```
 
 #### 2. Start a Conversation and Add Messages
@@ -302,21 +302,21 @@ ws.onmessage = (event) => {
 **Example**:
 ```sql
 -- Shared document storage
-CREATE SHARED TABLE docs.content (
-  doc_id TEXT,
+CREATE TABLE docs.content (
+  doc_id TEXT PRIMARY KEY,
   version INT,
   content TEXT,
   author TEXT DEFAULT CURRENT_USER(),
   updated_at TIMESTAMP DEFAULT NOW()
-) FLUSH INTERVAL 60s;
+) WITH (TYPE = 'SHARED', FLUSH_POLICY = 'interval:60');
 
 -- Ephemeral presence tracking
-CREATE STREAM TABLE docs.presence (
-  doc_id TEXT,
+CREATE TABLE docs.presence (
+  doc_id TEXT PRIMARY KEY,
   user_id TEXT,
   cursor_position INT,
   last_seen TIMESTAMP DEFAULT NOW()
-) TTL 5;  -- Auto-evict after 5 seconds
+) WITH (TYPE = 'STREAM', TTL_SECONDS = 5);  -- Auto-evict after 5 seconds
 
 -- Subscribe to document changes
 SUBSCRIBE TO docs.content 
@@ -340,21 +340,21 @@ OPTIONS (last_rows=1);
 **Example**:
 ```sql
 -- Ephemeral sensor readings (10-second retention)
-CREATE STREAM TABLE iot.sensor_data (
-  sensor_id TEXT,
+CREATE TABLE iot.sensor_data (
+  sensor_id TEXT PRIMARY KEY,
   temperature DOUBLE,
   humidity DOUBLE,
   timestamp TIMESTAMP DEFAULT NOW()
-) TTL 10;
+) WITH (TYPE = 'STREAM', TTL_SECONDS = 10);
 
 -- Aggregated metrics (persisted)
-CREATE SHARED TABLE iot.metrics (
-  sensor_id TEXT,
+CREATE TABLE iot.metrics (
+  sensor_id TEXT PRIMARY KEY,
   avg_temp DOUBLE,
   max_temp DOUBLE,
   min_temp DOUBLE,
   hour TIMESTAMP
-) FLUSH INTERVAL 3600s;  -- Flush every hour
+) WITH (TYPE = 'SHARED', FLUSH_POLICY = 'interval:3600');  -- Flush every hour
 
 -- Real-time alert subscription
 SUBSCRIBE TO iot.sensor_data 
@@ -377,13 +377,13 @@ WHERE temperature > 80.0 OR humidity > 95.0;
 **Example**:
 ```sql
 -- Create user with audit trail
-CREATE USER TABLE app.user_data (
+CREATE TABLE app.user_data (
   id BIGINT PRIMARY KEY DEFAULT SNOWFLAKE_ID(),
   data_type TEXT,
   content TEXT,
   created_by TEXT DEFAULT CURRENT_USER(),
   created_at TIMESTAMP DEFAULT NOW()
-) FLUSH INTERVAL 300s;
+) WITH (TYPE = 'USER', FLUSH_POLICY = 'interval:300');
 
 -- Export user data (simple file copy)
 -- cp -r /var/lib/kalamdb/user/alice123/ /exports/alice-gdpr-export/
@@ -411,22 +411,22 @@ DROP USER 'alice';
 **Example**:
 ```sql
 -- Tenant-isolated data
-CREATE USER TABLE saas.customer_data (
+CREATE TABLE saas.customer_data (
   id BIGINT PRIMARY KEY DEFAULT SNOWFLAKE_ID(),
   customer_id TEXT DEFAULT CURRENT_USER(),
   entity_type TEXT,
   entity_data TEXT,
   created_at TIMESTAMP DEFAULT NOW()
-) FLUSH INTERVAL 600s ROW_THRESHOLD 10000;
+) WITH (TYPE = 'USER', FLUSH_POLICY = 'rows:10000,interval:600');
 
 -- Cross-tenant analytics (aggregated)
-CREATE SHARED TABLE saas.analytics (
+CREATE TABLE saas.analytics (
   id BIGINT PRIMARY KEY DEFAULT SNOWFLAKE_ID(),
   metric_name TEXT,
   metric_value DOUBLE,
   tenant_id TEXT,
   timestamp TIMESTAMP DEFAULT NOW()
-) FLUSH INTERVAL 3600s;
+) WITH (TYPE = 'SHARED', FLUSH_POLICY = 'interval:3600');
 
 -- Create service account per tenant
 CREATE USER 'tenant_acme' WITH PASSWORD 'SecureKey123!' ROLE 'service';

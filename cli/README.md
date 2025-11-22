@@ -53,12 +53,12 @@ kalam-cli --token YOUR_JWT_TOKEN
 CREATE NAMESPACE app;
 
 -- Create table
-CREATE USER TABLE app.users (
+CREATE TABLE app.users (
     id BIGINT PRIMARY KEY DEFAULT SNOWFLAKE_ID(),
     username TEXT NOT NULL,
     email TEXT,
     created_at TIMESTAMP DEFAULT NOW()
-);
+) WITH (TYPE = 'USER');
 
 -- Insert data
 INSERT INTO app.users (username, email) 
@@ -180,12 +180,12 @@ Example `setup.sql`:
 
 ```sql
 CREATE NAMESPACE prod;
-CREATE USER TABLE prod.events (
+CREATE TABLE prod.events (
     id BIGINT PRIMARY KEY DEFAULT SNOWFLAKE_ID(),
     event_type TEXT NOT NULL,
     data TEXT,
     created_at TIMESTAMP DEFAULT NOW()
-);
+) WITH (TYPE = 'USER');
 INSERT INTO prod.events (event_type, data) VALUES ('login', '{"user":"alice"}');
 ```
 
@@ -325,7 +325,7 @@ Error: table 'app.users' not found
 
 ```sql
 CREATE NAMESPACE app;
-CREATE USER TABLE app.users (...);
+CREATE TABLE app.users (...) WITH (TYPE = 'USER');
 ```
 
 ## Examples
@@ -337,12 +337,12 @@ CREATE USER TABLE app.users (...);
 CREATE NAMESPACE myapp;
 
 -- Create table with auto-incrementing ID
-CREATE USER TABLE myapp.users (
+CREATE TABLE myapp.users (
     id BIGINT PRIMARY KEY DEFAULT SNOWFLAKE_ID(),
     username TEXT NOT NULL,
     email TEXT,
     created_at TIMESTAMP DEFAULT NOW()
-);
+) WITH (TYPE = 'USER');
 
 -- Insert data
 INSERT INTO myapp.users (username, email) VALUES 
@@ -360,12 +360,12 @@ SELECT username, email FROM myapp.users WHERE username = 'alice';
 
 ```sql
 -- Create messages table
-CREATE USER TABLE chat.messages (
+CREATE TABLE chat.messages (
     id BIGINT PRIMARY KEY DEFAULT SNOWFLAKE_ID(),
     user_id TEXT NOT NULL,
     content TEXT NOT NULL,
     created_at TIMESTAMP DEFAULT NOW()
-);
+) WITH (TYPE = 'USER');
 
 -- Subscribe to new messages
 SUBSCRIBE TO chat.messages WHERE user_id = 'alice';
@@ -381,13 +381,13 @@ Create `import.sql`:
 
 ```sql
 CREATE NAMESPACE analytics;
-CREATE USER TABLE analytics.events (
+CREATE TABLE analytics.events (
     id BIGINT PRIMARY KEY DEFAULT SNOWFLAKE_ID(),
     event_type TEXT NOT NULL,
     user_id TEXT,
     data TEXT,
     created_at TIMESTAMP DEFAULT NOW()
-);
+) WITH (TYPE = 'USER');
 
 INSERT INTO analytics.events (event_type, user_id, data) VALUES
     ('page_view', 'user1', '{"page":"/home"}'),

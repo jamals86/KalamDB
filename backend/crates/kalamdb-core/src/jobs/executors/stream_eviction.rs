@@ -243,6 +243,7 @@ impl Default for StreamEvictionExecutor {
 mod tests {
     use super::*;
     use crate::app_context::AppContext;
+    use crate::providers::arrow_json_conversion::json_to_row;
     use crate::providers::base::{BaseTableProvider, TableProviderCore};
     use crate::schema_registry::CachedTableData;
     use crate::test_helpers::init_test_app_context;
@@ -405,10 +406,16 @@ mod tests {
         // Insert a couple of rows
         let user = UserId::new("user-ttl");
         provider
-            .insert(&user, json!({"event_id": "evt1", "payload": "hello"}))
+            .insert(
+                &user,
+                json_to_row(&json!({"event_id": "evt1", "payload": "hello"})).unwrap(),
+            )
             .expect("insert evt1");
         provider
-            .insert(&user, json!({"event_id": "evt2", "payload": "world"}))
+            .insert(
+                &user,
+                json_to_row(&json!({"event_id": "evt2", "payload": "world"})).unwrap(),
+            )
             .expect("insert evt2");
 
         // Wait for TTL to make them eligible for eviction

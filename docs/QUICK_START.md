@@ -48,7 +48,7 @@ curl -X POST http://127.0.0.1:8080/v1/api/sql \
 
 curl -X POST http://127.0.0.1:8080/v1/api/sql \
   -H "Content-Type: application/json" \
-  -d '{"sql": "CREATE USER TABLE app.messages (id BIGINT PRIMARY KEY DEFAULT SNOWFLAKE_ID(), content TEXT NOT NULL, created_at TIMESTAMP DEFAULT NOW()) FLUSH ROW_THRESHOLD 1000;"}'
+  -d '{"sql": "CREATE TABLE app.messages (id BIGINT PRIMARY KEY DEFAULT SNOWFLAKE_ID(), content TEXT NOT NULL, created_at TIMESTAMP DEFAULT NOW()) WITH (TYPE=''USER'', FLUSH_POLICY=''rows:1000'');"}'
 ```
 
 ## 6. Insert and query

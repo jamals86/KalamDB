@@ -24,7 +24,6 @@ use kalamdb_api::models::ResponseStatus;
 // ============================================================================
 
 #[actix_web::test]
-#[ignore = "Shared tables require pre-created column families at DB init. TestServer::new() creates in-memory DB without these CFs."]
 async fn test_01_default_storage_exists() {
     let server = TestServer::new().await;
 
@@ -68,7 +67,6 @@ async fn test_01_default_storage_exists() {
 // ============================================================================
 
 #[actix_web::test]
-#[ignore = "Shared tables require pre-created column families at DB init. TestServer::new() creates in-memory DB without these CFs."]
 async fn test_02_show_storages_basic() {
     let server = TestServer::new().await;
 
@@ -103,7 +101,6 @@ async fn test_02_show_storages_basic() {
 // ============================================================================
 
 #[actix_web::test]
-#[ignore = "Shared tables require pre-created column families at DB init. TestServer::new() creates in-memory DB without these CFs."]
 async fn test_03_create_storage_filesystem() {
     let server = TestServer::new().await;
 
@@ -169,7 +166,6 @@ async fn test_03_create_storage_filesystem() {
 // ============================================================================
 
 #[actix_web::test]
-#[ignore = "Shared tables require pre-created column families at DB init. TestServer::new() creates in-memory DB without these CFs."]
 async fn test_04_create_storage_s3() {
     let server = TestServer::new().await;
 
@@ -228,7 +224,6 @@ async fn test_04_create_storage_s3() {
 // ============================================================================
 
 #[actix_web::test]
-#[ignore = "Shared tables require pre-created column families at DB init. TestServer::new() creates in-memory DB without these CFs."]
 async fn test_05_create_storage_duplicate_error() {
     let server = TestServer::new().await;
 
@@ -265,7 +260,6 @@ async fn test_05_create_storage_duplicate_error() {
 // ============================================================================
 
 #[actix_web::test]
-#[ignore = "Shared tables require pre-created column families at DB init. TestServer::new() creates in-memory DB without these CFs."]
 async fn test_06_create_storage_invalid_template() {
     let server = TestServer::new().await;
 
@@ -305,7 +299,6 @@ async fn test_06_create_storage_invalid_template() {
 // ============================================================================
 
 #[actix_web::test]
-#[ignore = "Shared tables require pre-created column families at DB init. TestServer::new() creates in-memory DB without these CFs."]
 async fn test_07_alter_storage_all_fields() {
     let server = TestServer::new().await;
 
@@ -380,7 +373,6 @@ async fn test_07_alter_storage_all_fields() {
 // ============================================================================
 
 #[actix_web::test]
-#[ignore = "Shared tables require pre-created column families at DB init. TestServer::new() creates in-memory DB without these CFs."]
 async fn test_08_alter_storage_partial() {
     let server = TestServer::new().await;
 
@@ -437,7 +429,6 @@ async fn test_08_alter_storage_partial() {
 // ============================================================================
 
 #[actix_web::test]
-#[ignore = "Shared tables require pre-created column families at DB init. TestServer::new() creates in-memory DB without these CFs."]
 async fn test_09_alter_storage_invalid_template() {
     let server = TestServer::new().await;
 
@@ -484,7 +475,6 @@ async fn test_09_alter_storage_invalid_template() {
 // ============================================================================
 
 #[actix_web::test]
-#[ignore = "Shared tables require pre-created column families at DB init. TestServer::new() creates in-memory DB without these CFs."]
 async fn test_10_drop_storage_basic() {
     let server = TestServer::new().await;
 
@@ -529,7 +519,6 @@ async fn test_10_drop_storage_basic() {
 // ============================================================================
 
 #[actix_web::test]
-#[ignore = "Shared tables require pre-created column families at DB init. TestServer::new() creates in-memory DB without these CFs."]
 async fn test_11_drop_storage_referential_integrity() {
     let server = TestServer::new().await;
 
@@ -563,7 +552,6 @@ async fn test_11_drop_storage_referential_integrity() {
 // ============================================================================
 
 #[actix_web::test]
-#[ignore = "Shared tables require pre-created column families at DB init. TestServer::new() creates in-memory DB without these CFs."]
 async fn test_12_drop_storage_not_exists() {
     let server = TestServer::new().await;
 
@@ -591,7 +579,6 @@ async fn test_12_drop_storage_not_exists() {
 // ============================================================================
 
 #[actix_web::test]
-#[ignore = "Shared tables require pre-created column families at DB init. TestServer::new() creates in-memory DB without these CFs."]
 async fn test_13_template_validation_correct_order() {
     let server = TestServer::new().await;
 
@@ -618,7 +605,6 @@ async fn test_13_template_validation_correct_order() {
 // ============================================================================
 
 #[actix_web::test]
-#[ignore = "Shared tables require pre-created column families at DB init. TestServer::new() creates in-memory DB without these CFs."]
 async fn test_14_template_validation_invalid_order() {
     let server = TestServer::new().await;
 
@@ -632,7 +618,11 @@ async fn test_14_template_validation_invalid_order() {
     "#;
 
     let response = server.execute_sql(sql).await;
-    assert_eq!(response.status, ResponseStatus::Error, "Invalid template should fail");
+    assert_eq!(
+        response.status,
+        ResponseStatus::Error,
+        "Invalid template should fail"
+    );
 }
 
 // ============================================================================
@@ -640,7 +630,6 @@ async fn test_14_template_validation_invalid_order() {
 // ============================================================================
 
 #[actix_web::test]
-#[ignore = "Shared tables require pre-created column families at DB init. TestServer::new() creates in-memory DB without these CFs."]
 async fn test_15_storage_lookup_table_level() {
     let server = TestServer::new().await;
 
@@ -658,12 +647,14 @@ async fn test_15_storage_lookup_table_level() {
 
     // Create table with explicit storage
     let create_table = r#"
-        CREATE USER TABLE lookup_ns.lookup_table (
+        CREATE TABLE lookup_ns.lookup_table (
             id BIGINT,
             message TEXT
+        ) WITH (
+            TYPE = 'USER',
+            STORAGE_ID = 'table_storage',
+            USE_USER_STORAGE = true
         )
-        STORAGE 'table_storage'
-        USE_USER_STORAGE
     "#;
 
     let response = server.execute_sql(create_table).await;
@@ -700,7 +691,6 @@ async fn test_15_storage_lookup_table_level() {
 // ============================================================================
 
 #[actix_web::test]
-#[ignore = "Shared tables require pre-created column families at DB init. TestServer::new() creates in-memory DB without these CFs."]
 async fn test_16_show_storages_ordered() {
     let server = TestServer::new().await;
 
@@ -761,7 +751,6 @@ async fn test_16_show_storages_ordered() {
 // ============================================================================
 
 #[actix_web::test]
-#[ignore = "Shared tables require pre-created column families at DB init. TestServer::new() creates in-memory DB without these CFs."]
 async fn test_17_concurrent_storage_operations() {
     let server = TestServer::new().await;
 
@@ -813,7 +802,6 @@ async fn test_17_concurrent_storage_operations() {
 // ============================================================================
 
 #[actix_web::test]
-#[ignore = "Shared tables require pre-created column families at DB init. TestServer::new() creates in-memory DB without these CFs."]
 async fn test_18_invalid_storage_type() {
     let server = TestServer::new().await;
 
@@ -848,7 +836,6 @@ async fn test_18_invalid_storage_type() {
 // ============================================================================
 
 #[actix_web::test]
-#[ignore = "Shared tables require pre-created column families at DB init. TestServer::new() creates in-memory DB without these CFs."]
 async fn test_19_minimal_storage_config() {
     let server = TestServer::new().await;
 
@@ -892,7 +879,6 @@ async fn test_19_minimal_storage_config() {
 // ============================================================================
 
 #[actix_web::test]
-#[ignore = "Shared tables require pre-created column families at DB init. TestServer::new() creates in-memory DB without these CFs."]
 async fn test_20_storage_with_namespace() {
     let server = TestServer::new().await;
 
@@ -946,7 +932,6 @@ async fn test_20_storage_with_namespace() {
 // ============================================================================
 
 #[actix_web::test]
-#[ignore = "Shared tables require pre-created column families at DB init. TestServer::new() creates in-memory DB without these CFs."]
 async fn test_22_credentials_column_exists() {
     let server = TestServer::new().await;
 
@@ -979,7 +964,6 @@ async fn test_22_credentials_column_exists() {
 // ============================================================================
 
 #[actix_web::test]
-#[ignore = "Shared tables require pre-created column families at DB init. TestServer::new() creates in-memory DB without these CFs."]
 async fn test_23_storage_with_credentials() {
     let server = TestServer::new().await;
 
@@ -1032,7 +1016,6 @@ async fn test_23_storage_with_credentials() {
 // ============================================================================
 
 #[actix_web::test]
-#[ignore = "Shared tables require pre-created column families at DB init. TestServer::new() creates in-memory DB without these CFs."]
 async fn test_24_credentials_masked_in_query() {
     let server = TestServer::new().await;
 
@@ -1079,7 +1062,6 @@ async fn test_24_credentials_masked_in_query() {
 // ============================================================================
 
 #[actix_web::test]
-#[ignore = "Shared tables require pre-created column families at DB init. TestServer::new() creates in-memory DB without these CFs."]
 async fn test_25_create_table_with_storage() {
     let server = TestServer::new().await;
     fixtures::create_namespace(&server, "test_ns").await;
@@ -1133,7 +1115,6 @@ async fn test_25_create_table_with_storage() {
 // ============================================================================
 
 #[actix_web::test]
-#[ignore = "Shared tables require pre-created column families at DB init. TestServer::new() creates in-memory DB without these CFs."]
 async fn test_26_create_table_default_storage() {
     let server = TestServer::new().await;
     fixtures::create_namespace(&server, "default_ns").await;
@@ -1174,7 +1155,6 @@ async fn test_26_create_table_default_storage() {
 // ============================================================================
 
 #[actix_web::test]
-#[ignore = "Shared tables require pre-created column families at DB init. TestServer::new() creates in-memory DB without these CFs."]
 async fn test_27_create_table_invalid_storage() {
     let server = TestServer::new().await;
     fixtures::create_namespace(&server, "invalid_ns").await;
@@ -1225,7 +1205,6 @@ async fn test_27_create_table_invalid_storage() {
 // ============================================================================
 
 #[actix_web::test]
-#[ignore = "Shared tables require pre-created column families at DB init. TestServer::new() creates in-memory DB without these CFs."]
 async fn test_28_table_storage_assignment() {
     let server = TestServer::new().await;
     fixtures::create_namespace(&server, "storage_ns").await;
@@ -1272,7 +1251,6 @@ async fn test_28_table_storage_assignment() {
 // ============================================================================
 
 #[actix_web::test]
-#[ignore = "Shared tables require pre-created column families at DB init. TestServer::new() creates in-memory DB without these CFs."]
 async fn test_29_delete_storage_with_tables() {
     let server = TestServer::new().await;
     fixtures::create_namespace(&server, "protected_ns").await;
@@ -1324,7 +1302,6 @@ async fn test_29_delete_storage_with_tables() {
 // ============================================================================
 
 #[actix_web::test]
-#[ignore = "Shared tables require pre-created column families at DB init. TestServer::new() creates in-memory DB without these CFs."]
 async fn test_30_delete_storage_local_protected() {
     let server = TestServer::new().await;
 
@@ -1357,7 +1334,6 @@ async fn test_30_delete_storage_local_protected() {
 // ============================================================================
 
 #[actix_web::test]
-#[ignore = "Shared tables require pre-created column families at DB init. TestServer::new() creates in-memory DB without these CFs."]
 async fn test_31_delete_storage_no_dependencies() {
     let server = TestServer::new().await;
 
@@ -1395,7 +1371,6 @@ async fn test_31_delete_storage_no_dependencies() {
 // ============================================================================
 
 #[actix_web::test]
-#[ignore = "Shared tables require pre-created column families at DB init. TestServer::new() creates in-memory DB without these CFs."]
 async fn test_32_show_storages_ordering() {
     let server = TestServer::new().await;
 
@@ -1454,7 +1429,6 @@ async fn test_32_show_storages_ordering() {
 // ============================================================================
 
 #[actix_web::test]
-#[ignore = "Shared tables require pre-created column families at DB init. TestServer::new() creates in-memory DB without these CFs."]
 async fn test_33_storage_template_validation() {
     let server = TestServer::new().await;
 
@@ -1500,7 +1474,6 @@ async fn test_33_storage_template_validation() {
 // ============================================================================
 
 #[actix_web::test]
-#[ignore = "Shared tables require pre-created column families at DB init. TestServer::new() creates in-memory DB without these CFs."]
 async fn test_34_shared_table_template_ordering() {
     let server = TestServer::new().await;
 
@@ -1535,7 +1508,6 @@ async fn test_34_shared_table_template_ordering() {
 // ============================================================================
 
 #[actix_web::test]
-#[ignore = "Shared tables require pre-created column families at DB init. TestServer::new() creates in-memory DB without these CFs."]
 async fn test_35_user_table_template_ordering() {
     let server = TestServer::new().await;
 
@@ -1563,7 +1535,6 @@ async fn test_35_user_table_template_ordering() {
 // ============================================================================
 
 #[actix_web::test]
-#[ignore = "Shared tables require pre-created column families at DB init. TestServer::new() creates in-memory DB without these CFs."]
 async fn test_36_user_table_template_requires_userId() {
     let server = TestServer::new().await;
 
@@ -1607,7 +1578,6 @@ async fn test_36_user_table_template_requires_userId() {
 // ============================================================================
 
 #[actix_web::test]
-#[ignore = "Shared tables require pre-created column families at DB init. TestServer::new() creates in-memory DB without these CFs."]
 async fn test_37_flush_with_use_user_storage() {
     let server = TestServer::new().await;
     fixtures::create_namespace(&server, "storage_test").await;
@@ -1659,7 +1629,6 @@ async fn test_37_flush_with_use_user_storage() {
 // ============================================================================
 
 #[actix_web::test]
-#[ignore = "Shared tables require pre-created column families at DB init. TestServer::new() creates in-memory DB without these CFs."]
 async fn test_38_user_storage_mode_region() {
     let server = TestServer::new().await;
     fixtures::create_namespace(&server, "region_test").await;
@@ -1693,7 +1662,6 @@ async fn test_38_user_storage_mode_region() {
 // ============================================================================
 
 #[actix_web::test]
-#[ignore = "Shared tables require pre-created column families at DB init. TestServer::new() creates in-memory DB without these CFs."]
 async fn test_39_user_storage_mode_table() {
     let server = TestServer::new().await;
     fixtures::create_namespace(&server, "table_mode_test").await;
@@ -1734,7 +1702,6 @@ async fn test_39_user_storage_mode_table() {
 // ============================================================================
 
 #[actix_web::test]
-#[ignore = "Shared tables require pre-created column families at DB init. TestServer::new() creates in-memory DB without these CFs."]
 async fn test_40_flush_resolves_s3_storage() {
     let server = TestServer::new().await;
     fixtures::create_namespace(&server, "s3_flush_test").await;
@@ -1788,7 +1755,6 @@ async fn test_40_flush_resolves_s3_storage() {
 // ============================================================================
 
 #[actix_web::test]
-#[ignore = "Shared tables require pre-created column families at DB init. TestServer::new() creates in-memory DB without these CFs."]
 async fn test_41_multi_storage_flush() {
     let server = TestServer::new().await;
     fixtures::create_namespace(&server, "multi_storage").await;

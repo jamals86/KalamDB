@@ -35,14 +35,8 @@ impl TypedStatementHandler<JobCommand> for KillJobHandler {
 
                 // Log DDL operation (treating KILL JOB as an admin operation)
                 use crate::sql::executor::helpers::audit;
-                let audit_entry = audit::log_ddl_operation(
-                    context,
-                    "KILL",
-                    "JOB",
-                    &job_id,
-                    None,
-                    None,
-                );
+                let audit_entry =
+                    audit::log_ddl_operation(context, "KILL", "JOB", &job_id, None, None);
                 audit::persist_audit_entry(&self.app_context, &audit_entry).await?;
 
                 Ok(ExecutionResult::JobKilled {

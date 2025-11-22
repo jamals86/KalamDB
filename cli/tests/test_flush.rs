@@ -26,13 +26,13 @@ fn test_cli_explicit_flush() {
     execute_sql_as_root_via_cli(&format!("CREATE NAMESPACE IF NOT EXISTS {}", namespace))
         .expect("CREATE NAMESPACE failed");
     execute_sql_as_root_via_cli(&format!(
-        r#"CREATE USER TABLE {} (
+        r#"CREATE TABLE {} (
             id INT PRIMARY KEY AUTO_INCREMENT,
             content VARCHAR NOT NULL
-        ) FLUSH ROWS 10"#,
+        ) WITH (TYPE='USER', FLUSH_POLICY='rows:10')"#,
         full_table_name
     ))
-    .expect("CREATE USER TABLE failed");
+    .expect("CREATE TABLE failed");
 
     // Insert some data first via CLI
     execute_sql_as_root_via_cli(&format!(

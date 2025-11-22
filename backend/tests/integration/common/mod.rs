@@ -122,6 +122,14 @@ impl TestServer {
     ///
     /// * `data_dir` - Optional path to existing database directory
     pub async fn new_with_data_dir(data_dir: Option<String>) -> Self {
+        Self::new_with_options(data_dir, false).await
+    }
+
+    /// Create a new test server with custom options.
+    pub async fn new_with_options(
+        data_dir: Option<String>,
+        enforce_password_complexity: bool,
+    ) -> Self {
         use kalamdb_commons::{AuthType, NodeId, Role, StorageMode, UserId};
         use once_cell::sync::Lazy;
         use std::sync::Mutex;
@@ -194,8 +202,9 @@ impl TestServer {
 
         // Bootstrap: ensure a default 'system' user exists for admin operations in tests (idempotent)
         {
+            use kalamdb_commons::constants::AuthConstants;
             use kalamdb_commons::types::User;
-            let sys_id = UserId::new("system");
+            let sys_id = UserId::root();
             let users_provider = app_context.system_tables().users();
 
             // Only create if doesn't exist
@@ -206,10 +215,13 @@ impl TestServer {
                 .is_none()
             {
                 let now = chrono::Utc::now().timestamp_millis();
+                // Create a valid bcrypt hash for testing
+                let password_hash = bcrypt::hash("admin", bcrypt::DEFAULT_COST).unwrap_or_default();
+                
                 let sys_user = User {
                     id: sys_id.clone(),
-                    username: "system".into(),
-                    password_hash: String::new(),
+                    username: AuthConstants::DEFAULT_SYSTEM_USERNAME.into(),
+                    password_hash,
                     role: Role::System,
                     email: Some("system@localhost".to_string()),
                     auth_type: AuthType::Internal,
@@ -261,7 +273,7 @@ impl TestServer {
         // Initialize SqlExecutor with new pattern (Phase 10: takes app_context + enforce_password_complexity)
         let sql_executor = Arc::new(SqlExecutor::new(
             app_context.clone(),
-            false, // disable password complexity enforcement in tests
+            enforce_password_complexity,
         ));
 
         // Ensure all existing tables are registered with providers/DataFusion for this process
@@ -864,6 +876,59 @@ impl TestServer {
             }),
             Err(_) => false,
         }
+    }
+
+    /// Get an AuthService instance configured with the server's settings
+    pub fn auth_service(&self) -> Arc<kalamdb_auth::AuthService> {
+        Arc::new(kalamdb_auth::AuthService::new(
+            self.app_context.config().auth.jwt_secret.clone(),
+            vec![self.app_context.config().auth.jwt_trusted_issuers.clone()],
+            true,
+            false,
+            kalamdb_commons::Role::User,
+        ))
+    }
+
+    /// Get a CoreUsersRepo instance connected to the server's user table
+    pub fn users_repo(&self) -> Arc<dyn kalamdb_auth::UserRepository> {
+        Arc::new(kalamdb_api::repositories::CoreUsersRepo::new(
+            self.app_context.system_tables().users(),
+        ))
+    }
+
+    /// Helper to create a test user
+    pub async fn create_user(
+        &self,
+        username: &str,
+        password: &str,
+        role: kalamdb_commons::Role,
+    ) -> kalamdb_commons::UserId {
+        use kalamdb_commons::{AuthType, StorageMode, UserId};
+
+        let user_id = UserId::new(username);
+        let password_hash =
+            bcrypt::hash(password, bcrypt::DEFAULT_COST).expect("Failed to hash password");
+
+        let user = kalamdb_commons::system::User {
+            id: user_id.clone(),
+            username: username.into(),
+            password_hash,
+            role,
+            email: Some(format!("{}@test.com", username)),
+            auth_type: AuthType::Password,
+            auth_data: None,
+            storage_mode: StorageMode::Table,
+            storage_id: None,
+            created_at: chrono::Utc::now().timestamp_millis(),
+            updated_at: chrono::Utc::now().timestamp_millis(),
+            last_seen: None,
+            deleted_at: None,
+        };
+
+        // Ignore error if user already exists (idempotent)
+        let _ = self.app_context.system_tables().users().create_user(user);
+
+        user_id
     }
 }
 

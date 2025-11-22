@@ -5,10 +5,9 @@
 use crate::error::SystemError;
 use crate::system_table_trait::SystemTableProviderExt;
 use kalamdb_store::{
-    entity_store::{CrossUserTableStore, EntityStore},
+    entity_store::{CrossUserTableStore, EntityStore, KSerializable},
     StorageBackend, StorageKey,
 };
-use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 
 /// Generic store for system tables with admin-only access control.
@@ -42,7 +41,7 @@ impl<K, V> SystemTableStore<K, V> {
 impl<K, V> EntityStore<K, V> for SystemTableStore<K, V>
 where
     K: StorageKey,
-    V: Serialize + for<'de> Deserialize<'de> + Send + Sync,
+    V: KSerializable,
 {
     fn backend(&self) -> &Arc<dyn StorageBackend> {
         &self.backend
@@ -76,7 +75,7 @@ impl<K: Send + Sync, V: Send + Sync> SystemTableProviderExt for SystemTableStore
 impl<K, V> CrossUserTableStore<K, V> for SystemTableStore<K, V>
 where
     K: StorageKey,
-    V: Serialize + for<'de> Deserialize<'de> + Send + Sync,
+    V: KSerializable,
 {
     fn table_access(&self) -> Option<kalamdb_commons::models::TableAccess> {
         None // System tables are admin-only

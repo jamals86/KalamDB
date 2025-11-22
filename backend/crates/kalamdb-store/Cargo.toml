@@ -10,6 +10,7 @@ kalamdb-commons = { path = "../kalamdb-commons", features = ["serde"] }
 rocksdb = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
+bincode = { workspace = true }
 chrono = { workspace = true }
 anyhow = { workspace = true }
 tempfile = { workspace = true }

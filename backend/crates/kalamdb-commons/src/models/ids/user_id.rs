@@ -5,7 +5,7 @@ use std::fmt;
 #[cfg(feature = "serde")]
 use serde::{Deserialize, Serialize};
 
-use crate::{StorageKey, constants::AuthConstants};
+use crate::{constants::AuthConstants, StorageKey};
 
 /// Type-safe wrapper for user identifiers.
 ///

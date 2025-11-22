@@ -13,7 +13,8 @@ use kalamdb_api::models::SqlResponse;
 
 fn assert_row_count(response: &SqlResponse, expected: usize, verbs: &[&str]) {
     assert_eq!(
-        response.status, kalamdb_api::models::ResponseStatus::Success,
+        response.status,
+        kalamdb_api::models::ResponseStatus::Success,
         "DML execution failed: {:?}",
         response.error
     );
@@ -52,11 +53,14 @@ async fn test_update_returns_correct_row_count() {
     fixtures::create_namespace(&server, "test_ns").await;
     server
         .execute_sql_as_user(
-            r#"CREATE USER TABLE test_ns.users (
+            r#"CREATE TABLE test_ns.users (
                 id TEXT PRIMARY KEY,
                 name TEXT,
                 email TEXT
-            ) STORAGE local"#,
+            ) WITH (
+                TYPE = 'USER',
+                STORAGE_ID = 'local'
+            )"#,
             "user1",
         )
         .await;
@@ -109,10 +113,13 @@ async fn test_update_same_values_still_counts() {
     fixtures::create_namespace(&server, "test_ns").await;
     server
         .execute_sql_as_user(
-            r#"CREATE USER TABLE test_ns.users (
+            r#"CREATE TABLE test_ns.users (
                 id TEXT PRIMARY KEY,
                 name TEXT
-            ) STORAGE local"#,
+            ) WITH (
+                TYPE = 'USER',
+                STORAGE_ID = 'local'
+            )"#,
             "user1",
         )
         .await;
@@ -147,10 +154,13 @@ async fn test_delete_returns_correct_row_count() {
     fixtures::create_namespace(&server, "test_ns").await;
     server
         .execute_sql_as_user(
-            r#"CREATE USER TABLE test_ns.tasks (
+            r#"CREATE TABLE test_ns.tasks (
                 id TEXT PRIMARY KEY,
                 title TEXT
-            ) STORAGE local"#,
+            ) WITH (
+                TYPE = 'USER',
+                STORAGE_ID = 'local'
+            )"#,
             "user1",
         )
         .await;
@@ -209,10 +219,13 @@ async fn test_delete_already_deleted_returns_zero() {
     fixtures::create_namespace(&server, "test_ns").await;
     server
         .execute_sql_as_user(
-            r#"CREATE USER TABLE test_ns.tasks (
+            r#"CREATE TABLE test_ns.tasks (
                 id TEXT PRIMARY KEY,
                 title TEXT
-            ) STORAGE local"#,
+            ) WITH (
+                TYPE = 'USER',
+                STORAGE_ID = 'local'
+            )"#,
             "user1",
         )
         .await;
@@ -263,10 +276,13 @@ async fn test_delete_multiple_rows_count() {
     fixtures::create_namespace(&server, "test_ns").await;
     server
         .execute_sql_as_user(
-            r#"CREATE USER TABLE test_ns.tasks (
+            r#"CREATE TABLE test_ns.tasks (
                 id TEXT PRIMARY KEY,
                 priority INT
-            ) STORAGE local"#,
+            ) WITH (
+                TYPE = 'USER',
+                STORAGE_ID = 'local'
+            )"#,
             "user1",
         )
         .await;

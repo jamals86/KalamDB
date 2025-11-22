@@ -18,6 +18,12 @@
 /// All keys used with SystemTableStore must implement this trait to ensure
 /// correct serialization to bytes for RocksDB/Parquet storage.
 ///
+/// # Ordering Guarantees
+///
+/// To ensure correct range scans in RocksDB, numerical types MUST be serialized
+/// in **Big-Endian** format. This preserves the natural ordering of numbers
+/// when compared as byte arrays.
+///
 /// # Examples
 ///
 /// Composite key (TableId):
@@ -42,5 +48,82 @@ pub trait StorageKey: Clone + Send + Sync + 'static {
     ///
     /// For composite keys, this MUST return the full composite representation.
     /// For simple keys, this returns the key's byte representation.
+    ///
+    /// **IMPORTANT**: Numerical values must be serialized using Big-Endian
+    /// (e.g., `to_be_bytes()`) to ensure correct lexicographical ordering in RocksDB.
     fn storage_key(&self) -> Vec<u8>;
+}
+
+// --- Standard Implementations ---
+
+impl StorageKey for String {
+    fn storage_key(&self) -> Vec<u8> {
+        self.as_bytes().to_vec()
+    }
+}
+
+impl StorageKey for Vec<u8> {
+    fn storage_key(&self) -> Vec<u8> {
+        self.clone()
+    }
+}
+
+impl StorageKey for u8 {
+    fn storage_key(&self) -> Vec<u8> {
+        vec![*self]
+    }
+}
+
+impl StorageKey for u16 {
+    fn storage_key(&self) -> Vec<u8> {
+        self.to_be_bytes().to_vec()
+    }
+}
+
+impl StorageKey for u32 {
+    fn storage_key(&self) -> Vec<u8> {
+        self.to_be_bytes().to_vec()
+    }
+}
+
+impl StorageKey for u64 {
+    fn storage_key(&self) -> Vec<u8> {
+        self.to_be_bytes().to_vec()
+    }
+}
+
+impl StorageKey for u128 {
+    fn storage_key(&self) -> Vec<u8> {
+        self.to_be_bytes().to_vec()
+    }
+}
+
+impl StorageKey for i8 {
+    fn storage_key(&self) -> Vec<u8> {
+        self.to_be_bytes().to_vec()
+    }
+}
+
+impl StorageKey for i16 {
+    fn storage_key(&self) -> Vec<u8> {
+        self.to_be_bytes().to_vec()
+    }
+}
+
+impl StorageKey for i32 {
+    fn storage_key(&self) -> Vec<u8> {
+        self.to_be_bytes().to_vec()
+    }
+}
+
+impl StorageKey for i64 {
+    fn storage_key(&self) -> Vec<u8> {
+        self.to_be_bytes().to_vec()
+    }
+}
+
+impl StorageKey for i128 {
+    fn storage_key(&self) -> Vec<u8> {
+        self.to_be_bytes().to_vec()
+    }
 }

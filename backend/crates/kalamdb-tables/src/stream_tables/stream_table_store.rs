@@ -8,7 +8,7 @@
 use kalamdb_commons::ids::{SeqId, StreamTableRowId};
 use kalamdb_commons::models::row::Row;
 use kalamdb_commons::models::{KTableRow, NamespaceId, TableName, UserId};
-use kalamdb_store::{test_utils::InMemoryBackend, StorageBackend};
+use kalamdb_store::{entity_store::KSerializable, test_utils::InMemoryBackend, StorageBackend};
 use kalamdb_system::system_table_store::SystemTableStore;
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
@@ -25,6 +25,8 @@ pub struct StreamTableRow {
     pub _seq: SeqId,
     pub fields: Row, // All event data
 }
+
+impl KSerializable for StreamTableRow {}
 
 impl From<StreamTableRow> for KTableRow {
     fn from(row: StreamTableRow) -> Self {

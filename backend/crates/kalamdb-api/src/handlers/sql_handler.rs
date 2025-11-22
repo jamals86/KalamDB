@@ -14,7 +14,6 @@ use serde_json::Value as JsonValue;
 use std::sync::Arc;
 use std::time::Instant;
 
-use crate::models::sql_response::ResponseStatus;
 use crate::models::{QueryResult, SqlRequest, SqlResponse};
 use crate::rate_limiter::RateLimiter;
 
@@ -154,7 +153,9 @@ pub async fn execute_sql_v1(
                             true,
                             resolved_ip.clone(),
                         );
-                        if let Err(e) = audit::persist_audit_entry(app_context.get_ref(), &entry).await {
+                        if let Err(e) =
+                            audit::persist_audit_entry(app_context.get_ref(), &entry).await
+                        {
                             error!("Failed to persist audit log: {}", e);
                         }
                     }
@@ -168,7 +169,9 @@ pub async fn execute_sql_v1(
                 if let Ok(h) = auth_val.to_str() {
                     if h.starts_with("Basic ") {
                         // Try to extract username to log who failed
-                        let username = if let Ok((u, _)) = kalamdb_auth::basic_auth::parse_basic_auth_header(h) {
+                        let username = if let Ok((u, _)) =
+                            kalamdb_auth::basic_auth::parse_basic_auth_header(h)
+                        {
                             u
                         } else {
                             "unknown".to_string()
@@ -180,7 +183,9 @@ pub async fn execute_sql_v1(
                             false,
                             resolved_ip.clone(),
                         );
-                        if let Err(e) = audit::persist_audit_entry(app_context.get_ref(), &entry).await {
+                        if let Err(e) =
+                            audit::persist_audit_entry(app_context.get_ref(), &entry).await
+                        {
                             error!("Failed to persist audit log: {}", e);
                         }
                     }
@@ -576,7 +581,7 @@ fn is_admin(user_id: Option<&UserId>) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::rate_limiter::RateLimiter;
+    use crate::{models::ResponseStatus, rate_limiter::RateLimiter};
     use actix_web::{test, App};
     use kalamdb_core::sql::DataFusionSessionFactory;
 

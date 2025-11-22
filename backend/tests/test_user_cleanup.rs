@@ -109,10 +109,10 @@ async fn test_cleanup_cascade_deletes_tables() {
 
     create_user(&server, "cleanup_tables").await;
 
-    let create_table_sql = r#"CREATE USER TABLE cleanup_ns.tasks (
+    let create_table_sql = r#"CREATE TABLE cleanup_ns.tasks (
         id TEXT,
         content TEXT
-    )"#;
+    ) WITH (TYPE = 'USER')"#;
     let response = server
         .execute_sql_as_user(create_table_sql, "cleanup_tables")
         .await;

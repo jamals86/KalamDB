@@ -1,14 +1,14 @@
 use super::*;
+use crate::schema_registry::CachedTableData;
+use datafusion::catalog::TableProvider;
 use kalamdb_commons::datatypes::KalamDataType;
 use kalamdb_commons::models::schemas::{ColumnDefinition, TableDefinition};
 use kalamdb_commons::models::{NamespaceId, TableId, TableName, UserId};
 use kalamdb_commons::schemas::TableType;
-use std::sync::Arc;
 use std::sync::atomic::AtomicU64;
+use std::sync::Arc;
 use std::thread;
 use std::time::Duration;
-use crate::schema_registry::CachedTableData;
-use datafusion::catalog::TableProvider;
 
 fn create_test_schema() -> Arc<TableDefinition> {
     use kalamdb_commons::schemas::{ColumnDefault, TableOptions};
@@ -60,17 +60,17 @@ fn test_insert_and_get() {
 }
 
 #[test]
-fn test_get_by_name() {
+fn test_get_by_table_id() {
     let cache = SchemaRegistry::new(1000);
     let namespace = NamespaceId::new("ns1");
     let table_name = TableName::new("table1");
     let table_id = TableId::new(namespace.clone(), table_name.clone());
     let data = create_test_data(table_id.clone());
 
-    cache.insert(table_id, data);
+    cache.insert(table_id.clone(), data);
 
     let retrieved = cache
-        .get_by_name(&namespace, &table_name)
+        .get(&table_id)
         .expect("Should find table");
     assert_eq!(retrieved.table.table_type, TableType::User);
 }
@@ -516,8 +516,7 @@ fn test_provider_cache_insert_and_get() {
     use kalamdb_system::providers::stats::StatsTableProvider;
     let cache = SchemaRegistry::new(1000);
     let table_id = TableId::new(NamespaceId::new("ns1"), TableName::new("stats"));
-    let provider =
-        Arc::new(StatsTableProvider::new(None)) as Arc<dyn TableProvider + Send + Sync>;
+    let provider = Arc::new(StatsTableProvider::new(None)) as Arc<dyn TableProvider + Send + Sync>;
 
     cache
         .insert_provider(table_id.clone(), Arc::clone(&provider))

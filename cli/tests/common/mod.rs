@@ -4,15 +4,9 @@ use rand::{distr::Alphanumeric, Rng};
 use std::io::{BufRead, BufReader};
 use std::process::Command;
 use std::process::{Child, Stdio};
-use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::mpsc as std_mpsc;
 use std::thread;
 use std::time::Duration;
-
-// Global monotonic counter to ensure uniqueness when multiple tests generate
-// names within the same millisecond (which was causing occasional collisions
-// and "Already exists" errors in parallel smoke tests).
-static UNIQUIFIER: AtomicU64 = AtomicU64::new(1);
 
 // Re-export commonly used types for credential tests
 pub use kalam_cli::FileCredentialStore;
@@ -167,22 +161,22 @@ pub fn execute_sql_as_root_via_cli_json(sql: &str) -> Result<String, Box<dyn std
 
 /// Helper to generate unique namespace name
 pub fn generate_unique_namespace(base_name: &str) -> String {
-    let ts = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .unwrap()
-        .as_millis();
-    let ctr = UNIQUIFIER.fetch_add(1, Ordering::Relaxed);
-    format!("{}_{}_{}", base_name, ts, ctr)
+    let rng = rand::rng();
+    let random_suffix: String = rng.sample_iter(Alphanumeric)
+        .take(6)
+        .map(char::from)
+        .collect();
+    format!("{}_{}", base_name, random_suffix).to_lowercase()
 }
 
 /// Helper to generate unique table name
 pub fn generate_unique_table(base_name: &str) -> String {
-    let ts = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .unwrap()
-        .as_millis();
-    let ctr = UNIQUIFIER.fetch_add(1, Ordering::Relaxed);
-    format!("{}_{}_{}", base_name, ts, ctr)
+    let rng = rand::rng();
+    let random_suffix: String = rng.sample_iter(Alphanumeric)
+        .take(6)
+        .map(char::from)
+        .collect();
+    format!("{}_{}", base_name, random_suffix).to_lowercase()
 }
 
 /// Helper to create a CLI command with default test settings
@@ -223,11 +217,14 @@ pub fn setup_test_table(test_name: &str) -> Result<String, Box<dyn std::error::E
 
     // Create test table
     let create_sql = format!(
-        r#"CREATE USER TABLE {} (
+        r#"CREATE TABLE {} (
             id INT PRIMARY KEY AUTO_INCREMENT,
             content VARCHAR NOT NULL,
             created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-        ) FLUSH ROWS 10"#,
+        ) WITH (
+            TYPE = 'USER',
+            FLUSH_POLICY = 'rows:10'
+        )"#,
         full_table_name
     );
 
@@ -333,12 +330,14 @@ pub fn verify_job_completed(
         match execute_sql_as_root_via_cli_json(&query) {
             Ok(output) => {
                 println!("Query output: {}", output); // DEBUG
-                // Parse JSON output
-                let json: serde_json::Value = serde_json::from_str(&output)
-                    .map_err(|e| format!("Failed to parse JSON output: {}. Output: {}", e, output))?;
+                                                      // Parse JSON output
+                let json: serde_json::Value = serde_json::from_str(&output).map_err(|e| {
+                    format!("Failed to parse JSON output: {}. Output: {}", e, output)
+                })?;
 
                 // Navigate to results[0].rows[0]
-                let row = json.get("results")
+                let row = json
+                    .get("results")
                     .and_then(|v| v.as_array())
                     .and_then(|arr| arr.first())
                     .and_then(|res| res.get("rows"))
@@ -347,7 +346,10 @@ pub fn verify_job_completed(
 
                 if let Some(row) = row {
                     let status = row.get("status").and_then(|v| v.as_str()).unwrap_or("");
-                    let error_message = row.get("error_message").and_then(|v| v.as_str()).unwrap_or("");
+                    let error_message = row
+                        .get("error_message")
+                        .and_then(|v| v.as_str())
+                        .unwrap_or("");
 
                     // Debug print status
                     println!("Job {} status: {}", job_id, status);
@@ -357,7 +359,9 @@ pub fn verify_job_completed(
                     }
 
                     if status.eq_ignore_ascii_case("failed") {
-                        return Err(format!("Job {} failed. Error: {}", job_id, error_message).into());
+                        return Err(
+                            format!("Job {} failed. Error: {}", job_id, error_message).into()
+                        );
                     }
                 }
             }

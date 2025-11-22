@@ -1,22 +1,22 @@
 use super::*;
 use crate::app_context::AppContext;
+use crate::live::connection_registry::LiveQueryOptions;
+use crate::live::types::ChangeNotification;
+use crate::providers::arrow_json_conversion::json_to_row;
 use crate::schema_registry::SchemaRegistry;
 use crate::sql::executor::SqlExecutor;
 use crate::test_helpers::{create_test_session, init_test_app_context};
 use kalamdb_commons::datatypes::KalamDataType;
+use kalamdb_commons::models::Row;
 use kalamdb_commons::models::TableId;
 use kalamdb_commons::schemas::{ColumnDefinition, TableDefinition, TableOptions, TableType};
 use kalamdb_commons::{NamespaceId, TableName};
+use kalamdb_commons::{NodeId, UserId};
 use kalamdb_store::RocksDbInit;
 use kalamdb_system::providers::live_queries::LiveQueriesTableProvider;
 use kalamdb_tables::{new_shared_table_store, new_stream_table_store, new_user_table_store};
-use crate::providers::arrow_json_conversion::json_to_row;
-use kalamdb_commons::models::Row;
-use tempfile::TempDir;
-use crate::live::connection_registry::LiveQueryOptions;
-use crate::live::types::ChangeNotification;
 use std::sync::Arc;
-use kalamdb_commons::{NodeId, UserId};
+use tempfile::TempDir;
 
 fn to_row(v: serde_json::Value) -> Row {
     json_to_row(&v).unwrap()
@@ -524,7 +524,7 @@ async fn test_notification_filtering() {
         .notify_table_change(&user_id, &table_id, non_matching_change)
         .await
         .unwrap();
-        assert_eq!(notified, 0); // Should NOT notify (filter didn't match)
+    assert_eq!(notified, 0); // Should NOT notify (filter didn't match)
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]

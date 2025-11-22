@@ -2,61 +2,41 @@ use crate::error::KalamDbError;
 use crate::providers::arrow_json_conversion::json_rows_to_arrow_batch;
 use datafusion::arrow::datatypes::SchemaRef;
 use datafusion::arrow::record_batch::{RecordBatch, RecordBatchOptions};
+use datafusion::scalar::ScalarValue;
+use kalamdb_commons::constants::SystemColumnNames;
 use kalamdb_commons::models::Row;
 use kalamdb_tables::{SharedTableRow, StreamTableRow, UserTableRow};
-use serde_json::{Map, Value as JsonValue};
 use std::sync::Arc;
 
-/// Helper function to inject system columns (_seq, _deleted) into JSON object
-///
-/// This consolidates the duplicated logic across UserTableProvider, SharedTableProvider,
-/// and StreamTableProvider scan_rows() methods.
-///
-/// # Arguments
-/// * `schema` - Arrow schema to check which system columns exist
-/// * `obj` - Mutable JSON object to inject system columns into
-/// * `seq_value` - _seq column value (i64)
-/// * `deleted_value` - _deleted column value (bool)
-///
-/// # Note
-/// Only injects columns that exist in the schema to avoid adding unexpected fields.
+/// Helper function to inject system columns (_seq, _deleted) into Row values
 pub fn inject_system_columns(
     schema: &SchemaRef,
-    obj: &mut serde_json::Map<String, JsonValue>,
+    row: &mut Row,
     seq_value: i64,
     deleted_value: bool,
 ) {
-    let has_seq = schema.field_with_name("_seq").is_ok();
-    let has_deleted = schema.field_with_name("_deleted").is_ok();
-
-    if has_seq {
-        obj.insert("_seq".to_string(), serde_json::json!(seq_value));
+    if schema.field_with_name(SystemColumnNames::SEQ).is_ok() {
+        row.values
+            .insert(SystemColumnNames::SEQ.to_string(), ScalarValue::Int64(Some(seq_value)));
     }
-    if has_deleted {
-        obj.insert("_deleted".to_string(), serde_json::json!(deleted_value));
-    }
-}
-
-/// Helper to convert Row to JSON Map
-pub fn row_to_json_map(row: &Row) -> Map<String, JsonValue> {
-    let val = serde_json::to_value(row).unwrap_or(JsonValue::Null);
-    if let JsonValue::Object(map) = val {
-        map
-    } else {
-        Map::new()
+    if schema.field_with_name(SystemColumnNames::DELETED).is_ok() {
+        row.values.insert(
+            SystemColumnNames::DELETED.to_string(),
+            ScalarValue::Boolean(Some(deleted_value)),
+        );
     }
 }
 
 /// Trait implemented by provider row types to expose system columns and JSON payload
 pub trait ScanRow {
-    fn to_json_map(&self) -> Map<String, JsonValue>;
+    fn row(&self) -> &Row;
     fn seq_value(&self) -> i64;
     fn deleted_flag(&self) -> bool;
 }
 
 impl ScanRow for SharedTableRow {
-    fn to_json_map(&self) -> Map<String, JsonValue> {
-        row_to_json_map(&self.fields)
+    fn row(&self) -> &Row {
+        &self.fields
     }
 
     fn seq_value(&self) -> i64 {
@@ -69,8 +49,8 @@ impl ScanRow for SharedTableRow {
 }
 
 impl ScanRow for UserTableRow {
-    fn to_json_map(&self) -> Map<String, JsonValue> {
-        row_to_json_map(&self.fields)
+    fn row(&self) -> &Row {
+        &self.fields
     }
 
     fn seq_value(&self) -> i64 {
@@ -83,8 +63,8 @@ impl ScanRow for UserTableRow {
 }
 
 impl ScanRow for StreamTableRow {
-    fn to_json_map(&self) -> Map<String, JsonValue> {
-        row_to_json_map(&self.fields)
+    fn row(&self) -> &Row {
+        &self.fields
     }
 
     fn seq_value(&self) -> i64 {
@@ -105,7 +85,7 @@ pub fn rows_to_arrow_batch<K, R, F>(
 ) -> Result<RecordBatch, KalamDbError>
 where
     R: ScanRow,
-    F: FnMut(&mut Map<String, JsonValue>, &R),
+    F: FnMut(&mut Row, &R),
 {
     let row_count = kvs.len();
 
@@ -124,19 +104,24 @@ where
         }
     }
 
-    let mut rows: Vec<JsonValue> = Vec::with_capacity(row_count);
+    let mut rows: Vec<Row> = Vec::with_capacity(row_count);
 
     for (_key, row) in kvs.into_iter() {
-        let mut obj = row.to_json_map();
+        let mut materialized = row.row().clone();
 
-        enrich_row(&mut obj, &row);
+        enrich_row(&mut materialized, &row);
 
-        inject_system_columns(schema, &mut obj, row.seq_value(), row.deleted_flag());
-        rows.push(JsonValue::Object(obj));
+        inject_system_columns(
+            schema,
+            &mut materialized,
+            row.seq_value(),
+            row.deleted_flag(),
+        );
+        rows.push(materialized);
     }
 
     // If projection is provided, we should project the schema and only convert relevant fields
-    // However, json_rows_to_arrow_batch currently takes the full schema and rows.
+    // However, the conversion helper currently takes the full schema and rows.
     // For now, we pass the full schema and let DataFusion handle projection later,
     // OR we can project the schema here.
     //
