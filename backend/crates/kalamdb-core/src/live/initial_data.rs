@@ -10,7 +10,7 @@ use crate::schema_registry::TableType;
 use crate::sql::executor::models::{ExecutionContext, ExecutionResult, ScalarValue};
 use crate::sql::executor::SqlExecutor;
 use datafusion::execution::context::SessionContext;
-use kalamdb_commons::constants::AuthConstants;
+use kalamdb_commons::constants::{AuthConstants, SystemColumnNames};
 use kalamdb_commons::ids::SeqId;
 use kalamdb_commons::models::row::Row;
 use kalamdb_commons::models::{TableId, UserId};
@@ -220,18 +220,18 @@ impl InitialDataFetcher {
 
         // Add _seq filters
         if let Some(since) = options.since_seq {
-            where_clauses.push(format!("_seq > {}", since.as_i64()));
+            where_clauses.push(format!("{} > {}", SystemColumnNames::SEQ, since.as_i64()));
         }
         if let Some(until) = options.until_seq {
-            where_clauses.push(format!("_seq <= {}", until.as_i64()));
+            where_clauses.push(format!("{} <= {}", SystemColumnNames::SEQ, until.as_i64()));
         }
 
         // Add deleted filter
         if !options.include_deleted {
             if matches!(table_type, TableType::User | TableType::Shared)
-                && self.table_has_column(table_id, "_deleted")?
+                && self.table_has_column(table_id, SystemColumnNames::DELETED)?
             {
-                where_clauses.push("_deleted = false".to_string());
+                where_clauses.push(format!("{} = false", SystemColumnNames::DELETED));
             }
         }
 
@@ -247,9 +247,9 @@ impl InitialDataFetcher {
 
         // Add ORDER BY
         if options.fetch_last {
-            sql.push_str(" ORDER BY _seq DESC");
+            sql.push_str(&format!(" ORDER BY {} DESC", SystemColumnNames::SEQ));
         } else {
-            sql.push_str(" ORDER BY _seq ASC");
+            sql.push_str(&format!(" ORDER BY {} ASC", SystemColumnNames::SEQ));
         }
 
         // Add LIMIT (fetch limit + 1 to check has_more)
@@ -277,14 +277,14 @@ impl InitialDataFetcher {
         for batch in batches {
             let schema = batch.schema();
             let seq_col_idx = schema
-                .index_of("_seq")
-                .map_err(|_| KalamDbError::Other("Result missing _seq column".to_string()))?;
+                .index_of(SystemColumnNames::SEQ)
+                .map_err(|_| KalamDbError::Other(format!("Result missing {} column", SystemColumnNames::SEQ)))?;
 
             let seq_col = batch.column(seq_col_idx);
             let seq_array = seq_col
                 .as_any()
                 .downcast_ref::<datafusion::arrow::array::Int64Array>()
-                .ok_or_else(|| KalamDbError::Other("_seq column is not Int64".to_string()))?;
+                .ok_or_else(|| KalamDbError::Other(format!("{} column is not Int64", SystemColumnNames::SEQ)))?;
 
             let num_rows = batch.num_rows();
             let num_cols = batch.num_columns();

@@ -12,7 +12,6 @@ use kalamdb_api::models::ResponseStatus;
 use std::path::Path;
 
 #[actix_web::test]
-#[ignore = "Shared tables require pre-created column families at DB init. TestServer::new() creates in-memory DB without these CFs."]
 async fn test_drop_shared_table_deletes_partitions_and_parquet() {
     let server = TestServer::new().await;
 

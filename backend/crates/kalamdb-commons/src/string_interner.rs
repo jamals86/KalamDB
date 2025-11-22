@@ -157,11 +157,11 @@ mod tests {
         let deleted = SYSTEM_COLUMNS.deleted.clone();
 
         // Verify they have correct values
-        assert_eq!(seq.as_ref(), "_seq");
-        assert_eq!(deleted.as_ref(), "_deleted");
+        assert_eq!(seq.as_ref(), SystemColumnNames::SEQ);
+        assert_eq!(deleted.as_ref(), SystemColumnNames::DELETED);
 
         // Interning the same string should return the same Arc
-        let seq2 = intern("_seq");
+        let seq2 = intern(SystemColumnNames::SEQ);
         assert!(Arc::ptr_eq(&seq, &seq2));
     }
 
@@ -169,8 +169,8 @@ mod tests {
     fn test_all_system_columns() {
         let cols = &*SYSTEM_COLUMNS;
 
-        assert_eq!(cols.seq.as_ref(), "_seq");
-        assert_eq!(cols.deleted.as_ref(), "_deleted");
+        assert_eq!(cols.seq.as_ref(), SystemColumnNames::SEQ);
+        assert_eq!(cols.deleted.as_ref(), SystemColumnNames::DELETED);
         assert_eq!(cols.user_id.as_ref(), "user_id");
         assert_eq!(cols.namespace_id.as_ref(), "namespace_id");
         assert_eq!(cols.table_id.as_ref(), "table_id");

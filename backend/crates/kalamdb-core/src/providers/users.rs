@@ -25,6 +25,7 @@ use datafusion::physical_plan::{ExecutionPlan, Statistics};
 use kalamdb_commons::ids::UserTableRowId;
 use kalamdb_commons::models::UserId;
 use kalamdb_commons::{Role, StorageKey, TableId};
+use kalamdb_commons::constants::SystemColumnNames;
 use kalamdb_store::entity_store::EntityStore;
 use kalamdb_tables::{UserTableRow, UserTableStore};
 use std::any::Any;
@@ -181,38 +182,27 @@ impl UserTableProvider {
         Ok(())
     }
 
-    /// Get list of users that have data in cold storage (Parquet files).
-    /// Scans the table directory for user subdirectories.
-    fn get_users_from_cold_storage(&self) -> Result<Vec<UserId>, KalamDbError> {
-        use std::fs;
-        use std::path::PathBuf;
-
-        let table_id = self.core.table_id();
-        let namespace = table_id.namespace_id();
-        let table = table_id.table_name();
-
-        // Build table directory path: ./data/storage/{namespace}/{table}
-        let mut table_dir =
-            PathBuf::from(&self.core.app_context.config().storage.default_storage_path);
-        table_dir.push(namespace.as_str());
-        table_dir.push(table.as_str());
-
-        let mut users = Vec::new();
-
-        // Read directory entries (each subdirectory is a user_id)
-        if let Ok(entries) = fs::read_dir(&table_dir) {
-            for entry in entries.flatten() {
-                if let Ok(metadata) = entry.metadata() {
-                    if metadata.is_dir() {
-                        if let Some(dir_name) = entry.file_name().to_str() {
-                            users.push(UserId::from(dir_name));
-                        }
-                    }
-                }
-            }
+    /// Retrieve a specific row version from Parquet storage by SeqId
+    fn get_row_from_parquet(
+        &self,
+        user_id: &UserId,
+        seq_id: kalamdb_commons::ids::SeqId,
+    ) -> Result<Option<UserTableRow>, KalamDbError> {
+        use datafusion::prelude::{col, lit};
+        let filter = col(SystemColumnNames::SEQ).eq(lit(seq_id.as_i64()));
+        let batch = self.scan_parquet_files_as_batch(user_id, Some(&filter))?;
+        let rows = parquet_batch_to_rows(&batch)?;
+        
+        if let Some(row_data) = rows.into_iter().next() {
+             Ok(Some(UserTableRow {
+                user_id: user_id.clone(),
+                _seq: row_data.seq_id,
+                _deleted: row_data.deleted,
+                fields: row_data.fields,
+            }))
+        } else {
+            Ok(None)
         }
-
-        Ok(users)
     }
 }
 
@@ -292,9 +282,16 @@ impl BaseTableProvider<UserTableRowId, UserTableRow> for UserTableProvider {
         updates: Row,
     ) -> Result<UserTableRowId, KalamDbError> {
         // Load referenced version to extract PK
-        let prior = EntityStore::get(&*self.store, key)
-            .map_err(|e| KalamDbError::Other(format!("Failed to load prior version: {}", e)))?
-            .ok_or_else(|| KalamDbError::NotFound("Row not found for update".to_string()))?;
+        // Try RocksDB first, then Parquet
+        let prior_opt = EntityStore::get(&*self.store, key)
+            .map_err(|e| KalamDbError::Other(format!("Failed to load prior version: {}", e)))?;
+            
+        let prior = if let Some(p) = prior_opt {
+            p
+        } else {
+            self.get_row_from_parquet(user_id, key.seq)?
+                .ok_or_else(|| KalamDbError::NotFound("Row not found for update".to_string()))?
+        };
 
         let pk_name = self.primary_key_field_name().to_string();
         let pk_value = prior
@@ -351,9 +348,17 @@ impl BaseTableProvider<UserTableRowId, UserTableRow> for UserTableProvider {
 
     fn delete(&self, user_id: &UserId, key: &UserTableRowId) -> Result<(), KalamDbError> {
         // Load referenced version to extract PK (for validation; we append tombstone regardless)
-        let prior = EntityStore::get(&*self.store, key)
-            .map_err(|e| KalamDbError::Other(format!("Failed to load prior version: {}", e)))?
-            .ok_or_else(|| KalamDbError::NotFound("Row not found for delete".to_string()))?;
+        // Try RocksDB first, then Parquet
+        let prior_opt = EntityStore::get(&*self.store, key)
+            .map_err(|e| KalamDbError::Other(format!("Failed to load prior version: {}", e)))?;
+            
+        let prior = if let Some(p) = prior_opt {
+            p
+        } else {
+            self.get_row_from_parquet(user_id, key.seq)?
+                .ok_or_else(|| KalamDbError::NotFound("Row not found for delete".to_string()))?
+        };
+        
         let pk_name = self.primary_key_field_name().to_string();
 
         let sys_cols = self.core.system_columns.clone();

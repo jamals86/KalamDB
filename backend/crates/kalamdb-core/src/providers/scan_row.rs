@@ -3,6 +3,7 @@ use crate::providers::arrow_json_conversion::json_rows_to_arrow_batch;
 use datafusion::arrow::datatypes::SchemaRef;
 use datafusion::arrow::record_batch::{RecordBatch, RecordBatchOptions};
 use datafusion::scalar::ScalarValue;
+use kalamdb_commons::constants::SystemColumnNames;
 use kalamdb_commons::models::Row;
 use kalamdb_tables::{SharedTableRow, StreamTableRow, UserTableRow};
 use std::sync::Arc;
@@ -14,13 +15,13 @@ pub fn inject_system_columns(
     seq_value: i64,
     deleted_value: bool,
 ) {
-    if schema.field_with_name("_seq").is_ok() {
+    if schema.field_with_name(SystemColumnNames::SEQ).is_ok() {
         row.values
-            .insert("_seq".to_string(), ScalarValue::Int64(Some(seq_value)));
+            .insert(SystemColumnNames::SEQ.to_string(), ScalarValue::Int64(Some(seq_value)));
     }
-    if schema.field_with_name("_deleted").is_ok() {
+    if schema.field_with_name(SystemColumnNames::DELETED).is_ok() {
         row.values.insert(
-            "_deleted".to_string(),
+            SystemColumnNames::DELETED.to_string(),
             ScalarValue::Boolean(Some(deleted_value)),
         );
     }

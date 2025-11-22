@@ -200,12 +200,12 @@ async fn test_insert_storage_key_format() {
         response.error
     );
 
-    // Insert into shared table
+    // Insert into shared table (must be done by system/owner for Private tables)
     let response = server
         .execute_sql_as_user(
             r#"INSERT INTO test_ns.shared_data (id, content) 
                VALUES ('rec1', 'Shared data')"#,
-            "user1",
+            "system",
         )
         .await;
 
@@ -227,7 +227,7 @@ async fn test_insert_storage_key_format() {
     }
 
     let response = server
-        .execute_sql_as_user("SELECT id, content FROM test_ns.shared_data", "user1")
+        .execute_sql_as_user("SELECT id, content FROM test_ns.shared_data", "system")
         .await;
 
     assert_eq!(response.status, ResponseStatus::Success);
@@ -333,20 +333,20 @@ async fn test_shared_table_row_structure() {
         )
         .await;
 
-    // Insert record
+    // Insert record (must be done by system/owner)
     server
         .execute_sql_as_user(
             r#"INSERT INTO test_ns.shared_config (key, value, enabled) 
                VALUES ('feature_flag', 'on', true)"#,
-            "user1",
+            "system",
         )
         .await;
 
-    // Query with all columns including system columns
+    // Query with all columns including system columns (as system user)
     let response = server
         .execute_sql_as_user(
             "SELECT key, value, enabled, _seq, _deleted FROM test_ns.shared_config",
-            "user1",
+            "system",
         )
         .await;
 

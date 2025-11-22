@@ -445,7 +445,7 @@ pub fn scalar_value_to_json(value: &ScalarValue) -> Result<JsonValue, KalamDbErr
         ScalarValue::TimestampMillisecond(Some(ts), _) => Ok(JsonValue::Number((*ts).into())),
         ScalarValue::TimestampMicrosecond(Some(ts), _) => Ok(JsonValue::Number((*ts).into())),
         ScalarValue::TimestampNanosecond(Some(ts), _) => Ok(JsonValue::Number((*ts).into())),
-        ScalarValue::Decimal128(Some(v), _, scale) => {
+        ScalarValue::Decimal128(Some(_v), _, _scale) => {
             // Convert to string to preserve precision, or float?
             // For now, let's use string representation of the decimal
             // We can construct it from the i128 value and scale

@@ -8,6 +8,7 @@ use crate::error::KalamDbError;
 use datafusion::arrow::array::*;
 use datafusion::arrow::record_batch::RecordBatch;
 use datafusion::parquet::arrow::arrow_reader::ParquetRecordBatchReaderBuilder;
+use kalamdb_commons::constants::SystemColumnNames;
 use kalamdb_commons::types::{BatchFileEntry, ManifestFile, RowGroupPruningStats};
 use kalamdb_commons::{NamespaceId, TableId, TableName, UserId};
 use std::collections::HashMap;
@@ -58,7 +59,7 @@ impl FlushManifestHelper {
     /// Returns (min_seq, max_seq) tuple
     pub fn extract_seq_range(batch: &RecordBatch) -> (i64, i64) {
         let seq_column = batch
-            .column_by_name("_seq")
+            .column_by_name(SystemColumnNames::SEQ)
             .and_then(|col| col.as_any().downcast_ref::<Int64Array>());
 
         if let Some(seq_arr) = seq_column {

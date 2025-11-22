@@ -34,7 +34,6 @@ pub struct SqlExecutor {
     app_context: Arc<crate::app_context::AppContext>,
     handler_registry: Arc<HandlerRegistry>,
     plan_cache: Arc<PlanCache>,
-    enforce_password_complexity: bool,
 }
 
 impl SqlExecutor {
@@ -52,7 +51,6 @@ impl SqlExecutor {
             app_context,
             handler_registry,
             plan_cache,
-            enforce_password_complexity,
         }
     }
 

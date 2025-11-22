@@ -26,6 +26,7 @@ use datafusion::scalar::ScalarValue;
 use kalamdb_commons::ids::SharedTableRowId;
 use kalamdb_commons::models::{Row, UserId};
 use kalamdb_commons::TableId;
+use kalamdb_commons::constants::SystemColumnNames;
 use kalamdb_store::entity_store::EntityStore;
 use kalamdb_tables::{SharedTableRow, SharedTableStore};
 use std::any::Any;
@@ -145,6 +146,26 @@ impl SharedTableProvider {
 
         Ok(())
     }
+    /// Retrieve a specific row version from Parquet storage by SeqId
+    fn get_row_from_parquet(
+        &self,
+        seq_id: kalamdb_commons::ids::SeqId,
+    ) -> Result<Option<SharedTableRow>, KalamDbError> {
+        use datafusion::prelude::{col, lit};
+        let filter = col(SystemColumnNames::SEQ).eq(lit(seq_id.as_i64()));
+        let batch = self.scan_parquet_files_as_batch(Some(&filter))?;
+        let rows = parquet_batch_to_rows(&batch)?;
+
+        if let Some(row_data) = rows.into_iter().next() {
+            Ok(Some(SharedTableRow {
+                _seq: row_data.seq_id,
+                _deleted: row_data.deleted,
+                fields: row_data.fields,
+            }))
+        } else {
+            Ok(None)
+        }
+    }
 }
 
 impl BaseTableProvider<SharedTableRowId, SharedTableRow> for SharedTableProvider {
@@ -209,9 +230,16 @@ impl BaseTableProvider<SharedTableRowId, SharedTableRow> for SharedTableProvider
         // Merge updates onto latest resolved row by PK
         let pk_name = self.primary_key_field_name().to_string();
         // Load referenced prior version to derive PK value if not present in updates
-        let prior = EntityStore::get(&*self.store, key)
-            .map_err(|e| KalamDbError::Other(format!("Failed to load prior version: {}", e)))?
-            .ok_or_else(|| KalamDbError::NotFound("Row not found for update".to_string()))?;
+        // Try RocksDB first, then Parquet
+        let prior_opt = EntityStore::get(&*self.store, key)
+            .map_err(|e| KalamDbError::Other(format!("Failed to load prior version: {}", e)))?;
+
+        let prior = if let Some(p) = prior_opt {
+            p
+        } else {
+            self.get_row_from_parquet(key.clone())?
+                .ok_or_else(|| KalamDbError::NotFound("Row not found for update".to_string()))?
+        };
 
         let pk_value = prior
             .fields
@@ -250,9 +278,16 @@ impl BaseTableProvider<SharedTableRowId, SharedTableRow> for SharedTableProvider
     fn delete(&self, _user_id: &UserId, key: &SharedTableRowId) -> Result<(), KalamDbError> {
         // IGNORE user_id parameter - no RLS for shared tables
         // Load referenced version to extract PK so tombstone groups with same logical row
-        let prior = EntityStore::get(&*self.store, key)
-            .map_err(|e| KalamDbError::Other(format!("Failed to load prior version: {}", e)))?
-            .ok_or_else(|| KalamDbError::NotFound("Row not found for delete".to_string()))?;
+        // Try RocksDB first, then Parquet
+        let prior_opt = EntityStore::get(&*self.store, key)
+            .map_err(|e| KalamDbError::Other(format!("Failed to load prior version: {}", e)))?;
+
+        let prior = if let Some(p) = prior_opt {
+            p
+        } else {
+            self.get_row_from_parquet(key.clone())?
+                .ok_or_else(|| KalamDbError::NotFound("Row not found for delete".to_string()))?
+        };
 
         let pk_name = self.primary_key_field_name().to_string();
         // Preserve existing PK value if present; may be null if malformed

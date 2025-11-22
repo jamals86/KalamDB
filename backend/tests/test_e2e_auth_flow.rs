@@ -59,7 +59,7 @@ async fn test_e2e_auth_flow() {
     // Create table
     // Shared tables require a PRIMARY KEY column of BIGINT or STRING
     let create_table_sql = format!(
-        "CREATE TABLE {}.{} (id BIGINT PRIMARY KEY, name TEXT) STORAGE local",
+        "CREATE TABLE {}.{} (id BIGINT PRIMARY KEY, name TEXT)",
         namespace, table_name
     );
     let response = server
@@ -226,7 +226,7 @@ async fn test_role_based_auth_e2e() {
     // Regular user creates user table (should succeed)
     // Use the actual user_id as the namespace for user tables
     let user_table_sql = format!(
-        "CREATE TABLE {}.test_table (id BIGINT PRIMARY KEY) STORAGE local",
+        "CREATE TABLE {}.test_table (id BIGINT PRIMARY KEY)",
         user_user.id.as_str()
     );
     let response = server
@@ -246,7 +246,7 @@ async fn test_role_based_auth_e2e() {
 
     // Service user creates user table (should succeed)
     let service_table_sql = format!(
-        "CREATE TABLE {}.test_table (id BIGINT PRIMARY KEY) STORAGE local",
+        "CREATE TABLE {}.test_table (id BIGINT PRIMARY KEY)",
         service_user.id.as_str()
     );
     let response = server

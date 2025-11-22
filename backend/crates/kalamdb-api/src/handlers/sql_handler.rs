@@ -14,7 +14,6 @@ use serde_json::Value as JsonValue;
 use std::sync::Arc;
 use std::time::Instant;
 
-use crate::models::sql_response::ResponseStatus;
 use crate::models::{QueryResult, SqlRequest, SqlResponse};
 use crate::rate_limiter::RateLimiter;
 
@@ -582,7 +581,7 @@ fn is_admin(user_id: Option<&UserId>) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::rate_limiter::RateLimiter;
+    use crate::{models::ResponseStatus, rate_limiter::RateLimiter};
     use actix_web::{test, App};
     use kalamdb_core::sql::DataFusionSessionFactory;
 

@@ -132,7 +132,7 @@ pub(crate) fn scan_parquet_files_as_batch(
         }
     }
 
-    if let Some(ref manifest) = manifest_opt {
+    if let Some(ref _manifest) = manifest_opt {
         // log::debug!(
         //     "✅ Manifest cache HIT | table={}.{} | {} | batches={}",
         //     namespace.as_str(),

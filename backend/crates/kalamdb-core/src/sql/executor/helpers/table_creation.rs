@@ -142,6 +142,24 @@ pub fn create_user_table(
 
     if table_exists {
         if stmt.if_not_exists {
+            // Ensure provider is registered even if table exists
+            // This handles cases where table exists in storage but provider is missing from cache
+            // (e.g. after restart or in test environments with shared storage)
+            if schema_registry.get_provider(&table_id).is_none() {
+                log::info!(
+                    "Table {}.{} exists but provider missing - registering now",
+                    stmt.namespace_id.as_str(),
+                    stmt.table_name.as_str()
+                );
+
+                if let Some(def) = schema_registry.get_table_definition(&table_id)? {
+                    let arrow_schema = def.to_arrow_schema().map_err(|e| {
+                        KalamDbError::SchemaError(format!("Failed to build Arrow schema: {}", e))
+                    })?;
+                    register_user_table_provider(&app_context, &table_id, arrow_schema)?;
+                }
+            }
+
             log::info!(
                 "ℹ️  USER TABLE {}.{} already exists (IF NOT EXISTS - skipping)",
                 stmt.namespace_id.as_str(),
@@ -344,6 +362,22 @@ pub fn create_shared_table(
 
     if table_exists {
         if stmt.if_not_exists {
+            // Ensure provider is registered even if table exists
+            if schema_registry.get_provider(&table_id).is_none() {
+                log::info!(
+                    "Table {}.{} exists but provider missing - registering now",
+                    stmt.namespace_id.as_str(),
+                    stmt.table_name.as_str()
+                );
+
+                if let Some(def) = schema_registry.get_table_definition(&table_id)? {
+                    let arrow_schema = def.to_arrow_schema().map_err(|e| {
+                        KalamDbError::SchemaError(format!("Failed to build Arrow schema: {}", e))
+                    })?;
+                    register_shared_table_provider(&app_context, &table_id, arrow_schema)?;
+                }
+            }
+
             log::info!(
                 "ℹ️  SHARED TABLE {}.{} already exists (IF NOT EXISTS - skipping)",
                 stmt.namespace_id.as_str(),
@@ -541,6 +575,30 @@ pub fn create_stream_table(
 
     if table_exists {
         if stmt.if_not_exists {
+            // Ensure provider is registered even if table exists
+            if schema_registry.get_provider(&table_id).is_none() {
+                log::info!(
+                    "Table {}.{} exists but provider missing - registering now",
+                    stmt.namespace_id.as_str(),
+                    stmt.table_name.as_str()
+                );
+
+                if let Some(def) = schema_registry.get_table_definition(&table_id)? {
+                    let arrow_schema = def.to_arrow_schema().map_err(|e| {
+                        KalamDbError::SchemaError(format!("Failed to build Arrow schema: {}", e))
+                    })?;
+                    
+                    // Extract TTL from table options if available, otherwise use default
+                    let ttl_seconds = if let kalamdb_commons::schemas::TableOptions::Stream(opts) = &def.table_options {
+                        Some(opts.ttl_seconds)
+                    } else {
+                        stmt.ttl_seconds
+                    };
+                    
+                    register_stream_table_provider(&app_context, &table_id, arrow_schema, ttl_seconds)?;
+                }
+            }
+
             log::info!(
                 "ℹ️  STREAM TABLE {}.{} already exists (IF NOT EXISTS - skipping)",
                 stmt.namespace_id.as_str(),
