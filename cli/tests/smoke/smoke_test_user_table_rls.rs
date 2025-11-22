@@ -24,13 +24,7 @@ fn smoke_user_table_rls_isolation() -> Result<(), Box<dyn std::error::Error>> {
     let table = generate_unique_table("smoke_rls_tbl");
     let full_table = format!("{}.{}", namespace, table);
 
-    let user_name = format!(
-        "smoke_user_{}",
-        std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .unwrap()
-            .as_millis()
-    );
+    let user_name = generate_unique_namespace("smoke_user");
     let user_pass = "smoke_pass_123";
 
     // 0) As root: create namespace

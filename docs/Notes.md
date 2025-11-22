@@ -251,6 +251,7 @@ instead of: 1 failed: Invalid operation: No handler registered for statement typ
 172) instead of returning: (NamespaceId, TableName) return TableId directly
 174) Make sure we flush the table before we alter it to avoid any data loss from a previous schema, also make sure we lock the table for writing/reading while it is being altered
 175) When altering a table to add/remove columns we need to update the manifest file as well
+176) Add a test to chekc if we can kill a live_query and verify the user's socket got closed and user disconnected
 
 
 Here’s the updated 5-line spec with embedding storage inside Parquet and managed HNSW indexing (with delete handling):

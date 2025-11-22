@@ -12,7 +12,7 @@ fn test_update_all_types_user_table() {
     }
 
     let table_name = generate_unique_table("all_types_user");
-    let namespace = "test_update_types";
+    let namespace = generate_unique_namespace("test_update_types");
     let full_table_name = format!("{}.{}", namespace, table_name);
 
     // Setup namespace
@@ -67,6 +67,27 @@ fn test_update_all_types_user_table() {
     let output = execute_sql_as_root_via_cli_json(&query_sql).unwrap();
     assert!(output.contains("initial text"), "Initial data not found: {}", output);
     assert!(output.contains("123"), "Initial int not found");
+
+    // --- NEW SCENARIO: Flush initial data to cold storage before update ---
+    println!("Flushing initial data to cold storage...");
+    let flush_sql = format!("FLUSH TABLE {}", full_table_name);
+    let output = execute_sql_as_root_via_cli(&flush_sql).unwrap();
+    
+    // Wait for flush to complete
+    if let Ok(job_id) = parse_job_id_from_flush_output(&output) {
+        println!("Waiting for initial flush job {}...", job_id);
+        if let Err(e) = verify_job_completed(&job_id, Duration::from_secs(10)) {
+            eprintln!("Initial flush job failed or timed out: {}", e);
+        }
+    } else {
+        thread::sleep(Duration::from_secs(2));
+    }
+
+    // Verify initial data is still readable after flush
+    let output = execute_sql_as_root_via_cli_json(&query_sql).unwrap();
+    assert!(output.contains("initial text"), "Initial data not found after flush: {}", output);
+    assert!(output.contains("123"), "Initial int not found after flush");
+    // ---------------------------------------------------------------------
 
     // Update all columns
     let update_sql = format!(
@@ -135,7 +156,7 @@ fn test_update_all_types_shared_table() {
     }
 
     let table_name = generate_unique_table("all_types_shared");
-    let namespace = "test_update_types";
+    let namespace = generate_unique_namespace("test_update_types");
     let full_table_name = format!("{}.{}", namespace, table_name);
 
     // Setup namespace
@@ -188,6 +209,27 @@ fn test_update_all_types_shared_table() {
     let output = execute_sql_as_root_via_cli_json(&query_sql).unwrap();
     assert!(output.contains("initial text"), "Initial data not found: {}", output);
     assert!(output.contains("123"), "Initial int not found");
+
+    // --- NEW SCENARIO: Flush initial data to cold storage before update ---
+    println!("Flushing initial data to cold storage...");
+    let flush_sql = format!("FLUSH TABLE {}", full_table_name);
+    let output = execute_sql_as_root_via_cli(&flush_sql).unwrap();
+    
+    // Wait for flush to complete
+    if let Ok(job_id) = parse_job_id_from_flush_output(&output) {
+        println!("Waiting for initial flush job {}...", job_id);
+        if let Err(e) = verify_job_completed(&job_id, Duration::from_secs(10)) {
+            eprintln!("Initial flush job failed or timed out: {}", e);
+        }
+    } else {
+        thread::sleep(Duration::from_secs(2));
+    }
+
+    // Verify initial data is still readable after flush
+    let output = execute_sql_as_root_via_cli_json(&query_sql).unwrap();
+    assert!(output.contains("initial text"), "Initial data not found after flush: {}", output);
+    assert!(output.contains("123"), "Initial int not found after flush");
+    // ---------------------------------------------------------------------
 
     // Update all columns
     let update_sql = format!(

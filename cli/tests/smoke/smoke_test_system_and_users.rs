@@ -26,13 +26,7 @@ fn smoke_system_tables_and_user_lifecycle() {
     }
 
     // 2) CREATE USER and verify present in system.users
-    let uname = format!(
-        "smoke_user_{}",
-        std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .unwrap()
-            .as_millis()
-    );
+    let uname = generate_unique_namespace("smoke_user");
     let pass = "S1mpleP@ss!";
     let create_user = format!("CREATE USER {} WITH PASSWORD '{}' ROLE 'user'", uname, pass);
     execute_sql_as_root_via_cli(&create_user).expect("create user should succeed");

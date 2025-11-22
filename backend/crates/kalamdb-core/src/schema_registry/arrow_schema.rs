@@ -5,6 +5,7 @@
 
 use super::error::RegistryError;
 use arrow::datatypes::{Schema, SchemaRef};
+use kalamdb_commons::models::datatypes::{FromArrowType, KalamDataType, ToArrowType};
 use serde_json::Value;
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -37,31 +38,37 @@ impl ArrowSchemaWithOptions {
 
     /// Serialize schema and options to JSON
     ///
-    /// Uses a simplified JSON representation of the schema.
+    /// Uses KalamDataType for robust type serialization.
     pub fn to_json(&self) -> Result<Value, RegistryError> {
         // Serialize schema fields manually
-        let fields: Vec<serde_json::Map<String, Value>> = self
+        let fields: Result<Vec<serde_json::Map<String, Value>>, RegistryError> = self
             .schema
             .fields()
             .iter()
             .map(|field| {
                 let mut field_map = serde_json::Map::new();
                 field_map.insert("name".to_string(), serde_json::json!(field.name()));
+                
+                // Convert to KalamDataType for stable serialization
+                let kalam_type = KalamDataType::from_arrow_type(field.data_type())
+                    .map_err(|e| RegistryError::SchemaError(format!("Unsupported type for schema serialization: {}", e)))?;
+                
                 field_map.insert(
                     "data_type".to_string(),
-                    serde_json::json!(format!("{:?}", field.data_type())),
+                    serde_json::to_value(&kalam_type).map_err(|e| RegistryError::SchemaError(e.to_string()))?,
                 );
+                
                 field_map.insert(
                     "nullable".to_string(),
                     serde_json::json!(field.is_nullable()),
                 );
-                field_map
+                Ok(field_map)
             })
             .collect();
 
         // Combine schema and options
         let mut combined = serde_json::Map::new();
-        combined.insert("fields".to_string(), serde_json::json!(fields));
+        combined.insert("fields".to_string(), serde_json::json!(fields?));
         combined.insert(
             "options".to_string(),
             serde_json::to_value(&self.options).map_err(|e| {
@@ -74,7 +81,7 @@ impl ArrowSchemaWithOptions {
 
     /// Deserialize schema and options from JSON
     ///
-    /// Reconstructs the Arrow schema from the simplified JSON format.
+    /// Reconstructs the Arrow schema using KalamDataType.
     pub fn from_json(json: &Value) -> Result<Self, RegistryError> {
         let obj = json.as_object().ok_or_else(|| {
             RegistryError::SchemaError("Expected object for schema JSON".to_string())
@@ -103,20 +110,38 @@ impl ArrowSchemaWithOptions {
                         RegistryError::SchemaError("Field missing 'name'".to_string())
                     })?;
 
-                let data_type_str = field_obj
+                // Deserialize KalamDataType
+                let kalam_type_val = field_obj
                     .get("data_type")
-                    .and_then(|v| v.as_str())
-                    .ok_or_else(|| {
-                        RegistryError::SchemaError("Field missing 'data_type'".to_string())
-                    })?;
+                    .ok_or_else(|| RegistryError::SchemaError("Field missing 'data_type'".to_string()))?;
+                
+                let kalam_type: KalamDataType = serde_json::from_value(kalam_type_val.clone())
+                    .or_else(|_| {
+                        // Fallback for legacy string formats
+                        if let Some(s) = kalam_type_val.as_str() {
+                            match s {
+                                "Int64" => Ok(KalamDataType::BigInt),
+                                "Int32" => Ok(KalamDataType::Int),
+                                "Utf8" | "LargeUtf8" => Ok(KalamDataType::Text),
+                                "Boolean" => Ok(KalamDataType::Boolean),
+                                "Float64" => Ok(KalamDataType::Double),
+                                "Float32" => Ok(KalamDataType::Float),
+                                // Add other legacy mappings if necessary
+                                _ => Err(RegistryError::SchemaError(format!("Unknown legacy data type: {}", s)))
+                            }
+                        } else {
+                            Err(RegistryError::SchemaError(format!("Invalid data type format: {:?}", kalam_type_val)))
+                        }
+                    })
+                    .map_err(|e| RegistryError::SchemaError(format!("Invalid data type: {}", e)))?;
+
+                let data_type = kalam_type.to_arrow_type()
+                    .map_err(|e| RegistryError::SchemaError(format!("Failed to convert to Arrow type: {}", e)))?;
 
                 let nullable = field_obj
                     .get("nullable")
                     .and_then(|v| v.as_bool())
                     .unwrap_or(true);
-
-                // Parse data type from string (simplified - extend as needed)
-                let data_type = parse_data_type(data_type_str)?;
 
                 Ok(arrow::datatypes::Field::new(name, data_type, nullable))
             })
@@ -150,115 +175,6 @@ impl ArrowSchemaWithOptions {
             RegistryError::SchemaError(format!("Failed to parse JSON string: {}", e))
         })?;
         Self::from_json(&json)
-    }
-}
-
-/// Parse data type from debug string representation
-///
-/// This is a simplified parser - extend as needed for more types.
-fn parse_data_type(type_str: &str) -> Result<arrow::datatypes::DataType, RegistryError> {
-    use arrow::datatypes::{DataType, TimeUnit};
-
-    match type_str {
-        "Int64" => Ok(DataType::Int64),
-        "Int32" => Ok(DataType::Int32),
-        "Int16" => Ok(DataType::Int16),
-        "Int8" => Ok(DataType::Int8),
-        "UInt64" => Ok(DataType::UInt64),
-        "UInt32" => Ok(DataType::UInt32),
-        "UInt16" => Ok(DataType::UInt16),
-        "UInt8" => Ok(DataType::UInt8),
-        "Float64" => Ok(DataType::Float64),
-        "Float32" => Ok(DataType::Float32),
-        "Utf8" => Ok(DataType::Utf8),
-        "LargeUtf8" => Ok(DataType::LargeUtf8),
-        "Boolean" => Ok(DataType::Boolean),
-        "Date32" => Ok(DataType::Date32),
-        "Date64" => Ok(DataType::Date64),
-        "Null" => Ok(DataType::Null),
-        s if s.starts_with("Timestamp(") => {
-            // Format: Timestamp(Microsecond, Some("UTC")) or Timestamp(Microsecond, None)
-            let content = s
-                .strip_prefix("Timestamp(")
-                .and_then(|s| s.strip_suffix(")"))
-                .ok_or_else(|| RegistryError::SchemaError(format!("Invalid Timestamp format: {}", s)))?;
-            
-            let parts: Vec<&str> = content.splitn(2, ", ").collect();
-            
-            let unit = match parts[0] {
-                "Microsecond" => TimeUnit::Microsecond,
-                "Millisecond" => TimeUnit::Millisecond,
-                "Second" => TimeUnit::Second,
-                "Nanosecond" => TimeUnit::Nanosecond,
-                _ => return Err(RegistryError::SchemaError(format!("Unknown TimeUnit: {}", parts[0]))),
-            };
-
-            let timezone = if parts.len() > 1 {
-                if parts[1] == "None" {
-                    None
-                } else if parts[1].starts_with("Some(\"") && parts[1].ends_with("\")") {
-                    let tz = parts[1]
-                        .strip_prefix("Some(\"")
-                        .and_then(|s| s.strip_suffix("\")"))
-                        .unwrap_or("");
-                    Some(tz.to_string().into())
-                } else {
-                    // Fallback or error
-                    None
-                }
-            } else {
-                None
-            };
-
-            Ok(DataType::Timestamp(unit, timezone))
-        }
-        s if s.starts_with("Time64(Microsecond)") => {
-            Ok(DataType::Time64(TimeUnit::Microsecond))
-        }
-        s if s.starts_with("Time64(Nanosecond)") => {
-            Ok(DataType::Time64(TimeUnit::Nanosecond))
-        }
-        s if s.starts_with("Time32(Second)") => {
-            Ok(DataType::Time32(TimeUnit::Second))
-        }
-        s if s.starts_with("Time32(Millisecond)") => {
-            Ok(DataType::Time32(TimeUnit::Millisecond))
-        }
-        s if s.starts_with("FixedSizeBinary(") => {
-            // Extract size: FixedSizeBinary(16)
-            let size_str = s
-                .trim_start_matches("FixedSizeBinary(")
-                .trim_end_matches(')');
-            let size = size_str.parse::<i32>().map_err(|_| {
-                RegistryError::SchemaError(format!("Invalid FixedSizeBinary size: {}", size_str))
-            })?;
-            Ok(DataType::FixedSizeBinary(size))
-        }
-        s if s.starts_with("Decimal128(") => {
-            // Extract precision, scale: Decimal128(10, 2)
-            let parts: Vec<&str> = s
-                .trim_start_matches("Decimal128(")
-                .trim_end_matches(')')
-                .split(',')
-                .collect();
-            if parts.len() != 2 {
-                return Err(RegistryError::SchemaError(format!(
-                    "Invalid Decimal128 format: {}",
-                    s
-                )));
-            }
-            let precision = parts[0].trim().parse::<u8>().map_err(|_| {
-                RegistryError::SchemaError(format!("Invalid precision: {}", parts[0]))
-            })?;
-            let scale = parts[1].trim().parse::<i8>().map_err(|_| {
-                RegistryError::SchemaError(format!("Invalid scale: {}", parts[1]))
-            })?;
-            Ok(DataType::Decimal128(precision, scale))
-        }
-        _ => Err(RegistryError::SchemaError(format!(
-            "Unsupported data type: {}",
-            type_str
-        ))),
     }
 }
 

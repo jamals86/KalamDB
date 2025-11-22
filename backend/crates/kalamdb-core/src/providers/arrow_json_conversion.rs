@@ -39,16 +39,9 @@ pub fn json_rows_to_arrow_batch(schema: &SchemaRef, rows: Vec<Row>) -> Result<Re
             .map_err(|e| format!("Failed to create empty batch: {}", e));
     }
 
-    // Build arrays for each column
-    let mut arrays: Vec<ArrayRef> = Vec::new();
-
-    for field in schema.fields() {
-        let field_name = field.name().clone();
-        let field_name_str = field_name.as_str();
-        let typed_null = ScalarValue::try_from(field.data_type()).unwrap_or(ScalarValue::Null);
-
-        // Auto-populate NOT NULL timestamp columns when value missing (matches legacy behavior)
-        let default_value = match (field.data_type(), field.is_nullable()) {
+    // Pre-calculate default values for each column to avoid repeated logic in loop
+    let defaults: Vec<Option<ScalarValue>> = schema.fields().iter().map(|field| {
+        match (field.data_type(), field.is_nullable()) {
             (DataType::Timestamp(TimeUnit::Microsecond, tz_opt), false) => {
                 let micros = Utc::now().timestamp_micros();
                 Some(ScalarValue::TimestampMicrosecond(
@@ -57,30 +50,49 @@ pub fn json_rows_to_arrow_batch(schema: &SchemaRef, rows: Vec<Row>) -> Result<Re
                 ))
             }
             _ => None,
-        };
-
-        let mut column_values: Vec<ScalarValue> = Vec::with_capacity(rows.len());
-        for row in &rows {
-            let raw_value = row
-                .values
-                .get(field_name_str)
-                .cloned()
-                .or_else(|| default_value.clone())
-                .unwrap_or_else(|| typed_null.clone());
-            let coerced = coerce_scalar_to_field(raw_value, field)
-                .map_err(|e| format!("Failed to coerce column '{}': {}", field_name, e))?;
-            column_values.push(coerced);
         }
+    }).collect();
 
-        let array = ScalarValue::iter_to_array(column_values.into_iter())
+    let typed_nulls: Vec<ScalarValue> = schema.fields().iter().map(|field| {
+        ScalarValue::try_from(field.data_type()).unwrap_or(ScalarValue::Null)
+    }).collect();
+
+    // Transpose rows to columns (Row-oriented -> Column-oriented)
+    // We use move semantics (row.values.remove) to avoid cloning strings/blobs
+    let mut columns: Vec<Vec<ScalarValue>> = (0..schema.fields().len())
+        .map(|_| Vec::with_capacity(rows.len()))
+        .collect();
+
+    for mut row in rows {
+        for (i, field) in schema.fields().iter().enumerate() {
+            let field_name = field.name().as_str();
+            
+            // Take value from map (move) instead of cloning
+            let raw_value = row.values.remove(field_name)
+                .or_else(|| defaults[i].clone())
+                .unwrap_or_else(|| typed_nulls[i].clone());
+            
+            // We still need to coerce, but now we own the value
+            let coerced = coerce_scalar_to_field(raw_value, field)
+                .map_err(|e| format!("Failed to coerce column '{}': {}", field.name(), e))?;
+            
+            columns[i].push(coerced);
+        }
+    }
+
+    // Build arrays from columns
+    let mut arrays: Vec<ArrayRef> = Vec::with_capacity(schema.fields().len());
+    for (i, col_values) in columns.into_iter().enumerate() {
+        let field_name = schema.field(i).name();
+        let array = ScalarValue::iter_to_array(col_values.into_iter())
             .map_err(|e| format!("Failed to build column '{}': {}", field_name, e))?;
-
         arrays.push(array);
     }
 
     RecordBatch::try_new(schema.clone(), arrays)
         .map_err(|e| format!("Failed to build record batch: {}", e))
 }
+
 
 fn create_empty_array(data_type: &DataType) -> ArrayRef {
     new_empty_array(data_type)
