@@ -146,7 +146,7 @@ impl TablesTableProvider {
             use kalamdb_commons::schemas::TableOptions;
             if let TableOptions::Shared(opts) = &table_def.table_options {
                 if let Some(access) = &opts.access_level {
-                    access_levels.append_value(format!("{:?}", access));
+                    access_levels.append_value(access.as_str());
                 } else {
                     access_levels.append_null();
                 }

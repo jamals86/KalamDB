@@ -310,6 +310,57 @@ pub fn arrow_value_to_scalar(
                 tz.clone(),
             ))
         }
+        DataType::Date32 => {
+            let arr = array.as_any().downcast_ref::<Date32Array>().unwrap();
+            Ok(ScalarValue::Date32(Some(arr.value(row_idx))))
+        }
+        DataType::Date64 => {
+            let arr = array.as_any().downcast_ref::<Date64Array>().unwrap();
+            Ok(ScalarValue::Date64(Some(arr.value(row_idx))))
+        }
+        DataType::Time32(TimeUnit::Second) => {
+            let arr = array.as_any().downcast_ref::<Time32SecondArray>().unwrap();
+            Ok(ScalarValue::Time32Second(Some(arr.value(row_idx))))
+        }
+        DataType::Time32(TimeUnit::Millisecond) => {
+            let arr = array
+                .as_any()
+                .downcast_ref::<Time32MillisecondArray>()
+                .unwrap();
+            Ok(ScalarValue::Time32Millisecond(Some(arr.value(row_idx))))
+        }
+        DataType::Time64(TimeUnit::Microsecond) => {
+            let arr = array
+                .as_any()
+                .downcast_ref::<Time64MicrosecondArray>()
+                .unwrap();
+            Ok(ScalarValue::Time64Microsecond(Some(arr.value(row_idx))))
+        }
+        DataType::Time64(TimeUnit::Nanosecond) => {
+            let arr = array
+                .as_any()
+                .downcast_ref::<Time64NanosecondArray>()
+                .unwrap();
+            Ok(ScalarValue::Time64Nanosecond(Some(arr.value(row_idx))))
+        }
+        DataType::FixedSizeBinary(size) => {
+            let arr = array
+                .as_any()
+                .downcast_ref::<FixedSizeBinaryArray>()
+                .unwrap();
+            Ok(ScalarValue::FixedSizeBinary(
+                *size,
+                Some(arr.value(row_idx).to_vec()),
+            ))
+        }
+        DataType::Decimal128(precision, scale) => {
+            let arr = array.as_any().downcast_ref::<Decimal128Array>().unwrap();
+            Ok(ScalarValue::Decimal128(
+                Some(arr.value(row_idx)),
+                *precision,
+                *scale,
+            ))
+        }
         _ => {
             // Fallback: convert to string representation
             Ok(ScalarValue::Utf8(Some(format!(
@@ -376,6 +427,34 @@ pub fn scalar_value_to_json(value: &ScalarValue) -> Result<JsonValue, KalamDbErr
             .ok_or_else(|| KalamDbError::InvalidOperation("Invalid float value".into())),
         ScalarValue::Utf8(Some(s)) | ScalarValue::LargeUtf8(Some(s)) => {
             Ok(JsonValue::String(s.clone()))
+        }
+        ScalarValue::Date32(Some(d)) => Ok(JsonValue::Number((*d).into())),
+        ScalarValue::Date64(Some(d)) => Ok(JsonValue::Number((*d).into())),
+        ScalarValue::TimestampMillisecond(Some(ts), _) => Ok(JsonValue::Number((*ts).into())),
+        ScalarValue::TimestampMicrosecond(Some(ts), _) => Ok(JsonValue::Number((*ts).into())),
+        ScalarValue::TimestampNanosecond(Some(ts), _) => Ok(JsonValue::Number((*ts).into())),
+        ScalarValue::Decimal128(Some(v), _, scale) => {
+            // Convert to string to preserve precision, or float?
+            // For now, let's use string representation of the decimal
+            // We can construct it from the i128 value and scale
+            // But simpler might be to just cast to f64 for JSON if precision allows,
+            // or string.
+            // Let's use string to be safe.
+            // Actually, let's just use the string representation provided by ScalarValue display
+            Ok(JsonValue::String(value.to_string()))
+        }
+        ScalarValue::FixedSizeBinary(_, Some(bytes)) => {
+            // If it looks like a UUID (16 bytes), try to format as UUID string
+            if bytes.len() == 16 {
+                if let Ok(uuid) = uuid::Uuid::from_slice(bytes) {
+                    return Ok(JsonValue::String(uuid.to_string()));
+                }
+            }
+            // Otherwise, maybe base64? Or just array of bytes?
+            // Let's use array of numbers for generic binary
+            Ok(JsonValue::Array(
+                bytes.iter().map(|&b| JsonValue::Number(b.into())).collect(),
+            ))
         }
         _ => Err(KalamDbError::InvalidOperation(format!(
             "Unsupported ScalarValue conversion to JSON: {:?}",

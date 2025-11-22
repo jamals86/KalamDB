@@ -4,8 +4,8 @@
 //! Uses constants from kalamdb_commons for table prefixes.
 
 use crate::jobs::executors::{
-    BackupExecutor, CleanupExecutor, CompactExecutor, FlushExecutor, JobRegistry, RestoreExecutor,
-    RetentionExecutor, StreamEvictionExecutor, UserCleanupExecutor,
+    BackupExecutor, CleanupExecutor, CompactExecutor, FlushExecutor, JobCleanupExecutor,
+    JobRegistry, RestoreExecutor, RetentionExecutor, StreamEvictionExecutor, UserCleanupExecutor,
 };
 use crate::live_query::LiveQueryManager;
 use crate::schema_registry::SchemaRegistry;
@@ -228,6 +228,7 @@ impl AppContext {
                 let job_registry = Arc::new(JobRegistry::new());
                 job_registry.register(Arc::new(FlushExecutor::new()));
                 job_registry.register(Arc::new(CleanupExecutor::new()));
+                job_registry.register(Arc::new(JobCleanupExecutor::new()));
                 job_registry.register(Arc::new(RetentionExecutor::new()));
                 job_registry.register(Arc::new(StreamEvictionExecutor::new()));
                 job_registry.register(Arc::new(UserCleanupExecutor::new()));
@@ -533,6 +534,7 @@ impl AppContext {
         let job_registry = Arc::new(JobRegistry::new());
         job_registry.register(Arc::new(FlushExecutor::new()));
         job_registry.register(Arc::new(CleanupExecutor::new()));
+        job_registry.register(Arc::new(JobCleanupExecutor::new()));
         job_registry.register(Arc::new(RetentionExecutor::new()));
         job_registry.register(Arc::new(StreamEvictionExecutor::new()));
         job_registry.register(Arc::new(UserCleanupExecutor::new()));

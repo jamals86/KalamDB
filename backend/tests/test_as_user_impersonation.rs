@@ -363,16 +363,22 @@ async fn test_as_user_on_shared_table_rejected() {
         .execute_sql(&format!("CREATE NAMESPACE {}", ns))
         .await;
     let create_table = format!(
-        "CREATE TABLE {}.global_config (key VARCHAR PRIMARY KEY, value VARCHAR) WITH (TYPE = 'SHARED')",
+        "CREATE TABLE {}.global_config (config_key VARCHAR PRIMARY KEY, value VARCHAR) WITH (TYPE = 'SHARED')",
         ns
     );
-    server
+    let create_resp = server
         .execute_sql_as_user(&create_table, admin_user.as_str())
         .await;
+    assert_eq!(
+        create_resp.status,
+        ResponseStatus::Success,
+        "Failed to create SHARED table: {:?}",
+        create_resp.error
+    );
 
     // INSERT AS USER on SHARED table (should fail)
     let insert_sql = format!(
-        "INSERT INTO {}.global_config (key, value) VALUES ('setting1', 'value1') AS USER '{}'",
+        "INSERT INTO {}.global_config (config_key, value) VALUES ('setting1', 'value1') AS USER '{}'",
         ns,
         user_eve.as_str()
     );

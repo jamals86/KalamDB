@@ -47,22 +47,22 @@ KalamDB provides a native `EMBEDDING(dimension)` data type for storing vector em
 
 ```sql
 -- Semantic document search (MiniLM embeddings)
-CREATE USER TABLE app.documents (
+CREATE TABLE app.documents (
   doc_id BIGINT PRIMARY KEY DEFAULT SNOWFLAKE_ID(),
   title TEXT NOT NULL,
   content TEXT NOT NULL,
   embedding EMBEDDING(384),  -- MiniLM sentence embeddings
   created_at TIMESTAMP DEFAULT NOW()
-);
+) WITH (TYPE = 'USER');
 
 -- OpenAI embeddings (text-embedding-3-small)
-CREATE SHARED TABLE app.knowledge_base (
+CREATE TABLE app.knowledge_base (
   article_id BIGINT PRIMARY KEY DEFAULT SNOWFLAKE_ID(),
   category TEXT,
   text TEXT NOT NULL,
   embedding EMBEDDING(1536),  -- OpenAI text-embedding-3-small
   updated_at TIMESTAMP DEFAULT NOW()
-);
+) WITH (TYPE = 'SHARED');
 ```
 
 ### 2. Insert Embeddings from Application
@@ -133,7 +133,7 @@ for i, result in enumerate(results[:5]):
 **Schema**:
 
 ```sql
-CREATE SHARED TABLE kb.articles (
+CREATE TABLE kb.articles (
   article_id BIGINT PRIMARY KEY DEFAULT SNOWFLAKE_ID(),
   title TEXT NOT NULL,
   category TEXT,
@@ -142,7 +142,7 @@ CREATE SHARED TABLE kb.articles (
   author TEXT,
   published_at TIMESTAMP DEFAULT NOW(),
   views INT DEFAULT 0
-);
+) WITH (TYPE = 'SHARED');
 
 -- Index for category filtering
 CREATE INDEX idx_category ON kb.articles(category);
@@ -222,7 +222,7 @@ for i, result in enumerate(results, 1):
 **Schema**:
 
 ```sql
-CREATE USER TABLE chat.messages (
+CREATE TABLE chat.messages (
   message_id BIGINT PRIMARY KEY DEFAULT SNOWFLAKE_ID(),
   conversation_id TEXT NOT NULL,
   user_id UUID NOT NULL,
@@ -230,7 +230,7 @@ CREATE USER TABLE chat.messages (
   content TEXT NOT NULL,
   embedding EMBEDDING(1536),  -- OpenAI text-embedding-3-small
   timestamp TIMESTAMP DEFAULT NOW()
-) FLUSH ROW_THRESHOLD 1000;
+) WITH (TYPE = 'USER', FLUSH_POLICY = 'rows:1000');
 
 CREATE INDEX idx_conversation ON chat.messages(conversation_id);
 ```
@@ -334,7 +334,7 @@ await handleUserMessage('conv-123', 'user-uuid', 'What were we discussing about 
 **Schema**:
 
 ```sql
-CREATE SHARED TABLE ecommerce.products (
+CREATE TABLE ecommerce.products (
   product_id BIGINT PRIMARY KEY DEFAULT SNOWFLAKE_ID(),
   name TEXT NOT NULL,
   description TEXT NOT NULL,
@@ -343,7 +343,7 @@ CREATE SHARED TABLE ecommerce.products (
   embedding EMBEDDING(384),  -- Product description embeddings
   inventory INT DEFAULT 0,
   created_at TIMESTAMP DEFAULT NOW()
-);
+) WITH (TYPE = 'SHARED');
 
 CREATE INDEX idx_category ON ecommerce.products(category);
 ```
@@ -421,14 +421,14 @@ for i, rec in enumerate(recommendations, 1):
 **Schema**:
 
 ```sql
-CREATE SHARED TABLE media.images (
+CREATE TABLE media.images (
   image_id BIGINT PRIMARY KEY DEFAULT SNOWFLAKE_ID(),
   file_path TEXT NOT NULL,
   description TEXT,
   embedding EMBEDDING(512),  -- CLIP ViT-B/32 embeddings
   uploaded_by UUID,
   uploaded_at TIMESTAMP DEFAULT NOW()
-);
+) WITH (TYPE = 'SHARED');
 ```
 
 **Python Implementation (CLIP)**:
@@ -520,11 +520,11 @@ client = kalamdb.connect("http://localhost:8080", username="user", password="pas
 
 # 2. Create table
 client.execute("""
-    CREATE USER TABLE IF NOT EXISTS app.docs (
+    CREATE TABLE IF NOT EXISTS app.docs (
         doc_id BIGINT PRIMARY KEY DEFAULT SNOWFLAKE_ID(),
         text TEXT NOT NULL,
         embedding EMBEDDING(384)
-    )
+    ) WITH (TYPE = 'USER')
 """)
 
 # 3. Insert documents
@@ -576,11 +576,11 @@ const kalam = new KalamClient({ url: 'http://localhost:8080', username: 'user', 
 
 // Create table
 await kalam.execute(`
-  CREATE USER TABLE IF NOT EXISTS app.knowledge (
+  CREATE TABLE IF NOT EXISTS app.knowledge (
     id BIGINT PRIMARY KEY DEFAULT SNOWFLAKE_ID(),
     text TEXT NOT NULL,
     embedding EMBEDDING(1536)
-  )
+  ) WITH (TYPE = 'USER')
 `);
 
 // Insert with embedding
@@ -651,11 +651,11 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     
     // 2. Create table
     client.execute("
-        CREATE USER TABLE IF NOT EXISTS app.docs (
+        CREATE TABLE IF NOT EXISTS app.docs (
             id BIGINT PRIMARY KEY DEFAULT SNOWFLAKE_ID(),
             text TEXT NOT NULL,
             embedding EMBEDDING(768)
-        )
+        ) WITH (TYPE = 'USER')
     ").await?;
     
     // 3. Insert documents
@@ -788,18 +788,18 @@ rows = client.query("SELECT * FROM app.docs WHERE category = 'tutorial'")
 
 ```sql
 -- Main table (frequent queries)
-CREATE USER TABLE app.docs (
+CREATE TABLE app.docs (
   doc_id BIGINT PRIMARY KEY,
   text TEXT NOT NULL,
   category TEXT
-);
+) WITH (TYPE = 'USER');
 
 -- Embedding table (semantic search only)
-CREATE USER TABLE app.doc_embeddings (
+CREATE TABLE app.doc_embeddings (
   doc_id BIGINT PRIMARY KEY,
   embedding EMBEDDING(384),
   FOREIGN KEY (doc_id) REFERENCES app.docs(doc_id)
-);
+) WITH (TYPE = 'USER');
 
 -- Query with embeddings only when needed
 SELECT d.doc_id, d.text, e.embedding 
@@ -815,10 +815,10 @@ WHERE d.category = 'tutorial';
 **Configuration**: Set compression in table options (default: SNAPPY).
 
 ```sql
-CREATE USER TABLE app.docs (
+CREATE TABLE app.docs (
   ...
   embedding EMBEDDING(384)
-) COMPRESSION ZSTD;  -- Best compression ratio
+) WITH (TYPE = 'USER', COMPRESSION = 'ZSTD');  -- Best compression ratio
 ```
 
 ### 4. Monitor Embedding Quality
@@ -858,7 +858,7 @@ print(f"Model dimension: {len(embedding)}")  # Should match table EMBEDDING(dime
 
 # Fix: Recreate table with correct dimension
 client.execute("DROP TABLE app.docs")
-client.execute(f"CREATE USER TABLE app.docs (..., embedding EMBEDDING({len(embedding)}))")
+client.execute(f"CREATE TABLE app.docs (..., embedding EMBEDDING({len(embedding)})) WITH (TYPE = 'USER')")
 ```
 
 ### Issue: Poor search quality (low similarity scores)

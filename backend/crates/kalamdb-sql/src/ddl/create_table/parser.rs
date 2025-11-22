@@ -289,82 +289,7 @@ impl CreateTableStatement {
                                 col_is_nullable = true;
                             }
                             ColumnOption::Default(expr) => {
-                                let default_spec = match expr {
-                                    // Handle function calls
-                                    sqlparser::ast::Expr::Function(func) => {
-                                        let name = func.name.to_string().to_uppercase();
-                                        match name.as_str() {
-                                            "NOW" | "CURRENT_TIMESTAMP" | "SNOWFLAKE_ID"
-                                            | "UUID_V7" | "ULID" | "CURRENT_USER" => {
-                                                ColumnDefault::function(&name, vec![])
-                                            }
-                                            _ => {
-                                                // Fallback to string literal for unknown functions
-                                                ColumnDefault::literal(serde_json::Value::String(
-                                                    func.to_string(),
-                                                ))
-                                            }
-                                        }
-                                    }
-                                    // Handle literals
-                                    sqlparser::ast::Expr::Value(val) => match &val.value {
-                                        sqlparser::ast::Value::Number(n, _) => {
-                                            if let Ok(i) = n.parse::<i64>() {
-                                                ColumnDefault::literal(serde_json::Value::Number(
-                                                    i.into(),
-                                                ))
-                                            } else if let Ok(f) = n.parse::<f64>() {
-                                                ColumnDefault::literal(serde_json::json!(f))
-                                            } else {
-                                                ColumnDefault::literal(serde_json::Value::String(
-                                                    n.clone(),
-                                                ))
-                                            }
-                                        }
-                                        sqlparser::ast::Value::SingleQuotedString(s)
-                                        | sqlparser::ast::Value::DoubleQuotedString(s) => {
-                                            ColumnDefault::literal(serde_json::Value::String(
-                                                s.clone(),
-                                            ))
-                                        }
-                                        sqlparser::ast::Value::Boolean(b) => {
-                                            ColumnDefault::literal(serde_json::Value::Bool(*b))
-                                        }
-                                        sqlparser::ast::Value::Null => {
-                                            ColumnDefault::literal(serde_json::Value::Null)
-                                        }
-                                        _ => ColumnDefault::literal(serde_json::Value::String(
-                                            val.to_string(),
-                                        )),
-                                    },
-                                    // Handle identifiers (e.g. CURRENT_TIMESTAMP without parens)
-                                    sqlparser::ast::Expr::Identifier(ident) => {
-                                        let s = ident.value.to_uppercase();
-                                        if s == "CURRENT_TIMESTAMP" {
-                                            ColumnDefault::function("NOW", vec![])
-                                        } else if s == "NULL" {
-                                            ColumnDefault::literal(serde_json::Value::Null)
-                                        } else {
-                                            ColumnDefault::literal(serde_json::Value::String(
-                                                ident.value,
-                                            ))
-                                        }
-                                    }
-                                    _ => {
-                                        let default_val = expr.to_string();
-                                        if default_val.to_uppercase() == "NULL" {
-                                            ColumnDefault::literal(serde_json::Value::Null)
-                                        } else if default_val.to_uppercase() == "CURRENT_TIMESTAMP"
-                                            || default_val.to_uppercase() == "NOW()"
-                                        {
-                                            ColumnDefault::function("NOW", vec![])
-                                        } else {
-                                            // Strip quotes if present
-                                            let val = default_val.trim_matches('\'').to_string();
-                                            ColumnDefault::literal(serde_json::Value::String(val))
-                                        }
-                                    }
-                                };
+                                let default_spec = expr_to_column_default(&expr);
                                 column_defaults.insert(col_name.clone(), default_spec);
                             }
                             ColumnOption::DialectSpecific(tokens) => {
@@ -444,7 +369,13 @@ impl CreateTableStatement {
 }
 
 fn normalize_create_table_sql(sql: &str) -> (String, Option<TableType>) {
-    if let Some(caps) = LEGACY_CREATE_PREFIX_RE.captures(sql) {
+    // Replace CURRENT_USER() with CURRENT_USER to satisfy sqlparser GenericDialect
+    // which doesn't support function calls for this keyword in DEFAULT clause
+    let re_current_user = Regex::new(r"(?i)CURRENT_USER\s*\(\s*\)").unwrap();
+    let sql_cow = re_current_user.replace_all(sql, "CURRENT_USER");
+    let sql_ref = sql_cow.as_ref();
+
+    if let Some(caps) = LEGACY_CREATE_PREFIX_RE.captures(sql_ref) {
         let requested_type = caps[1].to_ascii_uppercase();
         let table_type = match requested_type.as_str() {
             "USER" => TableType::User,
@@ -453,11 +384,72 @@ fn normalize_create_table_sql(sql: &str) -> (String, Option<TableType>) {
             _ => TableType::User,
         };
         let normalized = LEGACY_CREATE_PREFIX_RE
-            .replace(sql, "CREATE TABLE ")
+            .replace(sql_ref, "CREATE TABLE ")
             .into_owned();
         (normalized, Some(table_type))
     } else {
-        (sql.to_string(), None)
+        (sql_ref.to_string(), None)
+    }
+}
+
+fn expr_to_column_default(expr: &sqlparser::ast::Expr) -> ColumnDefault {
+    match expr {
+        // Handle function calls
+        sqlparser::ast::Expr::Function(func) => {
+            let name = func.name.to_string().to_uppercase();
+            match name.as_str() {
+                "NOW" | "CURRENT_TIMESTAMP" | "SNOWFLAKE_ID" | "UUID_V7" | "ULID"
+                | "CURRENT_USER" => ColumnDefault::function(&name, vec![]),
+                _ => {
+                    // Fallback to string literal for unknown functions
+                    ColumnDefault::literal(serde_json::Value::String(func.to_string()))
+                }
+            }
+        }
+        // Handle literals
+        sqlparser::ast::Expr::Value(val) => match &val.value {
+            sqlparser::ast::Value::Number(n, _) => {
+                if let Ok(i) = n.parse::<i64>() {
+                    ColumnDefault::literal(serde_json::Value::Number(i.into()))
+                } else if let Ok(f) = n.parse::<f64>() {
+                    ColumnDefault::literal(serde_json::json!(f))
+                } else {
+                    ColumnDefault::literal(serde_json::Value::String(n.clone()))
+                }
+            }
+            sqlparser::ast::Value::SingleQuotedString(s)
+            | sqlparser::ast::Value::DoubleQuotedString(s) => {
+                ColumnDefault::literal(serde_json::Value::String(s.clone()))
+            }
+            sqlparser::ast::Value::Boolean(b) => {
+                ColumnDefault::literal(serde_json::Value::Bool(*b))
+            }
+            sqlparser::ast::Value::Null => ColumnDefault::literal(serde_json::Value::Null),
+            _ => ColumnDefault::literal(serde_json::Value::String(val.to_string())),
+        },
+        // Handle identifiers (e.g. CURRENT_TIMESTAMP without parens)
+        sqlparser::ast::Expr::Identifier(ident) => {
+            let s = ident.value.to_uppercase();
+            match s.as_str() {
+                "CURRENT_TIMESTAMP" => ColumnDefault::function("NOW", vec![]),
+                "CURRENT_USER" => ColumnDefault::function("CURRENT_USER", vec![]),
+                "NULL" => ColumnDefault::literal(serde_json::Value::Null),
+                _ => ColumnDefault::literal(serde_json::Value::String(ident.value.clone())),
+            }
+        }
+        _ => {
+            let default_val = expr.to_string();
+            let upper_val = default_val.to_uppercase();
+            if upper_val == "NULL" {
+                ColumnDefault::literal(serde_json::Value::Null)
+            } else if upper_val == "CURRENT_TIMESTAMP" || upper_val == "NOW()" {
+                ColumnDefault::function("NOW", vec![])
+            } else {
+                // Strip quotes if present
+                let val = default_val.trim_matches('\'').to_string();
+                ColumnDefault::literal(serde_json::Value::String(val))
+            }
+        }
     }
 }
 
@@ -487,10 +479,25 @@ pub(crate) fn convert_sql_type_to_arrow(
             };
             Ok((DataType::Timestamp(unit, None), true))
         }
+        SqlDataType::Datetime(_) => {
+            Ok((DataType::Timestamp(TimeUnit::Microsecond, Some("UTC".into())), true))
+        }
         SqlDataType::Date => Ok((DataType::Date32, true)),
+        SqlDataType::Time(_, _) => Ok((DataType::Time64(TimeUnit::Microsecond), true)),
         SqlDataType::Binary(_) | SqlDataType::Blob(_) | SqlDataType::Bytea => {
             Ok((DataType::Binary, true))
         }
+        SqlDataType::Uuid => Ok((DataType::FixedSizeBinary(16), true)),
+        SqlDataType::JSON => Ok((DataType::Utf8, true)),
+        SqlDataType::Decimal(info) => match info {
+            sqlparser::ast::ExactNumberInfo::PrecisionAndScale(p, s) => {
+                Ok((DataType::Decimal128(*p as u8, *s as i8), true))
+            }
+            sqlparser::ast::ExactNumberInfo::Precision(p) => {
+                Ok((DataType::Decimal128(*p as u8, 0), true))
+            }
+            sqlparser::ast::ExactNumberInfo::None => Ok((DataType::Decimal128(38, 10), true)),
+        },
         _ => Err(format!("Unsupported SQL data type: {:?}", sql_type)),
     }
 }
@@ -540,5 +547,33 @@ CREATE TABLE sales.activity (
 
         let err = CreateTableStatement::parse(sql, DEFAULT_NS).unwrap_err();
         assert!(err.contains("STREAM tables must specify"));
+    }
+
+    #[test]
+    fn test_current_user_default() {
+        let sql = r#"
+CREATE TABLE concurrent.user_data (
+    id INTEGER,
+    message TEXT,
+    timestamp BIGINT,
+    current_user_id TEXT DEFAULT CURRENT_USER()
+) WITH (TYPE='USER', FLUSH_POLICY='rows:100')
+"#;
+        let stmt = CreateTableStatement::parse(sql, DEFAULT_NS).unwrap();
+        assert!(stmt.column_defaults.contains_key("current_user_id"));
+    }
+
+    #[test]
+    fn test_current_user_no_parens() {
+        let sql = r#"
+CREATE TABLE concurrent.user_data_no_parens (
+    id INTEGER,
+    message TEXT,
+    timestamp BIGINT,
+    current_user_id TEXT DEFAULT CURRENT_USER
+) WITH (TYPE='USER')
+"#;
+        let stmt = CreateTableStatement::parse(sql, DEFAULT_NS).unwrap();
+        assert!(stmt.column_defaults.contains_key("current_user_id"));
     }
 }

@@ -128,6 +128,14 @@ impl AuditLogsTableProvider {
         let entries = self.store.scan_all(Some(limit), None, None)?;
         self.create_batch(entries)
     }
+
+    /// Scan all audit log entries and return as Vec<AuditLogEntry>
+    /// Useful for testing and internal usage where RecordBatch is not needed
+    pub fn scan_all(&self) -> Result<Vec<AuditLogEntry>, SystemError> {
+        use kalamdb_store::entity_store::EntityStore;
+        let entries = self.store.scan_all(None, None, None)?;
+        Ok(entries.into_iter().map(|(_, entry)| entry).collect())
+    }
 }
 
 impl SystemTableProviderExt for AuditLogsTableProvider {

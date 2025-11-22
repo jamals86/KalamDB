@@ -60,17 +60,17 @@ fn test_insert_and_get() {
 }
 
 #[test]
-fn test_get_by_name() {
+fn test_get_by_table_id() {
     let cache = SchemaRegistry::new(1000);
     let namespace = NamespaceId::new("ns1");
     let table_name = TableName::new("table1");
     let table_id = TableId::new(namespace.clone(), table_name.clone());
     let data = create_test_data(table_id.clone());
 
-    cache.insert(table_id, data);
+    cache.insert(table_id.clone(), data);
 
     let retrieved = cache
-        .get_by_name(&namespace, &table_name)
+        .get(&table_id)
         .expect("Should find table");
     assert_eq!(retrieved.table.table_type, TableType::User);
 }

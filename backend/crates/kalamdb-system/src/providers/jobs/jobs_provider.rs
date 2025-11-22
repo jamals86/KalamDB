@@ -315,22 +315,66 @@ impl JobsTableProvider {
     }
 
     /// Delete jobs older than retention period (in days)
+    ///
+    /// Optimized to use the status index to avoid full table scan.
     pub fn cleanup_old_jobs(&self, retention_days: i64) -> Result<usize, SystemError> {
         let now = chrono::Utc::now().timestamp_millis();
         let retention_ms = retention_days * 24 * 60 * 60 * 1000;
+        let cutoff_time = now - retention_ms;
 
-        let jobs = self.list_jobs()?;
         let mut deleted = 0;
+        let partition = Partition::new(StoragePartition::SystemJobsStatusIdx.name());
 
-        for job in jobs {
-            if job.status == JobStatus::Running {
-                continue;
-            }
+        // Only clean up terminal statuses
+        let target_statuses = [
+            JobStatus::Completed,
+            JobStatus::Failed,
+            JobStatus::Cancelled,
+        ];
 
-            let reference_time = job.finished_at.or(job.started_at).unwrap_or(job.created_at);
-            if now - reference_time > retention_ms {
-                self.delete_job(&job.job_id)?;
-                deleted += 1;
+        for status in target_statuses {
+            let status_byte = status_to_u8(status);
+            let prefix = vec![status_byte];
+
+            // Scan index for this status
+            // Keys are [status_byte][created_at_be][job_id_bytes]
+            // Sorted by created_at ASC
+            let iter = self.store.backend().scan(&partition, Some(&prefix), None, None)?;
+
+            for (key_bytes, job_id_bytes) in iter {
+                // Extract created_at (bytes 1..9)
+                if key_bytes.len() < 9 {
+                    continue;
+                }
+                
+                let mut created_at_bytes = [0u8; 8];
+                created_at_bytes.copy_from_slice(&key_bytes[1..9]);
+                let created_at = i64::from_be_bytes(created_at_bytes);
+
+                // Optimization: Since index is sorted by created_at, if we encounter
+                // a job created AFTER the cutoff, we can stop scanning this status.
+                // Note: We use a safety margin because we really want to check finished_at,
+                // and a job created before cutoff might have finished after cutoff.
+                // But if created_at is WAY after cutoff (e.g. > retention period), we can stop.
+                // For safety, we just check all candidates <= cutoff_time based on created_at.
+                if created_at > cutoff_time {
+                    break;
+                }
+
+                let job_id_str = String::from_utf8(job_id_bytes).map_err(|e| {
+                    SystemError::Other(format!("Invalid JobId in index: {}", e))
+                })?;
+                let job_id = JobId::new(job_id_str);
+
+                // Load job to check actual finished_at
+                if let Some(job) = self.store.get(&job_id)? {
+                    let reference_time = job.finished_at.or(job.started_at).unwrap_or(job.created_at);
+                    
+                    if reference_time < cutoff_time {
+                        self.delete_job(&job.job_id)?;
+                        deleted += 1;
+                    }
+                }
             }
         }
 

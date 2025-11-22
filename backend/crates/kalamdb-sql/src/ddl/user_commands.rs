@@ -93,8 +93,9 @@ impl CreateUserStatement {
                 Some(extract_quoted_keyword_value(&normalized, "PASSWORD")?)
             }
             AuthType::OAuth => {
-                // OAuth users don't have passwords in SQL (credentials managed externally)
-                None
+                // CREATE USER 'u' WITH OAUTH '{"provider":...}'
+                // Extract optional JSON payload
+                extract_quoted_keyword_value(&normalized, "OAUTH").ok()
             }
             AuthType::Internal => None,
         };

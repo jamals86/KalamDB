@@ -4,7 +4,7 @@ This guide explains how to route user-table data into the storage location selec
 
 1. **Storage definitions** (`CREATE STORAGE`) registered in `system.storages`.
 2. **Per-user preferences** stored on each row in `system.users` (`storage_mode`, `storage_id`).
-3. **Table-level opt-in** via `USE_USER_STORAGE` on the `CREATE USER TABLE` statement.
+3. **Table-level opt-in** via `USE_USER_STORAGE` on the `CREATE TABLE` statement.
 
 > **Status (012-full-dml-support branch)**  
 > The metadata plumbing is complete (`USE_USER_STORAGE` flag is persisted and exposed through `information_schema`), but the flush path still uses the table-level storage until the per-user storage resolver lands. Use this feature to prepare schemas and APIs, but expect all writes to continue flowing to the table storage for now.
@@ -57,13 +57,16 @@ Only `dba`/`system` roles should run these updates. A future `ALTER USER` syntax
 Use the `USE_USER_STORAGE` flag when defining the table. The `STORAGE <storage_id>` clause is still required and acts as the fallback whenever a user lacks a preferred storage.
 
 ```sql
-CREATE USER TABLE app.user_events (
-    event_id BIGINT NOT NULL DEFAULT SNOWFLAKE_ID(),
+CREATE TABLE app.user_events (
+    event_id BIGINT PRIMARY KEY DEFAULT SNOWFLAKE_ID(),
     payload JSON,
     created_at TIMESTAMP DEFAULT NOW()
-) STORAGE s3_us
-  USE_USER_STORAGE
-  FLUSH ROW_THRESHOLD 5000;
+) WITH (
+  TYPE = 'USER',
+  STORAGE_ID = 's3_us',
+  USE_USER_STORAGE = true,
+  FLUSH_POLICY = 'rows:5000'
+);
 ```
 
 What happens:

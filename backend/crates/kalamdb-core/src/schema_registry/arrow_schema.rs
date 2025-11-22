@@ -162,19 +162,98 @@ fn parse_data_type(type_str: &str) -> Result<arrow::datatypes::DataType, Registr
     match type_str {
         "Int64" => Ok(DataType::Int64),
         "Int32" => Ok(DataType::Int32),
+        "Int16" => Ok(DataType::Int16),
+        "Int8" => Ok(DataType::Int8),
+        "UInt64" => Ok(DataType::UInt64),
+        "UInt32" => Ok(DataType::UInt32),
+        "UInt16" => Ok(DataType::UInt16),
+        "UInt8" => Ok(DataType::UInt8),
         "Float64" => Ok(DataType::Float64),
         "Float32" => Ok(DataType::Float32),
         "Utf8" => Ok(DataType::Utf8),
+        "LargeUtf8" => Ok(DataType::LargeUtf8),
         "Boolean" => Ok(DataType::Boolean),
-        s if s.starts_with("Timestamp(Microsecond") => {
-            Ok(DataType::Timestamp(TimeUnit::Microsecond, None))
+        "Date32" => Ok(DataType::Date32),
+        "Date64" => Ok(DataType::Date64),
+        "Null" => Ok(DataType::Null),
+        s if s.starts_with("Timestamp(") => {
+            // Format: Timestamp(Microsecond, Some("UTC")) or Timestamp(Microsecond, None)
+            let content = s
+                .strip_prefix("Timestamp(")
+                .and_then(|s| s.strip_suffix(")"))
+                .ok_or_else(|| RegistryError::SchemaError(format!("Invalid Timestamp format: {}", s)))?;
+            
+            let parts: Vec<&str> = content.splitn(2, ", ").collect();
+            
+            let unit = match parts[0] {
+                "Microsecond" => TimeUnit::Microsecond,
+                "Millisecond" => TimeUnit::Millisecond,
+                "Second" => TimeUnit::Second,
+                "Nanosecond" => TimeUnit::Nanosecond,
+                _ => return Err(RegistryError::SchemaError(format!("Unknown TimeUnit: {}", parts[0]))),
+            };
+
+            let timezone = if parts.len() > 1 {
+                if parts[1] == "None" {
+                    None
+                } else if parts[1].starts_with("Some(\"") && parts[1].ends_with("\")") {
+                    let tz = parts[1]
+                        .strip_prefix("Some(\"")
+                        .and_then(|s| s.strip_suffix("\")"))
+                        .unwrap_or("");
+                    Some(tz.to_string().into())
+                } else {
+                    // Fallback or error
+                    None
+                }
+            } else {
+                None
+            };
+
+            Ok(DataType::Timestamp(unit, timezone))
         }
-        s if s.starts_with("Timestamp(Millisecond") => {
-            Ok(DataType::Timestamp(TimeUnit::Millisecond, None))
+        s if s.starts_with("Time64(Microsecond)") => {
+            Ok(DataType::Time64(TimeUnit::Microsecond))
         }
-        s if s.starts_with("Timestamp(Second") => Ok(DataType::Timestamp(TimeUnit::Second, None)),
-        s if s.starts_with("Timestamp(Nanosecond") => {
-            Ok(DataType::Timestamp(TimeUnit::Nanosecond, None))
+        s if s.starts_with("Time64(Nanosecond)") => {
+            Ok(DataType::Time64(TimeUnit::Nanosecond))
+        }
+        s if s.starts_with("Time32(Second)") => {
+            Ok(DataType::Time32(TimeUnit::Second))
+        }
+        s if s.starts_with("Time32(Millisecond)") => {
+            Ok(DataType::Time32(TimeUnit::Millisecond))
+        }
+        s if s.starts_with("FixedSizeBinary(") => {
+            // Extract size: FixedSizeBinary(16)
+            let size_str = s
+                .trim_start_matches("FixedSizeBinary(")
+                .trim_end_matches(')');
+            let size = size_str.parse::<i32>().map_err(|_| {
+                RegistryError::SchemaError(format!("Invalid FixedSizeBinary size: {}", size_str))
+            })?;
+            Ok(DataType::FixedSizeBinary(size))
+        }
+        s if s.starts_with("Decimal128(") => {
+            // Extract precision, scale: Decimal128(10, 2)
+            let parts: Vec<&str> = s
+                .trim_start_matches("Decimal128(")
+                .trim_end_matches(')')
+                .split(',')
+                .collect();
+            if parts.len() != 2 {
+                return Err(RegistryError::SchemaError(format!(
+                    "Invalid Decimal128 format: {}",
+                    s
+                )));
+            }
+            let precision = parts[0].trim().parse::<u8>().map_err(|_| {
+                RegistryError::SchemaError(format!("Invalid precision: {}", parts[0]))
+            })?;
+            let scale = parts[1].trim().parse::<i8>().map_err(|_| {
+                RegistryError::SchemaError(format!("Invalid scale: {}", parts[1]))
+            })?;
+            Ok(DataType::Decimal128(precision, scale))
         }
         _ => Err(RegistryError::SchemaError(format!(
             "Unsupported data type: {}",

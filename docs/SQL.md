@@ -50,7 +50,7 @@ KalamDB is a **SQL-first database** built for real-time chat and AI message hist
 ```sql
 -- Create namespace and tables
 CREATE NAMESPACE app;
-CREATE USER TABLE app.messages (id BIGINT DEFAULT SNOWFLAKE_ID(), content TEXT) FLUSH ROW_THRESHOLD 1000;
+CREATE TABLE app.messages (id BIGINT PRIMARY KEY DEFAULT SNOWFLAKE_ID(), content TEXT) WITH (TYPE='USER', FLUSH_POLICY='rows:1000');
 
 -- Insert and query data
 INSERT INTO app.messages (content) VALUES ('Hello World');
@@ -384,11 +384,12 @@ The legacy syntax `CREATE USER TABLE ... FLUSH ...` is normalized to the unified
 Isolated storage per user.
 
 ```sql
-CREATE USER TABLE app.messages (
+CREATE TABLE app.messages (
   id BIGINT PRIMARY KEY DEFAULT SNOWFLAKE_ID(),
   content TEXT,
   created_at TIMESTAMP DEFAULT NOW()
 ) WITH (
+  TYPE = 'USER',
   STORAGE_ID = 'local',
   FLUSH_POLICY = 'rows:1000,interval:60'
 );
@@ -398,11 +399,12 @@ CREATE USER TABLE app.messages (
 Global storage accessible to all users.
 
 ```sql
-CREATE SHARED TABLE app.config (
+CREATE TABLE app.config (
   key TEXT PRIMARY KEY,
   value TEXT,
   updated_at TIMESTAMP DEFAULT NOW()
 ) WITH (
+  TYPE = 'SHARED',
   ACCESS_LEVEL = 'PUBLIC',
   FLUSH_POLICY = 'rows:100'
 );
@@ -412,11 +414,12 @@ CREATE SHARED TABLE app.config (
 Ephemeral, memory-only tables with TTL.
 
 ```sql
-CREATE STREAM TABLE app.events (
+CREATE TABLE app.events (
   event_id TEXT PRIMARY KEY,
   payload TEXT,
   timestamp TIMESTAMP
 ) WITH (
+  TYPE = 'STREAM',
   TTL_SECONDS = 10
 );
 ```
@@ -1274,11 +1277,11 @@ KalamDB supports all DataFusion data types:
 
 **Usage**:
 ```sql
-CREATE USER TABLE app.users (
+CREATE TABLE app.users (
   user_id UUID PRIMARY KEY DEFAULT UUID_V7(),
   email TEXT NOT NULL,
   created_at TIMESTAMP DEFAULT NOW()
-);
+) WITH (TYPE = 'USER');
 
 -- Insert with explicit UUID
 INSERT INTO app.users (user_id, email) VALUES 
@@ -1300,12 +1303,12 @@ SELECT user_id FROM app.users WHERE user_id = UUID_V7();
 
 **Usage**:
 ```sql
-CREATE SHARED TABLE app.products (
+CREATE TABLE app.products (
   product_id BIGINT PRIMARY KEY,
   price DECIMAL(10, 2),  -- Up to $99,999,999.99
   tax_rate DECIMAL(5, 4), -- Up to 9.9999 (e.g., 0.0825 = 8.25%)
   quantity INT
-);
+) WITH (TYPE = 'SHARED');
 
 INSERT INTO app.products (product_id, price, tax_rate, quantity) VALUES
   (1, 1234.56, 0.0825, 100);
@@ -1330,13 +1333,13 @@ FROM app.products;
 
 **Usage**:
 ```sql
-CREATE USER TABLE app.tasks (
+CREATE TABLE app.tasks (
   task_id BIGINT PRIMARY KEY,
   priority SMALLINT,  -- -32768 to 32767
   status_code SMALLINT,  -- e.g., 200, 404, 500
   retry_count SMALLINT,
   description TEXT
-);
+) WITH (TYPE = 'USER');
 
 INSERT INTO app.tasks (task_id, priority, status_code, retry_count, description) VALUES
   (1, 5, 200, 0, 'High priority task');
@@ -1358,12 +1361,12 @@ SELECT * FROM app.tasks WHERE status_code = 200 AND priority > 3;
 **Usage**:
 ```sql
 -- Create table with embeddings
-CREATE USER TABLE app.documents (
+CREATE TABLE app.documents (
   doc_id BIGINT PRIMARY KEY DEFAULT SNOWFLAKE_ID(),
   content TEXT NOT NULL,
   embedding EMBEDDING(384),  -- MiniLM sentence embeddings
   created_at TIMESTAMP DEFAULT NOW()
-);
+) WITH (TYPE = 'USER');
 
 -- Insert document with embedding (from application)
 INSERT INTO app.documents (content, embedding) VALUES
@@ -1441,7 +1444,7 @@ let results = rows.iter()
 **Errors**:
 ```sql
 -- ❌ Invalid dimension (too large)
-CREATE USER TABLE app.docs (embedding EMBEDDING(10000));
+CREATE TABLE app.docs (embedding EMBEDDING(10000)) WITH (TYPE = 'USER');
 -- Error: EMBEDDING dimension must be between 1 and 8192
 
 -- ❌ Array length mismatch
@@ -1478,12 +1481,12 @@ INSERT INTO app.docs (embedding) VALUES (ARRAY[0.1, 0.2]);  -- Expected 384 elem
 **Example with Timezone Handling**:
 
 ```sql
-CREATE USER TABLE app.events (
+CREATE TABLE app.events (
   id BIGINT DEFAULT SNOWFLAKE_ID(),
   event_time DATETIME NOT NULL,        -- Stored in UTC
   user_timezone TEXT,                   -- Store original timezone separately
   description TEXT
-);
+) WITH (TYPE = 'USER');
 
 -- Insert with explicit timezone (Berlin)
 INSERT INTO app.events (event_time, user_timezone, description) VALUES
@@ -1600,12 +1603,12 @@ node_id = 0  # Range: 0-1023
 
 ```sql
 -- CREATE: Table with auto-generated primary key
-CREATE USER TABLE app.orders (
+CREATE TABLE app.orders (
   order_id BIGINT PRIMARY KEY DEFAULT SNOWFLAKE_ID(),
   customer_id TEXT NOT NULL,
   total_amount DOUBLE,
   created_at TIMESTAMP DEFAULT NOW()
-) FLUSH ROW_THRESHOLD 1000;
+) WITH (TYPE = 'USER', FLUSH_POLICY = 'rows:1000');
 
 -- INSERT: Omit order_id, it will be auto-generated
 INSERT INTO app.orders (customer_id, total_amount)
@@ -1667,13 +1670,13 @@ Generates RFC 9562 compliant UUIDv7 identifiers with time-ordering.
 
 ```sql
 -- CREATE: Table with UUID primary key
-CREATE USER TABLE app.sessions (
+CREATE TABLE app.sessions (
   session_id TEXT PRIMARY KEY DEFAULT UUID_V7(),
   user_id TEXT NOT NULL,
   ip_address TEXT,
   created_at TIMESTAMP DEFAULT NOW(),
   expires_at TIMESTAMP
-) FLUSH ROW_THRESHOLD 500;
+) WITH (TYPE = 'USER', FLUSH_POLICY = 'rows:500');
 
 -- INSERT: Auto-generate session IDs
 INSERT INTO app.sessions (user_id, ip_address, expires_at)
@@ -1738,13 +1741,13 @@ Generates Universally Unique Lexicographically Sortable Identifiers.
 
 ```sql
 -- CREATE: Table with ULID primary key
-CREATE USER TABLE app.events (
+CREATE TABLE app.events (
   event_id TEXT PRIMARY KEY DEFAULT ULID(),
   event_type TEXT NOT NULL,
   user_id TEXT,
   payload TEXT,
   created_at TIMESTAMP DEFAULT NOW()
-) FLUSH ROW_THRESHOLD 2000;
+) WITH (TYPE = 'USER', FLUSH_POLICY = 'rows:2000');
 
 -- INSERT: Auto-generate event IDs
 INSERT INTO app.events (event_type, user_id, payload)
@@ -1801,7 +1804,7 @@ Returns the user ID from the current session context.
 
 ```sql
 -- CREATE: Table tracking who created records
-CREATE USER TABLE app.documents (
+CREATE TABLE app.documents (
   doc_id BIGINT PRIMARY KEY DEFAULT SNOWFLAKE_ID(),
   title TEXT NOT NULL,
   content TEXT,
@@ -1809,7 +1812,7 @@ CREATE USER TABLE app.documents (
   created_at TIMESTAMP DEFAULT NOW(),
   modified_by TEXT,
   modified_at TIMESTAMP
-) FLUSH ROW_THRESHOLD 1000;
+) WITH (TYPE = 'USER', FLUSH_POLICY = 'rows:1000');
 
 -- INSERT: created_by automatically set to current user
 INSERT INTO app.documents (title, content)
@@ -1901,33 +1904,33 @@ WHERE modified_by IS NOT NULL;
 CREATE NAMESPACE shop;
 
 -- 2. Users table with SNOWFLAKE_ID
-CREATE USER TABLE shop.users (
+CREATE TABLE shop.users (
   user_id BIGINT PRIMARY KEY DEFAULT SNOWFLAKE_ID(),
   username TEXT NOT NULL,
   email TEXT NOT NULL,
   created_at TIMESTAMP DEFAULT NOW(),
   created_by TEXT DEFAULT CURRENT_USER()
-) FLUSH ROW_THRESHOLD 1000;
+) WITH (TYPE = 'USER', FLUSH_POLICY = 'rows:1000');
 
 -- 3. Orders table with UUID_V7 (external-facing)
-CREATE USER TABLE shop.orders (
+CREATE TABLE shop.orders (
   order_id TEXT PRIMARY KEY DEFAULT UUID_V7(),
   user_id BIGINT NOT NULL,
   total_amount DOUBLE NOT NULL,
   status TEXT DEFAULT 'pending',
   created_at TIMESTAMP DEFAULT NOW(),
   updated_at TIMESTAMP DEFAULT NOW()
-) FLUSH ROW_THRESHOLD 500;
+) WITH (TYPE = 'USER', FLUSH_POLICY = 'rows:500');
 
 -- 4. Events table with ULID (logging)
-CREATE SHARED TABLE shop.events (
+CREATE TABLE shop.events (
   event_id TEXT PRIMARY KEY DEFAULT ULID(),
   event_type TEXT NOT NULL,
   user_id BIGINT,
   order_id TEXT,
   payload TEXT,
   created_at TIMESTAMP DEFAULT NOW()
-) FLUSH INTERVAL 60s ROW_THRESHOLD 5000;
+) WITH (TYPE = 'SHARED', FLUSH_POLICY = 'interval:60,rows:5000');
 
 -- 5. Insert users (IDs auto-generated)
 INSERT INTO shop.users (username, email) VALUES

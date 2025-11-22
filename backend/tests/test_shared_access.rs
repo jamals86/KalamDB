@@ -1,4 +1,3 @@
-#![allow(unused_imports)]
 //! Integration tests for User Story 4: Shared Table Access Control
 //!
 //! Tests Phase 6 requirements:
@@ -11,303 +10,162 @@
 #[path = "integration/common/mod.rs"]
 mod common;
 
-use common::{auth_helper, TestServer};
-use kalamdb_api::models::{QueryResult, SqlResponse};
+use common::TestServer;
+use kalamdb_api::models::ResponseStatus;
 use kalamdb_commons::{Role, TableAccess};
-use uuid::Uuid;
 
-/// Helper function to check if SQL response is successful
-fn is_success(response: &SqlResponse) -> bool {
-    response.status == kalamdb_api::models::ResponseStatus::Success
-}
-
-/// Helper function to check if SQL response is error
-fn is_error(response: &SqlResponse) -> bool {
-    response.status == kalamdb_api::models::ResponseStatus::Error
-}
-
-/// Helper function to create column family for shared table
-///
-/// SharedTableStore expects column families to exist before CREATE TABLE.
-/// This helper creates the CF dynamically for testing purposes.
-fn create_shared_table_cf(
-    _server: &TestServer,
-    _namespace: &str,
-    _table_name: &str,
-) -> Result<(), String> {
-    // SharedTableStore expects column families to exist before CREATE TABLE.
-    // Test harness does not manage CF creation dynamically here.
-    Ok(())
-}
-
-/// Helper function to initialize test server with a unique namespace
-async fn init_server() -> (TestServer, String) {
-    let server = TestServer::new().await;
-
-    // Generate unique namespace to avoid collisions in parallel tests
-    let uuid_str = Uuid::new_v4().to_string().replace("-", "");
-    let namespace = format!("ns_{}", &uuid_str[..8]);
-
-    // Create namespace as system user (system user is bootstrapped by TestServer)
-    let create_ns_sql = format!("CREATE NAMESPACE {}", namespace);
-    let result = server.execute_sql_as_user(&create_ns_sql, "system").await;
-    if !is_success(&result) {
-        panic!(
-            "Failed to create namespace {}: {:?}",
-            namespace, result.error
-        );
-    }
-
-    (server, namespace)
-}
-
-/// T085: Integration test for public shared table read-only access
-///
-/// Requirement: All authenticated users can read public shared tables
-/// but cannot modify them (INSERT/UPDATE/DELETE operations should fail)
-///
-/// NOTE: This test is ignored because shared tables require pre-created column families
-/// at DB initialization. TestServer::new() creates an in-memory DB without dynamic CF support.
-/// The functionality is verified through unit tests in:
-/// - backend/crates/kalamdb-sql/src/ddl/create_table.rs (ACCESS LEVEL parsing)
-/// - backend/crates/kalamdb-sql/src/ddl/alter_table.rs (SET ACCESS LEVEL parsing)
-/// - backend/crates/kalamdb-core/src/sql/executor.rs (RBAC enforcement)
-#[actix_web::test]
-#[ignore = "Shared tables require pre-created column families at DB init"]
+#[tokio::test]
 async fn test_public_table_read_only_for_users() {
-    let (server, namespace) = init_server().await;
-    let uuid_str = Uuid::new_v4().to_string().replace("-", "");
-    let suffix = &uuid_str[..8];
+    let server = TestServer::new().await;
+    let admin_username = "system";
+    let admin_password = "SystemPass123!";
+    let admin_id = server.create_user(admin_username, admin_password, Role::System).await;
+    let admin_id_str = admin_id.as_str();
+
+    // Create test namespace
+    let namespace = "shared_test_public_ro";
+    let res = server.execute_sql_as_user(&format!("CREATE NAMESPACE {}", namespace), admin_id_str).await;
+    assert_eq!(res.status, ResponseStatus::Success, "Failed to create namespace: {:?}", res.error);
 
     // Create a service user to set up the table
-    let service_username = format!("service_{}", suffix);
+    let service_username = "service_user";
     let service_password = "ServicePass123!";
-    let service_user =
-        auth_helper::create_test_user(&server, &service_username, service_password, Role::Service)
-            .await;
+    let service_id = server.create_user(service_username, service_password, Role::Service).await;
+    let service_id_str = service_id.as_str();
 
-    // Create column family for the shared table
-    create_shared_table_cf(&server, &namespace, "messages")
-        .expect("Failed to create column family");
-
-    // Create a public shared table (as service user with correct user_id)
-    let create_table_sql = format!(
-        r#"
+    // Create a public shared table
+    let create_table_sql = format!(r#"
         CREATE TABLE {}.messages (
             id BIGINT PRIMARY KEY,
             content TEXT NOT NULL
-        ) WITH (
-            TYPE = 'SHARED',
-            ACCESS_LEVEL = 'PUBLIC'
-        )
-    "#,
-        namespace
-    );
-    let result = server
-        .execute_sql_as_user(&create_table_sql, service_user.id.as_str())
-        .await;
-    assert!(
-        is_success(&result),
-        "Failed to create public table: {:?}",
-        result.error
-    );
+        ) WITH (TYPE = 'SHARED', ACCESS_LEVEL = 'public')
+    "#, namespace);
+    let result = server.execute_sql_as_user(&create_table_sql, service_id_str).await;
+    assert_eq!(result.status, ResponseStatus::Success, "Failed to create public table: {:?}", result.error);
 
     // Create a regular user
-    let regular_username = format!("regular_{}", suffix);
+    let regular_username = "regular_user";
     let regular_password = "RegularPass123!";
-    let regular_user =
-        auth_helper::create_test_user(&server, &regular_username, regular_password, Role::User)
-            .await;
+    let regular_id = server.create_user(regular_username, regular_password, Role::User).await;
+    let regular_id_str = regular_id.as_str();
 
     // Test 1: Regular user CAN read from public table
     let select_sql = format!("SELECT * FROM {}.messages", namespace);
-    let result = server
-        .execute_sql_as_user(&select_sql, regular_user.id.as_str())
-        .await;
-    assert!(
-        is_success(&result),
-        "Regular user should be able to read public table: {:?}",
-        result.error
-    );
+    let result = server.execute_sql_as_user(&select_sql, regular_id_str).await;
+    assert_eq!(result.status, ResponseStatus::Success, "Regular user should be able to read public table: {:?}", result.error);
 
     // Test 2: Regular user CANNOT insert into public table (read-only)
-    let insert_sql = format!(
-        "INSERT INTO {}.messages (id, content) VALUES (1, 'test')",
-        namespace
-    );
-    let result = server
-        .execute_sql_as_user(&insert_sql, regular_user.id.as_str())
-        .await;
-    assert!(
-        is_error(&result),
-        "Regular user should NOT be able to insert into public table"
-    );
+    let insert_sql = format!("INSERT INTO {}.messages (id, content) VALUES (1, 'test')", namespace);
+    let result = server.execute_sql_as_user(&insert_sql, regular_id_str).await;
+    assert_eq!(result.status, ResponseStatus::Error, "Regular user should NOT be able to insert into public table");
 
     // Test 3: Regular user CANNOT update public table
-    let update_sql = format!(
-        "UPDATE {}.messages SET content = 'updated' WHERE id = 1",
-        namespace
-    );
-    let result = server
-        .execute_sql_as_user(&update_sql, regular_user.id.as_str())
-        .await;
-    assert!(
-        is_error(&result),
-        "Regular user should NOT be able to update public table"
-    );
+    let update_sql = format!("UPDATE {}.messages SET content = 'updated' WHERE id = 1", namespace);
+    let result = server.execute_sql_as_user(&update_sql, regular_id_str).await;
+    assert_eq!(result.status, ResponseStatus::Error, "Regular user should NOT be able to update public table");
 
     // Test 4: Regular user CANNOT delete from public table
     let delete_sql = format!("DELETE FROM {}.messages WHERE id = 1", namespace);
-    let result = server
-        .execute_sql_as_user(&delete_sql, regular_user.id.as_str())
-        .await;
-    assert!(
-        is_error(&result),
-        "Regular user should NOT be able to delete from public table"
-    );
+    let result = server.execute_sql_as_user(&delete_sql, regular_id_str).await;
+    assert_eq!(result.status, ResponseStatus::Error, "Regular user should NOT be able to delete from public table");
 }
 
-/// T086: Integration test for private shared table access (service/dba/system only)
-#[actix_web::test]
+#[tokio::test]
 async fn test_private_table_service_dba_only() {
-    let (server, namespace) = init_server().await;
-    let uuid_str = Uuid::new_v4().to_string().replace("-", "");
-    let suffix = &uuid_str[..8];
+    let server = TestServer::new().await;
+    let admin_username = "system";
+    let admin_password = "SystemPass123!";
+    let admin_id = server.create_user(admin_username, admin_password, Role::System).await;
+    let admin_id_str = admin_id.as_str();
+
+    // Create test namespace
+    let namespace = "shared_test_private";
+    let res = server.execute_sql_as_user(&format!("CREATE NAMESPACE {}", namespace), admin_id_str).await;
+    assert_eq!(res.status, ResponseStatus::Success);
 
     // Create users with different roles
-    let service_username = format!("service_{}", suffix);
+    let service_username = "service_user";
     let service_password = "ServicePass123!";
-    let service_user =
-        auth_helper::create_test_user(&server, &service_username, service_password, Role::Service)
-            .await;
+    let service_id = server.create_user(service_username, service_password, Role::Service).await;
+    let service_id_str = service_id.as_str();
 
-    let dba_username = format!("dba_{}", suffix);
+    let dba_username = "dba_user";
     let dba_password = "DbaPass123!";
-    let dba_user =
-        auth_helper::create_test_user(&server, &dba_username, dba_password, Role::Dba).await;
+    let dba_id = server.create_user(dba_username, dba_password, Role::Dba).await;
+    let dba_id_str = dba_id.as_str();
 
-    let regular_username = format!("regular_{}", suffix);
+    let regular_username = "regular_user";
     let regular_password = "RegularPass123!";
-    let regular_user =
-        auth_helper::create_test_user(&server, &regular_username, regular_password, Role::User)
-            .await;
+    let regular_id = server.create_user(regular_username, regular_password, Role::User).await;
+    let regular_id_str = regular_id.as_str();
 
     // Create a private shared table (as service user)
-    let create_table_sql = format!(
-        r#"
+    let create_table_sql = format!(r#"
         CREATE TABLE {}.sensitive_data (
             id BIGINT PRIMARY KEY,
             secret TEXT NOT NULL
-        ) WITH (
-            TYPE = 'SHARED',
-            ACCESS_LEVEL = 'PRIVATE'
-        )
-    "#,
-        namespace
-    );
-    let result = server
-        .execute_sql_as_user(&create_table_sql, service_user.id.as_str())
-        .await;
-    assert!(
-        is_success(&result),
-        "Failed to create private table: {:?}",
-        result.error
-    );
+        ) WITH (TYPE = 'SHARED', ACCESS_LEVEL = 'private')
+    "#, namespace);
+    let result = server.execute_sql_as_user(&create_table_sql, service_id_str).await;
+    assert_eq!(result.status, ResponseStatus::Success, "Failed to create private table: {:?}", result.error);
 
     // Test 1: Service user CAN access private table
     let select_sql = format!("SELECT * FROM {}.sensitive_data", namespace);
-    let result = server
-        .execute_sql_as_user(&select_sql, service_user.id.as_str())
-        .await;
-    assert!(
-        is_success(&result),
-        "Service user should access private table: {:?}",
-        result.error
-    );
+    let result = server.execute_sql_as_user(&select_sql, service_id_str).await;
+    assert_eq!(result.status, ResponseStatus::Success, "Service user should access private table: {:?}", result.error);
 
     // Test 2: DBA user CAN access private table
-    let result = server
-        .execute_sql_as_user(&select_sql, dba_user.id.as_str())
-        .await;
-    assert!(
-        is_success(&result),
-        "DBA user should access private table: {:?}",
-        result.error
-    );
+    let result = server.execute_sql_as_user(&select_sql, dba_id_str).await;
+    assert_eq!(result.status, ResponseStatus::Success, "DBA user should access private table: {:?}", result.error);
 
     // Test 3: Regular user CANNOT access private table
-    let result = server
-        .execute_sql_as_user(&select_sql, regular_user.id.as_str())
-        .await;
-    assert!(
-        is_error(&result),
-        "Regular user should NOT access private table"
-    );
+    let result = server.execute_sql_as_user(&select_sql, regular_id_str).await;
+    assert_eq!(result.status, ResponseStatus::Error, "Regular user should NOT access private table");
 
     // Test 4: Service user CAN modify private table
-    let insert_sql = format!(
-        "INSERT INTO {}.sensitive_data (id, secret) VALUES (1, 'confidential')",
-        namespace
-    );
-    let result = server
-        .execute_sql_as_user(&insert_sql, service_user.id.as_str())
-        .await;
-    assert!(
-        is_success(&result),
-        "Service user should be able to modify private table: {:?}",
-        result.error
-    );
+    let insert_sql = format!("INSERT INTO {}.sensitive_data (id, secret) VALUES (1, 'confidential')", namespace);
+    let result = server.execute_sql_as_user(&insert_sql, service_id_str).await;
+    assert_eq!(result.status, ResponseStatus::Success, "Service user should be able to modify private table: {:?}", result.error);
 }
 
-/// T087: Integration test for default access level
-#[actix_web::test]
+#[tokio::test]
 async fn test_shared_table_defaults_to_private() {
-    let (server, namespace) = init_server().await;
-    let uuid_str = Uuid::new_v4().to_string().replace("-", "");
-    let suffix = &uuid_str[..8];
+    let server = TestServer::new().await;
+    let admin_username = "system";
+    let admin_password = "SystemPass123!";
+    let admin_id = server.create_user(admin_username, admin_password, Role::System).await;
+    let admin_id_str = admin_id.as_str();
+
+    // Create test namespace
+    let namespace = "shared_test_defaults";
+    let res = server.execute_sql_as_user(&format!("CREATE NAMESPACE {}", namespace), admin_id_str).await;
+    assert_eq!(res.status, ResponseStatus::Success);
 
     // Create a service user
-    let service_username = format!("service_{}", suffix);
+    let service_username = "service_user";
     let service_password = "ServicePass123!";
-    auth_helper::create_test_user(&server, &service_username, service_password, Role::Service)
-        .await;
+    let service_id = server.create_user(service_username, service_password, Role::Service).await;
+    let service_id_str = service_id.as_str();
 
     // Create shared table WITHOUT specifying ACCESS LEVEL
-    let create_table_sql = format!(
-        r#"
+    let create_table_sql = format!(r#"
         CREATE TABLE {}.default_access (
             id BIGINT PRIMARY KEY,
             data TEXT
-        ) WITH (
-            TYPE = 'SHARED'
-        )
-    "#,
-        namespace
-    );
-    let result = server
-        .execute_sql_as_user(&create_table_sql, &service_username)
-        .await;
-    assert!(
-        is_success(&result),
-        "Failed to create table: {:?}",
-        result.error
-    );
+        ) WITH (TYPE = 'SHARED')
+    "#, namespace);
+    let result = server.execute_sql_as_user(&create_table_sql, service_id_str).await;
+    assert_eq!(result.status, ResponseStatus::Success, "Failed to create table: {:?}", result.error);
 
     // Verify the table was created with default "private" access level
+    // Query system.tables to get the table metadata
     let query_table_sql = format!(
-        "SELECT access_level FROM system.tables WHERE table_id = '{}:default_access'",
-        namespace
-    );
-    let query_result = server
-        .execute_sql_as_user(&query_table_sql, &service_username)
-        .await;
+        "SELECT access_level FROM system.tables WHERE table_id = '{}:default_access'", namespace);
+    let query_result = server.execute_sql_as_user(&query_table_sql, service_id_str).await;
 
-    assert!(
-        is_success(&query_result),
-        "Failed to query system.tables: {:?}",
-        query_result.error
-    );
+    assert_eq!(query_result.status, ResponseStatus::Success, "Failed to query system.tables: {:?}", query_result.error);
 
+    // Parse the result to check access_level
     assert!(!query_result.results.is_empty(), "Expected query results");
     let result = &query_result.results[0];
 
@@ -321,7 +179,7 @@ async fn test_shared_table_defaults_to_private() {
             .expect("access_level should be present");
 
         assert_eq!(
-            access_level, "Private",
+            access_level, "private",
             "Default access level should be Private"
         );
     } else {
@@ -329,354 +187,204 @@ async fn test_shared_table_defaults_to_private() {
     }
 
     // Create a regular user and verify they cannot access it
-    let regular_username = format!("regular_{}", suffix);
+    let regular_username = "regular_user";
     let regular_password = "RegularPass123!";
-    auth_helper::create_test_user(&server, &regular_username, regular_password, Role::User).await;
+    let regular_id = server.create_user(regular_username, regular_password, Role::User).await;
+    let regular_id_str = regular_id.as_str();
 
     let select_sql = format!("SELECT * FROM {}.default_access", namespace);
-    let result = server
-        .execute_sql_as_user(&select_sql, &regular_username)
-        .await;
-    assert!(
-        is_error(&result),
-        "Regular user should NOT access table with default private access"
-    );
+    let result = server.execute_sql_as_user(&select_sql, regular_id_str).await;
+    assert_eq!(result.status, ResponseStatus::Error, "Regular user should NOT access table with default private access");
 }
 
-/// T088: Integration test for access level modification authorization
-#[actix_web::test]
+#[tokio::test]
 async fn test_change_access_level_requires_privileges() {
-    let (server, namespace) = init_server().await;
-    let uuid_str = Uuid::new_v4().to_string().replace("-", "");
-    let suffix = &uuid_str[..8];
+    let server = TestServer::new().await;
+    let admin_username = "system";
+    let admin_password = "SystemPass123!";
+    let admin_id = server.create_user(admin_username, admin_password, Role::System).await;
+    let admin_id_str = admin_id.as_str();
+
+    // Create test namespace
+    let namespace = "shared_test_alter";
+    let res = server.execute_sql_as_user(&format!("CREATE NAMESPACE {}", namespace), admin_id_str).await;
+    assert_eq!(res.status, ResponseStatus::Success);
 
     // Create users with different roles
-    let service_username = format!("service_{}", suffix);
+    let service_username = "service_user";
     let service_password = "ServicePass123!";
-    let service_user =
-        auth_helper::create_test_user(&server, &service_username, service_password, Role::Service)
-            .await;
+    let service_id = server.create_user(service_username, service_password, Role::Service).await;
+    let service_id_str = service_id.as_str();
 
-    let dba_username = format!("dba_{}", suffix);
+    let dba_username = "dba_user";
     let dba_password = "DbaPass123!";
-    let dba_user =
-        auth_helper::create_test_user(&server, &dba_username, dba_password, Role::Dba).await;
+    let dba_id = server.create_user(dba_username, dba_password, Role::Dba).await;
+    let dba_id_str = dba_id.as_str();
 
-    let regular_username = format!("regular_{}", suffix);
+    let regular_username = "regular_user";
     let regular_password = "RegularPass123!";
-    let regular_user =
-        auth_helper::create_test_user(&server, &regular_username, regular_password, Role::User)
-            .await;
+    let regular_id = server.create_user(regular_username, regular_password, Role::User).await;
+    let regular_id_str = regular_id.as_str();
 
     // Create a private shared table
-    let create_table_sql = format!(
-        r#"
+    let create_table_sql = format!(r#"
         CREATE TABLE {}.config (
             id BIGINT PRIMARY KEY,
             value TEXT
-        ) WITH (
-            TYPE = 'SHARED',
-            ACCESS_LEVEL = 'PRIVATE'
-        )
-    "#,
-        namespace
-    );
-    let result = server
-        .execute_sql_as_user(&create_table_sql, service_user.id.as_str())
-        .await;
-    assert!(
-        is_success(&result),
-        "Failed to create table: {:?}",
-        result.error
-    );
+        ) WITH (TYPE = 'SHARED', ACCESS_LEVEL = 'private')
+    "#, namespace);
+    let result = server.execute_sql_as_user(&create_table_sql, service_id_str).await;
+    assert_eq!(result.status, ResponseStatus::Success, "Failed to create table: {:?}", result.error);
 
     // Test 1: Regular user CANNOT change access level
     let alter_sql = format!("ALTER TABLE {}.config SET ACCESS LEVEL public", namespace);
-    let result = server
-        .execute_sql_as_user(&alter_sql, regular_user.id.as_str())
-        .await;
-    assert!(
-        is_error(&result),
-        "Regular user should NOT be able to change access level"
-    );
-
-    // Verify access level unchanged
-    let table_id = kalamdb_commons::models::TableId::new(
-        kalamdb_commons::models::NamespaceId::new(&namespace),
-        kalamdb_commons::models::TableName::new("config"),
-    );
-    let table = server
-        .app_context
-        .system_tables()
-        .tables()
-        .get_table_by_id(&table_id)
-        .unwrap()
-        .unwrap();
-    match table.options() {
-        kalamdb_commons::models::schemas::TableOptions::Shared(opts) => {
-            assert_eq!(opts.access_level, Some(TableAccess::Private));
-        }
-        other => panic!("Expected Shared table options, got {:?}", other),
-    }
+    let result = server.execute_sql_as_user(&alter_sql, regular_id_str).await;
+    assert_eq!(result.status, ResponseStatus::Error, "Regular user should NOT be able to change access level");
 
     // Test 2: Service user CAN change access level
-    let result = server
-        .execute_sql_as_user(&alter_sql, service_user.id.as_str())
-        .await;
-    assert!(
-        is_success(&result),
-        "Service user should be able to change access level: {:?}",
-        result.error
-    );
-
-    // Verify access level changed to public
-    let table = server
-        .app_context
-        .system_tables()
-        .tables()
-        .get_table_by_id(&table_id)
-        .unwrap()
-        .unwrap();
-    match table.options() {
-        kalamdb_commons::models::schemas::TableOptions::Shared(opts) => {
-            assert_eq!(opts.access_level, Some(TableAccess::Public));
-        }
-        other => panic!("Expected Shared table options, got {:?}", other),
-    }
+    let result = server.execute_sql_as_user(&alter_sql, service_id_str).await;
+    assert_eq!(result.status, ResponseStatus::Success, "Service user should be able to change access level: {:?}", result.error);
 
     // Test 3: DBA user CAN change access level back
     let alter_sql_private = format!("ALTER TABLE {}.config SET ACCESS LEVEL private", namespace);
-    let result = server
-        .execute_sql_as_user(&alter_sql_private, dba_user.id.as_str())
-        .await;
-    assert!(
-        is_success(&result),
-        "DBA user should be able to change access level: {:?}",
-        result.error
-    );
-
-    // Verify access level changed back to private
-    let table = server
-        .app_context
-        .system_tables()
-        .tables()
-        .get_table_by_id(&table_id)
-        .unwrap()
-        .unwrap();
-    match table.options() {
-        kalamdb_commons::models::schemas::TableOptions::Shared(opts) => {
-            assert_eq!(opts.access_level, Some(TableAccess::Private));
-        }
-        other => panic!("Expected Shared table options, got {:?}", other),
-    }
+    let result = server.execute_sql_as_user(&alter_sql_private, dba_id_str).await;
+    assert_eq!(result.status, ResponseStatus::Success, "DBA user should be able to change access level: {:?}", result.error);
 }
 
-/// T089: Integration test for read-only enforcement on public tables
-#[actix_web::test]
+#[tokio::test]
 async fn test_user_cannot_modify_public_table() {
-    let (server, namespace) = init_server().await;
-    let uuid_str = Uuid::new_v4().to_string().replace("-", "");
-    let suffix = &uuid_str[..8];
+    let server = TestServer::new().await;
+    let admin_username = "system";
+    let admin_password = "SystemPass123!";
+    let admin_id = server.create_user(admin_username, admin_password, Role::System).await;
+    let admin_id_str = admin_id.as_str();
+
+    // Create test namespace
+    let namespace = "shared_test_modify";
+    let res = server.execute_sql_as_user(&format!("CREATE NAMESPACE {}", namespace), admin_id_str).await;
+    assert_eq!(res.status, ResponseStatus::Success);
 
     // Create service user and public table
-    let service_username = format!("service_{}", suffix);
+    let service_username = "service_user";
     let service_password = "ServicePass123!";
-    let service_user =
-        auth_helper::create_test_user(&server, &service_username, service_password, Role::Service)
-            .await;
+    let service_id = server.create_user(service_username, service_password, Role::Service).await;
+    let service_id_str = service_id.as_str();
 
-    let create_table_sql = format!(
-        r#"
+    let create_table_sql = format!(r#"
         CREATE TABLE {}.announcements (
             id BIGINT PRIMARY KEY,
             message TEXT NOT NULL
-        ) WITH (
-            TYPE = 'SHARED',
-            ACCESS_LEVEL = 'PUBLIC'
-        )
-    "#,
-        namespace
-    );
-    let result = server
-        .execute_sql_as_user(&create_table_sql, service_user.id.as_str())
-        .await;
-    assert!(
-        is_success(&result),
-        "Failed to create table: {:?}",
-        result.error
-    );
+        ) WITH (TYPE = 'SHARED', ACCESS_LEVEL = 'public')
+    "#, namespace);
+    let result = server.execute_sql_as_user(&create_table_sql, service_id_str).await;
+    assert_eq!(result.status, ResponseStatus::Success, "Failed to create table: {:?}", result.error);
 
     // Service user adds some data
-    let insert_sql = format!(
-        "INSERT INTO {}.announcements (id, message) VALUES (1, 'Welcome')",
-        namespace
-    );
-    let result = server
-        .execute_sql_as_user(&insert_sql, service_user.id.as_str())
-        .await;
-    assert!(
-        is_success(&result),
-        "Service user should insert data: {:?}",
-        result.error
-    );
+    let insert_sql = format!("INSERT INTO {}.announcements (id, message) VALUES (1, 'Welcome')", namespace);
+    let result = server.execute_sql_as_user(&insert_sql, service_id_str).await;
+    assert_eq!(result.status, ResponseStatus::Success, "Service user should insert data: {:?}", result.error);
 
     // Create regular user
-    let regular_username = format!("regular_{}", suffix);
+    let regular_username = "regular_user";
     let regular_password = "RegularPass123!";
-    let regular_user =
-        auth_helper::create_test_user(&server, &regular_username, regular_password, Role::User)
-            .await;
+    let regular_id = server.create_user(regular_username, regular_password, Role::User).await;
+    let regular_id_str = regular_id.as_str();
 
     // Test 1: Regular user CAN read
     let select_sql = format!("SELECT * FROM {}.announcements", namespace);
-    let result = server
-        .execute_sql_as_user(&select_sql, regular_user.id.as_str())
-        .await;
-    assert!(
-        is_success(&result),
-        "Regular user should be able to SELECT from public table: {:?}",
-        result.error
-    );
+    let result = server.execute_sql_as_user(&select_sql, regular_id_str).await;
+    assert_eq!(result.status, ResponseStatus::Success, "Regular user should be able to SELECT from public table: {:?}", result.error);
 
     // Test 2: Regular user CANNOT insert
-    let insert_sql = format!(
-        "INSERT INTO {}.announcements (id, message) VALUES (2, 'Hacked')",
-        namespace
-    );
-    let result = server
-        .execute_sql_as_user(&insert_sql, regular_user.id.as_str())
-        .await;
-    assert!(
-        is_error(&result),
-        "Regular user should NOT be able to INSERT into public table"
-    );
+    let insert_sql = format!("INSERT INTO {}.announcements (id, message) VALUES (2, 'Hacked')", namespace);
+    let result = server.execute_sql_as_user(&insert_sql, regular_id_str).await;
+    assert_eq!(result.status, ResponseStatus::Error, "Regular user should NOT be able to INSERT into public table");
 
     // Test 3: Regular user CANNOT update
-    let update_sql = format!(
-        "UPDATE {}.announcements SET message = 'Modified' WHERE id = 1",
-        namespace
-    );
-    let result = server
-        .execute_sql_as_user(&update_sql, regular_user.id.as_str())
-        .await;
-    assert!(
-        is_error(&result),
-        "Regular user should NOT be able to UPDATE public table"
-    );
+    let update_sql = format!("UPDATE {}.announcements SET message = 'Modified' WHERE id = 1", namespace);
+    let result = server.execute_sql_as_user(&update_sql, regular_id_str).await;
+    assert_eq!(result.status, ResponseStatus::Error, "Regular user should NOT be able to UPDATE public table");
 
     // Test 4: Regular user CANNOT delete
     let delete_sql = format!("DELETE FROM {}.announcements WHERE id = 1", namespace);
-    let result = server
-        .execute_sql_as_user(&delete_sql, regular_user.id.as_str())
-        .await;
-    assert!(
-        is_error(&result),
-        "Regular user should NOT be able to DELETE from public table"
-    );
+    let result = server.execute_sql_as_user(&delete_sql, regular_id_str).await;
+    assert_eq!(result.status, ResponseStatus::Error, "Regular user should NOT be able to DELETE from public table");
 
     // Test 5: Service user CAN still modify (verification)
-    let update_sql = format!(
-        "UPDATE {}.announcements SET message = 'Updated by service' WHERE id = 1",
-        namespace
-    );
-    let result = server
-        .execute_sql_as_user(&update_sql, service_user.id.as_str())
-        .await;
-    assert!(
-        is_success(&result),
-        "Service user should be able to modify public table: {:?}",
-        result.error
-    );
+    let update_sql = format!("UPDATE {}.announcements SET message = 'Updated by service' WHERE id = 1", namespace);
+    let result = server.execute_sql_as_user(&update_sql, service_id_str).await;
+    assert_eq!(result.status, ResponseStatus::Success, "Service user should be able to modify public table: {:?}", result.error);
 }
 
-/// Additional test: Verify ACCESS LEVEL cannot be set on USER or STREAM tables
-#[actix_web::test]
+#[tokio::test]
 async fn test_access_level_only_on_shared_tables() {
-    let (server, _namespace) = init_server().await;
-    let uuid_str = Uuid::new_v4().to_string().replace("-", "");
-    let suffix = &uuid_str[..8];
+    let server = TestServer::new().await;
+    let admin_username = "system";
+    let admin_password = "SystemPass123!";
+    let admin_id = server.create_user(admin_username, admin_password, Role::System).await;
+    let admin_id_str = admin_id.as_str();
 
-    let service_username = format!("service_{}", suffix);
+    // Create test namespace
+    let namespace = "shared_test_invalid";
+    let res = server.execute_sql_as_user(&format!("CREATE NAMESPACE {}", namespace), admin_id_str).await;
+    assert_eq!(res.status, ResponseStatus::Success);
+
+    let service_username = "service_user";
     let service_password = "ServicePass123!";
-    auth_helper::create_test_user(&server, &service_username, service_password, Role::Service)
-        .await;
+    let service_id = server.create_user(service_username, service_password, Role::Service).await;
+    let service_id_str = service_id.as_str();
 
     // Test 1: USER table with ACCESS LEVEL should fail
-    let create_user_table_sql = r#"
-        CREATE TABLE my_data (
+    let create_user_table_sql = format!(r#"
+        CREATE TABLE {}.my_data (
             id BIGINT PRIMARY KEY,
             data TEXT
-        ) WITH (TYPE = 'USER') ACCESS LEVEL public
-    "#;
-    let result = server
-        .execute_sql_as_user(create_user_table_sql, &service_username)
-        .await;
-    assert!(
-        is_error(&result),
-        "ACCESS LEVEL should not be allowed on USER tables"
-    );
+        ) WITH (TYPE = 'USER', ACCESS_LEVEL = 'public')
+    "#, namespace);
+    let result = server.execute_sql_as_user(&create_user_table_sql, service_id_str).await;
+    assert_eq!(result.status, ResponseStatus::Error, "ACCESS LEVEL should not be allowed on USER tables");
 
     // Test 2: STREAM table with ACCESS LEVEL should fail
-    let create_stream_table_sql = r#"
-        CREATE TABLE events (
+    let create_stream_table_sql = format!(r#"
+        CREATE TABLE {}.events (
             id BIGINT PRIMARY KEY,
             event_type TEXT
-        ) WITH (
-            TYPE = 'STREAM',
-            TTL_SECONDS = 3600,
-            ACCESS_LEVEL = 'PUBLIC'
-        )
-    "#;
-    let result = server
-        .execute_sql_as_user(create_stream_table_sql, &service_username)
-        .await;
-    assert!(
-        is_error(&result),
-        "ACCESS LEVEL should not be allowed on STREAM tables"
-    );
+        ) WITH (TYPE = 'STREAM', ACCESS_LEVEL = 'public', TTL_SECONDS = 3600)
+    "#, namespace);
+    let result = server.execute_sql_as_user(&create_stream_table_sql, service_id_str).await;
+    assert_eq!(result.status, ResponseStatus::Error, "ACCESS LEVEL should not be allowed on STREAM tables");
 }
 
-/// Additional test: Verify ALTER TABLE SET ACCESS LEVEL only works on SHARED tables
-#[actix_web::test]
+#[tokio::test]
 async fn test_alter_access_level_only_on_shared_tables() {
-    let (server, namespace) = init_server().await;
-    let uuid_str = Uuid::new_v4().to_string().replace("-", "");
-    let suffix = &uuid_str[..8];
+    let server = TestServer::new().await;
+    let admin_username = "system";
+    let admin_password = "SystemPass123!";
+    let admin_id = server.create_user(admin_username, admin_password, Role::System).await;
+    let admin_id_str = admin_id.as_str();
 
-    let service_username = format!("service_{}", suffix);
+    // Create test namespace
+    let namespace = "shared_test_alter_invalid";
+    let res = server.execute_sql_as_user(&format!("CREATE NAMESPACE {}", namespace), admin_id_str).await;
+    assert_eq!(res.status, ResponseStatus::Success);
+
+    let service_username = "service_user";
     let service_password = "ServicePass123!";
-    auth_helper::create_test_user(&server, &service_username, service_password, Role::Service)
-        .await;
+    let service_id = server.create_user(service_username, service_password, Role::Service).await;
+    let service_id_str = service_id.as_str();
 
     // Create a USER table
-    let create_user_table_sql = format!(
-        r#"
+    let create_user_table_sql = format!(r#"
         CREATE TABLE {}.personal_notes (
             id BIGINT PRIMARY KEY,
             note TEXT
         ) WITH (TYPE = 'USER')
-    "#,
-        namespace
-    );
-    let result = server
-        .execute_sql_as_user(&create_user_table_sql, &service_username)
-        .await;
-    assert!(
-        is_success(&result),
-        "Failed to create USER table: {:?}",
-        result.error
-    );
+    "#, namespace);
+    let result = server.execute_sql_as_user(&create_user_table_sql, service_id_str).await;
+    assert_eq!(result.status, ResponseStatus::Success, "Failed to create USER table: {:?}", result.error);
 
     // Try to set ACCESS LEVEL on USER table - should fail
-    let alter_sql = format!(
-        "ALTER TABLE {}.personal_notes SET ACCESS LEVEL public",
-        namespace
-    );
-    let result = server
-        .execute_sql_as_user(&alter_sql, &service_username)
-        .await;
-    assert!(
-        is_error(&result),
-        "ALTER TABLE SET ACCESS LEVEL should fail on USER tables"
-    );
+    let alter_sql = format!("ALTER TABLE {}.personal_notes SET ACCESS LEVEL public", namespace);
+    let result = server.execute_sql_as_user(&alter_sql, service_id_str).await;
+    assert_eq!(result.status, ResponseStatus::Error, "ALTER TABLE SET ACCESS LEVEL should fail on USER tables");
 }

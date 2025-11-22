@@ -2,6 +2,7 @@
 
 use crate::error::KalamDbError;
 use crate::sql::executor::models::ExecutionContext;
+use kalamdb_commons::models::TableId;
 use kalamdb_commons::{NamespaceId, TableName};
 
 pub fn resolve_namespace(
@@ -28,8 +29,8 @@ pub fn resolve_namespace_required(
         })
 }
 
-pub fn format_table_identifier(namespace: &NamespaceId, table_name: &TableName) -> String {
-    format!("{}.{}", namespace.as_str(), table_name.as_str())
+pub fn format_table_identifier(table_id: &TableId) -> String {
+    format!("{}.{}", table_id.namespace_id().as_str(), table_id.table_name().as_str())
 }
 
 pub fn format_table_identifier_opt(

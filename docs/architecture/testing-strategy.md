@@ -63,7 +63,7 @@ async fn test_user_table_insert_and_query() {
     let server = setup_test_server(TestConfig::default()).await;
     
     // Create table
-    let response = server.execute_sql("CREATE USER TABLE messages ...").await;
+    let response = server.execute_sql("CREATE TABLE messages ... WITH (TYPE='USER')").await;
     assert!(response.success);
     
     // Insert data

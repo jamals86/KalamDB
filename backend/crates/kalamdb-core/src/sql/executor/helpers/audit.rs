@@ -40,9 +40,10 @@ pub fn create_audit_entry(
     details: Option<String>,
     subject_user_id: Option<kalamdb_commons::UserId>,
 ) -> AuditLogEntry {
-    // Generate a unique audit ID (timestamp-based)
+    // Generate a unique audit ID (timestamp + random suffix to prevent collisions)
     let timestamp = Utc::now().timestamp_millis();
-    let audit_id = AuditLogId::from(format!("audit_{}", timestamp));
+    let uuid = uuid::Uuid::new_v4().simple();
+    let audit_id = AuditLogId::from(format!("audit_{}_{}", timestamp, uuid));
 
     AuditLogEntry {
         audit_id,

@@ -9,6 +9,7 @@ use crate::sql::executor::handlers::StatementHandler;
 use crate::sql::executor::models::{ExecutionContext, ExecutionResult, ScalarValue};
 use crate::sql::executor::parameter_validation::{validate_parameters, ParameterLimits};
 use async_trait::async_trait;
+use kalamdb_commons::models::datatypes::KalamDataType;
 use kalamdb_commons::models::{NamespaceId, Row, TableName};
 use kalamdb_sql::statement_classifier::{SqlStatement, SqlStatementKind};
 use std::collections::BTreeMap;
@@ -52,17 +53,7 @@ impl StatementHandler for UpdateHandler {
         let sql = statement.as_str();
         let (namespace, table_name, assignments, where_pair) = self.simple_parse_update(sql)?;
 
-        let mut values = BTreeMap::new();
-        for (col, token) in assignments {
-            let val = self.token_to_scalar_value(&token, &params)?;
-            values.insert(col, val);
-        }
-        let updates = Row::new(values);
-
-        // T153: Use effective user_id for impersonation support (Phase 7)
-        let effective_user_id = statement.as_user_id().unwrap_or(&context.user_id);
-
-        // Execute native update for USER tables; for SHARED tables, perform provider-level updates across matching rows (MVP: id only)
+        // Get table definition early to access schema for type coercion
         let schema_registry = app_context.schema_registry();
         use kalamdb_commons::models::TableId;
         let table_id = TableId::new(namespace.clone(), table_name.clone());
@@ -75,6 +66,24 @@ impl StatementHandler for UpdateHandler {
                     table_name.as_str()
                 ))
             })?;
+
+        // Create a map of column name to type for fast lookup
+        let col_types: std::collections::HashMap<String, KalamDataType> = def
+            .columns
+            .iter()
+            .map(|c| (c.column_name.clone(), c.data_type.clone()))
+            .collect();
+
+        let mut values = BTreeMap::new();
+        for (col, token) in assignments {
+            let target_type = col_types.get(&col);
+            let val = self.token_to_scalar_value(&token, &params, target_type)?;
+            values.insert(col, val);
+        }
+        let updates = Row::new(values);
+
+        // T153: Use effective user_id for impersonation support (Phase 7)
+        let effective_user_id = statement.as_user_id().unwrap_or(&context.user_id);
 
         // T163: Reject AS USER on Shared tables (Phase 7)
         use kalamdb_commons::schemas::TableType;
@@ -351,10 +360,36 @@ impl UpdateHandler {
         Ok(None)
     }
 
+    /// Coerce ScalarValue to target type if needed
+    fn coerce_scalar_value(
+        &self,
+        value: ScalarValue,
+        target: &KalamDataType,
+    ) -> Result<ScalarValue, KalamDbError> {
+        match (target, &value) {
+            (KalamDataType::Uuid, ScalarValue::Utf8(Some(s))) => {
+                // Parse UUID string to bytes
+                let uuid = uuid::Uuid::parse_str(s).map_err(|e| {
+                    KalamDbError::InvalidOperation(format!("Invalid UUID string '{}': {}", s, e))
+                })?;
+                Ok(ScalarValue::FixedSizeBinary(
+                    16,
+                    Some(uuid.as_bytes().to_vec()),
+                ))
+            }
+            (KalamDataType::Uuid, ScalarValue::Utf8(None)) => {
+                Ok(ScalarValue::FixedSizeBinary(16, None))
+            }
+            // Add other coercions if needed
+            _ => Ok(value),
+        }
+    }
+
     fn token_to_scalar_value(
         &self,
         token: &str,
         params: &[ScalarValue],
+        target_type: Option<&KalamDataType>,
     ) -> Result<ScalarValue, KalamDbError> {
         let t = token.trim();
 
@@ -372,7 +407,11 @@ impl UpdateHandler {
                 )));
             }
 
-            return Ok(params[param_num - 1].clone());
+            let val = params[param_num - 1].clone();
+            if let Some(target) = target_type {
+                return self.coerce_scalar_value(val, target);
+            }
+            return Ok(val);
         }
 
         // Check for NULL
@@ -394,7 +433,11 @@ impl UpdateHandler {
             || (t.starts_with('`') && t.ends_with('`'))
         {
             let unquoted = &t[1..t.len() - 1];
-            return Ok(ScalarValue::Utf8(Some(unquoted.to_string())));
+            let val = ScalarValue::Utf8(Some(unquoted.to_string()));
+            if let Some(target) = target_type {
+                return self.coerce_scalar_value(val, target);
+            }
+            return Ok(val);
         }
 
         // Try parsing as number
@@ -406,7 +449,11 @@ impl UpdateHandler {
         }
 
         // Default to string
-        Ok(ScalarValue::Utf8(Some(t.to_string())))
+        let val = ScalarValue::Utf8(Some(t.to_string()));
+        if let Some(target) = target_type {
+            return self.coerce_scalar_value(val, target);
+        }
+        Ok(val)
     }
 }
 

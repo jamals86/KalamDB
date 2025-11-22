@@ -42,8 +42,8 @@ impl TypedStatementHandler<CreateUserStatement> for CreateUserHandler {
             )));
         }
 
-        // Hash password if auth_type = Password
-        let password_hash = match statement.auth_type {
+        // Hash password if auth_type = Password, or extract auth_data for OAuth
+        let (password_hash, auth_data) = match statement.auth_type {
             AuthType::Password => {
                 let raw = statement.password.clone().ok_or_else(|| {
                     KalamDbError::InvalidOperation(
@@ -56,10 +56,32 @@ impl TypedStatementHandler<CreateUserStatement> for CreateUserHandler {
                 {
                     validate_password_complexity(&raw)?;
                 }
-                bcrypt::hash(raw, bcrypt::DEFAULT_COST)
-                    .map_err(|e| KalamDbError::Other(format!("Password hash error: {}", e)))?
+                let hash = bcrypt::hash(raw, bcrypt::DEFAULT_COST)
+                    .map_err(|e| KalamDbError::Other(format!("Password hash error: {}", e)))?;
+                (hash, None)
             }
-            _ => "".to_string(),
+            AuthType::OAuth => {
+                // For OAuth, the 'password' field contains the JSON payload
+                let payload = statement.password.clone();
+                
+                // Validate payload
+                if let Some(json_str) = &payload {
+                    let json: serde_json::Value = serde_json::from_str(json_str)
+                        .map_err(|e| KalamDbError::InvalidOperation(format!("Invalid OAuth JSON: {}", e)))?;
+                    
+                    if json.get("provider").is_none() {
+                        return Err(KalamDbError::InvalidOperation("OAuth user requires 'provider' field".to_string()));
+                    }
+                    if json.get("subject").is_none() {
+                        return Err(KalamDbError::InvalidOperation("OAuth user requires 'subject' field".to_string()));
+                    }
+                } else {
+                     return Err(KalamDbError::InvalidOperation("OAuth user requires JSON payload with provider and subject".to_string()));
+                }
+
+                ("".to_string(), payload)
+            }
+            AuthType::Internal => ("".to_string(), None),
         };
 
         let now = chrono::Utc::now().timestamp_millis();
@@ -70,7 +92,7 @@ impl TypedStatementHandler<CreateUserStatement> for CreateUserHandler {
             role: statement.role,
             email: statement.email.clone(),
             auth_type: statement.auth_type,
-            auth_data: None,
+            auth_data,
             storage_mode: kalamdb_commons::StorageMode::Table,
             storage_id: None,
             created_at: now,
@@ -115,6 +137,11 @@ impl TypedStatementHandler<CreateUserStatement> for CreateUserHandler {
 /// Validate password complexity according to policy
 /// Requires at least one uppercase, one lowercase, one digit, and one special character
 fn validate_password_complexity(pw: &str) -> Result<(), KalamDbError> {
+    if pw.len() > 72 {
+        return Err(KalamDbError::InvalidOperation(
+            "Password exceeds maximum length of 72 characters".to_string(),
+        ));
+    }
     let has_upper = pw.chars().any(|c| c.is_ascii_uppercase());
     if !has_upper {
         return Err(KalamDbError::InvalidOperation(

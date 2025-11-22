@@ -153,6 +153,28 @@ impl ManifestCacheService {
         EntityStore::delete(&self.store, &cache_key)
     }
 
+    /// Evict least-recently-used entry from hot cache
+    fn evict_lru(&self) {
+        let mut oldest_key: Option<String> = None;
+        let mut oldest_timestamp = i64::MAX;
+
+        // Find entry with oldest last_accessed timestamp
+        for entry in self.last_accessed.iter() {
+            let timestamp = *entry.value();
+            if timestamp < oldest_timestamp {
+                oldest_timestamp = timestamp;
+                oldest_key = Some(entry.key().clone());
+            }
+        }
+
+        // Remove oldest entry from hot cache and last_accessed
+        // Note: We do NOT remove from RocksDB (L2 cache)
+        if let Some(key) = oldest_key {
+            self.hot_cache.remove(&key);
+            self.last_accessed.remove(&key);
+        }
+    }
+
     /// Get all cache entries (for SHOW MANIFEST CACHE).
     pub fn get_all(&self) -> Result<Vec<(String, ManifestCacheEntry)>, StorageError> {
         let entries = EntityStore::scan_all(&self.store, None, None, None)?;
@@ -218,6 +240,11 @@ impl ManifestCacheService {
         source_path: String,
         sync_state: SyncState,
     ) -> Result<(), StorageError> {
+        // Check if we need to evict before inserting
+        if self.config.max_entries > 0 && self.hot_cache.len() >= self.config.max_entries {
+            self.evict_lru();
+        }
+
         let cache_key_str = self.make_cache_key(table_id, user_id);
         let cache_key = ManifestCacheKey::from(cache_key_str.clone());
         let now = chrono::Utc::now().timestamp();

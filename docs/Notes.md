@@ -248,9 +248,7 @@ instead of: 1 failed: Invalid operation: No handler registered for statement typ
 169) clear_plan_cache should be called in any DDL that is happening
 170) Make a way to set the namespace once per session and then we can use it in the next queries
 
-171) Use sqlparser-rs for CREATE TABLE parsing as well instead of our own custom parser
 172) instead of returning: (NamespaceId, TableName) return TableId directly
-173) Make sure all keys stored inside rocksdb are big-endian for better range scans and ordering
 174) Make sure we flush the table before we alter it to avoid any data loss from a previous schema, also make sure we lock the table for writing/reading while it is being altered
 175) When altering a table to add/remove columns we need to update the manifest file as well
 

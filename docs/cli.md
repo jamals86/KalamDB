@@ -134,11 +134,11 @@ kalam --instance prod \
   --no-color > stats.json
 
 # Stream processing with TTL
-kalam> CREATE STREAM TABLE sensor_data (
+kalam> CREATE TABLE sensor_data (
     sensor_id VARCHAR(50),
     temperature FLOAT,
     timestamp TIMESTAMP
-) WITH (TTL = 3600);
+) WITH (TYPE = 'STREAM', TTL_SECONDS = 3600);
 
 kalam> SELECT * FROM sensor_data WHERE temperature > 100;
 ```

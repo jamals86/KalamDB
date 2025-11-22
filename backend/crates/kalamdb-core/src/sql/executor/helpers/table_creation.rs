@@ -6,7 +6,7 @@ use crate::app_context::AppContext;
 use crate::error::KalamDbError;
 use crate::sql::executor::models::ExecutionContext;
 use kalamdb_commons::models::StorageType;
-use kalamdb_commons::models::{NamespaceId, StorageId, TableId, UserId};
+use kalamdb_commons::models::{NamespaceId, StorageId, TableAccess, TableId, UserId};
 use kalamdb_commons::schemas::TableType;
 use kalamdb_sql::ddl::CreateTableStatement;
 use std::sync::Arc;
@@ -223,8 +223,7 @@ pub fn create_user_table(
         use crate::schema_registry::CachedTableData;
         use kalamdb_commons::schemas::TableType;
         let template = schema_registry.resolve_storage_path_template(
-            &table_id.namespace_id(),
-            &table_id.table_name(),
+            &table_id,
             TableType::User,
             &storage_id,
         )?;
@@ -272,10 +271,15 @@ pub fn create_user_table(
 /// Create SHARED table (single-tenant with access control)
 pub fn create_shared_table(
     app_context: Arc<AppContext>,
-    stmt: CreateTableStatement,
+    mut stmt: CreateTableStatement,
     exec_ctx: &ExecutionContext,
 ) -> Result<String, KalamDbError> {
     use super::tables::{save_table_definition, validate_table_name};
+
+    // Set default access level if not provided
+    if stmt.access_level.is_none() {
+        stmt.access_level = Some(TableAccess::Private);
+    }
 
     // RBAC check
     if !crate::auth::rbac::can_create_table(exec_ctx.user_role, TableType::Shared) {
@@ -411,8 +415,7 @@ pub fn create_shared_table(
     {
         use crate::schema_registry::CachedTableData;
         let template = schema_registry.resolve_storage_path_template(
-            &table_id.namespace_id(),
-            &table_id.table_name(),
+            &table_id,
             TableType::Shared,
             &storage_id,
         )?;
@@ -628,8 +631,7 @@ pub fn create_stream_table(
         // Stream tables use default storage
         let storage_id = StorageId::from("local");
         let template = schema_registry.resolve_storage_path_template(
-            &table_id.namespace_id(),
-            &table_id.table_name(),
+            &table_id,
             TableType::Stream,
             &storage_id,
         )?;

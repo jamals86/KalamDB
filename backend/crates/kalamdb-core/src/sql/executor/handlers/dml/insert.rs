@@ -19,6 +19,7 @@ use crate::sql::executor::models::{ExecutionContext, ExecutionResult, ScalarValu
 use crate::sql::executor::parameter_validation::{validate_parameters, ParameterLimits};
 use async_trait::async_trait;
 use kalamdb_commons::models::{NamespaceId, Row, TableName};
+use kalamdb_commons::models::datatypes::KalamDataType;
 use kalamdb_commons::schemas::{ColumnDefault, TableType};
 use kalamdb_sql::statement_classifier::{SqlStatement, SqlStatementKind};
 use serde_json::Value as JsonValue;
@@ -127,6 +128,16 @@ impl StatementHandler for InsertHandler {
             .collect();
         let sys_cols = self.app_context.system_columns_service();
 
+        // Create a map of column name to type for fast lookup
+        let col_types: std::collections::HashMap<
+            String,
+            kalamdb_commons::models::datatypes::KalamDataType,
+        > = table_def
+            .columns
+            .iter()
+            .map(|c| (c.column_name.clone(), c.data_type.clone()))
+            .collect();
+
         // Bind parameters and construct Row values directly (ScalarValue map)
         let mut rows: Vec<Row> = Vec::new();
         for row_exprs in rows_data {
@@ -139,7 +150,9 @@ impl StatementHandler for InsertHandler {
                 )));
             }
             for (col, expr) in columns.iter().zip(row_exprs.iter()) {
-                let value = self.expr_to_scalar_value(expr, &params, effective_user_id)?;
+                let target_type = col_types.get(col);
+                let value =
+                    self.expr_to_scalar_value(expr, &params, effective_user_id, target_type)?;
                 values.insert(col.clone(), value);
             }
 
@@ -292,14 +305,40 @@ impl InsertHandler {
         Ok((namespace, table_name, columns, rows))
     }
 
+    /// Coerce ScalarValue to target type if needed
+    fn coerce_scalar_value(
+        &self,
+        value: ScalarValue,
+        target: &KalamDataType,
+    ) -> Result<ScalarValue, KalamDbError> {
+        match (target, &value) {
+            (KalamDataType::Uuid, ScalarValue::Utf8(Some(s))) => {
+                // Parse UUID string to bytes
+                let uuid = uuid::Uuid::parse_str(s).map_err(|e| {
+                    KalamDbError::InvalidOperation(format!("Invalid UUID string '{}': {}", s, e))
+                })?;
+                Ok(ScalarValue::FixedSizeBinary(
+                    16,
+                    Some(uuid.as_bytes().to_vec()),
+                ))
+            }
+            (KalamDataType::Uuid, ScalarValue::Utf8(None)) => {
+                Ok(ScalarValue::FixedSizeBinary(16, None))
+            }
+            // Add other coercions if needed
+            _ => Ok(value),
+        }
+    }
+
     /// Convert sqlparser Expr to ScalarValue for row construction
     fn expr_to_scalar_value(
         &self,
         expr: &Expr,
         params: &[ScalarValue],
         user_id: &kalamdb_commons::models::UserId,
+        target_type: Option<&KalamDataType>,
     ) -> Result<ScalarValue, KalamDbError> {
-        match expr {
+        let value = match expr {
             Expr::Value(val_with_span) => {
                 match &val_with_span.value {
                     sqlparser::ast::Value::Number(n, _) => {
@@ -391,6 +430,12 @@ impl InsertHandler {
                 // For other expressions, convert to string (fallback)
                 Ok(ScalarValue::Utf8(Some(expr.to_string())))
             }
+        }?;
+
+        if let Some(target) = target_type {
+            self.coerce_scalar_value(value, target)
+        } else {
+            Ok(value)
         }
     }
 

@@ -8,7 +8,7 @@ use crate::schema_registry::provider_registry::ProviderRegistry;
 use crate::schema_registry::table_cache::TableCache;
 use datafusion::datasource::TableProvider;
 use kalamdb_commons::models::schemas::TableDefinition;
-use kalamdb_commons::models::{NamespaceId, StorageId, TableId, TableName, UserId};
+use kalamdb_commons::models::{StorageId, TableId, UserId};
 use kalamdb_commons::schemas::TableType;
 use std::sync::Arc;
 
@@ -46,18 +46,12 @@ impl SchemaRegistry {
         self.table_cache.get(table_id)
     }
 
-    /// Get cached table data by namespace and table name
-    pub fn get_by_name(
-        &self,
-        namespace: &NamespaceId,
-        table_name: &TableName,
-    ) -> Option<Arc<CachedTableData>> {
-        self.table_cache.get_by_name(namespace, table_name)
-    }
-
     /// Insert or update cached table data
     pub fn insert(&self, table_id: TableId, data: Arc<CachedTableData>) {
-        self.table_cache.insert(table_id, data);
+        if let Some(evicted) = self.table_cache.insert(table_id, data) {
+            // Also remove the provider for the evicted table
+            let _ = self.provider_registry.remove_provider(&evicted);
+        }
     }
 
     /// Invalidate (remove) cached table data
@@ -128,12 +122,11 @@ impl SchemaRegistry {
     /// Resolve partial storage path template for a table
     pub fn resolve_storage_path_template(
         &self,
-        namespace: &NamespaceId,
-        table_name: &TableName,
+        table_id: &TableId,
         table_type: TableType,
         storage_id: &StorageId,
     ) -> Result<String, KalamDbError> {
-        PathResolver::resolve_storage_path_template(namespace, table_name, table_type, storage_id)
+        PathResolver::resolve_storage_path_template(table_id, table_type, storage_id)
     }
 
     // ===== Persistence Methods (Phase 5: SchemaRegistry Consolidation) =====
@@ -175,7 +168,13 @@ impl SchemaRegistry {
         &self,
         table_id: &TableId,
     ) -> Result<Arc<arrow::datatypes::Schema>, KalamDbError> {
-        SchemaPersistence::get_arrow_schema(&self.table_cache, table_id)
+        let (schema, evicted) = SchemaPersistence::get_arrow_schema(&self.table_cache, table_id)?;
+
+        if let Some(evicted_id) = evicted {
+            let _ = self.provider_registry.remove_provider(&evicted_id);
+        }
+
+        Ok(schema)
     }
 
     /// Get Bloom filter column names for a table (PRIMARY KEY columns + _seq)

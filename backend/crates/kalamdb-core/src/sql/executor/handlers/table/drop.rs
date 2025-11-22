@@ -224,8 +224,7 @@ pub async fn cleanup_parquet_files_internal(
     // Resolve relative template: substitutes {namespace} and {tableName};
     // leaves {userId}/{shard} placeholders intact for expansion below.
     let relative_template = registry.resolve_storage_path_template(
-        &table_def.namespace_id,
-        &table_def.table_name,
+        table_id,
         table_def.table_type,
         &storage_id,
     )?;
