@@ -24,12 +24,12 @@ async fn test_create_table_without_pk_rejected() {
     let server = TestServer::new().await;
 
     // Setup
-    fixtures::create_namespace(&server, "test_ns").await;
+    fixtures::create_namespace(&server, "test_ns_t051").await;
 
     // Try to create table without PRIMARY KEY specification
     let response = server
         .execute_sql_as_user(
-            r#"CREATE TABLE test_ns.invalid_table (
+            r#"CREATE TABLE test_ns_t051.invalid_table (
                 id TEXT,
                 name TEXT,
                 value INT
@@ -69,12 +69,12 @@ async fn test_create_table_auto_adds_system_columns() {
     let server = TestServer::new().await;
 
     // Setup
-    fixtures::create_namespace(&server, "test_ns").await;
+    fixtures::create_namespace(&server, "test_ns_t052").await;
 
     // Create table with user-defined PK
     let response = server
         .execute_sql_as_user(
-            r#"CREATE TABLE test_ns.products (
+            r#"CREATE TABLE test_ns_t052.products (
                 id TEXT PRIMARY KEY,
                 name TEXT,
                 price INT
@@ -96,7 +96,7 @@ async fn test_create_table_auto_adds_system_columns() {
     // Insert test data
     server
         .execute_sql_as_user(
-            r#"INSERT INTO test_ns.products (id, name, price) 
+            r#"INSERT INTO test_ns_t052.products (id, name, price) 
                VALUES ('prod1', 'Widget', 100)"#,
             "user1",
         )
@@ -105,7 +105,7 @@ async fn test_create_table_auto_adds_system_columns() {
     // Query with explicit _seq and _deleted columns
     let response = server
         .execute_sql_as_user(
-            "SELECT id, name, price, _seq, _deleted FROM test_ns.products WHERE id = 'prod1'",
+            "SELECT id, name, price, _seq, _deleted FROM test_ns_t052.products WHERE id = 'prod1'",
             "user1",
         )
         .await;
@@ -154,12 +154,13 @@ async fn test_insert_storage_key_format() {
     let server = TestServer::new().await;
 
     // Setup
-    fixtures::create_namespace(&server, "test_ns").await;
+    let resp = fixtures::create_namespace(&server, "test_ns_t053").await;
+    assert_eq!(resp.status, ResponseStatus::Success, "Namespace creation failed: {:?}", resp.error);
 
     // Create user table
-    server
+    let resp = server
         .execute_sql_as_user(
-            r#"CREATE TABLE test_ns.user_data (
+            r#"CREATE TABLE test_ns_t053.user_data (
                 id TEXT PRIMARY KEY,
                 content TEXT
             ) WITH (
@@ -169,11 +170,12 @@ async fn test_insert_storage_key_format() {
             "user1",
         )
         .await;
+    assert_eq!(resp.status, ResponseStatus::Success, "User table creation failed: {:?}", resp.error);
 
     // Create shared table with system privileges
-    server
+    let resp = server
         .execute_sql_as_user(
-            r#"CREATE TABLE test_ns.shared_data (
+            r#"CREATE TABLE test_ns_t053.shared_data (
                 id TEXT PRIMARY KEY,
                 content TEXT
             ) WITH (
@@ -183,11 +185,12 @@ async fn test_insert_storage_key_format() {
             "system",
         )
         .await;
+    assert_eq!(resp.status, ResponseStatus::Success, "Shared table creation failed: {:?}", resp.error);
 
     // Insert into user table
     let response = server
         .execute_sql_as_user(
-            r#"INSERT INTO test_ns.user_data (id, content) 
+            r#"INSERT INTO test_ns_t053.user_data (id, content) 
                VALUES ('rec1', 'User data')"#,
             "user1",
         )
@@ -203,7 +206,7 @@ async fn test_insert_storage_key_format() {
     // Insert into shared table (must be done by system/owner for Private tables)
     let response = server
         .execute_sql_as_user(
-            r#"INSERT INTO test_ns.shared_data (id, content) 
+            r#"INSERT INTO test_ns_t053.shared_data (id, content) 
                VALUES ('rec1', 'Shared data')"#,
             "system",
         )
@@ -218,7 +221,7 @@ async fn test_insert_storage_key_format() {
 
     // Verify data can be queried (storage key format works)
     let response = server
-        .execute_sql_as_user("SELECT id, content FROM test_ns.user_data", "user1")
+        .execute_sql_as_user("SELECT id, content FROM test_ns_t053.user_data", "user1")
         .await;
 
     assert_eq!(response.status, ResponseStatus::Success);
@@ -227,7 +230,7 @@ async fn test_insert_storage_key_format() {
     }
 
     let response = server
-        .execute_sql_as_user("SELECT id, content FROM test_ns.shared_data", "system")
+        .execute_sql_as_user("SELECT id, content FROM test_ns_t053.shared_data", "system")
         .await;
 
     assert_eq!(response.status, ResponseStatus::Success);
@@ -244,10 +247,12 @@ async fn test_user_table_row_structure() {
     let server = TestServer::new().await;
 
     // Setup
-    fixtures::create_namespace(&server, "test_ns").await;
-    server
+    let resp = fixtures::create_namespace(&server, "test_ns_t054").await;
+    assert_eq!(resp.status, ResponseStatus::Success, "Namespace creation failed: {:?}", resp.error);
+
+    let resp = server
         .execute_sql_as_user(
-            r#"CREATE TABLE test_ns.user_records (
+            r#"CREATE TABLE test_ns_t054.user_records (
                 record_id TEXT PRIMARY KEY,
                 title TEXT,
                 priority INT
@@ -258,20 +263,22 @@ async fn test_user_table_row_structure() {
             "user1",
         )
         .await;
+    assert_eq!(resp.status, ResponseStatus::Success, "Table creation failed: {:?}", resp.error);
 
     // Insert record
-    server
+    let resp = server
         .execute_sql_as_user(
-            r#"INSERT INTO test_ns.user_records (record_id, title, priority) 
+            r#"INSERT INTO test_ns_t054.user_records (record_id, title, priority) 
                VALUES ('rec1', 'Important', 5)"#,
             "user1",
         )
         .await;
+    assert_eq!(resp.status, ResponseStatus::Success, "Insert failed: {:?}", resp.error);
 
     // Query with all columns including system columns
     let response = server
         .execute_sql_as_user(
-            "SELECT record_id, title, priority, _seq, _deleted FROM test_ns.user_records",
+            "SELECT record_id, title, priority, _seq, _deleted FROM test_ns_t054.user_records",
             "user1",
         )
         .await;
@@ -318,11 +325,13 @@ async fn test_shared_table_row_structure() {
     let server = TestServer::new().await;
 
     // Setup - namespace and shared table created via system user
-    fixtures::create_namespace(&server, "test_ns").await;
-    server
+    let resp = fixtures::create_namespace(&server, "test_ns_t055").await;
+    assert_eq!(resp.status, ResponseStatus::Success, "Namespace creation failed: {:?}", resp.error);
+
+    let resp = server
         .execute_sql_as_user(
-            r#"CREATE TABLE test_ns.shared_config (
-                key TEXT PRIMARY KEY,
+            r#"CREATE TABLE test_ns_t055.shared_config (
+                config_key TEXT PRIMARY KEY,
                 value TEXT,
                 enabled BOOLEAN
             ) WITH (
@@ -332,20 +341,22 @@ async fn test_shared_table_row_structure() {
             "system",
         )
         .await;
+    assert_eq!(resp.status, ResponseStatus::Success, "Table creation failed: {:?}", resp.error);
 
     // Insert record (must be done by system/owner)
-    server
+    let resp = server
         .execute_sql_as_user(
-            r#"INSERT INTO test_ns.shared_config (key, value, enabled) 
+            r#"INSERT INTO test_ns_t055.shared_config (config_key, value, enabled) 
                VALUES ('feature_flag', 'on', true)"#,
             "system",
         )
         .await;
+    assert_eq!(resp.status, ResponseStatus::Success, "Insert failed: {:?}", resp.error);
 
     // Query with all columns including system columns (as system user)
     let response = server
         .execute_sql_as_user(
-            "SELECT key, value, enabled, _seq, _deleted FROM test_ns.shared_config",
+            "SELECT config_key, value, enabled, _seq, _deleted FROM test_ns_t055.shared_config",
             "system",
         )
         .await;
@@ -356,7 +367,7 @@ async fn test_shared_table_row_structure() {
         let row = &rows[0];
 
         // Verify fields (user-defined columns)
-        assert_eq!(row.get("key").unwrap().as_str().unwrap(), "feature_flag");
+        assert_eq!(row.get("config_key").unwrap().as_str().unwrap(), "feature_flag");
         assert_eq!(row.get("value").unwrap().as_str().unwrap(), "on");
         assert_eq!(row.get("enabled").unwrap().as_bool().unwrap(), true);
 
@@ -400,10 +411,10 @@ async fn test_insert_duplicate_pk_rejected() {
     let server = TestServer::new().await;
 
     // Setup
-    fixtures::create_namespace(&server, "test_ns").await;
+    fixtures::create_namespace(&server, "test_ns_t060").await;
     server
         .execute_sql_as_user(
-            r#"CREATE TABLE test_ns.unique_items (
+            r#"CREATE TABLE test_ns_t060.unique_items (
                 item_id TEXT PRIMARY KEY,
                 name TEXT
             ) WITH (
@@ -417,7 +428,7 @@ async fn test_insert_duplicate_pk_rejected() {
     // Insert first record WITH explicit PK
     let response = server
         .execute_sql_as_user(
-            r#"INSERT INTO test_ns.unique_items (item_id, name) 
+            r#"INSERT INTO test_ns_t060.unique_items (item_id, name) 
                VALUES ('item1', 'First')"#,
             "user1",
         )
@@ -432,7 +443,7 @@ async fn test_insert_duplicate_pk_rejected() {
     // Try to insert duplicate PK (should fail - user provided explicit PK value)
     let response = server
         .execute_sql_as_user(
-            r#"INSERT INTO test_ns.unique_items (item_id, name) 
+            r#"INSERT INTO test_ns_t060.unique_items (item_id, name) 
                VALUES ('item1', 'Duplicate')"#,
             "user1",
         )
@@ -460,7 +471,7 @@ async fn test_insert_duplicate_pk_rejected() {
 
     // Verify only one record exists
     let response = server
-        .execute_sql_as_user("SELECT item_id, name FROM test_ns.unique_items", "user1")
+        .execute_sql_as_user("SELECT item_id, name FROM test_ns_t060.unique_items", "user1")
         .await;
 
     assert_eq!(response.status, ResponseStatus::Success);
@@ -480,7 +491,7 @@ async fn test_insert_duplicate_pk_rejected() {
     // Verify different PK values still work
     let response = server
         .execute_sql_as_user(
-            r#"INSERT INTO test_ns.unique_items (item_id, name) 
+            r#"INSERT INTO test_ns_t060.unique_items (item_id, name) 
                VALUES ('item2', 'Second')"#,
             "user1",
         )
@@ -501,10 +512,12 @@ async fn test_incremental_sync_seq_threshold() {
     let server = TestServer::new().await;
 
     // Setup
-    fixtures::create_namespace(&server, "test_ns").await;
-    server
+    let resp = fixtures::create_namespace(&server, "test_ns_t062").await;
+    assert_eq!(resp.status, ResponseStatus::Success, "Namespace creation failed: {:?}", resp.error);
+
+    let resp = server
         .execute_sql_as_user(
-            r#"CREATE TABLE test_ns.sync_records (
+            r#"CREATE TABLE test_ns_t062.sync_records (
                 id TEXT PRIMARY KEY,
                 version INT
             ) WITH (
@@ -514,25 +527,26 @@ async fn test_incremental_sync_seq_threshold() {
             "user1",
         )
         .await;
+    assert_eq!(resp.status, ResponseStatus::Success, "Table creation failed: {:?}", resp.error);
 
     // Insert 3 records
     server
         .execute_sql_as_user(
-            r#"INSERT INTO test_ns.sync_records (id, version) VALUES ('rec1', 1)"#,
+            r#"INSERT INTO test_ns_t062.sync_records (id, version) VALUES ('rec1', 1)"#,
             "user1",
         )
         .await;
 
     server
         .execute_sql_as_user(
-            r#"INSERT INTO test_ns.sync_records (id, version) VALUES ('rec2', 2)"#,
+            r#"INSERT INTO test_ns_t062.sync_records (id, version) VALUES ('rec2', 2)"#,
             "user1",
         )
         .await;
 
     server
         .execute_sql_as_user(
-            r#"INSERT INTO test_ns.sync_records (id, version) VALUES ('rec3', 3)"#,
+            r#"INSERT INTO test_ns_t062.sync_records (id, version) VALUES ('rec3', 3)"#,
             "user1",
         )
         .await;
@@ -540,7 +554,7 @@ async fn test_incremental_sync_seq_threshold() {
     // Get all records with _seq
     let response = server
         .execute_sql_as_user(
-            "SELECT id, version, _seq FROM test_ns.sync_records ORDER BY id",
+            "SELECT id, version, _seq FROM test_ns_t062.sync_records ORDER BY id",
             "user1",
         )
         .await;
@@ -556,7 +570,7 @@ async fn test_incremental_sync_seq_threshold() {
     let response = server
         .execute_sql_as_user(
             &format!(
-                "SELECT id, version, _seq FROM test_ns.sync_records WHERE _seq > {} ORDER BY id",
+                "SELECT id, version, _seq FROM test_ns_t062.sync_records WHERE _seq > {} ORDER BY id",
                 threshold_seq
             ),
             "user1",
@@ -588,10 +602,10 @@ async fn test_rocksdb_prefix_scan_user_isolation() {
     let server = TestServer::new().await;
 
     // Setup
-    fixtures::create_namespace(&server, "test_ns").await;
+    fixtures::create_namespace(&server, "test_ns_t063").await;
     server
         .execute_sql_as_user(
-            r#"CREATE TABLE test_ns.user_notes (
+            r#"CREATE TABLE test_ns_t063.user_notes (
                 note_id TEXT PRIMARY KEY,
                 content TEXT
             ) WITH (
@@ -605,7 +619,7 @@ async fn test_rocksdb_prefix_scan_user_isolation() {
     // Insert data for user1
     server
         .execute_sql_as_user(
-            r#"INSERT INTO test_ns.user_notes (note_id, content) 
+            r#"INSERT INTO test_ns_t063.user_notes (note_id, content) 
                VALUES ('note1', 'User1 Note 1')"#,
             "user1",
         )
@@ -613,7 +627,7 @@ async fn test_rocksdb_prefix_scan_user_isolation() {
 
     server
         .execute_sql_as_user(
-            r#"INSERT INTO test_ns.user_notes (note_id, content) 
+            r#"INSERT INTO test_ns_t063.user_notes (note_id, content) 
                VALUES ('note2', 'User1 Note 2')"#,
             "user1",
         )
@@ -622,7 +636,7 @@ async fn test_rocksdb_prefix_scan_user_isolation() {
     // Insert data for user2 (different user)
     server
         .execute_sql_as_user(
-            r#"INSERT INTO test_ns.user_notes (note_id, content) 
+            r#"INSERT INTO test_ns_t063.user_notes (note_id, content) 
                VALUES ('note1', 'User2 Note 1')"#,
             "user2",
         )
@@ -631,7 +645,7 @@ async fn test_rocksdb_prefix_scan_user_isolation() {
     // Query as user1 (should only see user1's notes via prefix scan)
     let response = server
         .execute_sql_as_user(
-            "SELECT note_id, content FROM test_ns.user_notes ORDER BY note_id",
+            "SELECT note_id, content FROM test_ns_t063.user_notes ORDER BY note_id",
             "user1",
         )
         .await;
@@ -652,7 +666,7 @@ async fn test_rocksdb_prefix_scan_user_isolation() {
     // Query as user2 (should only see user2's note)
     let response = server
         .execute_sql_as_user(
-            "SELECT note_id, content FROM test_ns.user_notes ORDER BY note_id",
+            "SELECT note_id, content FROM test_ns_t063.user_notes ORDER BY note_id",
             "user2",
         )
         .await;
@@ -678,10 +692,10 @@ async fn test_rocksdb_range_scan_efficiency() {
     let server = TestServer::new().await;
 
     // Setup
-    fixtures::create_namespace(&server, "test_ns").await;
+    fixtures::create_namespace(&server, "test_ns_t064").await;
     server
         .execute_sql_as_user(
-            r#"CREATE TABLE test_ns.versioned_data (
+            r#"CREATE TABLE test_ns_t064.versioned_data (
                 id TEXT PRIMARY KEY,
                 value INT
             ) WITH (
@@ -695,7 +709,7 @@ async fn test_rocksdb_range_scan_efficiency() {
     // Insert initial version
     server
         .execute_sql_as_user(
-            r#"INSERT INTO test_ns.versioned_data (id, value) VALUES ('rec1', 1)"#,
+            r#"INSERT INTO test_ns_t064.versioned_data (id, value) VALUES ('rec1', 1)"#,
             "user1",
         )
         .await;
@@ -703,7 +717,7 @@ async fn test_rocksdb_range_scan_efficiency() {
     // Get initial _seq
     let response = server
         .execute_sql_as_user(
-            "SELECT id, value, _seq FROM test_ns.versioned_data",
+            "SELECT id, value, _seq FROM test_ns_t064.versioned_data",
             "user1",
         )
         .await;
@@ -717,7 +731,7 @@ async fn test_rocksdb_range_scan_efficiency() {
     // Update record (creates new version)
     server
         .execute_sql_as_user(
-            r#"UPDATE test_ns.versioned_data SET value = 2 WHERE id = 'rec1'"#,
+            r#"UPDATE test_ns_t064.versioned_data SET value = 2 WHERE id = 'rec1'"#,
             "user1",
         )
         .await;
@@ -725,7 +739,7 @@ async fn test_rocksdb_range_scan_efficiency() {
     // Update again
     server
         .execute_sql_as_user(
-            r#"UPDATE test_ns.versioned_data SET value = 3 WHERE id = 'rec1'"#,
+            r#"UPDATE test_ns_t064.versioned_data SET value = 3 WHERE id = 'rec1'"#,
             "user1",
         )
         .await;
@@ -734,7 +748,7 @@ async fn test_rocksdb_range_scan_efficiency() {
     let response = server
         .execute_sql_as_user(
             &format!(
-                "SELECT id, value, _seq FROM test_ns.versioned_data WHERE _seq > {}",
+                "SELECT id, value, _seq FROM test_ns_t064.versioned_data WHERE _seq > {}",
                 initial_seq
             ),
             "user1",
