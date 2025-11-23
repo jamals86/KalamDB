@@ -15,15 +15,19 @@ use std::time::Duration;
 const TEST_DATA_DIR: &str = "data/storage"; // Default from config.toml
 
 fn get_storage_dir() -> PathBuf {
-    let path = PathBuf::from(TEST_DATA_DIR);
-    if path.exists() {
-        return path;
-    }
-    // Try parent directory (if running from cli/)
+    // Try parent directory first (if running from cli/)
+    // This is preferred because if we are in cli/, ../data/storage is the workspace storage
+    // where the server writes. cli/data/storage might exist but be empty/stale.
     let parent_path = PathBuf::from("..").join(TEST_DATA_DIR);
     if parent_path.exists() {
         return parent_path;
     }
+
+    let path = PathBuf::from(TEST_DATA_DIR);
+    if path.exists() {
+        return path;
+    }
+    
     // Default to original path if neither exists (will fail in test)
     path
 }

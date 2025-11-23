@@ -255,6 +255,8 @@ instead of: 1 failed: Invalid operation: No handler registered for statement typ
 
 177) The loading of tables and registering its providers is scattered, i want to make it one place for on server starts and on create table
 
+178) Flushing - Maybe we need to change the flush to look at the active manifests and from them we can know what needs to be flushed instead of scaning the whole hot rows, this way we can make sure all the manifests are flushed as well.
+
 
 
 Here’s the updated 5-line spec with embedding storage inside Parquet and managed HNSW indexing (with delete handling):
