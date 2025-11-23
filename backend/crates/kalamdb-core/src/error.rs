@@ -58,6 +58,9 @@ pub enum KalamDbError {
     #[error("System column violation: {0}")]
     SystemColumnViolation(String),
 
+    #[error("Constraint violation: {0}")]
+    ConstraintViolation(String),
+
     #[error("Conflict: {0}")]
     Conflict(String),
 

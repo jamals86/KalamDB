@@ -7,7 +7,7 @@
 use dashmap::DashMap;
 use kalamdb_commons::{
     config::ManifestCacheSettings,
-    types::{ManifestCacheEntry, ManifestFile, SyncState},
+    types::{ManifestCacheEntry, Manifest, SyncState},
     NamespaceId, TableId, TableName, UserId,
 };
 use kalamdb_store::{entity_store::EntityStore, StorageBackend, StorageError};
@@ -85,7 +85,7 @@ impl ManifestCacheService {
         &self,
         table_id: &TableId,
         user_id: Option<&UserId>,
-        manifest: &ManifestFile,
+        manifest: &Manifest,
         etag: Option<String>,
         source_path: String,
     ) -> Result<(), StorageError> {
@@ -104,7 +104,7 @@ impl ManifestCacheService {
         &self,
         table_id: &TableId,
         user_id: Option<&UserId>,
-        manifest: &ManifestFile,
+        manifest: &Manifest,
         source_path: String,
     ) -> Result<(), StorageError> {
         self.upsert_cache_entry(
@@ -235,7 +235,7 @@ impl ManifestCacheService {
         &self,
         table_id: &TableId,
         user_id: Option<&UserId>,
-        manifest: &ManifestFile,
+        manifest: &Manifest,
         etag: Option<String>,
         source_path: String,
         sync_state: SyncState,
@@ -249,8 +249,10 @@ impl ManifestCacheService {
         let cache_key = ManifestCacheKey::from(cache_key_str.clone());
         let now = chrono::Utc::now().timestamp();
 
-        let manifest_json = manifest.to_json().map_err(|e| {
-            StorageError::SerializationError(format!("Failed to serialize ManifestFile: {}", e))
+        // TODO: Maybe its better to have it as parsed one instead of string
+        // For now we serialize it to string as ManifestCacheEntry expects string
+        let manifest_json = serde_json::to_string(manifest).map_err(|e| {
+            StorageError::SerializationError(format!("Failed to serialize Manifest: {}", e))
         })?;
 
         let entry = ManifestCacheEntry::new(manifest_json, etag, now, source_path, sync_state);
@@ -297,10 +299,9 @@ mod tests {
         ManifestCacheService::new(backend, config)
     }
 
-    fn create_test_manifest() -> ManifestFile {
-        use kalamdb_commons::models::schemas::TableType;
+    fn create_test_manifest() -> Manifest {
         let table_id = TableId::new(NamespaceId::new("test"), TableName::new("table"));
-        ManifestFile::new(table_id, TableType::Shared, Some(UserId::from("u_123")))
+        Manifest::new(table_id, Some(UserId::from("u_123")))
     }
 
     #[test]
@@ -493,3 +494,4 @@ mod tests {
         assert_eq!(service.count().unwrap(), 0);
     }
 }
+

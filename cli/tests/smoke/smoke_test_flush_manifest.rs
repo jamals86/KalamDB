@@ -14,6 +14,20 @@ use std::time::Duration;
 
 const TEST_DATA_DIR: &str = "data/storage"; // Default from config.toml
 
+fn get_storage_dir() -> PathBuf {
+    let path = PathBuf::from(TEST_DATA_DIR);
+    if path.exists() {
+        return path;
+    }
+    // Try parent directory (if running from cli/)
+    let parent_path = PathBuf::from("..").join(TEST_DATA_DIR);
+    if parent_path.exists() {
+        return parent_path;
+    }
+    // Default to original path if neither exists (will fail in test)
+    path
+}
+
 /// Test manifest.json creation after flushing USER table
 ///
 /// Verifies:
@@ -90,76 +104,65 @@ fn smoke_test_user_table_flush_manifest() {
     println!("✅ Flush job completed");
 
     // Filesystem verification: check manifest.json exists
-    // For USER tables, path is: storage/user/{user_id}/{table}/manifest.json
+    // For USER tables, path is: storage/{namespace}/{table}/{user_id}/manifest.json (based on config.toml)
     // When running via CLI as root, user_id is typically "root" or system user
     // We need to find the actual user_id from the flush job or test context
 
-    // TODO: For now, we'll just verify the storage directory structure exists
-    // In a full test, we'd parse the actual user_id from session context
-
-    // Alternative: Query system.tables to get storage_id and path template
-    // For now, we'll verify the top-level storage structure
-
-    let storage_dir = PathBuf::from(TEST_DATA_DIR);
+    let storage_dir = get_storage_dir();
     assert!(
         storage_dir.exists(),
         "Storage directory {:?} should exist",
         storage_dir
     );
 
-    let user_storage = storage_dir.join("user");
-    if user_storage.exists() {
-        println!("✅ User storage directory exists: {:?}", user_storage);
+    // Check if this namespace/table directory exists
+    let table_dir = storage_dir.join(&namespace).join(&table);
+    if table_dir.exists() {
+        println!("✅ Table directory exists: {:?}", table_dir);
 
         // Try to find any user subdirectory (we don't know exact user_id in test)
-        if let Ok(entries) = fs::read_dir(&user_storage) {
+        if let Ok(entries) = fs::read_dir(&table_dir) {
             let mut found_manifest = false;
             let mut found_parquet = false;
 
             for entry in entries.flatten() {
                 let user_dir = entry.path();
                 if user_dir.is_dir() {
-                    // Check if this user has our table
-                    let table_dir = user_dir.join(&table);
-                    if table_dir.exists() {
-                        println!("  Found table directory: {:?}", table_dir);
+                    // Check for manifest.json in user directory
+                    let manifest_path = user_dir.join("manifest.json");
+                    if manifest_path.exists() {
+                        println!("  ✅ Found manifest.json: {:?}", manifest_path);
+                        found_manifest = true;
 
-                        // Check for manifest.json
-                        let manifest_path = table_dir.join("manifest.json");
-                        if manifest_path.exists() {
-                            println!("  ✅ Found manifest.json: {:?}", manifest_path);
-                            found_manifest = true;
+                        // Verify manifest is non-empty
+                        let manifest_content = fs::read_to_string(&manifest_path)
+                            .expect("Failed to read manifest.json");
+                        assert!(
+                            !manifest_content.is_empty(),
+                            "manifest.json should not be empty"
+                        );
+                        assert!(
+                            manifest_content.contains("schema")
+                                || manifest_content.contains("batches")
+                                || manifest_content.len() > 10,
+                            "manifest.json should contain metadata, got: {}",
+                            manifest_content
+                        );
+                    }
 
-                            // Verify manifest is non-empty
-                            let manifest_content = fs::read_to_string(&manifest_path)
-                                .expect("Failed to read manifest.json");
-                            assert!(
-                                !manifest_content.is_empty(),
-                                "manifest.json should not be empty"
-                            );
-                            assert!(
-                                manifest_content.contains("schema")
-                                    || manifest_content.contains("batches")
-                                    || manifest_content.len() > 10,
-                                "manifest.json should contain metadata, got: {}",
-                                manifest_content
-                            );
-                        }
-
-                        // Check for batch-*.parquet files
-                        if let Ok(table_entries) = fs::read_dir(&table_dir) {
-                            for table_entry in table_entries.flatten() {
-                                let filename = table_entry.file_name();
-                                let filename_str = filename.to_string_lossy();
-                                if filename_str.starts_with("batch-")
-                                    && filename_str.ends_with(".parquet")
-                                {
-                                    println!(
-                                        "  ✅ Found parquet file: {:?}",
-                                        table_entry.path()
-                                    );
-                                    found_parquet = true;
-                                }
+                    // Check for batch-*.parquet files
+                    if let Ok(user_entries) = fs::read_dir(&user_dir) {
+                        for user_entry in user_entries.flatten() {
+                            let filename = user_entry.file_name();
+                            let filename_str = filename.to_string_lossy();
+                            if filename_str.starts_with("batch-")
+                                && filename_str.ends_with(".parquet")
+                            {
+                                println!(
+                                    "  ✅ Found parquet file: {:?}",
+                                    user_entry.path()
+                                );
+                                found_parquet = true;
                             }
                         }
                     }
@@ -176,7 +179,7 @@ fn smoke_test_user_table_flush_manifest() {
             );
         }
     } else {
-        println!("⚠️  User storage directory does not exist yet, skipping filesystem checks");
+        println!("⚠️  Table directory does not exist yet, skipping filesystem checks");
         // This is acceptable in some test scenarios where flush hasn't triggered yet
     }
 
@@ -252,48 +255,42 @@ fn smoke_test_shared_table_flush_manifest() {
     println!("✅ Flush job completed");
 
     // Filesystem verification: check shared table path
-    let storage_dir = PathBuf::from(TEST_DATA_DIR);
-    let shared_storage = storage_dir.join("shared");
+    // Shared table path is {namespace}/{table} (based on config.toml)
+    let storage_dir = get_storage_dir();
+    let table_dir = storage_dir.join(&namespace).join(&table);
 
-    if shared_storage.exists() {
-        println!("✅ Shared storage directory exists: {:?}", shared_storage);
+    if table_dir.exists() {
+        println!("✅ Shared table directory exists: {:?}", table_dir);
 
-        let table_dir = shared_storage.join(&table);
-        if table_dir.exists() {
-            println!("  Found shared table directory: {:?}", table_dir);
+        // Check for manifest.json
+        let manifest_path = table_dir.join("manifest.json");
+        assert!(
+            manifest_path.exists(),
+            "manifest.json should exist at {:?}",
+            manifest_path
+        );
+        println!("  ✅ Found manifest.json: {:?}", manifest_path);
 
-            // Check for manifest.json
-            let manifest_path = table_dir.join("manifest.json");
-            assert!(
-                manifest_path.exists(),
-                "manifest.json should exist at {:?}",
-                manifest_path
-            );
-            println!("  ✅ Found manifest.json: {:?}", manifest_path);
-
-            // Check for parquet files
-            let mut found_parquet = false;
-            if let Ok(entries) = fs::read_dir(&table_dir) {
-                for entry in entries.flatten() {
-                    let filename = entry.file_name();
-                    let filename_str = filename.to_string_lossy();
-                    if filename_str.starts_with("batch-") && filename_str.ends_with(".parquet") {
-                        println!("  ✅ Found parquet file: {:?}", entry.path());
-                        found_parquet = true;
-                    }
+        // Check for parquet files
+        let mut found_parquet = false;
+        if let Ok(entries) = fs::read_dir(&table_dir) {
+            for entry in entries.flatten() {
+                let filename = entry.file_name();
+                let filename_str = filename.to_string_lossy();
+                if filename_str.starts_with("batch-") && filename_str.ends_with(".parquet") {
+                    println!("  ✅ Found parquet file: {:?}", entry.path());
+                    found_parquet = true;
                 }
             }
-
-            assert!(
-                found_parquet,
-                "Expected at least one batch-*.parquet file in shared table storage"
-            );
-        } else {
-            println!("⚠️  Shared table directory does not exist yet, skipping filesystem checks");
         }
+
+        assert!(
+            found_parquet,
+            "Expected at least one batch-*.parquet file in shared table storage"
+        );
     } else {
         println!(
-            "⚠️  Shared storage directory does not exist yet, skipping filesystem checks"
+            "⚠️  Shared table directory does not exist yet, skipping filesystem checks"
         );
     }
 
@@ -357,8 +354,9 @@ fn smoke_test_manifest_updated_on_second_flush() {
     println!("✅ First flush completed");
 
     // Count parquet files after first flush
-    let storage_dir = PathBuf::from(TEST_DATA_DIR);
-    let table_dir = storage_dir.join("shared").join(&table);
+    let storage_dir = get_storage_dir();
+    // Shared table path is {namespace}/{table} (based on config.toml)
+    let table_dir = storage_dir.join(&namespace).join(&table);
 
     let mut parquet_count_after_first_flush = 0;
     if table_dir.exists() {

@@ -105,247 +105,139 @@ impl ManifestCacheEntry {
     }
 }
 
-/// Status of a batch file in manifest.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum BatchStatus {
-    /// Batch file is active and queryable
-    Active,
-    /// Batch file is being compacted
-    Compacting,
-    /// Batch file has been archived after compaction
-    Archived,
+/// Statistics for a single column in a segment.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct ColumnStats {
+    /// Minimum value in the column (serialized as JSON value)
+    pub min: Option<serde_json::Value>,
+
+    /// Maximum value in the column (serialized as JSON value)
+    pub max: Option<serde_json::Value>,
+
+    /// Number of null values
+    pub null_count: Option<i64>,
 }
 
-impl Default for BatchStatus {
-    fn default() -> Self {
-        Self::Active
-    }
-}
-
-/// Row group level pruning stats for advanced indexing.
+/// Segment metadata tracking a data file (Parquet) or hot storage segment.
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct RowGroupPruningStats {
-    /// Row group index within the Parquet file
-    pub index: u32,
+pub struct SegmentMetadata {
+    /// Unique segment identifier (UUID)
+    pub id: String,
 
-    /// Total number of rows in the row group
-    pub row_count: u64,
+    /// Path to the segment file (relative to table root)
+    pub path: String,
 
-    /// Minimum sequence id observed in the row group
+    /// Column statistics (min/max/nulls) keyed by column name
+    /// Replaces legacy min_key/max_key
+    #[serde(default)]
+    pub column_stats: HashMap<String, ColumnStats>,
+
+    /// Minimum sequence number in this segment (for MVCC pruning)
     pub min_seq: i64,
 
-    /// Maximum sequence id observed in the row group
+    /// Maximum sequence number in this segment (for MVCC pruning)
     pub max_seq: i64,
 
-    /// Column min/max bounds for predicate pruning
-    #[serde(default)]
-    pub column_min_max: HashMap<String, (serde_json::Value, serde_json::Value)>,
-
-    /// Optional byte range for fast IO planning (start, length)
-    #[serde(default)]
-    pub byte_range: Option<(u64, u64)>,
-}
-
-impl RowGroupPruningStats {
-    /// Create a new row group pruning stats entry
-    pub fn new(
-        index: u32,
-        row_count: u64,
-        min_seq: i64,
-        max_seq: i64,
-        column_min_max: HashMap<String, (serde_json::Value, serde_json::Value)>,
-        byte_range: Option<(u64, u64)>,
-    ) -> Self {
-        Self {
-            index,
-            row_count,
-            min_seq,
-            max_seq,
-            column_min_max,
-            byte_range,
-        }
-    }
-}
-
-impl Default for RowGroupPruningStats {
-    fn default() -> Self {
-        Self {
-            index: 0,
-            row_count: 0,
-            min_seq: 0,
-            max_seq: 0,
-            column_min_max: HashMap::new(),
-            byte_range: None,
-        }
-    }
-}
-
-/// Entry for a single batch file in the manifest (Phase 5 - US2, extended for DataFusion indexing).
-///
-/// Tracks metadata about a Parquet batch file for query optimization:
-/// - Row counts and size for cost estimation
-/// - Min/max timestamps for temporal pruning
-/// - Column min/max values for predicate pushdown
-/// - Optional row-group level statistics for fine grained pruning
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct BatchFileEntry {
-    /// Batch number (sequential, starting from 0)
-    pub batch_number: u64,
-
-    /// Relative file path (e.g., "batch-0.parquet")
-    pub file_path: String,
-
-    /// Minimum _seq value in this batch (for MVCC version pruning)
-    pub min_seq: i64,
-
-    /// Maximum _seq value in this batch (for MVCC version pruning)
-    pub max_seq: i64,
-
-    /// Number of rows in this batch
+    /// Number of rows in this segment
     pub row_count: u64,
 
-    /// File size in bytes
+    /// Size in bytes
     pub size_bytes: u64,
 
-    /// Schema version at time of flush
-    pub schema_version: u32,
+    /// Creation timestamp (Unix seconds)
+    pub created_at: i64,
 
-    /// Batch file status
-    pub status: BatchStatus,
-
-    /// Indicates whether the Parquet writer stored page index metadata
-    #[serde(default)]
-    pub has_page_index: bool,
-
-    /// Optional cached footer size to avoid re-reading file metadata
-    #[serde(default)]
-    pub footer_size: Option<u64>,
-
-    /// Row group level pruning metadata (empty when not collected)
-    #[serde(default)]
-    pub row_groups: Vec<RowGroupPruningStats>,
+    /// If true, this segment is marked for deletion (compaction/cleanup)
+    pub tombstone: bool,
 }
 
-impl BatchFileEntry {
-    /// Create a new batch file entry
-    #[allow(clippy::too_many_arguments)]
+impl SegmentMetadata {
     pub fn new(
-        batch_number: u64,
-        file_path: String,
+        id: String,
+        path: String,
+        column_stats: HashMap<String, ColumnStats>,
         min_seq: i64,
         max_seq: i64,
         row_count: u64,
         size_bytes: u64,
-        schema_version: u32,
     ) -> Self {
         Self {
-            batch_number,
-            file_path,
+            id,
+            path,
+            column_stats,
             min_seq,
             max_seq,
             row_count,
             size_bytes,
-            schema_version,
-            status: BatchStatus::Active,
-            has_page_index: false,
-            footer_size: None,
-            row_groups: Vec::new(),
+            created_at: chrono::Utc::now().timestamp(),
+            tombstone: false,
         }
-    }
-
-    /// Check if batch overlaps with sequence range (for MVCC version pruning)
-    pub fn overlaps_seq_range(&self, min_seq: i64, max_seq: i64) -> bool {
-        !(self.max_seq < min_seq || self.min_seq > max_seq)
     }
 }
 
-/// Manifest file tracking batch files for a table (Phase 5 - US2).
+/// Manifest file tracking segments for a table.
 ///
-/// The manifest file is the single source of truth for which Parquet batch files
-/// exist for a table, along with metadata for query optimization.
+/// The manifest is the source of truth for data location (Hot vs Cold).
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct ManifestFile {
-    /// Table identifier (namespace + table name)
+pub struct Manifest {
+    /// Table identifier
     pub table_id: TableId,
 
-    /// Table type (User or Shared)
-    pub table_type: TableType,
-
-    /// Scope: user_id for USER tables, None for SHARED tables
+    /// Optional user_id for User tables
     pub user_id: Option<UserId>,
 
-    /// Manifest format version (for backward compatibility)
-    pub version: u32,
+    /// Manifest version (incremented on update)
+    pub version: u64,
 
-    /// Timestamp when manifest was generated (Unix seconds)
-    pub generated_at: i64,
+    /// Creation timestamp
+    pub created_at: i64,
 
-    /// Highest batch number (max(batches.batch_number))
-    pub max_batch: u64,
+    /// Last update timestamp
+    pub updated_at: i64,
 
-    /// List of batch file entries
-    pub batches: Vec<BatchFileEntry>,
+    /// List of data segments
+    pub segments: Vec<SegmentMetadata>,
+
+    /// Last assigned sequence number (for append-only sequencing)
+    pub last_sequence_number: u64,
 }
 
-impl ManifestFile {
-    /// Create a new empty manifest
-    pub fn new(table_id: TableId, table_type: TableType, user_id: Option<UserId>) -> Self {
+impl Manifest {
+    pub fn new(table_id: TableId, user_id: Option<UserId>) -> Self {
+        let now = chrono::Utc::now().timestamp();
         Self {
             table_id,
-            table_type,
             user_id,
             version: 1,
-            generated_at: chrono::Utc::now().timestamp(),
-            max_batch: 0,
-            batches: Vec::new(),
+            created_at: now,
+            updated_at: now,
+            segments: Vec::new(),
+            last_sequence_number: 0,
         }
     }
+// ...existing code...
 
-    /// Add a new batch entry and increment max_batch
-    pub fn add_batch(&mut self, batch: BatchFileEntry) {
-        self.max_batch = self.max_batch.max(batch.batch_number);
-        self.batches.push(batch);
-        self.generated_at = chrono::Utc::now().timestamp();
+
+    pub fn add_segment(&mut self, segment: SegmentMetadata) {
+        self.segments.push(segment);
+        self.updated_at = chrono::Utc::now().timestamp();
+        self.version += 1;
     }
 
-    /// Validate that max_batch matches actual batches
-    pub fn validate(&self) -> Result<(), String> {
-        if let Some(max) = self.batches.iter().map(|b| b.batch_number).max() {
-            if max != self.max_batch {
-                return Err(format!(
-                    "max_batch mismatch: manifest says {}, actual max is {}",
-                    self.max_batch, max
-                ));
-            }
-        } else if self.max_batch != 0 {
-            return Err(format!(
-                "max_batch is {} but no batches found",
-                self.max_batch
-            ));
+    pub fn update_sequence_number(&mut self, seq: u64) {
+        if seq > self.last_sequence_number {
+            self.last_sequence_number = seq;
+            self.updated_at = chrono::Utc::now().timestamp();
+            // Version bump? Maybe not for just seq update if it happens often in memory
         }
-        Ok(())
-    }
-
-    /// Serialize to JSON string
-    pub fn to_json(&self) -> Result<String, serde_json::Error> {
-        serde_json::to_string_pretty(self)
-    }
-
-    /// Deserialize from JSON string
-    pub fn from_json(json: &str) -> Result<Self, serde_json::Error> {
-        serde_json::from_str(json)
-    }
-
-    /// Get next batch number for new flush
-    pub fn next_batch_number(&self) -> u64 {
-        self.max_batch + 1
     }
 }
+
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::{NamespaceId, TableName};
 
     #[test]
     fn test_manifest_cache_entry_is_stale() {
@@ -387,78 +279,40 @@ mod tests {
     }
 
     #[test]
-    fn test_batch_file_entry_overlaps_seq_range() {
-        let batch = BatchFileEntry::new(0, "batch-0.parquet".to_string(), 1000, 2000, 100, 1024, 1);
+    fn test_manifest_add_segment() {
+        let table_id = TableId::new(NamespaceId::new("test"), TableName::new("table"));
+        let mut manifest = Manifest::new(table_id, None);
 
-        // Overlaps
-        assert!(batch.overlaps_seq_range(1500, 2500));
-        assert!(batch.overlaps_seq_range(500, 1500));
-        assert!(batch.overlaps_seq_range(1000, 2000));
+        assert_eq!(manifest.segments.len(), 0);
 
-        // No overlap
-        assert!(!batch.overlaps_seq_range(2001, 3000));
-        assert!(!batch.overlaps_seq_range(0, 999));
+        let segment = SegmentMetadata::new(
+            "uuid-1".to_string(),
+            "segment-1.parquet".to_string(),
+            HashMap::new(),
+            1000,
+            2000,
+            50,
+            512,
+        );
+
+        manifest.add_segment(segment);
+        assert_eq!(manifest.segments.len(), 1);
+        assert_eq!(manifest.version, 2);
     }
 
     #[test]
-    fn test_manifest_file_add_batch() {
-        use crate::models::schemas::TableType;
-        use crate::{NamespaceId, TableName, UserId};
-
+    fn test_manifest_update_sequence_number() {
         let table_id = TableId::new(NamespaceId::new("test"), TableName::new("table"));
-        let mut manifest =
-            ManifestFile::new(table_id, TableType::User, Some(UserId::from("user_123")));
+        let mut manifest = Manifest::new(table_id, None);
 
-        assert_eq!(manifest.max_batch, 0);
-        assert_eq!(manifest.batches.len(), 0);
+        assert_eq!(manifest.last_sequence_number, 0);
 
-        let batch = BatchFileEntry::new(1, "batch-1.parquet".to_string(), 1000, 2000, 50, 512, 1);
+        manifest.update_sequence_number(100);
+        assert_eq!(manifest.last_sequence_number, 100);
 
-        manifest.add_batch(batch);
-        assert_eq!(manifest.max_batch, 1);
-        assert_eq!(manifest.batches.len(), 1);
-    }
-
-    #[test]
-    fn test_manifest_file_validate() {
-        use crate::models::schemas::TableType;
-        use crate::{NamespaceId, TableName};
-
-        let table_id = TableId::new(NamespaceId::new("test"), TableName::new("table"));
-        let mut manifest = ManifestFile::new(table_id, TableType::Shared, None);
-
-        // Empty manifest is valid
-        assert!(manifest.validate().is_ok());
-
-        // Add batch
-        let batch = BatchFileEntry::new(1, "batch-1.parquet".to_string(), 1000, 2000, 50, 512, 1);
-        manifest.add_batch(batch);
-        assert!(manifest.validate().is_ok());
-
-        // Manually corrupt max_batch
-        manifest.max_batch = 99;
-        assert!(manifest.validate().is_err());
-    }
-
-    #[test]
-    fn test_manifest_file_json_roundtrip() {
-        use crate::models::schemas::TableType;
-        use crate::{NamespaceId, TableName, UserId};
-
-        let table_id = TableId::new(NamespaceId::new("test"), TableName::new("table"));
-        let mut manifest =
-            ManifestFile::new(table_id, TableType::User, Some(UserId::from("user_456")));
-
-        let batch = BatchFileEntry::new(0, "batch-0.parquet".to_string(), 1000, 2000, 100, 1024, 1);
-        manifest.add_batch(batch);
-
-        let json = manifest.to_json().unwrap();
-        let roundtrip = ManifestFile::from_json(&json).unwrap();
-
-        assert_eq!(manifest.table_id, roundtrip.table_id);
-        assert_eq!(manifest.table_type, roundtrip.table_type);
-        assert_eq!(manifest.user_id, roundtrip.user_id);
-        assert_eq!(manifest.max_batch, roundtrip.max_batch);
-        assert_eq!(manifest.batches.len(), roundtrip.batches.len());
+        // Should not decrease
+        manifest.update_sequence_number(50);
+        assert_eq!(manifest.last_sequence_number, 100);
     }
 }
+

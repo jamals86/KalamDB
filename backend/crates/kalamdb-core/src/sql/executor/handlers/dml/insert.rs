@@ -138,6 +138,13 @@ impl StatementHandler for InsertHandler {
             .map(|c| (c.column_name.clone(), c.data_type.clone()))
             .collect();
 
+        // Create a map of column name to nullable status for validation
+        let col_nullable: std::collections::HashMap<String, bool> = table_def
+            .columns
+            .iter()
+            .map(|c| (c.column_name.clone(), c.is_nullable))
+            .collect();
+
         // Bind parameters and construct Row values directly (ScalarValue map)
         let mut rows: Vec<Row> = Vec::new();
         for row_exprs in rows_data {
@@ -153,6 +160,19 @@ impl StatementHandler for InsertHandler {
                 let target_type = col_types.get(col);
                 let value =
                     self.expr_to_scalar_value(expr, &params, effective_user_id, target_type)?;
+
+                // Validate NOT NULL constraint
+                if value.is_null() {
+                    if let Some(is_nullable) = col_nullable.get(col) {
+                        if !*is_nullable {
+                            return Err(KalamDbError::ConstraintViolation(format!(
+                                "Column '{}' cannot be null",
+                                col
+                            )));
+                        }
+                    }
+                }
+
                 values.insert(col.clone(), value);
             }
 

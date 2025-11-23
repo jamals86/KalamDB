@@ -106,33 +106,78 @@ impl StatementHandler for UpdateHandler {
                 {
                     // T064: Get actual PK column name from provider instead of assuming "id"
                     let pk_column = provider.primary_key_field_name();
-                    // Require WHERE <pk> = <value>
-                    let id_value = self
-                        .extract_row_id_for_column(&where_pair, pk_column, &params)?
-                        .ok_or_else(|| {
-                            KalamDbError::InvalidOperation(format!(
-                                "UPDATE currently requires WHERE {} = <value> for USER tables",
-                                pk_column
-                            ))
-                        })?;
+                    
+                    // Check if WHERE clause targets PK for fast path
+                    let id_value_opt = self
+                        .extract_row_id_for_column(&where_pair, pk_column, &params)?;
 
-                    println!("[DEBUG UpdateHandler] Calling provider.update_by_id_field for user={}, pk_column={}, pk_value={}", 
-                        effective_user_id.as_str(), pk_column, id_value);
+                    if let Some(id_value) = id_value_opt {
+                        println!("[DEBUG UpdateHandler] Calling provider.update_by_id_field for user={}, pk_column={}, pk_value={}", 
+                            effective_user_id.as_str(), pk_column, id_value);
 
-                    match provider.update_by_id_field(effective_user_id, &id_value, updates) {
-                        Ok(_) => {
-                            println!("[DEBUG UpdateHandler] update_by_id_field succeeded");
-                            Ok(ExecutionResult::Updated { rows_affected: 1 })
-                        }
-                        Err(e) => {
-                            println!("[DEBUG UpdateHandler] update_by_id_field failed: {}", e);
-                            // Isolation-friendly semantics: updating a non-existent row under this user_id
-                            // should return success with 0 rows affected (no-op), not an error.
-                            if matches!(e, crate::error::KalamDbError::NotFound(_)) {
-                                return Ok(ExecutionResult::Updated { rows_affected: 0 });
+                        match provider.update_by_id_field(effective_user_id, &id_value, updates) {
+                            Ok(_) => {
+                                println!("[DEBUG UpdateHandler] update_by_id_field succeeded");
+                                Ok(ExecutionResult::Updated { rows_affected: 1 })
                             }
-                            Err(e)
+                            Err(e) => {
+                                println!("[DEBUG UpdateHandler] update_by_id_field failed: {}", e);
+                                // Isolation-friendly semantics: updating a non-existent row under this user_id
+                                // should return success with 0 rows affected (no-op), not an error.
+                                if matches!(e, crate::error::KalamDbError::NotFound(_)) {
+                                    return Ok(ExecutionResult::Updated { rows_affected: 0 });
+                                }
+                                Err(e)
+                            }
                         }
+                    } else {
+                        // Multi-row update path (scan -> update)
+                        println!("[DEBUG UpdateHandler] Multi-row update fallback for user={}", effective_user_id.as_str());
+                        
+                        // Build filter expression
+                        let (filter, filter_col_val) = if let Some((col_name, val_str)) = &where_pair {
+                            let col_type = col_types.get(col_name).ok_or_else(|| {
+                                KalamDbError::InvalidOperation(format!("Column {} not found", col_name))
+                            })?;
+                            let val = self.token_to_scalar_value(val_str, &params, Some(col_type))?;
+                            
+                            use datafusion::prelude::{col, lit};
+                            (Some(col(col_name).eq(lit(val.clone()))), Some((col_name.clone(), val)))
+                        } else {
+                            (None, None) // Update all rows
+                        };
+
+                        // Scan for matching rows
+                        let rows = provider.scan_with_version_resolution_to_kvs(
+                            effective_user_id,
+                            filter.as_ref(),
+                            None,
+                            None,
+                            false
+                        )?;
+
+                        // Update each matching row
+                        let mut count = 0;
+                        for (key, row) in rows {
+                            // Manual filter check (needed because scan_with_version_resolution_to_kvs 
+                            // might not filter hot rows by the expression)
+                            let matches = if let Some((col_name, target_val)) = &filter_col_val {
+                                if let Some(row_val) = row.fields.values.get(col_name) {
+                                    row_val == target_val
+                                } else {
+                                    false // Column missing or null, doesn't match value
+                                }
+                            } else {
+                                true // No filter, match all
+                            };
+
+                            if matches {
+                                provider.update(effective_user_id, &key, updates.clone())?;
+                                count += 1;
+                            }
+                        }
+                        
+                        Ok(ExecutionResult::Updated { rows_affected: count })
                     }
                 } else {
                     Err(KalamDbError::InvalidOperation(

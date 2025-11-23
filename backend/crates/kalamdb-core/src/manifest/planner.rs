@@ -1,13 +1,13 @@
 //! Manifest-driven access planner (Phase: pruning integration)
 //!
-//! Provides utilities to translate `ManifestFile` metadata into
+//! Provides utilities to translate `Manifest` metadata into
 //! concrete file/row-group selections for efficient reads.
 
 use crate::error::KalamDbError;
 use datafusion::arrow::datatypes::SchemaRef;
 use datafusion::arrow::record_batch::RecordBatch;
 use datafusion::parquet::arrow::arrow_reader::ParquetRecordBatchReaderBuilder;
-use kalamdb_commons::types::{ManifestFile, RowGroupPruningStats};
+use kalamdb_commons::types::Manifest;
 use std::fs;
 use std::path::PathBuf;
 
@@ -41,11 +41,11 @@ impl ManifestAccessPlanner {
     /// Plan file selections (all files, no row-group pruning)
     ///
     /// Returns a list of all batch files to scan.
-    pub fn plan_all_files(&self, manifest: &ManifestFile) -> Vec<String> {
+    pub fn plan_all_files(&self, manifest: &Manifest) -> Vec<String> {
         manifest
-            .batches
+            .segments
             .iter()
-            .map(|b| b.file_path.clone())
+            .map(|s| s.path.clone())
             .collect()
     }
 
@@ -64,7 +64,7 @@ impl ManifestAccessPlanner {
     /// (batch: RecordBatch, stats: (total_batches, skipped, scanned))
     pub fn scan_parquet_files(
         &self,
-        manifest_opt: Option<&ManifestFile>,
+        manifest_opt: Option<&Manifest>,
         storage_dir: &PathBuf,
         seq_range: Option<(i64, i64)>,
         use_degraded_mode: bool,
@@ -75,10 +75,10 @@ impl ManifestAccessPlanner {
 
         if !use_degraded_mode {
             if let Some(manifest) = manifest_opt {
-                total_batches = manifest.batches.len();
+                total_batches = manifest.segments.len();
 
                 let selected_files: Vec<String> = if let Some((min_seq, max_seq)) = seq_range {
-                    // Use row-group level pruning
+                    // Use file level pruning
                     let selections = self.plan_by_seq_range(manifest, min_seq, max_seq);
                     selections.into_iter().map(|s| s.file_path).collect()
                 } else {
@@ -157,50 +157,33 @@ impl ManifestAccessPlanner {
         Ok((combined, (total_batches, skipped, scanned)))
     }
 
-    /// Simple planner: select row-groups overlapping a given `_seq` range
+    /// Simple planner: select files overlapping a given `_seq` range
     ///
     /// This is a first step towards full predicate-based pruning.
     pub fn plan_by_seq_range(
         &self,
-        manifest: &ManifestFile,
+        manifest: &Manifest,
         min_seq: i64,
         max_seq: i64,
     ) -> Vec<RowGroupSelection> {
-        if manifest.batches.is_empty() {
+        if manifest.segments.is_empty() {
             return Vec::new();
         }
 
         let mut selections: Vec<RowGroupSelection> = Vec::new();
 
-        for batch in &manifest.batches {
-            // Skip batches that don't overlap at all
-            if batch.max_seq < min_seq || batch.min_seq > max_seq {
+        for segment in &manifest.segments {
+            // Skip segments that don't overlap at all
+            if segment.max_seq < min_seq || segment.min_seq > max_seq {
                 continue;
             }
 
-            let mut selected = Vec::new();
-            if batch.row_groups.is_empty() {
-                // No row-group metadata -> read whole file (represented as empty selection meaning full scan)
-                // For explicitness, push all groups as unknown; caller may interpret empty to mean full
-                selected.clear();
-            } else {
-                for rg in &batch.row_groups {
-                    if overlaps_seq_range(rg, min_seq, max_seq) {
-                        selected.push(rg.index as usize);
-                    }
-                }
-            }
-
-            // Only add when there is at least one row-group or when metadata was missing (empty meaning full scan)
-            selections.push(RowGroupSelection::new(batch.file_path.clone(), selected));
+            // We don't have row group stats anymore, so we select the whole file
+            selections.push(RowGroupSelection::new(segment.path.clone(), Vec::new()));
         }
 
         selections
     }
-}
-
-fn overlaps_seq_range(rg: &RowGroupPruningStats, min_seq: i64, max_seq: i64) -> bool {
-    !(rg.max_seq < min_seq || rg.min_seq > max_seq)
 }
 
 #[cfg(test)]
@@ -209,57 +192,47 @@ mod tests {
     use datafusion::arrow::array::{Int32Array, Int64Array};
     use datafusion::arrow::datatypes::Schema;
     use datafusion::arrow::record_batch::RecordBatch as ArrowRecordBatch;
-    use kalamdb_commons::types::{BatchFileEntry, ManifestFile};
+    use kalamdb_commons::types::{Manifest, SegmentMetadata};
     use parquet::arrow::arrow_writer::ArrowWriter;
     use std::fs as stdfs;
     use std::sync::Arc;
     use std::time::{SystemTime, UNIX_EPOCH};
 
-    fn make_manifest_with_groups() -> ManifestFile {
-        use kalamdb_commons::models::schemas::TableType;
+    fn make_manifest_with_segments() -> Manifest {
         use kalamdb_commons::{NamespaceId, TableId, TableName};
+        use std::collections::HashMap;
 
         let table_id = TableId::new(NamespaceId::new("ns"), TableName::new("tbl"));
-        let mut mf = ManifestFile::new(table_id, TableType::Shared, None);
+        let mut mf = Manifest::new(table_id, None);
 
-        let mut b0 = BatchFileEntry::new(0, "batch-0.parquet".to_string(), 0, 99, 100, 1024, 1);
-        b0.row_groups = vec![
-            RowGroupPruningStats {
-                index: 0,
-                row_count: 50,
-                min_seq: 0,
-                max_seq: 49,
-                column_min_max: Default::default(),
-                byte_range: None,
-            },
-            RowGroupPruningStats {
-                index: 1,
-                row_count: 50,
-                min_seq: 50,
-                max_seq: 99,
-                column_min_max: Default::default(),
-                byte_range: None,
-            },
-        ];
-        mf.add_batch(b0);
+        let s0 = SegmentMetadata::new(
+            "uuid-0".to_string(),
+            "batch-0.parquet".to_string(),
+            HashMap::new(),
+            0,
+            99,
+            100,
+            1024,
+        );
+        mf.add_segment(s0);
 
-        let mut b1 = BatchFileEntry::new(1, "batch-1.parquet".to_string(), 100, 199, 100, 2048, 1);
-        b1.row_groups = vec![RowGroupPruningStats {
-            index: 0,
-            row_count: 100,
-            min_seq: 100,
-            max_seq: 199,
-            column_min_max: Default::default(),
-            byte_range: None,
-        }];
-        mf.add_batch(b1);
+        let s1 = SegmentMetadata::new(
+            "uuid-1".to_string(),
+            "batch-1.parquet".to_string(),
+            HashMap::new(),
+            100,
+            199,
+            100,
+            2048,
+        );
+        mf.add_segment(s1);
 
         mf
     }
 
     #[test]
     fn test_plan_by_seq_range_overlaps() {
-        let mf = make_manifest_with_groups();
+        let mf = make_manifest_with_segments();
         let planner = ManifestAccessPlanner::new();
 
         let plan = planner.plan_by_seq_range(&mf, 25, 150);
@@ -269,18 +242,18 @@ mod tests {
             .iter()
             .find(|p| p.file_path == "batch-0.parquet")
             .unwrap();
-        assert_eq!(p0.row_groups, vec![0, 1]);
+        assert!(p0.row_groups.is_empty());
 
         let p1 = plan
             .iter()
             .find(|p| p.file_path == "batch-1.parquet")
             .unwrap();
-        assert_eq!(p1.row_groups, vec![0]);
+        assert!(p1.row_groups.is_empty());
     }
 
     #[test]
     fn test_plan_by_seq_range_no_overlap() {
-        let mf = make_manifest_with_groups();
+        let mf = make_manifest_with_segments();
         let planner = ManifestAccessPlanner::new();
 
         let plan = planner.plan_by_seq_range(&mf, 300, 400);
@@ -360,16 +333,32 @@ mod tests {
         write_parquet_with_rows(&f0, &schema, 10);
         write_parquet_with_rows(&f1, &schema, 10);
 
-        // Manifest with two batches
-        use crate::schema_registry::TableType;
+        // Manifest with two segments
         use kalamdb_commons::{NamespaceId, TableId, TableName};
+        use std::collections::HashMap;
         let table_id = TableId::new(NamespaceId::new("ns"), TableName::new("tbl"));
-        let mut mf = ManifestFile::new(table_id, TableType::Shared, None);
+        let mut mf = Manifest::new(table_id, None);
 
-        let b0 = BatchFileEntry::new(0, "batch-0.parquet".to_string(), 0, 99, 10, 123, 1);
-        mf.add_batch(b0);
-        let b1 = BatchFileEntry::new(1, "batch-1.parquet".to_string(), 100, 199, 10, 123, 1);
-        mf.add_batch(b1);
+        let s0 = SegmentMetadata::new(
+            "uuid-0".to_string(),
+            "batch-0.parquet".to_string(),
+            HashMap::new(),
+            0,
+            99,
+            10,
+            123,
+        );
+        mf.add_segment(s0);
+        let s1 = SegmentMetadata::new(
+            "uuid-1".to_string(),
+            "batch-1.parquet".to_string(),
+            HashMap::new(),
+            100,
+            199,
+            10,
+            123,
+        );
+        mf.add_segment(s1);
 
         let planner = ManifestAccessPlanner::new();
 
