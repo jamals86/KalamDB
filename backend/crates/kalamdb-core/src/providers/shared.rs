@@ -22,7 +22,6 @@ use datafusion::datasource::TableProvider;
 use datafusion::error::Result as DataFusionResult;
 use datafusion::logical_expr::{Expr, TableProviderFilterPushDown};
 use datafusion::physical_plan::ExecutionPlan;
-use datafusion::scalar::ScalarValue;
 use kalamdb_commons::ids::SharedTableRowId;
 use kalamdb_commons::models::{Row, UserId};
 use kalamdb_commons::TableId;
@@ -30,7 +29,6 @@ use kalamdb_commons::constants::SystemColumnNames;
 use kalamdb_store::entity_store::EntityStore;
 use kalamdb_tables::{SharedTableRow, SharedTableStore};
 use std::any::Any;
-use std::collections::BTreeMap;
 use std::sync::Arc;
 
 // Arrow <-> JSON helpers
@@ -289,19 +287,10 @@ impl BaseTableProvider<SharedTableRowId, SharedTableRow> for SharedTableProvider
                 .ok_or_else(|| KalamDbError::NotFound("Row not found for delete".to_string()))?
         };
 
-        let pk_name = self.primary_key_field_name().to_string();
-        // Preserve existing PK value if present; may be null if malformed
-        let pk_val = prior
-            .fields
-            .get(&pk_name)
-            .cloned()
-            .unwrap_or(ScalarValue::Null);
-
         let sys_cols = self.core.system_columns.clone();
         let seq_id = sys_cols.generate_seq_id()?;
-        // Include PK in tombstone fields so version resolution collapses correctly
-        let mut values = BTreeMap::new();
-        values.insert(pk_name, pk_val);
+        // Preserve ALL fields in the tombstone
+        let values = prior.fields.values.clone();
 
         let entity = SharedTableRow {
             _seq: seq_id,
@@ -329,12 +318,15 @@ impl BaseTableProvider<SharedTableRowId, SharedTableRow> for SharedTableProvider
             (None, None)
         };
 
+        let keep_deleted = filter.map(|f| base::filter_uses_deleted_column(f)).unwrap_or(false);
+
         // NO user_id extraction - shared tables scan ALL rows
         let kvs = self.scan_with_version_resolution_to_kvs(
             base::system_user_id(),
             filter,
             since_seq,
             limit,
+            keep_deleted,
         )?;
 
         // Convert to JSON rows aligned with schema
@@ -348,6 +340,7 @@ impl BaseTableProvider<SharedTableRowId, SharedTableRow> for SharedTableProvider
         _filter: Option<&Expr>,
         since_seq: Option<kalamdb_commons::ids::SeqId>,
         limit: Option<usize>,
+        keep_deleted: bool,
     ) -> Result<Vec<(SharedTableRowId, SharedTableRow)>, KalamDbError> {
         // IGNORE user_id parameter - scan ALL rows (hot storage)
 
@@ -410,7 +403,7 @@ impl BaseTableProvider<SharedTableRowId, SharedTableRow> for SharedTableProvider
                 })
                 .collect();
 
-        let mut result = merge_versioned_rows(&pk_name, hot_rows, cold_rows);
+        let mut result = merge_versioned_rows(&pk_name, hot_rows, cold_rows, keep_deleted);
 
         // Apply limit after resolution
         if let Some(l) = limit {

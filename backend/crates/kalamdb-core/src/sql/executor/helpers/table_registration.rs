@@ -214,8 +214,26 @@ pub fn register_stream_table_provider(
         TableProviderCore::from_app_context(&app_context, table_id.clone(), TableType::Stream)
             .with_live_query_manager(app_context.live_query_manager()),
     );
-    // For streams, we use a conventional primary key field name in JSON payload ("id")
-    let provider = StreamTableProvider::new(core, stream_store, ttl_seconds, "id".to_string());
+    // Determine primary key field name from TableDefinition
+    let table_def = app_context
+        .schema_registry()
+        .get_table_definition(table_id)?
+        .ok_or_else(|| {
+            KalamDbError::InvalidOperation(format!(
+                "Table definition not found for {}.{}",
+                table_id.namespace_id().as_str(),
+                table_id.table_name().as_str()
+            ))
+        })?;
+
+    let pk_field = table_def
+        .columns
+        .iter()
+        .find(|c| c.is_primary_key)
+        .map(|c| c.column_name.clone())
+        .unwrap_or_else(|| "id".to_string());
+
+    let provider = StreamTableProvider::new(core, stream_store, ttl_seconds, pk_field);
 
     app_context
         .schema_registry()

@@ -5,6 +5,10 @@ use crate::error::KalamDbError;
 use crate::schema_registry::arrow_schema::ArrowSchemaWithOptions;
 use crate::sql::executor::handlers::typed::TypedStatementHandler;
 use crate::sql::executor::models::{ExecutionContext, ExecutionResult, ScalarValue};
+use crate::sql::executor::helpers::table_registration::{
+    register_shared_table_provider, register_stream_table_provider, register_user_table_provider,
+    unregister_table_provider,
+};
 use kalamdb_commons::models::datatypes::KalamDataType;
 use kalamdb_commons::models::schemas::{ColumnDefinition, TableDefinition};
 use kalamdb_commons::models::{NamespaceId, TableId};
@@ -218,7 +222,7 @@ impl TypedStatementHandler<AlterTableStatement> for AlterTableHandler {
         let arrow_schema = table_def
             .to_arrow_schema()
             .map_err(|e| KalamDbError::SchemaError(format!("Arrow conversion failed: {}", e)))?;
-        let schema_json = ArrowSchemaWithOptions::new(arrow_schema)
+        let schema_json = ArrowSchemaWithOptions::new(arrow_schema.clone())
             .to_json_string()
             .map_err(|e| {
                 KalamDbError::SchemaError(format!("Failed to serialize Arrow schema: {}", e))
@@ -239,6 +243,37 @@ impl TypedStatementHandler<AlterTableStatement> for AlterTableHandler {
                 table_id.clone(),
                 Arc::new(CachedTableData::new(Arc::new(table_def.clone()))),
             );
+        }
+
+        // Unregister old provider first to ensure DataFusion catalog is updated
+        unregister_table_provider(&self.app_context, &table_id)?;
+
+        // Re-register provider to update schema in DataFusion
+        match table_def.table_type {
+            TableType::User => {
+                register_user_table_provider(&self.app_context, &table_id, arrow_schema)?;
+            }
+            TableType::Shared => {
+                register_shared_table_provider(&self.app_context, &table_id, arrow_schema)?;
+            }
+            TableType::Stream => {
+                let ttl_seconds = if let kalamdb_commons::schemas::TableOptions::Stream(opts) =
+                    &table_def.table_options
+                {
+                    Some(opts.ttl_seconds)
+                } else {
+                    None
+                };
+                register_stream_table_provider(
+                    &self.app_context,
+                    &table_id,
+                    arrow_schema,
+                    ttl_seconds,
+                )?;
+            }
+            TableType::System => {
+                // System tables are not altered this way usually
+            }
         }
 
         // Log DDL operation

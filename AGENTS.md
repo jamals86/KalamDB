@@ -42,6 +42,8 @@ use kalamdb_commons::models::UserId;
    - Orchestration layers in `kalamdb-core` (DDL/DML handlers, job executors) should delegate to these crates and avoid embedding filesystem or RocksDB specifics directly
    - When adding cleanup/compaction/file lifecycle functionality, implement it in `kalamdb-filestore` and call it from `kalamdb-core`
 
+12. **Smoke Tests Priority**: Always ensure smoke tests are passing before committing changes. If smoke tests fail, fix them or the underlying backend issue immediately. Run `cargo test --test smoke` in the `cli` directory to verify.
+
 **When adding a new dependency:**
 1. Add it to `Cargo.toml` (root) under `[workspace.dependencies]` with version
 2. Reference it in individual crates using `{ workspace = true }`

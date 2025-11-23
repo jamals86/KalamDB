@@ -14,19 +14,6 @@ use std::time::Duration;
 
 const TEST_DATA_DIR: &str = "data/storage"; // Default from config.toml
 
-/// Helper to get storage path for user table
-fn get_user_table_storage_path(user_id: &str, table_name: &str) -> PathBuf {
-    PathBuf::from(TEST_DATA_DIR)
-        .join("user")
-        .join(user_id)
-        .join(table_name)
-}
-
-/// Helper to get storage path for shared table
-fn get_shared_table_storage_path(table_name: &str) -> PathBuf {
-    PathBuf::from(TEST_DATA_DIR).join("shared").join(table_name)
-}
-
 /// Test manifest.json creation after flushing USER table
 ///
 /// Verifies:

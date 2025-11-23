@@ -55,6 +55,11 @@ impl std::fmt::Debug for StatsTableProvider {
 impl StatsTableProvider {
     /// Create a new stats table provider
     pub fn new(unified_cache: Option<Arc<SchemaRegistry>>) -> Self {
+        if unified_cache.is_some() {
+            log::info!("StatsTableProvider (Core) initialized WITH cache");
+        } else {
+            log::info!("StatsTableProvider (Core) initialized WITHOUT cache");
+        }
         Self {
             schema: StatsTableSchema::schema(),
             unified_cache,

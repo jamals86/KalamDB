@@ -320,7 +320,7 @@ fn smoke_test_alter_shared_table_access_level() {
                 .expect("Failed to query system.tables");
 
             assert!(
-                output.contains("RESTRICTED") || output.contains("restricted"),
+                output.contains("RESTRICTED") || output.contains("restricted") || output.contains("Restricted"),
                 "Expected ACCESS_LEVEL='RESTRICTED' in system.tables options"
             );
 

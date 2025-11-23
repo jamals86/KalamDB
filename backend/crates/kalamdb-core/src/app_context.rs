@@ -9,6 +9,7 @@ use crate::jobs::executors::{
 };
 use crate::live_query::LiveQueryManager;
 use crate::schema_registry::SchemaRegistry;
+use crate::schema_registry::stats::StatsTableProvider;
 use crate::sql::datafusion_session::DataFusionSessionFactory;
 use crate::sql::executor::SqlExecutor;
 use crate::storage::storage_registry::StorageRegistry;
@@ -170,6 +171,10 @@ impl AppContext {
 
                 // Create schema cache (Phase 10 unified cache)
                 let schema_registry = Arc::new(SchemaRegistry::new(10000));
+
+                // Inject real StatsTableProvider with schema registry access (Phase 13)
+                let stats_provider = Arc::new(StatsTableProvider::new(Some(schema_registry.clone())));
+                system_tables.set_stats_provider(stats_provider);
 
                 // Register all system tables in DataFusion
                 let session_factory = Arc::new(
@@ -369,6 +374,10 @@ impl AppContext {
         // Create minimal schema registry
         let schema_registry = Arc::new(SchemaRegistry::new(100));
 
+        // Inject real StatsTableProvider with schema registry access
+        let stats_provider = Arc::new(StatsTableProvider::new(Some(schema_registry.clone())));
+        system_tables.set_stats_provider(stats_provider);
+
         // Create DataFusion session
         let session_factory = Arc::new(
             DataFusionSessionFactory::new().expect("Failed to create test session factory"),
@@ -483,6 +492,10 @@ impl AppContext {
 
         // Create schema cache
         let schema_registry = Arc::new(SchemaRegistry::new(10000));
+
+        // Inject real StatsTableProvider with schema registry access
+        let stats_provider = Arc::new(StatsTableProvider::new(Some(schema_registry.clone())));
+        system_tables.set_stats_provider(stats_provider);
 
         // Register all system tables in DataFusion
         let session_factory = Arc::new(

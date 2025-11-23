@@ -41,14 +41,39 @@ pub fn json_rows_to_arrow_batch(schema: &SchemaRef, rows: Vec<Row>) -> Result<Re
 
     // Pre-calculate default values for each column to avoid repeated logic in loop
     let defaults: Vec<Option<ScalarValue>> = schema.fields().iter().map(|field| {
-        match (field.data_type(), field.is_nullable()) {
-            (DataType::Timestamp(TimeUnit::Microsecond, tz_opt), false) => {
+        if field.is_nullable() {
+            return None;
+        }
+        match field.data_type() {
+            DataType::Boolean => Some(ScalarValue::Boolean(Some(false))),
+            DataType::Int8 => Some(ScalarValue::Int8(Some(0))),
+            DataType::Int16 => Some(ScalarValue::Int16(Some(0))),
+            DataType::Int32 => Some(ScalarValue::Int32(Some(0))),
+            DataType::Int64 => Some(ScalarValue::Int64(Some(0))),
+            DataType::UInt8 => Some(ScalarValue::UInt8(Some(0))),
+            DataType::UInt16 => Some(ScalarValue::UInt16(Some(0))),
+            DataType::UInt32 => Some(ScalarValue::UInt32(Some(0))),
+            DataType::UInt64 => Some(ScalarValue::UInt64(Some(0))),
+            DataType::Float32 => Some(ScalarValue::Float32(Some(0.0))),
+            DataType::Float64 => Some(ScalarValue::Float64(Some(0.0))),
+            DataType::Utf8 => Some(ScalarValue::Utf8(Some("".to_string()))),
+            DataType::LargeUtf8 => Some(ScalarValue::LargeUtf8(Some("".to_string()))),
+            DataType::Timestamp(TimeUnit::Microsecond, tz_opt) => {
                 let micros = Utc::now().timestamp_micros();
                 Some(ScalarValue::TimestampMicrosecond(
                     Some(micros),
                     tz_opt.clone(),
                 ))
             }
+            DataType::Timestamp(TimeUnit::Millisecond, tz_opt) => {
+                let millis = Utc::now().timestamp_millis();
+                Some(ScalarValue::TimestampMillisecond(
+                    Some(millis),
+                    tz_opt.clone(),
+                ))
+            }
+            DataType::Date32 => Some(ScalarValue::Date32(Some(0))),
+            DataType::Date64 => Some(ScalarValue::Date64(Some(0))),
             _ => None,
         }
     }).collect();

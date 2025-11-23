@@ -208,7 +208,7 @@ pub trait BaseTableProvider<K: StorageKey, V>: Send + Sync + TableProvider {
         id_value: &str,
     ) -> Result<Option<K>, KalamDbError> {
         // Default implementation: scan rows with user scoping and version resolution
-        let rows = self.scan_with_version_resolution_to_kvs(user_id, None, None, None)?;
+        let rows = self.scan_with_version_resolution_to_kvs(user_id, None, None, None, false)?;
 
         for (key, row) in rows {
             let fields = Self::extract_row(&row);
@@ -393,12 +393,14 @@ pub trait BaseTableProvider<K: StorageKey, V>: Send + Sync + TableProvider {
     /// * `filter` - Optional DataFusion expression for filtering
     /// * `since_seq` - Optional sequence number to start scanning from (optimization)
     /// * `limit` - Optional limit on number of rows
+    /// * `keep_deleted` - Whether to include soft-deleted rows (tombstones) in the result
     fn scan_with_version_resolution_to_kvs(
         &self,
         user_id: &UserId,
         filter: Option<&Expr>,
         since_seq: Option<SeqId>,
         limit: Option<usize>,
+        keep_deleted: bool,
     ) -> Result<Vec<(K, V)>, KalamDbError>;
 
     /// Extract row fields from provider-specific value type
@@ -416,6 +418,18 @@ fn json_value_matches_pk(value: &ScalarValue, target: &str) -> bool {
     }
 }
 
+/// Check if a filter expression references the _deleted column
+pub fn filter_uses_deleted_column(filter: &Expr) -> bool {
+    use datafusion::logical_expr::utils::expr_to_columns;
+    use std::collections::HashSet;
+    let mut columns = HashSet::new();
+    if expr_to_columns(filter, &mut columns).is_ok() {
+        columns.iter().any(|c| c.name == "_deleted")
+    } else {
+        false
+    }
+}
+
 /// Locate the latest non-deleted row matching the provided primary-key value
 pub fn find_row_by_pk<P, K, V>(
     provider: &P,
@@ -427,7 +441,7 @@ where
     K: StorageKey,
 {
     let user_scope = resolve_user_scope(scope);
-    let resolved = provider.scan_with_version_resolution_to_kvs(user_scope, None, None, None)?;
+    let resolved = provider.scan_with_version_resolution_to_kvs(user_scope, None, None, None, false)?;
     let pk_name = provider.primary_key_field_name();
 
     for (key, row) in resolved.into_iter() {
