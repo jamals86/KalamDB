@@ -5,6 +5,7 @@
 
 use actix_web::{get, web, Error, HttpRequest, HttpResponse};
 use actix_web_actors::ws;
+use base64::Engine;
 use kalamdb_commons::models::UserId;
 use kalamdb_core::sql::executor::helpers::audit;
 use log::{error, info};
@@ -13,8 +14,67 @@ use uuid::Uuid;
 
 use crate::actors::WebSocketSession;
 use crate::rate_limiter::RateLimiter;
-use kalamdb_auth::{extract_auth_with_repo, UserRepository};
+use kalamdb_auth::{extract_auth_with_repo, AuthenticatedRequest, AuthError, UserRepository};
 use kalamdb_core::live_query::LiveQueryManager;
+
+/// Authenticate WebSocket connection using query parameter
+/// 
+/// Browser WebSocket API cannot set Authorization headers, so we support
+/// ?auth=base64(username:password) query parameter as an alternative.
+async fn auth_from_query(
+    auth_param: &str,
+    user_repo: &Arc<dyn UserRepository>,
+) -> Result<AuthenticatedRequest, AuthError> {
+    // Decode base64 auth parameter
+    let decoded_bytes = base64::engine::general_purpose::STANDARD
+        .decode(auth_param)
+        .map_err(|_| {
+            AuthError::MalformedAuthorization("Auth parameter is not valid base64".to_string())
+        })?;
+
+    let decoded_str = String::from_utf8(decoded_bytes).map_err(|_| {
+        AuthError::MalformedAuthorization("Auth parameter is not valid UTF-8".to_string())
+    })?;
+
+    // Split into username:password
+    let (username, password) = decoded_str.split_once(':').ok_or_else(|| {
+        AuthError::MalformedAuthorization(
+            "Auth parameter must be in format username:password".to_string(),
+        )
+    })?;
+
+    // Look up user
+    let user = user_repo
+        .get_user_by_username(username)
+        .await
+        .map_err(|_| {
+            AuthError::InvalidCredentials("Invalid username or password".to_string())
+        })?;
+
+    // Check if user is deleted
+    if user.deleted_at.is_some() {
+        return Err(AuthError::InvalidCredentials(
+            "Invalid username or password".to_string(),
+        ));
+    }
+
+    // Verify password (async, uses blocking thread pool)
+    let password_valid = kalamdb_auth::password::verify_password(password, &user.password_hash)
+        .await
+        .unwrap_or(false);
+    
+    if !password_valid {
+        return Err(AuthError::InvalidCredentials(
+            "Invalid username or password".to_string(),
+        ));
+    }
+
+    Ok(AuthenticatedRequest {
+        user_id: user.id.clone(),
+        role: user.role,
+        username: user.username.to_string(),
+    })
+}
 
 /// GET /v1/ws - Establish WebSocket connection (T063AAA)
 ///
@@ -63,7 +123,6 @@ use kalamdb_core::live_query::LiveQueryManager;
 pub async fn websocket_handler_v1(
     req: HttpRequest,
     stream: web::Payload,
-    _query: web::Query<std::collections::HashMap<String, String>>,
     app_context: web::Data<Arc<kalamdb_core::app_context::AppContext>>,
     rate_limiter: web::Data<Arc<RateLimiter>>,
     live_query_manager: web::Data<Arc<LiveQueryManager>>,
@@ -72,101 +131,19 @@ pub async fn websocket_handler_v1(
     // Generate unique connection ID
     let connection_id = Uuid::new_v4().to_string();
 
-    info!("New WebSocket connection request: {}", connection_id);
+    info!("New WebSocket connection request: {} (authentication required within 3 seconds)", connection_id);
 
-    let resolved_ip = req
-        .headers()
-        .get("X-Forwarded-For")
-        .and_then(|h| h.to_str().ok())
-        .and_then(|raw| raw.split(',').next().map(|s| s.trim().to_string()))
-        .filter(|s| !s.is_empty())
-        .or_else(|| {
-            req.connection_info()
-                .realip_remote_addr()
-                .map(|s| s.to_string())
-        });
-
-    // Authenticate using centralized extract_auth function (repo-based)
-    let auth_result = match extract_auth_with_repo(&req, user_repo.get_ref()).await {
-        Ok(auth) => {
-            info!(
-                "WebSocket connection authenticated: connection_id={}, user_id={}, username={}",
-                connection_id,
-                auth.user_id.as_str(),
-                auth.username
-            );
-
-            // Log successful login if using Basic Auth
-            if let Some(auth_val) = req.headers().get("Authorization") {
-                if let Ok(h) = auth_val.to_str() {
-                    if h.starts_with("Basic ") {
-                        let entry = audit::log_auth_event(
-                            &auth.user_id,
-                            "LOGIN_WS",
-                            true,
-                            resolved_ip.clone(),
-                        );
-                        if let Err(e) =
-                            audit::persist_audit_entry(app_context.get_ref(), &entry).await
-                        {
-                            error!("Failed to persist audit log: {}", e);
-                        }
-                    }
-                }
-            }
-
-            auth
-        }
-        Err(e) => {
-            error!(
-                "WebSocket connection rejected: connection_id={}, error={}",
-                connection_id, e
-            );
-
-            // Log failed login if using Basic Auth
-            if let Some(auth_val) = req.headers().get("Authorization") {
-                if let Ok(h) = auth_val.to_str() {
-                    if h.starts_with("Basic ") {
-                        // Try to extract username to log who failed
-                        let username = if let Ok((u, _)) =
-                            kalamdb_auth::basic_auth::parse_basic_auth_header(h)
-                        {
-                            u
-                        } else {
-                            "unknown".to_string()
-                        };
-
-                        let entry = audit::log_auth_event(
-                            &UserId::new(username),
-                            "LOGIN_WS",
-                            false,
-                            resolved_ip.clone(),
-                        );
-                        if let Err(e) =
-                            audit::persist_audit_entry(app_context.get_ref(), &entry).await
-                        {
-                            error!("Failed to persist audit log: {}", e);
-                        }
-                    }
-                }
-            }
-
-            return Ok(HttpResponse::Unauthorized().json(serde_json::json!({
-                "error": "AUTHENTICATION_FAILED",
-                "message": format!("{}", e)
-            })));
-        }
-    };
-
-    // Create WebSocket session actor with authenticated user_id and rate limiter
+    // Create WebSocketSession without authentication (will be authenticated via message)
     let session = WebSocketSession::new(
-        connection_id,
-        Some(auth_result.user_id),
+        connection_id.clone(),
+        None, // No user_id yet - will be set after authentication
         Some(rate_limiter.get_ref().clone()),
         live_query_manager.get_ref().clone(),
+        app_context.get_ref().clone(),
+        user_repo.get_ref().clone(),
     );
 
-    // Start WebSocket handshake
+    // Start WebSocket actor
     ws::start(session, &req, stream)
 }
 

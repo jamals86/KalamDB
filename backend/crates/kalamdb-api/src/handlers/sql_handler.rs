@@ -590,7 +590,7 @@ mod tests {
     // SQL execution is thoroughly tested in integration tests (backend/tests/).
 
     #[ignore]
-    #[actix_rt::test]
+    #[tokio::test]
     async fn test_execute_sql_endpoint() {
         // Create a test session factory
         let session_factory = Arc::new(DataFusionSessionFactory::new().unwrap());
@@ -626,7 +626,7 @@ mod tests {
     }
 
     #[ignore]
-    #[actix_rt::test]
+    #[tokio::test]
     async fn test_execute_sql_empty_query() {
         let session_factory = Arc::new(DataFusionSessionFactory::new().unwrap());
         let rate_limiter = Arc::new(RateLimiter::new());
@@ -655,7 +655,7 @@ mod tests {
     }
 
     #[ignore]
-    #[actix_rt::test]
+    #[tokio::test]
     async fn test_execute_sql_multiple_statements() {
         let session_factory = Arc::new(DataFusionSessionFactory::new().unwrap());
         let rate_limiter = Arc::new(RateLimiter::new());

@@ -97,7 +97,15 @@
 //! ```
 
 use crate::ids::SeqId;
+
+// Full Row type for server (with datafusion support)
+#[cfg(feature = "full")]
 use crate::models::Row;
+
+// Simple Row type for WASM (JSON only)
+#[cfg(feature = "wasm")]
+pub type Row = serde_json::Map<String, serde_json::Value>;
+
 use serde::{Deserialize, Serialize};
 
 /// Batch size in bytes (8KB) for chunking large initial data payloads
@@ -110,6 +118,25 @@ pub const MAX_ROWS_PER_BATCH: usize = 1000;
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum WebSocketMessage {
+    /// Authentication successful response
+    ///
+    /// Sent after client sends Authenticate message with valid credentials.
+    /// Client can now send Subscribe/Unsubscribe messages.
+    AuthSuccess {
+        /// Authenticated user ID
+        user_id: String,
+        /// User role
+        role: String,
+    },
+
+    /// Authentication failed response
+    ///
+    /// Sent when authentication fails. Connection will be closed immediately.
+    AuthError {
+        /// Error message describing why authentication failed
+        message: String,
+    },
+
     /// Acknowledgement of successful subscription registration
     ///
     /// Sent immediately after client subscribes, includes total row count
@@ -148,6 +175,19 @@ pub enum WebSocketMessage {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum ClientMessage {
+    /// Authenticate WebSocket connection
+    ///
+    /// Client sends this immediately after establishing WebSocket connection.
+    /// Server must receive this within 3 seconds or connection will be closed.
+    /// Server responds with AuthSuccess or AuthError.
+    Authenticate {
+        //TODO: Add also jwt option
+        /// Username for authentication
+        username: String,
+        /// Password for authentication (sent over encrypted WebSocket in production)
+        password: String,
+    },
+
     /// Subscribe to live query updates
     ///
     /// Client sends this to register one or more subscriptions.

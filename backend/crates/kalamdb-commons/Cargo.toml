@@ -19,7 +19,7 @@ toml = { workspace = true }
 anyhow = { workspace = true }
 num_cpus = { workspace = true }
 sqlparser = { workspace = true }
-datafusion = { workspace = true }
+datafusion = { workspace = true, optional = true }
 # Optional dependencies - only enabled via features
 serde = { workspace = true, optional = true }
 serde_json = { workspace = true, optional = true }
@@ -38,7 +38,11 @@ serde = [
 	"dep:bincode",
 	"dep:chrono",
 ]
-default = ["serde"]
+# Full feature set including datafusion (for server use)
+full = ["serde", "dep:datafusion"]
+# WASM-compatible subset (no datafusion but has serialization)
+wasm = ["serde"]
+default = ["full"]
 
 [lib]
 name = "kalamdb_commons"

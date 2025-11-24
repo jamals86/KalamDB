@@ -29,6 +29,9 @@ const HEARTBEAT_INTERVAL: Duration = Duration::from_secs(5);
 /// How long before lack of client response causes a timeout
 const CLIENT_TIMEOUT: Duration = Duration::from_secs(10);
 
+/// How long to wait for authentication message before disconnecting
+const AUTH_TIMEOUT: Duration = Duration::from_secs(3);
+
 /// WebSocket session actor
 ///
 /// Manages the lifecycle of a WebSocket connection and handles:
@@ -43,14 +46,26 @@ pub struct WebSocketSession {
     pub connection_id: String,
 
     /// Authenticated user ID (from JWT token)
-    /// None if authentication is disabled/optional
+    /// None until client sends Authenticate message
     pub user_id: Option<UserId>,
+
+    /// Whether the connection has been authenticated
+    pub is_authenticated: bool,
+
+    /// Timestamp when connection was established (for auth timeout)
+    pub connected_at: Instant,
 
     /// Rate limiter for message and subscription limits
     pub rate_limiter: Option<Arc<RateLimiter>>,
 
     /// Live query manager for subscription lifecycle
     pub live_query_manager: Arc<LiveQueryManager>,
+
+    /// App context for audit logging
+    pub app_context: Arc<kalamdb_core::app_context::AppContext>,
+
+    /// User repository for authentication
+    pub user_repo: Arc<dyn kalamdb_auth::UserRepository>,
 
     /// Registered live query connection ID
     pub live_connection_id: Option<LiveConnectionId>,
@@ -69,6 +84,9 @@ pub struct WebSocketSession {
     /// Maps subscription_id -> (sql, user_id, snapshot_end_seq, batch_size)
     pub subscription_metadata:
         HashMap<String, (String, UserId, Option<kalamdb_commons::ids::SeqId>, usize)>,
+
+    /// Notification channel sender for live query updates
+    pub notification_tx: Option<tokio::sync::mpsc::UnboundedSender<(String, kalamdb_commons::Notification)>>,
 }
 
 impl WebSocketSession {
@@ -76,30 +94,61 @@ impl WebSocketSession {
     ///
     /// # Arguments
     /// * `connection_id` - Unique connection identifier
-    /// * `user_id` - Authenticated user ID (from JWT token)
+    /// * `user_id` - Authenticated user ID (None until authentication)
     /// * `rate_limiter` - Optional rate limiter for message and subscription limits
+    /// * `live_query_manager` - Live query manager for subscriptions
+    /// * `app_context` - App context for audit logging
+    /// * `user_repo` - User repository for authentication
     pub fn new(
         connection_id: String,
         user_id: Option<UserId>,
         rate_limiter: Option<Arc<RateLimiter>>,
         live_query_manager: Arc<LiveQueryManager>,
+        app_context: Arc<kalamdb_core::app_context::AppContext>,
+        user_repo: Arc<dyn kalamdb_auth::UserRepository>,
     ) -> Self {
         Self {
             connection_id,
             user_id,
+            is_authenticated: false,
+            connected_at: Instant::now(),
             rate_limiter,
             live_query_manager,
+            app_context,
+            user_repo,
             live_connection_id: None,
             live_user_id: None,
             hb: Instant::now(),
             subscriptions: Vec::new(),
             subscription_metadata: HashMap::new(),
+            notification_tx: None,
         }
     }
 
     /// Start the heartbeat process
     fn hb(&self, ctx: &mut ws::WebsocketContext<Self>) {
         ctx.run_interval(HEARTBEAT_INTERVAL, |act, ctx| {
+            // Check authentication timeout (3 seconds)
+            if !act.is_authenticated && Instant::now().duration_since(act.connected_at) > AUTH_TIMEOUT {
+                error!(
+                    "WebSocket authentication timeout: connection_id={}, waited {} seconds",
+                    act.connection_id,
+                    AUTH_TIMEOUT.as_secs()
+                );
+                
+                // Send auth error message before closing
+                let msg = WebSocketMessage::AuthError {
+                    message: "Authentication timeout - no auth message received within 3 seconds".to_string(),
+                };
+                if let Ok(json) = serde_json::to_string(&msg) {
+                    ctx.text(json);
+                }
+                
+                // Stop actor
+                ctx.stop();
+                return;
+            }
+
             // Check client heartbeats
             if Instant::now().duration_since(act.hb) > CLIENT_TIMEOUT {
                 // Heartbeat timed out
@@ -121,13 +170,14 @@ impl Actor for WebSocketSession {
 
     /// Called when the actor starts
     fn started(&mut self, ctx: &mut Self::Context) {
-        info!("WebSocket connection established: {}", self.connection_id);
+        info!("WebSocket connection established: {} (waiting for authentication)", self.connection_id);
 
-        // Start heartbeat process
+        // Start heartbeat process (includes auth timeout check)
         self.hb(ctx);
 
         // Create notification channel for live query updates
         let (notification_tx, mut notification_rx) = tokio::sync::mpsc::unbounded_channel();
+        self.notification_tx = Some(notification_tx);
 
         // Spawn task to listen for notifications and send to WebSocket
         let addr = ctx.address();
@@ -138,47 +188,8 @@ impl Actor for WebSocketSession {
             }
         });
 
-        // Register connection with live query manager
-        if let Some(ref user_id) = self.user_id {
-            let manager = self.live_query_manager.clone();
-            let unique_conn_id = self.connection_id.clone();
-            let user_string = user_id.as_str().to_string();
-
-            ctx.wait(
-                fut::wrap_future(async move {
-                    let live_user = LiveUserId::new(user_string);
-                    let conn_id = manager
-                        .register_connection(
-                            live_user.clone(),
-                            unique_conn_id,
-                            Some(notification_tx),
-                        )
-                        .await;
-                    (conn_id, live_user)
-                })
-                .map(|(result, live_user), act: &mut Self, ctx| match result {
-                    Ok(conn_id) => {
-                        act.live_connection_id = Some(conn_id);
-                        act.live_user_id = Some(live_user);
-                    }
-                    Err(err) => {
-                        error!(
-                            "Failed to register live query connection {}: {}",
-                            act.connection_id, err
-                        );
-                        ctx.close(None);
-                        ctx.stop();
-                    }
-                }),
-            );
-        } else {
-            error!(
-                "WebSocket connection {} missing authenticated user; closing",
-                self.connection_id
-            );
-            ctx.close(None);
-            ctx.stop();
-        }
+        // Note: Connection will be registered with live query manager
+        // AFTER successful authentication (see AuthResult handler)
     }
 
     /// Called when the actor stops
@@ -250,7 +261,22 @@ impl StreamHandler<Result<ws::Message, ws::ProtocolError>> for WebSocketSession 
                     Ok(client_msg) => {
                         use kalamdb_commons::websocket::ClientMessage;
                         match client_msg {
+                            ClientMessage::Authenticate { username, password } => {
+                                self.handle_authenticate(ctx, username, password);
+                            }
                             ClientMessage::Subscribe { subscriptions } => {
+                                // Check if authenticated
+                                if !self.is_authenticated {
+                                    error!("Subscription request before authentication: connection_id={}", self.connection_id);
+                                    let error_msg = WebSocketMessage::AuthError {
+                                        message: "Authentication required before subscribing".to_string(),
+                                    };
+                                    if let Ok(json) = serde_json::to_string(&error_msg) {
+                                        ctx.text(json);
+                                    }
+                                    return;
+                                }
+
                                 let sub_req = crate::models::SubscriptionRequest {
                                     subscriptions: subscriptions
                                         .into_iter()
@@ -270,9 +296,21 @@ impl StreamHandler<Result<ws::Message, ws::ProtocolError>> for WebSocketSession 
                                 subscription_id,
                                 last_seq_id,
                             } => {
+                                // Check if authenticated
+                                if !self.is_authenticated {
+                                    error!("Next batch request before authentication: connection_id={}", self.connection_id);
+                                    return;
+                                }
+
                                 self.handle_next_batch_request(ctx, subscription_id, last_seq_id);
                             }
                             ClientMessage::Unsubscribe { subscription_id } => {
+                                // Check if authenticated
+                                if !self.is_authenticated {
+                                    error!("Unsubscribe request before authentication: connection_id={}", self.connection_id);
+                                    return;
+                                }
+
                                 // TODO: Implement unsubscribe logic
                                 warn!("Unsubscribe not yet implemented: {}", subscription_id);
                             }
@@ -309,6 +347,69 @@ impl StreamHandler<Result<ws::Message, ws::ProtocolError>> for WebSocketSession 
 }
 
 impl WebSocketSession {
+    /// Handle authentication message from client
+    fn handle_authenticate(
+        &mut self,
+        ctx: &mut ws::WebsocketContext<Self>,
+        username: String,
+        password: String,
+    ) {
+        if self.is_authenticated {
+            warn!("Client {} already authenticated, ignoring duplicate auth request", self.connection_id);
+            return;
+        }
+
+        info!("Authenticating WebSocket connection: connection_id={}, username={}", self.connection_id, username);
+
+        // Clone Arc references for async block
+        let user_repo = self.user_repo.clone();
+        let app_context = self.app_context.clone();
+        let connection_id = self.connection_id.clone();
+        let addr = ctx.address();
+
+        // Spawn async authentication task
+        actix::spawn(async move {
+            // Look up user
+            let user_result = user_repo.get_user_by_username(&username).await;
+            
+            let auth_result = match user_result {
+                Ok(user) => {
+                    // Check if user is deleted
+                    if user.deleted_at.is_some() {
+                        Err("Invalid username or password".to_string())
+                    } else {
+                        // Verify password
+                        match kalamdb_auth::password::verify_password(&password, &user.password_hash).await {
+                            Ok(true) => {
+                                // Log successful authentication
+                                let entry = kalamdb_core::sql::executor::helpers::audit::log_auth_event(
+                                    &user.id,
+                                    "LOGIN_WS",
+                                    true,
+                                    None,
+                                );
+                                if let Err(e) = kalamdb_core::sql::executor::helpers::audit::persist_audit_entry(&app_context, &entry).await {
+                                    error!("Failed to persist audit log: {}", e);
+                                }
+
+                                Ok((user.id, user.role))
+                            }
+                            Ok(false) => Err("Invalid username or password".to_string()),
+                            Err(_) => Err("Authentication error".to_string()),
+                        }
+                    }
+                }
+                Err(_) => Err("Invalid username or password".to_string()),
+            };
+
+            // Send result back to actor
+            addr.do_send(AuthResult {
+                connection_id,
+                result: auth_result,
+            });
+        });
+    }
+
     /// Handle subscription request message
     fn handle_subscription_request(
         &mut self,
@@ -645,6 +746,113 @@ impl WebSocketSession {
                 },
             ),
         );
+    }
+}
+
+/// Message for authentication result
+#[derive(Message)]
+#[rtype(result = "()")]
+pub struct AuthResult {
+    pub connection_id: String,
+    pub result: Result<(UserId, kalamdb_commons::models::Role), String>,
+}
+
+impl Handler<AuthResult> for WebSocketSession {
+    type Result = ();
+
+    fn handle(&mut self, msg: AuthResult, ctx: &mut Self::Context) {
+        match msg.result {
+            Ok((user_id, role)) => {
+                info!(
+                    "WebSocket authentication successful: connection_id={}, user_id={}, role={:?}",
+                    self.connection_id, user_id.as_str(), role
+                );
+
+                // Mark as authenticated
+                self.is_authenticated = true;
+                self.user_id = Some(user_id.clone());
+                self.live_user_id = Some(user_id.clone());
+
+                // Register connection with live query manager now that we have user_id
+                let manager = self.live_query_manager.clone();
+                let unique_conn_id = self.connection_id.clone();
+                let user_for_manager = user_id.clone();
+                let notification_tx = self.notification_tx.clone();
+
+                ctx.wait(
+                    fut::wrap_future(async move {
+                        let result = manager
+                            .register_connection(
+                                user_for_manager.clone(),
+                                unique_conn_id.clone(),
+                                notification_tx,
+                            )
+                            .await;
+                        (result, unique_conn_id)
+                    })
+                    .map(|(result, unique_conn_id), act, ctx| {
+                        match result {
+                            Ok(conn_id) => {
+                                act.live_connection_id = Some(conn_id.clone());
+                                info!(
+                                    "WebSocket connection registered with LiveQueryManager: websocket_id={}, live_id={}",
+                                    unique_conn_id,
+                                    conn_id.as_str()
+                                );
+                            }
+                            Err(err) => {
+                                error!(
+                                    "Failed to register live query connection {}: {}",
+                                    unique_conn_id, err
+                                );
+                                ctx.close(None);
+                                ctx.stop();
+                            }
+                        }
+                    }),
+                );
+
+                // Send success response
+                let success_msg = WebSocketMessage::AuthSuccess {
+                    user_id: user_id.as_str().to_string(),
+                    role: format!("{:?}", role),
+                };
+                if let Ok(json) = serde_json::to_string(&success_msg) {
+                    ctx.text(json);
+                }
+            }
+            Err(error_msg) => {
+                error!(
+                    "WebSocket authentication failed: connection_id={}, error={}",
+                    self.connection_id, error_msg
+                );
+
+                // Log failed authentication
+                let entry = kalamdb_core::sql::executor::helpers::audit::log_auth_event(
+                    &UserId::new("unknown".to_string()),
+                    "LOGIN_WS",
+                    false,
+                    None,
+                );
+                let app_context = self.app_context.clone();
+                actix::spawn(async move {
+                    if let Err(e) = kalamdb_core::sql::executor::helpers::audit::persist_audit_entry(&app_context, &entry).await {
+                        error!("Failed to persist audit log: {}", e);
+                    }
+                });
+
+                // Send error response
+                let error_response = WebSocketMessage::AuthError {
+                    message: error_msg,
+                };
+                if let Ok(json) = serde_json::to_string(&error_response) {
+                    ctx.text(json);
+                }
+
+                // Close connection
+                ctx.stop();
+            }
+        }
     }
 }
 

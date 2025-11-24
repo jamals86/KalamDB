@@ -51,6 +51,15 @@ pub enum BatchStatus {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum ClientMessage {
+    /// Authenticate WebSocket connection (browser clients only)
+    /// Native clients use HTTP Basic Auth headers instead
+    Authenticate {
+        /// Username for authentication
+        username: String,
+        /// Password for authentication
+        password: String,
+    },
+
     /// Subscribe to live query updates
     Subscribe {
         /// List of subscriptions to register
@@ -101,6 +110,20 @@ pub struct SubscriptionOptions {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum ServerMessage {
+    /// Authentication successful response (browser clients only)
+    AuthSuccess {
+        /// Authenticated user ID
+        user_id: String,
+        /// User role
+        role: String,
+    },
+
+    /// Authentication failed response (browser clients only)
+    AuthError {
+        /// Error message
+        message: String,
+    },
+
     /// Acknowledgement of successful subscription registration
     SubscriptionAck {
         /// The subscription ID that was registered

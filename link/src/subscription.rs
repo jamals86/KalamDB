@@ -20,7 +20,7 @@ use tokio_tungstenite::{
         protocol::Message,
     },
 };
-use uuid::Uuid;
+use std::time::{SystemTime, UNIX_EPOCH};
 
 type WebSocketStream =
     tokio_tungstenite::WebSocketStream<tokio_tungstenite::MaybeTlsStream<tokio::net::TcpStream>>;
@@ -352,7 +352,15 @@ impl SubscriptionManager {
         };
 
         let mut ws_stream = ws_stream;
-        let subscription_id = id.unwrap_or_else(|| format!("sub-{}", Uuid::new_v4()));
+        
+        // Generate subscription ID using timestamp + random component
+        let subscription_id = id.unwrap_or_else(|| {
+            let nanos = SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .unwrap()
+                .as_nanos();
+            format!("sub-{}", nanos)
+        });
 
         // Send subscription request
         send_subscription_request(&mut ws_stream, &subscription_id, &sql, options).await?;

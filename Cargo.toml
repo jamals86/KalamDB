@@ -69,7 +69,7 @@ actix-cors = "0.7"
 actix-rt = "2.10"
 
 # UUID generation
-uuid = { version = "1.11", features = ["v4", "v7", "serde"] }
+uuid = { version = "1.6", features = ["v4", "v7", "serde"] }
 
 # ULID generation
 ulid = "1.1"
@@ -122,12 +122,12 @@ wasm-bindgen-futures = { version = "0.4" }
 js-sys = { version = "0.3" }
 libc = "0.2"
 web-sys = { version = "0.3" }
-getrandom = { version = "0.2.16", features = ["js"] }
+getrandom = { version = "0.2", features = ["js"] }
 
-[profile.release]
-opt-level = "z"     # Optimize for size
-lto = true          # Enable Link Time Optimization (removes unused code across crates)
-codegen-units = 1   # Slower build, but better optimization
-panic = "abort"     # Removes stack unwinding code
-strip = true        # Automatically strip symbols from the binary
+# [profile.release]
+# opt-level = "z"     # Optimize for size
+# lto = true          # Enable Link Time Optimization (removes unused code across crates)
+# codegen-units = 1   # Slower build, but better optimization
+# panic = "abort"     # Removes stack unwinding code
+# strip = true        # Automatically strip symbols from the binary
 
