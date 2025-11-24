@@ -81,16 +81,18 @@ pub fn json_rows_to_arrow_batch(schema: &SchemaRef, rows: Vec<Row>) -> Result<Re
     for mut row in rows {
         for (i, field) in schema.fields().iter().enumerate() {
             let field_name = field.name().as_str();
-            
+
             // Take value from map (move) instead of cloning
-            let raw_value = row.values.remove(field_name)
+            let raw_value = row
+                .values
+                .remove(field_name)
                 .or_else(|| defaults[i].clone())
                 .unwrap_or_else(|| typed_nulls[i].clone());
-            
+
             // We still need to coerce, but now we own the value
             let coerced = coerce_scalar_to_field(raw_value, field)
                 .map_err(|e| format!("Failed to coerce column '{}': {}", field.name(), e))?;
-            
+
             columns[i].push(coerced);
         }
     }
@@ -547,7 +549,7 @@ pub fn scalar_value_to_json(value: &ScalarValue) -> Result<JsonValue, KalamDbErr
 /// It only coerces the columns that are present in the update row.
 pub fn coerce_updates(row: Row, schema: &SchemaRef) -> Result<Row, String> {
     let mut new_values = BTreeMap::new();
-    
+
     for (col_name, value) in row.values {
         if let Ok(field) = schema.field_with_name(&col_name) {
             let coerced = coerce_scalar_to_field(value, field)?;
@@ -557,6 +559,6 @@ pub fn coerce_updates(row: Row, schema: &SchemaRef) -> Result<Row, String> {
             new_values.insert(col_name, value);
         }
     }
-    
+
     Ok(Row::new(new_values))
 }

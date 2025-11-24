@@ -143,10 +143,12 @@ pub trait BaseTableProvider<K: StorageKey, V>: Send + Sync + TableProvider {
 
         // Coerce rows to match schema types (e.g. String -> Timestamp)
         // This ensures real-time events match the storage format
-        let coerced_rows = coerce_rows(rows, &self.schema_ref())
-            .map_err(|e| KalamDbError::InvalidOperation(format!("Schema coercion failed: {}", e)))?;
+        let coerced_rows = coerce_rows(rows, &self.schema_ref()).map_err(|e| {
+            KalamDbError::InvalidOperation(format!("Schema coercion failed: {}", e))
+        })?;
 
-        coerced_rows.into_iter()
+        coerced_rows
+            .into_iter()
             .map(|row| self.insert(user_id, row))
             .collect()
     }
@@ -448,7 +450,8 @@ where
     K: StorageKey,
 {
     let user_scope = resolve_user_scope(scope);
-    let resolved = provider.scan_with_version_resolution_to_kvs(user_scope, None, None, None, false)?;
+    let resolved =
+        provider.scan_with_version_resolution_to_kvs(user_scope, None, None, None, false)?;
     let pk_name = provider.primary_key_field_name();
 
     for (key, row) in resolved.into_iter() {

@@ -587,15 +587,22 @@ pub fn create_stream_table(
                     let arrow_schema = def.to_arrow_schema().map_err(|e| {
                         KalamDbError::SchemaError(format!("Failed to build Arrow schema: {}", e))
                     })?;
-                    
+
                     // Extract TTL from table options if available, otherwise use default
-                    let ttl_seconds = if let kalamdb_commons::schemas::TableOptions::Stream(opts) = &def.table_options {
+                    let ttl_seconds = if let kalamdb_commons::schemas::TableOptions::Stream(opts) =
+                        &def.table_options
+                    {
                         Some(opts.ttl_seconds)
                     } else {
                         stmt.ttl_seconds
                     };
-                    
-                    register_stream_table_provider(&app_context, &table_id, arrow_schema, ttl_seconds)?;
+
+                    register_stream_table_provider(
+                        &app_context,
+                        &table_id,
+                        arrow_schema,
+                        ttl_seconds,
+                    )?;
                 }
             }
 

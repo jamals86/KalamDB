@@ -118,14 +118,22 @@ impl AuditLogsTableProvider {
 
     /// Scan all audit log entries and return as RecordBatch
     pub fn scan_all_entries(&self) -> Result<RecordBatch, SystemError> {
-        let entries = self.store.scan_all(None, None, None)?;
+        let iter = self.store.scan_iterator(None, None)?;
+        let mut entries = Vec::new();
+        for item in iter {
+            entries.push(item?);
+        }
         self.create_batch(entries)
     }
 
     /// Scan up to `limit` audit log entries and return as RecordBatch
     pub fn scan_entries_limited(&self, limit: usize) -> Result<RecordBatch, SystemError> {
-        use kalamdb_store::entity_store::EntityStore;
-        let entries = self.store.scan_all(Some(limit), None, None)?;
+        use kalamdb_store::entity_store::{EntityStore, ScanDirection};
+        let iter = self.store.scan_directional(None, ScanDirection::Newer, limit)?;
+        let mut entries = Vec::new();
+        for item in iter {
+            entries.push(item?);
+        }
         self.create_batch(entries)
     }
 
@@ -133,8 +141,13 @@ impl AuditLogsTableProvider {
     /// Useful for testing and internal usage where RecordBatch is not needed
     pub fn scan_all(&self) -> Result<Vec<AuditLogEntry>, SystemError> {
         use kalamdb_store::entity_store::EntityStore;
-        let entries = self.store.scan_all(None, None, None)?;
-        Ok(entries.into_iter().map(|(_, entry)| entry).collect())
+        let iter = self.store.scan_iterator(None, None)?;
+        let mut entries = Vec::new();
+        for item in iter {
+            let (_, entry) = item?;
+            entries.push(entry);
+        }
+        Ok(entries)
     }
 }
 

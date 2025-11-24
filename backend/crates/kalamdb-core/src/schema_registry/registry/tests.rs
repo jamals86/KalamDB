@@ -69,9 +69,7 @@ fn test_get_by_table_id() {
 
     cache.insert(table_id.clone(), data);
 
-    let retrieved = cache
-        .get(&table_id)
-        .expect("Should find table");
+    let retrieved = cache.get(&table_id).expect("Should find table");
     assert_eq!(retrieved.table.table_type, TableType::User);
 }
 

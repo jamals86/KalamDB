@@ -39,7 +39,7 @@ pub struct Namespace {
     pub name: String,
     pub created_at: i64,         // Unix timestamp in milliseconds
     pub options: Option<String>, // JSON configuration
-    pub table_count: i32, //TODO: Remove this field and calculate on the fly
+    pub table_count: i32,        //TODO: Remove this field and calculate on the fly
 }
 
 impl Namespace {

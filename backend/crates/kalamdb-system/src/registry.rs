@@ -208,7 +208,8 @@ impl SystemTablesRegistry {
             ),
             (
                 "stats",
-                self.stats.read().unwrap().clone() as Arc<dyn datafusion::datasource::TableProvider>,
+                self.stats.read().unwrap().clone()
+                    as Arc<dyn datafusion::datasource::TableProvider>,
             ),
             (
                 "manifest",

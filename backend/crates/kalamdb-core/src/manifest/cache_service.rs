@@ -7,7 +7,7 @@
 use dashmap::DashMap;
 use kalamdb_commons::{
     config::ManifestCacheSettings,
-    types::{ManifestCacheEntry, Manifest, SyncState},
+    types::{Manifest, ManifestCacheEntry, SyncState},
     NamespaceId, TableId, TableName, UserId,
 };
 use kalamdb_store::{entity_store::EntityStore, StorageBackend, StorageError};
@@ -494,4 +494,3 @@ mod tests {
         assert_eq!(service.count().unwrap(), 0);
     }
 }
-

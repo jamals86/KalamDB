@@ -110,7 +110,10 @@ async fn system_namespaces_tracks_table_count() {
             "Namespace table_count should be non-negative, got: {}",
             table_count
         );
-        println!("NOTE: analytics namespace has table_count = {} (expected 1, may be async update)", table_count);
+        println!(
+            "NOTE: analytics namespace has table_count = {} (expected 1, may be async update)",
+            table_count
+        );
     } else {
         panic!("Expected query result");
     }
@@ -120,12 +123,16 @@ async fn system_namespaces_tracks_table_count() {
 #[tokio::test]
 async fn system_jobs_tracks_flush_operations() {
     let server = TestServer::new().await;
-    
+
     // Create DBA user for admin operations
-    let _admin_id = server.create_user("admin", "AdminPass123!", Role::Dba).await;
+    let _admin_id = server
+        .create_user("admin", "AdminPass123!", Role::Dba)
+        .await;
 
     // Create namespace and table (use unique namespace to avoid conflicts)
-    let resp = server.execute_sql("CREATE NAMESPACE IF NOT EXISTS app_jobs").await;
+    let resp = server
+        .execute_sql("CREATE NAMESPACE IF NOT EXISTS app_jobs")
+        .await;
     assert_eq!(resp.status, ResponseStatus::Success);
 
     let create_table = r#"
@@ -139,7 +146,9 @@ async fn system_jobs_tracks_flush_operations() {
     assert_eq!(resp.status, ResponseStatus::Success);
 
     // Insert data as user
-    let user_id = server.create_user("user1", "UserPass123!", Role::User).await;
+    let user_id = server
+        .create_user("user1", "UserPass123!", Role::User)
+        .await;
     let resp = server
         .execute_sql_as_user(
             "INSERT INTO app_jobs.logs (log_id, message) VALUES ('log1', 'Test message')",
@@ -152,8 +161,9 @@ async fn system_jobs_tracks_flush_operations() {
     let resp_before = server
         .execute_sql("SELECT COUNT(*) as count FROM system.jobs WHERE job_type = 'flush'")
         .await;
-    
-    let count_before = if let Some(rows) = resp_before.results.first().and_then(|r| r.rows.as_ref()) {
+
+    let count_before = if let Some(rows) = resp_before.results.first().and_then(|r| r.rows.as_ref())
+    {
         rows[0].get("count").unwrap().as_i64().unwrap()
     } else {
         0
@@ -217,7 +227,9 @@ async fn system_users_shows_created_users() {
     let server = TestServer::new().await;
 
     // Create a test user
-    let _user_id = server.create_user("testuser", "TestPass123!", Role::User).await;
+    let _user_id = server
+        .create_user("testuser", "TestPass123!", Role::User)
+        .await;
 
     // Query system.users
     let resp = server
@@ -293,7 +305,7 @@ async fn system_tables_row_counts_are_consistent() {
 
     let resp = server.execute_sql("CREATE NAMESPACE ns1").await;
     assert_eq!(resp.status, ResponseStatus::Success);
-    
+
     let resp = server.execute_sql("CREATE NAMESPACE ns2").await;
     assert_eq!(resp.status, ResponseStatus::Success);
 
@@ -350,7 +362,7 @@ async fn system_tables_queryable_on_startup() {
     for table in system_tables {
         let sql = format!("SELECT * FROM {} LIMIT 1", table);
         let resp = server.execute_sql(&sql).await;
-        
+
         assert_eq!(
             resp.status,
             ResponseStatus::Success,
@@ -367,7 +379,9 @@ async fn system_tables_includes_column_metadata() {
     let server = TestServer::new().await;
 
     // Create a table with specific columns
-    let resp = server.execute_sql("CREATE NAMESPACE IF NOT EXISTS app_metadata").await;
+    let resp = server
+        .execute_sql("CREATE NAMESPACE IF NOT EXISTS app_metadata")
+        .await;
     assert_eq!(resp.status, ResponseStatus::Success);
 
     let create_table = r#"
@@ -388,14 +402,14 @@ async fn system_tables_includes_column_metadata() {
         .await;
 
     assert_eq!(resp.status, ResponseStatus::Success);
-    
+
     // At minimum, the table should exist
     if let Some(rows) = resp.results.first().and_then(|r| r.rows.as_ref()) {
         assert_eq!(rows.len(), 1, "Should find products table");
-        
+
         let row = &rows[0];
         assert_eq!(row.get("table_name").unwrap().as_str().unwrap(), "products");
-        
+
         // Check if schema information is included
         // Note: The actual schema column format depends on implementation
         // We're just verifying the table metadata exists

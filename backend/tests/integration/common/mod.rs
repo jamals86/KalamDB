@@ -217,7 +217,7 @@ impl TestServer {
                 let now = chrono::Utc::now().timestamp_millis();
                 // Create a valid bcrypt hash for testing
                 let password_hash = bcrypt::hash("admin", bcrypt::DEFAULT_COST).unwrap_or_default();
-                
+
                 let sys_user = User {
                     id: sys_id.clone(),
                     username: AuthConstants::DEFAULT_SYSTEM_USERNAME.into(),

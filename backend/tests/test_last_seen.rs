@@ -22,10 +22,10 @@ async fn test_last_seen_updates_on_authentication() {
     let server = TestServer::new().await;
     let auth_service = server.auth_service();
     let adapter = server.users_repo();
-    
+
     let username = "seen_once";
     let password = "StrongPass1!";
-    
+
     // Create user
     server.create_user(username, password, Role::User).await;
 
@@ -59,15 +59,16 @@ async fn test_last_seen_updates_only_once_per_day() {
     let server = TestServer::new().await;
     let auth_service = server.auth_service();
     let adapter = server.users_repo();
-    
+
     let username = "seen_daily";
     let password = "StrongPass1!";
-    
+
     // Create user with last_seen = yesterday
     let user_id = UserId::new(username);
     let now = chrono::Utc::now().timestamp_millis();
     let yesterday = (chrono::Utc::now() - ChronoDuration::days(1)).timestamp_millis();
-    let password_hash = bcrypt::hash(password, bcrypt::DEFAULT_COST).expect("Failed to hash password");
+    let password_hash =
+        bcrypt::hash(password, bcrypt::DEFAULT_COST).expect("Failed to hash password");
 
     let user = kalamdb_commons::system::User {
         id: user_id.clone(),
@@ -86,7 +87,9 @@ async fn test_last_seen_updates_only_once_per_day() {
     };
 
     let users_provider = server.app_context.system_tables().users();
-    users_provider.create_user(user).expect("Failed to insert test user");
+    users_provider
+        .create_user(user)
+        .expect("Failed to insert test user");
 
     let auth_header = basic_auth_header(username, password);
     let connection_info = ConnectionInfo::new(Some("127.0.0.1".to_string()));
@@ -96,15 +99,15 @@ async fn test_last_seen_updates_only_once_per_day() {
         .authenticate_with_repo(&auth_header, &connection_info, &adapter)
         .await
         .expect("Authentication should succeed");
-        
+
     sleep(Duration::from_millis(100)).await;
-    
+
     let user_after_first = users_provider
         .get_user_by_username(username)
         .expect("Failed to fetch user")
         .expect("User should exist");
     let first_seen = user_after_first.last_seen.expect("last_seen should be set");
-    
+
     assert!(first_seen > yesterday, "last_seen should be updated");
 
     // Second auth - should NOT update last_seen (because it's same day)
@@ -112,9 +115,9 @@ async fn test_last_seen_updates_only_once_per_day() {
         .authenticate_with_repo(&auth_header, &connection_info, &adapter)
         .await
         .expect("Second authentication should succeed");
-        
+
     sleep(Duration::from_millis(100)).await;
-    
+
     let user_after_second = users_provider
         .get_user_by_username(username)
         .expect("Failed to fetch user")

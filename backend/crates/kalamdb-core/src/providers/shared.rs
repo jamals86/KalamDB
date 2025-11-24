@@ -22,10 +22,10 @@ use datafusion::datasource::TableProvider;
 use datafusion::error::Result as DataFusionResult;
 use datafusion::logical_expr::{Expr, TableProviderFilterPushDown};
 use datafusion::physical_plan::ExecutionPlan;
+use kalamdb_commons::constants::SystemColumnNames;
 use kalamdb_commons::ids::SharedTableRowId;
 use kalamdb_commons::models::{Row, UserId};
 use kalamdb_commons::TableId;
-use kalamdb_commons::constants::SystemColumnNames;
 use kalamdb_store::entity_store::EntityStore;
 use kalamdb_tables::{SharedTableRow, SharedTableStore};
 use std::any::Any;
@@ -318,7 +318,9 @@ impl BaseTableProvider<SharedTableRowId, SharedTableRow> for SharedTableProvider
             (None, None)
         };
 
-        let keep_deleted = filter.map(|f| base::filter_uses_deleted_column(f)).unwrap_or(false);
+        let keep_deleted = filter
+            .map(|f| base::filter_uses_deleted_column(f))
+            .unwrap_or(false);
 
         // NO user_id extraction - shared tables scan ALL rows
         let kvs = self.scan_with_version_resolution_to_kvs(

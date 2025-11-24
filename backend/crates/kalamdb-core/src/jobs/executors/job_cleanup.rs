@@ -75,11 +75,11 @@ impl JobExecutor for JobCleanupExecutor {
         ));
 
         let jobs_provider = ctx.app_ctx.system_tables().jobs();
-        
+
         // Execute cleanup
-        let deleted_count = jobs_provider.cleanup_old_jobs(retention_days).map_err(|e| {
-            KalamDbError::Other(format!("Failed to cleanup old jobs: {}", e))
-        })?;
+        let deleted_count = jobs_provider
+            .cleanup_old_jobs(retention_days)
+            .map_err(|e| KalamDbError::Other(format!("Failed to cleanup old jobs: {}", e)))?;
 
         let message = format!(
             "Job history cleanup completed - {} jobs deleted (retention: {} days)",

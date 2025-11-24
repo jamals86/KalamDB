@@ -61,7 +61,8 @@ fn test_cli_basic_query_execution() {
     assert!(
         stdout.contains("Test Message") && output.status.success(),
         "Output should contain query results: stdout='{}', stderr='{}'",
-        stdout, stderr
+        stdout,
+        stderr
     );
 
     // Cleanup

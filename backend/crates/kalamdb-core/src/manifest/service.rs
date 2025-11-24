@@ -98,10 +98,9 @@ impl ManifestService {
             self.ensure_manifest_initialized(table_id, table_type, user_id)?;
         }
 
-        let mut manifest = self
-            .cache
-            .get_mut(&key)
-            .ok_or_else(|| StorageError::Other("Manifest not found in cache after init".to_string()))?;
+        let mut manifest = self.cache.get_mut(&key).ok_or_else(|| {
+            StorageError::Other("Manifest not found in cache after init".to_string())
+        })?;
 
         manifest.add_segment(segment);
         // Also update sequence number if needed? Segment has min/max seq.
@@ -207,12 +206,12 @@ impl ManifestService {
     pub fn validate_manifest(&self, manifest: &Manifest) -> Result<(), StorageError> {
         // Basic validation
         if manifest.segments.is_empty() && manifest.last_sequence_number > 0 {
-             // This might be valid if segments were deleted but seq num kept increasing?
-             // But for now let's assume it's suspicious if we have seq num but no segments ever.
-             // Actually, last_sequence_number tracks the *latest* assigned ID.
-             // If we delete all segments, we still want to know the last ID to avoid reuse.
-             // So this check might be invalid.
-             // Let's just check if segments are valid.
+            // This might be valid if segments were deleted but seq num kept increasing?
+            // But for now let's assume it's suspicious if we have seq num but no segments ever.
+            // Actually, last_sequence_number tracks the *latest* assigned ID.
+            // If we delete all segments, we still want to know the last ID to avoid reuse.
+            // So this check might be invalid.
+            // Let's just check if segments are valid.
         }
         Ok(())
     }
@@ -427,9 +426,11 @@ mod tests {
     fn test_flush_manifest_writes_to_disk() {
         let (service, temp_dir) = create_test_service();
         let table_id = build_table_id("ns1", "flush_test");
-        
+
         // 1. Init (In-Memory)
-        service.ensure_manifest_initialized(&table_id, TableType::Shared, None).unwrap();
+        service
+            .ensure_manifest_initialized(&table_id, TableType::Shared, None)
+            .unwrap();
 
         // 2. Update (In-Memory)
         let segment = SegmentMetadata::new(
@@ -441,13 +442,15 @@ mod tests {
             0,
             0,
         );
-        service.update_manifest(&table_id, TableType::Shared, None, segment).unwrap();
+        service
+            .update_manifest(&table_id, TableType::Shared, None, segment)
+            .unwrap();
 
         // 3. Verify NOT on disk
         let manifest_path = service.manifest_path(&table_id, None).unwrap_or_else(|_| {
-             let mut path = temp_dir.path().to_path_buf();
-             path.push("ns1/flush_test/manifest.json");
-             path
+            let mut path = temp_dir.path().to_path_buf();
+            path.push("ns1/flush_test/manifest.json");
+            path
         });
         assert!(!manifest_path.exists());
 
@@ -458,4 +461,3 @@ mod tests {
         assert!(manifest_path.exists());
     }
 }
-

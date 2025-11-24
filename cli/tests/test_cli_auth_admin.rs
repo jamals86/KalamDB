@@ -646,7 +646,11 @@ async fn test_cli_flush_all_tables() {
     let namespace_name = generate_unique_namespace("flush_all_test");
 
     // Setup: Create namespace with multiple tables
-    let _ = execute_sql_as_root(&format!("DROP NAMESPACE IF EXISTS {} CASCADE", namespace_name)).await;
+    let _ = execute_sql_as_root(&format!(
+        "DROP NAMESPACE IF EXISTS {} CASCADE",
+        namespace_name
+    ))
+    .await;
     tokio::time::sleep(Duration::from_millis(300)).await;
 
     let _ = execute_sql_as_root(&format!("CREATE NAMESPACE {}", namespace_name)).await;
@@ -664,10 +668,16 @@ async fn test_cli_flush_all_tables() {
     tokio::time::sleep(Duration::from_millis(100)).await;
 
     // Insert some data
-    let _ = execute_sql_as_root(&format!("INSERT INTO {}.table1 (id, data) VALUES (1, 'test')", namespace_name))
-        .await;
-    let _ =
-        execute_sql_as_root(&format!("INSERT INTO {}.table2 (id, value) VALUES (1, 42.0)", namespace_name)).await;
+    let _ = execute_sql_as_root(&format!(
+        "INSERT INTO {}.table1 (id, data) VALUES (1, 'test')",
+        namespace_name
+    ))
+    .await;
+    let _ = execute_sql_as_root(&format!(
+        "INSERT INTO {}.table2 (id, value) VALUES (1, 42.0)",
+        namespace_name
+    ))
+    .await;
     tokio::time::sleep(Duration::from_millis(100)).await;
 
     // Execute FLUSH ALL TABLES via CLI
@@ -740,9 +750,12 @@ async fn test_cli_flush_all_tables() {
         )
     } else {
         // Fallback to querying by namespace
-        format!("SELECT job_id, job_type, status, namespace_id, table_name, result FROM system.jobs \
+        format!(
+            "SELECT job_id, job_type, status, namespace_id, table_name, result FROM system.jobs \
          WHERE job_type = 'flush' AND namespace_id = '{}' \
-         ORDER BY created_at DESC", namespace_name)
+         ORDER BY created_at DESC",
+            namespace_name
+        )
     };
 
     let jobs_result = execute_sql_as_root(&jobs_query).await.unwrap();

@@ -259,7 +259,21 @@ instead of: 1 failed: Invalid operation: No handler registered for statement typ
 
 179) No need to have backend\crates\kalamdb-core\src\schema_registry\views since we will be impl;ementing a views which are supported by datafusion, we only persist the view create sql to be applied or run on startup of the server
 
+180) For jobs add a method for each executor called: preValidate which check if we should create that job or not, so we can check if we need to evict data or there is no need, this will not need a created job to run
 
+
+181) cut the took into 3 decimal places only:
+{
+  "status": "success",
+  "results": [
+    {
+      "row_count": 1,
+      "columns": [],
+      "message": "Inserted 1 row(s)"
+    }
+  ],
+  "took": 1.2685000000000002
+}
 
 Here’s the updated 5-line spec with embedding storage inside Parquet and managed HNSW indexing (with delete handling):
 	1.	Parquet Storage: All embeddings are stored as regular columns in the Parquet file alongside other table columns to keep data unified and versioned per batch.
@@ -293,7 +307,7 @@ IMPORTANT:
 15) Support postgress protocol
 16) Add file DataType for storing files/blobs next to the storage parquet files
 17) Persist views in the system_views table and load them on database starts
-
+18) Remove the usage of scan_all from EntityStore and replace all calls to always include filter or limit and check ability to have a stream instead of returning a vector
 
 
 

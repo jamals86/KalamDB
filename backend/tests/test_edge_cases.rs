@@ -77,9 +77,11 @@ async fn test_malformed_basic_auth_400() {
 #[tokio::test]
 async fn test_concurrent_auth_no_race_conditions() {
     let server = TestServer::new().await;
-    
+
     // Create test user
-    server.create_user("concurrent_user", "TestPass123", Role::User).await;
+    server
+        .create_user("concurrent_user", "TestPass123", Role::User)
+        .await;
 
     let auth_service = server.auth_service();
     let adapter = server.users_repo();
@@ -125,11 +127,15 @@ async fn test_deleted_user_denied() {
     let server = TestServer::new().await;
 
     // Create user
-    server.create_user("deleted_user", "TestPass123", Role::User).await;
+    server
+        .create_user("deleted_user", "TestPass123", Role::User)
+        .await;
 
     // Soft delete the user via provider
     let users_provider = server.app_context.system_tables().users();
-    users_provider.delete_user(&UserId::new("deleted_user")).expect("Failed to delete user");
+    users_provider
+        .delete_user(&UserId::new("deleted_user"))
+        .expect("Failed to delete user");
 
     let auth_service = server.auth_service();
     let adapter = server.users_repo();
@@ -158,7 +164,9 @@ async fn test_role_change_applies_next_request() {
     let server = TestServer::new().await;
 
     // Create user with User role
-    server.create_user("role_change_user", "TestPass123", Role::User).await;
+    server
+        .create_user("role_change_user", "TestPass123", Role::User)
+        .await;
 
     let auth_service = server.auth_service();
     let adapter = server.users_repo();
@@ -176,9 +184,14 @@ async fn test_role_change_applies_next_request() {
 
     // Change user role to DBA
     let users_provider = server.app_context.system_tables().users();
-    let mut user = users_provider.get_user_by_id(&UserId::new("role_change_user")).unwrap().unwrap();
+    let mut user = users_provider
+        .get_user_by_id(&UserId::new("role_change_user"))
+        .unwrap()
+        .unwrap();
     user.role = Role::Dba;
-    users_provider.update_user(user).expect("Failed to update user");
+    users_provider
+        .update_user(user)
+        .expect("Failed to update user");
 
     // Invalidate the user cache to ensure the role change is reflected
     auth_service.invalidate_user_cache("role_change_user").await;

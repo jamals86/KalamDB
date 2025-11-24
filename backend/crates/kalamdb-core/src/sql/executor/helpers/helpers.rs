@@ -30,7 +30,11 @@ pub fn resolve_namespace_required(
 }
 
 pub fn format_table_identifier(table_id: &TableId) -> String {
-    format!("{}.{}", table_id.namespace_id().as_str(), table_id.table_name().as_str())
+    format!(
+        "{}.{}",
+        table_id.namespace_id().as_str(),
+        table_id.table_name().as_str()
+    )
 }
 
 pub fn format_table_identifier_opt(

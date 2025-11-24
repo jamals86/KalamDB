@@ -30,11 +30,7 @@ async fn create_system_user(server: &TestServer, username: &str) -> UserId {
     };
 
     // Ignore error if user already exists (shared DB in tests)
-    let _ = server
-        .app_context
-        .system_tables()
-        .users()
-        .create_user(user);
+    let _ = server.app_context.system_tables().users().create_user(user);
     user_id
 }
 
@@ -63,10 +59,7 @@ async fn test_audit_log_for_user_management() {
     assert_eq!(resp.status, ResponseStatus::Success, "CREATE USER failed");
 
     let resp = server
-        .execute_sql_as_user(
-            "ALTER USER 'audit_user_1' SET ROLE dba",
-            admin_id.as_str(),
-        )
+        .execute_sql_as_user("ALTER USER 'audit_user_1' SET ROLE dba", admin_id.as_str())
         .await;
     assert_eq!(resp.status, ResponseStatus::Success, "ALTER USER failed");
 
@@ -86,10 +79,18 @@ async fn test_audit_log_for_user_management() {
     assert_eq!(create_entry.actor_user_id, admin_id);
     assert_eq!(create_entry.action, "CREATE_USER");
     // Details are strings in current implementation, not JSON
-    assert!(create_entry.details.as_ref().unwrap().contains("Role: User"));
+    assert!(create_entry
+        .details
+        .as_ref()
+        .unwrap()
+        .contains("Role: User"));
 
     let alter_entry = find_audit_entry(&logs, "ALTER_USER", "audit_user_1");
-    assert!(alter_entry.details.as_ref().unwrap().contains("SetRole(Dba)"));
+    assert!(alter_entry
+        .details
+        .as_ref()
+        .unwrap()
+        .contains("SetRole(Dba)"));
 
     let drop_entry = find_audit_entry(&logs, "DROP_USER", "audit_user_1");
     assert!(drop_entry.details.is_none());
@@ -104,39 +105,42 @@ async fn test_audit_log_for_table_access_change() {
         .execute_sql_as_user("CREATE NAMESPACE analytics", admin_id.as_str())
         .await;
     // Ignore if namespace already exists
-    if resp.status != ResponseStatus::Success && !resp.error.as_ref().unwrap().message.contains("already exists") {
-         panic!("CREATE NAMESPACE failed: {:?}", resp.error);
+    if resp.status != ResponseStatus::Success
+        && !resp
+            .error
+            .as_ref()
+            .unwrap()
+            .message
+            .contains("already exists")
+    {
+        panic!("CREATE NAMESPACE failed: {:?}", resp.error);
     }
 
     // Use a regular table instead of shared table if shared tables are problematic in tests
     // But ACCESS LEVEL is only for shared tables.
     // Let's try to create a shared table with a unique name
     let table_name = format!("analytics.events_{}", chrono::Utc::now().timestamp_millis());
-    
+
     // Note: If this fails due to missing column families, we might need to skip this part of the test
     // or update TestServer to support shared tables.
     // For now, let's try to proceed and see if unique name helps (unlikely if it's a CF issue).
-    
-    let sql = format!("CREATE SHARED TABLE {} (id INT, value TEXT) ACCESS LEVEL private", table_name);
-    let resp = server
-        .execute_sql_as_user(
-            &sql,
-            admin_id.as_str(),
-        )
-        .await;
-    
+
+    let sql = format!(
+        "CREATE SHARED TABLE {} (id INT, value TEXT) ACCESS LEVEL private",
+        table_name
+    );
+    let resp = server.execute_sql_as_user(&sql, admin_id.as_str()).await;
+
     if resp.status != ResponseStatus::Success {
-        println!("Skipping shared table test due to environment limitations: {:?}", resp.error);
+        println!(
+            "Skipping shared table test due to environment limitations: {:?}",
+            resp.error
+        );
         return;
     }
 
     let sql = format!("ALTER TABLE {} SET ACCESS LEVEL public", table_name);
-    let resp = server
-        .execute_sql_as_user(
-            &sql,
-            admin_id.as_str(),
-        )
-        .await;
+    let resp = server.execute_sql_as_user(&sql, admin_id.as_str()).await;
     assert_eq!(resp.status, ResponseStatus::Success, "ALTER TABLE failed");
 
     let logs = server
@@ -145,8 +149,12 @@ async fn test_audit_log_for_table_access_change() {
         .audit_logs()
         .scan_all()
         .expect("Failed to read audit log");
-    
+
     let entry = find_audit_entry(&logs, "ALTER_TABLE", &table_name);
     // Details string: "Operation: SET ACCESS LEVEL Public, New Version: ..."
-    assert!(entry.details.as_ref().unwrap().contains("SET ACCESS LEVEL Public"));
+    assert!(entry
+        .details
+        .as_ref()
+        .unwrap()
+        .contains("SET ACCESS LEVEL Public"));
 }

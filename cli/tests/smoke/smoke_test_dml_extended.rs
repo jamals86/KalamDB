@@ -78,7 +78,8 @@ fn smoke_test_multi_row_insert() {
 
     // Verify specific data
     let select_names = format!("SELECT name FROM {} ORDER BY name", full_table);
-    let names_output = execute_sql_as_root_via_cli_json(&select_names).expect("Failed to query names");
+    let names_output =
+        execute_sql_as_root_via_cli_json(&select_names).expect("Failed to query names");
 
     assert!(
         names_output.contains("Alice") && names_output.contains("Diana"),
@@ -147,7 +148,8 @@ fn smoke_test_soft_delete_user_table() {
 
     // Verify count after delete (should be 2, excluding soft-deleted row)
     let count_after = format!("SELECT COUNT(*) as total FROM {}", full_table);
-    let after_output = execute_sql_as_root_via_cli(&count_after).expect("Failed to count after delete");
+    let after_output =
+        execute_sql_as_root_via_cli(&count_after).expect("Failed to count after delete");
 
     assert!(
         after_output.contains('2'),
@@ -170,14 +172,17 @@ fn smoke_test_soft_delete_user_table() {
 
     // Query soft-deleted rows explicitly
     let query_deleted = format!("SELECT name FROM {} WHERE _deleted = true", full_table);
-    let deleted_output = execute_sql_as_root_via_cli_json(&query_deleted).expect("Failed to query deleted rows");
+    let deleted_output =
+        execute_sql_as_root_via_cli_json(&query_deleted).expect("Failed to query deleted rows");
 
     assert!(
         deleted_output.contains("Bob"),
         "Expected Bob visible when querying _deleted = true"
     );
 
-    println!("✅ Verified soft delete behavior: row hidden by default, visible with _deleted = true");
+    println!(
+        "✅ Verified soft delete behavior: row hidden by default, visible with _deleted = true"
+    );
 }
 
 /// Test soft DELETE for SHARED tables
@@ -302,7 +307,8 @@ fn smoke_test_hard_delete_stream_table() {
 
     // Verify count after delete (should be 1, rows physically removed)
     let count_after = format!("SELECT COUNT(*) as total FROM {}", full_table);
-    let after_output = execute_sql_as_root_via_cli(&count_after).expect("Failed to count after delete");
+    let after_output =
+        execute_sql_as_root_via_cli(&count_after).expect("Failed to count after delete");
 
     assert!(
         after_output.contains('1'),
@@ -526,7 +532,8 @@ fn smoke_test_multi_row_update() {
         "SELECT COUNT(*) as total FROM {} WHERE status = 'pending'",
         full_table
     );
-    let pending_output = execute_sql_as_root_via_cli(&count_pending).expect("Failed to count pending");
+    let pending_output =
+        execute_sql_as_root_via_cli(&count_pending).expect("Failed to count pending");
 
     assert!(
         pending_output.contains('0'),

@@ -276,15 +276,17 @@ impl InitialDataFetcher {
 
         for batch in batches {
             let schema = batch.schema();
-            let seq_col_idx = schema
-                .index_of(SystemColumnNames::SEQ)
-                .map_err(|_| KalamDbError::Other(format!("Result missing {} column", SystemColumnNames::SEQ)))?;
+            let seq_col_idx = schema.index_of(SystemColumnNames::SEQ).map_err(|_| {
+                KalamDbError::Other(format!("Result missing {} column", SystemColumnNames::SEQ))
+            })?;
 
             let seq_col = batch.column(seq_col_idx);
             let seq_array = seq_col
                 .as_any()
                 .downcast_ref::<datafusion::arrow::array::Int64Array>()
-                .ok_or_else(|| KalamDbError::Other(format!("{} column is not Int64", SystemColumnNames::SEQ)))?;
+                .ok_or_else(|| {
+                    KalamDbError::Other(format!("{} column is not Int64", SystemColumnNames::SEQ))
+                })?;
 
             let num_rows = batch.num_rows();
             let num_cols = batch.num_columns();

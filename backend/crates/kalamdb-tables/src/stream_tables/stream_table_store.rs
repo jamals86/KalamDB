@@ -22,7 +22,7 @@ use std::sync::Arc;
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct StreamTableRow {
     pub user_id: UserId,
-    pub _seq: SeqId,
+    pub _seq: SeqId, //TODO: Rename this to seq without the _
     pub fields: Row, // All event data
 }
 

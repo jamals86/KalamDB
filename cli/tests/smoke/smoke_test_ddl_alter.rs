@@ -59,11 +59,14 @@ fn smoke_test_alter_table_add_column() {
     // Add nullable column
     let alter_sql = format!("ALTER TABLE {} ADD COLUMN age INT", full_table);
     let alter_result = execute_sql_as_root_via_cli(&alter_sql);
-    
+
     match alter_result {
         Ok(output) => {
             println!("ALTER output: {}", output);
-            if output.to_lowercase().contains("error") || output.to_lowercase().contains("not implemented") || output.to_lowercase().contains("unsupported") {
+            if output.to_lowercase().contains("error")
+                || output.to_lowercase().contains("not implemented")
+                || output.to_lowercase().contains("unsupported")
+            {
                 println!("⚠️  ALTER TABLE ADD COLUMN not yet implemented - skipping test");
                 return;
             }
@@ -81,16 +84,19 @@ fn smoke_test_alter_table_add_column() {
     // Verify new column exists (SELECT should succeed)
     let select_sql = format!("SELECT name, age FROM {}", full_table);
     let output_result = execute_sql_as_root_via_cli_json(&select_sql);
-    
+
     if output_result.is_err() {
         println!("⚠️  Column 'age' not found in schema - ALTER TABLE may have succeeded syntactically but schema wasn't updated");
         println!("   This indicates ALTER TABLE ADD COLUMN needs further implementation");
         return;
     }
-    
+
     let output = output_result.unwrap();
 
-    assert!(output.contains("\"age\""), "Expected 'age' column in output");
+    assert!(
+        output.contains("\"age\""),
+        "Expected 'age' column in output"
+    );
     assert!(output.contains("Alice"), "Expected existing row in output");
 
     println!("✅ Verified new column exists and old data preserved");
@@ -167,7 +173,7 @@ fn smoke_test_alter_table_drop_column() {
     // Drop column
     let alter_sql = format!("ALTER TABLE {} DROP COLUMN email", full_table);
     let alter_result = execute_sql_as_root_via_cli(&alter_sql);
-    
+
     if alter_result.is_err() {
         println!("⚠️  ALTER TABLE DROP COLUMN not yet implemented - skipping test");
         println!("   Error: {:?}", alter_result.unwrap_err());
@@ -179,7 +185,8 @@ fn smoke_test_alter_table_drop_column() {
 
     // Verify column no longer exists
     let select_sql = format!("SELECT * FROM {}", full_table);
-    let output = execute_sql_as_root_via_cli_json(&select_sql).expect("Failed to query after DROP COLUMN");
+    let output =
+        execute_sql_as_root_via_cli_json(&select_sql).expect("Failed to query after DROP COLUMN");
 
     assert!(
         !output.contains("\"email\""),
@@ -235,22 +242,25 @@ fn smoke_test_alter_table_modify_column() {
     execute_sql_as_root_via_cli(&insert_sql).expect("Failed to insert row");
 
     // Modify column to NOT NULL (should work if data exists)
-    let alter_sql = format!("ALTER TABLE {} MODIFY COLUMN content TEXT NOT NULL", full_table);
-    
+    let alter_sql = format!(
+        "ALTER TABLE {} MODIFY COLUMN content TEXT NOT NULL",
+        full_table
+    );
+
     // Note: This might fail if backend doesn't support MODIFY COLUMN yet
     match execute_sql_as_root_via_cli(&alter_sql) {
         Ok(_) => {
             println!("✅ Modified column to NOT NULL");
-            
+
             // Verify by attempting to insert NULL (should fail)
             let insert_null = format!("INSERT INTO {} (content) VALUES (NULL)", full_table);
             let null_result = execute_sql_as_root_via_cli(&insert_null);
-            
+
             assert!(
                 null_result.is_err() || null_result.unwrap().to_lowercase().contains("error"),
                 "Expected error when inserting NULL into NOT NULL column"
             );
-            
+
             println!("✅ Verified NOT NULL constraint enforced");
         }
         Err(e) => {
@@ -320,7 +330,9 @@ fn smoke_test_alter_shared_table_access_level() {
                 .expect("Failed to query system.tables");
 
             assert!(
-                output.contains("RESTRICTED") || output.contains("restricted") || output.contains("Restricted"),
+                output.contains("RESTRICTED")
+                    || output.contains("restricted")
+                    || output.contains("Restricted"),
                 "Expected ACCESS_LEVEL='RESTRICTED' in system.tables options"
             );
 
@@ -375,7 +387,10 @@ fn smoke_test_alter_add_not_null_without_default_error() {
     println!("✅ Created table with existing data");
 
     // Try to add NOT NULL column without DEFAULT (should fail)
-    let alter_sql = format!("ALTER TABLE {} ADD COLUMN required_field TEXT NOT NULL", full_table);
+    let alter_sql = format!(
+        "ALTER TABLE {} ADD COLUMN required_field TEXT NOT NULL",
+        full_table
+    );
     let alter_result = execute_sql_as_root_via_cli(&alter_sql);
 
     match alter_result {
@@ -383,7 +398,9 @@ fn smoke_test_alter_add_not_null_without_default_error() {
             println!("✅ ADD NOT NULL without DEFAULT failed as expected: {}", e);
             let error_msg = e.to_string().to_lowercase();
             assert!(
-                error_msg.contains("not null") || error_msg.contains("default") || error_msg.contains("required"),
+                error_msg.contains("not null")
+                    || error_msg.contains("default")
+                    || error_msg.contains("required"),
                 "Expected error message about NOT NULL requiring DEFAULT, got: {}",
                 e
             );
@@ -451,7 +468,10 @@ fn smoke_test_alter_system_columns_error() {
             if output_lower.contains("error") || output_lower.contains("system") {
                 println!("✅ DROP _updated failed as expected");
             } else {
-                println!("⚠️  DROP _updated should fail (system column), but got: {}", output);
+                println!(
+                    "⚠️  DROP _updated should fail (system column), but got: {}",
+                    output
+                );
                 println!("TODO: Enforce protection of system columns in ALTER TABLE");
             }
         }
@@ -470,7 +490,10 @@ fn smoke_test_alter_system_columns_error() {
             if output_lower.contains("error") || output_lower.contains("system") {
                 println!("✅ DROP _deleted failed as expected");
             } else {
-                println!("⚠️  DROP _deleted should fail (system column), but got: {}", output);
+                println!(
+                    "⚠️  DROP _deleted should fail (system column), but got: {}",
+                    output
+                );
             }
         }
     }

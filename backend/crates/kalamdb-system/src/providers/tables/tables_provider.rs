@@ -91,8 +91,13 @@ impl TablesTableProvider {
 
     /// List all table definitions
     pub fn list_tables(&self) -> Result<Vec<TableDefinition>, SystemError> {
-        let tables = self.store.scan_all(None, None, None)?;
-        Ok(tables.into_iter().map(|(_, table_def)| table_def).collect())
+        let iter = self.store.scan_iterator(None, None)?;
+        let mut tables = Vec::new();
+        for item in iter {
+            let (_, table_def) = item?;
+            tables.push(table_def);
+        }
+        Ok(tables)
     }
 
     /// Alias for list_tables (backward compatibility)
@@ -104,7 +109,11 @@ impl TablesTableProvider {
     pub fn scan_all_tables(&self) -> Result<RecordBatch, SystemError> {
         use kalamdb_store::entity_store::EntityStore;
 
-        let tables = self.store.scan_all(None, None, None)?;
+        let iter = self.store.scan_iterator(None, None)?;
+        let mut tables = Vec::new();
+        for item in iter {
+            tables.push(item?);
+        }
         let row_count = tables.len();
 
         // Pre-allocate builders for optimal performance

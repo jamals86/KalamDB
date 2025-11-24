@@ -223,11 +223,8 @@ pub async fn cleanup_parquet_files_internal(
 
     // Resolve relative template: substitutes {namespace} and {tableName};
     // leaves {userId}/{shard} placeholders intact for expansion below.
-    let relative_template = registry.resolve_storage_path_template(
-        table_id,
-        table_def.table_type,
-        &storage_id,
-    )?;
+    let relative_template =
+        registry.resolve_storage_path_template(table_id, table_def.table_type, &storage_id)?;
 
     // 3) Resolve base directory using storage config or default base path
     let default_base = _app_context

@@ -19,7 +19,7 @@ async fn syntax_error_messages_are_clear() {
     let resp = server.execute_sql("SELCT * FROM system.tables").await;
     assert_eq!(resp.status, ResponseStatus::Error);
     assert!(resp.error.is_some());
-    
+
     let error = resp.error.unwrap();
     let error_msg = error.message.to_lowercase();
     // The error should at least indicate something went wrong
@@ -42,13 +42,11 @@ async fn syntax_error_messages_are_clear() {
 async fn table_not_found_error_is_clear() {
     let server = TestServer::new().await;
 
-    let resp = server
-        .execute_sql("SELECT * FROM nonexistent.table")
-        .await;
-    
+    let resp = server.execute_sql("SELECT * FROM nonexistent.table").await;
+
     assert_eq!(resp.status, ResponseStatus::Error);
     assert!(resp.error.is_some());
-    
+
     let error = resp.error.unwrap();
     let error_msg = error.message.to_lowercase();
     assert!(
@@ -68,25 +66,25 @@ async fn invalid_namespace_name_rejected() {
 
     // Namespace names must be lowercase and start with letter
     let invalid_names = vec![
-        "123invalid",  // Starts with number
-        "Invalid",     // Has uppercase
+        "123invalid",   // Starts with number
+        "Invalid",      // Has uppercase
         "invalid-name", // Has hyphen (if not allowed)
     ];
 
     for name in invalid_names {
         let sql = format!("CREATE NAMESPACE {}", name);
         let resp = server.execute_sql(&sql).await;
-        
+
         // Should either fail with validation error or succeed if name is actually valid
         // We're primarily checking that error messages are clear when they do fail
         if resp.status == ResponseStatus::Error {
             assert!(resp.error.is_some());
             let error = resp.error.unwrap();
-            
+
             // Error should mention validation or naming rules
             let error_msg = error.message.to_lowercase();
             println!("Namespace '{}' rejected with: {}", name, error.message);
-            
+
             // Just verify we got an error, the exact validation rules may vary
             assert!(!error_msg.is_empty(), "Error message should not be empty");
         }
@@ -109,11 +107,11 @@ async fn table_without_primary_key_rejected() {
         )
         WITH (TYPE = 'USER')
     "#;
-    
+
     let resp = server.execute_sql(create_table).await;
     assert_eq!(resp.status, ResponseStatus::Error);
     assert!(resp.error.is_some());
-    
+
     let error = resp.error.unwrap();
     let error_msg = error.message.to_lowercase();
     assert!(
@@ -146,20 +144,17 @@ async fn null_constraint_violation_detected() {
 
     // Try to insert without required field
     let resp = server
-        .execute_sql_as_user(
-            "INSERT INTO app.users (id) VALUES (1)",
-            user_id.as_str(),
-        )
+        .execute_sql_as_user("INSERT INTO app.users (id) VALUES (1)", user_id.as_str())
         .await;
 
     // Should fail with constraint violation
     assert_eq!(resp.status, ResponseStatus::Error);
     if let Some(error) = resp.error {
         let error_msg = error.message.to_lowercase();
-        
+
         // Should mention NULL or constraint or required field
         assert!(
-            error_msg.contains("null") 
+            error_msg.contains("null")
                 || error_msg.contains("constraint")
                 || error_msg.contains("required")
                 || error_msg.contains("email"),
@@ -234,10 +229,7 @@ async fn user_isolation_in_user_tables() {
     // User2 tries to query - should see no rows (user isolation)
     let user2_id = server.create_user("user2", "Pass123!", Role::User).await;
     let resp = server
-        .execute_sql_as_user(
-            "SELECT * FROM app.private_data",
-            user2_id.as_str(),
-        )
+        .execute_sql_as_user("SELECT * FROM app.private_data", user2_id.as_str())
         .await;
 
     assert_eq!(resp.status, ResponseStatus::Success);
@@ -251,19 +243,12 @@ async fn user_isolation_in_user_tables() {
 
     // User1 can still see their own data
     let resp = server
-        .execute_sql_as_user(
-            "SELECT * FROM app.private_data",
-            user1_id.as_str(),
-        )
+        .execute_sql_as_user("SELECT * FROM app.private_data", user1_id.as_str())
         .await;
 
     assert_eq!(resp.status, ResponseStatus::Success);
     if let Some(rows) = resp.results.first().and_then(|r| r.rows.as_ref()) {
-        assert_eq!(
-            rows.len(),
-            1,
-            "User1 should see their own data"
-        );
+        assert_eq!(rows.len(), 1, "User1 should see their own data");
     }
 }
 
@@ -309,7 +294,7 @@ async fn duplicate_primary_key_rejected() {
     if let Some(error) = resp.error {
         let error_msg = error.message.to_lowercase();
         assert!(
-            error_msg.contains("duplicate") 
+            error_msg.contains("duplicate")
                 || error_msg.contains("unique")
                 || error_msg.contains("primary key")
                 || error_msg.contains("constraint")
@@ -326,10 +311,10 @@ async fn drop_nonexistent_table_error_is_clear() {
     let server = TestServer::new().await;
 
     let resp = server.execute_sql("DROP TABLE nonexistent.table").await;
-    
+
     assert_eq!(resp.status, ResponseStatus::Error);
     assert!(resp.error.is_some());
-    
+
     let error = resp.error.unwrap();
     let error_msg = error.message.to_lowercase();
     assert!(
@@ -411,7 +396,7 @@ async fn select_invalid_column_error_is_clear() {
     if let Some(error) = resp.error {
         let error_msg = error.message.to_lowercase();
         assert!(
-            error_msg.contains("column") 
+            error_msg.contains("column")
                 || error_msg.contains("field")
                 || error_msg.contains("invalid_column"),
             "Invalid column error should be clear, got: {}",
@@ -426,7 +411,9 @@ async fn permission_denied_error_is_clear() {
     let server = TestServer::new().await;
 
     // Create regular user (not DBA)
-    let user_id = server.create_user("regularuser", "Pass123!", Role::User).await;
+    let user_id = server
+        .create_user("regularuser", "Pass123!", Role::User)
+        .await;
 
     // Try to create namespace as regular user (requires DBA or System role)
     let resp = server
@@ -438,7 +425,7 @@ async fn permission_denied_error_is_clear() {
     if let Some(error) = resp.error {
         let error_msg = error.message.to_lowercase();
         assert!(
-            error_msg.contains("permission") 
+            error_msg.contains("permission")
                 || error_msg.contains("denied")
                 || error_msg.contains("unauthorized")
                 || error_msg.contains("forbidden")

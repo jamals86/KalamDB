@@ -98,8 +98,13 @@ impl NamespacesTableProvider {
 
     /// List all namespaces
     pub fn list_namespaces(&self) -> Result<Vec<Namespace>, SystemError> {
-        let namespaces = self.store.scan_all(None, None, None)?;
-        Ok(namespaces.into_iter().map(|(_, ns)| ns).collect())
+        let iter = self.store.scan_iterator(None, None)?;
+        let mut namespaces = Vec::new();
+        for item in iter {
+            let (_, ns) = item?;
+            namespaces.push(ns);
+        }
+        Ok(namespaces)
     }
 
     /// Alias for list_namespaces (backward compatibility)
@@ -109,7 +114,11 @@ impl NamespacesTableProvider {
 
     /// Scan all namespaces and return as RecordBatch
     pub fn scan_all_namespaces(&self) -> Result<RecordBatch, SystemError> {
-        let namespaces = self.store.scan_all(None, None, None)?;
+        let iter = self.store.scan_iterator(None, None)?;
+        let mut namespaces = Vec::new();
+        for item in iter {
+            namespaces.push(item?);
+        }
         let row_count = namespaces.len();
 
         // Pre-allocate builders for optimal performance
