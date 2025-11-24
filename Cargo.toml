@@ -54,15 +54,15 @@ chrono = { version = "0.4.38", features = ["serde"] }
 rocksdb = { version = "0.24.0", default-features = false, features = ["snappy"] }
 
 # Apache Arrow ecosystem
-arrow = { version = "56.2.0", features = ["prettyprint"] }
-arrow-schema = { version = "56.2.0" }
-datafusion = { version = "50.3.0" }
-datafusion-common = { version = "50.3.0" }
-sqlparser = { version = "0.58.0" }
-parquet = { version = "56.2.0" }
+arrow = { version = "57.0.0", features = ["prettyprint"] }
+arrow-schema = { version = "57.0.0" }
+datafusion = { version = "51.0.0" }
+datafusion-common = { version = "51.0.0" }
+sqlparser = { version = "0.59.0" }
+parquet = { version = "57.0.0" }
 
 # Web framework
-actix-web = "4.9"
+actix-web = "4.12.0"
 actix-web-actors = "4.3.0"
 actix = "0.13"
 actix-cors = "0.7"
@@ -81,7 +81,7 @@ jsonwebtoken = { version = "10.2.0", default-features = false, features = ["use_
 toml = "0.9.8"
 
 # CLI tools
-clap = { version = "4.5.51", features = ["derive", "color"] }
+clap = { version = "4.5.53", features = ["derive", "color"] }
 rustyline = { version = "17.0.2" }
 tabled = { version = "0.20.0" }
 crossterm = { version = "0.29.0" }
@@ -101,7 +101,7 @@ bcrypt = "0.17.1"
 rand = "0.9.2"
 colored = "3.0.0"
 fern = "0.7"
-indicatif = "0.18.2"
+indicatif = "0.18.3"
 console = "0.16.1"
 rpassword = "7.3"
 dirs = "6.0"
@@ -123,4 +123,11 @@ js-sys = { version = "0.3" }
 libc = "0.2"
 web-sys = { version = "0.3" }
 getrandom = { version = "0.2.16", features = ["js"] }
+
+[profile.release]
+opt-level = "z"     # Optimize for size
+lto = true          # Enable Link Time Optimization (removes unused code across crates)
+codegen-units = 1   # Slower build, but better optimization
+panic = "abort"     # Removes stack unwinding code
+strip = true        # Automatically strip symbols from the binary
 

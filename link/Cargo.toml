@@ -72,3 +72,10 @@ tokio = { workspace = true, features = ["test-util", "macros"] }
 
 [lib]
 crate-type = ["cdylib", "rlib"]
+
+[profile.release]
+opt-level = "z"     # Optimize for size
+lto = true          # Enable Link Time Optimization
+codegen-units = 1   # Better optimization, slower build
+panic = "abort"     # Remove unwinding code
+strip = true        # Strip symbols
