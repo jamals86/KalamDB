@@ -86,7 +86,7 @@ pub struct WebSocketSession {
         HashMap<String, (String, UserId, Option<kalamdb_commons::ids::SeqId>, usize)>,
 
     /// Notification channel sender for live query updates
-    pub notification_tx: Option<tokio::sync::mpsc::UnboundedSender<(String, kalamdb_commons::Notification)>>,
+    pub notification_tx: Option<tokio::sync::mpsc::UnboundedSender<(kalamdb_commons::models::LiveId, kalamdb_commons::Notification)>>,
 }
 
 impl WebSocketSession {
@@ -797,7 +797,7 @@ impl Handler<AuthResult> for WebSocketSession {
                                 info!(
                                     "WebSocket connection registered with LiveQueryManager: websocket_id={}, live_id={}",
                                     unique_conn_id,
-                                    conn_id.as_str()
+                                    conn_id
                                 );
                             }
                             Err(err) => {

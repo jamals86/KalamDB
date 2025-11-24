@@ -162,6 +162,12 @@ fn parse_message(text: &str) -> Result<Option<ChangeEvent>> {
     match serde_json::from_str::<ServerMessage>(text) {
         Ok(msg) => {
             let event = match msg {
+                // Auth messages are only used in WASM (post-connection auth)
+                // CLI uses header-based auth, so these should not appear here
+                // Return None to skip processing (will continue to next message)
+                ServerMessage::AuthSuccess { .. } | ServerMessage::AuthError { .. } => {
+                    return Ok(None);
+                },
                 ServerMessage::SubscriptionAck {
                     subscription_id,
                     total_rows,
@@ -227,7 +233,7 @@ fn parse_message(text: &str) -> Result<Option<ChangeEvent>> {
                     subscription_id,
                     code,
                     message,
-                },
+                }
             };
             Ok(Some(event))
         }
