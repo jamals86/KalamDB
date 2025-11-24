@@ -11,7 +11,7 @@
 use kalamdb_commons::{
     config::ManifestCacheSettings,
     models::{schemas::TableType, TableId},
-    types::{ManifestFile, SyncState},
+    types::{Manifest, SyncState},
     NamespaceId, TableName, UserId,
 };
 use kalamdb_core::manifest::ManifestCacheService;
@@ -29,15 +29,10 @@ fn create_test_service() -> ManifestCacheService {
     ManifestCacheService::new(backend, config)
 }
 
-fn create_test_manifest(namespace: &str, table_name: &str, user_id: Option<&str>) -> ManifestFile {
+fn create_test_manifest(namespace: &str, table_name: &str, user_id: Option<&str>) -> Manifest {
     let table_id = TableId::new(NamespaceId::new(namespace), TableName::new(table_name));
     let user_id_opt = user_id.map(UserId::from);
-    let table_type = if user_id.is_some() {
-        TableType::User
-    } else {
-        TableType::Shared
-    };
-    ManifestFile::new(table_id, table_type, user_id_opt)
+    Manifest::new(table_id, user_id_opt)
 }
 
 // T095: get_or_load() cache miss → returns None (caller should load from S3)
@@ -174,7 +169,7 @@ fn test_update_after_flush_atomic_write() {
     );
 
     // Verify manifest JSON is valid
-    let parsed_manifest = ManifestFile::from_json(&entry.manifest_json).unwrap();
+    let parsed_manifest: Manifest = serde_json::from_str(&entry.manifest_json).unwrap();
     assert_eq!(parsed_manifest.table_id.namespace_id().as_str(), "ns1");
     assert_eq!(parsed_manifest.table_id.table_name().as_str(), "orders");
     assert_eq!(parsed_manifest.user_id, Some(UserId::from("u_456")));

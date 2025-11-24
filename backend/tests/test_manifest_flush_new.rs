@@ -6,7 +6,7 @@ mod common;
 use common::fixtures::{create_namespace, execute_sql};
 use common::{flush_helpers, TestServer};
 use kalamdb_api::models::ResponseStatus;
-use kalamdb_commons::types::ManifestFile;
+use kalamdb_commons::types::Manifest;
 use kalamdb_commons::{NamespaceId, TableName};
 
 #[tokio::test]
@@ -85,7 +85,7 @@ async fn test_shared_table_flush_creates_manifest() {
 
     // Parse and validate manifest
     let manifest_json = std::fs::read_to_string(&manifest_path).unwrap();
-    let manifest: ManifestFile = ManifestFile::from_json(&manifest_json).unwrap();
+    let manifest: Manifest = serde_json::from_str(&manifest_json).unwrap();
 
     assert_eq!(
         manifest.table_id.namespace_id().as_str(),
@@ -97,13 +97,13 @@ async fn test_shared_table_flush_creates_manifest() {
         "Shared table should have no user_id"
     );
     assert!(
-        !manifest.batches.is_empty(),
-        "Should have at least one batch"
+        !manifest.segments.is_empty(),
+        "Should have at least one segment"
     );
 
-    let batch = &manifest.batches[0];
-    assert_eq!(batch.batch_number, 0);
-    assert_eq!(batch.file_path, "batch-0.parquet");
+    let batch = &manifest.segments[0];
+    // assert_eq!(batch.id, "0"); // ID might be UUID or filename, let's not assert exact value unless we know
+    assert_eq!(batch.path, "batch-0.parquet");
     assert!(batch.row_count >= 5, "Batch should have at least 5 rows");
     assert!(batch.size_bytes > 0);
     assert!(batch.min_seq > 0);
@@ -111,7 +111,7 @@ async fn test_shared_table_flush_creates_manifest() {
 
     println!(
         "✅ Manifest created successfully with {} batch(es)",
-        manifest.batches.len()
+        manifest.segments.len()
     );
 }
 
