@@ -6,7 +6,6 @@
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 
-use crate::models::schemas::TableType;
 use crate::models::TableId;
 use crate::UserId;
 

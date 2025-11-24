@@ -153,7 +153,13 @@ impl JobExecutor for StreamEvictionExecutor {
             let mut batch_count = 0usize;
             let mut last_key_in_batch: Option<StreamTableRowId> = None;
 
-            for (row_key, row) in iterator {
+            for result in iterator {
+                let (row_key, row) = result.map_err(|e| {
+                    KalamDbError::InvalidOperation(format!(
+                        "Failed to deserialize row during pre-validation: {}",
+                        e
+                    ))
+                })?;
                 batch_count += 1;
 
                 if row._seq.timestamp_millis() < cutoff_ms {

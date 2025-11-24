@@ -14,7 +14,7 @@ use datafusion::error::{DataFusionError, Result as DataFusionResult};
 use datafusion::logical_expr::Expr;
 use datafusion::physical_plan::ExecutionPlan;
 use kalamdb_commons::system::User;
-use kalamdb_commons::UserId;
+use kalamdb_commons::{StorageKey, UserId};
 use kalamdb_store::entity_store::EntityStore;
 use kalamdb_store::StorageBackend;
 use std::any::Any;
@@ -224,9 +224,10 @@ impl UsersTableProvider {
     /// Scan all users and return as RecordBatch
     pub fn scan_all_users(&self) -> Result<RecordBatch, SystemError> {
         let iter = self.store.scan_iterator(None, None)?;
-        let mut users = Vec::new();
+        let mut users: Vec<(Vec<u8>, User)> = Vec::new();
         for item in iter {
-            users.push(item?);
+            let (id, user) = item?;
+            users.push((id.storage_key(), user));
         }
         self.create_batch(users)
     }

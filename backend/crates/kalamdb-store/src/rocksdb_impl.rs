@@ -107,7 +107,7 @@ impl StorageBackend for RocksDBBackend {
         prefix: Option<&[u8]>,
         start_key: Option<&[u8]>,
         limit: Option<usize>,
-    ) -> Result<Box<dyn Iterator<Item = (Vec<u8>, Vec<u8>)> + '_>> {
+    ) -> Result<Box<dyn Iterator<Item = (Vec<u8>, Vec<u8>)> + Send + '_>> {
         use rocksdb::Direction;
 
         let cf = self.get_cf(partition)?;
@@ -138,6 +138,12 @@ impl StorageBackend for RocksDBBackend {
             prefix: Option<Vec<u8>>,
             remaining: Option<usize>,
         }
+
+        // SAFETY: SnapshotScanIter is Send because:
+        // 1. rocksdb::SnapshotWithThreadMode is Send (RocksDB handles thread safety)
+        // 2. rocksdb::DBIteratorWithThreadMode is Send
+        // 3. Vec and Option are Send
+        unsafe impl<'a, D: rocksdb::DBAccess> Send for SnapshotScanIter<'a, D> {}
 
         impl<'a, D: rocksdb::DBAccess> Iterator for SnapshotScanIter<'a, D> {
             type Item = (Vec<u8>, Vec<u8>);

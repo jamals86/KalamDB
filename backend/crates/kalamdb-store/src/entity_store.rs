@@ -233,7 +233,7 @@ where
 
     /// Returns a lazy iterator over all entities in the partition.
     ///
-    /// This avoids loading all entities into memory at once.
+    /// Note: Currently collects results to avoid lifetime issues with the underlying storage iterator.
     fn scan_iterator(
         &self,
         prefix: Option<&K>,
@@ -250,14 +250,16 @@ where
             None,
         )?;
 
-        let mapped_iter = iter.map(|(key_bytes, value_bytes)| {
+        // Collect results to avoid lifetime issues
+        let mut results = Vec::new();
+        for (key_bytes, value_bytes) in iter {
             let key = K::from_storage_key(&key_bytes)
                 .map_err(|e| StorageError::SerializationError(e))?;
             let value = V::decode(&value_bytes)?;
-            Ok((key, value))
-        });
+            results.push(Ok((key, value)));
+        }
 
-        Ok(Box::new(mapped_iter))
+        Ok(Box::new(results.into_iter()))
     }
 
     /// Serializes an entity to bytes.
