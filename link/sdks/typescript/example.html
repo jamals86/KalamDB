@@ -586,7 +586,7 @@
             completed BOOLEAN DEFAULT false,
             priority TEXT DEFAULT 'medium',
             created_at TIMESTAMP DEFAULT NOW()
-          ) WITH (TYPE='SHARED', FLUSH_POLICY='rows:100')
+          ) WITH (TYPE='USER', FLUSH_POLICY='rows:100')
         `);
         
         log('✅ Table created!', 'success');
@@ -701,7 +701,7 @@
         log('📡 Subscribing to test_browser.todos...', 'info');
         
         // Make sure table exists first
-        await client.query('CREATE TABLE IF NOT EXISTS test_browser.todos (id BIGINT PRIMARY KEY DEFAULT SNOWFLAKE_ID(), title TEXT NOT NULL, completed BOOLEAN DEFAULT false, priority TEXT DEFAULT \'medium\', created_at TIMESTAMP DEFAULT NOW()) WITH (TYPE=\'SHARED\', FLUSH_POLICY=\'rows:100\')');
+        await client.query('CREATE TABLE IF NOT EXISTS test_browser.todos (id BIGINT PRIMARY KEY DEFAULT SNOWFLAKE_ID(), title TEXT NOT NULL, completed BOOLEAN DEFAULT false, priority TEXT DEFAULT \'medium\', created_at TIMESTAMP DEFAULT NOW()) WITH (TYPE=\'USER\', FLUSH_POLICY=\'rows:100\')');
         
         subscriptionId = await client.subscribe(
           'test_browser.todos',
@@ -715,18 +715,19 @@
               // Log to console
               data.rows.forEach(row => {
                 const status = row.completed ? '✓' : '○';
-                log(`   ${status} [${row.priority?.toUpperCase()}] ${row.title}`, 'info');
+                log(`   ${JSON.stringify(row, null, 2)}`, 'info', true);
               });
               
               // Update subscription output div
               let html = `<div style="color: #4CAF50; font-weight: bold; margin-bottom: 10px;">📡 Live Updates (Last: ${timestamp})</div>`;
               data.rows.forEach(row => {
                 const status = row.completed ? '✓' : '○';
-                const priorityColor = row.priority === 'high' ? '#ef5350' : row.priority === 'medium' ? '#ffb74d' : '#66bb6a';
+                const priority = row.priority ? String(row.priority) : 'medium';
+                const priorityColor = priority === 'high' ? '#ef5350' : priority === 'medium' ? '#ffb74d' : '#66bb6a';
                 html += `<div style="padding: 8px; margin: 5px 0; background: #2d2d30; border-left: 3px solid ${priorityColor}; border-radius: 3px;">`;
                 html += `<span style="font-size: 16px; margin-right: 8px;">${status}</span>`;
                 html += `<strong style="color: #d4d4d4;">${row.title}</strong> `;
-                html += `<span style="color: ${priorityColor}; font-size: 10px; text-transform: uppercase;">[${row.priority}]</span>`;
+                html += `<span style="color: ${priorityColor}; font-size: 10px; text-transform: uppercase;">[${priority}]</span>`;
                 html += `<div style="font-size: 10px; color: #808080; margin-top: 4px;">ID: ${row.id}</div>`;
                 html += `</div>`;
               });
@@ -754,17 +755,27 @@
     };
 
     window.testUnsubscribe = async function() {
-      if (!client || !subscriptionId) {
+      if (!client) {
+        log('⚠️  Please initialize first!', 'warning');
+        return;
+      }
+      
+      if (!subscriptionId) {
         log('⚠️  No active subscription!', 'warning');
         return;
       }
 
       try {
-        log(`📡 Unsubscribing from subscription ${subscriptionId}...`, 'info');
-        await client.unsubscribe(subscriptionId);
+        const currentSubId = subscriptionId;
+        log(`📡 Unsubscribing from subscription ${currentSubId}...`, 'info');
+        
+        // Clear subscription ID first to prevent re-entry
+        subscriptionId = null;
+        
+        // Unsubscribe from server
+        await client.unsubscribe(currentSubId);
         
         log('✅ Unsubscribed successfully!', 'success');
-        subscriptionId = null;
         
         // Update button states
         document.getElementById('subscribeBtn').disabled = false;
@@ -778,6 +789,7 @@
       } catch (error) {
         log(`❌ Unsubscribe failed: ${error.message}`, 'error');
         console.error(error);
+        // Don't reset subscriptionId if unsubscribe failed - allow retry
       }
     };
 
@@ -837,7 +849,7 @@
         await client.connect();
         log('✅ Connected to server!', 'success');
         
-        log('📋 Creating and subscribing to test_browser.todos (SHARED table)...', 'info');
+        log('📋 Creating and subscribing to test_browser.todos (USER table)...', 'info');
         
         // Create table
         await client.query(`
@@ -847,7 +859,7 @@
             completed BOOLEAN DEFAULT false, 
             priority TEXT DEFAULT 'medium', 
             created_at TIMESTAMP DEFAULT NOW()
-          ) WITH (TYPE='SHARED', FLUSH_POLICY='rows:100')
+          ) WITH (TYPE='USER', FLUSH_POLICY='rows:100')
         `);
         
         log('✅ Table created!', 'success');
@@ -861,7 +873,8 @@
             if (data.rows && data.rows.length > 0) {
               data.rows.forEach(row => {
                 const status = row.completed ? '✓' : '○';
-                log(`   ${status} [${row.priority?.toUpperCase()}] ${row.title}`, 'info');
+                const priority = row.priority ? String(row.priority).toUpperCase() : 'MEDIUM';
+                log(`   ${status} [${priority}] ${row.title}`, 'info');
               });
             }
           },
@@ -993,24 +1006,37 @@
         let unsubscribed = false;
         
         if (subscriptionId) {
-          log(`📡 Unsubscribing from todos (${subscriptionId})...`, 'info');
-          await client.unsubscribe(subscriptionId);
-          log('✅ Unsubscribed from todos!', 'success');
-          subscriptionId = null;
-          unsubscribed = true;
+          const currentSubId = subscriptionId;
+          log(`📡 Unsubscribing from todos (${currentSubId})...`, 'info');
+          subscriptionId = null; // Clear first
+          
+          try {
+            await client.unsubscribe(currentSubId);
+            log('✅ Unsubscribed from todos!', 'success');
+            unsubscribed = true;
+          } catch (err) {
+            log(`⚠️  Failed to unsubscribe from todos: ${err.message}`, 'warning');
+          }
           
           // Update button states
           document.getElementById('subscribeBtn').disabled = false;
           document.getElementById('unsubscribeBtn').disabled = true;
           document.getElementById('insertLiveBtn').disabled = true;
+          document.getElementById('subscriptionOutput').innerHTML = '<div style="color: #808080; font-style: italic; font-size: 11px;">No active subscription</div>';
         }
         
         if (eventsSubscriptionId) {
-          log(`📡 Unsubscribing from events (${eventsSubscriptionId})...`, 'info');
-          await client.unsubscribe(eventsSubscriptionId);
-          log('✅ Unsubscribed from events!', 'success');
-          eventsSubscriptionId = null;
-          unsubscribed = true;
+          const currentEventSubId = eventsSubscriptionId;
+          log(`📡 Unsubscribing from events (${currentEventSubId})...`, 'info');
+          eventsSubscriptionId = null; // Clear first
+          
+          try {
+            await client.unsubscribe(currentEventSubId);
+            log('✅ Unsubscribed from events!', 'success');
+            unsubscribed = true;
+          } catch (err) {
+            log(`⚠️  Failed to unsubscribe from events: ${err.message}`, 'warning');
+          }
           
           // Update button states
           document.getElementById('createSubEventsBtn').disabled = false;
