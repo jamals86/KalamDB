@@ -1,0 +1,50 @@
+{
+  "name": "@kalamdb/client",
+  "version": "0.1.0",
+  "description": "Official TypeScript/JavaScript client for KalamDB - Real-time database with WebAssembly support",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "type": "module",
+  "scripts": {
+    "build": "bash build.sh || powershell -ExecutionPolicy Bypass -File build.ps1",
+    "build:bash": "bash build.sh",
+    "build:ps1": "powershell -ExecutionPolicy Bypass -File build.ps1",
+    "test": "node --test tests/basic.test.js",
+    "test:all": "node --test tests/*.test.js",
+    "test:types": "tsc --noEmit tests/types.test.ts",
+    "serve": "npx http-server -p 3000 -o /example.html",
+    "prepublishOnly": "npm run build"
+  },
+  "keywords": [
+    "kalamdb",
+    "database",
+    "real-time",
+    "websocket",
+    "wasm",
+    "webassembly",
+    "sql",
+    "client"
+  ],
+  "author": "KalamDB Team",
+  "license": "Apache-2.0",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/jamals86/KalamDB.git",
+    "directory": "link/sdks/typescript"
+  },
+  "files": [
+    "dist/**/*",
+    "kalam_link.js",
+    "kalam_link.d.ts",
+    "kalam_link_bg.wasm",
+    "README.md",
+    "LICENSE"
+  ],
+  "engines": {
+    "node": ">=18.0.0"
+  },
+  "devDependencies": {
+    "@types/node": "^20.0.0",
+    "typescript": "^5.0.0"
+  }
+}
