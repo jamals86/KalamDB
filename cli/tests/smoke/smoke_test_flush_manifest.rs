@@ -12,24 +12,24 @@ use std::fs;
 use std::path::PathBuf;
 use std::time::Duration;
 
-const BACKEND_STORAGE_DIR: &str = "../backend/data/storage"; // Backend server's storage directory
+const BACKEND_STORAGE_DIR: &str = "../data/storage"; // Server's storage directory (from repository root)
 
 fn get_storage_dir() -> PathBuf {
-    // The backend server writes to ./data/storage from backend/ directory
-    // When tests run from cli/, we need to access ../backend/data/storage
-    let backend_path = PathBuf::from(BACKEND_STORAGE_DIR);
+    // The backend server writes to ./data/storage from repository root
+    // When tests run from cli/, we need to access ../data/storage
+    let root_path = PathBuf::from(BACKEND_STORAGE_DIR);
+    if root_path.exists() {
+        return root_path;
+    }
+
+    // Fallback for different working directory contexts
+    let backend_path = PathBuf::from("../backend/data/storage");
     if backend_path.exists() {
         return backend_path;
     }
 
-    // Fallback for different working directory contexts
-    let alt_path = PathBuf::from("backend/data/storage");
-    if alt_path.exists() {
-        return alt_path;
-    }
-
-    // Default to backend path (will fail in test if it doesn't exist)
-    backend_path
+    // Default to root path (will fail in test if it doesn't exist)
+    root_path
 }
 
 /// Test manifest.json creation after flushing USER table
@@ -103,6 +103,9 @@ fn smoke_test_user_table_flush_manifest() {
         .expect("Flush job did not complete successfully");
 
     println!("✅ Flush job completed");
+    
+    // Give filesystem a moment to sync after async flush
+    std::thread::sleep(Duration::from_millis(500));
 
     // Filesystem verification: check manifest.json exists
     // For USER tables, path is: storage/{namespace}/{table}/{user_id}/manifest.json (based on config.toml)
@@ -118,6 +121,11 @@ fn smoke_test_user_table_flush_manifest() {
 
     // Check if this namespace/table directory exists
     let table_dir = storage_dir.join(&namespace).join(&table);
+    
+    println!("  Storage dir: {:?}", storage_dir);
+    println!("  Table dir: {:?}", table_dir);
+    println!("  Table dir exists: {}", table_dir.exists());
+    
     if table_dir.exists() {
         println!("✅ Table directory exists: {:?}", table_dir);
 
@@ -351,11 +359,18 @@ fn smoke_test_manifest_updated_on_second_flush() {
         .expect("First flush job did not complete");
 
     println!("✅ First flush completed");
+    
+    // Give filesystem a moment to sync after async flush
+    std::thread::sleep(Duration::from_millis(500));
 
     // Count parquet files after first flush
     let storage_dir = get_storage_dir();
     // Shared table path is {namespace}/{table} (based on config.toml)
     let table_dir = storage_dir.join(&namespace).join(&table);
+    
+    println!("  Storage dir: {:?}", storage_dir);
+    println!("  Table dir: {:?}", table_dir);
+    println!("  Table dir exists: {}", table_dir.exists());
 
     let mut parquet_count_after_first_flush = 0;
     if table_dir.exists() {
@@ -392,6 +407,9 @@ fn smoke_test_manifest_updated_on_second_flush() {
         .expect("Second flush job did not complete");
 
     println!("✅ Second flush completed");
+    
+    // Give filesystem a moment to sync after async flush
+    std::thread::sleep(Duration::from_millis(500));
 
     // Count parquet files after second flush
     let mut parquet_count_after_second_flush = 0;
