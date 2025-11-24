@@ -38,6 +38,11 @@ pub enum ColumnOperation {
         new_data_type: String,
         nullable: Option<bool>,
     },
+    /// Rename an existing column (metadata only)
+    Rename {
+        old_column_name: String,
+        new_column_name: String,
+    },
     /// Set access level (SHARED tables only)
     SetAccessLevel { access_level: TableAccess },
 }
@@ -170,6 +175,13 @@ fn convert_operation(operation: &AlterTableOperation) -> DdlResult<ColumnOperati
             }
             build_modify_column_operation(col_name, data_type, options)
         }
+        AlterTableOperation::RenameColumn {
+            old_column_name,
+            new_column_name,
+        } => Ok(ColumnOperation::Rename {
+            old_column_name: old_column_name.value.clone(),
+            new_column_name: new_column_name.value.clone(),
+        }),
         AlterTableOperation::SetTblProperties { table_properties } => {
             build_set_access_level_operation(table_properties)
         }
