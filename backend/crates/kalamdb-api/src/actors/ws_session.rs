@@ -55,6 +55,9 @@ pub struct WebSocketSession {
     /// Timestamp when connection was established (for auth timeout)
     pub connected_at: Instant,
 
+    /// Client IP address for localhost bypass check
+    pub client_ip: Option<String>,
+
     /// Rate limiter for message and subscription limits
     pub rate_limiter: Option<Arc<RateLimiter>>,
 
@@ -99,9 +102,11 @@ impl WebSocketSession {
     /// * `live_query_manager` - Live query manager for subscriptions
     /// * `app_context` - App context for audit logging
     /// * `user_repo` - User repository for authentication
+    /// * `client_ip` - Client IP address for localhost bypass check
     pub fn new(
         connection_id: String,
         user_id: Option<UserId>,
+        client_ip: Option<String>,
         rate_limiter: Option<Arc<RateLimiter>>,
         live_query_manager: Arc<LiveQueryManager>,
         app_context: Arc<kalamdb_core::app_context::AppContext>,
@@ -112,6 +117,7 @@ impl WebSocketSession {
             user_id,
             is_authenticated: false,
             connected_at: Instant::now(),
+            client_ip,
             rate_limiter,
             live_query_manager,
             app_context,
@@ -235,7 +241,7 @@ impl StreamHandler<Result<ws::Message, ws::ProtocolError>> for WebSocketSession 
                 self.hb = Instant::now();
             }
             Ok(ws::Message::Text(text)) => {
-                debug!("Received text message: {}", text);
+                // Note: Not logging raw message to avoid exposing credentials in Authenticate messages
 
                 // Rate limiting: Check message rate per connection
                 if let Some(ref limiter) = self.rate_limiter {
@@ -365,6 +371,7 @@ impl WebSocketSession {
         let user_repo = self.user_repo.clone();
         let app_context = self.app_context.clone();
         let connection_id = self.connection_id.clone();
+        let client_ip = self.client_ip.clone();
         let addr = ctx.address();
 
         // Spawn async authentication task
@@ -378,24 +385,49 @@ impl WebSocketSession {
                     if user.deleted_at.is_some() {
                         Err("Invalid username or password".to_string())
                     } else {
-                        // Verify password
-                        match kalamdb_auth::password::verify_password(&password, &user.password_hash).await {
-                            Ok(true) => {
-                                // Log successful authentication
-                                let entry = kalamdb_core::sql::executor::helpers::audit::log_auth_event(
-                                    &user.id,
-                                    "LOGIN_WS",
-                                    true,
-                                    None,
-                                );
-                                if let Err(e) = kalamdb_core::sql::executor::helpers::audit::persist_audit_entry(&app_context, &entry).await {
-                                    error!("Failed to persist audit log: {}", e);
-                                }
+                        // Check for localhost root bypass (same logic as HTTP auth)
+                        let is_localhost = client_ip
+                            .as_deref()
+                            .map(|ip| kalamdb_auth::is_localhost_address(ip))
+                            .unwrap_or(false);
 
-                                Ok((user.id, user.role))
+                        let is_system_internal = user.role == kalamdb_commons::models::Role::System 
+                            && user.auth_type == kalamdb_commons::models::AuthType::Internal;
+
+                        // Localhost root bypass: if system/internal user from localhost with no password, allow
+                        if is_system_internal && is_localhost && user.password_hash.is_empty() {
+                            // Log successful authentication
+                            let entry = kalamdb_core::sql::executor::helpers::audit::log_auth_event(
+                                &user.id,
+                                "LOGIN_WS_LOCALHOST",
+                                true,
+                                Some("Localhost root bypass".to_string()),
+                            );
+                            if let Err(e) = kalamdb_core::sql::executor::helpers::audit::persist_audit_entry(&app_context, &entry).await {
+                                error!("Failed to persist audit log: {}", e);
                             }
-                            Ok(false) => Err("Invalid username or password".to_string()),
-                            Err(_) => Err("Authentication error".to_string()),
+
+                            Ok((user.id, user.role))
+                        } else {
+                            // Verify password
+                            match kalamdb_auth::password::verify_password(&password, &user.password_hash).await {
+                                Ok(true) => {
+                                    // Log successful authentication
+                                    let entry = kalamdb_core::sql::executor::helpers::audit::log_auth_event(
+                                        &user.id,
+                                        "LOGIN_WS",
+                                        true,
+                                        None,
+                                    );
+                                    if let Err(e) = kalamdb_core::sql::executor::helpers::audit::persist_audit_entry(&app_context, &entry).await {
+                                        error!("Failed to persist audit log: {}", e);
+                                    }
+
+                                    Ok((user.id, user.role))
+                                }
+                                Ok(false) => Err("Invalid username or password".to_string()),
+                                Err(_) => Err("Authentication error".to_string()),
+                            }
                         }
                     }
                 }
@@ -790,7 +822,7 @@ impl Handler<AuthResult> for WebSocketSession {
                             .await;
                         (result, unique_conn_id)
                     })
-                    .map(|(result, unique_conn_id), act, ctx| {
+                    .map(|(result, unique_conn_id), act: &mut Self, ctx| {
                         match result {
                             Ok(conn_id) => {
                                 act.live_connection_id = Some(conn_id.clone());

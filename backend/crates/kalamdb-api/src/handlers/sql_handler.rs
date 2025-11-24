@@ -127,18 +127,8 @@ pub async fn execute_sql_v1(
         .and_then(|h| h.to_str().ok())
         .map(|s| s.to_string());
 
-    let resolved_ip = http_req
-        .headers()
-        .get("X-Forwarded-For")
-        .and_then(|h| h.to_str().ok())
-        .and_then(|raw| raw.split(',').next().map(|s| s.trim().to_string()))
-        .filter(|s| !s.is_empty())
-        .or_else(|| {
-            http_req
-                .connection_info()
-                .realip_remote_addr()
-                .map(|s| s.to_string())
-        });
+    // Extract client IP with security checks against spoofing
+    let resolved_ip = kalamdb_auth::extract_client_ip_secure(&http_req);
 
     // Extract and validate authentication from request using repo
     let auth_result = match extract_auth_with_repo(&http_req, &repo).await {

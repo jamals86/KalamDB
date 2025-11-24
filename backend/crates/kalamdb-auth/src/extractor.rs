@@ -116,16 +116,12 @@ async fn extract_basic_auth_with_repo(
         ));
     }
 
-    let client_ip = req
-        .headers()
-        .get("X-Forwarded-For")
-        .and_then(|h| h.to_str().ok())
-        .map(|s| s.split(',').next().unwrap_or("").trim().to_string())
-        .or_else(|| req.peer_addr().map(|addr| addr.ip().to_string()));
+    // Extract client IP with security checks against spoofing
+    let client_ip = crate::ip_extractor::extract_client_ip_secure(req);
 
     let is_localhost = client_ip
         .as_deref()
-        .map(|ip| ip == "127.0.0.1" || ip == "::1" || ip.starts_with("127.") || ip == "localhost")
+        .map(|ip| crate::ip_extractor::is_localhost_address(ip))
         .unwrap_or(false);
 
     let is_system_internal = user.role == Role::System && user.auth_type == AuthType::Internal;

@@ -131,3 +131,10 @@ getrandom = { version = "0.2", features = ["js"] }
 # panic = "abort"     # Removes stack unwinding code
 # strip = true        # Automatically strip symbols from the binary
 
+
+[profile.dev]
+opt-level = 0        # no optimizations = faster compile
+debug = 1            # keep some debug info, but not huge
+incremental = true   # incremental builds (usually default)
+lto = "off"          # no link-time optimization
+codegen-units = 256  # more parallelism for codegen

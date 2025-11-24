@@ -5,79 +5,22 @@
 
 use actix_web::{get, web, Error, HttpRequest, HttpResponse};
 use actix_web_actors::ws;
-use base64::Engine;
-use kalamdb_commons::models::UserId;
-use kalamdb_core::sql::executor::helpers::audit;
-use log::{error, info};
+use log::info;
 use std::sync::Arc;
 use uuid::Uuid;
 
 use crate::actors::WebSocketSession;
 use crate::rate_limiter::RateLimiter;
-use kalamdb_auth::{extract_auth_with_repo, AuthenticatedRequest, AuthError, UserRepository};
+use kalamdb_auth::UserRepository;
 use kalamdb_core::live_query::LiveQueryManager;
 
-/// Authenticate WebSocket connection using query parameter
-/// 
-/// Browser WebSocket API cannot set Authorization headers, so we support
-/// ?auth=base64(username:password) query parameter as an alternative.
-async fn auth_from_query(
-    auth_param: &str,
-    user_repo: &Arc<dyn UserRepository>,
-) -> Result<AuthenticatedRequest, AuthError> {
-    // Decode base64 auth parameter
-    let decoded_bytes = base64::engine::general_purpose::STANDARD
-        .decode(auth_param)
-        .map_err(|_| {
-            AuthError::MalformedAuthorization("Auth parameter is not valid base64".to_string())
-        })?;
-
-    let decoded_str = String::from_utf8(decoded_bytes).map_err(|_| {
-        AuthError::MalformedAuthorization("Auth parameter is not valid UTF-8".to_string())
-    })?;
-
-    // Split into username:password
-    let (username, password) = decoded_str.split_once(':').ok_or_else(|| {
-        AuthError::MalformedAuthorization(
-            "Auth parameter must be in format username:password".to_string(),
-        )
-    })?;
-
-    // Look up user
-    let user = user_repo
-        .get_user_by_username(username)
-        .await
-        .map_err(|_| {
-            AuthError::InvalidCredentials("Invalid username or password".to_string())
-        })?;
-
-    // Check if user is deleted
-    if user.deleted_at.is_some() {
-        return Err(AuthError::InvalidCredentials(
-            "Invalid username or password".to_string(),
-        ));
-    }
-
-    // Verify password (async, uses blocking thread pool)
-    let password_valid = kalamdb_auth::password::verify_password(password, &user.password_hash)
-        .await
-        .unwrap_or(false);
-    
-    if !password_valid {
-        return Err(AuthError::InvalidCredentials(
-            "Invalid username or password".to_string(),
-        ));
-    }
-
-    Ok(AuthenticatedRequest {
-        user_id: user.id.clone(),
-        role: user.role,
-        username: user.username.to_string(),
-    })
-}
-
-/// GET /v1/ws - Establish WebSocket connection (T063AAA)
+/// GET /v1/ws - Establish WebSocket connection
 ///
+/// Accepts unauthenticated WebSocket connections.
+/// Authentication happens via post-connection Authenticate message (3-second timeout enforced by WebSocketSession).
+///
+/// No query parameters or headers required for initial connection.
+/// The WebSocketSession actor will handle authentication after connection is established.
 /// This endpoint upgrades an HTTP request to a WebSocket connection.
 /// Clients can then send subscription requests to receive real-time updates.
 ///
@@ -131,12 +74,16 @@ pub async fn websocket_handler_v1(
     // Generate unique connection ID
     let connection_id = Uuid::new_v4().to_string();
 
+    // Extract client IP with security checks against spoofing
+    let client_ip = kalamdb_auth::extract_client_ip_secure(&req);
+
     info!("New WebSocket connection request: {} (authentication required within 3 seconds)", connection_id);
 
     // Create WebSocketSession without authentication (will be authenticated via message)
     let session = WebSocketSession::new(
         connection_id.clone(),
         None, // No user_id yet - will be set after authentication
+        client_ip,
         Some(rate_limiter.get_ref().clone()),
         live_query_manager.get_ref().clone(),
         app_context.get_ref().clone(),
