@@ -100,6 +100,11 @@ impl StatementHandler for UpdateHandler {
                     KalamDbError::InvalidOperation("User table provider not found".into())
                 })?;
 
+                // Coerce updates using provider's schema
+                use crate::providers::arrow_json_conversion::coerce_updates;
+                let updates = coerce_updates(updates, &provider_arc.schema())
+                    .map_err(|e| KalamDbError::InvalidOperation(format!("Update coercion failed: {}", e)))?;
+
                 if let Some(provider) = provider_arc
                     .as_any()
                     .downcast_ref::<crate::providers::UserTableProvider>()
@@ -210,6 +215,12 @@ impl StatementHandler for UpdateHandler {
                 let provider_arc = schema_registry.get_provider(&table_id).ok_or_else(|| {
                     KalamDbError::InvalidOperation("Shared table provider not found".into())
                 })?;
+
+                // Coerce updates using provider's schema
+                use crate::providers::arrow_json_conversion::coerce_updates;
+                let updates = coerce_updates(updates, &provider_arc.schema())
+                    .map_err(|e| KalamDbError::InvalidOperation(format!("Update coercion failed: {}", e)))?;
+
                 if let Some(provider) = provider_arc
                     .as_any()
                     .downcast_ref::<crate::providers::SharedTableProvider>()

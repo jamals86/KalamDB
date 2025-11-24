@@ -139,7 +139,14 @@ pub trait BaseTableProvider<K: StorageKey, V>: Send + Sync + TableProvider {
     /// Iterates over rows and calls insert() for each. Providers may override
     /// with batch-optimized implementation.
     fn insert_batch(&self, user_id: &UserId, rows: Vec<Row>) -> Result<Vec<K>, KalamDbError> {
-        rows.into_iter()
+        use crate::providers::arrow_json_conversion::coerce_rows;
+
+        // Coerce rows to match schema types (e.g. String -> Timestamp)
+        // This ensures real-time events match the storage format
+        let coerced_rows = coerce_rows(rows, &self.schema_ref())
+            .map_err(|e| KalamDbError::InvalidOperation(format!("Schema coercion failed: {}", e)))?;
+
+        coerced_rows.into_iter()
             .map(|row| self.insert(user_id, row))
             .collect()
     }
