@@ -257,6 +257,8 @@ instead of: 1 failed: Invalid operation: No handler registered for statement typ
 
 178) Flushing - Maybe we need to change the flush to look at the active manifests and from them we can know what needs to be flushed instead of scaning the whole hot rows, this way we can make sure all the manifests are flushed as well.
 
+179) No need to have backend\crates\kalamdb-core\src\schema_registry\views since we will be impl;ementing a views which are supported by datafusion, we only persist the view create sql to be applied or run on startup of the server
+
 
 
 Here’s the updated 5-line spec with embedding storage inside Parquet and managed HNSW indexing (with delete handling):
