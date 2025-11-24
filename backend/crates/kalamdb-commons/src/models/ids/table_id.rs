@@ -112,6 +112,10 @@ impl StorageKey for TableId {
     fn storage_key(&self) -> Vec<u8> {
         self.as_storage_key()
     }
+
+    fn from_storage_key(bytes: &[u8]) -> Result<Self, String> {
+        Self::from_storage_key(bytes).ok_or_else(|| "Invalid TableId format".to_string())
+    }
 }
 
 #[cfg(test)]

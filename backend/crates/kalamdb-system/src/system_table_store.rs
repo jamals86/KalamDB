@@ -41,7 +41,7 @@ impl<K, V> SystemTableStore<K, V> {
 impl<K, V> EntityStore<K, V> for SystemTableStore<K, V>
 where
     K: StorageKey,
-    V: KSerializable,
+    V: KSerializable + 'static,
 {
     fn backend(&self) -> &Arc<dyn StorageBackend> {
         &self.backend
@@ -75,7 +75,7 @@ impl<K: Send + Sync, V: Send + Sync> SystemTableProviderExt for SystemTableStore
 impl<K, V> CrossUserTableStore<K, V> for SystemTableStore<K, V>
 where
     K: StorageKey,
-    V: KSerializable,
+    V: KSerializable + 'static,
 {
     fn table_access(&self) -> Option<kalamdb_commons::models::TableAccess> {
         None // System tables are admin-only

@@ -57,9 +57,7 @@ mod user_table_counter;
 pub use audit_log::AuditLogEntry;
 pub use job::{Job, JobFilter, JobOptions, JobSortField, SortOrder};
 pub use live_query::LiveQuery;
-pub use manifest::{
-    ColumnStats, Manifest, ManifestCacheEntry, SegmentMetadata, SyncState,
-};
+pub use manifest::{ColumnStats, Manifest, ManifestCacheEntry, SegmentMetadata, SyncState};
 pub use namespace::Namespace;
 pub use storage::Storage;
 pub use user::User;

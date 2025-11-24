@@ -223,7 +223,11 @@ impl UsersTableProvider {
 
     /// Scan all users and return as RecordBatch
     pub fn scan_all_users(&self) -> Result<RecordBatch, SystemError> {
-        let users = self.store.scan_all(None, None, None)?;
+        let iter = self.store.scan_iterator(None, None)?;
+        let mut users = Vec::new();
+        for item in iter {
+            users.push(item?);
+        }
         self.create_batch(users)
     }
 }

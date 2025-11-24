@@ -22,10 +22,10 @@ use datafusion::datasource::TableProvider;
 use datafusion::error::Result as DataFusionResult;
 use datafusion::logical_expr::{Expr, TableProviderFilterPushDown};
 use datafusion::physical_plan::{ExecutionPlan, Statistics};
+use kalamdb_commons::constants::SystemColumnNames;
 use kalamdb_commons::ids::UserTableRowId;
 use kalamdb_commons::models::UserId;
 use kalamdb_commons::{Role, StorageKey, TableId};
-use kalamdb_commons::constants::SystemColumnNames;
 use kalamdb_store::entity_store::EntityStore;
 use kalamdb_tables::{UserTableRow, UserTableStore};
 use std::any::Any;
@@ -190,9 +190,9 @@ impl UserTableProvider {
         let filter = col(SystemColumnNames::SEQ).eq(lit(seq_id.as_i64()));
         let batch = self.scan_parquet_files_as_batch(user_id, Some(&filter))?;
         let rows = parquet_batch_to_rows(&batch)?;
-        
+
         if let Some(row_data) = rows.into_iter().next() {
-             Ok(Some(UserTableRow {
+            Ok(Some(UserTableRow {
                 user_id: user_id.clone(),
                 _seq: row_data.seq_id,
                 _deleted: row_data.deleted,
@@ -283,7 +283,7 @@ impl BaseTableProvider<UserTableRowId, UserTableRow> for UserTableProvider {
         // Try RocksDB first, then Parquet
         let prior_opt = EntityStore::get(&*self.store, key)
             .map_err(|e| KalamDbError::Other(format!("Failed to load prior version: {}", e)))?;
-            
+
         let prior = if let Some(p) = prior_opt {
             p
         } else {
@@ -349,17 +349,17 @@ impl BaseTableProvider<UserTableRowId, UserTableRow> for UserTableProvider {
         // Try RocksDB first, then Parquet
         let prior_opt = EntityStore::get(&*self.store, key)
             .map_err(|e| KalamDbError::Other(format!("Failed to load prior version: {}", e)))?;
-            
+
         let prior = if let Some(p) = prior_opt {
             p
         } else {
             self.get_row_from_parquet(user_id, key.seq)?
                 .ok_or_else(|| KalamDbError::NotFound("Row not found for delete".to_string()))?
         };
-        
+
         let sys_cols = self.core.system_columns.clone();
         let seq_id = sys_cols.generate_seq_id()?;
-        
+
         // Preserve ALL fields in the tombstone so they can be queried if _deleted=true
         // This allows "undo" functionality and auditing of deleted records
         let values = prior.fields.values.clone();
@@ -413,9 +413,17 @@ impl BaseTableProvider<UserTableRowId, UserTableRow> for UserTableProvider {
 
         // All roles operate within the current effective user scope. Admins must use AS USER to
         // impersonate other users instead of bypassing RLS.
-        let keep_deleted = filter.map(|f| base::filter_uses_deleted_column(f)).unwrap_or(false);
-        
-        let kvs = self.scan_with_version_resolution_to_kvs(&user_id, filter, since_seq, limit, keep_deleted)?;
+        let keep_deleted = filter
+            .map(|f| base::filter_uses_deleted_column(f))
+            .unwrap_or(false);
+
+        let kvs = self.scan_with_version_resolution_to_kvs(
+            &user_id,
+            filter,
+            since_seq,
+            limit,
+            keep_deleted,
+        )?;
 
         let table_id = self.core.table_id();
         log::debug!(

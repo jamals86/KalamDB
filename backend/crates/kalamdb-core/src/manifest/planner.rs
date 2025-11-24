@@ -42,11 +42,7 @@ impl ManifestAccessPlanner {
     ///
     /// Returns a list of all batch files to scan.
     pub fn plan_all_files(&self, manifest: &Manifest) -> Vec<String> {
-        manifest
-            .segments
-            .iter()
-            .map(|s| s.path.clone())
-            .collect()
+        manifest.segments.iter().map(|s| s.path.clone()).collect()
     }
 
     /// Unified scan method: returns combined RecordBatch from Parquet files

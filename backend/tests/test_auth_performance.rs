@@ -307,10 +307,10 @@ async fn test_auth_cache_effectiveness() {
 async fn test_concurrent_auth_load() {
     use base64::engine::general_purpose;
     use base64::Engine;
+    use kalamdb_api::repositories::user_repo::CoreUsersRepo;
     use kalamdb_auth::connection::ConnectionInfo;
     use kalamdb_auth::service::AuthService;
     use kalamdb_auth::UserRepository;
-    use kalamdb_api::repositories::user_repo::CoreUsersRepo;
     use std::sync::Arc;
 
     let server = TestServer::new().await;
@@ -334,10 +334,10 @@ async fn test_concurrent_auth_load() {
         false,
         Role::User,
     ));
-    
+
     // Create user repository adapter
     let user_repo: Arc<dyn UserRepository> = Arc::new(CoreUsersRepo::new(
-        server.app_context.system_tables().users()
+        server.app_context.system_tables().users(),
     ));
 
     // Concurrent authentication test

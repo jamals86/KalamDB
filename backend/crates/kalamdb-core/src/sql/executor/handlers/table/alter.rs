@@ -4,11 +4,11 @@ use crate::app_context::AppContext;
 use crate::error::KalamDbError;
 use crate::schema_registry::arrow_schema::ArrowSchemaWithOptions;
 use crate::sql::executor::handlers::typed::TypedStatementHandler;
-use crate::sql::executor::models::{ExecutionContext, ExecutionResult, ScalarValue};
 use crate::sql::executor::helpers::table_registration::{
     register_shared_table_provider, register_stream_table_provider, register_user_table_provider,
     unregister_table_provider,
 };
+use crate::sql::executor::models::{ExecutionContext, ExecutionResult, ScalarValue};
 use kalamdb_commons::models::datatypes::KalamDataType;
 use kalamdb_commons::models::schemas::{ColumnDefinition, TableDefinition};
 use kalamdb_commons::models::{NamespaceId, TableId};

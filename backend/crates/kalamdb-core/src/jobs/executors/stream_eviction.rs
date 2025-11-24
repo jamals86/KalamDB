@@ -21,14 +21,18 @@
 //! }
 //! ```
 
+use crate::app_context::AppContext;
 use crate::error::KalamDbError;
 use crate::jobs::executors::{JobContext, JobDecision, JobExecutor, JobParams};
 use crate::providers::StreamTableProvider;
 use async_trait::async_trait;
+use kalamdb_commons::ids::{SeqId, SnowflakeGenerator, StreamTableRowId};
 use kalamdb_commons::schemas::TableType;
 use kalamdb_commons::{JobType, TableId};
-use kalamdb_store::entity_store::EntityStore;
+use kalamdb_store::entity_store::{EntityStore, ScanDirection};
 use serde::{Deserialize, Serialize};
+use std::sync::Arc;
+use std::time::{SystemTime, UNIX_EPOCH};
 
 fn default_batch_size() -> u64 {
     10000
@@ -83,6 +87,20 @@ impl StreamEvictionExecutor {
     }
 }
 
+fn compute_cutoff_window(ttl_seconds: u64) -> Result<(u64, SeqId), KalamDbError> {
+    let now = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map_err(|e| KalamDbError::InvalidOperation(format!("System time error: {}", e)))?
+        .as_millis() as u64;
+    let ttl_ms = ttl_seconds.saturating_mul(1000);
+    let cutoff_ms = now.saturating_sub(ttl_ms);
+    let normalized_cutoff = cutoff_ms.max(SnowflakeGenerator::DEFAULT_EPOCH);
+    let cutoff_seq = SeqId::max_id_for_timestamp(normalized_cutoff).map_err(|e| {
+        KalamDbError::InvalidOperation(format!("Failed to compute cutoff snowflake id: {}", e))
+    })?;
+    Ok((cutoff_ms, cutoff_seq))
+}
+
 #[async_trait]
 impl JobExecutor for StreamEvictionExecutor {
     type Params = StreamEvictionParams;
@@ -93,6 +111,72 @@ impl JobExecutor for StreamEvictionExecutor {
 
     fn name(&self) -> &'static str {
         "StreamEvictionExecutor"
+    }
+
+    async fn pre_validate(
+        &self,
+        app_ctx: &Arc<AppContext>,
+        params: &Self::Params,
+    ) -> Result<bool, KalamDbError> {
+        params.validate()?;
+
+        let schema_registry = app_ctx.schema_registry();
+        let provider_arc = match schema_registry.get_provider(&params.table_id) {
+            Some(p) => p,
+            None => return Ok(false),
+        };
+        let stream_provider = provider_arc
+            .as_any()
+            .downcast_ref::<StreamTableProvider>()
+            .ok_or_else(|| {
+                KalamDbError::InvalidOperation(format!(
+                    "Cached provider for {} is not a StreamTableProvider",
+                    params.table_id
+                ))
+            })?;
+        let store = stream_provider.store_arc();
+        let (cutoff_ms, cutoff_seq) = compute_cutoff_window(params.ttl_seconds)?;
+
+        const KEY_SCAN_LIMIT: usize = 512;
+        let mut start_key: Option<StreamTableRowId> = None;
+
+        loop {
+            let iterator = store
+                .scan_directional(start_key.as_ref(), ScanDirection::Newer, KEY_SCAN_LIMIT)
+                .map_err(|e| {
+                    KalamDbError::InvalidOperation(format!(
+                        "Failed to scan stream keys during pre-validation: {}",
+                        e
+                    ))
+                })?;
+
+            let mut batch_count = 0usize;
+            let mut last_key_in_batch: Option<StreamTableRowId> = None;
+
+            for (row_key, row) in iterator {
+                batch_count += 1;
+
+                if row._seq.timestamp_millis() < cutoff_ms {
+                    return Ok(true);
+                }
+
+                if row_key.seq() <= cutoff_seq {
+                    return Ok(true);
+                }
+
+                last_key_in_batch = Some(row_key);
+            }
+
+            if batch_count < KEY_SCAN_LIMIT {
+                return Ok(false);
+            }
+
+            if let Some(last_key) = last_key_in_batch {
+                start_key = Some(last_key);
+            } else {
+                return Ok(false);
+            }
+        }
     }
 
     async fn execute(&self, ctx: &JobContext<Self::Params>) -> Result<JobDecision, KalamDbError> {
@@ -110,12 +194,7 @@ impl JobExecutor for StreamEvictionExecutor {
         ));
 
         // Calculate cutoff time for eviction (records created before this time are expired)
-        let now = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .map_err(|e| KalamDbError::InvalidOperation(format!("System time error: {}", e)))?
-            .as_millis() as u64;
-        let ttl_ms = ttl_seconds * 1000;
-        let cutoff_ms = now.saturating_sub(ttl_ms);
+        let (cutoff_ms, cutoff_seq) = compute_cutoff_window(ttl_seconds)?;
 
         ctx.log_info(&format!(
             "Cutoff time: {}ms (records with timestamp < {} are expired)",
@@ -151,43 +230,82 @@ impl JobExecutor for StreamEvictionExecutor {
             })?;
         let store = stream_provider.store_arc();
 
-        // Scan all rows (no prefix filter - evict for ALL users)
-        let all_rows = store.scan_all(None, None, None).map_err(|e| {
-            KalamDbError::InvalidOperation(format!("Failed to scan stream store: {}", e))
-        })?;
+        let batch_target = batch_size.min(usize::MAX as u64) as usize;
+        const SCAN_CHUNK_MAX: usize = 1024;
+        let scan_chunk = std::cmp::max(1, std::cmp::min(batch_target, SCAN_CHUNK_MAX));
 
-        ctx.log_info(&format!(
-            "Scanned {} total rows from {}",
-            all_rows.len(),
-            table_id
-        ));
+        let mut expired_keys: Vec<StreamTableRowId> = Vec::new();
+        let mut start_key: Option<StreamTableRowId> = None;
+        
+        // Track current user to optimize scanning (skip fresh rows for same user)
+        let mut current_user_id: Option<kalamdb_commons::models::UserId> = None;
+        let mut skip_current_user = false;
 
-        // If no rows, nothing to evict
-        if all_rows.is_empty() {
-            ctx.log_info("No rows found; nothing to evict");
-            return Ok(JobDecision::Completed {
-                message: Some(format!("No rows found in {}; nothing to evict", table_id)),
-            });
-        }
+        while expired_keys.len() < batch_target {
+            let iterator = store
+                .scan_directional(start_key.as_ref(), ScanDirection::Newer, scan_chunk)
+                .map_err(|e| {
+                    KalamDbError::InvalidOperation(format!(
+                        "Failed to scan stream rows for eviction: {}",
+                        e
+                    ))
+                })?;
 
-        // Filter expired rows (timestamp < cutoff)
-        let mut expired_keys = Vec::new();
-        for (key_bytes, row) in all_rows.iter() {
-            let row_ts = row._seq.timestamp_millis();
-            if row_ts < cutoff_ms {
-                // Parse key from bytes
-                if let Ok(row_key) = kalamdb_commons::ids::StreamTableRowId::from_bytes(key_bytes) {
+            let mut batch_count = 0usize;
+            let mut last_processed_key: Option<StreamTableRowId> = None;
+
+            for item in iterator {
+                let (row_key, _) = item.map_err(|e| KalamDbError::InvalidOperation(e.to_string()))?;
+                batch_count += 1;
+                last_processed_key = Some(row_key.clone());
+
+                // Check if we switched to a new user
+                if Some(row_key.user_id()) != current_user_id.as_ref() {
+                    current_user_id = Some(row_key.user_id().clone());
+                    skip_current_user = false;
+                }
+
+                if skip_current_user {
+                    continue;
+                }
+
+                // Check expiration using key only (no deserialization needed)
+                if row_key.seq() <= cutoff_seq {
                     expired_keys.push(row_key);
-                    // Stop if we hit batch size limit
-                    if expired_keys.len() >= batch_size as usize {
+                    if expired_keys.len() >= batch_target {
                         break;
                     }
+                } else {
+                    // Found a fresh row for this user. Since we scan Newer (oldest first),
+                    // all subsequent rows for this user are also fresh.
+                    skip_current_user = true;
                 }
+            }
+
+            if expired_keys.len() >= batch_target {
+                break;
+            }
+
+            if batch_count < scan_chunk {
+                break;
+            }
+
+            if let Some(last_key) = last_processed_key {
+                start_key = Some(last_key);
+            } else {
+                break;
             }
         }
 
+        if expired_keys.is_empty() {
+            ctx.log_info("No expired rows found; nothing to evict");
+            return Ok(JobDecision::Completed {
+                message: Some(format!("No expired rows found in {}", table_id)),
+            });
+        }
+
         ctx.log_info(&format!(
-            "Found {} expired rows (batch limit: {})",
+            "Found {} expired rows ready for eviction (batch limit: {})",
             expired_keys.len(),
             batch_size
         ));
@@ -209,7 +327,7 @@ impl JobExecutor for StreamEvictionExecutor {
         ));
 
         // If we hit batch size limit, schedule retry for next batch
-        if expired_keys.len() >= batch_size as usize {
+        if expired_keys.len() >= batch_target {
             ctx.log_info("Batch size limit reached - scheduling retry for next batch");
             return Ok(JobDecision::Retry {
                 message: format!("Batch evicted {} rows, more remaining", deleted_count),
@@ -245,6 +363,7 @@ mod tests {
     use crate::app_context::AppContext;
     use crate::providers::arrow_json_conversion::json_to_row;
     use crate::providers::base::{BaseTableProvider, TableProviderCore};
+    use crate::providers::StreamTableProvider;
     use crate::schema_registry::CachedTableData;
     use crate::test_helpers::init_test_app_context;
     use chrono::Utc;
@@ -284,6 +403,84 @@ mod tests {
             node_id: NodeId::from("node1"),
             queue: None,
             priority: None,
+        }
+    }
+
+    struct StreamTestHarness {
+        table_id: TableId,
+        namespace: NamespaceId,
+        table_name_value: String,
+        provider: Arc<StreamTableProvider>,
+    }
+
+    fn setup_stream_table(app_ctx: &Arc<AppContext>) -> StreamTestHarness {
+        let namespace = NamespaceId::new("chat_stream_jobs");
+        let table_name_value = format!(
+            "typing_events_{}",
+            Utc::now().timestamp_nanos_opt().unwrap_or(0)
+        );
+        let tbl = TableName::new(&table_name_value);
+        let table_id = TableId::new(namespace.clone(), tbl.clone());
+
+        let table_def = TableDefinition::new(
+            namespace.clone(),
+            tbl.clone(),
+            TableType::Stream,
+            vec![
+                ColumnDefinition::new(
+                    "event_id".to_string(),
+                    1,
+                    KalamDataType::Text,
+                    false,
+                    false,
+                    false,
+                    ColumnDefault::None,
+                    None,
+                ),
+                ColumnDefinition::new(
+                    "payload".to_string(),
+                    2,
+                    KalamDataType::Text,
+                    false,
+                    false,
+                    false,
+                    ColumnDefault::None,
+                    None,
+                ),
+            ],
+            TableOptions::stream(1),
+            None,
+        )
+        .expect("table definition");
+
+        app_ctx.schema_registry().insert(
+            table_id.clone(),
+            Arc::new(CachedTableData::new(Arc::new(table_def))),
+        );
+
+        let stream_store = Arc::new(kalamdb_tables::new_stream_table_store(&namespace, &tbl));
+        let core = Arc::new(TableProviderCore::from_app_context(
+            app_ctx,
+            table_id.clone(),
+            TableType::Stream,
+        ));
+        let provider = Arc::new(StreamTableProvider::new(
+            core,
+            stream_store,
+            Some(1),
+            "event_id".to_string(),
+        ));
+        let provider_trait: Arc<dyn TableProvider> = provider.clone();
+        app_ctx
+            .schema_registry()
+            .insert_provider(table_id.clone(), provider_trait)
+            .expect("register provider");
+
+        StreamTestHarness {
+            table_id,
+            namespace,
+            table_name_value,
+            provider,
         }
     }
 
@@ -340,68 +537,8 @@ mod tests {
     async fn test_execute_evicts_expired_rows_from_provider_store() {
         init_test_app_context();
         let app_ctx = AppContext::get();
-
-        let ns = NamespaceId::new("chat_stream_jobs");
-        let table_name_value = format!(
-            "typing_events_{}",
-            Utc::now().timestamp_nanos_opt().unwrap_or(0)
-        );
-        let tbl = TableName::new(&table_name_value);
-        let table_id = TableId::new(ns.clone(), tbl.clone());
-
-        // Register table definition for schema registry consumers
-        let table_def = TableDefinition::new(
-            ns.clone(),
-            tbl.clone(),
-            TableType::Stream,
-            vec![
-                ColumnDefinition::new(
-                    "event_id".to_string(),
-                    1,
-                    KalamDataType::Text,
-                    false,
-                    false,
-                    false,
-                    ColumnDefault::None,
-                    None,
-                ),
-                ColumnDefinition::new(
-                    "payload".to_string(),
-                    2,
-                    KalamDataType::Text,
-                    false,
-                    false,
-                    false,
-                    ColumnDefault::None,
-                    None,
-                ),
-            ],
-            TableOptions::stream(1),
-            None,
-        )
-        .expect("table definition");
-        app_ctx.schema_registry().insert(
-            table_id.clone(),
-            Arc::new(CachedTableData::new(Arc::new(table_def))),
-        );
-
-        let stream_store = Arc::new(kalamdb_tables::new_stream_table_store(&ns, &tbl));
-        let core = Arc::new(TableProviderCore::from_app_context(
-            &app_ctx,
-            table_id.clone(),
-            TableType::Stream,
-        ));
-        let provider = Arc::new(StreamTableProvider::new(
-            core,
-            stream_store.clone(),
-            Some(1),
-            "event_id".to_string(),
-        ));
-        let provider_trait: Arc<dyn TableProvider> = provider.clone();
-        app_ctx
-            .schema_registry()
-            .insert_provider(table_id.clone(), provider_trait)
-            .expect("register provider");
+        let harness = setup_stream_table(&app_ctx);
+        let provider = harness.provider.clone();
 
         // Insert a couple of rows
         let user = UserId::new("user-ttl");
@@ -421,11 +558,15 @@ mod tests {
         // Wait for TTL to make them eligible for eviction
         sleep(Duration::from_millis(1200)).await;
 
-        let mut job = make_job("SE-evict", JobType::StreamEviction, ns.as_str());
+        let mut job = make_job(
+            "SE-evict",
+            JobType::StreamEviction,
+            harness.namespace.as_str(),
+        );
         job.parameters = Some(
             json!({
-                "namespace_id": ns.as_str(),
-                "table_name": table_name_value.clone(),
+                "namespace_id": harness.namespace.as_str(),
+                "table_name": harness.table_name_value.clone(),
                 "table_type": "Stream",
                 "ttl_seconds": 1,
                 "batch_size": 100
@@ -434,7 +575,7 @@ mod tests {
         );
 
         let params = StreamEvictionParams {
-            table_id: table_id.clone(),
+            table_id: harness.table_id.clone(),
             table_type: TableType::Stream,
             ttl_seconds: 1,
             batch_size: 100,
@@ -451,10 +592,77 @@ mod tests {
             other => panic!("Expected Completed decision, got {:?}", other),
         }
 
-        let remaining = provider
+        let remaining_iter = harness
+            .provider
             .store_arc()
-            .scan_all(None, None, None)
+            .scan_iterator(None, None)
             .expect("scan store after eviction");
-        assert!(remaining.is_empty(), "All expired rows should be removed");
+        
+        let remaining_count = remaining_iter.count();
+        assert_eq!(remaining_count, 0, "All expired rows should be removed");
+    }
+
+    #[tokio::test]
+    async fn test_pre_validate_skips_when_no_expired_rows() {
+        init_test_app_context();
+        let app_ctx = AppContext::get();
+        let harness = setup_stream_table(&app_ctx);
+
+        let user = UserId::new("user-prevalidate-no-expired");
+        harness
+            .provider
+            .insert(
+                &user,
+                json_to_row(&json!({"event_id": "evt1", "payload": "fresh"})).unwrap(),
+            )
+            .expect("insert fresh row");
+
+        let params = StreamEvictionParams {
+            table_id: harness.table_id.clone(),
+            table_type: TableType::Stream,
+            ttl_seconds: 60,
+            batch_size: 100,
+        };
+
+        let executor = StreamEvictionExecutor::new();
+        let should_run = executor
+            .pre_validate(&app_ctx, &params)
+            .await
+            .expect("pre_validate execution");
+
+        assert!(!should_run, "No expired rows should skip job creation");
+    }
+
+    #[tokio::test]
+    async fn test_pre_validate_detects_expired_rows() {
+        init_test_app_context();
+        let app_ctx = AppContext::get();
+        let harness = setup_stream_table(&app_ctx);
+
+        let user = UserId::new("user-prevalidate-expired");
+        harness
+            .provider
+            .insert(
+                &user,
+                json_to_row(&json!({"event_id": "evt1", "payload": "expired"})).unwrap(),
+            )
+            .expect("insert expired row");
+
+        sleep(Duration::from_millis(1200)).await;
+
+        let params = StreamEvictionParams {
+            table_id: harness.table_id.clone(),
+            table_type: TableType::Stream,
+            ttl_seconds: 1,
+            batch_size: 10,
+        };
+
+        let executor = StreamEvictionExecutor::new();
+        let should_run = executor
+            .pre_validate(&app_ctx, &params)
+            .await
+            .expect("pre_validate execution");
+
+        assert!(should_run, "Expired rows should trigger job creation");
     }
 }

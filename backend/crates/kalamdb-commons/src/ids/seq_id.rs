@@ -3,6 +3,7 @@
 //! This module provides a wrapper around Snowflake IDs for use as sequence identifiers
 //! in the MVCC architecture. Each SeqId represents a unique version of a row.
 
+use crate::ids::SnowflakeGenerator;
 use crate::StorageKey;
 use serde::{Deserialize, Serialize};
 use std::fmt;
@@ -102,6 +103,17 @@ impl SeqId {
         array.copy_from_slice(bytes);
         Ok(Self::new(i64::from_be_bytes(array)))
     }
+
+    /// Return the maximum possible SeqId for the provided timestamp.
+    ///
+    /// This packs the timestamp together with the largest worker/sequence values
+    /// so the returned SeqId encompasses every Snowflake generated at or before
+    /// `timestamp_millis`.
+    pub fn max_id_for_timestamp(timestamp_millis: u64) -> Result<Self, String> {
+        //let normalized = timestamp_millis.max(Self::EPOCH);
+        let id = SnowflakeGenerator::max_id_for_timestamp(timestamp_millis)?;
+        Ok(Self::new(id))
+    }
 }
 
 impl fmt::Display for SeqId {
@@ -125,6 +137,10 @@ impl From<SeqId> for i64 {
 impl StorageKey for SeqId {
     fn storage_key(&self) -> Vec<u8> {
         self.to_bytes().to_vec()
+    }
+
+    fn from_storage_key(bytes: &[u8]) -> Result<Self, String> {
+        Self::from_bytes(bytes)
     }
 }
 
@@ -191,6 +207,14 @@ mod tests {
         let bytes = seq_id.to_bytes();
         let parsed = SeqId::from_bytes(&bytes).unwrap();
         assert_eq!(parsed, seq_id);
+    }
+
+    #[test]
+    fn test_seq_id_max_id_for_timestamp() {
+        let ts = SeqId::EPOCH + 5000;
+        let seq_id = SeqId::max_id_for_timestamp(ts).expect("seq id");
+        assert!(seq_id.timestamp_millis() >= ts);
+        assert!(seq_id >= SeqId::new(0));
     }
 
     #[test]

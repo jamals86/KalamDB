@@ -339,14 +339,17 @@ impl JobsTableProvider {
             // Scan index for this status
             // Keys are [status_byte][created_at_be][job_id_bytes]
             // Sorted by created_at ASC
-            let iter = self.store.backend().scan(&partition, Some(&prefix), None, None)?;
+            let iter = self
+                .store
+                .backend()
+                .scan(&partition, Some(&prefix), None, None)?;
 
             for (key_bytes, job_id_bytes) in iter {
                 // Extract created_at (bytes 1..9)
                 if key_bytes.len() < 9 {
                     continue;
                 }
-                
+
                 let mut created_at_bytes = [0u8; 8];
                 created_at_bytes.copy_from_slice(&key_bytes[1..9]);
                 let created_at = i64::from_be_bytes(created_at_bytes);
@@ -361,15 +364,15 @@ impl JobsTableProvider {
                     break;
                 }
 
-                let job_id_str = String::from_utf8(job_id_bytes).map_err(|e| {
-                    SystemError::Other(format!("Invalid JobId in index: {}", e))
-                })?;
+                let job_id_str = String::from_utf8(job_id_bytes)
+                    .map_err(|e| SystemError::Other(format!("Invalid JobId in index: {}", e)))?;
                 let job_id = JobId::new(job_id_str);
 
                 // Load job to check actual finished_at
                 if let Some(job) = self.store.get(&job_id)? {
-                    let reference_time = job.finished_at.or(job.started_at).unwrap_or(job.created_at);
-                    
+                    let reference_time =
+                        job.finished_at.or(job.started_at).unwrap_or(job.created_at);
+
                     if reference_time < cutoff_time {
                         self.delete_job(&job.job_id)?;
                         deleted += 1;

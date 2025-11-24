@@ -23,9 +23,9 @@ use std::sync::Arc;
 /// - Kept: _seq (version identifier with embedded timestamp), _deleted (tombstone), fields (all shared table columns including PK)
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct SharedTableRow {
-    pub _seq: SeqId,
-    pub _deleted: bool,
-    pub fields: Row, // All user-defined columns including PK
+    pub _seq: SeqId,    //TODO: Rename this to seq without the _
+    pub _deleted: bool, //TODO: Rename this to deleted without the _
+    pub fields: Row,    // All user-defined columns including PK
 }
 
 impl KSerializable for SharedTableRow {}

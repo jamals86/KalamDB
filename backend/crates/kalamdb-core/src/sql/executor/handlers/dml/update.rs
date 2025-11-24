@@ -102,8 +102,9 @@ impl StatementHandler for UpdateHandler {
 
                 // Coerce updates using provider's schema
                 use crate::providers::arrow_json_conversion::coerce_updates;
-                let updates = coerce_updates(updates, &provider_arc.schema())
-                    .map_err(|e| KalamDbError::InvalidOperation(format!("Update coercion failed: {}", e)))?;
+                let updates = coerce_updates(updates, &provider_arc.schema()).map_err(|e| {
+                    KalamDbError::InvalidOperation(format!("Update coercion failed: {}", e))
+                })?;
 
                 if let Some(provider) = provider_arc
                     .as_any()
@@ -111,10 +112,10 @@ impl StatementHandler for UpdateHandler {
                 {
                     // T064: Get actual PK column name from provider instead of assuming "id"
                     let pk_column = provider.primary_key_field_name();
-                    
+
                     // Check if WHERE clause targets PK for fast path
-                    let id_value_opt = self
-                        .extract_row_id_for_column(&where_pair, pk_column, &params)?;
+                    let id_value_opt =
+                        self.extract_row_id_for_column(&where_pair, pk_column, &params)?;
 
                     if let Some(id_value) = id_value_opt {
                         println!("[DEBUG UpdateHandler] Calling provider.update_by_id_field for user={}, pk_column={}, pk_value={}", 
@@ -137,20 +138,31 @@ impl StatementHandler for UpdateHandler {
                         }
                     } else {
                         // Multi-row update path (scan -> update)
-                        println!("[DEBUG UpdateHandler] Multi-row update fallback for user={}", effective_user_id.as_str());
-                        
+                        println!(
+                            "[DEBUG UpdateHandler] Multi-row update fallback for user={}",
+                            effective_user_id.as_str()
+                        );
+
                         // Build filter expression
-                        let (filter, filter_col_val) = if let Some((col_name, val_str)) = &where_pair {
-                            let col_type = col_types.get(col_name).ok_or_else(|| {
-                                KalamDbError::InvalidOperation(format!("Column {} not found", col_name))
-                            })?;
-                            let val = self.token_to_scalar_value(val_str, &params, Some(col_type))?;
-                            
-                            use datafusion::prelude::{col, lit};
-                            (Some(col(col_name).eq(lit(val.clone()))), Some((col_name.clone(), val)))
-                        } else {
-                            (None, None) // Update all rows
-                        };
+                        let (filter, filter_col_val) =
+                            if let Some((col_name, val_str)) = &where_pair {
+                                let col_type = col_types.get(col_name).ok_or_else(|| {
+                                    KalamDbError::InvalidOperation(format!(
+                                        "Column {} not found",
+                                        col_name
+                                    ))
+                                })?;
+                                let val =
+                                    self.token_to_scalar_value(val_str, &params, Some(col_type))?;
+
+                                use datafusion::prelude::{col, lit};
+                                (
+                                    Some(col(col_name).eq(lit(val.clone()))),
+                                    Some((col_name.clone(), val)),
+                                )
+                            } else {
+                                (None, None) // Update all rows
+                            };
 
                         // Scan for matching rows
                         let rows = provider.scan_with_version_resolution_to_kvs(
@@ -158,13 +170,13 @@ impl StatementHandler for UpdateHandler {
                             filter.as_ref(),
                             None,
                             None,
-                            false
+                            false,
                         )?;
 
                         // Update each matching row
                         let mut count = 0;
                         for (key, row) in rows {
-                            // Manual filter check (needed because scan_with_version_resolution_to_kvs 
+                            // Manual filter check (needed because scan_with_version_resolution_to_kvs
                             // might not filter hot rows by the expression)
                             let matches = if let Some((col_name, target_val)) = &filter_col_val {
                                 if let Some(row_val) = row.fields.values.get(col_name) {
@@ -181,8 +193,10 @@ impl StatementHandler for UpdateHandler {
                                 count += 1;
                             }
                         }
-                        
-                        Ok(ExecutionResult::Updated { rows_affected: count })
+
+                        Ok(ExecutionResult::Updated {
+                            rows_affected: count,
+                        })
                     }
                 } else {
                     Err(KalamDbError::InvalidOperation(
@@ -218,8 +232,9 @@ impl StatementHandler for UpdateHandler {
 
                 // Coerce updates using provider's schema
                 use crate::providers::arrow_json_conversion::coerce_updates;
-                let updates = coerce_updates(updates, &provider_arc.schema())
-                    .map_err(|e| KalamDbError::InvalidOperation(format!("Update coercion failed: {}", e)))?;
+                let updates = coerce_updates(updates, &provider_arc.schema()).map_err(|e| {
+                    KalamDbError::InvalidOperation(format!("Update coercion failed: {}", e))
+                })?;
 
                 if let Some(provider) = provider_arc
                     .as_any()

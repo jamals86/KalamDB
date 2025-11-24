@@ -143,7 +143,9 @@ fn smoke_test_uuid_v7_default() {
     for i in 1..=3 {
         let insert_sql = format!(
             "INSERT INTO {} (user_id, ip_address) VALUES ('user_{}', '192.168.1.{}')",
-            full_table, i, 100 + i
+            full_table,
+            i,
+            100 + i
         );
         execute_sql_as_root_via_cli(&insert_sql)
             .unwrap_or_else(|e| panic!("Failed to insert session {}: {}", i, e));
@@ -367,10 +369,7 @@ fn smoke_test_all_custom_functions_combined() {
     let table = generate_unique_table("all_funcs");
     let full_table = format!("{}.{}", namespace, table);
 
-    println!(
-        "🧪 Testing all custom functions combined: {}",
-        full_table
-    );
+    println!("🧪 Testing all custom functions combined: {}", full_table);
 
     // Cleanup and setup
     let _ = execute_sql_as_root_via_cli(&format!("DROP NAMESPACE IF EXISTS {} CASCADE", namespace));
@@ -421,8 +420,14 @@ fn smoke_test_all_custom_functions_combined() {
         output.contains("\"snowflake_id\""),
         "Expected snowflake_id column"
     );
-    assert!(output.contains("\"uuid_field\""), "Expected uuid_field column");
-    assert!(output.contains("\"ulid_field\""), "Expected ulid_field column");
+    assert!(
+        output.contains("\"uuid_field\""),
+        "Expected uuid_field column"
+    );
+    assert!(
+        output.contains("\"ulid_field\""),
+        "Expected ulid_field column"
+    );
     assert!(
         output.contains("\"created_by\""),
         "Expected created_by column"

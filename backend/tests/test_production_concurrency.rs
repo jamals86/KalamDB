@@ -16,7 +16,9 @@ async fn concurrent_inserts_same_user_table() {
     let server = TestServer::new().await;
 
     // Setup
-    let resp = server.execute_sql("CREATE NAMESPACE IF NOT EXISTS app_concurrent_ins").await;
+    let resp = server
+        .execute_sql("CREATE NAMESPACE IF NOT EXISTS app_concurrent_ins")
+        .await;
     assert_eq!(resp.status, ResponseStatus::Success);
 
     let create_table = r#"
@@ -36,7 +38,7 @@ async fn concurrent_inserts_same_user_table() {
     for writer_id in 0..5 {
         let server_clone = server.clone();
         let user_id_clone = user_id.clone();
-        
+
         let handle = tokio::spawn(async move {
             for i in 0..10 {
                 let row_id = writer_id * 10 + i;
@@ -47,7 +49,7 @@ async fn concurrent_inserts_same_user_table() {
                 let resp = server_clone
                     .execute_sql_as_user(&sql, user_id_clone.as_str())
                     .await;
-                
+
                 assert_eq!(
                     resp.status,
                     ResponseStatus::Success,
@@ -85,7 +87,9 @@ async fn concurrent_select_queries() {
     let server = TestServer::new().await;
 
     // Setup with data
-    let resp = server.execute_sql("CREATE NAMESPACE IF NOT EXISTS app_concurrent_sel").await;
+    let resp = server
+        .execute_sql("CREATE NAMESPACE IF NOT EXISTS app_concurrent_sel")
+        .await;
     assert_eq!(resp.status, ResponseStatus::Success);
 
     let create_table = r#"
@@ -115,7 +119,7 @@ async fn concurrent_select_queries() {
     for _ in 0..10 {
         let server_clone = server.clone();
         let user_id_clone = user_id.clone();
-        
+
         let handle = tokio::spawn(async move {
             let resp = server_clone
                 .execute_sql_as_user(
@@ -123,7 +127,7 @@ async fn concurrent_select_queries() {
                     user_id_clone.as_str(),
                 )
                 .await;
-            
+
             assert_eq!(resp.status, ResponseStatus::Success);
             if let Some(rows) = resp.results.first().and_then(|r| r.rows.as_ref()) {
                 let count = rows[0].get("count").unwrap().as_i64().unwrap();
@@ -144,7 +148,9 @@ async fn concurrent_select_queries() {
 async fn concurrent_duplicate_primary_key_handling() {
     let server = TestServer::new().await;
 
-    let resp = server.execute_sql("CREATE NAMESPACE IF NOT EXISTS app_concurrent_pk").await;
+    let resp = server
+        .execute_sql("CREATE NAMESPACE IF NOT EXISTS app_concurrent_pk")
+        .await;
     assert_eq!(resp.status, ResponseStatus::Success);
 
     let create_table = r#"
@@ -164,7 +170,7 @@ async fn concurrent_duplicate_primary_key_handling() {
     for writer_id in 0..3 {
         let server_clone = server.clone();
         let user_id_clone = user_id.clone();
-        
+
         let handle = tokio::spawn(async move {
             let sql = format!(
                 "INSERT INTO app_concurrent_pk.items (id, data) VALUES (1, 'writer_{}')",
@@ -180,7 +186,7 @@ async fn concurrent_duplicate_primary_key_handling() {
     // Collect results
     let mut success_count = 0;
     let mut error_count = 0;
-    
+
     for handle in handles {
         let resp = handle.await.expect("Writer task panicked");
         match resp.status {
@@ -209,7 +215,10 @@ async fn concurrent_duplicate_primary_key_handling() {
 
     if let Some(rows) = resp.results.first().and_then(|r| r.rows.as_ref()) {
         let count = rows[0].get("count").unwrap().as_i64().unwrap();
-        assert_eq!(count, 1, "Should have exactly 1 row despite concurrent attempts");
+        assert_eq!(
+            count, 1,
+            "Should have exactly 1 row despite concurrent attempts"
+        );
     }
 }
 
@@ -218,7 +227,9 @@ async fn concurrent_duplicate_primary_key_handling() {
 async fn concurrent_updates_same_row() {
     let server = TestServer::new().await;
 
-    let resp = server.execute_sql("CREATE NAMESPACE IF NOT EXISTS app_concurrent_upd").await;
+    let resp = server
+        .execute_sql("CREATE NAMESPACE IF NOT EXISTS app_concurrent_upd")
+        .await;
     assert_eq!(resp.status, ResponseStatus::Success);
 
     let create_table = r#"
@@ -247,7 +258,7 @@ async fn concurrent_updates_same_row() {
     for i in 1..=5 {
         let server_clone = server.clone();
         let user_id_clone = user_id.clone();
-        
+
         let handle = tokio::spawn(async move {
             let sql = format!(
                 "UPDATE app_concurrent_upd.counter SET value = {} WHERE id = 1",
@@ -291,7 +302,9 @@ async fn concurrent_updates_same_row() {
 async fn concurrent_deletes() {
     let server = TestServer::new().await;
 
-    let resp = server.execute_sql("CREATE NAMESPACE IF NOT EXISTS app_concurrent_del").await;
+    let resp = server
+        .execute_sql("CREATE NAMESPACE IF NOT EXISTS app_concurrent_del")
+        .await;
     assert_eq!(resp.status, ResponseStatus::Success);
 
     let create_table = r#"
@@ -321,19 +334,22 @@ async fn concurrent_deletes() {
     for i in 0..5 {
         let server_clone = server.clone();
         let user_id_clone = user_id.clone();
-        
+
         let handle = tokio::spawn(async move {
             // Each deleter tries to delete specific rows
             let sql1 = format!("DELETE FROM app_concurrent_del.temp WHERE id = {}", i * 2);
             let resp1 = server_clone
                 .execute_sql_as_user(&sql1, user_id_clone.as_str())
                 .await;
-            
-            let sql2 = format!("DELETE FROM app_concurrent_del.temp WHERE id = {}", i * 2 + 1);
+
+            let sql2 = format!(
+                "DELETE FROM app_concurrent_del.temp WHERE id = {}",
+                i * 2 + 1
+            );
             let resp2 = server_clone
                 .execute_sql_as_user(&sql2, user_id_clone.as_str())
                 .await;
-            
+
             (resp1, resp2)
         });
         handles.push(handle);
@@ -343,7 +359,7 @@ async fn concurrent_deletes() {
     let mut success_count = 0;
     for handle in handles {
         let (resp1, resp2) = handle.await.expect("Deleter task panicked");
-        
+
         if resp1.status == ResponseStatus::Success {
             success_count += 1;
         }
@@ -353,8 +369,14 @@ async fn concurrent_deletes() {
     }
 
     // At least some deletes should succeed
-    println!("Concurrent deletes: {} successful operations", success_count);
-    assert!(success_count > 0, "At least some concurrent deletes should succeed");
+    println!(
+        "Concurrent deletes: {} successful operations",
+        success_count
+    );
+    assert!(
+        success_count > 0,
+        "At least some concurrent deletes should succeed"
+    );
 
     // Verify rows were deleted (may not be all 10 due to races)
     let resp = server
@@ -369,6 +391,9 @@ async fn concurrent_deletes() {
         println!("Rows remaining after concurrent deletes: {}", count);
         // We just verify the count is non-negative and the operations completed
         // The exact count depends on deletion order and timing
-        assert!(count >= 0 && count <= 10, "Row count should be between 0 and 10");
+        assert!(
+            count >= 0 && count <= 10,
+            "Row count should be between 0 and 10"
+        );
     }
 }

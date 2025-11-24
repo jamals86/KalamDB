@@ -1,5 +1,5 @@
-use kalamdb_core::test_helpers::{init_test_app_context, TestContext};
 use kalamdb_commons::models::TableId;
+use kalamdb_core::test_helpers::{init_test_app_context, TestContext};
 
 #[tokio::test]
 async fn test_manifest_persistence_lifecycle() {

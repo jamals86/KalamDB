@@ -89,24 +89,26 @@ impl StatementHandler for DeleteHandler {
                     .downcast_ref::<crate::providers::UserTableProvider>()
                 {
                     let pk_column = provider.primary_key_field_name();
-                    
+
                     // Try to extract simple WHERE pk = value first (fast path)
                     if let Some(row_id) = self.extract_row_id_for_column(&where_pair, pk_column)? {
                         let _deleted = provider.delete_by_id_field(effective_user_id, &row_id)?;
                         Ok(ExecutionResult::Deleted { rows_affected: 1 })
                     } else if where_pair.is_some() {
                         // Complex WHERE clause - use DataFusion to find matching rows
-                        let rows_affected = self.delete_with_datafusion(
-                            sql,
-                            &table_id,
-                            effective_user_id,
-                            provider_arc.clone(),
-                            context,
-                        ).await?;
+                        let rows_affected = self
+                            .delete_with_datafusion(
+                                sql,
+                                &table_id,
+                                effective_user_id,
+                                provider_arc.clone(),
+                                context,
+                            )
+                            .await?;
                         Ok(ExecutionResult::Deleted { rows_affected })
                     } else {
                         Err(KalamDbError::InvalidOperation(
-                            "DELETE requires a WHERE clause".to_string()
+                            "DELETE requires a WHERE clause".to_string(),
                         ))
                     }
                 } else {
@@ -139,30 +141,32 @@ impl StatementHandler for DeleteHandler {
                 let provider_arc = schema_registry.get_provider(&table_id).ok_or_else(|| {
                     KalamDbError::InvalidOperation("Shared table provider not found".into())
                 })?;
-                
+
                 if let Some(provider) = provider_arc
                     .as_any()
                     .downcast_ref::<crate::providers::SharedTableProvider>()
                 {
                     let pk_column = provider.primary_key_field_name();
-                    
+
                     // Try to extract simple WHERE pk = value first (fast path)
                     if let Some(row_id) = self.extract_row_id_for_column(&where_pair, pk_column)? {
                         provider.delete_by_id_field(effective_user_id, &row_id)?;
                         Ok(ExecutionResult::Deleted { rows_affected: 1 })
                     } else if where_pair.is_some() {
                         // Complex WHERE clause - use DataFusion to find matching rows
-                        let rows_affected = self.delete_with_datafusion(
-                            sql,
-                            &table_id,
-                            effective_user_id,
-                            provider_arc.clone(),
-                            context,
-                        ).await?;
+                        let rows_affected = self
+                            .delete_with_datafusion(
+                                sql,
+                                &table_id,
+                                effective_user_id,
+                                provider_arc.clone(),
+                                context,
+                            )
+                            .await?;
                         Ok(ExecutionResult::Deleted { rows_affected })
                     } else {
                         Err(KalamDbError::InvalidOperation(
-                            "DELETE requires a WHERE clause".to_string()
+                            "DELETE requires a WHERE clause".to_string(),
                         ))
                     }
                 } else {
@@ -176,20 +180,22 @@ impl StatementHandler for DeleteHandler {
                 let provider_arc = schema_registry.get_provider(&table_id).ok_or_else(|| {
                     KalamDbError::InvalidOperation("Stream table provider not found".into())
                 })?;
-                
+
                 if where_pair.is_some() {
                     // Use DataFusion to find matching rows for deletion
-                    let rows_affected = self.delete_with_datafusion(
-                        sql,
-                        &table_id,
-                        effective_user_id,
-                        provider_arc.clone(),
-                        context,
-                    ).await?;
+                    let rows_affected = self
+                        .delete_with_datafusion(
+                            sql,
+                            &table_id,
+                            effective_user_id,
+                            provider_arc.clone(),
+                            context,
+                        )
+                        .await?;
                     Ok(ExecutionResult::Deleted { rows_affected })
                 } else {
                     Err(KalamDbError::InvalidOperation(
-                        "DELETE on STREAM tables requires a WHERE clause".to_string()
+                        "DELETE on STREAM tables requires a WHERE clause".to_string(),
                     ))
                 }
             }
@@ -261,75 +267,112 @@ impl DeleteHandler {
         // Convert DELETE to SELECT to find matching PKs
         // DELETE FROM ns.table WHERE condition -> SELECT * FROM ns.table WHERE condition
         let select_sql = sql.replace("DELETE FROM", "SELECT * FROM");
-        
+
         // Create per-user session and register table
         let df_ctx = context.create_session_with_user();
-        let table_name = format!("{}.{}", table_id.namespace_id().as_str(), table_id.table_name().as_str());
-        
+        let table_name = format!(
+            "{}.{}",
+            table_id.namespace_id().as_str(),
+            table_id.table_name().as_str()
+        );
+
         // Register table if not exists (ignore if already exists)
         match df_ctx.register_table(&table_name, provider.clone()) {
-            Ok(_) => {},
+            Ok(_) => {}
             Err(e) => {
                 let msg = e.to_string();
-                if !msg.to_lowercase().contains("already exists") && !msg.to_lowercase().contains("exists") {
-                    return Err(KalamDbError::InvalidOperation(format!("Failed to register table: {}", e)));
+                if !msg.to_lowercase().contains("already exists")
+                    && !msg.to_lowercase().contains("exists")
+                {
+                    return Err(KalamDbError::InvalidOperation(format!(
+                        "Failed to register table: {}",
+                        e
+                    )));
                 }
             }
         }
-        
+
         let df = df_ctx.sql(&select_sql).await?;
         let batches = df.collect().await?;
-        
+
         if batches.is_empty() {
             return Ok(0);
         }
-        
+
         // Get PK column name from provider
-        let pk_column = if let Some(user_provider) = provider.as_any().downcast_ref::<crate::providers::UserTableProvider>() {
+        let pk_column = if let Some(user_provider) = provider
+            .as_any()
+            .downcast_ref::<crate::providers::UserTableProvider>(
+        ) {
             user_provider.primary_key_field_name()
-        } else if let Some(shared_provider) = provider.as_any().downcast_ref::<crate::providers::SharedTableProvider>() {
+        } else if let Some(shared_provider) = provider
+            .as_any()
+            .downcast_ref::<crate::providers::SharedTableProvider>()
+        {
             shared_provider.primary_key_field_name()
-        } else if let Some(stream_provider) = provider.as_any().downcast_ref::<crate::providers::StreamTableProvider>() {
+        } else if let Some(stream_provider) = provider
+            .as_any()
+            .downcast_ref::<crate::providers::StreamTableProvider>()
+        {
             stream_provider.primary_key_field_name()
         } else {
-            return Err(KalamDbError::InvalidOperation("Unknown provider type".into()));
+            return Err(KalamDbError::InvalidOperation(
+                "Unknown provider type".into(),
+            ));
         };
-        
+
         // Extract PKs from results and delete each row
         let mut deleted_count = 0;
         for batch in batches {
             if batch.num_rows() == 0 {
                 continue;
             }
-            
+
             // Find PK column index
             let schema = batch.schema();
-            let pk_idx = schema.fields().iter().position(|f| f.name() == pk_column)
-                .ok_or_else(|| KalamDbError::InvalidOperation(format!("PK column '{}' not found in result", pk_column)))?;
-            
+            let pk_idx = schema
+                .fields()
+                .iter()
+                .position(|f| f.name() == pk_column)
+                .ok_or_else(|| {
+                    KalamDbError::InvalidOperation(format!(
+                        "PK column '{}' not found in result",
+                        pk_column
+                    ))
+                })?;
+
             let pk_array = batch.column(pk_idx);
-            
+
             // Delete each row by PK
             for row_idx in 0..batch.num_rows() {
                 let pk_value = self.extract_pk_value_from_array(pk_array, row_idx)?;
-                
+
                 // Call delete method based on provider type
-                if let Some(user_provider) = provider.as_any().downcast_ref::<crate::providers::UserTableProvider>() {
+                if let Some(user_provider) = provider
+                    .as_any()
+                    .downcast_ref::<crate::providers::UserTableProvider>()
+                {
                     user_provider.delete_by_id_field(user_id, &pk_value)?;
                     deleted_count += 1;
-                } else if let Some(shared_provider) = provider.as_any().downcast_ref::<crate::providers::SharedTableProvider>() {
+                } else if let Some(shared_provider) = provider
+                    .as_any()
+                    .downcast_ref::<crate::providers::SharedTableProvider>(
+                ) {
                     shared_provider.delete_by_id_field(user_id, &pk_value)?;
                     deleted_count += 1;
-                } else if let Some(stream_provider) = provider.as_any().downcast_ref::<crate::providers::StreamTableProvider>() {
+                } else if let Some(stream_provider) = provider
+                    .as_any()
+                    .downcast_ref::<crate::providers::StreamTableProvider>(
+                ) {
                     stream_provider.delete_by_id_field(user_id, &pk_value)?;
                     deleted_count += 1;
                 }
             }
         }
-        
+
         Ok(deleted_count)
     }
-    
+
     /// Extract PK value from Arrow array
     fn extract_pk_value_from_array(
         &self,
@@ -338,21 +381,30 @@ impl DeleteHandler {
     ) -> Result<String, KalamDbError> {
         use arrow::array::*;
         use arrow::datatypes::DataType;
-        
+
         match array.data_type() {
             DataType::Int64 => {
-                let arr = array.as_any().downcast_ref::<Int64Array>()
-                    .ok_or_else(|| KalamDbError::InvalidOperation("Failed to downcast Int64Array".into()))?;
+                let arr = array.as_any().downcast_ref::<Int64Array>().ok_or_else(|| {
+                    KalamDbError::InvalidOperation("Failed to downcast Int64Array".into())
+                })?;
                 Ok(arr.value(row_idx).to_string())
             }
             DataType::Utf8 => {
-                let arr = array.as_any().downcast_ref::<StringArray>()
-                    .ok_or_else(|| KalamDbError::InvalidOperation("Failed to downcast StringArray".into()))?;
+                let arr = array
+                    .as_any()
+                    .downcast_ref::<StringArray>()
+                    .ok_or_else(|| {
+                        KalamDbError::InvalidOperation("Failed to downcast StringArray".into())
+                    })?;
                 Ok(arr.value(row_idx).to_string())
             }
             DataType::LargeUtf8 => {
-                let arr = array.as_any().downcast_ref::<LargeStringArray>()
-                    .ok_or_else(|| KalamDbError::InvalidOperation("Failed to downcast LargeStringArray".into()))?;
+                let arr = array
+                    .as_any()
+                    .downcast_ref::<LargeStringArray>()
+                    .ok_or_else(|| {
+                        KalamDbError::InvalidOperation("Failed to downcast LargeStringArray".into())
+                    })?;
                 Ok(arr.value(row_idx).to_string())
             }
             _ => Err(KalamDbError::InvalidOperation(format!(

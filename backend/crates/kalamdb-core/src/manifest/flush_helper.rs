@@ -7,7 +7,7 @@ use super::{ManifestCacheService, ManifestService};
 use crate::error::KalamDbError;
 use datafusion::arrow::array::*;
 use datafusion::arrow::compute;
-use datafusion::arrow::compute::kernels::aggregate::{min_string, max_string};
+use datafusion::arrow::compute::kernels::aggregate::{max_string, min_string};
 use datafusion::arrow::datatypes::DataType;
 use datafusion::arrow::record_batch::RecordBatch;
 use kalamdb_commons::constants::SystemColumnNames;
@@ -95,14 +95,17 @@ impl FlushManifestHelper {
     }
 
     /// Extract column statistics (min/max/nulls) from RecordBatch
-    pub fn extract_column_stats(batch: &RecordBatch, indexed_columns: &[String]) -> HashMap<String, ColumnStats> {
+    pub fn extract_column_stats(
+        batch: &RecordBatch,
+        indexed_columns: &[String],
+    ) -> HashMap<String, ColumnStats> {
         let mut stats = HashMap::new();
         for field in batch.schema().fields() {
             let name = field.name();
             if name == SystemColumnNames::SEQ {
                 continue; // Handled separately
             }
-            
+
             // Only compute stats for indexed columns
             if !indexed_columns.contains(name) {
                 continue;
@@ -111,12 +114,15 @@ impl FlushManifestHelper {
             if let Some(col) = batch.column_by_name(name) {
                 let null_count = col.null_count() as i64;
                 let (min, max) = Self::compute_min_max(col);
-                
-                stats.insert(name.clone(), ColumnStats {
-                    min,
-                    max,
-                    null_count: Some(null_count),
-                });
+
+                stats.insert(
+                    name.clone(),
+                    ColumnStats {
+                        min,
+                        max,
+                        null_count: Some(null_count),
+                    },
+                );
             }
         }
         stats
@@ -217,7 +223,7 @@ impl FlushManifestHelper {
                 // For boolean, min is false (0), max is true (1).
                 // If all true, min=true. If all false, max=false.
                 // Let's skip boolean stats for now or implement simple check.
-                (None, None) 
+                (None, None)
             }
             _ => (None, None), // Unsupported types for stats
         }
@@ -266,8 +272,8 @@ impl FlushManifestHelper {
 
         // Create segment metadata
         // Use filename as ID for now, or generate UUID
-        let segment_id = batch_filename.clone(); 
-        
+        let segment_id = batch_filename.clone();
+
         let segment = SegmentMetadata::new(
             segment_id,
             batch_filename,
@@ -291,28 +297,30 @@ impl FlushManifestHelper {
                     e
                 ))
             })?;
-            
+
         // Flush manifest to disk (Cold Store persistence)
         // In the new architecture, we might want to flush periodically or immediately depending on policy.
         // For now, let's flush immediately to maintain durability guarantees similar to before.
-        self.manifest_service.flush_manifest(&table_id, user_id).map_err(|e| {
-             KalamDbError::Other(format!(
-                "Failed to flush manifest for {}.{} (user_id={:?}): {}",
-                namespace.as_str(),
-                table.as_str(),
-                user_id.map(|u| u.as_str()),
-                e
-            ))
-        })?;
+        self.manifest_service
+            .flush_manifest(&table_id, user_id)
+            .map_err(|e| {
+                KalamDbError::Other(format!(
+                    "Failed to flush manifest for {}.{} (user_id={:?}): {}",
+                    namespace.as_str(),
+                    table.as_str(),
+                    user_id.map(|u| u.as_str()),
+                    e
+                ))
+            })?;
 
         // Update cache service (if it's separate from ManifestService's internal cache)
         // ManifestService now has its own cache, but ManifestCacheService might be a higher level or legacy service?
         // The prompt says "Modify ManifestService... to implement Hot/Cold split".
         // ManifestCacheService seems to be doing similar things (Hot cache + RocksDB).
         // If ManifestService now handles caching, maybe ManifestCacheService is redundant or needs to be integrated.
-        // For now, I'll keep updating ManifestCacheService to avoid breaking other things, 
+        // For now, I'll keep updating ManifestCacheService to avoid breaking other things,
         // but I should probably rely on ManifestService.
-        
+
         let scope_str = user_id
             .map(|u| u.as_str().to_string())
             .unwrap_or_else(|| "shared".to_string());
@@ -322,7 +330,7 @@ impl FlushManifestHelper {
             table.as_str(),
             scope_str
         );
-        
+
         self.manifest_cache
             .update_after_flush(&table_id, user_id, &updated_manifest, None, manifest_path)
             .map_err(|e| {

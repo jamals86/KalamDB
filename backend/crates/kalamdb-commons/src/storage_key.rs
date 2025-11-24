@@ -52,6 +52,11 @@ pub trait StorageKey: Clone + Send + Sync + 'static {
     /// **IMPORTANT**: Numerical values must be serialized using Big-Endian
     /// (e.g., `to_be_bytes()`) to ensure correct lexicographical ordering in RocksDB.
     fn storage_key(&self) -> Vec<u8>;
+
+    /// Deserialize this key from bytes
+    fn from_storage_key(bytes: &[u8]) -> Result<Self, String>
+    where
+        Self: Sized;
 }
 
 // --- Standard Implementations ---
@@ -60,11 +65,19 @@ impl StorageKey for String {
     fn storage_key(&self) -> Vec<u8> {
         self.as_bytes().to_vec()
     }
+
+    fn from_storage_key(bytes: &[u8]) -> Result<Self, String> {
+        String::from_utf8(bytes.to_vec()).map_err(|e| e.to_string())
+    }
 }
 
 impl StorageKey for Vec<u8> {
     fn storage_key(&self) -> Vec<u8> {
         self.clone()
+    }
+
+    fn from_storage_key(bytes: &[u8]) -> Result<Self, String> {
+        Ok(bytes.to_vec())
     }
 }
 
@@ -72,11 +85,25 @@ impl StorageKey for u8 {
     fn storage_key(&self) -> Vec<u8> {
         vec![*self]
     }
+
+    fn from_storage_key(bytes: &[u8]) -> Result<Self, String> {
+        if bytes.len() != 1 {
+            return Err("Invalid length for u8".to_string());
+        }
+        Ok(bytes[0])
+    }
 }
 
 impl StorageKey for u16 {
     fn storage_key(&self) -> Vec<u8> {
         self.to_be_bytes().to_vec()
+    }
+
+    fn from_storage_key(bytes: &[u8]) -> Result<Self, String> {
+        if bytes.len() != 2 {
+            return Err("Invalid length for u16".to_string());
+        }
+        Ok(u16::from_be_bytes(bytes.try_into().unwrap()))
     }
 }
 
@@ -84,11 +111,25 @@ impl StorageKey for u32 {
     fn storage_key(&self) -> Vec<u8> {
         self.to_be_bytes().to_vec()
     }
+
+    fn from_storage_key(bytes: &[u8]) -> Result<Self, String> {
+        if bytes.len() != 4 {
+            return Err("Invalid length for u32".to_string());
+        }
+        Ok(u32::from_be_bytes(bytes.try_into().unwrap()))
+    }
 }
 
 impl StorageKey for u64 {
     fn storage_key(&self) -> Vec<u8> {
         self.to_be_bytes().to_vec()
+    }
+
+    fn from_storage_key(bytes: &[u8]) -> Result<Self, String> {
+        if bytes.len() != 8 {
+            return Err("Invalid length for u64".to_string());
+        }
+        Ok(u64::from_be_bytes(bytes.try_into().unwrap()))
     }
 }
 
@@ -96,11 +137,25 @@ impl StorageKey for u128 {
     fn storage_key(&self) -> Vec<u8> {
         self.to_be_bytes().to_vec()
     }
+
+    fn from_storage_key(bytes: &[u8]) -> Result<Self, String> {
+        if bytes.len() != 16 {
+            return Err("Invalid length for u128".to_string());
+        }
+        Ok(u128::from_be_bytes(bytes.try_into().unwrap()))
+    }
 }
 
 impl StorageKey for i8 {
     fn storage_key(&self) -> Vec<u8> {
         self.to_be_bytes().to_vec()
+    }
+
+    fn from_storage_key(bytes: &[u8]) -> Result<Self, String> {
+        if bytes.len() != 1 {
+            return Err("Invalid length for i8".to_string());
+        }
+        Ok(i8::from_be_bytes(bytes.try_into().unwrap()))
     }
 }
 
@@ -108,11 +163,25 @@ impl StorageKey for i16 {
     fn storage_key(&self) -> Vec<u8> {
         self.to_be_bytes().to_vec()
     }
+
+    fn from_storage_key(bytes: &[u8]) -> Result<Self, String> {
+        if bytes.len() != 2 {
+            return Err("Invalid length for i16".to_string());
+        }
+        Ok(i16::from_be_bytes(bytes.try_into().unwrap()))
+    }
 }
 
 impl StorageKey for i32 {
     fn storage_key(&self) -> Vec<u8> {
         self.to_be_bytes().to_vec()
+    }
+
+    fn from_storage_key(bytes: &[u8]) -> Result<Self, String> {
+        if bytes.len() != 4 {
+            return Err("Invalid length for i32".to_string());
+        }
+        Ok(i32::from_be_bytes(bytes.try_into().unwrap()))
     }
 }
 
@@ -120,10 +189,24 @@ impl StorageKey for i64 {
     fn storage_key(&self) -> Vec<u8> {
         self.to_be_bytes().to_vec()
     }
+
+    fn from_storage_key(bytes: &[u8]) -> Result<Self, String> {
+        if bytes.len() != 8 {
+            return Err("Invalid length for i64".to_string());
+        }
+        Ok(i64::from_be_bytes(bytes.try_into().unwrap()))
+    }
 }
 
 impl StorageKey for i128 {
     fn storage_key(&self) -> Vec<u8> {
         self.to_be_bytes().to_vec()
+    }
+
+    fn from_storage_key(bytes: &[u8]) -> Result<Self, String> {
+        if bytes.len() != 16 {
+            return Err("Invalid length for i128".to_string());
+        }
+        Ok(i128::from_be_bytes(bytes.try_into().unwrap()))
     }
 }

@@ -162,7 +162,8 @@ pub fn execute_sql_as_root_via_cli_json(sql: &str) -> Result<String, Box<dyn std
 /// Helper to generate unique namespace name
 pub fn generate_unique_namespace(base_name: &str) -> String {
     let rng = rand::rng();
-    let random_suffix: String = rng.sample_iter(Alphanumeric)
+    let random_suffix: String = rng
+        .sample_iter(Alphanumeric)
         .take(6)
         .map(char::from)
         .collect();
@@ -172,7 +173,8 @@ pub fn generate_unique_namespace(base_name: &str) -> String {
 /// Helper to generate unique table name
 pub fn generate_unique_table(base_name: &str) -> String {
     let rng = rand::rng();
-    let random_suffix: String = rng.sample_iter(Alphanumeric)
+    let random_suffix: String = rng
+        .sample_iter(Alphanumeric)
         .take(6)
         .map(char::from)
         .collect();

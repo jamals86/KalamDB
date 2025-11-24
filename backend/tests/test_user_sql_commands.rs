@@ -22,21 +22,29 @@ async fn test_create_user_with_password_success() {
     let sql = "CREATE USER 'alice' WITH PASSWORD 'SecurePass123' ROLE developer EMAIL 'alice@example.com'";
     let result = server.execute_sql_as_user(sql, admin_id).await;
 
-    assert_eq!(result.status, ResponseStatus::Success, "CREATE USER should succeed: {:?}", result.error);
+    assert_eq!(
+        result.status,
+        ResponseStatus::Success,
+        "CREATE USER should succeed: {:?}",
+        result.error
+    );
 
     // Verify user was created via system.users
     let query = "SELECT * FROM system.users WHERE username = 'alice'";
     let result = server.execute_sql_as_user(query, admin_id).await;
-    
+
     assert!(!result.results.is_empty());
     let rows = result.results[0].rows.as_ref().unwrap();
     assert_eq!(rows.len(), 1);
-    
+
     let row = &rows[0];
     assert_eq!(row.get("username").unwrap().as_str().unwrap(), "alice");
     assert_eq!(row.get("auth_type").unwrap().as_str().unwrap(), "password");
     assert_eq!(row.get("role").unwrap().as_str().unwrap(), "service"); // developer -> service
-    assert_eq!(row.get("email").unwrap().as_str().unwrap(), "alice@example.com");
+    assert_eq!(
+        row.get("email").unwrap().as_str().unwrap(),
+        "alice@example.com"
+    );
 }
 
 #[tokio::test]
@@ -48,14 +56,19 @@ async fn test_create_user_with_oauth_success() {
     let sql = r#"CREATE USER 'bob' WITH OAUTH '{"provider": "google", "subject": "12345"}' ROLE viewer EMAIL 'bob@example.com'"#;
     let result = server.execute_sql_as_user(sql, admin_id).await;
 
-    assert_eq!(result.status, ResponseStatus::Success, "CREATE USER with OAuth should succeed: {:?}", result.error);
+    assert_eq!(
+        result.status,
+        ResponseStatus::Success,
+        "CREATE USER with OAuth should succeed: {:?}",
+        result.error
+    );
 
     let query = "SELECT * FROM system.users WHERE username = 'bob'";
     let result = server.execute_sql_as_user(query, admin_id).await;
-    
+
     let rows = result.results[0].rows.as_ref().unwrap();
     let row = &rows[0];
-    
+
     assert_eq!(row.get("username").unwrap().as_str().unwrap(), "bob");
     assert_eq!(row.get("auth_type").unwrap().as_str().unwrap(), "oauth");
     assert_eq!(row.get("role").unwrap().as_str().unwrap(), "user"); // viewer -> user
@@ -69,12 +82,16 @@ async fn test_create_user_without_authorization_fails() {
     // Create a regular user
     let create_sql = "CREATE USER 'regular_user' WITH PASSWORD 'Pass123!' ROLE user";
     server.execute_sql_as_user(create_sql, admin_id).await;
-    
+
     // Try to create a user as regular user
     let sql = "CREATE USER 'charlie' WITH PASSWORD 'TestPass123' ROLE user";
     let result = server.execute_sql_as_user(sql, "regular_user").await;
 
-    assert_eq!(result.status, ResponseStatus::Error, "Regular user should not be able to create users");
+    assert_eq!(
+        result.status,
+        ResponseStatus::Error,
+        "Regular user should not be able to create users"
+    );
     // The error message might vary, but it should be an error
 }
 
@@ -90,7 +107,12 @@ async fn test_alter_user_set_password() {
     // Get old hash
     let query = "SELECT password_hash FROM system.users WHERE username = 'dave'";
     let result = server.execute_sql_as_user(query, admin_id).await;
-    let old_hash = result.results[0].rows.as_ref().unwrap()[0].get("password_hash").unwrap().as_str().unwrap().to_string();
+    let old_hash = result.results[0].rows.as_ref().unwrap()[0]
+        .get("password_hash")
+        .unwrap()
+        .as_str()
+        .unwrap()
+        .to_string();
 
     // Change password
     let alter_sql = "ALTER USER 'dave' SET PASSWORD 'NewPass456'";
@@ -99,8 +121,13 @@ async fn test_alter_user_set_password() {
 
     // Verify hash changed
     let result = server.execute_sql_as_user(query, admin_id).await;
-    let new_hash = result.results[0].rows.as_ref().unwrap()[0].get("password_hash").unwrap().as_str().unwrap().to_string();
-    
+    let new_hash = result.results[0].rows.as_ref().unwrap()[0]
+        .get("password_hash")
+        .unwrap()
+        .as_str()
+        .unwrap()
+        .to_string();
+
     assert_ne!(old_hash, new_hash);
 }
 
@@ -121,7 +148,11 @@ async fn test_alter_user_set_role() {
     // Verify role
     let query = "SELECT role FROM system.users WHERE username = 'eve'";
     let result = server.execute_sql_as_user(query, admin_id).await;
-    let role = result.results[0].rows.as_ref().unwrap()[0].get("role").unwrap().as_str().unwrap();
+    let role = result.results[0].rows.as_ref().unwrap()[0]
+        .get("role")
+        .unwrap()
+        .as_str()
+        .unwrap();
     assert_eq!(role, "dba");
 }
 
@@ -140,9 +171,10 @@ async fn test_drop_user_soft_delete() {
     assert_eq!(result.status, ResponseStatus::Success);
 
     // Verify user is soft-deleted (deleted_at IS NOT NULL)
-    let query_deleted = "SELECT deleted_at FROM system.users WHERE username = 'frank' AND deleted_at IS NOT NULL";
+    let query_deleted =
+        "SELECT deleted_at FROM system.users WHERE username = 'frank' AND deleted_at IS NOT NULL";
     let result = server.execute_sql_as_user(query_deleted, admin_id).await;
-    
+
     assert!(!result.results.is_empty());
     if let Some(rows) = &result.results[0].rows {
         assert_eq!(rows.len(), 1);
@@ -209,5 +241,3 @@ async fn test_drop_user_if_exists() {
     let result = server.execute_sql_as_user(drop_sql, admin_id).await;
     assert_eq!(result.status, ResponseStatus::Success);
 }
-
-

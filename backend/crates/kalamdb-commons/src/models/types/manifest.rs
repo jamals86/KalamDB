@@ -215,8 +215,7 @@ impl Manifest {
             last_sequence_number: 0,
         }
     }
-// ...existing code...
-
+    // ...existing code...
 
     pub fn add_segment(&mut self, segment: SegmentMetadata) {
         self.segments.push(segment);
@@ -232,7 +231,6 @@ impl Manifest {
         }
     }
 }
-
 
 #[cfg(test)]
 mod tests {
@@ -315,4 +313,3 @@ mod tests {
         assert_eq!(manifest.last_sequence_number, 100);
     }
 }
-

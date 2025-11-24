@@ -8,8 +8,8 @@ use crate::jobs::executors::{
     JobRegistry, RestoreExecutor, RetentionExecutor, StreamEvictionExecutor, UserCleanupExecutor,
 };
 use crate::live_query::LiveQueryManager;
-use crate::schema_registry::SchemaRegistry;
 use crate::schema_registry::stats::StatsTableProvider;
+use crate::schema_registry::SchemaRegistry;
 use crate::sql::datafusion_session::DataFusionSessionFactory;
 use crate::sql::executor::SqlExecutor;
 use crate::storage::storage_registry::StorageRegistry;
@@ -173,7 +173,8 @@ impl AppContext {
                 let schema_registry = Arc::new(SchemaRegistry::new(10000));
 
                 // Inject real StatsTableProvider with schema registry access (Phase 13)
-                let stats_provider = Arc::new(StatsTableProvider::new(Some(schema_registry.clone())));
+                let stats_provider =
+                    Arc::new(StatsTableProvider::new(Some(schema_registry.clone())));
                 system_tables.set_stats_provider(stats_provider);
 
                 // Register all system tables in DataFusion

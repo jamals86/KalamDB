@@ -23,9 +23,9 @@ use std::sync::Arc;
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct UserTableRow {
     pub user_id: UserId,
-    pub _seq: SeqId,
-    pub _deleted: bool,
-    pub fields: Row, // All user-defined columns including PK
+    pub _seq: SeqId,    //TODO: Rename this to seq without the _
+    pub _deleted: bool, //TODO: Rename this to deleted without the _
+    pub fields: Row,    // All user-defined columns including PK
 }
 
 impl KSerializable for UserTableRow {}

@@ -48,16 +48,22 @@ impl ArrowSchemaWithOptions {
             .map(|field| {
                 let mut field_map = serde_json::Map::new();
                 field_map.insert("name".to_string(), serde_json::json!(field.name()));
-                
+
                 // Convert to KalamDataType for stable serialization
-                let kalam_type = KalamDataType::from_arrow_type(field.data_type())
-                    .map_err(|e| RegistryError::SchemaError(format!("Unsupported type for schema serialization: {}", e)))?;
-                
+                let kalam_type =
+                    KalamDataType::from_arrow_type(field.data_type()).map_err(|e| {
+                        RegistryError::SchemaError(format!(
+                            "Unsupported type for schema serialization: {}",
+                            e
+                        ))
+                    })?;
+
                 field_map.insert(
                     "data_type".to_string(),
-                    serde_json::to_value(&kalam_type).map_err(|e| RegistryError::SchemaError(e.to_string()))?,
+                    serde_json::to_value(&kalam_type)
+                        .map_err(|e| RegistryError::SchemaError(e.to_string()))?,
                 );
-                
+
                 field_map.insert(
                     "nullable".to_string(),
                     serde_json::json!(field.is_nullable()),
@@ -111,10 +117,10 @@ impl ArrowSchemaWithOptions {
                     })?;
 
                 // Deserialize KalamDataType
-                let kalam_type_val = field_obj
-                    .get("data_type")
-                    .ok_or_else(|| RegistryError::SchemaError("Field missing 'data_type'".to_string()))?;
-                
+                let kalam_type_val = field_obj.get("data_type").ok_or_else(|| {
+                    RegistryError::SchemaError("Field missing 'data_type'".to_string())
+                })?;
+
                 let kalam_type: KalamDataType = serde_json::from_value(kalam_type_val.clone())
                     .or_else(|_| {
                         // Fallback for legacy string formats
@@ -127,16 +133,23 @@ impl ArrowSchemaWithOptions {
                                 "Float64" => Ok(KalamDataType::Double),
                                 "Float32" => Ok(KalamDataType::Float),
                                 // Add other legacy mappings if necessary
-                                _ => Err(RegistryError::SchemaError(format!("Unknown legacy data type: {}", s)))
+                                _ => Err(RegistryError::SchemaError(format!(
+                                    "Unknown legacy data type: {}",
+                                    s
+                                ))),
                             }
                         } else {
-                            Err(RegistryError::SchemaError(format!("Invalid data type format: {:?}", kalam_type_val)))
+                            Err(RegistryError::SchemaError(format!(
+                                "Invalid data type format: {:?}",
+                                kalam_type_val
+                            )))
                         }
                     })
                     .map_err(|e| RegistryError::SchemaError(format!("Invalid data type: {}", e)))?;
 
-                let data_type = kalam_type.to_arrow_type()
-                    .map_err(|e| RegistryError::SchemaError(format!("Failed to convert to Arrow type: {}", e)))?;
+                let data_type = kalam_type.to_arrow_type().map_err(|e| {
+                    RegistryError::SchemaError(format!("Failed to convert to Arrow type: {}", e))
+                })?;
 
                 let nullable = field_obj
                     .get("nullable")

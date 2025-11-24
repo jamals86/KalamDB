@@ -27,7 +27,7 @@ fn get_storage_dir() -> PathBuf {
     if path.exists() {
         return path;
     }
-    
+
     // Default to original path if neither exists (will fail in test)
     path
 }
@@ -79,10 +79,7 @@ fn smoke_test_user_table_flush_manifest() {
     // Insert 20 rows to trigger auto-flush (threshold is 10)
     println!("📝 Inserting 20 rows to trigger flush...");
     for i in 1..=20 {
-        let insert_sql = format!(
-            "INSERT INTO {} (content) VALUES ('Row {}')",
-            full_table, i
-        );
+        let insert_sql = format!("INSERT INTO {} (content) VALUES ('Row {}')", full_table, i);
         execute_sql_as_root_via_cli(&insert_sql)
             .unwrap_or_else(|e| panic!("Failed to insert row {}: {}", i, e));
     }
@@ -162,10 +159,7 @@ fn smoke_test_user_table_flush_manifest() {
                             if filename_str.starts_with("batch-")
                                 && filename_str.ends_with(".parquet")
                             {
-                                println!(
-                                    "  ✅ Found parquet file: {:?}",
-                                    user_entry.path()
-                                );
+                                println!("  ✅ Found parquet file: {:?}", user_entry.path());
                                 found_parquet = true;
                             }
                         }
@@ -293,9 +287,7 @@ fn smoke_test_shared_table_flush_manifest() {
             "Expected at least one batch-*.parquet file in shared table storage"
         );
     } else {
-        println!(
-            "⚠️  Shared table directory does not exist yet, skipping filesystem checks"
-        );
+        println!("⚠️  Shared table directory does not exist yet, skipping filesystem checks");
     }
 
     println!("✅ Verified manifest.json exists for shared table");
@@ -344,7 +336,10 @@ fn smoke_test_manifest_updated_on_second_flush() {
     // First flush cycle
     println!("📝 First flush: Inserting 15 rows...");
     for i in 1..=15 {
-        let insert_sql = format!("INSERT INTO {} (data) VALUES ('Batch1-Row{}')", full_table, i);
+        let insert_sql = format!(
+            "INSERT INTO {} (data) VALUES ('Batch1-Row{}')",
+            full_table, i
+        );
         execute_sql_as_root_via_cli(&insert_sql).expect("Failed to insert row");
     }
 
@@ -382,7 +377,10 @@ fn smoke_test_manifest_updated_on_second_flush() {
     // Second flush cycle
     println!("📝 Second flush: Inserting another 15 rows...");
     for i in 1..=15 {
-        let insert_sql = format!("INSERT INTO {} (data) VALUES ('Batch2-Row{}')", full_table, i);
+        let insert_sql = format!(
+            "INSERT INTO {} (data) VALUES ('Batch2-Row{}')",
+            full_table, i
+        );
         execute_sql_as_root_via_cli(&insert_sql).expect("Failed to insert row");
     }
 
@@ -481,7 +479,9 @@ fn smoke_test_flush_stream_table_error() {
             println!("✅ FLUSH TABLE on STREAM table failed as expected: {}", e);
             let error_msg = e.to_string().to_lowercase();
             assert!(
-                error_msg.contains("stream") || error_msg.contains("not support") || error_msg.contains("cannot flush"),
+                error_msg.contains("stream")
+                    || error_msg.contains("not support")
+                    || error_msg.contains("cannot flush"),
                 "Expected error message about stream tables not supporting flush, got: {}",
                 e
             );

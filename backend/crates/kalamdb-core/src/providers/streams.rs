@@ -304,7 +304,13 @@ impl BaseTableProvider<StreamTableRowId, StreamTableRow> for StreamTableProvider
 
         // Perform KV scan (hot-only) and convert to batch
         let keep_deleted = false; // Stream tables don't support soft delete yet
-        let kvs = self.scan_with_version_resolution_to_kvs(&user_id, filter, since_seq, limit, keep_deleted)?;
+        let kvs = self.scan_with_version_resolution_to_kvs(
+            &user_id,
+            filter,
+            since_seq,
+            limit,
+            keep_deleted,
+        )?;
         let table_id = self.core.table_id();
         log::debug!(
             "[StreamProvider] scan_rows: table={} rows={} user={} ttl={:?}",
