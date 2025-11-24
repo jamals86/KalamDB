@@ -197,7 +197,8 @@ pub struct Manifest {
     /// List of data segments
     pub segments: Vec<SegmentMetadata>,
 
-    /// Last assigned sequence number (for append-only sequencing)
+    /// Last batch/segment index (used to generate next batch filename: batch-{N}.parquet)
+    /// This is automatically updated when add_segment() is called.
     pub last_sequence_number: u64,
 }
 
@@ -217,9 +218,30 @@ impl Manifest {
     // ...existing code...
 
     pub fn add_segment(&mut self, segment: SegmentMetadata) {
+        // Extract batch number from segment path and update last_sequence_number
+        if let Some(batch_num) = Self::extract_batch_number(&segment.path) {
+            if batch_num >= self.last_sequence_number {
+                self.last_sequence_number = batch_num;
+            }
+        }
+        
         self.segments.push(segment);
         self.updated_at = chrono::Utc::now().timestamp();
         self.version += 1;
+    }
+
+    /// Extract batch number from segment path (e.g., "batch-0.parquet" -> 0)
+    fn extract_batch_number(path: &str) -> Option<u64> {
+        let filename = std::path::Path::new(path).file_name()?.to_str()?;
+        if filename.starts_with("batch-") && filename.ends_with(".parquet") {
+            filename
+                .strip_prefix("batch-")?
+                .strip_suffix(".parquet")?
+                .parse::<u64>()
+                .ok()
+        } else {
+            None
+        }
     }
 
     pub fn update_sequence_number(&mut self, seq: u64) {
@@ -310,5 +332,68 @@ mod tests {
         // Should not decrease
         manifest.update_sequence_number(50);
         assert_eq!(manifest.last_sequence_number, 100);
+    }
+
+    #[test]
+    fn test_manifest_tracks_batch_numbers() {
+        let table_id = TableId::new(NamespaceId::new("test"), TableName::new("table"));
+        let mut manifest = Manifest::new(table_id, None);
+
+        assert_eq!(manifest.last_sequence_number, 0);
+
+        // Add batch-0.parquet
+        let segment0 = SegmentMetadata::new(
+            "batch-0".to_string(),
+            "batch-0.parquet".to_string(),
+            HashMap::new(),
+            1000,
+            2000,
+            50,
+            512,
+        );
+        manifest.add_segment(segment0);
+        assert_eq!(manifest.last_sequence_number, 0);
+        assert_eq!(manifest.segments.len(), 1);
+
+        // Add batch-1.parquet
+        let segment1 = SegmentMetadata::new(
+            "batch-1".to_string(),
+            "batch-1.parquet".to_string(),
+            HashMap::new(),
+            2001,
+            3000,
+            50,
+            512,
+        );
+        manifest.add_segment(segment1);
+        assert_eq!(manifest.last_sequence_number, 1);
+        assert_eq!(manifest.segments.len(), 2);
+
+        // Add batch-5.parquet (skip some numbers)
+        let segment5 = SegmentMetadata::new(
+            "batch-5".to_string(),
+            "batch-5.parquet".to_string(),
+            HashMap::new(),
+            5001,
+            6000,
+            50,
+            512,
+        );
+        manifest.add_segment(segment5);
+        assert_eq!(manifest.last_sequence_number, 5);
+        assert_eq!(manifest.segments.len(), 3);
+    }
+
+    #[test]
+    fn test_extract_batch_number() {
+        assert_eq!(Manifest::extract_batch_number("batch-0.parquet"), Some(0));
+        assert_eq!(Manifest::extract_batch_number("batch-1.parquet"), Some(1));
+        assert_eq!(Manifest::extract_batch_number("batch-42.parquet"), Some(42));
+        assert_eq!(Manifest::extract_batch_number("batch-999.parquet"), Some(999));
+        
+        // Invalid formats
+        assert_eq!(Manifest::extract_batch_number("other-0.parquet"), None);
+        assert_eq!(Manifest::extract_batch_number("batch-0.csv"), None);
+        assert_eq!(Manifest::extract_batch_number("batch.parquet"), None);
     }
 }

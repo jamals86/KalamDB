@@ -331,6 +331,13 @@ pub async fn run(
                     }
                 }
             }
+            
+            // Ensure all file descriptors are released
+            info!("Performing cleanup to release file descriptors...");
+            drop(components);
+            drop(app_context);
+            
+            info!("Graceful shutdown complete");
         }
     }
 

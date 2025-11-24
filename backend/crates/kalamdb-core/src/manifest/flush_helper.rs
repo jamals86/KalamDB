@@ -47,26 +47,14 @@ impl FlushManifestHelper {
         let table_id = TableId::new(namespace.clone(), table.clone());
         match self.manifest_service.read_manifest(&table_id, user_id) {
             Ok(manifest) => {
-                // Find max batch number from segments
-                let max_batch = manifest
-                    .segments
-                    .iter()
-                    .filter_map(|s| {
-                        // Assuming path format "batch-{N}.parquet"
-                        let filename = Path::new(&s.path).file_name()?.to_str()?;
-                        if filename.starts_with("batch-") && filename.ends_with(".parquet") {
-                            filename
-                                .strip_prefix("batch-")?
-                                .strip_suffix(".parquet")?
-                                .parse::<u64>()
-                                .ok()
-                        } else {
-                            None
-                        }
-                    })
-                    .max()
-                    .unwrap_or(0);
-                Ok(max_batch + 1)
+                // Use last_sequence_number which tracks the last batch index
+                // Next batch should be last_sequence_number + 1
+                let next_batch = if manifest.segments.is_empty() {
+                    0 // First batch
+                } else {
+                    manifest.last_sequence_number + 1
+                };
+                Ok(next_batch)
             }
             Err(_) => Ok(0), // No manifest exists yet, start with batch 0
         }

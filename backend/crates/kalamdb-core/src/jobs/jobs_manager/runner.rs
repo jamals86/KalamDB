@@ -49,7 +49,8 @@ impl JobsManager {
 
             // Periodic health metrics logging
             if last_health_check.elapsed() >= health_check_interval {
-                if let Err(e) = HealthMonitor::log_metrics(self).await {
+                let app_ctx = self.get_attached_app_context();
+                if let Err(e) = HealthMonitor::log_metrics(self, app_ctx).await {
                     log::warn!("Failed to log health metrics: {}", e);
                 }
                 last_health_check = Instant::now();

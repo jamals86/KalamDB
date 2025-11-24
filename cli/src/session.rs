@@ -977,7 +977,8 @@ impl CLISession {
     /// // Output: ("SELECT * FROM table", Some(SubscriptionOptions { last_rows: Some(20) }))
     /// ```
     fn extract_subscribe_options(sql: &str) -> (String, Option<SubscriptionOptions>) {
-        let sql = sql.trim();
+        // Trim and remove trailing semicolon if present
+        let sql = sql.trim().trim_end_matches(';').trim();
         let sql_upper = sql.to_uppercase();
 
         // Find OPTIONS keyword (case-insensitive)
@@ -2077,5 +2078,28 @@ mod tests {
     fn test_output_format() {
         let format = OutputFormat::Table;
         assert!(matches!(format, OutputFormat::Table));
+    }
+
+    #[test]
+    fn test_extract_subscribe_options_with_semicolon() {
+        // Test that semicolon is properly trimmed from subscription queries
+        let (sql, _) = CLISession::extract_subscribe_options("SELECT * FROM table;");
+        assert_eq!(sql, "SELECT * FROM table");
+
+        let (sql, _) = CLISession::extract_subscribe_options("SELECT * FROM table ;");
+        assert_eq!(sql, "SELECT * FROM table");
+
+        let (sql, _) = CLISession::extract_subscribe_options("SELECT * FROM table");
+        assert_eq!(sql, "SELECT * FROM table");
+    }
+
+    #[test]
+    fn test_extract_subscribe_options_with_options_and_semicolon() {
+        // Test OPTIONS parsing with semicolon
+        let (sql, options) = CLISession::extract_subscribe_options(
+            "SELECT * FROM table OPTIONS (last_rows=50);"
+        );
+        assert_eq!(sql, "SELECT * FROM table");
+        assert!(options.is_some());
     }
 }

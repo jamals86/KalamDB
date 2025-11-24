@@ -12,24 +12,24 @@ use std::fs;
 use std::path::PathBuf;
 use std::time::Duration;
 
-const TEST_DATA_DIR: &str = "data/storage"; // Default from config.toml
+const BACKEND_STORAGE_DIR: &str = "../backend/data/storage"; // Backend server's storage directory
 
 fn get_storage_dir() -> PathBuf {
-    // Try parent directory first (if running from cli/)
-    // This is preferred because if we are in cli/, ../data/storage is the workspace storage
-    // where the server writes. cli/data/storage might exist but be empty/stale.
-    let parent_path = PathBuf::from("..").join(TEST_DATA_DIR);
-    if parent_path.exists() {
-        return parent_path;
+    // The backend server writes to ./data/storage from backend/ directory
+    // When tests run from cli/, we need to access ../backend/data/storage
+    let backend_path = PathBuf::from(BACKEND_STORAGE_DIR);
+    if backend_path.exists() {
+        return backend_path;
     }
 
-    let path = PathBuf::from(TEST_DATA_DIR);
-    if path.exists() {
-        return path;
+    // Fallback for different working directory contexts
+    let alt_path = PathBuf::from("backend/data/storage");
+    if alt_path.exists() {
+        return alt_path;
     }
 
-    // Default to original path if neither exists (will fail in test)
-    path
+    // Default to backend path (will fail in test if it doesn't exist)
+    backend_path
 }
 
 /// Test manifest.json creation after flushing USER table

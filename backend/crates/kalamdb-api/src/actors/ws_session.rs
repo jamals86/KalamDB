@@ -662,3 +662,21 @@ impl Handler<SendNotification> for WebSocketSession {
         }
     }
 }
+
+impl Drop for WebSocketSession {
+    fn drop(&mut self) {
+        // Ensure cleanup happens even if stopped() wasn't called
+        // This prevents file descriptor leaks when actors crash or panic
+        if let Some(ref limiter) = self.rate_limiter {
+            limiter.cleanup_connection(&self.connection_id);
+            
+            if let Some(ref uid) = self.user_id {
+                for _ in 0..self.subscriptions.len() {
+                    limiter.decrement_subscription(uid);
+                }
+            }
+        }
+        
+        debug!("WebSocketSession dropped: {}", self.connection_id);
+    }
+}
