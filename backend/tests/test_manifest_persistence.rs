@@ -1,3 +1,5 @@
+use kalamdb_core::test_helpers::init_test_app_context;
+
 use kalamdb_commons::models::TableId;
 use kalamdb_core::test_helpers::{init_test_app_context, TestContext};
 
