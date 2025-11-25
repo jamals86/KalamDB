@@ -125,9 +125,33 @@ impl JobsManager {
         // Validate parameters before serialization
         params.validate()?;
 
-        // Serialize to JSON for storage
-        let parameters = serde_json::to_value(&params).map_err(|e| {
+        // Serialize to JSON for storage and pre-validation
+        let params_json = serde_json::to_string(&params).map_err(|e| {
             KalamDbError::Other(format!("Failed to serialize job parameters: {}", e))
+        })?;
+
+        // Call executor's pre_validate to check if job should be created
+        let app_ctx = self.get_attached_app_context();
+        let should_create = self
+            .job_registry
+            .pre_validate(&app_ctx, &job_type, &params_json)
+            .await?;
+
+        if !should_create {
+            // Log skip and return a special "skipped" job ID (or error)
+            log::debug!(
+                "Job pre-validation returned false; skipping job creation for {:?} in namespace {}",
+                job_type,
+                namespace_id
+            );
+            return Err(KalamDbError::Other(format!(
+                "Job {:?} skipped: pre-validation returned false (nothing to do)",
+                job_type
+            )));
+        }
+
+        let parameters = serde_json::from_str(&params_json).map_err(|e| {
+            KalamDbError::Other(format!("Failed to parse job parameters: {}", e))
         })?;
 
         // Delegate to existing create_job method

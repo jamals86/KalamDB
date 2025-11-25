@@ -29,6 +29,16 @@ trait DynJobExecutor: Send + Sync {
     /// Returns the executor name for logging
     fn name(&self) -> &'static str;
 
+    /// Pre-validates job parameters before job creation
+    ///
+    /// Returns Ok(true) to proceed with job creation, Ok(false) to skip,
+    /// or Err if validation fails.
+    async fn pre_validate_dyn(
+        &self,
+        app_ctx: &Arc<AppContext>,
+        params_json: &str,
+    ) -> Result<bool, KalamDbError>;
+
     /// Executes the job with dynamic parameter deserialization
     ///
     /// Deserializes parameters from JSON, validates them, creates typed
@@ -55,6 +65,26 @@ where
 {
     fn name(&self) -> &'static str {
         JobExecutor::name(self)
+    }
+
+    async fn pre_validate_dyn(
+        &self,
+        app_ctx: &Arc<AppContext>,
+        params_json: &str,
+    ) -> Result<bool, KalamDbError> {
+        // Deserialize parameters from JSON string
+        let params: T = serde_json::from_str(params_json).map_err(|e| {
+            KalamDbError::InvalidOperation(format!(
+                "Failed to deserialize job parameters for pre-validation: {}",
+                e
+            ))
+        })?;
+
+        // Validate parameters
+        params.validate()?;
+
+        // Call type-safe pre_validate method
+        self.pre_validate(app_ctx, &params).await
     }
 
     async fn execute_dyn(
@@ -166,6 +196,37 @@ impl JobRegistry {
     {
         let job_type = executor.job_type();
         self.executors.insert(job_type, executor)
+    }
+
+    /// Pre-validate job parameters before job creation
+    ///
+    /// Calls the executor's pre_validate method to determine if the job
+    /// should be created. Returns Ok(true) to proceed, Ok(false) to skip.
+    ///
+    /// # Arguments
+    /// * `app_ctx` - Application context
+    /// * `job_type` - Type of job to validate
+    /// * `params_json` - JSON-serialized job parameters
+    ///
+    /// # Errors
+    /// Returns error if:
+    /// - No executor registered for job type
+    /// - Parameter deserialization fails
+    /// - Validation fails
+    pub async fn pre_validate(
+        &self,
+        app_ctx: &Arc<AppContext>,
+        job_type: &JobType,
+        params_json: &str,
+    ) -> Result<bool, KalamDbError> {
+        let executor = self.executors.get(job_type).ok_or_else(|| {
+            KalamDbError::NotFound(format!(
+                "No executor registered for job type: {:?}",
+                job_type
+            ))
+        })?;
+
+        executor.pre_validate_dyn(app_ctx, params_json).await
     }
 
     /// Execute a job using the registered executor

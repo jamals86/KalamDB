@@ -85,12 +85,18 @@ impl StreamEvictionScheduler {
                     );
                 }
                 Err(e) => {
+                    let err_msg = e.to_string();
                     // Idempotency errors are expected (job already exists for this hour)
-                    if e.to_string().contains("already running")
-                        || e.to_string().contains("already exists")
-                    {
+                    if err_msg.contains("already running") || err_msg.contains("already exists") {
                         log::trace!(
                             "Stream eviction job for {}.{} already exists (idempotent)",
+                            namespace_id,
+                            table_name
+                        );
+                    } else if err_msg.contains("pre-validation returned false") {
+                        // Pre-validation skipped job creation (nothing to evict)
+                        log::trace!(
+                            "Stream eviction job for {}.{} skipped (no expired rows)",
                             namespace_id,
                             table_name
                         );
