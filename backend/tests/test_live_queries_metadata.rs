@@ -4,7 +4,7 @@ mod common;
 use common::TestServer;
 use kalamdb_commons::websocket::{SubscriptionRequest, SubscriptionOptions};
 use kalamdb_commons::Notification;
-use kalamdb_commons::models::{LiveQueryId, UserId, NamespaceId, TableName, TableId};
+use kalamdb_commons::models::{ConnectionId, LiveQueryId, UserId, NamespaceId, TableName, TableId};
 use tokio::sync::mpsc;
 
 #[tokio::test(flavor = "multi_thread")]
@@ -15,12 +15,13 @@ async fn test_live_queries_metadata() {
     // 1. Register Connection
     let user_id = UserId::new("root");
     let conn_id_str = "conn_meta_test";
+    let conn_id = ConnectionId::new(conn_id_str.to_string());
     
     let (tx, _rx) = mpsc::unbounded_channel::<(LiveQueryId, Notification)>();
     
     let connection_id = manager.register_connection(
         user_id.clone(),
-        conn_id_str.to_string(),
+        conn_id.clone(),
         Some(tx)
     ).await.expect("Failed to register connection");
 
