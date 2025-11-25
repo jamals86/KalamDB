@@ -33,6 +33,9 @@ tokio = { workspace = true }
 actix-web = { workspace = true }
 actix-cors = { workspace = true }
 
+# Async futures utilities
+futures-util = { workspace = true }
+
 # Configuration
 toml = { workspace = true }
 

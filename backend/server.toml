@@ -137,15 +137,41 @@ max_connections = 25000
 [rate_limit]
 # Maximum SQL queries per second per user (default: 100)
 # Prevents query flooding from a single user
-max_queries_per_sec = 100
+max_queries_per_sec = 100000
 
 # Maximum WebSocket messages per second per connection (default: 50)
 # Prevents message flooding on WebSocket connections
-max_messages_per_sec = 50
+max_messages_per_sec = 5000
 
 # Maximum concurrent live query subscriptions per user (default: 10)
 # Limits total active subscriptions to prevent resource exhaustion
-max_subscriptions_per_user = 10
+max_subscriptions_per_user = 1000
+
+# ============================================================================
+# Connection Protection (DoS Prevention)
+# ============================================================================
+
+# Enable connection protection middleware (default: true)
+# When true, applies per-IP rate limiting and connection limits
+# Disable only for testing or trusted networks
+enable_connection_protection = false
+
+# Maximum concurrent connections per IP address (default: 100)
+# Prevents a single IP from exhausting all server connections
+max_connections_per_ip = 100
+
+# Maximum requests per second per IP before authentication (default: 200)
+# Applied BEFORE auth to protect against unauthenticated floods
+# Set higher for load balancers or reverse proxies
+max_requests_per_ip_per_sec = 200
+
+# Maximum request body size in bytes (default: 10485760 = 10MB)
+# Prevents memory exhaustion from huge request payloads
+request_body_limit_bytes = 10485760
+
+# Duration in seconds to ban abusive IPs (default: 300 = 5 minutes)
+# IPs that persistently violate rate limits are temporarily banned
+ban_duration_seconds = 300
 
 # T105 - Phase 7, User Story 5: System User Management
 [auth]

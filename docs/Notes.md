@@ -278,6 +278,8 @@ instead of: 1 failed: Invalid operation: No handler registered for statement typ
 182) Add to the README.md an example for managing notifications in a mobile app
 183) in WebSocketSession limit the size of the request coming from the client to avoid dos attacks
 
+184) i see when the system is idle again after a high load Open Files: 421 this is too high we need to investigate why and make sure we close all file handles correctly, add a logging or display logs when we request it to see where its leaking from
+
 
 
 Here’s the updated 5-line spec with embedding storage inside Parquet and managed HNSW indexing (with delete handling):

@@ -98,6 +98,18 @@ pub struct Cli {
     #[arg(long = "timeout", value_name = "SECONDS", default_value_t = 30)]
     pub timeout: u64,
 
+    /// Connection timeout in seconds (TCP + TLS handshake, default: 10)
+    #[arg(long = "connection-timeout", value_name = "SECONDS", default_value_t = 10)]
+    pub connection_timeout: u64,
+
+    /// Receive timeout in seconds (default: 30)
+    #[arg(long = "receive-timeout", value_name = "SECONDS", default_value_t = 30)]
+    pub receive_timeout: u64,
+
+    /// WebSocket authentication timeout in seconds (default: 5)
+    #[arg(long = "auth-timeout", value_name = "SECONDS", default_value_t = 5)]
+    pub auth_timeout: u64,
+
     // Credential management commands
     /// Show stored credentials for instance
     #[arg(long = "show-credentials")]
@@ -119,6 +131,24 @@ pub struct Cli {
     /// Subscribe to a table or live query
     #[arg(long = "subscribe")]
     pub subscribe: Option<String>,
+
+    /// Subscription timeout in seconds (0 = no timeout, default: 0)
+    /// After receiving initial data, subscription will exit after this duration
+    #[arg(long = "subscription-timeout", value_name = "SECONDS", default_value_t = 0)]
+    pub subscription_timeout: u64,
+
+    /// Initial data timeout in seconds (0 = no timeout, default: 30)
+    /// Maximum time to wait for initial data batch after subscribing
+    #[arg(long = "initial-data-timeout", value_name = "SECONDS", default_value_t = 30)]
+    pub initial_data_timeout: u64,
+
+    /// Use fast timeout preset (optimized for local development)
+    #[arg(long = "fast-timeouts")]
+    pub fast_timeouts: bool,
+
+    /// Use relaxed timeout preset (optimized for high-latency networks)
+    #[arg(long = "relaxed-timeouts")]
+    pub relaxed_timeouts: bool,
 
     /// Unsubscribe from a subscription
     #[arg(long = "unsubscribe")]

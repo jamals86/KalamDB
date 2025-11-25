@@ -139,7 +139,7 @@ impl JobsManager {
 
         if !should_create {
             // Log skip and return a special "skipped" job ID (or error)
-            log::debug!(
+            log::trace!(
                 "Job pre-validation returned false; skipping job creation for {:?} in namespace {}",
                 job_type,
                 namespace_id

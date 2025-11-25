@@ -38,6 +38,7 @@ impl Drop for CleanupActions {
     }
 }
 
+#[ntest::timeout(60000)]
 #[test]
 fn smoke_storage_custom_templates() {
     if !is_server_running() {

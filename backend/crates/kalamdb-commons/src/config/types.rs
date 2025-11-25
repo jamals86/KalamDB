@@ -323,6 +323,29 @@ pub struct RateLimitSettings {
     /// Maximum concurrent subscriptions per user (default: 10)
     #[serde(default = "default_rate_limit_max_subscriptions")]
     pub max_subscriptions_per_user: u32,
+
+    /// Maximum concurrent connections per IP address (default: 100)
+    /// Prevents a single IP from exhausting all server connections
+    #[serde(default = "default_max_connections_per_ip")]
+    pub max_connections_per_ip: u32,
+
+    /// Maximum requests per second per IP before authentication (default: 200)
+    /// Applied before auth to protect against unauthenticated floods
+    #[serde(default = "default_max_requests_per_ip_per_sec")]
+    pub max_requests_per_ip_per_sec: u32,
+
+    /// Maximum request body size in bytes (default: 10MB)
+    /// Prevents memory exhaustion from huge request payloads
+    #[serde(default = "default_request_body_limit_bytes")]
+    pub request_body_limit_bytes: usize,
+
+    /// Duration in seconds to ban abusive IPs (default: 300 = 5 minutes)
+    #[serde(default = "default_ban_duration_seconds")]
+    pub ban_duration_seconds: u64,
+
+    /// Enable connection protection middleware (default: true)
+    #[serde(default = "default_enable_connection_protection")]
+    pub enable_connection_protection: bool,
 }
 
 /// Authentication settings (T105 - Phase 7, User Story 5)
@@ -500,6 +523,11 @@ impl Default for RateLimitSettings {
             max_queries_per_sec: default_rate_limit_queries_per_sec(),
             max_messages_per_sec: default_rate_limit_messages_per_sec(),
             max_subscriptions_per_user: default_rate_limit_max_subscriptions(),
+            max_connections_per_ip: default_max_connections_per_ip(),
+            max_requests_per_ip_per_sec: default_max_requests_per_ip_per_sec(),
+            request_body_limit_bytes: default_request_body_limit_bytes(),
+            ban_duration_seconds: default_ban_duration_seconds(),
+            enable_connection_protection: default_enable_connection_protection(),
         }
     }
 }

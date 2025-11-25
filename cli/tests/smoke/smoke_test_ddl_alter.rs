@@ -18,6 +18,7 @@ use std::time::Duration;
 /// - Can add nullable column to existing table
 /// - Can add column with DEFAULT value
 /// - New column appears in subsequent queries
+#[ntest::timeout(60000)]
 #[test]
 fn smoke_test_alter_table_add_column() {
     if !is_server_running() {
@@ -129,6 +130,7 @@ fn smoke_test_alter_table_add_column() {
 /// - Can drop existing column
 /// - Column no longer appears in queries
 /// - Existing data in other columns preserved
+#[ntest::timeout(60000)]
 #[test]
 fn smoke_test_alter_table_drop_column() {
     if !is_server_running() {
@@ -205,6 +207,7 @@ fn smoke_test_alter_table_drop_column() {
 /// Verifies:
 /// - Can modify column type
 /// - Can change NULL/NOT NULL constraint
+#[ntest::timeout(60000)]
 #[test]
 fn smoke_test_alter_table_modify_column() {
     if !is_server_running() {
@@ -275,6 +278,7 @@ fn smoke_test_alter_table_modify_column() {
 /// Verifies:
 /// - Can change ACCESS_LEVEL for shared tables
 /// - ACCESS_LEVEL appears in system.tables options
+#[ntest::timeout(60000)]
 #[test]
 fn smoke_test_alter_shared_table_access_level() {
     if !is_server_running() {
@@ -350,6 +354,7 @@ fn smoke_test_alter_shared_table_access_level() {
 /// Verifies:
 /// - Adding NOT NULL column without DEFAULT to table with existing rows fails
 /// - Error message is clear
+#[ntest::timeout(60000)]
 #[test]
 fn smoke_test_alter_add_not_null_without_default_error() {
     if !is_server_running() {
@@ -423,6 +428,7 @@ fn smoke_test_alter_add_not_null_without_default_error() {
 /// Verifies:
 /// - Attempting to DROP or MODIFY _updated or _deleted fails
 /// - Error message indicates system columns are protected
+#[ntest::timeout(60000)]
 #[test]
 fn smoke_test_alter_system_columns_error() {
     if !is_server_running() {

@@ -126,7 +126,22 @@ fn execute_sql_via_cli_as_with_args(
     sql: &str,
     extra_args: &[&str],
 ) -> Result<String, Box<dyn std::error::Error>> {
-    let output = Command::new(env!("CARGO_BIN_EXE_kalam"))
+    use std::time::Instant;
+    
+    let sql_preview = if sql.len() > 60 {
+        format!("{}...", &sql[..60])
+    } else {
+        sql.to_string()
+    };
+    
+    let spawn_start = Instant::now();
+    eprintln!(
+        "[TEST_CLI] Executing as {}: \"{}\"",
+        username,
+        sql_preview.replace('\n', " ")
+    );
+    
+    let mut child = Command::new(env!("CARGO_BIN_EXE_kalam"))
         .arg("-u")
         .arg(SERVER_URL)
         .arg("--username")
@@ -136,14 +151,37 @@ fn execute_sql_via_cli_as_with_args(
         .args(extra_args)
         .arg("--command")
         .arg(sql)
-        .output()?;
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped())
+        .spawn()?;
+    
+    let spawn_duration = spawn_start.elapsed();
+    eprintln!(
+        "[TEST_CLI] Process spawned in {:?}",
+        spawn_duration
+    );
+    
+    let wait_start = Instant::now();
+    let output = child.wait_with_output()?;
+    let wait_duration = wait_start.elapsed();
+    
+    let total_duration_ms = spawn_start.elapsed().as_millis();
 
     if output.status.success() {
+        eprintln!(
+            "[TEST_CLI] Success: spawn={:?} wait={:?} total={}ms",
+            spawn_duration, wait_duration, total_duration_ms
+        );
         Ok(String::from_utf8_lossy(&output.stdout).to_string())
     } else {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        eprintln!(
+            "[TEST_CLI] Failed: spawn={:?} wait={:?} total={}ms stderr={}",
+            spawn_duration, wait_duration, total_duration_ms, stderr
+        );
         Err(format!(
             "CLI command failed: {}",
-            String::from_utf8_lossy(&output.stderr)
+            stderr
         )
         .into())
     }
@@ -454,8 +492,13 @@ pub struct SubscriptionListener {
 }
 
 impl SubscriptionListener {
-    /// Start a subscription listener for a given query
+    /// Start a subscription listener for a given query with a default timeout
     pub fn start(query: &str) -> Result<Self, Box<dyn std::error::Error>> {
+        Self::start_with_timeout(query, 30) // Default 30 second timeout for tests
+    }
+
+    /// Start a subscription listener with a specific timeout in seconds
+    pub fn start_with_timeout(query: &str, timeout_secs: u64) -> Result<Self, Box<dyn std::error::Error>> {
         let mut child = Command::new(env!("CARGO_BIN_EXE_kalam"))
             .arg("-u")
             .arg(SERVER_URL)
@@ -464,6 +507,8 @@ impl SubscriptionListener {
             .arg("--password")
             .arg("")
             .arg("--no-spinner") // Disable animations and banner messages
+            .arg("--subscription-timeout")
+            .arg(timeout_secs.to_string())
             .arg("--subscribe")
             .arg(query)
             .stdout(Stdio::piped())
