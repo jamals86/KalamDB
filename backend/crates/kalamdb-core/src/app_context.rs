@@ -33,7 +33,7 @@ static APP_CONTEXT: OnceLock<Arc<AppContext>> = OnceLock::new();
 /// - Memory-efficient per-request operations
 /// - Single source of truth for all shared state
 pub struct AppContext {
-    /// Node identifier loaded once from config.toml (Phase 10, US0, FR-000)
+    /// Node identifier loaded once from server.toml (Phase 10, US0, FR-000)
     /// Wrapped in Arc for zero-copy sharing across all components
     node_id: Arc<NodeId>,
 
@@ -116,7 +116,7 @@ impl AppContext {
     ///
     /// # Parameters
     /// - `storage_backend`: Storage abstraction (RocksDB implementation)
-    /// - `node_id`: Node identifier loaded from config.toml (wrapped in Arc internally)
+    /// - `node_id`: Node identifier loaded from server.toml (wrapped in Arc internally)
     /// - `storage_base_path`: Base directory for storage files
     ///
     /// # Example
@@ -127,8 +127,8 @@ impl AppContext {
     /// # use std::sync::Arc;
     ///
     /// let backend: Arc<dyn StorageBackend> = todo!();
-    /// let node_id = NodeId::new("prod-node-1".to_string()); // From config.toml
-    /// let config = ServerConfig::from_file("config.toml").unwrap();
+    /// let node_id = NodeId::new("prod-node-1".to_string()); // From server.toml
+    /// let config = ServerConfig::from_file("server.toml").unwrap();
     /// AppContext::init(
     ///     backend,
     ///     node_id,
@@ -673,7 +673,7 @@ impl AppContext {
         self.live_query_manager.clone()
     }
 
-    /// Get the NodeId loaded from config.toml (Phase 10, US0, FR-000)
+    /// Get the NodeId loaded from server.toml (Phase 10, US0, FR-000)
     ///
     /// Returns an Arc reference for zero-copy sharing. This NodeId is allocated
     /// exactly once per server instance during AppContext::init().

@@ -33,7 +33,7 @@ impl ServerConfig {
     /// - KALAMDB_HOST: Override server.host (legacy, prefer KALAMDB_SERVER_HOST)
     /// - KALAMDB_PORT: Override server.port (legacy, prefer KALAMDB_SERVER_PORT)
     ///
-    /// Environment variables take precedence over config.toml values (T031)
+    /// Environment variables take precedence over server.toml values (T031)
     fn apply_env_overrides(&mut self) -> anyhow::Result<()> {
         use std::env;
 

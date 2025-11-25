@@ -36,7 +36,7 @@ impl TypedStatementHandler<SubscribeStatement> for SubscribeHandler {
             statement.table_name.as_str(),
             Uuid::new_v4().simple()
         );
-        // Channel placeholder (could read from config.toml later)
+        // Channel placeholder (could read from server.toml later)
         let channel = "ws://localhost:8080/ws".to_string();
 
         // Log query operation

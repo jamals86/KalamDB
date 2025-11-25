@@ -1,0 +1,221 @@
+# KalamDB Server Configuration
+# This is an example configuration file with all available settings.
+# Copy this file to config.toml and adjust values for your environment.
+#
+# NOTE: Runtime configuration only!
+# - Namespace and storage location configuration is stored in system tables (via kalamdb-sql)
+# - This file contains only server runtime settings (ports, paths, limits, etc.)
+
+[server]
+# Server bind address (default: 127.0.0.1)
+host = "127.0.0.1"
+
+# Server port (default: 8080)
+port = 8080
+
+# Number of worker threads (0 = number of CPU cores)
+workers = 0
+
+[storage]
+# RocksDB data directory path (relative or absolute)
+rocksdb_path = "./data/rocksdb"
+
+# Default storage path for 'local' storage (when base_directory='')
+# Used for table flushes to Parquet files (default: "./data/storage")
+default_storage_path = "./data/storage"
+
+# Enable Write-Ahead Log for durability (default: true)
+enable_wal = true
+
+# Compression algorithm: none, snappy, zlib, lz4, zstd (default: snappy)
+compression = "snappy"
+
+[storage.rocksdb]
+# Write buffer size per column family in bytes (default: 64MB)
+# Larger values improve write throughput but use more memory
+write_buffer_size = 67108864
+
+# Maximum number of write buffers (default: 3)
+# Allows writes to continue while buffers are being flushed
+max_write_buffers = 3
+
+# Block cache size for reads in bytes (default: 256MB)
+# Larger values improve read performance for hot data
+block_cache_size = 268435456
+
+# Maximum number of background compaction/flush jobs (default: 4)
+max_background_jobs = 4
+
+[datafusion]
+# Memory limit for query execution in bytes (default: 1GB)
+# Queries exceeding this limit will be terminated
+memory_limit = 1073741824
+
+# Number of parallel threads for query execution (default: number of CPU cores)
+# Set to 0 to auto-detect CPU count
+query_parallelism = 0
+
+# Maximum number of partitions per query (default: 16)
+# Higher values increase parallelism but use more resources
+max_partitions = 16
+
+# Batch size for record processing (default: 8192 rows)
+# Larger batches improve throughput but use more memory
+batch_size = 8192
+
+[flush]
+# Default row limit for flush policies (default: 10000 rows)
+# Tables without explicit flush policy will use this value
+default_row_limit = 10000
+
+# Default time interval for flush in seconds (default: 300s = 5 minutes)
+# Tables will flush to Parquet after this duration
+default_time_interval = 300
+
+# T158j: Flush job shutdown timeout in seconds (default: 300s = 5 minutes)
+# Server waits this duration for active flush jobs to complete during shutdown
+flush_job_shutdown_timeout_seconds = 300
+
+# T158q: Job retention days (default: 30 days)
+# Job records older than this are deleted during cleanup
+job_retention_days = 30
+
+# T158r: Job cleanup schedule (cron format, default: daily at midnight UTC)
+# Format: "second minute hour day_of_month month day_of_week"
+# Example: "0 0 * * *" = daily at midnight
+job_cleanup_schedule = "0 0 * * *"
+
+[retention]
+# Default retention hours for soft-deleted rows (default: 168 hours = 7 days)
+# Rows with _deleted=true will be kept in Parquet files for this duration
+default_deleted_retention_hours = 168
+
+[stream]
+# Default TTL for stream table rows in seconds (default: 10 seconds)
+# Stream tables are ephemeral - rows expire after this duration
+default_ttl_seconds = 10
+
+# Default maximum buffer size for stream tables (default: 10000 rows)
+# Oldest rows are evicted when buffer exceeds this limit
+default_max_buffer = 10000
+
+[limits]
+# Maximum message size for REST API requests in bytes (default: 1MB)
+max_message_size = 1048576
+
+# Maximum rows that can be returned in a single query (default: 1000)
+max_query_limit = 1000
+
+# Default LIMIT for queries without explicit LIMIT clause (default: 50)
+default_query_limit = 50
+
+[logging]
+# Log level: error, warn, info, debug, trace (default: info)
+level = "debug"
+
+# Log file path (relative or absolute)
+file_path = "./logs/app.log"
+
+# Also log to console/stdout (default: true)
+log_to_console = true
+
+# Log format: compact, pretty, json (default: compact)
+format = "compact"
+
+[performance]
+# Request timeout in seconds (default: 30s)
+# Requests exceeding this duration will be terminated
+request_timeout = 30
+
+# Keep-alive timeout in seconds (default: 75s)
+keepalive_timeout = 75
+
+# Maximum concurrent connections (default: 25000)
+# Includes both REST API and WebSocket connections
+max_connections = 25000
+
+[rate_limit]
+# Maximum SQL queries per second per user (default: 100)
+# Prevents query flooding from a single user
+max_queries_per_sec = 100
+
+# Maximum WebSocket messages per second per connection (default: 50)
+# Prevents message flooding on WebSocket connections
+max_messages_per_sec = 50
+
+# Maximum concurrent live query subscriptions per user (default: 10)
+# Limits total active subscriptions to prevent resource exhaustion
+max_subscriptions_per_user = 10
+
+# T105 - Phase 7, User Story 5: System User Management
+[auth]
+# Allow remote (non-localhost) connections for system users (default: false)
+# When false, system users with auth_type='internal' can only authenticate from localhost
+# When true, system users can authenticate from any IP (requires password in metadata)
+allow_remote_access = false
+
+# JWT secret for token validation (REQUIRED for JWT auth)
+# IMPORTANT: Change this in production! Use a long, random string
+jwt_secret = "CHANGE_ME_IN_PRODUCTION"
+
+# Trusted JWT issuers (comma-separated list of domains)
+# Example: "auth.example.com,login.company.com"
+# Empty list means JWT authentication is disabled
+jwt_trusted_issuers = ""
+
+# Minimum password length (default: 8 characters)
+min_password_length = 8
+
+# Maximum password length (default: 1024 characters)
+max_password_length = 1024
+
+# Bcrypt cost factor (default: 12, range: 4-31)
+# Higher values are more secure but slower
+# 12 is recommended for production (good balance of security and performance)
+bcrypt_cost = 12
+
+# Phase 10, User Story 8: OAuth Integration
+[oauth]
+# Enable OAuth authentication (default: false)
+# When true, users can authenticate using OAuth providers
+enabled = false
+
+# Auto-provision users on first OAuth login (default: false)
+# When true, new users will be created automatically on first successful OAuth authentication
+# When false, users must be created explicitly with CREATE USER ... WITH OAUTH before they can authenticate
+auto_provision = false
+
+# Default role for auto-provisioned OAuth users (default: "user")
+# Only used when auto_provision = true
+# Valid values: "user", "service", "dba", "system"
+default_role = "user"
+
+# Supported OAuth providers configuration
+# Each provider requires:
+# - issuer: OAuth provider's issuer URL (for JWT validation)
+# - jwks_uri: JSON Web Key Set endpoint for public keys
+# - client_id: OAuth application client ID (optional, for additional validation)
+
+# Google OAuth configuration
+[oauth.providers.google]
+enabled = false
+issuer = "https://accounts.google.com"
+jwks_uri = "https://www.googleapis.com/oauth2/v3/certs"
+# client_id = "your-google-client-id.apps.googleusercontent.com"
+
+# GitHub OAuth configuration
+[oauth.providers.github]
+enabled = false
+issuer = "https://github.com"
+# GitHub doesn't use standard JWKS - requires custom token validation
+# See: https://docs.github.com/en/developers/apps/building-oauth-apps/authorizing-oauth-apps
+# client_id = "your-github-client-id"
+# client_secret = "your-github-client-secret"
+
+# Azure AD (Microsoft) OAuth configuration
+[oauth.providers.azure]
+enabled = false
+issuer = "https://login.microsoftonline.com/{tenant}/v2.0"
+jwks_uri = "https://login.microsoftonline.com/{tenant}/discovery/v2.0/keys"
+# tenant = "your-tenant-id"
+# client_id = "your-azure-client-id"

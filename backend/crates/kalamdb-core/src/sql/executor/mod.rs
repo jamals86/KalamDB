@@ -222,7 +222,7 @@ impl SqlExecutor {
         let row_count: usize = batches.iter().map(|b| b.num_rows()).sum();
 
         // Informational log for debugging result sizes in tests
-        log::info!(
+        log::debug!(
             target: "sql::exec",
             "✅ SQL executed | sql='{}' | user='{}' | role='{:?}' | rows={}",
             sql,

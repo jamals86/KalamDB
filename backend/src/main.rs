@@ -20,8 +20,18 @@ async fn main() -> Result<()> {
     let _args: Vec<String> = env::args().collect();
 
     // Normal server startup
-    // Load configuration (fallback to defaults when config file missing)
-    let config_path = "config.toml";
+    // Load configuration from server.toml (fallback to config.toml for backward compatibility)
+    let config_path = if std::path::Path::new("server.toml").exists() {
+        "server.toml"
+    } else if std::path::Path::new("config.toml").exists() {
+        eprintln!("⚠️  WARNING: Using deprecated config.toml. Please rename to server.toml");
+        "config.toml"
+    } else {
+        eprintln!("❌ FATAL: Neither server.toml nor config.toml found");
+        eprintln!("❌ Server cannot start without valid configuration");
+        std::process::exit(1);
+    };
+
     let config = match ServerConfig::from_file(config_path) {
         Ok(cfg) => {
             eprintln!(
@@ -33,7 +43,7 @@ async fn main() -> Result<()> {
             cfg
         }
         Err(e) => {
-            eprintln!("❌ FATAL: Failed to load config.toml: {}", e);
+            eprintln!("❌ FATAL: Failed to load {}: {}", config_path, e);
             eprintln!("❌ Server cannot start without valid configuration");
             std::process::exit(1);
         }

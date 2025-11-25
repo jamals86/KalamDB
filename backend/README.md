@@ -32,8 +32,8 @@ cargo build
 Copy the example configuration and customize it:
 
 ```bash
-cp config.example.toml config.toml
-# Edit config.toml with your settings
+cp server.example.toml server.toml
+# Edit server.toml with your settings
 ```
 
 ### Run
@@ -104,7 +104,7 @@ See [docker/README.md](../docker/README.md) for complete deployment guide.
 
 ### Environment Variable Configuration
 
-Override any config.toml setting with environment variables:
+Override any server.toml setting with environment variables:
 
 ```bash
 KALAMDB_SERVER_PORT=9000 \
@@ -147,7 +147,7 @@ See [link/README.md](../link/README.md) for complete SDK documentation.
 ```
 backend/
 ├── Cargo.toml                    # Workspace configuration
-├── config.example.toml           # Example configuration
+├── server.example.toml           # Example configuration
 ├── crates/
 │   ├── kalamdb-core/            # Core storage library
 │   ├── kalamdb-api/             # REST API library
@@ -189,7 +189,7 @@ cargo build --release
 
 ## Configuration
 
-See `config.example.toml` for all available configuration options:
+See `server.example.toml` for all available configuration options:
 
 - **Server**: Host, port, worker threads
 - **Storage**: RocksDB path, WAL settings, compression
@@ -253,7 +253,7 @@ Health check endpoint
 
 ## Logging
 
-Logs are written to the path specified in `config.toml` (default: `./logs/app.log`).
+Logs are written to the path specified in `server.toml` (default: `./logs/app.log`).
 
 Log levels: `error`, `warn`, `info`, `debug`, `trace`
 
