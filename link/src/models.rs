@@ -62,8 +62,8 @@ pub enum ClientMessage {
 
     /// Subscribe to live query updates
     Subscribe {
-        /// List of subscriptions to register
-        subscriptions: Vec<SubscriptionRequest>,
+        /// Subscription to register
+        subscription: SubscriptionRequest,
     },
 
     /// Request next batch of initial data

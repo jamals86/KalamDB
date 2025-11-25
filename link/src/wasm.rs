@@ -392,14 +392,14 @@ impl KalamClient {
             .insert(subscription_id.clone(), callback);
 
         // Send subscribe message via WebSocket
-        // Server expects: {"type": "subscribe", "subscriptions": [{"id": "sub-1", "sql": "SELECT * FROM ...", "options": {}}]}
+        // Server expects: {"type": "subscribe", "subscription": {"id": "sub-1", "sql": "SELECT * FROM ...", "options": {}}}
         if let Some(ws) = self.ws.borrow().as_ref() {
             let subscribe_msg = ClientMessage::Subscribe {
-                subscriptions: vec![SubscriptionRequest {
+                subscription: SubscriptionRequest {
                     id: subscription_id.clone(),
                     sql: format!("SELECT * FROM {}", table_name),
                     options: SubscriptionOptions::default(),
-                }],
+                },
             };
             let payload = serde_json::to_string(&subscribe_msg)
                 .map_err(|e| JsValue::from_str(&format!("Serialization error: {}", e)))?;
