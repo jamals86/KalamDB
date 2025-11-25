@@ -978,14 +978,14 @@ impl Handler<AuthResult> for WebSocketSession {
                                 // Connection is now registered (connection_id already stored in self)
                                 info!(
                                     "WebSocket connection registered with LiveQueryManager: websocket_id={}, live_id={}",
-                                    unique_conn_id,
+                                    connection_id,
                                     conn_id
                                 );
                             }
                             Err(err) => {
                                 error!(
                                     "Failed to register live query connection {}: {}",
-                                    unique_conn_id, err
+                                    connection_id, err
                                 );
                                 ctx.close(None);
                                 ctx.stop();

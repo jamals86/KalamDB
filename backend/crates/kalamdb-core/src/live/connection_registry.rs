@@ -249,36 +249,41 @@ impl LiveQueryRegistry {
         let (user_id, table_id) = self.live_id_index.remove(live_id)?.1;
 
         // Remove from primary index
-        let key = (user_id, table_id);
-        let connection_id = self.subscriptions.get_mut(&key).and_then(|mut handles| {
-            if let Some(pos) = handles.iter().position(|h| &h.live_id == live_id) {
-                let handle = handles.remove(pos);
-                Some(handle.live_id.connection_id.clone())
-            } else {
-                None
+        let key = (user_id.clone(), table_id.clone());
+        let (connection_id, should_remove_key) = {
+            // Scope the mutable reference to avoid holding it across operations
+            let mut result = (None, false);
+            if let Some(mut handles) = self.subscriptions.get_mut(&key) {
+                if let Some(pos) = handles.iter().position(|h| &h.live_id == live_id) {
+                    let handle = handles.remove(pos);
+                    result.0 = Some(handle.live_id.connection_id.clone());
+                }
+                result.1 = handles.is_empty();
             }
-        });
+            result
+        };
 
-        // Remove entry if no subscriptions left
-        if let Some(handles) = self.subscriptions.get(&key) {
-            if handles.is_empty() {
-                self.subscriptions.remove(&key);
-            }
+        // Remove entry if no subscriptions left (outside the guard scope)
+        if should_remove_key {
+            self.subscriptions.remove(&key);
         }
 
         // Remove from connection subscriptions index
         if let Some(conn_id) = &connection_id {
-            if let Some(mut live_ids) = self.connection_subscriptions.get_mut(conn_id) {
-                if let Some(pos) = live_ids.iter().position(|id| id == live_id) {
-                    live_ids.remove(pos);
+            let should_remove_conn = {
+                // Scope the mutable reference
+                let mut should_remove = false;
+                if let Some(mut live_ids) = self.connection_subscriptions.get_mut(conn_id) {
+                    if let Some(pos) = live_ids.iter().position(|id| id == live_id) {
+                        live_ids.remove(pos);
+                    }
+                    should_remove = live_ids.is_empty();
                 }
-            }
-            // Clean up empty connection entries?
-            // Maybe not strictly necessary but good for memory.
-            if let Some(live_ids) = self.connection_subscriptions.get(conn_id) {
-                if live_ids.is_empty() {
-                    self.connection_subscriptions.remove(conn_id);
-                }
+                should_remove
+            };
+            // Clean up empty connection entries (outside the guard scope)
+            if should_remove_conn {
+                self.connection_subscriptions.remove(conn_id);
             }
         }
 
