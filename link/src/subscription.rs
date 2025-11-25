@@ -116,6 +116,93 @@ fn apply_ws_auth_headers(
     Ok(())
 }
 
+/// Send authentication message and wait for AuthSuccess response
+///
+/// The WebSocket protocol requires an explicit Authenticate message after connection.
+/// This function sends the authentication credentials and waits for the server's response.
+async fn send_auth_and_wait(ws_stream: &mut WebSocketStream, auth: &AuthProvider) -> Result<()> {
+    use crate::models::ClientMessage;
+
+    // Extract credentials from auth provider
+    let (username, password) = match auth {
+        AuthProvider::BasicAuth(username, password) => (username.clone(), password.clone()),
+        AuthProvider::JwtToken(_) => {
+            // JWT tokens should use a different auth flow (not yet implemented)
+            // For now, return error - JWT WebSocket auth needs server-side support
+            return Err(KalamLinkError::AuthenticationError(
+                "JWT authentication for WebSocket not yet implemented. Use Basic Auth.".to_string(),
+            ));
+        }
+        AuthProvider::None => {
+            return Err(KalamLinkError::AuthenticationError(
+                "Authentication required for WebSocket subscriptions".to_string(),
+            ));
+        }
+    };
+
+    // Send Authenticate message
+    let auth_message = ClientMessage::Authenticate { username, password };
+    let payload = serde_json::to_string(&auth_message).map_err(|e| {
+        KalamLinkError::WebSocketError(format!("Failed to serialize auth message: {}", e))
+    })?;
+
+    ws_stream
+        .send(Message::Text(payload.into()))
+        .await
+        .map_err(|e| {
+            KalamLinkError::WebSocketError(format!("Failed to send auth message: {}", e))
+        })?;
+
+    // Wait for AuthSuccess or AuthError response with timeout
+    let timeout = Duration::from_secs(5);
+    let response = tokio::time::timeout(timeout, ws_stream.next()).await;
+
+    match response {
+        Ok(Some(Ok(Message::Text(text)))) => {
+            // Parse as ServerMessage to check for auth response
+            match serde_json::from_str::<ServerMessage>(&text) {
+                Ok(ServerMessage::AuthSuccess { user_id: _, role: _ }) => {
+                    // Authentication successful
+                    Ok(())
+                }
+                Ok(ServerMessage::AuthError { message }) => {
+                    Err(KalamLinkError::AuthenticationError(format!(
+                        "WebSocket authentication failed: {}",
+                        message
+                    )))
+                }
+                Ok(other) => {
+                    // Unexpected message type
+                    Err(KalamLinkError::WebSocketError(format!(
+                        "Unexpected response during authentication: {:?}",
+                        other
+                    )))
+                }
+                Err(e) => Err(KalamLinkError::WebSocketError(format!(
+                    "Failed to parse auth response: {}",
+                    e
+                ))),
+            }
+        }
+        Ok(Some(Ok(Message::Close(_)))) => Err(KalamLinkError::WebSocketError(
+            "Connection closed during authentication".to_string(),
+        )),
+        Ok(Some(Ok(_))) => Err(KalamLinkError::WebSocketError(
+            "Unexpected message type during authentication".to_string(),
+        )),
+        Ok(Some(Err(e))) => Err(KalamLinkError::WebSocketError(format!(
+            "WebSocket error during authentication: {}",
+            e
+        ))),
+        Ok(None) => Err(KalamLinkError::WebSocketError(
+            "Connection closed before authentication completed".to_string(),
+        )),
+        Err(_) => Err(KalamLinkError::WebSocketError(
+            "Authentication timeout (5 seconds)".to_string(),
+        )),
+    }
+}
+
 async fn send_subscription_request(
     ws_stream: &mut WebSocketStream,
     subscription_id: &str,
@@ -312,6 +399,10 @@ impl SubscriptionManager {
         };
 
         let mut ws_stream = ws_stream;
+
+        // Send authentication message and wait for AuthSuccess
+        // (WebSocket protocol requires explicit Authenticate message even with HTTP headers)
+        send_auth_and_wait(&mut ws_stream, auth).await?;
         
         // Use the provided subscription ID (now required)
         let subscription_id = id;
