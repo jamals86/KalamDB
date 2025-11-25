@@ -1,4 +1,6 @@
 // Aggregator for smoke tests to ensure Cargo picks them up
+#[path = "smoke/smoke_test_00_parallel_query_burst.rs"]
+mod smoke_test_00_parallel_query_burst;
 #[path = "smoke/chat_ai_example_smoke.rs"]
 mod chat_ai_example_smoke;
 mod common;

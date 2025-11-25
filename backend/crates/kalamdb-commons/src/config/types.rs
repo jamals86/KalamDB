@@ -160,6 +160,22 @@ pub struct PerformanceSettings {
     pub keepalive_timeout: u64,
     #[serde(default = "default_max_connections")]
     pub max_connections: usize,
+    /// Backlog size for pending connections (default: 2048)
+    /// Increase for high-traffic servers
+    #[serde(default = "default_backlog")]
+    pub backlog: u32,
+    /// Max blocking threads per worker for CPU-intensive operations (default: 512 / workers)
+    /// Used for RocksDB and other synchronous operations
+    #[serde(default = "default_worker_max_blocking_threads")]
+    pub worker_max_blocking_threads: usize,
+    /// Client request timeout in seconds (default: 5)
+    /// Time allowed for client to send complete request headers
+    #[serde(default = "default_client_request_timeout")]
+    pub client_request_timeout: u64,
+    /// Client disconnect timeout in seconds (default: 2)
+    /// Time allowed for graceful connection shutdown
+    #[serde(default = "default_client_disconnect_timeout")]
+    pub client_disconnect_timeout: u64,
 }
 
 /// DataFusion settings
@@ -608,6 +624,10 @@ impl Default for ServerConfig {
                 request_timeout: 30,
                 keepalive_timeout: 75,
                 max_connections: 25000,
+                backlog: default_backlog(),
+                worker_max_blocking_threads: default_worker_max_blocking_threads(),
+                client_request_timeout: default_client_request_timeout(),
+                client_disconnect_timeout: default_client_disconnect_timeout(),
             },
             datafusion: DataFusionSettings::default(),
             flush: FlushSettings::default(),

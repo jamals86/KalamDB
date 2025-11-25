@@ -642,7 +642,7 @@ impl WebSocketSession {
         let user_clone: UserId = user_id.clone();
         let live_conn_clone = self.connection_id.clone();
 
-        ctx.wait(
+        ctx.spawn(
             fut::wrap_future(async move {
                 match manager
                     .register_subscription_with_initial_data(
@@ -813,7 +813,7 @@ impl WebSocketSession {
 
         let (sql, user_id, snapshot_end_seq, batch_size) = metadata;
 
-        ctx.wait(
+        ctx.spawn(
             fut::wrap_future(async move {
                 // Fetch next batch of data
                 let initial_data_options = Some(InitialDataOptions::batch(
@@ -898,7 +898,7 @@ impl WebSocketSession {
         let user_id = self.user_id.clone().unwrap();
         let user_id_for_limiter = user_id.clone();
 
-        ctx.wait(
+        ctx.spawn(
             fut::wrap_future(async move {
                 let live_id = kalamdb_commons::models::LiveQueryId::new(
                     user_id.clone(),
@@ -961,7 +961,7 @@ impl Handler<AuthResult> for WebSocketSession {
                 let user_for_manager = user_id.clone();
                 let notification_tx = self.notification_tx.clone();
 
-                ctx.wait(
+                ctx.spawn(
                     fut::wrap_future(async move {
                         let result = manager
                             .register_connection(

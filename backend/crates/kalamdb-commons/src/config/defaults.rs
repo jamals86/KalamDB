@@ -77,6 +77,22 @@ pub fn default_max_connections() -> usize {
     25000
 }
 
+pub fn default_backlog() -> u32 {
+    2048 // Pending connection queue size
+}
+
+pub fn default_worker_max_blocking_threads() -> usize {
+    512 // Max blocking threads per worker (actix default: 512 / parallelism)
+}
+
+pub fn default_client_request_timeout() -> u64 {
+    5 // 5 seconds to receive request headers
+}
+
+pub fn default_client_disconnect_timeout() -> u64 {
+    2 // 2 seconds for graceful disconnect
+}
+
 // DataFusion defaults
 pub fn default_datafusion_memory_limit() -> usize {
     1024 * 1024 * 1024 // 1GB

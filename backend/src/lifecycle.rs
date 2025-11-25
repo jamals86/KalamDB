@@ -249,13 +249,15 @@ pub async fn run(
 
     // Log server configuration for debugging
     info!(
-        "Server config: workers={}, max_connections={}, body_limit={}MB",
+        "Server config: workers={}, max_connections={}, backlog={}, blocking_threads={}, body_limit={}MB",
         if config.server.workers == 0 {
             num_cpus::get()
         } else {
             config.server.workers
         },
         config.performance.max_connections,
+        config.performance.backlog,
+        config.performance.worker_max_blocking_threads,
         config.rate_limit.request_body_limit_bytes / (1024 * 1024)
     );
 
@@ -301,20 +303,25 @@ pub async fn run(
             .app_data(web::Data::new(user_repo.clone()))
             .configure(routes::configure)
     })
+    // Set backlog BEFORE bind() - this affects the listen queue size
+    .backlog(config.performance.backlog)
     .bind(&bind_addr)?
     .workers(if config.server.workers == 0 {
         num_cpus::get()
     } else {
         config.server.workers
     })
+    // Per-worker max concurrent connections (default: 25000)
     .max_connections(config.performance.max_connections)
-    // Disable HTTP keep-alive to prevent CLOSE_WAIT accumulation
+    // Blocking thread pool size per worker for RocksDB and CPU-intensive ops
+    .worker_max_blocking_threads(config.performance.worker_max_blocking_threads)
+    // Disable HTTP keep-alive to prevent CLOSE_WAIT accumulation in tests
     // Each request gets a fresh connection that closes immediately after response
     .keep_alive(std::time::Duration::ZERO)
-    // Client must send request within 5 seconds of connecting
-    .client_request_timeout(std::time::Duration::from_secs(5))
-    // Allow 2 seconds for client to disconnect gracefully
-    .client_disconnect_timeout(std::time::Duration::from_secs(2))
+    // Client must send request headers within this time
+    .client_request_timeout(std::time::Duration::from_secs(config.performance.client_request_timeout))
+    // Allow time for graceful connection shutdown
+    .client_disconnect_timeout(std::time::Duration::from_secs(config.performance.client_disconnect_timeout))
     .run();
 
     let server_handle = server.handle();

@@ -13,6 +13,7 @@ use kalamdb_commons::system::LiveQuery as SystemLiveQuery;
 use kalamdb_system::LiveQueriesTableProvider;
 use std::sync::Arc;
 use std::time::{SystemTime, UNIX_EPOCH};
+use tokio::task::spawn_blocking;
 
 /// Service for managing subscriptions
 ///
@@ -70,54 +71,66 @@ impl SubscriptionService {
             KalamDbError::NotFound(format!("Connection not found: {}", connection_id))
         })?;
 
-        // Generate LiveQueryId
-        let live_id = LiveQueryId::new(
-            user_id.clone(),
-            connection_id.clone(),
-            subscription.id.clone(),
-        );
+        let registry = Arc::clone(&self.registry);
+        let provider = Arc::clone(&self.live_queries_provider);
+        let node_id = self.node_id.clone();
+        let conn_for_record = connection_id.clone();
+        let table_for_record = table_id.clone();
+        let user_for_record = user_id.clone();
 
-        let timestamp = Self::current_timestamp_ms();
+        let live_id = spawn_blocking(move || {
+            // Generate LiveQueryId
+            let live_id = LiveQueryId::new(
+                user_for_record.clone(),
+                conn_for_record.clone(),
+                subscription.id.clone(),
+            );
 
-        // Convert SubscriptionOptions to LiveQueryOptions
-        let options = LiveQueryOptions {
-            last_rows: subscription.options.last_rows,
-        };
+            let timestamp = Self::current_timestamp_ms();
 
-        // Serialize options to JSON
-        let options_json = serde_json::to_string(&options).map_err(|e| {
-            KalamDbError::SerializationError(format!("Failed to serialize options: {}", e))
-        })?;
+            // Convert SubscriptionOptions to LiveQueryOptions
+            let options = LiveQueryOptions {
+                last_rows: subscription.options.last_rows,
+            };
 
-        // Create record for system.live_queries
-        let live_query_record = SystemLiveQuery {
-            live_id: live_id.clone(),
-            connection_id: connection_id.to_string(),
-            namespace_id: table_id.namespace_id().clone(),
-            table_name: table_id.table_name().clone(),
-            user_id: user_id.clone(),
-            query: subscription.sql.clone(),
-            options: Some(options_json),
-            created_at: timestamp,
-            last_update: timestamp,
-            changes: 0,
-            node: self.node_id.as_str().to_string(),
-            subscription_id: subscription.id.clone(),
-            status: kalamdb_commons::types::LiveQueryStatus::Active,
-        };
+            // Serialize options to JSON
+            let options_json = serde_json::to_string(&options).map_err(|e| {
+                KalamDbError::SerializationError(format!("Failed to serialize options: {}", e))
+            })?;
 
-        // Insert into system.live_queries
-        self.live_queries_provider
-            .insert_live_query(live_query_record)?;
+            // Create record for system.live_queries
+            let live_query_record = SystemLiveQuery {
+                live_id: live_id.clone(),
+                connection_id: conn_for_record.to_string(),
+                namespace_id: table_for_record.namespace_id().clone(),
+                table_name: table_for_record.table_name().clone(),
+                user_id: user_for_record.clone(),
+                query: subscription.sql.clone(),
+                options: Some(options_json),
+                created_at: timestamp,
+                last_update: timestamp,
+                changes: 0,
+                node: node_id.as_str().to_string(),
+                subscription_id: subscription.id.clone(),
+                status: kalamdb_commons::types::LiveQueryStatus::Active,
+            };
 
-        // Register subscription in in-memory registry (DashMap - lock-free)
-        self.registry.register_subscription(
-            user_id.clone(),
-            table_id.clone(),
-            live_id.clone(),
-            connection_id.clone(),
-            options,
-        )?;
+            // Insert into system.live_queries (blocking)
+            provider.insert_live_query(live_query_record)?;
+
+            // Register subscription in in-memory registry (DashMap - lock-free)
+            registry.register_subscription(
+                user_for_record,
+                table_for_record,
+                live_id.clone(),
+                conn_for_record,
+                options,
+            )?;
+
+            Ok::<_, KalamDbError>(live_id)
+        })
+        .await
+        .map_err(|e| KalamDbError::Other(format!("Join error registering subscription: {}", e)))??;
 
         Ok(live_id)
     }
@@ -140,8 +153,14 @@ impl SubscriptionService {
             )));
         }
 
-        // Delete from system.live_queries
-        self.live_queries_provider.delete_live_query(live_id)?;
+        let provider = Arc::clone(&self.live_queries_provider);
+        let live_id_for_delete = live_id.clone();
+        spawn_blocking(move || {
+            provider.delete_live_query(&live_id_for_delete)?;
+            Ok::<_, KalamDbError>(())
+        })
+        .await
+        .map_err(|e| KalamDbError::Other(format!("Join error deleting live query: {}", e)))??;
 
         Ok(())
     }
@@ -149,7 +168,7 @@ impl SubscriptionService {
     /// Unregister a WebSocket connection
     pub async fn unregister_connection(
         &self,
-        _user_id: &UserId,
+        _user_id: &UserId, //TODO: Remove this completely
         connection_id: &ConnectionId,
     ) -> Result<Vec<LiveQueryId>, KalamDbError> {
         // Remove from in-memory registry and get all live_ids (DashMap - lock-free)
@@ -163,9 +182,14 @@ impl SubscriptionService {
             }
         }
 
-        // Delete from system.live_queries
-        self.live_queries_provider
-            .delete_by_connection_id(&connection_id.to_string())?;
+        let provider = Arc::clone(&self.live_queries_provider);
+        let connection_key = connection_id.to_string();
+        spawn_blocking(move || {
+            provider.delete_by_connection_id(&connection_key)?;
+            Ok::<_, KalamDbError>(())
+        })
+        .await
+        .map_err(|e| KalamDbError::Other(format!("Join error deleting live queries by connection: {}", e)))??;
 
         Ok(live_ids)
     }

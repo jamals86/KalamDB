@@ -130,9 +130,28 @@ request_timeout = 30
 # Keep-alive timeout in seconds (default: 75s)
 keepalive_timeout = 75
 
-# Maximum concurrent connections (default: 25000)
+# Maximum concurrent connections per worker (default: 25000)
 # Includes both REST API and WebSocket connections
 max_connections = 25000
+
+# Backlog size for pending connections (default: 2048)
+# Increase for high-traffic servers to prevent connection rejections
+# This is the OS-level listen queue size
+backlog = 2048
+
+# Maximum blocking threads per worker (default: 512)
+# Used for CPU-intensive operations like RocksDB, bcrypt, etc.
+# Higher values allow more concurrent blocking operations but use more memory
+worker_max_blocking_threads = 512
+
+# Client request timeout in seconds (default: 5)
+# Time allowed for client to send complete request headers
+# Prevents slow-loris attacks
+client_request_timeout = 5
+
+# Client disconnect timeout in seconds (default: 2)
+# Time allowed for graceful connection shutdown
+client_disconnect_timeout = 2
 
 [rate_limit]
 # Maximum SQL queries per second per user (default: 100)

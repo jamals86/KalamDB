@@ -12,6 +12,7 @@ use kalamdb_system::LiveQueriesTableProvider;
 use std::collections::{BTreeMap, HashSet};
 use std::sync::Arc;
 use std::time::{SystemTime, UNIX_EPOCH};
+use tokio::task::spawn_blocking;
 
 /// Service for notifying subscribers of changes
 ///
@@ -48,8 +49,16 @@ impl NotificationService {
     /// Increment the changes counter for a live query
     pub async fn increment_changes(&self, live_id: &LiveQueryId) -> Result<(), KalamDbError> {
         let timestamp = Self::current_timestamp_ms();
-        self.live_queries_provider
-            .increment_changes(&live_id.to_string(), timestamp)?;
+        let provider = Arc::clone(&self.live_queries_provider);
+        let live_id_string = live_id.to_string();
+
+        spawn_blocking(move || {
+            provider.increment_changes(&live_id_string, timestamp)?;
+            Ok::<_, KalamDbError>(())
+        })
+        .await
+        .map_err(|e| KalamDbError::Other(format!("Join error incrementing live query changes: {}", e)))??;
+
         Ok(())
     }
 
