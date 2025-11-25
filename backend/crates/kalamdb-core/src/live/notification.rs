@@ -3,26 +3,30 @@
 //! Handles dispatching change notifications to subscribed clients,
 //! including filtering based on WHERE clauses.
 
-use super::connection_registry::{LiveId, LiveQueryRegistry};
+use super::connection_registry::LiveQueryRegistry;
 use super::filter::FilterCache;
 use super::types::{ChangeNotification, ChangeType};
 use crate::error::KalamDbError;
-use kalamdb_commons::models::{Row, TableId, UserId};
+use kalamdb_commons::models::{LiveQueryId, Row, TableId, UserId};
 use kalamdb_system::LiveQueriesTableProvider;
 use std::collections::{BTreeMap, HashSet};
 use std::sync::Arc;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 /// Service for notifying subscribers of changes
+///
+/// Uses Arc<LiveQueryRegistry> directly since LiveQueryRegistry internally
+/// uses DashMap for lock-free concurrent access - no RwLock wrapper needed.
 pub struct NotificationService {
-    registry: Arc<tokio::sync::RwLock<LiveQueryRegistry>>,
+    /// Registry uses DashMap internally for lock-free access
+    registry: Arc<LiveQueryRegistry>,
     filter_cache: Arc<tokio::sync::RwLock<FilterCache>>,
     live_queries_provider: Arc<LiveQueriesTableProvider>,
 }
 
 impl NotificationService {
     pub fn new(
-        registry: Arc<tokio::sync::RwLock<LiveQueryRegistry>>,
+        registry: Arc<LiveQueryRegistry>,
         filter_cache: Arc<tokio::sync::RwLock<FilterCache>>,
         live_queries_provider: Arc<LiveQueriesTableProvider>,
     ) -> Self {
@@ -42,7 +46,7 @@ impl NotificationService {
     }
 
     /// Increment the changes counter for a live query
-    pub async fn increment_changes(&self, live_id: &LiveId) -> Result<(), KalamDbError> {
+    pub async fn increment_changes(&self, live_id: &LiveQueryId) -> Result<(), KalamDbError> {
         let timestamp = Self::current_timestamp_ms();
         self.live_queries_provider
             .increment_changes(&live_id.to_string(), timestamp)?;
@@ -57,14 +61,9 @@ impl NotificationService {
         notification: ChangeNotification,
     ) {
         // Check if there are any subscriptions for this user_id and table_id
-        let has_subscriptions = {
-            if let Ok(registry) = self.registry.try_read() {
-                let subscriptions = registry.get_subscriptions_for_table(&user_id, &table_id);
-                !subscriptions.is_empty()
-            } else {
-                true // Lock held, assume subscriptions exist
-            }
-        };
+        // DashMap provides lock-free access
+        let subscriptions = self.registry.get_subscriptions_for_table(&user_id, &table_id);
+        let has_subscriptions = !subscriptions.is_empty();
 
         if has_subscriptions {
             let service = Arc::clone(self);
@@ -108,14 +107,14 @@ impl NotificationService {
         let filter_cache = self.filter_cache.read().await;
 
         // Gather subscriptions for the specific user AND admin/system observers
-        let live_ids_to_notify: Vec<LiveId> = {
-            let registry = self.registry.read().await;
+        // DashMap provides lock-free access
+        let live_ids_to_notify: Vec<LiveQueryId> = {
             let mut all_handles = Vec::new();
             // Exact user subscriptions
-            all_handles.extend(registry.get_subscriptions_for_table(user_id, table_id));
+            all_handles.extend(self.registry.get_subscriptions_for_table(user_id, table_id));
             // Admin-like observers (observe all users)
             let root = kalamdb_commons::models::UserId::root();
-            all_handles.extend(registry.get_subscriptions_for_table(&root, table_id));
+            all_handles.extend(self.registry.get_subscriptions_for_table(&root, table_id));
 
             let mut ids = Vec::new();
             let mut seen = HashSet::new();
@@ -221,10 +220,10 @@ impl NotificationService {
     /// Get the notification sender for a specific live query
     async fn get_notification_sender(
         &self,
-        live_id: &LiveId,
+        live_id: &LiveQueryId,
     ) -> Option<super::connection_registry::NotificationSender> {
-        let registry = self.registry.read().await;
-        registry
+        // DashMap provides lock-free access
+        self.registry
             .get_notification_sender(&live_id.connection_id)
             .map(|arc| (*arc).clone())
     }

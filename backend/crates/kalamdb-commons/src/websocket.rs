@@ -190,11 +190,11 @@ pub enum ClientMessage {
 
     /// Subscribe to live query updates
     ///
-    /// Client sends this to register one or more subscriptions.
+    /// Client sends this to register a single subscription.
     /// Server responds with SubscriptionAck followed by InitialDataBatch.
     Subscribe {
-        /// List of subscriptions to register
-        subscriptions: Vec<SubscriptionRequest>,
+        /// Subscription to register
+        subscription: SubscriptionRequest,
     },
 
     /// Request next batch of initial data
@@ -227,6 +227,24 @@ pub struct SubscriptionRequest {
     /// Optional subscription options
     #[serde(default)]
     pub options: SubscriptionOptions,
+
+    // --- Server-side parsed fields (not sent by client) ---
+    
+    /// Parsed table ID (namespace + table name)
+    /// Populated by server after SQL parsing and validation
+    #[serde(skip)]
+    pub table_id: Option<crate::models::TableId>,
+    
+    /// Extracted WHERE clause from SQL query
+    /// Populated by server after SQL parsing
+    #[serde(skip)]
+    pub where_clause: Option<String>,
+    
+    /// Extracted column projections from SELECT clause
+    /// None means SELECT * (all columns)
+    /// Populated by server after SQL parsing
+    #[serde(skip)]
+    pub projections: Option<Vec<String>>,
 }
 
 /// Options for live query subscriptions
@@ -429,9 +447,9 @@ impl WebSocketMessage {
 }
 
 impl ClientMessage {
-    /// Create a subscribe message
-    pub fn subscribe(subscriptions: Vec<SubscriptionRequest>) -> Self {
-        Self::Subscribe { subscriptions }
+    /// Create a subscribe message for a single subscription
+    pub fn subscribe(subscription: SubscriptionRequest) -> Self {
+        Self::Subscribe { subscription }
     }
 
     /// Create a next batch request message
@@ -568,11 +586,14 @@ mod tests {
     fn test_client_message_serialization() {
         use crate::websocket::{ClientMessage, SubscriptionOptions, SubscriptionRequest};
 
-        let msg = ClientMessage::subscribe(vec![SubscriptionRequest {
+        let msg = ClientMessage::subscribe(SubscriptionRequest {
             id: "sub-1".to_string(),
             sql: "SELECT * FROM messages".to_string(),
             options: SubscriptionOptions::default(),
-        }]);
+            table_id: None, // Server-side only
+            where_clause: None,
+            projections: None,
+        });
 
         let json = serde_json::to_string(&msg).unwrap();
         assert!(json.contains("\"type\":\"subscribe\""));

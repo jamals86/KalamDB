@@ -72,7 +72,7 @@ pub async fn websocket_handler_v1(
     user_repo: web::Data<Arc<dyn UserRepository>>,
 ) -> Result<HttpResponse, Error> {
     // Generate unique connection ID
-    let connection_id = Uuid::new_v4().to_string();
+    let connection_id = uuid::Uuid::new_v4().simple().to_string();
 
     // Extract client IP with security checks against spoofing
     let client_ip = kalamdb_auth::extract_client_ip_secure(&req);

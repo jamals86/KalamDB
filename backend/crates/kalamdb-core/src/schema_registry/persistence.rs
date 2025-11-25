@@ -20,6 +20,15 @@ impl SchemaPersistence {
             return Ok(Some(Arc::clone(&cached.table)));
         }
 
+        // Check if it's a system table
+        if table_id.namespace_id().as_str() == "system" {
+            use kalamdb_system::system_table_definitions::all_system_table_definitions;
+            let all_defs = all_system_table_definitions();
+            if let Some((_, def)) = all_defs.into_iter().find(|(id, _)| id == table_id) {
+                return Ok(Some(Arc::new(def)));
+            }
+        }
+
         // Slow path: query persistence layer via AppContext
         let app_ctx = crate::app_context::AppContext::get();
         let tables_provider = app_ctx.system_tables().tables();

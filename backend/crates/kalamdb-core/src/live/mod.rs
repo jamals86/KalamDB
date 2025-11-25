@@ -16,7 +16,7 @@ pub mod subscription;
 pub mod types;
 
 pub use connection_registry::{
-    ConnectionId, LiveId, LiveQueryOptions, LiveQueryRegistry, NodeId, SubscriptionHandle, UserId,
+    ConnectionId, LiveQueryId, LiveQueryOptions, LiveQueryRegistry, NodeId, SubscriptionHandle, UserId,
 };
 pub use filter::{FilterCache, FilterPredicate};
 pub use initial_data::{InitialDataFetcher, InitialDataOptions, InitialDataResult};

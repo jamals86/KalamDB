@@ -26,9 +26,9 @@
 
 **Purpose**: Align documentation/configuration before touching runtime code.
 
-- [ ] T001 Document SQL-only admin controls (kill + live query inspection) in `specs/014-live-queries-websocket/plan.md` so downstream tasks avoid adding REST endpoints.
-- [ ] T002 Update developer quickstart with SQL kill/query workflows and SeqId resume notes in `specs/014-live-queries-websocket/quickstart.md`.
-- [ ] T003 \[P] Record Kalam-link shared lifecycle ownership (connect/disconnect/subscribe/unsubscribe/resume/list) in `specs/014-live-queries-websocket/research.md` to guide SDK work.
+- [x] T001 Document SQL-only admin controls (kill + live query inspection) in `specs/014-live-queries-websocket/plan.md` so downstream tasks avoid adding REST endpoints.
+- [x] T002 Update developer quickstart with SQL kill/query workflows and SeqId resume notes in `specs/014-live-queries-websocket/quickstart.md`.
+- [x] T003 \[P] Record Kalam-link shared lifecycle ownership (connect/disconnect/subscribe/unsubscribe/resume/list) in `specs/014-live-queries-websocket/research.md` to guide SDK work.
 
 ---
 
@@ -36,14 +36,14 @@
 
 **Purpose**: Core data structures shared by every user story.
 
-- [ ] T004 Update system table schema/types to include `connection_id`, `subscription_id`, and `last_seq_id` in `backend/crates/kalamdb-commons/src/system_tables.rs`.
-- [ ] T005 \[P] Build an O(1) connection handler index keyed by `(user_id, connection_id)` inside `backend/crates/kalamdb-core/src/live/connection_registry.rs` so lookups avoid scanning users.
-- [ ] T006 \[P] Implement immediate RocksDB deletion helpers for unsubscribe and socket-close flows in `backend/crates/kalamdb-core/src/live/connection_registry.rs`.
-- [ ] T007 \[P] Ensure the `system.live_queries` table provider exposes the new fields and can refresh on every mutation in `backend/crates/kalamdb-core/src/tables/system/live_queries.rs`.
-- [ ] T008 Define the Kalam-link shared lifecycle interface (connect/disconnect/subscribe/unsubscribe/resume/list) and exports in `link/src/client.rs` + `link/src/subscription.rs`.
-- [ ] T009 Add shared TypeScript types/bindings aligned with the Kalam-link interface in `link/sdks/typescript/src/live/types.ts`.
-- [ ] T010 \[P] Propagate auth-expiry and token-revocation events into the live manager so affected WebSocket connections close and run the shared teardown path within 5 seconds in `backend/crates/kalamdb-core/src/live/manager.rs` and supporting auth middleware.
-- [ ] T011 Add a backend regression test that simulates auth expiry to ensure the WebSocket closes and `system.live_queries` rows disappear within the SLA in `backend/tests/test_live_queries_auth_expiry.rs`.
+- [x] T004 Update system table schema/types to include `connection_id`, `subscription_id`, and `last_seq_id` in `backend/crates/kalamdb-commons/src/system_tables.rs`.
+- [x] T005 \[P] Build an O(1) connection handler index keyed by `(user_id, connection_id)` inside `backend/crates/kalamdb-core/src/live/connection_registry.rs` so lookups avoid scanning users.
+- [x] T006 \[P] Implement immediate RocksDB deletion helpers for unsubscribe and socket-close flows in `backend/crates/kalamdb-core/src/live/connection_registry.rs`.
+- [x] T007 \[P] Ensure the `system.live_queries` table provider exposes the new fields and can refresh on every mutation in `backend/crates/kalamdb-core/src/tables/system/live_queries.rs`.
+- [x] T008 Define the Kalam-link shared lifecycle interface (connect/disconnect/subscribe/unsubscribe/resume/list) and exports in `link/src/client.rs` + `link/src/subscription.rs`.
+- [x] T009 Add shared TypeScript types/bindings aligned with the Kalam-link interface in `link/sdks/typescript/src/live/types.ts`.
+- [x] T010 \[P] Propagate auth-expiry and token-revocation events into the live manager so affected WebSocket connections close and run the shared teardown path within 5 seconds in `backend/crates/kalamdb-core/src/live/manager.rs` and supporting auth middleware.
+- [x] T011 Add a backend regression test that simulates auth expiry to ensure the WebSocket closes and `system.live_queries` rows disappear within the SLA in `backend/tests/test_live_queries_auth_expiry.rs`.
 
 **Checkpoint**: Once Phase 2 completes, user stories can proceed independently.
 
@@ -57,12 +57,45 @@
 
 ### Implementation & Tests
 
-- [ ] T012 \[P] \[US1] Implement per-connection subscription map and routing (leveraging the O(1) index) in `backend/crates/kalamdb-core/src/live/subscription_manager.rs`.
-- [ ] T013 \[P] \[US1] Update WebSocket command handling to accept multiple `subscribe` messages and targeted `unsubscribe` in `backend/crates/kalamdb-api/src/websocket/live_queries.rs`.
-- [ ] T014 \[US1] Persist unique `(connection_id, subscription_id)` rows and trigger immediate RocksDB removal on unsubscribe in `backend/crates/kalamdb-core/src/live/connection_registry.rs`.
-- [ ] T015 \[US1] Add regression test covering multi-subscribe/unsubscribe behavior in `backend/crates/kalamdb-core/tests/live_multi_subscription.rs`.
+- [x] T012 \[P] \[US1] Implement per-connection subscription map and routing (leveraging the O(1) index) in `backend/crates/kalamdb-core/src/live/subscription_manager.rs`.
+- [x] T013 \[P] \[US1] Update WebSocket command handling to accept multiple `subscribe` messages and targeted `unsubscribe` in `backend/crates/kalamdb-api/src/websocket/live_queries.rs`.
+- [x] T014 \[US1] Persist unique `(connection_id, subscription_id)` rows and trigger immediate RocksDB removal on unsubscribe in `backend/crates/kalamdb-core/src/live/connection_registry.rs`.
+- [x] T015 \[US1] Add regression test covering multi-subscribe/unsubscribe behavior in `backend/crates/kalamdb-core/tests/live_multi_subscription.rs`.
 
 **Checkpoint**: US1 delivers the MVP (multi-subscription WebSocket + unsubscribe).
+
+---
+
+## Phase 3.5: Architecture Refactoring (Post-US1, Pre-US2)
+
+**Goal**: Clean up data model and optimize performance before implementing observability features.
+
+**Rationale**: These refactors simplify the codebase and fix architectural issues discovered during US1 implementation.
+
+### Data Model Cleanup
+
+- [x] R001 \[P] Remove redundant `query_id` field from `LiveQuery` struct and system table schema in `backend/crates/kalamdb-commons/src/system/mod.rs` and `backend/crates/kalamdb-system/src/system_table_definitions/live_queries.rs` (use `subscription_id` consistently). **COMPLETED**: LiveQueryId now uses subscription_id consistently.
+- [x] R002 Update `LiveId` composite key to use `subscription_id` instead of `query_id` in `backend/crates/kalamdb-commons/src/models/` and update all parsing/formatting logic. **COMPLETED**: LiveQueryId format is now {user_id}-{connection_id}-{subscription_id}, implemented in kalamdb-commons/src/models/ids/live_query_id.rs.
+- [x] R003 \[P] Convert `status` field from String to `LiveQueryStatus` enum (`Active`, `Paused`, `Terminated`) in `backend/crates/kalamdb-commons/src/models/mod.rs` and update all usage sites. **COMPLETED**: LiveQueryStatus enum implemented with Active/Paused/Terminated variants.
+- [x] R004 Remove `last_seq_id` field from `LiveQuery` persistence (keep in-memory only in `WebSocketSession` actor) in `backend/crates/kalamdb-commons/src/system/mod.rs` and `backend/crates/kalamdb-system/src/system_table_definitions/live_queries.rs`. **COMPLETED**: Removed from LiveQuery struct, system table schema (now 12 columns), and all providers. WebSocketSession tracks it in subscription_metadata map.
+
+### Runtime Status Management
+
+- [x] R005 Implement runtime status fetching: check in-memory `DashMap` first, fallback to RocksDB, with node_id filtering for distributed scenarios in `backend/crates/kalamdb-core/src/live/connection_registry.rs` and `backend/crates/kalamdb-system/src/providers/live_queries/live_queries_provider.rs`. **COMPLETED**: LiveQueryRegistry implements get_user_id() for connection-to-user mapping, uses DashMap for O(1) lookups.
+
+### Performance Optimizations
+
+- [x] R006 \[P] Optimize `handle_unsubscribe` to store `LiveId` directly in `subscription_metadata` map instead of re-parsing table name from SQL in `backend/crates/kalamdb-api/src/actors/ws_session.rs`. **COMPLETED**: Unsubscribe now constructs LiveQueryId directly from user_id, connection_id, and subscription_id without reparsing SQL.
+
+### Client Contract Enforcement
+
+- [x] R007 \[P] Make `SubscriptionConfig.id` required (non-optional) in `link/src/models.rs`, `link/sdks/typescript/src/live/types.ts`, and add backend validation in `backend/crates/kalamdb-api/src/actors/ws_session.rs`. **COMPLETED**: TypeScript interface now requires id field, backend validates non-empty subscription ID with clear error message.
+
+### Architecture Investigation
+
+- [ ] R008 Investigate moving subscription state ownership entirely into `WebSocketSession` actor (make actor the single source of truth for connection state, with `LiveQueryManager` as passive service) in `backend/crates/kalamdb-api/src/actors/ws_session.rs` and `backend/crates/kalamdb-core/src/live/manager/core.rs`.
+
+**Checkpoint**: After Phase 3.5, data model is clean and performant. Ready for US2 observability features.
 
 ---
 
@@ -124,13 +157,16 @@
 
 1. **Phase 1 → Phase 2**: Setup must finish before foundational data structures change.
 2. **Phase 2 → User Stories**: Foundational library changes block every user story.
-3. **User Story Order**: Prioritize US1 (MVP), then US2 → US3 → US4. Stories can run in parallel after Phase 2 if coordination exists, but each stays independently testable.
-4. **Polish** depends on completion of whichever user stories are in scope for the release.
+3. **Phase 3 (US1) → Phase 3.5 (Refactoring)**: Complete US1 MVP before refactoring data model.
+4. **Phase 3.5 → Phase 4 (US2)**: Refactoring must complete before implementing observability.
+5. **User Story Order**: Prioritize US1 (MVP), then Refactoring, then US2 → US3 → US4. Stories can run in parallel after Phase 2 if coordination exists, but each stays independently testable.
+6. **Polish** depends on completion of whichever user stories are in scope for the release.
 
 ### Story Dependency Graph
 
 - US1 has no story-level dependencies once Phase 2 is done.
-- US2 depends on US1 data structures but not on US1 features being fully shipped (shared registry code already exists post Phase 2).
+- **Phase 3.5 (Refactoring) depends on US1 completion** to understand actual implementation patterns.
+- US2 depends on US1 data structures and **Phase 3.5 refactoring** (clean data model required for metadata).
 - US3 depends on US1/US2 cleanup semantics so kill operations can remove rows cleanly.
 - US4 depends on US1 behavior (multi-subscribe support) and benefits from US2 metadata for debugging.
 
@@ -138,6 +174,7 @@
 
 - After Phase 2, T012 (backend multi-subscribe) and T022 (shared Kalam-link lifecycle manager) can run concurrently because they live in different repo paths.
 - Within US1, T012 and T013 are marked \[P] and can proceed in parallel since one touches core manager logic and the other touches API wiring.
+- **Within Phase 3.5, R001, R003, R006, and R007 are marked \[P]** and can proceed in parallel (different files/concerns).
 - Test tasks (T015, T018, T021, T025) can run while corresponding implementation tasks are underway, provided mocks/stubs exist.
 
 ---
@@ -148,21 +185,31 @@
 
 Deliver Phase 1–3 (through User Story 1). This enables multiplexed subscriptions with independent unsubscribe on a single WebSocket, meeting the minimum user promise.
 
+### Refactoring Phase
+
+After MVP delivery, complete Phase 3.5 (Architecture Refactoring) to clean up technical debt before adding more features. This ensures:
+- Clean data model for observability (US2)
+- Type-safe status handling
+- Performance optimizations
+- Clear client contracts
+
 ### Incremental Delivery
 
 1. Ship MVP (US1) once tests pass.
-2. Add US2 to expose observability data.
-3. Layer in US3 to let admins kill rogue connections.
-4. Finish with US4 to provide a production-ready SDK experience.
-5. Reserve Phase 7 polish tasks for the stabilization sprint before release.
+2. **Complete Phase 3.5 refactoring to clean up architecture.**
+3. Add US2 to expose observability data.
+4. Layer in US3 to let admins kill rogue connections.
+5. Finish with US4 to provide a production-ready SDK experience.
+6. Reserve Phase 7 polish tasks for the stabilization sprint before release.
 
 ---
 
 ## Task Counts
 
-- **Total tasks**: 29
+- **Total tasks**: 37 (29 original + 8 refactoring)
 - **By user story**:
   - US1: 4 tasks (T012–T015)
+  - **Refactoring: 8 tasks (R001–R008)**
   - US2: 3 tasks (T016–T018)
   - US3: 3 tasks (T019–T021)
   - US4: 4 tasks (T022–T025)

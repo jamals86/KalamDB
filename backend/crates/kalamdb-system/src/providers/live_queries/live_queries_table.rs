@@ -21,16 +21,20 @@ impl LiveQueriesTableSchema {
     /// Schema includes (in ordinal_position order):
     /// - live_id: Utf8 (PK) - Format: {user_id}-{unique_conn_id}-{table_name}-{query_id}
     /// - connection_id: Utf8
+    /// - subscription_id: Utf8
     /// - namespace_id: Utf8
     /// - table_name: Utf8
     /// - query_id: Utf8
     /// - user_id: Utf8
     /// - query: Utf8
     /// - options: Utf8 (nullable) - JSON
+    /// - status: Utf8
     /// - created_at: TimestampMillisecond
     /// - last_update: TimestampMillisecond
     /// - changes: Int64
     /// - node: Utf8
+    ///
+    /// Note: last_seq_id is tracked in-memory only (WebSocketSession), not persisted
     pub fn schema() -> SchemaRef {
         LIVE_QUERIES_SCHEMA
             .get_or_init(|| {

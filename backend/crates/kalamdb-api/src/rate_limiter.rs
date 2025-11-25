@@ -4,6 +4,7 @@
 //! and ensure fair resource allocation across users and connections.
 
 use kalamdb_commons::models::UserId;
+use kalamdb_core::live::ConnectionId;
 use std::collections::HashMap;
 use std::sync::{Arc, RwLock};
 use std::time::{Duration, Instant};
@@ -107,7 +108,7 @@ pub struct RateLimiter {
     config: RateLimitConfig,
     user_query_buckets: Arc<RwLock<HashMap<String, TokenBucket>>>,
     user_subscription_counts: Arc<RwLock<HashMap<String, u32>>>,
-    connection_message_buckets: Arc<RwLock<HashMap<String, TokenBucket>>>,
+    connection_message_buckets: Arc<RwLock<HashMap<ConnectionId, TokenBucket>>>,
 }
 
 impl RateLimiter {
@@ -173,10 +174,10 @@ impl RateLimiter {
 
     /// Check if a connection can send a message
     /// Returns true if allowed, false if rate limit exceeded
-    pub fn check_message_rate(&self, connection_id: &str) -> bool {
+    pub fn check_message_rate(&self, connection_id: &ConnectionId) -> bool {
         let mut buckets = self.connection_message_buckets.write().unwrap();
 
-        let bucket = buckets.entry(connection_id.to_string()).or_insert_with(|| {
+        let bucket = buckets.entry(connection_id.clone()).or_insert_with(|| {
             TokenBucket::new(
                 self.config.max_messages_per_connection,
                 self.config.max_messages_per_connection,
@@ -188,7 +189,7 @@ impl RateLimiter {
     }
 
     /// Clean up rate limit state for a connection
-    pub fn cleanup_connection(&self, connection_id: &str) {
+    pub fn cleanup_connection(&self, connection_id: &ConnectionId) {
         let mut buckets = self.connection_message_buckets.write().unwrap();
         buckets.remove(connection_id);
     }
@@ -304,32 +305,31 @@ mod tests {
             ..Default::default()
         };
         let limiter = RateLimiter::with_config(config);
-        let conn_id = "conn-123";
+        let conn_id = ConnectionId::new("conn-123");
 
         // Should allow first 5 messages
         for _ in 0..5 {
-            assert!(limiter.check_message_rate(conn_id));
+            assert!(limiter.check_message_rate(&conn_id));
         }
 
         // 6th message should be denied
-        assert!(!limiter.check_message_rate(conn_id));
+        assert!(!limiter.check_message_rate(&conn_id));
     }
 
     #[test]
     fn test_connection_cleanup() {
         let limiter = RateLimiter::new();
-        let conn_id = "conn-123";
+        let conn_id = ConnectionId::new("conn-123");
 
         // Send messages
         for _ in 0..5 {
-            limiter.check_message_rate(conn_id);
+            limiter.check_message_rate(&conn_id);
         }
 
         // Cleanup
-        limiter.cleanup_connection(conn_id);
-
+        limiter.cleanup_connection(&conn_id);
         // Should be able to send again (new bucket created)
-        assert!(limiter.check_message_rate(conn_id));
+        assert!(limiter.check_message_rate(&conn_id));
     }
 
     #[test]

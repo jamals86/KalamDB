@@ -6,3 +6,5 @@
 4. Use `unsubscribe` to cancel individual subscriptions without closing the connection.
 5. Optionally call `listSubscriptions` to inspect current active subscriptions.
 6. On transient network issues, the SDK automatically reconnects, re-subscribes, and resumes from the last delivered SeqId per subscription.
+7. Administrators can inspect active subscriptions via `SELECT * FROM system.live_queries`.
+8. Administrators can terminate a connection via `KILL CONNECTION '<connection_id>'`.

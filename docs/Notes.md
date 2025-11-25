@@ -275,6 +275,11 @@ instead of: 1 failed: Invalid operation: No handler registered for statement typ
   "took": 1.2685000000000002
 }
 
+182) Add to the README.md an example for managing notifications in a mobile app
+183) in WebSocketSession limit the size of the request coming from the client to avoid dos attacks
+
+
+
 Here’s the updated 5-line spec with embedding storage inside Parquet and managed HNSW indexing (with delete handling):
 	1.	Parquet Storage: All embeddings are stored as regular columns in the Parquet file alongside other table columns to keep data unified and versioned per batch.
 	2.	Temp Indexing: On each row insert/update, serialize embeddings into a temporary .hnsw file under /tmp/kalamdb/{namespace}/{table}/{column}-hot_index.hnsw for fast incremental indexing.

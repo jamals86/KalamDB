@@ -2,7 +2,7 @@
 
 use crate::error::KalamDbError;
 use crate::live::connection_registry::{
-    ConnectionId, LiveId, LiveQueryOptions, LiveQueryRegistry, NodeId, NotificationSender,
+    LiveQueryRegistry, NodeId, NotificationSender,
 };
 use crate::live::filter::{FilterCache, FilterPredicate};
 use crate::live::initial_data::{InitialDataFetcher, InitialDataOptions, InitialDataResult};
@@ -12,14 +12,17 @@ use crate::live::subscription::SubscriptionService;
 use crate::live::types::{ChangeNotification, RegistryStats, SubscriptionResult};
 use crate::sql::executor::SqlExecutor;
 use datafusion::execution::context::SessionContext;
-use kalamdb_commons::models::{NamespaceId, TableId, TableName, UserId};
+use kalamdb_commons::models::{ConnectionId, LiveQueryId, NamespaceId, TableId, TableName, UserId};
 use kalamdb_commons::system::LiveQuery as SystemLiveQuery;
 use kalamdb_system::LiveQueriesTableProvider;
 use std::sync::Arc;
 
 /// Live query manager
 pub struct LiveQueryManager {
-    registry: Arc<tokio::sync::RwLock<LiveQueryRegistry>>,
+    /// In-memory registry using DashMap for lock-free concurrent access
+    /// NOTE: LiveQueryRegistry uses DashMap internally which provides interior mutability,
+    /// so we don't need tokio::sync::RwLock wrapper - it would only add unnecessary overhead
+    registry: Arc<LiveQueryRegistry>,
     live_queries_provider: Arc<LiveQueriesTableProvider>,
     filter_cache: Arc<tokio::sync::RwLock<FilterCache>>,
     initial_data_fetcher: Arc<InitialDataFetcher>,
@@ -39,9 +42,7 @@ impl LiveQueryManager {
         node_id: NodeId,
         base_session_context: Arc<SessionContext>,
     ) -> Self {
-        let registry = Arc::new(tokio::sync::RwLock::new(LiveQueryRegistry::new(
-            node_id.clone(),
-        )));
+        let registry = Arc::new(LiveQueryRegistry::new(node_id.clone()));
         let filter_cache = Arc::new(tokio::sync::RwLock::new(FilterCache::new()));
         let initial_data_fetcher = Arc::new(InitialDataFetcher::new(
             base_session_context,
@@ -52,7 +53,6 @@ impl LiveQueryManager {
             registry.clone(),
             filter_cache.clone(),
             live_queries_provider.clone(),
-            schema_registry.clone(),
             node_id.clone(),
         ));
 
@@ -88,10 +88,9 @@ impl LiveQueryManager {
     pub async fn register_connection(
         &self,
         user_id: UserId,
-        unique_conn_id: String,
+        connection_id: ConnectionId,
         notification_tx: Option<NotificationSender>,
     ) -> Result<ConnectionId, KalamDbError> {
-        let connection_id = ConnectionId::new(user_id.as_str().to_string(), unique_conn_id);
 
         let tx = if let Some(tx) = notification_tx {
             tx
@@ -99,8 +98,7 @@ impl LiveQueryManager {
             let (tx, _rx) = tokio::sync::mpsc::unbounded_channel();
             tx
         };
-        let registry = self.registry.read().await;
-        registry.register_connection(connection_id.clone(), tx);
+        self.registry.register_connection(user_id, connection_id.clone(), tx);
 
         Ok(connection_id)
     }
@@ -109,12 +107,10 @@ impl LiveQueryManager {
     pub async fn register_subscription(
         &self,
         connection_id: ConnectionId,
-        query_id: String,
-        query: String,
-        options: LiveQueryOptions,
-    ) -> Result<LiveId, KalamDbError> {
+        subscription: kalamdb_commons::websocket::SubscriptionRequest,
+    ) -> Result<LiveQueryId, KalamDbError> {
         self.subscription_service
-            .register_subscription(connection_id, query_id, query, options)
+            .register_subscription(connection_id, subscription)
             .await
     }
 
@@ -122,37 +118,30 @@ impl LiveQueryManager {
     pub async fn register_subscription_with_initial_data(
         &self,
         connection_id: ConnectionId,
-        query_id: String,
-        query: String,
-        options: LiveQueryOptions,
+        subscription: kalamdb_commons::websocket::SubscriptionRequest,
         initial_data_options: Option<InitialDataOptions>,
     ) -> Result<SubscriptionResult, KalamDbError> {
+        // Extract pre-parsed table_id (already validated in handle_subscription)
+        let table_id = subscription.table_id.clone().ok_or_else(|| {
+            KalamDbError::InvalidOperation(
+                "Subscription must have table_id populated by server".to_string()
+            )
+        })?;
+
         // First register the subscription
         let live_id = self
-            .register_subscription(connection_id, query_id, query.clone(), options)
+            .register_subscription(connection_id, subscription.clone())
             .await?;
 
         // Fetch initial data if requested
         let initial_data = if let Some(fetch_options) = initial_data_options {
-            // Extract table info for initial data fetch
-            let raw_table = QueryParser::extract_table_name(&query)?;
-            let (namespace, table) = raw_table.split_once('.').ok_or_else(|| {
-                KalamDbError::InvalidSql(format!(
-                    "Query must reference table as namespace.table: {}",
-                    raw_table
-                ))
-            })?;
-
-            let namespace_id = NamespaceId::from(namespace);
-            let table_name = TableName::from(table);
-            let table_id = TableId::new(namespace_id.clone(), table_name.clone());
             let table_def = self
                 .schema_registry
                 .get_table_definition(&table_id)?
                 .ok_or_else(|| {
                     KalamDbError::NotFound(format!(
-                        "Table {}.{} not found for subscription",
-                        namespace, table
+                        "Table {} not found for subscription",
+                        table_id
                     ))
                 })?;
 
@@ -217,14 +206,11 @@ impl LiveQueryManager {
                 ))
             })?;
 
-        // Create a temporary LiveId for fetching (not actually used by fetcher for filtering)
-        let temp_conn_id = ConnectionId::new(
-            user_id.as_str().to_string(),
-            format!("batch-{}", uuid::Uuid::new_v4()),
-        );
-        let temp_live_id = LiveId::new(
+        // Create a temporary LiveQueryId for fetching (not actually used by fetcher for filtering)
+        let temp_conn_id = ConnectionId::new(format!("batch-{}", uuid::Uuid::new_v4()));
+        let temp_live_id = LiveQueryId::new(
+            user_id.clone(),
             temp_conn_id,
-            table_id.clone(),
             format!("batch-query-{}", uuid::Uuid::new_v4()),
         );
 
@@ -253,21 +239,21 @@ impl LiveQueryManager {
         &self,
         user_id: &UserId,
         connection_id: &ConnectionId,
-    ) -> Result<Vec<LiveId>, KalamDbError> {
+    ) -> Result<Vec<LiveQueryId>, KalamDbError> {
         self.subscription_service
             .unregister_connection(user_id, connection_id)
             .await
     }
 
     /// Unregister a single live query subscription
-    pub async fn unregister_subscription(&self, live_id: &LiveId) -> Result<(), KalamDbError> {
+    pub async fn unregister_subscription(&self, live_id: &LiveQueryId) -> Result<(), KalamDbError> {
         self.subscription_service
             .unregister_subscription(live_id)
             .await
     }
 
     /// Increment the changes counter for a live query
-    pub async fn increment_changes(&self, live_id: &LiveId) -> Result<(), KalamDbError> {
+    pub async fn increment_changes(&self, live_id: &LiveQueryId) -> Result<(), KalamDbError> {
         self.notification_service.increment_changes(live_id).await
     }
 
@@ -293,16 +279,15 @@ impl LiveQueryManager {
 
     /// Get registry statistics
     pub async fn get_stats(&self) -> RegistryStats {
-        let registry = self.registry.read().await;
         RegistryStats {
-            total_connections: registry.total_connections(),
-            total_subscriptions: registry.total_subscriptions(),
+            total_connections: self.registry.total_connections(),
+            total_subscriptions: self.registry.total_subscriptions(),
             node_id: self.node_id.as_str().to_string(),
         }
     }
 
     /// Get the registry (for advanced use cases)
-    pub fn registry(&self) -> Arc<tokio::sync::RwLock<LiveQueryRegistry>> {
+    pub fn registry(&self) -> Arc<LiveQueryRegistry> {
         Arc::clone(&self.registry)
     }
 
@@ -333,5 +318,25 @@ impl LiveQueryManager {
         self.notification_service
             .notify_table_change(user_id, table_id, change_notification)
             .await
+    }
+
+    /// Handle auth expiry for a connection
+    ///
+    /// Closes the connection and cleans up subscriptions.
+    pub async fn handle_auth_expiry(&self, connection_id: &ConnectionId) -> Result<(), KalamDbError> {
+        // Get user_id from connection registry (DashMap provides lock-free access)
+        let user_id = self.registry.get_user_id(connection_id).ok_or_else(|| {
+            KalamDbError::NotFound(format!("Connection not found: {}", connection_id))
+        })?;
+        
+        // Unregister connection (closes socket via channel drop)
+        let removed_ids = self.unregister_connection(&user_id, connection_id).await?;
+        
+        // Ensure rows are removed from system.live_queries
+        for live_id in removed_ids {
+             let _ = self.live_queries_provider.delete_live_query(&live_id);
+        }
+        
+        Ok(())
     }
 }

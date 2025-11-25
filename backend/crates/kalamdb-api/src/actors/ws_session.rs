@@ -14,15 +14,12 @@ use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
-use crate::models::{Notification, SubscriptionRequest};
+use crate::models::Notification;
+use kalamdb_commons::websocket::SubscriptionRequest;
 use crate::rate_limiter::RateLimiter;
 use kalamdb_core::live_query::{
-    ConnectionId as LiveConnectionId, InitialDataOptions, InitialDataResult, LiveQueryManager,
-    LiveQueryOptions,
+    ConnectionId, InitialDataOptions, InitialDataResult, LiveQueryManager,
 };
-// UserId is from kalamdb_commons, not from live_query
-type LiveUserId = UserId;
-
 /// How often heartbeat pings are sent
 const HEARTBEAT_INTERVAL: Duration = Duration::from_secs(5);
 
@@ -42,8 +39,8 @@ const AUTH_TIMEOUT: Duration = Duration::from_secs(3);
 /// - User authentication and authorization
 /// - Rate limiting
 pub struct WebSocketSession {
-    /// Unique connection identifier
-    pub connection_id: String,
+    /// Unique connection identifier (generated when socket opens, before auth)
+    pub connection_id: ConnectionId,
 
     /// Authenticated user ID (from JWT token)
     /// None until client sends Authenticate message
@@ -70,12 +67,6 @@ pub struct WebSocketSession {
     /// User repository for authentication
     pub user_repo: Arc<dyn kalamdb_auth::UserRepository>,
 
-    /// Registered live query connection ID
-    pub live_connection_id: Option<LiveConnectionId>,
-
-    /// Live query user identifier (for manager interactions)
-    pub live_user_id: Option<LiveUserId>,
-
     /// Client must send ping at least once per 10 seconds (CLIENT_TIMEOUT),
     /// otherwise we drop connection.
     pub hb: Instant,
@@ -89,7 +80,7 @@ pub struct WebSocketSession {
         HashMap<String, (String, UserId, Option<kalamdb_commons::ids::SeqId>, usize)>,
 
     /// Notification channel sender for live query updates
-    pub notification_tx: Option<tokio::sync::mpsc::UnboundedSender<(kalamdb_commons::models::LiveId, kalamdb_commons::Notification)>>,
+    pub notification_tx: Option<tokio::sync::mpsc::UnboundedSender<(kalamdb_commons::models::LiveQueryId, kalamdb_commons::Notification)>>,
 }
 
 impl WebSocketSession {
@@ -113,7 +104,7 @@ impl WebSocketSession {
         user_repo: Arc<dyn kalamdb_auth::UserRepository>,
     ) -> Self {
         Self {
-            connection_id,
+            connection_id: ConnectionId::new(connection_id),
             user_id,
             is_authenticated: false,
             connected_at: Instant::now(),
@@ -122,8 +113,6 @@ impl WebSocketSession {
             live_query_manager,
             app_context,
             user_repo,
-            live_connection_id: None,
-            live_user_id: None,
             hb: Instant::now(),
             subscriptions: Vec::new(),
             subscription_metadata: HashMap::new(),
@@ -214,14 +203,12 @@ impl Actor for WebSocketSession {
             }
         }
 
-        if let (Some(ref live_user), Some(ref live_conn)) =
-            (&self.live_user_id, &self.live_connection_id)
-        {
+        if let Some(ref user_id) = self.user_id {
             let manager = self.live_query_manager.clone();
-            let live_user = live_user.clone();
-            let live_conn = live_conn.clone();
+            let user_id = user_id.clone();
+            let live_conn = self.connection_id.clone();
             actix::spawn(async move {
-                if let Err(err) = manager.unregister_connection(&live_user, &live_conn).await {
+                if let Err(err) = manager.unregister_connection(&user_id, &live_conn).await {
                     warn!("Failed to unregister live query connection: {}", err);
                 }
             });
@@ -270,7 +257,7 @@ impl StreamHandler<Result<ws::Message, ws::ProtocolError>> for WebSocketSession 
                             ClientMessage::Authenticate { username, password } => {
                                 self.handle_authenticate(ctx, username, password);
                             }
-                            ClientMessage::Subscribe { subscriptions } => {
+                            ClientMessage::Subscribe { subscription } => {
                                 // Check if authenticated
                                 if !self.is_authenticated {
                                     error!("Subscription request before authentication: connection_id={}", self.connection_id);
@@ -283,20 +270,7 @@ impl StreamHandler<Result<ws::Message, ws::ProtocolError>> for WebSocketSession 
                                     return;
                                 }
 
-                                let sub_req = crate::models::SubscriptionRequest {
-                                    subscriptions: subscriptions
-                                        .into_iter()
-                                        .map(|s| crate::models::Subscription {
-                                            id: s.id,
-                                            sql: s.sql,
-                                            options: crate::models::SubscriptionOptions {
-                                                last_rows: s.options.last_rows.map(|n| n as usize),
-                                                batch_size: s.options.batch_size,
-                                            },
-                                        })
-                                        .collect(),
-                                };
-                                self.handle_subscription_request(ctx, sub_req);
+                                self.handle_subscription(ctx, subscription);
                             }
                             ClientMessage::NextBatch {
                                 subscription_id,
@@ -317,8 +291,8 @@ impl StreamHandler<Result<ws::Message, ws::ProtocolError>> for WebSocketSession 
                                     return;
                                 }
 
-                                // TODO: Implement unsubscribe logic
-                                warn!("Unsubscribe not yet implemented: {}", subscription_id);
+                                //TODO: Pass connection_id to handle_unsubscribe
+                                self.handle_unsubscribe(ctx, subscription_id);
                             }
                         }
                     }
@@ -442,49 +416,29 @@ impl WebSocketSession {
         });
     }
 
-    /// Handle subscription request message
-    fn handle_subscription_request(
+    /// Handle subscription message - process single subscription per request
+    fn handle_subscription(
         &mut self,
         ctx: &mut ws::WebsocketContext<Self>,
-        sub_req: SubscriptionRequest,
+        mut subscription: SubscriptionRequest,
     ) {
-        info!("Registering {} subscriptions", sub_req.subscriptions.len());
+        info!("Registering subscription: {}", subscription.id);
 
-        // Ensure connection registered with live query manager
-        let live_connection_id = match self.live_connection_id.clone() {
-            Some(conn_id) => conn_id,
-            None => {
-                error!(
-                    "Live query manager connection missing for {}",
-                    self.connection_id
-                );
-                let error_msg = Notification::error(
-                    "connection".to_string(),
-                    "CONNECTION_NOT_READY".to_string(),
-                    "Live query manager is not ready for subscriptions".to_string(),
-                );
-                if let Ok(json) = serde_json::to_string(&error_msg) {
-                    ctx.text(json);
-                }
-                return;
+        // Validate subscription ID is non-empty (required field)
+        if subscription.id.trim().is_empty() {
+            error!("Subscription rejected: empty subscription ID");
+            let error_msg = Notification::error(
+                "invalid_subscription".to_string(),
+                "INVALID_SUBSCRIPTION_ID".to_string(),
+                "Subscription ID cannot be empty".to_string(),
+            );
+            if let Ok(json) = serde_json::to_string(&error_msg) {
+                ctx.text(json);
             }
-        };
-
-        // Register each subscription
-        for subscription in sub_req.subscriptions {
-            self.process_single_subscription(ctx, &live_connection_id, subscription);
+            return;
         }
-    }
 
-    /// Process a single subscription registration with batched initial data
-    fn process_single_subscription(
-        &mut self,
-        ctx: &mut ws::WebsocketContext<Self>,
-        live_connection_id: &LiveConnectionId,
-        subscription: crate::models::Subscription,
-    ) {
-        use kalamdb_commons::websocket::{BatchControl, BatchStatus, MAX_ROWS_PER_BATCH};
-
+        // Get authenticated user ID
         let user_id = match self.user_id.clone() {
             Some(uid) => uid,
             None => {
@@ -503,6 +457,149 @@ impl WebSocketSession {
                 return;
             }
         };
+
+        // Parse SQL and extract components (single parse point)
+        let schema_registry = self.app_context.schema_registry();
+        let sql = subscription.sql.clone();
+        let sub_id_for_error = subscription.id.clone();
+        
+        // Extract table name
+        let raw_table = match kalamdb_core::live::query_parser::QueryParser::extract_table_name(&sql) {
+            Ok(t) => t,
+            Err(e) => {
+                error!("Failed to extract table name from query: {}", e);
+                let error_msg = Notification::error(
+                    sub_id_for_error,
+                    "INVALID_QUERY".to_string(),
+                    format!("Failed to parse table name: {}", e),
+                );
+                if let Ok(json) = serde_json::to_string(&error_msg) {
+                    ctx.text(json);
+                }
+                return;
+            }
+        };
+
+        let (namespace, table) = match raw_table.split_once('.') {
+            Some((ns, tbl)) => (ns, tbl),
+            None => {
+                error!("Invalid table format (expected namespace.table): {}", raw_table);
+                let error_msg = Notification::error(
+                    sub_id_for_error,
+                    "INVALID_QUERY".to_string(),
+                    format!("Query must reference table as namespace.table: {}", raw_table),
+                );
+                if let Ok(json) = serde_json::to_string(&error_msg) {
+                    ctx.text(json);
+                }
+                return;
+            }
+        };
+
+        let namespace_id = kalamdb_commons::models::NamespaceId::from(namespace);
+        let table_name = kalamdb_commons::models::TableName::from(table);
+        let table_id = kalamdb_commons::models::TableId::new(namespace_id.clone(), table_name.clone());
+
+        // Get table definition for permission checks
+        let table_def = match schema_registry.get_table_definition(&table_id) {
+            Ok(Some(def)) => def,
+            Ok(None) => {
+                error!("Table not found: {}.{}", namespace, table);
+                let error_msg = Notification::error(
+                    sub_id_for_error,
+                    "TABLE_NOT_FOUND".to_string(),
+                    format!("Table {}.{} not found", namespace, table),
+                );
+                if let Ok(json) = serde_json::to_string(&error_msg) {
+                    ctx.text(json);
+                }
+                return;
+            }
+            Err(e) => {
+                error!("Failed to get table definition: {}", e);
+                let error_msg = Notification::error(
+                    sub_id_for_error,
+                    "SCHEMA_ERROR".to_string(),
+                    format!("Failed to get table definition: {}", e),
+                );
+                if let Ok(json) = serde_json::to_string(&error_msg) {
+                    ctx.text(json);
+                }
+                return;
+            }
+        };
+
+        // Check permissions based on table type
+        let is_admin = user_id.is_admin();
+        
+        use kalamdb_commons::TableType;
+        let permission_result = match table_def.table_type {
+            TableType::User => {
+                if !is_admin && namespace != user_id.as_str() {
+                    Err(format!(
+                        "Insufficient privileges to subscribe to user table '{}.{}'",
+                        namespace, table
+                    ))
+                } else {
+                    Ok(())
+                }
+            }
+            TableType::System => {
+                if !is_admin {
+                    Err(format!(
+                        "Insufficient privileges to subscribe to system table '{}.{}'",
+                        namespace, table
+                    ))
+                } else {
+                    Ok(())
+                }
+            }
+            TableType::Shared => {
+                // Shared tables not supported for live queries
+                Err(format!(
+                    "Shared table subscriptions are not supported: '{}.{}'",
+                    namespace, table
+                ))
+            }
+            TableType::Stream => Ok(()), // Stream tables allow all authenticated users
+        };
+
+        if let Err(err_msg) = permission_result {
+            error!("Permission denied for subscription: {}", err_msg);
+            let error_msg = Notification::error(
+                sub_id_for_error,
+                "UNAUTHORIZED".to_string(),
+                err_msg,
+            );
+            if let Ok(json) = serde_json::to_string(&error_msg) {
+                ctx.text(json);
+            }
+            return;
+        }
+
+        // Extract WHERE clause (optional)
+        let where_clause = kalamdb_core::live::query_parser::QueryParser::extract_where_clause(&sql);
+
+        // TODO: Extract projections from SELECT clause (for now, assume SELECT *)
+        let projections: Option<Vec<String>> = None;
+
+        // Populate parsed fields in subscription request
+        subscription.table_id = Some(table_id);
+        subscription.where_clause = where_clause;
+        subscription.projections = projections;
+
+        // Process subscription
+        self.process_single_subscription(ctx, &user_id, subscription);
+    }
+
+    /// Process a single subscription registration with batched initial data
+    fn process_single_subscription(
+        &mut self,
+        ctx: &mut ws::WebsocketContext<Self>,
+        user_id: &UserId,
+        subscription: SubscriptionRequest,
+    ) {
+        use kalamdb_commons::websocket::{BatchControl, BatchStatus, MAX_ROWS_PER_BATCH};
 
         // Rate limiting: Check subscription limit per user
         if let Some(ref limiter) = self.rate_limiter {
@@ -532,7 +629,7 @@ impl WebSocketSession {
             .unwrap_or(MAX_ROWS_PER_BATCH);
 
         let initial_data_options = if let Some(last_n) = subscription.options.last_rows {
-            Some(InitialDataOptions::last(last_n))
+            Some(InitialDataOptions::last(last_n as usize))
         } else {
             Some(InitialDataOptions::batch(None, None, batch_size))
         };
@@ -542,17 +639,15 @@ impl WebSocketSession {
         let subscription_id = subscription.id.clone();
         let sql = subscription.sql.clone();
         let sql_for_metadata = sql.clone(); // Clone for metadata storage
-        let live_conn_clone = live_connection_id.clone();
-        let user_clone = user_id.clone();
+        let user_clone: UserId = user_id.clone();
+        let live_conn_clone = self.connection_id.clone();
 
         ctx.wait(
             fut::wrap_future(async move {
                 match manager
                     .register_subscription_with_initial_data(
                         live_conn_clone,
-                        subscription_id.clone(),
-                        sql.clone(),
-                        LiveQueryOptions { last_rows: None },
+                        subscription,
                         initial_data_options,
                     )
                     .await
@@ -779,13 +874,69 @@ impl WebSocketSession {
             ),
         );
     }
+
+    /// Handle unsubscribe request
+    fn handle_unsubscribe(
+        &mut self,
+        ctx: &mut ws::WebsocketContext<Self>,
+        subscription_id: String,
+    ) {
+        info!("Unsubscribing: {}", subscription_id);
+
+        // Verify subscription exists
+        if !self.subscriptions.contains(&subscription_id) {
+            warn!("Unsubscribe request for unknown subscription: {}", subscription_id);
+            return;
+        }
+
+        // Reconstruct LiveId
+        let manager = self.live_query_manager.clone();
+        let sub_id = subscription_id.clone();
+        let sub_id_for_log = sub_id.clone();
+        let connection_id = self.connection_id.clone();
+        let rate_limiter = self.rate_limiter.clone();
+        let user_id = self.user_id.clone().unwrap();
+        let user_id_for_limiter = user_id.clone();
+
+        ctx.wait(
+            fut::wrap_future(async move {
+                let live_id = kalamdb_commons::models::LiveQueryId::new(
+                    user_id.clone(),
+                    connection_id.clone(),
+                    sub_id.clone()
+                );
+                
+                manager.unregister_subscription(&live_id).await
+            })
+            .map(move |result, act: &mut Self, _ctx| {
+                match result {
+                    Ok(_) => {
+                        info!("Unsubscribed successfully: {}", sub_id_for_log);
+                        // Remove from local state
+                        if let Some(pos) = act.subscriptions.iter().position(|x| x == &sub_id_for_log) {
+                            act.subscriptions.remove(pos);
+                        }
+                        act.subscription_metadata.remove(&sub_id_for_log);
+                        
+                        // Decrement rate limiter
+                        if let Some(ref limiter) = rate_limiter {
+                            limiter.decrement_subscription(&user_id_for_limiter);
+                        }
+                    }
+                    Err(e) => {
+                        error!("Failed to unsubscribe {}: {}", sub_id_for_log, e);
+                    }
+                }
+            })
+        );
+    }
 }
 
 /// Message for authentication result
 #[derive(Message)]
 #[rtype(result = "()")]
 pub struct AuthResult {
-    pub connection_id: String,
+    pub connection_id: ConnectionId,
     pub result: Result<(UserId, kalamdb_commons::models::Role), String>,
 }
 
@@ -803,11 +954,10 @@ impl Handler<AuthResult> for WebSocketSession {
                 // Mark as authenticated
                 self.is_authenticated = true;
                 self.user_id = Some(user_id.clone());
-                self.live_user_id = Some(user_id.clone());
 
                 // Register connection with live query manager now that we have user_id
                 let manager = self.live_query_manager.clone();
-                let unique_conn_id = self.connection_id.clone();
+                let connection_id = self.connection_id.clone();
                 let user_for_manager = user_id.clone();
                 let notification_tx = self.notification_tx.clone();
 
@@ -816,16 +966,16 @@ impl Handler<AuthResult> for WebSocketSession {
                         let result = manager
                             .register_connection(
                                 user_for_manager.clone(),
-                                unique_conn_id.clone(),
+                                connection_id.clone(),
                                 notification_tx,
                             )
                             .await;
-                        (result, unique_conn_id)
+                        (result, connection_id)
                     })
-                    .map(|(result, unique_conn_id), act: &mut Self, ctx| {
+                    .map(|(result, connection_id), _act: &mut Self, ctx| {
                         match result {
                             Ok(conn_id) => {
-                                act.live_connection_id = Some(conn_id.clone());
+                                // Connection is now registered (connection_id already stored in self)
                                 info!(
                                     "WebSocket connection registered with LiveQueryManager: websocket_id={}, live_id={}",
                                     unique_conn_id,

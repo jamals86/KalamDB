@@ -6,7 +6,7 @@
 use crate::{
     auth::AuthProvider,
     error::{KalamLinkError, Result},
-    models::{BatchStatus, ChangeEvent, ServerMessage, SubscriptionOptions},
+    models::{BatchStatus, ChangeEvent, ServerMessage, SubscriptionConfig, SubscriptionOptions},
 };
 use futures_util::{SinkExt, StreamExt};
 use serde_json::Value;
@@ -20,7 +20,7 @@ use tokio_tungstenite::{
         protocol::Message,
     },
 };
-use std::time::{SystemTime, UNIX_EPOCH};
+use std::time::Duration;
 
 type WebSocketStream =
     tokio_tungstenite::WebSocketStream<tokio_tungstenite::MaybeTlsStream<tokio::net::TcpStream>>;
@@ -48,19 +48,6 @@ type WebSocketStream =
 /// # Ok(())
 /// # }
 /// ```
-/// Configuration for establishing a WebSocket subscription.
-#[derive(Debug, Clone)]
-pub struct SubscriptionConfig {
-    /// Subscription identifier (if pre-allocated by server). If `None`, the client generates one.
-    pub id: Option<String>,
-    /// SQL query to register for live updates
-    pub sql: String,
-    /// Optional subscription options (e.g., last_rows)
-    pub options: Option<SubscriptionOptions>,
-    /// Override WebSocket URL (falls back to base_url conversion when `None`)
-    pub ws_url: Option<String>,
-}
-
 fn resolve_ws_url(base_url: &str, override_url: Option<&str>) -> String {
     if let Some(url) = override_url {
         return url.to_string();
@@ -252,39 +239,6 @@ fn parse_message(text: &str) -> Result<Option<ChangeEvent>> {
     }
 }
 
-impl SubscriptionConfig {
-    /// Create a new configuration with required SQL.
-    ///
-    /// By default, includes empty subscription options (batch streaming configured server-side).
-    pub fn new(sql: impl Into<String>) -> Self {
-        Self {
-            id: None,
-            sql: sql.into(),
-            options: Some(SubscriptionOptions {
-                _reserved: None,
-                batch_size: None,
-            }),
-            ws_url: None,
-        }
-    }
-
-    /// Create a configuration without any initial data fetch
-    pub fn without_initial_data(sql: impl Into<String>) -> Self {
-        Self {
-            id: None,
-            sql: sql.into(),
-            options: None,
-            ws_url: None,
-        }
-    }
-
-    /// Set the number of initial rows to fetch (deprecated - batch streaming configured server-side)
-    #[deprecated(note = "Batch streaming is now configured server-side, this method is a no-op")]
-    pub fn with_last_rows(self, _count: usize) -> Self {
-        // No-op: batch streaming configured server-side
-        self
-    }
-}
 
 pub struct SubscriptionManager {
     ws_stream: WebSocketStream,
@@ -359,14 +313,8 @@ impl SubscriptionManager {
 
         let mut ws_stream = ws_stream;
         
-        // Generate subscription ID using timestamp + random component
-        let subscription_id = id.unwrap_or_else(|| {
-            let nanos = SystemTime::now()
-                .duration_since(UNIX_EPOCH)
-                .unwrap()
-                .as_nanos();
-            format!("sub-{}", nanos)
-        });
+        // Use the provided subscription ID (now required)
+        let subscription_id = id;
 
         // Send subscription request
         send_subscription_request(&mut ws_stream, &subscription_id, &sql, options).await?;

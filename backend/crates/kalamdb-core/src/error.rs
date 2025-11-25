@@ -261,6 +261,55 @@ impl From<crate::live::error::LiveError> for KalamDbError {
             crate::live::error::LiveError::System(msg) => {
                 KalamDbError::Other(format!("Live query system error: {}", msg))
             }
+            crate::live::error::LiveError::LiveQueryNotFound { live_id } => {
+                KalamDbError::NotFound(format!("Live query not found: {}", live_id))
+            }
+            crate::live::error::LiveError::ConnectionNotFound { connection_id } => {
+                KalamDbError::NotFound(format!("Connection not found: {}", connection_id))
+            }
+            crate::live::error::LiveError::InvalidSubscription { reason, field } => {
+                KalamDbError::InvalidOperation(format!("Invalid subscription '{}': {}", field, reason))
+            }
+            crate::live::error::LiveError::DuplicateSubscription {
+                subscription_id,
+                connection_id,
+            } => KalamDbError::AlreadyExists(format!(
+                "Duplicate subscription ID '{}' for connection '{}'",
+                subscription_id, connection_id
+            )),
+            crate::live::error::LiveError::InvalidQuery { query, reason } => {
+                KalamDbError::InvalidOperation(format!("Invalid query '{}': {}", query, reason))
+            }
+            crate::live::error::LiveError::TableAccessDenied {
+                namespace,
+                table,
+                user_id,
+            } => KalamDbError::PermissionDenied(format!(
+                "User '{}' does not have access to table '{}.{}'",
+                user_id, namespace, table
+            )),
+            crate::live::error::LiveError::FilterCompilationError { filter, reason } => {
+                KalamDbError::InvalidOperation(format!(
+                    "Failed to compile filter '{}': {}",
+                    filter, reason
+                ))
+            }
+            crate::live::error::LiveError::SubscriptionLimitExceeded {
+                connection_id,
+                current,
+                max,
+            } => KalamDbError::InvalidOperation(format!(
+                "Connection '{}' has reached maximum subscriptions ({}/{})",
+                connection_id, current, max
+            )),
+            crate::live::error::LiveError::UserSubscriptionLimitExceeded {
+                user_id,
+                current,
+                max,
+            } => KalamDbError::InvalidOperation(format!(
+                "User '{}' has reached maximum subscriptions ({}/{})",
+                user_id, current, max
+            )),
             crate::live::error::LiveError::Other(msg) => KalamDbError::Other(msg),
         }
     }

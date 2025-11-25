@@ -9,16 +9,19 @@ use kalamdb_commons::{NamespaceId, TableName};
 /// Schema:
 /// - live_id TEXT PRIMARY KEY
 /// - connection_id TEXT NOT NULL
+/// - subscription_id TEXT NOT NULL
 /// - namespace_id TEXT NOT NULL
 /// - table_name TEXT NOT NULL
-/// - query_id TEXT NOT NULL
 /// - user_id TEXT NOT NULL
 /// - query TEXT NOT NULL
 /// - options TEXT (nullable, JSON)
+/// - status TEXT NOT NULL
 /// - created_at TIMESTAMP NOT NULL
 /// - last_update TIMESTAMP NOT NULL
 /// - changes BIGINT NOT NULL
 /// - node TEXT NOT NULL
+///
+/// Note: last_seq_id is tracked in-memory only (WebSocketSession), not persisted
 pub fn live_queries_table_definition() -> TableDefinition {
     let columns = vec![
         ColumnDefinition::new(
@@ -30,7 +33,7 @@ pub fn live_queries_table_definition() -> TableDefinition {
             false,
             ColumnDefault::None,
             Some(
-                "Live query identifier (format: {user_id}-{conn_id}-{table}-{query_id})"
+                "Live query identifier (format: {user_id}-{conn_id}-{table}-{subscription_id})"
                     .to_string(),
             ),
         ),
@@ -45,8 +48,18 @@ pub fn live_queries_table_definition() -> TableDefinition {
             Some("WebSocket connection identifier".to_string()),
         ),
         ColumnDefinition::new(
-            "namespace_id",
+            "subscription_id",
             3,
+            KalamDataType::Text,
+            false,
+            false,
+            false,
+            ColumnDefault::None,
+            Some("Client-provided subscription identifier".to_string()),
+        ),
+        ColumnDefinition::new(
+            "namespace_id",
+            4,
             KalamDataType::Text,
             false,
             false,
@@ -56,23 +69,13 @@ pub fn live_queries_table_definition() -> TableDefinition {
         ),
         ColumnDefinition::new(
             "table_name",
-            4,
-            KalamDataType::Text,
-            false,
-            false,
-            false,
-            ColumnDefault::None,
-            Some("Table being queried".to_string()),
-        ),
-        ColumnDefinition::new(
-            "query_id",
             5,
             KalamDataType::Text,
             false,
             false,
             false,
             ColumnDefault::None,
-            Some("Query identifier (UUID)".to_string()),
+            Some("Table being queried".to_string()),
         ),
         ColumnDefinition::new(
             "user_id",
@@ -105,8 +108,18 @@ pub fn live_queries_table_definition() -> TableDefinition {
             Some("Query options (JSON)".to_string()),
         ),
         ColumnDefinition::new(
-            "created_at",
+            "status",
             9,
+            KalamDataType::Text,
+            false,
+            false,
+            false,
+            ColumnDefault::None,
+            Some("Current status (active, paused, etc.)".to_string()),
+        ),
+        ColumnDefinition::new(
+            "created_at",
+            10,
             KalamDataType::Timestamp,
             false,
             false,
@@ -116,7 +129,7 @@ pub fn live_queries_table_definition() -> TableDefinition {
         ),
         ColumnDefinition::new(
             "last_update",
-            10,
+            11,
             KalamDataType::Timestamp,
             false,
             false,
@@ -126,7 +139,7 @@ pub fn live_queries_table_definition() -> TableDefinition {
         ),
         ColumnDefinition::new(
             "changes",
-            11,
+            12,
             KalamDataType::BigInt,
             false,
             false,
@@ -136,7 +149,7 @@ pub fn live_queries_table_definition() -> TableDefinition {
         ),
         ColumnDefinition::new(
             "node",
-            12,
+            13,
             KalamDataType::Text,
             false,
             false,

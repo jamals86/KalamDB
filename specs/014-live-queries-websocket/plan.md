@@ -7,7 +7,7 @@
 
 ## Summary
 
-This feature enables each authenticated user to maintain multiple WebSocket connections, each hosting multiple live query subscriptions, with one row per subscription in `system.live_queries` keyed by `(connection_id, subscription_id)`. Users can subscribe and unsubscribe individual queries on a shared connection; administrators (or auth expiry) can kill a connection and thereby terminate all its subscriptions within a 5-second SLA; and the Kalam-link shared library (not just the TypeScript SDK) will own connection lifecycle, authentication, subscriptions, auto-reconnect, and SeqId-based resume semantics with O(1) handler lookup while the TypeScript SDK exposes thin wrappers to those shared capabilities.
+This feature enables each authenticated user to maintain multiple WebSocket connections, each hosting multiple live query subscriptions, with one row per subscription in `system.live_queries` keyed by `(connection_id, subscription_id)`. Users can subscribe and unsubscribe individual queries on a shared connection; administrators (or auth expiry) can kill a connection via SQL commands (no REST) and thereby terminate all its subscriptions within a 5-second SLA; and the Kalam-link shared library (not just the TypeScript SDK) will own connection lifecycle, authentication, subscriptions, auto-reconnect, and SeqId-based resume semantics with O(1) handler lookup while the TypeScript SDK exposes thin wrappers to those shared capabilities.
 
 ## Technical Context
 
@@ -26,7 +26,7 @@ This feature enables each authenticated user to maintain multiple WebSocket conn
 *GATE: Must pass before Phase 0 research. Re-check after Phase 1 design.*
 
 - Library-first: Feature will extend existing crates (`kalamdb-core`, `kalamdb-api`, `link` TypeScript SDK) rather than creating ad-hoc binaries; live connection and subscription management will be encapsulated behind clear interfaces.
-- CLI/interface orientation: Existing CLI and HTTP APIs will be respected; any new administrative kill-connection controls will be exposed via documented APIs/commands.
+- CLI/interface orientation: Existing CLI and HTTP APIs will be respected; any new administrative kill-connection controls will be exposed via SQL commands (no new REST endpoints).
 - Test-first: New behavior (multi-subscription connections, admin kill, SeqId resume) will be guarded by unit/integration tests and extended smoke tests for critical flows.
 - Observability: Changes will ensure that `system.live_queries` remains the primary observability surface for active subscriptions, with additional logging/metrics added only where justified.
 

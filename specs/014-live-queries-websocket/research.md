@@ -33,7 +33,7 @@
 - **Alternatives considered**: Deferred cleanup jobs; TTL-based expiration (adds latency and complexity).
 
 ### Shared Kalam-link library for lifecycle management
-- **Decision**: Place connection lifecycle logic (connect/disconnect/subscribe/unsubscribe/resume) in the Kalam-link shared library so multiple SDKs (TypeScript, others) reuse the same implementation; the TypeScript SDK exposes wrappers to those helpers.
+- **Decision**: Place connection lifecycle logic (connect/disconnect/subscribe/unsubscribe/resume/list) in the Kalam-link shared library so multiple SDKs (TypeScript, others) reuse the same implementation; the TypeScript SDK exposes wrappers to those helpers.
 - **Rationale**: Avoids duplicated state machines, ensures consistent behavior across clients, and makes future SDKs cheaper to build.
 - **Alternatives considered**: Keeping logic in each SDK (harder to maintain, divergence risk); server-only orchestration (less flexible offline/testing support).
 

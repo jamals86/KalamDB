@@ -6,9 +6,9 @@
 use crate::{
     auth::AuthProvider,
     error::{KalamLinkError, Result},
-    models::{HealthCheckResponse, QueryResponse},
+    models::{HealthCheckResponse, QueryResponse, SubscriptionConfig},
     query::QueryExecutor,
-    subscription::{SubscriptionConfig, SubscriptionManager},
+    subscription::SubscriptionManager,
 };
 use std::{
     sync::Arc,
@@ -67,7 +67,12 @@ impl KalamLinkClient {
 
     /// Subscribe to real-time changes
     pub async fn subscribe(&self, query: &str) -> Result<SubscriptionManager> {
-        self.subscribe_with_config(SubscriptionConfig::new(query))
+        // Generate a unique subscription ID using timestamp + random component
+        let subscription_id = format!("sub_{}", std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos());
+        self.subscribe_with_config(SubscriptionConfig::new(subscription_id, query))
             .await
     }
 

@@ -1,14 +1,12 @@
 use super::*;
 use crate::app_context::AppContext;
-use crate::live::connection_registry::LiveQueryOptions;
 use crate::live::types::ChangeNotification;
 use crate::providers::arrow_json_conversion::json_to_row;
 use crate::schema_registry::SchemaRegistry;
 use crate::sql::executor::SqlExecutor;
 use crate::test_helpers::{create_test_session, init_test_app_context};
 use kalamdb_commons::datatypes::KalamDataType;
-use kalamdb_commons::models::Row;
-use kalamdb_commons::models::TableId;
+use kalamdb_commons::models::{ConnectionId, Row, TableId};
 use kalamdb_commons::schemas::{ColumnDefinition, TableDefinition, TableOptions, TableType};
 use kalamdb_commons::{NamespaceId, TableName};
 use kalamdb_commons::{NodeId, UserId};
@@ -20,6 +18,27 @@ use tempfile::TempDir;
 
 fn to_row(v: serde_json::Value) -> Row {
     json_to_row(&v).unwrap()
+}
+
+/// Helper function to create a SubscriptionRequest for tests
+fn create_test_subscription_request(
+    id: String,
+    sql: String,
+    table_id: Option<TableId>,
+    last_rows: Option<u32>,
+) -> kalamdb_commons::websocket::SubscriptionRequest {
+    kalamdb_commons::websocket::SubscriptionRequest {
+        id,
+        sql,
+        options: kalamdb_commons::websocket::SubscriptionOptions {
+            _reserved: None,
+            batch_size: None,
+            last_rows,
+        },
+        table_id,
+        where_clause: None, // Tests don't need pre-parsed WHERE clause
+        projections: None,  // Tests don't need pre-parsed projections
+    }
 }
 
 async fn create_test_manager() -> (LiveQueryManager, TempDir) {
@@ -155,12 +174,12 @@ async fn test_register_connection() {
     let user_id = UserId::new("user1".to_string());
 
     let connection_id = manager
-        .register_connection(user_id, "conn1".to_string(), None)
+        .register_connection(user_id, ConnectionId::new("conn1".to_string()), None)
         .await
         .unwrap();
 
-    assert_eq!(connection_id.user_id().as_str(), "user1");
-    assert_eq!(connection_id.unique_conn_id(), "conn1");
+    // ConnectionId now only has unique_id (not user_id/unique_conn_id)
+    assert_eq!(connection_id.as_str(), "conn1");
 
     let stats = manager.get_stats().await;
     assert_eq!(stats.total_connections, 1);
@@ -173,25 +192,26 @@ async fn test_register_subscription() {
     let user_id = UserId::new("user1".to_string());
 
     let connection_id = manager
-        .register_connection(user_id.clone(), "conn1".to_string(), None)
+        .register_connection(user_id.clone(), ConnectionId::new("conn1".to_string()), None)
         .await
         .unwrap();
 
+    let table_id = TableId::from_strings("user1", "messages");
+    let subscription = create_test_subscription_request(
+        "q1".to_string(),
+        "SELECT * FROM user1.messages WHERE id > 0".to_string(),
+        Some(table_id),
+        Some(50),
+    );
+
     let live_id = manager
-        .register_subscription(
-            connection_id.clone(),
-            "q1".to_string(),
-            "SELECT * FROM user1.messages WHERE id > 0".to_string(),
-            LiveQueryOptions {
-                last_rows: Some(50),
-            },
-        )
+        .register_subscription(connection_id.clone(), subscription)
         .await
         .unwrap();
 
     assert_eq!(live_id.connection_id(), &connection_id);
-    assert_eq!(live_id.table_id().to_string(), "user1:messages");
-    assert_eq!(live_id.query_id(), "q1");
+    // LiveQueryId no longer has table_id() - subscription_id is the identifying field
+    assert_eq!(live_id.subscription_id(), "q1");
 
     let stats = manager.get_stats().await;
     assert_eq!(stats.total_subscriptions, 1);
@@ -223,48 +243,44 @@ async fn test_get_subscriptions_for_table() {
     let user_id = UserId::new("user1".to_string());
 
     let connection_id = manager
-        .register_connection(user_id.clone(), "conn1".to_string(), None)
+        .register_connection(user_id.clone(), ConnectionId::new("conn1".to_string()), None)
         .await
         .unwrap();
 
-    manager
-        .register_subscription(
-            connection_id.clone(),
-            "q1".to_string(),
-            "SELECT * FROM user1.messages".to_string(),
-            LiveQueryOptions::default(),
-        )
-        .await
-        .unwrap();
-
-    manager
-        .register_subscription(
-            connection_id.clone(),
-            "q2".to_string(),
-            "SELECT * FROM user1.notifications".to_string(),
-            LiveQueryOptions::default(),
-        )
-        .await
-        .unwrap();
-
-    // Get subscriptions from registry
-    let registry_arc = manager.registry();
-    let registry = registry_arc.read().await;
     let table_id1 = TableId::from_strings("user1", "messages");
-    let messages_subs = registry.get_subscriptions_for_table(&user_id, &table_id1);
-    assert_eq!(messages_subs.len(), 1);
-    assert_eq!(
-        messages_subs[0].live_id.table_id().table_name().as_str(),
-        "messages"
+    let subscription1 = create_test_subscription_request(
+        "q1".to_string(),
+        "SELECT * FROM user1.messages".to_string(),
+        Some(table_id1.clone()),
+        None,
     );
+    manager
+        .register_subscription(connection_id.clone(), subscription1)
+        .await
+        .unwrap();
 
     let table_id2 = TableId::from_strings("user1", "notifications");
+    let subscription2 = create_test_subscription_request(
+        "q2".to_string(),
+        "SELECT * FROM user1.notifications".to_string(),
+        Some(table_id2.clone()),
+        None,
+    );
+    manager
+        .register_subscription(connection_id.clone(), subscription2)
+        .await
+        .unwrap();
+
+    // Get subscriptions from registry (DashMap - no RwLock)
+    let registry = manager.registry();
+    let messages_subs = registry.get_subscriptions_for_table(&user_id, &table_id1);
+    assert_eq!(messages_subs.len(), 1);
+    // LiveQueryId no longer has table_id() - verify by subscription_id instead
+    assert_eq!(messages_subs[0].live_id.subscription_id(), "q1");
+
     let notif_subs = registry.get_subscriptions_for_table(&user_id, &table_id2);
     assert_eq!(notif_subs.len(), 1);
-    assert_eq!(
-        notif_subs[0].live_id.table_id().table_name().as_str(),
-        "notifications"
-    );
+    assert_eq!(notif_subs[0].live_id.subscription_id(), "q2");
 }
 
 #[tokio::test]
@@ -273,27 +289,31 @@ async fn test_unregister_connection() {
     let user_id = UserId::new("user1".to_string());
 
     let connection_id = manager
-        .register_connection(user_id.clone(), "conn1".to_string(), None)
+        .register_connection(user_id.clone(), ConnectionId::new("conn1".to_string()), None)
         .await
         .unwrap();
 
+    let table_id1 = TableId::from_strings("user1", "messages");
+    let subscription1 = create_test_subscription_request(
+        "q1".to_string(),
+        "SELECT * FROM user1.messages".to_string(),
+        Some(table_id1),
+        None,
+    );
     manager
-        .register_subscription(
-            connection_id.clone(),
-            "q1".to_string(),
-            "SELECT * FROM user1.messages".to_string(),
-            LiveQueryOptions::default(),
-        )
+        .register_subscription(connection_id.clone(), subscription1)
         .await
         .unwrap();
 
+    let table_id2 = TableId::from_strings("user1", "notifications");
+    let subscription2 = create_test_subscription_request(
+        "q2".to_string(),
+        "SELECT * FROM user1.notifications".to_string(),
+        Some(table_id2),
+        None,
+    );
     manager
-        .register_subscription(
-            connection_id.clone(),
-            "q2".to_string(),
-            "SELECT * FROM user1.notifications".to_string(),
-            LiveQueryOptions::default(),
-        )
+        .register_subscription(connection_id.clone(), subscription2)
         .await
         .unwrap();
 
@@ -308,42 +328,41 @@ async fn test_unregister_connection() {
     assert_eq!(stats.total_subscriptions, 0);
 }
 
-#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-#[cfg_attr(not(feature = "expensive_tests"), ignore)]
+/// Test unregistering a subscription - verifies RwLock was removed correctly
+/// This test previously hung forever due to an unnecessary RwLock wrapper around
+/// DashMap-based LiveQueryRegistry. After removing the RwLock wrapper, this test
+/// should complete quickly.
+#[tokio::test]
 async fn test_unregister_subscription() {
     let (manager, _temp_dir) = create_test_manager().await;
     let user_id = UserId::new("user1".to_string());
 
     let connection_id = manager
-        .register_connection(user_id.clone(), "conn1".to_string(), None)
+        .register_connection(user_id.clone(), ConnectionId::new("conn1".to_string()), None)
         .await
         .unwrap();
+
+    let table_id = TableId::new(
+        NamespaceId::new("user1"),
+        TableName::new("messages"),
+    );
+    let subscription_request = create_test_subscription_request(
+        "q1".to_string(),
+        "SELECT * FROM user1.messages".to_string(),
+        Some(table_id),
+        None,
+    );
 
     let live_id = manager
-        .register_subscription(
-            connection_id.clone(),
-            "q1".to_string(),
-            "SELECT * FROM user1.messages".to_string(),
-            LiveQueryOptions::default(),
-        )
+        .register_subscription(connection_id.clone(), subscription_request)
         .await
         .unwrap();
 
-    // Add timeout to prevent hanging
-    let result = tokio::time::timeout(
-        std::time::Duration::from_secs(5),
-        manager.unregister_subscription(&live_id),
-    )
-    .await;
-
-    match result {
-        Ok(Ok(())) => {
-            let stats = manager.get_stats().await;
-            assert_eq!(stats.total_subscriptions, 0);
-        }
-        Ok(Err(e)) => panic!("Unregister failed: {}", e),
-        Err(_) => panic!("Test timed out after 5 seconds"),
-    }
+    // This should complete quickly now that RwLock wrapper has been removed
+    manager.unregister_subscription(&live_id).await.unwrap();
+    
+    let stats = manager.get_stats().await;
+    assert_eq!(stats.total_subscriptions, 0);
 }
 
 #[tokio::test]
@@ -352,17 +371,19 @@ async fn test_increment_changes() {
     let user_id = UserId::new("user1".to_string());
 
     let connection_id = manager
-        .register_connection(user_id.clone(), "conn1".to_string(), None)
+        .register_connection(user_id.clone(), ConnectionId::new("conn1".to_string()), None)
         .await
         .unwrap();
 
+    let table_id = TableId::from_strings("user1", "messages");
+    let subscription = create_test_subscription_request(
+        "q1".to_string(),
+        "SELECT * FROM user1.messages".to_string(),
+        Some(table_id),
+        None,
+    );
     let live_id = manager
-        .register_subscription(
-            connection_id.clone(),
-            "q1".to_string(),
-            "SELECT * FROM user1.messages".to_string(),
-            LiveQueryOptions::default(),
-        )
+        .register_subscription(connection_id.clone(), subscription)
         .await
         .unwrap();
 
@@ -383,44 +404,44 @@ async fn test_multi_subscription_support() {
     let user_id = UserId::new("user1".to_string());
 
     let connection_id = manager
-        .register_connection(user_id.clone(), "conn1".to_string(), None)
+        .register_connection(user_id.clone(), ConnectionId::new("conn1".to_string()), None)
         .await
         .unwrap();
 
     // Multiple subscriptions on same connection
+    let table_id1 = TableId::from_strings("user1", "messages");
+    let subscription1 = create_test_subscription_request(
+        "messages_query".to_string(),
+        "SELECT * FROM user1.messages WHERE conversation_id = 'conv1'".to_string(),
+        Some(table_id1),
+        Some(50),
+    );
     let live_id1 = manager
-        .register_subscription(
-            connection_id.clone(),
-            "messages_query".to_string(),
-            "SELECT * FROM user1.messages WHERE conversation_id = 'conv1'".to_string(),
-            LiveQueryOptions {
-                last_rows: Some(50),
-            },
-        )
+        .register_subscription(connection_id.clone(), subscription1)
         .await
         .unwrap();
 
+    let table_id2 = TableId::from_strings("user1", "notifications");
+    let subscription2 = create_test_subscription_request(
+        "notifications_query".to_string(),
+        "SELECT * FROM user1.notifications WHERE user_id = CURRENT_USER()".to_string(),
+        Some(table_id2),
+        Some(10),
+    );
     let live_id2 = manager
-        .register_subscription(
-            connection_id.clone(),
-            "notifications_query".to_string(),
-            "SELECT * FROM user1.notifications WHERE user_id = CURRENT_USER()".to_string(),
-            LiveQueryOptions {
-                last_rows: Some(10),
-            },
-        )
+        .register_subscription(connection_id.clone(), subscription2)
         .await
         .unwrap();
 
+    let table_id3 = TableId::from_strings("user1", "messages");
+    let subscription3 = create_test_subscription_request(
+        "messages_query2".to_string(),
+        "SELECT * FROM user1.messages WHERE conversation_id = 'conv2'".to_string(),
+        Some(table_id3),
+        Some(20),
+    );
     let live_id3 = manager
-        .register_subscription(
-            connection_id.clone(),
-            "messages_query2".to_string(),
-            "SELECT * FROM user1.messages WHERE conversation_id = 'conv2'".to_string(),
-            LiveQueryOptions {
-                last_rows: Some(20),
-            },
-        )
+        .register_subscription(connection_id.clone(), subscription3)
         .await
         .unwrap();
 
@@ -428,9 +449,8 @@ async fn test_multi_subscription_support() {
     assert_eq!(stats.total_connections, 1);
     assert_eq!(stats.total_subscriptions, 3);
 
-    // Verify all subscriptions are tracked
-    let registry_arc = manager.registry();
-    let registry = registry_arc.read().await;
+    // Verify all subscriptions are tracked (DashMap - no RwLock)
+    let registry = manager.registry();
     let table_id1 = TableId::from_strings("user1", "messages");
     let messages_subs = registry.get_subscriptions_for_table(&user_id, &table_id1);
     assert_eq!(messages_subs.len(), 2); // messages_query and messages_query2
@@ -451,18 +471,20 @@ async fn test_filter_compilation_and_caching() {
     let user_id = UserId::new("user1".to_string());
 
     let connection_id = manager
-        .register_connection(user_id.clone(), "conn1".to_string(), None)
+        .register_connection(user_id.clone(), ConnectionId::new("conn1".to_string()), None)
         .await
         .unwrap();
 
     // Register subscription with WHERE clause
+    let table_id = TableId::from_strings("user1", "messages");
+    let subscription = create_test_subscription_request(
+        "filtered_messages".to_string(),
+        "SELECT * FROM user1.messages WHERE user_id = 'user1' AND read = false".to_string(),
+        Some(table_id),
+        None,
+    );
     let live_id = manager
-        .register_subscription(
-            connection_id.clone(),
-            "filtered_messages".to_string(),
-            "SELECT * FROM user1.messages WHERE user_id = 'user1' AND read = false".to_string(),
-            LiveQueryOptions::default(),
-        )
+        .register_subscription(connection_id.clone(), subscription)
         .await
         .unwrap();
 
@@ -486,18 +508,20 @@ async fn test_notification_filtering() {
     let user_id = UserId::new("user1".to_string());
 
     let connection_id = manager
-        .register_connection(user_id.clone(), "conn1".to_string(), None)
+        .register_connection(user_id.clone(), ConnectionId::new("conn1".to_string()), None)
         .await
         .unwrap();
 
     // Register subscription with filter
+    let table_id = TableId::from_strings("user1", "messages");
+    let subscription = create_test_subscription_request(
+        "q1".to_string(),
+        "SELECT * FROM user1.messages WHERE user_id = 'user1'".to_string(),
+        Some(table_id.clone()),
+        None,
+    );
     manager
-        .register_subscription(
-            connection_id.clone(),
-            "q1".to_string(),
-            "SELECT * FROM user1.messages WHERE user_id = 'user1'".to_string(),
-            LiveQueryOptions::default(),
-        )
+        .register_subscription(connection_id.clone(), subscription)
         .await
         .unwrap();
 
@@ -534,17 +558,19 @@ async fn test_filter_cleanup_on_unsubscribe() {
     let user_id = UserId::new("user1".to_string());
 
     let connection_id = manager
-        .register_connection(user_id.clone(), "conn1".to_string(), None)
+        .register_connection(user_id.clone(), ConnectionId::new("conn1".to_string()), None)
         .await
         .unwrap();
 
+    let table_id = TableId::from_strings("user1", "messages");
+    let subscription = create_test_subscription_request(
+        "q1".to_string(),
+        "SELECT * FROM user1.messages WHERE user_id = 'user1'".to_string(),
+        Some(table_id),
+        None,
+    );
     let live_id = manager
-        .register_subscription(
-            connection_id.clone(),
-            "q1".to_string(),
-            "SELECT * FROM user1.messages WHERE user_id = 'user1'".to_string(),
-            LiveQueryOptions::default(),
-        )
+        .register_subscription(connection_id.clone(), subscription)
         .await
         .unwrap();
 

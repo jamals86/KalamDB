@@ -299,11 +299,17 @@ impl CLISession {
                 CLIError::ParseError("Subscription metadata does not include SQL query".into())
             })?;
 
-        let mut config = SubscriptionConfig::new(sql);
+        // Extract or generate subscription ID
+        let sub_id = subscription_obj
+            .get("id")
+            .and_then(|v| v.as_str())
+            .map(|s| s.to_string())
+            .unwrap_or_else(|| format!("sub_{}", std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()));
 
-        if let Some(id) = subscription_obj.get("id").and_then(|v| v.as_str()) {
-            config.id = Some(id.to_string());
-        }
+        let mut config = SubscriptionConfig::new(sub_id, sql);
 
         if let Some(url) = ws_url {
             config.ws_url = Some(url);
@@ -934,7 +940,12 @@ impl CLISession {
             Command::Subscribe(query) => {
                 // Parse OPTIONS clause from SQL before creating config
                 let (clean_sql, options) = Self::extract_subscribe_options(&query);
-                let mut config = SubscriptionConfig::new(clean_sql);
+                // Generate subscription ID
+                let sub_id = format!("sub_{}", std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .unwrap()
+                    .as_nanos());
+                let mut config = SubscriptionConfig::new(sub_id, clean_sql);
                 config.options = options;
                 self.run_subscription(config).await?;
             }
@@ -1067,9 +1078,7 @@ impl CLISession {
             if let Some(ref ws_url) = ws_url_display {
                 eprintln!("WebSocket endpoint: {}", ws_url);
             }
-            if let Some(ref id) = requested_id {
-                eprintln!("Requested subscription ID: {}", id);
-            }
+            eprintln!("Subscription ID: {}", requested_id);
             eprintln!("Press Ctrl+C to unsubscribe and return to CLI\n");
         }
 
@@ -1772,7 +1781,12 @@ impl CLISession {
     /// This is similar to the interactive \subscribe command but designed for
     /// command-line usage where the subscription runs until interrupted.
     pub async fn subscribe(&mut self, query: &str) -> Result<()> {
-        let config = SubscriptionConfig::new(query);
+        // Generate subscription ID
+        let sub_id = format!("sub_{}", std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos());
+        let config = SubscriptionConfig::new(sub_id, query);
         self.run_subscription(config).await
     }
 

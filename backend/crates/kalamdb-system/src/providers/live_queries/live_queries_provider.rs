@@ -70,7 +70,8 @@ impl LiveQueriesTableProvider {
 
     /// Alias for get_live_query_by_id (for backward compatibility)
     pub fn get_live_query(&self, live_id: &str) -> Result<Option<LiveQuery>, SystemError> {
-        let live_query_id = LiveQueryId::new(live_id);
+        let live_query_id = LiveQueryId::from_string(live_id)
+            .map_err(|e| SystemError::InvalidOperation(format!("Invalid LiveQueryId: {}", e)))?;
         self.get_live_query_by_id(&live_query_id)
     }
 
@@ -96,7 +97,8 @@ impl LiveQueriesTableProvider {
 
     /// Delete a live query entry (string version for backward compatibility)
     pub fn delete_live_query_str(&self, live_id: &str) -> Result<(), SystemError> {
-        let live_query_id = LiveQueryId::new(live_id);
+        let live_query_id = LiveQueryId::from_string(live_id)
+            .map_err(|e| SystemError::InvalidOperation(format!("Invalid LiveQueryId: {}", e)))?;
         self.delete_live_query(&live_query_id)
     }
 
@@ -159,12 +161,13 @@ impl LiveQueriesTableProvider {
         // Pre-allocate builders for optimal performance
         let mut live_ids = StringBuilder::with_capacity(row_count, row_count * 48);
         let mut connection_ids = StringBuilder::with_capacity(row_count, row_count * 16);
+        let mut subscription_ids = StringBuilder::with_capacity(row_count, row_count * 16);
         let mut namespace_ids = StringBuilder::with_capacity(row_count, row_count * 16);
         let mut table_names = StringBuilder::with_capacity(row_count, row_count * 16);
-        let mut query_ids = StringBuilder::with_capacity(row_count, row_count * 16);
         let mut user_ids = StringBuilder::with_capacity(row_count, row_count * 16);
         let mut queries = StringBuilder::with_capacity(row_count, row_count * 128);
         let mut options = StringBuilder::with_capacity(row_count, row_count * 64);
+        let mut statuses = StringBuilder::with_capacity(row_count, row_count * 16);
         let mut created_ats = Vec::with_capacity(row_count);
         let mut last_updates = Vec::with_capacity(row_count);
         let mut changes = Vec::with_capacity(row_count);
@@ -173,12 +176,13 @@ impl LiveQueriesTableProvider {
         for (_key, lq) in live_queries {
             live_ids.append_value(lq.live_id.as_str());
             connection_ids.append_value(&lq.connection_id);
+            subscription_ids.append_value(&lq.subscription_id);
             namespace_ids.append_value(lq.namespace_id.as_str());
             table_names.append_value(lq.table_name.as_str());
-            query_ids.append_value(&lq.query_id);
             user_ids.append_value(lq.user_id.as_str());
             queries.append_value(&lq.query);
             options.append_option(lq.options.as_deref());
+            statuses.append_value(lq.status.as_str());
             created_ats.push(Some(lq.created_at));
             last_updates.push(Some(lq.last_update));
             changes.push(Some(lq.changes));
@@ -190,12 +194,13 @@ impl LiveQueriesTableProvider {
             vec![
                 Arc::new(live_ids.finish()) as ArrayRef,
                 Arc::new(connection_ids.finish()) as ArrayRef,
+                Arc::new(subscription_ids.finish()) as ArrayRef,
                 Arc::new(namespace_ids.finish()) as ArrayRef,
                 Arc::new(table_names.finish()) as ArrayRef,
-                Arc::new(query_ids.finish()) as ArrayRef,
                 Arc::new(user_ids.finish()) as ArrayRef,
                 Arc::new(queries.finish()) as ArrayRef,
                 Arc::new(options.finish()) as ArrayRef,
+                Arc::new(statuses.finish()) as ArrayRef,
                 Arc::new(TimestampMillisecondArray::from(created_ats)) as ArrayRef,
                 Arc::new(TimestampMillisecondArray::from(last_updates)) as ArrayRef,
                 Arc::new(Int64Array::from(changes)) as ArrayRef,
@@ -268,14 +273,15 @@ mod tests {
 
     fn create_test_live_query(live_id: &str, user_id: &str, table_name: &str) -> LiveQuery {
         LiveQuery {
-            live_id: LiveQueryId::new(live_id),
+            live_id: LiveQueryId::from_string(live_id).expect("Invalid LiveQueryId format"),
             connection_id: "conn123".to_string(),
+            subscription_id: "sub123".to_string(),
             namespace_id: NamespaceId::new("default"),
             table_name: TableName::new(table_name),
-            query_id: "query123".to_string(),
             user_id: UserId::new(user_id),
             query: "SELECT * FROM test".to_string(),
             options: Some("{}".to_string()),
+            status: kalamdb_commons::types::LiveQueryStatus::Active,
             created_at: 1000,
             last_update: 1000,
             changes: 0,
@@ -291,7 +297,7 @@ mod tests {
         provider.create_live_query(live_query.clone()).unwrap();
 
         let retrieved = provider
-            .get_live_query(live_query.live_id.as_str())
+            .get_live_query(&live_query.live_id.to_string())
             .unwrap();
         assert!(retrieved.is_some());
         let retrieved = retrieved.unwrap();
@@ -311,7 +317,7 @@ mod tests {
 
         // Verify
         let retrieved = provider
-            .get_live_query(live_query.live_id.as_str())
+            .get_live_query(&live_query.live_id.to_string())
             .unwrap()
             .unwrap();
         assert_eq!(retrieved.changes, 5);
@@ -324,11 +330,11 @@ mod tests {
 
         provider.create_live_query(live_query.clone()).unwrap();
         provider
-            .delete_live_query_str(live_query.live_id.as_str())
+            .delete_live_query_str(&live_query.live_id.to_string())
             .unwrap();
 
         let retrieved = provider
-            .get_live_query(live_query.live_id.as_str())
+            .get_live_query(&live_query.live_id.to_string())
             .unwrap();
         assert!(retrieved.is_none());
     }
@@ -360,7 +366,7 @@ mod tests {
         // Scan
         let batch = provider.scan_all_live_queries().unwrap();
         assert_eq!(batch.num_rows(), 1);
-        assert_eq!(batch.num_columns(), 12);
+        assert_eq!(batch.num_columns(), 14);
     }
 
     #[tokio::test]
