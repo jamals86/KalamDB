@@ -27,6 +27,7 @@ async fn ensure_server_running() {
     let client = reqwest::Client::new();
     let result = client
         .post(format!("{}/v1/api/sql", SERVER_URL))
+        .header("X-Kalam-System-User", TEST_USER)
         .json(&serde_json::json!({ "sql": "SELECT 1" }))
         .timeout(Duration::from_secs(2))
         .send()
@@ -53,6 +54,7 @@ fn create_client() -> Result<KalamLinkClient, KalamLinkError> {
     KalamLinkClient::builder()
         .base_url(SERVER_URL)
         .timeout(Duration::from_secs(10))
+        .auth(AuthProvider::system_user_auth("".to_string()))
         .build()
 }
 
@@ -220,8 +222,9 @@ fn test_auth_provider_jwt() {
 
 #[tokio::test]
 async fn test_subscription_config_creation() {
-    let config = SubscriptionConfig::new("SELECT * FROM table");
+    let config = SubscriptionConfig::new("sub-1", "SELECT * FROM table");
     // Config is created successfully
+    assert_eq!(config.id, "sub-1");
     assert_eq!(config.sql, "SELECT * FROM table");
 }
 
@@ -281,7 +284,7 @@ async fn test_subscription_with_custom_config() {
     sleep(Duration::from_millis(100)).await;
 
     // Create subscription with custom config
-    let config = SubscriptionConfig::new("SELECT * FROM ws_link_config.data");
+    let config = SubscriptionConfig::new("sub-custom", "SELECT * FROM ws_link_config.data");
 
     let sub_result = timeout(Duration::from_secs(5), client.subscribe_with_config(config)).await;
 

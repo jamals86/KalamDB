@@ -18,6 +18,8 @@
 //!
 //! Tests will be skipped if the server is not running.
 
+use base64::Engine;
+use kalam_link::auth::AuthProvider;
 use kalam_link::models::ResponseStatus;
 use kalam_link::{ChangeEvent, KalamLinkClient, QueryResponse, SubscriptionConfig};
 use std::time::Duration;
@@ -31,8 +33,11 @@ const TEST_USER_ID: &str = "ws_test_user";
 
 /// Helper to check if server is running
 async fn is_server_running() -> bool {
+    // Use Basic Auth with root:<empty> for localhost bypass
+    let credentials = base64::engine::general_purpose::STANDARD.encode("root:");
     match reqwest::Client::new()
         .post(format!("{}/v1/api/sql", SERVER_URL))
+        .header("Authorization", format!("Basic {}", credentials))
         .json(&serde_json::json!({ "sql": "SELECT 1" }))
         .timeout(Duration::from_secs(2))
         .send()
@@ -48,6 +53,7 @@ fn create_test_client() -> Result<KalamLinkClient, kalam_link::KalamLinkError> {
     KalamLinkClient::builder()
         .base_url(SERVER_URL)
         .timeout(Duration::from_secs(30))
+        .auth(AuthProvider::system_user_auth("".to_string()))
         .build()
 }
 
@@ -228,7 +234,7 @@ async fn test_websocket_subscription_with_config() {
     let client = create_test_client().expect("Failed to create client");
 
     // Create subscription with custom config
-    let config = SubscriptionConfig::new(&format!("SELECT * FROM {}", table));
+    let config = SubscriptionConfig::new("sub-config-test", &format!("SELECT * FROM {}", table));
 
     let subscription_result = timeout(TEST_TIMEOUT, client.subscribe_with_config(config)).await;
 
