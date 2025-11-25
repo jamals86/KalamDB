@@ -131,7 +131,7 @@ async fn send_subscription_request(
     };
 
     let message = ClientMessage::Subscribe {
-        subscriptions: vec![subscription_req],
+        subscription: subscription_req,
     };
 
     let payload = serde_json::to_string(&message).map_err(|e| {
