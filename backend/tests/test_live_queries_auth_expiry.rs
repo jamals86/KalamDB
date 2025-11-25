@@ -6,7 +6,7 @@
 mod common;
 
 use common::TestServer;
-use kalamdb_commons::models::{ConnectionId, LiveId};
+use kalamdb_commons::models::{ConnectionId, LiveQueryId, UserId};
 use kalamdb_commons::Notification;
 use tokio::sync::mpsc;
 use std::time::Duration;
@@ -21,15 +21,15 @@ async fn test_live_query_auth_expiry() {
     let conn_id_str = "conn_expiry_test";
     let connection_id = ConnectionId::new(conn_id_str.to_string());
     
-    // Create channel for notifications
-    let (tx, mut rx) = mpsc::unbounded_channel::<(LiveId, Notification)>();
+    // Create channel for notifications (LiveQueryId, Notification)
+    let (tx, mut rx) = mpsc::unbounded_channel::<(LiveQueryId, Notification)>();
     
     // 2. Register Connection
-    let user_id = kalamdb_commons::models::UserId::new(user_id_str.to_string());
+    let user_id = UserId::new(user_id_str.to_string());
     
     manager.register_connection(
         user_id.clone(), 
-        connection_id.to_string(), 
+        connection_id.clone(), 
         Some(tx)
     )
         .await
