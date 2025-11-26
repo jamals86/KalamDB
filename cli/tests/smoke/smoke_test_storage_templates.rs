@@ -89,51 +89,51 @@ fn smoke_storage_custom_templates() {
         let ns = namespace_user.clone();
         let table = user_table.clone();
         move || {
-            let _ = execute_sql_as_root_via_cli(&format!("DROP TABLE IF EXISTS {}.{}", ns, table));
+            let _ = execute_sql_as_root_via_client(&format!("DROP TABLE IF EXISTS {}.{}", ns, table));
         }
     });
     cleanup.defer({
         let ns = namespace_shared.clone();
         let table = shared_table.clone();
         move || {
-            let _ = execute_sql_as_root_via_cli(&format!("DROP TABLE IF EXISTS {}.{}", ns, table));
+            let _ = execute_sql_as_root_via_client(&format!("DROP TABLE IF EXISTS {}.{}", ns, table));
         }
     });
     cleanup.defer({
         let ns = namespace_user.clone();
         move || {
             let _ =
-                execute_sql_as_root_via_cli(&format!("DROP NAMESPACE IF EXISTS {} CASCADE", ns));
+                execute_sql_as_root_via_client(&format!("DROP NAMESPACE IF EXISTS {} CASCADE", ns));
         }
     });
     cleanup.defer({
         let ns = namespace_shared.clone();
         move || {
             let _ =
-                execute_sql_as_root_via_cli(&format!("DROP NAMESPACE IF EXISTS {} CASCADE", ns));
+                execute_sql_as_root_via_client(&format!("DROP NAMESPACE IF EXISTS {} CASCADE", ns));
         }
     });
     cleanup.defer({
         let storage = storage_id.clone();
         move || {
-            let _ = execute_sql_as_root_via_cli(&format!("DROP STORAGE {}", storage));
+            let _ = execute_sql_as_root_via_client(&format!("DROP STORAGE {}", storage));
         }
     });
     cleanup.defer({
         let user = test_user.clone();
         move || {
-            let _ = execute_sql_as_root_via_cli(&format!("DROP USER IF EXISTS '{}'", user));
+            let _ = execute_sql_as_root_via_client(&format!("DROP USER IF EXISTS '{}'", user));
         }
     });
 
     // Create namespaces
-    execute_sql_as_root_via_cli(&format!("CREATE NAMESPACE {}", namespace_user))
+    execute_sql_as_root_via_client(&format!("CREATE NAMESPACE {}", namespace_user))
         .expect("create namespace (user)");
-    execute_sql_as_root_via_cli(&format!("CREATE NAMESPACE {}", namespace_shared))
+    execute_sql_as_root_via_client(&format!("CREATE NAMESPACE {}", namespace_shared))
         .expect("create namespace (shared)");
 
     // Create test user to generate userId component in path templates
-    execute_sql_as_root_via_cli(&format!(
+    execute_sql_as_root_via_client(&format!(
         "CREATE USER {} WITH PASSWORD '{}' ROLE 'user'",
         test_user, test_password
     ))
@@ -149,7 +149,7 @@ fn smoke_storage_custom_templates() {
             SHARED_TABLES_TEMPLATE 'ns_{{namespace}}/table_{{tableName}}'
             USER_TABLES_TEMPLATE 'ns_{{namespace}}/tbl_{{tableName}}/usr_{{userId}}'"
     );
-    execute_sql_as_root_via_cli(&storage_sql).expect("create storage with custom templates");
+    execute_sql_as_root_via_client(&storage_sql).expect("create storage with custom templates");
     assert_storage_registered(&storage_id, &base_dir_sql);
 
     // ----- User table scenario -----
@@ -163,7 +163,7 @@ fn smoke_storage_custom_templates() {
                     FLUSH_POLICY = 'rows:10'
                 )"
     );
-    execute_sql_as_root_via_cli(&create_user_table_sql).expect("create user table");
+    execute_sql_as_root_via_client(&create_user_table_sql).expect("create user table");
     assert_table_storage(&namespace_user, &user_table, &storage_id);
 
     // Reduced row count for faster smoke execution (was 50)
@@ -237,7 +237,7 @@ fn smoke_storage_custom_templates() {
         );
     }
 
-    execute_sql_as_root_via_cli(&format!("DROP TABLE {}", table_user_full))
+    execute_sql_as_root_via_client(&format!("DROP TABLE {}", table_user_full))
         .expect("drop user table");
     if !wait_for_directory_absence(&expected_user_dir, Duration::from_secs(15)) {
         println!(
@@ -257,7 +257,7 @@ fn smoke_storage_custom_templates() {
                     FLUSH_POLICY = 'rows:10'
                 )"
     );
-    execute_sql_as_root_via_cli(&create_shared_table_sql).expect("create shared table");
+    execute_sql_as_root_via_client(&create_shared_table_sql).expect("create shared table");
     assert_table_storage(&namespace_shared, &shared_table, &storage_id);
 
     insert_rows_as_root(&table_shared_full, 50);
@@ -323,7 +323,7 @@ fn smoke_storage_custom_templates() {
         );
     }
 
-    execute_sql_as_root_via_cli(&format!("DROP TABLE {}", table_shared_full))
+    execute_sql_as_root_via_client(&format!("DROP TABLE {}", table_shared_full))
         .expect("drop shared table");
     if !wait_for_directory_absence(&expected_shared_dir, Duration::from_secs(15)) {
         println!(
@@ -333,19 +333,19 @@ fn smoke_storage_custom_templates() {
     }
 
     // Drop storage so cleanup guard doesn't emit errors
-    execute_sql_as_root_via_cli(&format!("DROP STORAGE {}", storage_id)).expect("drop storage");
+    execute_sql_as_root_via_client(&format!("DROP STORAGE {}", storage_id)).expect("drop storage");
 }
 
 fn insert_rows_as_user(username: &str, password: &str, table_name: &str, row_count: usize) {
     let values = build_values_clause(row_count, "user payload");
     let insert_sql = format!("INSERT INTO {} (body) VALUES {}", table_name, values);
-    execute_sql_via_cli_as(username, password, &insert_sql).expect("user insert should succeed");
+    execute_sql_via_client_as(username, password, &insert_sql).expect("user insert should succeed");
 }
 
 fn insert_rows_as_root(table_name: &str, row_count: usize) {
     let values = build_values_clause(row_count, "shared payload");
     let insert_sql = format!("INSERT INTO {} (body) VALUES {}", table_name, values);
-    execute_sql_as_root_via_cli(&insert_sql).expect("root insert should succeed");
+    execute_sql_as_root_via_client(&insert_sql).expect("root insert should succeed");
 }
 
 fn build_values_clause(row_count: usize, prefix: &str) -> String {
@@ -357,7 +357,7 @@ fn build_values_clause(row_count: usize, prefix: &str) -> String {
 
 fn trigger_flush_and_wait(table_name: &str) {
     let flush_sql = format!("FLUSH TABLE {}", table_name);
-    let output = execute_sql_as_root_via_cli(&flush_sql).expect("flush command should succeed");
+    let output = execute_sql_as_root_via_client(&flush_sql).expect("flush command should succeed");
     let job_id =
         parse_job_id_from_flush_output(&output).expect("flush output should contain job id");
     verify_job_completed(&job_id, Duration::from_secs(60)).expect("flush job should complete");
@@ -497,7 +497,7 @@ fn assert_table_storage(namespace: &str, table_name: &str, expected_storage_id: 
 }
 
 fn query_rows(sql: &str) -> Vec<JsonValue> {
-    let output = execute_sql_as_root_via_cli_json(sql)
+    let output = execute_sql_as_root_via_client_json(sql)
         .unwrap_or_else(|err| panic!("Failed to execute '{}': {}", sql, err));
     let json: JsonValue = serde_json::from_str(&output)
         .unwrap_or_else(|err| panic!("Failed to parse CLI JSON output: {}\n{}", err, output));

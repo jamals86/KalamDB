@@ -292,7 +292,7 @@ async fn open_authenticated_connection(
 async fn run_simple_sql() -> Duration {
     let start = Instant::now();
     let result = tokio::task::spawn_blocking(|| {
-        execute_sql_as_root_via_cli("SELECT 1").map_err(|e| format!("{}", e))
+        execute_sql_as_root_via_client("SELECT 1").map_err(|e| format!("{}", e))
     })
         .await
         .expect("spawn_blocking join failure");
@@ -309,7 +309,7 @@ async fn run_simple_sql() -> Duration {
 
 async fn fetch_live_queries_snapshot() -> String {
     tokio::task::spawn_blocking(|| {
-        execute_sql_as_root_via_cli("SELECT * FROM system.live_queries ORDER BY live_id")
+        execute_sql_as_root_via_client("SELECT * FROM system.live_queries ORDER BY live_id")
             .map_err(|e| format!("{}", e))
     })
     .await
@@ -319,7 +319,7 @@ async fn fetch_live_queries_snapshot() -> String {
 
 async fn count_live_query_subscriptions(prefix: String) -> usize {
     tokio::task::spawn_blocking(move || {
-        execute_sql_as_root_via_cli_json(
+        execute_sql_as_root_via_client_json(
             "SELECT subscription_id FROM system.live_queries ORDER BY subscription_id",
         )
         .map_err(|e| format!("{}", e))
@@ -397,30 +397,30 @@ async fn wait_for_subscription_ack(idx: usize, expected_id: &str, stream: &mut W
 }
 
 fn setup_test_table(namespace: &str, full_table_name: &str) {
-    execute_sql_as_root_via_cli(&format!("CREATE NAMESPACE IF NOT EXISTS {}", namespace))
+    execute_sql_as_root_via_client(&format!("CREATE NAMESPACE IF NOT EXISTS {}", namespace))
         .expect("CREATE NAMESPACE should succeed for websocket capacity test");
 
     let create_sql = format!(
         "CREATE TABLE IF NOT EXISTS {} (id INT PRIMARY KEY, value VARCHAR NOT NULL) WITH (TYPE = 'USER')",
         full_table_name
     );
-    execute_sql_as_root_via_cli(&create_sql)
+    execute_sql_as_root_via_client(&create_sql)
         .expect("CREATE TABLE should succeed for websocket capacity test");
 
     let delete_sql = format!(
         "DELETE FROM {} WHERE id = 0",
         full_table_name
     );
-    let _ = execute_sql_as_root_via_cli(&delete_sql);
+    let _ = execute_sql_as_root_via_client(&delete_sql);
 
     let insert_sql = format!(
         "INSERT INTO {} (id, value) VALUES (0, 'ws payload')",
         full_table_name
     );
-    let _ = execute_sql_as_root_via_cli(&insert_sql);
+    let _ = execute_sql_as_root_via_client(&insert_sql);
 }
 
 fn cleanup_namespace(namespace: &str) {
     let drop_sql = format!("DROP NAMESPACE IF EXISTS {} CASCADE", namespace);
-    let _ = execute_sql_as_root_via_cli(&drop_sql);
+    let _ = execute_sql_as_root_via_client(&drop_sql);
 }

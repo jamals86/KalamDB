@@ -244,9 +244,21 @@ where
         partition: impl Into<String>,
         indexes: Vec<Arc<dyn IndexDefinition<K, V>>>,
     ) -> Self {
+        let partition_str = partition.into();
+
+        // Ensure main partition exists
+        let main_partition = Partition::new(&partition_str);
+        let _ = backend.create_partition(&main_partition); // Ignore error if already exists
+
+        // Ensure all index partitions exist
+        for index in &indexes {
+            let index_partition = Partition::new(index.partition());
+            let _ = backend.create_partition(&index_partition); // Ignore error if already exists
+        }
+
         Self {
             backend,
-            partition: partition.into(),
+            partition: partition_str,
             indexes,
             _marker: std::marker::PhantomData,
         }

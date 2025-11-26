@@ -36,12 +36,12 @@ fn smoke_queries_benchmark() {
 
     // Create namespace
     let ns_sql = format!("CREATE NAMESPACE IF NOT EXISTS {}", namespace);
-    execute_sql_as_root_via_cli(&ns_sql).expect("create namespace");
+    execute_sql_as_root_via_client(&ns_sql).expect("create namespace");
 
     // Defensive: drop any leftover table from previous runs if it exists
     // This avoids rare "Already exists" errors when a prior run didn't clean up
     let drop_if_exists = format!("DROP TABLE IF EXISTS {}", full);
-    let _ = execute_sql_as_root_via_cli(&drop_if_exists);
+    let _ = execute_sql_as_root_via_client(&drop_if_exists);
 
     // Create ERP/POS-like user table with mixed types
     // Columns:
@@ -62,7 +62,7 @@ fn smoke_queries_benchmark() {
         ) WITH (TYPE = 'USER')"#,
         full
     );
-    execute_sql_as_root_via_cli(&create_sql).expect("create user table");
+    execute_sql_as_root_via_client(&create_sql).expect("create user table");
 
     // Insert rows in batches to minimize CLI overhead
     let total = rows_to_insert();
@@ -110,7 +110,7 @@ fn smoke_queries_benchmark() {
         // Retry on transient errors (e.g., timeout) up to 3 times
         let mut attempts = 0;
         loop {
-            match execute_sql_as_root_via_cli(&insert_sql) {
+            match execute_sql_as_root_via_client(&insert_sql) {
                 Ok(_) => break,
                 Err(e) => {
                     attempts += 1;
@@ -148,7 +148,7 @@ fn smoke_queries_benchmark() {
             "SELECT order_id, customer_id, sku, status, quantity, price, created_at, updated_at, paid, notes FROM {} WHERE order_id > {} ORDER BY order_id LIMIT {}",
             full, last_id, page_size
         );
-        let _ = execute_sql_as_root_via_cli(&select_sql).expect("select page (cursor)");
+        let _ = execute_sql_as_root_via_client(&select_sql).expect("select page (cursor)");
 
         println!("Fetched page {} (last_id={})", pages + 1, last_id);
         // Advance cursor optimistically by page size (order_id is sequential in this test)
@@ -164,5 +164,5 @@ fn smoke_queries_benchmark() {
     );
 
     // Best-effort cleanup to keep the namespace tidy between runs
-    let _ = execute_sql_as_root_via_cli(&format!("DROP TABLE IF EXISTS {}", full));
+    let _ = execute_sql_as_root_via_client(&format!("DROP TABLE IF EXISTS {}", full));
 }

@@ -148,13 +148,17 @@ impl CLISession {
         // Try to fetch server info from health check
         let (server_version, server_api_version, server_build_date, connected) =
             match client.health_check().await {
-                Ok(health) => (
+                Ok(health) => {
+                    (
                     Some(health.version),
                     Some(health.api_version),
                     health.build_date,
                     true,
-                ),
-                Err(_) => (None, None, None, false),
+                )
+                },
+                Err(_e) => {
+                    (None, None, None, false)
+                },
             };
 
         // Extract username from auth provider

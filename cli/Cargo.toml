@@ -80,6 +80,7 @@ tokio-tungstenite = { workspace = true }
 futures-util = { workspace = true }
 regex = { workspace = true }
 ntest = { workspace = true }
+wait-timeout = { workspace = true }
 
 [profile.release]
 opt-level = "z"     # Optimize for size

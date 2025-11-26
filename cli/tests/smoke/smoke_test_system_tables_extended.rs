@@ -32,10 +32,10 @@ fn smoke_test_system_tables_options_column() {
     println!("🧪 Testing system.tables options column");
 
     // Cleanup and setup
-    let _ = execute_sql_as_root_via_cli(&format!("DROP NAMESPACE IF EXISTS {} CASCADE", namespace));
+    let _ = execute_sql_as_root_via_client(&format!("DROP NAMESPACE IF EXISTS {} CASCADE", namespace));
     std::thread::sleep(Duration::from_millis(200));
 
-    execute_sql_as_root_via_cli(&format!("CREATE NAMESPACE {}", namespace))
+    execute_sql_as_root_via_client(&format!("CREATE NAMESPACE {}", namespace))
         .expect("Failed to create namespace");
 
     // Create USER table with specific options
@@ -50,7 +50,7 @@ fn smoke_test_system_tables_options_column() {
         )"#,
         namespace, user_table
     );
-    execute_sql_as_root_via_cli(&create_user_sql).expect("Failed to create user table");
+    execute_sql_as_root_via_client(&create_user_sql).expect("Failed to create user table");
 
     // Create SHARED table with specific options
     let create_shared_sql = format!(
@@ -66,7 +66,7 @@ fn smoke_test_system_tables_options_column() {
         )"#,
         namespace, shared_table
     );
-    execute_sql_as_root_via_cli(&create_shared_sql).expect("Failed to create shared table");
+    execute_sql_as_root_via_client(&create_shared_sql).expect("Failed to create shared table");
 
     // Create STREAM table with TTL
     let create_stream_sql = format!(
@@ -80,7 +80,7 @@ fn smoke_test_system_tables_options_column() {
         )"#,
         namespace, stream_table
     );
-    execute_sql_as_root_via_cli(&create_stream_sql).expect("Failed to create stream table");
+    execute_sql_as_root_via_client(&create_stream_sql).expect("Failed to create stream table");
 
     std::thread::sleep(Duration::from_millis(500));
 
@@ -92,7 +92,7 @@ fn smoke_test_system_tables_options_column() {
         namespace
     );
     let output =
-        execute_sql_as_root_via_cli_json(&query_sql).expect("Failed to query system.tables");
+        execute_sql_as_root_via_client_json(&query_sql).expect("Failed to query system.tables");
 
     println!("system.tables output:\n{}", output);
 
@@ -181,10 +181,10 @@ fn smoke_test_system_live_queries() {
     println!("🧪 Testing system.live_queries");
 
     // Cleanup and setup
-    let _ = execute_sql_as_root_via_cli(&format!("DROP NAMESPACE IF EXISTS {} CASCADE", namespace));
+    let _ = execute_sql_as_root_via_client(&format!("DROP NAMESPACE IF EXISTS {} CASCADE", namespace));
     std::thread::sleep(Duration::from_millis(200));
 
-    execute_sql_as_root_via_cli(&format!("CREATE NAMESPACE {}", namespace))
+    execute_sql_as_root_via_client(&format!("CREATE NAMESPACE {}", namespace))
         .expect("Failed to create namespace");
 
     // Create table for subscription
@@ -195,7 +195,7 @@ fn smoke_test_system_live_queries() {
         ) WITH (TYPE = 'USER', FLUSH_POLICY = 'rows:1000')"#,
         full_table
     );
-    execute_sql_as_root_via_cli(&create_sql).expect("Failed to create table");
+    execute_sql_as_root_via_client(&create_sql).expect("Failed to create table");
     std::thread::sleep(Duration::from_millis(200));
 
     println!("✅ Created table for subscription");
@@ -210,7 +210,7 @@ fn smoke_test_system_live_queries() {
     // Query system.live_queries
     let query_sql = "SELECT live_id, query, user_id FROM system.live_queries";
     let output =
-        execute_sql_as_root_via_cli_json(query_sql).expect("Failed to query system.live_queries");
+        execute_sql_as_root_via_client_json(query_sql).expect("Failed to query system.live_queries");
 
     println!("system.live_queries output:\n{}", output);
 
@@ -249,7 +249,7 @@ fn smoke_test_system_stats_meta_command() {
 
     // Query system.stats table directly
     let query_sql = "SELECT metric_name, metric_value FROM system.stats ORDER BY metric_name";
-    let output = execute_sql_as_root_via_cli(query_sql).expect("Failed to query system.stats");
+    let output = execute_sql_as_root_via_client(query_sql).expect("Failed to query system.stats");
 
     println!("system.stats output:\n{}", output);
 
@@ -295,10 +295,10 @@ fn smoke_test_dt_meta_command() {
     println!("🧪 Testing \\dt meta-command");
 
     // Cleanup and setup
-    let _ = execute_sql_as_root_via_cli(&format!("DROP NAMESPACE IF EXISTS {} CASCADE", namespace));
+    let _ = execute_sql_as_root_via_client(&format!("DROP NAMESPACE IF EXISTS {} CASCADE", namespace));
     std::thread::sleep(Duration::from_millis(200));
 
-    execute_sql_as_root_via_cli(&format!("CREATE NAMESPACE {}", namespace))
+    execute_sql_as_root_via_client(&format!("CREATE NAMESPACE {}", namespace))
         .expect("Failed to create namespace");
 
     // Create two tables
@@ -307,7 +307,7 @@ fn smoke_test_dt_meta_command() {
             "CREATE TABLE {}.{} (id BIGINT PRIMARY KEY, name TEXT) WITH (TYPE = 'USER', FLUSH_POLICY = 'rows:1000')",
             namespace, table
         );
-        execute_sql_as_root_via_cli(&create_sql).expect("Failed to create table");
+        execute_sql_as_root_via_client(&create_sql).expect("Failed to create table");
     }
 
     std::thread::sleep(Duration::from_millis(500));
@@ -319,7 +319,7 @@ fn smoke_test_dt_meta_command() {
         "SELECT table_name, table_type FROM system.tables WHERE namespace_id = '{}' ORDER BY table_name",
         namespace
     );
-    let output = execute_sql_as_root_via_cli(&query_sql).expect("Failed to query system.tables");
+    let output = execute_sql_as_root_via_client(&query_sql).expect("Failed to query system.tables");
 
     println!("\\dt equivalent output:\n{}", output);
 
@@ -360,10 +360,10 @@ fn smoke_test_describe_table_meta_command() {
     println!("🧪 Testing \\d <table> meta-command");
 
     // Cleanup and setup
-    let _ = execute_sql_as_root_via_cli(&format!("DROP NAMESPACE IF EXISTS {} CASCADE", namespace));
+    let _ = execute_sql_as_root_via_client(&format!("DROP NAMESPACE IF EXISTS {} CASCADE", namespace));
     std::thread::sleep(Duration::from_millis(200));
 
-    execute_sql_as_root_via_cli(&format!("CREATE NAMESPACE {}", namespace))
+    execute_sql_as_root_via_client(&format!("CREATE NAMESPACE {}", namespace))
         .expect("Failed to create namespace");
 
     // Create table with multiple columns
@@ -376,7 +376,7 @@ fn smoke_test_describe_table_meta_command() {
         ) WITH (TYPE = 'USER', FLUSH_POLICY = 'rows:1000')"#,
         full_table
     );
-    execute_sql_as_root_via_cli(&create_sql).expect("Failed to create table");
+    execute_sql_as_root_via_client(&create_sql).expect("Failed to create table");
     std::thread::sleep(Duration::from_millis(200));
 
     println!("✅ Created table with multiple columns");
@@ -386,7 +386,7 @@ fn smoke_test_describe_table_meta_command() {
         "SELECT table_name, table_type, options FROM system.tables WHERE namespace_id = '{}' AND table_name = '{}'",
         namespace, table
     );
-    let output = execute_sql_as_root_via_cli(&query_sql).expect("Failed to describe table");
+    let output = execute_sql_as_root_via_client(&query_sql).expect("Failed to describe table");
 
     println!("\\d <table> equivalent output:\n{}", output);
 

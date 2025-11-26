@@ -143,6 +143,12 @@ impl WebSocketSession {
                     ctx.text(json);
                 }
                 
+                // Close the WebSocket connection with a proper close frame before stopping
+                ctx.close(Some(ws::CloseReason {
+                    code: ws::CloseCode::Policy,
+                    description: Some("Authentication timeout".to_string()),
+                }));
+                
                 // Stop actor
                 ctx.stop();
                 return;
@@ -153,6 +159,13 @@ impl WebSocketSession {
                 // Heartbeat timed out
                 warn!("WebSocket Client heartbeat failed, disconnecting!");
 
+                // Close the WebSocket connection with a proper close frame before stopping
+                // This ensures the TCP connection is properly terminated
+                ctx.close(Some(ws::CloseReason {
+                    code: ws::CloseCode::Normal,
+                    description: Some("Heartbeat timeout".to_string()),
+                }));
+                
                 // Stop actor
                 ctx.stop();
 
