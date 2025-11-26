@@ -164,7 +164,7 @@ max_messages_per_sec = 5000
 
 # Maximum concurrent live query subscriptions per user (default: 10)
 # Limits total active subscriptions to prevent resource exhaustion
-max_subscriptions_per_user = 1000
+max_subscriptions_per_user = 1500
 
 # ============================================================================
 # Connection Protection (DoS Prevention)

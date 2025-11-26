@@ -45,6 +45,7 @@ impl JobsManager {
     /// Recover incomplete jobs on startup
     ///
     /// Marks all Running jobs as Failed with "Server restarted" error.
+    /// Uses provider's async methods which handle spawn_blocking internally.
     pub(crate) async fn recover_incomplete_jobs(&self) -> Result<(), KalamDbError> {
         let mut filter = JobFilter::default();
         filter.status = Some(JobStatus::Running);
@@ -61,9 +62,11 @@ impl JobsManager {
             running_jobs.len()
         );
 
+        let now_ms = chrono::Utc::now().timestamp_millis();
+
+        // Update each job using provider's async method
         for mut job in running_jobs {
-            // Manually update job to failed state
-            let now_ms = chrono::Utc::now().timestamp_millis();
+            let job_id = job.job_id.clone();
             job.status = JobStatus::Failed;
             job.message = Some("Server restarted".to_string());
             job.exception_trace = Some("Job was running when server shut down".to_string());
@@ -71,14 +74,11 @@ impl JobsManager {
             job.finished_at = Some(now_ms);
 
             self.jobs_provider
-                .update_job(job.clone())
+                .update_job_async(job)
+                .await
                 .map_err(|e| KalamDbError::IoError(format!("Failed to recover job: {}", e)))?;
 
-            self.log_job_event(
-                &job.job_id,
-                "error",
-                "Job marked as failed (server restart)",
-            );
+            self.log_job_event(&job_id, "error", "Job marked as failed (server restart)");
         }
 
         Ok(())

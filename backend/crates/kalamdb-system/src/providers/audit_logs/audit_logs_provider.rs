@@ -16,7 +16,7 @@ use datafusion::physical_plan::ExecutionPlan;
 use kalamdb_commons::models::AuditLogId;
 use kalamdb_commons::system::AuditLogEntry;
 use kalamdb_commons::StorageKey;
-use kalamdb_store::entity_store::EntityStore;
+use kalamdb_store::entity_store::{EntityStore, EntityStoreAsync};
 use kalamdb_store::StorageBackend;
 use std::any::Any;
 use std::sync::Arc;
@@ -57,6 +57,17 @@ impl AuditLogsTableProvider {
     /// Result indicating success or failure
     pub fn append(&self, entry: AuditLogEntry) -> Result<(), SystemError> {
         self.store.put(&entry.audit_id, &entry)?;
+        Ok(())
+    }
+
+    /// Async version of `append()` - offloads to blocking thread pool.
+    ///
+    /// Use this in async contexts to avoid blocking the Tokio runtime.
+    pub async fn append_async(&self, entry: AuditLogEntry) -> Result<(), SystemError> {
+        self.store
+            .put_async(&entry.audit_id, &entry)
+            .await
+            .map_err(|e| SystemError::Other(format!("put_async error: {}", e)))?;
         Ok(())
     }
 

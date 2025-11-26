@@ -16,6 +16,7 @@ use std::sync::Arc;
 /// - Typed access to system tables (K = key type, V = value type)
 /// - Admin-only access control (CrossUserTableStore returns None for table_access)
 /// - Integration with SystemTableProviderExt trait
+#[derive(Clone)]
 pub struct SystemTableStore<K, V> {
     backend: Arc<dyn StorageBackend>,
     partition: String,

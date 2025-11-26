@@ -17,7 +17,7 @@ use datafusion::logical_expr::Expr;
 use datafusion::physical_plan::ExecutionPlan;
 use kalamdb_commons::models::TableId;
 use kalamdb_commons::schemas::TableDefinition;
-use kalamdb_store::entity_store::EntityStore;
+use kalamdb_store::entity_store::{EntityStore, EntityStoreAsync};
 use kalamdb_store::StorageBackend;
 use std::any::Any;
 use std::sync::Arc;
@@ -58,6 +58,21 @@ impl TablesTableProvider {
         Ok(())
     }
 
+    /// Async version of `create_table()` - offloads to blocking thread pool.
+    ///
+    /// Use this in async contexts to avoid blocking the Tokio runtime.
+    pub async fn create_table_async(
+        &self,
+        table_id: &TableId,
+        table_def: &TableDefinition,
+    ) -> Result<(), SystemError> {
+        self.store
+            .put_async(table_id, table_def)
+            .await
+            .map_err(|e| SystemError::Other(format!("put_async error: {}", e)))?;
+        Ok(())
+    }
+
     pub fn update_table(
         &self,
         table_id: &TableId,
@@ -87,6 +102,19 @@ impl TablesTableProvider {
         table_id: &TableId,
     ) -> Result<Option<TableDefinition>, SystemError> {
         Ok(self.store.get(table_id)?)
+    }
+
+    /// Async version of `get_table_by_id()` - offloads to blocking thread pool.
+    ///
+    /// Use this in async contexts to avoid blocking the Tokio runtime.
+    pub async fn get_table_by_id_async(
+        &self,
+        table_id: &TableId,
+    ) -> Result<Option<TableDefinition>, SystemError> {
+        self.store
+            .get_async(table_id)
+            .await
+            .map_err(|e| SystemError::Other(format!("get_async error: {}", e)))
     }
 
     /// List all table definitions

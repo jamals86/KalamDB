@@ -10,10 +10,10 @@ use std::time::{Duration, Instant};
 const PARALLEL_QUERIES: usize = 500;
 const ROW_TARGET: usize = 500;
 const INSERT_CHUNK_SIZE: usize = 1000;
-const MAX_QUERY_DURATION: Duration = Duration::from_secs(60);
+const MAX_QUERY_DURATION: Duration = Duration::from_secs(30);
 const MAX_ROWS_IN_TABLE: usize = 2_000;
 
-#[ntest::timeout(1200000)]
+#[ntest::timeout(120000)]
 #[test]
 fn smoke_test_00_parallel_query_burst() {
     if !is_server_running() {

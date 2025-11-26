@@ -4,10 +4,10 @@
 
 use crate::app_context::AppContext;
 use crate::error::KalamDbError;
-use crate::sql::executor::models::ExecutionContext;
 use kalamdb_commons::models::StorageType;
 use kalamdb_commons::models::{NamespaceId, StorageId, TableAccess, TableId, UserId};
 use kalamdb_commons::schemas::TableType;
+use kalamdb_commons::Role;
 use kalamdb_sql::ddl::CreateTableStatement;
 use std::sync::Arc;
 
@@ -21,14 +21,16 @@ use super::table_registration::{
 /// # Arguments
 /// * `app_context` - Application context
 /// * `stmt` - Parsed CREATE TABLE statement
-/// * `exec_ctx` - Execution context (user, role)
+/// * `user_id` - User ID from execution context
+/// * `user_role` - User role from execution context
 ///
 /// # Returns
 /// Ok with success message, or error
 pub fn create_table(
     app_context: Arc<AppContext>,
     stmt: CreateTableStatement,
-    exec_ctx: &ExecutionContext,
+    user_id: &UserId,
+    user_role: Role,
 ) -> Result<String, KalamDbError> {
     let table_id_str = format!(
         "{}.{}",
@@ -36,8 +38,7 @@ pub fn create_table(
         stmt.table_name.as_str()
     );
     let table_type = stmt.table_type;
-    let user_id_str = exec_ctx.user_id.as_str().to_string();
-    let user_role = exec_ctx.user_role;
+    let user_id_str = user_id.as_str().to_string();
 
     log::info!(
         "🔨 CREATE TABLE request: {} (type: {:?}, user: {}, role: {:?})",
@@ -49,9 +50,9 @@ pub fn create_table(
 
     // Route to type-specific handler
     let result = match stmt.table_type {
-        TableType::User => create_user_table(app_context, stmt, exec_ctx),
-        TableType::Shared => create_shared_table(app_context, stmt, exec_ctx),
-        TableType::Stream => create_stream_table(app_context, stmt, exec_ctx),
+        TableType::User => create_user_table(app_context, stmt, user_id, user_role),
+        TableType::Shared => create_shared_table(app_context, stmt, user_id, user_role),
+        TableType::Stream => create_stream_table(app_context, stmt, user_id, user_role),
         TableType::System => {
             log::error!(
                 "❌ CREATE TABLE failed: Cannot create SYSTEM tables via SQL ({})",
@@ -75,18 +76,19 @@ pub fn create_table(
 pub fn create_user_table(
     app_context: Arc<AppContext>,
     stmt: CreateTableStatement,
-    exec_ctx: &ExecutionContext,
+    user_id: &UserId,
+    user_role: Role,
 ) -> Result<String, KalamDbError> {
     use super::tables::{save_table_definition, validate_table_name};
 
     // RBAC check
-    if !crate::auth::rbac::can_create_table(exec_ctx.user_role, TableType::User) {
+    if !crate::auth::rbac::can_create_table(user_role, TableType::User) {
         log::error!(
             "❌ CREATE TABLE (TYPE='USER') {}.{}: Insufficient privileges (user: {}, role: {:?})",
             stmt.namespace_id.as_str(),
             stmt.table_name.as_str(),
-            exec_ctx.user_id.as_str(),
-            exec_ctx.user_role
+            user_id.as_str(),
+            user_role
         );
         return Err(KalamDbError::Unauthorized(
             "Insufficient privileges to create USER tables".to_string(),
@@ -266,7 +268,7 @@ pub fn create_user_table(
 
     // Ensure filesystem table directories exist for the creator
     if storage_type == StorageType::Filesystem {
-        ensure_table_directory_exists(&schema_registry, &table_id, Some(exec_ctx.user_id()))?;
+        ensure_table_directory_exists(&schema_registry, &table_id, Some(user_id))?;
     }
 
     // Log detailed success with table options
@@ -290,7 +292,8 @@ pub fn create_user_table(
 pub fn create_shared_table(
     app_context: Arc<AppContext>,
     mut stmt: CreateTableStatement,
-    exec_ctx: &ExecutionContext,
+    user_id: &UserId,
+    user_role: Role,
 ) -> Result<String, KalamDbError> {
     use super::tables::{save_table_definition, validate_table_name};
 
@@ -300,13 +303,13 @@ pub fn create_shared_table(
     }
 
     // RBAC check
-    if !crate::auth::rbac::can_create_table(exec_ctx.user_role, TableType::Shared) {
+    if !crate::auth::rbac::can_create_table(user_role, TableType::Shared) {
         log::error!(
             "❌ CREATE TABLE (TYPE='SHARED') {}.{}: Insufficient privileges (user: {}, role: {:?})",
             stmt.namespace_id.as_str(),
             stmt.table_name.as_str(),
-            exec_ctx.user_id.as_str(),
-            exec_ctx.user_role
+            user_id.as_str(),
+            user_role
         );
         return Err(KalamDbError::Unauthorized(
             "Insufficient privileges to create SHARED tables".to_string(),
@@ -537,18 +540,19 @@ fn ensure_table_directory_exists(
 pub fn create_stream_table(
     app_context: Arc<AppContext>,
     stmt: CreateTableStatement,
-    exec_ctx: &ExecutionContext,
+    user_id: &UserId,
+    user_role: Role,
 ) -> Result<String, KalamDbError> {
     use super::tables::{save_table_definition, validate_table_name};
 
     // RBAC check
-    if !crate::auth::rbac::can_create_table(exec_ctx.user_role, TableType::Stream) {
+    if !crate::auth::rbac::can_create_table(user_role, TableType::Stream) {
         log::error!(
             "❌ CREATE TABLE (TYPE='STREAM') {}.{}: Insufficient privileges (user: {}, role: {:?})",
             stmt.namespace_id.as_str(),
             stmt.table_name.as_str(),
-            exec_ctx.user_id.as_str(),
-            exec_ctx.user_role
+            user_id.as_str(),
+            user_role
         );
         return Err(KalamDbError::Unauthorized(
             "Insufficient privileges to create STREAM tables".to_string(),

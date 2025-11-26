@@ -71,6 +71,9 @@ pub struct WebSocketSession {
     /// otherwise we drop connection.
     pub hb: Instant,
 
+    /// Last meaningful client activity (text/ping/pong/subscription)
+    pub last_activity: Instant,
+
     /// List of active subscription IDs for this connection
     pub subscriptions: Vec<String>,
 
@@ -114,6 +117,7 @@ impl WebSocketSession {
             app_context,
             user_repo,
             hb: Instant::now(),
+            last_activity: Instant::now(),
             subscriptions: Vec::new(),
             subscription_metadata: HashMap::new(),
             notification_tx: None,
@@ -207,7 +211,9 @@ impl Actor for WebSocketSession {
             let manager = self.live_query_manager.clone();
             let user_id = user_id.clone();
             let live_conn = self.connection_id.clone();
-            actix::spawn(async move {
+            // Use tokio::spawn instead of actix::spawn to ensure cleanup completes
+            // even after the Actix actor has stopped
+            tokio::spawn(async move {
                 if let Err(err) = manager.unregister_connection(&user_id, &live_conn).await {
                     warn!("Failed to unregister live query connection: {}", err);
                 }

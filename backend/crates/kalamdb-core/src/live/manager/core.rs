@@ -258,22 +258,28 @@ impl LiveQueryManager {
     }
 
     /// Get all subscriptions for a user
+    ///
+    /// Delegates to provider's async method which handles spawn_blocking internally.
     pub async fn get_user_subscriptions(
         &self,
         user_id: &UserId,
     ) -> Result<Vec<SystemLiveQuery>, KalamDbError> {
         self.live_queries_provider
-            .get_by_user_id(user_id)
+            .get_by_user_id_async(user_id)
+            .await
             .map_err(|e| KalamDbError::Other(format!("Failed to get user subscriptions: {}", e)))
     }
 
     /// Get a specific live query
+    ///
+    /// Delegates to provider's async method which handles spawn_blocking internally.
     pub async fn get_live_query(
         &self,
         live_id: &str,
     ) -> Result<Option<SystemLiveQuery>, KalamDbError> {
         self.live_queries_provider
-            .get_live_query(live_id)
+            .get_live_query_async(live_id)
+            .await
             .map_err(|e| KalamDbError::Other(format!("Failed to get live query: {}", e)))
     }
 
@@ -323,6 +329,7 @@ impl LiveQueryManager {
     /// Handle auth expiry for a connection
     ///
     /// Closes the connection and cleans up subscriptions.
+    /// Uses provider's async methods which handle spawn_blocking internally.
     pub async fn handle_auth_expiry(&self, connection_id: &ConnectionId) -> Result<(), KalamDbError> {
         // Get user_id from connection registry (DashMap provides lock-free access)
         let user_id = self.registry.get_user_id(connection_id).ok_or_else(|| {
@@ -334,7 +341,7 @@ impl LiveQueryManager {
         
         // Ensure rows are removed from system.live_queries
         for live_id in removed_ids {
-             let _ = self.live_queries_provider.delete_live_query(&live_id);
+            let _ = self.live_queries_provider.delete_live_query_async(&live_id).await;
         }
         
         Ok(())

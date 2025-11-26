@@ -467,6 +467,132 @@ where
     }
 }
 
+/// Extension trait providing async versions of EntityStore methods.
+///
+/// These methods internally use `tokio::task::spawn_blocking` to offload
+/// synchronous RocksDB operations to a blocking thread pool, preventing
+/// the async runtime from being blocked.
+///
+/// ## Usage
+///
+/// ```rust,ignore
+/// use kalamdb_store::{EntityStore, EntityStoreAsync};
+///
+/// // In async context, use the async variants:
+/// let user = store.get_async(&user_id).await?;
+/// store.put_async(&user_id, &user).await?;
+///
+/// // In sync context (e.g., blocking thread), use the sync variants:
+/// let user = store.get(&user_id)?;
+/// store.put(&user_id, &user)?;
+/// ```
+#[async_trait::async_trait]
+pub trait EntityStoreAsync<K, V>: EntityStore<K, V> + Send + Sync
+where
+    K: StorageKey + Clone + Send + Sync + 'static,
+    V: KSerializable + Clone + Send + Sync + 'static,
+    Self: Clone + 'static,
+{
+    /// Async version of `get()` - retrieves an entity by key.
+    ///
+    /// Uses `spawn_blocking` internally to prevent blocking the async runtime.
+    async fn get_async(&self, key: &K) -> Result<Option<V>> {
+        let store = self.clone();
+        let key = key.clone();
+        tokio::task::spawn_blocking(move || store.get(&key))
+            .await
+            .map_err(|e| StorageError::Other(format!("spawn_blocking join error: {}", e)))?
+    }
+
+    /// Async version of `put()` - stores an entity by key.
+    ///
+    /// Uses `spawn_blocking` internally to prevent blocking the async runtime.
+    async fn put_async(&self, key: &K, entity: &V) -> Result<()> {
+        let store = self.clone();
+        let key = key.clone();
+        let entity = entity.clone();
+        tokio::task::spawn_blocking(move || store.put(&key, &entity))
+            .await
+            .map_err(|e| StorageError::Other(format!("spawn_blocking join error: {}", e)))?
+    }
+
+    /// Async version of `delete()` - removes an entity by key.
+    ///
+    /// Uses `spawn_blocking` internally to prevent blocking the async runtime.
+    async fn delete_async(&self, key: &K) -> Result<()> {
+        let store = self.clone();
+        let key = key.clone();
+        tokio::task::spawn_blocking(move || store.delete(&key))
+            .await
+            .map_err(|e| StorageError::Other(format!("spawn_blocking join error: {}", e)))?
+    }
+
+    /// Async version of `batch_put()` - stores multiple entities atomically.
+    ///
+    /// Uses `spawn_blocking` internally to prevent blocking the async runtime.
+    async fn batch_put_async(&self, entries: Vec<(K, V)>) -> Result<()> {
+        let store = self.clone();
+        tokio::task::spawn_blocking(move || store.batch_put(&entries))
+            .await
+            .map_err(|e| StorageError::Other(format!("spawn_blocking join error: {}", e)))?
+    }
+
+    /// Async version of `scan_all()` - scans all entities in partition.
+    ///
+    /// Uses `spawn_blocking` internally to prevent blocking the async runtime.
+    async fn scan_all_async(
+        &self,
+        limit: Option<usize>,
+        prefix: Option<K>,
+        start_key: Option<K>,
+    ) -> Result<Vec<(Vec<u8>, V)>> {
+        let store = self.clone();
+        tokio::task::spawn_blocking(move || {
+            store.scan_all(limit, prefix.as_ref(), start_key.as_ref())
+        })
+        .await
+        .map_err(|e| StorageError::Other(format!("spawn_blocking join error: {}", e)))?
+    }
+
+    /// Async version of `scan_prefix()` - scans entities with a key prefix.
+    ///
+    /// Uses `spawn_blocking` internally to prevent blocking the async runtime.
+    async fn scan_prefix_async(&self, prefix: &K) -> Result<Vec<(Vec<u8>, V)>> {
+        let store = self.clone();
+        let prefix = prefix.clone();
+        tokio::task::spawn_blocking(move || store.scan_prefix(&prefix))
+            .await
+            .map_err(|e| StorageError::Other(format!("spawn_blocking join error: {}", e)))?
+    }
+
+    /// Async version of `scan_directional()` - scans relative to a starting key.
+    ///
+    /// Uses `spawn_blocking` internally to prevent blocking the async runtime.
+    async fn scan_directional_async(
+        &self,
+        start_key: Option<K>,
+        direction: ScanDirection,
+        limit: usize,
+    ) -> Result<Vec<(K, V)>> {
+        let store = self.clone();
+        tokio::task::spawn_blocking(move || {
+            let iter = store.scan_directional(start_key.as_ref(), direction, limit)?;
+            iter.collect::<Result<Vec<_>>>()
+        })
+        .await
+        .map_err(|e| StorageError::Other(format!("spawn_blocking join error: {}", e)))?
+    }
+}
+
+// Blanket implementation for any type that implements EntityStore + Clone + Send + Sync
+impl<T, K, V> EntityStoreAsync<K, V> for T
+where
+    T: EntityStore<K, V> + Clone + Send + Sync + 'static,
+    K: StorageKey + Clone + Send + Sync + 'static,
+    V: KSerializable + Clone + Send + Sync + 'static,
+{
+}
+
 /// Trait for cross-user table stores with access control.
 ///
 /// This trait extends `EntityStore<K, V>` to add access control functionality
