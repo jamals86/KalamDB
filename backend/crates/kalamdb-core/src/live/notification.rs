@@ -3,8 +3,8 @@
 //! Handles dispatching change notifications to subscribed clients,
 //! including filtering based on WHERE clauses.
 
-use super::connection_registry::LiveQueryRegistry;
 use super::filter::FilterCache;
+use super::registry::{ConnectionRegistry, NotificationSender};
 use super::types::{ChangeNotification, ChangeType};
 use crate::error::KalamDbError;
 use kalamdb_commons::models::{LiveQueryId, Row, TableId, UserId};
@@ -15,18 +15,18 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 /// Service for notifying subscribers of changes
 ///
-/// Uses Arc<LiveQueryRegistry> directly since LiveQueryRegistry internally
+/// Uses Arc<ConnectionRegistry> directly since ConnectionRegistry internally
 /// uses DashMap for lock-free concurrent access - no RwLock wrapper needed.
 pub struct NotificationService {
     /// Registry uses DashMap internally for lock-free access
-    registry: Arc<LiveQueryRegistry>,
+    registry: Arc<ConnectionRegistry>,
     filter_cache: Arc<tokio::sync::RwLock<FilterCache>>,
     live_queries_provider: Arc<LiveQueriesTableProvider>,
 }
 
 impl NotificationService {
     pub fn new(
-        registry: Arc<LiveQueryRegistry>,
+        registry: Arc<ConnectionRegistry>,
         filter_cache: Arc<tokio::sync::RwLock<FilterCache>>,
         live_queries_provider: Arc<LiveQueriesTableProvider>,
     ) -> Self {
@@ -229,7 +229,7 @@ impl NotificationService {
     async fn get_notification_sender(
         &self,
         live_id: &LiveQueryId,
-    ) -> Option<super::connection_registry::NotificationSender> {
+    ) -> Option<NotificationSender> {
         // DashMap provides lock-free access
         self.registry
             .get_notification_sender(&live_id.connection_id)

@@ -843,112 +843,115 @@ impl SubscriptionListener {
         Self::start_with_timeout(query, 30) // Default 30 second timeout for tests
     }
 
-    /// Start a subscription listener with a specific timeout in seconds
-    pub fn start_with_timeout(query: &str, timeout_secs: u64) -> Result<Self, Box<dyn std::error::Error>> {
-        let mut child = Command::new(env!("CARGO_BIN_EXE_kalam"))
-            .arg("-u")
-            .arg(SERVER_URL)
-            .arg("--username")
-            .arg("root")
-            .arg("--password")
-            .arg("")
-            .arg("--no-spinner") // Disable animations and banner messages
-            .arg("--subscription-timeout")
-            .arg(timeout_secs.to_string())
-            .arg("--subscribe")
-            .arg(query)
-            .stdout(Stdio::piped())
-            .stderr(Stdio::piped())
-            .spawn()?;
-
-        let stdout = child.stdout.take().ok_or("Failed to capture stdout")?;
-        let stderr = child.stderr.take().ok_or("Failed to capture stderr")?;
-        let mut stdout_reader = BufReader::new(stdout);
-        let stderr_reader = BufReader::new(stderr);
-
-        // Start a background thread to read stderr and print it for debugging
-        let stderr_thread = thread::spawn(move || {
-            for line in stderr_reader.lines() {
-                if let Ok(line) = line {
-                    eprintln!("[SUBSCRIPTION_STDERR] {}", line);
-                }
-            }
-        });
-
-        // Start a background thread to read lines with ability to timeout
-        let (tx, rx) = std_mpsc::channel();
-        let reader_thread = thread::spawn(move || {
-            loop {
-                let mut line = String::new();
-                match stdout_reader.read_line(&mut line) {
-                    Ok(0) => {
-                        // EOF
-                        let _ = tx.send(Ok("".to_string()));
-                        break;
+    /// Start a subscription listener with a specific timeout in seconds.
+    /// Uses kalam-link WebSocket client instead of spawning CLI processes.
+    pub fn start_with_timeout(query: &str, _timeout_secs: u64) -> Result<Self, Box<dyn std::error::Error>> {
+        let (event_tx, event_rx) = std_mpsc::channel();
+        let (stop_tx, stop_rx) = tokio::sync::oneshot::channel::<()>();
+        
+        let query = query.to_string();
+        
+        let handle = thread::spawn(move || {
+            let runtime = tokio::runtime::Builder::new_current_thread()
+                .enable_all()
+                .build()
+                .expect("Failed to create tokio runtime for subscription");
+            
+            runtime.block_on(async move {
+                // Build client for subscription
+                let client = match KalamLinkClient::builder()
+                    .base_url(SERVER_URL)
+                    .auth(AuthProvider::basic_auth("root".to_string(), "".to_string()))
+                    .timeouts(KalamLinkTimeouts::fast())
+                    .build()
+                {
+                    Ok(c) => c,
+                    Err(e) => {
+                        let _ = event_tx.send(format!("ERROR: Failed to create client: {}", e));
+                        return;
                     }
-                    Ok(_) => {
-                        if tx.send(Ok(line.trim().to_string())).is_err() {
-                            break; // Receiver dropped
+                };
+                
+                // Start subscription
+                let mut subscription = match client.subscribe(&query).await {
+                    Ok(s) => s,
+                    Err(e) => {
+                        let _ = event_tx.send(format!("ERROR: Failed to subscribe: {}", e));
+                        return;
+                    }
+                };
+                
+                // Convert oneshot receiver to a future we can select on
+                let mut stop_rx = stop_rx;
+                
+                loop {
+                    tokio::select! {
+                        _ = &mut stop_rx => {
+                            // Stop signal received
+                            break;
+                        }
+                        event = subscription.next() => {
+                            match event {
+                                Some(Ok(change_event)) => {
+                                    // Format the event as a string for compatibility with existing tests
+                                    let event_str = format!("{:?}", change_event);
+                                    if event_tx.send(event_str).is_err() {
+                                        break; // Receiver dropped
+                                    }
+                                }
+                                Some(Err(e)) => {
+                                    let _ = event_tx.send(format!("ERROR: {}", e));
+                                    break;
+                                }
+                                None => {
+                                    // Subscription ended
+                                    break;
+                                }
+                            }
                         }
                     }
-                    Err(e) => {
-                        let _ = tx.send(Err(e.to_string()));
-                        break;
-                    }
                 }
-            }
+            });
         });
 
         Ok(Self {
-            child,
-            stdout_reader: None,
-            line_receiver: Some(rx),
-            reader_thread: Some(reader_thread),
-            stderr_thread: Some(stderr_thread),
+            event_receiver: event_rx,
+            stop_sender: Some(stop_tx),
+            _handle: Some(handle),
         })
     }
 
     /// Read next line from subscription output
     pub fn read_line(&mut self) -> Result<Option<String>, Box<dyn std::error::Error>> {
-        if let Some(ref rx) = self.line_receiver {
-            match rx.recv() {
-                Ok(Ok(line)) => {
-                    if line.is_empty() {
-                        Ok(None) // EOF
-                    } else {
-                        Ok(Some(line))
-                    }
+        match self.event_receiver.recv() {
+            Ok(line) => {
+                if line.is_empty() {
+                    Ok(None) // EOF
+                } else {
+                    Ok(Some(line))
                 }
-                Ok(Err(e)) => Err(e.into()),
-                Err(_) => Ok(None), // Channel closed
             }
-        } else {
-            Err("Listener not initialized properly".into())
+            Err(_) => Ok(None), // Channel closed
         }
     }
 
-    /// Try to read a line with a timeout (uses polling approach)
+    /// Try to read a line with a timeout
     pub fn try_read_line(
         &mut self,
         timeout: Duration,
     ) -> Result<Option<String>, Box<dyn std::error::Error>> {
-        if let Some(ref rx) = self.line_receiver {
-            match rx.recv_timeout(timeout) {
-                Ok(Ok(line)) => {
-                    if line.is_empty() {
-                        Ok(None) // EOF
-                    } else {
-                        Ok(Some(line))
-                    }
+        match self.event_receiver.recv_timeout(timeout) {
+            Ok(line) => {
+                if line.is_empty() {
+                    Ok(None) // EOF
+                } else {
+                    Ok(Some(line))
                 }
-                Ok(Err(e)) => Err(e.into()),
-                Err(std_mpsc::RecvTimeoutError::Timeout) => {
-                    Err("Timeout waiting for subscription data".into())
-                }
-                Err(std_mpsc::RecvTimeoutError::Disconnected) => Ok(None),
             }
-        } else {
-            Err("Listener not initialized properly".into())
+            Err(std_mpsc::RecvTimeoutError::Timeout) => {
+                Err("Timeout waiting for subscription data".into())
+            }
+            Err(std_mpsc::RecvTimeoutError::Disconnected) => Ok(None),
         }
     }
 
@@ -976,19 +979,11 @@ impl SubscriptionListener {
     }
 
     /// Stop the subscription listener gracefully
-    /// Note: Drop is also implemented, so cleanup happens even on panic
     pub fn stop(mut self) -> Result<(), Box<dyn std::error::Error>> {
-        // Kill is idempotent - ok if already killed by Drop
-        let kill_result = self.child.kill();
-        let wait_result = self.child.wait();
-        
-        // If kill failed because process already exited, that's fine
-        if kill_result.is_err() && wait_result.is_ok() {
-            return Ok(());
+        // Signal the subscription task to stop
+        if let Some(sender) = self.stop_sender.take() {
+            let _ = sender.send(());
         }
-        
-        kill_result?;
-        wait_result?;
         Ok(())
     }
 }

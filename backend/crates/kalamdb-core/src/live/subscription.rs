@@ -3,12 +3,11 @@
 //! Handles registration and unregistration of live query subscriptions,
 //! including permission checks, filter compilation, and system table updates.
 
-use super::connection_registry::{
-    ConnectionId, LiveQueryId, LiveQueryOptions, LiveQueryRegistry, NodeId,
-};
 use super::filter::FilterCache;
+use super::registry::ConnectionRegistry;
+use kalamdb_commons::NodeId;
 use crate::error::KalamDbError;
-use kalamdb_commons::models::UserId;
+use kalamdb_commons::models::{ConnectionId, LiveQueryId, UserId};
 use kalamdb_commons::system::LiveQuery as SystemLiveQuery;
 use kalamdb_system::LiveQueriesTableProvider;
 use std::sync::Arc;
@@ -16,11 +15,11 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 /// Service for managing subscriptions
 ///
-/// Uses Arc<LiveQueryRegistry> directly since LiveQueryRegistry internally
+/// Uses Arc<ConnectionRegistry> directly since ConnectionRegistry internally
 /// uses DashMap for lock-free concurrent access - no RwLock wrapper needed.
 pub struct SubscriptionService {
     /// Registry uses DashMap internally for lock-free access
-    registry: Arc<LiveQueryRegistry>,
+    registry: Arc<ConnectionRegistry>,
     filter_cache: Arc<tokio::sync::RwLock<FilterCache>>,
     live_queries_provider: Arc<LiveQueriesTableProvider>,
     node_id: NodeId,
@@ -28,7 +27,7 @@ pub struct SubscriptionService {
 
 impl SubscriptionService {
     pub fn new(
-        registry: Arc<LiveQueryRegistry>,
+        registry: Arc<ConnectionRegistry>,
         filter_cache: Arc<tokio::sync::RwLock<FilterCache>>,
         live_queries_provider: Arc<LiveQueriesTableProvider>,
         node_id: NodeId,
@@ -79,10 +78,8 @@ impl SubscriptionService {
 
         let timestamp = Self::current_timestamp_ms();
 
-        // Convert SubscriptionOptions to LiveQueryOptions
-        let options = LiveQueryOptions {
-            last_rows: subscription.options.last_rows,
-        };
+        // Clone subscription options directly (already has the right type)
+        let options = subscription.options.clone();
 
         // Serialize options to JSON
         let options_json = serde_json::to_string(&options).map_err(|e| {

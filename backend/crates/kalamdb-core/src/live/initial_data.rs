@@ -160,7 +160,7 @@ impl InitialDataFetcher {
     /// InitialDataResult with rows and metadata
     pub async fn fetch_initial_data(
         &self,
-        live_id: &super::connection_registry::LiveQueryId,
+        live_id: &kalamdb_commons::models::LiveQueryId,
         table_id: &TableId,
         table_type: TableType,
         options: InitialDataOptions,

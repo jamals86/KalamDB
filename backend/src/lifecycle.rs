@@ -12,6 +12,7 @@ use anyhow::Result;
 use kalamdb_api::auth::jwt::JwtAuth;
 use kalamdb_api::rate_limiter::{RateLimitConfig, RateLimiter};
 use kalamdb_commons::{AuthType, Role, StorageId, StorageMode, UserId};
+use kalamdb_core::live::ConnectionRegistry;
 use kalamdb_core::live_query::LiveQueryManager;
 use kalamdb_core::sql::datafusion_session::DataFusionSessionFactory;
 use kalamdb_core::sql::executor::SqlExecutor;
@@ -30,6 +31,7 @@ pub struct ApplicationComponents {
     pub rate_limiter: Arc<RateLimiter>,
     pub live_query_manager: Arc<LiveQueryManager>,
     pub user_repo: Arc<dyn kalamdb_auth::UserRepository>,
+    pub connection_registry: Arc<ConnectionRegistry>,
 }
 
 /// Initialize RocksDB, DataFusion, services, rate limiter, and flush scheduler.
@@ -198,6 +200,25 @@ pub async fn bootstrap(
         config.rate_limit.max_subscriptions_per_user
     );
 
+    // Connection Registry for WebSocket connections - use the one from AppContext
+    // This is CRITICAL: the same ConnectionRegistry must be used by both:
+    // 1. ws_handler (for registering connections and marking authentication)
+    // 2. LiveQueryManager's SubscriptionService (for checking connection state during subscription)
+    // 
+    // Previously, lifecycle.rs created a NEW ConnectionRegistry which caused the error:
+    // "Connection not found" when trying to register subscriptions because the connection
+    // was registered in one registry but looked up in another.
+    let connection_registry = app_context.connection_registry();
+    let client_timeout = config.websocket.client_timeout_secs.unwrap_or(10);
+    let auth_timeout = config.websocket.auth_timeout_secs.unwrap_or(3);
+    let heartbeat_interval = 5; // Fixed at 5s in AppContext
+    info!(
+        "ConnectionRegistry initialized (client_timeout={}s, auth_timeout={}s, heartbeat_interval={}s)",
+        client_timeout,
+        auth_timeout,
+        heartbeat_interval
+    );
+
     // Phase 9: All job scheduling now handled by JobsManager
     // Stream eviction is now handled by JobsManager.run_loop() - no separate scheduler needed
     // JobsManager periodically checks for STREAM tables with TTL and creates eviction jobs
@@ -227,6 +248,7 @@ pub async fn bootstrap(
         rate_limiter,
         live_query_manager,
         user_repo,
+        connection_registry,
     };
 
     info!(
@@ -282,11 +304,13 @@ pub async fn run(
     let rate_limiter = components.rate_limiter.clone();
     let live_query_manager = components.live_query_manager.clone();
     let user_repo = components.user_repo.clone();
+    let connection_registry = components.connection_registry.clone();
 
     // Create connection protection middleware from config
     let connection_protection = middleware::ConnectionProtection::from_server_config(config);
 
     let app_context_for_handler = app_context.clone();
+    let connection_registry_for_handler = connection_registry.clone();
     let server = HttpServer::new(move || {
         App::new()
             // Connection protection (first middleware - drops bad requests early)
@@ -301,6 +325,7 @@ pub async fn run(
             .app_data(web::Data::new(rate_limiter.clone()))
             .app_data(web::Data::new(live_query_manager.clone()))
             .app_data(web::Data::new(user_repo.clone()))
+            .app_data(web::Data::new(connection_registry_for_handler.clone()))
             .configure(routes::configure)
     })
     // Set backlog BEFORE bind() - this affects the listen queue size
@@ -336,7 +361,12 @@ pub async fn run(
         _ = tokio::signal::ctrl_c() => {
             info!("Received Ctrl+C, initiating graceful shutdown...");
 
+            // Stop accepting new HTTP connections
             server_handle.stop(true).await;
+
+            // Gracefully shutdown WebSocket connections
+            info!("Shutting down WebSocket connections...");
+            connection_registry.shutdown(std::time::Duration::from_secs(5)).await;
 
             info!(
                 "Waiting up to {}s for active jobs to complete...",

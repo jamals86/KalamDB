@@ -8,5 +8,5 @@ pub mod ws_handler;
 // pub mod query;
 
 pub use sql_handler::*;
-pub use ws_handler::*;
+pub use ws_handler::websocket_handler;
 // pub use query::*;

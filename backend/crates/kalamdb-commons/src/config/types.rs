@@ -21,6 +21,8 @@ pub struct ServerConfig {
     #[serde(default)]
     pub stream: StreamSettings,
     #[serde(default)]
+    pub websocket: WebSocketSettings,
+    #[serde(default)]
     pub rate_limit: RateLimitSettings,
     #[serde(default, alias = "authentication")]
     pub auth: AuthSettings,
@@ -264,6 +266,35 @@ pub struct StreamSettings {
     /// How often to check and evict expired events from stream tables
     #[serde(default = "default_stream_eviction_interval")]
     pub eviction_interval_seconds: u64,
+}
+
+/// WebSocket settings for connection management
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct WebSocketSettings {
+    /// Client heartbeat timeout in seconds (default: 10)
+    /// How long to wait for client pong before disconnecting
+    #[serde(default = "default_websocket_client_timeout")]
+    pub client_timeout_secs: Option<u64>,
+
+    /// Authentication timeout in seconds (default: 3)
+    /// How long to wait for auth message before disconnecting
+    #[serde(default = "default_websocket_auth_timeout")]
+    pub auth_timeout_secs: Option<u64>,
+
+    /// Heartbeat check interval in seconds (default: 5)
+    /// How often the shared heartbeat manager checks all connections
+    #[serde(default = "default_websocket_heartbeat_interval")]
+    pub heartbeat_interval_secs: Option<u64>,
+}
+
+impl Default for WebSocketSettings {
+    fn default() -> Self {
+        Self {
+            client_timeout_secs: default_websocket_client_timeout(),
+            auth_timeout_secs: default_websocket_auth_timeout(),
+            heartbeat_interval_secs: default_websocket_heartbeat_interval(),
+        }
+    }
 }
 
 /// User management cleanup settings
@@ -634,6 +665,7 @@ impl Default for ServerConfig {
             manifest_cache: ManifestCacheSettings::default(),
             retention: RetentionSettings::default(),
             stream: StreamSettings::default(),
+            websocket: WebSocketSettings::default(),
             rate_limit: RateLimitSettings::default(),
             auth: AuthSettings::default(),
             oauth: OAuthSettings::default(),

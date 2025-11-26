@@ -3,8 +3,28 @@ use crate::error::KalamDbError;
 use crate::jobs::JobsManager;
 use kalamdb_commons::system::JobFilter;
 use kalamdb_commons::JobStatus;
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
 use sysinfo::System;
+
+/// Global counter for active WebSocket sessions
+/// This is updated by kalamdb-api when sessions start/stop
+static ACTIVE_WEBSOCKET_SESSIONS: AtomicUsize = AtomicUsize::new(0);
+
+/// Increment the active WebSocket session count
+pub fn increment_websocket_sessions() -> usize {
+    ACTIVE_WEBSOCKET_SESSIONS.fetch_add(1, Ordering::SeqCst) + 1
+}
+
+/// Decrement the active WebSocket session count
+pub fn decrement_websocket_sessions() -> usize {
+    ACTIVE_WEBSOCKET_SESSIONS.fetch_sub(1, Ordering::SeqCst) - 1
+}
+
+/// Get the current active WebSocket session count
+pub fn get_websocket_session_count() -> usize {
+    ACTIVE_WEBSOCKET_SESSIONS.load(Ordering::SeqCst)
+}
 
 /// Monitor for system health and job statistics
 pub struct HealthMonitor;
@@ -51,6 +71,9 @@ impl HealthMonitor {
         let subscription_count = live_stats.total_subscriptions;
         let connection_count = live_stats.total_connections;
 
+        // Get active WebSocket session count (set by kalamdb-api)
+        let ws_session_count = get_websocket_session_count();
+
         // Get open file descriptor count (Unix only)
         #[cfg(unix)]
         let open_files = Self::count_open_files();
@@ -65,7 +88,7 @@ impl HealthMonitor {
             let cpu_usage = proc.cpu_usage();
 
             log::debug!(
-                "Health metrics: Memory: {} MB | CPU: {:.2}% | Open Files: {} | Namespaces: {} | Tables: {} | Subscriptions: {} ({} connections) | Jobs: {} running, {} queued, {} failed (total: {})",
+                "Health metrics: Memory: {} MB | CPU: {:.2}% | Open Files: {} | Namespaces: {} | Tables: {} | Subscriptions: {} ({} connections, {} ws sessions) | Jobs: {} running, {} queued, {} failed (total: {})",
                 memory_mb,
                 cpu_usage,
                 open_files,
@@ -73,6 +96,7 @@ impl HealthMonitor {
                 table_count,
                 subscription_count,
                 connection_count,
+                ws_session_count,
                 running_count,
                 queued_count,
                 failed_count,
@@ -80,12 +104,13 @@ impl HealthMonitor {
             );
         } else {
             log::debug!(
-                "Health metrics: Open Files: {} | Namespaces: {} | Tables: {} | Subscriptions: {} ({} connections) | Jobs: {} running, {} queued, {} failed (total: {})",
+                "Health metrics: Open Files: {} | Namespaces: {} | Tables: {} | Subscriptions: {} ({} connections, {} ws sessions) | Jobs: {} running, {} queued, {} failed (total: {})",
                 open_files,
                 namespace_count,
                 table_count,
                 subscription_count,
                 connection_count,
+                ws_session_count,
                 running_count,
                 queued_count,
                 failed_count,
