@@ -44,6 +44,8 @@ use kalamdb_commons::models::UserId;
 
 12. **Smoke Tests Priority**: Always ensure smoke tests are passing before committing changes. If smoke tests fail, fix them or the underlying backend issue immediately. Run `cargo test --test smoke` in the `cli` directory to verify.
 
+> **⚠️ IMPORTANT**: Smoke tests require a running KalamDB server! Start the server first with `cargo run` in the `backend` directory before running smoke tests. The tests will fail if no server is running.
+
 **When adding a new dependency:**
 1. Add it to `Cargo.toml` (root) under `[workspace.dependencies]` with version
 2. Reference it in individual crates using `{ workspace = true }`

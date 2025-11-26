@@ -90,9 +90,43 @@ impl TablesTableProvider {
         Ok(())
     }
 
+    /// Async version of `update_table()` - offloads to blocking thread pool.
+    ///
+    /// Use this in async contexts to avoid blocking the Tokio runtime.
+    pub async fn update_table_async(
+        &self,
+        table_id: &TableId,
+        table_def: &TableDefinition,
+    ) -> Result<(), SystemError> {
+        // Check if table exists
+        if self.store.get_async(table_id).await?.is_none() {
+            return Err(SystemError::NotFound(format!(
+                "Table not found: {}",
+                table_id
+            )));
+        }
+
+        self.store
+            .put_async(table_id, table_def)
+            .await
+            .map_err(|e| SystemError::Other(format!("put_async error: {}", e)))?;
+        Ok(())
+    }
+
     /// Delete a table entry
     pub fn delete_table(&self, table_id: &TableId) -> Result<(), SystemError> {
         self.store.delete(table_id)?;
+        Ok(())
+    }
+
+    /// Async version of `delete_table()` - offloads to blocking thread pool.
+    ///
+    /// Use this in async contexts to avoid blocking the Tokio runtime.
+    pub async fn delete_table_async(&self, table_id: &TableId) -> Result<(), SystemError> {
+        self.store
+            .delete_async(table_id)
+            .await
+            .map_err(|e| SystemError::Other(format!("delete_async error: {}", e)))?;
         Ok(())
     }
 
@@ -126,6 +160,18 @@ impl TablesTableProvider {
             tables.push(table_def);
         }
         Ok(tables)
+    }
+
+    /// Async version of `list_tables()` - offloads to blocking thread pool.
+    ///
+    /// Use this in async contexts to avoid blocking the Tokio runtime.
+    pub async fn list_tables_async(&self) -> Result<Vec<TableDefinition>, SystemError> {
+        let results: Vec<(Vec<u8>, TableDefinition)> = self
+            .store
+            .scan_all_async(None, None, None)
+            .await
+            .map_err(|e| SystemError::Other(format!("scan_all_async error: {}", e)))?;
+        Ok(results.into_iter().map(|(_, td)| td).collect())
     }
 
     /// Alias for list_tables (backward compatibility)

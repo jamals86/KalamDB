@@ -23,6 +23,7 @@
 pub mod common;
 pub mod entity_store; // Phase 14: Type-safe EntityStore<K, V> with generic keys
 pub mod index; // Generic secondary index support
+pub mod indexed_store; // Phase 15: Automatic secondary index management
 pub mod key_encoding;
 pub mod rocksdb_impl;
 pub mod rocksdb_init;
@@ -57,6 +58,12 @@ pub use entity_store::{
 
 // Export index types
 pub use index::{FunctionExtractor, IndexKeyExtractor, SecondaryIndex};
+
+// Phase 15: Export IndexedEntityStore for automatic index management
+pub use indexed_store::{IndexDefinition, IndexedEntityStore};
+
+#[cfg(feature = "datafusion")]
+pub use indexed_store::{extract_i64_equality, extract_string_equality};
 
 // Make test_utils available for testing in dependent crates
 pub mod test_utils;

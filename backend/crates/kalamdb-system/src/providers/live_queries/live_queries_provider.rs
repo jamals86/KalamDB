@@ -16,7 +16,7 @@ use datafusion::error::{DataFusionError, Result as DataFusionResult};
 use datafusion::logical_expr::Expr;
 use datafusion::physical_plan::ExecutionPlan;
 use kalamdb_commons::system::LiveQuery;
-use kalamdb_commons::{LiveQueryId, TableId, UserId};
+use kalamdb_commons::{LiveQueryId, StorageKey, TableId, UserId};
 use kalamdb_store::entity_store::{EntityStore, EntityStoreAsync};
 use kalamdb_store::StorageBackend;
 use std::any::Any;
@@ -55,9 +55,27 @@ impl LiveQueriesTableProvider {
         Ok(())
     }
 
+    /// Async version of `create_live_query()` - offloads to blocking thread pool.
+    ///
+    /// Use this in async contexts to avoid blocking the Tokio runtime.
+    pub async fn create_live_query_async(&self, live_query: LiveQuery) -> Result<(), SystemError> {
+        self.store
+            .put_async(&live_query.live_id, &live_query)
+            .await
+            .map_err(|e| SystemError::Other(format!("put_async error: {}", e)))?;
+        Ok(())
+    }
+
     /// Alias for create_live_query (for backward compatibility)
     pub fn insert_live_query(&self, live_query: LiveQuery) -> Result<(), SystemError> {
         self.create_live_query(live_query)
+    }
+
+    /// Async version of `insert_live_query()` - offloads to blocking thread pool.
+    ///
+    /// Use this in async contexts to avoid blocking the Tokio runtime.
+    pub async fn insert_live_query_async(&self, live_query: LiveQuery) -> Result<(), SystemError> {
+        self.create_live_query_async(live_query).await
     }
 
     /// Get a live query by ID
@@ -104,6 +122,25 @@ impl LiveQueriesTableProvider {
         Ok(())
     }
 
+    /// Async version of `update_live_query()` - offloads to blocking thread pool.
+    ///
+    /// Use this in async contexts to avoid blocking the Tokio runtime.
+    pub async fn update_live_query_async(&self, live_query: LiveQuery) -> Result<(), SystemError> {
+        // Check if live query exists
+        if self.store.get_async(&live_query.live_id).await?.is_none() {
+            return Err(SystemError::NotFound(format!(
+                "Live query not found: {}",
+                live_query.live_id
+            )));
+        }
+
+        self.store
+            .put_async(&live_query.live_id, &live_query)
+            .await
+            .map_err(|e| SystemError::Other(format!("put_async error: {}", e)))?;
+        Ok(())
+    }
+
     /// Delete a live query entry
     pub fn delete_live_query(&self, live_id: &LiveQueryId) -> Result<(), SystemError> {
         self.store.delete(live_id)?;
@@ -132,6 +169,18 @@ impl LiveQueriesTableProvider {
     pub fn list_live_queries(&self) -> Result<Vec<LiveQuery>, SystemError> {
         let live_queries = self.store.scan_all(None, None, None)?;
         Ok(live_queries.into_iter().map(|(_, lq)| lq).collect())
+    }
+
+    /// Async version of `list_live_queries()` - offloads to blocking thread pool.
+    ///
+    /// Use this in async contexts to avoid blocking the Tokio runtime.
+    pub async fn list_live_queries_async(&self) -> Result<Vec<LiveQuery>, SystemError> {
+        let results: Vec<(Vec<u8>, LiveQuery)> = self
+            .store
+            .scan_all_async(None, None, None)
+            .await
+            .map_err(|e| SystemError::Other(format!("scan_all_async error: {}", e)))?;
+        Ok(results.into_iter().map(|(_, lq)| lq).collect())
     }
 
     /// Get live queries by user ID
@@ -175,26 +224,71 @@ impl LiveQueriesTableProvider {
             .collect())
     }
 
-    /// Delete live queries by connection ID
+    /// Delete live queries by user ID and connection ID using efficient prefix scan.
     ///
-    /// PERFORMANCE OPTIMIZATION: Collects matching keys first, then batch deletes.
-    /// This reduces RocksDB roundtrips from O(n*m) to O(n + m) where n is total
-    /// queries and m is matching queries.
-    /// FIXME: Delete always by prefix of LiveQueryId which is user_id + connection_id
-    pub fn delete_by_connection_id(&self, connection_id: &str) -> Result<(), SystemError> {
-        // First, collect all matching live query IDs (single scan)
-        let all_queries = self.list_live_queries()?;
-        let keys_to_delete: Vec<LiveQueryId> = all_queries
-            .into_iter()
-            .filter(|lq| lq.connection_id == connection_id)
-            .map(|lq| lq.live_id)
-            .collect();
+    /// PERFORMANCE OPTIMIZATION: Uses prefix scan on the storage key format
+    /// `{user_id}-{connection_id}-{subscription_id}` to find all live queries
+    /// for a user+connection without scanning the entire table.
+    ///
+    /// This reduces RocksDB operations from O(n) to O(m) where n is total
+    /// queries and m is queries for this user+connection.
+    pub fn delete_by_connection_id(
+        &self,
+        user_id: &UserId,
+        connection_id: &str,
+    ) -> Result<(), SystemError> {
+        // Create prefix key for scanning: "user_id-connection_id-"
+        let prefix = LiveQueryId::user_connection_prefix(
+            user_id,
+            &kalamdb_commons::models::ConnectionId::new(connection_id.to_string()),
+        );
 
-        // Batch delete is more efficient than individual deletes
-        // Even though we don't have atomic batch_delete, this reduces
-        // the number of filter iterations
-        for key in keys_to_delete {
+        // Scan all keys with this prefix
+        let prefix_bytes = prefix.as_bytes();
+        let results = self
+            .store
+            .scan_limited_with_prefix_and_start(Some(prefix_bytes), None, 10000)?;
+
+        // Delete each matching key
+        for (key_bytes, _) in results {
+            let key = LiveQueryId::from_storage_key(&key_bytes)
+                .map_err(|e| SystemError::InvalidOperation(format!("Invalid key: {}", e)))?;
             self.store.delete(&key)?;
+        }
+        Ok(())
+    }
+
+    /// Async version of `delete_by_connection_id()` - offloads to blocking thread pool.
+    ///
+    /// Uses efficient prefix scan on the storage key format to find and delete
+    /// all live queries for a user+connection without scanning the entire table.
+    pub async fn delete_by_connection_id_async(
+        &self,
+        user_id: &UserId,
+        connection_id: &str,
+    ) -> Result<(), SystemError> {
+        // Create prefix key for scanning: "user_id-connection_id-"
+        let prefix = LiveQueryId::user_connection_prefix(
+            user_id,
+            &kalamdb_commons::models::ConnectionId::new(connection_id.to_string()),
+        );
+
+        // Scan all keys with this prefix (async)
+        let prefix_bytes = prefix.as_bytes().to_vec();
+        let results: Vec<(Vec<u8>, LiveQuery)> = {
+            let store = self.store.clone();
+            tokio::task::spawn_blocking(move || {
+                store.scan_limited_with_prefix_and_start(Some(&prefix_bytes), None, 10000)
+            })
+            .await
+            .map_err(|e| SystemError::Other(format!("Join error: {}", e)))??
+        };
+
+        // Delete each matching key asynchronously
+        for (key_bytes, _) in results {
+            let key = LiveQueryId::from_storage_key(&key_bytes)
+                .map_err(|e| SystemError::InvalidOperation(format!("Invalid key: {}", e)))?;
+            self.delete_live_query_async(&key).await?;
         }
         Ok(())
     }
@@ -209,6 +303,26 @@ impl LiveQueriesTableProvider {
         live_query.last_update = timestamp;
 
         self.update_live_query(live_query)?;
+        Ok(())
+    }
+
+    /// Async version of `increment_changes()` - offloads to blocking thread pool.
+    ///
+    /// Use this in async contexts to avoid blocking the Tokio runtime.
+    pub async fn increment_changes_async(
+        &self,
+        live_id: &str,
+        timestamp: i64,
+    ) -> Result<(), SystemError> {
+        let mut live_query = self
+            .get_live_query_async(live_id)
+            .await?
+            .ok_or_else(|| SystemError::NotFound(format!("Live query not found: {}", live_id)))?;
+
+        live_query.changes += 1;
+        live_query.last_update = timestamp;
+
+        self.update_live_query_async(live_query).await?;
         Ok(())
     }
 
@@ -425,7 +539,7 @@ mod tests {
         // Scan
         let batch = provider.scan_all_live_queries().unwrap();
         assert_eq!(batch.num_rows(), 1);
-        assert_eq!(batch.num_columns(), 14);
+        assert_eq!(batch.num_columns(), 13); // Schema has 13 columns (see live_queries_table_definition)
     }
 
     #[tokio::test]

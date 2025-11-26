@@ -6,13 +6,8 @@ use crate::common::*;
 #[ntest::timeout(60000)]
 #[test]
 fn smoke_test_core_operations() {
-    if !is_server_running() {
-        println!(
-            "Skipping smoke_test_core_operations: server not running at {}",
-            SERVER_URL
-        );
-        return;
-    }
+    // Fail fast with clear error if server not running
+    require_server_running();
 
     println!("\n=== Starting Core Operations Smoke Test ===\n");
 

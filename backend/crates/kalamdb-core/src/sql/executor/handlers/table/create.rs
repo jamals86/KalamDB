@@ -64,7 +64,12 @@ impl TypedStatementHandler<CreateTableStatement> for CreateTableHandler {
         let table_type = statement.table_type;
 
         // Delegate to helper function
-        let message = table_creation::create_table(self.app_context.clone(), statement, context)?;
+        let message = table_creation::create_table(
+            self.app_context.clone(),
+            statement,
+            &context.user_id,
+            context.user_role,
+        )?;
 
         // Log DDL operation
         let audit_entry = audit::log_ddl_operation(

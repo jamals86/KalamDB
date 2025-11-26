@@ -12,7 +12,6 @@ use kalamdb_system::LiveQueriesTableProvider;
 use std::collections::{BTreeMap, HashSet};
 use std::sync::Arc;
 use std::time::{SystemTime, UNIX_EPOCH};
-use tokio::task::spawn_blocking;
 
 /// Service for notifying subscribers of changes
 ///
@@ -47,17 +46,16 @@ impl NotificationService {
     }
 
     /// Increment the changes counter for a live query
+    ///
+    /// Uses provider's async method which handles spawn_blocking internally.
     pub async fn increment_changes(&self, live_id: &LiveQueryId) -> Result<(), KalamDbError> {
         let timestamp = Self::current_timestamp_ms();
-        let provider = Arc::clone(&self.live_queries_provider);
         let live_id_string = live_id.to_string();
 
-        spawn_blocking(move || {
-            provider.increment_changes(&live_id_string, timestamp)?;
-            Ok::<_, KalamDbError>(())
-        })
-        .await
-        .map_err(|e| KalamDbError::Other(format!("Join error incrementing live query changes: {}", e)))??;
+        self.live_queries_provider
+            .increment_changes_async(&live_id_string, timestamp)
+            .await
+            .map_err(|e| KalamDbError::Other(format!("Failed to increment changes: {}", e)))?;
 
         Ok(())
     }
@@ -122,6 +120,7 @@ impl NotificationService {
             // Exact user subscriptions
             all_handles.extend(self.registry.get_subscriptions_for_table(user_id, table_id));
             // Admin-like observers (observe all users)
+            // TODO: Not needed!!
             let root = kalamdb_commons::models::UserId::root();
             all_handles.extend(self.registry.get_subscriptions_for_table(&root, table_id));
 

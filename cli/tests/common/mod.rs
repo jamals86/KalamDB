@@ -20,12 +20,37 @@ pub const SERVER_URL: &str = "http://localhost:8080";
 pub const TEST_TIMEOUT: Duration = Duration::from_secs(30);
 
 /// Check if the KalamDB server is running
-/// Check if the KalamDB server is running
 pub fn is_server_running() -> bool {
     // Simple TCP connection check
     std::net::TcpStream::connect("localhost:8080")
         .map(|_| true)
         .unwrap_or(false)
+}
+
+/// Require the KalamDB server to be running, panic if not.
+///
+/// Use this at the start of smoke tests to fail fast with a clear error message
+/// instead of silently skipping the test.
+///
+/// # Panics
+/// Panics with a clear error message if the server is not running.
+pub fn require_server_running() {
+    if !is_server_running() {
+        panic!(
+            "\n\n\
+            ╔══════════════════════════════════════════════════════════════════╗\n\
+            ║                    SERVER NOT RUNNING                            ║\n\
+            ╠══════════════════════════════════════════════════════════════════╣\n\
+            ║  Smoke tests require a running KalamDB server!                   ║\n\
+            ║                                                                  ║\n\
+            ║  Start the server first:                                         ║\n\
+            ║    cd backend && cargo run                                       ║\n\
+            ║                                                                  ║\n\
+            ║  Then run the smoke tests:                                       ║\n\
+            ║    cd cli && cargo test --test smoke                             ║\n\
+            ╚══════════════════════════════════════════════════════════════════╝\n\n"
+        );
+    }
 }
 
 /// Helper to execute SQL via CLI

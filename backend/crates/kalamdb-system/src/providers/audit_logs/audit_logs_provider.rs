@@ -82,6 +82,19 @@ impl AuditLogsTableProvider {
         Ok(self.store.get(audit_id)?)
     }
 
+    /// Async version of `get_entry()` - offloads to blocking thread pool.
+    ///
+    /// Use this in async contexts to avoid blocking the Tokio runtime.
+    pub async fn get_entry_async(
+        &self,
+        audit_id: &AuditLogId,
+    ) -> Result<Option<AuditLogEntry>, SystemError> {
+        self.store
+            .get_async(audit_id)
+            .await
+            .map_err(|e| SystemError::Other(format!("get_async error: {}", e)))
+    }
+
     /// Helper to create RecordBatch from entries
     fn create_batch(
         &self,
@@ -162,6 +175,18 @@ impl AuditLogsTableProvider {
             entries.push(entry);
         }
         Ok(entries)
+    }
+
+    /// Async version of `scan_all()` - offloads to blocking thread pool.
+    ///
+    /// Use this in async contexts to avoid blocking the Tokio runtime.
+    pub async fn scan_all_async(&self) -> Result<Vec<AuditLogEntry>, SystemError> {
+        let results: Vec<(Vec<u8>, AuditLogEntry)> = self
+            .store
+            .scan_all_async(None, None, None)
+            .await
+            .map_err(|e| SystemError::Other(format!("scan_all_async error: {}", e)))?;
+        Ok(results.into_iter().map(|(_, entry)| entry).collect())
     }
 }
 
