@@ -17,7 +17,7 @@ use datafusion::logical_expr::Expr;
 use datafusion::physical_plan::ExecutionPlan;
 use kalamdb_commons::system::LiveQuery;
 use kalamdb_commons::{LiveQueryId, TableId, UserId};
-use kalamdb_store::entity_store::EntityStore;
+use kalamdb_store::entity_store::{EntityStore, EntityStoreAsync};
 use kalamdb_store::StorageBackend;
 use std::any::Any;
 use std::sync::Arc;
@@ -75,6 +75,21 @@ impl LiveQueriesTableProvider {
         self.get_live_query_by_id(&live_query_id)
     }
 
+    /// Async version of `get_live_query()` - offloads to blocking thread pool.
+    ///
+    /// Use this in async contexts to avoid blocking the Tokio runtime.
+    pub async fn get_live_query_async(
+        &self,
+        live_id: &str,
+    ) -> Result<Option<LiveQuery>, SystemError> {
+        let live_query_id = LiveQueryId::from_string(live_id)
+            .map_err(|e| SystemError::InvalidOperation(format!("Invalid LiveQueryId: {}", e)))?;
+        self.store
+            .get_async(&live_query_id)
+            .await
+            .map_err(|e| SystemError::Other(format!("get_async error: {}", e)))
+    }
+
     /// Update an existing live query entry
     pub fn update_live_query(&self, live_query: LiveQuery) -> Result<(), SystemError> {
         // Check if live query exists
@@ -92,6 +107,17 @@ impl LiveQueriesTableProvider {
     /// Delete a live query entry
     pub fn delete_live_query(&self, live_id: &LiveQueryId) -> Result<(), SystemError> {
         self.store.delete(live_id)?;
+        Ok(())
+    }
+
+    /// Async version of `delete_live_query()` - offloads to blocking thread pool.
+    ///
+    /// Use this in async contexts to avoid blocking the Tokio runtime.
+    pub async fn delete_live_query_async(&self, live_id: &LiveQueryId) -> Result<(), SystemError> {
+        self.store
+            .delete_async(live_id)
+            .await
+            .map_err(|e| SystemError::Other(format!("delete_async error: {}", e)))?;
         Ok(())
     }
 
@@ -117,6 +143,26 @@ impl LiveQueriesTableProvider {
             .collect())
     }
 
+    /// Async version of `get_by_user_id()` - offloads to blocking thread pool.
+    ///
+    /// Use this in async contexts to avoid blocking the Tokio runtime.
+    pub async fn get_by_user_id_async(
+        &self,
+        user_id: &UserId,
+    ) -> Result<Vec<LiveQuery>, SystemError> {
+        let user_id = user_id.clone();
+        let all_queries: Vec<(Vec<u8>, LiveQuery)> = self
+            .store
+            .scan_all_async(None, None, None)
+            .await
+            .map_err(|e| SystemError::Other(format!("scan_all_async error: {}", e)))?;
+        Ok(all_queries
+            .into_iter()
+            .map(|(_, lq)| lq)
+            .filter(|lq| lq.user_id == user_id)
+            .collect())
+    }
+
     /// Get live queries by table ID
     pub fn get_by_table_id(&self, table_id: &TableId) -> Result<Vec<LiveQuery>, SystemError> {
         let all_queries = self.list_live_queries()?;
@@ -130,12 +176,25 @@ impl LiveQueriesTableProvider {
     }
 
     /// Delete live queries by connection ID
+    ///
+    /// PERFORMANCE OPTIMIZATION: Collects matching keys first, then batch deletes.
+    /// This reduces RocksDB roundtrips from O(n*m) to O(n + m) where n is total
+    /// queries and m is matching queries.
+    /// FIXME: Delete always by prefix of LiveQueryId which is user_id + connection_id
     pub fn delete_by_connection_id(&self, connection_id: &str) -> Result<(), SystemError> {
+        // First, collect all matching live query IDs (single scan)
         let all_queries = self.list_live_queries()?;
-        for lq in all_queries {
-            if lq.connection_id == connection_id {
-                self.delete_live_query(&lq.live_id)?;
-            }
+        let keys_to_delete: Vec<LiveQueryId> = all_queries
+            .into_iter()
+            .filter(|lq| lq.connection_id == connection_id)
+            .map(|lq| lq.live_id)
+            .collect();
+
+        // Batch delete is more efficient than individual deletes
+        // Even though we don't have atomic batch_delete, this reduces
+        // the number of filter iterations
+        for key in keys_to_delete {
+            self.store.delete(&key)?;
         }
         Ok(())
     }

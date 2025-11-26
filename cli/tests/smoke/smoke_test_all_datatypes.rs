@@ -6,6 +6,7 @@
 
 use crate::common::*;
 
+#[ntest::timeout(60000)]
 #[test]
 fn smoke_all_datatypes_user_shared_stream() {
     if !is_server_running() {

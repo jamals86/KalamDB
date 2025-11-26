@@ -46,6 +46,11 @@ impl HealthMonitor {
         let namespace_count = namespaces_provider.list_namespaces().map(|ns| ns.len()).unwrap_or(0);
         let table_count = tables_provider.list_tables().map(|ts| ts.len()).unwrap_or(0);
 
+        // Get live subscription stats
+        let live_stats = app_context.live_query_manager().get_stats().await;
+        let subscription_count = live_stats.total_subscriptions;
+        let connection_count = live_stats.total_connections;
+
         // Get open file descriptor count (Unix only)
         #[cfg(unix)]
         let open_files = Self::count_open_files();
@@ -60,12 +65,14 @@ impl HealthMonitor {
             let cpu_usage = proc.cpu_usage();
 
             log::debug!(
-                "Health metrics: Memory: {} MB | CPU: {:.2}% | Open Files: {} | Namespaces: {} | Tables: {} | Jobs: {} running, {} queued, {} failed (total: {})",
+                "Health metrics: Memory: {} MB | CPU: {:.2}% | Open Files: {} | Namespaces: {} | Tables: {} | Subscriptions: {} ({} connections) | Jobs: {} running, {} queued, {} failed (total: {})",
                 memory_mb,
                 cpu_usage,
                 open_files,
                 namespace_count,
                 table_count,
+                subscription_count,
+                connection_count,
                 running_count,
                 queued_count,
                 failed_count,
@@ -73,10 +80,12 @@ impl HealthMonitor {
             );
         } else {
             log::debug!(
-                "Health metrics: Open Files: {} | Namespaces: {} | Tables: {} | Jobs: {} running, {} queued, {} failed (total: {})",
+                "Health metrics: Open Files: {} | Namespaces: {} | Tables: {} | Subscriptions: {} ({} connections) | Jobs: {} running, {} queued, {} failed (total: {})",
                 open_files,
                 namespace_count,
                 table_count,
+                subscription_count,
+                connection_count,
                 running_count,
                 queued_count,
                 failed_count,

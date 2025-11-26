@@ -17,6 +17,7 @@ fn parse_timing_ms(output: &str) -> Option<f64> {
         .and_then(|m| m.as_str().parse::<f64>().ok())
 }
 
+#[ntest::timeout(60000)]
 #[test]
 fn smoke_test_timing_output_format() {
     if !is_server_running() {
@@ -67,6 +68,7 @@ fn smoke_test_timing_output_format() {
     let _ = execute_sql_as_root_via_cli(&format!("DROP TABLE IF EXISTS {}", full));
 }
 
+#[ntest::timeout(60000)]
 #[test]
 fn smoke_test_timing_scaling_small_table() {
     if !is_server_running() {
@@ -113,6 +115,7 @@ fn smoke_test_timing_scaling_small_table() {
     let _ = execute_sql_as_root_via_cli(&format!("DROP TABLE IF EXISTS {}", full));
 }
 
+#[ntest::timeout(60000)]
 #[test]
 fn smoke_test_timing_scaling_medium_table() {
     if !is_server_running() {
@@ -170,6 +173,7 @@ fn smoke_test_timing_scaling_medium_table() {
     let _ = execute_sql_as_root_via_cli(&format!("DROP TABLE IF EXISTS {}", full));
 }
 
+#[ntest::timeout(60000)]
 #[test]
 fn smoke_test_timing_aggregation_query() {
     if !is_server_running() {
@@ -223,6 +227,7 @@ fn smoke_test_timing_aggregation_query() {
     let _ = execute_sql_as_root_via_cli(&format!("DROP TABLE IF EXISTS {}", full));
 }
 
+#[ntest::timeout(60000)]
 #[test]
 fn smoke_test_timing_join_query() {
     if !is_server_running() {
@@ -290,6 +295,7 @@ fn smoke_test_timing_join_query() {
     let _ = execute_sql_as_root_via_cli(&format!("DROP TABLE IF EXISTS {}", full2));
 }
 
+#[ntest::timeout(60000)]
 #[test]
 fn smoke_test_timing_ddl_operations() {
     if !is_server_running() {
@@ -330,6 +336,7 @@ fn smoke_test_timing_ddl_operations() {
     // Note: This test is primarily informational - DDL timing may vary
 }
 
+#[ntest::timeout(60000)]
 #[test]
 fn smoke_test_timing_flush_operation() {
     if !is_server_running() {

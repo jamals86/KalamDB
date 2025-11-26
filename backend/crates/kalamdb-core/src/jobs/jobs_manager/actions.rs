@@ -5,6 +5,16 @@ use kalamdb_commons::system::{Job, JobOptions};
 use kalamdb_commons::{JobId, JobStatus, JobType, NamespaceId};
 
 impl JobsManager {
+    /// Insert a job in the database asynchronously
+    /// 
+    /// Delegates to provider's async method which handles spawn_blocking internally.
+    async fn insert_job_async(&self, job: Job) -> Result<(), KalamDbError> {
+        self.jobs_provider
+            .insert_job_async(job)
+            .await
+            .map_err(|e| KalamDbError::IoError(format!("Failed to insert job: {}", e)))
+    }
+
     /// Create a new job
     ///
     /// # Arguments
@@ -80,9 +90,7 @@ impl JobsManager {
         }
 
         // Persist job
-        self.jobs_provider
-            .insert_job(job.clone())
-            .map_err(|e| KalamDbError::IoError(format!("Failed to create job: {}", e)))?;
+        self.insert_job_async(job.clone()).await?;
 
         // Log job creation
         self.log_job_event(
@@ -139,7 +147,7 @@ impl JobsManager {
 
         if !should_create {
             // Log skip and return a special "skipped" job ID (or error)
-            log::debug!(
+            log::trace!(
                 "Job pre-validation returned false; skipping job creation for {:?} in namespace {}",
                 job_type,
                 namespace_id
@@ -167,11 +175,10 @@ impl JobsManager {
     /// # Errors
     /// Returns error if job not found or cancellation fails
     pub async fn cancel_job(&self, job_id: &JobId) -> Result<(), KalamDbError> {
-        // Get job
+        // Get job using async method
         let job = self
-            .jobs_provider
             .get_job(job_id)
-            .map_err(|e| KalamDbError::IoError(format!("Failed to get job: {}", e)))?
+            .await?
             .ok_or_else(|| KalamDbError::NotFound(format!("Job {} not found", job_id)))?;
 
         // Can only cancel New, Queued, or Running jobs
@@ -189,7 +196,8 @@ impl JobsManager {
         let cancelled_job = job.cancel();
 
         self.jobs_provider
-            .update_job(cancelled_job.clone())
+            .update_job_async(cancelled_job)
+            .await
             .map_err(|e| KalamDbError::IoError(format!("Failed to cancel job: {}", e)))?;
 
         // Log cancellation
@@ -226,7 +234,8 @@ impl JobsManager {
         job.finished_at = Some(now_ms);
 
         self.jobs_provider
-            .update_job(job.clone())
+            .update_job_async(job)
+            .await
             .map_err(|e| KalamDbError::Other(format!("Failed to complete job: {}", e)))?;
 
         self.log_job_event(job_id, "info", &format!("{}", success_message));
@@ -261,7 +270,8 @@ impl JobsManager {
         job.finished_at = Some(now_ms);
 
         self.jobs_provider
-            .update_job(job)
+            .update_job_async(job)
+            .await
             .map_err(|e| KalamDbError::Other(format!("Failed to mark job as failed: {}", e)))?;
 
         self.log_job_event(job_id, "error", &format!("Job failed: {}", error_message));

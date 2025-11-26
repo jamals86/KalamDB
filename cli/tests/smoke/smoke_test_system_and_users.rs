@@ -3,6 +3,7 @@
 
 use crate::common::*;
 
+#[ntest::timeout(60000)]
 #[test]
 fn smoke_system_tables_and_user_lifecycle() {
     if !is_server_running() {

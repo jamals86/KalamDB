@@ -3,6 +3,7 @@
 
 use crate::common::*;
 
+#[ntest::timeout(60000)]
 #[test]
 fn smoke_stream_table_subscription() {
     if !is_server_running() {

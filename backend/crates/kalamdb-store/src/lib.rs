@@ -43,7 +43,7 @@ pub use rocksdb_init::RocksDbInit;
 pub use sharding::{
     AlphabeticSharding, ConsistentHashSharding, NumericSharding, ShardingRegistry, ShardingStrategy,
 };
-pub use storage_trait::{Operation, Partition, StorageBackend, StorageError};
+pub use storage_trait::{Operation, Partition, StorageBackend, StorageBackendAsync, StorageError};
 
 // Re-export StorageKey from kalamdb-commons to avoid import inconsistency
 pub use kalamdb_commons::StorageKey;
@@ -52,6 +52,7 @@ pub use kalamdb_commons::StorageKey;
 pub use entity_store::{
     CrossUserTableStore,
     EntityStore as EntityStoreV2, // Alias to avoid conflict during migration, FIXME: Rename to EntityStore later
+    EntityStoreAsync,             // Async versions using spawn_blocking internally
 };
 
 // Export index types

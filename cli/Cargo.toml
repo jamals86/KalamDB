@@ -79,6 +79,7 @@ base64 = { workspace = true }
 tokio-tungstenite = { workspace = true }
 futures-util = { workspace = true }
 regex = { workspace = true }
+ntest = { workspace = true }
 
 [profile.release]
 opt-level = "z"     # Optimize for size

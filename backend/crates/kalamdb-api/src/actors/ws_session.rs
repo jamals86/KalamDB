@@ -71,6 +71,9 @@ pub struct WebSocketSession {
     /// otherwise we drop connection.
     pub hb: Instant,
 
+    /// Last meaningful client activity (text/ping/pong/subscription)
+    pub last_activity: Instant,
+
     /// List of active subscription IDs for this connection
     pub subscriptions: Vec<String>,
 
@@ -114,6 +117,7 @@ impl WebSocketSession {
             app_context,
             user_repo,
             hb: Instant::now(),
+            last_activity: Instant::now(),
             subscriptions: Vec::new(),
             subscription_metadata: HashMap::new(),
             notification_tx: None,
@@ -207,7 +211,9 @@ impl Actor for WebSocketSession {
             let manager = self.live_query_manager.clone();
             let user_id = user_id.clone();
             let live_conn = self.connection_id.clone();
-            actix::spawn(async move {
+            // Use tokio::spawn instead of actix::spawn to ensure cleanup completes
+            // even after the Actix actor has stopped
+            tokio::spawn(async move {
                 if let Err(err) = manager.unregister_connection(&user_id, &live_conn).await {
                     warn!("Failed to unregister live query connection: {}", err);
                 }
@@ -642,7 +648,7 @@ impl WebSocketSession {
         let user_clone: UserId = user_id.clone();
         let live_conn_clone = self.connection_id.clone();
 
-        ctx.wait(
+        ctx.spawn(
             fut::wrap_future(async move {
                 match manager
                     .register_subscription_with_initial_data(
@@ -813,7 +819,7 @@ impl WebSocketSession {
 
         let (sql, user_id, snapshot_end_seq, batch_size) = metadata;
 
-        ctx.wait(
+        ctx.spawn(
             fut::wrap_future(async move {
                 // Fetch next batch of data
                 let initial_data_options = Some(InitialDataOptions::batch(
@@ -898,7 +904,7 @@ impl WebSocketSession {
         let user_id = self.user_id.clone().unwrap();
         let user_id_for_limiter = user_id.clone();
 
-        ctx.wait(
+        ctx.spawn(
             fut::wrap_future(async move {
                 let live_id = kalamdb_commons::models::LiveQueryId::new(
                     user_id.clone(),
@@ -961,7 +967,7 @@ impl Handler<AuthResult> for WebSocketSession {
                 let user_for_manager = user_id.clone();
                 let notification_tx = self.notification_tx.clone();
 
-                ctx.wait(
+                ctx.spawn(
                     fut::wrap_future(async move {
                         let result = manager
                             .register_connection(

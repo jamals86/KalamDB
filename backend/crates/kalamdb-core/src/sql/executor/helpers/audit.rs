@@ -181,15 +181,18 @@ use crate::app_context::AppContext;
 use std::sync::Arc;
 
 /// Persist an audit entry to the system.audit_logs table
+///
+/// Delegates to provider's async method which handles spawn_blocking internally.
 pub async fn persist_audit_entry(
     app_context: &Arc<AppContext>,
     entry: &AuditLogEntry,
 ) -> Result<(), KalamDbError> {
-    let audit_logs_provider = app_context.system_tables().audit_logs();
-    audit_logs_provider
-        .append(entry.clone())
-        .map_err(|e| KalamDbError::from(e))?;
-    Ok(())
+    app_context
+        .system_tables()
+        .audit_logs()
+        .append_async(entry.clone())
+        .await
+        .map_err(|e| KalamDbError::from(e))
 }
 
 #[cfg(test)]

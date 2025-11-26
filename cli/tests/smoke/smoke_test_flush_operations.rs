@@ -24,6 +24,7 @@ const INSERT_ROWS: usize = 200;
 ///
 /// Creates a user table with FLUSH ROWS 50 policy, inserts 200 rows,
 /// flushes manually, and verifies all data is retrievable.
+#[ntest::timeout(60000)]
 #[test]
 fn smoke_test_user_table_flush() {
     if !is_server_running() {
@@ -176,6 +177,7 @@ fn smoke_test_user_table_flush() {
 ///
 /// Creates a shared table with FLUSH ROWS 50 policy, inserts 200 rows,
 /// flushes manually, and verifies all data is retrievable.
+#[ntest::timeout(60000)]
 #[test]
 fn smoke_test_shared_table_flush() {
     if !is_server_running() {
@@ -329,6 +331,7 @@ fn smoke_test_shared_table_flush() {
 /// This test verifies the query engine properly combines:
 /// - Unflushed data still in RocksDB
 /// - Flushed data in Parquet files
+#[ntest::timeout(60000)]
 #[test]
 fn smoke_test_mixed_source_query() {
     if !is_server_running() {

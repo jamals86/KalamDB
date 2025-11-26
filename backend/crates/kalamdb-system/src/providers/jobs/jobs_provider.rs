@@ -19,8 +19,8 @@ use kalamdb_commons::{
     system::{Job, JobFilter, JobSortField, SortOrder},
     JobId, JobStatus, StoragePartition,
 };
-use kalamdb_store::entity_store::EntityStore;
-use kalamdb_store::{Partition, StorageBackend};
+use kalamdb_store::entity_store::{EntityStore, EntityStoreAsync};
+use kalamdb_store::{Partition, StorageBackend, StorageBackendAsync};
 use std::any::Any;
 use std::sync::Arc;
 
@@ -69,6 +69,27 @@ impl JobsTableProvider {
         self.create_job(job)
     }
 
+    /// Async version of `insert_job()` - uses EntityStoreAsync and StorageBackendAsync.
+    ///
+    /// Use this in async contexts to avoid blocking the Tokio runtime.
+    pub async fn insert_job_async(&self, job: Job) -> Result<(), SystemError> {
+        // Maintain index: Status + CreatedAt + JobId
+        let index_key = make_status_index_key(job.status, job.created_at, &job.job_id);
+        let partition = Partition::new(StoragePartition::SystemJobsStatusIdx.name());
+        self.store
+            .backend()
+            .clone()
+            .put_async(&partition, &index_key, job.job_id.as_bytes())
+            .await
+            .map_err(|e| SystemError::Other(format!("put_async index error: {}", e)))?;
+
+        self.store
+            .put_async(&job.job_id, &job)
+            .await
+            .map_err(|e| SystemError::Other(format!("put_async job error: {}", e)))?;
+        Ok(())
+    }
+
     /// Get a job by ID
     pub fn get_job_by_id(&self, job_id: &JobId) -> Result<Option<Job>, SystemError> {
         Ok(self.store.get(job_id)?)
@@ -77,6 +98,16 @@ impl JobsTableProvider {
     /// Alias for get_job_by_id (for backward compatibility)
     pub fn get_job(&self, job_id: &JobId) -> Result<Option<Job>, SystemError> {
         self.get_job_by_id(job_id)
+    }
+
+    /// Async version of `get_job()` - offloads to blocking thread pool.
+    ///
+    /// Use this in async contexts to avoid blocking the Tokio runtime.
+    pub async fn get_job_async(&self, job_id: &JobId) -> Result<Option<Job>, SystemError> {
+        self.store
+            .get_async(job_id)
+            .await
+            .map_err(|e| SystemError::Other(format!("get_async error: {}", e)))
     }
 
     /// Update an existing job entry
@@ -110,6 +141,58 @@ impl JobsTableProvider {
         }
 
         self.store.put(&job.job_id, &job)?;
+        Ok(())
+    }
+
+    /// Async version of `update_job()` - uses EntityStoreAsync and StorageBackendAsync.
+    ///
+    /// Use this in async contexts to avoid blocking the Tokio runtime.
+    pub async fn update_job_async(&self, job: Job) -> Result<(), SystemError> {
+        // Check if job exists
+        let old_job = self
+            .store
+            .get_async(&job.job_id)
+            .await
+            .map_err(|e| SystemError::Other(format!("get_async error: {}", e)))?;
+        
+        let old_job = match old_job {
+            Some(j) => j,
+            None => {
+                return Err(SystemError::NotFound(format!(
+                    "Job not found: {}",
+                    job.job_id
+                )));
+            }
+        };
+
+        validate_job_update(&job)?;
+
+        let backend = self.store.backend().clone();
+
+        // Maintain index if status or created_at changed
+        if old_job.status != job.status || old_job.created_at != job.created_at {
+            let partition = Partition::new(StoragePartition::SystemJobsStatusIdx.name());
+
+            // Remove old index entry
+            let old_index_key =
+                make_status_index_key(old_job.status, old_job.created_at, &old_job.job_id);
+            backend
+                .delete_async(&partition, &old_index_key)
+                .await
+                .map_err(|e| SystemError::Other(format!("delete_async index error: {}", e)))?;
+
+            // Add new index entry
+            let new_index_key = make_status_index_key(job.status, job.created_at, &job.job_id);
+            backend
+                .put_async(&partition, &new_index_key, job.job_id.as_bytes())
+                .await
+                .map_err(|e| SystemError::Other(format!("put_async index error: {}", e)))?;
+        }
+
+        self.store
+            .put_async(&job.job_id, &job)
+            .await
+            .map_err(|e| SystemError::Other(format!("put_async job error: {}", e)))?;
         Ok(())
     }
 
@@ -211,6 +294,98 @@ impl JobsTableProvider {
         }
 
         // Limit
+        if let Some(limit) = filter.limit {
+            if jobs.len() > limit {
+                jobs.truncate(limit);
+            }
+        }
+
+        Ok(jobs)
+    }
+
+    /// Async version of `list_jobs_filtered()` - uses EntityStoreAsync and StorageBackendAsync.
+    ///
+    /// Use this in async contexts to avoid blocking the Tokio runtime.
+    pub async fn list_jobs_filtered_async(
+        &self,
+        filter: JobFilter,
+    ) -> Result<Vec<Job>, SystemError> {
+        // Optimization: If filtering by status(es) and sorting by CreatedAt ASC, use the index
+        let use_index = filter.sort_by == Some(JobSortField::CreatedAt)
+            && filter.sort_order == Some(SortOrder::Asc)
+            && (filter.status.is_some() || filter.statuses.is_some());
+
+        if use_index {
+            let mut jobs = Vec::new();
+            let limit = filter.limit.unwrap_or(usize::MAX);
+
+            // Collect statuses to scan
+            let mut statuses = Vec::new();
+            if let Some(s) = filter.status {
+                statuses.push(s);
+            }
+            if let Some(ref s_list) = filter.statuses {
+                statuses.extend(s_list.iter().cloned());
+            }
+            statuses.sort_by_key(|s| status_to_u8(*s));
+            statuses.dedup();
+
+            let partition = Partition::new(StoragePartition::SystemJobsStatusIdx.name());
+            let backend = self.store.backend().clone();
+
+            for status in statuses {
+                if jobs.len() >= limit {
+                    break;
+                }
+
+                let prefix = vec![status_to_u8(status)];
+                let index_entries = backend
+                    .scan_async(&partition, Some(prefix), None, Some(limit - jobs.len()))
+                    .await
+                    .map_err(|e| SystemError::Other(format!("scan_async error: {}", e)))?;
+
+                for (_, job_id_bytes) in index_entries {
+                    let job_id_str = String::from_utf8(job_id_bytes)
+                        .map_err(|e| SystemError::Other(format!("Invalid JobId in index: {}", e)))?;
+                    let job_id = JobId::new(job_id_str);
+
+                    if let Some(job) = self
+                        .store
+                        .get_async(&job_id)
+                        .await
+                        .map_err(|e| SystemError::Other(format!("get_async error: {}", e)))?
+                    {
+                        if matches_filter_sync(&job, &filter) {
+                            jobs.push(job);
+                        }
+                    }
+                }
+            }
+
+            return Ok(jobs);
+        }
+
+        // Fallback to full scan
+        let all_jobs: Vec<(Vec<u8>, Job)> = self
+            .store
+            .scan_all_async(None, None, None)
+            .await
+            .map_err(|e| SystemError::Other(format!("scan_all_async error: {}", e)))?;
+        let mut jobs: Vec<Job> = all_jobs.into_iter().map(|(_, job)| job).collect();
+
+        jobs.retain(|job| matches_filter_sync(job, &filter));
+
+        if let Some(sort_by) = filter.sort_by {
+            match sort_by {
+                JobSortField::CreatedAt => jobs.sort_by_key(|j| j.created_at),
+                JobSortField::UpdatedAt => jobs.sort_by_key(|j| j.updated_at),
+                JobSortField::Priority => jobs.sort_by_key(|j| j.priority.unwrap_or(0)),
+            }
+            if filter.sort_order == Some(SortOrder::Desc) {
+                jobs.reverse();
+            }
+        }
+
         if let Some(limit) = filter.limit {
             if jobs.len() > limit {
                 jobs.truncate(limit);
@@ -505,6 +680,51 @@ fn status_to_u8(status: JobStatus) -> u8 {
         JobStatus::Failed => 5,
         JobStatus::Cancelled => 6,
     }
+}
+
+/// Synchronous filter matching helper
+fn matches_filter_sync(job: &Job, filter: &JobFilter) -> bool {
+    if let Some(ref status) = filter.status {
+        if status != &job.status {
+            return false;
+        }
+    }
+    if let Some(ref statuses) = filter.statuses {
+        if !statuses.contains(&job.status) {
+            return false;
+        }
+    }
+    if let Some(ref job_type) = filter.job_type {
+        if job_type != &job.job_type {
+            return false;
+        }
+    }
+    if let Some(ref namespace) = filter.namespace_id {
+        if namespace != &job.namespace_id {
+            return false;
+        }
+    }
+    if let Some(ref table_name) = filter.table_name {
+        if job.table_name.as_ref() != Some(table_name) {
+            return false;
+        }
+    }
+    if let Some(ref key) = filter.idempotency_key {
+        if job.idempotency_key.as_ref() != Some(key) {
+            return false;
+        }
+    }
+    if let Some(after) = filter.created_after {
+        if job.created_at < after {
+            return false;
+        }
+    }
+    if let Some(before) = filter.created_before {
+        if job.created_at >= before {
+            return false;
+        }
+    }
+    true
 }
 
 fn make_status_index_key(status: JobStatus, created_at: i64, job_id: &JobId) -> Vec<u8> {

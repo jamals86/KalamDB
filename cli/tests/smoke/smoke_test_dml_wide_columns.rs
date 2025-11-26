@@ -130,6 +130,7 @@ fn run_dml_sequence(full: &str, _is_shared: bool) {
     // Note: subscription validations are covered in dedicated test below
 }
 
+#[ntest::timeout(60000)]
 #[test]
 fn smoke_user_table_dml_wide_columns() {
     if !is_server_running() {
@@ -165,6 +166,7 @@ fn smoke_user_table_dml_wide_columns() {
     run_dml_sequence(&full, false);
 }
 
+#[ntest::timeout(60000)]
 #[test]
 fn smoke_shared_table_dml_wide_columns() {
     if !is_server_running() {
@@ -202,6 +204,7 @@ fn smoke_shared_table_dml_wide_columns() {
 
 // Subscription coverage for UPDATE and DELETE notifications on a user table with
 // _updated/_deleted columns.
+#[ntest::timeout(60000)]
 #[test]
 #[ignore = "Backend issue: UPDATE on user tables returns 0 rows affected (NotFound error)"]
 fn smoke_subscription_update_delete_notifications() {

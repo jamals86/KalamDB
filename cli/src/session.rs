@@ -10,7 +10,7 @@
 use clap::ValueEnum;
 use colored::*;
 use indicatif::{ProgressBar, ProgressStyle};
-use kalam_link::{AuthProvider, KalamLinkClient, SubscriptionConfig, SubscriptionOptions};
+use kalam_link::{AuthProvider, KalamLinkClient, KalamLinkTimeouts, SubscriptionConfig, SubscriptionOptions};
 use rustyline::completion::Completer;
 use rustyline::error::ReadlineError;
 use rustyline::highlight::Highlighter;
@@ -97,6 +97,9 @@ pub struct CLISession {
 
     /// Credential store for managing saved credentials
     credential_store: Option<crate::credentials::FileCredentialStore>,
+
+    /// Configured timeouts for operations
+    timeouts: KalamLinkTimeouts,
 }
 
 impl CLISession {
@@ -110,7 +113,7 @@ impl CLISession {
         color: bool,
     ) -> Result<Self> {
         Self::with_auth_and_instance(
-            server_url, auth, format, color, None, None, None, true, None,
+            server_url, auth, format, color, None, None, None, true, None, None,
         )
         .await
     }
@@ -128,14 +131,18 @@ impl CLISession {
         loading_threshold_ms: Option<u64>,
         animations: bool,
         client_timeout: Option<Duration>,
+        timeouts: Option<KalamLinkTimeouts>,
     ) -> Result<Self> {
-        // Build kalam-link client with authentication
-        let timeout = client_timeout.unwrap_or_else(|| Duration::from_secs(30));
+        // Build kalam-link client with authentication and timeouts
+        let timeouts = timeouts.unwrap_or_default();
+        let timeout = client_timeout.unwrap_or(timeouts.receive_timeout);
+        
         let client = KalamLinkClient::builder()
             .base_url(&server_url)
             .timeout(timeout)
             .max_retries(3)
             .auth(auth.clone())
+            .timeouts(timeouts.clone())
             .build()?;
 
         // Try to fetch server info from health check
@@ -178,6 +185,7 @@ impl CLISession {
             server_build_date,
             instance,
             credential_store,
+            timeouts,
         })
     }
 
@@ -1151,6 +1159,148 @@ impl CLISession {
         Ok(())
     }
 
+    /// Run a WebSocket subscription with an optional timeout
+    ///
+    /// If timeout is Some, the subscription will exit after the specified duration
+    /// once initial data has been received. This is useful for testing.
+    async fn run_subscription_with_timeout(&mut self, config: SubscriptionConfig, timeout: Option<std::time::Duration>) -> Result<()> {
+        let sql_display = config.sql.clone();
+        let ws_url_display = config.ws_url.clone();
+        let requested_id = config.id.clone();
+
+        // Suppress banner messages when running non-interactively (for test/automation)
+        // Only print to stderr so stdout remains clean for data consumption
+        if self.animations {
+            eprintln!("Starting subscription for query: {}", sql_display);
+            if let Some(ref ws_url) = ws_url_display {
+                eprintln!("WebSocket endpoint: {}", ws_url);
+            }
+            eprintln!("Subscription ID: {}", requested_id);
+            if timeout.is_some() {
+                eprintln!("Timeout: {:?}", timeout.unwrap());
+            } else {
+                eprintln!("Press Ctrl+C to unsubscribe and return to CLI");
+            }
+            eprintln!();
+        }
+
+        let mut subscription = self.client.subscribe_with_config(config).await?;
+
+        if self.animations {
+            eprintln!(
+                "Subscription established (ID: {})",
+                subscription.subscription_id()
+            );
+        }
+
+        // Set up Ctrl+C handler for graceful unsubscribe
+        let ctrl_c = tokio::signal::ctrl_c();
+        tokio::pin!(ctrl_c);
+
+        // Track when initial data is complete and when timeout should fire
+        let mut initial_data_complete = false;
+        let timeout_deadline = timeout.map(|d| tokio::time::Instant::now() + d);
+
+        loop {
+            // Check timeout after initial data is received
+            if initial_data_complete {
+                if let Some(deadline) = timeout_deadline {
+                    if tokio::time::Instant::now() >= deadline {
+                        if self.animations {
+                            eprintln!("\n⏱ Subscription timeout reached");
+                        }
+                        // Close subscription gracefully
+                        if let Err(e) = subscription.close().await {
+                            eprintln!("Warning: Failed to close subscription cleanly: {}", e);
+                        }
+                        break;
+                    }
+                }
+            }
+
+            // Check if paused (T104)
+            if self.subscription_paused {
+                tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
+                continue;
+            }
+
+            // Create a timeout for the select (if we have a timeout configured)
+            let poll_timeout = if timeout.is_some() {
+                tokio::time::Duration::from_millis(100)
+            } else {
+                tokio::time::Duration::from_secs(3600) // Effectively infinite
+            };
+
+            // Wait for either a subscription event, Ctrl+C, or poll timeout
+            tokio::select! {
+                // Handle Ctrl+C
+                _ = &mut ctrl_c => {
+                    if self.color {
+                        println!("\n\x1b[33m⚠ Unsubscribing...\x1b[0m");
+                    } else {
+                        println!("\n⚠ Unsubscribing...");
+                    }
+                    // Close subscription gracefully
+                    if let Err(e) = subscription.close().await {
+                        eprintln!("Warning: Failed to close subscription cleanly: {}", e);
+                    }
+                    if self.color {
+                        println!("\x1b[32m✓ Unsubscribed\x1b[0m Back to CLI prompt");
+                    } else {
+                        println!("✓ Unsubscribed - Back to CLI prompt");
+                    }
+                    break;
+                }
+
+                // Poll timeout - just continue the loop to check deadline
+                _ = tokio::time::sleep(poll_timeout) => {
+                    continue;
+                }
+
+                // Handle subscription events
+                event_result = subscription.next() => {
+                    match event_result {
+                        Some(Ok(event)) => {
+                            // Check if it's an error event - if so, display and exit
+                            if matches!(event, kalam_link::ChangeEvent::Error { .. }) {
+                                self.display_change_event(&sql_display, &event);
+                                println!("\nSubscription failed - returning to CLI prompt");
+                                break;
+                            }
+                            
+                            // Check if initial data is complete (batch with has_more=false)
+                            match &event {
+                                kalam_link::ChangeEvent::InitialDataBatch { batch_control, .. } => {
+                                    if !batch_control.has_more {
+                                        initial_data_complete = true;
+                                    }
+                                }
+                                kalam_link::ChangeEvent::Ack { batch_control, .. } => {
+                                    if !batch_control.has_more {
+                                        initial_data_complete = true;
+                                    }
+                                }
+                                _ => {}
+                            }
+                            
+                            self.display_change_event(&sql_display, &event);
+                        }
+                        Some(Err(e)) => {
+                            eprintln!("Subscription error: {}", e);
+                            break;
+                        }
+                        None => {
+                            println!("Subscription ended by server");
+                            break;
+                        }
+                    }
+                }
+            }
+        }
+
+        Ok(())
+    }
+
     /// Display a change event with formatting
     ///
     /// **Implements T102**: Change indicators (INSERT/UPDATE/DELETE)
@@ -1781,13 +1931,21 @@ impl CLISession {
     /// This is similar to the interactive \subscribe command but designed for
     /// command-line usage where the subscription runs until interrupted.
     pub async fn subscribe(&mut self, query: &str) -> Result<()> {
+        self.subscribe_with_timeout(query, None).await
+    }
+
+    /// Subscribe to a table or live query with an optional timeout
+    ///
+    /// If timeout is Some, the subscription will exit after the specified duration
+    /// once initial data has been received. This is useful for testing.
+    pub async fn subscribe_with_timeout(&mut self, query: &str, timeout: Option<std::time::Duration>) -> Result<()> {
         // Generate subscription ID
         let sub_id = format!("sub_{}", std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
             .unwrap()
             .as_nanos());
         let config = SubscriptionConfig::new(sub_id, query);
-        self.run_subscription(config).await
+        self.run_subscription_with_timeout(config, timeout).await
     }
 
     /// Unsubscribe from active subscription via command line

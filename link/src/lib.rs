@@ -97,6 +97,7 @@ pub mod models;
 #[cfg(feature = "tokio-runtime")]
 mod normalize;
 pub mod seq_id;
+pub mod timeouts;
 
 // Credential storage (available in both native and WASM)
 pub mod credentials;
@@ -129,6 +130,7 @@ pub use models::{
     SubscriptionOptions,
 };
 pub use seq_id::SeqId;
+pub use timeouts::{KalamLinkTimeouts, KalamLinkTimeoutsBuilder};
 
 #[cfg(feature = "tokio-runtime")]
 pub use query::QueryExecutor;

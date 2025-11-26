@@ -38,6 +38,7 @@ fn get_storage_dir() -> PathBuf {
 /// - manifest.json exists at user/{user_id}/{table}/ after flush
 /// - At least one batch-*.parquet file exists
 /// - manifest.json is valid (non-empty)
+#[ntest::timeout(60000)]
 #[test]
 fn smoke_test_user_table_flush_manifest() {
     if !is_server_running() {
@@ -197,6 +198,7 @@ fn smoke_test_user_table_flush_manifest() {
 /// Verifies:
 /// - manifest.json exists at shared/{table}/ after flush
 /// - Shared table storage path differs from user table path
+#[ntest::timeout(60000)]
 #[test]
 fn smoke_test_shared_table_flush_manifest() {
     if !is_server_running() {
@@ -307,6 +309,7 @@ fn smoke_test_shared_table_flush_manifest() {
 /// - manifest.json exists after first flush
 /// - Additional batch-*.parquet file created after second flush
 /// - manifest.json updated (different content or file modified time)
+#[ntest::timeout(60000)]
 #[test]
 fn smoke_test_manifest_updated_on_second_flush() {
     if !is_server_running() {
@@ -457,6 +460,7 @@ fn smoke_test_manifest_updated_on_second_flush() {
 /// Verifies:
 /// - FLUSH TABLE on stream table returns error
 /// - Error message mentions stream tables don't support flushing
+#[ntest::timeout(60000)]
 #[test]
 fn smoke_test_flush_stream_table_error() {
     if !is_server_running() {

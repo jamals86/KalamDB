@@ -9,14 +9,15 @@ use crate::common::*;
 // 4) Login via CLI as the regular user
 // 5) As regular user: insert multiple rows, update one, delete one, then SELECT all
 // 6) Verify: (a) regular user can insert, (b) login succeeds, (c) SELECT shows only this user's rows (no root rows)
+#[ntest::timeout(60000)]
 #[test]
-fn smoke_user_table_rls_isolation() -> Result<(), Box<dyn std::error::Error>> {
+fn smoke_user_table_rls_isolation() {
     if !is_server_running() {
         eprintln!(
             "Skipping smoke_user_table_rls_isolation: server not running at {}",
             SERVER_URL
         );
-        return Ok(());
+        return;
     }
 
     // Unique namespace/table and user credentials per run
@@ -28,7 +29,8 @@ fn smoke_user_table_rls_isolation() -> Result<(), Box<dyn std::error::Error>> {
     let user_pass = "smoke_pass_123";
 
     // 0) As root: create namespace
-    execute_sql_as_root_via_cli(&format!("CREATE NAMESPACE {}", namespace))?;
+    execute_sql_as_root_via_cli(&format!("CREATE NAMESPACE {}", namespace))
+        .expect("Failed to create namespace");
 
     // 1) As root: create a user table
     let create_table_sql = format!(
@@ -40,13 +42,13 @@ fn smoke_user_table_rls_isolation() -> Result<(), Box<dyn std::error::Error>> {
         ) WITH (TYPE='USER', FLUSH_POLICY='rows:10')"#,
         full_table
     );
-    execute_sql_as_root_via_cli(&create_table_sql)?;
+    execute_sql_as_root_via_cli(&create_table_sql).expect("Failed to create table");
 
     // 2) As root: insert several rows
     let root_rows = vec!["root_row_1", "root_row_2", "root_row_3"];
     for val in &root_rows {
         let ins = format!("INSERT INTO {} (content) VALUES ('{}')", full_table, val);
-        execute_sql_as_root_via_cli(&ins)?;
+        execute_sql_as_root_via_cli(&ins).expect("Failed to insert root row");
     }
 
     // 3) Create a new regular user
@@ -54,17 +56,17 @@ fn smoke_user_table_rls_isolation() -> Result<(), Box<dyn std::error::Error>> {
         "CREATE USER {} WITH PASSWORD '{}' ROLE 'user'",
         user_name, user_pass
     );
-    execute_sql_as_root_via_cli(&create_user_sql)?;
+    execute_sql_as_root_via_cli(&create_user_sql).expect("Failed to create user");
 
     // 4) Login via CLI as the regular user (implicit via next commands)
     // Validate auth by running a trivial command
-    let _ = execute_sql_via_cli_as(&user_name, user_pass, "SELECT 1")?;
+    let _ = execute_sql_via_cli_as(&user_name, user_pass, "SELECT 1").expect("Failed to login as user");
 
     // 5) As regular user: insert multiple rows
     let user_rows = vec!["user_row_a", "user_row_b", "user_row_c"];
     for val in &user_rows {
         let ins = format!("INSERT INTO {} (content) VALUES ('{}')", full_table, val);
-        execute_sql_via_cli_as(&user_name, user_pass, &ins)?;
+        execute_sql_via_cli_as(&user_name, user_pass, &ins).expect("Failed to insert user row");
     }
 
     // Fetch ids for the specific user rows so we can perform id-based UPDATE/DELETE
@@ -73,7 +75,7 @@ fn smoke_user_table_rls_isolation() -> Result<(), Box<dyn std::error::Error>> {
         "SELECT id, content FROM {} WHERE content IN ('user_row_b','user_row_c') ORDER BY content",
         full_table
     );
-    let id_out = execute_sql_via_cli_as(&user_name, user_pass, &id_query)?;
+    let id_out = execute_sql_via_cli_as(&user_name, user_pass, &id_query).expect("Failed to query user rows");
 
     // Parse ids from table output, handling negative numbers
     let mut row_b_id: Option<String> = None;
@@ -85,7 +87,7 @@ fn smoke_user_table_rls_isolation() -> Result<(), Box<dyn std::error::Error>> {
             if parts.len() >= 2 {
                 let id_part = parts[1].trim();
                 // Validate it's a number (allowing negative)
-                if let Ok(_) = id_part.parse::<i64>() {
+                if id_part.parse::<i64>().is_ok() {
                     if line.contains("user_row_b") {
                         row_b_id = Some(id_part.to_string());
                     }
@@ -97,20 +99,20 @@ fn smoke_user_table_rls_isolation() -> Result<(), Box<dyn std::error::Error>> {
         }
     }
     let row_b_id = row_b_id
-        .ok_or_else(|| format!("Failed to parse id for user_row_b from output: {}", id_out))?;
+        .unwrap_or_else(|| panic!("Failed to parse id for user_row_b from output: {}", id_out));
     let row_c_id = row_c_id
-        .ok_or_else(|| format!("Failed to parse id for user_row_c from output: {}", id_out))?;
+        .unwrap_or_else(|| panic!("Failed to parse id for user_row_c from output: {}", id_out));
 
     // Update one of the user's rows (set updated=1) using id predicate
     let upd = format!(
         "UPDATE {} SET updated = 1 WHERE id = {}",
         full_table, row_b_id
     );
-    execute_sql_via_cli_as(&user_name, user_pass, &upd)?;
+    execute_sql_via_cli_as(&user_name, user_pass, &upd).expect("Failed to update user row");
 
     // Delete one of the user's rows using id predicate
     let del = format!("DELETE FROM {} WHERE id = {}", full_table, row_c_id);
-    execute_sql_via_cli_as(&user_name, user_pass, &del)?;
+    execute_sql_via_cli_as(&user_name, user_pass, &del).expect("Failed to delete user row");
 
     // 6) SELECT as the regular user and verify visibility
     let select_out = execute_sql_via_cli_as(
@@ -120,7 +122,7 @@ fn smoke_user_table_rls_isolation() -> Result<(), Box<dyn std::error::Error>> {
             "SELECT id, content, updated FROM {} ORDER BY id",
             full_table
         ),
-    )?;
+    ).expect("Failed to select user rows");
 
     // (a) user could insert (at least one of user's values appears)
     assert!(
@@ -155,6 +157,4 @@ fn smoke_user_table_rls_isolation() -> Result<(), Box<dyn std::error::Error>> {
     let _ = execute_sql_as_root_via_cli(&format!("DROP USER {}", user_name));
     let _ = execute_sql_as_root_via_cli(&format!("DROP TABLE IF EXISTS {}", full_table));
     let _ = execute_sql_as_root_via_cli(&format!("DROP NAMESPACE IF EXISTS {}", namespace));
-
-    Ok(())
 }

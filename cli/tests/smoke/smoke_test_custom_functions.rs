@@ -19,6 +19,7 @@ use std::time::Duration;
 /// - Time-ordering (monotonic increase)
 /// - Non-null values
 /// - Numeric format (BIGINT)
+#[ntest::timeout(60000)]
 #[test]
 fn smoke_test_snowflake_id_default() {
     if !is_server_running() {
@@ -102,6 +103,7 @@ fn smoke_test_snowflake_id_default() {
 /// - Uniqueness
 /// - Non-null values
 /// - Text format
+#[ntest::timeout(60000)]
 #[test]
 fn smoke_test_uuid_v7_default() {
     if !is_server_running() {
@@ -191,6 +193,7 @@ fn smoke_test_uuid_v7_default() {
 /// - Uniqueness
 /// - Non-null values
 /// - No hyphens (compact format)
+#[ntest::timeout(60000)]
 #[test]
 fn smoke_test_ulid_default() {
     if !is_server_running() {
@@ -274,6 +277,7 @@ fn smoke_test_ulid_default() {
 /// Verifies:
 /// - created_by is automatically set to current user
 /// - Matches authenticated user from session
+#[ntest::timeout(60000)]
 #[test]
 fn smoke_test_current_user_default() {
     if !is_server_running() {
@@ -358,6 +362,7 @@ fn smoke_test_current_user_default() {
 /// - Multiple DEFAULT functions work together
 /// - Each function generates distinct values
 /// - All auto-generated columns are populated correctly
+#[ntest::timeout(60000)]
 #[test]
 fn smoke_test_all_custom_functions_combined() {
     if !is_server_running() {

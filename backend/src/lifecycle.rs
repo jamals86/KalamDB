@@ -247,6 +247,31 @@ pub async fn run(
     info!("Starting HTTP server on {}", bind_addr);
     info!("Endpoints: POST /v1/api/sql, GET /v1/ws");
 
+    // Log server configuration for debugging
+    info!(
+        "Server config: workers={}, max_connections={}, backlog={}, blocking_threads={}, body_limit={}MB",
+        if config.server.workers == 0 {
+            num_cpus::get()
+        } else {
+            config.server.workers
+        },
+        config.performance.max_connections,
+        config.performance.backlog,
+        config.performance.worker_max_blocking_threads,
+        config.rate_limit.request_body_limit_bytes / (1024 * 1024)
+    );
+
+    if config.rate_limit.enable_connection_protection {
+        info!(
+            "Connection protection: max_conn_per_ip={}, max_req_per_ip_per_sec={}, ban_duration={}s",
+            config.rate_limit.max_connections_per_ip,
+            config.rate_limit.max_requests_per_ip_per_sec,
+            config.rate_limit.ban_duration_seconds
+        );
+    } else {
+        warn!("Connection protection is DISABLED - server may be vulnerable to DoS attacks");
+    }
+
     // Get JobsManager for graceful shutdown
     let job_manager_shutdown = app_context.job_manager();
     let shutdown_timeout_secs = config.shutdown.flush.timeout;
@@ -258,9 +283,15 @@ pub async fn run(
     let live_query_manager = components.live_query_manager.clone();
     let user_repo = components.user_repo.clone();
 
+    // Create connection protection middleware from config
+    let connection_protection = middleware::ConnectionProtection::from_server_config(config);
+
     let app_context_for_handler = app_context.clone();
     let server = HttpServer::new(move || {
         App::new()
+            // Connection protection (first middleware - drops bad requests early)
+            .wrap(connection_protection.clone())
+            // Standard middleware
             .wrap(middleware::request_logger())
             .wrap(middleware::build_cors())
             .app_data(web::Data::new(app_context_for_handler.clone()))
@@ -272,12 +303,25 @@ pub async fn run(
             .app_data(web::Data::new(user_repo.clone()))
             .configure(routes::configure)
     })
+    // Set backlog BEFORE bind() - this affects the listen queue size
+    .backlog(config.performance.backlog)
     .bind(&bind_addr)?
     .workers(if config.server.workers == 0 {
         num_cpus::get()
     } else {
         config.server.workers
     })
+    // Per-worker max concurrent connections (default: 25000)
+    .max_connections(config.performance.max_connections)
+    // Blocking thread pool size per worker for RocksDB and CPU-intensive ops
+    .worker_max_blocking_threads(config.performance.worker_max_blocking_threads)
+    // Disable HTTP keep-alive to prevent CLOSE_WAIT accumulation in tests
+    // Each request gets a fresh connection that closes immediately after response
+    .keep_alive(std::time::Duration::ZERO)
+    // Client must send request headers within this time
+    .client_request_timeout(std::time::Duration::from_secs(config.performance.client_request_timeout))
+    // Allow time for graceful connection shutdown
+    .client_disconnect_timeout(std::time::Duration::from_secs(config.performance.client_disconnect_timeout))
     .run();
 
     let server_handle = server.handle();

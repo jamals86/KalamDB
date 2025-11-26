@@ -257,6 +257,110 @@ pub trait StorageBackend: Send + Sync {
     fn as_any(&self) -> &dyn Any;
 }
 
+/// Extension trait providing async versions of StorageBackend methods.
+///
+/// These methods internally use `tokio::task::spawn_blocking` to offload
+/// synchronous storage operations to a blocking thread pool, preventing
+/// the async runtime from being blocked.
+///
+/// ## Usage
+///
+/// ```rust,ignore
+/// use kalamdb_store::storage_trait::{StorageBackend, StorageBackendAsync, Partition};
+/// use std::sync::Arc;
+///
+/// async fn store_data(backend: Arc<dyn StorageBackend>, partition: &Partition) {
+///     // Use async variants in async contexts:
+///     let value = backend.get_async(partition, b"key").await.unwrap();
+///     backend.put_async(partition, b"key", b"value").await.unwrap();
+/// }
+/// ```
+#[async_trait::async_trait]
+pub trait StorageBackendAsync: Send + Sync {
+    /// Async version of `get()` - retrieves a value by key.
+    async fn get_async(&self, partition: &Partition, key: &[u8]) -> Result<Option<Vec<u8>>>;
+
+    /// Async version of `put()` - stores a key-value pair.
+    async fn put_async(&self, partition: &Partition, key: &[u8], value: &[u8]) -> Result<()>;
+
+    /// Async version of `delete()` - removes a key.
+    async fn delete_async(&self, partition: &Partition, key: &[u8]) -> Result<()>;
+
+    /// Async version of `batch()` - executes multiple operations atomically.
+    async fn batch_async(&self, operations: Vec<Operation>) -> Result<()>;
+
+    /// Async version of `scan()` - scans keys in a partition.
+    /// Returns collected results since iterators can't cross spawn_blocking boundary.
+    async fn scan_async(
+        &self,
+        partition: &Partition,
+        prefix: Option<Vec<u8>>,
+        start_key: Option<Vec<u8>>,
+        limit: Option<usize>,
+    ) -> Result<Vec<(Vec<u8>, Vec<u8>)>>;
+}
+
+// Blanket implementation for Arc<dyn StorageBackend>
+#[async_trait::async_trait]
+impl StorageBackendAsync for std::sync::Arc<dyn StorageBackend> {
+    async fn get_async(&self, partition: &Partition, key: &[u8]) -> Result<Option<Vec<u8>>> {
+        let backend = self.clone();
+        let partition = partition.clone();
+        let key = key.to_vec();
+        tokio::task::spawn_blocking(move || backend.get(&partition, &key))
+            .await
+            .map_err(|e| StorageError::Other(format!("spawn_blocking join error: {}", e)))?
+    }
+
+    async fn put_async(&self, partition: &Partition, key: &[u8], value: &[u8]) -> Result<()> {
+        let backend = self.clone();
+        let partition = partition.clone();
+        let key = key.to_vec();
+        let value = value.to_vec();
+        tokio::task::spawn_blocking(move || backend.put(&partition, &key, &value))
+            .await
+            .map_err(|e| StorageError::Other(format!("spawn_blocking join error: {}", e)))?
+    }
+
+    async fn delete_async(&self, partition: &Partition, key: &[u8]) -> Result<()> {
+        let backend = self.clone();
+        let partition = partition.clone();
+        let key = key.to_vec();
+        tokio::task::spawn_blocking(move || backend.delete(&partition, &key))
+            .await
+            .map_err(|e| StorageError::Other(format!("spawn_blocking join error: {}", e)))?
+    }
+
+    async fn batch_async(&self, operations: Vec<Operation>) -> Result<()> {
+        let backend = self.clone();
+        tokio::task::spawn_blocking(move || backend.batch(operations))
+            .await
+            .map_err(|e| StorageError::Other(format!("spawn_blocking join error: {}", e)))?
+    }
+
+    async fn scan_async(
+        &self,
+        partition: &Partition,
+        prefix: Option<Vec<u8>>,
+        start_key: Option<Vec<u8>>,
+        limit: Option<usize>,
+    ) -> Result<Vec<(Vec<u8>, Vec<u8>)>> {
+        let backend = self.clone();
+        let partition = partition.clone();
+        tokio::task::spawn_blocking(move || {
+            let iter = backend.scan(
+                &partition,
+                prefix.as_deref(),
+                start_key.as_deref(),
+                limit,
+            )?;
+            Ok(iter.collect())
+        })
+        .await
+        .map_err(|e| StorageError::Other(format!("spawn_blocking join error: {}", e)))?
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

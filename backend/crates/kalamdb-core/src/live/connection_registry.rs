@@ -209,6 +209,8 @@ impl LiveQueryRegistry {
     pub fn unregister_connection(&self, connection_id: &ConnectionId) -> Vec<LiveQueryId> {
         // Remove connection from registry
         self.connections.remove(connection_id);
+        // Remove connection-user mapping to prevent memory leak
+        self.connection_users.remove(connection_id);
 
         // Get all LiveIds for this connection using O(1) index
         let removed_live_ids = self
