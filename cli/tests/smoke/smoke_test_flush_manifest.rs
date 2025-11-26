@@ -12,24 +12,25 @@ use std::fs;
 use std::path::PathBuf;
 use std::time::Duration;
 
-const BACKEND_STORAGE_DIR: &str = "../data/storage"; // Server's storage directory (from repository root)
+const BACKEND_STORAGE_DIR: &str = "../backend/data/storage"; // Server's storage directory (from backend/)
 
 fn get_storage_dir() -> PathBuf {
-    // The backend server writes to ./data/storage from repository root
-    // When tests run from cli/, we need to access ../data/storage
-    let root_path = PathBuf::from(BACKEND_STORAGE_DIR);
-    if root_path.exists() {
-        return root_path;
-    }
-
-    // Fallback for different working directory contexts
-    let backend_path = PathBuf::from("../backend/data/storage");
+    // The backend server writes to ./data/storage from backend/ directory
+    // When tests run from cli/, we need to access ../backend/data/storage
+    // Check this FIRST because ../data/storage may exist from old test runs
+    let backend_path = PathBuf::from(BACKEND_STORAGE_DIR);
     if backend_path.exists() {
         return backend_path;
     }
 
-    // Default to root path (will fail in test if it doesn't exist)
-    root_path
+    // Fallback for different working directory contexts (legacy root path)
+    let root_path = PathBuf::from("../data/storage");
+    if root_path.exists() {
+        return root_path;
+    }
+
+    // Default to backend path (will fail in test if it doesn't exist)
+    backend_path
 }
 
 /// Test manifest.json creation after flushing USER table

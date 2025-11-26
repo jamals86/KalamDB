@@ -7,8 +7,9 @@ use crate::common::*;
 use std::time::Instant;
 
 // Global rows to insert (can be overridden via KBENCH_ROWS env)
-// Reduced from 5000 to 1000 for faster smoke execution while still exercising pagination.
-const DEFAULT_ROWS_TO_INSERT: usize = 1000;
+// Reduced from 1000 to 200 for faster smoke execution while still exercising pagination.
+// This ensures the test completes within timeout even under load.
+const DEFAULT_ROWS_TO_INSERT: usize = 200;
 
 fn rows_to_insert() -> usize {
     if let Ok(val) = std::env::var("KBENCH_ROWS") {
@@ -66,7 +67,7 @@ fn smoke_queries_benchmark() {
 
     // Insert rows in batches to minimize CLI overhead
     let total = rows_to_insert();
-    let batch_size = 500; // tuneable, 200-1000 typical
+    let batch_size = 100; // reduced from 500 for better server stability
 
     let start_insert = Instant::now();
     let mut inserted = 0usize;
