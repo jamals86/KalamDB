@@ -126,7 +126,7 @@ impl SubscriptionService {
         // Remove cached filter first (needs RwLock write)
         {
             let mut filter_cache = self.filter_cache.write().await;
-            filter_cache.remove(&live_id.to_string());
+            filter_cache.remove(live_id.as_ref());
         }
 
         // Remove from in-memory registry (DashMap - lock-free)
@@ -161,7 +161,7 @@ impl SubscriptionService {
         {
             let mut filter_cache = self.filter_cache.write().await;
             for live_id in &live_ids {
-                filter_cache.remove(&live_id.to_string());
+                filter_cache.remove(live_id.as_ref());
             }
         }
 

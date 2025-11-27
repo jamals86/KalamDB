@@ -238,7 +238,7 @@ impl JobsManager {
             .await
             .map_err(|e| KalamDbError::Other(format!("Failed to complete job: {}", e)))?;
 
-        self.log_job_event(job_id, "info", &format!("{}", success_message));
+        self.log_job_event(job_id, "info", &success_message);
         Ok(())
     }
 

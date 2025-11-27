@@ -238,7 +238,7 @@ impl JobExecutor for StreamEvictionExecutor {
 
         let batch_target = batch_size.min(usize::MAX as u64) as usize;
         const SCAN_CHUNK_MAX: usize = 1024;
-        let scan_chunk = std::cmp::max(1, std::cmp::min(batch_target, SCAN_CHUNK_MAX));
+        let scan_chunk = batch_target.clamp(1, SCAN_CHUNK_MAX);
 
         let mut expired_keys: Vec<StreamTableRowId> = Vec::new();
         let mut start_key: Option<StreamTableRowId> = None;

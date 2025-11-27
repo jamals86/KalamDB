@@ -669,7 +669,7 @@ impl AppContext {
 
     /// Try to get the AppContext singleton without panicking
     pub fn try_get() -> Option<Arc<AppContext>> {
-        APP_CONTEXT.get().map(|ctx| ctx.clone())
+        APP_CONTEXT.get().cloned()
     }
 
     // ===== Getters =====

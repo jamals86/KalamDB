@@ -220,7 +220,7 @@ impl TablesTableProvider {
             // Serialize TableOptions enum to JSON
             match serde_json::to_string(&table_def.table_options) {
                 Ok(json) => options_json.append_value(&json),
-                Err(e) => options_json.append_value(&format!(
+                Err(e) => options_json.append_value(format!(
                     "{{\"error\":\"failed to serialize options: {}\"}}",
                     e
                 )),

@@ -192,7 +192,7 @@ pub async fn persist_audit_entry(
         .audit_logs()
         .append_async(entry.clone())
         .await
-        .map_err(|e| KalamDbError::from(e))
+        .map_err(KalamDbError::from)
 }
 
 #[cfg(test)]

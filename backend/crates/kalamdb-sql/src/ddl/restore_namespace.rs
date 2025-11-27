@@ -70,10 +70,10 @@ impl RestoreDatabaseStatement {
 
         let path_part = remaining[from_pos + 6..].trim(); // Skip " FROM "
 
-        // Extract path from quotes
-        let backup_path = if path_part.starts_with('\'') && path_part.ends_with('\'') {
-            path_part[1..path_part.len() - 1].to_string()
-        } else if path_part.starts_with('"') && path_part.ends_with('"') {
+        // Extract path from quotes (single or double)
+        let backup_path = if (path_part.starts_with('\'') && path_part.ends_with('\''))
+            || (path_part.starts_with('"') && path_part.ends_with('"'))
+        {
             path_part[1..path_part.len() - 1].to_string()
         } else {
             return Err("Backup path must be quoted".to_string());

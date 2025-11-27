@@ -88,9 +88,8 @@ impl UserTableFlushJob {
 
     /// Resolve storage path for a specific user
     fn resolve_storage_path_for_user(&self, user_id: &UserId) -> Result<String, KalamDbError> {
-        Ok(self
-            .unified_cache
-            .get_storage_path(&*self.table_id, Some(user_id), None)?)
+        self.unified_cache
+            .get_storage_path(&self.table_id, Some(user_id), None)
     }
 
     /// Convert JSON rows to Arrow RecordBatch

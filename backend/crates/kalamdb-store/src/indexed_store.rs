@@ -514,7 +514,7 @@ where
         for (_index_key, primary_key_bytes) in iter {
             // Deserialize primary key from index value
             let primary_key = K::from_storage_key(&primary_key_bytes)
-                .map_err(|e| StorageError::SerializationError(e))?;
+                .map_err(StorageError::SerializationError)?;
 
             // Fetch actual entity
             if let Some(entity) = self.get(&primary_key)? {
@@ -545,7 +545,7 @@ where
         let mut results = Vec::new();
         for (_index_key, primary_key_bytes) in iter {
             let primary_key = K::from_storage_key(&primary_key_bytes)
-                .map_err(|e| StorageError::SerializationError(e))?;
+                .map_err(StorageError::SerializationError)?;
             results.push(primary_key);
         }
 
@@ -709,15 +709,11 @@ pub fn extract_string_equality(filter: &Expr) -> Option<(&str, &str)> {
             }
 
             match (binary.left.as_ref(), binary.right.as_ref()) {
-                (Expr::Column(col), Expr::Literal(scalar, _)) => {
-                    if let ScalarValue::Utf8(Some(val)) = scalar {
-                        return Some((col.name.as_str(), val.as_str()));
-                    }
+                (Expr::Column(col), Expr::Literal(ScalarValue::Utf8(Some(val)), _)) => {
+                    return Some((col.name.as_str(), val.as_str()));
                 }
-                (Expr::Literal(scalar, _), Expr::Column(col)) => {
-                    if let ScalarValue::Utf8(Some(val)) = scalar {
-                        return Some((col.name.as_str(), val.as_str()));
-                    }
+                (Expr::Literal(ScalarValue::Utf8(Some(val)), _), Expr::Column(col)) => {
+                    return Some((col.name.as_str(), val.as_str()));
                 }
                 _ => {}
             }
@@ -737,15 +733,11 @@ pub fn extract_i64_equality(filter: &Expr) -> Option<(&str, i64)> {
             }
 
             match (binary.left.as_ref(), binary.right.as_ref()) {
-                (Expr::Column(col), Expr::Literal(scalar, _)) => {
-                    if let ScalarValue::Int64(Some(val)) = scalar {
-                        return Some((col.name.as_str(), *val));
-                    }
+                (Expr::Column(col), Expr::Literal(ScalarValue::Int64(Some(val)), _)) => {
+                    return Some((col.name.as_str(), *val));
                 }
-                (Expr::Literal(scalar, _), Expr::Column(col)) => {
-                    if let ScalarValue::Int64(Some(val)) = scalar {
-                        return Some((col.name.as_str(), *val));
-                    }
+                (Expr::Literal(ScalarValue::Int64(Some(val)), _), Expr::Column(col)) => {
+                    return Some((col.name.as_str(), *val));
                 }
                 _ => {}
             }

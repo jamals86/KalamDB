@@ -419,12 +419,6 @@ pub async fn run(
     Ok(())
 }
 
-/// Periodic scheduler for stream table TTL eviction
-///
-/// Runs in background, checking all STREAM tables and creating eviction jobs
-/// for tables that have TTL configured.
-/// T125-T127: Create default system user on database initialization
-
 /// T125-T127: Create default system user on database initialization
 ///
 /// Creates a default system user with:
@@ -432,6 +426,10 @@ pub async fn run(
 /// - Auth type: Internal (localhost-only by default)
 /// - Role: System
 /// - Random password for emergency remote access
+///
+/// Periodic scheduler for stream table TTL eviction runs in background,
+/// checking all STREAM tables and creating eviction jobs for tables
+/// that have TTL configured.
 ///
 /// On first startup, logs the credentials to stdout for the administrator to save.
 ///

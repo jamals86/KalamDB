@@ -20,27 +20,18 @@
 //! - **Shared Tables**: Global data with key format `{row_id}`
 //! - **Stream Tables**: Ephemeral events with key format `{timestamp_ms}:{row_id}`
 
-pub mod common;
 pub mod entity_store; // Phase 14: Type-safe EntityStore<K, V> with generic keys
 pub mod index; // Generic secondary index support
 pub mod indexed_store; // Phase 15: Automatic secondary index management
 pub mod key_encoding;
 pub mod rocksdb_impl;
 pub mod rocksdb_init;
-// pub mod s3_storage; // T171: S3 storage backend (requires cmake build dependency)
 pub mod sharding;
 pub mod storage_trait;
 pub mod traits; // Old EntityStore<T> trait (to be deprecated after Phase 14 migration)
 
-// NOTE: Old RocksDB-based table stores removed - use EntityStore implementations in kalamdb-core instead
-// - UserTableStore, SharedTableStore, StreamTableStore are now in kalamdb-core/src/stores/
-// pub mod shared_table_store;
-// pub mod stream_table_store;
-// pub mod user_table_store;
-
 pub use rocksdb_impl::RocksDBBackend;
 pub use rocksdb_init::RocksDbInit;
-// pub use s3_storage::S3Storage; // T171: Export S3Storage (requires cmake)
 pub use sharding::{
     AlphabeticSharding, ConsistentHashSharding, NumericSharding, ShardingRegistry, ShardingStrategy,
 };

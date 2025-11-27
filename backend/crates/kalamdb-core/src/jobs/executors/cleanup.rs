@@ -102,7 +102,7 @@ impl JobExecutor for CleanupExecutor {
         // Execute cleanup in 3 phases:
         // 1. Clean up table data (rows) from RocksDB stores
         let rows_deleted =
-            cleanup_table_data_internal(&ctx.app_ctx, &table_id, table_type.clone()).await?;
+            cleanup_table_data_internal(&ctx.app_ctx, &table_id, table_type).await?;
 
         ctx.log_info(&format!("Cleaned up {} rows from table data", rows_deleted));
 

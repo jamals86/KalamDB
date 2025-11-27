@@ -281,7 +281,7 @@ impl TypedStatementHandler<AlterTableStatement> for AlterTableHandler {
                 if let kalamdb_commons::schemas::TableOptions::Shared(opts) =
                     &mut table_def.table_options
                 {
-                    opts.access_level = Some(access_level.clone());
+                    opts.access_level = Some(access_level);
                 }
                 change_desc_opt = Some(format!("SET ACCESS LEVEL {:?}", access_level));
                 log::debug!("✓ Set access level to {:?}", access_level);

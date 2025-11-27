@@ -8,6 +8,7 @@ use std::sync::{Arc, RwLock};
 /// This struct manages a multiplexed WebSocket connection and its subscriptions.
 /// It is intended to be used by both the Rust client and the WASM bindings.
 pub struct LiveConnection {
+    #[allow(dead_code)] // Will be used when WebSocket connection is implemented
     base_url: String,
     subscriptions: Arc<RwLock<HashMap<String, SubscriptionConfig>>>,
     connected: Arc<RwLock<bool>>,

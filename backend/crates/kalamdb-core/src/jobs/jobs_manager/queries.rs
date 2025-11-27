@@ -40,8 +40,10 @@ impl JobsManager {
     ///
     /// Active = New, Queued, Running, or Retrying status
     pub(crate) async fn has_active_job_with_key(&self, key: &str) -> Result<bool, KalamDbError> {
-        let mut filter = JobFilter::default();
-        filter.idempotency_key = Some(key.to_string());
+        let filter = JobFilter {
+            idempotency_key: Some(key.to_string()),
+            ..Default::default()
+        };
 
         let jobs = self.list_jobs(filter).await?;
         Ok(jobs.into_iter().any(|job| {

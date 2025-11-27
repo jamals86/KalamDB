@@ -14,18 +14,18 @@ impl SqlStatement {
             // Extract after "AS USER "
             let after_as_user = &sql[as_user_pos + 9..].trim_start();
 
-            // Determine quote type
-            let user_id_str = if after_as_user.starts_with('\'') {
+            // Determine quote type and extract user_id
+            let user_id_str = if let Some(after_quote) = after_as_user.strip_prefix('\'') {
                 // Single quote: 'user_id'
-                if let Some(end_quote) = after_as_user[1..].find('\'') {
-                    &after_as_user[1..end_quote + 1]
+                if let Some(end_quote) = after_quote.find('\'') {
+                    &after_quote[..end_quote]
                 } else {
                     return (sql.to_string(), None); // Malformed, ignore
                 }
-            } else if after_as_user.starts_with('"') {
+            } else if let Some(after_quote) = after_as_user.strip_prefix('"') {
                 // Double quote: "user_id"
-                if let Some(end_quote) = after_as_user[1..].find('"') {
-                    &after_as_user[1..end_quote + 1]
+                if let Some(end_quote) = after_quote.find('"') {
+                    &after_quote[..end_quote]
                 } else {
                     return (sql.to_string(), None); // Malformed, ignore
                 }
@@ -623,7 +623,7 @@ impl SqlStatement {
 }
 
 fn is_create_view(tokens: &[&str]) -> bool {
-    if tokens.first().map(|t| *t) != Some("CREATE") {
+    if tokens.first().copied() != Some("CREATE") {
         return false;
     }
 

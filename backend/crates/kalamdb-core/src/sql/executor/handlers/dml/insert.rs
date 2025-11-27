@@ -312,9 +312,7 @@ impl InsertHandler {
         };
 
         let rows = match source.body.as_ref() {
-            sqlparser::ast::SetExpr::Values(SqlValues { rows, .. }) => {
-                rows.iter().map(|row| row.clone()).collect()
-            }
+            sqlparser::ast::SetExpr::Values(SqlValues { rows, .. }) => rows.to_vec(),
             _ => {
                 return Err(KalamDbError::InvalidOperation(
                     "Only VALUES clause supported for INSERT".into(),
@@ -597,7 +595,7 @@ impl InsertHandler {
                     .as_any()
                     .downcast_ref::<crate::providers::UserTableProvider>()
                 {
-                    let row_ids = provider.insert_batch(&user_id, rows)?;
+                    let row_ids = provider.insert_batch(user_id, rows)?;
                     Ok(row_ids.len())
                 } else {
                     Err(KalamDbError::InvalidOperation(
@@ -613,12 +611,12 @@ impl InsertHandler {
                 use kalamdb_commons::TableAccess;
 
                 let access_level = if let TableOptions::Shared(opts) = &table_def.table_options {
-                    opts.access_level.clone().unwrap_or(TableAccess::Private)
+                    opts.access_level.unwrap_or(TableAccess::Private)
                 } else {
                     TableAccess::Private
                 };
 
-                if !can_write_shared_table(access_level.clone(), false, role) {
+                if !can_write_shared_table(access_level, false, role) {
                     return Err(KalamDbError::Unauthorized(format!(
                         "Insufficient privileges to write to shared table '{}.{}' (Access Level: {:?})",
                         namespace.as_str(),
@@ -640,7 +638,7 @@ impl InsertHandler {
                     .as_any()
                     .downcast_ref::<crate::providers::SharedTableProvider>(
                 ) {
-                    let row_ids = shared_provider.insert_batch(&user_id, rows)?;
+                    let row_ids = shared_provider.insert_batch(user_id, rows)?;
                     Ok(row_ids.len())
                 } else {
                     Err(KalamDbError::InvalidOperation(format!(
@@ -664,7 +662,7 @@ impl InsertHandler {
                     .as_any()
                     .downcast_ref::<crate::providers::StreamTableProvider>(
                 ) {
-                    let row_ids = stream_provider.insert_batch(&user_id, rows)?;
+                    let row_ids = stream_provider.insert_batch(user_id, rows)?;
                     Ok(row_ids.len())
                 } else {
                     Err(KalamDbError::InvalidOperation(format!(

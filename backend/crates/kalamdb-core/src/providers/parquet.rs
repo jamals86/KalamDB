@@ -64,7 +64,7 @@ pub(crate) fn scan_parquet_files_as_batch(
                     let tbl = table.clone();
                     let uid = user_id.cloned();
                     let scope_for_spawn = scope_label.clone();
-                    let manifest_table_type = table_type.clone();
+                    let manifest_table_type = table_type;
                     let table_id_for_spawn = table_id.clone();
                     let manifest_service_clone = core.app_context.manifest_service();
                     tokio::spawn(async move {
@@ -146,7 +146,7 @@ pub(crate) fn scan_parquet_files_as_batch(
 
     let planner = ManifestAccessPlanner::new();
     let (min_seq, max_seq) = filter
-        .map(|f| crate::providers::helpers::extract_seq_bounds_from_filter(f))
+        .map(crate::providers::helpers::extract_seq_bounds_from_filter)
         .unwrap_or((None, None));
     let seq_range = match (min_seq, max_seq) {
         (Some(min), Some(max)) => Some((min.as_i64(), max.as_i64())),

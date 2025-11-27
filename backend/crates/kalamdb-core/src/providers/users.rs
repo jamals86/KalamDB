@@ -116,7 +116,7 @@ impl UserTableProvider {
                 )
             })?;
 
-        Ok((user_ctx.user_id.clone(), user_ctx.role.clone()))
+        Ok((user_ctx.user_id.clone(), user_ctx.role))
     }
 
     /// Scan Parquet files from cold storage for a specific user
@@ -414,7 +414,7 @@ impl BaseTableProvider<UserTableRowId, UserTableRow> for UserTableProvider {
         // All roles operate within the current effective user scope. Admins must use AS USER to
         // impersonate other users instead of bypassing RLS.
         let keep_deleted = filter
-            .map(|f| base::filter_uses_deleted_column(f))
+            .map(base::filter_uses_deleted_column)
             .unwrap_or(false);
 
         let kvs = self.scan_with_version_resolution_to_kvs(

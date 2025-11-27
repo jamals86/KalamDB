@@ -30,11 +30,6 @@
 //! # }
 //! ```
 
-// ============================================================================
-// PHASE 6: adapter module disabled (StorageAdapter removal)
-// ============================================================================
-// pub mod adapter; // PHASE 6: Disabled - file renamed to adapter.rs.disabled
-
 pub mod batch_execution;
 pub mod classifier;
 pub mod compatibility;
@@ -49,9 +44,6 @@ pub use kalamdb_commons::system::{
     AuditLogEntry, Job, LiveQuery, Namespace, Storage, User, UserTableCounter,
 };
 
-// pub use adapter::StorageAdapter; // PHASE 6: Disabled
-// Backwards-compatibility alias, TODO: Remove the alias and use only StorageAdapter
-// pub type RocksDbAdapter = StorageAdapter; // PHASE 6: Disabled
 pub use batch_execution::split_statements;
 pub use compatibility::{
     format_mysql_column_not_found, format_mysql_error, format_mysql_syntax_error,
@@ -67,11 +59,3 @@ pub use ddl::{
 pub use ddl_parent::DdlAst;
 pub use parser::SqlParser;
 pub use query_cache::{QueryCache, QueryCacheKey, QueryCacheTtlConfig};
-
-// ============================================================================
-// PHASE 6: KalamSql STRUCT COMMENTED OUT
-// ============================================================================
-// This struct is being removed in Phase 6. All usages should migrate to
-// SystemTablesRegistry providers instead.
-// Uncomment to see all places that need migration.
-// ============================================================================

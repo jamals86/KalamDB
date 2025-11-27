@@ -370,7 +370,7 @@ async fn handle_authenticate(
     session: &mut Session,
     registry: &Arc<ConnectionRegistry>,
     app_context: &Arc<AppContext>,
-    live_query_manager: &Arc<LiveQueryManager>,
+    _live_query_manager: &Arc<LiveQueryManager>,
     user_repo: &Arc<dyn UserRepository>,
 ) -> Result<(), String> {
     info!(

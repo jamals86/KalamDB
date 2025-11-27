@@ -142,7 +142,7 @@ impl NotificationService {
                 }
 
                 // Check filter if one exists (for INSERT/UPDATE/DELETE only)
-                if let Some(filter) = filter_cache.get(&handle.live_id.to_string()) {
+                if let Some(filter) = filter_cache.get(handle.live_id.as_ref()) {
                     // Apply filter to row data
                     match filter.matches(filtering_row) {
                         Ok(true) => {

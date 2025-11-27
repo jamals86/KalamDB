@@ -259,7 +259,7 @@ impl ConnectionRegistry {
                     let sub = entry.value();
                     let key = (user_id.clone(), sub.table_id.clone());
                     if let Some(mut handles) = self.user_table_subscriptions.get_mut(&key) {
-                        handles.retain(|h| &h.live_id != &sub.live_id);
+                        handles.retain(|h| h.live_id != sub.live_id);
                         if handles.is_empty() {
                             drop(handles);
                             self.user_table_subscriptions.remove(&key);

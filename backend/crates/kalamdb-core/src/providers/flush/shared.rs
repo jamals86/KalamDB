@@ -277,7 +277,7 @@ impl TableFlush for SharedTableFlushJob {
         let (batch_number, batch_filename) = self.generate_batch_filename()?;
         let full_path = self
             .unified_cache
-            .get_storage_path(&*self.table_id, None, None)?;
+            .get_storage_path(&self.table_id, None, None)?;
         let table_dir = PathBuf::from(full_path);
         let output_path = table_dir.join(&batch_filename);
 
@@ -291,7 +291,7 @@ impl TableFlush for SharedTableFlushJob {
         // Fetch once per flush job instead of per-batch for efficiency
         let bloom_filter_columns = self
             .unified_cache
-            .get_bloom_filter_columns(&*self.table_id)
+            .get_bloom_filter_columns(&self.table_id)
             .unwrap_or_else(|e| {
                 log::warn!(
                     "⚠️  Failed to get Bloom filter columns for {}: {}. Using default (_seq only)",

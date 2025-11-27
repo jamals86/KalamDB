@@ -88,39 +88,13 @@ impl JobExecutor for UserCleanupExecutor {
         ));
 
         // TODO: Implement actual user cleanup logic
-        // Current architecture: System table providers are ready via app_context.system_tables()
         // Implementation steps:
-        //   1. Delete user from system.users:
-        //      let users_provider = ctx.app_ctx.system_tables().users();
-        //      users_provider.delete_user(user_id).await?;
-        //
-        //   2. If cascade=true, cascade delete user's tables:
-        //      let tables_provider = ctx.app_ctx.system_tables().tables();
-        //      let user_tables = tables_provider.list_by_owner(user_id).await?;
-        //      for table in user_tables {
-        //          // Create CleanupJob for each table (avoids blocking this job)
-        //          let cleanup_params = CleanupParams {
-        //              table_id: TableId::new(table.namespace_id, table.table_name),
-        //              table_type: table.table_type,
-        //              operation: CleanupOperation::DropTable,
-        //          };
-        //          job_manager.create_job(cleanup_params)?;
-        //      }
-        //
-        //   3. If cascade=true, remove user from shared table ACLs:
-        //      // This requires adding list_shared_tables_with_user() to TablesTableProvider
-        //      // For now, skip ACL cleanup (low priority - user won't be able to access anyway)
-        //
-        //   4. Clean up user's live queries:
-        //      let live_queries_provider = ctx.app_ctx.system_tables().live_queries();
-        //      let user_queries = live_queries_provider.list_by_user(user_id).await?;
-        //      for query in user_queries {
-        //          live_query_manager.stop_query(&query.query_id)?;
-        //      }
-        //
-        //   5. Clean up user's auth tokens:
-        //      // TODO: Add JWT token revocation mechanism (blacklist or token versioning)
-        //
+        // 1. Delete user from system.users via users_provider.delete_user(user_id)
+        // 2. If cascade=true, cascade delete user's tables via cleanup jobs
+        // 3. If cascade=true, remove user from shared table ACLs
+        // 4. Clean up user's live queries via live_query_manager
+        // 5. Clean up user's auth tokens (add JWT revocation mechanism)
+
         // For now, return placeholder metrics
         let tables_deleted = 0;
         let queries_stopped = 0;

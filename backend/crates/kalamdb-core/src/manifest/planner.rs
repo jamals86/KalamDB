@@ -35,7 +35,7 @@ pub struct ManifestAccessPlanner;
 
 impl ManifestAccessPlanner {
     pub fn new() -> Self {
-        Self::default()
+        Self
     }
 
     /// Plan file selections (all files, no row-group pruning)
@@ -92,15 +92,15 @@ impl ManifestAccessPlanner {
         }
 
         // Fallback: only when no manifest (or degraded mode)
-        if parquet_files.is_empty() {
-            if manifest_opt.is_none() || use_degraded_mode {
-                let entries = fs::read_dir(storage_dir).map_err(|e| KalamDbError::Io(e))?;
-                for entry in entries {
-                    let entry = entry.map_err(|e| KalamDbError::Io(e))?;
-                    let path = entry.path();
-                    if path.extension().and_then(|s| s.to_str()) == Some("parquet") {
-                        parquet_files.push(path);
-                    }
+        if parquet_files.is_empty()
+            && (manifest_opt.is_none() || use_degraded_mode)
+        {
+            let entries = fs::read_dir(storage_dir).map_err(KalamDbError::Io)?;
+            for entry in entries {
+                let entry = entry.map_err(KalamDbError::Io)?;
+                let path = entry.path();
+                if path.extension().and_then(|s| s.to_str()) == Some("parquet") {
+                    parquet_files.push(path);
                 }
             }
         }
@@ -117,18 +117,18 @@ impl ManifestAccessPlanner {
         let mut all_batches = Vec::new();
 
         for parquet_file in &parquet_files {
-            let file = fs::File::open(parquet_file).map_err(|e| KalamDbError::Io(e))?;
+            let file = fs::File::open(parquet_file).map_err(KalamDbError::Io)?;
 
             let builder = ParquetRecordBatchReaderBuilder::try_new(file).map_err(|e| {
                 KalamDbError::Other(format!("Failed to create Parquet reader: {}", e))
             })?;
 
-            let mut reader = builder.build().map_err(|e| {
+            let reader = builder.build().map_err(|e| {
                 KalamDbError::Other(format!("Failed to build Parquet reader: {}", e))
             })?;
 
             // Read all batches from this file
-            while let Some(batch_result) = reader.next() {
+            for batch_result in reader {
                 let batch = batch_result.map_err(|e| {
                     KalamDbError::Other(format!("Failed to read Parquet batch: {}", e))
                 })?;

@@ -188,7 +188,7 @@ where
 
                 let mut rows = Vec::new();
                 for (key_bytes, value_bytes) in iter {
-                    let key = K::from_storage_key(&key_bytes).map_err(|e| StorageError::SerializationError(e))?;
+                    let key = K::from_storage_key(&key_bytes).map_err(StorageError::SerializationError)?;
                     let entity = self.deserialize(&value_bytes)?;
                     rows.push(Ok((key, entity)));
                     if rows.len() >= limit {
@@ -221,7 +221,7 @@ where
                 collected.reverse();
                 let mut rows = Vec::with_capacity(collected.len());
                 for (key_bytes, value_bytes) in collected {
-                    let key = K::from_storage_key(&key_bytes).map_err(|e| StorageError::SerializationError(e))?;
+                    let key = K::from_storage_key(&key_bytes).map_err(StorageError::SerializationError)?;
                     let entity = self.deserialize(&value_bytes)?;
                     rows.push(Ok((key, entity)));
                 }
@@ -254,7 +254,7 @@ where
         let mut results = Vec::new();
         for (key_bytes, value_bytes) in iter {
             let key = K::from_storage_key(&key_bytes)
-                .map_err(|e| StorageError::SerializationError(e))?;
+                .map_err(StorageError::SerializationError)?;
             let value = V::decode(&value_bytes)?;
             results.push(Ok((key, value)));
         }

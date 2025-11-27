@@ -29,7 +29,3 @@ pub mod live_query {
 pub mod system_columns {
     pub use crate::schema_registry::SystemColumnsService;
 }
-
-// // Test helpers (only compiled in test mode)
-// #[cfg(test)]
-// pub mod test_helpers;

@@ -227,12 +227,11 @@ impl InitialDataFetcher {
         }
 
         // Add deleted filter
-        if !options.include_deleted {
-            if matches!(table_type, TableType::User | TableType::Shared)
-                && self.table_has_column(table_id, SystemColumnNames::DELETED)?
-            {
-                where_clauses.push(format!("{} = false", SystemColumnNames::DELETED));
-            }
+        if !options.include_deleted
+            && matches!(table_type, TableType::User | TableType::Shared)
+            && self.table_has_column(table_id, SystemColumnNames::DELETED)?
+        {
+            where_clauses.push(format!("{} = false", SystemColumnNames::DELETED));
         }
 
         // Add custom filter from subscription

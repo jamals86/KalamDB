@@ -273,7 +273,7 @@ pub async fn execute_sql_v1(
     }
 
     // Reject multi-statement batches with parameters (simplifies implementation)
-    if params.len() > 0 && statements.len() > 1 {
+    if !params.is_empty() && statements.len() > 1 {
         let took = start_time.elapsed().as_secs_f64() * 1000.0;
         return HttpResponse::BadRequest().json(SqlResponse::error(
             "PARAMS_WITH_BATCH",
@@ -474,13 +474,7 @@ async fn execute_single_statement(
             Err(e) => Err(Box::new(e)),
         }
     } else {
-        // // Fallback for testing: use shared session from AppContext (avoid memory leak)
-        // let session = app_context.session();
-        // let df = session.sql(sql).await?;
-        // let batches = df.collect().await?;
-        // record_batch_to_query_result(batches, None)
-
-        //Throw error if SqlExecutor is not available
+        // Throw error if SqlExecutor is not available
         Err("SqlExecutor not available".into())
     }
 }

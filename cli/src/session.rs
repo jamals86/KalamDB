@@ -99,6 +99,7 @@ pub struct CLISession {
     credential_store: Option<crate::credentials::FileCredentialStore>,
 
     /// Configured timeouts for operations
+    #[allow(dead_code)] // Reserved for future use
     timeouts: KalamLinkTimeouts,
 }
 
@@ -385,12 +386,10 @@ impl CLISession {
                 } else {
                     "*".green().bold().to_string()
                 }
+            } else if use_unicode {
+                "○".yellow().bold().to_string()
             } else {
-                if use_unicode {
-                    "○".yellow().bold().to_string()
-                } else {
-                    "o".yellow().bold().to_string()
-                }
+                "o".yellow().bold().to_string()
             }
         } else if self.connected {
             "*".to_string()
@@ -1583,13 +1582,12 @@ impl CLISession {
 
         // Basics
         println!("{}", "║  Basics".bright_blue().bold());
-        println!("{}", "║    • Write SQL; end with ';' to run");
+        println!("║    • Write SQL; end with ';' to run");
         println!(
-            "{}{}",
-            "║    • Autocomplete: keywords, namespaces, tables, columns  ",
+            "║    • Autocomplete: keywords, namespaces, tables, columns  {}",
             "(Tab)".dimmed()
         );
-        println!("{}", "║    • Inline hints and SQL highlighting enabled");
+        println!("║    • Inline hints and SQL highlighting enabled");
 
         // Meta-commands (two columns)
         println!(
