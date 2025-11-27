@@ -219,9 +219,28 @@ pub trait BaseTableProvider<K: StorageKey, V>: Send + Sync + TableProvider {
         // Default implementation: scan rows with user scoping and version resolution
         let rows = self.scan_with_version_resolution_to_kvs(user_id, None, None, None, false)?;
 
+        log::trace!(
+            "[find_row_key_by_id_field] Scanning for pk_name='{}' id_value='{}' user='{}', found {} rows",
+            self.primary_key_field_name(),
+            id_value,
+            user_id.as_str(),
+            rows.len()
+        );
+
         for (key, row) in rows {
             let fields = Self::extract_row(&row);
-            if let Some(id) = fields.get(self.primary_key_field_name()) {
+            log::trace!(
+                "[find_row_key_by_id_field] Checking row: pk_field='{}', row_keys={:?}",
+                self.primary_key_field_name(),
+                fields.values.keys().collect::<Vec<_>>()
+            );
+            let pk_value = fields.get(self.primary_key_field_name());
+            log::trace!(
+                "[find_row_key_by_id_field] pk_value={:?}, searching for id_value='{}'",
+                pk_value,
+                id_value
+            );
+            if let Some(id) = pk_value {
                 // Compare robustly: support numeric and string IDs
                 let matches = match id {
                     ScalarValue::Utf8(Some(s)) | ScalarValue::LargeUtf8(Some(s)) => s == id_value,
@@ -236,14 +255,57 @@ pub trait BaseTableProvider<K: StorageKey, V>: Send + Sync + TableProvider {
                             false
                         }
                     }
+                    ScalarValue::Int32(Some(n)) => {
+                        // Compare as exact string, and also as i32 if parseable
+                        let num_str = n.to_string();
+                        if num_str == id_value {
+                            true
+                        } else if let Ok(iv) = id_value.parse::<i32>() {
+                            *n == iv
+                        } else {
+                            false
+                        }
+                    }
+                    ScalarValue::Int16(Some(n)) => {
+                        let num_str = n.to_string();
+                        if num_str == id_value {
+                            true
+                        } else if let Ok(iv) = id_value.parse::<i16>() {
+                            *n == iv
+                        } else {
+                            false
+                        }
+                    }
+                    ScalarValue::UInt64(Some(n)) => {
+                        let num_str = n.to_string();
+                        if num_str == id_value {
+                            true
+                        } else if let Ok(iv) = id_value.parse::<u64>() {
+                            *n == iv
+                        } else {
+                            false
+                        }
+                    }
+                    ScalarValue::UInt32(Some(n)) => {
+                        let num_str = n.to_string();
+                        if num_str == id_value {
+                            true
+                        } else if let Ok(iv) = id_value.parse::<u32>() {
+                            *n == iv
+                        } else {
+                            false
+                        }
+                    }
                     _ => false,
                 };
                 if matches {
+                    log::trace!("[find_row_key_by_id_field] Found matching row with id={}", id_value);
                     return Ok(Some(key));
                 }
             }
         }
 
+        log::trace!("[find_row_key_by_id_field] No matching row found for id={}", id_value);
         Ok(None)
     }
 

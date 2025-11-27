@@ -341,5 +341,14 @@ Code Cleanup Operations:
 6) Remove un-needed imports across the codebase
 7) Fix all clippy warnings and errors
 8) Check where we use AppContext::get() multiple times in the same struct and make it a member of the struct instead, or if the code already have AppContext as a member use it directly
+9) Use clippy suggestions to improve code quality
+10) Use todo!() instead of unimplemented!() where needed
+11) Remove all commented code across the codebase
+
+
+Tasks To Repo:
+1) Add ci/cd pipelines to the new repo
+2) Add code coverage to the new repo
+3) Add rustfmt and clippy checks to the new repo
 
 
