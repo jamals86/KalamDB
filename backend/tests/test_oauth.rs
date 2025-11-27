@@ -12,7 +12,7 @@ mod common;
 
 use common::TestServer;
 use kalamdb_api::models::ResponseStatus;
-use kalamdb_commons::{AuthType, Role};
+use kalamdb_commons::{AuthType, Role, models::ConnectionInfo};
 
 #[tokio::test]
 async fn test_oauth_google_success() {

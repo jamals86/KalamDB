@@ -15,7 +15,7 @@ async fn test_live_queries_metadata() {
     let user_id = UserId::new("root");
     let conn_id = ConnectionId::new("conn_meta_test".to_string());
     
-    let registration = registry.register_connection(conn_id.clone(), None)
+    let registration = registry.register_connection(conn_id.clone(), ConnectionInfo::new(None))
         .expect("Failed to register connection");
     let connection_state = registration.state;
     
