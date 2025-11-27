@@ -3,6 +3,7 @@
 
 use crate::common::*;
 
+#[ntest::timeout(60000)]
 #[test]
 fn smoke_stream_table_subscription() {
     if !is_server_running() {
@@ -20,7 +21,7 @@ fn smoke_stream_table_subscription() {
 
     // 1) Create namespace
     let ns_sql = format!("CREATE NAMESPACE IF NOT EXISTS {}", namespace);
-    execute_sql_as_root_via_cli(&ns_sql).expect("create namespace should succeed");
+    execute_sql_as_root_via_client(&ns_sql).expect("create namespace should succeed");
 
     // 2) Create stream table with 30-second TTL
     let create_sql = format!(
@@ -32,7 +33,7 @@ fn smoke_stream_table_subscription() {
         ) WITH (TYPE = 'STREAM', TTL_SECONDS = 10)"#,
         full
     );
-    execute_sql_as_root_via_cli(&create_sql).expect("create stream table should succeed");
+    execute_sql_as_root_via_client(&create_sql).expect("create stream table should succeed");
 
     // 3) Subscribe to the stream table
     let query = format!("SELECT * FROM {}", full);
@@ -49,7 +50,7 @@ fn smoke_stream_table_subscription() {
             "INSERT INTO {} (event_id, event_type, payload) VALUES ('{}', 'info', '{}')",
             full, event_id, ev_val
         );
-        execute_sql_as_root_via_cli(&ins).expect("insert stream event should succeed");
+        execute_sql_as_root_via_client(&ins).expect("insert stream event should succeed");
 
         // After each insert, poll for up to 1s for a subscription line
         let per_attempt_deadline = std::time::Instant::now() + std::time::Duration::from_secs(1);
@@ -77,7 +78,7 @@ fn smoke_stream_table_subscription() {
     // 5) Verify data is present via regular SELECT immediately after insert
     let select_sql = format!("SELECT * FROM {}", full);
     let select_output =
-        execute_sql_as_root_via_cli_json(&select_sql).expect("select should succeed");
+        execute_sql_as_root_via_client_json(&select_sql).expect("select should succeed");
     assert!(
         select_output.contains(ev_val),
         "expected to find inserted event '{}' in SELECT output immediately after insert. Output:\n{}",
@@ -91,7 +92,7 @@ fn smoke_stream_table_subscription() {
 
     // 7) Verify data has been evicted via regular SELECT
     let select_after_ttl =
-        execute_sql_as_root_via_cli_json(&select_sql).expect("select after TTL should succeed");
+        execute_sql_as_root_via_client_json(&select_sql).expect("select after TTL should succeed");
     assert!(
         !select_after_ttl.contains(ev_val),
         "expected event '{}' to be evicted after 11 seconds (TTL=10s)",

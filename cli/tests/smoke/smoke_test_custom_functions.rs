@@ -19,6 +19,7 @@ use std::time::Duration;
 /// - Time-ordering (monotonic increase)
 /// - Non-null values
 /// - Numeric format (BIGINT)
+#[ntest::timeout(60000)]
 #[test]
 fn smoke_test_snowflake_id_default() {
     if !is_server_running() {
@@ -33,10 +34,10 @@ fn smoke_test_snowflake_id_default() {
     println!("🧪 Testing SNOWFLAKE_ID() DEFAULT: {}", full_table);
 
     // Cleanup and setup
-    let _ = execute_sql_as_root_via_cli(&format!("DROP NAMESPACE IF EXISTS {} CASCADE", namespace));
+    let _ = execute_sql_as_root_via_client(&format!("DROP NAMESPACE IF EXISTS {} CASCADE", namespace));
     std::thread::sleep(Duration::from_millis(200));
 
-    execute_sql_as_root_via_cli(&format!("CREATE NAMESPACE {}", namespace))
+    execute_sql_as_root_via_client(&format!("CREATE NAMESPACE {}", namespace))
         .expect("Failed to create namespace");
 
     // Create table with SNOWFLAKE_ID() as PRIMARY KEY default
@@ -49,7 +50,7 @@ fn smoke_test_snowflake_id_default() {
         full_table
     );
 
-    execute_sql_as_root_via_cli(&create_sql).expect("Failed to create table with SNOWFLAKE_ID");
+    execute_sql_as_root_via_client(&create_sql).expect("Failed to create table with SNOWFLAKE_ID");
     std::thread::sleep(Duration::from_millis(200));
 
     println!("✅ Created table with SNOWFLAKE_ID() DEFAULT");
@@ -61,7 +62,7 @@ fn smoke_test_snowflake_id_default() {
             "INSERT INTO {} (content) VALUES ('Message {}')",
             full_table, i
         );
-        execute_sql_as_root_via_cli(&insert_sql)
+        execute_sql_as_root_via_client(&insert_sql)
             .unwrap_or_else(|e| panic!("Failed to insert row {}: {}", i, e));
         // Small delay to ensure IDs are time-ordered
         std::thread::sleep(Duration::from_millis(10));
@@ -71,7 +72,7 @@ fn smoke_test_snowflake_id_default() {
 
     // Query and verify IDs
     let select_sql = format!("SELECT id, content FROM {} ORDER BY id", full_table);
-    let output = execute_sql_as_root_via_cli_json(&select_sql).expect("Failed to query data");
+    let output = execute_sql_as_root_via_client_json(&select_sql).expect("Failed to query data");
 
     println!("Query output:\n{}", output);
 
@@ -102,6 +103,7 @@ fn smoke_test_snowflake_id_default() {
 /// - Uniqueness
 /// - Non-null values
 /// - Text format
+#[ntest::timeout(60000)]
 #[test]
 fn smoke_test_uuid_v7_default() {
     if !is_server_running() {
@@ -116,10 +118,10 @@ fn smoke_test_uuid_v7_default() {
     println!("🧪 Testing UUID_V7() DEFAULT: {}", full_table);
 
     // Cleanup and setup
-    let _ = execute_sql_as_root_via_cli(&format!("DROP NAMESPACE IF EXISTS {} CASCADE", namespace));
+    let _ = execute_sql_as_root_via_client(&format!("DROP NAMESPACE IF EXISTS {} CASCADE", namespace));
     std::thread::sleep(Duration::from_millis(200));
 
-    execute_sql_as_root_via_cli(&format!("CREATE NAMESPACE {}", namespace))
+    execute_sql_as_root_via_client(&format!("CREATE NAMESPACE {}", namespace))
         .expect("Failed to create namespace");
 
     // Create table with UUID_V7() as PRIMARY KEY default
@@ -133,7 +135,7 @@ fn smoke_test_uuid_v7_default() {
         full_table
     );
 
-    execute_sql_as_root_via_cli(&create_sql).expect("Failed to create table with UUID_V7");
+    execute_sql_as_root_via_client(&create_sql).expect("Failed to create table with UUID_V7");
     std::thread::sleep(Duration::from_millis(200));
 
     println!("✅ Created table with UUID_V7() DEFAULT");
@@ -143,9 +145,11 @@ fn smoke_test_uuid_v7_default() {
     for i in 1..=3 {
         let insert_sql = format!(
             "INSERT INTO {} (user_id, ip_address) VALUES ('user_{}', '192.168.1.{}')",
-            full_table, i, 100 + i
+            full_table,
+            i,
+            100 + i
         );
-        execute_sql_as_root_via_cli(&insert_sql)
+        execute_sql_as_root_via_client(&insert_sql)
             .unwrap_or_else(|e| panic!("Failed to insert session {}: {}", i, e));
         std::thread::sleep(Duration::from_millis(10));
     }
@@ -157,7 +161,7 @@ fn smoke_test_uuid_v7_default() {
         "SELECT session_id, user_id FROM {} ORDER BY created_at",
         full_table
     );
-    let output = execute_sql_as_root_via_cli_json(&select_sql).expect("Failed to query sessions");
+    let output = execute_sql_as_root_via_client_json(&select_sql).expect("Failed to query sessions");
 
     println!("Query output:\n{}", output);
 
@@ -189,6 +193,7 @@ fn smoke_test_uuid_v7_default() {
 /// - Uniqueness
 /// - Non-null values
 /// - No hyphens (compact format)
+#[ntest::timeout(60000)]
 #[test]
 fn smoke_test_ulid_default() {
     if !is_server_running() {
@@ -203,10 +208,10 @@ fn smoke_test_ulid_default() {
     println!("🧪 Testing ULID() DEFAULT: {}", full_table);
 
     // Cleanup and setup
-    let _ = execute_sql_as_root_via_cli(&format!("DROP NAMESPACE IF EXISTS {} CASCADE", namespace));
+    let _ = execute_sql_as_root_via_client(&format!("DROP NAMESPACE IF EXISTS {} CASCADE", namespace));
     std::thread::sleep(Duration::from_millis(200));
 
-    execute_sql_as_root_via_cli(&format!("CREATE NAMESPACE {}", namespace))
+    execute_sql_as_root_via_client(&format!("CREATE NAMESPACE {}", namespace))
         .expect("Failed to create namespace");
 
     // Create table with ULID() as PRIMARY KEY default
@@ -221,7 +226,7 @@ fn smoke_test_ulid_default() {
         full_table
     );
 
-    execute_sql_as_root_via_cli(&create_sql).expect("Failed to create table with ULID");
+    execute_sql_as_root_via_client(&create_sql).expect("Failed to create table with ULID");
     std::thread::sleep(Duration::from_millis(200));
 
     println!("✅ Created table with ULID() DEFAULT");
@@ -233,7 +238,7 @@ fn smoke_test_ulid_default() {
             "INSERT INTO {} (event_type, user_id, payload) VALUES ('user_action', 'user_{}', '{{\"action\":\"click\"}}')",
             full_table, i
         );
-        execute_sql_as_root_via_cli(&insert_sql)
+        execute_sql_as_root_via_client(&insert_sql)
             .unwrap_or_else(|e| panic!("Failed to insert event {}: {}", i, e));
         std::thread::sleep(Duration::from_millis(10));
     }
@@ -245,7 +250,7 @@ fn smoke_test_ulid_default() {
         "SELECT event_id, event_type FROM {} ORDER BY created_at",
         full_table
     );
-    let output = execute_sql_as_root_via_cli_json(&select_sql).expect("Failed to query events");
+    let output = execute_sql_as_root_via_client_json(&select_sql).expect("Failed to query events");
 
     println!("Query output:\n{}", output);
 
@@ -272,6 +277,7 @@ fn smoke_test_ulid_default() {
 /// Verifies:
 /// - created_by is automatically set to current user
 /// - Matches authenticated user from session
+#[ntest::timeout(60000)]
 #[test]
 fn smoke_test_current_user_default() {
     if !is_server_running() {
@@ -286,10 +292,10 @@ fn smoke_test_current_user_default() {
     println!("🧪 Testing CURRENT_USER() DEFAULT: {}", full_table);
 
     // Cleanup and setup
-    let _ = execute_sql_as_root_via_cli(&format!("DROP NAMESPACE IF EXISTS {} CASCADE", namespace));
+    let _ = execute_sql_as_root_via_client(&format!("DROP NAMESPACE IF EXISTS {} CASCADE", namespace));
     std::thread::sleep(Duration::from_millis(200));
 
-    execute_sql_as_root_via_cli(&format!("CREATE NAMESPACE {}", namespace))
+    execute_sql_as_root_via_client(&format!("CREATE NAMESPACE {}", namespace))
         .expect("Failed to create namespace");
 
     // Create table with CURRENT_USER() as DEFAULT for created_by
@@ -304,7 +310,7 @@ fn smoke_test_current_user_default() {
         full_table
     );
 
-    execute_sql_as_root_via_cli(&create_sql).expect("Failed to create table with CURRENT_USER");
+    execute_sql_as_root_via_client(&create_sql).expect("Failed to create table with CURRENT_USER");
     std::thread::sleep(Duration::from_millis(200));
 
     println!("✅ Created table with CURRENT_USER() DEFAULT");
@@ -316,7 +322,7 @@ fn smoke_test_current_user_default() {
             "INSERT INTO {} (title, content) VALUES ('Document {}', 'Content for document {}')",
             full_table, i, i
         );
-        execute_sql_as_root_via_cli(&insert_sql)
+        execute_sql_as_root_via_client(&insert_sql)
             .unwrap_or_else(|e| panic!("Failed to insert document {}: {}", i, e));
     }
 
@@ -327,7 +333,7 @@ fn smoke_test_current_user_default() {
         "SELECT title, created_by FROM {} ORDER BY doc_id",
         full_table
     );
-    let output = execute_sql_as_root_via_cli_json(&select_sql).expect("Failed to query documents");
+    let output = execute_sql_as_root_via_client_json(&select_sql).expect("Failed to query documents");
 
     println!("Query output:\n{}", output);
 
@@ -356,6 +362,7 @@ fn smoke_test_current_user_default() {
 /// - Multiple DEFAULT functions work together
 /// - Each function generates distinct values
 /// - All auto-generated columns are populated correctly
+#[ntest::timeout(60000)]
 #[test]
 fn smoke_test_all_custom_functions_combined() {
     if !is_server_running() {
@@ -367,16 +374,13 @@ fn smoke_test_all_custom_functions_combined() {
     let table = generate_unique_table("all_funcs");
     let full_table = format!("{}.{}", namespace, table);
 
-    println!(
-        "🧪 Testing all custom functions combined: {}",
-        full_table
-    );
+    println!("🧪 Testing all custom functions combined: {}", full_table);
 
     // Cleanup and setup
-    let _ = execute_sql_as_root_via_cli(&format!("DROP NAMESPACE IF EXISTS {} CASCADE", namespace));
+    let _ = execute_sql_as_root_via_client(&format!("DROP NAMESPACE IF EXISTS {} CASCADE", namespace));
     std::thread::sleep(Duration::from_millis(200));
 
-    execute_sql_as_root_via_cli(&format!("CREATE NAMESPACE {}", namespace))
+    execute_sql_as_root_via_client(&format!("CREATE NAMESPACE {}", namespace))
         .expect("Failed to create namespace");
 
     // Create table with ALL custom functions
@@ -392,7 +396,7 @@ fn smoke_test_all_custom_functions_combined() {
         full_table
     );
 
-    execute_sql_as_root_via_cli(&create_sql)
+    execute_sql_as_root_via_client(&create_sql)
         .expect("Failed to create table with all custom functions");
     std::thread::sleep(Duration::from_millis(200));
 
@@ -403,7 +407,7 @@ fn smoke_test_all_custom_functions_combined() {
         "INSERT INTO {} (title) VALUES ('Test Document')",
         full_table
     );
-    execute_sql_as_root_via_cli(&insert_sql).expect("Failed to insert row");
+    execute_sql_as_root_via_client(&insert_sql).expect("Failed to insert row");
 
     println!("✅ Inserted 1 row with only title specified");
 
@@ -412,7 +416,7 @@ fn smoke_test_all_custom_functions_combined() {
         "SELECT snowflake_id, uuid_field, ulid_field, created_by, title FROM {}",
         full_table
     );
-    let output = execute_sql_as_root_via_cli_json(&select_sql).expect("Failed to query data");
+    let output = execute_sql_as_root_via_client_json(&select_sql).expect("Failed to query data");
 
     println!("Query output:\n{}", output);
 
@@ -421,8 +425,14 @@ fn smoke_test_all_custom_functions_combined() {
         output.contains("\"snowflake_id\""),
         "Expected snowflake_id column"
     );
-    assert!(output.contains("\"uuid_field\""), "Expected uuid_field column");
-    assert!(output.contains("\"ulid_field\""), "Expected ulid_field column");
+    assert!(
+        output.contains("\"uuid_field\""),
+        "Expected uuid_field column"
+    );
+    assert!(
+        output.contains("\"ulid_field\""),
+        "Expected ulid_field column"
+    );
     assert!(
         output.contains("\"created_by\""),
         "Expected created_by column"

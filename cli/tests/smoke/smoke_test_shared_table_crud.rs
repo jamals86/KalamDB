@@ -3,6 +3,7 @@
 
 use crate::common::*;
 
+#[ntest::timeout(60000)]
 #[test]
 fn smoke_shared_table_crud() {
     if !is_server_running() {
@@ -20,7 +21,7 @@ fn smoke_shared_table_crud() {
 
     // 0) Create namespace
     let ns_sql = format!("CREATE NAMESPACE IF NOT EXISTS {}", namespace);
-    execute_sql_as_root_via_cli(&ns_sql).expect("create namespace should succeed");
+    execute_sql_as_root_via_client(&ns_sql).expect("create namespace should succeed");
 
     // 1) Create shared table
     let create_sql = format!(
@@ -35,7 +36,7 @@ fn smoke_shared_table_crud() {
         )"#,
         full
     );
-    execute_sql_as_root_via_cli(&create_sql).expect("create shared table should succeed");
+    execute_sql_as_root_via_client(&create_sql).expect("create shared table should succeed");
 
     // 2) Insert rows
     let ins1 = format!(
@@ -43,12 +44,12 @@ fn smoke_shared_table_crud() {
         full
     );
     let ins2 = format!("INSERT INTO {} (name, status) VALUES ('beta', 'new')", full);
-    execute_sql_as_root_via_cli(&ins1).expect("insert alpha should succeed");
-    execute_sql_as_root_via_cli(&ins2).expect("insert beta should succeed");
+    execute_sql_as_root_via_client(&ins1).expect("insert alpha should succeed");
+    execute_sql_as_root_via_client(&ins2).expect("insert beta should succeed");
 
     // 3) SELECT and verify both rows present
     let sel_all = format!("SELECT * FROM {}", full);
-    let out = execute_sql_as_root_via_cli(&sel_all).expect("select should succeed");
+    let out = execute_sql_as_root_via_client(&sel_all).expect("select should succeed");
     assert!(
         out.contains("alpha"),
         "expected 'alpha' in results: {}",
@@ -57,29 +58,35 @@ fn smoke_shared_table_crud() {
     assert!(out.contains("beta"), "expected 'beta' in results: {}", out);
 
     // 4) Retrieve ids for rows we will mutate (backend requires primary key equality for UPDATE/DELETE)
+    // Use JSON output for reliable parsing
     let id_sel = format!(
         "SELECT id, name FROM {} WHERE name IN ('alpha','beta') ORDER BY name",
         full
     );
-    let id_out = execute_sql_as_root_via_cli(&id_sel).expect("id select should succeed");
+    let id_out_json = execute_sql_as_root_via_client_json(&id_sel).expect("id select should succeed");
+
+    // Parse JSON response to extract IDs
+    let json_value: serde_json::Value = serde_json::from_str(&id_out_json)
+        .expect("Failed to parse JSON response");
+    let rows = json_value
+        .get("results")
+        .and_then(|v| v.as_array())
+        .and_then(|arr| arr.first())
+        .and_then(|res| res.get("rows"))
+        .and_then(|v| v.as_array())
+        .expect("Expected rows in JSON response");
 
     let mut alpha_id: Option<String> = None;
     let mut beta_id: Option<String> = None;
-    for line in id_out.lines() {
-        if line.contains("alpha") || line.contains("beta") {
-            // Parse id allowing negative numbers: split on non-digit-or-minus, take first numeric segment
-            let parts: Vec<&str> = line.split('│').collect();
-            if parts.len() >= 2 {
-                let id_part = parts[1].trim();
-                // Try to parse as i64 to validate it's a number
-                if let Ok(_) = id_part.parse::<i64>() {
-                    if line.contains("alpha") {
-                        alpha_id = Some(id_part.to_string());
-                    }
-                    if line.contains("beta") {
-                        beta_id = Some(id_part.to_string());
-                    }
-                }
+    for row in rows {
+        let name = row.get("name").and_then(|v| v.as_str()).unwrap_or("");
+        let id = row.get("id").and_then(|v| v.as_i64());
+        if let Some(id_val) = id {
+            if name == "alpha" {
+                alpha_id = Some(id_val.to_string());
+            }
+            if name == "beta" {
+                beta_id = Some(id_val.to_string());
             }
         }
     }
@@ -88,14 +95,14 @@ fn smoke_shared_table_crud() {
 
     // 5) DELETE one row via id
     let del = format!("DELETE FROM {} WHERE id = {}", full, alpha_id);
-    execute_sql_as_root_via_cli(&del).expect("delete should succeed");
+    execute_sql_as_root_via_client(&del).expect("delete should succeed");
 
     // 6) UPDATE one row via id
     let upd = format!("UPDATE {} SET status='done' WHERE id = {}", full, beta_id);
-    execute_sql_as_root_via_cli(&upd).expect("update should succeed");
+    execute_sql_as_root_via_client(&upd).expect("update should succeed");
 
     // 7) SELECT non-deleted rows and verify contents reflect changes
-    let out2 = execute_sql_as_root_via_cli(&sel_all).expect("second select should succeed");
+    let out2 = execute_sql_as_root_via_client(&sel_all).expect("second select should succeed");
     assert!(out2.contains("beta"), "expected 'beta' to remain: {}", out2);
     assert!(
         out2.contains("done"),
@@ -105,9 +112,9 @@ fn smoke_shared_table_crud() {
 
     // 8) DROP TABLE and verify selecting fails
     let drop_sql = format!("DROP TABLE {}", full);
-    execute_sql_as_root_via_cli(&drop_sql).expect("drop table should succeed");
+    execute_sql_as_root_via_client(&drop_sql).expect("drop table should succeed");
 
-    let select_after_drop = execute_sql_via_cli(&sel_all);
+    let select_after_drop = execute_sql_via_client(&sel_all);
     match select_after_drop {
         Ok(s) => panic!(
             "expected failure selecting dropped table, got output: {}",

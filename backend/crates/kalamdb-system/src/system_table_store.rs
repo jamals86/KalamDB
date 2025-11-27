@@ -1,6 +1,11 @@
 //! System table store implementation using EntityStore pattern.
 //!
 //! Provides a wrapper around EntityStore for system tables with admin-only access control.
+//!
+//! ## Note
+//!
+//! For system tables that need secondary indexes, use `IndexedEntityStore` from `kalamdb-store`
+//! instead. It provides automatic atomic index management via RocksDB WriteBatch.
 
 use crate::error::SystemError;
 use crate::system_table_trait::SystemTableProviderExt;
@@ -16,6 +21,9 @@ use std::sync::Arc;
 /// - Typed access to system tables (K = key type, V = value type)
 /// - Admin-only access control (CrossUserTableStore returns None for table_access)
 /// - Integration with SystemTableProviderExt trait
+///
+/// For tables that need secondary indexes, use `IndexedEntityStore` instead.
+#[derive(Clone)]
 pub struct SystemTableStore<K, V> {
     backend: Arc<dyn StorageBackend>,
     partition: String,
@@ -41,7 +49,7 @@ impl<K, V> SystemTableStore<K, V> {
 impl<K, V> EntityStore<K, V> for SystemTableStore<K, V>
 where
     K: StorageKey,
-    V: KSerializable,
+    V: KSerializable + 'static,
 {
     fn backend(&self) -> &Arc<dyn StorageBackend> {
         &self.backend
@@ -75,7 +83,7 @@ impl<K: Send + Sync, V: Send + Sync> SystemTableProviderExt for SystemTableStore
 impl<K, V> CrossUserTableStore<K, V> for SystemTableStore<K, V>
 where
     K: StorageKey,
-    V: KSerializable,
+    V: KSerializable + 'static,
 {
     fn table_access(&self) -> Option<kalamdb_commons::models::TableAccess> {
         None // System tables are admin-only

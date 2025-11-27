@@ -36,9 +36,7 @@ async fn test_select_star_returns_columns_in_ordinal_order() {
     .expect("Failed to create table definition");
 
     // Create namespace first
-    server
-        .execute_sql("CREATE NAMESPACE test_ns")
-        .await;
+    server.execute_sql("CREATE NAMESPACE test_ns").await;
 
     // Store the table definition using system tables provider
     server
@@ -90,9 +88,7 @@ async fn test_alter_table_add_column_assigns_next_ordinal() {
     let table_id = TableId::new(test_namespace.clone(), table_name.clone());
 
     // Create namespace first
-    server
-        .execute_sql("CREATE NAMESPACE test_ns")
-        .await;
+    server.execute_sql("CREATE NAMESPACE test_ns").await;
 
     // Create initial table with 2 columns
     let initial_columns = vec![
@@ -154,9 +150,7 @@ async fn test_alter_table_drop_column_preserves_ordinals() {
     let table_id = TableId::new(test_namespace.clone(), table_name.clone());
 
     // Create namespace first
-    server
-        .execute_sql("CREATE NAMESPACE test_ns")
-        .await;
+    server.execute_sql("CREATE NAMESPACE test_ns").await;
 
     // Create table with 4 columns
     let initial_columns = vec![

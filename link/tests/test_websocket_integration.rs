@@ -18,6 +18,8 @@
 //!
 //! Tests will be skipped if the server is not running.
 
+use base64::Engine;
+use kalam_link::auth::AuthProvider;
 use kalam_link::models::ResponseStatus;
 use kalam_link::{ChangeEvent, KalamLinkClient, QueryResponse, SubscriptionConfig};
 use std::time::Duration;
@@ -31,8 +33,11 @@ const TEST_USER_ID: &str = "ws_test_user";
 
 /// Helper to check if server is running
 async fn is_server_running() -> bool {
+    // Use Basic Auth with root:<empty> for localhost bypass
+    let credentials = base64::engine::general_purpose::STANDARD.encode("root:");
     match reqwest::Client::new()
         .post(format!("{}/v1/api/sql", SERVER_URL))
+        .header("Authorization", format!("Basic {}", credentials))
         .json(&serde_json::json!({ "sql": "SELECT 1" }))
         .timeout(Duration::from_secs(2))
         .send()
@@ -48,6 +53,7 @@ fn create_test_client() -> Result<KalamLinkClient, kalam_link::KalamLinkError> {
     KalamLinkClient::builder()
         .base_url(SERVER_URL)
         .timeout(Duration::from_secs(30))
+        .auth(AuthProvider::system_user_auth("".to_string()))
         .build()
 }
 
@@ -228,7 +234,7 @@ async fn test_websocket_subscription_with_config() {
     let client = create_test_client().expect("Failed to create client");
 
     // Create subscription with custom config
-    let config = SubscriptionConfig::new(&format!("SELECT * FROM {}", table));
+    let config = SubscriptionConfig::new("sub-config-test", &format!("SELECT * FROM {}", table));
 
     let subscription_result = timeout(TEST_TIMEOUT, client.subscribe_with_config(config)).await;
 
@@ -465,157 +471,6 @@ async fn test_websocket_filtered_subscription() {
     cleanup_test_data(&table).await.ok();
 }
 
-#[tokio::test]
-#[ignore = "UPDATE/DELETE not supported on STREAM tables - test uses ws_test.events which is a STREAM table"]
-async fn test_websocket_update_notification() {
-    if !is_server_running().await {
-        eprintln!("⚠️  Server not running. Skipping test.");
-        return;
-    }
-
-    let table = setup_test_data().await.expect("Failed to setup test data");
-
-    // Insert initial row
-    execute_sql("INSERT INTO ws_test.events (event_type, data) VALUES ('update_test', 'original')")
-        .await
-        .ok();
-    sleep(Duration::from_millis(200)).await;
-
-    let client = create_test_client().expect("Failed to create client");
-
-    let subscription_result = timeout(
-        TEST_TIMEOUT,
-        client.subscribe("SELECT * FROM ws_test.events WHERE event_type = 'update_test'"),
-    )
-    .await;
-
-    match subscription_result {
-        Ok(Ok(mut subscription)) => {
-            // Skip initial messages
-            for _ in 0..2 {
-                let _ = timeout(Duration::from_millis(500), subscription.next()).await;
-            }
-
-            // Update the row
-            execute_sql(
-                "UPDATE ws_test.events SET data = 'updated' WHERE event_type = 'update_test'",
-            )
-            .await
-            .ok();
-
-            // Wait for update notification
-            let event_received = timeout(Duration::from_secs(3), subscription.next()).await;
-
-            match event_received {
-                Ok(Some(Ok(event))) => match event {
-                    ChangeEvent::Update { rows, old_rows, .. } => {
-                        assert!(!rows.is_empty(), "Update should contain new rows");
-                        assert!(!old_rows.is_empty(), "Update should contain old rows");
-                    }
-                    _ => {
-                        panic!(
-                            "Expected Update event, got unexpected event type: {:?}",
-                            event
-                        );
-                    }
-                },
-                Ok(Some(Err(e))) => {
-                    panic!("Update notification failed with error: {}", e);
-                }
-                Ok(None) => {
-                    panic!("Subscription ended before receiving update notification");
-                }
-                Err(_) => {
-                    panic!("FAILED: No update notification received within timeout - WebSocket notifications not working!");
-                }
-            }
-        }
-        Ok(Err(e)) => {
-            panic!("Subscription failed: {}", e);
-        }
-        Err(_) => {
-            panic!("Subscription creation timed out");
-        }
-    }
-
-    cleanup_test_data(&table).await.ok();
-}
-
-#[tokio::test]
-#[ignore = "UPDATE/DELETE not supported on STREAM tables - test uses ws_test.events which is a STREAM table"]
-async fn test_websocket_delete_notification() {
-    if !is_server_running().await {
-        eprintln!("⚠️  Server not running. Skipping test.");
-        return;
-    }
-
-    let table = setup_test_data().await.expect("Failed to setup test data");
-
-    // Insert initial row
-    execute_sql(
-        "INSERT INTO ws_test.events (event_type, data) VALUES ('delete_test', 'to_delete')",
-    )
-    .await
-    .ok();
-    sleep(Duration::from_millis(200)).await;
-
-    let client = create_test_client().expect("Failed to create client");
-
-    let subscription_result = timeout(
-        TEST_TIMEOUT,
-        client.subscribe("SELECT * FROM ws_test.events WHERE event_type = 'delete_test'"),
-    )
-    .await;
-
-    match subscription_result {
-        Ok(Ok(mut subscription)) => {
-            // Skip initial messages
-            for _ in 0..2 {
-                let _ = timeout(Duration::from_millis(500), subscription.next()).await;
-            }
-
-            // Delete the row
-            execute_sql("DELETE FROM ws_test.events WHERE event_type = 'delete_test'")
-                .await
-                .ok();
-
-            // Wait for delete notification
-            let event_received = timeout(Duration::from_secs(3), subscription.next()).await;
-
-            match event_received {
-                Ok(Some(Ok(event))) => match event {
-                    ChangeEvent::Delete { old_rows, .. } => {
-                        assert!(!old_rows.is_empty(), "Delete should contain deleted rows");
-                    }
-                    _ => {
-                        panic!(
-                            "Expected Delete event, got unexpected event type: {:?}",
-                            event
-                        );
-                    }
-                },
-                Ok(Some(Err(e))) => {
-                    panic!("Delete notification failed with error: {}", e);
-                }
-                Ok(None) => {
-                    panic!("Subscription ended before receiving delete notification");
-                }
-                Err(_) => {
-                    panic!("FAILED: No delete notification received within timeout - WebSocket notifications not working!");
-                }
-            }
-        }
-        Ok(Err(e)) => {
-            panic!("Subscription failed: {}", e);
-        }
-        Err(_) => {
-            panic!("Subscription creation timed out");
-        }
-    }
-
-    cleanup_test_data(&table).await.ok();
-}
-
 // =============================================================================
 // SQL Statement Coverage Tests
 // =============================================================================
@@ -708,60 +563,6 @@ async fn test_sql_insert_select() {
 }
 
 #[tokio::test]
-#[ignore = "UPDATE not supported on STREAM tables - test uses ws_test.events which is a STREAM table"]
-async fn test_sql_update() {
-    if !is_server_running().await {
-        eprintln!("⚠️  Server not running. Skipping test.");
-        return;
-    }
-
-    let table = setup_test_data().await.expect("Failed to setup");
-
-    let client = create_test_client().expect("Failed to create client");
-
-    // Insert
-    client
-        .execute_query("INSERT INTO ws_test.events (event_type, data) VALUES ('update', 'old')")
-        .await
-        .ok();
-
-    // Update
-    let result = client
-        .execute_query("UPDATE ws_test.events SET data = 'new' WHERE event_type = 'update'")
-        .await;
-    assert!(result.is_ok(), "UPDATE should succeed");
-
-    cleanup_test_data(&table).await.ok();
-}
-
-#[tokio::test]
-#[ignore = "DELETE not supported on STREAM tables - test uses ws_test.events which is a STREAM table"]
-async fn test_sql_delete() {
-    if !is_server_running().await {
-        eprintln!("⚠️  Server not running. Skipping test.");
-        return;
-    }
-
-    let table = setup_test_data().await.expect("Failed to setup");
-
-    let client = create_test_client().expect("Failed to create client");
-
-    // Insert
-    client
-        .execute_query("INSERT INTO ws_test.events (event_type, data) VALUES ('delete', 'data')")
-        .await
-        .ok();
-
-    // Delete
-    let result = client
-        .execute_query("DELETE FROM ws_test.events WHERE event_type = 'delete'")
-        .await;
-    assert!(result.is_ok(), "DELETE should succeed");
-
-    cleanup_test_data(&table).await.ok();
-}
-
-#[tokio::test]
 async fn test_sql_drop_table() {
     if !is_server_running().await {
         eprintln!("⚠️  Server not running. Skipping test.");
@@ -781,29 +582,6 @@ async fn test_sql_drop_table() {
     // Drop it
     let result = client.execute_query("DROP TABLE ws_test.temp_table").await;
     assert!(result.is_ok(), "DROP TABLE should succeed");
-
-    cleanup_test_data(&table).await.ok();
-}
-
-#[tokio::test]
-#[ignore = "FLUSH TABLE not supported on STREAM tables - test uses ws_test.events which is a STREAM table"]
-async fn test_sql_flush_table() {
-    if !is_server_running().await {
-        eprintln!("⚠️  Server not running. Skipping test.");
-        return;
-    }
-
-    let table = setup_test_data().await.expect("Failed to setup");
-
-    let client = create_test_client().expect("Failed to create client");
-
-    let result = client.execute_query("FLUSH TABLE ws_test.events").await;
-
-    // FLUSH might not be implemented, so accept either success or "unsupported"
-    assert!(
-        result.is_ok() || result.unwrap_err().to_string().contains("Unsupported"),
-        "FLUSH TABLE should succeed or return unsupported"
-    );
 
     cleanup_test_data(&table).await.ok();
 }

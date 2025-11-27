@@ -22,6 +22,35 @@ use std::sync::Arc;
 /// Type alias for Arc<dyn Array> to improve readability
 type ArrayRef = Arc<dyn datafusion::arrow::array::Array>;
 
+/// Coerce a list of rows to match the schema types and fill defaults.
+///
+/// This is useful for INSERT operations where we need to ensure the data matches
+/// the schema before broadcasting or storing.
+pub fn coerce_rows(rows: Vec<Row>, schema: &SchemaRef) -> Result<Vec<Row>, String> {
+    let defaults = get_column_defaults(schema);
+    let typed_nulls = get_typed_nulls(schema);
+
+    rows.into_iter()
+        .map(|mut row| {
+            let mut new_values = BTreeMap::new();
+            for (i, field) in schema.fields().iter().enumerate() {
+                let field_name = field.name().as_str();
+
+                // Take value from map (move) instead of cloning
+                let raw_value = row
+                    .values
+                    .remove(field_name)
+                    .or_else(|| defaults[i].clone())
+                    .unwrap_or_else(|| typed_nulls[i].clone());
+
+                let coerced = coerce_scalar_to_field(raw_value, field)?;
+                new_values.insert(field_name.to_string(), coerced);
+            }
+            Ok(Row::new(new_values))
+        })
+        .collect()
+}
+
 /// Convert ScalarValue-backed rows to Arrow RecordBatch
 ///
 /// SELECT operations build row-oriented `Row` values (ScalarValue map) directly from storage.
@@ -40,22 +69,8 @@ pub fn json_rows_to_arrow_batch(schema: &SchemaRef, rows: Vec<Row>) -> Result<Re
     }
 
     // Pre-calculate default values for each column to avoid repeated logic in loop
-    let defaults: Vec<Option<ScalarValue>> = schema.fields().iter().map(|field| {
-        match (field.data_type(), field.is_nullable()) {
-            (DataType::Timestamp(TimeUnit::Microsecond, tz_opt), false) => {
-                let micros = Utc::now().timestamp_micros();
-                Some(ScalarValue::TimestampMicrosecond(
-                    Some(micros),
-                    tz_opt.clone(),
-                ))
-            }
-            _ => None,
-        }
-    }).collect();
-
-    let typed_nulls: Vec<ScalarValue> = schema.fields().iter().map(|field| {
-        ScalarValue::try_from(field.data_type()).unwrap_or(ScalarValue::Null)
-    }).collect();
+    let defaults = get_column_defaults(schema);
+    let typed_nulls = get_typed_nulls(schema);
 
     // Transpose rows to columns (Row-oriented -> Column-oriented)
     // We use move semantics (row.values.remove) to avoid cloning strings/blobs
@@ -66,16 +81,18 @@ pub fn json_rows_to_arrow_batch(schema: &SchemaRef, rows: Vec<Row>) -> Result<Re
     for mut row in rows {
         for (i, field) in schema.fields().iter().enumerate() {
             let field_name = field.name().as_str();
-            
+
             // Take value from map (move) instead of cloning
-            let raw_value = row.values.remove(field_name)
+            let raw_value = row
+                .values
+                .remove(field_name)
                 .or_else(|| defaults[i].clone())
                 .unwrap_or_else(|| typed_nulls[i].clone());
-            
+
             // We still need to coerce, but now we own the value
             let coerced = coerce_scalar_to_field(raw_value, field)
                 .map_err(|e| format!("Failed to coerce column '{}': {}", field.name(), e))?;
-            
+
             columns[i].push(coerced);
         }
     }
@@ -93,12 +110,63 @@ pub fn json_rows_to_arrow_batch(schema: &SchemaRef, rows: Vec<Row>) -> Result<Re
         .map_err(|e| format!("Failed to build record batch: {}", e))
 }
 
+fn get_column_defaults(schema: &SchemaRef) -> Vec<Option<ScalarValue>> {
+    schema
+        .fields()
+        .iter()
+        .map(|field| {
+            if field.is_nullable() {
+                return None;
+            }
+            match field.data_type() {
+                DataType::Boolean => Some(ScalarValue::Boolean(Some(false))),
+                DataType::Int8 => Some(ScalarValue::Int8(Some(0))),
+                DataType::Int16 => Some(ScalarValue::Int16(Some(0))),
+                DataType::Int32 => Some(ScalarValue::Int32(Some(0))),
+                DataType::Int64 => Some(ScalarValue::Int64(Some(0))),
+                DataType::UInt8 => Some(ScalarValue::UInt8(Some(0))),
+                DataType::UInt16 => Some(ScalarValue::UInt16(Some(0))),
+                DataType::UInt32 => Some(ScalarValue::UInt32(Some(0))),
+                DataType::UInt64 => Some(ScalarValue::UInt64(Some(0))),
+                DataType::Float32 => Some(ScalarValue::Float32(Some(0.0))),
+                DataType::Float64 => Some(ScalarValue::Float64(Some(0.0))),
+                DataType::Utf8 => Some(ScalarValue::Utf8(Some("".to_string()))),
+                DataType::LargeUtf8 => Some(ScalarValue::LargeUtf8(Some("".to_string()))),
+                DataType::Timestamp(TimeUnit::Microsecond, tz_opt) => {
+                    let micros = Utc::now().timestamp_micros();
+                    Some(ScalarValue::TimestampMicrosecond(
+                        Some(micros),
+                        tz_opt.clone(),
+                    ))
+                }
+                DataType::Timestamp(TimeUnit::Millisecond, tz_opt) => {
+                    let millis = Utc::now().timestamp_millis();
+                    Some(ScalarValue::TimestampMillisecond(
+                        Some(millis),
+                        tz_opt.clone(),
+                    ))
+                }
+                DataType::Date32 => Some(ScalarValue::Date32(Some(0))),
+                DataType::Date64 => Some(ScalarValue::Date64(Some(0))),
+                _ => None,
+            }
+        })
+        .collect()
+}
+
+fn get_typed_nulls(schema: &SchemaRef) -> Vec<ScalarValue> {
+    schema
+        .fields()
+        .iter()
+        .map(|field| ScalarValue::try_from(field.data_type()).unwrap_or(ScalarValue::Null))
+        .collect()
+}
 
 fn create_empty_array(data_type: &DataType) -> ArrayRef {
     new_empty_array(data_type)
 }
 
-fn coerce_scalar_to_field(value: ScalarValue, field: &Field) -> Result<ScalarValue, String> {
+pub fn coerce_scalar_to_field(value: ScalarValue, field: &Field) -> Result<ScalarValue, String> {
     if matches!(value, ScalarValue::Null) {
         return ScalarValue::try_from(field.data_type())
             .map_err(|e| format!("Failed to build typed NULL for '{}': {}", field.name(), e));
@@ -473,4 +541,24 @@ pub fn scalar_value_to_json(value: &ScalarValue) -> Result<JsonValue, KalamDbErr
             value
         ))),
     }
+}
+
+/// Coerce a single row of updates to match the schema types.
+///
+/// Unlike `coerce_rows`, this does NOT fill in default values for missing columns.
+/// It only coerces the columns that are present in the update row.
+pub fn coerce_updates(row: Row, schema: &SchemaRef) -> Result<Row, String> {
+    let mut new_values = BTreeMap::new();
+
+    for (col_name, value) in row.values {
+        if let Ok(field) = schema.field_with_name(&col_name) {
+            let coerced = coerce_scalar_to_field(value, field)?;
+            new_values.insert(col_name, coerced);
+        } else {
+            // If column not in schema, keep it as is
+            new_values.insert(col_name, value);
+        }
+    }
+
+    Ok(Row::new(new_values))
 }

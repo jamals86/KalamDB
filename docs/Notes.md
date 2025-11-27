@@ -255,6 +255,40 @@ instead of: 1 failed: Invalid operation: No handler registered for statement typ
 
 177) The loading of tables and registering its providers is scattered, i want to make it one place for on server starts and on create table
 
+178) Flushing - Maybe we need to change the flush to look at the active manifests and from them we can know what needs to be flushed instead of scaning the whole hot rows, this way we can make sure all the manifests are flushed as well.
+
+179) No need to have backend\crates\kalamdb-core\src\schema_registry\views since we will be impl;ementing a views which are supported by datafusion, we only persist the view create sql to be applied or run on startup of the server
+
+180) For jobs add a method for each executor called: preValidate which check if we should create that job or not, so we can check if we need to evict data or there is no need, this will not need a created job to run
+
+
+181) cut the took into 3 decimal places only:
+{
+  "status": "success",
+  "results": [
+    {
+      "row_count": 1,
+      "columns": [],
+      "message": "Inserted 1 row(s)"
+    }
+  ],
+  "took": 1.2685000000000002
+}
+
+182) Add to the README.md an example for managing notifications in a mobile app
+183) in WebSocketSession limit the size of the request coming from the client to avoid dos attacks
+
+184) i see when the system is idle again after a high load Open Files: 421 this is too high we need to investigate why and make sure we close all file handles correctly, add a logging or display logs when we request it to see where its leaking from
+
+185)     /// FIXME: Delete always by prefix of LiveQueryId which is user_id + connection_id
+    pub fn delete_by_connection_id(&self, connection_id: &str) -> Result<(), SystemError>
+
+186) delete_by_connection_id_async should use an index in live_queries table instead of scanning all the rows to find the matching connection_id
+
+187) remove notify_table_change from pushing to 2 places user and admin! the pushing/notification is only for the user side not admin
+
+
+
 
 
 Here’s the updated 5-line spec with embedding storage inside Parquet and managed HNSW indexing (with delete handling):
@@ -289,7 +323,7 @@ IMPORTANT:
 15) Support postgress protocol
 16) Add file DataType for storing files/blobs next to the storage parquet files
 17) Persist views in the system_views table and load them on database starts
-
+18) Remove the usage of scan_all from EntityStore and replace all calls to always include filter or limit and check ability to have a stream instead of returning a vector
 
 
 
@@ -307,5 +341,14 @@ Code Cleanup Operations:
 6) Remove un-needed imports across the codebase
 7) Fix all clippy warnings and errors
 8) Check where we use AppContext::get() multiple times in the same struct and make it a member of the struct instead, or if the code already have AppContext as a member use it directly
+9) Use clippy suggestions to improve code quality
+10) Use todo!() instead of unimplemented!() where needed
+11) Remove all commented code across the codebase
+
+
+Tasks To Repo:
+1) Add ci/cd pipelines to the new repo
+2) Add code coverage to the new repo
+3) Add rustfmt and clippy checks to the new repo
 
 

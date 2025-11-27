@@ -3,9 +3,8 @@
 
 #![cfg(feature = "wasm")]
 
-use crate::models::{
-    ClientMessage, QueryRequest, ServerMessage, SubscriptionOptions, SubscriptionRequest,
-};
+// Use local models for WebSocket messages
+use crate::models::{ClientMessage, QueryRequest, ServerMessage, SubscriptionOptions, SubscriptionRequest};
 use base64::{engine::general_purpose, Engine as _};
 use std::cell::RefCell;
 use std::collections::HashMap;
@@ -82,28 +81,25 @@ impl KalamClient {
     /// Connect to KalamDB server via WebSocket (T045, T063C-T063D)
     ///
     /// # Returns
-    /// Promise that resolves when connection is established
+    /// Promise that resolves when connection is established and authenticated
     pub async fn connect(&mut self) -> Result<(), JsValue> {
         use wasm_bindgen_futures::JsFuture;
 
         // T063O: Add console.log debugging for connection state changes
         console_log("KalamClient: Connecting to WebSocket...");
 
-        // Convert http(s) URL to ws(s) URL
+        // Convert http(s) URL to ws(s) URL (no auth in URL)
         let ws_url = self
             .url
             .replace("http://", "ws://")
             .replace("https://", "wss://");
-        // WebSocket URL with Basic Auth credentials embedded
-        let credentials = format!("{}:{}", self.username, self.password);
-        let encoded = general_purpose::STANDARD.encode(credentials.as_bytes());
-        let ws_url = format!("{}/v1/ws?auth={}", ws_url, encoded);
+        let ws_url = format!("{}/v1/ws", ws_url);
 
         // T063C: Implement proper WebSocket connection using web-sys::WebSocket
         let ws = WebSocket::new(&ws_url)?;
 
-        // Create a promise that resolves when WebSocket opens
-        let (promise, resolve, reject) = {
+        // Create promises for connection and authentication
+        let (connect_promise, connect_resolve, connect_reject) = {
             let mut resolve_fn: Option<js_sys::Function> = None;
             let mut reject_fn: Option<js_sys::Function> = None;
 
@@ -115,21 +111,53 @@ impl KalamClient {
             (promise, resolve_fn.unwrap(), reject_fn.unwrap())
         };
 
-        // Set up onopen handler to resolve the promise
-        let resolve_clone = resolve.clone();
+        let (auth_promise, auth_resolve, auth_reject) = {
+            let mut resolve_fn: Option<js_sys::Function> = None;
+            let mut reject_fn: Option<js_sys::Function> = None;
+
+            let promise = js_sys::Promise::new(&mut |resolve, reject_arg| {
+                resolve_fn = Some(resolve);
+                reject_fn = Some(reject_arg);
+            });
+
+            (promise, resolve_fn.unwrap(), reject_fn.unwrap())
+        };
+
+        // Clone credentials for the onopen handler
+        let username = self.username.clone();
+        let password = self.password.clone();
+        let ws_clone_for_auth = ws.clone();
+        
+        // Set up onopen handler to send authentication message
+        let connect_resolve_clone = connect_resolve.clone();
         let onopen_callback = Closure::wrap(Box::new(move || {
-            console_log("KalamClient: WebSocket connected");
-            let _ = resolve_clone.call0(&JsValue::NULL);
+            console_log("KalamClient: WebSocket connected, sending authentication...");
+            
+            // Send authentication message
+            let auth_msg = ClientMessage::Authenticate {
+                username: username.clone(),
+                password: password.clone(),
+            };
+            
+            if let Ok(json) = serde_json::to_string(&auth_msg) {
+                if let Err(e) = ws_clone_for_auth.send_with_str(&json) {
+                    console_log(&format!("KalamClient: Failed to send auth message: {:?}", e));
+                }
+            }
+            
+            let _ = connect_resolve_clone.call0(&JsValue::NULL);
         }) as Box<dyn FnMut()>);
         ws.set_onopen(Some(onopen_callback.as_ref().unchecked_ref()));
         onopen_callback.forget();
 
         // T063L: Implement WebSocket error and close handlers
-        let reject_clone = reject.clone();
+        let connect_reject_clone = connect_reject.clone();
+        let auth_reject_clone = auth_reject.clone();
         let onerror_callback = Closure::wrap(Box::new(move |e: ErrorEvent| {
             console_log(&format!("KalamClient: WebSocket error: {:?}", e));
             let error_msg = JsValue::from_str("WebSocket connection failed");
-            let _ = reject_clone.call1(&JsValue::NULL, &error_msg);
+            let _ = connect_reject_clone.call1(&JsValue::NULL, &error_msg);
+            let _ = auth_reject_clone.call1(&JsValue::NULL, &error_msg);
         }) as Box<dyn FnMut(ErrorEvent)>);
         ws.set_onerror(Some(onerror_callback.as_ref().unchecked_ref()));
         onerror_callback.forget();
@@ -146,6 +174,11 @@ impl KalamClient {
 
         // T063K: Implement WebSocket onmessage handler to parse events and invoke registered callbacks
         let subscriptions = Rc::clone(&self.subscriptions);
+        let auth_resolve_clone = auth_resolve.clone();
+        let auth_reject_clone2 = auth_reject.clone();
+        let auth_handled = Rc::new(RefCell::new(false));
+        let auth_handled_clone = Rc::clone(&auth_handled);
+        
         let onmessage_callback = Closure::wrap(Box::new(move |e: MessageEvent| {
             if let Ok(txt) = e.data().dyn_into::<js_sys::JsString>() {
                 let message = String::from(txt);
@@ -154,28 +187,65 @@ impl KalamClient {
                     message
                 ));
 
-                // Parse message and invoke callbacks
+                // Parse message using ServerMessage enum
                 if let Ok(event) = serde_json::from_str::<ServerMessage>(&message) {
+                    // Check for authentication response first
+                    if !*auth_handled_clone.borrow() {
+                        match &event {
+                            ServerMessage::AuthSuccess { user_id, role } => {
+                                console_log(&format!(
+                                    "KalamClient: Authentication successful - user_id: {}, role: {}",
+                                    user_id, role
+                                ));
+                                *auth_handled_clone.borrow_mut() = true;
+                                let _ = auth_resolve_clone.call0(&JsValue::NULL);
+                                return;
+                            }
+                            ServerMessage::AuthError { message: error_msg } => {
+                                console_log(&format!(
+                                    "KalamClient: Authentication failed - {}",
+                                    error_msg
+                                ));
+                                *auth_handled_clone.borrow_mut() = true;
+                                let error = JsValue::from_str(&format!("Authentication failed: {}", error_msg));
+                                let _ = auth_reject_clone2.call1(&JsValue::NULL, &error);
+                                return;
+                            }
+                            _ => {} // Not an auth message, continue to subscription handling
+                        }
+                    }
+
                     // Look for subscription_id in the event
-                    let subscription_id = match event {
+                    let subscription_id = match &event {
                         ServerMessage::SubscriptionAck {
                             subscription_id, ..
-                        } => Some(subscription_id),
+                        } => Some(subscription_id.clone()),
                         ServerMessage::InitialDataBatch {
                             subscription_id, ..
-                        } => Some(subscription_id),
+                        } => Some(subscription_id.clone()),
                         ServerMessage::Change {
                             subscription_id, ..
-                        } => Some(subscription_id),
+                        } => Some(subscription_id.clone()),
                         ServerMessage::Error {
                             subscription_id, ..
-                        } => Some(subscription_id),
+                        } => Some(subscription_id.clone()),
+                        _ => None, // Auth messages don't have subscription_id
                     };
 
                     if let Some(id) = subscription_id {
                         let subs = subscriptions.borrow();
+                        // First try exact match
                         if let Some(callback) = subs.get(&id) {
                             let _ = callback.call1(&JsValue::NULL, &JsValue::from_str(&message));
+                        } else {
+                            // Server may prefix subscription_id with user_id-session_id-
+                            // Try to find a callback where the server's ID ends with our client ID
+                            for (client_id, callback) in subs.iter() {
+                                if id.ends_with(client_id) {
+                                    let _ = callback.call1(&JsValue::NULL, &JsValue::from_str(&message));
+                                    break;
+                                }
+                            }
                         }
                     }
                 }
@@ -190,9 +260,14 @@ impl KalamClient {
         console_log("KalamClient: Waiting for WebSocket to open...");
 
         // Wait for the WebSocket to open
-        JsFuture::from(promise).await?;
+        JsFuture::from(connect_promise).await?;
 
-        console_log("KalamClient: WebSocket connection established");
+        console_log("KalamClient: Waiting for authentication...");
+
+        // Wait for authentication to complete
+        JsFuture::from(auth_promise).await?;
+
+        console_log("KalamClient: WebSocket connection established and authenticated");
         Ok(())
     }
 
@@ -238,8 +313,36 @@ impl KalamClient {
     /// }));
     /// ```
     pub async fn insert(&self, table_name: String, data: String) -> Result<String, JsValue> {
-        // T063G: Implement using fetch API to execute INSERT statement via /v1/api/sql
-        let sql = format!("INSERT INTO {} VALUES {}", table_name, data);
+        // Parse JSON data to build proper SQL INSERT statement
+        let parsed: serde_json::Value = serde_json::from_str(&data)
+            .map_err(|e| JsValue::from_str(&format!("Invalid JSON data: {}", e)))?;
+        
+        let obj = parsed.as_object()
+            .ok_or_else(|| JsValue::from_str("Data must be a JSON object"))?;
+        
+        if obj.is_empty() {
+            return Err(JsValue::from_str("Cannot insert empty object"));
+        }
+        
+        // Build column names and values
+        let columns: Vec<String> = obj.keys().cloned().collect();
+        let values: Vec<String> = obj.values().map(|v| {
+            match v {
+                serde_json::Value::Null => "NULL".to_string(),
+                serde_json::Value::Bool(b) => b.to_string(),
+                serde_json::Value::Number(n) => n.to_string(),
+                serde_json::Value::String(s) => format!("'{}'", s.replace("'", "''")), // SQL escape single quotes
+                _ => format!("'{}'", v.to_string().replace("'", "''")),
+            }
+        }).collect();
+        
+        let sql = format!(
+            "INSERT INTO {} ({}) VALUES ({})",
+            table_name,
+            columns.join(", "),
+            values.join(", ")
+        );
+        
         self.execute_sql(&sql).await
     }
 
@@ -299,14 +402,14 @@ impl KalamClient {
             .insert(subscription_id.clone(), callback);
 
         // Send subscribe message via WebSocket
-        // Server expects: {"type": "subscribe", "subscriptions": [{"id": "sub-1", "sql": "SELECT * FROM ...", "options": {}}]}
+        // Server expects: {"type": "subscribe", "subscription": {"id": "sub-1", "sql": "SELECT * FROM ...", "options": {}}}
         if let Some(ws) = self.ws.borrow().as_ref() {
             let subscribe_msg = ClientMessage::Subscribe {
-                subscriptions: vec![SubscriptionRequest {
+                subscription: SubscriptionRequest {
                     id: subscription_id.clone(),
                     sql: format!("SELECT * FROM {}", table_name),
                     options: SubscriptionOptions::default(),
-                }],
+                },
             };
             let payload = serde_json::to_string(&subscribe_msg)
                 .map_err(|e| JsValue::from_str(&format!("Serialization error: {}", e)))?;

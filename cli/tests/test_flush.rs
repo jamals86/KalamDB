@@ -27,7 +27,7 @@ fn test_cli_explicit_flush() {
         .expect("CREATE NAMESPACE failed");
     execute_sql_as_root_via_cli(&format!(
         r#"CREATE TABLE {} (
-            id INT PRIMARY KEY AUTO_INCREMENT,
+            id BIGINT PRIMARY KEY AUTO_INCREMENT,
             content VARCHAR NOT NULL
         ) WITH (TYPE='USER', FLUSH_POLICY='rows:10')"#,
         full_table_name

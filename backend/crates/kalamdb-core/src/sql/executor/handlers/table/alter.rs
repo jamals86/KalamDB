@@ -4,6 +4,10 @@ use crate::app_context::AppContext;
 use crate::error::KalamDbError;
 use crate::schema_registry::arrow_schema::ArrowSchemaWithOptions;
 use crate::sql::executor::handlers::typed::TypedStatementHandler;
+use crate::sql::executor::helpers::table_registration::{
+    register_shared_table_provider, register_stream_table_provider, register_user_table_provider,
+    unregister_table_provider,
+};
 use crate::sql::executor::models::{ExecutionContext, ExecutionResult, ScalarValue};
 use kalamdb_commons::models::datatypes::KalamDataType;
 use kalamdb_commons::models::schemas::{ColumnDefinition, TableDefinition};
@@ -68,19 +72,30 @@ impl TypedStatementHandler<AlterTableStatement> for AlterTableHandler {
             table_def.schema_version
         );
 
-        // RBAC (re-check here in case ownership rules added later)
-        let is_owner = false; // TODO: track ownership in system.tables
+        // RBAC: For USER tables, if the user can access it, they're the owner
+        // For other table types, ownership is not applicable (only Dba/System can alter)
+        let is_owner = matches!(table_def.table_type, TableType::User);
+        
+        log::debug!(
+            "🔐 RBAC check: user={}, role={:?}, table_type={:?}, is_owner={}",
+            context.user_id.as_str(),
+            context.user_role,
+            table_def.table_type,
+            is_owner
+        );
+        
         if !crate::auth::rbac::can_alter_table(context.user_role, table_def.table_type, is_owner) {
             log::error!(
-                "❌ ALTER TABLE {}.{}: Insufficient privileges (user: {}, role: {:?}, table_type: {:?})",
+                "❌ ALTER TABLE {}.{}: Insufficient privileges (user: {}, role: {:?}, table_type: {:?}, is_owner: {})",
                 namespace_id.as_str(),
                 statement.table_name.as_str(),
                 context.user_id.as_str(),
                 context.user_role,
-                table_def.table_type
+                table_def.table_type,
+                is_owner
             );
             return Err(KalamDbError::Unauthorized(
-                "Insufficient privileges to alter this table".to_string(),
+                "Insufficient privileges to alter table".to_string(),
             ));
         }
 
@@ -192,6 +207,65 @@ impl TypedStatementHandler<AlterTableStatement> for AlterTableHandler {
                     new_data_type
                 );
             }
+            ColumnOperation::Rename {
+                old_column_name,
+                new_column_name,
+            } => {
+                // Check that old column exists
+                if !table_def
+                    .columns
+                    .iter()
+                    .any(|c| c.column_name == old_column_name)
+                {
+                    log::error!(
+                        "❌ ALTER TABLE failed: Column '{}' does not exist in {}.{}",
+                        old_column_name,
+                        namespace_id.as_str(),
+                        statement.table_name.as_str()
+                    );
+                    return Err(KalamDbError::InvalidOperation(format!(
+                        "Column '{}' does not exist",
+                        old_column_name
+                    )));
+                }
+                
+                // Check that new column name doesn't already exist
+                if table_def
+                    .columns
+                    .iter()
+                    .any(|c| c.column_name == new_column_name)
+                {
+                    log::error!(
+                        "❌ ALTER TABLE failed: Column '{}' already exists in {}.{}",
+                        new_column_name,
+                        namespace_id.as_str(),
+                        statement.table_name.as_str()
+                    );
+                    return Err(KalamDbError::InvalidOperation(format!(
+                        "Column '{}' already exists",
+                        new_column_name
+                    )));
+                }
+                
+                // Rename the column (metadata only, no data migration needed)
+                if let Some(col) = table_def
+                    .columns
+                    .iter_mut()
+                    .find(|c| c.column_name == old_column_name)
+                {
+                    col.column_name = new_column_name.clone();
+                }
+                
+                change_desc_opt = Some(format!(
+                    "RENAME COLUMN {} TO {}",
+                    old_column_name, new_column_name
+                ));
+                log::debug!(
+                    "✓ Renamed column {} to {}",
+                    old_column_name,
+                    new_column_name
+                );
+            }
             ColumnOperation::SetAccessLevel { access_level } => {
                 if table_def.table_type != TableType::Shared {
                     log::error!(
@@ -207,7 +281,7 @@ impl TypedStatementHandler<AlterTableStatement> for AlterTableHandler {
                 if let kalamdb_commons::schemas::TableOptions::Shared(opts) =
                     &mut table_def.table_options
                 {
-                    opts.access_level = Some(access_level.clone());
+                    opts.access_level = Some(access_level);
                 }
                 change_desc_opt = Some(format!("SET ACCESS LEVEL {:?}", access_level));
                 log::debug!("✓ Set access level to {:?}", access_level);
@@ -218,7 +292,7 @@ impl TypedStatementHandler<AlterTableStatement> for AlterTableHandler {
         let arrow_schema = table_def
             .to_arrow_schema()
             .map_err(|e| KalamDbError::SchemaError(format!("Arrow conversion failed: {}", e)))?;
-        let schema_json = ArrowSchemaWithOptions::new(arrow_schema)
+        let schema_json = ArrowSchemaWithOptions::new(arrow_schema.clone())
             .to_json_string()
             .map_err(|e| {
                 KalamDbError::SchemaError(format!("Failed to serialize Arrow schema: {}", e))
@@ -239,6 +313,37 @@ impl TypedStatementHandler<AlterTableStatement> for AlterTableHandler {
                 table_id.clone(),
                 Arc::new(CachedTableData::new(Arc::new(table_def.clone()))),
             );
+        }
+
+        // Unregister old provider first to ensure DataFusion catalog is updated
+        unregister_table_provider(&self.app_context, &table_id)?;
+
+        // Re-register provider to update schema in DataFusion
+        match table_def.table_type {
+            TableType::User => {
+                register_user_table_provider(&self.app_context, &table_id, arrow_schema)?;
+            }
+            TableType::Shared => {
+                register_shared_table_provider(&self.app_context, &table_id, arrow_schema)?;
+            }
+            TableType::Stream => {
+                let ttl_seconds = if let kalamdb_commons::schemas::TableOptions::Stream(opts) =
+                    &table_def.table_options
+                {
+                    Some(opts.ttl_seconds)
+                } else {
+                    None
+                };
+                register_stream_table_provider(
+                    &self.app_context,
+                    &table_id,
+                    arrow_schema,
+                    ttl_seconds,
+                )?;
+            }
+            TableType::System => {
+                // System tables are not altered this way usually
+            }
         }
 
         // Log DDL operation
@@ -292,7 +397,10 @@ impl TypedStatementHandler<AlterTableStatement> for AlterTableHandler {
         // Lookup table to get type for accurate permission check
         let registry = self.app_context.schema_registry();
         if let Ok(Some(def)) = registry.get_table_definition(&table_id) {
-            let is_owner = false; // TODO: track ownership
+            // For USER tables, if the user can access it, they're the owner
+            // For other table types, ownership is not applicable (only Dba/System can alter)
+            let is_owner = matches!(def.table_type, TableType::User);
+            
             if !crate::auth::rbac::can_alter_table(context.user_role, def.table_type, is_owner) {
                 return Err(KalamDbError::Unauthorized(
                     "Insufficient privileges to alter table".to_string(),
@@ -341,6 +449,10 @@ fn get_operation_summary(op: &ColumnOperation) -> String {
             new_data_type,
             ..
         } => format!("MODIFY COLUMN {} {}", column_name, new_data_type),
+        ColumnOperation::Rename {
+            old_column_name,
+            new_column_name,
+        } => format!("RENAME COLUMN {} TO {}", old_column_name, new_column_name),
         ColumnOperation::SetAccessLevel { access_level } => {
             format!("SET ACCESS LEVEL {:?}", access_level)
         }

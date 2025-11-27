@@ -123,7 +123,7 @@ pub trait StatementHandler: Send + Sync {
         // Default implementation: delegate to AuthorizationHandler
         //AuthorizationHandler::check_authorization(context, statement)
         statement
-            .check_authorization(context.user_role.clone())
+            .check_authorization(context.user_role)
             .map_err(KalamDbError::PermissionDenied)
     }
 }

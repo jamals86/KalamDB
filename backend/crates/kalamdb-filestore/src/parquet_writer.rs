@@ -32,8 +32,8 @@ impl ParquetWriter {
     /// * `schema` - Arrow schema for the data
     /// * `batches` - Record batches to write
     /// * `bloom_filter_columns` - Optional list of columns to enable Bloom filters on.
-    ///                             If None, defaults to [_seq] only.
-    ///                             Common usage: Pass PRIMARY KEY columns + _seq for optimal point query performance.
+    ///   If None, defaults to [_seq] only.
+    ///   Common usage: Pass PRIMARY KEY columns + _seq for optimal point query performance.
     ///
     /// # Bloom Filter Configuration
     /// - **False Positive Rate**: 1% (0.01) - balances space overhead vs accuracy
@@ -56,10 +56,10 @@ impl ParquetWriter {
 
         // Create parent directory if needed
         if let Some(parent) = path.parent() {
-            std::fs::create_dir_all(parent).map_err(|e| FilestoreError::Io(e))?;
+            std::fs::create_dir_all(parent).map_err(FilestoreError::Io)?;
         }
 
-        let file = File::create(path).map_err(|e| FilestoreError::Io(e))?;
+        let file = File::create(path).map_err(FilestoreError::Io)?;
 
         // Configure writer properties with bloom filters
         let mut props_builder = WriterProperties::builder()

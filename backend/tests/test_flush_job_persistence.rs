@@ -17,7 +17,7 @@ async fn test_flush_table_persists_job() {
 
     // Create a job directly using the Jobs API
     use kalamdb_commons::{JobId, JobStatus, JobType, NamespaceId, NodeId, TableName};
-    
+
     let now = chrono::Utc::now().timestamp_millis();
     let job = kalamdb_commons::system::Job {
         job_id: JobId::new("test-flush-123"),
@@ -69,7 +69,9 @@ async fn test_flush_all_tables_persists_jobs() {
     // Create a DBA user to execute admin operations
     let admin_username = "test_admin";
     let admin_password = "AdminPass123!";
-    let admin_id = server.create_user(admin_username, admin_password, Role::Dba).await;
+    let admin_id = server
+        .create_user(admin_username, admin_password, Role::Dba)
+        .await;
     let admin_id_str = admin_id.as_str();
 
     // Create 'local' storage (required for user tables)
@@ -78,29 +80,61 @@ async fn test_flush_all_tables_persists_jobs() {
     // For now, we assume it exists because TestServer ensures it.
 
     // Create namespace
-    let res = server.execute_sql_as_user("CREATE NAMESPACE IF NOT EXISTS app", admin_id_str).await;
-    assert_eq!(res.status, ResponseStatus::Success, "Failed to create namespace: {:?}", res.error);
+    let res = server
+        .execute_sql_as_user("CREATE NAMESPACE IF NOT EXISTS app", admin_id_str)
+        .await;
+    assert_eq!(
+        res.status,
+        ResponseStatus::Success,
+        "Failed to create namespace: {:?}",
+        res.error
+    );
 
     // Create multiple user tables
     // Drop tables if they exist to ensure clean state
-    let _ = server.execute_sql_as_user("DROP TABLE IF EXISTS app.table1", admin_id_str).await;
-    let _ = server.execute_sql_as_user("DROP TABLE IF EXISTS app.table2", admin_id_str).await;
+    let _ = server
+        .execute_sql_as_user("DROP TABLE IF EXISTS app.table1", admin_id_str)
+        .await;
+    let _ = server
+        .execute_sql_as_user("DROP TABLE IF EXISTS app.table2", admin_id_str)
+        .await;
 
-    let res = server.execute_sql_as_user(
-        "CREATE TABLE app.table1 (id INT PRIMARY KEY, data VARCHAR) WITH (TYPE = 'USER')",
-        admin_id_str,
-    ).await;
-    assert_eq!(res.status, ResponseStatus::Success, "Failed to create table1: {:?}", res.error);
+    let res = server
+        .execute_sql_as_user(
+            "CREATE TABLE app.table1 (id INT PRIMARY KEY, data VARCHAR) WITH (TYPE = 'USER')",
+            admin_id_str,
+        )
+        .await;
+    assert_eq!(
+        res.status,
+        ResponseStatus::Success,
+        "Failed to create table1: {:?}",
+        res.error
+    );
 
-    let res = server.execute_sql_as_user(
-        "CREATE TABLE app.table2 (id INT PRIMARY KEY, data VARCHAR) WITH (TYPE = 'USER')",
-        admin_id_str,
-    ).await;
-    assert_eq!(res.status, ResponseStatus::Success, "Failed to create table2: {:?}", res.error);
+    let res = server
+        .execute_sql_as_user(
+            "CREATE TABLE app.table2 (id INT PRIMARY KEY, data VARCHAR) WITH (TYPE = 'USER')",
+            admin_id_str,
+        )
+        .await;
+    assert_eq!(
+        res.status,
+        ResponseStatus::Success,
+        "Failed to create table2: {:?}",
+        res.error
+    );
 
     // Execute FLUSH ALL TABLES
-    let flush_result = server.execute_sql_as_user("FLUSH ALL TABLES IN NAMESPACE app", admin_id_str).await;
-    assert_eq!(flush_result.status, ResponseStatus::Success, "FLUSH ALL TABLES should succeed: {:?}", flush_result.error);
+    let flush_result = server
+        .execute_sql_as_user("FLUSH ALL TABLES IN NAMESPACE app", admin_id_str)
+        .await;
+    assert_eq!(
+        flush_result.status,
+        ResponseStatus::Success,
+        "FLUSH ALL TABLES should succeed: {:?}",
+        flush_result.error
+    );
 
     println!("Flush all result: {:?}", flush_result);
 
@@ -110,9 +144,9 @@ async fn test_flush_all_tables_persists_jobs() {
     let flush_jobs: Vec<_> = jobs
         .iter()
         .filter(|job| {
-            job.job_type == JobType::Flush &&
-            (job.table_name.as_ref().map(|t| t.as_str()) == Some("table1") ||
-             job.table_name.as_ref().map(|t| t.as_str()) == Some("table2"))
+            job.job_type == JobType::Flush
+                && (job.table_name.as_ref().map(|t| t.as_str()) == Some("table1")
+                    || job.table_name.as_ref().map(|t| t.as_str()) == Some("table2"))
         })
         .collect();
 

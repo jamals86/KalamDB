@@ -106,6 +106,31 @@ impl SnowflakeGenerator {
             .map_err(|e| format!("Failed to get current timestamp: {}", e))
     }
 
+    /// Compute the maximum Snowflake ID representable at the provided timestamp.
+    ///
+    /// This packs the timestamp component together with the highest possible
+    /// worker and sequence values so the resulting ID is greater than or equal
+    /// to every Snowflake generated at or before `timestamp_ms`.
+    pub fn max_id_for_timestamp(timestamp_ms: u64) -> Result<i64, String> {
+        Self::max_id_for_timestamp_with_epoch(timestamp_ms, Self::DEFAULT_EPOCH)
+    }
+
+    /// Same as [`max_id_for_timestamp`] but allowing a custom epoch.
+    pub fn max_id_for_timestamp_with_epoch(timestamp_ms: u64, epoch: u64) -> Result<i64, String> {
+        if timestamp_ms < epoch {
+            return Err(format!(
+                "Timestamp {} occurs before configured epoch {}",
+                timestamp_ms, epoch
+            ));
+        }
+
+        let timestamp_component = (timestamp_ms - epoch) << 22;
+        let worker_component = (Self::MAX_WORKER_ID as u64) << 12;
+        let sequence_component = Self::MAX_SEQUENCE as u64;
+
+        Ok((timestamp_component | worker_component | sequence_component) as i64)
+    }
+
     /// Wait until next millisecond
     fn wait_next_millis(&self, last_timestamp: u64) -> Result<u64, String> {
         let mut timestamp = self.current_timestamp()?;
@@ -213,6 +238,23 @@ mod tests {
 
         // Sequences should be different (likely seq2 = seq1 + 1)
         assert!(seq2 >= seq1);
+    }
+
+    #[test]
+    fn test_max_id_for_timestamp_default_epoch() {
+        let id = SnowflakeGenerator::max_id_for_timestamp(SnowflakeGenerator::DEFAULT_EPOCH + 1)
+            .expect("id for timestamp");
+        let expected = (1u64 << 22)
+            | ((SnowflakeGenerator::MAX_WORKER_ID as u64) << 12)
+            | (SnowflakeGenerator::MAX_SEQUENCE as u64);
+        assert_eq!(id as u64, expected);
+    }
+
+    #[test]
+    fn test_max_id_for_timestamp_before_epoch_errors() {
+        let err = SnowflakeGenerator::max_id_for_timestamp(SnowflakeGenerator::DEFAULT_EPOCH - 1)
+            .unwrap_err();
+        assert!(err.contains("before configured epoch"));
     }
 
     #[test]

@@ -7,7 +7,9 @@ use crate::jobs::executors::{
     BackupExecutor, CleanupExecutor, CompactExecutor, FlushExecutor, JobCleanupExecutor,
     JobRegistry, RestoreExecutor, RetentionExecutor, StreamEvictionExecutor, UserCleanupExecutor,
 };
+use crate::live::ConnectionsManager;
 use crate::live_query::LiveQueryManager;
+use crate::schema_registry::stats::StatsTableProvider;
 use crate::schema_registry::SchemaRegistry;
 use crate::sql::datafusion_session::DataFusionSessionFactory;
 use crate::sql::executor::SqlExecutor;
@@ -20,6 +22,7 @@ use kalamdb_system::SystemTablesRegistry;
 use kalamdb_tables::{SharedTableStore, StreamTableStore, UserTableStore};
 use once_cell::sync::OnceCell;
 use std::sync::{Arc, OnceLock};
+use std::time::Duration;
 
 static APP_CONTEXT: OnceLock<Arc<AppContext>> = OnceLock::new();
 
@@ -32,7 +35,7 @@ static APP_CONTEXT: OnceLock<Arc<AppContext>> = OnceLock::new();
 /// - Memory-efficient per-request operations
 /// - Single source of truth for all shared state
 pub struct AppContext {
-    /// Node identifier loaded once from config.toml (Phase 10, US0, FR-000)
+    /// Node identifier loaded once from server.toml (Phase 10, US0, FR-000)
     /// Wrapped in Arc for zero-copy sharing across all components
     node_id: Arc<NodeId>,
 
@@ -54,6 +57,9 @@ pub struct AppContext {
     // ===== Managers =====
     job_manager: Arc<crate::jobs::JobsManager>,
     live_query_manager: Arc<LiveQueryManager>,
+
+    // ===== Connections Manager (WebSocket connections, subscriptions, heartbeat) =====
+    connection_registry: Arc<ConnectionsManager>,
 
     // ===== Registries =====
     storage_registry: Arc<StorageRegistry>,
@@ -91,6 +97,7 @@ impl std::fmt::Debug for AppContext {
             .field("storage_backend", &"Arc<dyn StorageBackend>")
             .field("job_manager", &"Arc<JobsManager>")
             .field("live_query_manager", &"Arc<LiveQueryManager>")
+            .field("connection_registry", &"Arc<ConnectionsManager>")
             .field("storage_registry", &"Arc<StorageRegistry>")
             .field("session_factory", &"Arc<DataFusionSessionFactory>")
             .field("base_session_context", &"Arc<SessionContext>")
@@ -115,7 +122,7 @@ impl AppContext {
     ///
     /// # Parameters
     /// - `storage_backend`: Storage abstraction (RocksDB implementation)
-    /// - `node_id`: Node identifier loaded from config.toml (wrapped in Arc internally)
+    /// - `node_id`: Node identifier loaded from server.toml (wrapped in Arc internally)
     /// - `storage_base_path`: Base directory for storage files
     ///
     /// # Example
@@ -126,8 +133,8 @@ impl AppContext {
     /// # use std::sync::Arc;
     ///
     /// let backend: Arc<dyn StorageBackend> = todo!();
-    /// let node_id = NodeId::new("prod-node-1".to_string()); // From config.toml
-    /// let config = ServerConfig::from_file("config.toml").unwrap();
+    /// let node_id = NodeId::new("prod-node-1".to_string()); // From server.toml
+    /// let config = ServerConfig::from_file("server.toml").unwrap();
     /// AppContext::init(
     ///     backend,
     ///     node_id,
@@ -170,6 +177,11 @@ impl AppContext {
 
                 // Create schema cache (Phase 10 unified cache)
                 let schema_registry = Arc::new(SchemaRegistry::new(10000));
+
+                // Inject real StatsTableProvider with schema registry access (Phase 13)
+                let stats_provider =
+                    Arc::new(StatsTableProvider::new(Some(schema_registry.clone())));
+                system_tables.set_stats_provider(stats_provider);
 
                 // Register all system tables in DataFusion
                 let session_factory = Arc::new(
@@ -241,10 +253,22 @@ impl AppContext {
                 let job_manager =
                     Arc::new(crate::jobs::JobsManager::new(jobs_provider, job_registry));
 
+                // Create connections manager (unified WebSocket connection management)
+                // Timeouts from config or defaults
+                let client_timeout = Duration::from_secs(config.websocket.client_timeout_secs.unwrap_or(30));
+                let auth_timeout = Duration::from_secs(config.websocket.auth_timeout_secs.unwrap_or(10));
+                let heartbeat_interval = Duration::from_secs(config.websocket.heartbeat_interval_secs.unwrap_or(5));
+                let connection_registry = ConnectionsManager::new(
+                    (*node_id).clone(),
+                    client_timeout,
+                    auth_timeout,
+                    heartbeat_interval,
+                );
+
                 let live_query_manager = Arc::new(LiveQueryManager::new(
                     system_tables.live_queries(),
                     schema_registry.clone(),
-                    (*node_id).clone(), // Dereference Arc<NodeId> to NodeId for LiveQueryManager
+                    connection_registry.clone(),
                     Arc::clone(&base_session_context),
                 ));
 
@@ -284,6 +308,7 @@ impl AppContext {
                     storage_backend,
                     job_manager: job_manager.clone(),
                     live_query_manager,
+                    connection_registry,
                     storage_registry,
                     system_tables,
                     session_factory,
@@ -369,6 +394,10 @@ impl AppContext {
         // Create minimal schema registry
         let schema_registry = Arc::new(SchemaRegistry::new(100));
 
+        // Inject real StatsTableProvider with schema registry access
+        let stats_provider = Arc::new(StatsTableProvider::new(Some(schema_registry.clone())));
+        system_tables.set_stats_provider(stats_provider);
+
         // Create DataFusion session
         let session_factory = Arc::new(
             DataFusionSessionFactory::new().expect("Failed to create test session factory"),
@@ -383,11 +412,19 @@ impl AppContext {
         // Create test NodeId
         let node_id = Arc::new(NodeId::new("test-node".to_string()));
 
+        // Create connections manager for tests
+        let connection_registry = ConnectionsManager::new(
+            (*node_id).clone(),
+            Duration::from_secs(30), // client_timeout
+            Duration::from_secs(10), // auth_timeout
+            Duration::from_secs(5),  // heartbeat_interval
+        );
+
         // Create live query manager
         let live_query_manager = Arc::new(LiveQueryManager::new(
             system_tables.live_queries(),
             schema_registry.clone(),
-            (*node_id).clone(),
+            connection_registry.clone(),
             Arc::clone(&base_session_context),
         ));
 
@@ -422,6 +459,7 @@ impl AppContext {
             storage_backend,
             job_manager,
             live_query_manager,
+            connection_registry,
             storage_registry,
             system_tables,
             session_factory,
@@ -483,6 +521,10 @@ impl AppContext {
 
         // Create schema cache
         let schema_registry = Arc::new(SchemaRegistry::new(10000));
+
+        // Inject real StatsTableProvider with schema registry access
+        let stats_provider = Arc::new(StatsTableProvider::new(Some(schema_registry.clone())));
+        system_tables.set_stats_provider(stats_provider);
 
         // Register all system tables in DataFusion
         let session_factory = Arc::new(
@@ -546,11 +588,19 @@ impl AppContext {
         let jobs_provider = system_tables.jobs();
         let job_manager = Arc::new(crate::jobs::JobsManager::new(jobs_provider, job_registry));
 
+        // Create connections manager for integration tests
+        let connection_registry = ConnectionsManager::new(
+            (*node_id).clone(),
+            Duration::from_secs(config.websocket.client_timeout_secs.unwrap_or(30)),
+            Duration::from_secs(config.websocket.auth_timeout_secs.unwrap_or(10)),
+            Duration::from_secs(config.websocket.heartbeat_interval_secs.unwrap_or(5)),
+        );
+
         // Create live query manager
         let live_query_manager = Arc::new(LiveQueryManager::new(
             system_tables.live_queries(),
             schema_registry.clone(),
-            (*node_id).clone(),
+            connection_registry.clone(),
             Arc::clone(&base_session_context),
         ));
 
@@ -588,6 +638,7 @@ impl AppContext {
             storage_backend,
             job_manager: job_manager.clone(),
             live_query_manager,
+            connection_registry,
             storage_registry,
             system_tables,
             session_factory,
@@ -618,7 +669,7 @@ impl AppContext {
 
     /// Try to get the AppContext singleton without panicking
     pub fn try_get() -> Option<Arc<AppContext>> {
-        APP_CONTEXT.get().map(|ctx| ctx.clone())
+        APP_CONTEXT.get().cloned()
     }
 
     // ===== Getters =====
@@ -659,7 +710,12 @@ impl AppContext {
         self.live_query_manager.clone()
     }
 
-    /// Get the NodeId loaded from config.toml (Phase 10, US0, FR-000)
+    /// Get the connections manager (WebSocket connection state)
+    pub fn connection_registry(&self) -> Arc<ConnectionsManager> {
+        self.connection_registry.clone()
+    }
+
+    /// Get the NodeId loaded from server.toml (Phase 10, US0, FR-000)
     ///
     /// Returns an Arc reference for zero-copy sharing. This NodeId is allocated
     /// exactly once per server instance during AppContext::init().

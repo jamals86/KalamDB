@@ -108,7 +108,7 @@ pub fn save_table_definition(
         table_options,
         None, // table_comment
     )
-    .map_err(|e| KalamDbError::SchemaError(e))?;
+    .map_err(KalamDbError::SchemaError)?;
 
     // Persist table-level options from DDL (storage, flush policy, ACL, TTL overrides)
     match (&mut table_def.table_options, stmt.table_type) {
@@ -121,7 +121,7 @@ pub fn save_table_definition(
         (TableOptions::Shared(opts), TableType::Shared) => {
             let storage = stmt.storage_id.clone().unwrap_or_else(StorageId::local);
             opts.storage_id = storage;
-            opts.access_level = stmt.access_level.clone();
+            opts.access_level = stmt.access_level;
             opts.flush_policy = stmt.flush_policy.clone();
         }
         (TableOptions::Stream(opts), TableType::Stream) => {

@@ -51,10 +51,19 @@ pub enum BatchStatus {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum ClientMessage {
+    /// Authenticate WebSocket connection (browser clients only)
+    /// Native clients use HTTP Basic Auth headers instead
+    Authenticate {
+        /// Username for authentication
+        username: String,
+        /// Password for authentication
+        password: String,
+    },
+
     /// Subscribe to live query updates
     Subscribe {
-        /// List of subscriptions to register
-        subscriptions: Vec<SubscriptionRequest>,
+        /// Subscription to register
+        subscription: SubscriptionRequest,
     },
 
     /// Request next batch of initial data
@@ -101,6 +110,20 @@ pub struct SubscriptionOptions {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum ServerMessage {
+    /// Authentication successful response (browser clients only)
+    AuthSuccess {
+        /// Authenticated user ID
+        user_id: String,
+        /// User role
+        role: String,
+    },
+
+    /// Authentication failed response (browser clients only)
+    AuthError {
+        /// Error message
+        message: String,
+    },
+
     /// Acknowledgement of successful subscription registration
     SubscriptionAck {
         /// The subscription ID that was registered
@@ -379,6 +402,53 @@ pub struct HealthCheckResponse {
     /// Server build date
     #[serde(default)]
     pub build_date: Option<String>,
+}
+
+/// Configuration for establishing a WebSocket subscription.
+#[derive(Debug, Clone)]
+pub struct SubscriptionConfig {
+    /// Subscription identifier (client-generated, required)
+    pub id: String,
+    /// SQL query to register for live updates
+    pub sql: String,
+    /// Optional subscription options (e.g., last_rows)
+    pub options: Option<SubscriptionOptions>,
+    /// Override WebSocket URL (falls back to base_url conversion when `None`)
+    pub ws_url: Option<String>,
+}
+
+impl SubscriptionConfig {
+    /// Create a new configuration with required ID and SQL.
+    ///
+    /// By default, includes empty subscription options (batch streaming configured server-side).
+    pub fn new(id: impl Into<String>, sql: impl Into<String>) -> Self {
+        Self {
+            id: id.into(),
+            sql: sql.into(),
+            options: Some(SubscriptionOptions {
+                _reserved: None,
+                batch_size: None,
+            }),
+            ws_url: None,
+        }
+    }
+
+    /// Create a configuration without any initial data fetch
+    pub fn without_initial_data(id: impl Into<String>, sql: impl Into<String>) -> Self {
+        Self {
+            id: id.into(),
+            sql: sql.into(),
+            options: None,
+            ws_url: None,
+        }
+    }
+
+    /// Set the number of initial rows to fetch (deprecated - batch streaming configured server-side)
+    #[deprecated(note = "Batch streaming is now configured server-side, this method is a no-op")]
+    pub fn with_last_rows(self, _count: usize) -> Self {
+        // No-op: batch streaming configured server-side
+        self
+    }
 }
 
 #[cfg(test)]

@@ -10,7 +10,7 @@
 use clap::ValueEnum;
 use colored::*;
 use indicatif::{ProgressBar, ProgressStyle};
-use kalam_link::{AuthProvider, KalamLinkClient, SubscriptionConfig, SubscriptionOptions};
+use kalam_link::{AuthProvider, KalamLinkClient, KalamLinkTimeouts, SubscriptionConfig, SubscriptionOptions};
 use rustyline::completion::Completer;
 use rustyline::error::ReadlineError;
 use rustyline::highlight::Highlighter;
@@ -97,6 +97,10 @@ pub struct CLISession {
 
     /// Credential store for managing saved credentials
     credential_store: Option<crate::credentials::FileCredentialStore>,
+
+    /// Configured timeouts for operations
+    #[allow(dead_code)] // Reserved for future use
+    timeouts: KalamLinkTimeouts,
 }
 
 impl CLISession {
@@ -110,7 +114,7 @@ impl CLISession {
         color: bool,
     ) -> Result<Self> {
         Self::with_auth_and_instance(
-            server_url, auth, format, color, None, None, None, true, None,
+            server_url, auth, format, color, None, None, None, true, None, None,
         )
         .await
     }
@@ -128,26 +132,34 @@ impl CLISession {
         loading_threshold_ms: Option<u64>,
         animations: bool,
         client_timeout: Option<Duration>,
+        timeouts: Option<KalamLinkTimeouts>,
     ) -> Result<Self> {
-        // Build kalam-link client with authentication
-        let timeout = client_timeout.unwrap_or_else(|| Duration::from_secs(30));
+        // Build kalam-link client with authentication and timeouts
+        let timeouts = timeouts.unwrap_or_default();
+        let timeout = client_timeout.unwrap_or(timeouts.receive_timeout);
+        
         let client = KalamLinkClient::builder()
             .base_url(&server_url)
             .timeout(timeout)
             .max_retries(3)
             .auth(auth.clone())
+            .timeouts(timeouts.clone())
             .build()?;
 
         // Try to fetch server info from health check
         let (server_version, server_api_version, server_build_date, connected) =
             match client.health_check().await {
-                Ok(health) => (
+                Ok(health) => {
+                    (
                     Some(health.version),
                     Some(health.api_version),
                     health.build_date,
                     true,
-                ),
-                Err(_) => (None, None, None, false),
+                )
+                },
+                Err(_e) => {
+                    (None, None, None, false)
+                },
             };
 
         // Extract username from auth provider
@@ -178,6 +190,7 @@ impl CLISession {
             server_build_date,
             instance,
             credential_store,
+            timeouts,
         })
     }
 
@@ -299,11 +312,17 @@ impl CLISession {
                 CLIError::ParseError("Subscription metadata does not include SQL query".into())
             })?;
 
-        let mut config = SubscriptionConfig::new(sql);
+        // Extract or generate subscription ID
+        let sub_id = subscription_obj
+            .get("id")
+            .and_then(|v| v.as_str())
+            .map(|s| s.to_string())
+            .unwrap_or_else(|| format!("sub_{}", std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()));
 
-        if let Some(id) = subscription_obj.get("id").and_then(|v| v.as_str()) {
-            config.id = Some(id.to_string());
-        }
+        let mut config = SubscriptionConfig::new(sub_id, sql);
 
         if let Some(url) = ws_url {
             config.ws_url = Some(url);
@@ -367,12 +386,10 @@ impl CLISession {
                 } else {
                     "*".green().bold().to_string()
                 }
+            } else if use_unicode {
+                "○".yellow().bold().to_string()
             } else {
-                if use_unicode {
-                    "○".yellow().bold().to_string()
-                } else {
-                    "o".yellow().bold().to_string()
-                }
+                "o".yellow().bold().to_string()
             }
         } else if self.connected {
             "*".to_string()
@@ -934,7 +951,12 @@ impl CLISession {
             Command::Subscribe(query) => {
                 // Parse OPTIONS clause from SQL before creating config
                 let (clean_sql, options) = Self::extract_subscribe_options(&query);
-                let mut config = SubscriptionConfig::new(clean_sql);
+                // Generate subscription ID
+                let sub_id = format!("sub_{}", std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .unwrap()
+                    .as_nanos());
+                let mut config = SubscriptionConfig::new(sub_id, clean_sql);
                 config.options = options;
                 self.run_subscription(config).await?;
             }
@@ -977,7 +999,8 @@ impl CLISession {
     /// // Output: ("SELECT * FROM table", Some(SubscriptionOptions { last_rows: Some(20) }))
     /// ```
     fn extract_subscribe_options(sql: &str) -> (String, Option<SubscriptionOptions>) {
-        let sql = sql.trim();
+        // Trim and remove trailing semicolon if present
+        let sql = sql.trim().trim_end_matches(';').trim();
         let sql_upper = sql.to_uppercase();
 
         // Find OPTIONS keyword (case-insensitive)
@@ -1066,9 +1089,7 @@ impl CLISession {
             if let Some(ref ws_url) = ws_url_display {
                 eprintln!("WebSocket endpoint: {}", ws_url);
             }
-            if let Some(ref id) = requested_id {
-                eprintln!("Requested subscription ID: {}", id);
-            }
+            eprintln!("Subscription ID: {}", requested_id);
             eprintln!("Press Ctrl+C to unsubscribe and return to CLI\n");
         }
 
@@ -1123,6 +1144,148 @@ impl CLISession {
                                 println!("\nSubscription failed - returning to CLI prompt");
                                 break;
                             }
+                            self.display_change_event(&sql_display, &event);
+                        }
+                        Some(Err(e)) => {
+                            eprintln!("Subscription error: {}", e);
+                            break;
+                        }
+                        None => {
+                            println!("Subscription ended by server");
+                            break;
+                        }
+                    }
+                }
+            }
+        }
+
+        Ok(())
+    }
+
+    /// Run a WebSocket subscription with an optional timeout
+    ///
+    /// If timeout is Some, the subscription will exit after the specified duration
+    /// once initial data has been received. This is useful for testing.
+    async fn run_subscription_with_timeout(&mut self, config: SubscriptionConfig, timeout: Option<std::time::Duration>) -> Result<()> {
+        let sql_display = config.sql.clone();
+        let ws_url_display = config.ws_url.clone();
+        let requested_id = config.id.clone();
+
+        // Suppress banner messages when running non-interactively (for test/automation)
+        // Only print to stderr so stdout remains clean for data consumption
+        if self.animations {
+            eprintln!("Starting subscription for query: {}", sql_display);
+            if let Some(ref ws_url) = ws_url_display {
+                eprintln!("WebSocket endpoint: {}", ws_url);
+            }
+            eprintln!("Subscription ID: {}", requested_id);
+            if timeout.is_some() {
+                eprintln!("Timeout: {:?}", timeout.unwrap());
+            } else {
+                eprintln!("Press Ctrl+C to unsubscribe and return to CLI");
+            }
+            eprintln!();
+        }
+
+        let mut subscription = self.client.subscribe_with_config(config).await?;
+
+        if self.animations {
+            eprintln!(
+                "Subscription established (ID: {})",
+                subscription.subscription_id()
+            );
+        }
+
+        // Set up Ctrl+C handler for graceful unsubscribe
+        let ctrl_c = tokio::signal::ctrl_c();
+        tokio::pin!(ctrl_c);
+
+        // Track when initial data is complete and when timeout should fire
+        let mut initial_data_complete = false;
+        let timeout_deadline = timeout.map(|d| tokio::time::Instant::now() + d);
+
+        loop {
+            // Check timeout after initial data is received
+            if initial_data_complete {
+                if let Some(deadline) = timeout_deadline {
+                    if tokio::time::Instant::now() >= deadline {
+                        if self.animations {
+                            eprintln!("\n⏱ Subscription timeout reached");
+                        }
+                        // Close subscription gracefully
+                        if let Err(e) = subscription.close().await {
+                            eprintln!("Warning: Failed to close subscription cleanly: {}", e);
+                        }
+                        break;
+                    }
+                }
+            }
+
+            // Check if paused (T104)
+            if self.subscription_paused {
+                tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
+                continue;
+            }
+
+            // Create a timeout for the select (if we have a timeout configured)
+            let poll_timeout = if timeout.is_some() {
+                tokio::time::Duration::from_millis(100)
+            } else {
+                tokio::time::Duration::from_secs(3600) // Effectively infinite
+            };
+
+            // Wait for either a subscription event, Ctrl+C, or poll timeout
+            tokio::select! {
+                // Handle Ctrl+C
+                _ = &mut ctrl_c => {
+                    if self.color {
+                        println!("\n\x1b[33m⚠ Unsubscribing...\x1b[0m");
+                    } else {
+                        println!("\n⚠ Unsubscribing...");
+                    }
+                    // Close subscription gracefully
+                    if let Err(e) = subscription.close().await {
+                        eprintln!("Warning: Failed to close subscription cleanly: {}", e);
+                    }
+                    if self.color {
+                        println!("\x1b[32m✓ Unsubscribed\x1b[0m Back to CLI prompt");
+                    } else {
+                        println!("✓ Unsubscribed - Back to CLI prompt");
+                    }
+                    break;
+                }
+
+                // Poll timeout - just continue the loop to check deadline
+                _ = tokio::time::sleep(poll_timeout) => {
+                    continue;
+                }
+
+                // Handle subscription events
+                event_result = subscription.next() => {
+                    match event_result {
+                        Some(Ok(event)) => {
+                            // Check if it's an error event - if so, display and exit
+                            if matches!(event, kalam_link::ChangeEvent::Error { .. }) {
+                                self.display_change_event(&sql_display, &event);
+                                println!("\nSubscription failed - returning to CLI prompt");
+                                break;
+                            }
+                            
+                            // Check if initial data is complete (batch with has_more=false)
+                            match &event {
+                                kalam_link::ChangeEvent::InitialDataBatch { batch_control, .. } => {
+                                    if !batch_control.has_more {
+                                        initial_data_complete = true;
+                                    }
+                                }
+                                kalam_link::ChangeEvent::Ack { batch_control, .. } => {
+                                    if !batch_control.has_more {
+                                        initial_data_complete = true;
+                                    }
+                                }
+                                _ => {}
+                            }
+                            
                             self.display_change_event(&sql_display, &event);
                         }
                         Some(Err(e)) => {
@@ -1419,13 +1582,12 @@ impl CLISession {
 
         // Basics
         println!("{}", "║  Basics".bright_blue().bold());
-        println!("{}", "║    • Write SQL; end with ';' to run");
+        println!("║    • Write SQL; end with ';' to run");
         println!(
-            "{}{}",
-            "║    • Autocomplete: keywords, namespaces, tables, columns  ",
+            "║    • Autocomplete: keywords, namespaces, tables, columns  {}",
             "(Tab)".dimmed()
         );
-        println!("{}", "║    • Inline hints and SQL highlighting enabled");
+        println!("║    • Inline hints and SQL highlighting enabled");
 
         // Meta-commands (two columns)
         println!(
@@ -1771,8 +1933,21 @@ impl CLISession {
     /// This is similar to the interactive \subscribe command but designed for
     /// command-line usage where the subscription runs until interrupted.
     pub async fn subscribe(&mut self, query: &str) -> Result<()> {
-        let config = SubscriptionConfig::new(query);
-        self.run_subscription(config).await
+        self.subscribe_with_timeout(query, None).await
+    }
+
+    /// Subscribe to a table or live query with an optional timeout
+    ///
+    /// If timeout is Some, the subscription will exit after the specified duration
+    /// once initial data has been received. This is useful for testing.
+    pub async fn subscribe_with_timeout(&mut self, query: &str, timeout: Option<std::time::Duration>) -> Result<()> {
+        // Generate subscription ID
+        let sub_id = format!("sub_{}", std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos());
+        let config = SubscriptionConfig::new(sub_id, query);
+        self.run_subscription_with_timeout(config, timeout).await
     }
 
     /// Unsubscribe from active subscription via command line
@@ -2077,5 +2252,28 @@ mod tests {
     fn test_output_format() {
         let format = OutputFormat::Table;
         assert!(matches!(format, OutputFormat::Table));
+    }
+
+    #[test]
+    fn test_extract_subscribe_options_with_semicolon() {
+        // Test that semicolon is properly trimmed from subscription queries
+        let (sql, _) = CLISession::extract_subscribe_options("SELECT * FROM table;");
+        assert_eq!(sql, "SELECT * FROM table");
+
+        let (sql, _) = CLISession::extract_subscribe_options("SELECT * FROM table ;");
+        assert_eq!(sql, "SELECT * FROM table");
+
+        let (sql, _) = CLISession::extract_subscribe_options("SELECT * FROM table");
+        assert_eq!(sql, "SELECT * FROM table");
+    }
+
+    #[test]
+    fn test_extract_subscribe_options_with_options_and_semicolon() {
+        // Test OPTIONS parsing with semicolon
+        let (sql, options) = CLISession::extract_subscribe_options(
+            "SELECT * FROM table OPTIONS (last_rows=50);"
+        );
+        assert_eq!(sql, "SELECT * FROM table");
+        assert!(options.is_some());
     }
 }

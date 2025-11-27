@@ -3,7 +3,10 @@
 //! This module provides HTTP handlers for executing SQL statements via the REST API.
 
 use actix_web::{post, web, HttpRequest, HttpResponse, Responder};
-use kalamdb_auth::{extract_auth_with_repo, UserRepository};
+use kalamdb_auth::{
+    authenticate, extract_client_ip_secure, extract_username_for_audit, AuthenticatedUser,
+    AuthError, AuthRequest, UserRepository,
+};
 use kalamdb_commons::models::UserId;
 use kalamdb_core::sql::executor::helpers::audit;
 use kalamdb_core::sql::executor::models::{ExecutionContext, ScalarValue};
@@ -16,6 +19,28 @@ use std::time::Instant;
 
 use crate::models::{QueryResult, SqlRequest, SqlResponse};
 use crate::rate_limiter::RateLimiter;
+
+/// Convert AuthError to HTTP response code and message
+fn auth_error_to_response(e: &AuthError) -> (&'static str, String) {
+    match e {
+        AuthError::MissingAuthorization(msg) => ("MISSING_AUTHORIZATION", msg.clone()),
+        AuthError::MalformedAuthorization(msg) => ("MALFORMED_AUTHORIZATION", msg.clone()),
+        AuthError::InvalidCredentials(msg) => ("INVALID_CREDENTIALS", msg.clone()),
+        AuthError::RemoteAccessDenied(msg) => ("REMOTE_ACCESS_DENIED", msg.clone()),
+        AuthError::UserNotFound(msg) => ("USER_NOT_FOUND", msg.clone()),
+        AuthError::DatabaseError(msg) => ("DATABASE_ERROR", msg.clone()),
+        AuthError::TokenExpired => ("TOKEN_EXPIRED", "Token expired".to_string()),
+        AuthError::InvalidSignature => ("INVALID_SIGNATURE", "Invalid token signature".to_string()),
+        AuthError::UntrustedIssuer(iss) => {
+            ("UNTRUSTED_ISSUER", format!("Untrusted issuer: {}", iss))
+        }
+        AuthError::MissingClaim(claim) => (
+            "MISSING_CLAIM",
+            format!("Missing required claim: {}", claim),
+        ),
+        _ => ("AUTHENTICATION_ERROR", format!("{:?}", e)),
+    }
+}
 
 /// Convert JSON value to DataFusion ScalarValue
 ///
@@ -94,21 +119,6 @@ pub async fn execute_sql_v1(
 ) -> impl Responder {
     let start_time = Instant::now();
 
-    // TODO: Handle all auth errors and checking inside kalamdb-auth crate
-    // Early guard: reject malformed bare Bearer headers consistently with 401
-    if let Some(auth_val) = http_req.headers().get("Authorization") {
-        if let Ok(h) = auth_val.to_str() {
-            if h == "Bearer" || h == "Bearer " {
-                let took = start_time.elapsed().as_secs_f64() * 1000.0;
-                return HttpResponse::Unauthorized().json(SqlResponse::error(
-                    "MALFORMED_AUTHORIZATION",
-                    "Bearer token missing",
-                    took,
-                ));
-            }
-        }
-    }
-
     // Resolve user repository (tests may not inject it explicitly)
     // Prefer injected repository; fallback to CoreUsersRepo if not provided
     let repo: Arc<dyn UserRepository> = if let Some(repo) = user_repo {
@@ -127,98 +137,69 @@ pub async fn execute_sql_v1(
         .and_then(|h| h.to_str().ok())
         .map(|s| s.to_string());
 
-    let resolved_ip = http_req
-        .headers()
-        .get("X-Forwarded-For")
-        .and_then(|h| h.to_str().ok())
-        .and_then(|raw| raw.split(',').next().map(|s| s.trim().to_string()))
-        .filter(|s| !s.is_empty())
-        .or_else(|| {
-            http_req
-                .connection_info()
-                .realip_remote_addr()
-                .map(|s| s.to_string())
-        });
+    // Extract client IP with security checks against spoofing
+    let connection_info = extract_client_ip_secure(&http_req);
 
-    // Extract and validate authentication from request using repo
-    let auth_result = match extract_auth_with_repo(&http_req, &repo).await {
-        Ok(auth) => {
-            // Log successful login if using Basic Auth (explicit credentials)
-            if let Some(auth_val) = http_req.headers().get("Authorization") {
-                if let Ok(h) = auth_val.to_str() {
-                    if h.starts_with("Basic ") {
-                        let entry = audit::log_auth_event(
-                            &auth.user_id,
-                            "LOGIN",
-                            true,
-                            resolved_ip.clone(),
-                        );
-                        if let Err(e) =
-                            audit::persist_audit_entry(app_context.get_ref(), &entry).await
-                        {
-                            error!("Failed to persist audit log: {}", e);
-                        }
-                    }
+    // Build authentication request from HTTP Authorization header
+    let auth_header = match http_req.headers().get("Authorization") {
+        Some(val) => match val.to_str() {
+            Ok(h) => h.to_string(),
+            Err(_) => {
+                let took = start_time.elapsed().as_secs_f64() * 1000.0;
+                return HttpResponse::Unauthorized().json(SqlResponse::error(
+                    "MALFORMED_AUTHORIZATION",
+                    "Authorization header contains invalid characters",
+                    took,
+                ));
+            }
+        },
+        None => {
+            let took = start_time.elapsed().as_secs_f64() * 1000.0;
+            return HttpResponse::Unauthorized().json(SqlResponse::error(
+                "MISSING_AUTHORIZATION",
+                "Authorization header is required. Use 'Authorization: Basic <credentials>' or 'Authorization: Bearer <token>'",
+                took,
+            ));
+        }
+    };
+
+    // Build connection info and auth request for unified authentication
+    let auth_request = AuthRequest::Header(auth_header.clone());
+
+    // Authenticate using unified auth module
+    let auth_result = match authenticate(auth_request.clone(), &connection_info, &repo).await {
+        Ok(result) => {
+            // Log successful login for password-based auth (Basic Auth or Direct)
+            if matches!(result.method, kalamdb_auth::AuthMethod::Basic | kalamdb_auth::AuthMethod::Direct) {
+                let entry = audit::log_auth_event(
+                    &result.user.user_id,
+                    "LOGIN",
+                    true,
+                    connection_info.remote_addr.clone(),
+                );
+                if let Err(e) = audit::persist_audit_entry(app_context.get_ref(), &entry).await {
+                    error!("Failed to persist audit log: {}", e);
                 }
             }
-            auth
+            result.user
         }
         Err(e) => {
-            // Log failed login if using Basic Auth
-            if let Some(auth_val) = http_req.headers().get("Authorization") {
-                if let Ok(h) = auth_val.to_str() {
-                    if h.starts_with("Basic ") {
-                        // Try to extract username to log who failed
-                        let username = if let Ok((u, _)) =
-                            kalamdb_auth::basic_auth::parse_basic_auth_header(h)
-                        {
-                            u
-                        } else {
-                            "unknown".to_string()
-                        };
-
-                        let entry = audit::log_auth_event(
-                            &UserId::new(username),
-                            "LOGIN",
-                            false,
-                            resolved_ip.clone(),
-                        );
-                        if let Err(e) =
-                            audit::persist_audit_entry(app_context.get_ref(), &entry).await
-                        {
-                            error!("Failed to persist audit log: {}", e);
-                        }
-                    }
+            // Log failed login for password-based auth attempts
+            if auth_header.starts_with("Basic ") {
+                let username = extract_username_for_audit(&auth_request);
+                let entry = audit::log_auth_event(
+                    &UserId::new(username),
+                    "LOGIN",
+                    false,
+                    connection_info.remote_addr.clone(),
+                );
+                if let Err(e) = audit::persist_audit_entry(app_context.get_ref(), &entry).await {
+                    error!("Failed to persist audit log: {}", e);
                 }
             }
 
             let took = start_time.elapsed().as_secs_f64() * 1000.0;
-            let (code, message) = match e {
-                kalamdb_auth::AuthError::MissingAuthorization(msg) => {
-                    ("MISSING_AUTHORIZATION", msg)
-                }
-                kalamdb_auth::AuthError::MalformedAuthorization(msg) => {
-                    ("MALFORMED_AUTHORIZATION", msg)
-                }
-                kalamdb_auth::AuthError::InvalidCredentials(msg) => ("INVALID_CREDENTIALS", msg),
-                kalamdb_auth::AuthError::RemoteAccessDenied(msg) => ("REMOTE_ACCESS_DENIED", msg),
-                kalamdb_auth::AuthError::UserNotFound(msg) => ("USER_NOT_FOUND", msg),
-                kalamdb_auth::AuthError::DatabaseError(msg) => ("DATABASE_ERROR", msg),
-                kalamdb_auth::AuthError::TokenExpired => {
-                    ("TOKEN_EXPIRED", "Token expired".to_string())
-                }
-                kalamdb_auth::AuthError::InvalidSignature => {
-                    ("INVALID_SIGNATURE", "Invalid token signature".to_string())
-                }
-                kalamdb_auth::AuthError::UntrustedIssuer(iss) => {
-                    ("UNTRUSTED_ISSUER", format!("Untrusted issuer: {}", iss))
-                }
-                kalamdb_auth::AuthError::MissingClaim(claim) => (
-                    "MISSING_CLAIM",
-                    format!("Missing required claim: {}", claim),
-                ),
-                _ => ("AUTHENTICATION_ERROR", format!("{:?}", e)),
-            };
+            let (code, message) = auth_error_to_response(&e);
             return HttpResponse::Unauthorized().json(SqlResponse::error(code, &message, took));
         }
     };
@@ -283,7 +264,7 @@ pub async fn execute_sql_v1(
     }
 
     // Reject multi-statement batches with parameters (simplifies implementation)
-    if params.len() > 0 && statements.len() > 1 {
+    if !params.is_empty() && statements.len() > 1 {
         let took = start_time.elapsed().as_secs_f64() * 1000.0;
         return HttpResponse::BadRequest().json(SqlResponse::error(
             "PARAMS_WITH_BATCH",
@@ -309,7 +290,7 @@ pub async fn execute_sql_v1(
             sql_executor,
             &auth_result,
             request_id.as_deref(),
-            resolved_ip.as_deref(),
+            connection_info.remote_addr.as_deref(),
             None,
             params.clone(), // Pass parameters to each statement
         )
@@ -392,7 +373,7 @@ async fn execute_single_statement(
     sql: &str,
     app_context: &Arc<kalamdb_core::app_context::AppContext>,
     sql_executor: Option<&Arc<SqlExecutor>>,
-    auth: &kalamdb_auth::AuthenticatedRequest,
+    auth: &AuthenticatedUser,
     request_id: Option<&str>,
     ip_address: Option<&str>,
     metadata: Option<&ExecutorMetadataAlias>,
@@ -484,13 +465,7 @@ async fn execute_single_statement(
             Err(e) => Err(Box::new(e)),
         }
     } else {
-        // // Fallback for testing: use shared session from AppContext (avoid memory leak)
-        // let session = app_context.session();
-        // let df = session.sql(sql).await?;
-        // let batches = df.collect().await?;
-        // record_batch_to_query_result(batches, None)
-
-        //Throw error if SqlExecutor is not available
+        // Throw error if SqlExecutor is not available
         Err("SqlExecutor not available".into())
     }
 }
@@ -590,7 +565,7 @@ mod tests {
     // SQL execution is thoroughly tested in integration tests (backend/tests/).
 
     #[ignore]
-    #[actix_rt::test]
+    #[tokio::test]
     async fn test_execute_sql_endpoint() {
         // Create a test session factory
         let session_factory = Arc::new(DataFusionSessionFactory::new().unwrap());
@@ -626,7 +601,7 @@ mod tests {
     }
 
     #[ignore]
-    #[actix_rt::test]
+    #[tokio::test]
     async fn test_execute_sql_empty_query() {
         let session_factory = Arc::new(DataFusionSessionFactory::new().unwrap());
         let rate_limiter = Arc::new(RateLimiter::new());
@@ -655,7 +630,7 @@ mod tests {
     }
 
     #[ignore]
-    #[actix_rt::test]
+    #[tokio::test]
     async fn test_execute_sql_multiple_statements() {
         let session_factory = Arc::new(DataFusionSessionFactory::new().unwrap());
         let rate_limiter = Arc::new(RateLimiter::new());

@@ -51,7 +51,7 @@ pub fn register_user_table_provider(
 
     // Create TableProviderCore and provider (wire LiveQueryManager for notifications)
     let core = Arc::new(
-        TableProviderCore::from_app_context(&app_context, table_id.clone(), TableType::User)
+        TableProviderCore::from_app_context(app_context, table_id.clone(), TableType::User)
             .with_live_query_manager(app_context.live_query_manager()),
     );
 
@@ -131,7 +131,7 @@ pub fn register_shared_table_provider(
 
     // Create and register new providers::SharedTableProvider
     let core = Arc::new(
-        TableProviderCore::from_app_context(&app_context, table_id.clone(), TableType::Shared)
+        TableProviderCore::from_app_context(app_context, table_id.clone(), TableType::Shared)
             .with_live_query_manager(app_context.live_query_manager()),
     );
 
@@ -211,11 +211,29 @@ pub fn register_stream_table_provider(
 
     // Create and register provider (new providers::streams implementation)
     let core = Arc::new(
-        TableProviderCore::from_app_context(&app_context, table_id.clone(), TableType::Stream)
+        TableProviderCore::from_app_context(app_context, table_id.clone(), TableType::Stream)
             .with_live_query_manager(app_context.live_query_manager()),
     );
-    // For streams, we use a conventional primary key field name in JSON payload ("id")
-    let provider = StreamTableProvider::new(core, stream_store, ttl_seconds, "id".to_string());
+    // Determine primary key field name from TableDefinition
+    let table_def = app_context
+        .schema_registry()
+        .get_table_definition(table_id)?
+        .ok_or_else(|| {
+            KalamDbError::InvalidOperation(format!(
+                "Table definition not found for {}.{}",
+                table_id.namespace_id().as_str(),
+                table_id.table_name().as_str()
+            ))
+        })?;
+
+    let pk_field = table_def
+        .columns
+        .iter()
+        .find(|c| c.is_primary_key)
+        .map(|c| c.column_name.clone())
+        .unwrap_or_else(|| "id".to_string());
+
+    let provider = StreamTableProvider::new(core, stream_store, ttl_seconds, pk_field);
 
     app_context
         .schema_registry()

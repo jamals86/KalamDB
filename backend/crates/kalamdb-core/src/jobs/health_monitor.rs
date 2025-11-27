@@ -1,8 +1,30 @@
+use crate::app_context::AppContext;
 use crate::error::KalamDbError;
 use crate::jobs::JobsManager;
 use kalamdb_commons::system::JobFilter;
 use kalamdb_commons::JobStatus;
+use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::Arc;
 use sysinfo::System;
+
+/// Global counter for active WebSocket sessions
+/// This is updated by kalamdb-api when sessions start/stop
+static ACTIVE_WEBSOCKET_SESSIONS: AtomicUsize = AtomicUsize::new(0);
+
+/// Increment the active WebSocket session count
+pub fn increment_websocket_sessions() -> usize {
+    ACTIVE_WEBSOCKET_SESSIONS.fetch_add(1, Ordering::SeqCst) + 1
+}
+
+/// Decrement the active WebSocket session count
+pub fn decrement_websocket_sessions() -> usize {
+    ACTIVE_WEBSOCKET_SESSIONS.fetch_sub(1, Ordering::SeqCst) - 1
+}
+
+/// Get the current active WebSocket session count
+pub fn get_websocket_session_count() -> usize {
+    ACTIVE_WEBSOCKET_SESSIONS.load(Ordering::SeqCst)
+}
 
 /// Monitor for system health and job statistics
 pub struct HealthMonitor;
@@ -10,8 +32,11 @@ pub struct HealthMonitor;
 impl HealthMonitor {
     /// Log system health metrics for monitoring
     ///
-    /// Logs memory usage, CPU usage, thread count, and active job statistics.
-    pub async fn log_metrics(jobs_manager: &JobsManager) -> Result<(), KalamDbError> {
+    /// Logs memory usage, CPU usage, open files count, namespace/table counts, and active job statistics.
+    pub async fn log_metrics(
+        jobs_manager: &JobsManager,
+        app_context: Arc<AppContext>,
+    ) -> Result<(), KalamDbError> {
         let mut sys = System::new_all();
         sys.refresh_all();
 
@@ -34,23 +59,44 @@ impl HealthMonitor {
             .filter(|j| j.status == JobStatus::Failed)
             .count();
 
+        // Get namespace and table counts from system tables
+        let namespaces_provider = app_context.system_tables().namespaces();
+        let tables_provider = app_context.system_tables().tables();
+        
+        let namespace_count = namespaces_provider.list_namespaces().map(|ns| ns.len()).unwrap_or(0);
+        let table_count = tables_provider.list_tables().map(|ts| ts.len()).unwrap_or(0);
+
+        // Get live subscription stats
+        let live_stats = app_context.live_query_manager().get_stats().await;
+        let subscription_count = live_stats.total_subscriptions;
+        let connection_count = live_stats.total_connections;
+
+        // Get active WebSocket session count (set by kalamdb-api)
+        let ws_session_count = get_websocket_session_count();
+
+        // Get open file descriptor count (Unix only)
+        #[cfg(unix)]
+        let open_files = Self::count_open_files();
+        #[cfg(not(unix))]
+        let open_files = 0;
+
         if let Some(proc) = process {
             // Memory usage in MB
             let memory_mb = proc.memory() / 1024 / 1024;
-            let virtual_memory_mb = proc.virtual_memory() / 1024 / 1024;
 
             // CPU usage percentage
             let cpu_usage = proc.cpu_usage();
 
-            // Get total number of processes (as proxy for system load)
-            let total_processes = sys.processes().len();
-
             log::debug!(
-                "Health metrics: Memory: {} MB (Virtual: {} MB) | CPU: {:.2}% | Total Processes: {} | Jobs: {} running, {} queued, {} failed (total: {})",
+                "Health metrics: Memory: {} MB | CPU: {:.2}% | Open Files: {} | Namespaces: {} | Tables: {} | Subscriptions: {} ({} connections, {} ws sessions) | Jobs: {} running, {} queued, {} failed (total: {})",
                 memory_mb,
-                virtual_memory_mb,
                 cpu_usage,
-                total_processes,
+                open_files,
+                namespace_count,
+                table_count,
+                subscription_count,
+                connection_count,
+                ws_session_count,
                 running_count,
                 queued_count,
                 failed_count,
@@ -58,7 +104,13 @@ impl HealthMonitor {
             );
         } else {
             log::debug!(
-                "Health metrics: Jobs: {} running, {} queued, {} failed (total: {})",
+                "Health metrics: Open Files: {} | Namespaces: {} | Tables: {} | Subscriptions: {} ({} connections, {} ws sessions) | Jobs: {} running, {} queued, {} failed (total: {})",
+                open_files,
+                namespace_count,
+                table_count,
+                subscription_count,
+                connection_count,
+                ws_session_count,
                 running_count,
                 queued_count,
                 failed_count,
@@ -67,5 +119,26 @@ impl HealthMonitor {
         }
 
         Ok(())
+    }
+
+    /// Count open file descriptors for the current process (Unix only)
+    #[cfg(unix)]
+    fn count_open_files() -> usize {
+        use std::process::Command;
+
+        if let Ok(output) = Command::new("sh")
+            .arg("-c")
+            .arg(format!("lsof -p {} 2>/dev/null | wc -l", std::process::id()))
+            .output()
+        {
+            if let Ok(count_str) = String::from_utf8(output.stdout) {
+                if let Ok(count) = count_str.trim().parse::<usize>() {
+                    // lsof includes header line, so subtract 1
+                    return count.saturating_sub(1);
+                }
+            }
+        }
+
+        0
     }
 }

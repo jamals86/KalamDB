@@ -5,9 +5,9 @@
 //!
 //! Moved from kalamdb-live crate to kalamdb-core to avoid circular dependencies.
 
-pub mod connection_registry;
+pub mod connections_manager;
 pub mod error;
-pub mod filter;
+pub mod filter_eval;
 pub mod initial_data;
 pub mod manager;
 pub mod notification;
@@ -15,13 +15,21 @@ pub mod query_parser;
 pub mod subscription;
 pub mod types;
 
-pub use connection_registry::{
-    ConnectionId, LiveId, LiveQueryOptions, LiveQueryRegistry, NodeId, SubscriptionHandle, UserId,
+// Re-export types from kalamdb-commons (canonical source)
+pub use kalamdb_commons::models::{ConnectionId, LiveQueryId, TableId, UserId};
+pub use kalamdb_commons::NodeId;
+
+// Re-export from connections_manager (consolidated connection management)
+pub use connections_manager::{
+    ConnectionEvent, ConnectionRegistration, ConnectionsManager, ConnectionState,
+    NotificationSender, SharedConnectionState, SubscriptionState,
 };
-pub use filter::{FilterCache, FilterPredicate};
+
+pub use filter_eval::{matches as filter_matches, parse_where_clause};
 pub use initial_data::{InitialDataFetcher, InitialDataOptions, InitialDataResult};
 pub use manager::LiveQueryManager;
 pub use notification::NotificationService;
 pub use query_parser::QueryParser;
-pub use subscription::SubscriptionService;
+pub use subscription::{RegisteredSubscription, SubscriptionService};
 pub use types::{ChangeNotification, ChangeType, RegistryStats, SubscriptionResult};
+

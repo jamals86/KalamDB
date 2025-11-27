@@ -4,7 +4,6 @@
 // Provides "changes since timestamp" functionality to populate client state
 // before real-time notifications begin.
 
-use super::filter::FilterPredicate;
 use crate::error::KalamDbError;
 use crate::schema_registry::TableType;
 use crate::sql::executor::models::{ExecutionContext, ExecutionResult, ScalarValue};
@@ -155,16 +154,17 @@ impl InitialDataFetcher {
     /// * `table_id` - Table identifier with namespace and table name
     /// * `table_type` - User or Shared table
     /// * `options` - Options for the fetch (timestamp, limit, etc.)
+    /// * `where_clause` - Optional WHERE clause string to include in the query
     ///
     /// # Returns
     /// InitialDataResult with rows and metadata
     pub async fn fetch_initial_data(
         &self,
-        live_id: &super::connection_registry::LiveId,
+        live_id: &kalamdb_commons::models::LiveQueryId,
         table_id: &TableId,
         table_type: TableType,
         options: InitialDataOptions,
-        filter: Option<Arc<FilterPredicate>>,
+        where_clause: Option<&str>,
     ) -> Result<InitialDataResult, KalamDbError> {
         log::info!(
             "fetch_initial_data called: table={}, type={:?}, limit={}, since={:?}",
@@ -227,17 +227,16 @@ impl InitialDataFetcher {
         }
 
         // Add deleted filter
-        if !options.include_deleted {
-            if matches!(table_type, TableType::User | TableType::Shared)
-                && self.table_has_column(table_id, SystemColumnNames::DELETED)?
-            {
-                where_clauses.push(format!("{} = false", SystemColumnNames::DELETED));
-            }
+        if !options.include_deleted
+            && matches!(table_type, TableType::User | TableType::Shared)
+            && self.table_has_column(table_id, SystemColumnNames::DELETED)?
+        {
+            where_clauses.push(format!("{} = false", SystemColumnNames::DELETED));
         }
 
         // Add custom filter from subscription
-        if let Some(predicate) = filter {
-            where_clauses.push(predicate.sql().to_string());
+        if let Some(where_sql) = where_clause {
+            where_clauses.push(where_sql.to_string());
         }
 
         if !where_clauses.is_empty() {
@@ -276,15 +275,17 @@ impl InitialDataFetcher {
 
         for batch in batches {
             let schema = batch.schema();
-            let seq_col_idx = schema
-                .index_of(SystemColumnNames::SEQ)
-                .map_err(|_| KalamDbError::Other(format!("Result missing {} column", SystemColumnNames::SEQ)))?;
+            let seq_col_idx = schema.index_of(SystemColumnNames::SEQ).map_err(|_| {
+                KalamDbError::Other(format!("Result missing {} column", SystemColumnNames::SEQ))
+            })?;
 
             let seq_col = batch.column(seq_col_idx);
             let seq_array = seq_col
                 .as_any()
                 .downcast_ref::<datafusion::arrow::array::Int64Array>()
-                .ok_or_else(|| KalamDbError::Other(format!("{} column is not Int64", SystemColumnNames::SEQ)))?;
+                .ok_or_else(|| {
+                    KalamDbError::Other(format!("{} column is not Int64", SystemColumnNames::SEQ))
+                })?;
 
             let num_rows = batch.num_rows();
             let num_cols = batch.num_columns();
@@ -362,7 +363,7 @@ mod tests {
     use crate::providers::arrow_json_conversion::json_to_row;
     use crate::sql::executor::SqlExecutor;
     use kalamdb_commons::ids::{SeqId, UserTableRowId};
-    use kalamdb_commons::models::{ConnectionId as ConnId, LiveId as CommonsLiveId};
+    use kalamdb_commons::models::{ConnectionId as ConnId, LiveQueryId as CommonsLiveQueryId};
     use kalamdb_commons::models::{NamespaceId, TableName};
     use kalamdb_commons::UserId;
     use kalamdb_store::entity_store::EntityStore;
@@ -521,8 +522,9 @@ mod tests {
         fetcher.set_sql_executor(sql_executor);
 
         // LiveId for connection user 'userA' (RLS enforced)
-        let conn = ConnId::new("usera".to_string(), "conn1".to_string());
-        let live = CommonsLiveId::new(conn, table_id.clone(), "q1".to_string());
+        let user_id = UserId::new("usera");
+        let conn = ConnId::new("conn1");
+        let live = CommonsLiveQueryId::new(user_id, conn, "q1".to_string());
 
         // Fetch initial data (default options: last 100)
         let res = fetcher
@@ -652,8 +654,9 @@ mod tests {
             InitialDataFetcher::new(app_context.base_session_context(), schema_registry.clone());
         let sql_executor = Arc::new(SqlExecutor::new(app_context.clone(), false));
         fetcher.set_sql_executor(sql_executor);
-        let conn = ConnId::new("userb".to_string(), "conn2".to_string());
-        let live = CommonsLiveId::new(conn, table_id.clone(), "q2".to_string());
+        let user_id = UserId::new("userb");
+        let conn = ConnId::new("conn2");
+        let live = CommonsLiveQueryId::new(user_id, conn, "q2".to_string());
 
         // 1. Fetch first batch (limit 1)
         let res1 = fetcher
@@ -821,8 +824,9 @@ mod tests {
             InitialDataFetcher::new(app_context.base_session_context(), schema_registry.clone());
         let sql_executor = Arc::new(SqlExecutor::new(app_context.clone(), false));
         fetcher.set_sql_executor(sql_executor);
-        let conn = ConnId::new("userc".to_string(), "conn3".to_string());
-        let live = CommonsLiveId::new(conn, table_id.clone(), "q3".to_string());
+        let user_id = UserId::new("userc");
+        let conn = ConnId::new("conn3");
+        let live = CommonsLiveQueryId::new(user_id, conn, "q3".to_string());
 
         // Fetch last 3 rows
         let res = fetcher

@@ -3,6 +3,7 @@
 
 use crate::common::*;
 
+#[ntest::timeout(60000)]
 #[test]
 fn smoke_system_tables_and_user_lifecycle() {
     if !is_server_running() {
@@ -22,17 +23,17 @@ fn smoke_system_tables_and_user_lifecycle() {
         "SELECT * FROM system.namespaces LIMIT 1",
     ];
     for q in system_queries {
-        let _ = execute_sql_as_root_via_cli(q).expect("system table query should succeed");
+        let _ = execute_sql_as_root_via_client(q).expect("system table query should succeed");
     }
 
     // 2) CREATE USER and verify present in system.users
     let uname = generate_unique_namespace("smoke_user");
     let pass = "S1mpleP@ss!";
     let create_user = format!("CREATE USER {} WITH PASSWORD '{}' ROLE 'user'", uname, pass);
-    execute_sql_as_root_via_cli(&create_user).expect("create user should succeed");
+    execute_sql_as_root_via_client(&create_user).expect("create user should succeed");
 
     // Use SELECT username to avoid column truncation in pretty-printed tables
-    let users_out = execute_sql_as_root_via_cli(&format!(
+    let users_out = execute_sql_as_root_via_client(&format!(
         "SELECT username FROM system.users WHERE username='{}'",
         uname
     ))
@@ -45,9 +46,9 @@ fn smoke_system_tables_and_user_lifecycle() {
 
     // 3) DROP USER and verify removed or soft-deleted
     let drop_user = format!("DROP USER '{}'", uname);
-    execute_sql_as_root_via_cli(&drop_user).expect("drop user should succeed");
+    execute_sql_as_root_via_client(&drop_user).expect("drop user should succeed");
 
-    let users_out2 = execute_sql_as_root_via_cli(&format!(
+    let users_out2 = execute_sql_as_root_via_client(&format!(
         "SELECT * FROM system.users WHERE username='{}'",
         uname
     ))
@@ -63,7 +64,7 @@ fn smoke_system_tables_and_user_lifecycle() {
     // Create a test namespace and user table first
     // Use a unique namespace per run to avoid cross-test collisions when tests run in parallel
     let test_ns = generate_unique_namespace("smoke_test_flush");
-    let _ = execute_sql_as_root_via_cli(&format!("CREATE NAMESPACE IF NOT EXISTS {}", test_ns));
+    let _ = execute_sql_as_root_via_client(&format!("CREATE NAMESPACE IF NOT EXISTS {}", test_ns));
 
     // Create a user table to flush (unique per run to avoid collisions)
     let unique_tbl = generate_unique_table("test_flush_table");
@@ -72,14 +73,14 @@ fn smoke_system_tables_and_user_lifecycle() {
         "CREATE TABLE {} (id INT PRIMARY KEY, value VARCHAR) WITH (TYPE = 'USER', FLUSH_POLICY = 'rows:100')",
         test_table
     );
-    execute_sql_as_root_via_cli(&create_table_sql).expect("create test table should succeed");
+    execute_sql_as_root_via_client(&create_table_sql).expect("create test table should succeed");
 
     // Insert some data
     let insert_sql = format!("INSERT INTO {} (id, value) VALUES (1, 'test')", test_table);
-    execute_sql_as_root_via_cli(&insert_sql).expect("insert should succeed");
+    execute_sql_as_root_via_client(&insert_sql).expect("insert should succeed");
 
     // Now flush all tables in the namespace
-    let flush_output = execute_sql_as_root_via_cli(&format!("FLUSH ALL TABLES IN {}", test_ns))
+    let flush_output = execute_sql_as_root_via_client(&format!("FLUSH ALL TABLES IN {}", test_ns))
         .expect("flush all tables in namespace should succeed");
 
     println!("[FLUSH ALL] Output: {}", flush_output);
@@ -94,7 +95,7 @@ fn smoke_system_tables_and_user_lifecycle() {
     // Verify each job has been recorded in system.jobs (no need to wait for completion here)
     for job_id in &job_ids {
         let q = format!("SELECT job_id FROM system.jobs WHERE job_id='{}'", job_id);
-        let out = execute_sql_as_root_via_cli(&q).expect("query system.jobs should succeed");
+        let out = execute_sql_as_root_via_client(&q).expect("query system.jobs should succeed");
         // The pretty table may truncate long IDs; rely on row count footer instead
         assert!(
             out.contains("(1 row)"),

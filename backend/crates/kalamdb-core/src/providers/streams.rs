@@ -124,7 +124,7 @@ impl StreamTableProvider {
                 )
             })?;
 
-        Ok((user_ctx.user_id.clone(), user_ctx.role.clone()))
+        Ok((user_ctx.user_id.clone(), user_ctx.role))
     }
 }
 
@@ -212,12 +212,9 @@ impl BaseTableProvider<StreamTableRowId, StreamTableRow> for StreamTableProvider
         })?;
 
         log::debug!(
-            "[StreamProvider] Inserted event: table={} seq={} user={}",
-            format!(
-                "{}.{}",
-                table_id.namespace_id().as_str(),
-                table_id.table_name().as_str()
-            ),
+            "[StreamProvider] Inserted event: table={}.{} seq={} user={}",
+            table_id.namespace_id().as_str(),
+            table_id.table_name().as_str(),
             seq_id.as_i64(),
             user_id.as_str()
         );
@@ -303,15 +300,19 @@ impl BaseTableProvider<StreamTableRowId, StreamTableRow> for StreamTableProvider
         };
 
         // Perform KV scan (hot-only) and convert to batch
-        let kvs = self.scan_with_version_resolution_to_kvs(&user_id, filter, since_seq, limit)?;
+        let keep_deleted = false; // Stream tables don't support soft delete yet
+        let kvs = self.scan_with_version_resolution_to_kvs(
+            &user_id,
+            filter,
+            since_seq,
+            limit,
+            keep_deleted,
+        )?;
         let table_id = self.core.table_id();
         log::debug!(
-            "[StreamProvider] scan_rows: table={} rows={} user={} ttl={:?}",
-            format!(
-                "{}.{}",
-                table_id.namespace_id().as_str(),
-                table_id.table_name().as_str()
-            ),
+            "[StreamProvider] scan_rows: table={}.{} rows={} user={} ttl={:?}",
+            table_id.namespace_id().as_str(),
+            table_id.table_name().as_str(),
             kvs.len(),
             user_id.as_str(),
             self.ttl_seconds
@@ -335,6 +336,7 @@ impl BaseTableProvider<StreamTableRowId, StreamTableRow> for StreamTableProvider
         _filter: Option<&Expr>,
         since_seq: Option<kalamdb_commons::ids::SeqId>,
         limit: Option<usize>,
+        _keep_deleted: bool,
     ) -> Result<Vec<(StreamTableRowId, StreamTableRow)>, KalamDbError> {
         let table_id = self.core.table_id();
         // 1) Scan ONLY RocksDB (hot storage) with user_id prefix filter
@@ -386,12 +388,9 @@ impl BaseTableProvider<StreamTableRowId, StreamTableRow> for StreamTableProvider
                 ))
             })?;
         log::debug!(
-            "[StreamProvider] raw scan results: table={} user={} count={}",
-            format!(
-                "{}.{}",
-                table_id.namespace_id().as_str(),
-                table_id.table_name().as_str()
-            ),
+            "[StreamProvider] raw scan results: table={}.{} user={} count={}",
+            table_id.namespace_id().as_str(),
+            table_id.table_name().as_str(),
             user_id.as_str(),
             raw.len()
         );

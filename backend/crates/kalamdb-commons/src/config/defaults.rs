@@ -77,6 +77,22 @@ pub fn default_max_connections() -> usize {
     25000
 }
 
+pub fn default_backlog() -> u32 {
+    2048 // Pending connection queue size
+}
+
+pub fn default_worker_max_blocking_threads() -> usize {
+    512 // Max blocking threads per worker (actix default: 512 / parallelism)
+}
+
+pub fn default_client_request_timeout() -> u64 {
+    5 // 5 seconds to receive request headers
+}
+
+pub fn default_client_disconnect_timeout() -> u64 {
+    2 // 2 seconds for graceful disconnect
+}
+
 // DataFusion defaults
 pub fn default_datafusion_memory_limit() -> usize {
     1024 * 1024 * 1024 // 1GB
@@ -185,6 +201,27 @@ pub fn default_rate_limit_max_subscriptions() -> u32 {
     10 // 10 concurrent subscriptions per user
 }
 
+// Connection protection defaults (DoS prevention)
+pub fn default_max_connections_per_ip() -> u32 {
+    100 // Maximum 100 concurrent connections per IP address
+}
+
+pub fn default_max_requests_per_ip_per_sec() -> u32 {
+    200 // Maximum 200 requests per second per IP (before auth)
+}
+
+pub fn default_request_body_limit_bytes() -> usize {
+    10 * 1024 * 1024 // 10MB maximum request body size
+}
+
+pub fn default_ban_duration_seconds() -> u64 {
+    300 // 5 minutes ban for abusive IPs
+}
+
+pub fn default_enable_connection_protection() -> bool {
+    true // Enable connection protection by default
+}
+
 // Authentication defaults (T105 - Phase 7, User Story 5)
 pub fn default_auth_allow_remote_access() -> bool {
     false // System users localhost-only by default for security
@@ -246,4 +283,17 @@ pub fn default_rocksdb_block_cache_size() -> usize {
 
 pub fn default_rocksdb_max_background_jobs() -> i32 {
     4
+}
+
+// WebSocket defaults (Phase 14 - Live Queries)
+pub fn default_websocket_client_timeout() -> Option<u64> {
+    Some(10) // 10 seconds for client heartbeat timeout
+}
+
+pub fn default_websocket_auth_timeout() -> Option<u64> {
+    Some(3) // 3 seconds for authentication timeout
+}
+
+pub fn default_websocket_heartbeat_interval() -> Option<u64> {
+    Some(5) // 5 seconds between heartbeat checks
 }

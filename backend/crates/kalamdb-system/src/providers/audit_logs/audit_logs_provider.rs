@@ -15,7 +15,8 @@ use datafusion::logical_expr::Expr;
 use datafusion::physical_plan::ExecutionPlan;
 use kalamdb_commons::models::AuditLogId;
 use kalamdb_commons::system::AuditLogEntry;
-use kalamdb_store::entity_store::EntityStore;
+use kalamdb_commons::StorageKey;
+use kalamdb_store::entity_store::{EntityStore, EntityStoreAsync};
 use kalamdb_store::StorageBackend;
 use std::any::Any;
 use std::sync::Arc;
@@ -59,6 +60,17 @@ impl AuditLogsTableProvider {
         Ok(())
     }
 
+    /// Async version of `append()` - offloads to blocking thread pool.
+    ///
+    /// Use this in async contexts to avoid blocking the Tokio runtime.
+    pub async fn append_async(&self, entry: AuditLogEntry) -> Result<(), SystemError> {
+        self.store
+            .put_async(&entry.audit_id, &entry)
+            .await
+            .map_err(|e| SystemError::Other(format!("put_async error: {}", e)))?;
+        Ok(())
+    }
+
     /// Get an audit log entry by ID
     ///
     /// # Arguments
@@ -68,6 +80,19 @@ impl AuditLogsTableProvider {
     /// Option<AuditLogEntry> if found, None otherwise
     pub fn get_entry(&self, audit_id: &AuditLogId) -> Result<Option<AuditLogEntry>, SystemError> {
         Ok(self.store.get(audit_id)?)
+    }
+
+    /// Async version of `get_entry()` - offloads to blocking thread pool.
+    ///
+    /// Use this in async contexts to avoid blocking the Tokio runtime.
+    pub async fn get_entry_async(
+        &self,
+        audit_id: &AuditLogId,
+    ) -> Result<Option<AuditLogEntry>, SystemError> {
+        self.store
+            .get_async(audit_id)
+            .await
+            .map_err(|e| SystemError::Other(format!("get_async error: {}", e)))
     }
 
     /// Helper to create RecordBatch from entries
@@ -118,14 +143,24 @@ impl AuditLogsTableProvider {
 
     /// Scan all audit log entries and return as RecordBatch
     pub fn scan_all_entries(&self) -> Result<RecordBatch, SystemError> {
-        let entries = self.store.scan_all(None, None, None)?;
+        let iter = self.store.scan_iterator(None, None)?;
+        let mut entries: Vec<(Vec<u8>, AuditLogEntry)> = Vec::new();
+        for item in iter {
+            let (id, entry) = item?;
+            entries.push((id.storage_key(), entry));
+        }
         self.create_batch(entries)
     }
 
     /// Scan up to `limit` audit log entries and return as RecordBatch
     pub fn scan_entries_limited(&self, limit: usize) -> Result<RecordBatch, SystemError> {
-        use kalamdb_store::entity_store::EntityStore;
-        let entries = self.store.scan_all(Some(limit), None, None)?;
+        use kalamdb_store::entity_store::{EntityStore, ScanDirection};
+        let iter = self.store.scan_directional(None, ScanDirection::Newer, limit)?;
+        let mut entries: Vec<(Vec<u8>, AuditLogEntry)> = Vec::new();
+        for item in iter {
+            let (id, entry) = item?;
+            entries.push((id.storage_key(), entry));
+        }
         self.create_batch(entries)
     }
 
@@ -133,8 +168,25 @@ impl AuditLogsTableProvider {
     /// Useful for testing and internal usage where RecordBatch is not needed
     pub fn scan_all(&self) -> Result<Vec<AuditLogEntry>, SystemError> {
         use kalamdb_store::entity_store::EntityStore;
-        let entries = self.store.scan_all(None, None, None)?;
-        Ok(entries.into_iter().map(|(_, entry)| entry).collect())
+        let iter = self.store.scan_iterator(None, None)?;
+        let mut entries = Vec::new();
+        for item in iter {
+            let (_, entry) = item?;
+            entries.push(entry);
+        }
+        Ok(entries)
+    }
+
+    /// Async version of `scan_all()` - offloads to blocking thread pool.
+    ///
+    /// Use this in async contexts to avoid blocking the Tokio runtime.
+    pub async fn scan_all_async(&self) -> Result<Vec<AuditLogEntry>, SystemError> {
+        let results: Vec<(Vec<u8>, AuditLogEntry)> = self
+            .store
+            .scan_all_async(None, None, None)
+            .await
+            .map_err(|e| SystemError::Other(format!("scan_all_async error: {}", e)))?;
+        Ok(results.into_iter().map(|(_, entry)| entry).collect())
     }
 }
 

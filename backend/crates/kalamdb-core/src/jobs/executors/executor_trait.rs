@@ -255,6 +255,19 @@ pub trait JobExecutor: Send + Sync {
     /// Returns the executor name for logging
     fn name(&self) -> &'static str;
 
+    /// Optional pre-validation hook executed before a job is created
+    ///
+    /// Returns `Ok(true)` when the scheduler should enqueue the job,
+    /// `Ok(false)` to skip job creation (e.g., nothing to process), and
+    /// `Err` when validation fails.
+    async fn pre_validate(
+        &self,
+        _app_ctx: &Arc<AppContext>,
+        _params: &Self::Params,
+    ) -> Result<bool, KalamDbError> {
+        Ok(true)
+    }
+
     /// Executes the job with type-safe parameters
     ///
     /// Parameters are already deserialized and validated in JobContext.

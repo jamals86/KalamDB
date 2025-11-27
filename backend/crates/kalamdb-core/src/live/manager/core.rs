@@ -1,27 +1,31 @@
 //! Live query manager core implementation
+//!
+//! Orchestrates subscription lifecycle, initial data fetching, and notifications.
+//! Uses SharedConnectionState pattern for efficient state access.
 
 use crate::error::KalamDbError;
-use crate::live::connection_registry::{
-    ConnectionId, LiveId, LiveQueryOptions, LiveQueryRegistry, NodeId, NotificationSender,
-};
-use crate::live::filter::{FilterCache, FilterPredicate};
 use crate::live::initial_data::{InitialDataFetcher, InitialDataOptions, InitialDataResult};
 use crate::live::notification::NotificationService;
 use crate::live::query_parser::QueryParser;
+use crate::live::connections_manager::{ConnectionsManager, SharedConnectionState};
 use crate::live::subscription::SubscriptionService;
 use crate::live::types::{ChangeNotification, RegistryStats, SubscriptionResult};
 use crate::sql::executor::SqlExecutor;
 use datafusion::execution::context::SessionContext;
-use kalamdb_commons::models::{NamespaceId, TableId, TableName, UserId};
+use datafusion::sql::sqlparser::ast::Expr;
+use kalamdb_commons::ids::SeqId;
+use kalamdb_commons::models::{ConnectionId, LiveQueryId, TableId, UserId};
 use kalamdb_commons::system::LiveQuery as SystemLiveQuery;
+use kalamdb_commons::websocket::SubscriptionRequest;
+use kalamdb_commons::NodeId;
 use kalamdb_system::LiveQueriesTableProvider;
 use std::sync::Arc;
 
 /// Live query manager
 pub struct LiveQueryManager {
-    registry: Arc<tokio::sync::RwLock<LiveQueryRegistry>>,
+    /// Unified connections manager using DashMap for lock-free concurrent access
+    registry: Arc<ConnectionsManager>,
     live_queries_provider: Arc<LiveQueriesTableProvider>,
-    filter_cache: Arc<tokio::sync::RwLock<FilterCache>>,
     initial_data_fetcher: Arc<InitialDataFetcher>,
     schema_registry: Arc<crate::schema_registry::SchemaRegistry>,
     node_id: NodeId,
@@ -32,17 +36,17 @@ pub struct LiveQueryManager {
 }
 
 impl LiveQueryManager {
-    /// Create a new live query manager
+    /// Create a new live query manager with an external ConnectionsManager
+    ///
+    /// The ConnectionsManager is shared across all WebSocket handlers for
+    /// centralized connection/subscription management.
     pub fn new(
         live_queries_provider: Arc<LiveQueriesTableProvider>,
         schema_registry: Arc<crate::schema_registry::SchemaRegistry>,
-        node_id: NodeId,
+        registry: Arc<ConnectionsManager>,
         base_session_context: Arc<SessionContext>,
     ) -> Self {
-        let registry = Arc::new(tokio::sync::RwLock::new(LiveQueryRegistry::new(
-            node_id.clone(),
-        )));
-        let filter_cache = Arc::new(tokio::sync::RwLock::new(FilterCache::new()));
+        let node_id = registry.node_id().clone();
         let initial_data_fetcher = Arc::new(InitialDataFetcher::new(
             base_session_context,
             schema_registry.clone(),
@@ -50,22 +54,18 @@ impl LiveQueryManager {
 
         let subscription_service = Arc::new(SubscriptionService::new(
             registry.clone(),
-            filter_cache.clone(),
             live_queries_provider.clone(),
-            schema_registry.clone(),
             node_id.clone(),
         ));
 
         let notification_service = Arc::new(NotificationService::new(
             registry.clone(),
-            filter_cache.clone(),
             live_queries_provider.clone(),
         ));
 
         Self {
             registry,
             live_queries_provider,
-            filter_cache,
             initial_data_fetcher,
             schema_registry,
             node_id,
@@ -84,95 +84,130 @@ impl LiveQueryManager {
         self.initial_data_fetcher.set_sql_executor(executor);
     }
 
-    /// Register a new WebSocket connection
-    pub async fn register_connection(
-        &self,
-        user_id: UserId,
-        unique_conn_id: String,
-        notification_tx: Option<NotificationSender>,
-    ) -> Result<ConnectionId, KalamDbError> {
-        let connection_id = ConnectionId::new(user_id.as_str().to_string(), unique_conn_id);
-
-        let tx = if let Some(tx) = notification_tx {
-            tx
-        } else {
-            let (tx, _rx) = tokio::sync::mpsc::unbounded_channel();
-            tx
-        };
-        let registry = self.registry.read().await;
-        registry.register_connection(connection_id.clone(), tx);
-
-        Ok(connection_id)
-    }
-
     /// Register a live query subscription
+    ///
+    /// Parameters:
+    /// - connection_state: Shared reference to connection state
+    /// - request: Client subscription request
+    /// - table_id: Pre-validated table identifier
+    /// - filter_expr: Optional parsed WHERE clause
+    /// - projections: Optional column projections from SELECT
+    /// - batch_size: Batch size for initial data loading
     pub async fn register_subscription(
         &self,
-        connection_id: ConnectionId,
-        query_id: String,
-        query: String,
-        options: LiveQueryOptions,
-    ) -> Result<LiveId, KalamDbError> {
+        connection_state: &SharedConnectionState,
+        request: &SubscriptionRequest,
+        table_id: TableId,
+        filter_expr: Option<Expr>,
+        projections: Option<Vec<String>>,
+        batch_size: usize,
+    ) -> Result<LiveQueryId, KalamDbError> {
         self.subscription_service
-            .register_subscription(connection_id, query_id, query, options)
+            .register_subscription(connection_state, request, table_id, filter_expr, projections, batch_size)
             .await
     }
 
-    /// Register a live query subscription with optional initial data fetch
+    /// Register subscription and fetch initial data (simplified API)
+    ///
+    /// This method handles all SQL parsing internally:
+    /// - Extracts table name from SQL
+    /// - Validates table exists
+    /// - Checks user permissions
+    /// - Parses WHERE clause for filtering
+    /// - Extracts column projections
+    ///
+    /// The ws_handler only needs to validate subscription ID and rate limits.
     pub async fn register_subscription_with_initial_data(
         &self,
-        connection_id: ConnectionId,
-        query_id: String,
-        query: String,
-        options: LiveQueryOptions,
+        connection_state: &SharedConnectionState,
+        request: &SubscriptionRequest,
         initial_data_options: Option<InitialDataOptions>,
     ) -> Result<SubscriptionResult, KalamDbError> {
-        // First register the subscription
-        let live_id = self
-            .register_subscription(connection_id, query_id, query.clone(), options)
-            .await?;
+        // Get user_id from connection state
+        let user_id = connection_state.read().user_id()
+            .cloned()
+            .ok_or_else(|| KalamDbError::InvalidOperation("Connection not authenticated".to_string()))?;
+
+        // Parse table name from SQL
+        // TODO: Parse tableid/where/projection all at once using sqlparser instead of writing ad-hoc parsers
+        let raw_table = QueryParser::extract_table_name(&request.sql)?;
+        let (namespace, table) = raw_table
+            .split_once('.')
+            .ok_or_else(|| KalamDbError::InvalidSql("Query must use namespace.table format".to_string()))?;
+
+        let table_id = TableId::new(
+            kalamdb_commons::models::NamespaceId::from(namespace),
+            kalamdb_commons::models::TableName::from(table),
+        );
+
+        // Look up table definition
+        let table_def = self
+            .schema_registry
+            .get_table_definition(&table_id)?
+            .ok_or_else(|| KalamDbError::NotFound(format!("Table not found: {}.{}", namespace, table)))?;
+
+        // Permission check
+        let is_admin = user_id.is_admin();
+        match table_def.table_type {
+            kalamdb_commons::TableType::User if !is_admin && namespace != user_id.as_str() => {
+                return Err(KalamDbError::PermissionDenied("Insufficient privileges".to_string()));
+            }
+            kalamdb_commons::TableType::System if !is_admin => {
+                return Err(KalamDbError::PermissionDenied("Insufficient privileges for system table".to_string()));
+            }
+            kalamdb_commons::TableType::Shared => {
+                return Err(KalamDbError::InvalidOperation("Shared tables don't support subscriptions".to_string()));
+            }
+            _ => {}
+        }
+
+        // Determine batch size
+        let batch_size = request.options.batch_size.unwrap_or(kalamdb_commons::websocket::MAX_ROWS_PER_BATCH);
+
+        // Parse filter expression from WHERE clause (if present)
+        // TODO: Parse filter_expr from SQL using DataFusion
+        let filter_expr: Option<Expr> = None;
+
+        // Extract projections from SELECT clause (if not SELECT *)
+        // TODO: Parse projections from SQL using DataFusion
+        let projections: Option<Vec<String>> = None;
+
+        // Register the subscription
+        let live_id = self.register_subscription(
+            connection_state,
+            request,
+            table_id.clone(),
+            filter_expr,
+            projections,
+            batch_size,
+        ).await?;
 
         // Fetch initial data if requested
         let initial_data = if let Some(fetch_options) = initial_data_options {
-            // Extract table info for initial data fetch
-            let raw_table = QueryParser::extract_table_name(&query)?;
-            let (namespace, table) = raw_table.split_once('.').ok_or_else(|| {
-                KalamDbError::InvalidSql(format!(
-                    "Query must reference table as namespace.table: {}",
-                    raw_table
-                ))
-            })?;
+            // Extract WHERE clause from SQL for initial data fetch
+            let where_clause = QueryParser::extract_where_clause(&request.sql);
 
-            let namespace_id = NamespaceId::from(namespace);
-            let table_name = TableName::from(table);
-            let table_id = TableId::new(namespace_id.clone(), table_name.clone());
-            let table_def = self
-                .schema_registry
-                .get_table_definition(&table_id)?
-                .ok_or_else(|| {
-                    KalamDbError::NotFound(format!(
-                        "Table {}.{} not found for subscription",
-                        namespace, table
-                    ))
-                })?;
+            let result = self
+                .initial_data_fetcher
+                .fetch_initial_data(
+                    &live_id,
+                    &table_id,
+                    table_def.table_type,
+                    fetch_options,
+                    where_clause.as_deref(),
+                )
+                .await?;
 
-            let live_id_string = live_id.to_string();
-            let filter_predicate = {
-                let cache = self.filter_cache.read().await;
-                cache.get(&live_id_string)
-            };
+            // Update snapshot_end_seq in subscription state
+            if let Some(snapshot_seq) = result.snapshot_end_seq {
+                self.subscription_service.update_snapshot_end_seq(
+                    connection_state,
+                    &request.id,
+                    snapshot_seq,
+                );
+            }
 
-            Some(
-                self.initial_data_fetcher
-                    .fetch_initial_data(
-                        &live_id,
-                        &table_id,
-                        table_def.table_type,
-                        fetch_options,
-                        filter_predicate,
-                    )
-                    .await?,
-            )
+            Some(result)
         } else {
             None
         };
@@ -184,61 +219,53 @@ impl LiveQueryManager {
     }
 
     /// Fetch a batch of initial data for an existing subscription
+    ///
+    /// Uses subscription metadata from ConnectionState for batch fetching.
     pub async fn fetch_initial_data_batch(
         &self,
-        sql: &str,
-        user_id: &UserId,
-        initial_data_options: Option<InitialDataOptions>,
+        connection_state: &SharedConnectionState,
+        subscription_id: &str,
+        since_seq: Option<SeqId>,
     ) -> Result<InitialDataResult, KalamDbError> {
-        let fetch_options = initial_data_options.ok_or_else(|| {
-            KalamDbError::InvalidOperation("Batch options are required".to_string())
-        })?;
-
-        // Extract table info from SQL
-        let raw_table = QueryParser::extract_table_name(sql)?;
-        let (namespace, table) = raw_table.split_once('.').ok_or_else(|| {
-            KalamDbError::InvalidSql(format!(
-                "Query must reference table as namespace.table: {}",
-                raw_table
-            ))
-        })?;
-
-        let namespace_id = NamespaceId::from(namespace);
-        let table_name = TableName::from(table);
-        let table_id = TableId::new(namespace_id.clone(), table_name.clone());
+        // Get subscription state from connection
+        let sub_state = {
+            let state = connection_state.read();
+            state
+                .subscriptions
+                .get(subscription_id)
+                .map(|s| s.clone())
+                .ok_or_else(|| {
+                    KalamDbError::NotFound(format!("Subscription not found: {}", subscription_id))
+                })?
+        };
 
         let table_def = self
             .schema_registry
-            .get_table_definition(&table_id)?
+            .get_table_definition(&sub_state.table_id)?
             .ok_or_else(|| {
                 KalamDbError::NotFound(format!(
-                    "Table {}.{} not found for batch fetch",
-                    namespace, table
+                    "Table {} not found for batch fetch",
+                    sub_state.table_id
                 ))
             })?;
 
-        // Create a temporary LiveId for fetching (not actually used by fetcher for filtering)
-        let temp_conn_id = ConnectionId::new(
-            user_id.as_str().to_string(),
-            format!("batch-{}", uuid::Uuid::new_v4()),
-        );
-        let temp_live_id = LiveId::new(
-            temp_conn_id,
-            table_id.clone(),
-            format!("batch-query-{}", uuid::Uuid::new_v4()),
-        );
+        // Extract WHERE clause from stored SQL
+        let where_clause = QueryParser::extract_where_clause(&sub_state.sql);
 
-        // Extract filter predicate from SQL WHERE clause if present
-        // For now, we pass None as filter (TODO: parse WHERE clause into FilterPredicate)
-        let filter_predicate: Option<Arc<FilterPredicate>> = None;
+        // Create batch options with metadata from subscription state
+        let fetch_options = InitialDataOptions::batch(
+            since_seq,
+            sub_state.snapshot_end_seq,
+            sub_state.batch_size,
+        );
 
         self.initial_data_fetcher
             .fetch_initial_data(
-                &temp_live_id,
-                &table_id,
+                &sub_state.live_id,
+                &sub_state.table_id,
                 table_def.table_type,
                 fetch_options,
-                filter_predicate,
+                where_clause.as_deref(),
             )
             .await
     }
@@ -253,21 +280,51 @@ impl LiveQueryManager {
         &self,
         user_id: &UserId,
         connection_id: &ConnectionId,
-    ) -> Result<Vec<LiveId>, KalamDbError> {
+    ) -> Result<Vec<LiveQueryId>, KalamDbError> {
         self.subscription_service
             .unregister_connection(user_id, connection_id)
             .await
     }
 
-    /// Unregister a single live query subscription
-    pub async fn unregister_subscription(&self, live_id: &LiveId) -> Result<(), KalamDbError> {
+    /// Unregister a single live query subscription using SharedConnectionState
+    pub async fn unregister_subscription(
+        &self,
+        connection_state: &SharedConnectionState,
+        subscription_id: &str,
+        live_id: &LiveQueryId,
+    ) -> Result<(), KalamDbError> {
         self.subscription_service
-            .unregister_subscription(live_id)
+            .unregister_subscription(connection_state, subscription_id, live_id)
+            .await
+    }
+
+    /// Unregister a live query subscription by LiveQueryId
+    ///
+    /// This is a convenience method that looks up the connection state
+    /// from the LiveQueryId. Used by KILL LIVE QUERY command.
+    pub async fn unregister_subscription_by_id(
+        &self,
+        live_id: &LiveQueryId,
+    ) -> Result<(), KalamDbError> {
+        // Get connection from registry
+        let connection_state = self.registry.get_connection(&live_id.connection_id)
+            .ok_or_else(|| {
+                KalamDbError::NotFound(format!(
+                    "Connection not found for live query: {}",
+                    live_id
+                ))
+            })?;
+
+        // Extract subscription_id from live_id
+        let subscription_id = live_id.subscription_id();
+
+        self.subscription_service
+            .unregister_subscription(&connection_state, subscription_id, live_id)
             .await
     }
 
     /// Increment the changes counter for a live query
-    pub async fn increment_changes(&self, live_id: &LiveId) -> Result<(), KalamDbError> {
+    pub async fn increment_changes(&self, live_id: &LiveQueryId) -> Result<(), KalamDbError> {
         self.notification_service.increment_changes(live_id).await
     }
 
@@ -277,7 +334,8 @@ impl LiveQueryManager {
         user_id: &UserId,
     ) -> Result<Vec<SystemLiveQuery>, KalamDbError> {
         self.live_queries_provider
-            .get_by_user_id(user_id)
+            .get_by_user_id_async(user_id)
+            .await
             .map_err(|e| KalamDbError::Other(format!("Failed to get user subscriptions: {}", e)))
     }
 
@@ -287,29 +345,23 @@ impl LiveQueryManager {
         live_id: &str,
     ) -> Result<Option<SystemLiveQuery>, KalamDbError> {
         self.live_queries_provider
-            .get_live_query(live_id)
+            .get_live_query_async(live_id)
+            .await
             .map_err(|e| KalamDbError::Other(format!("Failed to get live query: {}", e)))
     }
 
     /// Get registry statistics
     pub async fn get_stats(&self) -> RegistryStats {
-        let registry = self.registry.read().await;
         RegistryStats {
-            total_connections: registry.total_connections(),
-            total_subscriptions: registry.total_subscriptions(),
+            total_connections: self.registry.connection_count(),
+            total_subscriptions: self.registry.subscription_count(),
             node_id: self.node_id.as_str().to_string(),
         }
     }
 
-    /// Get the registry (for advanced use cases)
-    pub fn registry(&self) -> Arc<tokio::sync::RwLock<LiveQueryRegistry>> {
+    /// Get the connections manager
+    pub fn registry(&self) -> Arc<ConnectionsManager> {
         Arc::clone(&self.registry)
-    }
-
-    /// Get the filter cache (for testing)
-    #[cfg(test)]
-    pub fn filter_cache(&self) -> Arc<tokio::sync::RwLock<FilterCache>> {
-        Arc::clone(&self.filter_cache)
     }
 
     /// Notify subscribers about a table change (fire-and-forget async)
@@ -333,5 +385,40 @@ impl LiveQueryManager {
         self.notification_service
             .notify_table_change(user_id, table_id, change_notification)
             .await
+    }
+
+    /// Handle auth expiry for a connection
+    pub async fn handle_auth_expiry(&self, connection_id: &ConnectionId) -> Result<(), KalamDbError> {
+        let connection_state = self.registry.get_connection(connection_id).ok_or_else(|| {
+            KalamDbError::NotFound(format!("Connection not found: {}", connection_id))
+        })?;
+        
+        let user_id = {
+            let state = connection_state.read();
+            state.user_id.clone().ok_or_else(|| {
+                KalamDbError::NotFound(format!("User not found for connection: {}", connection_id))
+            })?
+        };
+        
+        let removed_ids = self.unregister_connection(&user_id, connection_id).await?;
+        
+        for live_id in removed_ids {
+            let _ = self.live_queries_provider.delete_live_query_async(&live_id).await;
+        }
+        
+        Ok(())
+    }
+
+    // ==================== Backward Compatibility ====================
+    // These methods support older interfaces that use connection_id instead of SharedConnectionState
+
+    /// Get the total number of connections
+    pub fn total_connections(&self) -> usize {
+        self.registry.connection_count()
+    }
+
+    /// Get the total number of subscriptions
+    pub fn total_subscriptions(&self) -> usize {
+        self.registry.subscription_count()
     }
 }

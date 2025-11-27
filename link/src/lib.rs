@@ -92,10 +92,12 @@
 //! ```
 
 pub mod error;
+pub mod live;
 pub mod models;
 #[cfg(feature = "tokio-runtime")]
 mod normalize;
 pub mod seq_id;
+pub mod timeouts;
 
 // Credential storage (available in both native and WASM)
 pub mod credentials;
@@ -122,15 +124,18 @@ pub use client::KalamLinkClient;
 
 pub use credentials::{CredentialStore, Credentials, MemoryCredentialStore};
 pub use error::{KalamLinkError, Result};
+pub use live::LiveConnection;
 pub use models::{
-    ChangeEvent, ErrorDetail, HealthCheckResponse, QueryRequest, QueryResponse, SubscriptionOptions,
+    ChangeEvent, ErrorDetail, HealthCheckResponse, QueryRequest, QueryResponse, SubscriptionConfig,
+    SubscriptionOptions,
 };
 pub use seq_id::SeqId;
+pub use timeouts::{KalamLinkTimeouts, KalamLinkTimeoutsBuilder};
 
 #[cfg(feature = "tokio-runtime")]
 pub use query::QueryExecutor;
 #[cfg(feature = "tokio-runtime")]
-pub use subscription::{SubscriptionConfig, SubscriptionManager};
+pub use subscription::SubscriptionManager;
 
 /// Library version
 pub const VERSION: &str = env!("CARGO_PKG_VERSION");

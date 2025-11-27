@@ -1,226 +1,355 @@
 //! WebSocket handler for live query subscriptions
 //!
 //! This module provides the HTTP endpoint for establishing WebSocket connections
-//! and managing live query subscriptions.
+//! and managing live query subscriptions using actix-ws (non-actor based).
+//!
+//! Connection lifecycle and heartbeat management is handled by the shared
+//! ConnectionsManager from kalamdb-core.
+//!
+//! Architecture:
+//! - Connection created in ConnectionsManager on WebSocket open
+//! - Subscriptions stored in ConnectionState.subscriptions
+//! - No local tracking needed - everything is in ConnectionState
 
 use actix_web::{get, web, Error, HttpRequest, HttpResponse};
-use actix_web_actors::ws;
-use kalamdb_commons::models::UserId;
-use kalamdb_core::sql::executor::helpers::audit;
-use log::{error, info};
+use actix_ws::{CloseCode, CloseReason, Message, Session};
+use futures_util::StreamExt;
+use kalamdb_auth::UserRepository;
+use kalamdb_commons::models::ConnectionInfo;
+use kalamdb_commons::websocket::ClientMessage;
+use kalamdb_commons::WebSocketMessage;
+use kalamdb_core::app_context::AppContext;
+use kalamdb_core::jobs::health_monitor::{
+    decrement_websocket_sessions, increment_websocket_sessions,
+};
+use kalamdb_core::live::{
+    ConnectionEvent, ConnectionId, ConnectionsManager, SharedConnectionState,
+};
+use log::{debug, error, info, warn};
 use std::sync::Arc;
-use uuid::Uuid;
 
-use crate::actors::WebSocketSession;
+use super::events::{
+    auth::handle_authenticate,
+    batch::handle_next_batch,
+    cleanup::cleanup_connection,
+    send_error,
+    subscription::handle_subscribe,
+    unsubscribe::handle_unsubscribe,
+};
 use crate::rate_limiter::RateLimiter;
-use kalamdb_auth::{extract_auth_with_repo, UserRepository};
-use kalamdb_core::live_query::LiveQueryManager;
 
-/// GET /v1/ws - Establish WebSocket connection (T063AAA)
+/// GET /v1/ws - Establish WebSocket connection
 ///
-/// This endpoint upgrades an HTTP request to a WebSocket connection.
-/// Clients can then send subscription requests to receive real-time updates.
-///
-/// # Authentication
-///
-/// Requires HTTP Basic Auth or JWT Bearer token in Authorization header.
-/// Authentication is handled by the centralized `extract_auth` function from kalamdb-auth.
-///
-/// # WebSocket Protocol
-///
-/// ## Client → Server (Subscription Request)
-/// ```json
-/// {
-///   "subscriptions": [
-///     {
-///       "id": "sub-1",
-///       "sql": "SELECT * FROM messages WHERE user_id = CURRENT_USER()",
-///       "options": {"last_rows": 10}
-///     }
-///   ]
-/// }
-/// ```
-///
-/// ## Server → Client (Initial Data)
-/// ```json
-/// {
-///   "type": "initial_data",
-///   "subscription_id": "sub-1",
-///   "rows": [...]
-/// }
-/// ```
-///
-/// ## Server → Client (Change Notification)
-/// ```json
-/// {
-///   "type": "change",
-///   "subscription_id": "sub-1",
-///   "change_type": "insert",
-///   "rows": [...]
-/// }
-/// ```
+/// Accepts unauthenticated WebSocket connections.
+/// Authentication happens via post-connection Authenticate message (3-second timeout enforced).
+/// Uses ConnectionsManager for consolidated connection state management.
 #[get("/ws")]
-pub async fn websocket_handler_v1(
+pub async fn websocket_handler(
     req: HttpRequest,
     stream: web::Payload,
-    _query: web::Query<std::collections::HashMap<String, String>>,
-    app_context: web::Data<Arc<kalamdb_core::app_context::AppContext>>,
+    app_context: web::Data<Arc<AppContext>>,
     rate_limiter: web::Data<Arc<RateLimiter>>,
-    live_query_manager: web::Data<Arc<LiveQueryManager>>,
+    live_query_manager: web::Data<Arc<kalamdb_core::live::LiveQueryManager>>,
     user_repo: web::Data<Arc<dyn UserRepository>>,
+    connection_registry: web::Data<Arc<ConnectionsManager>>,
 ) -> Result<HttpResponse, Error> {
+    // Check if server is shutting down
+    if connection_registry.is_shutting_down() {
+        return Ok(HttpResponse::ServiceUnavailable().body("Server is shutting down"));
+    }
+
     // Generate unique connection ID
-    let connection_id = Uuid::new_v4().to_string();
+    let connection_id = ConnectionId::new(uuid::Uuid::new_v4().simple().to_string());
 
-    info!("New WebSocket connection request: {}", connection_id);
+    // Extract client IP with security checks against spoofing
+    let client_ip = kalamdb_auth::extract_client_ip_secure(&req);
 
-    let resolved_ip = req
-        .headers()
-        .get("X-Forwarded-For")
-        .and_then(|h| h.to_str().ok())
-        .and_then(|raw| raw.split(',').next().map(|s| s.trim().to_string()))
-        .filter(|s| !s.is_empty())
-        .or_else(|| {
-            req.connection_info()
-                .realip_remote_addr()
-                .map(|s| s.to_string())
-        });
+    info!(
+        "New WebSocket connection: {} (auth required within 3s)",
+        connection_id
+    );
 
-    // Authenticate using centralized extract_auth function (repo-based)
-    let auth_result = match extract_auth_with_repo(&req, user_repo.get_ref()).await {
-        Ok(auth) => {
-            info!(
-                "WebSocket connection authenticated: connection_id={}, user_id={}, username={}",
-                connection_id,
-                auth.user_id.as_str(),
-                auth.username
-            );
-
-            // Log successful login if using Basic Auth
-            if let Some(auth_val) = req.headers().get("Authorization") {
-                if let Ok(h) = auth_val.to_str() {
-                    if h.starts_with("Basic ") {
-                        let entry = audit::log_auth_event(
-                            &auth.user_id,
-                            "LOGIN_WS",
-                            true,
-                            resolved_ip.clone(),
-                        );
-                        if let Err(e) =
-                            audit::persist_audit_entry(app_context.get_ref(), &entry).await
-                        {
-                            error!("Failed to persist audit log: {}", e);
-                        }
-                    }
-                }
-            }
-
-            auth
-        }
-        Err(e) => {
-            error!(
-                "WebSocket connection rejected: connection_id={}, error={}",
-                connection_id, e
-            );
-
-            // Log failed login if using Basic Auth
-            if let Some(auth_val) = req.headers().get("Authorization") {
-                if let Ok(h) = auth_val.to_str() {
-                    if h.starts_with("Basic ") {
-                        // Try to extract username to log who failed
-                        let username = if let Ok((u, _)) =
-                            kalamdb_auth::basic_auth::parse_basic_auth_header(h)
-                        {
-                            u
-                        } else {
-                            "unknown".to_string()
-                        };
-
-                        let entry = audit::log_auth_event(
-                            &UserId::new(username),
-                            "LOGIN_WS",
-                            false,
-                            resolved_ip.clone(),
-                        );
-                        if let Err(e) =
-                            audit::persist_audit_entry(app_context.get_ref(), &entry).await
-                        {
-                            error!("Failed to persist audit log: {}", e);
-                        }
-                    }
-                }
-            }
-
-            return Ok(HttpResponse::Unauthorized().json(serde_json::json!({
-                "error": "AUTHENTICATION_FAILED",
-                "message": format!("{}", e)
-            })));
+    // Register connection with unified registry (handles heartbeat tracking)
+    let registration = match connection_registry.register_connection(
+        connection_id.clone(),
+        client_ip.clone(),
+    ) {
+        Some(reg) => reg,
+        None => {
+            warn!("Rejecting WebSocket during shutdown: {}", connection_id);
+            return Ok(HttpResponse::ServiceUnavailable().body("Server shutting down"));
         }
     };
 
-    // Create WebSocket session actor with authenticated user_id and rate limiter
-    let session = WebSocketSession::new(
-        connection_id,
-        Some(auth_result.user_id),
-        Some(rate_limiter.get_ref().clone()),
-        live_query_manager.get_ref().clone(),
-    );
+    // Upgrade to WebSocket using actix-ws
+    let (response, session, msg_stream) = actix_ws::handle(&req, stream)?;
 
-    // Start WebSocket handshake
-    ws::start(session, &req, stream)
+    // Clone references for the async task
+    let registry = connection_registry.get_ref().clone();
+    let app_ctx = app_context.get_ref().clone();
+    let limiter = rate_limiter.get_ref().clone();
+    let lq_manager = live_query_manager.get_ref().clone();
+    let user_repository = user_repo.get_ref().clone();
+
+    // Spawn WebSocket handling task
+    actix_web::rt::spawn(async move {
+        increment_websocket_sessions();
+
+        handle_websocket(
+            client_ip,
+            session,
+            msg_stream,
+            registration,
+            registry,
+            app_ctx,
+            limiter,
+            lq_manager,
+            user_repository,
+        )
+        .await;
+
+        decrement_websocket_sessions();
+    });
+
+    Ok(response)
 }
 
-// #[cfg(test)]
-// mod tests {
-//     use super::*;
-//     use crate::rate_limiter::RateLimiter;
-//     use actix_web::{test, App};
-//     use kalamdb_core::live_query::{LiveQueryManager, NodeId};
-//     use kalamdb_store::RocksDbInit;
-//     use std::sync::Arc;
-//     use tempfile::TempDir;
+/// Main WebSocket handling loop
+///
+/// All subscription state is stored in ConnectionState.subscriptions.
+/// No local tracking needed - cleanup is handled by ConnectionsManager.
+async fn handle_websocket(
+    client_ip: ConnectionInfo,
+    mut session: Session,
+    mut msg_stream: actix_ws::MessageStream,
+    registration: kalamdb_core::live::ConnectionRegistration,
+    registry: Arc<ConnectionsManager>,
+    app_context: Arc<AppContext>,
+    rate_limiter: Arc<RateLimiter>,
+    live_query_manager: Arc<kalamdb_core::live::LiveQueryManager>,
+    user_repo: Arc<dyn UserRepository>,
+) {
+    let mut event_rx = registration.event_rx;
+    let mut notification_rx = registration.notification_rx;
+    let connection_state = registration.state;
 
-//     #[actix_rt::test]
-//     async fn test_websocket_endpoint() {
-//         let rate_limiter = Arc::new(RateLimiter::new());
+    loop {
+        // Get connection_id for logging (read once per loop iteration)
+        let connection_id = connection_state.read().connection_id().clone();
 
-//         let temp_dir = TempDir::new().expect("temp dir");
-//         let db_path = temp_dir.path().to_str().unwrap().to_string();
-//         let db_init = RocksDbInit::new(&db_path);
-//         let db = db_init.open().expect("open RocksDB");
-//         let backend: Arc<dyn kalamdb_store::StorageBackend> =
-//             Arc::new(kalamdb_store::RocksDBBackend::new(db.clone()));
-//         // Build provider-backed user repository
-//         let users_provider = kalamdb_core::tables::system::UsersTableProvider::new(backend);
-//         let user_repo: Arc<dyn kalamdb_auth::UserRepository> =
-//             Arc::new(kalamdb_auth::ProviderUserRepo::new(Arc::new(users_provider)));
-//         let live_query_manager = Arc::new(LiveQueryManager::new(
-//             kalam_sql,
-//             NodeId::new("test-node".to_string()),
-//             None,
-//             None,
-//             None,
-//         ));
+        tokio::select! {
+            biased;
 
-//         let app = test::init_service(
-//             App::new()
-//         .app_data(web::Data::new(user_repo))
-//                 .app_data(web::Data::new(rate_limiter))
-//                 .app_data(web::Data::new(live_query_manager))
-//                 .service(websocket_handler_v1),
-//         )
-//         .await;
+            // Handle control events from registry (highest priority)
+            event = event_rx.recv() => {
+                match event {
+                    Some(ConnectionEvent::SendPing) => {
+                        if session.ping(b"").await.is_err() {
+                            break;
+                        }
+                    }
+                    Some(ConnectionEvent::AuthTimeout) => {
+                        error!("WebSocket auth timeout: {}", connection_id);
+                        let msg = WebSocketMessage::AuthError {
+                            message: "Authentication timeout - no auth message received within 3 seconds".to_string(),
+                        };
+                        let _ = super::events::send_json(&mut session, &msg).await;
+                        let _ = session.close(Some(CloseReason {
+                            code: CloseCode::Policy,
+                            description: Some("Authentication timeout".into()),
+                        })).await;
+                        break;
+                    }
+                    Some(ConnectionEvent::HeartbeatTimeout) => {
+                        warn!("WebSocket heartbeat timeout: {}", connection_id);
+                        let _ = session.close(Some(CloseReason {
+                            code: CloseCode::Normal,
+                            description: Some("Heartbeat timeout".into()),
+                        })).await;
+                        break;
+                    }
+                    Some(ConnectionEvent::Shutdown) => {
+                        info!("WebSocket shutdown requested: {}", connection_id);
+                        let _ = session.close(Some(CloseReason {
+                            code: CloseCode::Away,
+                            description: Some("Server shutting down".into()),
+                        })).await;
+                        break;
+                    }
+                    None => {
+                        // Channel closed
+                        break;
+                    }
+                }
+            }
 
-//         // Test without Authorization header - should return 401
-//         let req = test::TestRequest::get()
-//             .uri("/ws")
-//             .insert_header(("upgrade", "websocket"))
-//             .insert_header(("connection", "upgrade"))
-//             .insert_header(("sec-websocket-version", "13"))
-//             .insert_header(("sec-websocket-key", "dGhlIHNhbXBsZSBub25jZQ=="))
-//             .to_request();
+            // Handle incoming WebSocket messages
+            msg = msg_stream.next() => {
+                match msg {
+                    Some(Ok(Message::Ping(bytes))) => {
+                        connection_state.write().update_heartbeat();
+                        if session.pong(&bytes).await.is_err() {
+                            break;
+                        }
+                    }
+                    Some(Ok(Message::Pong(_))) => {
+                        connection_state.write().update_heartbeat();
+                    }
+                    Some(Ok(Message::Text(text))) => {
+                        connection_state.write().update_heartbeat();
 
-//         let resp = test::call_service(&app, req).await;
-//         assert_eq!(resp.status(), 401); // Unauthorized without authentication
-//     }
-// }
+                        // Rate limit check
+                        if !rate_limiter.check_message_rate(&connection_id) {
+                            warn!("Message rate limit exceeded: {}", connection_id);
+                            let _ = send_error(&mut session, "rate_limit", "RATE_LIMIT_EXCEEDED", "Too many messages").await;
+                            continue;
+                        }
+
+                        if let Err(e) = handle_text_message(
+                            &connection_state,
+                            &client_ip,
+                            &text,
+                            &mut session,
+                            &registry,
+                            &app_context,
+                            &rate_limiter,
+                            &live_query_manager,
+                            &user_repo,
+                        ).await {
+                            error!("Error handling message: {}", e);
+                            let _ = session.close(Some(CloseReason {
+                                code: CloseCode::Error,
+                                description: Some(e),
+                            })).await;
+                            break;
+                        }
+                    }
+                    Some(Ok(Message::Binary(_))) => {
+                        warn!("Binary messages not supported: {}", connection_id);
+                        let _ = send_error(&mut session, "protocol", "UNSUPPORTED_DATA", "Binary not supported").await;
+                    }
+                    Some(Ok(Message::Close(reason))) => {
+                        info!("Client requested close: {:?}", reason);
+                        let _ = session.close(reason).await;
+                        break;
+                    }
+                    Some(Ok(_)) => {
+                        // Continuation, Nop - ignore
+                    }
+                    Some(Err(e)) => {
+                        error!("WebSocket error: {}", e);
+                        break;
+                    }
+                    None => {
+                        // Stream ended
+                        debug!("WebSocket stream ended: {}", connection_id);
+                        break;
+                    }
+                }
+            }
+
+            // Handle notifications from live query manager
+            notification = notification_rx.recv() => {
+                match notification {
+                    Some((_live_id, notif)) => {
+                        if let Ok(json) = serde_json::to_string(&notif) {
+                            if session.text(json).await.is_err() {
+                                break;
+                            }
+                        }
+                    }
+                    None => {
+                        // Channel closed
+                        break;
+                    }
+                }
+            }
+        }
+    }
+
+    // Cleanup - ConnectionsManager handles subscription cleanup automatically
+    cleanup_connection(&connection_state, &registry, &rate_limiter, &live_query_manager).await;
+}
+
+/// Handle text message from client
+///
+/// Uses connection_id from SharedConnectionState, no separate parameter needed.
+async fn handle_text_message(
+    connection_state: &SharedConnectionState,
+    client_ip: &ConnectionInfo,
+    text: &str,
+    session: &mut Session,
+    registry: &Arc<ConnectionsManager>,
+    app_context: &Arc<AppContext>,
+    rate_limiter: &Arc<RateLimiter>,
+    live_query_manager: &Arc<kalamdb_core::live::LiveQueryManager>,
+    user_repo: &Arc<dyn UserRepository>,
+) -> Result<(), String> {
+    let msg: ClientMessage =
+        serde_json::from_str(text).map_err(|e| format!("Invalid message: {}", e))?;
+
+    match msg {
+        ClientMessage::Authenticate { username, password } => {
+            connection_state.write().mark_auth_started();
+            handle_authenticate(
+                connection_state,
+                client_ip,
+                &username,
+                &password,
+                session,
+                registry,
+                app_context,
+                user_repo,
+            )
+            .await
+        }
+        ClientMessage::Subscribe { subscription } => {
+            if !connection_state.read().is_authenticated() {
+                let _ = send_error(
+                    session,
+                    "subscribe",
+                    "AUTH_REQUIRED",
+                    "Authentication required before subscribing",
+                )
+                .await;
+                return Ok(());
+            }
+            handle_subscribe(
+                connection_state,
+                subscription,
+                session,
+                rate_limiter,
+                live_query_manager,
+            )
+            .await
+        }
+        ClientMessage::NextBatch {
+            subscription_id,
+            last_seq_id,
+        } => {
+            if !connection_state.read().is_authenticated() {
+                return Ok(());
+            }
+            handle_next_batch(
+                connection_state,
+                &subscription_id,
+                last_seq_id,
+                session,
+                live_query_manager,
+            )
+            .await
+        }
+        ClientMessage::Unsubscribe { subscription_id } => {
+            if !connection_state.read().is_authenticated() {
+                return Ok(());
+            }
+            handle_unsubscribe(
+                connection_state,
+                &subscription_id,
+                rate_limiter,
+                live_query_manager,
+            )
+            .await
+        }
+    }
+}

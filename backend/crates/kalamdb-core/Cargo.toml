@@ -27,10 +27,12 @@ sqlparser = { workspace = true }
 
 # Concurrent data structures
 dashmap = { workspace = true }
+parking_lot = { workspace = true }
 
 # Async
 async-trait = { workspace = true }
 tokio = { workspace = true, features = ["sync", "time", "rt"] }
+tokio-util = { workspace = true }
 
 # Serialization
 serde = { workspace = true }
@@ -79,6 +81,10 @@ tempfile = { workspace = true }
 tokio = { workspace = true, features = ["test-util"] }
 rocksdb = { workspace = true }  # Only for TestDb in tests
 parquet = { workspace = true }
+
+[features]
+# Feature to run expensive/slow tests (disabled by default)
+expensive_tests = []
 
 [lib]
 doctest = false

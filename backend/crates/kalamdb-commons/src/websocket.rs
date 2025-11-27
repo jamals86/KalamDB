@@ -97,7 +97,15 @@
 //! ```
 
 use crate::ids::SeqId;
+
+// Full Row type for server (with datafusion support)
+#[cfg(feature = "full")]
 use crate::models::Row;
+
+// Simple Row type for WASM (JSON only)
+#[cfg(feature = "wasm")]
+pub type Row = serde_json::Map<String, serde_json::Value>;
+
 use serde::{Deserialize, Serialize};
 
 /// Batch size in bytes (8KB) for chunking large initial data payloads
@@ -110,6 +118,25 @@ pub const MAX_ROWS_PER_BATCH: usize = 1000;
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum WebSocketMessage {
+    /// Authentication successful response
+    ///
+    /// Sent after client sends Authenticate message with valid credentials.
+    /// Client can now send Subscribe/Unsubscribe messages.
+    AuthSuccess {
+        /// Authenticated user ID
+        user_id: String,
+        /// User role
+        role: String,
+    },
+
+    /// Authentication failed response
+    ///
+    /// Sent when authentication fails. Connection will be closed immediately.
+    AuthError {
+        /// Error message describing why authentication failed
+        message: String,
+    },
+
     /// Acknowledgement of successful subscription registration
     ///
     /// Sent immediately after client subscribes, includes total row count
@@ -148,13 +175,26 @@ pub enum WebSocketMessage {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum ClientMessage {
+    /// Authenticate WebSocket connection
+    ///
+    /// Client sends this immediately after establishing WebSocket connection.
+    /// Server must receive this within 3 seconds or connection will be closed.
+    /// Server responds with AuthSuccess or AuthError.
+    Authenticate {
+        //TODO: Add also jwt option
+        /// Username for authentication
+        username: String,
+        /// Password for authentication (sent over encrypted WebSocket in production)
+        password: String,
+    },
+
     /// Subscribe to live query updates
     ///
-    /// Client sends this to register one or more subscriptions.
+    /// Client sends this to register a single subscription.
     /// Server responds with SubscriptionAck followed by InitialDataBatch.
     Subscribe {
-        /// List of subscriptions to register
-        subscriptions: Vec<SubscriptionRequest>,
+        /// Subscription to register
+        subscription: SubscriptionRequest,
     },
 
     /// Request next batch of initial data
@@ -178,6 +218,10 @@ pub enum ClientMessage {
 }
 
 /// Subscription request details
+///
+/// This is a client-only struct representing the subscription request.
+/// Server-side metadata (table_id, filter_expr, projections, etc.) is stored
+/// in SubscriptionState within ConnectionState.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SubscriptionRequest {
     /// Unique subscription identifier (client-generated)
@@ -192,10 +236,6 @@ pub struct SubscriptionRequest {
 /// Options for live query subscriptions
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct SubscriptionOptions {
-    /// Reserved for future use (filtering, sorting, etc.)
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub _reserved: Option<String>,
-
     /// Optional: Configure batch size for initial data streaming
     #[serde(skip_serializing_if = "Option::is_none")]
     pub batch_size: Option<usize>,
@@ -389,9 +429,9 @@ impl WebSocketMessage {
 }
 
 impl ClientMessage {
-    /// Create a subscribe message
-    pub fn subscribe(subscriptions: Vec<SubscriptionRequest>) -> Self {
-        Self::Subscribe { subscriptions }
+    /// Create a subscribe message for a single subscription
+    pub fn subscribe(subscription: SubscriptionRequest) -> Self {
+        Self::Subscribe { subscription }
     }
 
     /// Create a next batch request message
@@ -528,11 +568,11 @@ mod tests {
     fn test_client_message_serialization() {
         use crate::websocket::{ClientMessage, SubscriptionOptions, SubscriptionRequest};
 
-        let msg = ClientMessage::subscribe(vec![SubscriptionRequest {
+        let msg = ClientMessage::subscribe(SubscriptionRequest {
             id: "sub-1".to_string(),
             sql: "SELECT * FROM messages".to_string(),
             options: SubscriptionOptions::default(),
-        }]);
+        });
 
         let json = serde_json::to_string(&msg).unwrap();
         assert!(json.contains("\"type\":\"subscribe\""));

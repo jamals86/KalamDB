@@ -1,17 +1,13 @@
 // Smoke Test 1 (revised): User table with subscription lifecycle
 // Covers: namespace creation, user table creation, inserts, subscription receiving events, flush job visibility
+// Uses kalam-link client directly instead of CLI to avoid macOS TCP subprocess limits
 
 use crate::common::*;
 
+#[ntest::timeout(180000)]
 #[test]
 fn smoke_user_table_subscription_lifecycle() {
-    if !is_server_running() {
-        println!(
-            "Skipping smoke_user_table_subscription_lifecycle: server not running at {}",
-            SERVER_URL
-        );
-        return;
-    }
+    require_server_running();
 
     // Unique per run
     let namespace = generate_unique_namespace("smoke_ns");
@@ -20,7 +16,7 @@ fn smoke_user_table_subscription_lifecycle() {
 
     // 1) Create namespace
     let ns_sql = format!("CREATE NAMESPACE IF NOT EXISTS {}", namespace);
-    execute_sql_as_root_via_cli(&ns_sql).expect("create namespace should succeed");
+    execute_sql_as_root_via_client(&ns_sql).expect("create namespace should succeed");
 
     // 2) Create user table
     let create_sql = format!(
@@ -31,17 +27,17 @@ fn smoke_user_table_subscription_lifecycle() {
         ) WITH (TYPE='USER', FLUSH_POLICY='rows:10')"#,
         full
     );
-    execute_sql_as_root_via_cli(&create_sql).expect("create user table should succeed");
+    execute_sql_as_root_via_client(&create_sql).expect("create user table should succeed");
 
     // 3) Insert a couple rows
     let ins1 = format!("INSERT INTO {} (name) VALUES ('alpha')", full);
     let ins2 = format!("INSERT INTO {} (name) VALUES ('beta')", full);
-    execute_sql_as_root_via_cli(&ins1).expect("insert alpha should succeed");
-    execute_sql_as_root_via_cli(&ins2).expect("insert beta should succeed");
+    execute_sql_as_root_via_client(&ins1).expect("insert alpha should succeed");
+    execute_sql_as_root_via_client(&ins2).expect("insert beta should succeed");
 
     // Quick verification via SELECT
     let sel = format!("SELECT * FROM {}", full);
-    let out = execute_sql_as_root_via_cli(&sel).expect("select should succeed");
+    let out = execute_sql_as_root_via_client(&sel).expect("select should succeed");
     assert!(
         out.contains("alpha"),
         "expected to see 'alpha' in select output: {}",
@@ -58,7 +54,7 @@ fn smoke_user_table_subscription_lifecycle() {
 
     // Double-check data is visible right before subscribing
     let verify_sel = format!("SELECT COUNT(*) as cnt FROM {}", full);
-    let count_out = execute_sql_as_root_via_cli(&verify_sel).expect("count query should succeed");
+    let count_out = execute_sql_as_root_via_client(&verify_sel).expect("count query should succeed");
     println!("[DEBUG] Row count before subscribing: {}", count_out);
 
     // 4) Subscribe to the user table
@@ -84,7 +80,7 @@ fn smoke_user_table_subscription_lifecycle() {
         // Fallback: perform a SELECT to synthesize snapshot
         println!("[subscription] No snapshot lines captured; performing fallback SELECT");
         let fallback_sel = format!("SELECT * FROM {}", full);
-        execute_sql_as_root_via_cli(&fallback_sel).unwrap_or_default()
+        execute_sql_as_root_via_client(&fallback_sel).unwrap_or_default()
     } else {
         snapshot_lines.join("\n")
     };
@@ -103,7 +99,7 @@ fn smoke_user_table_subscription_lifecycle() {
     let sub_val = "from_subscription";
     let ins3 = format!("INSERT INTO {} (name) VALUES ('{}')", full, sub_val);
     println!("[DEBUG] Inserting new row with value: {}", sub_val);
-    execute_sql_as_root_via_cli(&ins3).expect("insert sub row should succeed");
+    execute_sql_as_root_via_client(&ins3).expect("insert sub row should succeed");
     println!("[DEBUG] Insert completed, waiting for change event...");
 
     let mut change_lines: Vec<String> = Vec::new();
@@ -158,13 +154,13 @@ fn smoke_user_table_subscription_lifecycle() {
     // 6) Flush the user table and verify job completes successfully
     let flush_sql = format!("FLUSH TABLE {}", full);
     let flush_output =
-        execute_sql_as_root_via_cli(&flush_sql).expect("flush should succeed for user table");
+        execute_sql_as_root_via_client_json(&flush_sql).expect("flush should succeed for user table");
 
     println!("[FLUSH] Output: {}", flush_output);
 
-    // Parse job ID from flush output
-    let job_id = parse_job_id_from_flush_output(&flush_output)
-        .expect("should parse job_id from FLUSH output");
+    // Parse job ID from JSON response message field
+    let job_id = parse_job_id_from_json_message(&flush_output)
+        .expect("should parse job_id from FLUSH JSON output");
 
     println!("[FLUSH] Job ID: {}", job_id);
 

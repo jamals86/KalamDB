@@ -1,5 +1,9 @@
 //! Stream table store implementation using EntityStore pattern
 //!
+//! This module provides an EntityStore-based implementation for stream tables.
+//! Unlike system tables, stream tables use EntityStore directly (not SystemTableStore)
+//! because they are user data (ephemeral events), not system metadata.
+//!
 //! **MVCC Architecture (Phase 13.2)**:
 //! - StreamTableRowId: Composite struct with user_id and _seq fields
 //! - StreamTableRow: Minimal structure with user_id, _seq, fields (JSON)
@@ -8,8 +12,8 @@
 use kalamdb_commons::ids::{SeqId, StreamTableRowId};
 use kalamdb_commons::models::row::Row;
 use kalamdb_commons::models::{KTableRow, NamespaceId, TableName, UserId};
-use kalamdb_store::{entity_store::KSerializable, test_utils::InMemoryBackend, StorageBackend};
-use kalamdb_system::system_table_store::SystemTableStore;
+use kalamdb_store::entity_store::{EntityStore, KSerializable};
+use kalamdb_store::{test_utils::InMemoryBackend, StorageBackend};
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 
@@ -22,7 +26,7 @@ use std::sync::Arc;
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct StreamTableRow {
     pub user_id: UserId,
-    pub _seq: SeqId,
+    pub _seq: SeqId, //TODO: Rename this to seq without the _
     pub fields: Row, // All event data
 }
 
@@ -39,8 +43,41 @@ impl From<StreamTableRow> for KTableRow {
     }
 }
 
-/// Type alias for stream table store (in-memory only, ephemeral data)
-pub type StreamTableStore = SystemTableStore<StreamTableRowId, StreamTableRow>;
+/// Store for stream tables (ephemeral event data, in-memory only).
+///
+/// Uses composite StreamTableRowId keys (user_id:_seq) for user isolation.
+/// Unlike SystemTableStore, this is a direct EntityStore implementation
+/// for user event data, not system metadata.
+#[derive(Clone)]
+pub struct StreamTableStore {
+    backend: Arc<dyn StorageBackend>,
+    partition: String,
+}
+
+impl StreamTableStore {
+    /// Create a new stream table store
+    ///
+    /// # Arguments
+    /// * `backend` - Storage backend (always in-memory for stream tables)
+    /// * `partition` - Partition name (e.g., "stream_default:events")
+    pub fn new(backend: Arc<dyn StorageBackend>, partition: impl Into<String>) -> Self {
+        Self {
+            backend,
+            partition: partition.into(),
+        }
+    }
+}
+
+/// Implement EntityStore trait for typed CRUD operations
+impl EntityStore<StreamTableRowId, StreamTableRow> for StreamTableStore {
+    fn backend(&self) -> &Arc<dyn StorageBackend> {
+        &self.backend
+    }
+
+    fn partition(&self) -> &str {
+        &self.partition
+    }
+}
 
 /// Helper function to create a new stream table store (always in-memory)
 ///
@@ -49,7 +86,7 @@ pub type StreamTableStore = SystemTableStore<StreamTableRowId, StreamTableRow>;
 /// * `table_name` - Table name
 ///
 /// # Returns
-/// A new SystemTableStore instance configured for the stream table (in-memory backend)
+/// A new StreamTableStore instance configured for the stream table (in-memory backend)
 pub fn new_stream_table_store(
     namespace_id: &NamespaceId,
     table_name: &TableName,
@@ -62,24 +99,27 @@ pub fn new_stream_table_store(
     );
     // Always use in-memory backend for stream tables (ephemeral, no persistence)
     let backend: Arc<dyn StorageBackend> = Arc::new(InMemoryBackend::new());
-    SystemTableStore::new(backend, partition_name)
+    StreamTableStore::new(backend, partition_name)
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use kalamdb_store::EntityStoreV2;
+    use datafusion::scalar::ScalarValue;
+    use std::collections::BTreeMap;
 
     fn create_test_store() -> StreamTableStore {
         new_stream_table_store(&NamespaceId::new("test_ns"), &TableName::new("test_stream"))
     }
 
     fn create_test_row(user_id: &str, seq: i64) -> StreamTableRow {
+        let mut values = BTreeMap::new();
+        values.insert("event".to_string(), ScalarValue::Utf8(Some("click".to_string())));
+        values.insert("data".to_string(), ScalarValue::Int64(Some(123)));
         StreamTableRow {
             user_id: UserId::new(user_id),
             _seq: SeqId::new(seq),
-            fields: serde_json::from_value(serde_json::json!({"event": "click", "data": 123}))
-                .unwrap(),
+            fields: Row::new(values),
         }
     }
 

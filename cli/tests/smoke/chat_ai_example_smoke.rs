@@ -5,6 +5,7 @@
 use crate::common::*;
 use std::time::Duration;
 
+#[ntest::timeout(60000)]
 #[test]
 fn smoke_chat_ai_example_from_readme() {
     if !is_server_running() {
@@ -23,7 +24,7 @@ fn smoke_chat_ai_example_from_readme() {
 
     // 1. Create namespace and tables
     let ns_sql = format!("CREATE NAMESPACE IF NOT EXISTS {}", namespace);
-    execute_sql_as_root_via_cli(&ns_sql).expect("failed to create namespace");
+    execute_sql_as_root_via_client(&ns_sql).expect("failed to create namespace");
 
     let create_conversations = format!(
         "CREATE TABLE IF NOT EXISTS {} (
@@ -33,7 +34,7 @@ fn smoke_chat_ai_example_from_readme() {
         ) WITH (TYPE = 'USER', FLUSH_POLICY = 'rows:1000');",
         conversations_table
     );
-    execute_sql_as_root_via_cli(&create_conversations)
+    execute_sql_as_root_via_client(&create_conversations)
         .expect("failed to create conversations table");
 
     let create_messages = format!(
@@ -46,7 +47,7 @@ fn smoke_chat_ai_example_from_readme() {
         ) WITH (TYPE = 'USER', FLUSH_POLICY = 'rows:1000');",
         messages_table
     );
-    execute_sql_as_root_via_cli(&create_messages).expect("failed to create messages table");
+    execute_sql_as_root_via_client(&create_messages).expect("failed to create messages table");
 
     let create_typing = format!(
         "CREATE TABLE IF NOT EXISTS {} (
@@ -58,14 +59,14 @@ fn smoke_chat_ai_example_from_readme() {
         ) WITH (TYPE = 'STREAM', TTL_SECONDS = 30);",
         typing_events_table
     );
-    execute_sql_as_root_via_cli(&create_typing).expect("failed to create typing_events table");
+    execute_sql_as_root_via_client(&create_typing).expect("failed to create typing_events table");
 
     // 2. Insert a conversation
     let insert_conv_sql = format!(
         "INSERT INTO {} (title) VALUES ('Chat with AI');",
         conversations_table
     );
-    execute_sql_as_root_via_cli(&insert_conv_sql).expect("failed to insert conversation");
+    execute_sql_as_root_via_client(&insert_conv_sql).expect("failed to insert conversation");
 
     // For smoke purposes, we'll use conversation_id = 1
     // (In production, you'd parse the conversation ID from a query)
@@ -78,14 +79,14 @@ fn smoke_chat_ai_example_from_readme() {
             ({}, 'assistant', 'Hi! How can I help you today?');",
         messages_table, conversation_id, conversation_id
     );
-    execute_sql_as_root_via_cli(&insert_msgs_sql).expect("failed to insert messages");
+    execute_sql_as_root_via_client(&insert_msgs_sql).expect("failed to insert messages");
 
     // 4. Query back the conversation history
     let select_msgs_sql = format!(
         "SELECT message_role, content FROM {} WHERE conversation_id = {} ORDER BY created_at ASC;",
         messages_table, conversation_id
     );
-    let history = execute_sql_as_root_via_cli_json(&select_msgs_sql)
+    let history = execute_sql_as_root_via_client_json(&select_msgs_sql)
         .expect("failed to query message history");
 
     assert!(
@@ -117,7 +118,7 @@ fn smoke_chat_ai_example_from_readme() {
             "INSERT INTO {} (conversation_id, user_id, event_type) VALUES ({}, '{}', '{}');",
             typing_events_table, conversation_id, user_id, event_type
         );
-        execute_sql_as_root_via_cli(&insert_event_sql)
+        execute_sql_as_root_via_client(&insert_event_sql)
             .expect(&format!("failed to insert typing event: {}", event_type));
     }
 
@@ -153,7 +154,7 @@ fn smoke_chat_ai_example_from_readme() {
 
     // 8. Verify events are queryable via regular SELECT
     let verify_events_sql = format!("SELECT * FROM {}", typing_events_table);
-    let events_output = execute_sql_as_root_via_cli_json(&verify_events_sql)
+    let events_output = execute_sql_as_root_via_client_json(&verify_events_sql)
         .expect("failed to query typing events");
 
     assert!(

@@ -3,53 +3,42 @@ use std::fmt;
 #[cfg(feature = "serde")]
 use serde::{Deserialize, Serialize};
 
-use crate::UserId;
-
 /// Unique identifier for WebSocket connections.
 ///
+/// Generated when a WebSocket connection is established, before authentication.
 /// Used to track live query subscriptions and route notifications.
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 #[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
-pub struct ConnectionId {
-    pub user_id: UserId,
-    pub unique_conn_id: String,
-}
+#[cfg_attr(feature = "serde", derive(bincode::Encode, bincode::Decode))]
+pub struct ConnectionId(String);
 
 impl ConnectionId {
-    /// Create a new connection ID
-    /// TODO: Intsead of String for UserId?
-    pub fn new(user_id: String, unique_conn_id: String) -> Self {
-        Self {
-            user_id: UserId::new(user_id),
-            unique_conn_id,
-        }
+    /// Create a new connection ID from a unique identifier
+    pub fn new(unique_id: impl Into<String>) -> Self {
+        Self(unique_id.into())
     }
 
-    /// Parse from string format: {user_id}-{unique_conn_id}
+    /// Parse from string format
     pub fn from_string(s: &str) -> Result<Self, String> {
-        let parts: Vec<&str> = s.splitn(2, '-').collect();
-        if parts.len() != 2 {
-            return Err(format!(
-                "Invalid connection_id format: {}. Expected: {{user_id}}-{{unique_conn_id}}",
-                s
-            ));
+        if s.is_empty() {
+            return Err("ConnectionId cannot be empty".to_string());
         }
-        Ok(Self {
-            user_id: UserId::new(parts[0].to_string()),
-            unique_conn_id: parts[1].to_string(),
-        })
+        Ok(Self(s.to_string()))
     }
 
-    pub fn user_id(&self) -> &UserId {
-        &self.user_id
+    /// Get the connection ID as a string slice
+    pub fn as_str(&self) -> &str {
+        &self.0
     }
-    pub fn unique_conn_id(&self) -> &str {
-        &self.unique_conn_id
+
+    /// Get the connection ID as bytes
+    pub fn as_bytes(&self) -> &[u8] {
+        self.0.as_bytes()
     }
 }
 
 impl fmt::Display for ConnectionId {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "{}-{}", self.user_id.as_str(), self.unique_conn_id)
+        write!(f, "{}", self.0)
     }
 }

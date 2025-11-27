@@ -52,7 +52,7 @@ pub fn map_sql_type_to_arrow(sql_type: &SQLDataType) -> Result<DataType, String>
         Date => DataType::Date32,
         Timestamp(_, _) | Datetime(_) => DataType::Timestamp(TimeUnit::Millisecond, None),
         Time(_, _) => DataType::Time64(TimeUnit::Nanosecond),
-        Interval => DataType::Interval(IntervalUnit::MonthDayNano),
+        SQLDataType::Interval { .. } => DataType::Interval(IntervalUnit::MonthDayNano),
 
         // Custom or dialect specific identifiers ----------------------------
         Custom(name, modifiers) => map_custom_type(name, modifiers)?,
@@ -61,8 +61,7 @@ pub fn map_sql_type_to_arrow(sql_type: &SQLDataType) -> Result<DataType, String>
         Array(_) | Enum(_, _) | Set(_) | Struct(_, _) => DataType::Utf8,
 
         // Otherwise, leave unsupported so callers can surface a friendly error
-        Numeric(_) | Decimal(_) | Dec(_) | BigNumeric(_) | BigDecimal(_) | Uuid | Regclass
-        | Unspecified | _ => {
+        _ => {
             return Err(format!("Unsupported data type: {:?}", sql_type));
         }
     };

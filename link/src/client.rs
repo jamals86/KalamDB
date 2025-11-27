@@ -6,9 +6,10 @@
 use crate::{
     auth::AuthProvider,
     error::{KalamLinkError, Result},
-    models::{HealthCheckResponse, QueryResponse},
+    models::{HealthCheckResponse, QueryResponse, SubscriptionConfig},
     query::QueryExecutor,
-    subscription::{SubscriptionConfig, SubscriptionManager},
+    subscription::SubscriptionManager,
+    timeouts::KalamLinkTimeouts,
 };
 use std::{
     sync::Arc,
@@ -43,6 +44,7 @@ pub struct KalamLinkClient {
     auth: AuthProvider,
     query_executor: QueryExecutor,
     health_cache: Arc<Mutex<HealthCheckCache>>,
+    timeouts: KalamLinkTimeouts,
 }
 
 impl KalamLinkClient {
@@ -67,7 +69,12 @@ impl KalamLinkClient {
 
     /// Subscribe to real-time changes
     pub async fn subscribe(&self, query: &str) -> Result<SubscriptionManager> {
-        self.subscribe_with_config(SubscriptionConfig::new(query))
+        // Generate a unique subscription ID using timestamp + random component
+        let subscription_id = format!("sub_{}", std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos());
+        self.subscribe_with_config(SubscriptionConfig::new(subscription_id, query))
             .await
     }
 
@@ -76,7 +83,12 @@ impl KalamLinkClient {
         &self,
         config: SubscriptionConfig,
     ) -> Result<SubscriptionManager> {
-        SubscriptionManager::new(&self.base_url, config, &self.auth).await
+        SubscriptionManager::new(&self.base_url, config, &self.auth, &self.timeouts).await
+    }
+
+    /// Get the configured timeouts
+    pub fn timeouts(&self) -> &KalamLinkTimeouts {
+        &self.timeouts
     }
 
     /// Check server health and get server information
@@ -87,14 +99,19 @@ impl KalamLinkClient {
                 (cache.last_check, cache.last_response.clone())
             {
                 if last_check.elapsed() < HEALTH_CHECK_TTL {
+                    log::debug!("[HEALTH_CHECK] Returning cached response (age: {:?})", last_check.elapsed());
                     return Ok(response);
                 }
             }
         }
 
         let url = format!("{}/v1/api/healthcheck", self.base_url);
+        log::debug!("[HEALTH_CHECK] Fetching from url={}", url);
+        let start = std::time::Instant::now();
         let response = self.http_client.get(&url).send().await?;
+        log::debug!("[HEALTH_CHECK] HTTP response received in {:?}, status={}", start.elapsed(), response.status());
         let health_response = response.json::<HealthCheckResponse>().await?;
+        log::debug!("[HEALTH_CHECK] JSON parsed in {:?}", start.elapsed());
 
         let mut cache = self.health_cache.lock().await;
         cache.last_check = Some(Instant::now());
@@ -110,6 +127,7 @@ pub struct KalamLinkClientBuilder {
     timeout: Duration,
     auth: AuthProvider,
     max_retries: u32,
+    timeouts: KalamLinkTimeouts,
 }
 
 impl KalamLinkClientBuilder {
@@ -119,6 +137,7 @@ impl KalamLinkClientBuilder {
             timeout: Duration::from_secs(30),
             auth: AuthProvider::none(),
             max_retries: 3,
+            timeouts: KalamLinkTimeouts::default(),
         }
     }
 
@@ -128,7 +147,7 @@ impl KalamLinkClientBuilder {
         self
     }
 
-    /// Set request timeout
+    /// Set request timeout (for HTTP requests)
     pub fn timeout(mut self, timeout: Duration) -> Self {
         self.timeout = timeout;
         self
@@ -168,14 +187,52 @@ impl KalamLinkClientBuilder {
         self
     }
 
+    /// Set comprehensive timeout configuration for all operations
+    ///
+    /// This overrides individual timeout settings like `timeout()`.
+    ///
+    /// # Example
+    ///
+    /// ```rust,no_run
+    /// use kalam_link::{KalamLinkClient, KalamLinkTimeouts};
+    ///
+    /// # async fn example() -> kalam_link::Result<()> {
+    /// let client = KalamLinkClient::builder()
+    ///     .base_url("http://localhost:3000")
+    ///     .timeouts(KalamLinkTimeouts::fast())
+    ///     .build()?;
+    /// # Ok(())
+    /// # }
+    /// ```
+    pub fn timeouts(mut self, timeouts: KalamLinkTimeouts) -> Self {
+        // Also update the HTTP timeout to match
+        self.timeout = timeouts.receive_timeout;
+        self.timeouts = timeouts;
+        self
+    }
+
     /// Build the client
     pub fn build(self) -> Result<KalamLinkClient> {
+        use reqwest::header::{HeaderMap, HeaderValue, CONNECTION};
+        
         let base_url = self
             .base_url
             .ok_or_else(|| KalamLinkError::ConfigurationError("base_url is required".into()))?;
 
+        // Set Connection: close header to force immediate connection closure
+        // This prevents CLOSE_WAIT accumulation and 30s delays
+        let mut default_headers = HeaderMap::new();
+        default_headers.insert(CONNECTION, HeaderValue::from_static("close"));
+
         let http_client = reqwest::Client::builder()
             .timeout(self.timeout)
+            .connect_timeout(self.timeouts.connection_timeout)
+            // Disable connection pooling completely
+            .pool_max_idle_per_host(0)
+            // Set idle timeout to 0 to immediately close unused connections  
+            .pool_idle_timeout(std::time::Duration::from_millis(0))
+            // Add Connection: close header to all requests
+            .default_headers(default_headers)
             .build()
             .map_err(|e| KalamLinkError::ConfigurationError(e.to_string()))?;
 
@@ -188,6 +245,7 @@ impl KalamLinkClientBuilder {
             auth: self.auth,
             query_executor,
             health_cache: Arc::new(Mutex::new(HealthCheckCache::default())),
+            timeouts: self.timeouts,
         })
     }
 }

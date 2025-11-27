@@ -6,6 +6,8 @@ use crate::{
     error::{KalamLinkError, Result},
     models::{QueryRequest, QueryResponse},
 };
+use log::{debug, warn};
+use std::time::Instant;
 
 /// Handles SQL query execution via HTTP.
 #[derive(Clone)]
@@ -38,6 +40,20 @@ impl QueryExecutor {
         // Send request with retry logic
         let mut retries = 0;
         let max_retries = 3;
+        
+        // Log query start
+        let sql_preview = if sql.len() > 80 {
+            format!("{}...", &sql[..80])
+        } else {
+            sql.to_string()
+        };
+        debug!(
+            "[LINK_QUERY] Starting query: \"{}\" (len={})",
+            sql_preview.replace('\n', " "),
+            sql.len()
+        );
+
+        let overall_start = Instant::now();
 
         loop {
             // Build request fresh on each attempt (can't clone request builders with bodies)
@@ -47,15 +63,39 @@ impl QueryExecutor {
             // Apply authentication
             req_builder = self.auth.apply_to_request(req_builder)?;
 
+            let attempt_start = Instant::now();
+            debug!(
+                "[LINK_HTTP] Sending POST to {} (attempt {}/{})",
+                url,
+                retries + 1,
+                max_retries + 1
+            );
+
             match req_builder.send().await {
                 Ok(response) => {
-                    if response.status().is_success() {
+                    let http_duration_ms = attempt_start.elapsed().as_millis();
+                    let status = response.status();
+                    debug!(
+                        "[LINK_HTTP] Response received: status={} duration_ms={}",
+                        status, http_duration_ms
+                    );
+
+                    if status.is_success() {
+                        let parse_start = Instant::now();
                         let mut query_response: QueryResponse = response.json().await?;
+                        let parse_duration_ms = parse_start.elapsed().as_millis();
+                        
                         // Enforce stable column ordering where applicable
                         normalize_query_response(sql, &mut query_response);
+                        
+                        let total_duration_ms = overall_start.elapsed().as_millis();
+                        debug!(
+                            "[LINK_QUERY] Success: http_ms={} parse_ms={} total_ms={}",
+                            http_duration_ms, parse_duration_ms, total_duration_ms
+                        );
+                        
                         return Ok(query_response);
                     } else {
-                        let status = response.status();
                         let error_text = response
                             .text()
                             .await
@@ -74,6 +114,11 @@ impl QueryExecutor {
                             error_text
                         };
 
+                        warn!(
+                            "[LINK_HTTP] Server error: status={} message=\"{}\" duration_ms={}",
+                            status, error_message, http_duration_ms
+                        );
+
                         return Err(KalamLinkError::ServerError {
                             status_code: status.as_u16(),
                             message: error_message,
@@ -81,12 +126,29 @@ impl QueryExecutor {
                     }
                 }
                 Err(e) if retries < max_retries && Self::is_retriable(&e) => {
+                    let http_duration_ms = attempt_start.elapsed().as_millis();
+                    warn!(
+                        "[LINK_HTTP] Retriable error (attempt {}/{}): {} duration_ms={}",
+                        retries + 1,
+                        max_retries + 1,
+                        e,
+                        http_duration_ms
+                    );
                     retries += 1;
                     tokio::time::sleep(tokio::time::Duration::from_millis(100 * retries as u64))
                         .await;
                     continue;
                 }
-                Err(e) => return Err(e.into()),
+                Err(e) => {
+                    let http_duration_ms = attempt_start.elapsed().as_millis();
+                    warn!(
+                        "[LINK_HTTP] Fatal error: {} duration_ms={} total_ms={}",
+                        e,
+                        http_duration_ms,
+                        overall_start.elapsed().as_millis()
+                    );
+                    return Err(e.into());
+                }
             }
         }
     }

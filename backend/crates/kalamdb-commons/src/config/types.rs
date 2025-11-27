@@ -21,6 +21,8 @@ pub struct ServerConfig {
     #[serde(default)]
     pub stream: StreamSettings,
     #[serde(default)]
+    pub websocket: WebSocketSettings,
+    #[serde(default)]
     pub rate_limit: RateLimitSettings,
     #[serde(default, alias = "authentication")]
     pub auth: AuthSettings,
@@ -160,6 +162,22 @@ pub struct PerformanceSettings {
     pub keepalive_timeout: u64,
     #[serde(default = "default_max_connections")]
     pub max_connections: usize,
+    /// Backlog size for pending connections (default: 2048)
+    /// Increase for high-traffic servers
+    #[serde(default = "default_backlog")]
+    pub backlog: u32,
+    /// Max blocking threads per worker for CPU-intensive operations (default: 512 / workers)
+    /// Used for RocksDB and other synchronous operations
+    #[serde(default = "default_worker_max_blocking_threads")]
+    pub worker_max_blocking_threads: usize,
+    /// Client request timeout in seconds (default: 5)
+    /// Time allowed for client to send complete request headers
+    #[serde(default = "default_client_request_timeout")]
+    pub client_request_timeout: u64,
+    /// Client disconnect timeout in seconds (default: 2)
+    /// Time allowed for graceful connection shutdown
+    #[serde(default = "default_client_disconnect_timeout")]
+    pub client_disconnect_timeout: u64,
 }
 
 /// DataFusion settings
@@ -250,6 +268,35 @@ pub struct StreamSettings {
     pub eviction_interval_seconds: u64,
 }
 
+/// WebSocket settings for connection management
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct WebSocketSettings {
+    /// Client heartbeat timeout in seconds (default: 10)
+    /// How long to wait for client pong before disconnecting
+    #[serde(default = "default_websocket_client_timeout")]
+    pub client_timeout_secs: Option<u64>,
+
+    /// Authentication timeout in seconds (default: 3)
+    /// How long to wait for auth message before disconnecting
+    #[serde(default = "default_websocket_auth_timeout")]
+    pub auth_timeout_secs: Option<u64>,
+
+    /// Heartbeat check interval in seconds (default: 5)
+    /// How often the shared heartbeat manager checks all connections
+    #[serde(default = "default_websocket_heartbeat_interval")]
+    pub heartbeat_interval_secs: Option<u64>,
+}
+
+impl Default for WebSocketSettings {
+    fn default() -> Self {
+        Self {
+            client_timeout_secs: default_websocket_client_timeout(),
+            auth_timeout_secs: default_websocket_auth_timeout(),
+            heartbeat_interval_secs: default_websocket_heartbeat_interval(),
+        }
+    }
+}
+
 /// User management cleanup settings
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct UserManagementSettings {
@@ -323,6 +370,29 @@ pub struct RateLimitSettings {
     /// Maximum concurrent subscriptions per user (default: 10)
     #[serde(default = "default_rate_limit_max_subscriptions")]
     pub max_subscriptions_per_user: u32,
+
+    /// Maximum concurrent connections per IP address (default: 100)
+    /// Prevents a single IP from exhausting all server connections
+    #[serde(default = "default_max_connections_per_ip")]
+    pub max_connections_per_ip: u32,
+
+    /// Maximum requests per second per IP before authentication (default: 200)
+    /// Applied before auth to protect against unauthenticated floods
+    #[serde(default = "default_max_requests_per_ip_per_sec")]
+    pub max_requests_per_ip_per_sec: u32,
+
+    /// Maximum request body size in bytes (default: 10MB)
+    /// Prevents memory exhaustion from huge request payloads
+    #[serde(default = "default_request_body_limit_bytes")]
+    pub request_body_limit_bytes: usize,
+
+    /// Duration in seconds to ban abusive IPs (default: 300 = 5 minutes)
+    #[serde(default = "default_ban_duration_seconds")]
+    pub ban_duration_seconds: u64,
+
+    /// Enable connection protection middleware (default: true)
+    #[serde(default = "default_enable_connection_protection")]
+    pub enable_connection_protection: bool,
 }
 
 /// Authentication settings (T105 - Phase 7, User Story 5)
@@ -500,6 +570,11 @@ impl Default for RateLimitSettings {
             max_queries_per_sec: default_rate_limit_queries_per_sec(),
             max_messages_per_sec: default_rate_limit_messages_per_sec(),
             max_subscriptions_per_user: default_rate_limit_max_subscriptions(),
+            max_connections_per_ip: default_max_connections_per_ip(),
+            max_requests_per_ip_per_sec: default_max_requests_per_ip_per_sec(),
+            request_body_limit_bytes: default_request_body_limit_bytes(),
+            ban_duration_seconds: default_ban_duration_seconds(),
+            enable_connection_protection: default_enable_connection_protection(),
         }
     }
 }
@@ -580,12 +655,17 @@ impl Default for ServerConfig {
                 request_timeout: 30,
                 keepalive_timeout: 75,
                 max_connections: 25000,
+                backlog: default_backlog(),
+                worker_max_blocking_threads: default_worker_max_blocking_threads(),
+                client_request_timeout: default_client_request_timeout(),
+                client_disconnect_timeout: default_client_disconnect_timeout(),
             },
             datafusion: DataFusionSettings::default(),
             flush: FlushSettings::default(),
             manifest_cache: ManifestCacheSettings::default(),
             retention: RetentionSettings::default(),
             stream: StreamSettings::default(),
+            websocket: WebSocketSettings::default(),
             rate_limit: RateLimitSettings::default(),
             auth: AuthSettings::default(),
             oauth: OAuthSettings::default(),

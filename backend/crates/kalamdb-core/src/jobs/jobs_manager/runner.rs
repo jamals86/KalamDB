@@ -7,6 +7,16 @@ use kalamdb_commons::JobStatus;
 use tokio::time::{sleep, Duration, Instant};
 
 impl JobsManager {
+    /// Update a job in the database asynchronously
+    /// 
+    /// Delegates to provider's async method which handles spawn_blocking internally.
+    async fn update_job_async(&self, job: Job) -> Result<(), KalamDbError> {
+        self.jobs_provider
+            .update_job_async(job)
+            .await
+            .map_err(|e| KalamDbError::IoError(format!("Failed to update job: {}", e)))
+    }
+
     /// Run job processing loop
     ///
     /// Continuously polls for queued jobs and executes them using registered executors.
@@ -49,7 +59,8 @@ impl JobsManager {
 
             // Periodic health metrics logging
             if last_health_check.elapsed() >= health_check_interval {
-                if let Err(e) = HealthMonitor::log_metrics(self).await {
+                let app_ctx = self.get_attached_app_context();
+                if let Err(e) = HealthMonitor::log_metrics(self, app_ctx).await {
                     log::warn!("Failed to log health metrics: {}", e);
                 }
                 last_health_check = Instant::now();
@@ -100,11 +111,13 @@ impl JobsManager {
     async fn poll_next(&self) -> Result<Option<Job>, KalamDbError> {
         // Query for jobs with status=Queued or New, ordered by created_at ASC
         // Use limit=1 to fetch only the next job efficiently
-        let mut filter = JobFilter::default();
-        filter.statuses = Some(vec![JobStatus::New, JobStatus::Queued]);
-        filter.sort_by = Some(JobSortField::CreatedAt);
-        filter.sort_order = Some(SortOrder::Asc);
-        filter.limit = Some(1);
+        let filter = JobFilter {
+            statuses: Some(vec![JobStatus::New, JobStatus::Queued]),
+            sort_by: Some(JobSortField::CreatedAt),
+            sort_order: Some(SortOrder::Asc),
+            limit: Some(1),
+            ..Default::default()
+        };
 
         let jobs = self.list_jobs(filter).await?;
 
@@ -122,9 +135,7 @@ impl JobsManager {
         job.started_at = Some(chrono::Utc::now().timestamp_millis());
         job.updated_at = chrono::Utc::now().timestamp_millis();
 
-        self.jobs_provider
-            .update_job(job.clone())
-            .map_err(|e| KalamDbError::IoError(format!("Failed to start job: {}", e)))?;
+        self.update_job_async(job.clone()).await?;
 
         self.log_job_event(&job_id, "info", "Job started");
 
@@ -143,7 +154,7 @@ impl JobsManager {
                 job.updated_at = now_ms;
                 job.finished_at = Some(now_ms);
 
-                self.jobs_provider.update_job(job.clone()).map_err(|err| {
+                self.update_job_async(job.clone()).await.map_err(|err| {
                     KalamDbError::IoError(format!(
                         "Failed to fail job after executor error: {}",
                         err
@@ -171,8 +182,7 @@ impl JobsManager {
                 job.updated_at = now_ms;
                 job.finished_at = Some(now_ms);
 
-                self.jobs_provider
-                    .update_job(job.clone())
+                self.update_job_async(job.clone()).await
                     .map_err(|e| KalamDbError::IoError(format!("Failed to complete job: {}", e)))?;
 
                 self.log_job_event(
@@ -193,7 +203,7 @@ impl JobsManager {
                     job.exception_trace = exception_trace.clone();
                     job.updated_at = chrono::Utc::now().timestamp_millis();
 
-                    self.jobs_provider.update_job(job.clone()).map_err(|e| {
+                    self.update_job_async(job.clone()).await.map_err(|e| {
                         KalamDbError::IoError(format!("Failed to retry job: {}", e))
                     })?;
 
@@ -217,8 +227,7 @@ impl JobsManager {
                     job.updated_at = now_ms;
                     job.finished_at = Some(now_ms);
 
-                    self.jobs_provider
-                        .update_job(job.clone())
+                    self.update_job_async(job.clone()).await
                         .map_err(|e| KalamDbError::IoError(format!("Failed to fail job: {}", e)))?;
 
                     self.log_job_event(&job_id, "error", "Job failed: max retries exceeded");
@@ -236,8 +245,7 @@ impl JobsManager {
                 job.updated_at = now_ms;
                 job.finished_at = Some(now_ms);
 
-                self.jobs_provider
-                    .update_job(job.clone())
+                self.update_job_async(job.clone()).await
                     .map_err(|e| KalamDbError::IoError(format!("Failed to fail job: {}", e)))?;
 
                 self.log_job_event(&job_id, "error", &format!("Job failed: {}", message));

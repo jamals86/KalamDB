@@ -33,7 +33,7 @@
 //!     fn backend(&self) -> &Arc<dyn StorageBackend> {
 //!         &self.backend
 //!     }
-//!     
+//!
 //!     fn partition(&self) -> &str {
 //!         "system_users"
 //!     }
@@ -59,6 +59,22 @@ use kalamdb_commons::{
 };
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
+
+/// Directional scanning for entity stores
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ScanDirection {
+    Older,
+    Newer,
+}
+
+pub type EntityIterator<K, V> = Box<dyn Iterator<Item = Result<(K, V)>> + Send>;
+
+fn next_storage_key_bytes(bytes: &[u8]) -> Vec<u8> {
+    let mut next = Vec::with_capacity(bytes.len() + 1);
+    next.extend_from_slice(bytes);
+    next.push(0);
+    next
+}
 
 /// Trait for typed entity storage with type-safe keys and automatic serialization.
 ///
@@ -140,7 +156,7 @@ impl KSerializable for UserId {}
 pub trait EntityStore<K, V>
 where
     K: StorageKey,
-    V: KSerializable,
+    V: KSerializable + 'static,
 {
     /// Returns a reference to the storage backend.
     fn backend(&self) -> &Arc<dyn StorageBackend>;
@@ -149,6 +165,102 @@ where
     ///
     /// Examples: "system_users", "system_jobs", "user_table:default:users"
     fn partition(&self) -> &str;
+
+    /// Scan rows relative to a starting key in a specified direction, returning an iterator.
+    fn scan_directional(
+        &self,
+        start_key: Option<&K>,
+        direction: ScanDirection,
+        limit: usize,
+    ) -> Result<EntityIterator<K, V>>
+    {
+        if limit == 0 {
+            return Ok(Box::new(Vec::<Result<(K, V)>>::new().into_iter()));
+        }
+
+        let partition = Partition::new(self.partition());
+        match direction {
+            ScanDirection::Newer => {
+                let start_bytes = start_key.map(|k| next_storage_key_bytes(&k.storage_key()));
+                let iter =
+                    self.backend()
+                        .scan(&partition, None, start_bytes.as_deref(), Some(limit))?;
+
+                let mut rows = Vec::new();
+                for (key_bytes, value_bytes) in iter {
+                    let key = K::from_storage_key(&key_bytes).map_err(StorageError::SerializationError)?;
+                    let entity = self.deserialize(&value_bytes)?;
+                    rows.push(Ok((key, entity)));
+                    if rows.len() >= limit {
+                        break;
+                    }
+                }
+
+                Ok(Box::new(rows.into_iter()))
+            }
+            ScanDirection::Older => {
+                let start_bytes = start_key.map(|k| k.storage_key());
+                let iter = self.backend().scan(&partition, None, None, None)?;
+                let mut collected: Vec<(Vec<u8>, Vec<u8>)> = Vec::new();
+
+                for (key_bytes, value_bytes) in iter {
+                    if let Some(start) = &start_bytes {
+                        if key_bytes.as_slice() >= start.as_slice() {
+                            break;
+                        }
+                    }
+                    collected.push((key_bytes, value_bytes));
+                }
+
+                // Keep only the closest `limit` rows before the start key.
+                if collected.len() > limit {
+                    let drain_end = collected.len() - limit;
+                    collected.drain(0..drain_end);
+                }
+
+                collected.reverse();
+                let mut rows = Vec::with_capacity(collected.len());
+                for (key_bytes, value_bytes) in collected {
+                    let key = K::from_storage_key(&key_bytes).map_err(StorageError::SerializationError)?;
+                    let entity = self.deserialize(&value_bytes)?;
+                    rows.push(Ok((key, entity)));
+                }
+
+                Ok(Box::new(rows.into_iter()))
+            }
+        }
+    }
+
+    /// Returns a lazy iterator over all entities in the partition.
+    ///
+    /// Note: Currently collects results to avoid lifetime issues with the underlying storage iterator.
+    fn scan_iterator(
+        &self,
+        prefix: Option<&K>,
+        start_key: Option<&K>,
+    ) -> Result<EntityIterator<K, V>> {
+        let partition = Partition::new(self.partition());
+        let prefix_bytes = prefix.map(|k| k.storage_key());
+        let start_key_bytes = start_key.map(|k| k.storage_key());
+
+        let iter = self.backend().scan(
+            &partition,
+            prefix_bytes.as_deref(),
+            start_key_bytes.as_deref(),
+            None,
+        )?;
+
+        // Collect results to avoid lifetime issues
+        let mut results = Vec::new();
+        for (key_bytes, value_bytes) in iter {
+            let key = K::from_storage_key(&key_bytes)
+                .map_err(StorageError::SerializationError)?;
+            let value = V::decode(&value_bytes)?;
+            results.push(Ok((key, value)));
+        }
+
+        Ok(Box::new(results.into_iter()))
+    }
 
     /// Serializes an entity to bytes.
     ///
@@ -331,23 +443,6 @@ where
         Ok(results)
     }
 
-    /// Scans entities with an overall limit and optional prefix, returning at most `limit` entities.
-    ///
-    /// This method streams from the underlying backend and stops early once the requested
-    /// number of results is reached. Prefer this over `scan_all()` for large datasets.
-    ///
-    /// - When `prefix` is `None`, scans from the beginning of the partition.
-    /// - When `prefix` is provided, scans keys beginning with the given byte prefix.
-    ///
-    /// Note: Keys are returned as raw bytes. Higher-level stores may provide typed wrappers.
-    fn scan_limited_with_prefix_bytes(
-        &self,
-        prefix: Option<&[u8]>,
-        limit: usize,
-    ) -> Result<Vec<(Vec<u8>, V)>> {
-        self.scan_limited_with_prefix_and_start(prefix, None, limit)
-    }
-
     /// Scans entities with limit, optional prefix, and optional start key.
     fn scan_limited_with_prefix_and_start(
         &self,
@@ -370,16 +465,132 @@ where
         }
         Ok(results)
     }
+}
 
-    /// Scans entities limited to `limit` results (no prefix).
-    fn scan_limited(&self, limit: usize) -> Result<Vec<(Vec<u8>, V)>> {
-        self.scan_limited_with_prefix_bytes(None, limit)
+/// Extension trait providing async versions of EntityStore methods.
+///
+/// These methods internally use `tokio::task::spawn_blocking` to offload
+/// synchronous RocksDB operations to a blocking thread pool, preventing
+/// the async runtime from being blocked.
+///
+/// ## Usage
+///
+/// ```rust,ignore
+/// use kalamdb_store::{EntityStore, EntityStoreAsync};
+///
+/// // In async context, use the async variants:
+/// let user = store.get_async(&user_id).await?;
+/// store.put_async(&user_id, &user).await?;
+///
+/// // In sync context (e.g., blocking thread), use the sync variants:
+/// let user = store.get(&user_id)?;
+/// store.put(&user_id, &user)?;
+/// ```
+#[async_trait::async_trait]
+pub trait EntityStoreAsync<K, V>: EntityStore<K, V> + Send + Sync
+where
+    K: StorageKey + Clone + Send + Sync + 'static,
+    V: KSerializable + Clone + Send + Sync + 'static,
+    Self: Clone + 'static,
+{
+    /// Async version of `get()` - retrieves an entity by key.
+    ///
+    /// Uses `spawn_blocking` internally to prevent blocking the async runtime.
+    async fn get_async(&self, key: &K) -> Result<Option<V>> {
+        let store = self.clone();
+        let key = key.clone();
+        tokio::task::spawn_blocking(move || store.get(&key))
+            .await
+            .map_err(|e| StorageError::Other(format!("spawn_blocking join error: {}", e)))?
     }
 
-    /// Scans entities with a byte prefix limited to `limit` results.
-    fn scan_prefix_limited_bytes(&self, prefix: &[u8], limit: usize) -> Result<Vec<(Vec<u8>, V)>> {
-        self.scan_limited_with_prefix_bytes(Some(prefix), limit)
+    /// Async version of `put()` - stores an entity by key.
+    ///
+    /// Uses `spawn_blocking` internally to prevent blocking the async runtime.
+    async fn put_async(&self, key: &K, entity: &V) -> Result<()> {
+        let store = self.clone();
+        let key = key.clone();
+        let entity = entity.clone();
+        tokio::task::spawn_blocking(move || store.put(&key, &entity))
+            .await
+            .map_err(|e| StorageError::Other(format!("spawn_blocking join error: {}", e)))?
     }
+
+    /// Async version of `delete()` - removes an entity by key.
+    ///
+    /// Uses `spawn_blocking` internally to prevent blocking the async runtime.
+    async fn delete_async(&self, key: &K) -> Result<()> {
+        let store = self.clone();
+        let key = key.clone();
+        tokio::task::spawn_blocking(move || store.delete(&key))
+            .await
+            .map_err(|e| StorageError::Other(format!("spawn_blocking join error: {}", e)))?
+    }
+
+    /// Async version of `batch_put()` - stores multiple entities atomically.
+    ///
+    /// Uses `spawn_blocking` internally to prevent blocking the async runtime.
+    async fn batch_put_async(&self, entries: Vec<(K, V)>) -> Result<()> {
+        let store = self.clone();
+        tokio::task::spawn_blocking(move || store.batch_put(&entries))
+            .await
+            .map_err(|e| StorageError::Other(format!("spawn_blocking join error: {}", e)))?
+    }
+
+    /// Async version of `scan_all()` - scans all entities in partition.
+    ///
+    /// Uses `spawn_blocking` internally to prevent blocking the async runtime.
+    async fn scan_all_async(
+        &self,
+        limit: Option<usize>,
+        prefix: Option<K>,
+        start_key: Option<K>,
+    ) -> Result<Vec<(Vec<u8>, V)>> {
+        let store = self.clone();
+        tokio::task::spawn_blocking(move || {
+            store.scan_all(limit, prefix.as_ref(), start_key.as_ref())
+        })
+        .await
+        .map_err(|e| StorageError::Other(format!("spawn_blocking join error: {}", e)))?
+    }
+
+    /// Async version of `scan_prefix()` - scans entities with a key prefix.
+    ///
+    /// Uses `spawn_blocking` internally to prevent blocking the async runtime.
+    async fn scan_prefix_async(&self, prefix: &K) -> Result<Vec<(Vec<u8>, V)>> {
+        let store = self.clone();
+        let prefix = prefix.clone();
+        tokio::task::spawn_blocking(move || store.scan_prefix(&prefix))
+            .await
+            .map_err(|e| StorageError::Other(format!("spawn_blocking join error: {}", e)))?
+    }
+
+    /// Async version of `scan_directional()` - scans relative to a starting key.
+    ///
+    /// Uses `spawn_blocking` internally to prevent blocking the async runtime.
+    async fn scan_directional_async(
+        &self,
+        start_key: Option<K>,
+        direction: ScanDirection,
+        limit: usize,
+    ) -> Result<Vec<(K, V)>> {
+        let store = self.clone();
+        tokio::task::spawn_blocking(move || {
+            let iter = store.scan_directional(start_key.as_ref(), direction, limit)?;
+            iter.collect::<Result<Vec<_>>>()
+        })
+        .await
+        .map_err(|e| StorageError::Other(format!("spawn_blocking join error: {}", e)))?
+    }
+}
+
+// Blanket implementation for any type that implements EntityStore + Clone + Send + Sync
+impl<T, K, V> EntityStoreAsync<K, V> for T
+where
+    T: EntityStore<K, V> + Clone + Send + Sync + 'static,
+    K: StorageKey + Clone + Send + Sync + 'static,
+    V: KSerializable + Clone + Send + Sync + 'static,
+{
 }
 
 /// Trait for cross-user table stores with access control.
@@ -413,7 +624,7 @@ where
 pub trait CrossUserTableStore<K, V>: EntityStore<K, V>
 where
     K: StorageKey,
-    V: KSerializable,
+    V: KSerializable + 'static,
 {
     /// Returns the table access level, if any.
     ///

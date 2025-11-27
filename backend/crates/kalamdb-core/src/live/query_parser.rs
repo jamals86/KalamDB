@@ -32,6 +32,7 @@ impl QueryParser {
     ///
     /// Returns None if no WHERE clause exists.
     /// This is a simple implementation that looks for "WHERE ..."
+    /// TODO: Replace with proper DataFusion SQL parsing
     pub fn extract_where_clause(query: &str) -> Option<String> {
         let query_upper = query.to_uppercase();
         let where_pos = query_upper.find(" WHERE ")?;

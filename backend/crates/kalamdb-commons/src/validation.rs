@@ -7,13 +7,13 @@
 //! (table aliases, column aliases, identifier restrictions, table factors), which
 //! cover the dialect-specific words that cannot safely be used as identifiers.
 
+use crate::constants::SystemColumnNames;
 use once_cell::sync::Lazy;
 use sqlparser::keywords::{
     Keyword, ALL_KEYWORDS, ALL_KEYWORDS_INDEX, RESERVED_FOR_COLUMN_ALIAS, RESERVED_FOR_IDENTIFIER,
     RESERVED_FOR_TABLE_ALIAS, RESERVED_FOR_TABLE_FACTOR,
 };
 use std::collections::HashSet;
-use crate::constants::SystemColumnNames;
 
 /// Reserved namespace names that cannot be used by users
 pub static RESERVED_NAMESPACES: Lazy<HashSet<&'static str>> = Lazy::new(|| {

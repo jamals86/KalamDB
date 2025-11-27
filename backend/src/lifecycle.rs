@@ -9,9 +9,9 @@ use crate::routes;
 use crate::ServerConfig;
 use actix_web::{web, App, HttpServer};
 use anyhow::Result;
-use kalamdb_api::auth::jwt::JwtAuth;
 use kalamdb_api::rate_limiter::{RateLimitConfig, RateLimiter};
 use kalamdb_commons::{AuthType, Role, StorageId, StorageMode, UserId};
+use kalamdb_core::live::ConnectionsManager;
 use kalamdb_core::live_query::LiveQueryManager;
 use kalamdb_core::sql::datafusion_session::DataFusionSessionFactory;
 use kalamdb_core::sql::executor::SqlExecutor;
@@ -26,10 +26,10 @@ use std::sync::Arc;
 pub struct ApplicationComponents {
     pub session_factory: Arc<DataFusionSessionFactory>,
     pub sql_executor: Arc<SqlExecutor>,
-    pub jwt_auth: Arc<JwtAuth>,
     pub rate_limiter: Arc<RateLimiter>,
     pub live_query_manager: Arc<LiveQueryManager>,
     pub user_repo: Arc<dyn kalamdb_auth::UserRepository>,
+    pub connection_registry: Arc<ConnectionsManager>,
 }
 
 /// Initialize RocksDB, DataFusion, services, rate limiter, and flush scheduler.
@@ -177,12 +177,6 @@ pub async fn bootstrap(
         phase_start.elapsed().as_secs_f64() * 1000.0
     );
 
-    // JWT authentication
-    use jsonwebtoken::Algorithm;
-    let jwt_secret = config.auth.jwt_secret.clone();
-    let jwt_auth = Arc::new(JwtAuth::new(jwt_secret, Algorithm::HS256));
-    info!("JWT authentication initialized (HS256)");
-
     // Rate limiter
     let rate_limit_config = RateLimitConfig {
         max_queries_per_user: config.rate_limit.max_queries_per_sec,
@@ -196,6 +190,25 @@ pub async fn bootstrap(
         config.rate_limit.max_queries_per_sec,
         config.rate_limit.max_messages_per_sec,
         config.rate_limit.max_subscriptions_per_user
+    );
+
+    // Connection Manager for WebSocket connections - use the one from AppContext
+    // This is CRITICAL: the same ConnectionsManager must be used by both:
+    // 1. ws_handler (for registering connections and marking authentication)
+    // 2. LiveQueryManager's SubscriptionService (for checking connection state during subscription)
+    // 
+    // Previously, lifecycle.rs created a NEW ConnectionsManager which caused the error:
+    // "Connection not found" when trying to register subscriptions because the connection
+    // was registered in one manager but looked up in another.
+    let connection_registry = app_context.connection_registry();
+    let client_timeout = config.websocket.client_timeout_secs.unwrap_or(10);
+    let auth_timeout = config.websocket.auth_timeout_secs.unwrap_or(3);
+    let heartbeat_interval = 5; // Fixed at 5s in AppContext
+    info!(
+        "ConnectionsManager initialized (client_timeout={}s, auth_timeout={}s, heartbeat_interval={}s)",
+        client_timeout,
+        auth_timeout,
+        heartbeat_interval
     );
 
     // Phase 9: All job scheduling now handled by JobsManager
@@ -223,10 +236,10 @@ pub async fn bootstrap(
     let components = ApplicationComponents {
         session_factory,
         sql_executor,
-        jwt_auth,
         rate_limiter,
         live_query_manager,
         user_repo,
+        connection_registry,
     };
 
     info!(
@@ -247,37 +260,82 @@ pub async fn run(
     info!("Starting HTTP server on {}", bind_addr);
     info!("Endpoints: POST /v1/api/sql, GET /v1/ws");
 
+    // Log server configuration for debugging
+    info!(
+        "Server config: workers={}, max_connections={}, backlog={}, blocking_threads={}, body_limit={}MB",
+        if config.server.workers == 0 {
+            num_cpus::get()
+        } else {
+            config.server.workers
+        },
+        config.performance.max_connections,
+        config.performance.backlog,
+        config.performance.worker_max_blocking_threads,
+        config.rate_limit.request_body_limit_bytes / (1024 * 1024)
+    );
+
+    if config.rate_limit.enable_connection_protection {
+        info!(
+            "Connection protection: max_conn_per_ip={}, max_req_per_ip_per_sec={}, ban_duration={}s",
+            config.rate_limit.max_connections_per_ip,
+            config.rate_limit.max_requests_per_ip_per_sec,
+            config.rate_limit.ban_duration_seconds
+        );
+    } else {
+        warn!("Connection protection is DISABLED - server may be vulnerable to DoS attacks");
+    }
+
     // Get JobsManager for graceful shutdown
     let job_manager_shutdown = app_context.job_manager();
     let shutdown_timeout_secs = config.shutdown.flush.timeout;
 
     let session_factory = components.session_factory.clone();
     let sql_executor = components.sql_executor.clone();
-    let jwt_auth = components.jwt_auth.clone();
     let rate_limiter = components.rate_limiter.clone();
     let live_query_manager = components.live_query_manager.clone();
     let user_repo = components.user_repo.clone();
+    let connection_registry = components.connection_registry.clone();
+
+    // Create connection protection middleware from config
+    let connection_protection = middleware::ConnectionProtection::from_server_config(config);
 
     let app_context_for_handler = app_context.clone();
+    let connection_registry_for_handler = connection_registry.clone();
     let server = HttpServer::new(move || {
         App::new()
+            // Connection protection (first middleware - drops bad requests early)
+            .wrap(connection_protection.clone())
+            // Standard middleware
             .wrap(middleware::request_logger())
             .wrap(middleware::build_cors())
             .app_data(web::Data::new(app_context_for_handler.clone()))
             .app_data(web::Data::new(session_factory.clone()))
             .app_data(web::Data::new(sql_executor.clone()))
-            .app_data(web::Data::new(jwt_auth.clone()))
             .app_data(web::Data::new(rate_limiter.clone()))
             .app_data(web::Data::new(live_query_manager.clone()))
             .app_data(web::Data::new(user_repo.clone()))
+            .app_data(web::Data::new(connection_registry_for_handler.clone()))
             .configure(routes::configure)
     })
+    // Set backlog BEFORE bind() - this affects the listen queue size
+    .backlog(config.performance.backlog)
     .bind(&bind_addr)?
     .workers(if config.server.workers == 0 {
         num_cpus::get()
     } else {
         config.server.workers
     })
+    // Per-worker max concurrent connections (default: 25000)
+    .max_connections(config.performance.max_connections)
+    // Blocking thread pool size per worker for RocksDB and CPU-intensive ops
+    .worker_max_blocking_threads(config.performance.worker_max_blocking_threads)
+    // Disable HTTP keep-alive to prevent CLOSE_WAIT accumulation in tests
+    // Each request gets a fresh connection that closes immediately after response
+    .keep_alive(std::time::Duration::ZERO)
+    // Client must send request headers within this time
+    .client_request_timeout(std::time::Duration::from_secs(config.performance.client_request_timeout))
+    // Allow time for graceful connection shutdown
+    .client_disconnect_timeout(std::time::Duration::from_secs(config.performance.client_disconnect_timeout))
     .run();
 
     let server_handle = server.handle();
@@ -292,7 +350,12 @@ pub async fn run(
         _ = tokio::signal::ctrl_c() => {
             info!("Received Ctrl+C, initiating graceful shutdown...");
 
+            // Stop accepting new HTTP connections
             server_handle.stop(true).await;
+
+            // Gracefully shutdown WebSocket connections
+            info!("Shutting down WebSocket connections...");
+            connection_registry.shutdown(std::time::Duration::from_secs(5)).await;
 
             info!(
                 "Waiting up to {}s for active jobs to complete...",
@@ -331,18 +394,19 @@ pub async fn run(
                     }
                 }
             }
+            
+            // Ensure all file descriptors are released
+            info!("Performing cleanup to release file descriptors...");
+            drop(components);
+            drop(app_context);
+            
+            info!("Graceful shutdown complete");
         }
     }
 
     info!("Server shutdown complete");
     Ok(())
 }
-
-/// Periodic scheduler for stream table TTL eviction
-///
-/// Runs in background, checking all STREAM tables and creating eviction jobs
-/// for tables that have TTL configured.
-/// T125-T127: Create default system user on database initialization
 
 /// T125-T127: Create default system user on database initialization
 ///
@@ -351,6 +415,10 @@ pub async fn run(
 /// - Auth type: Internal (localhost-only by default)
 /// - Role: System
 /// - Random password for emergency remote access
+///
+/// Periodic scheduler for stream table TTL eviction runs in background,
+/// checking all STREAM tables and creating eviction jobs for tables
+/// that have TTL configured.
 ///
 /// On first startup, logs the credentials to stdout for the administrator to save.
 ///

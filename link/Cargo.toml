@@ -27,11 +27,8 @@ serde_json = { workspace = true }
 # HTTP Basic Auth encoding
 base64 = { workspace = true }
 
-# UUID generation
-uuid = { workspace = true, features = ["js"] }
-
 # Random number generation for WASM
-getrandom = { workspace = true }
+getrandom = { workspace = true, optional = true }
 
 # Futures utilities
 futures-util = { workspace = true, default-features = false }
@@ -39,6 +36,9 @@ futures-util = { workspace = true, default-features = false }
 # Error handling
 anyhow = { workspace = true }
 thiserror = { workspace = true }
+
+# Logging
+log = { workspace = true }
 
 # WASM bindings (T039, T040, T063A-T063B)
 wasm-bindgen = { workspace = true, optional = true }
@@ -64,7 +64,7 @@ web-sys = { workspace = true, features = [
 
 [features]
 default = ["tokio-runtime"]
-tokio-runtime = ["tokio", "reqwest", "tokio-tungstenite"]
+tokio-runtime = ["tokio", "reqwest", "tokio-tungstenite", "getrandom"]
 wasm = ["wasm-bindgen", "wasm-bindgen-futures", "js-sys", "web-sys"]
 
 [dev-dependencies]
@@ -72,3 +72,13 @@ tokio = { workspace = true, features = ["test-util", "macros"] }
 
 [lib]
 crate-type = ["cdylib", "rlib"]
+
+[package.metadata.wasm-pack.profile.release]
+wasm-opt = false  # Disable wasm-opt to avoid bulk memory operation issues
+
+[profile.release]
+opt-level = "z"     # Optimize for size
+lto = true          # Enable Link Time Optimization
+codegen-units = 1   # Better optimization, slower build
+panic = "abort"     # Remove unwinding code
+strip = true        # Strip symbols

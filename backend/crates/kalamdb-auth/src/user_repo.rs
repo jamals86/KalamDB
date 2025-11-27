@@ -13,7 +13,4 @@ pub trait UserRepository: Send + Sync {
 
     /// Update a full user record. Implementations may persist only changed fields.
     async fn update_user(&self, user: &User) -> AuthResult<()>;
-
-    /// Return all users. Used for OAuth identity matching.
-    async fn scan_all_users(&self) -> AuthResult<Vec<User>>;
 }

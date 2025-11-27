@@ -615,7 +615,7 @@ mod tests {
         assert!(server.table_exists(ns, "messages").await);
         assert!(server.table_exists(ns, "config").await);
         assert!(server.table_exists(ns, "events").await);
-        
+
         // Manual cleanup
         let _ = drop_namespace(&server, ns).await;
     }

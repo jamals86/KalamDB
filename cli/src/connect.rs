@@ -3,8 +3,31 @@ use kalam_cli::{
     CLIConfiguration, CLIError, CLISession, FileCredentialStore, OutputFormat, Result,
 };
 use kalam_link::credentials::CredentialStore;
-use kalam_link::AuthProvider;
+use kalam_link::{AuthProvider, KalamLinkTimeouts};
 use std::time::Duration;
+
+/// Build timeouts configuration from CLI arguments
+fn build_timeouts(cli: &Cli) -> KalamLinkTimeouts {
+    // Check for preset flags first
+    if cli.fast_timeouts {
+        return KalamLinkTimeouts::fast();
+    }
+    if cli.relaxed_timeouts {
+        return KalamLinkTimeouts::relaxed();
+    }
+
+    // Build custom timeouts from individual CLI args
+    KalamLinkTimeouts::builder()
+        .connection_timeout_secs(cli.connection_timeout)
+        .receive_timeout_secs(cli.receive_timeout)
+        .send_timeout_secs(cli.timeout) // Use general timeout for send
+        .auth_timeout_secs(cli.auth_timeout)
+        .subscribe_timeout_secs(5) // Keep default for subscribe ack
+        .initial_data_timeout_secs(cli.initial_data_timeout)
+        .idle_timeout_secs(cli.subscription_timeout) // subscription_timeout is the idle timeout
+        .keepalive_interval_secs(30) // Keep default
+        .build()
+}
 
 pub async fn create_session(
     cli: &Cli,
@@ -98,6 +121,7 @@ pub async fn create_session(
         cli.loading_threshold_ms,
         !cli.no_spinner,
         Some(Duration::from_secs(cli.timeout)),
+        Some(build_timeouts(cli)),
     )
     .await
 }

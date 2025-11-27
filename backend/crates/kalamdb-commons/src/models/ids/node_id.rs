@@ -11,7 +11,7 @@ use std::fmt;
 
 /// Node identifier for cluster deployments
 ///
-/// Configured via config.toml `[server] node_id = "node1"`
+/// Configured via server.toml `[server] node_id = "node1"`
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize, Encode, Decode)]
 pub struct NodeId(String);
 

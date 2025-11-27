@@ -13,9 +13,9 @@ mod common;
 use common::*;
 
 use std::{
+    sync::{Arc, Barrier},
     thread,
     time::{Duration, Instant},
-    sync::{Arc, Barrier},
 };
 
 // Adjust these constants based on system capabilities
@@ -54,7 +54,7 @@ fn test_chat_simulation_memory_leak() {
     for i in 0..NUM_USERS {
         let username = format!("user_{}_{}", i, suffix);
         let password = format!("pass_{}", i);
-        
+
         if let Err(e) = execute_sql_as_root_via_cli(&format!(
             "CREATE USER {} WITH PASSWORD '{}' ROLE 'user'",
             username, password
@@ -72,7 +72,7 @@ fn test_chat_simulation_memory_leak() {
 
     // Spawn Simulation Threads
     let mut handles = Vec::new();
-    
+
     for (i, (username, password)) in user_credentials.iter().enumerate() {
         let username = username.clone();
         let password = password.clone();
@@ -82,13 +82,13 @@ fn test_chat_simulation_memory_leak() {
 
         let handle = thread::spawn(move || {
             barrier.wait(); // Wait for all threads to be ready
-            
+
             let conversation_id = format!("conv_{}_{}", user_idx, random_string(5));
-            
+
             // 1. AI Agent Thread
             // AI acts on behalf of the user or a system agent.
             // We use the user's credentials for simplicity, but distinguish by sender field.
-            
+
             let ai_creds = (username.clone(), password.clone());
             let user_creds = (username.clone(), password.clone());
             let ns_ref = namespace.clone();
@@ -128,7 +128,10 @@ fn test_chat_simulation_memory_leak() {
 
             let user_handle = thread::spawn(move || {
                 // User subscribes to messages
-                let msg_query = format!("SELECT * FROM {}.messages WHERE conversation_id = '{}'", namespace, conversation_id);
+                let msg_query = format!(
+                    "SELECT * FROM {}.messages WHERE conversation_id = '{}'",
+                    namespace, conversation_id
+                );
                 let mut msg_sub = match SubscriptionListener::start(&msg_query) {
                     Ok(l) => l,
                     Err(e) => {
@@ -138,7 +141,10 @@ fn test_chat_simulation_memory_leak() {
                 };
 
                 // User subscribes to stream events
-                let stream_query = format!("SELECT * FROM {}.stream_events WHERE conversation_id = '{}'", namespace, conversation_id);
+                let stream_query = format!(
+                    "SELECT * FROM {}.stream_events WHERE conversation_id = '{}'",
+                    namespace, conversation_id
+                );
                 let mut stream_sub = match SubscriptionListener::start(&stream_query) {
                     Ok(l) => l,
                     Err(e) => {
@@ -178,7 +184,7 @@ fn test_chat_simulation_memory_leak() {
 
     // Start the race
     start_barrier.wait();
-    
+
     // Wait for all simulations to finish
     for handle in handles {
         if let Err(_) = handle.join() {
@@ -188,8 +194,11 @@ fn test_chat_simulation_memory_leak() {
 
     println!("✅ Simulation complete. Cleaning up...");
     cleanup(&namespace, &user_credentials);
-    
-    println!("🎉 Test PASSED - Chat simulation finished in {:.2?}", test_start.elapsed());
+
+    println!(
+        "🎉 Test PASSED - Chat simulation finished in {:.2?}",
+        test_start.elapsed()
+    );
 }
 
 fn setup_chat_tables(namespace: &str) -> Result<(), Box<dyn std::error::Error>> {

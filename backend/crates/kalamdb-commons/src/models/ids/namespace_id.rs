@@ -72,4 +72,10 @@ impl StorageKey for NamespaceId {
     fn storage_key(&self) -> Vec<u8> {
         self.0.as_bytes().to_vec()
     }
+
+    fn from_storage_key(bytes: &[u8]) -> Result<Self, String> {
+        String::from_utf8(bytes.to_vec())
+            .map(NamespaceId)
+            .map_err(|e| e.to_string())
+    }
 }

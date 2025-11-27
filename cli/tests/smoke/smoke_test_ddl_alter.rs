@@ -18,6 +18,7 @@ use std::time::Duration;
 /// - Can add nullable column to existing table
 /// - Can add column with DEFAULT value
 /// - New column appears in subsequent queries
+#[ntest::timeout(60000)]
 #[test]
 fn smoke_test_alter_table_add_column() {
     if !is_server_running() {
@@ -32,10 +33,10 @@ fn smoke_test_alter_table_add_column() {
     println!("🧪 Testing ALTER TABLE ADD COLUMN");
 
     // Cleanup and setup
-    let _ = execute_sql_as_root_via_cli(&format!("DROP NAMESPACE IF EXISTS {} CASCADE", namespace));
+    let _ = execute_sql_as_root_via_client(&format!("DROP NAMESPACE IF EXISTS {} CASCADE", namespace));
     std::thread::sleep(Duration::from_millis(200));
 
-    execute_sql_as_root_via_cli(&format!("CREATE NAMESPACE {}", namespace))
+    execute_sql_as_root_via_client(&format!("CREATE NAMESPACE {}", namespace))
         .expect("Failed to create namespace");
 
     // Create table with initial columns
@@ -46,24 +47,27 @@ fn smoke_test_alter_table_add_column() {
         ) WITH (TYPE = 'USER', FLUSH_POLICY = 'rows:1000')"#,
         full_table
     );
-    execute_sql_as_root_via_cli(&create_sql).expect("Failed to create table");
+    execute_sql_as_root_via_client(&create_sql).expect("Failed to create table");
     std::thread::sleep(Duration::from_millis(200));
 
     println!("✅ Created table with 2 columns (id, name)");
 
     // Insert a row before adding column
     let insert_sql = format!("INSERT INTO {} (name) VALUES ('Alice')", full_table);
-    execute_sql_as_root_via_cli(&insert_sql).expect("Failed to insert row");
+    execute_sql_as_root_via_client(&insert_sql).expect("Failed to insert row");
     std::thread::sleep(Duration::from_millis(200));
 
     // Add nullable column
     let alter_sql = format!("ALTER TABLE {} ADD COLUMN age INT", full_table);
-    let alter_result = execute_sql_as_root_via_cli(&alter_sql);
-    
+    let alter_result = execute_sql_as_root_via_client(&alter_sql);
+
     match alter_result {
         Ok(output) => {
             println!("ALTER output: {}", output);
-            if output.to_lowercase().contains("error") || output.to_lowercase().contains("not implemented") || output.to_lowercase().contains("unsupported") {
+            if output.to_lowercase().contains("error")
+                || output.to_lowercase().contains("not implemented")
+                || output.to_lowercase().contains("unsupported")
+            {
                 println!("⚠️  ALTER TABLE ADD COLUMN not yet implemented - skipping test");
                 return;
             }
@@ -80,17 +84,20 @@ fn smoke_test_alter_table_add_column() {
 
     // Verify new column exists (SELECT should succeed)
     let select_sql = format!("SELECT name, age FROM {}", full_table);
-    let output_result = execute_sql_as_root_via_cli_json(&select_sql);
-    
+    let output_result = execute_sql_as_root_via_client_json(&select_sql);
+
     if output_result.is_err() {
         println!("⚠️  Column 'age' not found in schema - ALTER TABLE may have succeeded syntactically but schema wasn't updated");
         println!("   This indicates ALTER TABLE ADD COLUMN needs further implementation");
         return;
     }
-    
+
     let output = output_result.unwrap();
 
-    assert!(output.contains("\"age\""), "Expected 'age' column in output");
+    assert!(
+        output.contains("\"age\""),
+        "Expected 'age' column in output"
+    );
     assert!(output.contains("Alice"), "Expected existing row in output");
 
     println!("✅ Verified new column exists and old data preserved");
@@ -100,14 +107,14 @@ fn smoke_test_alter_table_add_column() {
         "ALTER TABLE {} ADD COLUMN status TEXT DEFAULT 'active'",
         full_table
     );
-    execute_sql_as_root_via_cli(&alter_with_default).expect("Failed to add column with DEFAULT");
+    execute_sql_as_root_via_client(&alter_with_default).expect("Failed to add column with DEFAULT");
 
     // Insert new row and verify DEFAULT applied
     let insert_sql2 = format!("INSERT INTO {} (name, age) VALUES ('Bob', 30)", full_table);
-    execute_sql_as_root_via_cli(&insert_sql2).expect("Failed to insert after ADD COLUMN");
+    execute_sql_as_root_via_client(&insert_sql2).expect("Failed to insert after ADD COLUMN");
 
     let select_sql2 = format!("SELECT name, status FROM {} WHERE name = 'Bob'", full_table);
-    let output2 = execute_sql_as_root_via_cli_json(&select_sql2).expect("Failed to query");
+    let output2 = execute_sql_as_root_via_client_json(&select_sql2).expect("Failed to query");
 
     assert!(
         output2.contains("active"),
@@ -123,6 +130,7 @@ fn smoke_test_alter_table_add_column() {
 /// - Can drop existing column
 /// - Column no longer appears in queries
 /// - Existing data in other columns preserved
+#[ntest::timeout(60000)]
 #[test]
 fn smoke_test_alter_table_drop_column() {
     if !is_server_running() {
@@ -137,10 +145,10 @@ fn smoke_test_alter_table_drop_column() {
     println!("🧪 Testing ALTER TABLE DROP COLUMN");
 
     // Cleanup and setup
-    let _ = execute_sql_as_root_via_cli(&format!("DROP NAMESPACE IF EXISTS {} CASCADE", namespace));
+    let _ = execute_sql_as_root_via_client(&format!("DROP NAMESPACE IF EXISTS {} CASCADE", namespace));
     std::thread::sleep(Duration::from_millis(200));
 
-    execute_sql_as_root_via_cli(&format!("CREATE NAMESPACE {}", namespace))
+    execute_sql_as_root_via_client(&format!("CREATE NAMESPACE {}", namespace))
         .expect("Failed to create namespace");
 
     // Create table with multiple columns
@@ -153,21 +161,21 @@ fn smoke_test_alter_table_drop_column() {
         ) WITH (TYPE = 'USER', FLUSH_POLICY = 'rows:1000')"#,
         full_table
     );
-    execute_sql_as_root_via_cli(&create_sql).expect("Failed to create table");
+    execute_sql_as_root_via_client(&create_sql).expect("Failed to create table");
 
     // Insert data
     let insert_sql = format!(
         "INSERT INTO {} (name, email, age) VALUES ('Alice', 'alice@example.com', 25)",
         full_table
     );
-    execute_sql_as_root_via_cli(&insert_sql).expect("Failed to insert row");
+    execute_sql_as_root_via_client(&insert_sql).expect("Failed to insert row");
 
     println!("✅ Created table with 4 columns and 1 row");
 
     // Drop column
     let alter_sql = format!("ALTER TABLE {} DROP COLUMN email", full_table);
-    let alter_result = execute_sql_as_root_via_cli(&alter_sql);
-    
+    let alter_result = execute_sql_as_root_via_client(&alter_sql);
+
     if alter_result.is_err() {
         println!("⚠️  ALTER TABLE DROP COLUMN not yet implemented - skipping test");
         println!("   Error: {:?}", alter_result.unwrap_err());
@@ -179,7 +187,8 @@ fn smoke_test_alter_table_drop_column() {
 
     // Verify column no longer exists
     let select_sql = format!("SELECT * FROM {}", full_table);
-    let output = execute_sql_as_root_via_cli_json(&select_sql).expect("Failed to query after DROP COLUMN");
+    let output =
+        execute_sql_as_root_via_client_json(&select_sql).expect("Failed to query after DROP COLUMN");
 
     assert!(
         !output.contains("\"email\""),
@@ -198,6 +207,7 @@ fn smoke_test_alter_table_drop_column() {
 /// Verifies:
 /// - Can modify column type
 /// - Can change NULL/NOT NULL constraint
+#[ntest::timeout(60000)]
 #[test]
 fn smoke_test_alter_table_modify_column() {
     if !is_server_running() {
@@ -212,10 +222,10 @@ fn smoke_test_alter_table_modify_column() {
     println!("🧪 Testing ALTER TABLE MODIFY COLUMN");
 
     // Cleanup and setup
-    let _ = execute_sql_as_root_via_cli(&format!("DROP NAMESPACE IF EXISTS {} CASCADE", namespace));
+    let _ = execute_sql_as_root_via_client(&format!("DROP NAMESPACE IF EXISTS {} CASCADE", namespace));
     std::thread::sleep(Duration::from_millis(200));
 
-    execute_sql_as_root_via_cli(&format!("CREATE NAMESPACE {}", namespace))
+    execute_sql_as_root_via_client(&format!("CREATE NAMESPACE {}", namespace))
         .expect("Failed to create namespace");
 
     // Create table
@@ -226,31 +236,34 @@ fn smoke_test_alter_table_modify_column() {
         ) WITH (TYPE = 'USER', FLUSH_POLICY = 'rows:1000')"#,
         full_table
     );
-    execute_sql_as_root_via_cli(&create_sql).expect("Failed to create table");
+    execute_sql_as_root_via_client(&create_sql).expect("Failed to create table");
 
     println!("✅ Created table");
 
     // Insert data
     let insert_sql = format!("INSERT INTO {} (content) VALUES ('Test data')", full_table);
-    execute_sql_as_root_via_cli(&insert_sql).expect("Failed to insert row");
+    execute_sql_as_root_via_client(&insert_sql).expect("Failed to insert row");
 
     // Modify column to NOT NULL (should work if data exists)
-    let alter_sql = format!("ALTER TABLE {} MODIFY COLUMN content TEXT NOT NULL", full_table);
-    
+    let alter_sql = format!(
+        "ALTER TABLE {} MODIFY COLUMN content TEXT NOT NULL",
+        full_table
+    );
+
     // Note: This might fail if backend doesn't support MODIFY COLUMN yet
-    match execute_sql_as_root_via_cli(&alter_sql) {
+    match execute_sql_as_root_via_client(&alter_sql) {
         Ok(_) => {
             println!("✅ Modified column to NOT NULL");
-            
+
             // Verify by attempting to insert NULL (should fail)
             let insert_null = format!("INSERT INTO {} (content) VALUES (NULL)", full_table);
-            let null_result = execute_sql_as_root_via_cli(&insert_null);
-            
+            let null_result = execute_sql_as_root_via_client(&insert_null);
+
             assert!(
                 null_result.is_err() || null_result.unwrap().to_lowercase().contains("error"),
                 "Expected error when inserting NULL into NOT NULL column"
             );
-            
+
             println!("✅ Verified NOT NULL constraint enforced");
         }
         Err(e) => {
@@ -265,6 +278,7 @@ fn smoke_test_alter_table_modify_column() {
 /// Verifies:
 /// - Can change ACCESS_LEVEL for shared tables
 /// - ACCESS_LEVEL appears in system.tables options
+#[ntest::timeout(60000)]
 #[test]
 fn smoke_test_alter_shared_table_access_level() {
     if !is_server_running() {
@@ -279,10 +293,10 @@ fn smoke_test_alter_shared_table_access_level() {
     println!("🧪 Testing ALTER TABLE SET TBLPROPERTIES (ACCESS_LEVEL)");
 
     // Cleanup and setup
-    let _ = execute_sql_as_root_via_cli(&format!("DROP NAMESPACE IF EXISTS {} CASCADE", namespace));
+    let _ = execute_sql_as_root_via_client(&format!("DROP NAMESPACE IF EXISTS {} CASCADE", namespace));
     std::thread::sleep(Duration::from_millis(200));
 
-    execute_sql_as_root_via_cli(&format!("CREATE NAMESPACE {}", namespace))
+    execute_sql_as_root_via_client(&format!("CREATE NAMESPACE {}", namespace))
         .expect("Failed to create namespace");
 
     // Create SHARED table with PUBLIC access
@@ -297,7 +311,7 @@ fn smoke_test_alter_shared_table_access_level() {
         )"#,
         full_table
     );
-    execute_sql_as_root_via_cli(&create_sql).expect("Failed to create shared table");
+    execute_sql_as_root_via_client(&create_sql).expect("Failed to create shared table");
 
     println!("✅ Created SHARED table with ACCESS_LEVEL='PUBLIC'");
 
@@ -307,7 +321,7 @@ fn smoke_test_alter_shared_table_access_level() {
         full_table
     );
 
-    match execute_sql_as_root_via_cli(&alter_sql) {
+    match execute_sql_as_root_via_client(&alter_sql) {
         Ok(_) => {
             println!("✅ Changed ACCESS_LEVEL to RESTRICTED");
 
@@ -316,11 +330,13 @@ fn smoke_test_alter_shared_table_access_level() {
                 "SELECT options FROM system.tables WHERE table_name = '{}'",
                 table
             );
-            let output = execute_sql_as_root_via_cli_json(&query_sql)
+            let output = execute_sql_as_root_via_client_json(&query_sql)
                 .expect("Failed to query system.tables");
 
             assert!(
-                output.contains("RESTRICTED") || output.contains("restricted"),
+                output.contains("RESTRICTED")
+                    || output.contains("restricted")
+                    || output.contains("Restricted"),
                 "Expected ACCESS_LEVEL='RESTRICTED' in system.tables options"
             );
 
@@ -338,6 +354,7 @@ fn smoke_test_alter_shared_table_access_level() {
 /// Verifies:
 /// - Adding NOT NULL column without DEFAULT to table with existing rows fails
 /// - Error message is clear
+#[ntest::timeout(60000)]
 #[test]
 fn smoke_test_alter_add_not_null_without_default_error() {
     if !is_server_running() {
@@ -352,10 +369,10 @@ fn smoke_test_alter_add_not_null_without_default_error() {
     println!("🧪 Testing error: ADD NOT NULL column without DEFAULT");
 
     // Cleanup and setup
-    let _ = execute_sql_as_root_via_cli(&format!("DROP NAMESPACE IF EXISTS {} CASCADE", namespace));
+    let _ = execute_sql_as_root_via_client(&format!("DROP NAMESPACE IF EXISTS {} CASCADE", namespace));
     std::thread::sleep(Duration::from_millis(200));
 
-    execute_sql_as_root_via_cli(&format!("CREATE NAMESPACE {}", namespace))
+    execute_sql_as_root_via_client(&format!("CREATE NAMESPACE {}", namespace))
         .expect("Failed to create namespace");
 
     // Create table
@@ -366,24 +383,29 @@ fn smoke_test_alter_add_not_null_without_default_error() {
         ) WITH (TYPE = 'USER', FLUSH_POLICY = 'rows:1000')"#,
         full_table
     );
-    execute_sql_as_root_via_cli(&create_sql).expect("Failed to create table");
+    execute_sql_as_root_via_client(&create_sql).expect("Failed to create table");
 
     // Insert data
     let insert_sql = format!("INSERT INTO {} (name) VALUES ('Alice')", full_table);
-    execute_sql_as_root_via_cli(&insert_sql).expect("Failed to insert row");
+    execute_sql_as_root_via_client(&insert_sql).expect("Failed to insert row");
 
     println!("✅ Created table with existing data");
 
     // Try to add NOT NULL column without DEFAULT (should fail)
-    let alter_sql = format!("ALTER TABLE {} ADD COLUMN required_field TEXT NOT NULL", full_table);
-    let alter_result = execute_sql_as_root_via_cli(&alter_sql);
+    let alter_sql = format!(
+        "ALTER TABLE {} ADD COLUMN required_field TEXT NOT NULL",
+        full_table
+    );
+    let alter_result = execute_sql_as_root_via_client(&alter_sql);
 
     match alter_result {
         Err(e) => {
             println!("✅ ADD NOT NULL without DEFAULT failed as expected: {}", e);
             let error_msg = e.to_string().to_lowercase();
             assert!(
-                error_msg.contains("not null") || error_msg.contains("default") || error_msg.contains("required"),
+                error_msg.contains("not null")
+                    || error_msg.contains("default")
+                    || error_msg.contains("required"),
                 "Expected error message about NOT NULL requiring DEFAULT, got: {}",
                 e
             );
@@ -406,6 +428,7 @@ fn smoke_test_alter_add_not_null_without_default_error() {
 /// Verifies:
 /// - Attempting to DROP or MODIFY _updated or _deleted fails
 /// - Error message indicates system columns are protected
+#[ntest::timeout(60000)]
 #[test]
 fn smoke_test_alter_system_columns_error() {
     if !is_server_running() {
@@ -420,10 +443,10 @@ fn smoke_test_alter_system_columns_error() {
     println!("🧪 Testing error: Cannot ALTER system columns");
 
     // Cleanup and setup
-    let _ = execute_sql_as_root_via_cli(&format!("DROP NAMESPACE IF EXISTS {} CASCADE", namespace));
+    let _ = execute_sql_as_root_via_client(&format!("DROP NAMESPACE IF EXISTS {} CASCADE", namespace));
     std::thread::sleep(Duration::from_millis(200));
 
-    execute_sql_as_root_via_cli(&format!("CREATE NAMESPACE {}", namespace))
+    execute_sql_as_root_via_client(&format!("CREATE NAMESPACE {}", namespace))
         .expect("Failed to create namespace");
 
     // Create USER table (has _updated, _deleted system columns)
@@ -434,13 +457,13 @@ fn smoke_test_alter_system_columns_error() {
         ) WITH (TYPE = 'USER', FLUSH_POLICY = 'rows:1000')"#,
         full_table
     );
-    execute_sql_as_root_via_cli(&create_sql).expect("Failed to create table");
+    execute_sql_as_root_via_client(&create_sql).expect("Failed to create table");
 
     println!("✅ Created USER table with system columns");
 
     // Try to DROP _updated (should fail)
     let drop_updated = format!("ALTER TABLE {} DROP COLUMN _updated", full_table);
-    let drop_result = execute_sql_as_root_via_cli(&drop_updated);
+    let drop_result = execute_sql_as_root_via_client(&drop_updated);
 
     match drop_result {
         Err(e) => {
@@ -451,7 +474,10 @@ fn smoke_test_alter_system_columns_error() {
             if output_lower.contains("error") || output_lower.contains("system") {
                 println!("✅ DROP _updated failed as expected");
             } else {
-                println!("⚠️  DROP _updated should fail (system column), but got: {}", output);
+                println!(
+                    "⚠️  DROP _updated should fail (system column), but got: {}",
+                    output
+                );
                 println!("TODO: Enforce protection of system columns in ALTER TABLE");
             }
         }
@@ -459,7 +485,7 @@ fn smoke_test_alter_system_columns_error() {
 
     // Try to DROP _deleted (should fail)
     let drop_deleted = format!("ALTER TABLE {} DROP COLUMN _deleted", full_table);
-    let drop_result2 = execute_sql_as_root_via_cli(&drop_deleted);
+    let drop_result2 = execute_sql_as_root_via_client(&drop_deleted);
 
     match drop_result2 {
         Err(e) => {
@@ -470,7 +496,10 @@ fn smoke_test_alter_system_columns_error() {
             if output_lower.contains("error") || output_lower.contains("system") {
                 println!("✅ DROP _deleted failed as expected");
             } else {
-                println!("⚠️  DROP _deleted should fail (system column), but got: {}", output);
+                println!(
+                    "⚠️  DROP _deleted should fail (system column), but got: {}",
+                    output
+                );
             }
         }
     }

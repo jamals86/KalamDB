@@ -139,7 +139,16 @@ pub trait BaseTableProvider<K: StorageKey, V>: Send + Sync + TableProvider {
     /// Iterates over rows and calls insert() for each. Providers may override
     /// with batch-optimized implementation.
     fn insert_batch(&self, user_id: &UserId, rows: Vec<Row>) -> Result<Vec<K>, KalamDbError> {
-        rows.into_iter()
+        use crate::providers::arrow_json_conversion::coerce_rows;
+
+        // Coerce rows to match schema types (e.g. String -> Timestamp)
+        // This ensures real-time events match the storage format
+        let coerced_rows = coerce_rows(rows, &self.schema_ref()).map_err(|e| {
+            KalamDbError::InvalidOperation(format!("Schema coercion failed: {}", e))
+        })?;
+
+        coerced_rows
+            .into_iter()
             .map(|row| self.insert(user_id, row))
             .collect()
     }
@@ -208,11 +217,30 @@ pub trait BaseTableProvider<K: StorageKey, V>: Send + Sync + TableProvider {
         id_value: &str,
     ) -> Result<Option<K>, KalamDbError> {
         // Default implementation: scan rows with user scoping and version resolution
-        let rows = self.scan_with_version_resolution_to_kvs(user_id, None, None, None)?;
+        let rows = self.scan_with_version_resolution_to_kvs(user_id, None, None, None, false)?;
+
+        log::trace!(
+            "[find_row_key_by_id_field] Scanning for pk_name='{}' id_value='{}' user='{}', found {} rows",
+            self.primary_key_field_name(),
+            id_value,
+            user_id.as_str(),
+            rows.len()
+        );
 
         for (key, row) in rows {
             let fields = Self::extract_row(&row);
-            if let Some(id) = fields.get(self.primary_key_field_name()) {
+            log::trace!(
+                "[find_row_key_by_id_field] Checking row: pk_field='{}', row_keys={:?}",
+                self.primary_key_field_name(),
+                fields.values.keys().collect::<Vec<_>>()
+            );
+            let pk_value = fields.get(self.primary_key_field_name());
+            log::trace!(
+                "[find_row_key_by_id_field] pk_value={:?}, searching for id_value='{}'",
+                pk_value,
+                id_value
+            );
+            if let Some(id) = pk_value {
                 // Compare robustly: support numeric and string IDs
                 let matches = match id {
                     ScalarValue::Utf8(Some(s)) | ScalarValue::LargeUtf8(Some(s)) => s == id_value,
@@ -227,14 +255,57 @@ pub trait BaseTableProvider<K: StorageKey, V>: Send + Sync + TableProvider {
                             false
                         }
                     }
+                    ScalarValue::Int32(Some(n)) => {
+                        // Compare as exact string, and also as i32 if parseable
+                        let num_str = n.to_string();
+                        if num_str == id_value {
+                            true
+                        } else if let Ok(iv) = id_value.parse::<i32>() {
+                            *n == iv
+                        } else {
+                            false
+                        }
+                    }
+                    ScalarValue::Int16(Some(n)) => {
+                        let num_str = n.to_string();
+                        if num_str == id_value {
+                            true
+                        } else if let Ok(iv) = id_value.parse::<i16>() {
+                            *n == iv
+                        } else {
+                            false
+                        }
+                    }
+                    ScalarValue::UInt64(Some(n)) => {
+                        let num_str = n.to_string();
+                        if num_str == id_value {
+                            true
+                        } else if let Ok(iv) = id_value.parse::<u64>() {
+                            *n == iv
+                        } else {
+                            false
+                        }
+                    }
+                    ScalarValue::UInt32(Some(n)) => {
+                        let num_str = n.to_string();
+                        if num_str == id_value {
+                            true
+                        } else if let Ok(iv) = id_value.parse::<u32>() {
+                            *n == iv
+                        } else {
+                            false
+                        }
+                    }
                     _ => false,
                 };
                 if matches {
+                    log::trace!("[find_row_key_by_id_field] Found matching row with id={}", id_value);
                     return Ok(Some(key));
                 }
             }
         }
 
+        log::trace!("[find_row_key_by_id_field] No matching row found for id={}", id_value);
         Ok(None)
     }
 
@@ -393,12 +464,14 @@ pub trait BaseTableProvider<K: StorageKey, V>: Send + Sync + TableProvider {
     /// * `filter` - Optional DataFusion expression for filtering
     /// * `since_seq` - Optional sequence number to start scanning from (optimization)
     /// * `limit` - Optional limit on number of rows
+    /// * `keep_deleted` - Whether to include soft-deleted rows (tombstones) in the result
     fn scan_with_version_resolution_to_kvs(
         &self,
         user_id: &UserId,
         filter: Option<&Expr>,
         since_seq: Option<SeqId>,
         limit: Option<usize>,
+        keep_deleted: bool,
     ) -> Result<Vec<(K, V)>, KalamDbError>;
 
     /// Extract row fields from provider-specific value type
@@ -416,6 +489,18 @@ fn json_value_matches_pk(value: &ScalarValue, target: &str) -> bool {
     }
 }
 
+/// Check if a filter expression references the _deleted column
+pub fn filter_uses_deleted_column(filter: &Expr) -> bool {
+    use datafusion::logical_expr::utils::expr_to_columns;
+    use std::collections::HashSet;
+    let mut columns = HashSet::new();
+    if expr_to_columns(filter, &mut columns).is_ok() {
+        columns.iter().any(|c| c.name == "_deleted")
+    } else {
+        false
+    }
+}
+
 /// Locate the latest non-deleted row matching the provided primary-key value
 pub fn find_row_by_pk<P, K, V>(
     provider: &P,
@@ -427,7 +512,8 @@ where
     K: StorageKey,
 {
     let user_scope = resolve_user_scope(scope);
-    let resolved = provider.scan_with_version_resolution_to_kvs(user_scope, None, None, None)?;
+    let resolved =
+        provider.scan_with_version_resolution_to_kvs(user_scope, None, None, None, false)?;
     let pk_name = provider.primary_key_field_name();
 
     for (key, row) in resolved.into_iter() {

@@ -19,7 +19,7 @@ fn test_update_all_types_user_table() {
     let _ = execute_sql_via_cli(&format!("CREATE NAMESPACE IF NOT EXISTS {}", namespace));
 
     // Create table with all supported types
-    // Note: Skipping EMBEDDING and BYTES for simplicity in SQL literals for now, 
+    // Note: Skipping EMBEDDING and BYTES for simplicity in SQL literals for now,
     // but covering all scalar types.
     let create_sql = format!(
         r#"CREATE TABLE {} (
@@ -43,7 +43,11 @@ fn test_update_all_types_user_table() {
     );
 
     let output = execute_sql_as_root_via_cli(&create_sql).unwrap();
-    assert!(output.contains("created") || output.contains("Success"), "Table creation failed: {}", output);
+    assert!(
+        output.contains("created") || output.contains("Success"),
+        "Table creation failed: {}",
+        output
+    );
 
     // Insert initial data
     let insert_sql = format!(
@@ -58,21 +62,32 @@ fn test_update_all_types_user_table() {
         )"#,
         full_table_name
     );
-    
+
     let output = execute_sql_as_root_via_cli(&insert_sql).unwrap();
-    assert!(output.contains("1 row(s) affected") || output.contains("1 rows affected") || output.contains("Inserted 1 row(s)") || output.contains("Success"), "Insert failed: {}", output);
+    assert!(
+        output.contains("1 row(s) affected")
+            || output.contains("1 rows affected")
+            || output.contains("Inserted 1 row(s)")
+            || output.contains("Success"),
+        "Insert failed: {}",
+        output
+    );
 
     // Verify initial data
     let query_sql = format!("SELECT * FROM {} WHERE id = 'row1'", full_table_name);
     let output = execute_sql_as_root_via_cli_json(&query_sql).unwrap();
-    assert!(output.contains("initial text"), "Initial data not found: {}", output);
+    assert!(
+        output.contains("initial text"),
+        "Initial data not found: {}",
+        output
+    );
     assert!(output.contains("123"), "Initial int not found");
 
     // --- NEW SCENARIO: Flush initial data to cold storage before update ---
     println!("Flushing initial data to cold storage...");
     let flush_sql = format!("FLUSH TABLE {}", full_table_name);
     let output = execute_sql_as_root_via_cli(&flush_sql).unwrap();
-    
+
     // Wait for flush to complete
     if let Ok(job_id) = parse_job_id_from_flush_output(&output) {
         println!("Waiting for initial flush job {}...", job_id);
@@ -85,7 +100,11 @@ fn test_update_all_types_user_table() {
 
     // Verify initial data is still readable after flush
     let output = execute_sql_as_root_via_cli_json(&query_sql).unwrap();
-    assert!(output.contains("initial text"), "Initial data not found after flush: {}", output);
+    assert!(
+        output.contains("initial text"),
+        "Initial data not found after flush: {}",
+        output
+    );
     assert!(output.contains("123"), "Initial int not found after flush");
     // ---------------------------------------------------------------------
 
@@ -111,11 +130,22 @@ fn test_update_all_types_user_table() {
     );
 
     let output = execute_sql_as_root_via_cli(&update_sql).unwrap();
-    assert!(output.contains("1 row(s) affected") || output.contains("1 rows affected") || output.contains("Updated 1 row(s)") || output.contains("Success"), "Update failed: {}", output);
+    assert!(
+        output.contains("1 row(s) affected")
+            || output.contains("1 rows affected")
+            || output.contains("Updated 1 row(s)")
+            || output.contains("Success"),
+        "Update failed: {}",
+        output
+    );
 
     // Verify updated data (before flush)
     let output = execute_sql_as_root_via_cli_json(&query_sql).unwrap();
-    assert!(output.contains("updated text"), "Updated text not found: {}", output);
+    assert!(
+        output.contains("updated text"),
+        "Updated text not found: {}",
+        output
+    );
     assert!(output.contains("456"), "Updated int not found");
     assert!(output.contains("200.75"), "Updated decimal not found");
     // Note: JSON formatting might vary (whitespace), so we might need loose check or just check presence of "updated"
@@ -124,7 +154,7 @@ fn test_update_all_types_user_table() {
     // Flush table
     let flush_sql = format!("FLUSH TABLE {}", full_table_name);
     let output = execute_sql_as_root_via_cli(&flush_sql).unwrap();
-    
+
     // Wait for flush to complete
     if let Ok(job_id) = parse_job_id_from_flush_output(&output) {
         println!("Waiting for flush job {}...", job_id);
@@ -139,9 +169,16 @@ fn test_update_all_types_user_table() {
 
     // Verify updated data (after flush)
     let output = execute_sql_as_root_via_cli_json(&query_sql).unwrap();
-    assert!(output.contains("updated text"), "Updated text not found after flush: {}", output);
+    assert!(
+        output.contains("updated text"),
+        "Updated text not found after flush: {}",
+        output
+    );
     assert!(output.contains("456"), "Updated int not found after flush");
-    assert!(output.contains("200.75"), "Updated decimal not found after flush");
+    assert!(
+        output.contains("200.75"),
+        "Updated decimal not found after flush"
+    );
 
     // Cleanup
     let _ = execute_sql_via_cli(&format!("DROP TABLE IF EXISTS {}", full_table_name));
@@ -185,7 +222,11 @@ fn test_update_all_types_shared_table() {
     );
 
     let output = execute_sql_as_root_via_cli(&create_sql).unwrap();
-    assert!(output.contains("created") || output.contains("Success"), "Table creation failed: {}", output);
+    assert!(
+        output.contains("created") || output.contains("Success"),
+        "Table creation failed: {}",
+        output
+    );
 
     // Insert initial data
     let insert_sql = format!(
@@ -200,21 +241,32 @@ fn test_update_all_types_shared_table() {
         )"#,
         full_table_name
     );
-    
+
     let output = execute_sql_as_root_via_cli(&insert_sql).unwrap();
-    assert!(output.contains("1 row(s) affected") || output.contains("1 rows affected") || output.contains("Inserted 1 row(s)") || output.contains("Success"), "Insert failed: {}", output);
+    assert!(
+        output.contains("1 row(s) affected")
+            || output.contains("1 rows affected")
+            || output.contains("Inserted 1 row(s)")
+            || output.contains("Success"),
+        "Insert failed: {}",
+        output
+    );
 
     // Verify initial data
     let query_sql = format!("SELECT * FROM {} WHERE id = 'row1'", full_table_name);
     let output = execute_sql_as_root_via_cli_json(&query_sql).unwrap();
-    assert!(output.contains("initial text"), "Initial data not found: {}", output);
+    assert!(
+        output.contains("initial text"),
+        "Initial data not found: {}",
+        output
+    );
     assert!(output.contains("123"), "Initial int not found");
 
     // --- NEW SCENARIO: Flush initial data to cold storage before update ---
     println!("Flushing initial data to cold storage...");
     let flush_sql = format!("FLUSH TABLE {}", full_table_name);
     let output = execute_sql_as_root_via_cli(&flush_sql).unwrap();
-    
+
     // Wait for flush to complete
     if let Ok(job_id) = parse_job_id_from_flush_output(&output) {
         println!("Waiting for initial flush job {}...", job_id);
@@ -227,7 +279,11 @@ fn test_update_all_types_shared_table() {
 
     // Verify initial data is still readable after flush
     let output = execute_sql_as_root_via_cli_json(&query_sql).unwrap();
-    assert!(output.contains("initial text"), "Initial data not found after flush: {}", output);
+    assert!(
+        output.contains("initial text"),
+        "Initial data not found after flush: {}",
+        output
+    );
     assert!(output.contains("123"), "Initial int not found after flush");
     // ---------------------------------------------------------------------
 
@@ -253,11 +309,22 @@ fn test_update_all_types_shared_table() {
     );
 
     let output = execute_sql_as_root_via_cli(&update_sql).unwrap();
-    assert!(output.contains("1 row(s) affected") || output.contains("1 rows affected") || output.contains("Updated 1 row(s)") || output.contains("Success"), "Update failed: {}", output);
+    assert!(
+        output.contains("1 row(s) affected")
+            || output.contains("1 rows affected")
+            || output.contains("Updated 1 row(s)")
+            || output.contains("Success"),
+        "Update failed: {}",
+        output
+    );
 
     // Verify updated data (before flush)
     let output = execute_sql_as_root_via_cli_json(&query_sql).unwrap();
-    assert!(output.contains("updated text"), "Updated text not found: {}", output);
+    assert!(
+        output.contains("updated text"),
+        "Updated text not found: {}",
+        output
+    );
     assert!(output.contains("456"), "Updated int not found");
     assert!(output.contains("200.75"), "Updated decimal not found");
     assert!(output.contains("updated"), "Updated JSON content not found");
@@ -265,7 +332,7 @@ fn test_update_all_types_shared_table() {
     // Flush table
     let flush_sql = format!("FLUSH TABLE {}", full_table_name);
     let output = execute_sql_as_root_via_cli(&flush_sql).unwrap();
-    
+
     // Wait for flush to complete
     if let Ok(job_id) = parse_job_id_from_flush_output(&output) {
         println!("Waiting for flush job {}...", job_id);
@@ -278,9 +345,16 @@ fn test_update_all_types_shared_table() {
 
     // Verify updated data (after flush)
     let output = execute_sql_as_root_via_cli_json(&query_sql).unwrap();
-    assert!(output.contains("updated text"), "Updated text not found after flush: {}", output);
+    assert!(
+        output.contains("updated text"),
+        "Updated text not found after flush: {}",
+        output
+    );
     assert!(output.contains("456"), "Updated int not found after flush");
-    assert!(output.contains("200.75"), "Updated decimal not found after flush");
+    assert!(
+        output.contains("200.75"),
+        "Updated decimal not found after flush"
+    );
 
     // Cleanup
     let _ = execute_sql_via_cli(&format!("DROP TABLE IF EXISTS {}", full_table_name));

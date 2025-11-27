@@ -6,7 +6,7 @@ use datafusion::arrow::datatypes::SchemaRef;
 use datafusion::arrow::record_batch::RecordBatch;
 use datafusion::logical_expr::Expr;
 use kalamdb_commons::models::UserId;
-use kalamdb_commons::types::ManifestFile;
+use kalamdb_commons::types::Manifest;
 use kalamdb_commons::TableId;
 use std::path::PathBuf;
 
@@ -43,13 +43,15 @@ pub(crate) fn scan_parquet_files_as_batch(
 
     let manifest_cache_service = core.app_context.manifest_cache_service();
     let cache_result = manifest_cache_service.get_or_load(table_id, user_id);
-    let mut manifest_opt: Option<ManifestFile> = None;
+    let mut manifest_opt: Option<Manifest> = None;
     let mut use_degraded_mode = false;
 
     match &cache_result {
-        Ok(Some(entry)) => match ManifestFile::from_json(&entry.manifest_json) {
+        Ok(Some(entry)) => match serde_json::from_str::<Manifest>(&entry.manifest_json) {
             Ok(manifest) => {
-                if let Err(e) = manifest.validate() {
+                // Validate manifest using service
+                let manifest_service = core.app_context.manifest_service();
+                if let Err(e) = manifest_service.validate_manifest(&manifest) {
                     log::warn!(
                         "⚠️  [MANIFEST CORRUPTION] table={}.{} {} error={} | Triggering rebuild",
                         namespace.as_str(),
@@ -58,13 +60,13 @@ pub(crate) fn scan_parquet_files_as_batch(
                         e
                     );
                     use_degraded_mode = true;
-                    let manifest_service = core.app_context.manifest_service();
                     let ns = namespace.clone();
                     let tbl = table.clone();
                     let uid = user_id.cloned();
                     let scope_for_spawn = scope_label.clone();
-                    let manifest_table_type = table_type.clone();
+                    let manifest_table_type = table_type;
                     let table_id_for_spawn = table_id.clone();
+                    let manifest_service_clone = core.app_context.manifest_service();
                     tokio::spawn(async move {
                         log::info!(
                             "🔧 [MANIFEST REBUILD STARTED] table={}.{} {}",
@@ -72,7 +74,7 @@ pub(crate) fn scan_parquet_files_as_batch(
                             tbl.as_str(),
                             scope_for_spawn
                         );
-                        match manifest_service.rebuild_manifest(
+                        match manifest_service_clone.rebuild_manifest(
                             &table_id_for_spawn,
                             manifest_table_type,
                             uid.as_ref(),
@@ -134,17 +136,17 @@ pub(crate) fn scan_parquet_files_as_batch(
 
     if let Some(ref _manifest) = manifest_opt {
         // log::debug!(
-        //     "✅ Manifest cache HIT | table={}.{} | {} | batches={}",
+        //     "✅ Manifest cache HIT | table={}.{} | {} | segments={}",
         //     namespace.as_str(),
         //     table.as_str(),
         //     scope_label,
-        //     manifest.batches.len()
+        //     manifest.segments.len()
         // );
     }
 
     let planner = ManifestAccessPlanner::new();
     let (min_seq, max_seq) = filter
-        .map(|f| crate::providers::helpers::extract_seq_bounds_from_filter(f))
+        .map(crate::providers::helpers::extract_seq_bounds_from_filter)
         .unwrap_or((None, None));
     let seq_range = match (min_seq, max_seq) {
         (Some(min), Some(max)) => Some((min.as_i64(), max.as_i64())),

@@ -17,6 +17,7 @@ fn parse_timing_ms(output: &str) -> Option<f64> {
         .and_then(|m| m.as_str().parse::<f64>().ok())
 }
 
+#[ntest::timeout(60000)]
 #[test]
 fn smoke_test_timing_output_format() {
     if !is_server_running() {
@@ -47,24 +48,27 @@ fn smoke_test_timing_output_format() {
     .expect("insert row");
 
     // Execute SELECT and verify timing output
-    let output = execute_sql_as_root_via_cli(&format!("SELECT * FROM {}", full))
-        .expect("select query");
+    let output =
+        execute_sql_as_root_via_cli(&format!("SELECT * FROM {}", full)).expect("select query");
 
     // Verify timing format exists
-    let timing = parse_timing_ms(&output).expect(
-        "CLI output should contain 'Took: X.XXX ms' timing information"
-    );
+    let timing = parse_timing_ms(&output)
+        .expect("CLI output should contain 'Took: X.XXX ms' timing information");
 
     println!("Parsed timing: {} ms", timing);
 
     // Sanity check: timing should be positive and reasonable (< 5 seconds)
     assert!(timing > 0.0, "Timing should be positive");
-    assert!(timing < 5000.0, "Single row SELECT should complete in < 5000ms");
+    assert!(
+        timing < 5000.0,
+        "Single row SELECT should complete in < 5000ms"
+    );
 
     // Cleanup
     let _ = execute_sql_as_root_via_cli(&format!("DROP TABLE IF EXISTS {}", full));
 }
 
+#[ntest::timeout(60000)]
 #[test]
 fn smoke_test_timing_scaling_small_table() {
     if !is_server_running() {
@@ -111,6 +115,7 @@ fn smoke_test_timing_scaling_small_table() {
     let _ = execute_sql_as_root_via_cli(&format!("DROP TABLE IF EXISTS {}", full));
 }
 
+#[ntest::timeout(60000)]
 #[test]
 fn smoke_test_timing_scaling_medium_table() {
     if !is_server_running() {
@@ -153,11 +158,9 @@ fn smoke_test_timing_scaling_medium_table() {
     }
 
     // Query all rows and parse timing
-    let output = execute_sql_as_root_via_cli(&format!(
-        "SELECT * FROM {} ORDER BY id LIMIT 1000",
-        full
-    ))
-    .expect("select query");
+    let output =
+        execute_sql_as_root_via_cli(&format!("SELECT * FROM {} ORDER BY id LIMIT 1000", full))
+            .expect("select query");
 
     let timing = parse_timing_ms(&output).expect("Should have timing output");
     println!("Medium table (1000 rows) timing: {} ms", timing);
@@ -170,6 +173,7 @@ fn smoke_test_timing_scaling_medium_table() {
     let _ = execute_sql_as_root_via_cli(&format!("DROP TABLE IF EXISTS {}", full));
 }
 
+#[ntest::timeout(60000)]
 #[test]
 fn smoke_test_timing_aggregation_query() {
     if !is_server_running() {
@@ -223,6 +227,7 @@ fn smoke_test_timing_aggregation_query() {
     let _ = execute_sql_as_root_via_cli(&format!("DROP TABLE IF EXISTS {}", full));
 }
 
+#[ntest::timeout(60000)]
 #[test]
 fn smoke_test_timing_join_query() {
     if !is_server_running() {
@@ -290,6 +295,7 @@ fn smoke_test_timing_join_query() {
     let _ = execute_sql_as_root_via_cli(&format!("DROP TABLE IF EXISTS {}", full2));
 }
 
+#[ntest::timeout(60000)]
 #[test]
 fn smoke_test_timing_ddl_operations() {
     if !is_server_running() {
@@ -302,8 +308,9 @@ fn smoke_test_timing_ddl_operations() {
     let full = format!("{}.{}", namespace, table);
 
     // Create namespace - verify timing output
-    let output = execute_sql_as_root_via_cli(&format!("CREATE NAMESPACE IF NOT EXISTS {}", namespace))
-        .expect("create namespace");
+    let output =
+        execute_sql_as_root_via_cli(&format!("CREATE NAMESPACE IF NOT EXISTS {}", namespace))
+            .expect("create namespace");
 
     let timing = parse_timing_ms(&output);
     println!("CREATE NAMESPACE timing: {:?}", timing);
@@ -320,8 +327,8 @@ fn smoke_test_timing_ddl_operations() {
     println!("CREATE TABLE timing: {:?}", timing);
 
     // Drop table - verify timing output
-    let output = execute_sql_as_root_via_cli(&format!("DROP TABLE IF EXISTS {}", full))
-        .expect("drop table");
+    let output =
+        execute_sql_as_root_via_cli(&format!("DROP TABLE IF EXISTS {}", full)).expect("drop table");
 
     let timing = parse_timing_ms(&output);
     println!("DROP TABLE timing: {:?}", timing);
@@ -329,6 +336,7 @@ fn smoke_test_timing_ddl_operations() {
     // Note: This test is primarily informational - DDL timing may vary
 }
 
+#[ntest::timeout(60000)]
 #[test]
 fn smoke_test_timing_flush_operation() {
     if !is_server_running() {
@@ -361,8 +369,8 @@ fn smoke_test_timing_flush_operation() {
     }
 
     // Execute FLUSH and verify timing
-    let output = execute_sql_as_root_via_cli(&format!("FLUSH TABLE {}", full))
-        .expect("flush table");
+    let output =
+        execute_sql_as_root_via_cli(&format!("FLUSH TABLE {}", full)).expect("flush table");
 
     let timing = parse_timing_ms(&output);
     println!("FLUSH TABLE timing: {:?}", timing);

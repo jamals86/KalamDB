@@ -1,6 +1,7 @@
 use crate::args::Cli;
 use crate::connect::create_session;
 use kalam_cli::{CLIConfiguration, FileCredentialStore, Result};
+use std::time::Duration;
 
 pub async fn handle_subscriptions(
     cli: &Cli,
@@ -15,7 +16,13 @@ pub async fn handle_subscriptions(
         if cli.list_subscriptions {
             session.list_subscriptions().await?;
         } else if let Some(query) = &cli.subscribe {
-            session.subscribe(query).await?;
+            // Convert timeout from seconds to Duration (0 = no timeout)
+            let timeout = if cli.subscription_timeout > 0 {
+                Some(Duration::from_secs(cli.subscription_timeout))
+            } else {
+                None
+            };
+            session.subscribe_with_timeout(query, timeout).await?;
         } else if let Some(subscription_id) = &cli.unsubscribe {
             session.unsubscribe(subscription_id).await?;
         }

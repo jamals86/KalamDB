@@ -7,8 +7,8 @@ use datafusion::common::ScalarValue;
 use kalamdb_core::app_context::AppContext;
 use kalamdb_core::sql::executor::parameter_validation::{validate_parameters, ParameterLimits};
 
-#[test]
-fn test_parameter_limits_from_config() {
+#[tokio::test]
+async fn test_parameter_limits_from_config() {
     // Initialize AppContext (from test_helpers)
     kalamdb_core::test_helpers::init_test_app_context();
 
@@ -52,8 +52,8 @@ fn test_parameter_limits_from_config() {
         .contains("size exceeds limit"));
 }
 
-#[test]
-fn test_config_accessible_from_app_context() {
+#[tokio::test]
+async fn test_config_accessible_from_app_context() {
     // Initialize AppContext
     kalamdb_core::test_helpers::init_test_app_context();
 

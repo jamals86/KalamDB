@@ -36,11 +36,10 @@ mod tests {
 
     fn create_test_live_query(live_id: &str, user_id: &str, table_name: &str) -> LiveQuery {
         LiveQuery {
-            live_id: LiveQueryId::new(live_id),
+            live_id: LiveQueryId::from_string(live_id).expect("Invalid LiveQueryId format"),
             connection_id: "conn123".to_string(),
             namespace_id: NamespaceId::new("default"),
             table_name: TableName::new(table_name),
-            query_id: "query123".to_string(),
             user_id: UserId::new(user_id),
             query: "SELECT * FROM test".to_string(),
             options: Some("{}".to_string()),
@@ -48,6 +47,8 @@ mod tests {
             last_update: 1000,
             changes: 0,
             node: "node1".to_string(),
+            subscription_id: "query123".to_string(),
+            status: kalamdb_commons::types::LiveQueryStatus::Active,
         }
     }
 

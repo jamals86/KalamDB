@@ -14,38 +14,28 @@
 //! cd cli/kalam-link && cargo test --test integration_tests
 //! ```
 
+use base64::Engine;
 use kalam_link::models::{BatchControl, BatchStatus, ResponseStatus};
 use kalam_link::{AuthProvider, ChangeEvent, KalamLinkClient, KalamLinkError, SubscriptionConfig};
 use std::time::Duration;
 use tokio::time::{sleep, timeout};
 
 const SERVER_URL: &str = "http://localhost:8080";
-const TEST_USER: &str = "link_test_user";
 
-/// Check if server is running - fail fast if not
-async fn ensure_server_running() {
-    let client = reqwest::Client::new();
-    let result = client
+/// Check if server is running - returns bool for graceful skipping
+async fn is_server_running() -> bool {
+    // Use Basic Auth with root:<empty> for localhost bypass
+    let credentials = base64::engine::general_purpose::STANDARD.encode("root:");
+    match reqwest::Client::new()
         .post(format!("{}/v1/api/sql", SERVER_URL))
+        .header("Authorization", format!("Basic {}", credentials))
         .json(&serde_json::json!({ "sql": "SELECT 1" }))
         .timeout(Duration::from_secs(2))
         .send()
-        .await;
-
-    match result {
-        Ok(resp) if resp.status().is_success() => {
-            println!("✅ Server is running at {}", SERVER_URL);
-        }
-        _ => {
-            panic!(
-                "\n❌ Server is NOT running at {}\n\n\
-                Start the server first:\n\
-                  cd backend && cargo run --bin kalamdb-server\n\n\
-                Then run tests:\n\
-                  cd cli/kalam-link && cargo test --test integration_tests\n",
-                SERVER_URL
-            );
-        }
+        .await
+    {
+        Ok(resp) => resp.status().is_success(),
+        Err(_) => false,
     }
 }
 
@@ -53,15 +43,19 @@ fn create_client() -> Result<KalamLinkClient, KalamLinkError> {
     KalamLinkClient::builder()
         .base_url(SERVER_URL)
         .timeout(Duration::from_secs(10))
+        .auth(AuthProvider::system_user_auth("".to_string()))
         .build()
 }
 
 async fn setup_namespace(ns: &str) {
     let client = create_client().unwrap();
+    // First drop the namespace to ensure clean state
     let _ = client
         .execute_query(&format!("DROP NAMESPACE IF EXISTS {} CASCADE", ns))
         .await;
-    sleep(Duration::from_millis(100)).await;
+    // Wait for drop to complete (cleanup is async)
+    sleep(Duration::from_millis(300)).await;
+    // Create the namespace
     let _ = client
         .execute_query(&format!("CREATE NAMESPACE {}", ns))
         .await;
@@ -121,9 +115,8 @@ async fn test_client_builder_missing_url() {
 // =============================================================================
 
 #[tokio::test]
-#[ignore = "requires running backend server"]
 async fn test_execute_simple_query() {
-    ensure_server_running().await;
+    if !is_server_running().await { eprintln!("⚠️  Server not running. Skipping test."); return; }
 
     let client = create_client().unwrap();
     let result = client.execute_query("SELECT 1 as num").await;
@@ -135,9 +128,8 @@ async fn test_execute_simple_query() {
 }
 
 #[tokio::test]
-#[ignore = "requires running backend server"]
 async fn test_execute_query_with_results() {
-    ensure_server_running().await;
+    if !is_server_running().await { eprintln!("⚠️  Server not running. Skipping test."); return; }
 
     setup_namespace("link_test").await;
 
@@ -145,7 +137,7 @@ async fn test_execute_query_with_results() {
 
     // Create table and insert data
     client
-        .execute_query("CREATE USER TABLE link_test.items (id INT, name VARCHAR) FLUSH ROWS 10")
+        .execute_query("CREATE USER TABLE link_test.items (id INT PRIMARY KEY, name VARCHAR)")
         .await
         .ok();
 
@@ -170,9 +162,8 @@ async fn test_execute_query_with_results() {
 }
 
 #[tokio::test]
-#[ignore = "requires running backend server"]
 async fn test_execute_query_error_handling() {
-    ensure_server_running().await;
+    if !is_server_running().await { eprintln!("⚠️  Server not running. Skipping test."); return; }
 
     let client = create_client().unwrap();
     let result = client.execute_query("INVALID SQL").await;
@@ -185,9 +176,8 @@ async fn test_execute_query_error_handling() {
 }
 
 #[tokio::test]
-#[ignore = "requires running backend server"]
 async fn test_health_check() {
-    ensure_server_running().await;
+    if !is_server_running().await { eprintln!("⚠️  Server not running. Skipping test."); return; }
 
     let client = create_client().unwrap();
     let result = client.health_check().await;
@@ -220,22 +210,22 @@ fn test_auth_provider_jwt() {
 
 #[tokio::test]
 async fn test_subscription_config_creation() {
-    let config = SubscriptionConfig::new("SELECT * FROM table");
+    let config = SubscriptionConfig::new("sub-1", "SELECT * FROM table");
     // Config is created successfully
+    assert_eq!(config.id, "sub-1");
     assert_eq!(config.sql, "SELECT * FROM table");
 }
 
 #[tokio::test]
-#[ignore = "requires running backend server"]
 async fn test_subscription_basic() {
-    ensure_server_running().await;
+    if !is_server_running().await { eprintln!("⚠️  Server not running. Skipping test."); return; }
     setup_namespace("ws_link_test").await;
 
     let client = create_client().unwrap();
 
     // Create table
     client
-        .execute_query("CREATE USER TABLE ws_link_test.events (id INT, data VARCHAR) FLUSH ROWS 10")
+        .execute_query("CREATE USER TABLE ws_link_test.events (id INT PRIMARY KEY, data VARCHAR)")
         .await
         .ok();
     sleep(Duration::from_millis(100)).await;
@@ -266,22 +256,21 @@ async fn test_subscription_basic() {
 }
 
 #[tokio::test]
-#[ignore = "requires running backend server"]
 async fn test_subscription_with_custom_config() {
-    ensure_server_running().await;
+    if !is_server_running().await { eprintln!("⚠️  Server not running. Skipping test."); return; }
     setup_namespace("ws_link_config").await;
 
     let client = create_client().unwrap();
 
     // Create table
     client
-        .execute_query("CREATE USER TABLE ws_link_config.data (id INT, val VARCHAR) FLUSH ROWS 10")
+        .execute_query("CREATE USER TABLE ws_link_config.data (id INT PRIMARY KEY, val VARCHAR)")
         .await
         .ok();
     sleep(Duration::from_millis(100)).await;
 
     // Create subscription with custom config
-    let config = SubscriptionConfig::new("SELECT * FROM ws_link_config.data");
+    let config = SubscriptionConfig::new("sub-custom", "SELECT * FROM ws_link_config.data");
 
     let sub_result = timeout(Duration::from_secs(5), client.subscribe_with_config(config)).await;
 
@@ -376,9 +365,8 @@ fn test_error_display() {
 // =============================================================================
 
 #[tokio::test]
-#[ignore = "requires running backend server"]
 async fn test_create_namespace() {
-    ensure_server_running().await;
+    if !is_server_running().await { eprintln!("⚠️  Server not running. Skipping test."); return; }
 
     let client = create_client().unwrap();
 
@@ -399,16 +387,15 @@ async fn test_create_namespace() {
 }
 
 #[tokio::test]
-#[ignore = "requires running backend server"]
 async fn test_create_and_drop_table() {
-    ensure_server_running().await;
+    if !is_server_running().await { eprintln!("⚠️  Server not running. Skipping test."); return; }
     setup_namespace("crud_test").await;
 
     let client = create_client().unwrap();
 
     // Create table
     let create = client
-        .execute_query("CREATE USER TABLE crud_test.test (id INT, name VARCHAR) FLUSH ROWS 10")
+        .execute_query("CREATE USER TABLE crud_test.test (id INT PRIMARY KEY, name VARCHAR)")
         .await;
     assert!(create.is_ok(), "CREATE TABLE should succeed");
 
@@ -420,16 +407,15 @@ async fn test_create_and_drop_table() {
 }
 
 #[tokio::test]
-#[ignore = "requires running backend server"]
 async fn test_insert_and_select() {
-    ensure_server_running().await;
+    if !is_server_running().await { eprintln!("⚠️  Server not running. Skipping test."); return; }
     setup_namespace("insert_test").await;
 
     let client = create_client().unwrap();
 
     // Create table
     client
-        .execute_query("CREATE USER TABLE insert_test.data (id INT, value VARCHAR) FLUSH ROWS 10")
+        .execute_query("CREATE USER TABLE insert_test.data (id INT PRIMARY KEY, value VARCHAR)")
         .await
         .ok();
 
@@ -455,16 +441,15 @@ async fn test_insert_and_select() {
 }
 
 #[tokio::test]
-#[ignore = "requires running backend server"]
 async fn test_update_operation() {
-    ensure_server_running().await;
+    if !is_server_running().await { eprintln!("⚠️  Server not running. Skipping test."); return; }
     setup_namespace("update_test").await;
 
     let client = create_client().unwrap();
 
     // Setup
     client
-        .execute_query("CREATE USER TABLE update_test.items (id INT, status VARCHAR) FLUSH ROWS 10")
+        .execute_query("CREATE USER TABLE update_test.items (id INT PRIMARY KEY, status VARCHAR)")
         .await
         .ok();
     client
@@ -482,28 +467,50 @@ async fn test_update_operation() {
 }
 
 #[tokio::test]
-#[ignore = "requires running backend server"]
 async fn test_delete_operation() {
-    ensure_server_running().await;
+    if !is_server_running().await { eprintln!("⚠️  Server not running. Skipping test."); return; }
     setup_namespace("delete_test").await;
 
     let client = create_client().unwrap();
 
-    // Setup
+    // Setup - drop table first to ensure clean state
     client
-        .execute_query("CREATE USER TABLE delete_test.records (id INT, data VARCHAR) FLUSH ROWS 10")
+        .execute_query("DROP TABLE IF EXISTS delete_test.records")
         .await
         .ok();
-    client
+    
+    // Wait for cleanup job to complete before creating new table
+    sleep(Duration::from_millis(500)).await;
+    
+    let create_result = client
+        .execute_query("CREATE USER TABLE delete_test.records (id INT PRIMARY KEY, data VARCHAR)")
+        .await;
+    assert!(create_result.is_ok(), "CREATE TABLE should succeed: {:?}", create_result.err());
+
+    // Small delay to ensure table is ready
+    sleep(Duration::from_millis(100)).await;
+
+    let insert_result = client
         .execute_query("INSERT INTO delete_test.records (id, data) VALUES (1, 'delete_me')")
-        .await
-        .ok();
+        .await;
+    assert!(insert_result.is_ok(), "INSERT should succeed: {:?}", insert_result.err());
+
+    // Verify row exists before delete
+    let select_result = client
+        .execute_query("SELECT * FROM delete_test.records WHERE id = 1")
+        .await;
+    assert!(select_result.is_ok(), "SELECT should succeed: {:?}", select_result.err());
+    
+    // Check the result has rows
+    if let Ok(ref qr) = select_result {
+        eprintln!("SELECT result: {:?}", qr);
+    }
 
     // Delete
     let delete = client
         .execute_query("DELETE FROM delete_test.records WHERE id = 1")
         .await;
-    assert!(delete.is_ok(), "DELETE should succeed");
+    assert!(delete.is_ok(), "DELETE should succeed: {:?}", delete.err());
 
     cleanup_namespace("delete_test").await;
 }
@@ -513,9 +520,8 @@ async fn test_delete_operation() {
 // =============================================================================
 
 #[tokio::test]
-#[ignore = "requires running backend server"]
 async fn test_query_system_users() {
-    ensure_server_running().await;
+    if !is_server_running().await { eprintln!("⚠️  Server not running. Skipping test."); return; }
 
     let client = create_client().unwrap();
     let result = client.execute_query("SELECT * FROM system.users").await;
@@ -526,9 +532,8 @@ async fn test_query_system_users() {
 }
 
 #[tokio::test]
-#[ignore = "requires running backend server"]
 async fn test_query_system_namespaces() {
-    ensure_server_running().await;
+    if !is_server_running().await { eprintln!("⚠️  Server not running. Skipping test."); return; }
 
     let client = create_client().unwrap();
     let result = client
@@ -539,9 +544,8 @@ async fn test_query_system_namespaces() {
 }
 
 #[tokio::test]
-#[ignore = "requires running backend server"]
 async fn test_query_system_tables() {
-    ensure_server_running().await;
+    if !is_server_running().await { eprintln!("⚠️  Server not running. Skipping test."); return; }
 
     let client = create_client().unwrap();
     let result = client.execute_query("SELECT * FROM system.tables").await;
@@ -554,16 +558,15 @@ async fn test_query_system_tables() {
 // =============================================================================
 
 #[tokio::test]
-#[ignore = "requires running backend server"]
 async fn test_where_clause_operators() {
-    ensure_server_running().await;
+    if !is_server_running().await { eprintln!("⚠️  Server not running. Skipping test."); return; }
     setup_namespace("where_test").await;
 
     let client = create_client().unwrap();
 
     // Setup
     client
-        .execute_query("CREATE USER TABLE where_test.data (id INT, val VARCHAR) FLUSH ROWS 10")
+        .execute_query("CREATE USER TABLE where_test.data (id INT PRIMARY KEY, val VARCHAR)")
         .await
         .ok();
 
@@ -593,16 +596,15 @@ async fn test_where_clause_operators() {
 }
 
 #[tokio::test]
-#[ignore = "requires running backend server"]
 async fn test_limit_clause() {
-    ensure_server_running().await;
+    if !is_server_running().await { eprintln!("⚠️  Server not running. Skipping test."); return; }
     setup_namespace("limit_test").await;
 
     let client = create_client().unwrap();
 
     // Setup
     client
-        .execute_query("CREATE USER TABLE limit_test.items (id INT) FLUSH ROWS 10")
+        .execute_query("CREATE USER TABLE limit_test.items (id INT PRIMARY KEY)")
         .await
         .ok();
 
@@ -628,16 +630,15 @@ async fn test_limit_clause() {
 }
 
 #[tokio::test]
-#[ignore = "requires running backend server"]
 async fn test_order_by_clause() {
-    ensure_server_running().await;
+    if !is_server_running().await { eprintln!("⚠️  Server not running. Skipping test."); return; }
     setup_namespace("order_test").await;
 
     let client = create_client().unwrap();
 
     // Setup
     client
-        .execute_query("CREATE USER TABLE order_test.data (val VARCHAR) FLUSH ROWS 10")
+        .execute_query("CREATE USER TABLE order_test.data (val VARCHAR PRIMARY KEY)")
         .await
         .ok();
 
@@ -661,16 +662,15 @@ async fn test_order_by_clause() {
 // =============================================================================
 
 #[tokio::test]
-#[ignore = "requires running backend server"]
 async fn test_concurrent_queries() {
-    ensure_server_running().await;
+    if !is_server_running().await { eprintln!("⚠️  Server not running. Skipping test."); return; }
     setup_namespace("concurrent_test").await;
 
     let client = create_client().unwrap();
 
     // Setup table
     client
-        .execute_query("CREATE USER TABLE concurrent_test.data (id INT) FLUSH ROWS 10")
+        .execute_query("CREATE USER TABLE concurrent_test.data (id INT PRIMARY KEY)")
         .await
         .ok();
 
@@ -703,9 +703,8 @@ async fn test_concurrent_queries() {
 // =============================================================================
 
 #[tokio::test]
-#[ignore = "requires running backend server"]
 async fn test_custom_timeout() {
-    ensure_server_running().await;
+    if !is_server_running().await { eprintln!("⚠️  Server not running. Skipping test."); return; }
 
     let client = KalamLinkClient::builder()
         .base_url(SERVER_URL)

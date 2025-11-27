@@ -97,8 +97,8 @@ pub fn can_delete_table(role: Role, _table_type: TableType, _is_owner: bool) -> 
 /// # Access Rules
 /// - **System role**: Can modify any table
 /// - **Dba role**: Can modify any table
-/// - **Service role**: Cannot alter tables (DML only)
-/// - **User role**: Cannot alter tables (DML only)
+/// - **Service role**: Can alter SHARED tables
+/// - **User role**: Can alter USER and STREAM tables they own
 ///
 /// # Arguments
 /// * `role` - User's role
@@ -107,12 +107,15 @@ pub fn can_delete_table(role: Role, _table_type: TableType, _is_owner: bool) -> 
 ///
 /// # Returns
 /// True if modification is allowed, false otherwise
-pub fn can_alter_table(role: Role, table_type: TableType, _is_owner: bool) -> bool {
+pub fn can_alter_table(role: Role, table_type: TableType, is_owner: bool) -> bool {
     match role {
         Role::System | Role::Dba => true,
         // Allow Service role to alter SHARED tables (e.g. changing access level)
         Role::Service => matches!(table_type, TableType::Shared),
-        _ => false,
+        // Allow User role to alter their own USER and STREAM tables
+        Role::User => {
+            is_owner && matches!(table_type, TableType::User | TableType::Stream)
+        }
     }
 }
 

@@ -535,7 +535,12 @@ impl VersionedRow for UserTableRow {
 }
 
 /// Merge hot (RocksDB) and cold (Parquet) rows keeping latest version per PK
-pub fn merge_versioned_rows<K, R, I, J>(pk_name: &str, hot_rows: I, cold_rows: J) -> Vec<(K, R)>
+pub fn merge_versioned_rows<K, R, I, J>(
+    pk_name: &str,
+    hot_rows: I,
+    cold_rows: J,
+    keep_deleted: bool,
+) -> Vec<(K, R)>
 where
     I: IntoIterator<Item = (K, R)>,
     J: IntoIterator<Item = (K, R)>,
@@ -565,6 +570,6 @@ where
     }
 
     best.into_values()
-        .filter(|(_, row)| !row.deleted())
+        .filter(|(_, row)| keep_deleted || !row.deleted())
         .collect()
 }

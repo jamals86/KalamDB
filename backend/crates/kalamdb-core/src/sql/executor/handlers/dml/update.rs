@@ -100,39 +100,103 @@ impl StatementHandler for UpdateHandler {
                     KalamDbError::InvalidOperation("User table provider not found".into())
                 })?;
 
+                // Coerce updates using provider's schema
+                use crate::providers::arrow_json_conversion::coerce_updates;
+                let updates = coerce_updates(updates, &provider_arc.schema()).map_err(|e| {
+                    KalamDbError::InvalidOperation(format!("Update coercion failed: {}", e))
+                })?;
+
                 if let Some(provider) = provider_arc
                     .as_any()
                     .downcast_ref::<crate::providers::UserTableProvider>()
                 {
                     // T064: Get actual PK column name from provider instead of assuming "id"
                     let pk_column = provider.primary_key_field_name();
-                    // Require WHERE <pk> = <value>
-                    let id_value = self
-                        .extract_row_id_for_column(&where_pair, pk_column, &params)?
-                        .ok_or_else(|| {
-                            KalamDbError::InvalidOperation(format!(
-                                "UPDATE currently requires WHERE {} = <value> for USER tables",
-                                pk_column
-                            ))
-                        })?;
 
-                    println!("[DEBUG UpdateHandler] Calling provider.update_by_id_field for user={}, pk_column={}, pk_value={}", 
-                        effective_user_id.as_str(), pk_column, id_value);
+                    // Check if WHERE clause targets PK for fast path
+                    let id_value_opt =
+                        self.extract_row_id_for_column(&where_pair, pk_column, &params)?;
 
-                    match provider.update_by_id_field(effective_user_id, &id_value, updates) {
-                        Ok(_) => {
-                            println!("[DEBUG UpdateHandler] update_by_id_field succeeded");
-                            Ok(ExecutionResult::Updated { rows_affected: 1 })
-                        }
-                        Err(e) => {
-                            println!("[DEBUG UpdateHandler] update_by_id_field failed: {}", e);
-                            // Isolation-friendly semantics: updating a non-existent row under this user_id
-                            // should return success with 0 rows affected (no-op), not an error.
-                            if matches!(e, crate::error::KalamDbError::NotFound(_)) {
-                                return Ok(ExecutionResult::Updated { rows_affected: 0 });
+                    if let Some(id_value) = id_value_opt {
+                        println!("[DEBUG UpdateHandler] Calling provider.update_by_id_field for user={}, pk_column={}, pk_value={}", 
+                            effective_user_id.as_str(), pk_column, id_value);
+
+                        match provider.update_by_id_field(effective_user_id, &id_value, updates) {
+                            Ok(_) => {
+                                println!("[DEBUG UpdateHandler] update_by_id_field succeeded");
+                                Ok(ExecutionResult::Updated { rows_affected: 1 })
                             }
-                            Err(e)
+                            Err(e) => {
+                                println!("[DEBUG UpdateHandler] update_by_id_field failed: {}", e);
+                                // Isolation-friendly semantics: updating a non-existent row under this user_id
+                                // should return success with 0 rows affected (no-op), not an error.
+                                if matches!(e, crate::error::KalamDbError::NotFound(_)) {
+                                    return Ok(ExecutionResult::Updated { rows_affected: 0 });
+                                }
+                                Err(e)
+                            }
                         }
+                    } else {
+                        // Multi-row update path (scan -> update)
+                        println!(
+                            "[DEBUG UpdateHandler] Multi-row update fallback for user={}",
+                            effective_user_id.as_str()
+                        );
+
+                        // Build filter expression
+                        let (filter, filter_col_val) =
+                            if let Some((col_name, val_str)) = &where_pair {
+                                let col_type = col_types.get(col_name).ok_or_else(|| {
+                                    KalamDbError::InvalidOperation(format!(
+                                        "Column {} not found",
+                                        col_name
+                                    ))
+                                })?;
+                                let val =
+                                    self.token_to_scalar_value(val_str, &params, Some(col_type))?;
+
+                                use datafusion::prelude::{col, lit};
+                                (
+                                    Some(col(col_name).eq(lit(val.clone()))),
+                                    Some((col_name.clone(), val)),
+                                )
+                            } else {
+                                (None, None) // Update all rows
+                            };
+
+                        // Scan for matching rows
+                        let rows = provider.scan_with_version_resolution_to_kvs(
+                            effective_user_id,
+                            filter.as_ref(),
+                            None,
+                            None,
+                            false,
+                        )?;
+
+                        // Update each matching row
+                        let mut count = 0;
+                        for (key, row) in rows {
+                            // Manual filter check (needed because scan_with_version_resolution_to_kvs
+                            // might not filter hot rows by the expression)
+                            let matches = if let Some((col_name, target_val)) = &filter_col_val {
+                                if let Some(row_val) = row.fields.values.get(col_name) {
+                                    row_val == target_val
+                                } else {
+                                    false // Column missing or null, doesn't match value
+                                }
+                            } else {
+                                true // No filter, match all
+                            };
+
+                            if matches {
+                                provider.update(effective_user_id, &key, updates.clone())?;
+                                count += 1;
+                            }
+                        }
+
+                        Ok(ExecutionResult::Updated {
+                            rows_affected: count,
+                        })
                     }
                 } else {
                     Err(KalamDbError::InvalidOperation(
@@ -147,12 +211,12 @@ impl StatementHandler for UpdateHandler {
                 use kalamdb_commons::TableAccess;
 
                 let access_level = if let TableOptions::Shared(opts) = &def.table_options {
-                    opts.access_level.clone().unwrap_or(TableAccess::Private)
+                    opts.access_level.unwrap_or(TableAccess::Private)
                 } else {
                     TableAccess::Private
                 };
 
-                if !can_write_shared_table(access_level.clone(), false, context.user_role) {
+                if !can_write_shared_table(access_level, false, context.user_role) {
                     return Err(KalamDbError::Unauthorized(format!(
                         "Insufficient privileges to write to shared table '{}.{}' (Access Level: {:?})",
                         namespace.as_str(),
@@ -165,6 +229,13 @@ impl StatementHandler for UpdateHandler {
                 let provider_arc = schema_registry.get_provider(&table_id).ok_or_else(|| {
                     KalamDbError::InvalidOperation("Shared table provider not found".into())
                 })?;
+
+                // Coerce updates using provider's schema
+                use crate::providers::arrow_json_conversion::coerce_updates;
+                let updates = coerce_updates(updates, &provider_arc.schema()).map_err(|e| {
+                    KalamDbError::InvalidOperation(format!("Update coercion failed: {}", e))
+                })?;
+
                 if let Some(provider) = provider_arc
                     .as_any()
                     .downcast_ref::<crate::providers::SharedTableProvider>()
@@ -337,8 +408,8 @@ impl UpdateHandler {
             }
             let t = token.trim();
             // Check for placeholder
-            if t.starts_with('$') {
-                let num: usize = t[1..].parse().map_err(|_| {
+            if let Some(stripped) = t.strip_prefix('$') {
+                let num: usize = stripped.parse().map_err(|_| {
                     KalamDbError::InvalidOperation("Invalid placeholder in WHERE".into())
                 })?;
                 if num == 0 || num > params.len() {
@@ -394,8 +465,8 @@ impl UpdateHandler {
         let t = token.trim();
 
         // Check for placeholder ($1, $2, etc.)
-        if t.starts_with('$') {
-            let param_num: usize = t[1..].parse().map_err(|_| {
+        if let Some(stripped) = t.strip_prefix('$') {
+            let param_num: usize = stripped.parse().map_err(|_| {
                 KalamDbError::InvalidOperation(format!("Invalid placeholder: {}", t))
             })?;
 

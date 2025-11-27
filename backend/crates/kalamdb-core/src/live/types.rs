@@ -1,7 +1,6 @@
-use super::connection_registry::LiveId;
 use super::initial_data::InitialDataResult;
 use datafusion::scalar::ScalarValue;
-use kalamdb_commons::models::Row;
+use kalamdb_commons::models::{LiveQueryId, Row};
 use std::collections::BTreeMap;
 
 /// Change notification for live query subscribers
@@ -107,7 +106,7 @@ impl ChangeNotification {
 #[derive(Debug, Clone)]
 pub struct SubscriptionResult {
     /// The generated LiveId for the subscription
-    pub live_id: LiveId,
+    pub live_id: LiveQueryId,
 
     /// Initial data returned with the subscription (if requested)
     pub initial_data: Option<InitialDataResult>,

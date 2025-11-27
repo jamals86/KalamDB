@@ -6,7 +6,8 @@
 use crate::{
     auth::AuthProvider,
     error::{KalamLinkError, Result},
-    models::{BatchStatus, ChangeEvent, ServerMessage, SubscriptionOptions},
+    models::{BatchStatus, ChangeEvent, ServerMessage, SubscriptionConfig, SubscriptionOptions},
+    timeouts::KalamLinkTimeouts,
 };
 use futures_util::{SinkExt, StreamExt};
 use serde_json::Value;
@@ -20,7 +21,7 @@ use tokio_tungstenite::{
         protocol::Message,
     },
 };
-use uuid::Uuid;
+use std::time::Duration;
 
 type WebSocketStream =
     tokio_tungstenite::WebSocketStream<tokio_tungstenite::MaybeTlsStream<tokio::net::TcpStream>>;
@@ -48,19 +49,6 @@ type WebSocketStream =
 /// # Ok(())
 /// # }
 /// ```
-/// Configuration for establishing a WebSocket subscription.
-#[derive(Debug, Clone)]
-pub struct SubscriptionConfig {
-    /// Subscription identifier (if pre-allocated by server). If `None`, the client generates one.
-    pub id: Option<String>,
-    /// SQL query to register for live updates
-    pub sql: String,
-    /// Optional subscription options (e.g., last_rows)
-    pub options: Option<SubscriptionOptions>,
-    /// Override WebSocket URL (falls back to base_url conversion when `None`)
-    pub ws_url: Option<String>,
-}
-
 fn resolve_ws_url(base_url: &str, override_url: Option<&str>) -> String {
     if let Some(url) = override_url {
         return url.to_string();
@@ -129,6 +117,97 @@ fn apply_ws_auth_headers(
     Ok(())
 }
 
+/// Send authentication message and wait for AuthSuccess response
+///
+/// The WebSocket protocol requires an explicit Authenticate message after connection.
+/// This function sends the authentication credentials and waits for the server's response.
+async fn send_auth_and_wait(
+    ws_stream: &mut WebSocketStream,
+    auth: &AuthProvider,
+    auth_timeout: Duration,
+) -> Result<()> {
+    use crate::models::ClientMessage;
+
+    // Extract credentials from auth provider
+    let (username, password) = match auth {
+        AuthProvider::BasicAuth(username, password) => (username.clone(), password.clone()),
+        AuthProvider::JwtToken(_) => {
+            // JWT tokens should use a different auth flow (not yet implemented)
+            // For now, return error - JWT WebSocket auth needs server-side support
+            return Err(KalamLinkError::AuthenticationError(
+                "JWT authentication for WebSocket not yet implemented. Use Basic Auth.".to_string(),
+            ));
+        }
+        AuthProvider::None => {
+            return Err(KalamLinkError::AuthenticationError(
+                "Authentication required for WebSocket subscriptions".to_string(),
+            ));
+        }
+    };
+
+    // Send Authenticate message
+    let auth_message = ClientMessage::Authenticate { username, password };
+    let payload = serde_json::to_string(&auth_message).map_err(|e| {
+        KalamLinkError::WebSocketError(format!("Failed to serialize auth message: {}", e))
+    })?;
+
+    ws_stream
+        .send(Message::Text(payload.into()))
+        .await
+        .map_err(|e| {
+            KalamLinkError::WebSocketError(format!("Failed to send auth message: {}", e))
+        })?;
+
+    // Wait for AuthSuccess or AuthError response with configured timeout
+    let response = tokio::time::timeout(auth_timeout, ws_stream.next()).await;
+
+    match response {
+        Ok(Some(Ok(Message::Text(text)))) => {
+            // Parse as ServerMessage to check for auth response
+            match serde_json::from_str::<ServerMessage>(&text) {
+                Ok(ServerMessage::AuthSuccess { user_id: _, role: _ }) => {
+                    // Authentication successful
+                    Ok(())
+                }
+                Ok(ServerMessage::AuthError { message }) => {
+                    Err(KalamLinkError::AuthenticationError(format!(
+                        "WebSocket authentication failed: {}",
+                        message
+                    )))
+                }
+                Ok(other) => {
+                    // Unexpected message type
+                    Err(KalamLinkError::WebSocketError(format!(
+                        "Unexpected response during authentication: {:?}",
+                        other
+                    )))
+                }
+                Err(e) => Err(KalamLinkError::WebSocketError(format!(
+                    "Failed to parse auth response: {}",
+                    e
+                ))),
+            }
+        }
+        Ok(Some(Ok(Message::Close(_)))) => Err(KalamLinkError::WebSocketError(
+            "Connection closed during authentication".to_string(),
+        )),
+        Ok(Some(Ok(_))) => Err(KalamLinkError::WebSocketError(
+            "Unexpected message type during authentication".to_string(),
+        )),
+        Ok(Some(Err(e))) => Err(KalamLinkError::WebSocketError(format!(
+            "WebSocket error during authentication: {}",
+            e
+        ))),
+        Ok(None) => Err(KalamLinkError::WebSocketError(
+            "Connection closed before authentication completed".to_string(),
+        )),
+        Err(_) => Err(KalamLinkError::TimeoutError(format!(
+            "Authentication timeout ({:?})",
+            auth_timeout
+        ))),
+    }
+}
+
 async fn send_subscription_request(
     ws_stream: &mut WebSocketStream,
     subscription_id: &str,
@@ -144,7 +223,7 @@ async fn send_subscription_request(
     };
 
     let message = ClientMessage::Subscribe {
-        subscriptions: vec![subscription_req],
+        subscription: subscription_req,
     };
 
     let payload = serde_json::to_string(&message).map_err(|e| {
@@ -162,6 +241,12 @@ fn parse_message(text: &str) -> Result<Option<ChangeEvent>> {
     match serde_json::from_str::<ServerMessage>(text) {
         Ok(msg) => {
             let event = match msg {
+                // Auth messages are only used in WASM (post-connection auth)
+                // CLI uses header-based auth, so these should not appear here
+                // Return None to skip processing (will continue to next message)
+                ServerMessage::AuthSuccess { .. } | ServerMessage::AuthError { .. } => {
+                    return Ok(None);
+                },
                 ServerMessage::SubscriptionAck {
                     subscription_id,
                     total_rows,
@@ -227,7 +312,7 @@ fn parse_message(text: &str) -> Result<Option<ChangeEvent>> {
                     subscription_id,
                     code,
                     message,
-                },
+                }
             };
             Ok(Some(event))
         }
@@ -246,39 +331,6 @@ fn parse_message(text: &str) -> Result<Option<ChangeEvent>> {
     }
 }
 
-impl SubscriptionConfig {
-    /// Create a new configuration with required SQL.
-    ///
-    /// By default, includes empty subscription options (batch streaming configured server-side).
-    pub fn new(sql: impl Into<String>) -> Self {
-        Self {
-            id: None,
-            sql: sql.into(),
-            options: Some(SubscriptionOptions {
-                _reserved: None,
-                batch_size: None,
-            }),
-            ws_url: None,
-        }
-    }
-
-    /// Create a configuration without any initial data fetch
-    pub fn without_initial_data(sql: impl Into<String>) -> Self {
-        Self {
-            id: None,
-            sql: sql.into(),
-            options: None,
-            ws_url: None,
-        }
-    }
-
-    /// Set the number of initial rows to fetch (deprecated - batch streaming configured server-side)
-    #[deprecated(note = "Batch streaming is now configured server-side, this method is a no-op")]
-    pub fn with_last_rows(self, _count: usize) -> Self {
-        // No-op: batch streaming configured server-side
-        self
-    }
-}
 
 pub struct SubscriptionManager {
     ws_stream: WebSocketStream,
@@ -286,6 +338,7 @@ pub struct SubscriptionManager {
     event_queue: VecDeque<ChangeEvent>,
     buffered_changes: Vec<ChangeEvent>,
     is_loading: bool,
+    timeouts: KalamLinkTimeouts,
 }
 
 impl SubscriptionManager {
@@ -296,6 +349,7 @@ impl SubscriptionManager {
         base_url: &str,
         config: SubscriptionConfig,
         auth: &AuthProvider,
+        timeouts: &KalamLinkTimeouts,
     ) -> Result<Self> {
         let SubscriptionConfig {
             id,
@@ -307,16 +361,23 @@ impl SubscriptionManager {
         let ws_endpoint = resolve_ws_url(base_url, ws_url.as_deref());
         let request_url = build_request_url(&ws_endpoint, auth);
 
-        // Connect to WebSocket
+        // Connect to WebSocket with connection timeout
         let mut request = request_url.into_client_request().map_err(|e| {
             KalamLinkError::WebSocketError(format!("Failed to build WebSocket request: {}", e))
         })?;
 
         apply_ws_auth_headers(&mut request, auth)?;
 
-        let (ws_stream, _) = match connect_async(request).await {
-            Ok(result) => result,
-            Err(WsError::Http(response)) => {
+        // Apply connection timeout
+        let connect_result = if !KalamLinkTimeouts::is_no_timeout(timeouts.connection_timeout) {
+            tokio::time::timeout(timeouts.connection_timeout, connect_async(request)).await
+        } else {
+            Ok(connect_async(request).await)
+        };
+
+        let ws_stream = match connect_result {
+            Ok(Ok((stream, _))) => stream,
+            Ok(Err(WsError::Http(response))) => {
                 let status = response.status();
                 let body_opt = response.into_body();
                 let body_text = body_opt
@@ -343,16 +404,28 @@ impl SubscriptionManager {
                 };
                 return Err(KalamLinkError::WebSocketError(message));
             }
-            Err(e) => {
+            Ok(Err(e)) => {
                 return Err(KalamLinkError::WebSocketError(format!(
                     "Connection failed: {}",
                     e
                 )));
             }
+            Err(_) => {
+                return Err(KalamLinkError::TimeoutError(format!(
+                    "Connection timeout ({:?})",
+                    timeouts.connection_timeout
+                )));
+            }
         };
 
         let mut ws_stream = ws_stream;
-        let subscription_id = id.unwrap_or_else(|| format!("sub-{}", Uuid::new_v4()));
+
+        // Send authentication message and wait for AuthSuccess
+        // (WebSocket protocol requires explicit Authenticate message even with HTTP headers)
+        send_auth_and_wait(&mut ws_stream, auth, timeouts.auth_timeout).await?;
+        
+        // Use the provided subscription ID (now required)
+        let subscription_id = id;
 
         // Send subscription request
         send_subscription_request(&mut ws_stream, &subscription_id, &sql, options).await?;
@@ -363,6 +436,7 @@ impl SubscriptionManager {
             event_queue: VecDeque::new(),
             buffered_changes: Vec::new(),
             is_loading: true,
+            timeouts: timeouts.clone(),
         })
     }
 
@@ -503,6 +577,11 @@ impl SubscriptionManager {
     /// Get the subscription ID assigned by the server
     pub fn subscription_id(&self) -> &str {
         &self.subscription_id
+    }
+
+    /// Get the configured timeouts
+    pub fn timeouts(&self) -> &KalamLinkTimeouts {
+        &self.timeouts
     }
 
     /// Close the subscription gracefully

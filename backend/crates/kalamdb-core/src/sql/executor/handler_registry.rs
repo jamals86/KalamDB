@@ -385,16 +385,13 @@ impl HandlerRegistry {
             },
         );
 
-        // For discriminant extraction, we only need a placeholder instance. Use LiveId::from_string.
+        // For discriminant extraction, we only need a placeholder instance. Use LiveQueryId::from_string.
         let placeholder_live =
-            kalamdb_commons::models::LiveId::from_string("user123-conn_abc-default:table_q1-q1")
+            kalamdb_commons::models::LiveQueryId::from_string("user123-conn_abc-q1")
                 .unwrap_or_else(|_| {
-                    kalamdb_commons::models::LiveId::new(
-                        kalamdb_commons::models::ConnectionId::new(
-                            "user123".to_string(),
-                            "conn_abc".to_string(),
-                        ),
-                        kalamdb_commons::models::TableId::from_strings("default", "table_q1"),
+                    kalamdb_commons::models::LiveQueryId::new(
+                        kalamdb_commons::models::UserId::new("user123"),
+                        kalamdb_commons::models::ConnectionId::new("conn_abc"),
                         "q1".to_string(),
                     )
                 });

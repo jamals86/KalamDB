@@ -91,6 +91,10 @@ impl StorageKey for UserTableRowId {
         key.extend_from_slice(&seq_bytes);
         key
     }
+
+    fn from_storage_key(bytes: &[u8]) -> Result<Self, String> {
+        Self::from_bytes(bytes)
+    }
 }
 
 /// Type alias for shared table row ID (just SeqId, no user scoping)
@@ -178,6 +182,10 @@ impl StorageKey for StreamTableRowId {
         key.extend_from_slice(&user_id_bytes[..user_id_len as usize]);
         key.extend_from_slice(&seq_bytes);
         key
+    }
+
+    fn from_storage_key(bytes: &[u8]) -> Result<Self, String> {
+        Self::from_bytes(bytes)
     }
 }
 

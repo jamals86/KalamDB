@@ -217,7 +217,7 @@ impl TestServer {
                 let now = chrono::Utc::now().timestamp_millis();
                 // Create a valid bcrypt hash for testing
                 let password_hash = bcrypt::hash("admin", bcrypt::DEFAULT_COST).unwrap_or_default();
-                
+
                 let sys_user = User {
                     id: sys_id.clone(),
                     username: AuthConstants::DEFAULT_SYSTEM_USERNAME.into(),
@@ -876,17 +876,6 @@ impl TestServer {
             }),
             Err(_) => false,
         }
-    }
-
-    /// Get an AuthService instance configured with the server's settings
-    pub fn auth_service(&self) -> Arc<kalamdb_auth::AuthService> {
-        Arc::new(kalamdb_auth::AuthService::new(
-            self.app_context.config().auth.jwt_secret.clone(),
-            vec![self.app_context.config().auth.jwt_trusted_issuers.clone()],
-            true,
-            false,
-            kalamdb_commons::Role::User,
-        ))
     }
 
     /// Get a CoreUsersRepo instance connected to the server's user table

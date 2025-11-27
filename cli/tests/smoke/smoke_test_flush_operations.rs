@@ -24,6 +24,7 @@ const INSERT_ROWS: usize = 200;
 ///
 /// Creates a user table with FLUSH ROWS 50 policy, inserts 200 rows,
 /// flushes manually, and verifies all data is retrievable.
+#[ntest::timeout(60000)]
 #[test]
 fn smoke_test_user_table_flush() {
     if !is_server_running() {
@@ -38,10 +39,10 @@ fn smoke_test_user_table_flush() {
     println!("🧪 Testing USER table flush: {}", full_table_name);
 
     // Cleanup and setup
-    let _ = execute_sql_as_root_via_cli(&format!("DROP NAMESPACE IF EXISTS {} CASCADE", namespace));
+    let _ = execute_sql_as_root_via_client(&format!("DROP NAMESPACE IF EXISTS {} CASCADE", namespace));
     std::thread::sleep(Duration::from_millis(200));
 
-    execute_sql_as_root_via_cli(&format!("CREATE NAMESPACE {}", namespace))
+    execute_sql_as_root_via_client(&format!("CREATE NAMESPACE {}", namespace))
         .expect("Failed to create namespace");
     std::thread::sleep(Duration::from_millis(200));
 
@@ -59,7 +60,7 @@ fn smoke_test_user_table_flush() {
         full_table_name, FLUSH_POLICY_ROWS
     );
 
-    execute_sql_as_root_via_cli(&create_sql).expect("Failed to create user table");
+    execute_sql_as_root_via_client(&create_sql).expect("Failed to create user table");
     std::thread::sleep(Duration::from_millis(200));
 
     println!(
@@ -81,7 +82,7 @@ fn smoke_test_user_table_flush() {
             );
             let mut attempts = 0;
             loop {
-                match execute_sql_as_root_via_cli(&insert_sql) {
+                match execute_sql_as_root_via_client(&insert_sql) {
                     Ok(_) => break,
                     Err(e) => {
                         attempts += 1;
@@ -108,7 +109,7 @@ fn smoke_test_user_table_flush() {
 
     // Manually flush the table
     println!("🚀 Triggering manual FLUSH TABLE...");
-    let flush_output = execute_sql_as_root_via_cli(&format!("FLUSH TABLE {}", full_table_name))
+    let flush_output = execute_sql_as_root_via_client(&format!("FLUSH TABLE {}", full_table_name))
         .expect("Failed to flush table");
 
     println!("Flush output: {}", flush_output);
@@ -127,7 +128,7 @@ fn smoke_test_user_table_flush() {
 
     // Query all data to verify retrieval from both RocksDB and Parquet
     println!("🔍 Querying all data...");
-    let select_output = execute_sql_as_root_via_cli(&format!(
+    let select_output = execute_sql_as_root_via_client(&format!(
         "SELECT COUNT(*) as total FROM {}",
         full_table_name
     ))
@@ -147,7 +148,7 @@ fn smoke_test_user_table_flush() {
 
     // Verify data integrity by checking sequence numbers
     println!("🔍 Verifying data integrity...");
-    let verify_output = execute_sql_as_root_via_cli(&format!(
+    let verify_output = execute_sql_as_root_via_client(&format!(
         "SELECT sequence FROM {} ORDER BY sequence",
         full_table_name
     ))
@@ -166,8 +167,8 @@ fn smoke_test_user_table_flush() {
 
     // Cleanup
     println!("🧹 Cleaning up...");
-    let _ = execute_sql_as_root_via_cli(&format!("DROP TABLE {}", full_table_name));
-    let _ = execute_sql_as_root_via_cli(&format!("DROP NAMESPACE {} CASCADE", namespace));
+    let _ = execute_sql_as_root_via_client(&format!("DROP TABLE {}", full_table_name));
+    let _ = execute_sql_as_root_via_client(&format!("DROP NAMESPACE {} CASCADE", namespace));
 
     println!("✅ USER table flush smoke test completed successfully!");
 }
@@ -176,6 +177,7 @@ fn smoke_test_user_table_flush() {
 ///
 /// Creates a shared table with FLUSH ROWS 50 policy, inserts 200 rows,
 /// flushes manually, and verifies all data is retrievable.
+#[ntest::timeout(60000)]
 #[test]
 fn smoke_test_shared_table_flush() {
     if !is_server_running() {
@@ -190,10 +192,10 @@ fn smoke_test_shared_table_flush() {
     println!("🧪 Testing SHARED table flush: {}", full_table_name);
 
     // Cleanup and setup
-    let _ = execute_sql_as_root_via_cli(&format!("DROP NAMESPACE IF EXISTS {} CASCADE", namespace));
+    let _ = execute_sql_as_root_via_client(&format!("DROP NAMESPACE IF EXISTS {} CASCADE", namespace));
     std::thread::sleep(Duration::from_millis(200));
 
-    execute_sql_as_root_via_cli(&format!("CREATE NAMESPACE {}", namespace))
+    execute_sql_as_root_via_client(&format!("CREATE NAMESPACE {}", namespace))
         .expect("Failed to create namespace");
     std::thread::sleep(Duration::from_millis(200));
 
@@ -211,7 +213,7 @@ fn smoke_test_shared_table_flush() {
         full_table_name, FLUSH_POLICY_ROWS
     );
 
-    execute_sql_as_root_via_cli(&create_sql).expect("Failed to create shared table");
+    execute_sql_as_root_via_client(&create_sql).expect("Failed to create shared table");
     std::thread::sleep(Duration::from_millis(200));
 
     println!(
@@ -233,7 +235,7 @@ fn smoke_test_shared_table_flush() {
             );
             let mut attempts = 0;
             loop {
-                match execute_sql_as_root_via_cli(&insert_sql) {
+                match execute_sql_as_root_via_client(&insert_sql) {
                     Ok(_) => break,
                     Err(e) => {
                         attempts += 1;
@@ -260,7 +262,7 @@ fn smoke_test_shared_table_flush() {
 
     // Manually flush the table
     println!("🚀 Triggering manual FLUSH TABLE...");
-    let flush_output = execute_sql_as_root_via_cli(&format!("FLUSH TABLE {}", full_table_name))
+    let flush_output = execute_sql_as_root_via_client(&format!("FLUSH TABLE {}", full_table_name))
         .expect("Failed to flush table");
 
     println!("Flush output: {}", flush_output);
@@ -279,7 +281,7 @@ fn smoke_test_shared_table_flush() {
 
     // Query all data to verify retrieval from both RocksDB and Parquet
     println!("🔍 Querying all data...");
-    let select_output = execute_sql_as_root_via_cli(&format!(
+    let select_output = execute_sql_as_root_via_client(&format!(
         "SELECT COUNT(*) as total FROM {}",
         full_table_name
     ))
@@ -299,7 +301,7 @@ fn smoke_test_shared_table_flush() {
 
     // Verify data integrity by checking sequence numbers
     println!("🔍 Verifying data integrity...");
-    let verify_output = execute_sql_as_root_via_cli(&format!(
+    let verify_output = execute_sql_as_root_via_client(&format!(
         "SELECT sequence FROM {} ORDER BY sequence",
         full_table_name
     ))
@@ -318,8 +320,8 @@ fn smoke_test_shared_table_flush() {
 
     // Cleanup
     println!("🧹 Cleaning up...");
-    let _ = execute_sql_as_root_via_cli(&format!("DROP TABLE {}", full_table_name));
-    let _ = execute_sql_as_root_via_cli(&format!("DROP NAMESPACE {} CASCADE", namespace));
+    let _ = execute_sql_as_root_via_client(&format!("DROP TABLE {}", full_table_name));
+    let _ = execute_sql_as_root_via_client(&format!("DROP NAMESPACE {} CASCADE", namespace));
 
     println!("✅ SHARED table flush smoke test completed successfully!");
 }
@@ -329,6 +331,7 @@ fn smoke_test_shared_table_flush() {
 /// This test verifies the query engine properly combines:
 /// - Unflushed data still in RocksDB
 /// - Flushed data in Parquet files
+#[ntest::timeout(60000)]
 #[test]
 fn smoke_test_mixed_source_query() {
     if !is_server_running() {
@@ -346,10 +349,10 @@ fn smoke_test_mixed_source_query() {
     );
 
     // Setup
-    let _ = execute_sql_as_root_via_cli(&format!("DROP NAMESPACE IF EXISTS {} CASCADE", namespace));
+    let _ = execute_sql_as_root_via_client(&format!("DROP NAMESPACE IF EXISTS {} CASCADE", namespace));
     std::thread::sleep(Duration::from_millis(200));
 
-    execute_sql_as_root_via_cli(&format!("CREATE NAMESPACE {}", namespace))
+    execute_sql_as_root_via_client(&format!("CREATE NAMESPACE {}", namespace))
         .expect("Failed to create namespace");
     std::thread::sleep(Duration::from_millis(200));
 
@@ -366,7 +369,7 @@ fn smoke_test_mixed_source_query() {
         full_table_name
     );
 
-    execute_sql_as_root_via_cli(&create_sql).expect("Failed to create table");
+    execute_sql_as_root_via_client(&create_sql).expect("Failed to create table");
     std::thread::sleep(Duration::from_millis(200));
 
     // Insert first batch (will be flushed)
@@ -378,7 +381,7 @@ fn smoke_test_mixed_source_query() {
         );
         let mut attempts = 0;
         loop {
-            match execute_sql_as_root_via_cli(&insert_sql) {
+            match execute_sql_as_root_via_client(&insert_sql) {
                 Ok(_) => break,
                 Err(e) => {
                     attempts += 1;
@@ -394,7 +397,7 @@ fn smoke_test_mixed_source_query() {
 
     // Manually flush to ensure first batch is in Parquet
     println!("🚀 Flushing first batch...");
-    let flush1_output = execute_sql_as_root_via_cli(&format!("FLUSH TABLE {}", full_table_name))
+    let flush1_output = execute_sql_as_root_via_client(&format!("FLUSH TABLE {}", full_table_name))
         .expect("Failed to flush");
     let job1_id = parse_job_id_from_flush_output(&flush1_output).expect("Failed to parse job ID");
     verify_job_completed(&job1_id, JOB_TIMEOUT).expect("First flush failed");
@@ -407,14 +410,14 @@ fn smoke_test_mixed_source_query() {
             "INSERT INTO {} (content, sequence) VALUES ('Batch2-Row{}', {})",
             full_table_name, i, i
         );
-        execute_sql_as_root_via_cli(&insert_sql)
+        execute_sql_as_root_via_client(&insert_sql)
             .unwrap_or_else(|e| panic!("Failed to insert row {}: {}", i, e));
     }
     std::thread::sleep(Duration::from_millis(200));
 
     // Query all data - should combine from both sources
     println!("🔍 Querying all data (should merge RocksDB + Parquet)...");
-    let count_output = execute_sql_as_root_via_cli(&format!(
+    let count_output = execute_sql_as_root_via_client(&format!(
         "SELECT COUNT(*) as total FROM {}",
         full_table_name
     ))
@@ -432,7 +435,7 @@ fn smoke_test_mixed_source_query() {
     println!("✅ Verified 70 total rows (50 Parquet + 20 RocksDB)");
 
     // Verify we can query specific ranges spanning both sources
-    let range_output = execute_sql_as_root_via_cli(&format!(
+    let range_output = execute_sql_as_root_via_client(&format!(
         "SELECT sequence FROM {} WHERE sequence >= 45 AND sequence <= 55 ORDER BY sequence",
         full_table_name
     ))
@@ -452,8 +455,8 @@ fn smoke_test_mixed_source_query() {
     println!("✅ Verified data spanning both sources (Parquet and RocksDB)");
 
     // Cleanup
-    let _ = execute_sql_as_root_via_cli(&format!("DROP TABLE {}", full_table_name));
-    let _ = execute_sql_as_root_via_cli(&format!("DROP NAMESPACE {} CASCADE", namespace));
+    let _ = execute_sql_as_root_via_client(&format!("DROP TABLE {}", full_table_name));
+    let _ = execute_sql_as_root_via_client(&format!("DROP NAMESPACE {} CASCADE", namespace));
 
     println!("✅ Mixed source query smoke test completed successfully!");
 }

@@ -38,9 +38,15 @@ mod audit_log_key;
 mod auth_type;
 mod job_status;
 mod job_type;
+mod connection;
+
+// Row types only available with full feature (datafusion dependency)
+#[cfg(feature = "full")]
 mod k_table_row;
-mod role;
+#[cfg(feature = "full")]
 pub mod row;
+
+mod role;
 mod storage_config;
 mod storage_mode;
 mod storage_type;
@@ -54,15 +60,22 @@ pub use auth_type::AuthType;
 pub use ids::*;
 pub use job_status::JobStatus;
 pub use job_type::JobType;
+
+#[cfg(feature = "full")]
 pub use k_table_row::KTableRow;
+
 pub use role::Role;
+
+#[cfg(feature = "full")]
 pub use row::{Row, RowEnvelope};
+
 pub use storage_config::StorageConfig;
 pub use storage_mode::StorageMode;
 pub use storage_type::StorageType;
 pub use table_access::TableAccess;
 pub use table_name::TableName;
 pub use user_name::UserName;
+pub use connection::ConnectionInfo;
 
 // Legacy compatibility: re-export system types as `system` module
 // This allows existing code using `kalamdb_commons::system::User` to continue working

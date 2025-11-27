@@ -79,3 +79,12 @@ base64 = { workspace = true }
 tokio-tungstenite = { workspace = true }
 futures-util = { workspace = true }
 regex = { workspace = true }
+ntest = { workspace = true }
+wait-timeout = { workspace = true }
+
+[profile.release]
+opt-level = "z"     # Optimize for size
+lto = true          # Enable Link Time Optimization
+codegen-units = 1   # Better optimization, slower build
+panic = "abort"     # Remove unwinding code
+strip = true        # Strip symbols

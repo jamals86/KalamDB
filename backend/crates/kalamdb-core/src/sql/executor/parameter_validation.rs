@@ -6,7 +6,7 @@ use crate::error::KalamDbError;
 use crate::sql::executor::models::ScalarValue;
 use kalamdb_commons::config::ExecutionSettings;
 
-/// Parameter validation limits (from config.toml [execution] section)
+/// Parameter validation limits (from server.toml [execution] section)
 pub struct ParameterLimits {
     /// Maximum number of parameters allowed (default: 50)
     pub max_count: usize,

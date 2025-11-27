@@ -25,7 +25,7 @@ pub fn ensure_results_dir() -> std::io::Result<PathBuf> {
 /// Get git commit hash (short)
 fn get_git_commit_hash() -> String {
     std::process::Command::new("git")
-        .args(&["rev-parse", "--short", "HEAD"])
+        .args(["rev-parse", "--short", "HEAD"])
         .current_dir(env!("CARGO_MANIFEST_DIR"))
         .output()
         .ok()
@@ -60,7 +60,7 @@ fn get_version() -> String {
 /// Get current git branch
 fn get_git_branch() -> String {
     std::process::Command::new("git")
-        .args(&["branch", "--show-current"])
+        .args(["branch", "--show-current"])
         .current_dir(env!("CARGO_MANIFEST_DIR"))
         .output()
         .ok()

@@ -155,7 +155,12 @@ async fn test_insert_storage_key_format() {
 
     // Setup
     let resp = fixtures::create_namespace(&server, "test_ns_t053").await;
-    assert_eq!(resp.status, ResponseStatus::Success, "Namespace creation failed: {:?}", resp.error);
+    assert_eq!(
+        resp.status,
+        ResponseStatus::Success,
+        "Namespace creation failed: {:?}",
+        resp.error
+    );
 
     // Create user table
     let resp = server
@@ -170,7 +175,12 @@ async fn test_insert_storage_key_format() {
             "user1",
         )
         .await;
-    assert_eq!(resp.status, ResponseStatus::Success, "User table creation failed: {:?}", resp.error);
+    assert_eq!(
+        resp.status,
+        ResponseStatus::Success,
+        "User table creation failed: {:?}",
+        resp.error
+    );
 
     // Create shared table with system privileges
     let resp = server
@@ -185,7 +195,12 @@ async fn test_insert_storage_key_format() {
             "system",
         )
         .await;
-    assert_eq!(resp.status, ResponseStatus::Success, "Shared table creation failed: {:?}", resp.error);
+    assert_eq!(
+        resp.status,
+        ResponseStatus::Success,
+        "Shared table creation failed: {:?}",
+        resp.error
+    );
 
     // Insert into user table
     let response = server
@@ -248,7 +263,12 @@ async fn test_user_table_row_structure() {
 
     // Setup
     let resp = fixtures::create_namespace(&server, "test_ns_t054").await;
-    assert_eq!(resp.status, ResponseStatus::Success, "Namespace creation failed: {:?}", resp.error);
+    assert_eq!(
+        resp.status,
+        ResponseStatus::Success,
+        "Namespace creation failed: {:?}",
+        resp.error
+    );
 
     let resp = server
         .execute_sql_as_user(
@@ -263,7 +283,12 @@ async fn test_user_table_row_structure() {
             "user1",
         )
         .await;
-    assert_eq!(resp.status, ResponseStatus::Success, "Table creation failed: {:?}", resp.error);
+    assert_eq!(
+        resp.status,
+        ResponseStatus::Success,
+        "Table creation failed: {:?}",
+        resp.error
+    );
 
     // Insert record
     let resp = server
@@ -273,7 +298,12 @@ async fn test_user_table_row_structure() {
             "user1",
         )
         .await;
-    assert_eq!(resp.status, ResponseStatus::Success, "Insert failed: {:?}", resp.error);
+    assert_eq!(
+        resp.status,
+        ResponseStatus::Success,
+        "Insert failed: {:?}",
+        resp.error
+    );
 
     // Query with all columns including system columns
     let response = server
@@ -326,7 +356,12 @@ async fn test_shared_table_row_structure() {
 
     // Setup - namespace and shared table created via system user
     let resp = fixtures::create_namespace(&server, "test_ns_t055").await;
-    assert_eq!(resp.status, ResponseStatus::Success, "Namespace creation failed: {:?}", resp.error);
+    assert_eq!(
+        resp.status,
+        ResponseStatus::Success,
+        "Namespace creation failed: {:?}",
+        resp.error
+    );
 
     let resp = server
         .execute_sql_as_user(
@@ -341,7 +376,12 @@ async fn test_shared_table_row_structure() {
             "system",
         )
         .await;
-    assert_eq!(resp.status, ResponseStatus::Success, "Table creation failed: {:?}", resp.error);
+    assert_eq!(
+        resp.status,
+        ResponseStatus::Success,
+        "Table creation failed: {:?}",
+        resp.error
+    );
 
     // Insert record (must be done by system/owner)
     let resp = server
@@ -351,7 +391,12 @@ async fn test_shared_table_row_structure() {
             "system",
         )
         .await;
-    assert_eq!(resp.status, ResponseStatus::Success, "Insert failed: {:?}", resp.error);
+    assert_eq!(
+        resp.status,
+        ResponseStatus::Success,
+        "Insert failed: {:?}",
+        resp.error
+    );
 
     // Query with all columns including system columns (as system user)
     let response = server
@@ -367,7 +412,10 @@ async fn test_shared_table_row_structure() {
         let row = &rows[0];
 
         // Verify fields (user-defined columns)
-        assert_eq!(row.get("config_key").unwrap().as_str().unwrap(), "feature_flag");
+        assert_eq!(
+            row.get("config_key").unwrap().as_str().unwrap(),
+            "feature_flag"
+        );
         assert_eq!(row.get("value").unwrap().as_str().unwrap(), "on");
         assert_eq!(row.get("enabled").unwrap().as_bool().unwrap(), true);
 
@@ -471,7 +519,10 @@ async fn test_insert_duplicate_pk_rejected() {
 
     // Verify only one record exists
     let response = server
-        .execute_sql_as_user("SELECT item_id, name FROM test_ns_t060.unique_items", "user1")
+        .execute_sql_as_user(
+            "SELECT item_id, name FROM test_ns_t060.unique_items",
+            "user1",
+        )
         .await;
 
     assert_eq!(response.status, ResponseStatus::Success);
@@ -513,7 +564,12 @@ async fn test_incremental_sync_seq_threshold() {
 
     // Setup
     let resp = fixtures::create_namespace(&server, "test_ns_t062").await;
-    assert_eq!(resp.status, ResponseStatus::Success, "Namespace creation failed: {:?}", resp.error);
+    assert_eq!(
+        resp.status,
+        ResponseStatus::Success,
+        "Namespace creation failed: {:?}",
+        resp.error
+    );
 
     let resp = server
         .execute_sql_as_user(
@@ -527,7 +583,12 @@ async fn test_incremental_sync_seq_threshold() {
             "user1",
         )
         .await;
-    assert_eq!(resp.status, ResponseStatus::Success, "Table creation failed: {:?}", resp.error);
+    assert_eq!(
+        resp.status,
+        ResponseStatus::Success,
+        "Table creation failed: {:?}",
+        resp.error
+    );
 
     // Insert 3 records
     server

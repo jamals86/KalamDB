@@ -19,7 +19,7 @@ arrow = { workspace = true }
 
 # Web framework
 actix-web = { workspace = true }
-actix-web-actors = { workspace = true }
+actix-ws = { workspace = true }
 actix = { workspace = true }
 
 # Serialization

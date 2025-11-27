@@ -167,13 +167,13 @@ impl From<StoredScalarValue> for ScalarValue {
             StoredScalarValue::Date32(v) => ScalarValue::Date32(v),
             StoredScalarValue::Time64Microsecond(v) => ScalarValue::Time64Microsecond(v),
             StoredScalarValue::TimestampMillisecond { value, timezone } => {
-                ScalarValue::TimestampMillisecond(value, timezone.map(|tz| Arc::<str>::from(tz)))
+                ScalarValue::TimestampMillisecond(value, timezone.map(Arc::<str>::from))
             }
             StoredScalarValue::TimestampMicrosecond { value, timezone } => {
-                ScalarValue::TimestampMicrosecond(value, timezone.map(|tz| Arc::<str>::from(tz)))
+                ScalarValue::TimestampMicrosecond(value, timezone.map(Arc::<str>::from))
             }
             StoredScalarValue::TimestampNanosecond { value, timezone } => {
-                ScalarValue::TimestampNanosecond(value, timezone.map(|tz| Arc::<str>::from(tz)))
+                ScalarValue::TimestampNanosecond(value, timezone.map(Arc::<str>::from))
             }
             StoredScalarValue::Decimal128 {
                 value,

@@ -27,7 +27,7 @@ impl TypedStatementHandler<KillLiveQueryStatement> for KillLiveQueryHandler {
         context: &ExecutionContext,
     ) -> Result<ExecutionResult, KalamDbError> {
         let manager = self.app_context.live_query_manager();
-        manager.unregister_subscription(&statement.live_id).await?;
+        manager.unregister_subscription_by_id(&statement.live_id).await?;
 
         // Log DDL operation
         use crate::sql::executor::helpers::audit;
@@ -35,7 +35,7 @@ impl TypedStatementHandler<KillLiveQueryStatement> for KillLiveQueryHandler {
             context,
             "KILL",
             "LIVE_QUERY",
-            &statement.live_id.to_string(),
+            statement.live_id.as_ref(),
             None,
             None,
         );

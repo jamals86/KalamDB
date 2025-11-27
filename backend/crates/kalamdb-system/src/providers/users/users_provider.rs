@@ -1,9 +1,22 @@
 //! System.users table provider
 //!
 //! This module provides a DataFusion TableProvider implementation for the system.users table.
-//! Uses the new EntityStore architecture with type-safe keys (UserId).
+//! Uses `IndexedEntityStore` for automatic secondary index management.
+//!
+//! ## Indexes
+//!
+//! The users table has two secondary indexes (managed automatically):
+//!
+//! 1. **UserUsernameIndex** - Unique username lookup (case-insensitive)
+//!    - Key: `{username_lowercase}`
+//!    - Enables: "Get user by username"
+//!
+//! 2. **UserRoleIndex** - Query users by role
+//!    - Key: `{role}:{user_id}`
+//!    - Enables: "All users with role 'admin'"
 
-use super::{new_username_index, new_users_store, UsernameIndex, UsernameIndexExt, UsersStore};
+use super::users_indexes::create_users_indexes;
+use super::UsersTableSchema;
 use crate::error::SystemError;
 use crate::system_table_trait::SystemTableProviderExt;
 use async_trait::async_trait;
@@ -14,18 +27,21 @@ use datafusion::error::{DataFusionError, Result as DataFusionResult};
 use datafusion::logical_expr::Expr;
 use datafusion::physical_plan::ExecutionPlan;
 use kalamdb_commons::system::User;
-use kalamdb_commons::UserId;
+use kalamdb_commons::{StorageKey, UserId};
 use kalamdb_store::entity_store::EntityStore;
-use kalamdb_store::StorageBackend;
+use kalamdb_store::{IndexedEntityStore, StorageBackend};
 use std::any::Any;
 use std::sync::Arc;
 
-use super::UsersTableSchema;
+/// Type alias for the indexed users store
+pub type UsersStore = IndexedEntityStore<UserId, User>;
 
-/// System.users table provider using EntityStore architecture
+/// System.users table provider using IndexedEntityStore for automatic index management.
+///
+/// All insert/update/delete operations automatically maintain secondary indexes
+/// using RocksDB's atomic WriteBatch - no manual index management needed.
 pub struct UsersTableProvider {
     store: UsersStore,
-    username_index: UsernameIndex,
     schema: SchemaRef,
 }
 
@@ -36,22 +52,24 @@ impl std::fmt::Debug for UsersTableProvider {
 }
 
 impl UsersTableProvider {
-    /// Create a new users table provider
+    /// Create a new users table provider with automatic index management.
     ///
     /// # Arguments
     /// * `backend` - Storage backend (RocksDB or mock)
     ///
     /// # Returns
-    /// A new UsersTableProvider instance
+    /// A new UsersTableProvider instance with indexes configured
     pub fn new(backend: Arc<dyn StorageBackend>) -> Self {
+        let store = IndexedEntityStore::new(backend, "system_users", create_users_indexes());
         Self {
-            store: new_users_store(backend.clone()),
-            username_index: new_username_index(backend),
+            store,
             schema: UsersTableSchema::schema(),
         }
     }
 
-    /// Create a new user
+    /// Create a new user.
+    ///
+    /// Indexes are automatically maintained via `IndexedEntityStore`.
     ///
     /// # Arguments
     /// * `user` - The user to create
@@ -59,24 +77,31 @@ impl UsersTableProvider {
     /// # Returns
     /// Result indicating success or failure
     pub fn create_user(&self, user: User) -> Result<(), SystemError> {
-        // Check if username already exists (duplicate check via unique index)
-        if let Some(_existing_id) = self.username_index.lookup(user.username.as_str())? {
+        // Check if username already exists (lookup by index)
+        // Username index is index 0, key is lowercase username
+        let username_key = user.username.as_str().to_lowercase();
+        let existing = self
+            .store
+            .scan_by_index(0, Some(username_key.as_bytes()), Some(1))
+            .map_err(|e| SystemError::Other(format!("scan_by_index error: {}", e)))?;
+
+        if !existing.is_empty() {
             return Err(SystemError::AlreadyExists(format!(
                 "User with username '{}' already exists",
                 user.username.as_str()
             )));
         }
 
-        // Store user by ID
-        self.store.put(&user.id, &user)?;
-
-        // Update username index
-        self.username_index.index_user(&user)?;
-
-        Ok(())
+        // Insert user - indexes are managed automatically
+        self.store
+            .insert(&user.id, &user)
+            .map_err(|e| SystemError::Other(format!("insert user error: {}", e)))
     }
 
-    /// Update an existing user
+    /// Update an existing user.
+    ///
+    /// Indexes are automatically maintained via `IndexedEntityStore`.
+    /// Stale index entries are removed and new ones added atomically.
     ///
     /// # Arguments
     /// * `user` - The updated user data
@@ -95,22 +120,29 @@ impl UsersTableProvider {
 
         let existing_user = existing.unwrap();
 
-        // If username changed, update index
+        // If username changed, check for conflicts
         if existing_user.username != user.username {
-            // Remove old username
-            self.username_index
-                .remove_user(existing_user.username.as_str())?;
-            // Add new username
-            self.username_index.index_user(&user)?;
+            let username_key = user.username.as_str().to_lowercase();
+            let conflicts = self
+                .store
+                .scan_by_index(0, Some(username_key.as_bytes()), Some(1))
+                .map_err(|e| SystemError::Other(format!("scan_by_index error: {}", e)))?;
+
+            if !conflicts.is_empty() && conflicts[0].0 != user.id {
+                return Err(SystemError::AlreadyExists(format!(
+                    "User with username '{}' already exists",
+                    user.username.as_str()
+                )));
+            }
         }
 
-        // Update user
-        self.store.put(&user.id, &user)?;
-
-        Ok(())
+        // Use update_with_old for efficiency (we already have old entity)
+        self.store
+            .update_with_old(&user.id, Some(&existing_user), &user)
+            .map_err(|e| SystemError::Other(format!("update user error: {}", e)))
     }
 
-    /// Soft delete a user (sets deleted_at timestamp)
+    /// Soft delete a user (sets deleted_at timestamp).
     ///
     /// # Arguments
     /// * `user_id` - The ID of the user to delete
@@ -128,14 +160,12 @@ impl UsersTableProvider {
         user.deleted_at = Some(chrono::Utc::now().timestamp_millis());
 
         // Update user with deleted_at
-        self.store.put(user_id, &user)?;
-
-        // Note: Keep username index for audit trail / recovery
-
-        Ok(())
+        self.store
+            .update(user_id, &user)
+            .map_err(|e| SystemError::Other(format!("update user error: {}", e)))
     }
 
-    /// Get a user by ID
+    /// Get a user by ID.
     ///
     /// # Arguments
     /// * `user_id` - The user ID to lookup
@@ -146,7 +176,9 @@ impl UsersTableProvider {
         Ok(self.store.get(user_id)?)
     }
 
-    /// Get a user by username
+    /// Get a user by username.
+    ///
+    /// Uses the username index for efficient lookup.
     ///
     /// # Arguments
     /// * `username` - The username to lookup
@@ -154,13 +186,14 @@ impl UsersTableProvider {
     /// # Returns
     /// Option<User> if found, None otherwise
     pub fn get_user_by_username(&self, username: &str) -> Result<Option<User>, SystemError> {
-        // Lookup user_id via secondary index
-        let user_id = self.username_index.lookup(username)?;
+        // Username index is index 0, key is lowercase username
+        let username_key = username.to_lowercase();
+        let results = self
+            .store
+            .scan_by_index(0, Some(username_key.as_bytes()), Some(1))
+            .map_err(|e| SystemError::Other(format!("scan_by_index error: {}", e)))?;
 
-        match user_id {
-            Some(id) => Ok(self.store.get(&id)?),
-            None => Ok(None),
-        }
+        Ok(results.into_iter().next().map(|(_, user)| user))
     }
 
     /// Helper to create RecordBatch from users
@@ -223,7 +256,12 @@ impl UsersTableProvider {
 
     /// Scan all users and return as RecordBatch
     pub fn scan_all_users(&self) -> Result<RecordBatch, SystemError> {
-        let users = self.store.scan_all(None, None, None)?;
+        let iter = self.store.scan_iterator(None, None)?;
+        let mut users: Vec<(Vec<u8>, User)> = Vec::new();
+        for item in iter {
+            let (id, user) = item?;
+            users.push((id.storage_key(), user));
+        }
         self.create_batch(users)
     }
 }

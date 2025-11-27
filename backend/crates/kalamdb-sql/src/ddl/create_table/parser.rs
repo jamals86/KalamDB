@@ -68,7 +68,7 @@ impl CreateTableStatement {
                 }
 
                 // 2. Parse options (TYPE, STORAGE, FLUSH_POLICY, etc.)
-                let mut table_type = legacy_table_type.clone().unwrap_or(TableType::Shared);
+                let mut table_type = legacy_table_type.unwrap_or(TableType::Shared);
                 let mut storage_id = None;
                 let mut use_user_storage = false;
                 let mut flush_policy = None;
@@ -479,9 +479,10 @@ pub(crate) fn convert_sql_type_to_arrow(
             };
             Ok((DataType::Timestamp(unit, None), true))
         }
-        SqlDataType::Datetime(_) => {
-            Ok((DataType::Timestamp(TimeUnit::Microsecond, Some("UTC".into())), true))
-        }
+        SqlDataType::Datetime(_) => Ok((
+            DataType::Timestamp(TimeUnit::Microsecond, Some("UTC".into())),
+            true,
+        )),
         SqlDataType::Date => Ok((DataType::Date32, true)),
         SqlDataType::Time(_, _) => Ok((DataType::Time64(TimeUnit::Microsecond), true)),
         SqlDataType::Binary(_) | SqlDataType::Blob(_) | SqlDataType::Bytea => {
