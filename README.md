@@ -245,33 +245,49 @@ VALUES (1, 'ai_model', 'cancelled');
 
 **Note**: Press `Ctrl+C` to stop the subscription and return to the prompt.
 
-#### 4. Subscribe to Live Message + Typing Updates (WebSocket API)
+#### 4. Subscribe to Live Message + Typing Updates (TypeScript SDK)
 
-```javascript
-const ws = new WebSocket('ws://localhost:8080/ws');
+The recommended way to subscribe to real-time updates is using the official TypeScript SDK:
 
-ws.onopen = () => {
-  ws.send(JSON.stringify({
-    subscriptions: [
-      {
-        query_id: "chat-messages-1",
-        sql: "SELECT * FROM chat.messages WHERE conversation_id = 1",
-        options: { last_rows: 20 }
-      },
-      {
-        query_id: "chat-typing-1",
-        sql: "SELECT * FROM chat.typing_events WHERE conversation_id = 1",
-        options: { last_rows: 10 }
-      }
-    ]
-  }));
-};
+```typescript
+import { createClient } from '@kalamdb/client';
 
-ws.onmessage = (event) => {
-  const notification = JSON.parse(event.data);
-  console.log('Change detected:', notification.query_id, notification.type, notification.data);
-};
+// Connect to KalamDB
+const client = createClient({
+  url: 'http://localhost:8080',
+  username: 'admin',
+  password: 'admin'
+});
+await client.connect();
+
+// Subscribe to messages for a specific conversation with options
+const unsubMessages = await client.subscribeWithSql(
+  'SELECT * FROM chat.messages WHERE conversation_id = 1 ORDER BY created_at DESC',
+  (event) => {
+    if (event.type === 'change') {
+      console.log('New message:', event.rows);
+    }
+  },
+  { batch_size: 50 }  // Load initial data in batches of 50
+);
+
+// Subscribe to typing events (simple table subscription)
+const unsubTyping = await client.subscribe('chat.typing_events', (event) => {
+  if (event.type === 'change') {
+    console.log('Typing event:', event.change_type, event.rows);
+  }
+});
+
+// Check active subscriptions
+console.log(`Active subscriptions: ${client.getSubscriptionCount()}`);
+
+// Later: cleanup
+await unsubMessages();
+await unsubTyping();
+await client.disconnect();
 ```
+
+> **Note**: You can also connect directly via WebSocket at `ws://localhost:8080/v1/ws` for custom implementations. See [SDK Documentation](docs/SDK.md) for the full API reference and [API Documentation](docs/API.md) for raw WebSocket protocol details.
 
 **📖 Complete SQL Reference**: See [SQL Syntax Documentation](docs/SQL.md) for the full command reference with all options.
 
@@ -468,16 +484,42 @@ CREATE USER 'tenant_acme' WITH PASSWORD 'SecureKey123!' ROLE 'service';
 
 ---
 
-### WASM Client / SDK (Coming Soon)
+### TypeScript/JavaScript SDK
 
-TypeScript/JavaScript SDK built on Rust → WASM is under development.
-See `docs/SDK.md` for the current design and status.
+The official TypeScript SDK provides a type-safe wrapper around KalamDB with real-time subscriptions:
+
+```typescript
+import { createClient } from '@kalamdb/client';
+
+const client = createClient({
+  url: 'http://localhost:8080',
+  username: 'admin',
+  password: 'admin'
+});
+await client.connect();
+
+// Query data
+const result = await client.query('SELECT * FROM chat.messages LIMIT 10');
+
+// Subscribe to changes (Firebase/Supabase style)
+const unsubscribe = await client.subscribe('chat.messages', (event) => {
+  console.log('Change:', event);
+});
+
+// Subscription management
+console.log(`Active: ${client.getSubscriptionCount()}`);
+await unsubscribe();
+await client.disconnect();
+```
 
 Features:
-- ✅ Real-time sync across browser tabs
-- ✅ Offline-first with localStorage caching
-- ✅ Professional UI with dark mode support
-- ✅ Complete with tests and documentation
+- ✅ Built on Rust → WASM for performance
+- ✅ Real-time subscriptions with Firebase/Supabase-style API
+- ✅ Subscription tracking (`getSubscriptionCount()`, `unsubscribeAll()`)
+- ✅ Works in browsers and Node.js
+- ✅ Full TypeScript type definitions
+
+See [SDK Documentation](docs/SDK.md) for the complete API reference.
 
 ---
 

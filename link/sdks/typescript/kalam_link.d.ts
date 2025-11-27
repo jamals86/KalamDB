@@ -100,6 +100,28 @@ export class KalamClient {
    */
   subscribe(table_name: string, callback: Function): Promise<string>;
   /**
+   * Subscribe to a SQL query with optional subscription options
+   *
+   * # Arguments
+   * * `sql` - SQL SELECT query to subscribe to
+   * * `options` - Optional JSON string with subscription options (e.g., `{"batch_size": 100}`)
+   * * `callback` - JavaScript function to call when changes occur
+   *
+   * # Returns
+   * Subscription ID for later unsubscribe
+   *
+   * # Example (JavaScript)
+   * ```js
+   * // Subscribe with options
+   * const subId = await client.subscribeWithSql(
+   *   "SELECT * FROM chat.messages WHERE conversation_id = 1",
+   *   JSON.stringify({ batch_size: 50 }),
+   *   (event) => console.log('Change:', event)
+   * );
+   * ```
+   */
+  subscribeWithSql(sql: string, options: string | null | undefined, callback: Function): Promise<string>;
+  /**
    * Unsubscribe from table changes (T052, T063M)
    *
    * # Arguments
@@ -121,12 +143,13 @@ export interface InitOutput {
   readonly kalamclient_delete: (a: number, b: number, c: number, d: number, e: number) => any;
   readonly kalamclient_query: (a: number, b: number, c: number) => any;
   readonly kalamclient_subscribe: (a: number, b: number, c: number, d: any) => any;
+  readonly kalamclient_subscribeWithSql: (a: number, b: number, c: number, d: number, e: number, f: any) => any;
   readonly kalamclient_unsubscribe: (a: number, b: number, c: number) => any;
-  readonly wasm_bindgen__convert__closures_____invoke__h762ee00b4618786e: (a: number, b: number) => void;
-  readonly wasm_bindgen__closure__destroy__h07a7edbb3f89726e: (a: number, b: number) => void;
   readonly wasm_bindgen__convert__closures_____invoke__hbe312fe94906cca5: (a: number, b: number, c: any) => void;
+  readonly wasm_bindgen__closure__destroy__h07a7edbb3f89726e: (a: number, b: number) => void;
   readonly wasm_bindgen__convert__closures_____invoke__h58212949185b0233: (a: number, b: number, c: any) => void;
   readonly wasm_bindgen__closure__destroy__h882e84b55e202da7: (a: number, b: number) => void;
+  readonly wasm_bindgen__convert__closures_____invoke__h762ee00b4618786e: (a: number, b: number) => void;
   readonly wasm_bindgen__convert__closures_____invoke__h631465b85669de06: (a: number, b: number, c: any, d: any) => void;
   readonly __wbindgen_malloc: (a: number, b: number) => number;
   readonly __wbindgen_realloc: (a: number, b: number, c: number, d: number) => number;
