@@ -6,7 +6,7 @@
 //! Moved from kalamdb-live crate to kalamdb-core to avoid circular dependencies.
 
 pub mod error;
-pub mod filter;
+pub mod filter_eval;
 pub mod initial_data;
 pub mod manager;
 pub mod notification;
@@ -21,14 +21,16 @@ pub use kalamdb_commons::NodeId;
 
 // Re-export from registry (consolidated connection management)
 pub use registry::{
-    ConnectionEvent, ConnectionRegistration, ConnectionRegistry, ConnectionState,
-    LiveQueryOptions, NotificationSender, SubscriptionHandle, SubscriptionState,
+    ConnectionEvent, ConnectionRegistration, ConnectionsManager, ConnectionState,
+    NotificationSender, SubscriptionState,
 };
 
-pub use filter::{FilterCache, FilterPredicate};
+pub use filter_eval::{matches as filter_matches, parse_where_clause};
 pub use initial_data::{InitialDataFetcher, InitialDataOptions, InitialDataResult};
 pub use manager::LiveQueryManager;
 pub use notification::NotificationService;
 pub use query_parser::QueryParser;
-pub use subscription::SubscriptionService;
+pub use registry::SharedConnectionState;
+pub use subscription::{RegisteredSubscription, SubscriptionService};
 pub use types::{ChangeNotification, ChangeType, RegistryStats, SubscriptionResult};
+

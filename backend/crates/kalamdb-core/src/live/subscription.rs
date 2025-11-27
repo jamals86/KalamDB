@@ -2,39 +2,41 @@
 //!
 //! Handles registration and unregistration of live query subscriptions,
 //! including permission checks, filter compilation, and system table updates.
+//!
+//! All SQL parsing is done inside register_subscription - no intermediate ParsedSubscription.
 
-use super::filter::FilterCache;
-use super::registry::ConnectionRegistry;
-use kalamdb_commons::NodeId;
+use super::registry::{ConnectionsManager, SharedConnectionState, SubscriptionState};
 use crate::error::KalamDbError;
-use kalamdb_commons::models::{ConnectionId, LiveQueryId, UserId};
+use datafusion::sql::sqlparser::ast::Expr;
+use kalamdb_commons::ids::SeqId;
+use kalamdb_commons::models::{ConnectionId, LiveQueryId, TableId, UserId};
 use kalamdb_commons::system::LiveQuery as SystemLiveQuery;
+use kalamdb_commons::websocket::SubscriptionRequest;
+use kalamdb_commons::NodeId;
 use kalamdb_system::LiveQueriesTableProvider;
+use log::info;
 use std::sync::Arc;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 /// Service for managing subscriptions
 ///
-/// Uses Arc<ConnectionRegistry> directly since ConnectionRegistry internally
+/// Uses Arc<ConnectionsManager> directly since ConnectionsManager internally
 /// uses DashMap for lock-free concurrent access - no RwLock wrapper needed.
 pub struct SubscriptionService {
-    /// Registry uses DashMap internally for lock-free access
-    registry: Arc<ConnectionRegistry>,
-    filter_cache: Arc<tokio::sync::RwLock<FilterCache>>,
+    /// Manager uses DashMap internally for lock-free access
+    registry: Arc<ConnectionsManager>,
     live_queries_provider: Arc<LiveQueriesTableProvider>,
     node_id: NodeId,
 }
 
 impl SubscriptionService {
     pub fn new(
-        registry: Arc<ConnectionRegistry>,
-        filter_cache: Arc<tokio::sync::RwLock<FilterCache>>,
+        registry: Arc<ConnectionsManager>,
         live_queries_provider: Arc<LiveQueriesTableProvider>,
         node_id: NodeId,
     ) -> Self {
         Self {
             registry,
-            filter_cache,
             live_queries_provider,
             node_id,
         }
@@ -50,36 +52,45 @@ impl SubscriptionService {
 
     /// Register a live query subscription
     ///
-    /// Takes SubscriptionRequest which contains pre-parsed table_id, where_clause,
-    /// and projections from handle_subscription() to avoid duplicate parsing.
-    /// Permissions have already been checked, but we still need to handle
-    /// auto-injection of user_id filter for user tables.
+    /// This method performs all SQL parsing internally and creates the SubscriptionState.
+    /// The ws_handler passes the SharedConnectionState directly.
+    ///
+    /// Parameters:
+    /// - connection_state: Shared reference to the connection state
+    /// - request: Client subscription request containing SQL and options
+    /// - table_id: Pre-validated table identifier (validated in ws_handler)
+    /// - filter_expr: Optional parsed WHERE clause expression
+    /// - projections: Optional column projections from SELECT
+    /// - batch_size: Batch size for initial data fetching
     pub async fn register_subscription(
         &self,
-        connection_id: ConnectionId,
-        subscription: kalamdb_commons::websocket::SubscriptionRequest,
+        connection_state: &SharedConnectionState,
+        request: &SubscriptionRequest,
+        table_id: TableId,
+        filter_expr: Option<Expr>,
+        projections: Option<Vec<String>>,
+        batch_size: usize,
     ) -> Result<LiveQueryId, KalamDbError> {
-        // Extract table_id from pre-parsed subscription request
-        let table_id = subscription.table_id.clone().ok_or_else(|| {
-            KalamDbError::InvalidOperation("table_id not parsed in SubscriptionRequest".to_string())
-        })?;
-
-        // Get user_id from connection registry (DashMap - lock-free)
-        let user_id = self.registry.get_user_id(&connection_id).ok_or_else(|| {
-            KalamDbError::NotFound(format!("Connection not found: {}", connection_id))
-        })?;
+        // Read connection info from state
+        let (connection_id, user_id, notification_tx) = {
+            let state = connection_state.read();
+            let user_id = state.user_id.clone().ok_or_else(|| {
+                KalamDbError::InvalidOperation("Connection not authenticated".to_string())
+            })?;
+            (state.connection_id.clone(), user_id, state.notification_tx.clone())
+        };
 
         // Generate LiveQueryId
         let live_id = LiveQueryId::new(
             user_id.clone(),
             connection_id.clone(),
-            subscription.id.clone(),
+            request.id.clone(),
         );
 
         let timestamp = Self::current_timestamp_ms();
 
-        // Clone subscription options directly (already has the right type)
-        let options = subscription.options.clone();
+        // Clone subscription options directly
+        let options = request.options.clone();
 
         // Serialize options to JSON
         let options_json = serde_json::to_string(&options).map_err(|e| {
@@ -93,13 +104,13 @@ impl SubscriptionService {
             namespace_id: table_id.namespace_id().clone(),
             table_name: table_id.table_name().clone(),
             user_id: user_id.clone(),
-            query: subscription.sql.clone(),
+            query: request.sql.clone(),
             options: Some(options_json),
             created_at: timestamp,
             last_update: timestamp,
             changes: 0,
             node: self.node_id.as_str().to_string(),
-            subscription_id: subscription.id.clone(),
+            subscription_id: request.id.clone(),
             status: kalamdb_commons::types::LiveQueryStatus::Active,
         };
 
@@ -109,61 +120,118 @@ impl SubscriptionService {
             .await
             .map_err(|e| KalamDbError::Other(format!("Failed to insert live query: {}", e)))?;
 
-        // Register subscription in in-memory registry (DashMap - lock-free)
-        self.registry.register_subscription(
-            user_id,
-            table_id,
+        // Create SubscriptionState with all necessary data
+        let subscription_state = SubscriptionState {
+            live_id: live_id.clone(),
+            table_id: table_id.clone(),
+            options: options.clone(),
+            sql: request.sql.clone(),
+            filter_expr,
+            projections,
+            batch_size,
+            snapshot_end_seq: None,
+            notification_tx,
+        };
+
+        // Add subscription to connection state
+        {
+            let state = connection_state.read();
+            state.subscriptions.insert(request.id.clone(), subscription_state.clone());
+        }
+
+        // Add to registry's table index for efficient lookups
+        self.registry.index_subscription(
+            &user_id,
+            &connection_id,
             live_id.clone(),
-            connection_id,
-            options,
-        )?;
+            table_id.clone(),
+            subscription_state,
+        );
+
+        info!(
+            "Registered subscription {} for connection {} on {}",
+            request.id, connection_id, table_id
+        );
 
         Ok(live_id)
     }
 
+    /// Update the snapshot_end_seq for a subscription after initial data fetch
+    pub fn update_snapshot_end_seq(
+        &self,
+        connection_state: &SharedConnectionState,
+        subscription_id: &str,
+        snapshot_end_seq: SeqId,
+    ) {
+        let state = connection_state.read();
+        state.update_snapshot_end_seq(subscription_id, Some(snapshot_end_seq));
+    }
+
     /// Unregister a single live query subscription
-    pub async fn unregister_subscription(&self, live_id: &LiveQueryId) -> Result<(), KalamDbError> {
-        // Remove cached filter first (needs RwLock write)
-        {
-            let mut filter_cache = self.filter_cache.write().await;
-            filter_cache.remove(live_id.as_ref());
-        }
+    pub async fn unregister_subscription(
+        &self,
+        connection_state: &SharedConnectionState,
+        subscription_id: &str,
+        live_id: &LiveQueryId,
+    ) -> Result<(), KalamDbError> {
+        // Get user_id and subscription details, then remove from connection state
+        let (connection_id, user_id, table_id) = {
+            let state = connection_state.read();
+            let user_id = state.user_id.clone().ok_or_else(|| {
+                KalamDbError::InvalidOperation("Connection not authenticated".to_string())
+            })?;
+            let subscription = state.subscriptions.remove(subscription_id);
+            match subscription {
+                Some((_, sub)) => (state.connection_id.clone(), user_id, sub.table_id),
+                None => {
+                    return Err(KalamDbError::NotFound(format!(
+                        "Subscription not found: {}",
+                        subscription_id
+                    )));
+                }
+            }
+        };
 
-        // Remove from in-memory registry (DashMap - lock-free)
-        let connection_id = self.registry.unregister_subscription(live_id);
+        // Remove from registry's table index
+        self.registry.unindex_subscription(&user_id, live_id, &table_id);
 
-        if connection_id.is_none() {
-            return Err(KalamDbError::NotFound(format!(
-                "Live query not found: {}",
-                live_id
-            )));
-        }
-
-        // Delete from system.live_queries (async - uses EntityStoreAsync internally)
+        // Delete from system.live_queries (async)
         self.live_queries_provider
             .delete_live_query_async(live_id)
             .await
             .map_err(|e| KalamDbError::Other(format!("Failed to delete live query: {}", e)))?;
 
+        info!(
+            "Unregistered subscription {} for connection {}",
+            subscription_id, connection_id
+        );
+
         Ok(())
     }
 
-    /// Unregister a WebSocket connection
+    /// Unregister a WebSocket connection and all its subscriptions
+    ///
+    /// Called from ConnectionsManager.unregister_connection() to clean up
+    /// the system.live_queries table entries.
     pub async fn unregister_connection(
         &self,
         user_id: &UserId,
         connection_id: &ConnectionId,
     ) -> Result<Vec<LiveQueryId>, KalamDbError> {
-        // Remove from in-memory registry and get all live_ids (DashMap - lock-free)
-        let live_ids = self.registry.unregister_connection(connection_id);
-
-        // Remove cached filters for all live queries
-        {
-            let mut filter_cache = self.filter_cache.write().await;
-            for live_id in &live_ids {
-                filter_cache.remove(live_id.as_ref());
+        // Get connection state from registry
+        let connection_state = self.registry.get_connection(connection_id);
+        
+        let live_ids: Vec<LiveQueryId> = match connection_state {
+            Some(state) => {
+                let state_guard = state.read();
+                state_guard
+                    .subscriptions
+                    .iter()
+                    .map(|entry| entry.value().live_id.clone())
+                    .collect()
             }
-        }
+            None => Vec::new(),
+        };
 
         // Delete from system.live_queries (async - uses prefix scan for efficiency)
         let connection_key = connection_id.to_string();
@@ -175,5 +243,35 @@ impl SubscriptionService {
             })?;
 
         Ok(live_ids)
+    }
+
+    /// Get subscription state from a connection
+    pub fn get_subscription(
+        &self,
+        connection_state: &SharedConnectionState,
+        subscription_id: &str,
+    ) -> Option<SubscriptionState> {
+        let state = connection_state.read();
+        state.subscriptions.get(subscription_id).map(|s| s.clone())
+    }
+}
+
+/// Result of registering a subscription (used for ws_handler response)
+#[derive(Debug, Clone)]
+pub struct RegisteredSubscription {
+    pub live_id: LiveQueryId,
+    pub subscription_id: String,
+    pub table_id: TableId,
+    pub batch_size: usize,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_timestamp() {
+        let ts = SubscriptionService::current_timestamp_ms();
+        assert!(ts > 0);
     }
 }

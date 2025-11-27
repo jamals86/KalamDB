@@ -4,7 +4,6 @@
 // Provides "changes since timestamp" functionality to populate client state
 // before real-time notifications begin.
 
-use super::filter::FilterPredicate;
 use crate::error::KalamDbError;
 use crate::schema_registry::TableType;
 use crate::sql::executor::models::{ExecutionContext, ExecutionResult, ScalarValue};
@@ -155,6 +154,7 @@ impl InitialDataFetcher {
     /// * `table_id` - Table identifier with namespace and table name
     /// * `table_type` - User or Shared table
     /// * `options` - Options for the fetch (timestamp, limit, etc.)
+    /// * `where_clause` - Optional WHERE clause string to include in the query
     ///
     /// # Returns
     /// InitialDataResult with rows and metadata
@@ -164,7 +164,7 @@ impl InitialDataFetcher {
         table_id: &TableId,
         table_type: TableType,
         options: InitialDataOptions,
-        filter: Option<Arc<FilterPredicate>>,
+        where_clause: Option<&str>,
     ) -> Result<InitialDataResult, KalamDbError> {
         log::info!(
             "fetch_initial_data called: table={}, type={:?}, limit={}, since={:?}",
@@ -235,8 +235,8 @@ impl InitialDataFetcher {
         }
 
         // Add custom filter from subscription
-        if let Some(predicate) = filter {
-            where_clauses.push(predicate.sql().to_string());
+        if let Some(where_sql) = where_clause {
+            where_clauses.push(where_sql.to_string());
         }
 
         if !where_clauses.is_empty() {

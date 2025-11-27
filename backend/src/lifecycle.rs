@@ -12,7 +12,7 @@ use anyhow::Result;
 use kalamdb_api::auth::jwt::JwtAuth;
 use kalamdb_api::rate_limiter::{RateLimitConfig, RateLimiter};
 use kalamdb_commons::{AuthType, Role, StorageId, StorageMode, UserId};
-use kalamdb_core::live::ConnectionRegistry;
+use kalamdb_core::live::ConnectionsManager;
 use kalamdb_core::live_query::LiveQueryManager;
 use kalamdb_core::sql::datafusion_session::DataFusionSessionFactory;
 use kalamdb_core::sql::executor::SqlExecutor;
@@ -31,7 +31,7 @@ pub struct ApplicationComponents {
     pub rate_limiter: Arc<RateLimiter>,
     pub live_query_manager: Arc<LiveQueryManager>,
     pub user_repo: Arc<dyn kalamdb_auth::UserRepository>,
-    pub connection_registry: Arc<ConnectionRegistry>,
+    pub connection_registry: Arc<ConnectionsManager>,
 }
 
 /// Initialize RocksDB, DataFusion, services, rate limiter, and flush scheduler.
@@ -200,20 +200,20 @@ pub async fn bootstrap(
         config.rate_limit.max_subscriptions_per_user
     );
 
-    // Connection Registry for WebSocket connections - use the one from AppContext
-    // This is CRITICAL: the same ConnectionRegistry must be used by both:
+    // Connection Manager for WebSocket connections - use the one from AppContext
+    // This is CRITICAL: the same ConnectionsManager must be used by both:
     // 1. ws_handler (for registering connections and marking authentication)
     // 2. LiveQueryManager's SubscriptionService (for checking connection state during subscription)
     // 
-    // Previously, lifecycle.rs created a NEW ConnectionRegistry which caused the error:
+    // Previously, lifecycle.rs created a NEW ConnectionsManager which caused the error:
     // "Connection not found" when trying to register subscriptions because the connection
-    // was registered in one registry but looked up in another.
+    // was registered in one manager but looked up in another.
     let connection_registry = app_context.connection_registry();
     let client_timeout = config.websocket.client_timeout_secs.unwrap_or(10);
     let auth_timeout = config.websocket.auth_timeout_secs.unwrap_or(3);
     let heartbeat_interval = 5; // Fixed at 5s in AppContext
     info!(
-        "ConnectionRegistry initialized (client_timeout={}s, auth_timeout={}s, heartbeat_interval={}s)",
+        "ConnectionsManager initialized (client_timeout={}s, auth_timeout={}s, heartbeat_interval={}s)",
         client_timeout,
         auth_timeout,
         heartbeat_interval

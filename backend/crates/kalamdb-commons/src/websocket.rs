@@ -218,6 +218,10 @@ pub enum ClientMessage {
 }
 
 /// Subscription request details
+///
+/// This is a client-only struct representing the subscription request.
+/// Server-side metadata (table_id, filter_expr, projections, etc.) is stored
+/// in SubscriptionState within ConnectionState.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SubscriptionRequest {
     /// Unique subscription identifier (client-generated)
@@ -227,33 +231,11 @@ pub struct SubscriptionRequest {
     /// Optional subscription options
     #[serde(default)]
     pub options: SubscriptionOptions,
-
-    // --- Server-side parsed fields (not sent by client) ---
-    
-    /// Parsed table ID (namespace + table name)
-    /// Populated by server after SQL parsing and validation
-    #[serde(skip)]
-    pub table_id: Option<crate::models::TableId>,
-    
-    /// Extracted WHERE clause from SQL query
-    /// Populated by server after SQL parsing
-    #[serde(skip)]
-    pub where_clause: Option<String>,
-    
-    /// Extracted column projections from SELECT clause
-    /// None means SELECT * (all columns)
-    /// Populated by server after SQL parsing
-    #[serde(skip)]
-    pub projections: Option<Vec<String>>,
 }
 
 /// Options for live query subscriptions
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct SubscriptionOptions {
-    /// Reserved for future use (filtering, sorting, etc.)
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub _reserved: Option<String>,
-
     /// Optional: Configure batch size for initial data streaming
     #[serde(skip_serializing_if = "Option::is_none")]
     pub batch_size: Option<usize>,
@@ -590,9 +572,6 @@ mod tests {
             id: "sub-1".to_string(),
             sql: "SELECT * FROM messages".to_string(),
             options: SubscriptionOptions::default(),
-            table_id: None, // Server-side only
-            where_clause: None,
-            projections: None,
         });
 
         let json = serde_json::to_string(&msg).unwrap();

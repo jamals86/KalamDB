@@ -1,4 +1,4 @@
-//! WebSocket Connection Registry
+//! WebSocket Connections Manager
 //!
 //! Single source of truth for all WebSocket connection state:
 //! - Connection lifecycle (connected, authenticated, subscriptions)
@@ -7,15 +7,19 @@
 //! - Notification delivery
 //! - Graceful shutdown coordination
 //!
-//! Each connection has exactly ONE entry in memory instead of being scattered across
-//! multiple data structures.
+//! Architecture:
+//! - `ConnectionsManager` manages connection lifecycle
+//! - `SharedConnectionState` (Arc<RwLock<ConnectionState>>) is returned on registration
+//! - Handlers hold the Arc and can access/mutate state directly without ID lookups
 
-use crate::error::KalamDbError;
 use dashmap::DashMap;
+use datafusion::sql::sqlparser::ast::Expr;
+use kalamdb_commons::ids::SeqId;
 use kalamdb_commons::models::{ConnectionId, LiveQueryId, TableId, UserId};
 use kalamdb_commons::websocket::SubscriptionOptions;
 use kalamdb_commons::{NodeId, Notification};
 use log::{debug, info, warn};
+use parking_lot::RwLock;
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
@@ -25,8 +29,8 @@ use tokio_util::sync::CancellationToken;
 /// Type alias for sending live query notifications to WebSocket clients
 pub type NotificationSender = mpsc::UnboundedSender<(LiveQueryId, Notification)>;
 
-/// Type alias for backward compatibility (LiveQueryOptions → SubscriptionOptions)
-pub type LiveQueryOptions = SubscriptionOptions;
+/// Shared connection state - can be held by handlers for direct access
+pub type SharedConnectionState = Arc<RwLock<ConnectionState>>;
 
 /// Events sent to connection tasks from the heartbeat checker
 #[derive(Debug, Clone)]
@@ -43,24 +47,34 @@ pub enum ConnectionEvent {
 
 /// Subscription state - unified struct for both storage and notification delivery
 ///
-/// Used in:
-/// - ConnectionState.subscriptions (primary storage)
-/// - user_table_subscriptions index (for O(1) notification delivery)
+/// Contains all metadata needed for:
+/// - Notification filtering (filter_expr)
+/// - Initial data batch fetching (sql, batch_size, snapshot_end_seq)
+/// - Column projections (projections)
 #[derive(Debug, Clone)]
 pub struct SubscriptionState {
     pub live_id: LiveQueryId,
     pub table_id: TableId,
     pub options: SubscriptionOptions,
+    /// Original SQL query for batch fetching
+    pub sql: String,
+    /// Compiled filter expression from WHERE clause (parsed once at subscription time)
+    /// None means no filter (SELECT * without WHERE)
+    pub filter_expr: Option<Expr>,
+    /// Extracted column projections from SELECT clause
+    /// None means SELECT * (all columns)
+    pub projections: Option<Vec<String>>,
+    /// Batch size for initial data loading
+    pub batch_size: usize,
+    /// Snapshot boundary SeqId for consistent batch loading
+    pub snapshot_end_seq: Option<SeqId>,
     /// Shared notification channel (Arc for zero-copy)
     pub notification_tx: Arc<NotificationSender>,
 }
 
-/// Type alias for backward compatibility with code expecting SubscriptionHandle
-pub type SubscriptionHandle = SubscriptionState;
-
 /// Connection state - everything about a connection in one struct
 ///
-/// Memory: ~200 bytes base + subscriptions (vs ~300+ bytes when split across 3 structures)
+/// Handlers hold `Arc<RwLock<ConnectionState>>` for direct access.
 pub struct ConnectionState {
     // === Identity ===
     /// Connection ID
@@ -72,7 +86,7 @@ pub struct ConnectionState {
 
     // === Authentication State ===
     /// Whether connection has been authenticated
-    pub is_authenticated: bool, // TODO: We can use UserId presence to check auth too
+    pub is_authenticated: bool,
     /// Whether auth attempt has started (for timeout logic)
     pub auth_started: bool,
 
@@ -93,35 +107,109 @@ pub struct ConnectionState {
     pub event_tx: mpsc::UnboundedSender<ConnectionEvent>,
 }
 
+impl ConnectionState {
+    /// Update heartbeat timestamp - call on any client activity
+    #[inline]
+    pub fn update_heartbeat(&mut self) {
+        self.last_heartbeat = Instant::now();
+    }
+
+    /// Mark that authentication has started (for timeout logic)
+    #[inline]
+    pub fn mark_auth_started(&mut self) {
+        self.auth_started = true;
+    }
+
+    /// Mark connection as authenticated with user ID
+    #[inline]
+    pub fn mark_authenticated(&mut self, user_id: UserId) {
+        self.is_authenticated = true;
+        self.user_id = Some(user_id);
+    }
+
+    /// Check if connection is authenticated
+    #[inline]
+    pub fn is_authenticated(&self) -> bool {
+        self.is_authenticated
+    }
+
+    /// Get user ID (None if not authenticated)
+    #[inline]
+    pub fn user_id(&self) -> Option<&UserId> {
+        self.user_id.as_ref()
+    }
+
+    /// Get connection ID
+    #[inline]
+    pub fn connection_id(&self) -> &ConnectionId {
+        &self.connection_id
+    }
+
+    /// Get client IP
+    #[inline]
+    pub fn client_ip(&self) -> Option<&str> {
+        self.client_ip.as_deref()
+    }
+
+    /// Get a subscription by ID
+    pub fn get_subscription(&self, subscription_id: &str) -> Option<SubscriptionState> {
+        self.subscriptions.get(subscription_id).map(|s| s.clone())
+    }
+
+    /// Update snapshot_end_seq for a subscription
+    pub fn update_snapshot_end_seq(&self, subscription_id: &str, snapshot_end_seq: Option<SeqId>) {
+        if let Some(mut sub) = self.subscriptions.get_mut(subscription_id) {
+            sub.snapshot_end_seq = snapshot_end_seq;
+        }
+    }
+
+    /// Get all subscription IDs
+    pub fn subscription_ids(&self) -> Vec<String> {
+        self.subscriptions.iter().map(|e| e.key().clone()).collect()
+    }
+
+    /// Check if subscription exists
+    pub fn has_subscription(&self, subscription_id: &str) -> bool {
+        self.subscriptions.contains_key(subscription_id)
+    }
+
+    /// Get subscription count
+    pub fn subscription_count(&self) -> usize {
+        self.subscriptions.len()
+    }
+}
+
 /// Registration result returned when a connection registers
+/// TODO: We dont need this anymore we can use ConnectionState directly
 pub struct ConnectionRegistration {
+    /// Shared connection state - hold this for direct access
+    pub state: SharedConnectionState,
     /// Receiver for control events (ping, timeout, shutdown)
     pub event_rx: mpsc::UnboundedReceiver<ConnectionEvent>,
     /// Receiver for notifications (live query updates)
     pub notification_rx: mpsc::UnboundedReceiver<(LiveQueryId, Notification)>,
 }
 
-/// WebSocket Connection Registry
+/// WebSocket Connections Manager
 ///
-/// Single source of truth for all connection state, replacing:
-/// - LiveQueryRegistry (subscriptions, notification routing)
-/// - HeartbeatManager (timeouts, ping/pong tracking)
+/// Responsibilities:
+/// - Connection lifecycle (register, unregister, heartbeat check)
+/// - Authentication state management
+/// - Maintaining indices for efficient lookups
+/// - Background heartbeat checker
 ///
-/// # Performance
-/// - DashMap for lock-free concurrent access
-/// - Single entry per connection (better cache locality)
-/// - O(1) lookups for all operations
-/// - Atomic counters for metrics
-pub struct ConnectionRegistry {
+/// NOTE: Subscription management is delegated to LiveQueryManager.
+/// The manager only maintains indices for notification routing.
+pub struct ConnectionsManager {
     // === Primary Storage ===
-    /// All active connections: ConnectionId → ConnectionState
-    connections: DashMap<ConnectionId, ConnectionState>,
+    /// All active connections: ConnectionId → SharedConnectionState
+    connections: DashMap<ConnectionId, SharedConnectionState>,
 
     // === Secondary Indices (for efficient lookups) ===
     /// User → Connections index: UserId → Vec<ConnectionId>
+    /// TODO: Is this needed?
     user_connections: DashMap<UserId, Vec<ConnectionId>>,
     /// (UserId, TableId) → Vec<SubscriptionState> for O(1) notification delivery
-    /// This is THE hot path - pre-built states avoid rebuilding on each notify
     user_table_subscriptions: DashMap<(UserId, TableId), Vec<SubscriptionState>>,
     /// LiveQueryId → ConnectionId reverse index
     live_id_to_connection: DashMap<LiveQueryId, ConnectionId>,
@@ -137,20 +225,16 @@ pub struct ConnectionRegistry {
     heartbeat_interval: Duration,
 
     // === Shutdown Coordination ===
-    /// Cancellation token for background tasks
     shutdown_token: CancellationToken,
-    /// Flag indicating shutdown in progress
     is_shutting_down: AtomicBool,
 
     // === Metrics ===
-    /// Total connection count (atomic for fast reads)
     total_connections: AtomicUsize,
-    /// Total subscription count (atomic for fast reads)
     total_subscriptions: AtomicUsize,
 }
 
-impl ConnectionRegistry {
-    /// Create a new connection registry and start the background heartbeat checker
+impl ConnectionsManager {
+    /// Create a new connections manager and start the background heartbeat checker
     pub fn new(
         node_id: NodeId,
         client_timeout: Duration,
@@ -181,7 +265,7 @@ impl ConnectionRegistry {
         });
 
         info!(
-            "ConnectionRegistry initialized (node={}, client_timeout={}s, auth_timeout={}s)",
+            "ConnectionsManager initialized (node={}, client_timeout={}s, auth_timeout={}s)",
             registry.node_id,
             client_timeout.as_secs(),
             auth_timeout.as_secs()
@@ -194,6 +278,11 @@ impl ConnectionRegistry {
 
     /// Register a new connection (called immediately when WebSocket opens)
     ///
+    /// Returns `ConnectionRegistration` containing:
+    /// - `SharedConnectionState` - hold this for direct access to connection state
+    /// - `event_rx` - control events (ping, timeout, shutdown)
+    /// - `notification_rx` - live query notifications
+    ///
     /// Returns None if server is shutting down.
     pub fn register_connection(
         &self,
@@ -201,10 +290,7 @@ impl ConnectionRegistry {
         client_ip: Option<String>,
     ) -> Option<ConnectionRegistration> {
         if self.is_shutting_down.load(Ordering::Acquire) {
-            warn!(
-                "Rejecting new connection during shutdown: {}",
-                connection_id
-            );
+            warn!("Rejecting new connection during shutdown: {}", connection_id);
             return None;
         }
 
@@ -225,24 +311,38 @@ impl ConnectionRegistry {
             event_tx,
         };
 
-        self.connections.insert(connection_id.clone(), state);
+        let shared_state = Arc::new(RwLock::new(state));
+        self.connections.insert(connection_id.clone(), shared_state.clone());
         let count = self.total_connections.fetch_add(1, Ordering::AcqRel) + 1;
 
-        debug!(
-            "Connection registered: {} (total: {})",
-            connection_id, count
-        );
+        debug!("Connection registered: {} (total: {})", connection_id, count);
 
         Some(ConnectionRegistration {
+            state: shared_state,
             event_rx,
             notification_rx,
         })
     }
 
+    /// Called after successful authentication to update user index
+    ///
+    /// Must be called after `state.write().mark_authenticated(user_id)`.
+    /// TODO: Use the same reference we have of ConnectionState instead of looking up again.
+    pub fn on_authenticated(&self, connection_id: &ConnectionId, user_id: UserId) {
+        self.user_connections
+            .entry(user_id)
+            .or_default()
+            .push(connection_id.clone());
+    }
+
     /// Unregister a connection and all its subscriptions
+    ///
+    /// Returns the list of removed LiveQueryIds for cleanup.
     pub fn unregister_connection(&self, connection_id: &ConnectionId) -> Vec<LiveQueryId> {
-        let removed_live_ids = if let Some((_, state)) = self.connections.remove(connection_id) {
+        let removed_live_ids = if let Some((_, shared_state)) = self.connections.remove(connection_id) {
             self.total_connections.fetch_sub(1, Ordering::AcqRel);
+
+            let state = shared_state.read();
 
             // Remove from user index
             if let Some(user_id) = &state.user_id {
@@ -273,7 +373,6 @@ impl ConnectionRegistry {
             for entry in state.subscriptions.iter() {
                 let sub = entry.value();
                 removed.push(sub.live_id.clone());
-                // Remove from reverse index
                 self.live_id_to_connection.remove(&sub.live_id);
             }
 
@@ -298,185 +397,68 @@ impl ConnectionRegistry {
         removed_live_ids
     }
 
-    // ==================== Heartbeat/Timeout Management ====================
+    // ==================== Subscription Index Management ====================
+    // NOTE: Actual subscription storage is in ConnectionState.subscriptions
+    // These methods maintain secondary indices for efficient notification routing
 
-    /// Update heartbeat timestamp for a connection
-    #[inline]
-    pub fn update_heartbeat(&self, connection_id: &ConnectionId) {
-        if let Some(mut conn) = self.connections.get_mut(connection_id) {
-            conn.last_heartbeat = Instant::now();
-        }
-    }
-
-    /// Mark that authentication has started
-    pub fn mark_auth_started(&self, connection_id: &ConnectionId) {
-        if let Some(mut conn) = self.connections.get_mut(connection_id) {
-            conn.auth_started = true;
-        }
-    }
-
-    /// Mark connection as authenticated with user ID
-    pub fn mark_authenticated(&self, connection_id: &ConnectionId, user_id: UserId) {
-        if let Some(mut conn) = self.connections.get_mut(connection_id) {
-            conn.is_authenticated = true;
-            conn.user_id = Some(user_id.clone());
-        }
-
-        // Add to user index
-        self.user_connections
-            .entry(user_id)
+    /// Add subscription to indices (called by LiveQueryManager after adding to ConnectionState)
+    pub fn index_subscription(
+        &self,
+        user_id: &UserId,
+        connection_id: &ConnectionId,
+        live_id: LiveQueryId,
+        table_id: TableId,
+        subscription_state: SubscriptionState,
+    ) {
+        // Add to (UserId, TableId) → Vec<SubscriptionState> index
+        self.user_table_subscriptions
+            .entry((user_id.clone(), table_id))
             .or_default()
-            .push(connection_id.clone());
+            .push(subscription_state);
+
+        // Add to reverse index
+        self.live_id_to_connection.insert(live_id, connection_id.clone());
+        
+        self.total_subscriptions.fetch_add(1, Ordering::AcqRel);
+    }
+
+    /// Remove subscription from indices (called by LiveQueryManager after removing from ConnectionState)
+    pub fn unindex_subscription(&self, user_id: &UserId, live_id: &LiveQueryId, table_id: &TableId) {
+        // Remove from reverse index
+        self.live_id_to_connection.remove(live_id);
+
+        // Remove from user_table_subscriptions index
+        let key = (user_id.clone(), table_id.clone());
+        if let Some(mut handles) = self.user_table_subscriptions.get_mut(&key) {
+            handles.retain(|h| &h.live_id != live_id);
+            if handles.is_empty() {
+                drop(handles);
+                self.user_table_subscriptions.remove(&key);
+            }
+        }
+
+        self.total_subscriptions.fetch_sub(1, Ordering::AcqRel);
+    }
+
+    /// Get connection ID for a live query (for cleanup)
+    pub fn get_connection_for_live_id(&self, live_id: &LiveQueryId) -> Option<ConnectionId> {
+        self.live_id_to_connection.get(live_id).map(|r| r.clone())
     }
 
     // ==================== Query Methods ====================
 
-    /// Check if connection is authenticated
-    pub fn is_authenticated(&self, connection_id: &ConnectionId) -> bool {
-        self.connections
-            .get(connection_id)
-            .map(|c| c.is_authenticated)
-            .unwrap_or(false)
+    /// Get shared connection state by ID (rarely needed - handlers should hold their own reference)
+    pub fn get_connection(&self, connection_id: &ConnectionId) -> Option<SharedConnectionState> {
+        self.connections.get(connection_id).map(|c| c.clone())
     }
 
-    /// Get user ID for a connection
-    pub fn get_user_id(&self, connection_id: &ConnectionId) -> Option<UserId> {
-        self.connections
-            .get(connection_id)
-            .and_then(|c| c.user_id.clone())
-    }
-
-    /// Get client IP for a connection
-    pub fn get_client_ip(&self, connection_id: &ConnectionId) -> Option<String> {
-        self.connections
-            .get(connection_id)
-            .and_then(|c| c.client_ip.clone())
-    }
-
-    /// Get notification sender for a connection
-    pub fn get_notification_sender(
-        &self,
-        connection_id: &ConnectionId,
-    ) -> Option<Arc<NotificationSender>> {
-        self.connections
-            .get(connection_id)
-            .map(|c| c.notification_tx.clone())
-    }
-
-    // ==================== Subscription Management ====================
-
-    /// Add a subscription to a connection
-    pub fn add_subscription(
-        &self,
-        connection_id: &ConnectionId,
-        live_id: LiveQueryId,
-        table_id: TableId,
-        options: SubscriptionOptions
-    ) -> Result<(), KalamDbError> {
-        let conn = self.connections.get(connection_id).ok_or_else(|| {
-            KalamDbError::NotFound(format!("Connection not found: {}", connection_id))
-        })?;
-        if !conn.is_authenticated {
-            return Err(KalamDbError::Unauthorized(
-                "Connection not authenticated".to_string(),
-            ));
-        }
-
-        let user_id = conn.user_id.clone().ok_or_else(|| {
-            KalamDbError::InvalidOperation("Connection has no user_id".to_string())
-        })?;
-
-        let subscription_id = live_id.subscription_id().to_string();
-        let state = SubscriptionState {
-            live_id: live_id.clone(),
-            table_id: table_id.clone(),
-            options,
-            notification_tx: conn.notification_tx.clone(),
-        };
-
-        conn.subscriptions.insert(subscription_id, state.clone());
-        self.total_subscriptions.fetch_add(1, Ordering::AcqRel);
-
-        // Add to (UserId, TableId) → Vec<SubscriptionState> index - THE HOT PATH
+    /// Check if any subscriptions exist for a (user, table) pair
+    pub fn has_subscriptions(&self, user_id: &UserId, table_id: &TableId) -> bool {
         self.user_table_subscriptions
-            .entry((user_id, table_id))
-            .or_default()
-            .push(state);
-
-        // Add to reverse index
-        self.live_id_to_connection
-            .insert(live_id, connection_id.clone());
-
-        Ok(())
+            .contains_key(&(user_id.clone(), table_id.clone()))
     }
 
-    /// Register a subscription (compatibility API matching old LiveQueryRegistry)
-    ///
-    /// This wraps add_subscription with the old method signature.
-    pub fn register_subscription(
-        &self,
-        _user_id: UserId,
-        table_id: TableId,
-        live_id: LiveQueryId,
-        connection_id: ConnectionId,
-        options: SubscriptionOptions,
-    ) -> Result<(), KalamDbError> {
-        self.add_subscription(&connection_id, live_id, table_id, options)
-    }
-
-    /// Unregister a subscription (compatibility API matching old LiveQueryRegistry)
-    ///
-    /// Returns the connection ID if found.
-    pub fn unregister_subscription(&self, live_id: &LiveQueryId) -> Option<ConnectionId> {
-        self.remove_subscription(live_id)
-    }
-
-    /// Remove a subscription from a connection
-    pub fn remove_subscription(&self, live_id: &LiveQueryId) -> Option<ConnectionId> {
-        // Find connection via reverse index
-        let connection_id = self.live_id_to_connection.remove(live_id)?.1;
-
-        if let Some(conn) = self.connections.get(&connection_id) {
-            let subscription_id = live_id.subscription_id();
-            if let Some((_, sub)) = conn.subscriptions.remove(subscription_id) {
-                self.total_subscriptions.fetch_sub(1, Ordering::AcqRel);
-
-                // Remove from user_table_subscriptions index
-                if let Some(user_id) = &conn.user_id {
-                    let key = (user_id.clone(), sub.table_id.clone());
-                    if let Some(mut handles) = self.user_table_subscriptions.get_mut(&key) {
-                        handles.retain(|h| &h.live_id != live_id);
-                        if handles.is_empty() {
-                            drop(handles);
-                            self.user_table_subscriptions.remove(&key);
-                        }
-                    }
-                }
-            }
-        }
-
-        Some(connection_id)
-    }
-
-    /// Check if a subscription exists
-    pub fn has_subscription(&self, connection_id: &ConnectionId, subscription_id: &str) -> bool {
-        self.connections
-            .get(connection_id)
-            .map(|c| c.subscriptions.contains_key(subscription_id))
-            .unwrap_or(false)
-    }
-
-    /// Get all subscription IDs for a connection
-    pub fn get_subscription_ids(&self, connection_id: &ConnectionId) -> Vec<String> {
-        self.connections
-            .get(connection_id)
-            .map(|c| c.subscriptions.iter().map(|e| e.key().clone()).collect())
-            .unwrap_or_default()
-    }
-
-    /// Get subscriptions for a specific (user, table) pair
-    /// 
-    /// O(1) lookup via DashMap - returns pre-built states, no iteration needed
+    /// Get subscriptions for a specific (user, table) pair for notification routing
     #[inline]
     pub fn get_subscriptions_for_table(
         &self,
@@ -489,7 +471,7 @@ impl ConnectionRegistry {
             .unwrap_or_default()
     }
 
-    /// Check if any subscriptions exist for a table (by table name substring match)
+    /// Check if any subscriptions exist for a table (across all users)
     pub fn has_subscriptions_for_table(&self, table_ref: &str) -> bool {
         self.user_table_subscriptions.iter().any(|entry| {
             entry.key().1.to_string().contains(table_ref)
@@ -501,15 +483,14 @@ impl ConnectionRegistry {
     /// Send notification to a specific subscription
     pub fn notify_subscription(&self, live_id: &LiveQueryId, notification: Notification) {
         if let Some(conn_id) = self.live_id_to_connection.get(live_id) {
-            if let Some(conn) = self.connections.get(conn_id.value()) {
-                let _ = conn.notification_tx.send((live_id.clone(), notification));
+            if let Some(shared_state) = self.connections.get(conn_id.value()) {
+                let state = shared_state.read();
+                let _ = state.notification_tx.send((live_id.clone(), notification));
             }
         }
     }
 
     /// Send notification to all subscriptions for a table (for a specific user)
-    /// 
-    /// O(1) lookup via pre-built index
     #[inline]
     pub fn notify_table_for_user(
         &self,
@@ -529,16 +510,14 @@ impl ConnectionRegistry {
     /// Initiate graceful shutdown of all connections
     pub async fn shutdown(&self, timeout: Duration) {
         let count = self.total_connections.load(Ordering::Acquire);
-        info!(
-            "Initiating WebSocket shutdown with {} active connections",
-            count
-        );
+        info!("Initiating WebSocket shutdown with {} active connections", count);
 
         self.is_shutting_down.store(true, Ordering::Release);
 
         // Send shutdown event to all connections
         for entry in self.connections.iter() {
-            let _ = entry.value().event_tx.send(ConnectionEvent::Shutdown);
+            let state = entry.value().read();
+            let _ = state.event_tx.send(ConnectionEvent::Shutdown);
         }
 
         // Wait for connections to close with timeout
@@ -569,22 +548,18 @@ impl ConnectionRegistry {
 
     // ==================== Metrics ====================
 
-    /// Get connection count
     pub fn connection_count(&self) -> usize {
         self.total_connections.load(Ordering::Acquire)
     }
 
-    /// Get subscription count
     pub fn subscription_count(&self) -> usize {
         self.total_subscriptions.load(Ordering::Acquire)
     }
 
-    /// Get node ID
     pub fn node_id(&self) -> &NodeId {
         &self.node_id
     }
 
-    // Alias for backward compatibility
     pub fn total_connections(&self) -> usize {
         self.connection_count()
     }
@@ -595,7 +570,6 @@ impl ConnectionRegistry {
 
     // ==================== Background Tasks ====================
 
-    /// Background heartbeat checker task
     async fn run_heartbeat_checker(self: Arc<Self>) {
         let mut interval = tokio::time::interval(self.heartbeat_interval);
         interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
@@ -614,14 +588,14 @@ impl ConnectionRegistry {
         }
     }
 
-    /// Check all connections for timeouts
     fn check_all_connections(&self) {
         let now = Instant::now();
         let mut to_timeout = Vec::new();
 
         for entry in self.connections.iter() {
             let conn_id = entry.key();
-            let state = entry.value();
+            let shared_state = entry.value();
+            let state = shared_state.read();
 
             // Check auth timeout (only if auth hasn't started)
             if !state.is_authenticated
@@ -653,10 +627,10 @@ impl ConnectionRegistry {
     }
 }
 
-impl Drop for ConnectionRegistry {
+impl Drop for ConnectionsManager {
     fn drop(&mut self) {
         self.shutdown_token.cancel();
-        debug!("ConnectionRegistry dropped");
+        debug!("ConnectionsManager dropped");
     }
 }
 
@@ -664,8 +638,8 @@ impl Drop for ConnectionRegistry {
 mod tests {
     use super::*;
 
-    fn create_test_registry() -> Arc<ConnectionRegistry> {
-        ConnectionRegistry::new(
+    fn create_test_registry() -> Arc<ConnectionsManager> {
+        ConnectionsManager::new(
             NodeId::new("test-node".to_string()),
             Duration::from_secs(10),
             Duration::from_secs(3),
@@ -692,39 +666,21 @@ mod tests {
         let conn_id = ConnectionId::new("conn1");
         let user_id = UserId::new("user1");
 
-        let _reg = registry.register_connection(conn_id.clone(), None);
-        assert!(!registry.is_authenticated(&conn_id));
+        let reg = registry.register_connection(conn_id.clone(), None).unwrap();
+        
+        {
+            let mut state = reg.state.write();
+            assert!(!state.is_authenticated());
+            state.mark_auth_started();
+            state.mark_authenticated(user_id.clone());
+        }
+        
+        // Update registry index
+        registry.on_authenticated(&conn_id, user_id.clone());
 
-        registry.mark_auth_started(&conn_id);
-        registry.mark_authenticated(&conn_id, user_id.clone());
-
-        assert!(registry.is_authenticated(&conn_id));
-        assert_eq!(registry.get_user_id(&conn_id), Some(user_id));
-    }
-
-    #[tokio::test]
-    async fn test_subscription_management() {
-        let registry = create_test_registry();
-        let conn_id = ConnectionId::new("conn1");
-        let user_id = UserId::new("user1");
-        let table_id = TableId::from_strings("ns1", "table1");
-
-        let _reg = registry.register_connection(conn_id.clone(), None);
-        registry.mark_authenticated(&conn_id, user_id.clone());
-
-        let live_id = LiveQueryId::new(user_id.clone(), conn_id.clone(), "sub1");
-
-        // Add subscription
-        registry
-            .add_subscription(&conn_id, live_id.clone(), table_id.clone(), Default::default())
-            .unwrap();
-        assert_eq!(registry.subscription_count(), 1);
-        assert!(registry.has_subscription(&conn_id, "sub1"));
-
-        // Remove subscription
-        registry.remove_subscription(&live_id);
-        assert_eq!(registry.subscription_count(), 0);
-        assert!(!registry.has_subscription(&conn_id, "sub1"));
+        let state = reg.state.read();
+        assert!(state.is_authenticated());
+        assert_eq!(state.user_id(), Some(&user_id));
     }
 
     #[tokio::test]

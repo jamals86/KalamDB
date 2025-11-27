@@ -4,7 +4,12 @@
 //! and managing live query subscriptions using actix-ws (non-actor based).
 //!
 //! Connection lifecycle and heartbeat management is handled by the shared
-//! ConnectionRegistry from kalamdb-core.
+//! ConnectionsManager from kalamdb-core.
+//!
+//! Architecture:
+//! - Connection created in ConnectionsManager on WebSocket open
+//! - Subscriptions stored in ConnectionState.subscriptions
+//! - No local tracking needed - everything is in ConnectionState
 
 use actix_web::{get, web, Error, HttpRequest, HttpResponse};
 use actix_ws::{CloseCode, CloseReason, Message, Session};
@@ -21,7 +26,8 @@ use kalamdb_core::jobs::health_monitor::{
     decrement_websocket_sessions, increment_websocket_sessions,
 };
 use kalamdb_core::live::{
-    ConnectionEvent, ConnectionId, InitialDataOptions, LiveQueryManager, ConnectionRegistry,
+    ConnectionEvent, ConnectionId, InitialDataOptions, LiveQueryManager, ConnectionsManager,
+    SharedConnectionState,
 };
 use log::{debug, error, info, warn};
 use std::sync::Arc;
@@ -33,7 +39,7 @@ use crate::rate_limiter::RateLimiter;
 ///
 /// Accepts unauthenticated WebSocket connections.
 /// Authentication happens via post-connection Authenticate message (3-second timeout enforced).
-/// Uses ConnectionRegistry for consolidated connection state management.
+/// Uses ConnectionsManager for consolidated connection state management.
 #[get("/ws")]
 pub async fn websocket_handler(
     req: HttpRequest,
@@ -42,7 +48,7 @@ pub async fn websocket_handler(
     rate_limiter: web::Data<Arc<RateLimiter>>,
     live_query_manager: web::Data<Arc<LiveQueryManager>>,
     user_repo: web::Data<Arc<dyn UserRepository>>,
-    connection_registry: web::Data<Arc<ConnectionRegistry>>,
+    connection_registry: web::Data<Arc<ConnectionsManager>>,
 ) -> Result<HttpResponse, Error> {
     // Check if server is shutting down
     if connection_registry.is_shutting_down() {
@@ -108,13 +114,16 @@ pub async fn websocket_handler(
 }
 
 /// Main WebSocket handling loop
+///
+/// All subscription state is stored in ConnectionState.subscriptions.
+/// No local tracking needed - cleanup is handled by ConnectionsManager.
 async fn handle_websocket(
     connection_id: ConnectionId,
     client_ip: Option<String>,
     mut session: Session,
     mut msg_stream: actix_ws::MessageStream,
     registration: kalamdb_core::live::ConnectionRegistration,
-    registry: Arc<ConnectionRegistry>,
+    registry: Arc<ConnectionsManager>,
     app_context: Arc<AppContext>,
     rate_limiter: Arc<RateLimiter>,
     live_query_manager: Arc<LiveQueryManager>,
@@ -122,14 +131,7 @@ async fn handle_websocket(
 ) {
     let mut event_rx = registration.event_rx;
     let mut notification_rx = registration.notification_rx;
-
-    // Track subscriptions locally for cleanup
-    let mut local_subscriptions: Vec<String> = Vec::new();
-    // Cache subscription metadata for batch fetching: sub_id -> (sql, user_id, snapshot_end_seq, batch_size)
-    let mut subscription_metadata: std::collections::HashMap<
-        String,
-        (String, UserId, Option<SeqId>, usize),
-    > = std::collections::HashMap::new();
+    let connection_state = registration.state;
 
     loop {
         tokio::select! {
@@ -182,16 +184,16 @@ async fn handle_websocket(
             msg = msg_stream.next() => {
                 match msg {
                     Some(Ok(Message::Ping(bytes))) => {
-                        registry.update_heartbeat(&connection_id);
+                        connection_state.write().update_heartbeat();
                         if session.pong(&bytes).await.is_err() {
                             break;
                         }
                     }
                     Some(Ok(Message::Pong(_))) => {
-                        registry.update_heartbeat(&connection_id);
+                        connection_state.write().update_heartbeat();
                     }
                     Some(Ok(Message::Text(text))) => {
-                        registry.update_heartbeat(&connection_id);
+                        connection_state.write().update_heartbeat();
 
                         // Rate limit check
                         if !rate_limiter.check_message_rate(&connection_id) {
@@ -202,6 +204,7 @@ async fn handle_websocket(
 
                         if let Err(e) = handle_text_message(
                             &connection_id,
+                            &connection_state,
                             &client_ip,
                             &text,
                             &mut session,
@@ -210,8 +213,6 @@ async fn handle_websocket(
                             &rate_limiter,
                             &live_query_manager,
                             &user_repo,
-                            &mut local_subscriptions,
-                            &mut subscription_metadata,
                         ).await {
                             error!("Error handling message: {}", e);
                             let _ = session.close(Some(CloseReason {
@@ -264,65 +265,56 @@ async fn handle_websocket(
         }
     }
 
-    // Cleanup
-    cleanup_connection(
-        &connection_id,
-        &registry,
-        &rate_limiter,
-        &live_query_manager,
-        &local_subscriptions,
-    )
-    .await;
+    // Cleanup - ConnectionsManager handles subscription cleanup automatically
+    cleanup_connection(&connection_id, &connection_state, &registry, &rate_limiter, &live_query_manager).await;
 }
 
 /// Handle text message from client
 async fn handle_text_message(
-    connection_id: &ConnectionId,
+    connection_id: &ConnectionId, //TODO: No need to pass the connection_id separately
+    connection_state: &SharedConnectionState,
     client_ip: &Option<String>,
     text: &str,
     session: &mut Session,
-    registry: &Arc<ConnectionRegistry>,
+    registry: &Arc<ConnectionsManager>,
     app_context: &Arc<AppContext>,
     rate_limiter: &Arc<RateLimiter>,
     live_query_manager: &Arc<LiveQueryManager>,
     user_repo: &Arc<dyn UserRepository>,
-    local_subscriptions: &mut Vec<String>,
-    subscription_metadata: &mut std::collections::HashMap<String, (String, UserId, Option<SeqId>, usize)>,
 ) -> Result<(), String> {
     let msg: ClientMessage =
         serde_json::from_str(text).map_err(|e| format!("Invalid message: {}", e))?;
 
     match msg {
         ClientMessage::Authenticate { username, password } => {
-            registry.mark_auth_started(connection_id);
+            connection_state.write().mark_auth_started();
             handle_authenticate(
                 connection_id,
+                connection_state,
                 client_ip,
                 &username,
                 &password,
                 session,
                 registry,
                 app_context,
-                live_query_manager,
                 user_repo,
             )
             .await
         }
         ClientMessage::Subscribe { subscription } => {
-            if !registry.is_authenticated(connection_id) {
+            if !connection_state.read().is_authenticated() {
                 let _ = send_error(session, "subscribe", "AUTH_REQUIRED", "Authentication required before subscribing").await;
                 return Ok(());
             }
             handle_subscribe(
                 connection_id,
+                connection_state,
                 subscription,
                 session,
                 registry,
                 app_context,
                 rate_limiter,
                 live_query_manager,
-                local_subscriptions,
-                subscription_metadata,
             )
             .await
         }
@@ -330,31 +322,29 @@ async fn handle_text_message(
             subscription_id,
             last_seq_id,
         } => {
-            if !registry.is_authenticated(connection_id) {
+            if !connection_state.read().is_authenticated() {
                 return Ok(());
             }
             handle_next_batch(
-                connection_id,
+                connection_state,
                 &subscription_id,
                 last_seq_id,
                 session,
                 live_query_manager,
-                subscription_metadata,
             )
             .await
         }
         ClientMessage::Unsubscribe { subscription_id } => {
-            if !registry.is_authenticated(connection_id) {
+            if !connection_state.read().is_authenticated() {
                 return Ok(());
             }
             handle_unsubscribe(
                 connection_id,
+                connection_state,
                 &subscription_id,
                 registry,
                 rate_limiter,
                 live_query_manager,
-                local_subscriptions,
-                subscription_metadata,
             )
             .await
         }
@@ -363,14 +353,14 @@ async fn handle_text_message(
 
 /// Handle authentication message
 async fn handle_authenticate(
-    connection_id: &ConnectionId,
+    connection_id: &ConnectionId, //TODO: No need to pass the connection_id separately
+    connection_state: &SharedConnectionState,
     client_ip: &Option<String>,
     username: &str,
     password: &str,
     session: &mut Session,
-    registry: &Arc<ConnectionRegistry>,
+    registry: &Arc<ConnectionsManager>,
     app_context: &Arc<AppContext>,
-    _live_query_manager: &Arc<LiveQueryManager>,
     user_repo: &Arc<dyn UserRepository>,
 ) -> Result<(), String> {
     info!(
@@ -436,9 +426,10 @@ async fn handle_authenticate(
         return Err("Authentication failed".to_string());
     }
 
-    // Mark authenticated in registry
-    // ConnectionRegistry now handles all connection state including user_id mapping
-    registry.mark_authenticated(connection_id, user.id.clone());
+    // Mark authenticated in connection state
+    connection_state.write().mark_authenticated(user.id.clone());
+    // Update registry's user index
+    registry.on_authenticated(connection_id, user.id.clone());
 
     // Send success
     let msg = WebSocketMessage::AuthSuccess {
@@ -458,19 +449,21 @@ async fn handle_authenticate(
 }
 
 /// Handle subscription request
+///
+/// Validates subscription ID and rate limits, then delegates to LiveQueryManager
+/// which handles all SQL parsing, permission checks, and registration.
 async fn handle_subscribe(
-    connection_id: &ConnectionId,
-    mut subscription: SubscriptionRequest,
+    _connection_id: &ConnectionId, // TODO: Remove when fully migrated
+    connection_state: &SharedConnectionState,
+    subscription: SubscriptionRequest,
     session: &mut Session,
-    registry: &Arc<ConnectionRegistry>,
-    app_context: &Arc<AppContext>,
+    _registry: &Arc<ConnectionsManager>,  // TODO: Remove when fully migrated
+    _app_context: &Arc<AppContext>,
     rate_limiter: &Arc<RateLimiter>,
     live_query_manager: &Arc<LiveQueryManager>,
-    local_subscriptions: &mut Vec<String>,
-    subscription_metadata: &mut std::collections::HashMap<String, (String, UserId, Option<SeqId>, usize)>,
 ) -> Result<(), String> {
-    let user_id = registry
-        .get_user_id(connection_id)
+    let user_id = connection_state.read().user_id()
+        .cloned()
         .ok_or("Not authenticated")?;
 
     // Validate subscription ID
@@ -497,81 +490,26 @@ async fn handle_subscribe(
         return Ok(());
     }
 
-    // Parse and validate table
-    let sql = &subscription.sql;
-    let raw_table = kalamdb_core::live::QueryParser::extract_table_name(sql)
-        .map_err(|e| format!("Invalid query: {}", e))?;
+    let subscription_id = subscription.id.clone();
 
-    let (namespace, table) = raw_table
-        .split_once('.')
-        .ok_or("Query must use namespace.table format")?;
-
-    let table_id = kalamdb_commons::models::TableId::new(
-        kalamdb_commons::models::NamespaceId::from(namespace),
-        kalamdb_commons::models::TableName::from(table),
-    );
-
-    // Permission check
-    let schema_registry = app_context.schema_registry();
-    let table_def = schema_registry
-        .get_table_definition(&table_id)
-        .map_err(|e| e.to_string())?
-        .ok_or_else(|| format!("Table not found: {}.{}", namespace, table))?;
-
-    let is_admin = user_id.is_admin();
-    match table_def.table_type {
-        kalamdb_commons::TableType::User if !is_admin && namespace != user_id.as_str() => {
-            let _ = send_error(
-                session,
-                &subscription.id,
-                "UNAUTHORIZED",
-                "Insufficient privileges",
-            )
-            .await;
-            return Ok(());
-        }
-        kalamdb_commons::TableType::System if !is_admin => {
-            let _ = send_error(
-                session,
-                &subscription.id,
-                "UNAUTHORIZED",
-                "Insufficient privileges for system table",
-            )
-            .await;
-            return Ok(());
-        }
-        kalamdb_commons::TableType::Shared => {
-            let _ = send_error(
-                session,
-                &subscription.id,
-                "UNSUPPORTED",
-                "Shared tables don't support subscriptions",
-            )
-            .await;
-            return Ok(());
-        }
-        _ => {}
-    }
-
-    // Extract WHERE clause and populate parsed fields
-    let where_clause = kalamdb_core::live::QueryParser::extract_where_clause(sql);
-    subscription.table_id = Some(table_id.clone());
-    subscription.where_clause = where_clause;
-    subscription.projections = None;
-
+    // Determine batch size for initial data options
     let batch_size = subscription.options.batch_size.unwrap_or(MAX_ROWS_PER_BATCH);
+
+    // Create initial data options
     let initial_opts = subscription
         .options
         .last_rows
         .map(|n| InitialDataOptions::last(n as usize))
         .unwrap_or_else(|| InitialDataOptions::batch(None, None, batch_size));
 
-    let subscription_id = subscription.id.clone();
-    let sql_clone = subscription.sql.clone();
-
-    // Register with live query manager
+    // Register subscription with initial data fetch
+    // LiveQueryManager handles all SQL parsing, permission checks, and registration internally
     match live_query_manager
-        .register_subscription_with_initial_data(connection_id.clone(), subscription, Some(initial_opts))
+        .register_subscription_with_initial_data(
+            connection_state,
+            &subscription,
+            Some(initial_opts),
+        )
         .await
     {
         Ok(result) => {
@@ -581,28 +519,8 @@ async fn handle_subscribe(
                 user_id.as_str()
             );
 
-            // Track locally
-            local_subscriptions.push(subscription_id.clone());
-
-            // Store metadata
-            let snapshot_end_seq = result.initial_data.as_ref().and_then(|d| d.snapshot_end_seq);
-            subscription_metadata.insert(
-                subscription_id.clone(),
-                (sql_clone, user_id.clone(), snapshot_end_seq, batch_size),
-            );
-
             // Update rate limiter
             rate_limiter.increment_subscription(&user_id);
-
-            // Add to unified registry
-            let live_id =
-                LiveQueryId::new(user_id.clone(), connection_id.clone(), subscription_id.clone());
-            let _ = registry.add_subscription(
-                connection_id,
-                live_id,
-                table_id,
-                kalamdb_core::live::LiveQueryOptions::default(),
-            );
 
             // Send response
             let batch_control = if let Some(ref initial) = result.initial_data {
@@ -642,12 +560,20 @@ async fn handle_subscribe(
             Ok(())
         }
         Err(e) => {
+            // Map error types to appropriate WebSocket error codes
+            let (code, message) = match &e {
+                kalamdb_core::error::KalamDbError::PermissionDenied(msg) => ("UNAUTHORIZED", msg.as_str()),
+                kalamdb_core::error::KalamDbError::NotFound(msg) => ("NOT_FOUND", msg.as_str()),
+                kalamdb_core::error::KalamDbError::InvalidSql(msg) => ("INVALID_SQL", msg.as_str()),
+                kalamdb_core::error::KalamDbError::InvalidOperation(msg) => ("UNSUPPORTED", msg.as_str()),
+                _ => ("SUBSCRIPTION_FAILED", "Subscription registration failed"),
+            };
             error!("Failed to register subscription {}: {}", subscription_id, e);
             let _ = send_error(
                 session,
                 &subscription_id,
-                "SUBSCRIPTION_FAILED",
-                &e.to_string(),
+                code,
+                message,
             )
             .await;
             Ok(())
@@ -656,27 +582,17 @@ async fn handle_subscribe(
 }
 
 /// Handle next batch request
+///
+/// Uses subscription metadata from ConnectionState for batch fetching.
 async fn handle_next_batch(
-    _connection_id: &ConnectionId,
+    connection_state: &SharedConnectionState,
     subscription_id: &str,
     last_seq_id: Option<SeqId>,
     session: &mut Session,
     live_query_manager: &Arc<LiveQueryManager>,
-    subscription_metadata: &std::collections::HashMap<String, (String, UserId, Option<SeqId>, usize)>,
 ) -> Result<(), String> {
-    let (sql, user_id, snapshot_end_seq, batch_size) = subscription_metadata
-        .get(subscription_id)
-        .ok_or("Subscription not found")?
-        .clone();
-
-    let opts = Some(InitialDataOptions::batch(
-        last_seq_id,
-        snapshot_end_seq,
-        batch_size,
-    ));
-
     match live_query_manager
-        .fetch_initial_data_batch(&sql, &user_id, opts)
+        .fetch_initial_data_batch(connection_state, subscription_id, last_seq_id)
         .await
     {
         Ok(result) => {
@@ -710,33 +626,24 @@ async fn handle_next_batch(
 
 /// Handle unsubscribe request
 async fn handle_unsubscribe(
-    connection_id: &ConnectionId,
+    connection_id: &ConnectionId,//TODO: No need to pass the connection_id separately
+    connection_state: &SharedConnectionState,
     subscription_id: &str,
-    registry: &Arc<ConnectionRegistry>,
+    _registry: &Arc<ConnectionsManager>,  // TODO: Remove when fully migrated
     rate_limiter: &Arc<RateLimiter>,
     live_query_manager: &Arc<LiveQueryManager>,
-    local_subscriptions: &mut Vec<String>,
-    subscription_metadata: &mut std::collections::HashMap<String, (String, UserId, Option<SeqId>, usize)>,
 ) -> Result<(), String> {
-    let user_id = match registry.get_user_id(connection_id) {
+    let user_id = connection_state.read().user_id().cloned();
+    let user_id = match user_id {
         Some(uid) => uid,
         None => return Ok(()),
     };
 
     let live_id = LiveQueryId::new(user_id.clone(), connection_id.clone(), subscription_id.to_string());
 
-    if let Err(e) = live_query_manager.unregister_subscription(&live_id).await {
+    if let Err(e) = live_query_manager.unregister_subscription(connection_state, subscription_id, &live_id).await {
         error!("Failed to unsubscribe {}: {}", subscription_id, e);
     }
-
-    // Remove from unified registry
-    registry.remove_subscription(&live_id);
-
-    // Update local tracking
-    if let Some(pos) = local_subscriptions.iter().position(|x| x == subscription_id) {
-        local_subscriptions.remove(pos);
-    }
-    subscription_metadata.remove(subscription_id);
 
     // Update rate limiter
     rate_limiter.decrement_subscription(&user_id);
@@ -746,17 +653,22 @@ async fn handle_unsubscribe(
 }
 
 /// Cleanup connection on close
+///
+/// ConnectionsManager.unregister_connection handles all subscription cleanup.
 async fn cleanup_connection(
-    connection_id: &ConnectionId,
-    registry: &Arc<ConnectionRegistry>,
+    connection_id: &ConnectionId,//TODO: No need to pass the connection_id separately
+    connection_state: &SharedConnectionState,
+    registry: &Arc<ConnectionsManager>,
     rate_limiter: &Arc<RateLimiter>,
     live_query_manager: &Arc<LiveQueryManager>,
-    local_subscriptions: &[String],
 ) {
     info!("Cleaning up connection: {}", connection_id);
 
-    // Get user ID before unregistering
-    let user_id = registry.get_user_id(connection_id);
+    // Get user ID and subscription count before unregistering
+    let (user_id, subscription_count) = {
+        let state = connection_state.read();
+        (state.user_id.clone(), state.subscriptions.len())
+    };
 
     // Unregister from unified registry (handles subscription cleanup)
     let removed_live_ids = registry.unregister_connection(connection_id);
@@ -769,7 +681,7 @@ async fn cleanup_connection(
 
         // Update rate limiter
         rate_limiter.cleanup_connection(connection_id);
-        for _ in local_subscriptions {
+        for _ in 0..subscription_count {
             rate_limiter.decrement_subscription(uid);
         }
     }

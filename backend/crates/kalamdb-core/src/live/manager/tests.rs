@@ -1,6 +1,6 @@
 use super::*;
 use crate::app_context::AppContext;
-use crate::live::registry::ConnectionRegistry;
+use crate::live::registry::ConnectionsManager;
 use crate::live::types::ChangeNotification;
 use crate::providers::arrow_json_conversion::json_to_row;
 use crate::schema_registry::SchemaRegistry;
@@ -43,7 +43,7 @@ fn create_test_subscription_request(
     }
 }
 
-async fn create_test_manager() -> (Arc<ConnectionRegistry>, LiveQueryManager, TempDir) {
+async fn create_test_manager() -> (Arc<ConnectionsManager>, LiveQueryManager, TempDir) {
     init_test_app_context();
     let temp_dir = TempDir::new().unwrap();
     let init = RocksDbInit::with_defaults(temp_dir.path().to_str().unwrap());
@@ -148,8 +148,8 @@ async fn create_test_manager() -> (Arc<ConnectionRegistry>, LiveQueryManager, Te
         .put_table_definition(&notifications_table_id, &notifications_table)
         .unwrap();
 
-    // Create connection registry first
-    let connection_registry = ConnectionRegistry::new(
+    // Create connections manager first
+    let connection_registry = ConnectionsManager::new(
         NodeId::from("test_node"),
         Duration::from_secs(30),
         Duration::from_secs(10),
@@ -170,7 +170,7 @@ async fn create_test_manager() -> (Arc<ConnectionRegistry>, LiveQueryManager, Te
 
 /// Helper to register and authenticate a connection
 fn register_and_auth_connection(
-    registry: &Arc<ConnectionRegistry>,
+    registry: &Arc<ConnectionsManager>,
     connection_id: ConnectionId,
     user_id: UserId,
 ) {

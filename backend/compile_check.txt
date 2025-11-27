@@ -1,0 +1,32 @@
+warning: profiles for the non root package will be ignored, specify profiles at the workspace root:
+package:   C:\Jamal\git\KalamDB\link\Cargo.toml
+workspace: C:\Jamal\git\KalamDB\Cargo.toml
+warning: profiles for the non root package will be ignored, specify profiles at the workspace root:
+package:   C:\Jamal\git\KalamDB\cli\Cargo.toml
+workspace: C:\Jamal\git\KalamDB\Cargo.toml
+   Compiling kalamdb-api v0.1.0 (C:\Jamal\git\KalamDB\backend\crates\kalamdb-api)
+warning: unused variable: `connection_id`
+   --> backend\crates\kalamdb-api\src\handlers\ws_handler.rs:459:5
+    |
+459 |     connection_id: &ConnectionId,//TODO: No need to pass the connection_id separately
+    |     ^^^^^^^^^^^^^ help: if this is intentional, prefix it with an underscore: `_connection_id`
+    |
+    = note: `#[warn(unused_variables)]` (part of `#[warn(unused)]`) on by default
+
+warning: unused variable: `registry`
+   --> backend\crates\kalamdb-api\src\handlers\ws_handler.rs:463:5
+    |
+463 |     registry: &Arc<ConnectionRegistry>,
+    |     ^^^^^^^^ help: if this is intentional, prefix it with an underscore: `_registry`
+
+warning: unused variable: `registry`
+   --> backend\crates\kalamdb-api\src\handlers\ws_handler.rs:687:5
+    |
+687 |     registry: &Arc<ConnectionRegistry>,
+    |     ^^^^^^^^ help: if this is intentional, prefix it with an underscore: `_registry`
+
+warning: `kalamdb-api` (lib) generated 3 warnings
+    Checking kalamdb-server v0.1.0 (C:\Jamal\git\KalamDB\backend)
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 3.49s
+warning: the following packages contain code that will be rejected by a future version of Rust: num-bigint-dig v0.8.5
+note: to see what the problems were, use the option `--future-incompat-report`, or run `cargo report future-incompatibilities --id 1`

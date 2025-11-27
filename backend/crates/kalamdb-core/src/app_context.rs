@@ -7,7 +7,7 @@ use crate::jobs::executors::{
     BackupExecutor, CleanupExecutor, CompactExecutor, FlushExecutor, JobCleanupExecutor,
     JobRegistry, RestoreExecutor, RetentionExecutor, StreamEvictionExecutor, UserCleanupExecutor,
 };
-use crate::live::ConnectionRegistry;
+use crate::live::ConnectionsManager;
 use crate::live_query::LiveQueryManager;
 use crate::schema_registry::stats::StatsTableProvider;
 use crate::schema_registry::SchemaRegistry;
@@ -58,8 +58,8 @@ pub struct AppContext {
     job_manager: Arc<crate::jobs::JobsManager>,
     live_query_manager: Arc<LiveQueryManager>,
 
-    // ===== Connection Registry (WebSocket connections, subscriptions, heartbeat) =====
-    connection_registry: Arc<ConnectionRegistry>,
+    // ===== Connections Manager (WebSocket connections, subscriptions, heartbeat) =====
+    connection_registry: Arc<ConnectionsManager>,
 
     // ===== Registries =====
     storage_registry: Arc<StorageRegistry>,
@@ -97,7 +97,7 @@ impl std::fmt::Debug for AppContext {
             .field("storage_backend", &"Arc<dyn StorageBackend>")
             .field("job_manager", &"Arc<JobsManager>")
             .field("live_query_manager", &"Arc<LiveQueryManager>")
-            .field("connection_registry", &"Arc<ConnectionRegistry>")
+            .field("connection_registry", &"Arc<ConnectionsManager>")
             .field("storage_registry", &"Arc<StorageRegistry>")
             .field("session_factory", &"Arc<DataFusionSessionFactory>")
             .field("base_session_context", &"Arc<SessionContext>")
@@ -253,12 +253,12 @@ impl AppContext {
                 let job_manager =
                     Arc::new(crate::jobs::JobsManager::new(jobs_provider, job_registry));
 
-                // Create connection registry (unified WebSocket connection management)
+                // Create connections manager (unified WebSocket connection management)
                 // Timeouts from config or defaults
                 let client_timeout = Duration::from_secs(config.websocket.client_timeout_secs.unwrap_or(30));
                 let auth_timeout = Duration::from_secs(config.websocket.auth_timeout_secs.unwrap_or(10));
                 let heartbeat_interval = Duration::from_secs(config.websocket.heartbeat_interval_secs.unwrap_or(5));
-                let connection_registry = ConnectionRegistry::new(
+                let connection_registry = ConnectionsManager::new(
                     (*node_id).clone(),
                     client_timeout,
                     auth_timeout,
@@ -412,8 +412,8 @@ impl AppContext {
         // Create test NodeId
         let node_id = Arc::new(NodeId::new("test-node".to_string()));
 
-        // Create connection registry for tests
-        let connection_registry = ConnectionRegistry::new(
+        // Create connections manager for tests
+        let connection_registry = ConnectionsManager::new(
             (*node_id).clone(),
             Duration::from_secs(30), // client_timeout
             Duration::from_secs(10), // auth_timeout
@@ -588,8 +588,8 @@ impl AppContext {
         let jobs_provider = system_tables.jobs();
         let job_manager = Arc::new(crate::jobs::JobsManager::new(jobs_provider, job_registry));
 
-        // Create connection registry for integration tests
-        let connection_registry = ConnectionRegistry::new(
+        // Create connections manager for integration tests
+        let connection_registry = ConnectionsManager::new(
             (*node_id).clone(),
             Duration::from_secs(config.websocket.client_timeout_secs.unwrap_or(30)),
             Duration::from_secs(config.websocket.auth_timeout_secs.unwrap_or(10)),
@@ -710,8 +710,8 @@ impl AppContext {
         self.live_query_manager.clone()
     }
 
-    /// Get the connection registry (WebSocket connection state)
-    pub fn connection_registry(&self) -> Arc<ConnectionRegistry> {
+    /// Get the connections manager (WebSocket connection state)
+    pub fn connection_registry(&self) -> Arc<ConnectionsManager> {
         self.connection_registry.clone()
     }
 
