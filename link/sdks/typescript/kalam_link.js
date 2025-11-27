@@ -214,20 +214,20 @@ function takeFromExternrefTable0(idx) {
     wasm.__externref_table_dealloc(idx);
     return value;
 }
-function wasm_bindgen__convert__closures_____invoke__h3ab5d0580b1319bc(arg0, arg1, arg2) {
-    wasm.wasm_bindgen__convert__closures_____invoke__h3ab5d0580b1319bc(arg0, arg1, arg2);
+function wasm_bindgen__convert__closures_____invoke__h762ee00b4618786e(arg0, arg1) {
+    wasm.wasm_bindgen__convert__closures_____invoke__h762ee00b4618786e(arg0, arg1);
 }
 
-function wasm_bindgen__convert__closures_____invoke__h4f4829089d542869(arg0, arg1, arg2) {
-    wasm.wasm_bindgen__convert__closures_____invoke__h4f4829089d542869(arg0, arg1, arg2);
+function wasm_bindgen__convert__closures_____invoke__hbe312fe94906cca5(arg0, arg1, arg2) {
+    wasm.wasm_bindgen__convert__closures_____invoke__hbe312fe94906cca5(arg0, arg1, arg2);
 }
 
-function wasm_bindgen__convert__closures_____invoke__hc75a9c0d4dc45705(arg0, arg1) {
-    wasm.wasm_bindgen__convert__closures_____invoke__hc75a9c0d4dc45705(arg0, arg1);
+function wasm_bindgen__convert__closures_____invoke__h58212949185b0233(arg0, arg1, arg2) {
+    wasm.wasm_bindgen__convert__closures_____invoke__h58212949185b0233(arg0, arg1, arg2);
 }
 
-function wasm_bindgen__convert__closures_____invoke__h14e8fa85ad019085(arg0, arg1, arg2, arg3) {
-    wasm.wasm_bindgen__convert__closures_____invoke__h14e8fa85ad019085(arg0, arg1, arg2, arg3);
+function wasm_bindgen__convert__closures_____invoke__h631465b85669de06(arg0, arg1, arg2, arg3) {
+    wasm.wasm_bindgen__convert__closures_____invoke__h631465b85669de06(arg0, arg1, arg2, arg3);
 }
 
 const __wbindgen_enum_RequestMode = ["same-origin", "no-cors", "cors", "navigate"];
@@ -264,39 +264,6 @@ export class KalamClient {
         wasm.__wbg_kalamclient_free(ptr, 0);
     }
     /**
-     * Disconnect from KalamDB server (T046, T063E)
-     * @returns {Promise<void>}
-     */
-    disconnect() {
-        const ret = wasm.kalamclient_disconnect(this.__wbg_ptr);
-        return ret;
-    }
-    /**
-     * Unsubscribe from table changes (T052, T063M)
-     *
-     * # Arguments
-     * * `subscription_id` - ID returned from subscribe()
-     * @param {string} subscription_id
-     * @returns {Promise<void>}
-     */
-    unsubscribe(subscription_id) {
-        const ptr0 = passStringToWasm0(subscription_id, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
-        const len0 = WASM_VECTOR_LEN;
-        const ret = wasm.kalamclient_unsubscribe(this.__wbg_ptr, ptr0, len0);
-        return ret;
-    }
-    /**
-     * Check if client is currently connected (T047)
-     *
-     * # Returns
-     * true if WebSocket connection is active, false otherwise
-     * @returns {boolean}
-     */
-    isConnected() {
-        const ret = wasm.kalamclient_isConnected(this.__wbg_ptr);
-        return ret !== 0;
-    }
-    /**
      * Create a new KalamDB client (T042, T043, T044)
      *
      * # Arguments
@@ -326,45 +293,34 @@ export class KalamClient {
         return this;
     }
     /**
-     * Execute a SQL query (T050, T063F)
-     *
-     * # Arguments
-     * * `sql` - SQL query string
+     * Connect to KalamDB server via WebSocket (T045, T063C-T063D)
      *
      * # Returns
-     * JSON string with query results
-     *
-     * # Example (JavaScript)
-     * ```js
-     * const result = await client.query("SELECT * FROM todos WHERE completed = false");
-     * const data = JSON.parse(result);
-     * ```
-     * @param {string} sql
-     * @returns {Promise<string>}
+     * Promise that resolves when connection is established and authenticated
+     * @returns {Promise<void>}
      */
-    query(sql) {
-        const ptr0 = passStringToWasm0(sql, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
-        const len0 = WASM_VECTOR_LEN;
-        const ret = wasm.kalamclient_query(this.__wbg_ptr, ptr0, len0);
+    connect() {
+        const ret = wasm.kalamclient_connect(this.__wbg_ptr);
         return ret;
     }
     /**
-     * Delete a row from a table (T049, T063H)
-     *
-     * # Arguments
-     * * `table_name` - Name of the table
-     * * `row_id` - ID of the row to delete
-     * @param {string} table_name
-     * @param {string} row_id
+     * Disconnect from KalamDB server (T046, T063E)
      * @returns {Promise<void>}
      */
-    delete(table_name, row_id) {
-        const ptr0 = passStringToWasm0(table_name, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
-        const len0 = WASM_VECTOR_LEN;
-        const ptr1 = passStringToWasm0(row_id, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
-        const len1 = WASM_VECTOR_LEN;
-        const ret = wasm.kalamclient_delete(this.__wbg_ptr, ptr0, len0, ptr1, len1);
+    disconnect() {
+        const ret = wasm.kalamclient_disconnect(this.__wbg_ptr);
         return ret;
+    }
+    /**
+     * Check if client is currently connected (T047)
+     *
+     * # Returns
+     * true if WebSocket connection is active, false otherwise
+     * @returns {boolean}
+     */
+    isConnected() {
+        const ret = wasm.kalamclient_isConnected(this.__wbg_ptr);
+        return ret !== 0;
     }
     /**
      * Insert data into a table (T048, T063G)
@@ -393,14 +349,44 @@ export class KalamClient {
         return ret;
     }
     /**
-     * Connect to KalamDB server via WebSocket (T045, T063C-T063D)
+     * Delete a row from a table (T049, T063H)
      *
-     * # Returns
-     * Promise that resolves when connection is established and authenticated
+     * # Arguments
+     * * `table_name` - Name of the table
+     * * `row_id` - ID of the row to delete
+     * @param {string} table_name
+     * @param {string} row_id
      * @returns {Promise<void>}
      */
-    connect() {
-        const ret = wasm.kalamclient_connect(this.__wbg_ptr);
+    delete(table_name, row_id) {
+        const ptr0 = passStringToWasm0(table_name, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        const len0 = WASM_VECTOR_LEN;
+        const ptr1 = passStringToWasm0(row_id, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        const len1 = WASM_VECTOR_LEN;
+        const ret = wasm.kalamclient_delete(this.__wbg_ptr, ptr0, len0, ptr1, len1);
+        return ret;
+    }
+    /**
+     * Execute a SQL query (T050, T063F)
+     *
+     * # Arguments
+     * * `sql` - SQL query string
+     *
+     * # Returns
+     * JSON string with query results
+     *
+     * # Example (JavaScript)
+     * ```js
+     * const result = await client.query("SELECT * FROM todos WHERE completed = false");
+     * const data = JSON.parse(result);
+     * ```
+     * @param {string} sql
+     * @returns {Promise<string>}
+     */
+    query(sql) {
+        const ptr0 = passStringToWasm0(sql, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        const len0 = WASM_VECTOR_LEN;
+        const ret = wasm.kalamclient_query(this.__wbg_ptr, ptr0, len0);
         return ret;
     }
     /**
@@ -420,6 +406,20 @@ export class KalamClient {
         const ptr0 = passStringToWasm0(table_name, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
         const len0 = WASM_VECTOR_LEN;
         const ret = wasm.kalamclient_subscribe(this.__wbg_ptr, ptr0, len0, callback);
+        return ret;
+    }
+    /**
+     * Unsubscribe from table changes (T052, T063M)
+     *
+     * # Arguments
+     * * `subscription_id` - ID returned from subscribe()
+     * @param {string} subscription_id
+     * @returns {Promise<void>}
+     */
+    unsubscribe(subscription_id) {
+        const ptr0 = passStringToWasm0(subscription_id, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        const len0 = WASM_VECTOR_LEN;
+        const ret = wasm.kalamclient_unsubscribe(this.__wbg_ptr, ptr0, len0);
         return ret;
     }
 }
@@ -553,7 +553,7 @@ function __wbg_get_imports() {
                 const a = state0.a;
                 state0.a = 0;
                 try {
-                    return wasm_bindgen__convert__closures_____invoke__h14e8fa85ad019085(a, state0.b, arg0, arg1);
+                    return wasm_bindgen__convert__closures_____invoke__h631465b85669de06(a, state0.b, arg0, arg1);
                 } finally {
                     state0.a = a;
                 }
@@ -668,9 +668,9 @@ function __wbg_get_imports() {
         const ret = arg0.then(arg1, arg2);
         return ret;
     };
-    imports.wbg.__wbindgen_cast_031f8b4922a58548 = function(arg0, arg1) {
-        // Cast intrinsic for `Closure(Closure { dtor_idx: 93, function: Function { arguments: [NamedExternref("ErrorEvent")], shim_idx: 94, ret: Unit, inner_ret: Some(Unit) }, mutable: true }) -> Externref`.
-        const ret = makeMutClosure(arg0, arg1, wasm.wasm_bindgen__closure__destroy__h24f7d9979b8eeeb3, wasm_bindgen__convert__closures_____invoke__h3ab5d0580b1319bc);
+    imports.wbg.__wbindgen_cast_1874f711bea6a2a5 = function(arg0, arg1) {
+        // Cast intrinsic for `Closure(Closure { dtor_idx: 67, function: Function { arguments: [], shim_idx: 70, ret: Unit, inner_ret: Some(Unit) }, mutable: true }) -> Externref`.
+        const ret = makeMutClosure(arg0, arg1, wasm.wasm_bindgen__closure__destroy__h07a7edbb3f89726e, wasm_bindgen__convert__closures_____invoke__h762ee00b4618786e);
         return ret;
     };
     imports.wbg.__wbindgen_cast_2241b6af4c4b2941 = function(arg0, arg1) {
@@ -678,24 +678,24 @@ function __wbg_get_imports() {
         const ret = getStringFromWasm0(arg0, arg1);
         return ret;
     };
-    imports.wbg.__wbindgen_cast_2f5490b275cdfac6 = function(arg0, arg1) {
-        // Cast intrinsic for `Closure(Closure { dtor_idx: 93, function: Function { arguments: [NamedExternref("CloseEvent")], shim_idx: 94, ret: Unit, inner_ret: Some(Unit) }, mutable: true }) -> Externref`.
-        const ret = makeMutClosure(arg0, arg1, wasm.wasm_bindgen__closure__destroy__h24f7d9979b8eeeb3, wasm_bindgen__convert__closures_____invoke__h3ab5d0580b1319bc);
-        return ret;
-    };
     imports.wbg.__wbindgen_cast_75c370d51f9cd57d = function(arg0, arg1) {
         // Cast intrinsic for `Closure(Closure { dtor_idx: 101, function: Function { arguments: [Externref], shim_idx: 102, ret: Unit, inner_ret: Some(Unit) }, mutable: true }) -> Externref`.
-        const ret = makeMutClosure(arg0, arg1, wasm.wasm_bindgen__closure__destroy__haaf0e2d57ce7f6f7, wasm_bindgen__convert__closures_____invoke__h4f4829089d542869);
+        const ret = makeMutClosure(arg0, arg1, wasm.wasm_bindgen__closure__destroy__h882e84b55e202da7, wasm_bindgen__convert__closures_____invoke__h58212949185b0233);
         return ret;
     };
-    imports.wbg.__wbindgen_cast_907e55357ef18104 = function(arg0, arg1) {
-        // Cast intrinsic for `Closure(Closure { dtor_idx: 93, function: Function { arguments: [], shim_idx: 98, ret: Unit, inner_ret: Some(Unit) }, mutable: true }) -> Externref`.
-        const ret = makeMutClosure(arg0, arg1, wasm.wasm_bindgen__closure__destroy__h24f7d9979b8eeeb3, wasm_bindgen__convert__closures_____invoke__hc75a9c0d4dc45705);
+    imports.wbg.__wbindgen_cast_9e65d9014baa0462 = function(arg0, arg1) {
+        // Cast intrinsic for `Closure(Closure { dtor_idx: 67, function: Function { arguments: [NamedExternref("MessageEvent")], shim_idx: 68, ret: Unit, inner_ret: Some(Unit) }, mutable: true }) -> Externref`.
+        const ret = makeMutClosure(arg0, arg1, wasm.wasm_bindgen__closure__destroy__h07a7edbb3f89726e, wasm_bindgen__convert__closures_____invoke__hbe312fe94906cca5);
         return ret;
     };
-    imports.wbg.__wbindgen_cast_f81ca01396e6e565 = function(arg0, arg1) {
-        // Cast intrinsic for `Closure(Closure { dtor_idx: 93, function: Function { arguments: [NamedExternref("MessageEvent")], shim_idx: 94, ret: Unit, inner_ret: Some(Unit) }, mutable: true }) -> Externref`.
-        const ret = makeMutClosure(arg0, arg1, wasm.wasm_bindgen__closure__destroy__h24f7d9979b8eeeb3, wasm_bindgen__convert__closures_____invoke__h3ab5d0580b1319bc);
+    imports.wbg.__wbindgen_cast_e08759fcd5fa8841 = function(arg0, arg1) {
+        // Cast intrinsic for `Closure(Closure { dtor_idx: 67, function: Function { arguments: [NamedExternref("CloseEvent")], shim_idx: 68, ret: Unit, inner_ret: Some(Unit) }, mutable: true }) -> Externref`.
+        const ret = makeMutClosure(arg0, arg1, wasm.wasm_bindgen__closure__destroy__h07a7edbb3f89726e, wasm_bindgen__convert__closures_____invoke__hbe312fe94906cca5);
+        return ret;
+    };
+    imports.wbg.__wbindgen_cast_e1caaa87c27fe3b8 = function(arg0, arg1) {
+        // Cast intrinsic for `Closure(Closure { dtor_idx: 67, function: Function { arguments: [NamedExternref("ErrorEvent")], shim_idx: 68, ret: Unit, inner_ret: Some(Unit) }, mutable: true }) -> Externref`.
+        const ret = makeMutClosure(arg0, arg1, wasm.wasm_bindgen__closure__destroy__h07a7edbb3f89726e, wasm_bindgen__convert__closures_____invoke__hbe312fe94906cca5);
         return ret;
     };
     imports.wbg.__wbindgen_init_externref_table = function() {

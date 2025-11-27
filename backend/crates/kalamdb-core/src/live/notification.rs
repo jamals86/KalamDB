@@ -4,7 +4,7 @@
 //! including filtering based on WHERE clauses stored in SubscriptionState.
 
 use super::filter_eval::matches as filter_matches;
-use super::registry::ConnectionsManager;
+use super::connections_manager::ConnectionsManager;
 use super::types::{ChangeNotification, ChangeType};
 use crate::error::KalamDbError;
 use kalamdb_commons::models::{LiveQueryId, Row, TableId, UserId};

@@ -31,6 +31,14 @@ echo "🔧 Compiling TypeScript..."
 cd sdks/typescript
 npx tsc
 
+# Build example app
+echo "📱 Building example app..."
+cd example
+npm install --silent
+echo "✅ Example app ready"
+
+cd ..
+echo ""
 echo "✅ Build complete!"
 echo ""
 echo "Output files:"
@@ -39,3 +47,4 @@ echo "  - kalam_link.d.ts (TypeScript definitions for WASM)"
 echo "  - kalam_link_bg.wasm (WebAssembly module)"
 echo "  - dist/index.js (TypeScript client)"
 echo "  - dist/index.d.ts (TypeScript types)"
+echo "  - example/ (Browser example app)"

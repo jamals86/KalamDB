@@ -7,7 +7,7 @@ use crate::error::KalamDbError;
 use crate::live::initial_data::{InitialDataFetcher, InitialDataOptions, InitialDataResult};
 use crate::live::notification::NotificationService;
 use crate::live::query_parser::QueryParser;
-use crate::live::registry::{ConnectionsManager, SharedConnectionState};
+use crate::live::connections_manager::{ConnectionsManager, SharedConnectionState};
 use crate::live::subscription::SubscriptionService;
 use crate::live::types::{ChangeNotification, RegistryStats, SubscriptionResult};
 use crate::sql::executor::SqlExecutor;

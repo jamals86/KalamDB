@@ -17,7 +17,7 @@ mod common;
 
 use actix_web::{test, web, App};
 use common::{auth_helper, TestServer};
-use kalamdb_commons::Role;
+use kalamdb_commons::{Role, models::ConnectionInfo};
 use std::time::{Duration, Instant};
 
 /// Performance benchmark for Basic Auth authentication
@@ -308,9 +308,7 @@ async fn test_concurrent_auth_load() {
     use base64::engine::general_purpose;
     use base64::Engine;
     use kalamdb_api::repositories::user_repo::CoreUsersRepo;
-    use kalamdb_auth::connection::ConnectionInfo;
-    use kalamdb_auth::service::AuthService;
-    use kalamdb_auth::UserRepository;
+    use kalamdb_auth::{authenticate, AuthRequest, UserRepository};
     use std::sync::Arc;
 
     let server = TestServer::new().await;
@@ -326,15 +324,6 @@ async fn test_concurrent_auth_load() {
         users.push((username, password.to_string()));
     }
 
-    // Create auth service
-    let auth_service = Arc::new(AuthService::new(
-        "test-secret".to_string(),
-        vec!["kalamdb-test".to_string()],
-        false,
-        false,
-        Role::User,
-    ));
-
     // Create user repository adapter
     let user_repo: Arc<dyn UserRepository> = Arc::new(CoreUsersRepo::new(
         server.app_context.system_tables().users(),
@@ -345,7 +334,6 @@ async fn test_concurrent_auth_load() {
     let mut handles = Vec::new();
 
     for i in 0..num_concurrent_requests {
-        let auth_service_clone = auth_service.clone();
         let user_repo_clone = user_repo.clone();
         let users_clone = users.clone();
 
@@ -360,10 +348,9 @@ async fn test_concurrent_auth_load() {
                 general_purpose::STANDARD.encode(format!("{}:{}", username, password));
             let auth_header = format!("Basic {}", credentials);
             let connection_info = ConnectionInfo::new(Some("127.0.0.1".to_string()));
+            let auth_request = AuthRequest::Header(auth_header);
 
-            let result = auth_service_clone
-                .authenticate_with_repo(&auth_header, &connection_info, &user_repo_clone)
-                .await;
+            let result = authenticate(auth_request, &connection_info, &user_repo_clone).await;
 
             let end = Instant::now();
 

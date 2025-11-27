@@ -15,6 +15,7 @@ use datafusion::datasource::{TableProvider, TableType};
 use datafusion::error::{DataFusionError, Result as DataFusionResult};
 use datafusion::logical_expr::Expr;
 use datafusion::physical_plan::ExecutionPlan;
+use kalamdb_commons::models::ConnectionId;
 use kalamdb_commons::system::LiveQuery;
 use kalamdb_commons::{LiveQueryId, StorageKey, TableId, UserId};
 use kalamdb_store::entity_store::{EntityStore, EntityStoreAsync};
@@ -235,7 +236,7 @@ impl LiveQueriesTableProvider {
     pub fn delete_by_connection_id(
         &self,
         user_id: &UserId,
-        connection_id: &str,
+        connection_id: &ConnectionId,
     ) -> Result<(), SystemError> {
         // Create prefix key for scanning: "user_id-connection_id-"
         let prefix = LiveQueryId::user_connection_prefix(
@@ -265,12 +266,12 @@ impl LiveQueriesTableProvider {
     pub async fn delete_by_connection_id_async(
         &self,
         user_id: &UserId,
-        connection_id: &str,
+        connection_id: &ConnectionId,
     ) -> Result<(), SystemError> {
         // Create prefix key for scanning: "user_id-connection_id-"
         let prefix = LiveQueryId::user_connection_prefix(
             user_id,
-            &kalamdb_commons::models::ConnectionId::new(connection_id.to_string()),
+            connection_id,
         );
 
         // Scan all keys with this prefix (async)

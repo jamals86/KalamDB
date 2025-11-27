@@ -12,7 +12,8 @@
     "test": "node --test tests/basic.test.js",
     "test:all": "node --test tests/*.test.js",
     "test:types": "tsc --noEmit tests/types.test.ts",
-    "serve": "npx http-server -p 3000 -o /example.html",
+    "test:ws": "node tests/websocket.test.mjs",
+    "serve": "cd example && npm run serve",
     "prepublishOnly": "npm run build"
   },
   "keywords": [
@@ -45,6 +46,7 @@
   },
   "devDependencies": {
     "@types/node": "^20.0.0",
-    "typescript": "^5.9.3"
+    "typescript": "^5.9.3",
+    "ws": "^8.18.3"
   }
 }

@@ -1,7 +1,8 @@
 // Unit tests for connection detection and localhost validation
 // T102 [US5] - Test localhost detection for IPv4, IPv6, Unix socket
 
-use kalamdb_auth::connection::ConnectionInfo;
+use kalamdb_commons::models::ConnectionInfo;
+
 
 #[test]
 fn test_localhost_detection_127_0_0_1() {

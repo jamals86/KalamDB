@@ -1,19 +1,19 @@
 //! Integration tests for HTTP Basic Authentication
 //!
-//! These tests verify the authentication middleware works correctly:
+//! These tests verify the unified authentication module works correctly:
 //! - Successful authentication with valid credentials
 //! - Rejection of invalid credentials
 //! - Rejection of missing Authorization header
 //! - Rejection of malformed Authorization header
 //!
-//! **Test Philosophy**: Follow TDD - these tests should verify the authentication
-//! flow through the middleware layer, testing the full integration path.
+//! **Test Philosophy**: Follow TDD - these tests verify the unified authentication
+//! flow that is used by both HTTP and WebSocket handlers.
 
 #[path = "integration/common/mod.rs"]
 mod common;
 
 use common::{auth_helper, TestServer};
-use kalamdb_commons::Role;
+use kalamdb_commons::{Role, models::ConnectionInfo};
 use std::sync::Arc;
 
 /// Test successful Basic Auth with valid credentials
@@ -26,36 +26,26 @@ async fn test_basic_auth_success() {
     let password = "SecurePassword123!";
     auth_helper::create_test_user(&server, username, password, Role::User).await;
 
-    // Test authentication directly using AuthService (no HTTP layer needed)
+    // Test authentication using unified auth module
     use base64::engine::general_purpose;
     use base64::Engine;
     use kalamdb_api::repositories::user_repo::CoreUsersRepo;
-    use kalamdb_auth::connection::ConnectionInfo;
-    use kalamdb_auth::service::AuthService;
-    use kalamdb_auth::UserRepository;
+    use kalamdb_auth::{authenticate, AuthRequest, UserRepository};
 
-    let auth_service = AuthService::new(
-        "test-secret".to_string(),
-        vec!["kalamdb-test".to_string()],
-        false,
-        false,
-        Role::User,
-    );
     let connection_info = ConnectionInfo::new(Some("127.0.0.1".to_string()));
 
     // Create Basic Auth header
     let credentials = general_purpose::STANDARD.encode(format!("{}:{}", username, password));
     let auth_header = format!("Basic {}", credentials);
+    let auth_request = AuthRequest::Header(auth_header);
 
     // Create user repository adapter
     let user_repo: Arc<dyn UserRepository> = Arc::new(CoreUsersRepo::new(
         server.app_context.system_tables().users(),
     ));
 
-    // Authenticate
-    let result = auth_service
-        .authenticate_with_repo(&auth_header, &connection_info, &user_repo)
-        .await;
+    // Authenticate using unified auth
+    let result = authenticate(auth_request, &connection_info, &user_repo).await;
 
     // Verify success
     if let Err(e) = &result {
@@ -66,9 +56,9 @@ async fn test_basic_auth_success() {
         "Authentication should succeed with valid credentials: {:?}",
         result.as_ref().err()
     );
-    let authenticated_user = result.unwrap();
-    assert_eq!(authenticated_user.username, username);
-    assert_eq!(authenticated_user.role, Role::User);
+    let auth_result = result.unwrap();
+    assert_eq!(auth_result.user.username, username);
+    assert_eq!(auth_result.user.role, Role::User);
 
     println!("✓ Basic Auth test passed - User authenticated successfully");
 }
@@ -88,32 +78,22 @@ async fn test_basic_auth_invalid_credentials() {
     use base64::engine::general_purpose;
     use base64::Engine;
     use kalamdb_api::repositories::user_repo::CoreUsersRepo;
-    use kalamdb_auth::connection::ConnectionInfo;
-    use kalamdb_auth::service::AuthService;
-    use kalamdb_auth::UserRepository;
+    use kalamdb_auth::{authenticate, AuthRequest, UserRepository};
 
-    let auth_service = AuthService::new(
-        "test-secret".to_string(),
-        vec!["kalamdb-test".to_string()],
-        false,
-        false,
-        Role::User,
-    );
     let connection_info = ConnectionInfo::new(Some("127.0.0.1".to_string()));
 
     // Create Basic Auth header with WRONG password
     let credentials = general_purpose::STANDARD.encode(format!("{}:{}", username, wrong_password));
     let auth_header = format!("Basic {}", credentials);
+    let auth_request = AuthRequest::Header(auth_header);
 
     // Create user repository adapter
     let user_repo: Arc<dyn UserRepository> = Arc::new(CoreUsersRepo::new(
         server.app_context.system_tables().users(),
     ));
 
-    // Authenticate
-    let result = auth_service
-        .authenticate_with_repo(&auth_header, &connection_info, &user_repo)
-        .await;
+    // Authenticate using unified auth
+    let result = authenticate(auth_request, &connection_info, &user_repo).await;
 
     // Verify failure
     assert!(
@@ -128,18 +108,9 @@ async fn test_basic_auth_invalid_credentials() {
 #[tokio::test]
 async fn test_basic_auth_missing_header() {
     use kalamdb_api::repositories::user_repo::CoreUsersRepo;
-    use kalamdb_auth::connection::ConnectionInfo;
-    use kalamdb_auth::service::AuthService;
-    use kalamdb_auth::UserRepository;
+    use kalamdb_auth::{authenticate, AuthRequest, UserRepository};
 
     let server = TestServer::new().await;
-    let auth_service = AuthService::new(
-        "test-secret".to_string(),
-        vec!["kalamdb-test".to_string()],
-        false,
-        false,
-        Role::User,
-    );
     let connection_info = ConnectionInfo::new(Some("127.0.0.1".to_string()));
 
     // Create user repository adapter
@@ -148,9 +119,8 @@ async fn test_basic_auth_missing_header() {
     ));
 
     // Empty authorization header
-    let result = auth_service
-        .authenticate_with_repo("", &connection_info, &user_repo)
-        .await;
+    let auth_request = AuthRequest::Header("".to_string());
+    let result = authenticate(auth_request, &connection_info, &user_repo).await;
 
     // Verify failure
     assert!(
@@ -165,18 +135,9 @@ async fn test_basic_auth_missing_header() {
 #[tokio::test]
 async fn test_basic_auth_malformed_header() {
     use kalamdb_api::repositories::user_repo::CoreUsersRepo;
-    use kalamdb_auth::connection::ConnectionInfo;
-    use kalamdb_auth::service::AuthService;
-    use kalamdb_auth::UserRepository;
+    use kalamdb_auth::{authenticate, AuthRequest, UserRepository};
 
     let server = TestServer::new().await;
-    let auth_service = AuthService::new(
-        "test-secret".to_string(),
-        vec!["kalamdb-test".to_string()],
-        false,
-        false,
-        Role::User,
-    );
     let connection_info = ConnectionInfo::new(Some("127.0.0.1".to_string()));
 
     // Create user repository adapter
@@ -188,15 +149,14 @@ async fn test_basic_auth_malformed_header() {
     let malformed_headers = vec![
         "Basic",                 // Missing credentials
         "Basic notbase64!@#",    // Invalid base64
-        "Bearer token123",       // Wrong auth scheme for basic
+        "Bearer token123",       // Bearer without valid JWT
         "Basic YWxpY2U=",        // Valid base64 but missing colon
         "BasicYWxpY2U6cGFzcw==", // Missing space after "Basic"
     ];
 
     for malformed_header in malformed_headers {
-        let result = auth_service
-            .authenticate_with_repo(malformed_header, &connection_info, &user_repo)
-            .await;
+        let auth_request = AuthRequest::Header(malformed_header.to_string());
+        let result = authenticate(auth_request, &connection_info, &user_repo).await;
 
         assert!(
             result.is_err(),
@@ -214,18 +174,9 @@ async fn test_basic_auth_nonexistent_user() {
     use base64::engine::general_purpose;
     use base64::Engine;
     use kalamdb_api::repositories::user_repo::CoreUsersRepo;
-    use kalamdb_auth::connection::ConnectionInfo;
-    use kalamdb_auth::service::AuthService;
-    use kalamdb_auth::UserRepository;
+    use kalamdb_auth::{authenticate, AuthRequest, UserRepository};
 
     let server = TestServer::new().await;
-    let auth_service = AuthService::new(
-        "test-secret".to_string(),
-        vec!["kalamdb-test".to_string()],
-        false,
-        false,
-        Role::User,
-    );
     let connection_info = ConnectionInfo::new(Some("127.0.0.1".to_string()));
 
     // Create user repository adapter
@@ -236,10 +187,9 @@ async fn test_basic_auth_nonexistent_user() {
     // Create auth header for user that doesn't exist
     let credentials = general_purpose::STANDARD.encode("nonexistent:password123");
     let auth_header = format!("Basic {}", credentials);
+    let auth_request = AuthRequest::Header(auth_header);
 
-    let result = auth_service
-        .authenticate_with_repo(&auth_header, &connection_info, &user_repo)
-        .await;
+    let result = authenticate(auth_request, &connection_info, &user_repo).await;
 
     // Verify failure
     assert!(

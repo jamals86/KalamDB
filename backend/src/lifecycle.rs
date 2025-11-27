@@ -9,7 +9,6 @@ use crate::routes;
 use crate::ServerConfig;
 use actix_web::{web, App, HttpServer};
 use anyhow::Result;
-use kalamdb_api::auth::jwt::JwtAuth;
 use kalamdb_api::rate_limiter::{RateLimitConfig, RateLimiter};
 use kalamdb_commons::{AuthType, Role, StorageId, StorageMode, UserId};
 use kalamdb_core::live::ConnectionsManager;
@@ -27,7 +26,6 @@ use std::sync::Arc;
 pub struct ApplicationComponents {
     pub session_factory: Arc<DataFusionSessionFactory>,
     pub sql_executor: Arc<SqlExecutor>,
-    pub jwt_auth: Arc<JwtAuth>,
     pub rate_limiter: Arc<RateLimiter>,
     pub live_query_manager: Arc<LiveQueryManager>,
     pub user_repo: Arc<dyn kalamdb_auth::UserRepository>,
@@ -179,12 +177,6 @@ pub async fn bootstrap(
         phase_start.elapsed().as_secs_f64() * 1000.0
     );
 
-    // JWT authentication
-    use jsonwebtoken::Algorithm;
-    let jwt_secret = config.auth.jwt_secret.clone();
-    let jwt_auth = Arc::new(JwtAuth::new(jwt_secret, Algorithm::HS256));
-    info!("JWT authentication initialized (HS256)");
-
     // Rate limiter
     let rate_limit_config = RateLimitConfig {
         max_queries_per_user: config.rate_limit.max_queries_per_sec,
@@ -244,7 +236,6 @@ pub async fn bootstrap(
     let components = ApplicationComponents {
         session_factory,
         sql_executor,
-        jwt_auth,
         rate_limiter,
         live_query_manager,
         user_repo,
@@ -300,7 +291,6 @@ pub async fn run(
 
     let session_factory = components.session_factory.clone();
     let sql_executor = components.sql_executor.clone();
-    let jwt_auth = components.jwt_auth.clone();
     let rate_limiter = components.rate_limiter.clone();
     let live_query_manager = components.live_query_manager.clone();
     let user_repo = components.user_repo.clone();
@@ -321,7 +311,6 @@ pub async fn run(
             .app_data(web::Data::new(app_context_for_handler.clone()))
             .app_data(web::Data::new(session_factory.clone()))
             .app_data(web::Data::new(sql_executor.clone()))
-            .app_data(web::Data::new(jwt_auth.clone()))
             .app_data(web::Data::new(rate_limiter.clone()))
             .app_data(web::Data::new(live_query_manager.clone()))
             .app_data(web::Data::new(user_repo.clone()))

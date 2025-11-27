@@ -1,7 +1,6 @@
 // Authenticated user context for request handling
 
-use crate::connection::ConnectionInfo;
-use kalamdb_commons::{Role, UserId};
+use kalamdb_commons::{Role, UserId, models::ConnectionInfo};
 
 /// Authenticated user context for a request.
 ///

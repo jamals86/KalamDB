@@ -15,7 +15,7 @@
 use dashmap::DashMap;
 use datafusion::sql::sqlparser::ast::Expr;
 use kalamdb_commons::ids::SeqId;
-use kalamdb_commons::models::{ConnectionId, LiveQueryId, TableId, UserId};
+use kalamdb_commons::models::{ConnectionId, ConnectionInfo, LiveQueryId, TableId, UserId};
 use kalamdb_commons::websocket::SubscriptionOptions;
 use kalamdb_commons::{NodeId, Notification};
 use log::{debug, info, warn};
@@ -80,9 +80,9 @@ pub struct ConnectionState {
     /// Connection ID
     pub connection_id: ConnectionId,
     /// User ID (None until authenticated)
-    pub user_id: Option<UserId>,
+    pub user_id: Option<UserId>, //TODO: Should we use AuthenticatedUser? which contains also Role/ip
     /// Client IP address (for localhost bypass check)
-    pub client_ip: Option<String>,
+    pub client_ip: ConnectionInfo,
 
     // === Authentication State ===
     /// Whether connection has been authenticated
@@ -147,8 +147,8 @@ impl ConnectionState {
 
     /// Get client IP
     #[inline]
-    pub fn client_ip(&self) -> Option<&str> {
-        self.client_ip.as_deref()
+    pub fn client_ip(&self) -> Option<&ConnectionInfo> {
+        Some(&self.client_ip)
     }
 
     /// Get a subscription by ID
@@ -287,7 +287,7 @@ impl ConnectionsManager {
     pub fn register_connection(
         &self,
         connection_id: ConnectionId,
-        client_ip: Option<String>,
+        client_ip: ConnectionInfo,
     ) -> Option<ConnectionRegistration> {
         if self.is_shutting_down.load(Ordering::Acquire) {
             warn!("Rejecting new connection during shutdown: {}", connection_id);
@@ -327,7 +327,6 @@ impl ConnectionsManager {
     /// Called after successful authentication to update user index
     ///
     /// Must be called after `state.write().mark_authenticated(user_id)`.
-    /// TODO: Use the same reference we have of ConnectionState instead of looking up again.
     pub fn on_authenticated(&self, connection_id: &ConnectionId, user_id: UserId) {
         self.user_connections
             .entry(user_id)
@@ -652,7 +651,7 @@ mod tests {
         let registry = create_test_registry();
         let conn_id = ConnectionId::new("conn1");
 
-        let reg = registry.register_connection(conn_id.clone(), Some("127.0.0.1".to_string()));
+        let reg = registry.register_connection(conn_id.clone(), ConnectionInfo::new(Some("127.0.0.1".to_string())));
         assert!(reg.is_some());
         assert_eq!(registry.connection_count(), 1);
 
@@ -666,7 +665,9 @@ mod tests {
         let conn_id = ConnectionId::new("conn1");
         let user_id = UserId::new("user1");
 
-        let reg = registry.register_connection(conn_id.clone(), None).unwrap();
+        let reg = registry.register_connection(conn_id.clone(), ConnectionInfo::new(None));
+        assert!(reg.is_some());
+        let reg = reg.unwrap();
         
         {
             let mut state = reg.state.write();
@@ -689,7 +690,7 @@ mod tests {
 
         registry.is_shutting_down.store(true, Ordering::Release);
 
-        let reg = registry.register_connection(ConnectionId::new("conn1"), None);
+        let reg = registry.register_connection(ConnectionId::new("conn1"), ConnectionInfo::new(None));
         assert!(reg.is_none());
     }
 }

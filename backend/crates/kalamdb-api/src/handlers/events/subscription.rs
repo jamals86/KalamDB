@@ -1,0 +1,144 @@
+//! WebSocket subscription handler
+//!
+//! Handles the Subscribe message for live query subscriptions.
+
+use actix_ws::Session;
+use kalamdb_commons::websocket::{
+    BatchControl, BatchStatus, SubscriptionRequest, MAX_ROWS_PER_BATCH,
+};
+use kalamdb_commons::WebSocketMessage;
+use kalamdb_core::live::{InitialDataOptions, LiveQueryManager, SharedConnectionState};
+use log::{error, info};
+use std::sync::Arc;
+
+use crate::rate_limiter::RateLimiter;
+
+use super::{send_error, send_json};
+
+/// Handle subscription request
+///
+/// Validates subscription ID and rate limits, then delegates to LiveQueryManager
+/// which handles all SQL parsing, permission checks, and registration.
+///
+/// Uses connection_id from SharedConnectionState, no separate parameter needed.
+pub async fn handle_subscribe(
+    connection_state: &SharedConnectionState,
+    subscription: SubscriptionRequest,
+    session: &mut Session,
+    rate_limiter: &Arc<RateLimiter>,
+    live_query_manager: &Arc<LiveQueryManager>,
+) -> Result<(), String> {
+    let user_id = connection_state
+        .read()
+        .user_id()
+        .cloned()
+        .ok_or("Not authenticated")?;
+
+    // Validate subscription ID
+    if subscription.id.trim().is_empty() {
+        let _ = send_error(
+            session,
+            "invalid_subscription",
+            "INVALID_SUBSCRIPTION_ID",
+            "Subscription ID cannot be empty",
+        )
+        .await;
+        return Ok(());
+    }
+
+    // Rate limit check
+    if !rate_limiter.check_subscription_limit(&user_id) {
+        let _ = send_error(
+            session,
+            &subscription.id,
+            "SUBSCRIPTION_LIMIT_EXCEEDED",
+            "Maximum subscriptions reached",
+        )
+        .await;
+        return Ok(());
+    }
+
+    let subscription_id = subscription.id.clone();
+
+    // Determine batch size for initial data options
+    let batch_size = subscription.options.batch_size.unwrap_or(MAX_ROWS_PER_BATCH);
+
+    // Create initial data options
+    let initial_opts = subscription
+        .options
+        .last_rows
+        .map(|n| InitialDataOptions::last(n as usize))
+        .unwrap_or_else(|| InitialDataOptions::batch(None, None, batch_size));
+
+    // Register subscription with initial data fetch
+    // LiveQueryManager handles all SQL parsing, permission checks, and registration internally
+    match live_query_manager
+        .register_subscription_with_initial_data(connection_state, &subscription, Some(initial_opts))
+        .await
+    {
+        Ok(result) => {
+            info!(
+                "Subscription registered: id={}, user_id={}",
+                subscription_id,
+                user_id.as_str()
+            );
+
+            // Update rate limiter
+            rate_limiter.increment_subscription(&user_id);
+
+            // Send response
+            let batch_control = if let Some(ref initial) = result.initial_data {
+                BatchControl {
+                    batch_num: 0,
+                    total_batches: None,
+                    has_more: initial.has_more,
+                    status: if initial.has_more {
+                        BatchStatus::Loading
+                    } else {
+                        BatchStatus::Ready
+                    },
+                    last_seq_id: initial.last_seq,
+                    snapshot_end_seq: initial.snapshot_end_seq,
+                }
+            } else {
+                BatchControl {
+                    batch_num: 0,
+                    total_batches: Some(0),
+                    has_more: false,
+                    status: BatchStatus::Ready,
+                    last_seq_id: None,
+                    snapshot_end_seq: None,
+                }
+            };
+
+            let ack =
+                WebSocketMessage::subscription_ack(subscription_id.clone(), 0, batch_control.clone());
+            let _ = send_json(session, &ack).await;
+
+            if let Some(initial) = result.initial_data {
+                let batch_msg =
+                    WebSocketMessage::initial_data_batch(subscription_id, initial.rows, batch_control);
+                let _ = send_json(session, &batch_msg).await;
+            }
+
+            Ok(())
+        }
+        Err(e) => {
+            // Map error types to appropriate WebSocket error codes
+            let (code, message) = match &e {
+                kalamdb_core::error::KalamDbError::PermissionDenied(msg) => {
+                    ("UNAUTHORIZED", msg.as_str())
+                }
+                kalamdb_core::error::KalamDbError::NotFound(msg) => ("NOT_FOUND", msg.as_str()),
+                kalamdb_core::error::KalamDbError::InvalidSql(msg) => ("INVALID_SQL", msg.as_str()),
+                kalamdb_core::error::KalamDbError::InvalidOperation(msg) => {
+                    ("UNSUPPORTED", msg.as_str())
+                }
+                _ => ("SUBSCRIPTION_FAILED", "Subscription registration failed"),
+            };
+            error!("Failed to register subscription {}: {}", subscription_id, e);
+            let _ = send_error(session, &subscription_id, code, message).await;
+            Ok(())
+        }
+    }
+}

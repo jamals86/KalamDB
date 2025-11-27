@@ -1,9 +1,7 @@
-use kalamdb_commons::models::{ConnectionId, LiveQueryId, NamespaceId, TableId, TableName, UserId};
+use kalamdb_commons::models::{ConnectionId, ConnectionInfo, NamespaceId, TableId, TableName, UserId};
 use kalamdb_commons::websocket::{SubscriptionOptions, SubscriptionRequest};
-use kalamdb_commons::Notification;
 use kalamdb_core::app_context::AppContext;
 use kalamdb_core::test_helpers::init_test_app_context;
-use tokio::sync::mpsc;
 
 #[tokio::test(flavor = "multi_thread")]
 async fn test_multi_subscription_lifecycle() {
@@ -11,19 +9,18 @@ async fn test_multi_subscription_lifecycle() {
     let _test_db = init_test_app_context();
     let app_ctx = AppContext::get();
     let manager = app_ctx.live_query_manager();
+    let registry = manager.registry();
 
     // 2. Register Connection
     let user_id = UserId::new("root");
-    let conn_id_str = ConnectionId::new("conn_multi");
-    
-    let (tx, _rx) = mpsc::unbounded_channel::<(LiveQueryId, Notification)>();
+    let conn_id = ConnectionId::new("conn_multi");
     
     println!("Registering connection...");
-    let connection_id = manager.register_connection(
-        user_id.clone(),
-        conn_id_str,
-        Some(tx)
-    ).await.expect("Failed to register connection");
+    let registration = registry.register_connection(conn_id.clone(), ConnectionInfo::new(None))
+        .expect("Failed to register connection");
+    let connection_state = registration.state;
+    connection_state.write().mark_authenticated(user_id.clone());
+    registry.on_authenticated(&conn_id, user_id.clone());
     println!("Registered connection");
 
     // 3. Register Subscription 1
@@ -33,14 +30,13 @@ async fn test_multi_subscription_lifecycle() {
         id: sub_id1.to_string(),
         sql: "SELECT * FROM system.users".to_string(),
         options: SubscriptionOptions::default(),
-        table_id: Some(TableId::new(NamespaceId::system(), TableName::new("users"))),
-        where_clause: None,
-        projections: None,
     };
-    let live_id1 = manager.register_subscription(
-        connection_id.clone(),
-        subscription1,
+    let result1 = manager.register_subscription_with_initial_data(
+        &connection_state,
+        &subscription1,
+        None,
     ).await.expect("Failed to register sub1");
+    let live_id1 = result1.live_id;
     println!("Registered sub1: {}", live_id1);
 
     // 4. Register Subscription 2
@@ -50,14 +46,13 @@ async fn test_multi_subscription_lifecycle() {
         id: sub_id2.to_string(),
         sql: "SELECT * FROM system.jobs".to_string(),
         options: SubscriptionOptions::default(),
-        table_id: Some(TableId::new(NamespaceId::system(), TableName::new("jobs"))),
-        where_clause: None,
-        projections: None,
     };
-    let live_id2 = manager.register_subscription(
-        connection_id.clone(),
-        subscription2,
+    let result2 = manager.register_subscription_with_initial_data(
+        &connection_state,
+        &subscription2,
+        None,
     ).await.expect("Failed to register sub2");
+    let live_id2 = result2.live_id;
     println!("Registered sub2: {}", live_id2);
 
     // 5. Verify both exist
@@ -68,7 +63,10 @@ async fn test_multi_subscription_lifecycle() {
 
     // 6. Unsubscribe Subscription 1
     println!("Unregistering sub1...");
-    manager.unregister_subscription(&live_id1).await.expect("Failed to unregister sub1");
+    let subscription_id1 = live_id1.subscription_id().to_string();
+    manager.unregister_subscription(&connection_state, &subscription_id1, &live_id1)
+        .await
+        .expect("Failed to unregister sub1");
     println!("Unregistered sub1");
 
     // 7. Verify sub1 removed, sub2 remains
@@ -79,7 +77,7 @@ async fn test_multi_subscription_lifecycle() {
 
     // 8. Unregister Connection
     println!("Unregistering connection...");
-    manager.unregister_connection(&user_id, &connection_id).await.expect("Failed to unregister connection");
+    manager.unregister_connection(&user_id, &conn_id).await.expect("Failed to unregister connection");
     println!("Unregistered connection");
 
     // 9. Verify all removed

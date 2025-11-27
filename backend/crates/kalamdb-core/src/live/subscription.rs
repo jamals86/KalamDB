@@ -5,7 +5,7 @@
 //!
 //! All SQL parsing is done inside register_subscription - no intermediate ParsedSubscription.
 
-use super::registry::{ConnectionsManager, SharedConnectionState, SubscriptionState};
+use super::connections_manager::{ConnectionsManager, SharedConnectionState, SubscriptionState};
 use crate::error::KalamDbError;
 use datafusion::sql::sqlparser::ast::Expr;
 use kalamdb_commons::ids::SeqId;
@@ -211,36 +211,23 @@ impl SubscriptionService {
 
     /// Unregister a WebSocket connection and all its subscriptions
     ///
-    /// Called from ConnectionsManager.unregister_connection() to clean up
-    /// the system.live_queries table entries.
+    /// Cleans up both the system.live_queries table entries and the
+    /// ConnectionsManager registry.
     pub async fn unregister_connection(
         &self,
         user_id: &UserId,
         connection_id: &ConnectionId,
     ) -> Result<Vec<LiveQueryId>, KalamDbError> {
-        // Get connection state from registry
-        let connection_state = self.registry.get_connection(connection_id);
-        
-        let live_ids: Vec<LiveQueryId> = match connection_state {
-            Some(state) => {
-                let state_guard = state.read();
-                state_guard
-                    .subscriptions
-                    .iter()
-                    .map(|entry| entry.value().live_id.clone())
-                    .collect()
-            }
-            None => Vec::new(),
-        };
-
         // Delete from system.live_queries (async - uses prefix scan for efficiency)
-        let connection_key = connection_id.to_string();
         self.live_queries_provider
-            .delete_by_connection_id_async(user_id, &connection_key)
+            .delete_by_connection_id_async(user_id, connection_id)
             .await
             .map_err(|e| {
                 KalamDbError::Other(format!("Failed to delete live queries by connection: {}", e))
             })?;
+
+        // Unregister from connections manager (removes connection and returns live_ids)
+        let live_ids = self.registry.unregister_connection(connection_id);
 
         Ok(live_ids)
     }

@@ -4,6 +4,7 @@
 //! with protection against header spoofing attacks that attempt to bypass localhost checks.
 
 use actix_web::HttpRequest;
+use kalamdb_commons::models::ConnectionInfo;
 use log::warn;
 
 /// Extract client IP address with security checks against header spoofing
@@ -33,7 +34,7 @@ use log::warn;
 ///     println!("Client IP: {:?}", client_ip);
 /// }
 /// ```
-pub fn extract_client_ip_secure(req: &HttpRequest) -> Option<String> {
+pub fn extract_client_ip_secure(req: &HttpRequest) -> ConnectionInfo {
     // Try X-Forwarded-For header first (standard proxy header)
     if let Some(forwarded_for) = req.headers().get("X-Forwarded-For") {
         if let Ok(header_value) = forwarded_for.to_str() {
@@ -49,13 +50,13 @@ pub fn extract_client_ip_secure(req: &HttpRequest) -> Option<String> {
                 );
                 // Fall through to peer_addr (real connection IP)
             } else if !first_ip.is_empty() {
-                return Some(first_ip.to_string());
+                return ConnectionInfo::new(Some(first_ip.to_string()));
             }
         }
     }
 
     // Fallback to peer address (direct TCP connection)
-    req.peer_addr().map(|addr| addr.ip().to_string())
+    req.peer_addr().map(|addr| ConnectionInfo::new(Some(addr.ip().to_string()))).unwrap_or_else(|| ConnectionInfo::new(None))
 }
 
 /// Check if an IP address string represents localhost

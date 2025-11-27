@@ -878,17 +878,6 @@ impl TestServer {
         }
     }
 
-    /// Get an AuthService instance configured with the server's settings
-    pub fn auth_service(&self) -> Arc<kalamdb_auth::AuthService> {
-        Arc::new(kalamdb_auth::AuthService::new(
-            self.app_context.config().auth.jwt_secret.clone(),
-            vec![self.app_context.config().auth.jwt_trusted_issuers.clone()],
-            true,
-            false,
-            kalamdb_commons::Role::User,
-        ))
-    }
-
     /// Get a CoreUsersRepo instance connected to the server's user table
     pub fn users_repo(&self) -> Arc<dyn kalamdb_auth::UserRepository> {
         Arc::new(kalamdb_api::repositories::CoreUsersRepo::new(

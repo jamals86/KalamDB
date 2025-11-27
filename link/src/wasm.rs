@@ -234,8 +234,18 @@ impl KalamClient {
 
                     if let Some(id) = subscription_id {
                         let subs = subscriptions.borrow();
+                        // First try exact match
                         if let Some(callback) = subs.get(&id) {
                             let _ = callback.call1(&JsValue::NULL, &JsValue::from_str(&message));
+                        } else {
+                            // Server may prefix subscription_id with user_id-session_id-
+                            // Try to find a callback where the server's ID ends with our client ID
+                            for (client_id, callback) in subs.iter() {
+                                if id.ends_with(client_id) {
+                                    let _ = callback.call1(&JsValue::NULL, &JsValue::from_str(&message));
+                                    break;
+                                }
+                            }
                         }
                     }
                 }

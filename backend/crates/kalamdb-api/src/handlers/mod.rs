@@ -2,6 +2,7 @@
 //!
 //! This module provides HTTP handlers for the KalamDB REST API and WebSocket endpoints.
 
+pub mod events;
 pub mod sql_handler;
 pub mod ws_handler;
 
