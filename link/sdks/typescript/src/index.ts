@@ -3,6 +3,35 @@
  * 
  * This package provides a type-safe wrapper around the KalamDB WASM bindings
  * for use in Node.js and browser environments.
+ * 
+ * Features:
+ * - SQL query execution via HTTP
+ * - Real-time subscriptions via WebSocket (single connection, multiple subscriptions)
+ * - Subscription management with modern patterns (unsubscribe functions)
+ * - Cross-platform support (Node.js & Browser)
+ * 
+ * @example
+ * ```typescript
+ * import { createClient } from '@kalamdb/client';
+ * 
+ * const client = await createClient({
+ *   url: 'http://localhost:8080',
+ *   username: 'admin',
+ *   password: 'admin'
+ * });
+ * await client.connect();
+ * 
+ * // Subscribe to changes (returns unsubscribe function - Firebase/Supabase style)
+ * const unsubscribe = await client.subscribe('messages', (event) => {
+ *   console.log('Change:', event);
+ * });
+ * 
+ * // Check subscription count
+ * console.log(`Active subscriptions: ${client.getSubscriptionCount()}`);
+ * 
+ * // Later: unsubscribe when done
+ * await unsubscribe();
+ * ```
  */
 
 import init, { KalamClient as WasmClient } from '../kalam_link.js';
@@ -83,6 +112,32 @@ export interface BatchControl {
 export type SubscriptionCallback = (event: ServerMessage) => void;
 
 /**
+ * Function to unsubscribe from a subscription (Firebase/Supabase style)
+ * @returns Promise that resolves when unsubscription is complete
+ */
+export type Unsubscribe = () => Promise<void>;
+
+/**
+ * Information about an active subscription
+ */
+export interface SubscriptionInfo {
+  /** Unique subscription ID */
+  id: string;
+  /** Table name or SQL query being subscribed to */
+  tableName: string;
+  /** Timestamp when subscription was created */
+  createdAt: Date;
+}
+
+/**
+ * Subscription options for controlling initial data loading
+ */
+export interface SubscribeOptions {
+  /** Hint for server-side batch sizing during initial data load */
+  batch_size?: number;
+}
+
+/**
  * Configuration options for KalamDB client
  */
 export interface ClientOptions {
@@ -102,6 +157,7 @@ export interface ClientOptions {
  * - Real-time WebSocket subscriptions
  * - HTTP Basic authentication
  * - Cross-platform (Node.js & Browser)
+ * - Subscription tracking and management
  * 
  * @example
  * ```typescript
@@ -113,15 +169,22 @@ export interface ClientOptions {
  * const users = await client.query('SELECT * FROM users WHERE active = true');
  * console.log(users.results[0].rows);
  * 
- * // Subscribe to changes
- * const subId = await client.subscribe('messages', (event) => {
+ * // Subscribe to changes (returns unsubscribe function)
+ * const unsubscribe = await client.subscribe('messages', (event) => {
  *   if (event.type === 'change') {
  *     console.log('New message:', event.rows);
  *   }
  * });
  * 
- * // Cleanup
- * await client.unsubscribe(subId);
+ * // Check subscription count
+ * console.log(`Active: ${client.getSubscriptionCount()}`);
+ * 
+ * // Cleanup - option 1: call returned function
+ * await unsubscribe();
+ * 
+ * // Cleanup - option 2: unsubscribe all
+ * await client.unsubscribeAll();
+ * 
  * await client.disconnect();
  * ```
  */
@@ -131,6 +194,9 @@ export class KalamDBClient {
   private url: string;
   private username: string;
   private password: string;
+  
+  /** Track active subscriptions for management */
+  private subscriptions: Map<string, SubscriptionInfo> = new Map();
 
   /**
    * Create a new KalamDB client
@@ -198,6 +264,8 @@ export class KalamDBClient {
     if (this.wasmClient) {
       await this.wasmClient.disconnect();
     }
+    // Clear subscription tracking
+    this.subscriptions.clear();
   }
 
   /**
@@ -290,30 +358,78 @@ export class KalamDBClient {
    * - Live changes (type: 'change')
    * - Errors (type: 'error')
    * 
+   * Returns an unsubscribe function (Firebase/Supabase style) for easy cleanup.
+   * 
    * @param tableName - Name of the table to subscribe to
    * @param callback - Function called when changes occur
-   * @returns Subscription ID for later unsubscribe
+   * @param options - Optional subscription options (batch_size, etc.)
+   * @returns Unsubscribe function to stop receiving updates
    * 
    * @throws Error if subscription fails or not connected
    * 
    * @example
    * ```typescript
-   * const subId = await client.subscribe('messages', (event) => {
-   *   switch (event.type) {
-   *     case 'initial_data_batch':
-   *       console.log('Initial data:', event.rows);
-   *       break;
-   *     case 'change':
-   *       console.log(`${event.change_type}:`, event.rows);
-   *       break;
-   *     case 'error':
-   *       console.error('Subscription error:', event.message);
-   *       break;
+   * // Simple subscription
+   * const unsubscribe = await client.subscribe('messages', (event) => {
+   *   if (event.type === 'change') {
+   *     console.log('New data:', event.rows);
    *   }
    * });
+   * 
+   * // With options
+   * const unsubscribe = await client.subscribe('messages', callback, {
+   *   batch_size: 100  // Load initial data in batches of 100
+   * });
+   * 
+   * // Later: unsubscribe when done
+   * await unsubscribe();
    * ```
    */
-  async subscribe(tableName: string, callback: SubscriptionCallback): Promise<string> {
+  async subscribe(
+    tableName: string,
+    callback: SubscriptionCallback,
+    options?: SubscribeOptions
+  ): Promise<Unsubscribe> {
+    // Use subscribeWithSql internally with SELECT * FROM tableName
+    const sql = `SELECT * FROM ${tableName}`;
+    return this.subscribeWithSql(sql, callback, options);
+  }
+
+  /**
+   * Subscribe to a SQL query with real-time updates
+   * 
+   * More flexible than subscribe() - allows custom SQL queries with WHERE clauses,
+   * JOINs, and other SQL features.
+   * 
+   * @param sql - SQL SELECT query to subscribe to
+   * @param callback - Function called when changes occur
+   * @param options - Optional subscription options (batch_size, etc.)
+   * @returns Unsubscribe function to stop receiving updates
+   * 
+   * @throws Error if subscription fails or not connected
+   * 
+   * @example
+   * ```typescript
+   * // Subscribe to filtered query
+   * const unsubscribe = await client.subscribeWithSql(
+   *   'SELECT * FROM chat.messages WHERE conversation_id = 1',
+   *   (event) => {
+   *     if (event.type === 'change') {
+   *       console.log('New message:', event.rows);
+   *     }
+   *   },
+   *   { batch_size: 50 }
+   * );
+   * 
+   * // Later: unsubscribe when done
+   * await unsubscribe();
+   * ```
+   */
+  async subscribeWithSql(
+    sql: string,
+    callback: SubscriptionCallback,
+    options?: SubscribeOptions
+  ): Promise<Unsubscribe> {
     await this.initialize();
     if (!this.wasmClient) {
       throw new Error('WASM client not initialized');
@@ -329,7 +445,26 @@ export class KalamDBClient {
       }
     };
 
-    return await this.wasmClient.subscribe(tableName, wrappedCallback as any);
+    // Convert options to JSON string if provided
+    const optionsJson = options ? JSON.stringify(options) : undefined;
+    
+    const subscriptionId = await this.wasmClient.subscribeWithSql(
+      sql,
+      optionsJson,
+      wrappedCallback as any
+    );
+    
+    // Track the subscription (use SQL as tableName for tracking)
+    this.subscriptions.set(subscriptionId, {
+      id: subscriptionId,
+      tableName: sql,
+      createdAt: new Date()
+    });
+
+    // Return unsubscribe function (Firebase/Supabase style)
+    return async () => {
+      await this.unsubscribe(subscriptionId);
+    };
   }
 
   /**
@@ -341,9 +476,14 @@ export class KalamDBClient {
    * 
    * @example
    * ```typescript
-   * const subId = await client.subscribe('messages', handleChange);
-   * // Later...
-   * await client.unsubscribe(subId);
+   * // Using the returned unsubscribe function (preferred)
+   * const unsubscribe = await client.subscribe('messages', handleChange);
+   * await unsubscribe();
+   * 
+   * // Or manually with subscription ID
+   * const unsubscribe = await client.subscribe('messages', handleChange);
+   * const subs = client.getSubscriptions();
+   * await client.unsubscribe(subs[0].id);
    * ```
    */
   async unsubscribe(subscriptionId: string): Promise<void> {
@@ -351,6 +491,86 @@ export class KalamDBClient {
       throw new Error('WASM client not initialized');
     }
     await this.wasmClient.unsubscribe(subscriptionId);
+    
+    // Remove from tracking
+    this.subscriptions.delete(subscriptionId);
+  }
+
+  /**
+   * Get the number of active subscriptions
+   * 
+   * @returns Number of active subscriptions
+   * 
+   * @example
+   * ```typescript
+   * console.log(`Active subscriptions: ${client.getSubscriptionCount()}`);
+   * 
+   * // Prevent too many subscriptions
+   * if (client.getSubscriptionCount() >= 10) {
+   *   console.warn('Too many subscriptions!');
+   * }
+   * ```
+   */
+  getSubscriptionCount(): number {
+    return this.subscriptions.size;
+  }
+
+  /**
+   * Get information about all active subscriptions
+   * 
+   * @returns Array of subscription info objects
+   * 
+   * @example
+   * ```typescript
+   * const subs = client.getSubscriptions();
+   * for (const sub of subs) {
+   *   console.log(`Subscribed to ${sub.tableName} since ${sub.createdAt}`);
+   * }
+   * ```
+   */
+  getSubscriptions(): SubscriptionInfo[] {
+    return Array.from(this.subscriptions.values());
+  }
+
+  /**
+   * Check if subscribed to a specific table
+   * 
+   * @param tableName - Name of the table to check
+   * @returns true if there's an active subscription to this table
+   * 
+   * @example
+   * ```typescript
+   * if (!client.isSubscribedTo('messages')) {
+   *   await client.subscribe('messages', handleChange);
+   * }
+   * ```
+   */
+  isSubscribedTo(tableName: string): boolean {
+    for (const sub of this.subscriptions.values()) {
+      if (sub.tableName === tableName) {
+        return true;
+      }
+    }
+    return false;
+  }
+
+  /**
+   * Unsubscribe from all active subscriptions
+   * 
+   * Useful for cleanup before disconnecting or switching contexts.
+   * 
+   * @example
+   * ```typescript
+   * // Cleanup all subscriptions
+   * await client.unsubscribeAll();
+   * console.log(`Subscriptions remaining: ${client.getSubscriptionCount()}`); // 0
+   * ```
+   */
+  async unsubscribeAll(): Promise<void> {
+    const subscriptionIds = Array.from(this.subscriptions.keys());
+    for (const id of subscriptionIds) {
+      await this.unsubscribe(id);
+    }
   }
 }
 

@@ -389,14 +389,55 @@ impl KalamClient {
         table_name: String,
         callback: js_sys::Function,
     ) -> Result<String, JsValue> {
+        // Default: SELECT * FROM table with default options
+        let sql = format!("SELECT * FROM {}", table_name);
+        self.subscribe_with_sql(sql, None, callback).await
+    }
+
+    /// Subscribe to a SQL query with optional subscription options
+    ///
+    /// # Arguments
+    /// * `sql` - SQL SELECT query to subscribe to
+    /// * `options` - Optional JSON string with subscription options (e.g., `{"batch_size": 100}`)
+    /// * `callback` - JavaScript function to call when changes occur
+    ///
+    /// # Returns
+    /// Subscription ID for later unsubscribe
+    ///
+    /// # Example (JavaScript)
+    /// ```js
+    /// // Subscribe with options
+    /// const subId = await client.subscribeWithSql(
+    ///   "SELECT * FROM chat.messages WHERE conversation_id = 1",
+    ///   JSON.stringify({ batch_size: 50 }),
+    ///   (event) => console.log('Change:', event)
+    /// );
+    /// ```
+    #[wasm_bindgen(js_name = subscribeWithSql)]
+    pub async fn subscribe_with_sql(
+        &self,
+        sql: String,
+        options: Option<String>,
+        callback: js_sys::Function,
+    ) -> Result<String, JsValue> {
         if !self.is_connected() {
             return Err(JsValue::from_str(
                 "Not connected to server. Call connect() first.",
             ));
         }
 
+        // Parse options if provided
+        let subscription_options: SubscriptionOptions = if let Some(opts_json) = options {
+            serde_json::from_str(&opts_json)
+                .map_err(|e| JsValue::from_str(&format!("Invalid options JSON: {}", e)))?
+        } else {
+            SubscriptionOptions::default()
+        };
+
+        // Generate unique subscription ID from SQL hash
+        let subscription_id = format!("sub-{:x}", md5_hash(&sql));
+        
         // T063J: Store subscription callbacks in HashMap for proper lifetime management
-        let subscription_id = format!("sub-{}", table_name);
         self.subscriptions
             .borrow_mut()
             .insert(subscription_id.clone(), callback);
@@ -407,8 +448,8 @@ impl KalamClient {
             let subscribe_msg = ClientMessage::Subscribe {
                 subscription: SubscriptionRequest {
                     id: subscription_id.clone(),
-                    sql: format!("SELECT * FROM {}", table_name),
-                    options: SubscriptionOptions::default(),
+                    sql,
+                    options: subscription_options,
                 },
             };
             let payload = serde_json::to_string(&subscribe_msg)
@@ -416,7 +457,7 @@ impl KalamClient {
             ws.send_with_str(&payload)?;
         }
 
-        console_log(&format!("KalamClient: Subscribed to table: {}", table_name));
+        console_log(&format!("KalamClient: Subscribed with ID: {}", subscription_id));
         Ok(subscription_id)
     }
 
@@ -503,6 +544,15 @@ impl KalamClient {
         let json = JsFuture::from(resp.text()?).await?;
         Ok(json.as_string().unwrap_or_else(|| "{}".to_string()))
     }
+}
+
+// Simple hash function to generate unique subscription IDs from SQL
+fn md5_hash(s: &str) -> u64 {
+    use std::collections::hash_map::DefaultHasher;
+    use std::hash::{Hash, Hasher};
+    let mut hasher = DefaultHasher::new();
+    s.hash(&mut hasher);
+    hasher.finish()
 }
 
 // Helper function to log to browser console
