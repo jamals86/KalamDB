@@ -211,12 +211,12 @@ impl StatementHandler for UpdateHandler {
                 use kalamdb_commons::TableAccess;
 
                 let access_level = if let TableOptions::Shared(opts) = &def.table_options {
-                    opts.access_level.clone().unwrap_or(TableAccess::Private)
+                    opts.access_level.unwrap_or(TableAccess::Private)
                 } else {
                     TableAccess::Private
                 };
 
-                if !can_write_shared_table(access_level.clone(), false, context.user_role) {
+                if !can_write_shared_table(access_level, false, context.user_role) {
                     return Err(KalamDbError::Unauthorized(format!(
                         "Insufficient privileges to write to shared table '{}.{}' (Access Level: {:?})",
                         namespace.as_str(),
@@ -408,8 +408,8 @@ impl UpdateHandler {
             }
             let t = token.trim();
             // Check for placeholder
-            if t.starts_with('$') {
-                let num: usize = t[1..].parse().map_err(|_| {
+            if let Some(stripped) = t.strip_prefix('$') {
+                let num: usize = stripped.parse().map_err(|_| {
                     KalamDbError::InvalidOperation("Invalid placeholder in WHERE".into())
                 })?;
                 if num == 0 || num > params.len() {
@@ -465,8 +465,8 @@ impl UpdateHandler {
         let t = token.trim();
 
         // Check for placeholder ($1, $2, etc.)
-        if t.starts_with('$') {
-            let param_num: usize = t[1..].parse().map_err(|_| {
+        if let Some(stripped) = t.strip_prefix('$') {
+            let param_num: usize = stripped.parse().map_err(|_| {
                 KalamDbError::InvalidOperation(format!("Invalid placeholder: {}", t))
             })?;
 

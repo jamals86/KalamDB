@@ -11,21 +11,47 @@ use std::time::Duration;
 // Re-export commonly used types for credential tests
 pub use kalam_cli::FileCredentialStore;
 pub use kalam_link::credentials::{CredentialStore, Credentials};
+pub use kalam_link::{AuthProvider, KalamLinkClient, KalamLinkTimeouts};
 pub use tempfile::TempDir;
 
 #[cfg(unix)]
 pub use std::os::unix::fs::PermissionsExt;
 
-pub const SERVER_URL: &str = "http://localhost:8080";
+pub const SERVER_URL: &str = "http://127.0.0.1:8080";
 pub const TEST_TIMEOUT: Duration = Duration::from_secs(30);
 
-/// Check if the KalamDB server is running
 /// Check if the KalamDB server is running
 pub fn is_server_running() -> bool {
     // Simple TCP connection check
     std::net::TcpStream::connect("localhost:8080")
         .map(|_| true)
         .unwrap_or(false)
+}
+
+/// Require the KalamDB server to be running, panic if not.
+///
+/// Use this at the start of smoke tests to fail fast with a clear error message
+/// instead of silently skipping the test.
+///
+/// # Panics
+/// Panics with a clear error message if the server is not running.
+pub fn require_server_running() {
+    if !is_server_running() {
+        panic!(
+            "\n\n\
+            ╔══════════════════════════════════════════════════════════════════╗\n\
+            ║                    SERVER NOT RUNNING                            ║\n\
+            ╠══════════════════════════════════════════════════════════════════╣\n\
+            ║  Smoke tests require a running KalamDB server!                   ║\n\
+            ║                                                                  ║\n\
+            ║  Start the server first:                                         ║\n\
+            ║    cd backend && cargo run                                       ║\n\
+            ║                                                                  ║\n\
+            ║  Then run the smoke tests:                                       ║\n\
+            ║    cd cli && cargo test --test smoke                             ║\n\
+            ╚══════════════════════════════════════════════════════════════════╝\n\n"
+        );
+    }
 }
 
 /// Helper to execute SQL via CLI
@@ -127,6 +153,7 @@ fn execute_sql_via_cli_as_with_args(
     extra_args: &[&str],
 ) -> Result<String, Box<dyn std::error::Error>> {
     use std::time::Instant;
+    use wait_timeout::ChildExt;
     
     let sql_preview = if sql.len() > 60 {
         format!("{}...", &sql[..60])
@@ -148,6 +175,8 @@ fn execute_sql_via_cli_as_with_args(
         .arg(username)
         .arg("--password")
         .arg(password)
+        .arg("--fast-timeouts")  // Use fast timeouts for tests
+        .arg("--no-spinner")     // Disable spinner for cleaner output
         .args(extra_args)
         .arg("--command")
         .arg(sql)
@@ -162,28 +191,61 @@ fn execute_sql_via_cli_as_with_args(
     );
     
     let wait_start = Instant::now();
-    let output = child.wait_with_output()?;
-    let wait_duration = wait_start.elapsed();
     
-    let total_duration_ms = spawn_start.elapsed().as_millis();
+    // Wait for child with timeout to avoid hanging tests
+    let timeout_duration = Duration::from_secs(60);
+    match child.wait_timeout(timeout_duration)? {
+        Some(status) => {
+            let wait_duration = wait_start.elapsed();
+            let total_duration_ms = spawn_start.elapsed().as_millis();
+            
+            // Now read stdout/stderr since the process completed
+            let mut stdout = String::new();
+            let mut stderr = String::new();
+            if let Some(ref mut out) = child.stdout {
+                use std::io::Read;
+                out.read_to_string(&mut stdout)?;
+            }
+            if let Some(ref mut err) = child.stderr {
+                use std::io::Read;
+                err.read_to_string(&mut stderr)?;
+            }
 
-    if output.status.success() {
-        eprintln!(
-            "[TEST_CLI] Success: spawn={:?} wait={:?} total={}ms",
-            spawn_duration, wait_duration, total_duration_ms
-        );
-        Ok(String::from_utf8_lossy(&output.stdout).to_string())
-    } else {
-        let stderr = String::from_utf8_lossy(&output.stderr);
-        eprintln!(
-            "[TEST_CLI] Failed: spawn={:?} wait={:?} total={}ms stderr={}",
-            spawn_duration, wait_duration, total_duration_ms, stderr
-        );
-        Err(format!(
-            "CLI command failed: {}",
-            stderr
-        )
-        .into())
+            if status.success() {
+                if !stderr.is_empty() {
+                    eprintln!("[TEST_CLI] stderr: {}", stderr);
+                }
+                eprintln!(
+                    "[TEST_CLI] Success: spawn={:?} wait={:?} total={}ms",
+                    spawn_duration, wait_duration, total_duration_ms
+                );
+                Ok(stdout)
+            } else {
+                eprintln!(
+                    "[TEST_CLI] Failed: spawn={:?} wait={:?} total={}ms stderr={}",
+                    spawn_duration, wait_duration, total_duration_ms, stderr
+                );
+                Err(format!(
+                    "CLI command failed: {}",
+                    stderr
+                )
+                .into())
+            }
+        }
+        None => {
+            // Timeout - kill the child and return error
+            let _ = child.kill();
+            let _ = child.wait();
+            let wait_duration = wait_start.elapsed();
+            eprintln!(
+                "[TEST_CLI] TIMEOUT after {:?}",
+                wait_duration
+            );
+            Err(format!(
+                "CLI command timed out after {:?}",
+                timeout_duration
+            ).into())
+        }
     }
 }
 
@@ -195,6 +257,247 @@ pub fn execute_sql_as_root_via_cli(sql: &str) -> Result<String, Box<dyn std::err
 /// Helper to execute SQL as root user via CLI returning JSON output to avoid table truncation
 pub fn execute_sql_as_root_via_cli_json(sql: &str) -> Result<String, Box<dyn std::error::Error>> {
     execute_sql_via_cli_as_with_args("root", "", sql, &["--json"])
+}
+
+// ============================================================================
+// CLIENT-BASED QUERY EXECUTION (uses kalam-link directly, avoids CLI process spawning)
+// ============================================================================
+
+/// A shared tokio runtime for client-based query execution.
+/// Using a shared runtime avoids the overhead of creating a new runtime for each query.
+fn get_shared_runtime() -> &'static tokio::runtime::Runtime {
+    use std::sync::OnceLock;
+    static RUNTIME: OnceLock<tokio::runtime::Runtime> = OnceLock::new();
+    RUNTIME.get_or_init(|| {
+        tokio::runtime::Builder::new_multi_thread()
+            .worker_threads(8)
+            .enable_all()
+            .build()
+            .expect("Failed to create shared tokio runtime")
+    })
+}
+
+/// A shared KalamLinkClient for root user to reuse HTTP connections.
+/// This avoids creating new TCP connections for every query, which helps
+/// avoid macOS TCP connection limits (connections in TIME_WAIT state).
+fn get_shared_root_client() -> &'static KalamLinkClient {
+    use std::sync::OnceLock;
+    static CLIENT: OnceLock<KalamLinkClient> = OnceLock::new();
+    CLIENT.get_or_init(|| {
+        KalamLinkClient::builder()
+            .base_url(SERVER_URL)
+            .auth(AuthProvider::basic_auth("root".to_string(), "".to_string()))
+            .timeouts(KalamLinkTimeouts::fast())
+            .build()
+            .expect("Failed to create shared root client")
+    })
+}
+
+/// Execute SQL via kalam-link client directly (avoids CLI process spawning).
+/// 
+/// This function uses the kalam-link library directly instead of spawning CLI processes,
+/// which avoids macOS TCP connection limits when running many parallel queries.
+/// 
+/// Returns JSON output as a string.
+pub fn execute_sql_via_client_as(
+    username: &str,
+    password: &str,
+    sql: &str,
+) -> Result<String, Box<dyn std::error::Error>> {
+    execute_sql_via_client_as_with_args(username, password, sql, false)
+}
+
+/// Execute SQL via kalam-link client directly with options.
+/// 
+/// This function uses the kalam-link library directly instead of spawning CLI processes,
+/// which avoids macOS TCP connection limits when running many parallel queries.
+/// 
+/// # Arguments
+/// * `username` - The username for authentication
+/// * `password` - The password for authentication  
+/// * `sql` - The SQL query to execute
+/// * `json_output` - If true, returns raw JSON; if false, returns formatted output
+/// 
+/// Returns the query result as a string.
+pub fn execute_sql_via_client_as_with_args(
+    username: &str,
+    password: &str,
+    sql: &str,
+    json_output: bool,
+) -> Result<String, Box<dyn std::error::Error>> {
+    use std::sync::mpsc;
+    
+    let runtime = get_shared_runtime();
+    
+    let sql_preview = if sql.len() > 60 {
+        format!("{}...", &sql[..60])
+    } else {
+        sql.to_string()
+    };
+    
+    eprintln!(
+        "[TEST_CLIENT] Executing as {}: \"{}\"",
+        username,
+        sql_preview.replace('\n', " ")
+    );
+    
+    let start = std::time::Instant::now();
+    
+    // Check if we can use the shared root client (most common case)
+    let is_root = username == "root" && password.is_empty();
+    
+    // Clone values for the async block only if needed
+    let sql = sql.to_string();
+    let username_owned = username.to_string();
+    let password_owned = password.to_string();
+    
+    // Use a channel to receive the result from the async task
+    // This avoids the block_on deadlock issue when called from multiple std threads
+    let (tx, rx) = mpsc::channel();
+    
+    runtime.spawn(async move {
+        let result = async {
+            if is_root {
+                // Reuse shared root client to avoid creating new TCP connections
+                let client = get_shared_root_client();
+                let response = client.execute_query(&sql).await?;
+                Ok::<_, Box<dyn std::error::Error + Send + Sync>>(response)
+            } else {
+                // For non-root users, we need a client with different auth
+                // These are less common, so creating a new client is acceptable
+                let client = KalamLinkClient::builder()
+                    .base_url(SERVER_URL)
+                    .auth(AuthProvider::basic_auth(username_owned, password_owned))
+                    .timeouts(KalamLinkTimeouts::fast())
+                    .build()?;
+                let response = client.execute_query(&sql).await?;
+                Ok(response)
+            }
+        }.await;
+        
+        let _ = tx.send(result);
+    });
+    
+    // Wait for the result with a timeout
+    let result = rx.recv_timeout(Duration::from_secs(60))
+        .map_err(|e| format!("Query timed out or channel error: {}", e))?;
+    
+    let duration = start.elapsed();
+    
+    match result {
+        Ok(response) => {
+            eprintln!(
+                "[TEST_CLIENT] Success in {:?}",
+                duration
+            );
+            
+            if json_output {
+                // Return raw JSON
+                Ok(serde_json::to_string_pretty(&response)?)
+            } else {
+                // Return a simple formatted output
+                let mut output = String::new();
+                
+                for result in &response.results {
+                    // Check if this has a message (e.g., FLUSH TABLE, DDL statements)
+                    if let Some(ref message) = result.message {
+                        // Check if this is a DML message like "Inserted N row(s)" or "Updated N row(s)"
+                        // and normalize to "N rows affected" format for test compatibility
+                        if message.starts_with("Inserted ") || message.starts_with("Updated ") || message.starts_with("Deleted ") {
+                            // Extract the count from messages like "Inserted 1 row(s)" -> "1 rows affected"
+                            if let Some(count_str) = message.split_whitespace().nth(1) {
+                                if let Ok(count) = count_str.parse::<usize>() {
+                                    output.push_str(&format!("{} rows affected\n", count));
+                                    continue;
+                                }
+                            }
+                        }
+                        // For non-DML messages (FLUSH, DDL, etc.), output as-is
+                        output.push_str(message);
+                        output.push('\n');
+                        continue;
+                    }
+                    
+                    // Check if this is a DML statement (no rows but has row_count)
+                    let is_dml = result.rows.is_none() || 
+                        (result.rows.as_ref().map(|r| r.is_empty()).unwrap_or(false) && result.row_count > 0);
+                    
+                    if is_dml {
+                        // DML statements: show "N rows affected"
+                        output.push_str(&format!("{} rows affected\n", result.row_count));
+                    } else {
+                        // Add column headers
+                        if !result.columns.is_empty() {
+                            output.push_str(&result.columns.join(" | "));
+                            output.push('\n');
+                        }
+                        
+                        // Add rows (rows is Option<Vec<...>>)
+                        if let Some(ref rows) = result.rows {
+                            for row in rows {
+                                let row_str: Vec<String> = result.columns.iter()
+                                    .map(|col| {
+                                        row.get(col)
+                                            .map(|v| match v {
+                                                serde_json::Value::String(s) => s.clone(),
+                                                serde_json::Value::Null => "NULL".to_string(),
+                                                other => other.to_string(),
+                                            })
+                                            .unwrap_or_else(|| "NULL".to_string())
+                                    })
+                                    .collect();
+                                output.push_str(&row_str.join(" | "));
+                                output.push('\n');
+                            }
+                            
+                            // Add row count
+                            output.push_str(&format!("({} row{})\n", rows.len(), if rows.len() == 1 { "" } else { "s" }));
+                        } else {
+                            output.push_str("(0 rows)\n");
+                        }
+                    }
+                }
+                
+                if let Some(ref error) = response.error {
+                    output.push_str(&format!("Error: {}\n", error.message));
+                }
+                
+                Ok(output)
+            }
+        }
+        Err(e) => {
+            eprintln!(
+                "[TEST_CLIENT] Failed in {:?}: {}",
+                duration, e
+            );
+            Err(e.to_string().into())
+        }
+    }
+}
+
+/// Execute SQL as root user via kalam-link client (empty password for localhost)
+pub fn execute_sql_as_root_via_client(sql: &str) -> Result<String, Box<dyn std::error::Error>> {
+    execute_sql_via_client_as("root", "", sql)
+}
+
+/// Execute SQL as root user via kalam-link client returning JSON output
+pub fn execute_sql_as_root_via_client_json(sql: &str) -> Result<String, Box<dyn std::error::Error>> {
+    execute_sql_via_client_as_with_args("root", "", sql, true)
+}
+
+/// Execute SQL via kalam-link client returning JSON output with custom credentials
+pub fn execute_sql_via_client_as_json(
+    username: &str,
+    password: &str,
+    sql: &str,
+) -> Result<String, Box<dyn std::error::Error>> {
+    execute_sql_via_client_as_with_args(username, password, sql, true)
+}
+
+/// Execute SQL via kalam-link client without authentication (uses default/anonymous)
+/// This is the client equivalent of execute_sql_via_cli (no auth)
+pub fn execute_sql_via_client(sql: &str) -> Result<String, Box<dyn std::error::Error>> {
+    execute_sql_via_client_as("root", "", sql)
 }
 
 /// Helper to generate unique namespace name
@@ -314,6 +617,35 @@ pub fn parse_job_id_from_flush_output(output: &str) -> Result<String, Box<dyn st
     }
 
     Err(format!("Failed to parse job ID from FLUSH output: {}", output).into())
+}
+
+/// Parse job ID from JSON response message field
+///
+/// Expected JSON format: {"status":"success","results":[{"message":"Flush started... Job ID: FL-xxx"}]}
+pub fn parse_job_id_from_json_message(json_output: &str) -> Result<String, Box<dyn std::error::Error>> {
+    let value: serde_json::Value = serde_json::from_str(json_output)
+        .map_err(|e| format!("Failed to parse JSON: {} in: {}", e, json_output))?;
+
+    // Navigate to results[0].message
+    let message = value
+        .get("results")
+        .and_then(|v| v.as_array())
+        .and_then(|arr| arr.first())
+        .and_then(|res| res.get("message"))
+        .and_then(|m| m.as_str())
+        .ok_or_else(|| format!("No message field in JSON response: {}", json_output))?;
+
+    // Extract job ID from message using the same logic as parse_job_id_from_flush_output
+    if let Some(idx) = message.find("Job ID: ") {
+        let after = &message[idx + "Job ID: ".len()..];
+        let id_token = after
+            .split_whitespace()
+            .next()
+            .ok_or("Missing job id token after 'Job ID: '")?;
+        return Ok(id_token.trim().to_string());
+    }
+
+    Err(format!("Failed to parse job ID from message: {}", message).into())
 }
 
 /// Parse multiple job IDs from FLUSH ALL TABLES output
@@ -483,12 +815,26 @@ pub fn wait_for_jobs_finished(
     Ok(statuses)
 }
 
-/// Subscription listener for testing real-time events via CLI
+// ============================================================================
+// CLIENT-BASED SUBSCRIPTION LISTENER (uses kalam-link WebSocket, avoids CLI)
+// ============================================================================
+
+/// Subscription listener for testing real-time events via kalam-link client.
+/// Uses WebSocket connection instead of spawning CLI processes to avoid
+/// macOS TCP connection limits.
 pub struct SubscriptionListener {
-    child: Child,
-    stdout_reader: Option<BufReader<std::process::ChildStdout>>,
-    line_receiver: Option<std_mpsc::Receiver<Result<String, String>>>,
-    reader_thread: Option<thread::JoinHandle<()>>,
+    event_receiver: std_mpsc::Receiver<String>,
+    stop_sender: Option<tokio::sync::oneshot::Sender<()>>,
+    _handle: Option<std::thread::JoinHandle<()>>,
+}
+
+impl Drop for SubscriptionListener {
+    fn drop(&mut self) {
+        // Signal the subscription task to stop
+        if let Some(sender) = self.stop_sender.take() {
+            let _ = sender.send(());
+        }
+    }
 }
 
 impl SubscriptionListener {
@@ -497,100 +843,115 @@ impl SubscriptionListener {
         Self::start_with_timeout(query, 30) // Default 30 second timeout for tests
     }
 
-    /// Start a subscription listener with a specific timeout in seconds
-    pub fn start_with_timeout(query: &str, timeout_secs: u64) -> Result<Self, Box<dyn std::error::Error>> {
-        let mut child = Command::new(env!("CARGO_BIN_EXE_kalam"))
-            .arg("-u")
-            .arg(SERVER_URL)
-            .arg("--username")
-            .arg("root")
-            .arg("--password")
-            .arg("")
-            .arg("--no-spinner") // Disable animations and banner messages
-            .arg("--subscription-timeout")
-            .arg(timeout_secs.to_string())
-            .arg("--subscribe")
-            .arg(query)
-            .stdout(Stdio::piped())
-            .stderr(Stdio::piped())
-            .spawn()?;
-
-        let stdout = child.stdout.take().ok_or("Failed to capture stdout")?;
-        let mut stdout_reader = BufReader::new(stdout);
-
-        // Start a background thread to read lines with ability to timeout
-        let (tx, rx) = std_mpsc::channel();
-        let reader_thread = thread::spawn(move || {
-            loop {
-                let mut line = String::new();
-                match stdout_reader.read_line(&mut line) {
-                    Ok(0) => {
-                        // EOF
-                        let _ = tx.send(Ok("".to_string()));
-                        break;
+    /// Start a subscription listener with a specific timeout in seconds.
+    /// Uses kalam-link WebSocket client instead of spawning CLI processes.
+    pub fn start_with_timeout(query: &str, _timeout_secs: u64) -> Result<Self, Box<dyn std::error::Error>> {
+        let (event_tx, event_rx) = std_mpsc::channel();
+        let (stop_tx, stop_rx) = tokio::sync::oneshot::channel::<()>();
+        
+        let query = query.to_string();
+        
+        let handle = thread::spawn(move || {
+            let runtime = tokio::runtime::Builder::new_current_thread()
+                .enable_all()
+                .build()
+                .expect("Failed to create tokio runtime for subscription");
+            
+            runtime.block_on(async move {
+                // Build client for subscription
+                let client = match KalamLinkClient::builder()
+                    .base_url(SERVER_URL)
+                    .auth(AuthProvider::basic_auth("root".to_string(), "".to_string()))
+                    .timeouts(KalamLinkTimeouts::fast())
+                    .build()
+                {
+                    Ok(c) => c,
+                    Err(e) => {
+                        let _ = event_tx.send(format!("ERROR: Failed to create client: {}", e));
+                        return;
                     }
-                    Ok(_) => {
-                        if tx.send(Ok(line.trim().to_string())).is_err() {
-                            break; // Receiver dropped
+                };
+                
+                // Start subscription
+                let mut subscription = match client.subscribe(&query).await {
+                    Ok(s) => s,
+                    Err(e) => {
+                        let _ = event_tx.send(format!("ERROR: Failed to subscribe: {}", e));
+                        return;
+                    }
+                };
+                
+                // Convert oneshot receiver to a future we can select on
+                let mut stop_rx = stop_rx;
+                
+                loop {
+                    tokio::select! {
+                        _ = &mut stop_rx => {
+                            // Stop signal received
+                            break;
+                        }
+                        event = subscription.next() => {
+                            match event {
+                                Some(Ok(change_event)) => {
+                                    // Format the event as a string for compatibility with existing tests
+                                    let event_str = format!("{:?}", change_event);
+                                    if event_tx.send(event_str).is_err() {
+                                        break; // Receiver dropped
+                                    }
+                                }
+                                Some(Err(e)) => {
+                                    let _ = event_tx.send(format!("ERROR: {}", e));
+                                    break;
+                                }
+                                None => {
+                                    // Subscription ended
+                                    break;
+                                }
+                            }
                         }
                     }
-                    Err(e) => {
-                        let _ = tx.send(Err(e.to_string()));
-                        break;
-                    }
                 }
-            }
+            });
         });
 
         Ok(Self {
-            child,
-            stdout_reader: None,
-            line_receiver: Some(rx),
-            reader_thread: Some(reader_thread),
+            event_receiver: event_rx,
+            stop_sender: Some(stop_tx),
+            _handle: Some(handle),
         })
     }
 
     /// Read next line from subscription output
     pub fn read_line(&mut self) -> Result<Option<String>, Box<dyn std::error::Error>> {
-        if let Some(ref rx) = self.line_receiver {
-            match rx.recv() {
-                Ok(Ok(line)) => {
-                    if line.is_empty() {
-                        Ok(None) // EOF
-                    } else {
-                        Ok(Some(line))
-                    }
+        match self.event_receiver.recv() {
+            Ok(line) => {
+                if line.is_empty() {
+                    Ok(None) // EOF
+                } else {
+                    Ok(Some(line))
                 }
-                Ok(Err(e)) => Err(e.into()),
-                Err(_) => Ok(None), // Channel closed
             }
-        } else {
-            Err("Listener not initialized properly".into())
+            Err(_) => Ok(None), // Channel closed
         }
     }
 
-    /// Try to read a line with a timeout (uses polling approach)
+    /// Try to read a line with a timeout
     pub fn try_read_line(
         &mut self,
         timeout: Duration,
     ) -> Result<Option<String>, Box<dyn std::error::Error>> {
-        if let Some(ref rx) = self.line_receiver {
-            match rx.recv_timeout(timeout) {
-                Ok(Ok(line)) => {
-                    if line.is_empty() {
-                        Ok(None) // EOF
-                    } else {
-                        Ok(Some(line))
-                    }
+        match self.event_receiver.recv_timeout(timeout) {
+            Ok(line) => {
+                if line.is_empty() {
+                    Ok(None) // EOF
+                } else {
+                    Ok(Some(line))
                 }
-                Ok(Err(e)) => Err(e.into()),
-                Err(std_mpsc::RecvTimeoutError::Timeout) => {
-                    Err("Timeout waiting for subscription data".into())
-                }
-                Err(std_mpsc::RecvTimeoutError::Disconnected) => Ok(None),
             }
-        } else {
-            Err("Listener not initialized properly".into())
+            Err(std_mpsc::RecvTimeoutError::Timeout) => {
+                Err("Timeout waiting for subscription data".into())
+            }
+            Err(std_mpsc::RecvTimeoutError::Disconnected) => Ok(None),
         }
     }
 
@@ -617,10 +978,12 @@ impl SubscriptionListener {
         Err(format!("Event pattern '{}' not found within timeout", pattern).into())
     }
 
-    /// Stop the subscription listener
+    /// Stop the subscription listener gracefully
     pub fn stop(mut self) -> Result<(), Box<dyn std::error::Error>> {
-        self.child.kill()?;
-        self.child.wait()?;
+        // Signal the subscription task to stop
+        if let Some(sender) = self.stop_sender.take() {
+            let _ = sender.send(());
+        }
         Ok(())
     }
 }

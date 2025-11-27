@@ -35,7 +35,7 @@ impl TypedStatementHandler<KillLiveQueryStatement> for KillLiveQueryHandler {
             context,
             "KILL",
             "LIVE_QUERY",
-            &statement.live_id.to_string(),
+            statement.live_id.as_ref(),
             None,
             None,
         );

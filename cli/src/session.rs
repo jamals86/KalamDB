@@ -99,6 +99,7 @@ pub struct CLISession {
     credential_store: Option<crate::credentials::FileCredentialStore>,
 
     /// Configured timeouts for operations
+    #[allow(dead_code)] // Reserved for future use
     timeouts: KalamLinkTimeouts,
 }
 
@@ -148,13 +149,17 @@ impl CLISession {
         // Try to fetch server info from health check
         let (server_version, server_api_version, server_build_date, connected) =
             match client.health_check().await {
-                Ok(health) => (
+                Ok(health) => {
+                    (
                     Some(health.version),
                     Some(health.api_version),
                     health.build_date,
                     true,
-                ),
-                Err(_) => (None, None, None, false),
+                )
+                },
+                Err(_e) => {
+                    (None, None, None, false)
+                },
             };
 
         // Extract username from auth provider
@@ -381,12 +386,10 @@ impl CLISession {
                 } else {
                     "*".green().bold().to_string()
                 }
+            } else if use_unicode {
+                "○".yellow().bold().to_string()
             } else {
-                if use_unicode {
-                    "○".yellow().bold().to_string()
-                } else {
-                    "o".yellow().bold().to_string()
-                }
+                "o".yellow().bold().to_string()
             }
         } else if self.connected {
             "*".to_string()
@@ -1579,13 +1582,12 @@ impl CLISession {
 
         // Basics
         println!("{}", "║  Basics".bright_blue().bold());
-        println!("{}", "║    • Write SQL; end with ';' to run");
+        println!("║    • Write SQL; end with ';' to run");
         println!(
-            "{}{}",
-            "║    • Autocomplete: keywords, namespaces, tables, columns  ",
+            "║    • Autocomplete: keywords, namespaces, tables, columns  {}",
             "(Tab)".dimmed()
         );
-        println!("{}", "║    • Inline hints and SQL highlighting enabled");
+        println!("║    • Inline hints and SQL highlighting enabled");
 
         // Meta-commands (two columns)
         println!(

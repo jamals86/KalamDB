@@ -121,7 +121,7 @@ async fn extract_basic_auth_with_repo(
 
     let is_localhost = client_ip
         .as_deref()
-        .map(|ip| crate::ip_extractor::is_localhost_address(ip))
+        .map(crate::ip_extractor::is_localhost_address)
         .unwrap_or(false);
 
     let is_system_internal = user.role == Role::System && user.auth_type == AuthType::Internal;
@@ -135,28 +135,23 @@ async fn extract_basic_auth_with_repo(
 
     if is_system_internal {
         if is_localhost {
-            if user.password_hash.is_empty() {
-                return Ok(AuthenticatedRequest {
+            // For localhost connections, accept empty password OR valid password
+            let password_ok = user.password_hash.is_empty()
+                || password::verify_password(&password_plain, &user.password_hash)
+                    .await
+                    .unwrap_or(false);
+
+            if password_ok {
+                Ok(AuthenticatedRequest {
                     user_id: user.id.clone(),
                     role: user.role,
                     username: user.username.to_string(),
-                });
+                })
             } else {
-                if password::verify_password(&password_plain, &user.password_hash)
-                    .await
-                    .unwrap_or(false)
-                {
-                    return Ok(AuthenticatedRequest {
-                        user_id: user.id.clone(),
-                        role: user.role,
-                        username: user.username.to_string(),
-                    });
-                } else {
-                    warn!("Invalid password for system user: {}", username);
-                    return Err(AuthError::InvalidCredentials(
-                        "Invalid username or password".to_string(),
-                    ));
-                }
+                warn!("Invalid password for system user: {}", username);
+                Err(AuthError::InvalidCredentials(
+                    "Invalid username or password".to_string(),
+                ))
             }
         } else {
             if user.password_hash.is_empty() {
@@ -173,40 +168,38 @@ async fn extract_basic_auth_with_repo(
                 .await
                 .unwrap_or(false)
             {
-                return Ok(AuthenticatedRequest {
+                Ok(AuthenticatedRequest {
                     user_id: user.id.clone(),
                     role: user.role,
                     username: user.username.to_string(),
-                });
+                })
             } else {
                 warn!("Invalid password for remote system user: {}", username);
-                return Err(AuthError::InvalidCredentials(
+                Err(AuthError::InvalidCredentials(
                     "Invalid username or password".to_string(),
-                ));
+                ))
             }
+        }
+    } else if !user.password_hash.is_empty() {
+        if password::verify_password(&password_plain, &user.password_hash)
+            .await
+            .unwrap_or(false)
+        {
+            Ok(AuthenticatedRequest {
+                user_id: user.id.clone(),
+                role: user.role,
+                username: user.username.to_string(),
+            })
+        } else {
+            warn!("Invalid password for user: {}", username);
+            Err(AuthError::InvalidCredentials(
+                "Invalid username or password".to_string(),
+            ))
         }
     } else {
-        if !user.password_hash.is_empty() {
-            if password::verify_password(&password_plain, &user.password_hash)
-                .await
-                .unwrap_or(false)
-            {
-                return Ok(AuthenticatedRequest {
-                    user_id: user.id.clone(),
-                    role: user.role,
-                    username: user.username.to_string(),
-                });
-            } else {
-                warn!("Invalid password for user: {}", username);
-                return Err(AuthError::InvalidCredentials(
-                    "Invalid username or password".to_string(),
-                ));
-            }
-        } else {
-            return Err(AuthError::InvalidCredentials(
-                "Invalid username or password".to_string(),
-            ));
-        }
+        Err(AuthError::InvalidCredentials(
+            "Invalid username or password".to_string(),
+        ))
     }
 }
 

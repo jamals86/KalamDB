@@ -111,11 +111,13 @@ impl JobsManager {
     async fn poll_next(&self) -> Result<Option<Job>, KalamDbError> {
         // Query for jobs with status=Queued or New, ordered by created_at ASC
         // Use limit=1 to fetch only the next job efficiently
-        let mut filter = JobFilter::default();
-        filter.statuses = Some(vec![JobStatus::New, JobStatus::Queued]);
-        filter.sort_by = Some(JobSortField::CreatedAt);
-        filter.sort_order = Some(SortOrder::Asc);
-        filter.limit = Some(1);
+        let filter = JobFilter {
+            statuses: Some(vec![JobStatus::New, JobStatus::Queued]),
+            sort_by: Some(JobSortField::CreatedAt),
+            sort_order: Some(SortOrder::Asc),
+            limit: Some(1),
+            ..Default::default()
+        };
 
         let jobs = self.list_jobs(filter).await?;
 

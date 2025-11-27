@@ -12,24 +12,25 @@ use std::fs;
 use std::path::PathBuf;
 use std::time::Duration;
 
-const BACKEND_STORAGE_DIR: &str = "../data/storage"; // Server's storage directory (from repository root)
+const BACKEND_STORAGE_DIR: &str = "../backend/data/storage"; // Server's storage directory (from backend/)
 
 fn get_storage_dir() -> PathBuf {
-    // The backend server writes to ./data/storage from repository root
-    // When tests run from cli/, we need to access ../data/storage
-    let root_path = PathBuf::from(BACKEND_STORAGE_DIR);
-    if root_path.exists() {
-        return root_path;
-    }
-
-    // Fallback for different working directory contexts
-    let backend_path = PathBuf::from("../backend/data/storage");
+    // The backend server writes to ./data/storage from backend/ directory
+    // When tests run from cli/, we need to access ../backend/data/storage
+    // Check this FIRST because ../data/storage may exist from old test runs
+    let backend_path = PathBuf::from(BACKEND_STORAGE_DIR);
     if backend_path.exists() {
         return backend_path;
     }
 
-    // Default to root path (will fail in test if it doesn't exist)
-    root_path
+    // Fallback for different working directory contexts (legacy root path)
+    let root_path = PathBuf::from("../data/storage");
+    if root_path.exists() {
+        return root_path;
+    }
+
+    // Default to backend path (will fail in test if it doesn't exist)
+    backend_path
 }
 
 /// Test manifest.json creation after flushing USER table
@@ -53,10 +54,10 @@ fn smoke_test_user_table_flush_manifest() {
     println!("🧪 Testing manifest.json for USER table flush");
 
     // Cleanup and setup
-    let _ = execute_sql_as_root_via_cli(&format!("DROP NAMESPACE IF EXISTS {} CASCADE", namespace));
+    let _ = execute_sql_as_root_via_client(&format!("DROP NAMESPACE IF EXISTS {} CASCADE", namespace));
     std::thread::sleep(Duration::from_millis(200));
 
-    execute_sql_as_root_via_cli(&format!("CREATE NAMESPACE {}", namespace))
+    execute_sql_as_root_via_client(&format!("CREATE NAMESPACE {}", namespace))
         .expect("Failed to create namespace");
 
     // Create USER table with low flush threshold for testing
@@ -72,7 +73,7 @@ fn smoke_test_user_table_flush_manifest() {
         )"#,
         full_table
     );
-    execute_sql_as_root_via_cli(&create_sql).expect("Failed to create table");
+    execute_sql_as_root_via_client(&create_sql).expect("Failed to create table");
     std::thread::sleep(Duration::from_millis(200));
 
     println!("✅ Created USER table with FLUSH_POLICY='rows:10'");
@@ -81,7 +82,7 @@ fn smoke_test_user_table_flush_manifest() {
     println!("📝 Inserting 20 rows to trigger flush...");
     for i in 1..=20 {
         let insert_sql = format!("INSERT INTO {} (content) VALUES ('Row {}')", full_table, i);
-        execute_sql_as_root_via_cli(&insert_sql)
+        execute_sql_as_root_via_client(&insert_sql)
             .unwrap_or_else(|e| panic!("Failed to insert row {}: {}", i, e));
     }
 
@@ -89,7 +90,7 @@ fn smoke_test_user_table_flush_manifest() {
 
     // Trigger manual flush to ensure data is flushed
     println!("🚀 Triggering manual FLUSH TABLE...");
-    let flush_output = execute_sql_as_root_via_cli(&format!("FLUSH TABLE {}", full_table))
+    let flush_output = execute_sql_as_root_via_client(&format!("FLUSH TABLE {}", full_table))
         .expect("Failed to flush table");
 
     println!("Flush output: {}", flush_output);
@@ -213,10 +214,10 @@ fn smoke_test_shared_table_flush_manifest() {
     println!("🧪 Testing manifest.json for SHARED table flush");
 
     // Cleanup and setup
-    let _ = execute_sql_as_root_via_cli(&format!("DROP NAMESPACE IF EXISTS {} CASCADE", namespace));
+    let _ = execute_sql_as_root_via_client(&format!("DROP NAMESPACE IF EXISTS {} CASCADE", namespace));
     std::thread::sleep(Duration::from_millis(200));
 
-    execute_sql_as_root_via_cli(&format!("CREATE NAMESPACE {}", namespace))
+    execute_sql_as_root_via_client(&format!("CREATE NAMESPACE {}", namespace))
         .expect("Failed to create namespace");
 
     // Create SHARED table
@@ -233,7 +234,7 @@ fn smoke_test_shared_table_flush_manifest() {
         )"#,
         full_table
     );
-    execute_sql_as_root_via_cli(&create_sql).expect("Failed to create shared table");
+    execute_sql_as_root_via_client(&create_sql).expect("Failed to create shared table");
     std::thread::sleep(Duration::from_millis(200));
 
     println!("✅ Created SHARED table with FLUSH_POLICY='rows:10'");
@@ -245,13 +246,13 @@ fn smoke_test_shared_table_flush_manifest() {
             "INSERT INTO {} (config_key, config_value) VALUES ('key_{}', 'value_{}')",
             full_table, i, i
         );
-        execute_sql_as_root_via_cli(&insert_sql)
+        execute_sql_as_root_via_client(&insert_sql)
             .unwrap_or_else(|e| panic!("Failed to insert row {}: {}", i, e));
     }
 
     // Trigger manual flush
     println!("🚀 Triggering manual FLUSH TABLE...");
-    let flush_output = execute_sql_as_root_via_cli(&format!("FLUSH TABLE {}", full_table))
+    let flush_output = execute_sql_as_root_via_client(&format!("FLUSH TABLE {}", full_table))
         .expect("Failed to flush table");
 
     let job_id = parse_job_id_from_flush_output(&flush_output)
@@ -324,10 +325,10 @@ fn smoke_test_manifest_updated_on_second_flush() {
     println!("🧪 Testing manifest.json updates on second flush");
 
     // Cleanup and setup
-    let _ = execute_sql_as_root_via_cli(&format!("DROP NAMESPACE IF EXISTS {} CASCADE", namespace));
+    let _ = execute_sql_as_root_via_client(&format!("DROP NAMESPACE IF EXISTS {} CASCADE", namespace));
     std::thread::sleep(Duration::from_millis(200));
 
-    execute_sql_as_root_via_cli(&format!("CREATE NAMESPACE {}", namespace))
+    execute_sql_as_root_via_client(&format!("CREATE NAMESPACE {}", namespace))
         .expect("Failed to create namespace");
 
     // Create SHARED table for easier testing (no user_id path complexity)
@@ -341,7 +342,7 @@ fn smoke_test_manifest_updated_on_second_flush() {
         )"#,
         full_table
     );
-    execute_sql_as_root_via_cli(&create_sql).expect("Failed to create table");
+    execute_sql_as_root_via_client(&create_sql).expect("Failed to create table");
     std::thread::sleep(Duration::from_millis(200));
 
     // First flush cycle
@@ -351,10 +352,10 @@ fn smoke_test_manifest_updated_on_second_flush() {
             "INSERT INTO {} (data) VALUES ('Batch1-Row{}')",
             full_table, i
         );
-        execute_sql_as_root_via_cli(&insert_sql).expect("Failed to insert row");
+        execute_sql_as_root_via_client(&insert_sql).expect("Failed to insert row");
     }
 
-    let flush1_output = execute_sql_as_root_via_cli(&format!("FLUSH TABLE {}", full_table))
+    let flush1_output = execute_sql_as_root_via_client(&format!("FLUSH TABLE {}", full_table))
         .expect("Failed to flush table (first)");
     let job1_id =
         parse_job_id_from_flush_output(&flush1_output).expect("Failed to parse job ID (first)");
@@ -399,10 +400,10 @@ fn smoke_test_manifest_updated_on_second_flush() {
             "INSERT INTO {} (data) VALUES ('Batch2-Row{}')",
             full_table, i
         );
-        execute_sql_as_root_via_cli(&insert_sql).expect("Failed to insert row");
+        execute_sql_as_root_via_client(&insert_sql).expect("Failed to insert row");
     }
 
-    let flush2_output = execute_sql_as_root_via_cli(&format!("FLUSH TABLE {}", full_table))
+    let flush2_output = execute_sql_as_root_via_client(&format!("FLUSH TABLE {}", full_table))
         .expect("Failed to flush table (second)");
     let job2_id =
         parse_job_id_from_flush_output(&flush2_output).expect("Failed to parse job ID (second)");
@@ -475,10 +476,10 @@ fn smoke_test_flush_stream_table_error() {
     println!("🧪 Testing FLUSH TABLE error on STREAM table");
 
     // Cleanup and setup
-    let _ = execute_sql_as_root_via_cli(&format!("DROP NAMESPACE IF EXISTS {} CASCADE", namespace));
+    let _ = execute_sql_as_root_via_client(&format!("DROP NAMESPACE IF EXISTS {} CASCADE", namespace));
     std::thread::sleep(Duration::from_millis(200));
 
-    execute_sql_as_root_via_cli(&format!("CREATE NAMESPACE {}", namespace))
+    execute_sql_as_root_via_client(&format!("CREATE NAMESPACE {}", namespace))
         .expect("Failed to create namespace");
 
     // Create STREAM table
@@ -489,12 +490,12 @@ fn smoke_test_flush_stream_table_error() {
         ) WITH (TYPE = 'STREAM', TTL_SECONDS = 30)"#,
         full_table
     );
-    execute_sql_as_root_via_cli(&create_sql).expect("Failed to create stream table");
+    execute_sql_as_root_via_client(&create_sql).expect("Failed to create stream table");
 
     println!("✅ Created STREAM table");
 
     // Try to flush stream table (should fail)
-    let flush_result = execute_sql_as_root_via_cli(&format!("FLUSH TABLE {}", full_table));
+    let flush_result = execute_sql_as_root_via_client(&format!("FLUSH TABLE {}", full_table));
 
     match flush_result {
         Err(e) => {

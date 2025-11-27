@@ -1,28 +1,27 @@
 //! Live query manager core implementation
 
 use crate::error::KalamDbError;
-use crate::live::connection_registry::{
-    LiveQueryRegistry, NodeId, NotificationSender,
-};
 use crate::live::filter::{FilterCache, FilterPredicate};
 use crate::live::initial_data::{InitialDataFetcher, InitialDataOptions, InitialDataResult};
 use crate::live::notification::NotificationService;
 use crate::live::query_parser::QueryParser;
+use crate::live::registry::ConnectionRegistry;
 use crate::live::subscription::SubscriptionService;
 use crate::live::types::{ChangeNotification, RegistryStats, SubscriptionResult};
 use crate::sql::executor::SqlExecutor;
 use datafusion::execution::context::SessionContext;
 use kalamdb_commons::models::{ConnectionId, LiveQueryId, NamespaceId, TableId, TableName, UserId};
 use kalamdb_commons::system::LiveQuery as SystemLiveQuery;
+use kalamdb_commons::NodeId;
 use kalamdb_system::LiveQueriesTableProvider;
 use std::sync::Arc;
 
 /// Live query manager
 pub struct LiveQueryManager {
-    /// In-memory registry using DashMap for lock-free concurrent access
-    /// NOTE: LiveQueryRegistry uses DashMap internally which provides interior mutability,
+    /// Unified connection registry using DashMap for lock-free concurrent access
+    /// NOTE: ConnectionRegistry uses DashMap internally which provides interior mutability,
     /// so we don't need tokio::sync::RwLock wrapper - it would only add unnecessary overhead
-    registry: Arc<LiveQueryRegistry>,
+    registry: Arc<ConnectionRegistry>,
     live_queries_provider: Arc<LiveQueriesTableProvider>,
     filter_cache: Arc<tokio::sync::RwLock<FilterCache>>,
     initial_data_fetcher: Arc<InitialDataFetcher>,
@@ -35,14 +34,17 @@ pub struct LiveQueryManager {
 }
 
 impl LiveQueryManager {
-    /// Create a new live query manager
+    /// Create a new live query manager with an external ConnectionRegistry
+    ///
+    /// The ConnectionRegistry is shared across all WebSocket handlers for
+    /// centralized connection/subscription management.
     pub fn new(
         live_queries_provider: Arc<LiveQueriesTableProvider>,
         schema_registry: Arc<crate::schema_registry::SchemaRegistry>,
-        node_id: NodeId,
+        registry: Arc<ConnectionRegistry>,
         base_session_context: Arc<SessionContext>,
     ) -> Self {
-        let registry = Arc::new(LiveQueryRegistry::new(node_id.clone()));
+        let node_id = registry.node_id().clone();
         let filter_cache = Arc::new(tokio::sync::RwLock::new(FilterCache::new()));
         let initial_data_fetcher = Arc::new(InitialDataFetcher::new(
             base_session_context,
@@ -82,25 +84,6 @@ impl LiveQueryManager {
     /// Provide shared SqlExecutor so initial data fetches reuse common execution path
     pub fn set_sql_executor(&self, executor: Arc<SqlExecutor>) {
         self.initial_data_fetcher.set_sql_executor(executor);
-    }
-
-    /// Register a new WebSocket connection
-    pub async fn register_connection(
-        &self,
-        user_id: UserId,
-        connection_id: ConnectionId,
-        notification_tx: Option<NotificationSender>,
-    ) -> Result<ConnectionId, KalamDbError> {
-
-        let tx = if let Some(tx) = notification_tx {
-            tx
-        } else {
-            let (tx, _rx) = tokio::sync::mpsc::unbounded_channel();
-            tx
-        };
-        self.registry.register_connection(user_id, connection_id.clone(), tx);
-
-        Ok(connection_id)
     }
 
     /// Register a live query subscription
@@ -292,8 +275,8 @@ impl LiveQueryManager {
         }
     }
 
-    /// Get the registry (for advanced use cases)
-    pub fn registry(&self) -> Arc<LiveQueryRegistry> {
+    /// Get the connection registry (for advanced use cases)
+    pub fn registry(&self) -> Arc<ConnectionRegistry> {
         Arc::clone(&self.registry)
     }
 

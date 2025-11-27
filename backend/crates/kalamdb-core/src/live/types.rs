@@ -1,7 +1,6 @@
-use super::connection_registry::LiveQueryId;
 use super::initial_data::InitialDataResult;
 use datafusion::scalar::ScalarValue;
-use kalamdb_commons::models::Row;
+use kalamdb_commons::models::{LiveQueryId, Row};
 use std::collections::BTreeMap;
 
 /// Change notification for live query subscribers

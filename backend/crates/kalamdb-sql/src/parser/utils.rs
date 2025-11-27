@@ -93,12 +93,12 @@ pub fn extract_keyword_value(sql: &str, keyword: &str) -> Result<String, String>
     let after_keyword = &sql[keyword_pos + keyword.len()..];
     let trimmed = after_keyword.trim();
 
-    if trimmed.starts_with('\'') {
+    if let Some(after_quote) = trimmed.strip_prefix('\'') {
         // Quoted value
-        let quote_end = trimmed[1..]
+        let quote_end = after_quote
             .find('\'')
             .ok_or_else(|| format!("Unclosed quote after {}", keyword))?;
-        Ok(trimmed[1..=quote_end].to_string())
+        Ok(after_quote[..quote_end].to_string())
     } else {
         // Unquoted value - extract next whitespace-separated token
         let value = trimmed

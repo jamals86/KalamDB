@@ -51,7 +51,7 @@ pub fn register_user_table_provider(
 
     // Create TableProviderCore and provider (wire LiveQueryManager for notifications)
     let core = Arc::new(
-        TableProviderCore::from_app_context(&app_context, table_id.clone(), TableType::User)
+        TableProviderCore::from_app_context(app_context, table_id.clone(), TableType::User)
             .with_live_query_manager(app_context.live_query_manager()),
     );
 
@@ -131,7 +131,7 @@ pub fn register_shared_table_provider(
 
     // Create and register new providers::SharedTableProvider
     let core = Arc::new(
-        TableProviderCore::from_app_context(&app_context, table_id.clone(), TableType::Shared)
+        TableProviderCore::from_app_context(app_context, table_id.clone(), TableType::Shared)
             .with_live_query_manager(app_context.live_query_manager()),
     );
 
@@ -211,7 +211,7 @@ pub fn register_stream_table_provider(
 
     // Create and register provider (new providers::streams implementation)
     let core = Arc::new(
-        TableProviderCore::from_app_context(&app_context, table_id.clone(), TableType::Stream)
+        TableProviderCore::from_app_context(app_context, table_id.clone(), TableType::Stream)
             .with_live_query_manager(app_context.live_query_manager()),
     );
     // Determine primary key field name from TableDefinition

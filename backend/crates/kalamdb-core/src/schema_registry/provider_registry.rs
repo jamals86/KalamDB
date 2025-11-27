@@ -180,6 +180,11 @@ impl ProviderRegistry {
     pub fn len(&self) -> usize {
         self.providers.len()
     }
+
+    /// Check if registry is empty
+    pub fn is_empty(&self) -> bool {
+        self.providers.is_empty()
+    }
 }
 
 impl Default for ProviderRegistry {

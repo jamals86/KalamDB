@@ -3,6 +3,10 @@ name = "kalamdb-store"
 version = "0.1.0"
 edition = "2021"
 
+[features]
+default = []
+datafusion = ["dep:datafusion"]
+
 [dependencies]
 # Internal crates
 kalamdb-commons = { path = "../kalamdb-commons", features = ["serde"] }
@@ -18,6 +22,9 @@ dashmap = { workspace = true }
 log = { workspace = true }
 tokio = { workspace = true, features = ["rt"] }
 async-trait = { workspace = true }
+
+# Optional: DataFusion integration for filter pushdown
+datafusion = { workspace = true, optional = true }
 
 # T171a: S3 storage backend support
 # NOTE: Commented out until cmake build dependency is available

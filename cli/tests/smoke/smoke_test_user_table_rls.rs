@@ -29,7 +29,7 @@ fn smoke_user_table_rls_isolation() {
     let user_pass = "smoke_pass_123";
 
     // 0) As root: create namespace
-    execute_sql_as_root_via_cli(&format!("CREATE NAMESPACE {}", namespace))
+    execute_sql_as_root_via_client(&format!("CREATE NAMESPACE {}", namespace))
         .expect("Failed to create namespace");
 
     // 1) As root: create a user table
@@ -42,13 +42,13 @@ fn smoke_user_table_rls_isolation() {
         ) WITH (TYPE='USER', FLUSH_POLICY='rows:10')"#,
         full_table
     );
-    execute_sql_as_root_via_cli(&create_table_sql).expect("Failed to create table");
+    execute_sql_as_root_via_client(&create_table_sql).expect("Failed to create table");
 
     // 2) As root: insert several rows
     let root_rows = vec!["root_row_1", "root_row_2", "root_row_3"];
     for val in &root_rows {
         let ins = format!("INSERT INTO {} (content) VALUES ('{}')", full_table, val);
-        execute_sql_as_root_via_cli(&ins).expect("Failed to insert root row");
+        execute_sql_as_root_via_client(&ins).expect("Failed to insert root row");
     }
 
     // 3) Create a new regular user
@@ -56,66 +56,71 @@ fn smoke_user_table_rls_isolation() {
         "CREATE USER {} WITH PASSWORD '{}' ROLE 'user'",
         user_name, user_pass
     );
-    execute_sql_as_root_via_cli(&create_user_sql).expect("Failed to create user");
+    execute_sql_as_root_via_client(&create_user_sql).expect("Failed to create user");
 
     // 4) Login via CLI as the regular user (implicit via next commands)
     // Validate auth by running a trivial command
-    let _ = execute_sql_via_cli_as(&user_name, user_pass, "SELECT 1").expect("Failed to login as user");
+    let _ = execute_sql_via_client_as(&user_name, user_pass, "SELECT 1").expect("Failed to login as user");
 
     // 5) As regular user: insert multiple rows
     let user_rows = vec!["user_row_a", "user_row_b", "user_row_c"];
     for val in &user_rows {
         let ins = format!("INSERT INTO {} (content) VALUES ('{}')", full_table, val);
-        execute_sql_via_cli_as(&user_name, user_pass, &ins).expect("Failed to insert user row");
+        execute_sql_via_client_as(&user_name, user_pass, &ins).expect("Failed to insert user row");
     }
 
     // Fetch ids for the specific user rows so we can perform id-based UPDATE/DELETE
     // (backend currently restricts USER table UPDATE/DELETE to primary key equality predicates)
+    // Use JSON output for reliable parsing
     let id_query = format!(
         "SELECT id, content FROM {} WHERE content IN ('user_row_b','user_row_c') ORDER BY content",
         full_table
     );
-    let id_out = execute_sql_via_cli_as(&user_name, user_pass, &id_query).expect("Failed to query user rows");
+    let id_out_json = execute_sql_via_client_as_json(&user_name, user_pass, &id_query).expect("Failed to query user rows");
 
-    // Parse ids from table output, handling negative numbers
+    // Parse JSON response to extract IDs
+    let json_value: serde_json::Value = serde_json::from_str(&id_out_json)
+        .expect("Failed to parse JSON response");
+    let rows = json_value
+        .get("results")
+        .and_then(|v| v.as_array())
+        .and_then(|arr| arr.first())
+        .and_then(|res| res.get("rows"))
+        .and_then(|v| v.as_array())
+        .expect("Expected rows in JSON response");
+
     let mut row_b_id: Option<String> = None;
     let mut row_c_id: Option<String> = None;
-    for line in id_out.lines() {
-        if line.contains("user_row_b") || line.contains("user_row_c") {
-            // Split by table cell delimiter '│' and take first column (id)
-            let parts: Vec<&str> = line.split('│').collect();
-            if parts.len() >= 2 {
-                let id_part = parts[1].trim();
-                // Validate it's a number (allowing negative)
-                if id_part.parse::<i64>().is_ok() {
-                    if line.contains("user_row_b") {
-                        row_b_id = Some(id_part.to_string());
-                    }
-                    if line.contains("user_row_c") {
-                        row_c_id = Some(id_part.to_string());
-                    }
-                }
+    for row in rows {
+        let content = row.get("content").and_then(|v| v.as_str()).unwrap_or("");
+        let id = row.get("id").and_then(|v| v.as_i64());
+        if let Some(id_val) = id {
+            if content == "user_row_b" {
+                row_b_id = Some(id_val.to_string());
+            }
+            if content == "user_row_c" {
+                row_c_id = Some(id_val.to_string());
             }
         }
     }
     let row_b_id = row_b_id
-        .unwrap_or_else(|| panic!("Failed to parse id for user_row_b from output: {}", id_out));
+        .unwrap_or_else(|| panic!("Failed to parse id for user_row_b from output: {}", id_out_json));
     let row_c_id = row_c_id
-        .unwrap_or_else(|| panic!("Failed to parse id for user_row_c from output: {}", id_out));
+        .unwrap_or_else(|| panic!("Failed to parse id for user_row_c from output: {}", id_out_json));
 
     // Update one of the user's rows (set updated=1) using id predicate
     let upd = format!(
         "UPDATE {} SET updated = 1 WHERE id = {}",
         full_table, row_b_id
     );
-    execute_sql_via_cli_as(&user_name, user_pass, &upd).expect("Failed to update user row");
+    execute_sql_via_client_as(&user_name, user_pass, &upd).expect("Failed to update user row");
 
     // Delete one of the user's rows using id predicate
     let del = format!("DELETE FROM {} WHERE id = {}", full_table, row_c_id);
-    execute_sql_via_cli_as(&user_name, user_pass, &del).expect("Failed to delete user row");
+    execute_sql_via_client_as(&user_name, user_pass, &del).expect("Failed to delete user row");
 
     // 6) SELECT as the regular user and verify visibility
-    let select_out = execute_sql_via_cli_as(
+    let select_out = execute_sql_via_client_as(
         &user_name,
         user_pass,
         &format!(
@@ -154,7 +159,7 @@ fn smoke_user_table_rls_isolation() {
     );
 
     // Cleanup (best-effort)
-    let _ = execute_sql_as_root_via_cli(&format!("DROP USER {}", user_name));
-    let _ = execute_sql_as_root_via_cli(&format!("DROP TABLE IF EXISTS {}", full_table));
-    let _ = execute_sql_as_root_via_cli(&format!("DROP NAMESPACE IF EXISTS {}", namespace));
+    let _ = execute_sql_as_root_via_client(&format!("DROP USER {}", user_name));
+    let _ = execute_sql_as_root_via_client(&format!("DROP TABLE IF EXISTS {}", full_table));
+    let _ = execute_sql_as_root_via_client(&format!("DROP NAMESPACE IF EXISTS {}", namespace));
 }

@@ -124,7 +124,7 @@ impl StreamTableProvider {
                 )
             })?;
 
-        Ok((user_ctx.user_id.clone(), user_ctx.role.clone()))
+        Ok((user_ctx.user_id.clone(), user_ctx.role))
     }
 }
 
@@ -212,12 +212,9 @@ impl BaseTableProvider<StreamTableRowId, StreamTableRow> for StreamTableProvider
         })?;
 
         log::debug!(
-            "[StreamProvider] Inserted event: table={} seq={} user={}",
-            format!(
-                "{}.{}",
-                table_id.namespace_id().as_str(),
-                table_id.table_name().as_str()
-            ),
+            "[StreamProvider] Inserted event: table={}.{} seq={} user={}",
+            table_id.namespace_id().as_str(),
+            table_id.table_name().as_str(),
             seq_id.as_i64(),
             user_id.as_str()
         );
@@ -313,12 +310,9 @@ impl BaseTableProvider<StreamTableRowId, StreamTableRow> for StreamTableProvider
         )?;
         let table_id = self.core.table_id();
         log::debug!(
-            "[StreamProvider] scan_rows: table={} rows={} user={} ttl={:?}",
-            format!(
-                "{}.{}",
-                table_id.namespace_id().as_str(),
-                table_id.table_name().as_str()
-            ),
+            "[StreamProvider] scan_rows: table={}.{} rows={} user={} ttl={:?}",
+            table_id.namespace_id().as_str(),
+            table_id.table_name().as_str(),
             kvs.len(),
             user_id.as_str(),
             self.ttl_seconds
@@ -394,12 +388,9 @@ impl BaseTableProvider<StreamTableRowId, StreamTableRow> for StreamTableProvider
                 ))
             })?;
         log::debug!(
-            "[StreamProvider] raw scan results: table={} user={} count={}",
-            format!(
-                "{}.{}",
-                table_id.namespace_id().as_str(),
-                table_id.table_name().as_str()
-            ),
+            "[StreamProvider] raw scan results: table={}.{} user={} count={}",
+            table_id.namespace_id().as_str(),
+            table_id.table_name().as_str(),
             user_id.as_str(),
             raw.len()
         );

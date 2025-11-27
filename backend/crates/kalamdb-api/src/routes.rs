@@ -20,7 +20,7 @@ pub fn configure_routes(cfg: &mut web::ServiceConfig) {
                     .service(handlers::execute_sql_v1)
                     .route("/healthcheck", web::get().to(healthcheck_handler)),
             )
-            .service(handlers::websocket_handler_v1),
+            .service(handlers::websocket_handler),
     );
 }
 

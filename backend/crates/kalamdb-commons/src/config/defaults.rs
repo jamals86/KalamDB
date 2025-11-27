@@ -284,3 +284,16 @@ pub fn default_rocksdb_block_cache_size() -> usize {
 pub fn default_rocksdb_max_background_jobs() -> i32 {
     4
 }
+
+// WebSocket defaults (Phase 14 - Live Queries)
+pub fn default_websocket_client_timeout() -> Option<u64> {
+    Some(10) // 10 seconds for client heartbeat timeout
+}
+
+pub fn default_websocket_auth_timeout() -> Option<u64> {
+    Some(3) // 3 seconds for authentication timeout
+}
+
+pub fn default_websocket_heartbeat_interval() -> Option<u64> {
+    Some(5) // 5 seconds between heartbeat checks
+}

@@ -115,9 +115,9 @@ impl CLIConfiguration {
     pub fn load(path: &Path) -> Result<Self> {
         // Expand tilde manually using home directory
         let path_str = path.to_str().unwrap_or("~/.kalam/config.toml");
-        let expanded_path = if path_str.starts_with("~/") {
+        let expanded_path = if let Some(rest) = path_str.strip_prefix("~/") {
             if let Some(home_dir) = dirs::home_dir() {
-                home_dir.join(&path_str[2..])
+                home_dir.join(rest)
             } else {
                 path.to_path_buf()
             }
@@ -143,9 +143,9 @@ impl CLIConfiguration {
     pub fn save(&self, path: &Path) -> Result<()> {
         // Expand tilde manually using home directory
         let path_str = path.to_str().unwrap_or("~/.kalam/config.toml");
-        let expanded_path = if path_str.starts_with("~/") {
+        let expanded_path = if let Some(rest) = path_str.strip_prefix("~/") {
             if let Some(home_dir) = dirs::home_dir() {
-                home_dir.join(&path_str[2..])
+                home_dir.join(rest)
             } else {
                 path.to_path_buf()
             }

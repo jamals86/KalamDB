@@ -1,8 +1,12 @@
-//! Actix actors for WebSocket management
+//! WebSocket session state management
 //!
-//! This module provides actor implementations for managing WebSocket connections
-//! and live query subscriptions.
+//! This module previously provided state-based WebSocket handling.
+//! Now consolidated into kalamdb_core::live::ConnectionRegistry.
+//!
+//! Legacy types removed:
+//! - HeartbeatManager (replaced by ConnectionRegistry)
+//! - WebSocketState (replaced by ws_handler)
 
-pub mod ws_session;
-
-pub use ws_session::WebSocketSession;
+// Re-export from kalamdb-core for backward compatibility
+pub use kalamdb_core::live::ConnectionRegistry;
+pub use kalamdb_core::live::ConnectionEvent;

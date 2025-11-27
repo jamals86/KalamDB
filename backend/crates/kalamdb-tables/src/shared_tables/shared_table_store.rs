@@ -1,6 +1,8 @@
 //! Shared table store implementation using EntityStore pattern
 //!
-//! This module provides a SystemTableStore-based implementation for cross-user shared tables.
+//! This module provides an EntityStore-based implementation for cross-user shared tables.
+//! Unlike system tables, shared tables use EntityStore directly (not SystemTableStore)
+//! because they are user data, not system metadata.
 //!
 //! **MVCC Architecture (Phase 12, User Story 5)**:
 //! - SharedTableRowId: SeqId directly (from kalamdb_commons)
@@ -11,8 +13,8 @@
 use kalamdb_commons::ids::{SeqId, SharedTableRowId};
 use kalamdb_commons::models::row::Row;
 use kalamdb_commons::models::{NamespaceId, TableName};
-use kalamdb_store::{entity_store::KSerializable, StorageBackend};
-use kalamdb_system::system_table_store::SystemTableStore;
+use kalamdb_store::entity_store::{EntityStore, KSerializable};
+use kalamdb_store::StorageBackend;
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 
@@ -30,8 +32,40 @@ pub struct SharedTableRow {
 
 impl KSerializable for SharedTableRow {}
 
-/// Type alias for shared table store (extends SystemTableStore)
-pub type SharedTableStore = SystemTableStore<SharedTableRowId, SharedTableRow>;
+/// Store for shared tables (cross-user data, not system metadata).
+///
+/// Uses SeqId keys for row versioning. Unlike SystemTableStore, this is a
+/// direct EntityStore implementation without admin-only access control.
+#[derive(Clone)]
+pub struct SharedTableStore {
+    backend: Arc<dyn StorageBackend>,
+    partition: String,
+}
+
+impl SharedTableStore {
+    /// Create a new shared table store
+    ///
+    /// # Arguments
+    /// * `backend` - Storage backend (RocksDB or mock)
+    /// * `partition` - Partition name (e.g., "shared_default:products")
+    pub fn new(backend: Arc<dyn StorageBackend>, partition: impl Into<String>) -> Self {
+        Self {
+            backend,
+            partition: partition.into(),
+        }
+    }
+}
+
+/// Implement EntityStore trait for typed CRUD operations
+impl EntityStore<SharedTableRowId, SharedTableRow> for SharedTableStore {
+    fn backend(&self) -> &Arc<dyn StorageBackend> {
+        &self.backend
+    }
+
+    fn partition(&self) -> &str {
+        &self.partition
+    }
+}
 
 /// Helper function to create a new shared table store
 ///
@@ -41,7 +75,7 @@ pub type SharedTableStore = SystemTableStore<SharedTableRowId, SharedTableRow>;
 /// * `table_name` - Table name
 ///
 /// # Returns
-/// A new SystemTableStore instance configured for the shared table
+/// A new SharedTableStore instance configured for the shared table
 pub fn new_shared_table_store(
     backend: Arc<dyn StorageBackend>,
     namespace_id: &NamespaceId,
@@ -57,13 +91,15 @@ pub fn new_shared_table_store(
     let partition = kalamdb_store::Partition::new(partition_name.clone());
     let _ = backend.create_partition(&partition); // Ignore error if already exists
 
-    SystemTableStore::new(backend, partition_name)
+    SharedTableStore::new(backend, partition_name)
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use kalamdb_store::{test_utils::InMemoryBackend, EntityStoreV2};
+    use datafusion::scalar::ScalarValue;
+    use kalamdb_store::test_utils::InMemoryBackend;
+    use std::collections::BTreeMap;
 
     fn create_test_store() -> SharedTableStore {
         let backend: Arc<dyn StorageBackend> = Arc::new(InMemoryBackend::new());
@@ -72,6 +108,17 @@ mod tests {
             &NamespaceId::new("test_ns"),
             &TableName::new("test_table"),
         )
+    }
+
+    fn create_test_row(seq: i64, name: &str) -> SharedTableRow {
+        let mut values = BTreeMap::new();
+        values.insert("name".to_string(), ScalarValue::Utf8(Some(name.to_string())));
+        values.insert("id".to_string(), ScalarValue::Int64(Some(seq)));
+        SharedTableRow {
+            _seq: SeqId::new(seq),
+            fields: Row::new(values),
+            _deleted: false,
+        }
     }
 
     #[test]
@@ -84,12 +131,7 @@ mod tests {
     fn test_shared_table_store_put_get() {
         let store = create_test_store();
         let key = SeqId::new(100);
-        let row = SharedTableRow {
-            _seq: SeqId::new(100),
-            fields: serde_json::from_value(serde_json::json!({"name": "Public Data", "id": 1}))
-                .unwrap(),
-            _deleted: false,
-        };
+        let row = create_test_row(100, "Public Data");
 
         // Put and get
         store.put(&key, &row).unwrap();
@@ -101,11 +143,7 @@ mod tests {
     fn test_shared_table_store_delete() {
         let store = create_test_store();
         let key = SeqId::new(200);
-        let row = SharedTableRow {
-            _seq: SeqId::new(200),
-            fields: serde_json::from_value(serde_json::json!({"data": "test", "id": 2})).unwrap(),
-            _deleted: false,
-        };
+        let row = create_test_row(200, "test");
 
         // Put, delete, verify
         store.put(&key, &row).unwrap();
@@ -120,11 +158,7 @@ mod tests {
         // Insert multiple rows
         for i in 1..=5 {
             let key = SeqId::new(i as i64 * 100);
-            let row = SharedTableRow {
-                _seq: SeqId::new(i as i64 * 100),
-                fields: serde_json::from_value(serde_json::json!({"id": i})).unwrap(),
-                _deleted: false,
-            };
+            let row = create_test_row(i as i64 * 100, &format!("item_{}", i));
             store.put(&key, &row).unwrap();
         }
 

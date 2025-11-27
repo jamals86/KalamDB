@@ -280,8 +280,16 @@ instead of: 1 failed: Invalid operation: No handler registered for statement typ
 
 184) i see when the system is idle again after a high load Open Files: 421 this is too high we need to investigate why and make sure we close all file handles correctly, add a logging or display logs when we request it to see where its leaking from
 
-15)     /// FIXME: Delete always by prefix of LiveQueryId which is user_id + connection_id
+185)     /// FIXME: Delete always by prefix of LiveQueryId which is user_id + connection_id
     pub fn delete_by_connection_id(&self, connection_id: &str) -> Result<(), SystemError>
+
+186) delete_by_connection_id_async should use an index in live_queries table instead of scanning all the rows to find the matching connection_id
+
+187) remove notify_table_change from pushing to 2 places user and admin! the pushing/notification is only for the user side not admin
+
+
+
+
 
 Here’s the updated 5-line spec with embedding storage inside Parquet and managed HNSW indexing (with delete handling):
 	1.	Parquet Storage: All embeddings are stored as regular columns in the Parquet file alongside other table columns to keep data unified and versioned per batch.
@@ -333,5 +341,14 @@ Code Cleanup Operations:
 6) Remove un-needed imports across the codebase
 7) Fix all clippy warnings and errors
 8) Check where we use AppContext::get() multiple times in the same struct and make it a member of the struct instead, or if the code already have AppContext as a member use it directly
+9) Use clippy suggestions to improve code quality
+10) Use todo!() instead of unimplemented!() where needed
+11) Remove all commented code across the codebase
+
+
+Tasks To Repo:
+1) Add ci/cd pipelines to the new repo
+2) Add code coverage to the new repo
+3) Add rustfmt and clippy checks to the new repo
 
 

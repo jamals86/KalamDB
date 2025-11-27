@@ -15,7 +15,7 @@ use datafusion::logical_expr::Expr;
 use datafusion::physical_plan::ExecutionPlan;
 use kalamdb_commons::system::Storage;
 use kalamdb_commons::StorageId;
-use kalamdb_store::entity_store::EntityStore;
+use kalamdb_store::entity_store::{EntityStore, EntityStoreAsync};
 use kalamdb_store::StorageBackend;
 use std::any::Any;
 use std::sync::Arc;
@@ -53,6 +53,17 @@ impl StoragesTableProvider {
         Ok(())
     }
 
+    /// Async version of `create_storage()` - offloads to blocking thread pool.
+    ///
+    /// Use this in async contexts to avoid blocking the Tokio runtime.
+    pub async fn create_storage_async(&self, storage: Storage) -> Result<(), SystemError> {
+        self.store
+            .put_async(&storage.storage_id, &storage)
+            .await
+            .map_err(|e| SystemError::Other(format!("put_async error: {}", e)))?;
+        Ok(())
+    }
+
     /// Alias for create_storage (for backward compatibility)
     pub fn insert_storage(&self, storage: Storage) -> Result<(), SystemError> {
         self.create_storage(storage)
@@ -66,9 +77,32 @@ impl StoragesTableProvider {
         Ok(self.store.get(storage_id)?)
     }
 
+    /// Async version of `get_storage_by_id()` - offloads to blocking thread pool.
+    ///
+    /// Use this in async contexts to avoid blocking the Tokio runtime.
+    pub async fn get_storage_by_id_async(
+        &self,
+        storage_id: &StorageId,
+    ) -> Result<Option<Storage>, SystemError> {
+        self.store
+            .get_async(storage_id)
+            .await
+            .map_err(|e| SystemError::Other(format!("get_async error: {}", e)))
+    }
+
     /// Alias for get_storage_by_id (for backward compatibility)
     pub fn get_storage(&self, storage_id: &StorageId) -> Result<Option<Storage>, SystemError> {
         self.get_storage_by_id(storage_id)
+    }
+
+    /// Async version of `get_storage()` - offloads to blocking thread pool.
+    ///
+    /// Use this in async contexts to avoid blocking the Tokio runtime.
+    pub async fn get_storage_async(
+        &self,
+        storage_id: &StorageId,
+    ) -> Result<Option<Storage>, SystemError> {
+        self.get_storage_by_id_async(storage_id).await
     }
 
     /// Update an existing storage entry
@@ -85,9 +119,39 @@ impl StoragesTableProvider {
         Ok(())
     }
 
+    /// Async version of `update_storage()` - offloads to blocking thread pool.
+    ///
+    /// Use this in async contexts to avoid blocking the Tokio runtime.
+    pub async fn update_storage_async(&self, storage: Storage) -> Result<(), SystemError> {
+        // Check if storage exists
+        if self.store.get_async(&storage.storage_id).await?.is_none() {
+            return Err(SystemError::NotFound(format!(
+                "Storage not found: {}",
+                storage.storage_id
+            )));
+        }
+
+        self.store
+            .put_async(&storage.storage_id, &storage)
+            .await
+            .map_err(|e| SystemError::Other(format!("put_async error: {}", e)))?;
+        Ok(())
+    }
+
     /// Delete a storage entry
     pub fn delete_storage(&self, storage_id: &StorageId) -> Result<(), SystemError> {
         self.store.delete(storage_id)?;
+        Ok(())
+    }
+
+    /// Async version of `delete_storage()` - offloads to blocking thread pool.
+    ///
+    /// Use this in async contexts to avoid blocking the Tokio runtime.
+    pub async fn delete_storage_async(&self, storage_id: &StorageId) -> Result<(), SystemError> {
+        self.store
+            .delete_async(storage_id)
+            .await
+            .map_err(|e| SystemError::Other(format!("delete_async error: {}", e)))?;
         Ok(())
     }
 
@@ -100,6 +164,18 @@ impl StoragesTableProvider {
             storages.push(s);
         }
         Ok(storages)
+    }
+
+    /// Async version of `list_storages()` - offloads to blocking thread pool.
+    ///
+    /// Use this in async contexts to avoid blocking the Tokio runtime.
+    pub async fn list_storages_async(&self) -> Result<Vec<Storage>, SystemError> {
+        let results: Vec<(Vec<u8>, Storage)> = self
+            .store
+            .scan_all_async(None, None, None)
+            .await
+            .map_err(|e| SystemError::Other(format!("scan_all_async error: {}", e)))?;
+        Ok(results.into_iter().map(|(_, s)| s).collect())
     }
 
     /// Scan all storages and return as RecordBatch

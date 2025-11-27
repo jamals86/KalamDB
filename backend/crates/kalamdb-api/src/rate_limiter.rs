@@ -402,7 +402,7 @@ impl ConnectionGuard {
 
             // Ban IP after repeated violations (escalating ban duration)
             if state.violation_count >= 10 {
-                let ban_multiplier = (state.violation_count / 10).min(6) as u32; // Max 6x
+                let ban_multiplier = (state.violation_count / 10).min(6); // Max 6x
                 let ban_duration = self.config.ban_duration * ban_multiplier;
                 state.banned_until = Some(Instant::now() + ban_duration);
 

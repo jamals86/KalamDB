@@ -235,7 +235,7 @@ impl BaseTableProvider<SharedTableRowId, SharedTableRow> for SharedTableProvider
         let prior = if let Some(p) = prior_opt {
             p
         } else {
-            self.get_row_from_parquet(key.clone())?
+            self.get_row_from_parquet(*key)?
                 .ok_or_else(|| KalamDbError::NotFound("Row not found for update".to_string()))?
         };
 
@@ -283,7 +283,7 @@ impl BaseTableProvider<SharedTableRowId, SharedTableRow> for SharedTableProvider
         let prior = if let Some(p) = prior_opt {
             p
         } else {
-            self.get_row_from_parquet(key.clone())?
+            self.get_row_from_parquet(*key)?
                 .ok_or_else(|| KalamDbError::NotFound("Row not found for delete".to_string()))?
         };
 
@@ -319,7 +319,7 @@ impl BaseTableProvider<SharedTableRowId, SharedTableRow> for SharedTableProvider
         };
 
         let keep_deleted = filter
-            .map(|f| base::filter_uses_deleted_column(f))
+            .map(base::filter_uses_deleted_column)
             .unwrap_or(false);
 
         // NO user_id extraction - shared tables scan ALL rows

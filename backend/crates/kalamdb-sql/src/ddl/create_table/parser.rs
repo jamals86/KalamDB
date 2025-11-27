@@ -68,7 +68,7 @@ impl CreateTableStatement {
                 }
 
                 // 2. Parse options (TYPE, STORAGE, FLUSH_POLICY, etc.)
-                let mut table_type = legacy_table_type.clone().unwrap_or(TableType::Shared);
+                let mut table_type = legacy_table_type.unwrap_or(TableType::Shared);
                 let mut storage_id = None;
                 let mut use_user_storage = false;
                 let mut flush_policy = None;

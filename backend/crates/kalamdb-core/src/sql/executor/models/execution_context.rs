@@ -240,7 +240,7 @@ impl ExecutionContext {
             .extensions
             .insert(SessionUserContext {
                 user_id: self.user_id.clone(),
-                role: self.user_role.clone(),
+                role: self.user_role,
             });
 
         // Create SessionContext from the per-user state

@@ -1,6 +1,8 @@
 //! User table store implementation using EntityStore pattern
 //!
-//! This module provides a SystemTableStore-based implementation for user-scoped tables.
+//! This module provides an EntityStore-based implementation for user-scoped tables.
+//! Unlike system tables, user tables use EntityStore directly (not SystemTableStore)
+//! because they are user data, not system metadata.
 //!
 //! **MVCC Architecture (Phase 12, User Story 5)**:
 //! - UserTableRowId: Composite struct with user_id and _seq fields (from kalamdb_commons)
@@ -10,8 +12,8 @@
 use kalamdb_commons::ids::{SeqId, UserTableRowId};
 use kalamdb_commons::models::row::Row;
 use kalamdb_commons::models::{KTableRow, NamespaceId, TableName, UserId};
-use kalamdb_store::{entity_store::KSerializable, StorageBackend};
-use kalamdb_system::system_table_store::SystemTableStore;
+use kalamdb_store::entity_store::{EntityStore, KSerializable};
+use kalamdb_store::StorageBackend;
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 
@@ -41,10 +43,41 @@ impl From<UserTableRow> for KTableRow {
     }
 }
 
-/// Type alias for user table store (extends SystemTableStore)
+/// Store for user tables (user data, not system metadata).
 ///
-/// Uses composite UserTableRowId keys (user_id:row_id) for user isolation.
-pub type UserTableStore = SystemTableStore<UserTableRowId, UserTableRow>;
+/// Uses composite UserTableRowId keys (user_id:_seq) for user isolation.
+/// Unlike SystemTableStore, this is a direct EntityStore implementation
+/// without admin-only access control.
+#[derive(Clone)]
+pub struct UserTableStore {
+    backend: Arc<dyn StorageBackend>,
+    partition: String,
+}
+
+impl UserTableStore {
+    /// Create a new user table store
+    ///
+    /// # Arguments
+    /// * `backend` - Storage backend (RocksDB or mock)
+    /// * `partition` - Partition name (e.g., "user_default:users")
+    pub fn new(backend: Arc<dyn StorageBackend>, partition: impl Into<String>) -> Self {
+        Self {
+            backend,
+            partition: partition.into(),
+        }
+    }
+}
+
+/// Implement EntityStore trait for typed CRUD operations
+impl EntityStore<UserTableRowId, UserTableRow> for UserTableStore {
+    fn backend(&self) -> &Arc<dyn StorageBackend> {
+        &self.backend
+    }
+
+    fn partition(&self) -> &str {
+        &self.partition
+    }
+}
 
 /// Helper function to create a new user table store
 ///
@@ -54,7 +87,7 @@ pub type UserTableStore = SystemTableStore<UserTableRowId, UserTableRow>;
 /// * `table_name` - Table name
 ///
 /// # Returns
-/// A new SystemTableStore instance configured for the user table
+/// A new UserTableStore instance configured for the user table
 pub fn new_user_table_store(
     backend: Arc<dyn StorageBackend>,
     namespace_id: &NamespaceId, //TODO: Use TableId instead of both namespace and table name
@@ -72,13 +105,15 @@ pub fn new_user_table_store(
     let partition = kalamdb_store::Partition::new(partition_name.clone());
     let _ = backend.create_partition(&partition); // Ignore error if already exists
 
-    SystemTableStore::new(backend, partition_name)
+    UserTableStore::new(backend, partition_name)
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use kalamdb_store::{test_utils::InMemoryBackend, EntityStoreV2};
+    use datafusion::scalar::ScalarValue;
+    use kalamdb_store::test_utils::InMemoryBackend;
+    use std::collections::BTreeMap;
 
     fn create_test_store() -> UserTableStore {
         let backend: Arc<dyn StorageBackend> = Arc::new(InMemoryBackend::new());
@@ -90,10 +125,13 @@ mod tests {
     }
 
     fn create_test_row(user_id: &str, seq: i64) -> UserTableRow {
+        let mut values = BTreeMap::new();
+        values.insert("name".to_string(), ScalarValue::Utf8(Some("Alice".to_string())));
+        values.insert("id".to_string(), ScalarValue::Int64(Some(1)));
         UserTableRow {
             user_id: UserId::new(user_id),
             _seq: SeqId::new(seq),
-            fields: serde_json::from_value(serde_json::json!({"name": "Alice", "id": 1})).unwrap(),
+            fields: Row::new(values),
             _deleted: false,
         }
     }

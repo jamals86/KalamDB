@@ -114,6 +114,25 @@ impl NamespacesTableProvider {
         Ok(())
     }
 
+    /// Async version of `update_namespace()` - offloads to blocking thread pool.
+    ///
+    /// Use this in async contexts to avoid blocking the Tokio runtime.
+    pub async fn update_namespace_async(&self, namespace: Namespace) -> Result<(), SystemError> {
+        // Check if namespace exists
+        if self.store.get_async(&namespace.namespace_id).await?.is_none() {
+            return Err(SystemError::NotFound(format!(
+                "Namespace not found: {}",
+                namespace.namespace_id
+            )));
+        }
+
+        self.store
+            .put_async(&namespace.namespace_id, &namespace)
+            .await
+            .map_err(|e| SystemError::Other(format!("put_async error: {}", e)))?;
+        Ok(())
+    }
+
     /// Delete a namespace entry
     pub fn delete_namespace(&self, namespace_id: &NamespaceId) -> Result<(), SystemError> {
         self.store.delete(namespace_id)?;
@@ -143,6 +162,18 @@ impl NamespacesTableProvider {
             namespaces.push(ns);
         }
         Ok(namespaces)
+    }
+
+    /// Async version of `list_namespaces()` - offloads to blocking thread pool.
+    ///
+    /// Use this in async contexts to avoid blocking the Tokio runtime.
+    pub async fn list_namespaces_async(&self) -> Result<Vec<Namespace>, SystemError> {
+        let results: Vec<(Vec<u8>, Namespace)> = self
+            .store
+            .scan_all_async(None, None, None)
+            .await
+            .map_err(|e| SystemError::Other(format!("scan_all_async error: {}", e)))?;
+        Ok(results.into_iter().map(|(_, ns)| ns).collect())
     }
 
     /// Alias for list_namespaces (backward compatibility)

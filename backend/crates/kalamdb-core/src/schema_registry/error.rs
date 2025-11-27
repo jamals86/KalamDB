@@ -103,12 +103,3 @@ impl From<arrow::error::ArrowError> for RegistryError {
         }
     }
 }
-
-// TODO: Re-enable when kalamdb-store exports EntityStoreError
-// impl From<kalamdb_store::EntityStoreError> for RegistryError {
-//     fn from(err: kalamdb_store::EntityStoreError) -> Self {
-//         RegistryError::StorageError {
-//             message: err.to_string(),
-//         }
-//     }
-// }

@@ -49,10 +49,13 @@ fn create_client() -> Result<KalamLinkClient, KalamLinkError> {
 
 async fn setup_namespace(ns: &str) {
     let client = create_client().unwrap();
+    // First drop the namespace to ensure clean state
     let _ = client
         .execute_query(&format!("DROP NAMESPACE IF EXISTS {} CASCADE", ns))
         .await;
-    sleep(Duration::from_millis(100)).await;
+    // Wait for drop to complete (cleanup is async)
+    sleep(Duration::from_millis(300)).await;
+    // Create the namespace
     let _ = client
         .execute_query(&format!("CREATE NAMESPACE {}", ns))
         .await;
@@ -134,7 +137,7 @@ async fn test_execute_query_with_results() {
 
     // Create table and insert data
     client
-        .execute_query("CREATE USER TABLE link_test.items (id INT, name VARCHAR) FLUSH ROWS 10")
+        .execute_query("CREATE USER TABLE link_test.items (id INT PRIMARY KEY, name VARCHAR)")
         .await
         .ok();
 
@@ -222,7 +225,7 @@ async fn test_subscription_basic() {
 
     // Create table
     client
-        .execute_query("CREATE USER TABLE ws_link_test.events (id INT, data VARCHAR) FLUSH ROWS 10")
+        .execute_query("CREATE USER TABLE ws_link_test.events (id INT PRIMARY KEY, data VARCHAR)")
         .await
         .ok();
     sleep(Duration::from_millis(100)).await;
@@ -261,7 +264,7 @@ async fn test_subscription_with_custom_config() {
 
     // Create table
     client
-        .execute_query("CREATE USER TABLE ws_link_config.data (id INT, val VARCHAR) FLUSH ROWS 10")
+        .execute_query("CREATE USER TABLE ws_link_config.data (id INT PRIMARY KEY, val VARCHAR)")
         .await
         .ok();
     sleep(Duration::from_millis(100)).await;
@@ -392,7 +395,7 @@ async fn test_create_and_drop_table() {
 
     // Create table
     let create = client
-        .execute_query("CREATE USER TABLE crud_test.test (id INT, name VARCHAR) FLUSH ROWS 10")
+        .execute_query("CREATE USER TABLE crud_test.test (id INT PRIMARY KEY, name VARCHAR)")
         .await;
     assert!(create.is_ok(), "CREATE TABLE should succeed");
 
@@ -412,7 +415,7 @@ async fn test_insert_and_select() {
 
     // Create table
     client
-        .execute_query("CREATE USER TABLE insert_test.data (id INT, value VARCHAR) FLUSH ROWS 10")
+        .execute_query("CREATE USER TABLE insert_test.data (id INT PRIMARY KEY, value VARCHAR)")
         .await
         .ok();
 
@@ -446,7 +449,7 @@ async fn test_update_operation() {
 
     // Setup
     client
-        .execute_query("CREATE USER TABLE update_test.items (id INT, status VARCHAR) FLUSH ROWS 10")
+        .execute_query("CREATE USER TABLE update_test.items (id INT PRIMARY KEY, status VARCHAR)")
         .await
         .ok();
     client
@@ -470,21 +473,44 @@ async fn test_delete_operation() {
 
     let client = create_client().unwrap();
 
-    // Setup
+    // Setup - drop table first to ensure clean state
     client
-        .execute_query("CREATE USER TABLE delete_test.records (id INT, data VARCHAR) FLUSH ROWS 10")
+        .execute_query("DROP TABLE IF EXISTS delete_test.records")
         .await
         .ok();
-    client
+    
+    // Wait for cleanup job to complete before creating new table
+    sleep(Duration::from_millis(500)).await;
+    
+    let create_result = client
+        .execute_query("CREATE USER TABLE delete_test.records (id INT PRIMARY KEY, data VARCHAR)")
+        .await;
+    assert!(create_result.is_ok(), "CREATE TABLE should succeed: {:?}", create_result.err());
+
+    // Small delay to ensure table is ready
+    sleep(Duration::from_millis(100)).await;
+
+    let insert_result = client
         .execute_query("INSERT INTO delete_test.records (id, data) VALUES (1, 'delete_me')")
-        .await
-        .ok();
+        .await;
+    assert!(insert_result.is_ok(), "INSERT should succeed: {:?}", insert_result.err());
+
+    // Verify row exists before delete
+    let select_result = client
+        .execute_query("SELECT * FROM delete_test.records WHERE id = 1")
+        .await;
+    assert!(select_result.is_ok(), "SELECT should succeed: {:?}", select_result.err());
+    
+    // Check the result has rows
+    if let Ok(ref qr) = select_result {
+        eprintln!("SELECT result: {:?}", qr);
+    }
 
     // Delete
     let delete = client
         .execute_query("DELETE FROM delete_test.records WHERE id = 1")
         .await;
-    assert!(delete.is_ok(), "DELETE should succeed");
+    assert!(delete.is_ok(), "DELETE should succeed: {:?}", delete.err());
 
     cleanup_namespace("delete_test").await;
 }
@@ -540,7 +566,7 @@ async fn test_where_clause_operators() {
 
     // Setup
     client
-        .execute_query("CREATE USER TABLE where_test.data (id INT, val VARCHAR) FLUSH ROWS 10")
+        .execute_query("CREATE USER TABLE where_test.data (id INT PRIMARY KEY, val VARCHAR)")
         .await
         .ok();
 
@@ -578,7 +604,7 @@ async fn test_limit_clause() {
 
     // Setup
     client
-        .execute_query("CREATE USER TABLE limit_test.items (id INT) FLUSH ROWS 10")
+        .execute_query("CREATE USER TABLE limit_test.items (id INT PRIMARY KEY)")
         .await
         .ok();
 
@@ -612,7 +638,7 @@ async fn test_order_by_clause() {
 
     // Setup
     client
-        .execute_query("CREATE USER TABLE order_test.data (val VARCHAR) FLUSH ROWS 10")
+        .execute_query("CREATE USER TABLE order_test.data (val VARCHAR PRIMARY KEY)")
         .await
         .ok();
 
@@ -644,7 +670,7 @@ async fn test_concurrent_queries() {
 
     // Setup table
     client
-        .execute_query("CREATE USER TABLE concurrent_test.data (id INT) FLUSH ROWS 10")
+        .execute_query("CREATE USER TABLE concurrent_test.data (id INT PRIMARY KEY)")
         .await
         .ok();
 

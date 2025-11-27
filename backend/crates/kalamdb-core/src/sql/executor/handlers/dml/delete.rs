@@ -124,12 +124,12 @@ impl StatementHandler for DeleteHandler {
                 use kalamdb_commons::TableAccess;
 
                 let access_level = if let TableOptions::Shared(opts) = &def.table_options {
-                    opts.access_level.clone().unwrap_or(TableAccess::Private)
+                    opts.access_level.unwrap_or(TableAccess::Private)
                 } else {
                     TableAccess::Private
                 };
 
-                if !can_write_shared_table(access_level.clone(), false, context.user_role) {
+                if !can_write_shared_table(access_level, false, context.user_role) {
                     return Err(KalamDbError::Unauthorized(format!(
                         "Insufficient privileges to write to shared table '{}.{}' (Access Level: {:?})",
                         namespace.as_str(),

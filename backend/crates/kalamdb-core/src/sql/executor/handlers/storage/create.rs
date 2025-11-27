@@ -82,7 +82,7 @@ impl TypedStatementHandler<CreateStorageStatement> for CreateStorageHandler {
 
         // Create storage record
         let storage = kalamdb_commons::system::Storage {
-            storage_id: StorageId::from(statement.storage_id.clone()),
+            storage_id: statement.storage_id.clone(),
             storage_name: statement.storage_name,
             description: statement.description,
             storage_type: statement.storage_type.to_string(),

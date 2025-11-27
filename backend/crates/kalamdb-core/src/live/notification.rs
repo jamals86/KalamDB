@@ -3,8 +3,8 @@
 //! Handles dispatching change notifications to subscribed clients,
 //! including filtering based on WHERE clauses.
 
-use super::connection_registry::LiveQueryRegistry;
 use super::filter::FilterCache;
+use super::registry::{ConnectionRegistry, NotificationSender};
 use super::types::{ChangeNotification, ChangeType};
 use crate::error::KalamDbError;
 use kalamdb_commons::models::{LiveQueryId, Row, TableId, UserId};
@@ -12,22 +12,21 @@ use kalamdb_system::LiveQueriesTableProvider;
 use std::collections::{BTreeMap, HashSet};
 use std::sync::Arc;
 use std::time::{SystemTime, UNIX_EPOCH};
-use tokio::task::spawn_blocking;
 
 /// Service for notifying subscribers of changes
 ///
-/// Uses Arc<LiveQueryRegistry> directly since LiveQueryRegistry internally
+/// Uses Arc<ConnectionRegistry> directly since ConnectionRegistry internally
 /// uses DashMap for lock-free concurrent access - no RwLock wrapper needed.
 pub struct NotificationService {
     /// Registry uses DashMap internally for lock-free access
-    registry: Arc<LiveQueryRegistry>,
+    registry: Arc<ConnectionRegistry>,
     filter_cache: Arc<tokio::sync::RwLock<FilterCache>>,
     live_queries_provider: Arc<LiveQueriesTableProvider>,
 }
 
 impl NotificationService {
     pub fn new(
-        registry: Arc<LiveQueryRegistry>,
+        registry: Arc<ConnectionRegistry>,
         filter_cache: Arc<tokio::sync::RwLock<FilterCache>>,
         live_queries_provider: Arc<LiveQueriesTableProvider>,
     ) -> Self {
@@ -47,17 +46,16 @@ impl NotificationService {
     }
 
     /// Increment the changes counter for a live query
+    ///
+    /// Uses provider's async method which handles spawn_blocking internally.
     pub async fn increment_changes(&self, live_id: &LiveQueryId) -> Result<(), KalamDbError> {
         let timestamp = Self::current_timestamp_ms();
-        let provider = Arc::clone(&self.live_queries_provider);
         let live_id_string = live_id.to_string();
 
-        spawn_blocking(move || {
-            provider.increment_changes(&live_id_string, timestamp)?;
-            Ok::<_, KalamDbError>(())
-        })
-        .await
-        .map_err(|e| KalamDbError::Other(format!("Join error incrementing live query changes: {}", e)))??;
+        self.live_queries_provider
+            .increment_changes_async(&live_id_string, timestamp)
+            .await
+            .map_err(|e| KalamDbError::Other(format!("Failed to increment changes: {}", e)))?;
 
         Ok(())
     }
@@ -122,6 +120,7 @@ impl NotificationService {
             // Exact user subscriptions
             all_handles.extend(self.registry.get_subscriptions_for_table(user_id, table_id));
             // Admin-like observers (observe all users)
+            // TODO: Not needed!!
             let root = kalamdb_commons::models::UserId::root();
             all_handles.extend(self.registry.get_subscriptions_for_table(&root, table_id));
 
@@ -143,7 +142,7 @@ impl NotificationService {
                 }
 
                 // Check filter if one exists (for INSERT/UPDATE/DELETE only)
-                if let Some(filter) = filter_cache.get(&handle.live_id.to_string()) {
+                if let Some(filter) = filter_cache.get(handle.live_id.as_ref()) {
                     // Apply filter to row data
                     match filter.matches(filtering_row) {
                         Ok(true) => {
@@ -230,7 +229,7 @@ impl NotificationService {
     async fn get_notification_sender(
         &self,
         live_id: &LiveQueryId,
-    ) -> Option<super::connection_registry::NotificationSender> {
+    ) -> Option<NotificationSender> {
         // DashMap provides lock-free access
         self.registry
             .get_notification_sender(&live_id.connection_id)

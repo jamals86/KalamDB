@@ -20,7 +20,7 @@ impl JobsManager {
 
         // Generate UUID for uniqueness
         let uuid = uuid::Uuid::new_v4().to_string().replace("-", "");
-        JobId::new(&format!("{}-{}", prefix, &uuid[..12]))
+        JobId::new(format!("{}-{}", prefix, &uuid[..12]))
     }
 
     /// Log job event to jobs.log file
@@ -47,8 +47,10 @@ impl JobsManager {
     /// Marks all Running jobs as Failed with "Server restarted" error.
     /// Uses provider's async methods which handle spawn_blocking internally.
     pub(crate) async fn recover_incomplete_jobs(&self) -> Result<(), KalamDbError> {
-        let mut filter = JobFilter::default();
-        filter.status = Some(JobStatus::Running);
+        let filter = JobFilter {
+            status: Some(JobStatus::Running),
+            ..Default::default()
+        };
 
         let running_jobs = self.list_jobs(filter).await?;
 
