@@ -14,9 +14,9 @@ export const kalamclient_subscribeWithSql: (a: number, b: number, c: number, d: 
 export const kalamclient_unsubscribe: (a: number, b: number, c: number) => any;
 export const wasm_bindgen__convert__closures_____invoke__hbe312fe94906cca5: (a: number, b: number, c: any) => void;
 export const wasm_bindgen__closure__destroy__h07a7edbb3f89726e: (a: number, b: number) => void;
-export const wasm_bindgen__convert__closures_____invoke__h762ee00b4618786e: (a: number, b: number) => void;
 export const wasm_bindgen__convert__closures_____invoke__h58212949185b0233: (a: number, b: number, c: any) => void;
 export const wasm_bindgen__closure__destroy__h882e84b55e202da7: (a: number, b: number) => void;
+export const wasm_bindgen__convert__closures_____invoke__h762ee00b4618786e: (a: number, b: number) => void;
 export const wasm_bindgen__convert__closures_____invoke__h631465b85669de06: (a: number, b: number, c: any, d: any) => void;
 export const __wbindgen_malloc: (a: number, b: number) => number;
 export const __wbindgen_realloc: (a: number, b: number, c: number, d: number) => number;
