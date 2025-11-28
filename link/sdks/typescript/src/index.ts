@@ -130,12 +130,99 @@ export interface SubscriptionInfo {
 }
 
 /**
- * Subscription options for controlling initial data loading
+ * Connection-level options for WebSocket connection behavior
+ * 
+ * These options control the overall WebSocket connection, including:
+ * - Automatic reconnection on connection loss
+ * - Reconnection timing and retry limits
+ * 
+ * Separate from SubscriptionOptions which control individual subscriptions.
+ * 
+ * @example
+ * ```typescript
+ * const client = new KalamDBClient('http://localhost:8080', 'user', 'pass');
+ * 
+ * // Configure connection options before connecting
+ * client.setAutoReconnect(true);
+ * client.setReconnectDelay(2000, 60000);
+ * client.setMaxReconnectAttempts(10);
+ * 
+ * await client.connect();
+ * ```
  */
-export interface SubscribeOptions {
-  /** Hint for server-side batch sizing during initial data load */
-  batch_size?: number;
+export interface ConnectionOptions {
+  /**
+   * Enable automatic reconnection on connection loss
+   * Default: true - automatically attempts to reconnect
+   */
+  auto_reconnect?: boolean;
+
+  /**
+   * Initial delay in milliseconds between reconnection attempts
+   * Default: 1000ms (1 second)
+   * Uses exponential backoff up to max_reconnect_delay_ms
+   */
+  reconnect_delay_ms?: number;
+
+  /**
+   * Maximum delay between reconnection attempts (for exponential backoff)
+   * Default: 30000ms (30 seconds)
+   */
+  max_reconnect_delay_ms?: number;
+
+  /**
+   * Maximum number of reconnection attempts before giving up
+   * Default: undefined (infinite retries)
+   * Set to 0 to disable reconnection entirely
+   */
+  max_reconnect_attempts?: number;
 }
+
+/**
+ * Subscription options for controlling individual subscription behavior
+ * 
+ * These options control subscription behavior including:
+ * - Initial data loading (batch_size, last_rows)
+ * - Data resumption after reconnection (from_seq_id)
+ * 
+ * Aligned with backend's SubscriptionOptions.
+ * 
+ * @example
+ * ```typescript
+ * // Fetch last 100 rows with batch size of 50
+ * const options: SubscriptionOptions = {
+ *   batch_size: 50,
+ *   last_rows: 100
+ * };
+ * 
+ * const unsubscribe = await client.subscribe('messages', callback, options);
+ * ```
+ */
+export interface SubscriptionOptions {
+  /** 
+   * Hint for server-side batch sizing during initial data load
+   * Default: server-configured (typically 1000 rows per batch)
+   */
+  batch_size?: number;
+
+  /**
+   * Number of last (newest) rows to fetch for initial data
+   * Default: undefined (fetch all matching rows)
+   */
+  last_rows?: number;
+
+  /**
+   * Resume subscription from a specific sequence ID
+   * When set, the server will only send changes after this seq_id
+   * Typically set automatically during reconnection to resume from last received event
+   */
+  from_seq_id?: string;
+}
+
+/**
+ * @deprecated Use SubscriptionOptions instead. This type alias is for backwards compatibility.
+ */
+export type SubscribeOptions = SubscriptionOptions;
 
 /**
  * Configuration options for KalamDB client
@@ -256,6 +343,115 @@ export class KalamDBClient {
   }
 
   /**
+   * Enable or disable automatic reconnection
+   * 
+   * When enabled, the client will automatically attempt to reconnect
+   * if the WebSocket connection is lost, and will re-subscribe to all
+   * active subscriptions with resume_from_seq_id to catch up on missed events.
+   * 
+   * @param enabled - Whether to automatically reconnect on connection loss
+   * 
+   * @example
+   * ```typescript
+   * client.setAutoReconnect(true);  // Enable (default)
+   * client.setAutoReconnect(false); // Disable for manual control
+   * ```
+   */
+  setAutoReconnect(enabled: boolean): void {
+    this.ensureInitialized();
+    this.wasmClient!.setAutoReconnect(enabled);
+  }
+
+  /**
+   * Configure reconnection delay parameters
+   * 
+   * The client uses exponential backoff starting from initialDelayMs,
+   * doubling each attempt up to maxDelayMs.
+   * 
+   * @param initialDelayMs - Initial delay between reconnection attempts (default: 1000ms)
+   * @param maxDelayMs - Maximum delay for exponential backoff (default: 30000ms)
+   * 
+   * @example
+   * ```typescript
+   * // Start with 500ms delay, max out at 10 seconds
+   * client.setReconnectDelay(500, 10000);
+   * ```
+   */
+  setReconnectDelay(initialDelayMs: number, maxDelayMs: number): void {
+    this.ensureInitialized();
+    this.wasmClient!.setReconnectDelay(BigInt(initialDelayMs), BigInt(maxDelayMs));
+  }
+
+  /**
+   * Set maximum number of reconnection attempts
+   * 
+   * @param maxAttempts - Maximum attempts before giving up (0 = infinite)
+   * 
+   * @example
+   * ```typescript
+   * client.setMaxReconnectAttempts(5);  // Give up after 5 attempts
+   * client.setMaxReconnectAttempts(0);  // Never give up (default)
+   * ```
+   */
+  setMaxReconnectAttempts(maxAttempts: number): void {
+    this.ensureInitialized();
+    this.wasmClient!.setMaxReconnectAttempts(maxAttempts);
+  }
+
+  /**
+   * Get the current number of reconnection attempts
+   * 
+   * Resets to 0 after a successful reconnection.
+   * 
+   * @returns Current reconnection attempt count
+   */
+  getReconnectAttempts(): number {
+    this.ensureInitialized();
+    return this.wasmClient!.getReconnectAttempts();
+  }
+
+  /**
+   * Check if the client is currently attempting to reconnect
+   * 
+   * @returns true if a reconnection is in progress
+   */
+  isReconnecting(): boolean {
+    this.ensureInitialized();
+    return this.wasmClient!.isReconnecting();
+  }
+
+  /**
+   * Get the last received sequence ID for a subscription
+   * 
+   * Useful for debugging or manual tracking of subscription progress.
+   * This seq_id is automatically used during reconnection to resume
+   * from where the subscription left off.
+   * 
+   * @param subscriptionId - The subscription ID to query
+   * @returns The last seq_id as a string, or undefined if not set
+   * 
+   * @example
+   * ```typescript
+   * const lastSeq = client.getLastSeqId(subscriptionId);
+   * console.log(`Last received seq: ${lastSeq}`);
+   * ```
+   */
+  getLastSeqId(subscriptionId: string): string | undefined {
+    this.ensureInitialized();
+    return this.wasmClient!.getLastSeqId(subscriptionId) ?? undefined;
+  }
+
+  /**
+   * Helper to ensure WASM client is initialized
+   * @private
+   */
+  private ensureInitialized(): void {
+    if (!this.wasmClient) {
+      throw new Error('WASM client not initialized. Call connect() first.');
+    }
+  }
+
+  /**
    * Disconnect from KalamDB server
    * 
    * Closes the WebSocket connection and cleans up all active subscriptions.
@@ -362,7 +558,7 @@ export class KalamDBClient {
    * 
    * @param tableName - Name of the table to subscribe to
    * @param callback - Function called when changes occur
-   * @param options - Optional subscription options (batch_size, etc.)
+   * @param options - Optional subscription options (batch_size, last_rows, from_seq_id)
    * @returns Unsubscribe function to stop receiving updates
    * 
    * @throws Error if subscription fails or not connected
@@ -378,7 +574,8 @@ export class KalamDBClient {
    * 
    * // With options
    * const unsubscribe = await client.subscribe('messages', callback, {
-   *   batch_size: 100  // Load initial data in batches of 100
+   *   batch_size: 100,  // Load initial data in batches of 100
+   *   last_rows: 50     // Only fetch last 50 rows initially
    * });
    * 
    * // Later: unsubscribe when done
@@ -388,7 +585,7 @@ export class KalamDBClient {
   async subscribe(
     tableName: string,
     callback: SubscriptionCallback,
-    options?: SubscribeOptions
+    options?: SubscriptionOptions
   ): Promise<Unsubscribe> {
     // Use subscribeWithSql internally with SELECT * FROM tableName
     const sql = `SELECT * FROM ${tableName}`;
@@ -403,7 +600,7 @@ export class KalamDBClient {
    * 
    * @param sql - SQL SELECT query to subscribe to
    * @param callback - Function called when changes occur
-   * @param options - Optional subscription options (batch_size, etc.)
+   * @param options - Optional subscription options (batch_size, last_rows, from_seq_id)
    * @returns Unsubscribe function to stop receiving updates
    * 
    * @throws Error if subscription fails or not connected
@@ -418,7 +615,7 @@ export class KalamDBClient {
    *       console.log('New message:', event.rows);
    *     }
    *   },
-   *   { batch_size: 50 }
+   *   { batch_size: 50, last_rows: 100 }
    * );
    * 
    * // Later: unsubscribe when done
@@ -428,7 +625,7 @@ export class KalamDBClient {
   async subscribeWithSql(
     sql: string,
     callback: SubscriptionCallback,
-    options?: SubscribeOptions
+    options?: SubscriptionOptions
   ): Promise<Unsubscribe> {
     await this.initialize();
     if (!this.wasmClient) {

@@ -126,8 +126,8 @@ pub use credentials::{CredentialStore, Credentials, MemoryCredentialStore};
 pub use error::{KalamLinkError, Result};
 pub use live::LiveConnection;
 pub use models::{
-    ChangeEvent, ErrorDetail, HealthCheckResponse, QueryRequest, QueryResponse, SubscriptionConfig,
-    SubscriptionOptions,
+    ChangeEvent, ConnectionOptions, ErrorDetail, HealthCheckResponse, QueryRequest, QueryResponse,
+    SubscriptionConfig, SubscriptionOptions,
 };
 pub use seq_id::SeqId;
 pub use timeouts::{KalamLinkTimeouts, KalamLinkTimeoutsBuilder};

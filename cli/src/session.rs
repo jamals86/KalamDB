@@ -1012,10 +1012,7 @@ impl CLISession {
             // No OPTIONS found - return SQL as-is with default options
             return (
                 sql.to_string(),
-                Some(SubscriptionOptions {
-                    batch_size: None,
-                    _reserved: None,
-                }),
+                Some(SubscriptionOptions::default()),
             );
         };
 
@@ -1036,10 +1033,7 @@ impl CLISession {
         // Expected format: (last_rows=N) or ( last_rows = N )
         if !options_str.starts_with('(') || !options_str.ends_with(')') {
             eprintln!("Warning: Invalid OPTIONS format, using defaults");
-            return Some(SubscriptionOptions {
-                batch_size: None,
-                _reserved: None,
-            });
+            return Some(SubscriptionOptions::default());
         }
 
         let inner = options_str[1..options_str.len() - 1].trim();
@@ -1050,14 +1044,20 @@ impl CLISession {
             let value = inner[equals_idx + 1..].trim();
 
             if key.to_lowercase() == "last_rows" {
-                if let Ok(_last_rows) = value.parse::<usize>() {
-                    return Some(SubscriptionOptions {
-                        batch_size: None,
-                        _reserved: None,
-                    });
+                if let Ok(last_rows) = value.parse::<u32>() {
+                    return Some(SubscriptionOptions::new().with_last_rows(last_rows));
                 } else {
                     eprintln!(
                         "Warning: Invalid last_rows value '{}', using default",
+                        value
+                    );
+                }
+            } else if key.to_lowercase() == "batch_size" {
+                if let Ok(batch_size) = value.parse::<usize>() {
+                    return Some(SubscriptionOptions::new().with_batch_size(batch_size));
+                } else {
+                    eprintln!(
+                        "Warning: Invalid batch_size value '{}', using default",
                         value
                     );
                 }
@@ -1067,10 +1067,7 @@ impl CLISession {
         }
 
         // Default if parsing failed
-        Some(SubscriptionOptions {
-            batch_size: None,
-            _reserved: None,
-        })
+        Some(SubscriptionOptions::default())
     }
 
     /// Run a WebSocket subscription

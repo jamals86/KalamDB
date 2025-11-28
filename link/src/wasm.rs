@@ -1,10 +1,14 @@
 // WASM bindings for KalamDB client (T041-T053, T063C-T063O)
 // Provides JavaScript/TypeScript interface for browser and Node.js usage
+// Supports automatic reconnection with seq_id resumption
 
 #![cfg(feature = "wasm")]
 
-// Use local models for WebSocket messages
-use crate::models::{ClientMessage, QueryRequest, ServerMessage, SubscriptionOptions, SubscriptionRequest};
+use crate::models::{
+    ClientMessage, ConnectionOptions, QueryRequest, ServerMessage, SubscriptionOptions,
+    SubscriptionRequest,
+};
+use crate::seq_id::SeqId;
 use base64::{engine::general_purpose, Engine as _};
 use std::cell::RefCell;
 use std::collections::HashMap;
@@ -17,7 +21,20 @@ use web_sys::{
     WebSocket,
 };
 
-/// WASM-compatible KalamDB client
+/// Stored subscription info for reconnection
+#[derive(Clone)]
+struct SubscriptionState {
+    /// The SQL query for this subscription
+    sql: String,
+    /// Original subscription options
+    options: SubscriptionOptions,
+    /// JavaScript callback function
+    callback: js_sys::Function,
+    /// Last received seq_id for resumption
+    last_seq_id: Option<SeqId>,
+}
+
+/// WASM-compatible KalamDB client with auto-reconnection support
 ///
 /// # Example (JavaScript)
 /// ```js
@@ -29,6 +46,22 @@ use web_sys::{
 ///   "username",
 ///   "password"
 /// );
+///
+/// // Configure auto-reconnect (enabled by default)
+/// client.setAutoReconnect(true);
+/// client.setReconnectDelay(1000, 30000);
+///
+/// await client.connect();
+///
+/// // Subscribe with options
+/// const subId = await client.subscribeWithSql(
+///   "SELECT * FROM chat.messages",
+///   JSON.stringify({
+///     batch_size: 100,
+///     include_old_values: true
+///   }),
+///   (event) => console.log('Change:', event)
+/// );
 /// ```
 #[wasm_bindgen]
 pub struct KalamClient {
@@ -36,7 +69,14 @@ pub struct KalamClient {
     username: String,
     password: String,
     ws: Rc<RefCell<Option<WebSocket>>>,
-    subscriptions: Rc<RefCell<HashMap<String, js_sys::Function>>>,
+    /// Subscription state including callbacks and last seq_id for resumption
+    subscription_state: Rc<RefCell<HashMap<String, SubscriptionState>>>,
+    /// Connection options for auto-reconnect
+    connection_options: Rc<RefCell<ConnectionOptions>>,
+    /// Current reconnection attempt count
+    reconnect_attempts: Rc<RefCell<u32>>,
+    /// Flag indicating if we're currently reconnecting
+    is_reconnecting: Rc<RefCell<bool>>,
 }
 
 #[wasm_bindgen]
@@ -74,8 +114,68 @@ impl KalamClient {
             username,
             password,
             ws: Rc::new(RefCell::new(None)),
-            subscriptions: Rc::new(RefCell::new(HashMap::new())),
+            subscription_state: Rc::new(RefCell::new(HashMap::new())),
+            connection_options: Rc::new(RefCell::new(ConnectionOptions::default())),
+            reconnect_attempts: Rc::new(RefCell::new(0)),
+            is_reconnecting: Rc::new(RefCell::new(false)),
         })
+    }
+
+    /// Enable or disable automatic reconnection
+    ///
+    /// # Arguments
+    /// * `enabled` - Whether to automatically reconnect on connection loss
+    #[wasm_bindgen(js_name = setAutoReconnect)]
+    pub fn set_auto_reconnect(&self, enabled: bool) {
+        self.connection_options.borrow_mut().auto_reconnect = enabled;
+    }
+
+    /// Set reconnection delay parameters
+    ///
+    /// # Arguments
+    /// * `initial_delay_ms` - Initial delay in milliseconds between reconnection attempts
+    /// * `max_delay_ms` - Maximum delay (for exponential backoff)
+    #[wasm_bindgen(js_name = setReconnectDelay)]
+    pub fn set_reconnect_delay(&self, initial_delay_ms: u64, max_delay_ms: u64) {
+        let mut opts = self.connection_options.borrow_mut();
+        opts.reconnect_delay_ms = initial_delay_ms;
+        opts.max_reconnect_delay_ms = max_delay_ms;
+    }
+
+    /// Set maximum reconnection attempts
+    ///
+    /// # Arguments
+    /// * `max_attempts` - Maximum number of attempts (0 = infinite)
+    #[wasm_bindgen(js_name = setMaxReconnectAttempts)]
+    pub fn set_max_reconnect_attempts(&self, max_attempts: u32) {
+        self.connection_options.borrow_mut().max_reconnect_attempts = if max_attempts == 0 {
+            None
+        } else {
+            Some(max_attempts)
+        };
+    }
+
+    /// Get the current reconnection attempt count
+    #[wasm_bindgen(js_name = getReconnectAttempts)]
+    pub fn get_reconnect_attempts(&self) -> u32 {
+        *self.reconnect_attempts.borrow()
+    }
+
+    /// Check if currently reconnecting
+    #[wasm_bindgen(js_name = isReconnecting)]
+    pub fn is_reconnecting_flag(&self) -> bool {
+        *self.is_reconnecting.borrow()
+    }
+
+    /// Get the last received seq_id for a subscription
+    ///
+    /// Useful for debugging or manual resumption tracking
+    #[wasm_bindgen(js_name = getLastSeqId)]
+    pub fn get_last_seq_id(&self, subscription_id: String) -> Option<String> {
+        self.subscription_state
+            .borrow()
+            .get(&subscription_id)
+            .and_then(|state| state.last_seq_id.map(|seq| seq.to_string()))
     }
 
     /// Connect to KalamDB server via WebSocket (T045, T063C-T063D)
@@ -84,6 +184,12 @@ impl KalamClient {
     /// Promise that resolves when connection is established and authenticated
     pub async fn connect(&mut self) -> Result<(), JsValue> {
         use wasm_bindgen_futures::JsFuture;
+
+        // Check if already connected - prevent duplicate connections
+        if self.is_connected() {
+            console_log("KalamClient: Already connected, skipping reconnection");
+            return Ok(());
+        }
 
         // T063O: Add console.log debugging for connection state changes
         console_log("KalamClient: Connecting to WebSocket...");
@@ -168,12 +274,16 @@ impl KalamClient {
                 e.code(),
                 e.reason()
             ));
+            // Note: Auto-reconnection is handled via the setup_auto_reconnect callback
         }) as Box<dyn FnMut(CloseEvent)>);
         ws.set_onclose(Some(onclose_callback.as_ref().unchecked_ref()));
         onclose_callback.forget();
 
+        // Set up auto-reconnect onclose handler
+        self.setup_auto_reconnect(&ws);
+
         // T063K: Implement WebSocket onmessage handler to parse events and invoke registered callbacks
-        let subscriptions = Rc::clone(&self.subscriptions);
+        let subscriptions = Rc::clone(&self.subscription_state);
         let auth_resolve_clone = auth_resolve.clone();
         let auth_reject_clone2 = auth_reject.clone();
         let auth_handled = Rc::new(RefCell::new(false));
@@ -215,14 +325,29 @@ impl KalamClient {
                         }
                     }
 
-                    // Look for subscription_id in the event
+                    // Look for subscription_id in the event and update last_seq_id
                     let subscription_id = match &event {
                         ServerMessage::SubscriptionAck {
                             subscription_id, ..
                         } => Some(subscription_id.clone()),
                         ServerMessage::InitialDataBatch {
-                            subscription_id, ..
-                        } => Some(subscription_id.clone()),
+                            subscription_id,
+                            batch_control,
+                            ..
+                        } => {
+                            // Update last_seq_id from batch_control
+                            if let Some(seq_id) = &batch_control.last_seq_id {
+                                let mut subs = subscriptions.borrow_mut();
+                                if let Some(state) = subs.get_mut(subscription_id) {
+                                    state.last_seq_id = Some(*seq_id);
+                                    console_log(&format!(
+                                        "KalamClient: Updated last_seq_id for {} to {}",
+                                        subscription_id, seq_id
+                                    ));
+                                }
+                            }
+                            Some(subscription_id.clone())
+                        }
                         ServerMessage::Change {
                             subscription_id, ..
                         } => Some(subscription_id.clone()),
@@ -235,14 +360,14 @@ impl KalamClient {
                     if let Some(id) = subscription_id {
                         let subs = subscriptions.borrow();
                         // First try exact match
-                        if let Some(callback) = subs.get(&id) {
-                            let _ = callback.call1(&JsValue::NULL, &JsValue::from_str(&message));
+                        if let Some(state) = subs.get(&id) {
+                            let _ = state.callback.call1(&JsValue::NULL, &JsValue::from_str(&message));
                         } else {
                             // Server may prefix subscription_id with user_id-session_id-
                             // Try to find a callback where the server's ID ends with our client ID
-                            for (client_id, callback) in subs.iter() {
+                            for (client_id, state) in subs.iter() {
                                 if id.ends_with(client_id) {
-                                    let _ = callback.call1(&JsValue::NULL, &JsValue::from_str(&message));
+                                    let _ = state.callback.call1(&JsValue::NULL, &JsValue::from_str(&message));
                                     break;
                                 }
                             }
@@ -275,13 +400,16 @@ impl KalamClient {
     pub async fn disconnect(&mut self) -> Result<(), JsValue> {
         console_log("KalamClient: Disconnecting from WebSocket...");
 
+        // Disable auto-reconnect during intentional disconnect
+        self.connection_options.borrow_mut().auto_reconnect = false;
+
         // T063E: Properly close WebSocket and cleanup resources
         if let Some(ws) = self.ws.borrow_mut().take() {
             ws.close()?;
         }
 
         // Clear all subscriptions
-        self.subscriptions.borrow_mut().clear();
+        self.subscription_state.borrow_mut().clear();
 
         console_log("KalamClient: Disconnected");
         Ok(())
@@ -398,7 +526,11 @@ impl KalamClient {
     ///
     /// # Arguments
     /// * `sql` - SQL SELECT query to subscribe to
-    /// * `options` - Optional JSON string with subscription options (e.g., `{"batch_size": 100}`)
+    /// * `options` - Optional JSON string with subscription options:
+    ///   - `batch_size`: Number of rows per batch (default: server-configured)
+    ///   - `auto_reconnect`: Override client auto-reconnect for this subscription (default: true)
+    ///   - `include_old_values`: Include old values in UPDATE/DELETE events (default: false)
+    ///   - `resume_from_seq_id`: Resume from a specific sequence ID (internal use)
     /// * `callback` - JavaScript function to call when changes occur
     ///
     /// # Returns
@@ -409,7 +541,7 @@ impl KalamClient {
     /// // Subscribe with options
     /// const subId = await client.subscribeWithSql(
     ///   "SELECT * FROM chat.messages WHERE conversation_id = 1",
-    ///   JSON.stringify({ batch_size: 50 }),
+    ///   JSON.stringify({ batch_size: 50, include_old_values: true }),
     ///   (event) => console.log('Change:', event)
     /// );
     /// ```
@@ -437,13 +569,18 @@ impl KalamClient {
         // Generate unique subscription ID from SQL hash
         let subscription_id = format!("sub-{:x}", md5_hash(&sql));
         
-        // T063J: Store subscription callbacks in HashMap for proper lifetime management
-        self.subscriptions
-            .borrow_mut()
-            .insert(subscription_id.clone(), callback);
+        // Store subscription state for reconnection (includes callback and last_seq_id)
+        self.subscription_state.borrow_mut().insert(
+            subscription_id.clone(),
+            SubscriptionState {
+                sql: sql.clone(),
+                options: subscription_options.clone(),
+                callback,
+                last_seq_id: None,
+            },
+        );
 
         // Send subscribe message via WebSocket
-        // Server expects: {"type": "subscribe", "subscription": {"id": "sub-1", "sql": "SELECT * FROM ...", "options": {}}}
         if let Some(ws) = self.ws.borrow().as_ref() {
             let subscribe_msg = ClientMessage::Subscribe {
                 subscription: SubscriptionRequest {
@@ -472,11 +609,10 @@ impl KalamClient {
             ));
         }
 
-        // T063M: Remove callback from HashMap and send unsubscribe message
-        self.subscriptions.borrow_mut().remove(&subscription_id);
+        // Remove from subscription state
+        self.subscription_state.borrow_mut().remove(&subscription_id);
 
         // Send unsubscribe message via WebSocket
-        // Note: Current server doesn't have unsubscribe - connection close will clean up
         if let Some(ws) = self.ws.borrow().as_ref() {
             let unsubscribe_msg = ClientMessage::Unsubscribe {
                 subscription_id: subscription_id.clone(),
@@ -544,6 +680,99 @@ impl KalamClient {
         let json = JsFuture::from(resp.text()?).await?;
         Ok(json.as_string().unwrap_or_else(|| "{}".to_string()))
     }
+
+    /// Set up auto-reconnection handler for the WebSocket
+    fn setup_auto_reconnect(&self, ws: &WebSocket) {
+        let connection_options = Rc::clone(&self.connection_options);
+        let subscription_state = Rc::clone(&self.subscription_state);
+        let reconnect_attempts = Rc::clone(&self.reconnect_attempts);
+        let is_reconnecting = Rc::clone(&self.is_reconnecting);
+        let ws_ref = Rc::clone(&self.ws);
+        let url = self.url.clone();
+        let username = self.username.clone();
+        let password = self.password.clone();
+
+        let onclose_reconnect = Closure::wrap(Box::new(move |_e: CloseEvent| {
+            let opts = connection_options.borrow();
+            if !opts.auto_reconnect || *is_reconnecting.borrow() {
+                return;
+            }
+
+            let current_attempts = *reconnect_attempts.borrow();
+            if let Some(max) = opts.max_reconnect_attempts {
+                if current_attempts >= max {
+                    console_log(&format!(
+                        "KalamClient: Max reconnection attempts ({}) reached",
+                        max
+                    ));
+                    return;
+                }
+            }
+
+            // Calculate delay with exponential backoff
+            let delay = std::cmp::min(
+                opts.reconnect_delay_ms * (2u64.pow(current_attempts)),
+                opts.max_reconnect_delay_ms,
+            );
+
+            console_log(&format!(
+                "KalamClient: Scheduling reconnection in {}ms (attempt {})",
+                delay,
+                current_attempts + 1
+            ));
+
+            // Clone for async closure
+            let is_reconnecting_clone = is_reconnecting.clone();
+            let reconnect_attempts_clone = reconnect_attempts.clone();
+            let subscription_state_clone = subscription_state.clone();
+            let ws_ref_clone = ws_ref.clone();
+            let url_clone = url.clone();
+            let username_clone = username.clone();
+            let password_clone = password.clone();
+
+            let reconnect_fn = Closure::wrap(Box::new(move || {
+                *is_reconnecting_clone.borrow_mut() = true;
+                *reconnect_attempts_clone.borrow_mut() += 1;
+
+                let url = url_clone.clone();
+                let username = username_clone.clone();
+                let password = password_clone.clone();
+                let ws_ref = ws_ref_clone.clone();
+                let subscription_state = subscription_state_clone.clone();
+                let is_reconnecting = is_reconnecting_clone.clone();
+                let reconnect_attempts = reconnect_attempts_clone.clone();
+
+                wasm_bindgen_futures::spawn_local(async move {
+                    match reconnect_internal(url, username, password, ws_ref.clone()).await {
+                        Ok(()) => {
+                            console_log("KalamClient: Reconnection successful");
+                            *reconnect_attempts.borrow_mut() = 0; // Reset attempts on success
+                            resubscribe_all(ws_ref, subscription_state).await;
+                        }
+                        Err(e) => {
+                            console_log(&format!("KalamClient: Reconnection failed: {:?}", e));
+                        }
+                    }
+                    *is_reconnecting.borrow_mut() = false;
+                });
+            }) as Box<dyn FnMut()>);
+
+            let window = web_sys::window().unwrap();
+            let _ = window.set_timeout_with_callback_and_timeout_and_arguments_0(
+                reconnect_fn.as_ref().unchecked_ref(),
+                delay as i32,
+            );
+            reconnect_fn.forget();
+        }) as Box<dyn FnMut(CloseEvent)>);
+
+        // Note: We add a second onclose handler for auto-reconnect
+        // The first one just logs, this one handles reconnection
+        ws.add_event_listener_with_callback(
+            "close",
+            onclose_reconnect.as_ref().unchecked_ref(),
+        ).ok();
+        onclose_reconnect.forget();
+    }
 }
 
 // Simple hash function to generate unique subscription IDs from SQL
@@ -553,6 +782,146 @@ fn md5_hash(s: &str) -> u64 {
     let mut hasher = DefaultHasher::new();
     s.hash(&mut hasher);
     hasher.finish()
+}
+
+/// Internal reconnection logic
+async fn reconnect_internal(
+    url: String,
+    username: String,
+    password: String,
+    ws_ref: Rc<RefCell<Option<WebSocket>>>,
+) -> Result<(), JsValue> {
+    let ws_url = url
+        .replace("http://", "ws://")
+        .replace("https://", "wss://");
+    let ws_url = format!("{}/v1/ws", ws_url);
+
+    let ws = WebSocket::new(&ws_url)?;
+
+    let (connect_promise, connect_resolve, connect_reject) = create_promise();
+    let (auth_promise, auth_resolve, auth_reject) = create_promise();
+
+    let username_clone = username.clone();
+    let password_clone = password.clone();
+    let ws_clone = ws.clone();
+
+    let connect_resolve_clone = connect_resolve.clone();
+    let onopen = Closure::wrap(Box::new(move || {
+        let auth_msg = ClientMessage::Authenticate {
+            username: username_clone.clone(),
+            password: password_clone.clone(),
+        };
+        if let Ok(json) = serde_json::to_string(&auth_msg) {
+            let _ = ws_clone.send_with_str(&json);
+        }
+        let _ = connect_resolve_clone.call0(&JsValue::NULL);
+    }) as Box<dyn FnMut()>);
+    ws.set_onopen(Some(onopen.as_ref().unchecked_ref()));
+    onopen.forget();
+
+    let connect_reject_clone = connect_reject.clone();
+    let auth_reject_clone = auth_reject.clone();
+    let onerror = Closure::wrap(Box::new(move |_: ErrorEvent| {
+        let error = JsValue::from_str("Reconnection failed");
+        let _ = connect_reject_clone.call1(&JsValue::NULL, &error);
+        let _ = auth_reject_clone.call1(&JsValue::NULL, &error);
+    }) as Box<dyn FnMut(ErrorEvent)>);
+    ws.set_onerror(Some(onerror.as_ref().unchecked_ref()));
+    onerror.forget();
+
+    let auth_resolve_clone = auth_resolve.clone();
+    let auth_reject_clone2 = auth_reject.clone();
+    let auth_handled = Rc::new(RefCell::new(false));
+    let auth_handled_clone = auth_handled.clone();
+
+    let onmessage = Closure::wrap(Box::new(move |e: MessageEvent| {
+        if let Ok(txt) = e.data().dyn_into::<js_sys::JsString>() {
+            let message = String::from(txt);
+            if let Ok(event) = serde_json::from_str::<ServerMessage>(&message) {
+                if !*auth_handled_clone.borrow() {
+                    match event {
+                        ServerMessage::AuthSuccess { .. } => {
+                            *auth_handled_clone.borrow_mut() = true;
+                            let _ = auth_resolve_clone.call0(&JsValue::NULL);
+                        }
+                        ServerMessage::AuthError { message } => {
+                            *auth_handled_clone.borrow_mut() = true;
+                            let error = JsValue::from_str(&format!("Auth failed: {}", message));
+                            let _ = auth_reject_clone2.call1(&JsValue::NULL, &error);
+                        }
+                        _ => {}
+                    }
+                }
+            }
+        }
+    }) as Box<dyn FnMut(MessageEvent)>);
+    ws.set_onmessage(Some(onmessage.as_ref().unchecked_ref()));
+    onmessage.forget();
+
+    *ws_ref.borrow_mut() = Some(ws);
+
+    JsFuture::from(connect_promise).await?;
+    JsFuture::from(auth_promise).await?;
+
+    Ok(())
+}
+
+/// Helper to create a Promise with resolve/reject functions
+fn create_promise() -> (js_sys::Promise, js_sys::Function, js_sys::Function) {
+    let mut resolve_fn: Option<js_sys::Function> = None;
+    let mut reject_fn: Option<js_sys::Function> = None;
+
+    let promise = js_sys::Promise::new(&mut |resolve, reject| {
+        resolve_fn = Some(resolve);
+        reject_fn = Some(reject);
+    });
+
+    (promise, resolve_fn.unwrap(), reject_fn.unwrap())
+}
+
+/// Re-subscribe to all subscriptions after reconnection with last seq_id
+async fn resubscribe_all(
+    ws_ref: Rc<RefCell<Option<WebSocket>>>,
+    subscription_state: Rc<RefCell<HashMap<String, SubscriptionState>>>,
+) {
+    let states: Vec<(String, SubscriptionState)> = subscription_state
+        .borrow()
+        .iter()
+        .map(|(id, state)| (id.clone(), state.clone()))
+        .collect();
+
+    for (subscription_id, state) in states {
+        console_log(&format!(
+            "KalamClient: Re-subscribing to {} with last_seq_id: {:?}",
+            subscription_id,
+            state.last_seq_id.map(|s| s.to_string())
+        ));
+
+        // Create options with from_seq_id if we have a last seq_id
+        let mut options = state.options.clone();
+        if let Some(seq_id) = state.last_seq_id {
+            options.from_seq_id = Some(seq_id);
+        }
+
+        let subscribe_msg = ClientMessage::Subscribe {
+            subscription: SubscriptionRequest {
+                id: subscription_id.clone(),
+                sql: state.sql.clone(),
+                options,
+            },
+        };
+
+        if let Some(ws) = ws_ref.borrow().as_ref() {
+            if let Ok(payload) = serde_json::to_string(&subscribe_msg) {
+                if let Err(e) = ws.send_with_str(&payload) {
+                    console_log(&format!(
+                        "KalamClient: Failed to re-subscribe to {}: {:?}",
+                        subscription_id, e
+                    ));
+                }
+            }
+        }
+    }
 }
 
 // Helper function to log to browser console

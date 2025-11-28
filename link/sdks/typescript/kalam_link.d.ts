@@ -1,7 +1,7 @@
 /* tslint:disable */
 /* eslint-disable */
 /**
- * WASM-compatible KalamDB client
+ * WASM-compatible KalamDB client with auto-reconnection support
  *
  * # Example (JavaScript)
  * ```js
@@ -12,6 +12,22 @@
  *   "http://localhost:8080",
  *   "username",
  *   "password"
+ * );
+ *
+ * // Configure auto-reconnect (enabled by default)
+ * client.setAutoReconnect(true);
+ * client.setReconnectDelay(1000, 30000);
+ *
+ * await client.connect();
+ *
+ * // Subscribe with options
+ * const subId = await client.subscribeWithSql(
+ *   "SELECT * FROM chat.messages",
+ *   JSON.stringify({
+ *     batch_size: 100,
+ *     include_old_values: true
+ *   }),
+ *   (event) => console.log('Change:', event)
  * );
  * ```
  */
@@ -30,6 +46,42 @@ export class KalamClient {
    * Returns JsValue error if url, username, or password is empty
    */
   constructor(url: string, username: string, password: string);
+  /**
+   * Enable or disable automatic reconnection
+   *
+   * # Arguments
+   * * `enabled` - Whether to automatically reconnect on connection loss
+   */
+  setAutoReconnect(enabled: boolean): void;
+  /**
+   * Set reconnection delay parameters
+   *
+   * # Arguments
+   * * `initial_delay_ms` - Initial delay in milliseconds between reconnection attempts
+   * * `max_delay_ms` - Maximum delay (for exponential backoff)
+   */
+  setReconnectDelay(initial_delay_ms: bigint, max_delay_ms: bigint): void;
+  /**
+   * Set maximum reconnection attempts
+   *
+   * # Arguments
+   * * `max_attempts` - Maximum number of attempts (0 = infinite)
+   */
+  setMaxReconnectAttempts(max_attempts: number): void;
+  /**
+   * Get the current reconnection attempt count
+   */
+  getReconnectAttempts(): number;
+  /**
+   * Check if currently reconnecting
+   */
+  isReconnecting(): boolean;
+  /**
+   * Get the last received seq_id for a subscription
+   *
+   * Useful for debugging or manual resumption tracking
+   */
+  getLastSeqId(subscription_id: string): string | undefined;
   /**
    * Connect to KalamDB server via WebSocket (T045, T063C-T063D)
    *
@@ -104,7 +156,11 @@ export class KalamClient {
    *
    * # Arguments
    * * `sql` - SQL SELECT query to subscribe to
-   * * `options` - Optional JSON string with subscription options (e.g., `{"batch_size": 100}`)
+   * * `options` - Optional JSON string with subscription options:
+   *   - `batch_size`: Number of rows per batch (default: server-configured)
+   *   - `auto_reconnect`: Override client auto-reconnect for this subscription (default: true)
+   *   - `include_old_values`: Include old values in UPDATE/DELETE events (default: false)
+   *   - `resume_from_seq_id`: Resume from a specific sequence ID (internal use)
    * * `callback` - JavaScript function to call when changes occur
    *
    * # Returns
@@ -115,7 +171,7 @@ export class KalamClient {
    * // Subscribe with options
    * const subId = await client.subscribeWithSql(
    *   "SELECT * FROM chat.messages WHERE conversation_id = 1",
-   *   JSON.stringify({ batch_size: 50 }),
+   *   JSON.stringify({ batch_size: 50, include_old_values: true }),
    *   (event) => console.log('Change:', event)
    * );
    * ```
@@ -136,6 +192,12 @@ export interface InitOutput {
   readonly memory: WebAssembly.Memory;
   readonly __wbg_kalamclient_free: (a: number, b: number) => void;
   readonly kalamclient_new: (a: number, b: number, c: number, d: number, e: number, f: number) => [number, number, number];
+  readonly kalamclient_setAutoReconnect: (a: number, b: number) => void;
+  readonly kalamclient_setReconnectDelay: (a: number, b: bigint, c: bigint) => void;
+  readonly kalamclient_setMaxReconnectAttempts: (a: number, b: number) => void;
+  readonly kalamclient_getReconnectAttempts: (a: number) => number;
+  readonly kalamclient_isReconnecting: (a: number) => number;
+  readonly kalamclient_getLastSeqId: (a: number, b: number, c: number) => [number, number];
   readonly kalamclient_connect: (a: number) => any;
   readonly kalamclient_disconnect: (a: number) => any;
   readonly kalamclient_isConnected: (a: number) => number;
@@ -157,6 +219,7 @@ export interface InitOutput {
   readonly __externref_table_alloc: () => number;
   readonly __wbindgen_externrefs: WebAssembly.Table;
   readonly __externref_table_dealloc: (a: number) => void;
+  readonly __wbindgen_free: (a: number, b: number, c: number) => void;
   readonly __wbindgen_start: () => void;
 }
 
