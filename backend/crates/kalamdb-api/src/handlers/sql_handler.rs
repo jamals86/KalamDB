@@ -169,10 +169,23 @@ pub async fn execute_sql_v1(
         .await
         {
             Ok(result) => {
-                // Log slow query if threshold exceeded
+                // Calculate timing and row count
                 let stmt_duration_secs = stmt_start.elapsed().as_secs_f64();
+                let stmt_duration_ms = stmt_duration_secs * 1000.0;
                 let row_count = result.rows.as_ref().map(|r| r.len()).unwrap_or(0);
 
+                // Debug log for SQL execution (includes timing)
+                log::debug!(
+                    target: "sql::exec",
+                    "✅ SQL executed | sql='{}' | user='{}' | role='{:?}' | rows={} | took={:.3}ms",
+                    sql,
+                    session.user.user_id.as_str(),
+                    session.user.role,
+                    row_count,
+                    stmt_duration_ms
+                );
+
+                // Log slow query if threshold exceeded
                 app_context.slow_query_logger().log_if_slow(
                     sql.to_string(),
                     stmt_duration_secs,

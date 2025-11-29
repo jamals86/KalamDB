@@ -277,7 +277,9 @@ instead of: 1 failed: Invalid operation: No handler registered for statement typ
 
 190) NamespaceId should be maximum of 32 characters only to avoid long names which may cause issues in file systems
 
-191) In cli tests whenever we have flush directly after it check the storage files manifest.json and the parquet files if they are exists there and the size is not 0, use one funstion in common which helps with this if not already having one like that
+191) In cli tests whenever we have flush directly after it check the storage files manifest.json and the parquet files if they are exists there and the size is not 0, use one function in common which helps with this if not already having one like that
+
+192) Remove last_seen from user or update it just only once per day to avoid too many writes to rocksdb for no reason
 
 
 
