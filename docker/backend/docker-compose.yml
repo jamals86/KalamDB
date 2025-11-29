@@ -1,51 +1,45 @@
-version: '3.8'
+# KalamDB Docker Compose Configuration
+# 
+# This compose file runs the pre-built KalamDB Docker image.
+# Build the image first using: ./tools/build (select Docker option)
+#
+# Usage:
+#   docker-compose up -d          # Start in background
+#   docker-compose logs -f        # View logs
+#   docker-compose down           # Stop and remove
+#   docker-compose down -v        # Stop and remove with volumes
+#
+# To override server.toml, uncomment the config volume mount below.
 
 services:
   kalamdb:
-    image: kalamdb:latest
+    image: jamals86/kalamdb:latest
     container_name: kalamdb
-    build:
-      context: ../../
-      dockerfile: docker/backend/Dockerfile
     ports:
-      - "8080:8080"
-    environment:
-      # Override config.toml values with environment variables
-      # All variables are optional - server uses config.toml defaults if not set
-      
-      # Server configuration
-      KALAMDB_SERVER_PORT: "${KALAMDB_SERVER_PORT:-8080}"
-      KALAMDB_SERVER_HOST: "${KALAMDB_SERVER_HOST:-0.0.0.0}"
-      
-      # Data directory
-      KALAMDB_DATA_DIR: "${KALAMDB_DATA_DIR:-/data}"
-      
-      # Logging
-      KALAMDB_LOG_LEVEL: "${KALAMDB_LOG_LEVEL:-info}"
-      KALAMDB_LOG_FILE: "${KALAMDB_LOG_FILE:-/data/logs/kalamdb.log}"
-      KALAMDB_LOG_TO_CONSOLE: "${KALAMDB_LOG_TO_CONSOLE:-true}"
-      
-      # Connection limits
-      KALAMDB_MAX_CONNECTIONS: "${KALAMDB_MAX_CONNECTIONS:-100}"
-      
+      - "${KALAMDB_PORT:-8080}:8080"
+    
     volumes:
       # Persistent data storage
       - kalamdb_data:/data
       
+      # Optional: Override server.toml with your own configuration
+      # Uncomment the line below and create a local server.toml file
+      # - ./server.toml:/config/server.toml:ro
+    
+    environment:
+      # These are informational - actual config is in server.toml
+      # To change settings, mount a custom server.toml (see volumes above)
+      RUST_LOG: "${RUST_LOG:-info}"
+    
     restart: unless-stopped
     
     healthcheck:
-      test: ["CMD", "/usr/local/bin/kalam-cli", "exec", "SELECT 1"]
+      test: ["CMD", "curl", "-sf", "http://localhost:8080/v1/api/healthcheck"]
       interval: 30s
-      timeout: 3s
+      timeout: 5s
       start_period: 10s
       retries: 3
 
 volumes:
   kalamdb_data:
     driver: local
-    # Optional: specify mount point on host
-    # driver_opts:
-    #   type: none
-    #   o: bind
-    #   device: /path/to/host/data

@@ -17,6 +17,14 @@ Faster operations. Lower infrastructure expenses. Zero waste.
 
 KalamDB is a **SQL-first, real-time database** that scales to millions of concurrent users through a revolutionary **table-per-user architecture**. Built in Rust with Apache Arrow and DataFusion, it combines the familiarity of SQL with the performance needed for modern chat applications and AI assistants.
 
+### 🐳 Quick Start with Docker
+
+Get KalamDB running in seconds:
+
+```bash
+curl -sSL https://raw.githubusercontent.com/jamals86/KalamDB/main/docker/backend/docker-compose.yml | docker-compose -f - up -d
+```
+
 ---
 
 ## 🚀 What Makes KalamDB Different?

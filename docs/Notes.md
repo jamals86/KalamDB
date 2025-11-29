@@ -281,7 +281,9 @@ instead of: 1 failed: Invalid operation: No handler registered for statement typ
 
 192) Remove last_seen from user or update it just only once per day to avoid too many writes to rocksdb for no reason
 
+193) is this still supported: job_cleanup_schedule = "0 0 * * *" in config.toml for jobs cleanup?
 
+194) Block update/insert/delete directly on system tables like users/namespaces/tables/live_queries
 
 
 Here’s the updated 5-line spec with embedding storage inside Parquet and managed HNSW indexing (with delete handling):

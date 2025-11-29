@@ -37,45 +37,70 @@ COPY cli/src ./cli/src
 COPY link/Cargo.toml ./link/
 COPY link/src ./link/src
 
-# Build release binaries
-RUN cargo build --release --bin kalamdb-server --bin kalam
+# Copy benchmark (needed for workspace, but we won't build it)
+COPY benchmark/Cargo.toml ./benchmark/
+RUN mkdir -p benchmark/src && echo "fn main() {}" > benchmark/src/main.rs
+
+# Copy build scripts
+COPY cli/build.rs ./cli/
+COPY backend/build.rs ./backend/
+
+# Copy or generate version.toml for compile-time version info
+# If version.toml exists, use it; otherwise create a default
+COPY version.tom[l] ./
+RUN if [ ! -f version.toml ]; then \
+    echo '# Auto-generated for Docker build' > version.toml && \
+    echo '[version]' >> version.toml && \
+    echo 'git_commit_hash = "docker"' >> version.toml && \
+    echo 'git_branch = "docker"' >> version.toml && \
+    echo "build_date = \"$(date -u '+%Y-%m-%d %H:%M:%S UTC')\"" >> version.toml; \
+    fi
+
+# Build optimized release binaries using docker profile
+# (opt-level=s, thin LTO, codegen-units=16 - less memory-intensive for cross-compilation)
+RUN cargo build --profile docker --bin kalamdb-server --bin kalam
 
 # ============================================================================
-# Stage 2: Runtime
+# Stage 2: Runtime (optimized for minimal size)
 # ============================================================================
 FROM debian:bookworm-slim
 
-# Install runtime dependencies
+# Install runtime dependencies and create user in single layer
+# Note: curl is needed for healthcheck
 RUN apt-get update && \
-    apt-get install -y \
+    apt-get install -y --no-install-recommends \
         ca-certificates \
         libssl3 \
-    && rm -rf /var/lib/apt/lists/*
+        curl \
+    && rm -rf /var/lib/apt/lists/* /var/cache/apt/* && \
+    useradd -m -u 1000 kalamdb && \
+    mkdir -p /data/rocksdb /data/storage /data/logs /config && \
+    chown -R kalamdb:kalamdb /data /config
 
-# Create app user (non-root)
-RUN useradd -m -u 1000 kalamdb && \
-    mkdir -p /data && \
-    chown -R kalamdb:kalamdb /data
+# Copy binaries from builder with correct permissions in single layer
+# Using --chmod to set executable bit without extra layer
+COPY --from=builder --chmod=755 /build/target/docker/kalamdb-server /usr/local/bin/kalamdb-server
+COPY --from=builder --chmod=755 /build/target/docker/kalam /usr/local/bin/kalam-cli
 
-# Copy binaries from builder
-COPY --from=builder /build/target/release/kalamdb-server /usr/local/bin/kalamdb-server
-COPY --from=builder /build/target/release/kalam /usr/local/bin/kalam-cli
+# Create symlink so 'kalam' command works (docs reference this name)
+RUN ln -s /usr/local/bin/kalam-cli /usr/local/bin/kalam
 
-# Make binaries executable
-RUN chmod +x /usr/local/bin/kalamdb-server /usr/local/bin/kalam-cli
+# Copy default server configuration (owned by kalamdb user)
+COPY --chown=kalamdb:kalamdb docker/backend/server.toml /config/server.toml
+COPY --chown=kalamdb:kalamdb docker/backend/server.toml /data/server.toml
 
 # Switch to non-root user
 USER kalamdb
 
-# Set working directory
+# Set working directory (server looks for server.toml here)
 WORKDIR /data
 
 # Expose default port
 EXPOSE 8080
 
-# Health check
-HEALTHCHECK --interval=30s --timeout=3s --start-period=5s --retries=3 \
-    CMD ["/usr/local/bin/kalam-cli", "exec", "SELECT 1"]
+# Health check using curl (more reliable than CLI which needs auth)
+HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 \
+    CMD curl -sf http://localhost:8080/health || exit 1
 
-# Default command: run server
+# Default command: run server (looks for server.toml in current directory)
 CMD ["/usr/local/bin/kalamdb-server"]

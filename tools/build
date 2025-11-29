@@ -1,0 +1,772 @@
+#!/usr/bin/env bash
+
+# ============================================================================
+# KalamDB Unified Build Tool
+# ============================================================================
+# Interactive build tool for creating releases, binaries, and Docker images
+#
+# Usage:
+#   ./tools/build              # Interactive mode
+#   ./tools/build --help       # Show help
+#
+# Features:
+#   - Auto-detects version from Cargo.toml
+#   - Multi-platform binary builds
+#   - GitHub release creation
+#   - Docker Hub publishing
+# ============================================================================
+
+set -e
+
+# Colors
+RED='\033[0;31m'
+GREEN='\033[0;32m'
+YELLOW='\033[1;33m'
+BLUE='\033[0;34m'
+CYAN='\033[0;36m'
+BOLD='\033[1m'
+NC='\033[0m'
+
+# Configuration
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+ROOT_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
+DOCKER_DIR="$ROOT_DIR/docker/backend"
+DIST_DIR="$ROOT_DIR/dist"
+REPO_OWNER="jamals86"
+REPO_NAME="KalamDB"
+DOCKERHUB_REPO="jamals86/kalamdb"
+PROFILE="release-dist"
+
+# Platform configurations: name:rust_target:file_ext
+PLATFORMS=(
+    "linux-x86_64:x86_64-unknown-linux-gnu:"
+    "linux-aarch64:aarch64-unknown-linux-gnu:"
+    "macos-x86_64:x86_64-apple-darwin:"
+    "macos-aarch64:aarch64-apple-darwin:"
+    "windows-x86_64:x86_64-pc-windows-gnu:.exe"
+)
+
+# Docker platform configurations
+DOCKER_PLATFORMS=(
+    "linux-amd64:linux/amd64"
+    "linux-arm64:linux/arm64"
+)
+
+# ============================================================================
+# Helper Functions
+# ============================================================================
+
+print_header() {
+    echo ""
+    echo -e "${BLUE}╔════════════════════════════════════════════════════════════╗${NC}"
+    echo -e "${BLUE}║${NC}${BOLD}              KalamDB Build Tool                            ${NC}${BLUE}║${NC}"
+    echo -e "${BLUE}╚════════════════════════════════════════════════════════════╝${NC}"
+    echo ""
+}
+
+print_step() {
+    echo -e "${CYAN}▶${NC} $1"
+}
+
+print_success() {
+    echo -e "${GREEN}✓${NC} $1"
+}
+
+print_warning() {
+    echo -e "${YELLOW}⚠${NC} $1"
+}
+
+print_error() {
+    echo -e "${RED}✗${NC} $1"
+}
+
+print_info() {
+    echo -e "${BLUE}ℹ${NC} $1"
+}
+
+# Show help
+show_help() {
+    cat << EOF
+${BOLD}KalamDB Build Tool${NC}
+
+Interactive build tool for creating releases, binaries, and Docker images.
+
+${BOLD}USAGE:${NC}
+    ./tools/build              Run in interactive mode
+    ./tools/build --help       Show this help message
+
+${BOLD}FEATURES:${NC}
+    • Auto-detects version from Cargo.toml
+    • Multi-platform binary builds (Linux, macOS, Windows)
+    • GitHub release creation with checksums
+    • Docker Hub publishing (multi-arch)
+
+${BOLD}PREREQUISITES:${NC}
+    • Rust toolchain installed
+    • GitHub CLI (gh) for releases: brew install gh && gh auth login
+    • Docker for container builds: https://docker.com
+    • cross for cross-compilation: cargo install cross
+
+${BOLD}SUPPORTED PLATFORMS:${NC}
+    Binaries:
+      • linux-x86_64   - Linux Intel/AMD 64-bit
+      • linux-aarch64  - Linux ARM 64-bit
+      • macos-x86_64   - macOS Intel
+      • macos-aarch64  - macOS Apple Silicon
+      • windows-x86_64 - Windows 64-bit
+
+    Docker:
+      • linux-amd64    - Docker for x86_64
+      • linux-arm64    - Docker for ARM64
+
+EOF
+    exit 0
+}
+
+# Extract version from Cargo.toml
+get_version() {
+    grep '^version = ' "$ROOT_DIR/Cargo.toml" | head -1 | sed 's/version = "\(.*\)"/\1/'
+}
+
+# Prompt for yes/no
+prompt_yes_no() {
+    local prompt="$1"
+    local default="${2:-n}"
+    local yn
+    
+    if [[ "$default" == "y" ]]; then
+        read -p "$(echo -e "${CYAN}?${NC} $prompt [Y/n]: ")" yn
+        yn="${yn:-y}"
+    else
+        read -p "$(echo -e "${CYAN}?${NC} $prompt [y/N]: ")" yn
+        yn="${yn:-n}"
+    fi
+    
+    [[ "$yn" =~ ^[Yy] ]]
+}
+
+# Multi-select menu (text-based, more reliable)
+multi_select() {
+    local prompt="$1"
+    shift
+    local options=("$@")
+    local num_options=${#options[@]}
+    local selected=()
+    
+    # Initialize all as selected (1 = selected, 0 = not selected)
+    for ((i=0; i<num_options; i++)); do
+        selected+=("1")
+    done
+    
+    while true; do
+        echo ""
+        echo -e "${CYAN}?${NC} $prompt"
+        echo -e "  ${BLUE}(Enter numbers to toggle, 'a' for all, 'n' for none, press Enter when done)${NC}"
+        echo ""
+        
+        for ((i=0; i<num_options; i++)); do
+            local check
+            if [[ "${selected[$i]}" == "1" ]]; then
+                check="${GREEN}◉${NC}"
+            else
+                check="○"
+            fi
+            echo -e "  ${BOLD}$((i+1))${NC}) ${check} ${options[$i]}"
+        done
+        
+        echo ""
+        read -p "$(echo -e "${CYAN}>${NC} ")" input
+        
+        case "$input" in
+            "")
+                # Done - exit loop (just press Enter)
+                break
+                ;;
+            a|A|all)
+                # Select all
+                for ((i=0; i<num_options; i++)); do
+                    selected[$i]="1"
+                done
+                clear_lines $((num_options + 6))
+                ;;
+            n|N|none)
+                # Deselect all
+                for ((i=0; i<num_options; i++)); do
+                    selected[$i]="0"
+                done
+                clear_lines $((num_options + 6))
+                ;;
+            *)
+                # Toggle specific numbers (comma or space separated)
+                local nums
+                IFS=', ' read -ra nums <<< "$input"
+                for num in "${nums[@]}"; do
+                    if [[ "$num" =~ ^[0-9]+$ ]] && [[ $num -ge 1 ]] && [[ $num -le $num_options ]]; then
+                        local idx=$((num - 1))
+                        if [[ "${selected[$idx]}" == "1" ]]; then
+                            selected[$idx]="0"
+                        else
+                            selected[$idx]="1"
+                        fi
+                    fi
+                done
+                clear_lines $((num_options + 6))
+                ;;
+        esac
+    done
+    
+    # Show final selection
+    echo -e "${GREEN}Selected:${NC}"
+    
+    # Return selected indices
+    SELECTED_INDICES=()
+    for ((i=0; i<num_options; i++)); do
+        if [[ "${selected[$i]}" == "1" ]]; then
+            SELECTED_INDICES+=("$i")
+            echo -e "  ${GREEN}✓${NC} ${options[$i]}"
+        fi
+    done
+    echo ""
+}
+
+# Clear N lines above cursor
+clear_lines() {
+    local count=$1
+    for ((i=0; i<count; i++)); do
+        tput cuu1  # Move up
+        tput el    # Clear line
+    done
+}
+
+# Single select menu (text-based)
+single_select() {
+    local prompt="$1"
+    shift
+    local options=("$@")
+    local num_options=${#options[@]}
+    
+    echo ""
+    echo -e "${CYAN}?${NC} $prompt"
+    echo ""
+    
+    for ((i=0; i<num_options; i++)); do
+        echo -e "  ${BOLD}$((i+1))${NC}) ${options[$i]}"
+    done
+    
+    echo ""
+    while true; do
+        read -p "$(echo -e "${CYAN}>${NC} Enter number [1-$num_options]: ")" input
+        
+        if [[ "$input" =~ ^[0-9]+$ ]] && [[ $input -ge 1 ]] && [[ $input -le $num_options ]]; then
+            SELECTED_INDEX=$((input - 1))
+            echo -e "${GREEN}Selected:${NC} ${options[$SELECTED_INDEX]}"
+            echo ""
+            break
+        else
+            echo -e "${RED}Invalid selection. Enter a number between 1 and $num_options${NC}"
+        fi
+    done
+}
+
+# ============================================================================
+# Build Functions
+# ============================================================================
+
+# Generate version.toml with git info for build scripts
+generate_version_toml() {
+    local version_file="$ROOT_DIR/version.toml"
+    
+    # Get git info
+    local git_commit
+    local git_branch
+    local build_date
+    
+    git_commit=$(git rev-parse --short HEAD 2>/dev/null || echo "unknown")
+    git_branch=$(git rev-parse --abbrev-ref HEAD 2>/dev/null || echo "unknown")
+    build_date=$(date -u "+%Y-%m-%d %H:%M:%S UTC")
+    
+    # Write version.toml
+    cat > "$version_file" << EOF
+# Auto-generated version info - DO NOT EDIT MANUALLY
+# Generated by tools/build at $build_date
+
+[version]
+git_commit_hash = "$git_commit"
+git_branch = "$git_branch"
+build_date = "$build_date"
+EOF
+    
+    print_success "Generated version.toml (commit: $git_commit, branch: $git_branch)"
+}
+
+setup_macos_env() {
+    if [[ "$(uname -s)" == "Darwin" ]]; then
+        if [ -d "$(xcode-select -p 2>/dev/null)/Toolchains/XcodeDefault.xctoolchain/usr/lib" ]; then
+            XCODE_LIB="$(xcode-select -p)/Toolchains/XcodeDefault.xctoolchain/usr/lib"
+            export DYLD_LIBRARY_PATH="${XCODE_LIB}:${DYLD_LIBRARY_PATH:-}"
+            export LIBCLANG_PATH="${XCODE_LIB}"
+            export BINDGEN_EXTRA_CLANG_ARGS="-I$(xcode-select -p)/Toolchains/XcodeDefault.xctoolchain/usr/include"
+        elif [ -d "/opt/homebrew/opt/llvm/lib" ]; then
+            export DYLD_LIBRARY_PATH="/opt/homebrew/opt/llvm/lib:${DYLD_LIBRARY_PATH:-}"
+            export LIBCLANG_PATH="/opt/homebrew/opt/llvm/lib"
+        elif [ -d "/usr/local/opt/llvm/lib" ]; then
+            export DYLD_LIBRARY_PATH="/usr/local/opt/llvm/lib:${DYLD_LIBRARY_PATH:-}"
+            export LIBCLANG_PATH="/usr/local/opt/llvm/lib"
+        fi
+    fi
+}
+
+build_platform() {
+    local platform_name="$1"
+    local rust_target="$2"
+    local file_ext="$3"
+    local version="$4"
+    
+    print_step "Building for ${BOLD}$platform_name${NC}..."
+    
+    local cli_bin="kalam${file_ext}"
+    local server_bin="kalamdb-server${file_ext}"
+    local build_dir="$ROOT_DIR/target/${rust_target}/${PROFILE}"
+    local output_dir="$DIST_DIR/$version"
+    
+    mkdir -p "$output_dir"
+    
+    # Add target
+    rustup target add "$rust_target" 2>/dev/null || true
+    
+    # Determine if cross-compilation is needed
+    local build_cmd="cargo"
+    local current_target=""
+    
+    case "$(uname -s)-$(uname -m)" in
+        Darwin-arm64) current_target="aarch64-apple-darwin" ;;
+        Darwin-x86_64) current_target="x86_64-apple-darwin" ;;
+        Linux-x86_64) current_target="x86_64-unknown-linux-gnu" ;;
+        Linux-aarch64) current_target="aarch64-unknown-linux-gnu" ;;
+    esac
+    
+    if [[ "$rust_target" != "$current_target" ]]; then
+        if command -v cross &> /dev/null; then
+            build_cmd="cross"
+        else
+            print_warning "cross not installed, attempting native build (may fail for $platform_name)"
+        fi
+    fi
+    
+    # Build with full output
+    echo ""
+    cd "$ROOT_DIR"
+    if ! $build_cmd build --profile "$PROFILE" --target "$rust_target"; then
+        print_error "Build command failed for $platform_name"
+        return 1
+    fi
+    echo ""
+    
+    # Check and copy binaries
+    if [[ ! -f "$build_dir/$cli_bin" ]] || [[ ! -f "$build_dir/$server_bin" ]]; then
+        print_error "Build failed for $platform_name"
+        return 1
+    fi
+    
+    local cli_output="kalam-${version}-${platform_name}${file_ext}"
+    local server_output="kalamdb-server-${version}-${platform_name}${file_ext}"
+    
+    cp "$build_dir/$cli_bin" "$output_dir/$cli_output"
+    cp "$build_dir/$server_bin" "$output_dir/$server_output"
+    
+    # Make executable
+    if [[ -z "$file_ext" ]]; then
+        chmod +x "$output_dir/$cli_output"
+        chmod +x "$output_dir/$server_output"
+    fi
+    
+    # Create archives
+    cd "$output_dir"
+    if [[ "$platform_name" == *"windows"* ]]; then
+        if command -v zip &> /dev/null; then
+            zip -q "${cli_output%.exe}.zip" "$cli_output"
+            zip -q "${server_output%.exe}.zip" "$server_output"
+        fi
+    else
+        tar -czf "${cli_output}.tar.gz" "$cli_output"
+        tar -czf "${server_output}.tar.gz" "$server_output"
+    fi
+    cd "$ROOT_DIR"
+    
+    print_success "Built $platform_name"
+}
+
+generate_checksums() {
+    local version="$1"
+    local output_dir="$DIST_DIR/$version"
+    
+    cd "$output_dir"
+    if command -v sha256sum &> /dev/null; then
+        sha256sum *.tar.gz *.zip 2>/dev/null > SHA256SUMS || true
+    elif command -v shasum &> /dev/null; then
+        shasum -a 256 *.tar.gz *.zip 2>/dev/null > SHA256SUMS || true
+    fi
+    cd "$ROOT_DIR"
+}
+
+create_github_release() {
+    local version="$1"
+    local tag="$2"
+    local output_dir="$DIST_DIR/$version"
+    
+    print_step "Creating GitHub release ${BOLD}$tag${NC}..."
+    
+    # Check if release exists
+    if gh release view "$tag" --repo "$REPO_OWNER/$REPO_NAME" &> /dev/null; then
+        if prompt_yes_no "Release $tag already exists. Delete and recreate?"; then
+            gh release delete "$tag" --repo "$REPO_OWNER/$REPO_NAME" --yes
+        else
+            print_warning "Skipping GitHub release"
+            return 0
+        fi
+    fi
+    
+    # Create release notes
+    local release_notes="## KalamDB $tag
+
+### Installation
+
+#### Linux/macOS
+\`\`\`bash
+# Download and extract
+wget https://github.com/$REPO_OWNER/$REPO_NAME/releases/download/$tag/kalamdb-server-$version-<platform>.tar.gz
+tar -xzf kalamdb-server-$version-<platform>.tar.gz
+chmod +x kalamdb-server-$version-<platform>
+sudo mv kalamdb-server-$version-<platform> /usr/local/bin/kalamdb-server
+\`\`\`
+
+#### Windows
+Download the \`.zip\` file and extract to a directory in your PATH.
+
+### Checksums
+SHA256 checksums available in \`SHA256SUMS\`.
+"
+    
+    # Collect files to upload (only existing files)
+    local upload_files=()
+    for f in "$output_dir"/*.tar.gz "$output_dir"/*.zip; do
+        [[ -f "$f" ]] && upload_files+=("$f")
+    done
+    [[ -f "$output_dir/SHA256SUMS" ]] && upload_files+=("$output_dir/SHA256SUMS")
+    
+    if [[ ${#upload_files[@]} -eq 0 ]]; then
+        print_error "No files to upload for release"
+        return 1
+    fi
+    
+    echo ""
+    print_info "Uploading ${#upload_files[@]} files..."
+    for f in "${upload_files[@]}"; do
+        echo "  • $(basename "$f")"
+    done
+    echo ""
+    
+    if ! gh release create "$tag" \
+        --repo "$REPO_OWNER/$REPO_NAME" \
+        --title "KalamDB $tag" \
+        --notes "$release_notes" \
+        "${upload_files[@]}"; then
+        print_error "Failed to create GitHub release"
+        return 1
+    fi
+    
+    print_success "GitHub release created: https://github.com/$REPO_OWNER/$REPO_NAME/releases/tag/$tag"
+}
+
+build_docker_image() {
+    local version="$1"
+    
+    print_step "Building Docker image ${BOLD}$DOCKERHUB_REPO:$version${NC}..."
+    echo ""
+    
+    cd "$ROOT_DIR"
+    
+    # Build and tag with full output
+    if ! DOCKER_BUILDKIT=1 docker build \
+        --tag "$DOCKERHUB_REPO:$version" \
+        --tag "$DOCKERHUB_REPO:latest" \
+        --file "$DOCKER_DIR/Dockerfile" \
+        --progress=plain \
+        .; then
+        print_error "Docker build failed"
+        return 1
+    fi
+    
+    echo ""
+    print_success "Docker image built: $DOCKERHUB_REPO:$version"
+    
+    # Show image size
+    local image_size
+    image_size=$(docker image inspect "$DOCKERHUB_REPO:$version" --format='{{.Size}}' 2>/dev/null | awk '{printf "%.1f MB", $1/1024/1024}')
+    print_info "Image size: $image_size"
+}
+
+push_docker_image() {
+    local version="$1"
+    
+    print_step "Pushing ${BOLD}$DOCKERHUB_REPO:$version${NC} to Docker Hub..."
+    echo ""
+    
+    if ! docker push "$DOCKERHUB_REPO:$version"; then
+        print_error "Failed to push $DOCKERHUB_REPO:$version"
+        return 1
+    fi
+    
+    print_step "Pushing ${BOLD}$DOCKERHUB_REPO:latest${NC} to Docker Hub..."
+    if ! docker push "$DOCKERHUB_REPO:latest"; then
+        print_error "Failed to push $DOCKERHUB_REPO:latest"
+        return 1
+    fi
+    
+    echo ""
+    print_success "Pushed to Docker Hub: $DOCKERHUB_REPO:$version"
+    print_info "View at: https://hub.docker.com/r/$DOCKERHUB_REPO"
+}
+
+# Check Docker prerequisites
+check_docker_prereqs() {
+    # Check Docker is installed
+    if ! command -v docker &> /dev/null; then
+        print_error "Docker is not installed"
+        print_info "Install from: https://docs.docker.com/get-docker/"
+        return 1
+    fi
+    
+    # Check Docker daemon is running
+    if ! docker info &> /dev/null; then
+        print_error "Docker daemon is not running"
+        print_info "Start Docker Desktop or run: sudo systemctl start docker"
+        return 1
+    fi
+    
+    print_success "Docker daemon is running"
+    return 0
+}
+
+# Check Docker Hub login status
+check_docker_login() {
+    print_step "Checking Docker Hub login status..."
+    
+    # Try to check if logged in by inspecting config
+    if docker info 2>/dev/null | grep -qi "Username:"; then
+        local username
+        username=$(docker info 2>/dev/null | grep -i "Username:" | awk '{print $2}')
+        print_success "Logged in to Docker Hub as: $username"
+        return 0
+    fi
+    
+    # Check docker config for credentials
+    if [[ -f "$HOME/.docker/config.json" ]] && grep -q "index.docker.io" "$HOME/.docker/config.json" 2>/dev/null; then
+        print_success "Docker Hub credentials found in config"
+        return 0
+    fi
+    
+    # Not logged in - prompt user
+    print_warning "Not logged in to Docker Hub"
+    echo ""
+    if prompt_yes_no "Login to Docker Hub now?"; then
+        echo ""
+        if docker login; then
+            print_success "Docker Hub login successful"
+            return 0
+        else
+            print_error "Docker Hub login failed"
+            return 1
+        fi
+    else
+        print_warning "Push may fail without login"
+        return 0
+    fi
+}
+
+# ============================================================================
+# Main
+# ============================================================================
+
+main() {
+    # Handle --help
+    if [[ "${1:-}" == "--help" ]] || [[ "${1:-}" == "-h" ]]; then
+        show_help
+    fi
+    
+    print_header
+    
+    # Get version from Cargo.toml
+    VERSION=$(get_version)
+    print_info "Detected version from Cargo.toml: ${BOLD}$VERSION${NC}"
+    echo ""
+    
+    # Ask for version tag
+    read -p "$(echo -e "${CYAN}?${NC} Version tag for release [v$VERSION]: ")" VERSION_TAG
+    VERSION_TAG="${VERSION_TAG:-v$VERSION}"
+    echo ""
+    
+    # Select target platforms
+    platform_names=()
+    for p in "${PLATFORMS[@]}"; do
+        platform_names+=("${p%%:*}")
+    done
+    
+    multi_select "Select target platforms:" "${platform_names[@]}"
+    
+    SELECTED_PLATFORMS=()
+    for idx in "${SELECTED_INDICES[@]}"; do
+        SELECTED_PLATFORMS+=("${PLATFORMS[$idx]}")
+    done
+    
+    if [[ ${#SELECTED_PLATFORMS[@]} -eq 0 ]]; then
+        print_error "No platforms selected"
+        exit 1
+    fi
+    
+    # Ask about GitHub release
+    CREATE_GITHUB_RELEASE=false
+    if prompt_yes_no "Create GitHub release?"; then
+        CREATE_GITHUB_RELEASE=true
+        
+        # Check gh CLI
+        if ! command -v gh &> /dev/null; then
+            print_error "GitHub CLI (gh) is not installed"
+            print_info "Install with: brew install gh && gh auth login"
+            exit 1
+        fi
+        
+        if ! gh auth status &> /dev/null; then
+            print_error "Not logged in to GitHub"
+            print_info "Run: gh auth login"
+            exit 1
+        fi
+    fi
+    
+    # Ask about Docker
+    BUILD_DOCKER=false
+    PUSH_DOCKER=false
+    
+    if prompt_yes_no "Build Docker image?"; then
+        # Run Docker pre-flight checks
+        echo ""
+        print_step "Checking Docker prerequisites..."
+        if ! check_docker_prereqs; then
+            print_error "Docker prerequisites not met"
+            exit 1
+        fi
+        
+        BUILD_DOCKER=true
+        
+        if prompt_yes_no "Push to Docker Hub?"; then
+            check_docker_login
+            PUSH_DOCKER=true
+        fi
+        echo ""
+    fi
+    
+    # Summary
+    echo ""
+    echo -e "${BLUE}════════════════════════════════════════════════════════════${NC}"
+    echo -e "${BOLD}Build Summary${NC}"
+    echo -e "${BLUE}════════════════════════════════════════════════════════════${NC}"
+    echo -e "  Version:          ${BOLD}$VERSION${NC}"
+    echo -e "  Tag:              ${BOLD}$VERSION_TAG${NC}"
+    echo -e "  Platforms:        ${BOLD}${#SELECTED_PLATFORMS[@]}${NC} selected"
+    for p in "${SELECTED_PLATFORMS[@]}"; do
+        echo -e "                    • ${p%%:*}"
+    done
+    echo -e "  GitHub Release:   ${BOLD}$CREATE_GITHUB_RELEASE${NC}"
+    echo -e "  Docker Build:     ${BOLD}$BUILD_DOCKER${NC}"
+    echo -e "  Docker Push:      ${BOLD}$PUSH_DOCKER${NC}"
+    echo -e "  Profile:          ${BOLD}$PROFILE${NC}"
+    echo -e "${BLUE}════════════════════════════════════════════════════════════${NC}"
+    echo ""
+    
+    if ! prompt_yes_no "Proceed with build?" "y"; then
+        print_warning "Build cancelled"
+        exit 0
+    fi
+    
+    echo ""
+    
+    # Generate version.toml with git info
+    print_step "Generating version info..."
+    generate_version_toml
+    
+    # Setup environment
+    setup_macos_env
+    
+    # Clean and create dist directory
+    rm -rf "$DIST_DIR/$VERSION"
+    mkdir -p "$DIST_DIR/$VERSION"
+    
+    # Build each platform
+    local build_count=0
+    local fail_count=0
+    
+    for platform_config in "${SELECTED_PLATFORMS[@]}"; do
+        IFS=':' read -r name target ext <<< "$platform_config"
+        
+        if build_platform "$name" "$target" "$ext" "$VERSION"; then
+            ((build_count++))
+        else
+            ((fail_count++))
+        fi
+    done
+    
+    echo ""
+    
+    # Generate checksums
+    if [[ $build_count -gt 0 ]]; then
+        print_step "Generating checksums..."
+        generate_checksums "$VERSION"
+        print_success "Checksums generated"
+    fi
+    
+    # Create GitHub release
+    if [[ "$CREATE_GITHUB_RELEASE" == true ]] && [[ $build_count -gt 0 ]]; then
+        echo ""
+        create_github_release "$VERSION" "$VERSION_TAG"
+    fi
+    
+    # Build and push Docker
+    if [[ "$BUILD_DOCKER" == true ]]; then
+        echo ""
+        build_docker_image "$VERSION" ""
+        
+        if [[ "$PUSH_DOCKER" == true ]]; then
+            push_docker_image "$VERSION"
+        fi
+    fi
+    
+    # Final summary
+    echo ""
+    echo -e "${GREEN}╔════════════════════════════════════════════════════════════╗${NC}"
+    echo -e "${GREEN}║${NC}${BOLD}                    Build Complete!                         ${NC}${GREEN}║${NC}"
+    echo -e "${GREEN}╚════════════════════════════════════════════════════════════╝${NC}"
+    echo ""
+    echo -e "  ${GREEN}✓${NC} Platforms built: $build_count"
+    if [[ $fail_count -gt 0 ]]; then
+        echo -e "  ${RED}✗${NC} Platforms failed: $fail_count"
+    fi
+    echo -e "  ${BLUE}📁${NC} Output: $DIST_DIR/$VERSION"
+    
+    if [[ "$CREATE_GITHUB_RELEASE" == true ]]; then
+        echo -e "  ${BLUE}🔗${NC} Release: https://github.com/$REPO_OWNER/$REPO_NAME/releases/tag/$VERSION_TAG"
+    fi
+    
+    if [[ "$BUILD_DOCKER" == true ]]; then
+        echo -e "  ${BLUE}🐳${NC} Docker: $DOCKERHUB_REPO:$VERSION"
+    fi
+    
+    echo ""
+    
+    # Show output files
+    print_info "Output files:"
+    ls -lh "$DIST_DIR/$VERSION" 2>/dev/null | tail -20
+    echo ""
+}
+
+# Run main
+main "$@"
