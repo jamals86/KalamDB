@@ -1,69 +1,22 @@
 //! SQL execution handler for the `/v1/api/sql` REST API endpoint
 //!
 //! This module provides HTTP handlers for executing SQL statements via the REST API.
+//! Authentication is handled automatically by the `AuthSession` extractor.
 
 use actix_web::{post, web, HttpRequest, HttpResponse, Responder};
-use kalamdb_auth::{
-    authenticate, extract_client_ip_secure, extract_username_for_audit, AuthenticatedUser,
-    AuthError, AuthRequest, UserRepository,
-};
+use kalamdb_auth::AuthSession;
 use kalamdb_commons::models::UserId;
+use kalamdb_core::providers::arrow_json_conversion::json_value_to_scalar_strict;
 use kalamdb_core::sql::executor::helpers::audit;
 use kalamdb_core::sql::executor::models::{ExecutionContext, ScalarValue};
 use kalamdb_core::sql::executor::{ExecutorMetadataAlias, SqlExecutor};
 use kalamdb_core::sql::ExecutionResult;
-use log::{error, warn};
-use serde_json::Value as JsonValue;
+use log::error;
 use std::sync::Arc;
 use std::time::Instant;
 
 use crate::models::{QueryResult, SqlRequest, SqlResponse};
 use crate::rate_limiter::RateLimiter;
-
-/// Convert AuthError to HTTP response code and message
-fn auth_error_to_response(e: &AuthError) -> (&'static str, String) {
-    match e {
-        AuthError::MissingAuthorization(msg) => ("MISSING_AUTHORIZATION", msg.clone()),
-        AuthError::MalformedAuthorization(msg) => ("MALFORMED_AUTHORIZATION", msg.clone()),
-        AuthError::InvalidCredentials(msg) => ("INVALID_CREDENTIALS", msg.clone()),
-        AuthError::RemoteAccessDenied(msg) => ("REMOTE_ACCESS_DENIED", msg.clone()),
-        AuthError::UserNotFound(msg) => ("USER_NOT_FOUND", msg.clone()),
-        AuthError::DatabaseError(msg) => ("DATABASE_ERROR", msg.clone()),
-        AuthError::TokenExpired => ("TOKEN_EXPIRED", "Token expired".to_string()),
-        AuthError::InvalidSignature => ("INVALID_SIGNATURE", "Invalid token signature".to_string()),
-        AuthError::UntrustedIssuer(iss) => {
-            ("UNTRUSTED_ISSUER", format!("Untrusted issuer: {}", iss))
-        }
-        AuthError::MissingClaim(claim) => (
-            "MISSING_CLAIM",
-            format!("Missing required claim: {}", claim),
-        ),
-        _ => ("AUTHENTICATION_ERROR", format!("{:?}", e)),
-    }
-}
-
-/// Convert JSON value to DataFusion ScalarValue
-///
-/// Supports common JSON types: null, bool, number (int/float), string
-/// Date/timestamp parsing will be added when needed
-fn json_to_scalar_value(value: &JsonValue) -> Result<ScalarValue, String> {
-    match value {
-        JsonValue::Null => Ok(ScalarValue::Utf8(None)),
-        JsonValue::Bool(b) => Ok(ScalarValue::Boolean(Some(*b))),
-        JsonValue::Number(n) => {
-            if let Some(i) = n.as_i64() {
-                Ok(ScalarValue::Int64(Some(i)))
-            } else if let Some(f) = n.as_f64() {
-                Ok(ScalarValue::Float64(Some(f)))
-            } else {
-                Err(format!("Unsupported number format: {}", n))
-            }
-        }
-        JsonValue::String(s) => Ok(ScalarValue::Utf8(Some(s.clone()))),
-        JsonValue::Array(_) => Err("Array parameters not yet supported".to_string()),
-        JsonValue::Object(_) => Err("Object parameters not yet supported".to_string()),
-    }
-}
 
 /// POST /v1/api/sql - Execute SQL statement(s)
 ///
@@ -71,8 +24,8 @@ fn json_to_scalar_value(value: &JsonValue) -> Result<ScalarValue, String> {
 /// Multiple statements can be separated by semicolons and will be executed sequentially.
 ///
 /// # Authentication
-/// Requires authentication via Authorization header (handled by middleware).
-/// The authenticated user is available in request extensions.
+/// Requires authentication via Authorization header.
+/// Authentication is handled automatically by the `AuthSession` extractor.
 ///
 /// # Example Request
 /// ```json
@@ -95,122 +48,37 @@ fn json_to_scalar_value(value: &JsonValue) -> Result<ScalarValue, String> {
 ///   "took": 15.0
 /// }
 /// ```
-///
-/// # Example Response (Error)
-/// ```json
-/// {
-///   "status": "error",
-///   "results": [],
-///   "took": 5.0,
-///   "error": {
-///     "code": "INVALID_SQL",
-///     "message": "Syntax error near 'SELCT'"
-///   }
-/// }
-/// ```
 #[post("/sql")]
 pub async fn execute_sql_v1(
+    session: AuthSession,
     http_req: HttpRequest,
     req: web::Json<SqlRequest>,
     app_context: web::Data<Arc<kalamdb_core::app_context::AppContext>>,
     sql_executor: web::Data<Arc<SqlExecutor>>,
-    user_repo: Option<web::Data<Arc<dyn UserRepository>>>,
     rate_limiter: Option<web::Data<Arc<RateLimiter>>>,
 ) -> impl Responder {
     let start_time = Instant::now();
 
-    // Resolve user repository (tests may not inject it explicitly)
-    // Prefer injected repository; fallback to CoreUsersRepo if not provided
-    let repo: Arc<dyn UserRepository> = if let Some(repo) = user_repo {
-        repo.get_ref().clone()
-    } else {
-        let users_provider = app_context.system_tables().users();
-        Arc::new(crate::repositories::user_repo::CoreUsersRepo::new(
-            users_provider,
-        )) as Arc<dyn UserRepository>
-    };
-
-    // Phase 3 (T033): Extract request_id and ip_address for ExecutionContext
-    let request_id = http_req
-        .headers()
-        .get("X-Request-ID")
-        .and_then(|h| h.to_str().ok())
-        .map(|s| s.to_string());
-
-    // Extract client IP with security checks against spoofing
-    let connection_info = extract_client_ip_secure(&http_req);
-
-    // Build authentication request from HTTP Authorization header
-    let auth_header = match http_req.headers().get("Authorization") {
-        Some(val) => match val.to_str() {
-            Ok(h) => h.to_string(),
-            Err(_) => {
-                let took = start_time.elapsed().as_secs_f64() * 1000.0;
-                return HttpResponse::Unauthorized().json(SqlResponse::error(
-                    "MALFORMED_AUTHORIZATION",
-                    "Authorization header contains invalid characters",
-                    took,
-                ));
-            }
-        },
-        None => {
-            let took = start_time.elapsed().as_secs_f64() * 1000.0;
-            return HttpResponse::Unauthorized().json(SqlResponse::error(
-                "MISSING_AUTHORIZATION",
-                "Authorization header is required. Use 'Authorization: Basic <credentials>' or 'Authorization: Bearer <token>'",
-                took,
-            ));
+    // Log successful login for password-based auth (Basic Auth or Direct)
+    if session.is_password_auth() {
+        let entry = audit::log_auth_event(
+            &session.user.user_id,
+            "LOGIN",
+            true,
+            session.connection_info.remote_addr.clone(),
+        );
+        if let Err(e) = audit::persist_audit_entry(app_context.get_ref(), &entry).await {
+            error!("Failed to persist audit log: {}", e);
         }
-    };
-
-    // Build connection info and auth request for unified authentication
-    let auth_request = AuthRequest::Header(auth_header.clone());
-
-    // Authenticate using unified auth module
-    let auth_result = match authenticate(auth_request.clone(), &connection_info, &repo).await {
-        Ok(result) => {
-            // Log successful login for password-based auth (Basic Auth or Direct)
-            if matches!(result.method, kalamdb_auth::AuthMethod::Basic | kalamdb_auth::AuthMethod::Direct) {
-                let entry = audit::log_auth_event(
-                    &result.user.user_id,
-                    "LOGIN",
-                    true,
-                    connection_info.remote_addr.clone(),
-                );
-                if let Err(e) = audit::persist_audit_entry(app_context.get_ref(), &entry).await {
-                    error!("Failed to persist audit log: {}", e);
-                }
-            }
-            result.user
-        }
-        Err(e) => {
-            // Log failed login for password-based auth attempts
-            if auth_header.starts_with("Basic ") {
-                let username = extract_username_for_audit(&auth_request);
-                let entry = audit::log_auth_event(
-                    &UserId::new(username),
-                    "LOGIN",
-                    false,
-                    connection_info.remote_addr.clone(),
-                );
-                if let Err(e) = audit::persist_audit_entry(app_context.get_ref(), &entry).await {
-                    error!("Failed to persist audit log: {}", e);
-                }
-            }
-
-            let took = start_time.elapsed().as_secs_f64() * 1000.0;
-            let (code, message) = auth_error_to_response(&e);
-            return HttpResponse::Unauthorized().json(SqlResponse::error(code, &message, took));
-        }
-    };
+    }
 
     // Rate limiting: Check if user can execute query
     if let Some(ref limiter) = rate_limiter {
-        if !limiter.check_query_rate(&auth_result.user_id) {
+        if !limiter.check_query_rate(&session.user.user_id) {
             let took = start_time.elapsed().as_secs_f64() * 1000.0;
-            warn!(
+            log::warn!(
                 "Rate limit exceeded for user: {} (queries per second)",
-                auth_result.user_id.as_str()
+                session.user.user_id.as_str()
             );
             return HttpResponse::TooManyRequests().json(SqlResponse::error(
                 "RATE_LIMIT_EXCEEDED",
@@ -220,12 +88,19 @@ pub async fn execute_sql_v1(
         }
     }
 
-    // Parse parameters if provided (T040: JSON → ScalarValue deserialization)
+    // Extract request_id for ExecutionContext
+    let request_id = http_req
+        .headers()
+        .get("X-Request-ID")
+        .and_then(|h| h.to_str().ok())
+        .map(|s| s.to_string());
+
+    // Parse parameters if provided
     let params = match &req.params {
         Some(json_params) => {
             let mut scalar_params = Vec::new();
             for (idx, json_val) in json_params.iter().enumerate() {
-                match json_to_scalar_value(json_val) {
+                match json_value_to_scalar_strict(json_val) {
                     Ok(scalar) => scalar_params.push(scalar),
                     Err(err) => {
                         let took = start_time.elapsed().as_secs_f64() * 1000.0;
@@ -242,6 +117,7 @@ pub async fn execute_sql_v1(
         None => Vec::new(),
     };
 
+    // Parse SQL statements
     let statements = match kalamdb_sql::split_statements(&req.sql) {
         Ok(stmts) => stmts,
         Err(err) => {
@@ -263,7 +139,7 @@ pub async fn execute_sql_v1(
         ));
     }
 
-    // Reject multi-statement batches with parameters (simplifies implementation)
+    // Reject multi-statement batches with parameters
     if !params.is_empty() && statements.len() > 1 {
         let took = start_time.elapsed().as_secs_f64() * 1000.0;
         return HttpResponse::BadRequest().json(SqlResponse::error(
@@ -273,50 +149,58 @@ pub async fn execute_sql_v1(
         ));
     }
 
-    // Execute each statement sequentially
+    // Execute statements
     let mut results = Vec::new();
-    let sql_executor: Option<&Arc<SqlExecutor>> = Some(sql_executor.get_ref());
-
-    // Track accumulated row counts for multi-statement DML batches (INSERT, UPDATE, DELETE)
     let mut total_inserted = 0usize;
     let mut total_updated = 0usize;
     let mut total_deleted = 0usize;
 
     for (idx, sql) in statements.iter().enumerate() {
-        let stmt_start = std::time::Instant::now();
+        let stmt_start = Instant::now();
         match execute_single_statement(
             sql,
             app_context.get_ref(),
-            sql_executor,
-            &auth_result,
+            sql_executor.get_ref(),
+            &session,
             request_id.as_deref(),
-            connection_info.remote_addr.as_deref(),
             None,
-            params.clone(), // Pass parameters to each statement
+            params.clone(),
         )
         .await
         {
             Ok(result) => {
-                // Log slow query if threshold exceeded
+                // Calculate timing and row count
                 let stmt_duration_secs = stmt_start.elapsed().as_secs_f64();
+                let stmt_duration_ms = stmt_duration_secs * 1000.0;
                 let row_count = result.rows.as_ref().map(|r| r.len()).unwrap_or(0);
 
+                // Debug log for SQL execution (includes timing)
+                log::debug!(
+                    target: "sql::exec",
+                    "✅ SQL executed | sql='{}' | user='{}' | role='{:?}' | rows={} | took={:.3}ms",
+                    sql,
+                    session.user.user_id.as_str(),
+                    session.user.role,
+                    row_count,
+                    stmt_duration_ms
+                );
+
+                // Log slow query if threshold exceeded
                 app_context.slow_query_logger().log_if_slow(
                     sql.to_string(),
                     stmt_duration_secs,
                     row_count,
-                    auth_result.user_id.clone(),
-                    kalamdb_core::schema_registry::TableType::User, // Default to User
-                    None, // Table name could be extracted from SQL parsing
+                    session.user.user_id.clone(),
+                    kalamdb_core::schema_registry::TableType::User,
+                    None,
                 );
 
-                // For multi-statement batches, accumulate DML row counts
+                // Accumulate DML row counts for multi-statement batches
                 if statements.len() > 1 {
-                    // Check if this is a DML statement by looking at the message
                     if let Some(ref msg) = result.message {
                         if msg.contains("Inserted") {
                             total_inserted += result.row_count;
-                            continue; // Skip pushing individual results for batches
+                            continue;
                         } else if msg.contains("Updated") {
                             total_updated += result.row_count;
                             continue;
@@ -341,7 +225,7 @@ pub async fn execute_sql_v1(
         }
     }
 
-    // Add accumulated DML results if we processed multiple statements
+    // Add accumulated DML results for multi-statement batches
     if statements.len() > 1 {
         if total_inserted > 0 {
             results.push(QueryResult::with_affected_rows(
@@ -368,105 +252,82 @@ pub async fn execute_sql_v1(
 }
 
 /// Execute a single SQL statement
-/// Uses SqlExecutor for all SQL (custom DDL and standard DataFusion SQL)
 async fn execute_single_statement(
     sql: &str,
     app_context: &Arc<kalamdb_core::app_context::AppContext>,
-    sql_executor: Option<&Arc<SqlExecutor>>,
-    auth: &AuthenticatedUser,
+    sql_executor: &Arc<SqlExecutor>,
+    session: &AuthSession,
     request_id: Option<&str>,
-    ip_address: Option<&str>,
     metadata: Option<&ExecutorMetadataAlias>,
-    params: Vec<ScalarValue>, // T040: Accept parameters
+    params: Vec<ScalarValue>,
 ) -> Result<QueryResult, Box<dyn std::error::Error>> {
-    // Phase 3 (T033): Construct ExecutionContext with user identity, request tracking, and base SessionContext
-    // Get base SessionContext from AppContext (tables already registered)
-    // ExecutionContext will extract SessionState and inject user_id for per-user filtering
     let base_session = app_context.base_session_context();
-    let mut exec_ctx =
-        ExecutionContext::new(auth.user_id.clone(), auth.role, Arc::clone(&base_session));
+    let mut exec_ctx = ExecutionContext::new(
+        session.user.user_id.clone(),
+        session.user.role,
+        Arc::clone(&base_session),
+    );
 
-    // Add request_id and ip_address if available
     if let Some(rid) = request_id {
         exec_ctx = exec_ctx.with_request_id(rid.to_string());
     }
-    if let Some(ip) = ip_address {
-        exec_ctx = exec_ctx.with_ip(ip.to_string());
+    if let Some(ip) = &session.connection_info.remote_addr {
+        exec_ctx = exec_ctx.with_ip(ip.clone());
     }
 
-    // If sql_executor is available, use it (production path)
-    if let Some(sql_executor) = sql_executor {
-        // Execute through SqlExecutor (handles both custom DDL and DataFusion)
-        // Note: session parameter is not used anymore - exec_ctx creates per-request session
-        match sql_executor
-            .execute_with_metadata(sql, &exec_ctx, metadata, params) // Pass parameters
-            .await
-        {
-            Ok(exec_result) => {
-                // Convert ExecutionResult to QueryResult
-                // Phase 3 (T036-T038): Use new ExecutionResult struct variants with row counts
-                match exec_result {
-                    ExecutionResult::Success { message } => Ok(QueryResult::with_message(message)),
-                    ExecutionResult::Rows {
-                        batches,
-                        row_count: _,
-                    } => record_batch_to_query_result(batches, Some(&auth.user_id)),
-                    ExecutionResult::Inserted { rows_affected } => {
-                        Ok(QueryResult::with_affected_rows(
-                            rows_affected,
-                            Some(format!("Inserted {} row(s)", rows_affected)),
-                        ))
-                    }
-                    ExecutionResult::Updated { rows_affected } => {
-                        Ok(QueryResult::with_affected_rows(
-                            rows_affected,
-                            Some(format!("Updated {} row(s)", rows_affected)),
-                        ))
-                    }
-                    ExecutionResult::Deleted { rows_affected } => {
-                        Ok(QueryResult::with_affected_rows(
-                            rows_affected,
-                            Some(format!("Deleted {} row(s)", rows_affected)),
-                        ))
-                    }
-                    ExecutionResult::Flushed {
-                        tables,
-                        bytes_written,
-                    } => Ok(QueryResult::with_affected_rows(
-                        tables.len(),
-                        Some(format!(
-                            "Flushed {} table(s), {} bytes written",
-                            tables.len(),
-                            bytes_written
-                        )),
-                    )),
-                    ExecutionResult::Subscription {
-                        subscription_id,
-                        channel,
-                        select_query,
-                    } => {
-                        // Create subscription result matching expected format
-                        let sub_data = serde_json::json!({
-                            "status": "active",
-                            "ws_url": channel,
-                            "subscription": serde_json::json!({
-                                "id": subscription_id,
-                                "sql": select_query // Use the parsed SELECT query, not the original SUBSCRIBE TO
-                            }),
-                            "message": "WebSocket subscription created. Connect to ws_url to receive updates."
-                        });
-                        Ok(QueryResult::subscription(sub_data))
-                    }
-                    ExecutionResult::JobKilled { job_id, status } => Ok(QueryResult::with_message(
-                        format!("Job {} killed: {}", job_id, status),
-                    )),
-                }
+    match sql_executor
+        .execute_with_metadata(sql, &exec_ctx, metadata, params)
+        .await
+    {
+        Ok(exec_result) => match exec_result {
+            ExecutionResult::Success { message } => Ok(QueryResult::with_message(message)),
+            ExecutionResult::Rows { batches, .. } => {
+                record_batch_to_query_result(batches, Some(&session.user.user_id))
             }
-            Err(e) => Err(Box::new(e)),
-        }
-    } else {
-        // Throw error if SqlExecutor is not available
-        Err("SqlExecutor not available".into())
+            ExecutionResult::Inserted { rows_affected } => Ok(QueryResult::with_affected_rows(
+                rows_affected,
+                Some(format!("Inserted {} row(s)", rows_affected)),
+            )),
+            ExecutionResult::Updated { rows_affected } => Ok(QueryResult::with_affected_rows(
+                rows_affected,
+                Some(format!("Updated {} row(s)", rows_affected)),
+            )),
+            ExecutionResult::Deleted { rows_affected } => Ok(QueryResult::with_affected_rows(
+                rows_affected,
+                Some(format!("Deleted {} row(s)", rows_affected)),
+            )),
+            ExecutionResult::Flushed {
+                tables,
+                bytes_written,
+            } => Ok(QueryResult::with_affected_rows(
+                tables.len(),
+                Some(format!(
+                    "Flushed {} table(s), {} bytes written",
+                    tables.len(),
+                    bytes_written
+                )),
+            )),
+            ExecutionResult::Subscription {
+                subscription_id,
+                channel,
+                select_query,
+            } => {
+                let sub_data = serde_json::json!({
+                    "status": "active",
+                    "ws_url": channel,
+                    "subscription": {
+                        "id": subscription_id,
+                        "sql": select_query
+                    },
+                    "message": "WebSocket subscription created. Connect to ws_url to receive updates."
+                });
+                Ok(QueryResult::subscription(sub_data))
+            }
+            ExecutionResult::JobKilled { job_id, status } => Ok(QueryResult::with_message(
+                format!("Job {} killed: {}", job_id, status),
+            )),
+        },
+        Err(e) => Err(Box::new(e)),
     }
 }
 
@@ -481,20 +342,16 @@ fn record_batch_to_query_result(
         ));
     }
 
-    // Convert Arrow batches to JSON rows
     let schema = batches[0].schema();
     let column_names: Vec<String> = schema.fields().iter().map(|f| f.name().clone()).collect();
 
     let mut rows = Vec::new();
-
     for batch in &batches {
-        // Convert each batch to JSON using Arrow's JSON writer
         let mut buf = Vec::new();
         let mut writer = arrow::json::LineDelimitedWriter::new(&mut buf);
         writer.write(batch)?;
         writer.finish()?;
 
-        // Parse the JSON lines
         let json_str = String::from_utf8(buf)?;
         for line in json_str.lines() {
             if !line.is_empty() {
@@ -507,40 +364,36 @@ fn record_batch_to_query_result(
 
     let mut result = QueryResult::with_rows(rows, column_names.clone());
 
+    // Mask sensitive columns for non-admin users
     if let Some(rows) = result.rows.as_mut() {
         if !is_admin(user_id) {
-            if let Some(credentials_col) = column_names
-                .iter()
-                .position(|name| name.eq_ignore_ascii_case("credentials"))
-            {
-                let key = column_names[credentials_col].clone();
-                for row in rows.iter_mut() {
-                    if let Some(value) = row.get_mut(&key) {
-                        if !value.is_null() {
-                            *value = serde_json::Value::String("***".to_string());
-                        }
-                    }
-                }
-            }
-
-            // Mask password_hash column
-            if let Some(pwd_col) = column_names
-                .iter()
-                .position(|name| name.eq_ignore_ascii_case("password_hash"))
-            {
-                let key = column_names[pwd_col].clone();
-                for row in rows.iter_mut() {
-                    if let Some(value) = row.get_mut(&key) {
-                        if !value.is_null() {
-                            *value = serde_json::Value::String("***".to_string());
-                        }
-                    }
-                }
-            }
+            mask_sensitive_column(rows, &column_names, "credentials");
+            mask_sensitive_column(rows, &column_names, "password_hash");
         }
     }
 
     Ok(result)
+}
+
+/// Mask a sensitive column with "***"
+fn mask_sensitive_column(
+    rows: &mut [std::collections::HashMap<String, serde_json::Value>],
+    column_names: &[String],
+    target_column: &str,
+) {
+    if let Some(col_idx) = column_names
+        .iter()
+        .position(|name| name.eq_ignore_ascii_case(target_column))
+    {
+        let key = column_names[col_idx].clone();
+        for row in rows.iter_mut() {
+            if let Some(value) = row.get_mut(&key) {
+                if !value.is_null() {
+                    *value = serde_json::Value::String("***".to_string());
+                }
+            }
+        }
+    }
 }
 
 fn is_admin(user_id: Option<&UserId>) -> bool {
@@ -550,117 +403,5 @@ fn is_admin(user_id: Option<&UserId>) -> bool {
             lower == "admin" || lower == "system"
         }
         None => false,
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use crate::{models::ResponseStatus, rate_limiter::RateLimiter};
-    use actix_web::{test, App};
-    use kalamdb_core::sql::DataFusionSessionFactory;
-
-    // NOTE: These unit tests are disabled because they require full KalamDB setup
-    // including RocksDB, SqlExecutor, and authentication middleware.
-    // SQL execution is thoroughly tested in integration tests (backend/tests/).
-
-    #[ignore]
-    #[tokio::test]
-    async fn test_execute_sql_endpoint() {
-        // Create a test session factory
-        let session_factory = Arc::new(DataFusionSessionFactory::new().unwrap());
-        let rate_limiter = Arc::new(RateLimiter::new());
-
-        let app = test::init_service(
-            App::new()
-                .app_data(web::Data::new(session_factory))
-                .app_data(web::Data::new(rate_limiter))
-                .service(execute_sql_v1),
-        )
-        .await;
-
-        let req_body = SqlRequest {
-            sql: "SELECT 1 as id, 'Alice' as name".to_string(),
-            params: None,
-        };
-
-        let req = test::TestRequest::post()
-            .uri("/sql")
-            .peer_addr("127.0.0.1:8080".parse().unwrap())
-            .set_json(&req_body)
-            .to_request();
-
-        let resp = test::call_service(&app, req).await;
-        assert!(resp.status().is_success());
-
-        // Parse the response body to verify structure
-        let body = test::read_body(resp).await;
-        let response: SqlResponse = serde_json::from_slice(&body).unwrap();
-        assert_eq!(response.status, ResponseStatus::Success);
-        assert_eq!(response.results.len(), 1);
-    }
-
-    #[ignore]
-    #[tokio::test]
-    async fn test_execute_sql_empty_query() {
-        let session_factory = Arc::new(DataFusionSessionFactory::new().unwrap());
-        let rate_limiter = Arc::new(RateLimiter::new());
-
-        let app = test::init_service(
-            App::new()
-                .app_data(web::Data::new(session_factory))
-                .app_data(web::Data::new(rate_limiter))
-                .service(execute_sql_v1),
-        )
-        .await;
-
-        let req_body = SqlRequest {
-            sql: "".to_string(),
-            params: None,
-        };
-
-        let req = test::TestRequest::post()
-            .uri("/sql")
-            .peer_addr("127.0.0.1:8080".parse().unwrap())
-            .set_json(&req_body)
-            .to_request();
-
-        let resp = test::call_service(&app, req).await;
-        assert_eq!(resp.status(), 400);
-    }
-
-    #[ignore]
-    #[tokio::test]
-    async fn test_execute_sql_multiple_statements() {
-        let session_factory = Arc::new(DataFusionSessionFactory::new().unwrap());
-        let rate_limiter = Arc::new(RateLimiter::new());
-
-        let app = test::init_service(
-            App::new()
-                .app_data(web::Data::new(session_factory))
-                .app_data(web::Data::new(rate_limiter))
-                .service(execute_sql_v1),
-        )
-        .await;
-
-        let req_body = SqlRequest {
-            sql: "SELECT 1 as id; SELECT 2 as id".to_string(),
-            params: None,
-        };
-
-        let req = test::TestRequest::post()
-            .uri("/sql")
-            .peer_addr("127.0.0.1:8080".parse().unwrap())
-            .set_json(&req_body)
-            .to_request();
-
-        let resp = test::call_service(&app, req).await;
-        assert!(resp.status().is_success());
-
-        // Parse response and verify we got 2 result sets
-        let body = test::read_body(resp).await;
-        let response: SqlResponse = serde_json::from_slice(&body).unwrap();
-        assert_eq!(response.status, ResponseStatus::Success);
-        assert_eq!(response.results.len(), 2);
     }
 }

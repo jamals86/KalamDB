@@ -9,16 +9,30 @@
  * - Real-time subscriptions via WebSocket (single connection, multiple subscriptions)
  * - Subscription management with modern patterns (unsubscribe functions)
  * - Cross-platform support (Node.js & Browser)
+ * - Type-safe authentication with multiple providers (Basic Auth, JWT, Anonymous)
  * 
  * @example
  * ```typescript
- * import { createClient } from '@kalamdb/client';
+ * import { createClient, Auth } from '@kalamdb/client';
  * 
- * const client = await createClient({
+ * // Basic Auth (username/password)
+ * const client = createClient({
  *   url: 'http://localhost:8080',
- *   username: 'admin',
- *   password: 'admin'
+ *   auth: Auth.basic('admin', 'admin')
  * });
+ * 
+ * // JWT Token Auth
+ * const jwtClient = createClient({
+ *   url: 'http://localhost:8080',
+ *   auth: Auth.jwt('eyJhbGciOiJIUzI1NiIs...')
+ * });
+ * 
+ * // Anonymous (localhost bypass)
+ * const anonClient = createClient({
+ *   url: 'http://localhost:8080',
+ *   auth: Auth.none()
+ * });
+ * 
  * await client.connect();
  * 
  * // Subscribe to changes (returns unsubscribe function - Firebase/Supabase style)
@@ -35,6 +49,36 @@
  */
 
 import init, { KalamClient as WasmClient } from '../kalam_link.js';
+
+// Extend WasmClient type with static factory methods that will be available at runtime
+// These are defined in wasm.rs but not in the auto-generated TypeScript types
+declare module '../kalam_link.js' {
+  interface KalamClient {
+    getAuthType(): string;
+  }
+  // eslint-disable-next-line @typescript-eslint/no-namespace
+  namespace KalamClient {
+    function withJwt(url: string, token: string): KalamClient;
+    function anonymous(url: string): KalamClient;
+  }
+}
+
+// Re-export authentication types
+export { 
+  Auth,
+  AuthCredentials,
+  BasicAuthCredentials,
+  JwtAuthCredentials,
+  NoAuthCredentials,
+  buildAuthHeader,
+  encodeBasicAuth,
+  isAuthenticated,
+  isBasicAuth,
+  isJwtAuth,
+  isNoAuth
+} from './auth.js';
+
+import type { AuthCredentials } from './auth.js';
 
 // Re-export types from WASM bindings
 export type { KalamClient as WasmKalamClient } from '../kalam_link.js';
@@ -130,17 +174,133 @@ export interface SubscriptionInfo {
 }
 
 /**
- * Subscription options for controlling initial data loading
+ * Connection-level options for WebSocket connection behavior
+ * 
+ * These options control the overall WebSocket connection, including:
+ * - Automatic reconnection on connection loss
+ * - Reconnection timing and retry limits
+ * 
+ * Separate from SubscriptionOptions which control individual subscriptions.
+ * 
+ * @example
+ * ```typescript
+ * const client = new KalamDBClient('http://localhost:8080', 'user', 'pass');
+ * 
+ * // Configure connection options before connecting
+ * client.setAutoReconnect(true);
+ * client.setReconnectDelay(2000, 60000);
+ * client.setMaxReconnectAttempts(10);
+ * 
+ * await client.connect();
+ * ```
  */
-export interface SubscribeOptions {
-  /** Hint for server-side batch sizing during initial data load */
-  batch_size?: number;
+export interface ConnectionOptions {
+  /**
+   * Enable automatic reconnection on connection loss
+   * Default: true - automatically attempts to reconnect
+   */
+  auto_reconnect?: boolean;
+
+  /**
+   * Initial delay in milliseconds between reconnection attempts
+   * Default: 1000ms (1 second)
+   * Uses exponential backoff up to max_reconnect_delay_ms
+   */
+  reconnect_delay_ms?: number;
+
+  /**
+   * Maximum delay between reconnection attempts (for exponential backoff)
+   * Default: 30000ms (30 seconds)
+   */
+  max_reconnect_delay_ms?: number;
+
+  /**
+   * Maximum number of reconnection attempts before giving up
+   * Default: undefined (infinite retries)
+   * Set to 0 to disable reconnection entirely
+   */
+  max_reconnect_attempts?: number;
 }
 
 /**
- * Configuration options for KalamDB client
+ * Subscription options for controlling individual subscription behavior
+ * 
+ * These options control subscription behavior including:
+ * - Initial data loading (batch_size, last_rows)
+ * - Data resumption after reconnection (from_seq_id)
+ * 
+ * Aligned with backend's SubscriptionOptions.
+ * 
+ * @example
+ * ```typescript
+ * // Fetch last 100 rows with batch size of 50
+ * const options: SubscriptionOptions = {
+ *   batch_size: 50,
+ *   last_rows: 100
+ * };
+ * 
+ * const unsubscribe = await client.subscribe('messages', callback, options);
+ * ```
  */
-export interface ClientOptions {
+export interface SubscriptionOptions {
+  /** 
+   * Hint for server-side batch sizing during initial data load
+   * Default: server-configured (typically 1000 rows per batch)
+   */
+  batch_size?: number;
+
+  /**
+   * Number of last (newest) rows to fetch for initial data
+   * Default: undefined (fetch all matching rows)
+   */
+  last_rows?: number;
+
+  /**
+   * Resume subscription from a specific sequence ID
+   * When set, the server will only send changes after this seq_id
+   * Typically set automatically during reconnection to resume from last received event
+   */
+  from_seq_id?: string;
+}
+
+/**
+ * @deprecated Use SubscriptionOptions instead. This type alias is for backwards compatibility.
+ */
+export type SubscribeOptions = SubscriptionOptions;
+
+/**
+ * Configuration options for KalamDB client (new type-safe API)
+ * 
+ * Uses discriminated unions for type-safe authentication.
+ * 
+ * @example
+ * ```typescript
+ * // Type-safe auth options
+ * const client = createClient({
+ *   url: 'http://localhost:8080',
+ *   auth: Auth.basic('admin', 'admin')
+ * });
+ * 
+ * // JWT authentication
+ * const jwtClient = createClient({
+ *   url: 'http://localhost:8080',
+ *   auth: Auth.jwt('eyJhbGciOiJIUzI1NiIs...')
+ * });
+ * ```
+ */
+export interface ClientOptionsWithAuth {
+  /** Server URL (e.g., 'http://localhost:8080') */
+  url: string;
+  /** Authentication credentials (type-safe) */
+  auth: AuthCredentials;
+}
+
+/**
+ * Configuration options for KalamDB client (legacy API)
+ * 
+ * @deprecated Use ClientOptionsWithAuth with Auth.basic() instead
+ */
+export interface ClientOptionsLegacy {
   /** Server URL (e.g., 'http://localhost:8080') */
   url: string;
   /** Username for authentication */
@@ -150,19 +310,51 @@ export interface ClientOptions {
 }
 
 /**
+ * Configuration options for KalamDB client
+ * 
+ * Supports both new type-safe auth API and legacy username/password API.
+ */
+export type ClientOptions = ClientOptionsWithAuth | ClientOptionsLegacy;
+
+/**
+ * Type guard to check if options use the new auth API
+ */
+function isAuthOptions(options: ClientOptions): options is ClientOptionsWithAuth {
+  return 'auth' in options;
+}
+
+/**
  * KalamDB Client - TypeScript wrapper around WASM bindings
  * 
  * Provides a type-safe interface to KalamDB with support for:
  * - SQL query execution
  * - Real-time WebSocket subscriptions
- * - HTTP Basic authentication
+ * - Multiple authentication methods (Basic Auth, JWT, Anonymous)
  * - Cross-platform (Node.js & Browser)
  * - Subscription tracking and management
  * 
  * @example
  * ```typescript
- * // Create and connect
- * const client = new KalamDBClient('http://localhost:8080', 'alice', 'password123');
+ * // New API with type-safe auth (recommended)
+ * import { createClient, Auth } from '@kalamdb/client';
+ * 
+ * const client = createClient({
+ *   url: 'http://localhost:8080',
+ *   auth: Auth.basic('alice', 'password123')
+ * });
+ * 
+ * // JWT authentication
+ * const jwtClient = createClient({
+ *   url: 'http://localhost:8080',
+ *   auth: Auth.jwt('eyJhbGciOiJIUzI1NiIs...')
+ * });
+ * 
+ * // Anonymous (no auth - localhost bypass)
+ * const anonClient = createClient({
+ *   url: 'http://localhost:8080',
+ *   auth: Auth.none()
+ * });
+ * 
  * await client.connect();
  * 
  * // Execute queries
@@ -179,12 +371,8 @@ export interface ClientOptions {
  * // Check subscription count
  * console.log(`Active: ${client.getSubscriptionCount()}`);
  * 
- * // Cleanup - option 1: call returned function
+ * // Cleanup
  * await unsubscribe();
- * 
- * // Cleanup - option 2: unsubscribe all
- * await client.unsubscribeAll();
- * 
  * await client.disconnect();
  * ```
  */
@@ -192,29 +380,75 @@ export class KalamDBClient {
   private wasmClient: WasmClient | null = null;
   private initialized = false;
   private url: string;
-  private username: string;
-  private password: string;
+  private auth: AuthCredentials;
   
   /** Track active subscriptions for management */
   private subscriptions: Map<string, SubscriptionInfo> = new Map();
 
   /**
-   * Create a new KalamDB client
+   * Create a new KalamDB client with type-safe auth options
+   * 
+   * @param options - Client options with URL and auth credentials
+   * 
+   * @throws Error if url is empty
+   * 
+   * @example
+   * ```typescript
+   * import { KalamDBClient, Auth } from '@kalamdb/client';
+   * 
+   * const client = new KalamDBClient({
+   *   url: 'http://localhost:8080',
+   *   auth: Auth.basic('admin', 'secret')
+   * });
+   * ```
+   */
+  constructor(options: ClientOptionsWithAuth);
+  
+  /**
+   * Create a new KalamDB client with username/password (legacy API)
    * 
    * @param url - Server URL (e.g., 'http://localhost:8080')
    * @param username - Username for authentication
    * @param password - Password for authentication
    * 
    * @throws Error if url, username, or password is empty
+   * 
+   * @deprecated Use constructor with ClientOptionsWithAuth and Auth.basic() instead
    */
-  constructor(url: string, username: string, password: string) {
-    if (!url) throw new Error('KalamDBClient: url parameter is required');
-    if (!username) throw new Error('KalamDBClient: username parameter is required');
-    if (!password) throw new Error('KalamDBClient: password parameter is required');
+  constructor(url: string, username: string, password: string);
+  
+  constructor(
+    urlOrOptions: string | ClientOptionsWithAuth, 
+    username?: string, 
+    password?: string
+  ) {
+    // Handle new options-based API
+    if (typeof urlOrOptions === 'object') {
+      if (!urlOrOptions.url) throw new Error('KalamDBClient: url is required');
+      if (!urlOrOptions.auth) throw new Error('KalamDBClient: auth is required');
+      
+      this.url = urlOrOptions.url;
+      this.auth = urlOrOptions.auth;
+    } 
+    // Handle legacy API (string url, username, password)
+    else {
+      if (!urlOrOptions) throw new Error('KalamDBClient: url parameter is required');
+      if (!username) throw new Error('KalamDBClient: username parameter is required');
+      if (!password) throw new Error('KalamDBClient: password parameter is required');
+      
+      this.url = urlOrOptions;
+      // Convert legacy API to new auth format
+      this.auth = { type: 'basic', username, password };
+    }
+  }
 
-    this.url = url;
-    this.username = username;
-    this.password = password;
+  /**
+   * Get the current authentication type
+   * 
+   * @returns 'basic', 'jwt', or 'none'
+   */
+  getAuthType(): 'basic' | 'jwt' | 'none' {
+    return this.auth.type;
   }
 
   /**
@@ -232,7 +466,23 @@ export class KalamDBClient {
       // Browser environment - WASM will be fetched automatically
       await init();
       
-      this.wasmClient = new WasmClient(this.url, this.username, this.password);
+      // Create WASM client based on auth type
+      switch (this.auth.type) {
+        case 'basic':
+          this.wasmClient = new WasmClient(this.url, this.auth.username, this.auth.password);
+          break;
+        case 'jwt':
+          this.wasmClient = WasmClient.withJwt(this.url, this.auth.token);
+          break;
+        case 'none':
+          this.wasmClient = WasmClient.anonymous(this.url);
+          break;
+        default:
+          // This should never happen due to TypeScript's exhaustiveness checking
+          const _exhaustive: never = this.auth;
+          throw new Error(`Unknown auth type: ${(_exhaustive as AuthCredentials).type}`);
+      }
+      
       this.initialized = true;
     } catch (error) {
       throw new Error(`Failed to initialize WASM client: ${error}`);
@@ -253,6 +503,115 @@ export class KalamDBClient {
       throw new Error('WASM client not initialized');
     }
     await this.wasmClient.connect();
+  }
+
+  /**
+   * Enable or disable automatic reconnection
+   * 
+   * When enabled, the client will automatically attempt to reconnect
+   * if the WebSocket connection is lost, and will re-subscribe to all
+   * active subscriptions with resume_from_seq_id to catch up on missed events.
+   * 
+   * @param enabled - Whether to automatically reconnect on connection loss
+   * 
+   * @example
+   * ```typescript
+   * client.setAutoReconnect(true);  // Enable (default)
+   * client.setAutoReconnect(false); // Disable for manual control
+   * ```
+   */
+  setAutoReconnect(enabled: boolean): void {
+    this.ensureInitialized();
+    this.wasmClient!.setAutoReconnect(enabled);
+  }
+
+  /**
+   * Configure reconnection delay parameters
+   * 
+   * The client uses exponential backoff starting from initialDelayMs,
+   * doubling each attempt up to maxDelayMs.
+   * 
+   * @param initialDelayMs - Initial delay between reconnection attempts (default: 1000ms)
+   * @param maxDelayMs - Maximum delay for exponential backoff (default: 30000ms)
+   * 
+   * @example
+   * ```typescript
+   * // Start with 500ms delay, max out at 10 seconds
+   * client.setReconnectDelay(500, 10000);
+   * ```
+   */
+  setReconnectDelay(initialDelayMs: number, maxDelayMs: number): void {
+    this.ensureInitialized();
+    this.wasmClient!.setReconnectDelay(BigInt(initialDelayMs), BigInt(maxDelayMs));
+  }
+
+  /**
+   * Set maximum number of reconnection attempts
+   * 
+   * @param maxAttempts - Maximum attempts before giving up (0 = infinite)
+   * 
+   * @example
+   * ```typescript
+   * client.setMaxReconnectAttempts(5);  // Give up after 5 attempts
+   * client.setMaxReconnectAttempts(0);  // Never give up (default)
+   * ```
+   */
+  setMaxReconnectAttempts(maxAttempts: number): void {
+    this.ensureInitialized();
+    this.wasmClient!.setMaxReconnectAttempts(maxAttempts);
+  }
+
+  /**
+   * Get the current number of reconnection attempts
+   * 
+   * Resets to 0 after a successful reconnection.
+   * 
+   * @returns Current reconnection attempt count
+   */
+  getReconnectAttempts(): number {
+    this.ensureInitialized();
+    return this.wasmClient!.getReconnectAttempts();
+  }
+
+  /**
+   * Check if the client is currently attempting to reconnect
+   * 
+   * @returns true if a reconnection is in progress
+   */
+  isReconnecting(): boolean {
+    this.ensureInitialized();
+    return this.wasmClient!.isReconnecting();
+  }
+
+  /**
+   * Get the last received sequence ID for a subscription
+   * 
+   * Useful for debugging or manual tracking of subscription progress.
+   * This seq_id is automatically used during reconnection to resume
+   * from where the subscription left off.
+   * 
+   * @param subscriptionId - The subscription ID to query
+   * @returns The last seq_id as a string, or undefined if not set
+   * 
+   * @example
+   * ```typescript
+   * const lastSeq = client.getLastSeqId(subscriptionId);
+   * console.log(`Last received seq: ${lastSeq}`);
+   * ```
+   */
+  getLastSeqId(subscriptionId: string): string | undefined {
+    this.ensureInitialized();
+    return this.wasmClient!.getLastSeqId(subscriptionId) ?? undefined;
+  }
+
+  /**
+   * Helper to ensure WASM client is initialized
+   * @private
+   */
+  private ensureInitialized(): void {
+    if (!this.wasmClient) {
+      throw new Error('WASM client not initialized. Call connect() first.');
+    }
   }
 
   /**
@@ -362,7 +721,7 @@ export class KalamDBClient {
    * 
    * @param tableName - Name of the table to subscribe to
    * @param callback - Function called when changes occur
-   * @param options - Optional subscription options (batch_size, etc.)
+   * @param options - Optional subscription options (batch_size, last_rows, from_seq_id)
    * @returns Unsubscribe function to stop receiving updates
    * 
    * @throws Error if subscription fails or not connected
@@ -378,7 +737,8 @@ export class KalamDBClient {
    * 
    * // With options
    * const unsubscribe = await client.subscribe('messages', callback, {
-   *   batch_size: 100  // Load initial data in batches of 100
+   *   batch_size: 100,  // Load initial data in batches of 100
+   *   last_rows: 50     // Only fetch last 50 rows initially
    * });
    * 
    * // Later: unsubscribe when done
@@ -388,7 +748,7 @@ export class KalamDBClient {
   async subscribe(
     tableName: string,
     callback: SubscriptionCallback,
-    options?: SubscribeOptions
+    options?: SubscriptionOptions
   ): Promise<Unsubscribe> {
     // Use subscribeWithSql internally with SELECT * FROM tableName
     const sql = `SELECT * FROM ${tableName}`;
@@ -403,7 +763,7 @@ export class KalamDBClient {
    * 
    * @param sql - SQL SELECT query to subscribe to
    * @param callback - Function called when changes occur
-   * @param options - Optional subscription options (batch_size, etc.)
+   * @param options - Optional subscription options (batch_size, last_rows, from_seq_id)
    * @returns Unsubscribe function to stop receiving updates
    * 
    * @throws Error if subscription fails or not connected
@@ -418,7 +778,7 @@ export class KalamDBClient {
    *       console.log('New message:', event.rows);
    *     }
    *   },
-   *   { batch_size: 50 }
+   *   { batch_size: 50, last_rows: 100 }
    * );
    * 
    * // Later: unsubscribe when done
@@ -428,7 +788,7 @@ export class KalamDBClient {
   async subscribeWithSql(
     sql: string,
     callback: SubscriptionCallback,
-    options?: SubscribeOptions
+    options?: SubscriptionOptions
   ): Promise<Unsubscribe> {
     await this.initialize();
     if (!this.wasmClient) {
@@ -577,13 +937,49 @@ export class KalamDBClient {
 /**
  * Create a KalamDB client with the given configuration
  * 
- * Factory function alternative to constructor
+ * Factory function that supports both the new type-safe auth API and legacy API.
  * 
- * @param options - Client configuration
+ * @param options - Client configuration with URL and authentication
  * @returns Configured KalamDB client
+ * 
+ * @example
+ * ```typescript
+ * import { createClient, Auth } from '@kalamdb/client';
+ * 
+ * // New type-safe API (recommended)
+ * const client = createClient({
+ *   url: 'http://localhost:8080',
+ *   auth: Auth.basic('admin', 'admin')
+ * });
+ * 
+ * // JWT authentication
+ * const jwtClient = createClient({
+ *   url: 'http://localhost:8080',
+ *   auth: Auth.jwt('eyJhbGciOiJIUzI1NiIs...')
+ * });
+ * 
+ * // Anonymous (no authentication)
+ * const anonClient = createClient({
+ *   url: 'http://localhost:8080',
+ *   auth: Auth.none()
+ * });
+ * 
+ * // Legacy API (deprecated but still works)
+ * const legacyClient = createClient({
+ *   url: 'http://localhost:8080',
+ *   username: 'admin',
+ *   password: 'admin'
+ * });
+ * ```
  */
 export function createClient(options: ClientOptions): KalamDBClient {
-  return new KalamDBClient(options.url, options.username, options.password);
+  // Handle both new and legacy API
+  if (isAuthOptions(options)) {
+    return new KalamDBClient(options);
+  } else {
+    // Legacy API: convert to new format
+    return new KalamDBClient(options.url, options.username, options.password);
+  }
 }
 
 // Default export

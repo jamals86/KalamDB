@@ -7,6 +7,13 @@
 //! ```toml
 //! [server]
 //! url = "http://localhost:8080"  # KalamDB server URL
+//! http_version = "http2"         # HTTP version: "http1", "http2", "auto"
+//!
+//! [connection]
+//! auto_reconnect = true          # Auto-reconnect on connection loss
+//! reconnect_delay_ms = 100       # Initial reconnect delay
+//! max_reconnect_delay_ms = 30000 # Maximum reconnect delay
+//! max_reconnect_attempts = 10    # Max reconnect attempts (0 = unlimited)
 //!
 //! [auth]
 //! jwt_token = "your-jwt-token"
@@ -28,6 +35,9 @@ pub struct CLIConfiguration {
     /// Server connection settings
     pub server: Option<ServerConfig>,
 
+    /// Connection/reconnection settings
+    pub connection: Option<ConnectionConfig>,
+
     /// Authentication settings
     pub auth: Option<AuthConfig>,
 
@@ -47,6 +57,30 @@ pub struct ServerConfig {
     /// Maximum retry attempts
     #[serde(default = "default_retries")]
     pub max_retries: u32,
+
+    /// HTTP version preference: "http1", "http2", "auto" (default: "http2")
+    #[serde(default = "default_http_version")]
+    pub http_version: String,
+}
+
+/// Connection settings for reconnection behavior
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ConnectionConfig {
+    /// Enable automatic reconnection on connection loss (default: true)
+    #[serde(default = "default_auto_reconnect")]
+    pub auto_reconnect: bool,
+
+    /// Initial delay between reconnection attempts in milliseconds (default: 100)
+    #[serde(default = "default_reconnect_delay_ms")]
+    pub reconnect_delay_ms: u64,
+
+    /// Maximum delay between reconnection attempts in milliseconds (default: 30000)
+    #[serde(default = "default_max_reconnect_delay_ms")]
+    pub max_reconnect_delay_ms: u64,
+
+    /// Maximum number of reconnection attempts (0 = unlimited, default: 10)
+    #[serde(default = "default_max_reconnect_attempts")]
+    pub max_reconnect_attempts: u32,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -78,6 +112,26 @@ fn default_retries() -> u32 {
     3
 }
 
+fn default_http_version() -> String {
+    "http2".to_string()
+}
+
+fn default_auto_reconnect() -> bool {
+    true
+}
+
+fn default_reconnect_delay_ms() -> u64 {
+    100
+}
+
+fn default_max_reconnect_delay_ms() -> u64 {
+    30000
+}
+
+fn default_max_reconnect_attempts() -> u32 {
+    10
+}
+
 fn default_format() -> String {
     "table".to_string()
 }
@@ -97,6 +151,13 @@ impl Default for CLIConfiguration {
                 url: Some("http://localhost:8080".to_string()),
                 timeout: default_timeout(),
                 max_retries: default_retries(),
+                http_version: default_http_version(),
+            }),
+            connection: Some(ConnectionConfig {
+                auto_reconnect: default_auto_reconnect(),
+                reconnect_delay_ms: default_reconnect_delay_ms(),
+                max_reconnect_delay_ms: default_max_reconnect_delay_ms(),
+                max_reconnect_attempts: default_max_reconnect_attempts(),
             }),
             auth: None,
             ui: Some(UIConfig {
@@ -164,6 +225,57 @@ impl CLIConfiguration {
         std::fs::write(path, contents)?;
         Ok(())
     }
+
+    /// Build ConnectionOptions from CLI configuration
+    ///
+    /// Converts CLI config settings to kalam-link ConnectionOptions
+    pub fn to_connection_options(&self) -> kalam_link::ConnectionOptions {
+        use kalam_link::{ConnectionOptions, HttpVersion};
+
+        let mut options = ConnectionOptions::default();
+
+        // Apply server settings
+        if let Some(ref server) = self.server {
+            // Parse http_version string to HttpVersion enum
+            options = options.with_http_version(match server.http_version.to_lowercase().as_str() {
+                "http1" | "http/1" | "http/1.1" => HttpVersion::Http1,
+                "http2" | "http/2" => HttpVersion::Http2,
+                "auto" | _ => HttpVersion::Auto,
+            });
+        }
+
+        // Apply connection settings
+        if let Some(ref conn) = self.connection {
+            options = options
+                .with_auto_reconnect(conn.auto_reconnect)
+                .with_reconnect_delay_ms(conn.reconnect_delay_ms)
+                .with_max_reconnect_delay_ms(conn.max_reconnect_delay_ms);
+
+            // Convert 0 to None (unlimited), otherwise Some(n)
+            let max_attempts = if conn.max_reconnect_attempts == 0 {
+                None
+            } else {
+                Some(conn.max_reconnect_attempts)
+            };
+            options = options.with_max_reconnect_attempts(max_attempts);
+        }
+
+        options
+    }
+
+    /// Get the HTTP version setting from config
+    pub fn http_version(&self) -> kalam_link::HttpVersion {
+        use kalam_link::HttpVersion;
+
+        self.server
+            .as_ref()
+            .map(|s| match s.http_version.to_lowercase().as_str() {
+                "http1" | "http/1" | "http/1.1" => HttpVersion::Http1,
+                "http2" | "http/2" => HttpVersion::Http2,
+                "auto" | _ => HttpVersion::Auto,
+            })
+            .unwrap_or(HttpVersion::Http2) // Default to HTTP/2
+    }
 }
 
 #[cfg(test)]
@@ -175,9 +287,22 @@ mod tests {
         let config = CLIConfiguration::default();
         assert!(config.server.is_some());
         assert_eq!(
-            config.server.unwrap().url,
+            config.server.as_ref().unwrap().url,
             Some("http://localhost:8080".to_string())
         );
+        // HTTP/2 should be the default
+        assert_eq!(config.server.as_ref().unwrap().http_version, "http2");
+    }
+
+    #[test]
+    fn test_default_connection_config() {
+        let config = CLIConfiguration::default();
+        assert!(config.connection.is_some());
+        let conn = config.connection.as_ref().unwrap();
+        assert!(conn.auto_reconnect);
+        assert_eq!(conn.reconnect_delay_ms, 100);
+        assert_eq!(conn.max_reconnect_delay_ms, 30000);
+        assert_eq!(conn.max_reconnect_attempts, 10);
     }
 
     #[test]
@@ -186,5 +311,62 @@ mod tests {
         let toml = toml::to_string(&config).unwrap();
         assert!(toml.contains("[server]"));
         assert!(toml.contains("url"));
+        assert!(toml.contains("http_version"));
+        assert!(toml.contains("[connection]"));
+        assert!(toml.contains("auto_reconnect"));
+    }
+
+    #[test]
+    fn test_to_connection_options() {
+        let config = CLIConfiguration::default();
+        let options = config.to_connection_options();
+
+        // Verify defaults are applied
+        assert_eq!(options.http_version, kalam_link::HttpVersion::Http2);
+        assert!(options.auto_reconnect);
+        assert_eq!(options.reconnect_delay_ms, 100);
+        assert_eq!(options.max_reconnect_delay_ms, 30000);
+        assert_eq!(options.max_reconnect_attempts, Some(10));
+    }
+
+    #[test]
+    fn test_http_version_parsing() {
+        // Test various http_version strings
+        let mut config = CLIConfiguration::default();
+
+        // http1 variants
+        config.server.as_mut().unwrap().http_version = "http1".to_string();
+        assert_eq!(config.http_version(), kalam_link::HttpVersion::Http1);
+
+        config.server.as_mut().unwrap().http_version = "http/1".to_string();
+        assert_eq!(config.http_version(), kalam_link::HttpVersion::Http1);
+
+        config.server.as_mut().unwrap().http_version = "HTTP/1.1".to_string();
+        assert_eq!(config.http_version(), kalam_link::HttpVersion::Http1);
+
+        // http2 variants
+        config.server.as_mut().unwrap().http_version = "http2".to_string();
+        assert_eq!(config.http_version(), kalam_link::HttpVersion::Http2);
+
+        config.server.as_mut().unwrap().http_version = "HTTP/2".to_string();
+        assert_eq!(config.http_version(), kalam_link::HttpVersion::Http2);
+
+        // auto
+        config.server.as_mut().unwrap().http_version = "auto".to_string();
+        assert_eq!(config.http_version(), kalam_link::HttpVersion::Auto);
+
+        // unknown defaults to Auto
+        config.server.as_mut().unwrap().http_version = "unknown".to_string();
+        assert_eq!(config.http_version(), kalam_link::HttpVersion::Auto);
+    }
+
+    #[test]
+    fn test_unlimited_reconnect_attempts() {
+        let mut config = CLIConfiguration::default();
+        config.connection.as_mut().unwrap().max_reconnect_attempts = 0;
+
+        let options = config.to_connection_options();
+        // 0 should be converted to None (unlimited)
+        assert_eq!(options.max_reconnect_attempts, None);
     }
 }

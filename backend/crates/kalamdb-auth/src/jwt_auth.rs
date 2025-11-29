@@ -95,10 +95,17 @@ pub fn validate_jwt_token(
 ///
 /// # Errors
 /// Returns `AuthError::UntrustedIssuer` if issuer is not in the list
+///
+/// # Security Note
+/// If no trusted issuers are configured, ALL issuers are rejected.
+/// This is a secure-by-default approach to prevent accepting arbitrary tokens.
 fn verify_issuer(issuer: &str, trusted_issuers: &[String]) -> AuthResult<()> {
+    // Security: If no issuers configured, reject all (secure by default)
     if trusted_issuers.is_empty() {
-        // If no issuers configured, accept any
-        return Ok(());
+        return Err(AuthError::UntrustedIssuer(format!(
+            "No trusted issuers configured. Rejecting issuer: {}",
+            issuer
+        )));
     }
 
     if trusted_issuers.iter().any(|i| i == issuer) {
@@ -208,8 +215,9 @@ mod tests {
 
     #[test]
     fn test_verify_issuer_empty_list() {
-        // Empty trusted list = accept any issuer
+        // Security: Empty trusted list = reject ALL issuers (secure by default)
         let trusted = vec![];
-        assert!(verify_issuer("any-issuer.com", &trusted).is_ok());
+        let result = verify_issuer("any-issuer.com", &trusted);
+        assert!(matches!(result, Err(AuthError::UntrustedIssuer(_))));
     }
 }

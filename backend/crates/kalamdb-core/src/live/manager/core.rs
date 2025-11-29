@@ -91,7 +91,6 @@ impl LiveQueryManager {
     /// - request: Client subscription request
     /// - table_id: Pre-validated table identifier
     /// - filter_expr: Optional parsed WHERE clause
-    /// - projections: Optional column projections from SELECT
     /// - batch_size: Batch size for initial data loading
     pub async fn register_subscription(
         &self,
@@ -99,11 +98,10 @@ impl LiveQueryManager {
         request: &SubscriptionRequest,
         table_id: TableId,
         filter_expr: Option<Expr>,
-        projections: Option<Vec<String>>,
         batch_size: usize,
     ) -> Result<LiveQueryId, KalamDbError> {
         self.subscription_service
-            .register_subscription(connection_state, request, table_id, filter_expr, projections, batch_size)
+            .register_subscription(connection_state, request, table_id, filter_expr, batch_size)
             .await
     }
 
@@ -168,17 +166,12 @@ impl LiveQueryManager {
         // TODO: Parse filter_expr from SQL using DataFusion
         let filter_expr: Option<Expr> = None;
 
-        // Extract projections from SELECT clause (if not SELECT *)
-        // TODO: Parse projections from SQL using DataFusion
-        let projections: Option<Vec<String>> = None;
-
         // Register the subscription
         let live_id = self.register_subscription(
             connection_state,
             request,
             table_id.clone(),
             filter_expr,
-            projections,
             batch_size,
         ).await?;
 

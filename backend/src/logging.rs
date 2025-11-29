@@ -47,12 +47,14 @@ pub fn init_logging(
             // Filter out noisy third-party debug logs
             //actix_server
             .level_for("actix_server", LevelFilter::Warn)
-            .level_for("sqlparser", LevelFilter::Info)
-            .level_for("datafusion", LevelFilter::Info)
-            .level_for("datafusion_optimizer", LevelFilter::Info)
-            .level_for("datafusion_datasource", LevelFilter::Info)
-            .level_for("arrow", LevelFilter::Info)
-            .level_for("parquet", LevelFilter::Info)
+            .level_for("actix_web", LevelFilter::Warn)
+            .level_for("h2", LevelFilter::Warn)
+            .level_for("sqlparser", LevelFilter::Warn)
+            .level_for("datafusion", LevelFilter::Warn)
+            .level_for("datafusion_optimizer", LevelFilter::Warn)
+            .level_for("datafusion_datasource", LevelFilter::Warn)
+            .level_for("arrow", LevelFilter::Warn)
+            .level_for("parquet", LevelFilter::Warn)
             .level_for("object_store", LevelFilter::Info);
 
         // Apply per-target overrides from configuration (if any)

@@ -48,6 +48,9 @@ async-trait = { workspace = true }
 # Base64 encoding/decoding
 base64 = { workspace = true }
 
+# Compression
+flate2 = { workspace = true }
+
 [build-dependencies]
 chrono = { workspace = true }
 

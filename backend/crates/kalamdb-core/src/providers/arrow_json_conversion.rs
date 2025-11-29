@@ -467,6 +467,9 @@ pub fn json_to_row(json: &JsonValue) -> Option<Row> {
 }
 
 /// Convert serde_json::Value to DataFusion ScalarValue
+///
+/// This variant uses fallbacks for complex types (arrays/objects are converted to JSON strings).
+/// For strict validation (e.g., SQL parameter binding), use `json_value_to_scalar_strict`.
 pub fn json_value_to_scalar(v: &JsonValue) -> ScalarValue {
     match v {
         JsonValue::Null => ScalarValue::Null,
@@ -483,6 +486,32 @@ pub fn json_value_to_scalar(v: &JsonValue) -> ScalarValue {
         JsonValue::String(s) => ScalarValue::Utf8(Some(s.clone())),
         JsonValue::Array(_) => ScalarValue::Utf8(Some(v.to_string())), // Fallback for arrays
         JsonValue::Object(_) => ScalarValue::Utf8(Some(v.to_string())), // Fallback for objects
+    }
+}
+
+/// Convert serde_json::Value to DataFusion ScalarValue with strict validation
+///
+/// Unlike `json_value_to_scalar`, this function returns an error for unsupported types
+/// (arrays and objects). Use this for API parameter binding where strict validation is needed.
+///
+/// # Errors
+/// Returns an error string if the JSON value is an array or object.
+pub fn json_value_to_scalar_strict(v: &JsonValue) -> Result<ScalarValue, String> {
+    match v {
+        JsonValue::Null => Ok(ScalarValue::Utf8(None)),
+        JsonValue::Bool(b) => Ok(ScalarValue::Boolean(Some(*b))),
+        JsonValue::Number(n) => {
+            if let Some(i) = n.as_i64() {
+                Ok(ScalarValue::Int64(Some(i)))
+            } else if let Some(f) = n.as_f64() {
+                Ok(ScalarValue::Float64(Some(f)))
+            } else {
+                Err(format!("Unsupported number format: {}", n))
+            }
+        }
+        JsonValue::String(s) => Ok(ScalarValue::Utf8(Some(s.clone()))),
+        JsonValue::Array(_) => Err("Array parameters not yet supported".to_string()),
+        JsonValue::Object(_) => Err("Object parameters not yet supported".to_string()),
     }
 }
 

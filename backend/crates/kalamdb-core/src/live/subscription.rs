@@ -5,7 +5,7 @@
 //!
 //! All SQL parsing is done inside register_subscription - no intermediate ParsedSubscription.
 
-use super::connections_manager::{ConnectionsManager, SharedConnectionState, SubscriptionState};
+use super::connections_manager::{ConnectionsManager, SharedConnectionState, SubscriptionHandle, SubscriptionState};
 use crate::error::KalamDbError;
 use datafusion::sql::sqlparser::ast::Expr;
 use kalamdb_commons::ids::SeqId;
@@ -60,7 +60,6 @@ impl SubscriptionService {
     /// - request: Client subscription request containing SQL and options
     /// - table_id: Pre-validated table identifier (validated in ws_handler)
     /// - filter_expr: Optional parsed WHERE clause expression
-    /// - projections: Optional column projections from SELECT
     /// - batch_size: Batch size for initial data fetching
     pub async fn register_subscription(
         &self,
@@ -68,7 +67,6 @@ impl SubscriptionService {
         request: &SubscriptionRequest,
         table_id: TableId,
         filter_expr: Option<Expr>,
-        projections: Option<Vec<String>>,
         batch_size: usize,
     ) -> Result<LiveQueryId, KalamDbError> {
         // Read connection info from state
@@ -120,32 +118,40 @@ impl SubscriptionService {
             .await
             .map_err(|e| KalamDbError::Other(format!("Failed to insert live query: {}", e)))?;
 
-        // Create SubscriptionState with all necessary data
+        // Wrap filter_expr in Arc for zero-copy sharing between state and handle
+        let filter_expr_arc = filter_expr.map(Arc::new);
+
+        // Create SubscriptionState with all necessary data (stored in ConnectionState)
         let subscription_state = SubscriptionState {
             live_id: live_id.clone(),
             table_id: table_id.clone(),
-            options: options.clone(),
-            sql: request.sql.clone(),
-            filter_expr,
-            projections,
+            sql: request.sql.as_str().into(),  // Arc<str> for zero-copy
+            filter_expr: filter_expr_arc.clone(),
             batch_size,
             snapshot_end_seq: None,
+            notification_tx: notification_tx.clone(),
+        };
+
+        // Create lightweight handle for the index (~48 bytes vs ~800+ bytes)
+        let subscription_handle = SubscriptionHandle {
+            live_id: live_id.clone(),
+            filter_expr: filter_expr_arc,
             notification_tx,
         };
 
         // Add subscription to connection state
         {
             let state = connection_state.read();
-            state.subscriptions.insert(request.id.clone(), subscription_state.clone());
+            state.subscriptions.insert(request.id.clone(), subscription_state);
         }
 
-        // Add to registry's table index for efficient lookups
+        // Add lightweight handle to registry's table index for efficient lookups
         self.registry.index_subscription(
             &user_id,
             &connection_id,
             live_id.clone(),
             table_id.clone(),
-            subscription_state,
+            subscription_handle,
         );
 
         info!(

@@ -43,6 +43,11 @@ use crate::rate_limiter::RateLimiter;
 /// Accepts unauthenticated WebSocket connections.
 /// Authentication happens via post-connection Authenticate message (3-second timeout enforced).
 /// Uses ConnectionsManager for consolidated connection state management.
+/// 
+/// Security:
+/// - Origin header validation (if configured)
+/// - Message size limits enforced
+/// - Rate limiting per connection
 #[get("/ws")]
 pub async fn websocket_handler(
     req: HttpRequest,
@@ -56,6 +61,28 @@ pub async fn websocket_handler(
     // Check if server is shutting down
     if connection_registry.is_shutting_down() {
         return Ok(HttpResponse::ServiceUnavailable().body("Server is shutting down"));
+    }
+
+    // Security: Validate Origin header if configured
+    let config = app_context.config();
+    let allowed_ws_origins = if config.security.allowed_ws_origins.is_empty() {
+        &config.security.cors.allowed_origins
+    } else {
+        &config.security.allowed_ws_origins
+    };
+    
+    if !allowed_ws_origins.is_empty() && !allowed_ws_origins.contains(&"*".to_string()) {
+        if let Some(origin) = req.headers().get("Origin") {
+            if let Ok(origin_str) = origin.to_str() {
+                if !allowed_ws_origins.iter().any(|allowed| allowed == origin_str) {
+                    warn!("WebSocket connection rejected: invalid origin '{}'", origin_str);
+                    return Ok(HttpResponse::Forbidden().body("Origin not allowed"));
+                }
+            }
+        } else if config.security.strict_ws_origin_check {
+            warn!("WebSocket connection rejected: missing Origin header");
+            return Ok(HttpResponse::Forbidden().body("Origin header required"));
+        }
     }
 
     // Generate unique connection ID
@@ -90,6 +117,7 @@ pub async fn websocket_handler(
     let limiter = rate_limiter.get_ref().clone();
     let lq_manager = live_query_manager.get_ref().clone();
     let user_repository = user_repo.get_ref().clone();
+    let max_message_size = config.security.max_ws_message_size;
 
     // Spawn WebSocket handling task
     actix_web::rt::spawn(async move {
@@ -105,6 +133,7 @@ pub async fn websocket_handler(
             limiter,
             lq_manager,
             user_repository,
+            max_message_size,
         )
         .await;
 
@@ -128,6 +157,7 @@ async fn handle_websocket(
     rate_limiter: Arc<RateLimiter>,
     live_query_manager: Arc<kalamdb_core::live::LiveQueryManager>,
     user_repo: Arc<dyn UserRepository>,
+    max_message_size: usize,
 ) {
     let mut event_rx = registration.event_rx;
     let mut notification_rx = registration.notification_rx;
@@ -197,6 +227,15 @@ async fn handle_websocket(
                     }
                     Some(Ok(Message::Text(text))) => {
                         connection_state.write().update_heartbeat();
+
+                        // Security: Check message size limit
+                        if text.len() > max_message_size {
+                            warn!("Message too large from {}: {} bytes (max {})", 
+                                connection_id, text.len(), max_message_size);
+                            let _ = send_error(&mut session, "protocol", "MESSAGE_TOO_LARGE", 
+                                &format!("Message exceeds maximum size of {} bytes", max_message_size)).await;
+                            continue;
+                        }
 
                         // Rate limit check
                         if !rate_limiter.check_message_rate(&connection_id) {
@@ -289,13 +328,12 @@ async fn handle_text_message(
         serde_json::from_str(text).map_err(|e| format!("Invalid message: {}", e))?;
 
     match msg {
-        ClientMessage::Authenticate { username, password } => {
+        ClientMessage::Authenticate { credentials } => {
             connection_state.write().mark_auth_started();
             handle_authenticate(
                 connection_state,
                 client_ip,
-                &username,
-                &password,
+                credentials,
                 session,
                 registry,
                 app_context,

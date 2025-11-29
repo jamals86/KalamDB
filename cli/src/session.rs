@@ -10,7 +10,7 @@
 use clap::ValueEnum;
 use colored::*;
 use indicatif::{ProgressBar, ProgressStyle};
-use kalam_link::{AuthProvider, KalamLinkClient, KalamLinkTimeouts, SubscriptionConfig, SubscriptionOptions};
+use kalam_link::{AuthProvider, ConnectionOptions, KalamLinkClient, KalamLinkTimeouts, SubscriptionConfig, SubscriptionOptions};
 use rustyline::completion::Completer;
 use rustyline::error::ReadlineError;
 use rustyline::highlight::Highlighter;
@@ -114,7 +114,7 @@ impl CLISession {
         color: bool,
     ) -> Result<Self> {
         Self::with_auth_and_instance(
-            server_url, auth, format, color, None, None, None, true, None, None,
+            server_url, auth, format, color, None, None, None, true, None, None, None,
         )
         .await
     }
@@ -133,18 +133,25 @@ impl CLISession {
         animations: bool,
         client_timeout: Option<Duration>,
         timeouts: Option<KalamLinkTimeouts>,
+        connection_options: Option<ConnectionOptions>,
     ) -> Result<Self> {
         // Build kalam-link client with authentication and timeouts
         let timeouts = timeouts.unwrap_or_default();
         let timeout = client_timeout.unwrap_or(timeouts.receive_timeout);
         
-        let client = KalamLinkClient::builder()
+        // Build client with connection options if provided
+        let mut builder = KalamLinkClient::builder()
             .base_url(&server_url)
             .timeout(timeout)
             .max_retries(3)
             .auth(auth.clone())
-            .timeouts(timeouts.clone())
-            .build()?;
+            .timeouts(timeouts.clone());
+        
+        if let Some(opts) = connection_options {
+            builder = builder.connection_options(opts);
+        }
+        
+        let client = builder.build()?;
 
         // Try to fetch server info from health check
         let (server_version, server_api_version, server_build_date, connected) =
@@ -1012,10 +1019,7 @@ impl CLISession {
             // No OPTIONS found - return SQL as-is with default options
             return (
                 sql.to_string(),
-                Some(SubscriptionOptions {
-                    batch_size: None,
-                    _reserved: None,
-                }),
+                Some(SubscriptionOptions::default()),
             );
         };
 
@@ -1036,10 +1040,7 @@ impl CLISession {
         // Expected format: (last_rows=N) or ( last_rows = N )
         if !options_str.starts_with('(') || !options_str.ends_with(')') {
             eprintln!("Warning: Invalid OPTIONS format, using defaults");
-            return Some(SubscriptionOptions {
-                batch_size: None,
-                _reserved: None,
-            });
+            return Some(SubscriptionOptions::default());
         }
 
         let inner = options_str[1..options_str.len() - 1].trim();
@@ -1050,14 +1051,20 @@ impl CLISession {
             let value = inner[equals_idx + 1..].trim();
 
             if key.to_lowercase() == "last_rows" {
-                if let Ok(_last_rows) = value.parse::<usize>() {
-                    return Some(SubscriptionOptions {
-                        batch_size: None,
-                        _reserved: None,
-                    });
+                if let Ok(last_rows) = value.parse::<u32>() {
+                    return Some(SubscriptionOptions::new().with_last_rows(last_rows));
                 } else {
                     eprintln!(
                         "Warning: Invalid last_rows value '{}', using default",
+                        value
+                    );
+                }
+            } else if key.to_lowercase() == "batch_size" {
+                if let Ok(batch_size) = value.parse::<usize>() {
+                    return Some(SubscriptionOptions::new().with_batch_size(batch_size));
+                } else {
+                    eprintln!(
+                        "Warning: Invalid batch_size value '{}', using default",
                         value
                     );
                 }
@@ -1067,10 +1074,7 @@ impl CLISession {
         }
 
         // Default if parsing failed
-        Some(SubscriptionOptions {
-            batch_size: None,
-            _reserved: None,
-        })
+        Some(SubscriptionOptions::default())
     }
 
     /// Run a WebSocket subscription

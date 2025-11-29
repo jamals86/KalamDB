@@ -13,6 +13,10 @@ pub fn default_node_id() -> String {
     "node1".to_string()
 }
 
+pub fn default_enable_http2() -> bool {
+    true // HTTP/2 enabled by default for better performance
+}
+
 pub fn default_flush_job_shutdown_timeout() -> u32 {
     300 // 5 minutes (T158j)
 }
@@ -283,6 +287,15 @@ pub fn default_rocksdb_block_cache_size() -> usize {
 
 pub fn default_rocksdb_max_background_jobs() -> i32 {
     4
+}
+
+// Security defaults
+pub fn default_max_ws_message_size() -> usize {
+    1024 * 1024 // 1MB - prevents memory exhaustion from large messages
+}
+
+pub fn default_max_request_body_size() -> usize {
+    10 * 1024 * 1024 // 10MB - reasonable limit for SQL queries
 }
 
 // WebSocket defaults (Phase 14 - Live Queries)

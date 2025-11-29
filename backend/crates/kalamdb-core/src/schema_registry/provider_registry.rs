@@ -156,7 +156,7 @@ impl ProviderRegistry {
     pub fn get_provider(&self, table_id: &TableId) -> Option<Arc<dyn TableProvider + Send + Sync>> {
         let result = self.providers.get(table_id).map(|e| Arc::clone(e.value()));
         if result.is_some() {
-            log::debug!(
+            log::trace!(
                 "[SchemaRegistry] Retrieved provider for table {}.{}",
                 table_id.namespace_id().as_str(),
                 table_id.table_name().as_str()

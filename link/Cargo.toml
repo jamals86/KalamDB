@@ -40,6 +40,9 @@ thiserror = { workspace = true }
 # Logging
 log = { workspace = true }
 
+# Decompression (pure Rust, WASM-compatible)
+miniz_oxide = { workspace = true }
+
 # WASM bindings (T039, T040, T063A-T063B)
 wasm-bindgen = { workspace = true, optional = true }
 wasm-bindgen-futures = { workspace = true, optional = true }
@@ -63,6 +66,8 @@ web-sys = { workspace = true, features = [
 ], optional = true }
 
 [features]
+# Default to tokio-runtime for native builds
+# WASM builds use wasm-pack which doesn't use default features
 default = ["tokio-runtime"]
 tokio-runtime = ["tokio", "reqwest", "tokio-tungstenite", "getrandom"]
 wasm = ["wasm-bindgen", "wasm-bindgen-futures", "js-sys", "web-sys"]

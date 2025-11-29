@@ -1,10 +1,14 @@
 // WASM bindings for KalamDB client (T041-T053, T063C-T063O)
 // Provides JavaScript/TypeScript interface for browser and Node.js usage
+// Supports automatic reconnection with seq_id resumption
 
 #![cfg(feature = "wasm")]
 
-// Use local models for WebSocket messages
-use crate::models::{ClientMessage, QueryRequest, ServerMessage, SubscriptionOptions, SubscriptionRequest};
+use crate::models::{
+    ClientMessage, ConnectionOptions, QueryRequest, ServerMessage, SubscriptionOptions,
+    SubscriptionRequest, WsAuthCredentials,
+};
+use crate::seq_id::SeqId;
 use base64::{engine::general_purpose, Engine as _};
 use std::cell::RefCell;
 use std::collections::HashMap;
@@ -17,31 +21,219 @@ use web_sys::{
     WebSocket,
 };
 
-/// WASM-compatible KalamDB client
+// ============================================================================
+// Security: Input Validation Functions
+// ============================================================================
+
+/// Validate a SQL identifier (table name, column name) to prevent SQL injection.
+/// Only allows: letters, numbers, underscores, and dots (for namespace.table format).
+/// Must start with a letter or underscore.
+fn validate_sql_identifier(name: &str, context: &str) -> Result<(), JsValue> {
+    if name.is_empty() {
+        return Err(JsValue::from_str(&format!("{} cannot be empty", context)));
+    }
+    if name.len() > 128 {
+        return Err(JsValue::from_str(&format!("{} too long (max 128 chars)", context)));
+    }
+    
+    let first_char = name.chars().next().unwrap();
+    if !first_char.is_ascii_alphabetic() && first_char != '_' {
+        return Err(JsValue::from_str(&format!(
+            "{} must start with a letter or underscore", context
+        )));
+    }
+    
+    // Only allow alphanumeric, underscore, and dot (for namespace.table)
+    for c in name.chars() {
+        if !c.is_ascii_alphanumeric() && c != '_' && c != '.' {
+            return Err(JsValue::from_str(&format!(
+                "{} contains invalid character '{}'. Only letters, numbers, underscores, and dots allowed",
+                context, c
+            )));
+        }
+    }
+    
+    // Check for path traversal attempts
+    if name.contains("..") || name.contains('/') || name.contains('\\') {
+        return Err(JsValue::from_str(&format!(
+            "{} contains forbidden sequence", context
+        )));
+    }
+    
+    Ok(())
+}
+
+/// Validate a row ID to prevent SQL injection.
+/// Accepts: UUIDs, integers, or alphanumeric strings with underscores/hyphens.
+fn validate_row_id(row_id: &str) -> Result<(), JsValue> {
+    if row_id.is_empty() {
+        return Err(JsValue::from_str("Row ID cannot be empty"));
+    }
+    if row_id.len() > 128 {
+        return Err(JsValue::from_str("Row ID too long (max 128 chars)"));
+    }
+    
+    // Check for SQL injection patterns
+    let dangerous_patterns = [";", "--", "/*", "*/", "'", "\"", "DROP", "DELETE", "UPDATE", "INSERT", "UNION", "SELECT"];
+    let upper = row_id.to_uppercase();
+    for pattern in dangerous_patterns {
+        if upper.contains(pattern) {
+            return Err(JsValue::from_str(&format!(
+                "Row ID contains forbidden pattern '{}'", pattern
+            )));
+        }
+    }
+    
+    // Only allow safe characters: alphanumeric, underscore, hyphen
+    for c in row_id.chars() {
+        if !c.is_ascii_alphanumeric() && c != '_' && c != '-' {
+            return Err(JsValue::from_str(&format!(
+                "Row ID contains invalid character '{}'", c
+            )));
+        }
+    }
+    
+    Ok(())
+}
+
+/// Validate a column name for INSERT operations
+fn validate_column_name(name: &str) -> Result<(), JsValue> {
+    validate_sql_identifier(name, "Column name")
+}
+
+// ============================================================================
+// Subscription State
+// ============================================================================
+
+/// Stored subscription info for reconnection
+#[derive(Clone)]
+struct SubscriptionState {
+    /// The SQL query for this subscription
+    sql: String,
+    /// Original subscription options
+    options: SubscriptionOptions,
+    /// JavaScript callback function
+    callback: js_sys::Function,
+    /// Last received seq_id for resumption
+    last_seq_id: Option<SeqId>,
+}
+
+/// Authentication provider for WASM clients
+///
+/// Supports three authentication modes:
+/// - Basic: HTTP Basic Auth with username/password
+/// - Jwt: Bearer token authentication with JWT
+/// - None: No authentication (localhost bypass)
+#[derive(Clone)]
+enum WasmAuthProvider {
+    /// HTTP Basic Authentication (username/password)
+    Basic { username: String, password: String },
+    /// JWT Token Authentication (Bearer token)
+    Jwt { token: String },
+    /// No authentication (for localhost bypass)
+    None,
+}
+
+impl WasmAuthProvider {
+    /// Get the Authorization header value for HTTP requests
+    fn to_http_header(&self) -> Option<String> {
+        match self {
+            WasmAuthProvider::Basic { username, password } => {
+                let credentials = format!("{}:{}", username, password);
+                let encoded = general_purpose::STANDARD.encode(credentials.as_bytes());
+                Some(format!("Basic {}", encoded))
+            }
+            WasmAuthProvider::Jwt { token } => Some(format!("Bearer {}", token)),
+            WasmAuthProvider::None => None,
+        }
+    }
+
+    /// Get the WebSocket authentication message using unified WsAuthCredentials
+    fn to_ws_auth_message(&self) -> Option<ClientMessage> {
+        match self {
+            WasmAuthProvider::Basic { username, password } => Some(ClientMessage::Authenticate {
+                credentials: WsAuthCredentials::Basic {
+                    username: username.clone(),
+                    password: password.clone(),
+                },
+            }),
+            WasmAuthProvider::Jwt { token } => Some(ClientMessage::Authenticate {
+                credentials: WsAuthCredentials::Jwt {
+                    token: token.clone(),
+                },
+            }),
+            WasmAuthProvider::None => None,
+        }
+    }
+}
+
+/// WASM-compatible KalamDB client with auto-reconnection support
+///
+/// Supports multiple authentication methods:
+/// - Basic Auth: `new KalamClient(url, username, password)`
+/// - JWT Token: `KalamClient.withJwt(url, token)`
+/// - Anonymous: `KalamClient.anonymous(url)`
 ///
 /// # Example (JavaScript)
 /// ```js
-/// import init, { KalamClient } from './pkg/kalam_link.js';
+/// import init, { KalamClient, KalamClientWithJwt, KalamClientAnonymous } from './pkg/kalam_link.js';
 ///
 /// await init();
+///
+/// // Basic Auth (username/password)
 /// const client = new KalamClient(
 ///   "http://localhost:8080",
 ///   "username",
 ///   "password"
 /// );
+///
+/// // JWT Token Auth
+/// const jwtClient = KalamClientWithJwt.new(
+///   "http://localhost:8080",
+///   "eyJhbGciOiJIUzI1NiIs..."
+/// );
+///
+/// // Anonymous (localhost bypass)
+/// const anonClient = KalamClientAnonymous.new("http://localhost:8080");
+///
+/// // Configure auto-reconnect (enabled by default)
+/// client.setAutoReconnect(true);
+/// client.setReconnectDelay(1000, 30000);
+///
+/// await client.connect();
+///
+/// // Subscribe with options
+/// const subId = await client.subscribeWithSql(
+///   "SELECT * FROM chat.messages",
+///   JSON.stringify({
+///     batch_size: 100,
+///     include_old_values: true
+///   }),
+///   (event) => console.log('Change:', event)
+/// );
 /// ```
 #[wasm_bindgen]
 pub struct KalamClient {
     url: String,
+    /// Authentication provider (Basic, JWT, or None)
+    auth: WasmAuthProvider,
+    /// Legacy fields for Basic Auth (kept for backwards compatibility in reconnection)
     username: String,
     password: String,
     ws: Rc<RefCell<Option<WebSocket>>>,
-    subscriptions: Rc<RefCell<HashMap<String, js_sys::Function>>>,
+    /// Subscription state including callbacks and last seq_id for resumption
+    subscription_state: Rc<RefCell<HashMap<String, SubscriptionState>>>,
+    /// Connection options for auto-reconnect
+    connection_options: Rc<RefCell<ConnectionOptions>>,
+    /// Current reconnection attempt count
+    reconnect_attempts: Rc<RefCell<u32>>,
+    /// Flag indicating if we're currently reconnecting
+    is_reconnecting: Rc<RefCell<bool>>,
 }
 
 #[wasm_bindgen]
 impl KalamClient {
-    /// Create a new KalamDB client (T042, T043, T044)
+    /// Create a new KalamDB client with HTTP Basic Authentication (T042, T043, T044)
     ///
     /// # Arguments
     /// * `url` - KalamDB server URL (required, e.g., "http://localhost:8080")
@@ -71,11 +263,167 @@ impl KalamClient {
 
         Ok(KalamClient {
             url,
+            auth: WasmAuthProvider::Basic {
+                username: username.clone(),
+                password: password.clone(),
+            },
             username,
             password,
             ws: Rc::new(RefCell::new(None)),
-            subscriptions: Rc::new(RefCell::new(HashMap::new())),
+            subscription_state: Rc::new(RefCell::new(HashMap::new())),
+            connection_options: Rc::new(RefCell::new(ConnectionOptions::default())),
+            reconnect_attempts: Rc::new(RefCell::new(0)),
+            is_reconnecting: Rc::new(RefCell::new(false)),
         })
+    }
+
+    /// Create a new KalamDB client with JWT Token Authentication
+    ///
+    /// # Arguments
+    /// * `url` - KalamDB server URL (required, e.g., "http://localhost:8080")
+    /// * `token` - JWT token for authentication (required)
+    ///
+    /// # Errors
+    /// Returns JsValue error if url or token is empty
+    ///
+    /// # Example (JavaScript)
+    /// ```js
+    /// const client = KalamClient.withJwt(
+    ///   "http://localhost:8080",
+    ///   "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9..."
+    /// );
+    /// await client.connect();
+    /// ```
+    #[wasm_bindgen(js_name = withJwt)]
+    pub fn with_jwt(url: String, token: String) -> Result<KalamClient, JsValue> {
+        if url.is_empty() {
+            return Err(JsValue::from_str(
+                "KalamClient.withJwt: 'url' parameter is required and cannot be empty",
+            ));
+        }
+        if token.is_empty() {
+            return Err(JsValue::from_str(
+                "KalamClient.withJwt: 'token' parameter is required and cannot be empty",
+            ));
+        }
+
+        Ok(KalamClient {
+            url,
+            auth: WasmAuthProvider::Jwt { token },
+            username: String::new(),
+            password: String::new(),
+            ws: Rc::new(RefCell::new(None)),
+            subscription_state: Rc::new(RefCell::new(HashMap::new())),
+            connection_options: Rc::new(RefCell::new(ConnectionOptions::default())),
+            reconnect_attempts: Rc::new(RefCell::new(0)),
+            is_reconnecting: Rc::new(RefCell::new(false)),
+        })
+    }
+
+    /// Create a new KalamDB client with no authentication
+    ///
+    /// Useful for localhost connections where the server allows
+    /// unauthenticated access, or for development/testing scenarios.
+    ///
+    /// # Arguments
+    /// * `url` - KalamDB server URL (required, e.g., "http://localhost:8080")
+    ///
+    /// # Errors
+    /// Returns JsValue error if url is empty
+    ///
+    /// # Example (JavaScript)
+    /// ```js
+    /// const client = KalamClient.anonymous("http://localhost:8080");
+    /// await client.connect();
+    /// ```
+    #[wasm_bindgen(js_name = anonymous)]
+    pub fn anonymous(url: String) -> Result<KalamClient, JsValue> {
+        if url.is_empty() {
+            return Err(JsValue::from_str(
+                "KalamClient.anonymous: 'url' parameter is required and cannot be empty",
+            ));
+        }
+
+        Ok(KalamClient {
+            url,
+            auth: WasmAuthProvider::None,
+            username: String::new(),
+            password: String::new(),
+            ws: Rc::new(RefCell::new(None)),
+            subscription_state: Rc::new(RefCell::new(HashMap::new())),
+            connection_options: Rc::new(RefCell::new(ConnectionOptions::default())),
+            reconnect_attempts: Rc::new(RefCell::new(0)),
+            is_reconnecting: Rc::new(RefCell::new(false)),
+        })
+    }
+
+    /// Get the current authentication type
+    ///
+    /// Returns one of: "basic", "jwt", or "none"
+    #[wasm_bindgen(js_name = getAuthType)]
+    pub fn get_auth_type(&self) -> String {
+        match &self.auth {
+            WasmAuthProvider::Basic { .. } => "basic".to_string(),
+            WasmAuthProvider::Jwt { .. } => "jwt".to_string(),
+            WasmAuthProvider::None => "none".to_string(),
+        }
+    }
+
+    /// Enable or disable automatic reconnection
+    ///
+    /// # Arguments
+    /// * `enabled` - Whether to automatically reconnect on connection loss
+    #[wasm_bindgen(js_name = setAutoReconnect)]
+    pub fn set_auto_reconnect(&self, enabled: bool) {
+        self.connection_options.borrow_mut().auto_reconnect = enabled;
+    }
+
+    /// Set reconnection delay parameters
+    ///
+    /// # Arguments
+    /// * `initial_delay_ms` - Initial delay in milliseconds between reconnection attempts
+    /// * `max_delay_ms` - Maximum delay (for exponential backoff)
+    #[wasm_bindgen(js_name = setReconnectDelay)]
+    pub fn set_reconnect_delay(&self, initial_delay_ms: u64, max_delay_ms: u64) {
+        let mut opts = self.connection_options.borrow_mut();
+        opts.reconnect_delay_ms = initial_delay_ms;
+        opts.max_reconnect_delay_ms = max_delay_ms;
+    }
+
+    /// Set maximum reconnection attempts
+    ///
+    /// # Arguments
+    /// * `max_attempts` - Maximum number of attempts (0 = infinite)
+    #[wasm_bindgen(js_name = setMaxReconnectAttempts)]
+    pub fn set_max_reconnect_attempts(&self, max_attempts: u32) {
+        self.connection_options.borrow_mut().max_reconnect_attempts = if max_attempts == 0 {
+            None
+        } else {
+            Some(max_attempts)
+        };
+    }
+
+    /// Get the current reconnection attempt count
+    #[wasm_bindgen(js_name = getReconnectAttempts)]
+    pub fn get_reconnect_attempts(&self) -> u32 {
+        *self.reconnect_attempts.borrow()
+    }
+
+    /// Check if currently reconnecting
+    #[wasm_bindgen(js_name = isReconnecting)]
+    pub fn is_reconnecting_flag(&self) -> bool {
+        *self.is_reconnecting.borrow()
+    }
+
+    /// Get the last received seq_id for a subscription
+    ///
+    /// Useful for debugging or manual resumption tracking
+    #[wasm_bindgen(js_name = getLastSeqId)]
+    pub fn get_last_seq_id(&self, subscription_id: String) -> Option<String> {
+        self.subscription_state
+            .borrow()
+            .get(&subscription_id)
+            .and_then(|state| state.last_seq_id.map(|seq| seq.to_string()))
     }
 
     /// Connect to KalamDB server via WebSocket (T045, T063C-T063D)
@@ -84,6 +432,12 @@ impl KalamClient {
     /// Promise that resolves when connection is established and authenticated
     pub async fn connect(&mut self) -> Result<(), JsValue> {
         use wasm_bindgen_futures::JsFuture;
+
+        // Check if already connected - prevent duplicate connections
+        if self.is_connected() {
+            console_log("KalamClient: Already connected, skipping reconnection");
+            return Ok(());
+        }
 
         // T063O: Add console.log debugging for connection state changes
         console_log("KalamClient: Connecting to WebSocket...");
@@ -111,6 +465,9 @@ impl KalamClient {
             (promise, resolve_fn.unwrap(), reject_fn.unwrap())
         };
 
+        // For anonymous auth, we don't need to wait for auth_promise
+        let requires_auth = !matches!(self.auth, WasmAuthProvider::None);
+
         let (auth_promise, auth_resolve, auth_reject) = {
             let mut resolve_fn: Option<js_sys::Function> = None;
             let mut reject_fn: Option<js_sys::Function> = None;
@@ -123,26 +480,27 @@ impl KalamClient {
             (promise, resolve_fn.unwrap(), reject_fn.unwrap())
         };
 
-        // Clone credentials for the onopen handler
-        let username = self.username.clone();
-        let password = self.password.clone();
+        // Clone auth message for the onopen handler
+        let auth_message = self.auth.to_ws_auth_message();
         let ws_clone_for_auth = ws.clone();
+        let auth_resolve_for_anon = auth_resolve.clone();
         
         // Set up onopen handler to send authentication message
         let connect_resolve_clone = connect_resolve.clone();
         let onopen_callback = Closure::wrap(Box::new(move || {
             console_log("KalamClient: WebSocket connected, sending authentication...");
             
-            // Send authentication message
-            let auth_msg = ClientMessage::Authenticate {
-                username: username.clone(),
-                password: password.clone(),
-            };
-            
-            if let Ok(json) = serde_json::to_string(&auth_msg) {
-                if let Err(e) = ws_clone_for_auth.send_with_str(&json) {
-                    console_log(&format!("KalamClient: Failed to send auth message: {:?}", e));
+            // Send authentication message if we have one
+            if let Some(auth_msg) = &auth_message {
+                if let Ok(json) = serde_json::to_string(&auth_msg) {
+                    if let Err(e) = ws_clone_for_auth.send_with_str(&json) {
+                        console_log(&format!("KalamClient: Failed to send auth message: {:?}", e));
+                    }
                 }
+            } else {
+                // No auth needed (anonymous), resolve auth immediately
+                console_log("KalamClient: Anonymous connection, skipping authentication");
+                let _ = auth_resolve_for_anon.call0(&JsValue::NULL);
             }
             
             let _ = connect_resolve_clone.call0(&JsValue::NULL);
@@ -168,83 +526,130 @@ impl KalamClient {
                 e.code(),
                 e.reason()
             ));
+            // Note: Auto-reconnection is handled via the setup_auto_reconnect callback
         }) as Box<dyn FnMut(CloseEvent)>);
         ws.set_onclose(Some(onclose_callback.as_ref().unchecked_ref()));
         onclose_callback.forget();
 
+        // Set up auto-reconnect onclose handler
+        self.setup_auto_reconnect(&ws);
+
         // T063K: Implement WebSocket onmessage handler to parse events and invoke registered callbacks
-        let subscriptions = Rc::clone(&self.subscriptions);
+        let subscriptions = Rc::clone(&self.subscription_state);
         let auth_resolve_clone = auth_resolve.clone();
         let auth_reject_clone2 = auth_reject.clone();
-        let auth_handled = Rc::new(RefCell::new(false));
+        let auth_handled = Rc::new(RefCell::new(!requires_auth)); // Already handled if anonymous
         let auth_handled_clone = Rc::clone(&auth_handled);
         
         let onmessage_callback = Closure::wrap(Box::new(move |e: MessageEvent| {
-            if let Ok(txt) = e.data().dyn_into::<js_sys::JsString>() {
-                let message = String::from(txt);
-                console_log(&format!(
-                    "KalamClient: Received WebSocket message: {}",
-                    message
-                ));
-
-                // Parse message using ServerMessage enum
-                if let Ok(event) = serde_json::from_str::<ServerMessage>(&message) {
-                    // Check for authentication response first
-                    if !*auth_handled_clone.borrow() {
-                        match &event {
-                            ServerMessage::AuthSuccess { user_id, role } => {
-                                console_log(&format!(
-                                    "KalamClient: Authentication successful - user_id: {}, role: {}",
-                                    user_id, role
-                                ));
-                                *auth_handled_clone.borrow_mut() = true;
-                                let _ = auth_resolve_clone.call0(&JsValue::NULL);
+            // Handle both Text and Binary (compressed) messages
+            let message = if let Ok(txt) = e.data().dyn_into::<js_sys::JsString>() {
+                // Plain text message
+                String::from(txt)
+            } else if let Ok(array_buffer) = e.data().dyn_into::<js_sys::ArrayBuffer>() {
+                // Binary message - likely gzip compressed
+                let uint8_array = js_sys::Uint8Array::new(&array_buffer);
+                let data = uint8_array.to_vec();
+                
+                // Decompress gzip data
+                match crate::compression::decompress_gzip(&data) {
+                    Ok(decompressed) => {
+                        match String::from_utf8(decompressed) {
+                            Ok(s) => s,
+                            Err(e) => {
+                                console_log(&format!("KalamClient: Invalid UTF-8 in decompressed message: {}", e));
                                 return;
                             }
-                            ServerMessage::AuthError { message: error_msg } => {
-                                console_log(&format!(
-                                    "KalamClient: Authentication failed - {}",
-                                    error_msg
-                                ));
-                                *auth_handled_clone.borrow_mut() = true;
-                                let error = JsValue::from_str(&format!("Authentication failed: {}", error_msg));
-                                let _ = auth_reject_clone2.call1(&JsValue::NULL, &error);
-                                return;
-                            }
-                            _ => {} // Not an auth message, continue to subscription handling
                         }
                     }
+                    Err(e) => {
+                        console_log(&format!("KalamClient: Failed to decompress message: {}", e));
+                        return;
+                    }
+                }
+            } else {
+                // Unknown message type
+                console_log("KalamClient: Received unknown message type");
+                return;
+            };
+            
+            console_log(&format!(
+                "KalamClient: Received WebSocket message: {}",
+                message
+            ));
 
-                    // Look for subscription_id in the event
-                    let subscription_id = match &event {
-                        ServerMessage::SubscriptionAck {
-                            subscription_id, ..
-                        } => Some(subscription_id.clone()),
-                        ServerMessage::InitialDataBatch {
-                            subscription_id, ..
-                        } => Some(subscription_id.clone()),
-                        ServerMessage::Change {
-                            subscription_id, ..
-                        } => Some(subscription_id.clone()),
-                        ServerMessage::Error {
-                            subscription_id, ..
-                        } => Some(subscription_id.clone()),
-                        _ => None, // Auth messages don't have subscription_id
-                    };
+            // Parse message using ServerMessage enum
+            if let Ok(event) = serde_json::from_str::<ServerMessage>(&message) {
+                // Check for authentication response first
+                if !*auth_handled_clone.borrow() {
+                    match &event {
+                        ServerMessage::AuthSuccess { user_id, role } => {
+                            console_log(&format!(
+                                "KalamClient: Authentication successful - user_id: {}, role: {}",
+                                user_id, role
+                            ));
+                            *auth_handled_clone.borrow_mut() = true;
+                            let _ = auth_resolve_clone.call0(&JsValue::NULL);
+                            return;
+                        }
+                        ServerMessage::AuthError { message: error_msg } => {
+                            console_log(&format!(
+                                "KalamClient: Authentication failed - {}",
+                                error_msg
+                            ));
+                            *auth_handled_clone.borrow_mut() = true;
+                            let error = JsValue::from_str(&format!("Authentication failed: {}", error_msg));
+                            let _ = auth_reject_clone2.call1(&JsValue::NULL, &error);
+                            return;
+                        }
+                        _ => {} // Not an auth message, continue to subscription handling
+                    }
+                }
 
-                    if let Some(id) = subscription_id {
-                        let subs = subscriptions.borrow();
-                        // First try exact match
-                        if let Some(callback) = subs.get(&id) {
-                            let _ = callback.call1(&JsValue::NULL, &JsValue::from_str(&message));
-                        } else {
-                            // Server may prefix subscription_id with user_id-session_id-
-                            // Try to find a callback where the server's ID ends with our client ID
-                            for (client_id, callback) in subs.iter() {
-                                if id.ends_with(client_id) {
-                                    let _ = callback.call1(&JsValue::NULL, &JsValue::from_str(&message));
-                                    break;
-                                }
+                // Look for subscription_id in the event and update last_seq_id
+                let subscription_id = match &event {
+                    ServerMessage::SubscriptionAck {
+                        subscription_id, ..
+                    } => Some(subscription_id.clone()),
+                    ServerMessage::InitialDataBatch {
+                        subscription_id,
+                        batch_control,
+                        ..
+                    } => {
+                        // Update last_seq_id from batch_control
+                        if let Some(seq_id) = &batch_control.last_seq_id {
+                            let mut subs = subscriptions.borrow_mut();
+                            if let Some(state) = subs.get_mut(subscription_id) {
+                                state.last_seq_id = Some(*seq_id);
+                                console_log(&format!(
+                                    "KalamClient: Updated last_seq_id for {} to {}",
+                                    subscription_id, seq_id
+                                ));
+                            }
+                        }
+                        Some(subscription_id.clone())
+                    }
+                    ServerMessage::Change {
+                        subscription_id, ..
+                    } => Some(subscription_id.clone()),
+                    ServerMessage::Error {
+                        subscription_id, ..
+                    } => Some(subscription_id.clone()),
+                    _ => None, // Auth messages don't have subscription_id
+                };
+
+                if let Some(id) = subscription_id {
+                    let subs = subscriptions.borrow();
+                    // First try exact match
+                    if let Some(state) = subs.get(&id) {
+                        let _ = state.callback.call1(&JsValue::NULL, &JsValue::from_str(&message));
+                    } else {
+                        // Server may prefix subscription_id with user_id-session_id-
+                        // Try to find a callback where the server's ID ends with our client ID
+                        for (client_id, state) in subs.iter() {
+                            if id.ends_with(client_id) {
+                                let _ = state.callback.call1(&JsValue::NULL, &JsValue::from_str(&message));
+                                break;
                             }
                         }
                     }
@@ -275,13 +680,16 @@ impl KalamClient {
     pub async fn disconnect(&mut self) -> Result<(), JsValue> {
         console_log("KalamClient: Disconnecting from WebSocket...");
 
+        // Disable auto-reconnect during intentional disconnect
+        self.connection_options.borrow_mut().auto_reconnect = false;
+
         // T063E: Properly close WebSocket and cleanup resources
         if let Some(ws) = self.ws.borrow_mut().take() {
             ws.close()?;
         }
 
         // Clear all subscriptions
-        self.subscriptions.borrow_mut().clear();
+        self.subscription_state.borrow_mut().clear();
 
         console_log("KalamClient: Disconnected");
         Ok(())
@@ -313,6 +721,9 @@ impl KalamClient {
     /// }));
     /// ```
     pub async fn insert(&self, table_name: String, data: String) -> Result<String, JsValue> {
+        // Security: Validate table name to prevent SQL injection
+        validate_sql_identifier(&table_name, "Table name")?;
+        
         // Parse JSON data to build proper SQL INSERT statement
         let parsed: serde_json::Value = serde_json::from_str(&data)
             .map_err(|e| JsValue::from_str(&format!("Invalid JSON data: {}", e)))?;
@@ -324,8 +735,14 @@ impl KalamClient {
             return Err(JsValue::from_str("Cannot insert empty object"));
         }
         
+        // Security: Validate all column names
+        for key in obj.keys() {
+            validate_column_name(key)?;
+        }
+        
         // Build column names and values
-        let columns: Vec<String> = obj.keys().cloned().collect();
+        // Security: Quote identifiers with double quotes (SQL standard)
+        let columns: Vec<String> = obj.keys().map(|k| format!("\"{}\"", k)).collect();
         let values: Vec<String> = obj.values().map(|v| {
             match v {
                 serde_json::Value::Null => "NULL".to_string(),
@@ -336,9 +753,10 @@ impl KalamClient {
             }
         }).collect();
         
+        // Security: Quote table name with double quotes
         let sql = format!(
-            "INSERT INTO {} ({}) VALUES ({})",
-            table_name,
+            "INSERT INTO \"{}\" ({}) VALUES ({})",
+            table_name.replace('"', "\"\""), // Escape any double quotes in table name
             columns.join(", "),
             values.join(", ")
         );
@@ -352,8 +770,17 @@ impl KalamClient {
     /// * `table_name` - Name of the table
     /// * `row_id` - ID of the row to delete
     pub async fn delete(&self, table_name: String, row_id: String) -> Result<(), JsValue> {
+        // Security: Validate inputs to prevent SQL injection
+        validate_sql_identifier(&table_name, "Table name")?;
+        validate_row_id(&row_id)?;
+        
         // T063H: Implement using fetch API to execute DELETE statement via /v1/api/sql
-        let sql = format!("DELETE FROM {} WHERE id = {}", table_name, row_id);
+        // Security: Quote table name and use parameterized-style value
+        let sql = format!(
+            "DELETE FROM \"{}\" WHERE id = '{}'",
+            table_name.replace('"', "\"\""),
+            row_id.replace("'", "''")
+        );
         self.execute_sql(&sql).await?;
         Ok(())
     }
@@ -389,8 +816,12 @@ impl KalamClient {
         table_name: String,
         callback: js_sys::Function,
     ) -> Result<String, JsValue> {
+        // Security: Validate table name to prevent SQL injection
+        validate_sql_identifier(&table_name, "Table name")?;
+        
         // Default: SELECT * FROM table with default options
-        let sql = format!("SELECT * FROM {}", table_name);
+        // Security: Quote table name
+        let sql = format!("SELECT * FROM \"{}\"", table_name.replace('"', "\"\""));
         self.subscribe_with_sql(sql, None, callback).await
     }
 
@@ -398,7 +829,11 @@ impl KalamClient {
     ///
     /// # Arguments
     /// * `sql` - SQL SELECT query to subscribe to
-    /// * `options` - Optional JSON string with subscription options (e.g., `{"batch_size": 100}`)
+    /// * `options` - Optional JSON string with subscription options:
+    ///   - `batch_size`: Number of rows per batch (default: server-configured)
+    ///   - `auto_reconnect`: Override client auto-reconnect for this subscription (default: true)
+    ///   - `include_old_values`: Include old values in UPDATE/DELETE events (default: false)
+    ///   - `resume_from_seq_id`: Resume from a specific sequence ID (internal use)
     /// * `callback` - JavaScript function to call when changes occur
     ///
     /// # Returns
@@ -409,7 +844,7 @@ impl KalamClient {
     /// // Subscribe with options
     /// const subId = await client.subscribeWithSql(
     ///   "SELECT * FROM chat.messages WHERE conversation_id = 1",
-    ///   JSON.stringify({ batch_size: 50 }),
+    ///   JSON.stringify({ batch_size: 50, include_old_values: true }),
     ///   (event) => console.log('Change:', event)
     /// );
     /// ```
@@ -437,13 +872,18 @@ impl KalamClient {
         // Generate unique subscription ID from SQL hash
         let subscription_id = format!("sub-{:x}", md5_hash(&sql));
         
-        // T063J: Store subscription callbacks in HashMap for proper lifetime management
-        self.subscriptions
-            .borrow_mut()
-            .insert(subscription_id.clone(), callback);
+        // Store subscription state for reconnection (includes callback and last_seq_id)
+        self.subscription_state.borrow_mut().insert(
+            subscription_id.clone(),
+            SubscriptionState {
+                sql: sql.clone(),
+                options: subscription_options.clone(),
+                callback,
+                last_seq_id: None,
+            },
+        );
 
         // Send subscribe message via WebSocket
-        // Server expects: {"type": "subscribe", "subscription": {"id": "sub-1", "sql": "SELECT * FROM ...", "options": {}}}
         if let Some(ws) = self.ws.borrow().as_ref() {
             let subscribe_msg = ClientMessage::Subscribe {
                 subscription: SubscriptionRequest {
@@ -472,11 +912,10 @@ impl KalamClient {
             ));
         }
 
-        // T063M: Remove callback from HashMap and send unsubscribe message
-        self.subscriptions.borrow_mut().remove(&subscription_id);
+        // Remove from subscription state
+        self.subscription_state.borrow_mut().remove(&subscription_id);
 
         // Send unsubscribe message via WebSocket
-        // Note: Current server doesn't have unsubscribe - connection close will clean up
         if let Some(ws) = self.ws.borrow().as_ref() {
             let unsubscribe_msg = ClientMessage::Unsubscribe {
                 subscription_id: subscription_id.clone(),
@@ -499,19 +938,19 @@ impl KalamClient {
         let window =
             web_sys::window().ok_or_else(|| JsValue::from_str("No window object available"))?;
 
-        // T063F: Implement HTTP fetch for SQL queries with Basic Auth
+        // T063F: Implement HTTP fetch for SQL queries with authentication
         let opts = RequestInit::new();
         opts.set_method("POST");
         opts.set_mode(RequestMode::Cors);
 
-        // Set headers with HTTP Basic Auth
+        // Set headers with authentication
         let headers = Headers::new()?;
         headers.set("Content-Type", "application/json")?;
 
-        // Encode username:password as base64 for Authorization: Basic header
-        let credentials = format!("{}:{}", self.username, self.password);
-        let encoded = general_purpose::STANDARD.encode(credentials.as_bytes());
-        headers.set("Authorization", &format!("Basic {}", encoded))?;
+        // Add Authorization header if we have authentication
+        if let Some(auth_header) = self.auth.to_http_header() {
+            headers.set("Authorization", &auth_header)?;
+        }
         opts.set_headers(&headers);
 
         // Set body
@@ -544,6 +983,96 @@ impl KalamClient {
         let json = JsFuture::from(resp.text()?).await?;
         Ok(json.as_string().unwrap_or_else(|| "{}".to_string()))
     }
+
+    /// Set up auto-reconnection handler for the WebSocket
+    fn setup_auto_reconnect(&self, ws: &WebSocket) {
+        let connection_options = Rc::clone(&self.connection_options);
+        let subscription_state = Rc::clone(&self.subscription_state);
+        let reconnect_attempts = Rc::clone(&self.reconnect_attempts);
+        let is_reconnecting = Rc::clone(&self.is_reconnecting);
+        let ws_ref = Rc::clone(&self.ws);
+        let url = self.url.clone();
+        let auth = self.auth.clone();
+
+        let onclose_reconnect = Closure::wrap(Box::new(move |_e: CloseEvent| {
+            let opts = connection_options.borrow();
+            if !opts.auto_reconnect || *is_reconnecting.borrow() {
+                return;
+            }
+
+            let current_attempts = *reconnect_attempts.borrow();
+            if let Some(max) = opts.max_reconnect_attempts {
+                if current_attempts >= max {
+                    console_log(&format!(
+                        "KalamClient: Max reconnection attempts ({}) reached",
+                        max
+                    ));
+                    return;
+                }
+            }
+
+            // Calculate delay with exponential backoff
+            let delay = std::cmp::min(
+                opts.reconnect_delay_ms * (2u64.pow(current_attempts)),
+                opts.max_reconnect_delay_ms,
+            );
+
+            console_log(&format!(
+                "KalamClient: Scheduling reconnection in {}ms (attempt {})",
+                delay,
+                current_attempts + 1
+            ));
+
+            // Clone for async closure
+            let is_reconnecting_clone = is_reconnecting.clone();
+            let reconnect_attempts_clone = reconnect_attempts.clone();
+            let subscription_state_clone = subscription_state.clone();
+            let ws_ref_clone = ws_ref.clone();
+            let url_clone = url.clone();
+            let auth_clone = auth.clone();
+
+            let reconnect_fn = Closure::wrap(Box::new(move || {
+                *is_reconnecting_clone.borrow_mut() = true;
+                *reconnect_attempts_clone.borrow_mut() += 1;
+
+                let url = url_clone.clone();
+                let auth = auth_clone.clone();
+                let ws_ref = ws_ref_clone.clone();
+                let subscription_state = subscription_state_clone.clone();
+                let is_reconnecting = is_reconnecting_clone.clone();
+                let reconnect_attempts = reconnect_attempts_clone.clone();
+
+                wasm_bindgen_futures::spawn_local(async move {
+                    match reconnect_internal_with_auth(url, auth, ws_ref.clone()).await {
+                        Ok(()) => {
+                            console_log("KalamClient: Reconnection successful");
+                            *reconnect_attempts.borrow_mut() = 0; // Reset attempts on success
+                            resubscribe_all(ws_ref, subscription_state).await;
+                        }
+                        Err(e) => {
+                            console_log(&format!("KalamClient: Reconnection failed: {:?}", e));
+                        }
+                    }
+                    *is_reconnecting.borrow_mut() = false;
+                });
+            }) as Box<dyn FnMut()>);
+
+            let window = web_sys::window().unwrap();
+            let _ = window.set_timeout_with_callback_and_timeout_and_arguments_0(
+                reconnect_fn.as_ref().unchecked_ref(),
+                delay as i32,
+            );
+            reconnect_fn.forget();
+        }) as Box<dyn FnMut(CloseEvent)>);
+
+        // Note: We add a second onclose handler for auto-reconnect
+        // The first one just logs, this one handles reconnection
+        ws.add_event_listener_with_callback(
+            "close",
+            onclose_reconnect.as_ref().unchecked_ref(),
+        ).ok();
+        onclose_reconnect.forget();
+    }
 }
 
 // Simple hash function to generate unique subscription IDs from SQL
@@ -553,6 +1082,148 @@ fn md5_hash(s: &str) -> u64 {
     let mut hasher = DefaultHasher::new();
     s.hash(&mut hasher);
     hasher.finish()
+}
+
+/// Internal reconnection logic with auth provider support
+async fn reconnect_internal_with_auth(
+    url: String,
+    auth: WasmAuthProvider,
+    ws_ref: Rc<RefCell<Option<WebSocket>>>,
+) -> Result<(), JsValue> {
+    let ws_url = url
+        .replace("http://", "ws://")
+        .replace("https://", "wss://");
+    let ws_url = format!("{}/v1/ws", ws_url);
+
+    let ws = WebSocket::new(&ws_url)?;
+
+    let (connect_promise, connect_resolve, connect_reject) = create_promise();
+    let (auth_promise, auth_resolve, auth_reject) = create_promise();
+
+    // Check if auth is required
+    let requires_auth = !matches!(auth, WasmAuthProvider::None);
+    let auth_message = auth.to_ws_auth_message();
+    let ws_clone = ws.clone();
+    let auth_resolve_for_anon = auth_resolve.clone();
+
+    let connect_resolve_clone = connect_resolve.clone();
+    let onopen = Closure::wrap(Box::new(move || {
+        if let Some(auth_msg) = &auth_message {
+            if let Ok(json) = serde_json::to_string(&auth_msg) {
+                let _ = ws_clone.send_with_str(&json);
+            }
+        } else {
+            // No auth needed (anonymous), resolve auth immediately
+            let _ = auth_resolve_for_anon.call0(&JsValue::NULL);
+        }
+        let _ = connect_resolve_clone.call0(&JsValue::NULL);
+    }) as Box<dyn FnMut()>);
+    ws.set_onopen(Some(onopen.as_ref().unchecked_ref()));
+    onopen.forget();
+
+    let connect_reject_clone = connect_reject.clone();
+    let auth_reject_clone = auth_reject.clone();
+    let onerror = Closure::wrap(Box::new(move |_: ErrorEvent| {
+        let error = JsValue::from_str("Reconnection failed");
+        let _ = connect_reject_clone.call1(&JsValue::NULL, &error);
+        let _ = auth_reject_clone.call1(&JsValue::NULL, &error);
+    }) as Box<dyn FnMut(ErrorEvent)>);
+    ws.set_onerror(Some(onerror.as_ref().unchecked_ref()));
+    onerror.forget();
+
+    let auth_resolve_clone = auth_resolve.clone();
+    let auth_reject_clone2 = auth_reject.clone();
+    let auth_handled = Rc::new(RefCell::new(!requires_auth));
+    let auth_handled_clone = auth_handled.clone();
+
+    let onmessage = Closure::wrap(Box::new(move |e: MessageEvent| {
+        if let Ok(txt) = e.data().dyn_into::<js_sys::JsString>() {
+            let message = String::from(txt);
+            if let Ok(event) = serde_json::from_str::<ServerMessage>(&message) {
+                if !*auth_handled_clone.borrow() {
+                    match event {
+                        ServerMessage::AuthSuccess { .. } => {
+                            *auth_handled_clone.borrow_mut() = true;
+                            let _ = auth_resolve_clone.call0(&JsValue::NULL);
+                        }
+                        ServerMessage::AuthError { message } => {
+                            *auth_handled_clone.borrow_mut() = true;
+                            let error = JsValue::from_str(&format!("Auth failed: {}", message));
+                            let _ = auth_reject_clone2.call1(&JsValue::NULL, &error);
+                        }
+                        _ => {}
+                    }
+                }
+            }
+        }
+    }) as Box<dyn FnMut(MessageEvent)>);
+    ws.set_onmessage(Some(onmessage.as_ref().unchecked_ref()));
+    onmessage.forget();
+
+    *ws_ref.borrow_mut() = Some(ws);
+
+    JsFuture::from(connect_promise).await?;
+    JsFuture::from(auth_promise).await?;
+
+    Ok(())
+}
+
+/// Helper to create a Promise with resolve/reject functions
+fn create_promise() -> (js_sys::Promise, js_sys::Function, js_sys::Function) {
+    let mut resolve_fn: Option<js_sys::Function> = None;
+    let mut reject_fn: Option<js_sys::Function> = None;
+
+    let promise = js_sys::Promise::new(&mut |resolve, reject| {
+        resolve_fn = Some(resolve);
+        reject_fn = Some(reject);
+    });
+
+    (promise, resolve_fn.unwrap(), reject_fn.unwrap())
+}
+
+/// Re-subscribe to all subscriptions after reconnection with last seq_id
+async fn resubscribe_all(
+    ws_ref: Rc<RefCell<Option<WebSocket>>>,
+    subscription_state: Rc<RefCell<HashMap<String, SubscriptionState>>>,
+) {
+    let states: Vec<(String, SubscriptionState)> = subscription_state
+        .borrow()
+        .iter()
+        .map(|(id, state)| (id.clone(), state.clone()))
+        .collect();
+
+    for (subscription_id, state) in states {
+        console_log(&format!(
+            "KalamClient: Re-subscribing to {} with last_seq_id: {:?}",
+            subscription_id,
+            state.last_seq_id.map(|s| s.to_string())
+        ));
+
+        // Create options with from_seq_id if we have a last seq_id
+        let mut options = state.options.clone();
+        if let Some(seq_id) = state.last_seq_id {
+            options.from_seq_id = Some(seq_id);
+        }
+
+        let subscribe_msg = ClientMessage::Subscribe {
+            subscription: SubscriptionRequest {
+                id: subscription_id.clone(),
+                sql: state.sql.clone(),
+                options,
+            },
+        };
+
+        if let Some(ws) = ws_ref.borrow().as_ref() {
+            if let Ok(payload) = serde_json::to_string(&subscribe_msg) {
+                if let Err(e) = ws.send_with_str(&payload) {
+                    console_log(&format!(
+                        "KalamClient: Failed to re-subscribe to {}: {:?}",
+                        subscription_id, e
+                    ));
+                }
+            }
+        }
+    }
 }
 
 // Helper function to log to browser console

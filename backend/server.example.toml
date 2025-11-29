@@ -16,6 +16,16 @@ port = 8080
 # Number of worker threads (0 = number of CPU cores)
 workers = 0
 
+# Enable HTTP/2 protocol support (default: true)
+# When true, server uses automatic HTTP/1.1 and HTTP/2 cleartext (h2c) negotiation
+# When false, server only supports HTTP/1.1
+# HTTP/2 offers:
+# - Multiplexed requests (multiple requests on single connection)
+# - Header compression (HPACK)
+# - Binary protocol (more efficient parsing)
+# - Server push support (for future features)
+enable_http2 = true
+
 # API version (default: "v1")
 # Controls the versioned endpoint prefix (e.g., /v1/api/sql)
 api_version = "v1"
@@ -183,6 +193,58 @@ max_messages_per_sec = 50
 # Maximum concurrent live query subscriptions per user (default: 10)
 # Limits total active subscriptions to prevent resource exhaustion
 max_subscriptions_per_user = 10
+
+# ============================================================================
+# Security Settings
+# ============================================================================
+# CORS, WebSocket, and request limit configuration
+
+[security]
+# Maximum request body size in bytes (default: 10MB)
+# Prevents memory exhaustion from large payloads
+max_request_body_size = 10485760
+
+# Maximum WebSocket message size in bytes (default: 1MB)
+# Prevents memory exhaustion from large WebSocket messages
+max_ws_message_size = 1048576
+
+# Allowed WebSocket origins (if different from CORS origins)
+# Leave empty to use CORS allowed_origins for WebSocket validation
+allowed_ws_origins = []
+
+# Strict WebSocket origin checking (default: false)
+# If true, rejects WebSocket connections without Origin header
+strict_ws_origin_check = false
+
+# CORS Configuration (uses actix-cors)
+# See: https://docs.rs/actix-cors
+[security.cors]
+# Allowed origins for CORS requests
+# Use ["*"] or empty [] for any origin (development mode)
+# For production, specify exact origins: ["https://app.example.com", "https://admin.example.com"]
+allowed_origins = []
+
+# Allowed HTTP methods (default: common REST methods)
+allowed_methods = ["GET", "POST", "PUT", "DELETE", "PATCH", "OPTIONS"]
+
+# Allowed HTTP headers
+# Use ["*"] to allow any header
+allowed_headers = ["Authorization", "Content-Type", "Accept", "Origin", "X-Requested-With"]
+
+# Headers to expose to the browser (default: none)
+# Example: ["X-Custom-Header", "X-Request-Id"]
+expose_headers = []
+
+# Allow credentials (cookies, authorization headers) (default: true)
+# Note: If true, allowed_origins cannot be ["*"] in browsers
+allow_credentials = true
+
+# Preflight request cache max age in seconds (default: 3600 = 1 hour)
+max_age = 3600
+
+# Allow private network requests (default: false)
+# Enables Access-Control-Request-Private-Network header support
+allow_private_network = false
 
 [authentication]
 # Bcrypt cost factor for password hashing (default: 12, range: 10-14)

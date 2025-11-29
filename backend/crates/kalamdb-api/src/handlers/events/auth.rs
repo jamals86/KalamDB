@@ -3,16 +3,14 @@
 //! Handles the Authenticate message for WebSocket connections.
 //! Uses the unified authentication module from kalamdb-auth.
 //!
-//! Supports multiple authentication methods:
-//! - Direct credentials (username/password in Authenticate message)
-//! - Authorization header (Basic or Bearer token sent in message)
+//! All authentication methods (Basic, JWT, future methods) are handled
+//! through the unified kalamdb-auth crate for centralized auth logic.
 
 use actix_ws::Session;
-use kalamdb_auth::{
-    authenticate, extract_username_for_audit, AuthRequest, UserRepository,
-};
+use kalamdb_auth::{authenticate, extract_username_for_audit, AuthRequest, UserRepository};
 use kalamdb_commons::models::ConnectionInfo;
 use kalamdb_commons::models::UserId;
+use kalamdb_commons::websocket::WsAuthCredentials;
 use kalamdb_commons::WebSocketMessage;
 use kalamdb_core::app_context::AppContext;
 use kalamdb_core::live::{ConnectionsManager, SharedConnectionState};
@@ -22,51 +20,26 @@ use std::sync::Arc;
 
 use super::{send_auth_error, send_json};
 
-/// Handle authentication message with username/password
+/// Handle authentication message with any supported credentials type
 ///
 /// Uses connection_id from SharedConnectionState, no separate parameter needed.
 /// Delegates to the unified authentication module in kalamdb-auth.
+///
+/// Supports:
+/// - Basic (username/password)
+/// - JWT token
+/// - Future auth methods (API keys, OAuth, etc.)
 pub async fn handle_authenticate(
     connection_state: &SharedConnectionState,
     client_ip: &ConnectionInfo,
-    username: &str,
-    password: &str,
+    credentials: WsAuthCredentials,
     session: &mut Session,
     registry: &Arc<ConnectionsManager>,
     app_context: &Arc<AppContext>,
     user_repo: &Arc<dyn UserRepository>,
 ) -> Result<(), String> {
-    let auth_request = AuthRequest::Credentials {
-        username: username.to_string(),
-        password: password.to_string(),
-    };
-
-    authenticate_with_request(
-        connection_state,
-        client_ip,
-        auth_request,
-        session,
-        registry,
-        app_context,
-        user_repo,
-    )
-    .await
-}
-
-/// Handle authentication message with Authorization header (Basic or Bearer)
-///
-/// Allows WebSocket clients to authenticate using the same Authorization header
-/// format as HTTP requests, enabling JWT and Basic Auth over WebSocket.
-pub async fn handle_authenticate_header(
-    connection_state: &SharedConnectionState,
-    client_ip: &ConnectionInfo,
-    auth_header: &str,
-    session: &mut Session,
-    registry: &Arc<ConnectionsManager>,
-    app_context: &Arc<AppContext>,
-    user_repo: &Arc<dyn UserRepository>,
-) -> Result<(), String> {
-    let auth_request = AuthRequest::Header(auth_header.to_string());
+    // Convert WsAuthCredentials to AuthRequest using From impl
+    let auth_request: AuthRequest = credentials.into();
 
     authenticate_with_request(
         connection_state,

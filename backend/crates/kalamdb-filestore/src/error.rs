@@ -15,6 +15,9 @@ pub enum FilestoreError {
     #[error("Path error: {0}")]
     Path(String),
 
+    #[error("Path traversal attempt: {0}")]
+    PathTraversal(String),
+
     #[error("Batch not found: {0}")]
     BatchNotFound(String),
 

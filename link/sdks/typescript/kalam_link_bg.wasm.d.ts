@@ -3,6 +3,12 @@
 export const memory: WebAssembly.Memory;
 export const __wbg_kalamclient_free: (a: number, b: number) => void;
 export const kalamclient_new: (a: number, b: number, c: number, d: number, e: number, f: number) => [number, number, number];
+export const kalamclient_setAutoReconnect: (a: number, b: number) => void;
+export const kalamclient_setReconnectDelay: (a: number, b: bigint, c: bigint) => void;
+export const kalamclient_setMaxReconnectAttempts: (a: number, b: number) => void;
+export const kalamclient_getReconnectAttempts: (a: number) => number;
+export const kalamclient_isReconnecting: (a: number) => number;
+export const kalamclient_getLastSeqId: (a: number, b: number, c: number) => [number, number];
 export const kalamclient_connect: (a: number) => any;
 export const kalamclient_disconnect: (a: number) => any;
 export const kalamclient_isConnected: (a: number) => number;
@@ -24,4 +30,5 @@ export const __wbindgen_exn_store: (a: number) => void;
 export const __externref_table_alloc: () => number;
 export const __wbindgen_externrefs: WebAssembly.Table;
 export const __externref_table_dealloc: (a: number) => void;
+export const __wbindgen_free: (a: number, b: number, c: number) => void;
 export const __wbindgen_start: () => void;

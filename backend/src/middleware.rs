@@ -6,7 +6,7 @@
 //! ## Protection Middleware Stack (applied in order)
 //!
 //! 1. **ConnectionProtection**: First line of defense - drops abusive IPs early
-//! 2. **CORS**: Cross-origin resource sharing policy
+//! 2. **CORS**: Cross-origin resource sharing policy (via actix-cors)
 //! 3. **Logger**: Request/response logging
 //!
 //! ## DoS Protection Features
@@ -19,25 +19,75 @@
 use actix_cors::Cors;
 use actix_web::body::{BoxBody, EitherBody};
 use actix_web::dev::{forward_ready, Service, ServiceRequest, ServiceResponse, Transform};
-use actix_web::http::StatusCode;
+use actix_web::http::{header::HeaderName, Method, StatusCode};
 use actix_web::middleware;
 use actix_web::{Error, HttpResponse};
 use futures_util::future::LocalBoxFuture;
 use kalamdb_api::rate_limiter::{ConnectionGuard, ConnectionGuardConfig, ConnectionGuardResult};
-use log::warn;
+use kalamdb_commons::config::ServerConfig;
+use log::{info, warn};
 use std::future::{ready, Ready};
 use std::net::IpAddr;
 use std::sync::Arc;
 use std::time::Duration;
 
-/// Build the CORS policy used by the server.
-pub fn build_cors() -> Cors {
-    Cors::default()
-        .allow_any_origin()
-        .allow_any_method()
-        .allow_any_header()
-        .supports_credentials()
-        .max_age(3600)
+/// Build CORS middleware from server configuration using actix-cors.
+///
+/// Maps all CorsSettings options to actix-cors builder methods.
+/// See: https://docs.rs/actix-cors/latest/actix_cors/struct.Cors.html
+pub fn build_cors_from_config(config: &ServerConfig) -> Cors {
+    let cors_config = &config.security.cors;
+    
+    let mut cors = Cors::default();
+    
+    // Configure allowed origins
+    if cors_config.allowed_origins.is_empty() || cors_config.allowed_origins.contains(&"*".to_string()) {
+        cors = cors.allow_any_origin();
+        info!("CORS: Allowing any origin");
+    } else {
+        for origin in &cors_config.allowed_origins {
+            cors = cors.allowed_origin(origin);
+        }
+        info!("CORS: Allowed origins: {:?}", cors_config.allowed_origins);
+    }
+    
+    // Configure allowed methods
+    let methods: Vec<Method> = cors_config.allowed_methods.iter()
+        .filter_map(|m| m.parse().ok())
+        .collect();
+    if !methods.is_empty() {
+        cors = cors.allowed_methods(methods);
+    }
+    
+    // Configure allowed headers
+    if cors_config.allowed_headers.contains(&"*".to_string()) {
+        cors = cors.allow_any_header();
+    } else {
+        let headers: Vec<HeaderName> = cors_config.allowed_headers.iter()
+            .filter_map(|h| h.parse().ok())
+            .collect();
+        if !headers.is_empty() {
+            cors = cors.allowed_headers(headers);
+        }
+    }
+    
+    // Configure exposed headers
+    if !cors_config.expose_headers.is_empty() {
+        let expose_headers: Vec<HeaderName> = cors_config.expose_headers.iter()
+            .filter_map(|h| h.parse().ok())
+            .collect();
+        cors = cors.expose_headers(expose_headers);
+    }
+    
+    // Configure credentials
+    if cors_config.allow_credentials {
+        cors = cors.supports_credentials();
+    }
+    
+    // Configure max age
+    cors = cors.max_age(cors_config.max_age as usize);
+    
+    cors
 }
 
 /// Build the request logger middleware.
@@ -256,6 +306,9 @@ where
 }
 
 /// Extract client IP from request, handling proxies
+/// 
+/// Security: Rejects localhost values in proxy headers to prevent rate limit bypass.
+/// Attackers cannot spoof X-Forwarded-For: 127.0.0.1 to bypass protections.
 fn extract_client_ip(req: &ServiceRequest) -> IpAddr {
     // Try X-Forwarded-For header first (for reverse proxies)
     if let Some(forwarded) = req.headers().get("X-Forwarded-For") {
@@ -263,8 +316,12 @@ fn extract_client_ip(req: &ServiceRequest) -> IpAddr {
             // X-Forwarded-For can contain multiple IPs: "client, proxy1, proxy2"
             // The first one is the original client
             if let Some(first_ip) = forwarded_str.split(',').next() {
-                if let Ok(ip) = first_ip.trim().parse::<IpAddr>() {
-                    return ip;
+                let trimmed = first_ip.trim();
+                // Security: Reject localhost in header (spoofing attempt)
+                if !is_localhost_header_value(trimmed) {
+                    if let Ok(ip) = trimmed.parse::<IpAddr>() {
+                        return ip;
+                    }
                 }
             }
         }
@@ -273,8 +330,12 @@ fn extract_client_ip(req: &ServiceRequest) -> IpAddr {
     // Try X-Real-IP header (nginx style)
     if let Some(real_ip) = req.headers().get("X-Real-IP") {
         if let Ok(real_ip_str) = real_ip.to_str() {
-            if let Ok(ip) = real_ip_str.trim().parse::<IpAddr>() {
-                return ip;
+            let trimmed = real_ip_str.trim();
+            // Security: Reject localhost in header (spoofing attempt)
+            if !is_localhost_header_value(trimmed) {
+                if let Ok(ip) = trimmed.parse::<IpAddr>() {
+                    return ip;
+                }
             }
         }
     }
@@ -283,4 +344,10 @@ fn extract_client_ip(req: &ServiceRequest) -> IpAddr {
     req.peer_addr()
         .map(|addr| addr.ip())
         .unwrap_or_else(|| "127.0.0.1".parse().unwrap())
+}
+
+/// Check if a header value is a localhost address (potential spoofing attempt)
+#[inline]
+fn is_localhost_header_value(ip: &str) -> bool {
+    ip == "127.0.0.1" || ip == "::1" || ip.starts_with("127.") || ip.eq_ignore_ascii_case("localhost")
 }

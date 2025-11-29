@@ -235,6 +235,7 @@ async fn open_authenticated_connection(
 
     let auth_payload = json!({
         "type": "authenticate",
+        "method": "basic",
         "username": AUTH_USERNAME,
         "password": AUTH_PASSWORD,
     });

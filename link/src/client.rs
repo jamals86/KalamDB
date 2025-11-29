@@ -6,7 +6,7 @@
 use crate::{
     auth::AuthProvider,
     error::{KalamLinkError, Result},
-    models::{HealthCheckResponse, QueryResponse, SubscriptionConfig},
+    models::{ConnectionOptions, HealthCheckResponse, HttpVersion, QueryResponse, SubscriptionConfig},
     query::QueryExecutor,
     subscription::SubscriptionManager,
     timeouts::KalamLinkTimeouts,
@@ -128,6 +128,7 @@ pub struct KalamLinkClientBuilder {
     auth: AuthProvider,
     max_retries: u32,
     timeouts: KalamLinkTimeouts,
+    connection_options: ConnectionOptions,
 }
 
 impl KalamLinkClientBuilder {
@@ -138,6 +139,7 @@ impl KalamLinkClientBuilder {
             auth: AuthProvider::none(),
             max_retries: 3,
             timeouts: KalamLinkTimeouts::default(),
+            connection_options: ConnectionOptions::default(),
         }
     }
 
@@ -211,6 +213,59 @@ impl KalamLinkClientBuilder {
         self
     }
 
+    /// Set connection options for HTTP and WebSocket behavior
+    ///
+    /// This allows configuring HTTP version, reconnection behavior, and other
+    /// connection-level settings.
+    ///
+    /// # Example
+    ///
+    /// ```rust,no_run
+    /// use kalam_link::{KalamLinkClient, ConnectionOptions, HttpVersion};
+    ///
+    /// # async fn example() -> kalam_link::Result<()> {
+    /// let client = KalamLinkClient::builder()
+    ///     .base_url("http://localhost:3000")
+    ///     .connection_options(
+    ///         ConnectionOptions::new()
+    ///             .with_http_version(HttpVersion::Http2)
+    ///             .with_auto_reconnect(true)
+    ///     )
+    ///     .build()?;
+    /// # Ok(())
+    /// # }
+    /// ```
+    pub fn connection_options(mut self, options: ConnectionOptions) -> Self {
+        self.connection_options = options;
+        self
+    }
+
+    /// Set the HTTP protocol version to use
+    ///
+    /// Shorthand for setting just the HTTP version without other connection options.
+    ///
+    /// - `HttpVersion::Http1` - HTTP/1.1 (default, maximum compatibility)
+    /// - `HttpVersion::Http2` - HTTP/2 (multiplexing, better for concurrent requests)
+    /// - `HttpVersion::Auto` - Let the client negotiate with the server
+    ///
+    /// # Example
+    ///
+    /// ```rust,no_run
+    /// use kalam_link::{KalamLinkClient, HttpVersion};
+    ///
+    /// # async fn example() -> kalam_link::Result<()> {
+    /// let client = KalamLinkClient::builder()
+    ///     .base_url("http://localhost:3000")
+    ///     .http_version(HttpVersion::Http2)
+    ///     .build()?;
+    /// # Ok(())
+    /// # }
+    /// ```
+    pub fn http_version(mut self, version: HttpVersion) -> Self {
+        self.connection_options.http_version = version;
+        self
+    }
+
     /// Build the client
     pub fn build(self) -> Result<KalamLinkClient> {
         use reqwest::header::{HeaderMap, HeaderValue, CONNECTION};
@@ -224,7 +279,8 @@ impl KalamLinkClientBuilder {
         let mut default_headers = HeaderMap::new();
         default_headers.insert(CONNECTION, HeaderValue::from_static("close"));
 
-        let http_client = reqwest::Client::builder()
+        // Build HTTP client with protocol version configuration
+        let mut client_builder = reqwest::Client::builder()
             .timeout(self.timeout)
             .connect_timeout(self.timeouts.connection_timeout)
             // Disable connection pooling completely
@@ -232,7 +288,29 @@ impl KalamLinkClientBuilder {
             // Set idle timeout to 0 to immediately close unused connections  
             .pool_idle_timeout(std::time::Duration::from_millis(0))
             // Add Connection: close header to all requests
-            .default_headers(default_headers)
+            .default_headers(default_headers);
+
+        // Configure HTTP version based on connection options
+        client_builder = match self.connection_options.http_version {
+            HttpVersion::Http1 => {
+                log::debug!("[CLIENT] Using HTTP/1.1 only");
+                client_builder.http1_only()
+            }
+            HttpVersion::Http2 => {
+                log::debug!("[CLIENT] Using HTTP/2 with prior knowledge");
+                // http2_prior_knowledge() assumes the server speaks HTTP/2
+                // Use this for known HTTP/2 servers for best performance
+                client_builder.http2_prior_knowledge()
+            }
+            HttpVersion::Auto => {
+                log::debug!("[CLIENT] Using automatic HTTP version negotiation");
+                // Default behavior - will negotiate via ALPN for HTTPS
+                // For HTTP, will use HTTP/1.1
+                client_builder
+            }
+        };
+
+        let http_client = client_builder
             .build()
             .map_err(|e| KalamLinkError::ConfigurationError(e.to_string()))?;
 

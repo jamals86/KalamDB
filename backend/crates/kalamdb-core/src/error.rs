@@ -147,6 +147,9 @@ impl From<kalamdb_filestore::FilestoreError> for KalamDbError {
             kalamdb_filestore::FilestoreError::Path(msg) => {
                 KalamDbError::Other(format!("Path error: {}", msg))
             }
+            kalamdb_filestore::FilestoreError::PathTraversal(msg) => {
+                KalamDbError::InvalidOperation(format!("Security: Path traversal blocked: {}", msg))
+            }
             kalamdb_filestore::FilestoreError::BatchNotFound(msg) => KalamDbError::NotFound(msg),
             kalamdb_filestore::FilestoreError::InvalidBatchFile(msg) => {
                 KalamDbError::InvalidOperation(format!("Invalid batch file: {}", msg))

@@ -49,6 +49,56 @@ async fn main() -> Result<()> {
         }
     };
 
+    // ========================================================================
+    // Security: Validate critical configuration at startup
+    // ========================================================================
+    
+    // Check JWT secret strength
+    const INSECURE_JWT_SECRETS: &[&str] = &[
+        "CHANGE_ME_IN_PRODUCTION",
+        "kalamdb-dev-secret-key-change-in-production",
+        "your-secret-key-at-least-32-chars-change-me-in-production",
+        "test",
+        "secret",
+        "password",
+    ];
+    
+    let jwt_secret = &config.auth.jwt_secret;
+    let is_insecure_secret = INSECURE_JWT_SECRETS.iter().any(|s| jwt_secret == *s);
+    let is_short_secret = jwt_secret.len() < 32;
+    
+    if is_insecure_secret || is_short_secret {
+        eprintln!("╔═══════════════════════════════════════════════════════════════════╗");
+        eprintln!("║               ⚠️  SECURITY WARNING: JWT SECRET ⚠️                  ║");
+        eprintln!("╠═══════════════════════════════════════════════════════════════════╣");
+        if is_insecure_secret {
+            eprintln!("║  The configured JWT secret is a known default/placeholder.       ║");
+            eprintln!("║  This is INSECURE and allows token forgery!                       ║");
+        }
+        if is_short_secret {
+            eprintln!("║  JWT secret is too short ({} chars). Minimum 32 chars required.  ║", jwt_secret.len());
+        }
+        eprintln!("║                                                                   ║");
+        eprintln!("║  To fix: Set a strong, unique secret in server.toml:             ║");
+        eprintln!("║    [auth]                                                         ║");
+        eprintln!("║    jwt_secret = \"your-unique-32-char-minimum-secret-here\"         ║");
+        eprintln!("║                                                                   ║");
+        
+        // In production mode (not localhost), refuse to start
+        let host = &config.server.host;
+        let is_localhost = host == "127.0.0.1" || host == "localhost" || host == "::1";
+        
+        if !is_localhost {
+            eprintln!("║  FATAL: Refusing to start with insecure JWT secret on non-local  ║");
+            eprintln!("║         address. This prevents token forgery attacks.             ║");
+            eprintln!("╚═══════════════════════════════════════════════════════════════════╝");
+            std::process::exit(1);
+        } else {
+            eprintln!("║  ⚠️ Allowing insecure secret for localhost development only.      ║");
+            eprintln!("╚═══════════════════════════════════════════════════════════════════╝");
+        }
+    }
+
     // Logging before any other side effects
     let server_log_path = format!("{}/server.log", config.logging.logs_path);
     logging::init_logging(

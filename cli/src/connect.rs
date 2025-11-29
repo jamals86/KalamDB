@@ -122,6 +122,7 @@ pub async fn create_session(
         !cli.no_spinner,
         Some(Duration::from_secs(cli.timeout)),
         Some(build_timeouts(cli)),
+        Some(config.to_connection_options()),
     )
     .await
 }
