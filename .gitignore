@@ -70,3 +70,4 @@ examples/simple-typescript/package-lock.json
 *.parquet
 backend/logs/test-backend.out
 *.bak
+version.toml

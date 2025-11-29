@@ -1,0 +1,72 @@
+# KalamDB Server Configuration for Docker
+# This is the default configuration bundled with the Docker image.
+# Override by mounting your own server.toml file.
+
+[server]
+# Bind to all interfaces for container access
+host = "0.0.0.0"
+port = 8080
+workers = 0
+enable_http2 = true
+
+[storage]
+# Data paths inside the container
+rocksdb_path = "/data/rocksdb"
+default_storage_path = "/data/storage"
+enable_wal = true
+compression = "snappy"
+
+[storage.rocksdb]
+write_buffer_size = 67108864
+max_write_buffers = 3
+block_cache_size = 268435456
+max_background_jobs = 4
+
+[datafusion]
+memory_limit = 1073741824
+query_parallelism = 0
+max_partitions = 16
+batch_size = 8192
+
+[flush]
+default_row_limit = 10000
+default_time_interval = 300
+flush_job_shutdown_timeout_seconds = 300
+job_retention_days = 30
+job_cleanup_schedule = "0 0 * * *"
+
+[retention]
+default_deleted_retention_hours = 168
+
+[stream]
+default_ttl_seconds = 10
+default_max_buffer = 10000
+
+[limits]
+max_message_size = 1048576
+max_query_limit = 1000
+default_query_limit = 50
+
+[logging]
+level = "info"
+file_path = "/data/logs/app.log"
+log_to_console = true
+format = "compact"
+
+[performance]
+request_timeout = 30
+keepalive_timeout = 75
+max_connections = 25000
+
+[rate_limit]
+max_queries_per_sec = 100
+max_messages_per_sec = 50
+max_subscriptions_per_user = 10
+
+[auth]
+allow_remote_access = true
+jwt_secret = "docker-dev-secret-change-in-production-minimum-32-chars"
+jwt_trusted_issuers = ""
+min_password_length = 8
+max_password_length = 1024
+bcrypt_cost = 12

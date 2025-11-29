@@ -17,7 +17,7 @@ members = [
 ]
 
 [workspace.package]
-version = "0.1.0"
+version = "0.1.1"
 edition = "2021"
 rust-version = "1.90"
 authors = ["KalamDB Team"]
@@ -130,13 +130,26 @@ getrandom = { version = "0.2", features = ["js"] }
 flate2 = "1.0"
 miniz_oxide = "0.8"
 
-# [profile.release]
-# opt-level = "z"     # Optimize for size
-# lto = true          # Enable Link Time Optimization (removes unused code across crates)
-# codegen-units = 1   # Slower build, but better optimization
-# panic = "abort"     # Removes stack unwinding code
-# strip = true        # Automatically strip symbols from the binary
+# Custom profile for distribution builds (smaller, optimized binaries)
+# Use with: cargo build --profile release-dist
+[profile.release-dist]
+inherits = "release"
+opt-level = "z"       # Optimize for size
+lto = true            # Enable Link Time Optimization (removes unused code across crates)
+codegen-units = 1     # Slower build, but better optimization
+panic = "abort"       # Removes stack unwinding code
+strip = true          # Automatically strip symbols from the binary
 
+# Custom profile for Docker builds (less memory-intensive for cross-compilation)
+# Uses thin LTO instead of full LTO to reduce memory usage during linking
+# Use with: cargo build --profile docker
+[profile.docker]
+inherits = "release"
+opt-level = "s"       # Optimize for size (slightly less aggressive than "z")
+lto = "thin"          # Thin LTO - uses less memory than full LTO during linking
+codegen-units = 16    # More parallelism, less memory pressure per unit
+panic = "abort"       # Removes stack unwinding code
+strip = true          # Automatically strip symbols from the binary
 
 [profile.dev]
 opt-level = 0        # no optimizations = faster compile
