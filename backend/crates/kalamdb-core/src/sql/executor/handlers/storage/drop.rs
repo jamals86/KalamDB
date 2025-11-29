@@ -154,8 +154,6 @@ mod tests {
             storage_id: StorageId::from(storage_id.as_str()),
         };
         let ctx = create_test_context(Role::System);
-        let session = SessionContext::new();
-
         let result = handler.execute(stmt, vec![], &ctx).await;
 
         assert!(result.is_ok());

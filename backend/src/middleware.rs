@@ -6,7 +6,7 @@
 //! ## Protection Middleware Stack (applied in order)
 //!
 //! 1. **ConnectionProtection**: First line of defense - drops abusive IPs early
-//! 2. **CORS**: Cross-origin resource sharing policy
+//! 2. **CORS**: Cross-origin resource sharing policy (via actix-cors)
 //! 3. **Logger**: Request/response logging
 //!
 //! ## DoS Protection Features
@@ -19,25 +19,75 @@
 use actix_cors::Cors;
 use actix_web::body::{BoxBody, EitherBody};
 use actix_web::dev::{forward_ready, Service, ServiceRequest, ServiceResponse, Transform};
-use actix_web::http::StatusCode;
+use actix_web::http::{header::HeaderName, Method, StatusCode};
 use actix_web::middleware;
 use actix_web::{Error, HttpResponse};
 use futures_util::future::LocalBoxFuture;
 use kalamdb_api::rate_limiter::{ConnectionGuard, ConnectionGuardConfig, ConnectionGuardResult};
-use log::warn;
+use kalamdb_commons::config::ServerConfig;
+use log::{info, warn};
 use std::future::{ready, Ready};
 use std::net::IpAddr;
 use std::sync::Arc;
 use std::time::Duration;
 
-/// Build the CORS policy used by the server.
-pub fn build_cors() -> Cors {
-    Cors::default()
-        .allow_any_origin()
-        .allow_any_method()
-        .allow_any_header()
-        .supports_credentials()
-        .max_age(3600)
+/// Build CORS middleware from server configuration using actix-cors.
+///
+/// Maps all CorsSettings options to actix-cors builder methods.
+/// See: https://docs.rs/actix-cors/latest/actix_cors/struct.Cors.html
+pub fn build_cors_from_config(config: &ServerConfig) -> Cors {
+    let cors_config = &config.security.cors;
+    
+    let mut cors = Cors::default();
+    
+    // Configure allowed origins
+    if cors_config.allowed_origins.is_empty() || cors_config.allowed_origins.contains(&"*".to_string()) {
+        cors = cors.allow_any_origin();
+        info!("CORS: Allowing any origin");
+    } else {
+        for origin in &cors_config.allowed_origins {
+            cors = cors.allowed_origin(origin);
+        }
+        info!("CORS: Allowed origins: {:?}", cors_config.allowed_origins);
+    }
+    
+    // Configure allowed methods
+    let methods: Vec<Method> = cors_config.allowed_methods.iter()
+        .filter_map(|m| m.parse().ok())
+        .collect();
+    if !methods.is_empty() {
+        cors = cors.allowed_methods(methods);
+    }
+    
+    // Configure allowed headers
+    if cors_config.allowed_headers.contains(&"*".to_string()) {
+        cors = cors.allow_any_header();
+    } else {
+        let headers: Vec<HeaderName> = cors_config.allowed_headers.iter()
+            .filter_map(|h| h.parse().ok())
+            .collect();
+        if !headers.is_empty() {
+            cors = cors.allowed_headers(headers);
+        }
+    }
+    
+    // Configure exposed headers
+    if !cors_config.expose_headers.is_empty() {
+        let expose_headers: Vec<HeaderName> = cors_config.expose_headers.iter()
+            .filter_map(|h| h.parse().ok())
+            .collect();
+        cors = cors.expose_headers(expose_headers);
+    }
+    
+    // Configure credentials
+    if cors_config.allow_credentials {
+        cors = cors.supports_credentials();
+    }
+    
+    // Configure max age
+    cors = cors.max_age(cors_config.max_age as usize);
+    
+    cors
 }
 
 /// Build the request logger middleware.

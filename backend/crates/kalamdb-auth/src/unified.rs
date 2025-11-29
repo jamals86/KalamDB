@@ -72,7 +72,7 @@ use crate::password;
 use crate::user_repo::UserRepository;
 use kalamdb_commons::models::ConnectionInfo;
 use kalamdb_commons::{AuthType, Role};
-use log::warn;
+use log::debug;
 use once_cell::sync::Lazy;
 use std::sync::Arc;
 
@@ -280,7 +280,8 @@ async fn authenticate_username_password(
 
     // Check if user is deleted
     if user.deleted_at.is_some() {
-        warn!("Attempt to authenticate deleted user: {}", username);
+        // Security: Use generic message to prevent username enumeration
+        debug!("Authentication failed for user attempt");
         return Err(AuthError::InvalidCredentials(
             "Invalid username or password".to_string(),
         ));
@@ -313,7 +314,8 @@ async fn authenticate_username_password(
                     .unwrap_or(false);
 
             if !password_ok {
-                warn!("Invalid password for system user: {}", username);
+                // Security: Generic message prevents username enumeration
+                debug!("Authentication failed for system user attempt");
                 return Err(AuthError::InvalidCredentials(
                     "Invalid username or password".to_string(),
                 ));
@@ -334,7 +336,8 @@ async fn authenticate_username_password(
                 .await
                 .unwrap_or(false)
             {
-                warn!("Invalid password for remote system user: {}", username);
+                // Security: Generic message prevents username enumeration
+                debug!("Authentication failed for remote user attempt");
                 return Err(AuthError::InvalidCredentials(
                     "Invalid username or password".to_string(),
                 ));
@@ -351,7 +354,8 @@ async fn authenticate_username_password(
             .await
             .unwrap_or(false)
         {
-            warn!("Invalid password for user: {}", username);
+            // Security: Generic message prevents username enumeration
+            debug!("Authentication failed for user attempt");
             return Err(AuthError::InvalidCredentials(
                 "Invalid username or password".to_string(),
             ));

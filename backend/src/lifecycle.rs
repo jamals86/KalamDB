@@ -298,6 +298,9 @@ pub async fn run(
 
     // Create connection protection middleware from config
     let connection_protection = middleware::ConnectionProtection::from_server_config(config);
+    
+    // Build CORS middleware from config (uses actix-cors)
+    let cors_config = config.clone();
 
     let app_context_for_handler = app_context.clone();
     let connection_registry_for_handler = connection_registry.clone();
@@ -307,7 +310,7 @@ pub async fn run(
             .wrap(connection_protection.clone())
             // Standard middleware
             .wrap(middleware::request_logger())
-            .wrap(middleware::build_cors())
+            .wrap(middleware::build_cors_from_config(&cors_config))
             .app_data(web::Data::new(app_context_for_handler.clone()))
             .app_data(web::Data::new(session_factory.clone()))
             .app_data(web::Data::new(sql_executor.clone()))

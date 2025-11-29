@@ -130,8 +130,8 @@ impl ParquetWriter {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use arrow::array::{Int64Array, StringArray, TimestampMicrosecondArray};
-    use arrow::datatypes::{DataType, Field, Schema, TimeUnit};
+    use arrow::array::{Int64Array, StringArray};
+    use arrow::datatypes::{DataType, Field, Schema};
     use datafusion::parquet::file::reader::{FileReader, SerializedFileReader};
     use std::env;
     use std::fs;

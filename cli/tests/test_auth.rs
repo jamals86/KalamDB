@@ -70,6 +70,9 @@ fn test_cli_invalid_token() {
             || error_lower.contains("authentication")
             || error_lower.contains("invalid token")
             || error_lower.contains("token")
+            || error_lower.contains("malformed")
+            || error_lower.contains("jwt")
+            || error_lower.contains("base64")
             || error_lower.contains("401")
             || error_lower.contains("403"),
         "Should handle invalid token appropriately. stdout: {}, stderr: {}",

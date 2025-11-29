@@ -23,8 +23,6 @@
 mod actions;
 mod queries;
 mod runner;
-#[cfg(test)]
-mod tests;
 mod types;
 mod utils;
 

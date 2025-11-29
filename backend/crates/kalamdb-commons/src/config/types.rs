@@ -36,6 +36,120 @@ pub struct ServerConfig {
     pub jobs: JobsSettings,
     #[serde(default)]
     pub execution: ExecutionSettings,
+    #[serde(default)]
+    pub security: SecuritySettings,
+}
+
+/// CORS configuration that maps directly to actix-cors options
+/// See: https://docs.rs/actix-cors/latest/actix_cors/struct.Cors.html
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CorsSettings {
+    /// Allowed origins. Use ["*"] for any origin, or specify exact origins.
+    /// Example: ["https://app.example.com", "https://admin.example.com"]
+    /// Empty list = same as ["*"] (allow any origin)
+    #[serde(default)]
+    pub allowed_origins: Vec<String>,
+    
+    /// Allowed HTTP methods. Default: ["GET", "POST", "PUT", "DELETE", "PATCH", "OPTIONS"]
+    #[serde(default = "default_cors_methods")]
+    pub allowed_methods: Vec<String>,
+    
+    /// Allowed HTTP headers. Use ["*"] for any header.
+    /// Default: ["Authorization", "Content-Type", "Accept", "Origin", "X-Requested-With"]
+    #[serde(default = "default_cors_headers")]
+    pub allowed_headers: Vec<String>,
+    
+    /// Headers to expose to the browser. Default: []
+    #[serde(default)]
+    pub expose_headers: Vec<String>,
+    
+    /// Allow credentials (cookies, authorization headers). Default: true
+    #[serde(default = "default_true")]
+    pub allow_credentials: bool,
+    
+    /// Preflight cache max age in seconds. Default: 3600 (1 hour)
+    #[serde(default = "default_cors_max_age")]
+    pub max_age: u64,
+    
+    /// Allow requests without Origin header. Default: false
+    #[serde(default)]
+    pub allow_private_network: bool,
+}
+
+fn default_cors_methods() -> Vec<String> {
+    vec![
+        "GET".to_string(),
+        "POST".to_string(), 
+        "PUT".to_string(),
+        "DELETE".to_string(),
+        "PATCH".to_string(),
+        "OPTIONS".to_string(),
+    ]
+}
+
+fn default_cors_headers() -> Vec<String> {
+    vec![
+        "Authorization".to_string(),
+        "Content-Type".to_string(),
+        "Accept".to_string(),
+        "Origin".to_string(),
+        "X-Requested-With".to_string(),
+    ]
+}
+
+fn default_cors_max_age() -> u64 {
+    3600 // 1 hour
+}
+
+impl Default for CorsSettings {
+    fn default() -> Self {
+        Self {
+            allowed_origins: Vec::new(), // Empty = allow any
+            allowed_methods: default_cors_methods(),
+            allowed_headers: default_cors_headers(),
+            expose_headers: Vec::new(),
+            allow_credentials: true,
+            max_age: default_cors_max_age(),
+            allow_private_network: false,
+        }
+    }
+}
+
+/// Security settings for CORS, WebSocket, and request limits
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SecuritySettings {
+    /// CORS configuration
+    #[serde(default)]
+    pub cors: CorsSettings,
+    
+    /// Allowed WebSocket origins for connection validation
+    /// If empty, falls back to CORS allowed_origins
+    #[serde(default)]
+    pub allowed_ws_origins: Vec<String>,
+    
+    /// Maximum WebSocket message size in bytes (default: 1MB)
+    #[serde(default = "default_max_ws_message_size")]
+    pub max_ws_message_size: usize,
+    
+    /// Enable strict origin checking for WebSocket (reject requests with no Origin header)
+    #[serde(default)]
+    pub strict_ws_origin_check: bool,
+    
+    /// Maximum request body size in bytes (default: 10MB)
+    #[serde(default = "default_max_request_body_size")]
+    pub max_request_body_size: usize,
+}
+
+impl Default for SecuritySettings {
+    fn default() -> Self {
+        Self {
+            cors: CorsSettings::default(),
+            allowed_ws_origins: Vec::new(),
+            max_ws_message_size: default_max_ws_message_size(),
+            strict_ws_origin_check: false,
+            max_request_body_size: default_max_request_body_size(),
+        }
+    }
 }
 
 /// Server settings
@@ -679,6 +793,7 @@ impl Default for ServerConfig {
             shutdown: ShutdownSettings::default(),
             jobs: JobsSettings::default(),
             execution: ExecutionSettings::default(),
+            security: SecuritySettings::default(),
         }
     }
 }

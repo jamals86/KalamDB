@@ -273,6 +273,10 @@ instead of: 1 failed: Invalid operation: No handler registered for statement typ
 
 188) Check why websocket is not using the http2 protocol even if we set it in the config file
 
+189) For subscription parsing the query should be done with datafusion even the parsing of the tableName to avoid any sql injection attacks, and re-add the projections as well and support parameters
+
+190) NamespaceId should be maximum of 32 characters only to avoid long names which may cause issues in file systems
+
 
 
 Here’s the updated 5-line spec with embedding storage inside Parquet and managed HNSW indexing (with delete handling):

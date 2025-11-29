@@ -21,6 +21,90 @@ use web_sys::{
     WebSocket,
 };
 
+// ============================================================================
+// Security: Input Validation Functions
+// ============================================================================
+
+/// Validate a SQL identifier (table name, column name) to prevent SQL injection.
+/// Only allows: letters, numbers, underscores, and dots (for namespace.table format).
+/// Must start with a letter or underscore.
+fn validate_sql_identifier(name: &str, context: &str) -> Result<(), JsValue> {
+    if name.is_empty() {
+        return Err(JsValue::from_str(&format!("{} cannot be empty", context)));
+    }
+    if name.len() > 128 {
+        return Err(JsValue::from_str(&format!("{} too long (max 128 chars)", context)));
+    }
+    
+    let first_char = name.chars().next().unwrap();
+    if !first_char.is_ascii_alphabetic() && first_char != '_' {
+        return Err(JsValue::from_str(&format!(
+            "{} must start with a letter or underscore", context
+        )));
+    }
+    
+    // Only allow alphanumeric, underscore, and dot (for namespace.table)
+    for c in name.chars() {
+        if !c.is_ascii_alphanumeric() && c != '_' && c != '.' {
+            return Err(JsValue::from_str(&format!(
+                "{} contains invalid character '{}'. Only letters, numbers, underscores, and dots allowed",
+                context, c
+            )));
+        }
+    }
+    
+    // Check for path traversal attempts
+    if name.contains("..") || name.contains('/') || name.contains('\\') {
+        return Err(JsValue::from_str(&format!(
+            "{} contains forbidden sequence", context
+        )));
+    }
+    
+    Ok(())
+}
+
+/// Validate a row ID to prevent SQL injection.
+/// Accepts: UUIDs, integers, or alphanumeric strings with underscores/hyphens.
+fn validate_row_id(row_id: &str) -> Result<(), JsValue> {
+    if row_id.is_empty() {
+        return Err(JsValue::from_str("Row ID cannot be empty"));
+    }
+    if row_id.len() > 128 {
+        return Err(JsValue::from_str("Row ID too long (max 128 chars)"));
+    }
+    
+    // Check for SQL injection patterns
+    let dangerous_patterns = [";", "--", "/*", "*/", "'", "\"", "DROP", "DELETE", "UPDATE", "INSERT", "UNION", "SELECT"];
+    let upper = row_id.to_uppercase();
+    for pattern in dangerous_patterns {
+        if upper.contains(pattern) {
+            return Err(JsValue::from_str(&format!(
+                "Row ID contains forbidden pattern '{}'", pattern
+            )));
+        }
+    }
+    
+    // Only allow safe characters: alphanumeric, underscore, hyphen
+    for c in row_id.chars() {
+        if !c.is_ascii_alphanumeric() && c != '_' && c != '-' {
+            return Err(JsValue::from_str(&format!(
+                "Row ID contains invalid character '{}'", c
+            )));
+        }
+    }
+    
+    Ok(())
+}
+
+/// Validate a column name for INSERT operations
+fn validate_column_name(name: &str) -> Result<(), JsValue> {
+    validate_sql_identifier(name, "Column name")
+}
+
+// ============================================================================
+// Subscription State
+// ============================================================================
+
 /// Stored subscription info for reconnection
 #[derive(Clone)]
 struct SubscriptionState {
@@ -458,86 +542,114 @@ impl KalamClient {
         let auth_handled_clone = Rc::clone(&auth_handled);
         
         let onmessage_callback = Closure::wrap(Box::new(move |e: MessageEvent| {
-            if let Ok(txt) = e.data().dyn_into::<js_sys::JsString>() {
-                let message = String::from(txt);
-                console_log(&format!(
-                    "KalamClient: Received WebSocket message: {}",
-                    message
-                ));
-
-                // Parse message using ServerMessage enum
-                if let Ok(event) = serde_json::from_str::<ServerMessage>(&message) {
-                    // Check for authentication response first
-                    if !*auth_handled_clone.borrow() {
-                        match &event {
-                            ServerMessage::AuthSuccess { user_id, role } => {
-                                console_log(&format!(
-                                    "KalamClient: Authentication successful - user_id: {}, role: {}",
-                                    user_id, role
-                                ));
-                                *auth_handled_clone.borrow_mut() = true;
-                                let _ = auth_resolve_clone.call0(&JsValue::NULL);
+            // Handle both Text and Binary (compressed) messages
+            let message = if let Ok(txt) = e.data().dyn_into::<js_sys::JsString>() {
+                // Plain text message
+                String::from(txt)
+            } else if let Ok(array_buffer) = e.data().dyn_into::<js_sys::ArrayBuffer>() {
+                // Binary message - likely gzip compressed
+                let uint8_array = js_sys::Uint8Array::new(&array_buffer);
+                let data = uint8_array.to_vec();
+                
+                // Decompress gzip data
+                match crate::compression::decompress_gzip(&data) {
+                    Ok(decompressed) => {
+                        match String::from_utf8(decompressed) {
+                            Ok(s) => s,
+                            Err(e) => {
+                                console_log(&format!("KalamClient: Invalid UTF-8 in decompressed message: {}", e));
                                 return;
                             }
-                            ServerMessage::AuthError { message: error_msg } => {
-                                console_log(&format!(
-                                    "KalamClient: Authentication failed - {}",
-                                    error_msg
-                                ));
-                                *auth_handled_clone.borrow_mut() = true;
-                                let error = JsValue::from_str(&format!("Authentication failed: {}", error_msg));
-                                let _ = auth_reject_clone2.call1(&JsValue::NULL, &error);
-                                return;
-                            }
-                            _ => {} // Not an auth message, continue to subscription handling
                         }
                     }
+                    Err(e) => {
+                        console_log(&format!("KalamClient: Failed to decompress message: {}", e));
+                        return;
+                    }
+                }
+            } else {
+                // Unknown message type
+                console_log("KalamClient: Received unknown message type");
+                return;
+            };
+            
+            console_log(&format!(
+                "KalamClient: Received WebSocket message: {}",
+                message
+            ));
 
-                    // Look for subscription_id in the event and update last_seq_id
-                    let subscription_id = match &event {
-                        ServerMessage::SubscriptionAck {
-                            subscription_id, ..
-                        } => Some(subscription_id.clone()),
-                        ServerMessage::InitialDataBatch {
-                            subscription_id,
-                            batch_control,
-                            ..
-                        } => {
-                            // Update last_seq_id from batch_control
-                            if let Some(seq_id) = &batch_control.last_seq_id {
-                                let mut subs = subscriptions.borrow_mut();
-                                if let Some(state) = subs.get_mut(subscription_id) {
-                                    state.last_seq_id = Some(*seq_id);
-                                    console_log(&format!(
-                                        "KalamClient: Updated last_seq_id for {} to {}",
-                                        subscription_id, seq_id
-                                    ));
-                                }
-                            }
-                            Some(subscription_id.clone())
+            // Parse message using ServerMessage enum
+            if let Ok(event) = serde_json::from_str::<ServerMessage>(&message) {
+                // Check for authentication response first
+                if !*auth_handled_clone.borrow() {
+                    match &event {
+                        ServerMessage::AuthSuccess { user_id, role } => {
+                            console_log(&format!(
+                                "KalamClient: Authentication successful - user_id: {}, role: {}",
+                                user_id, role
+                            ));
+                            *auth_handled_clone.borrow_mut() = true;
+                            let _ = auth_resolve_clone.call0(&JsValue::NULL);
+                            return;
                         }
-                        ServerMessage::Change {
-                            subscription_id, ..
-                        } => Some(subscription_id.clone()),
-                        ServerMessage::Error {
-                            subscription_id, ..
-                        } => Some(subscription_id.clone()),
-                        _ => None, // Auth messages don't have subscription_id
-                    };
+                        ServerMessage::AuthError { message: error_msg } => {
+                            console_log(&format!(
+                                "KalamClient: Authentication failed - {}",
+                                error_msg
+                            ));
+                            *auth_handled_clone.borrow_mut() = true;
+                            let error = JsValue::from_str(&format!("Authentication failed: {}", error_msg));
+                            let _ = auth_reject_clone2.call1(&JsValue::NULL, &error);
+                            return;
+                        }
+                        _ => {} // Not an auth message, continue to subscription handling
+                    }
+                }
 
-                    if let Some(id) = subscription_id {
-                        let subs = subscriptions.borrow();
-                        // First try exact match
-                        if let Some(state) = subs.get(&id) {
-                            let _ = state.callback.call1(&JsValue::NULL, &JsValue::from_str(&message));
-                        } else {
-                            // Server may prefix subscription_id with user_id-session_id-
-                            // Try to find a callback where the server's ID ends with our client ID
-                            for (client_id, state) in subs.iter() {
-                                if id.ends_with(client_id) {
-                                    let _ = state.callback.call1(&JsValue::NULL, &JsValue::from_str(&message));
-                                    break;
-                                }
+                // Look for subscription_id in the event and update last_seq_id
+                let subscription_id = match &event {
+                    ServerMessage::SubscriptionAck {
+                        subscription_id, ..
+                    } => Some(subscription_id.clone()),
+                    ServerMessage::InitialDataBatch {
+                        subscription_id,
+                        batch_control,
+                        ..
+                    } => {
+                        // Update last_seq_id from batch_control
+                        if let Some(seq_id) = &batch_control.last_seq_id {
+                            let mut subs = subscriptions.borrow_mut();
+                            if let Some(state) = subs.get_mut(subscription_id) {
+                                state.last_seq_id = Some(*seq_id);
+                                console_log(&format!(
+                                    "KalamClient: Updated last_seq_id for {} to {}",
+                                    subscription_id, seq_id
+                                ));
+                            }
+                        }
+                        Some(subscription_id.clone())
+                    }
+                    ServerMessage::Change {
+                        subscription_id, ..
+                    } => Some(subscription_id.clone()),
+                    ServerMessage::Error {
+                        subscription_id, ..
+                    } => Some(subscription_id.clone()),
+                    _ => None, // Auth messages don't have subscription_id
+                };
+
+                if let Some(id) = subscription_id {
+                    let subs = subscriptions.borrow();
+                    // First try exact match
+                    if let Some(state) = subs.get(&id) {
+                        let _ = state.callback.call1(&JsValue::NULL, &JsValue::from_str(&message));
+                    } else {
+                        // Server may prefix subscription_id with user_id-session_id-
+                        // Try to find a callback where the server's ID ends with our client ID
+                        for (client_id, state) in subs.iter() {
+                            if id.ends_with(client_id) {
+                                let _ = state.callback.call1(&JsValue::NULL, &JsValue::from_str(&message));
+                                break;
                             }
                         }
                     }
@@ -609,6 +721,9 @@ impl KalamClient {
     /// }));
     /// ```
     pub async fn insert(&self, table_name: String, data: String) -> Result<String, JsValue> {
+        // Security: Validate table name to prevent SQL injection
+        validate_sql_identifier(&table_name, "Table name")?;
+        
         // Parse JSON data to build proper SQL INSERT statement
         let parsed: serde_json::Value = serde_json::from_str(&data)
             .map_err(|e| JsValue::from_str(&format!("Invalid JSON data: {}", e)))?;
@@ -620,8 +735,14 @@ impl KalamClient {
             return Err(JsValue::from_str("Cannot insert empty object"));
         }
         
+        // Security: Validate all column names
+        for key in obj.keys() {
+            validate_column_name(key)?;
+        }
+        
         // Build column names and values
-        let columns: Vec<String> = obj.keys().cloned().collect();
+        // Security: Quote identifiers with double quotes (SQL standard)
+        let columns: Vec<String> = obj.keys().map(|k| format!("\"{}\"", k)).collect();
         let values: Vec<String> = obj.values().map(|v| {
             match v {
                 serde_json::Value::Null => "NULL".to_string(),
@@ -632,9 +753,10 @@ impl KalamClient {
             }
         }).collect();
         
+        // Security: Quote table name with double quotes
         let sql = format!(
-            "INSERT INTO {} ({}) VALUES ({})",
-            table_name,
+            "INSERT INTO \"{}\" ({}) VALUES ({})",
+            table_name.replace('"', "\"\""), // Escape any double quotes in table name
             columns.join(", "),
             values.join(", ")
         );
@@ -648,8 +770,17 @@ impl KalamClient {
     /// * `table_name` - Name of the table
     /// * `row_id` - ID of the row to delete
     pub async fn delete(&self, table_name: String, row_id: String) -> Result<(), JsValue> {
+        // Security: Validate inputs to prevent SQL injection
+        validate_sql_identifier(&table_name, "Table name")?;
+        validate_row_id(&row_id)?;
+        
         // T063H: Implement using fetch API to execute DELETE statement via /v1/api/sql
-        let sql = format!("DELETE FROM {} WHERE id = {}", table_name, row_id);
+        // Security: Quote table name and use parameterized-style value
+        let sql = format!(
+            "DELETE FROM \"{}\" WHERE id = '{}'",
+            table_name.replace('"', "\"\""),
+            row_id.replace("'", "''")
+        );
         self.execute_sql(&sql).await?;
         Ok(())
     }
@@ -685,8 +816,12 @@ impl KalamClient {
         table_name: String,
         callback: js_sys::Function,
     ) -> Result<String, JsValue> {
+        // Security: Validate table name to prevent SQL injection
+        validate_sql_identifier(&table_name, "Table name")?;
+        
         // Default: SELECT * FROM table with default options
-        let sql = format!("SELECT * FROM {}", table_name);
+        // Security: Quote table name
+        let sql = format!("SELECT * FROM \"{}\"", table_name.replace('"', "\"\""));
         self.subscribe_with_sql(sql, None, callback).await
     }
 

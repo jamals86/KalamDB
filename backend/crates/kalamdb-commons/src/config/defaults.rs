@@ -289,6 +289,15 @@ pub fn default_rocksdb_max_background_jobs() -> i32 {
     4
 }
 
+// Security defaults
+pub fn default_max_ws_message_size() -> usize {
+    1024 * 1024 // 1MB - prevents memory exhaustion from large messages
+}
+
+pub fn default_max_request_body_size() -> usize {
+    10 * 1024 * 1024 // 10MB - reasonable limit for SQL queries
+}
+
 // WebSocket defaults (Phase 14 - Live Queries)
 pub fn default_websocket_client_timeout() -> Option<u64> {
     Some(10) // 10 seconds for client heartbeat timeout

@@ -7,6 +7,7 @@
 pub mod basic_auth;
 pub mod context;
 pub mod error;
+pub mod extractor;
 pub mod impersonation;
 pub mod ip_extractor;
 pub mod jwt_auth;
@@ -20,6 +21,7 @@ pub mod user_repo;
 // Re-export commonly used types
 pub use context::AuthenticatedUser;
 pub use error::AuthError;
+pub use extractor::{AuthExtractError, AuthSession, OptionalAuth};
 pub use impersonation::{ImpersonationContext, ImpersonationOrigin};
 pub use ip_extractor::{extract_client_ip_secure, is_localhost_address};
 pub use unified::{

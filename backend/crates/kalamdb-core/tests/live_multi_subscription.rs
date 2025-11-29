@@ -1,4 +1,4 @@
-use kalamdb_commons::models::{ConnectionId, ConnectionInfo, NamespaceId, TableId, TableName, UserId};
+use kalamdb_commons::models::{ConnectionId, ConnectionInfo, UserId};
 use kalamdb_commons::websocket::{SubscriptionOptions, SubscriptionRequest};
 use kalamdb_core::app_context::AppContext;
 use kalamdb_core::test_helpers::init_test_app_context;
