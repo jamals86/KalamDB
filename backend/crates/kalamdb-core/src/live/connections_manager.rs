@@ -16,7 +16,6 @@ use dashmap::DashMap;
 use datafusion::sql::sqlparser::ast::Expr;
 use kalamdb_commons::ids::SeqId;
 use kalamdb_commons::models::{ConnectionId, ConnectionInfo, LiveQueryId, TableId, UserId};
-use kalamdb_commons::websocket::SubscriptionOptions;
 use kalamdb_commons::{NodeId, Notification};
 use log::{debug, info, warn};
 use parking_lot::RwLock;
@@ -45,25 +44,37 @@ pub enum ConnectionEvent {
     Shutdown,
 }
 
-/// Subscription state - unified struct for both storage and notification delivery
+/// Lightweight handle for subscription indices
+///
+/// Contains only the data needed for notification routing.
+/// ~48 bytes per handle (vs ~800+ bytes for full SubscriptionState)
+#[derive(Debug, Clone)]
+pub struct SubscriptionHandle {
+    pub live_id: LiveQueryId,
+    /// Shared filter expression (Arc for zero-copy across indices)
+    pub filter_expr: Option<Arc<Expr>>,
+    /// Shared notification channel
+    pub notification_tx: Arc<NotificationSender>,
+}
+
+/// Subscription state - stored only in ConnectionState.subscriptions
 ///
 /// Contains all metadata needed for:
 /// - Notification filtering (filter_expr)
 /// - Initial data batch fetching (sql, batch_size, snapshot_end_seq)
-/// - Column projections (projections)
+///
+/// Memory optimization: Uses Arc<str> for SQL and Arc<Expr> for filter
+/// to share data with SubscriptionHandle indices.
 #[derive(Debug, Clone)]
 pub struct SubscriptionState {
     pub live_id: LiveQueryId,
     pub table_id: TableId,
-    pub options: SubscriptionOptions,
-    /// Original SQL query for batch fetching
-    pub sql: String,
+    /// Original SQL query for batch fetching (Arc for zero-copy)
+    pub sql: Arc<str>,
     /// Compiled filter expression from WHERE clause (parsed once at subscription time)
     /// None means no filter (SELECT * without WHERE)
-    pub filter_expr: Option<Expr>,
-    /// Extracted column projections from SELECT clause
-    /// None means SELECT * (all columns)
-    pub projections: Option<Vec<String>>,
+    /// Arc-wrapped for sharing with SubscriptionHandle
+    pub filter_expr: Option<Arc<Expr>>,
     /// Batch size for initial data loading
     pub batch_size: usize,
     /// Snapshot boundary SeqId for consistent batch loading
@@ -209,8 +220,9 @@ pub struct ConnectionsManager {
     /// User → Connections index: UserId → Vec<ConnectionId>
     /// TODO: Is this needed?
     user_connections: DashMap<UserId, Vec<ConnectionId>>,
-    /// (UserId, TableId) → Vec<SubscriptionState> for O(1) notification delivery
-    user_table_subscriptions: DashMap<(UserId, TableId), Vec<SubscriptionState>>,
+    /// (UserId, TableId) → Vec<SubscriptionHandle> for O(1) notification delivery
+    /// Uses lightweight handles (~48 bytes) instead of full state (~800+ bytes)
+    user_table_subscriptions: DashMap<(UserId, TableId), Vec<SubscriptionHandle>>,
     /// LiveQueryId → ConnectionId reverse index
     live_id_to_connection: DashMap<LiveQueryId, ConnectionId>,
 
@@ -357,10 +369,10 @@ impl ConnectionsManager {
                 for entry in state.subscriptions.iter() {
                     let sub = entry.value();
                     let key = (user_id.clone(), sub.table_id.clone());
-                    if let Some(mut handles) = self.user_table_subscriptions.get_mut(&key) {
-                        handles.retain(|h| h.live_id != sub.live_id);
-                        if handles.is_empty() {
-                            drop(handles);
+                    if let Some(mut entries) = self.user_table_subscriptions.get_mut(&key) {
+                        entries.retain(|h| h.live_id != sub.live_id);
+                        if entries.is_empty() {
+                            drop(entries);
                             self.user_table_subscriptions.remove(&key);
                         }
                     }
@@ -401,19 +413,21 @@ impl ConnectionsManager {
     // These methods maintain secondary indices for efficient notification routing
 
     /// Add subscription to indices (called by LiveQueryManager after adding to ConnectionState)
+    ///
+    /// Uses lightweight SubscriptionHandle for the index instead of cloning full state.
     pub fn index_subscription(
         &self,
         user_id: &UserId,
         connection_id: &ConnectionId,
         live_id: LiveQueryId,
         table_id: TableId,
-        subscription_state: SubscriptionState,
+        handle: SubscriptionHandle,
     ) {
-        // Add to (UserId, TableId) → Vec<SubscriptionState> index
+        // Add to (UserId, TableId) → Vec<SubscriptionHandle> index
         self.user_table_subscriptions
             .entry((user_id.clone(), table_id))
             .or_default()
-            .push(subscription_state);
+            .push(handle);
 
         // Add to reverse index
         self.live_id_to_connection.insert(live_id, connection_id.clone());
@@ -457,16 +471,18 @@ impl ConnectionsManager {
             .contains_key(&(user_id.clone(), table_id.clone()))
     }
 
-    /// Get subscriptions for a specific (user, table) pair for notification routing
+    /// Get subscription handles for a specific (user, table) pair for notification routing
+    ///
+    /// Returns lightweight handles containing only the data needed for filtering and routing.
     #[inline]
     pub fn get_subscriptions_for_table(
         &self,
         user_id: &UserId,
         table_id: &TableId,
-    ) -> Vec<SubscriptionState> {
+    ) -> Vec<SubscriptionHandle> {
         self.user_table_subscriptions
             .get(&(user_id.clone(), table_id.clone()))
-            .map(|states| states.clone())
+            .map(|handles| handles.clone())
             .unwrap_or_default()
     }
 

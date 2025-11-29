@@ -41,8 +41,8 @@ env_logger = "0.11"
 # Async runtime
 tokio = { version = "1.42", features = ["full"] }
 
-# HTTP client
-reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }
+# HTTP client (with HTTP/2 support)
+reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls", "http2"] }
 
 # WebSocket
 tokio-tungstenite = { version = "0.28.0", features = ["rustls-tls-webpki-roots"] }
@@ -62,7 +62,7 @@ sqlparser = { version = "0.59.0" }
 parquet = { version = "57.0.0" }
 
 # Web framework
-actix-web = "4.12.0"
+actix-web = { version = "4.12.0", features = ["http2"] }
 actix-ws = "0.3"
 actix = "0.13"
 actix-cors = "0.7"
@@ -127,6 +127,8 @@ js-sys = { version = "0.3" }
 libc = "0.2"
 web-sys = { version = "0.3" }
 getrandom = { version = "0.2", features = ["js"] }
+flate2 = "1.0"
+miniz_oxide = "0.8"
 
 # [profile.release]
 # opt-level = "z"     # Optimize for size

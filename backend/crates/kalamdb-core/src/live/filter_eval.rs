@@ -56,6 +56,9 @@ pub fn parse_where_clause(where_clause: &str) -> Result<Expr, KalamDbError> {
     }
 }
 
+/// Maximum recursion depth for expression evaluation (prevents stack overflow)
+const MAX_EXPR_DEPTH: usize = 64;
+
 /// Evaluate a filter expression against row data
 ///
 /// # Arguments
@@ -67,22 +70,27 @@ pub fn parse_where_clause(where_clause: &str) -> Result<Expr, KalamDbError> {
 ///
 /// `true` if the row matches the filter, `false` otherwise
 pub fn matches(expr: &Expr, row_data: &Row) -> Result<bool, KalamDbError> {
-    evaluate_expr(expr, row_data)
+    evaluate_expr(expr, row_data, 0)
 }
 
 /// Recursively evaluate an expression against row data
-fn evaluate_expr(expr: &Expr, row_data: &Row) -> Result<bool, KalamDbError> {
+fn evaluate_expr(expr: &Expr, row_data: &Row, depth: usize) -> Result<bool, KalamDbError> {
+    if depth > MAX_EXPR_DEPTH {
+        return Err(KalamDbError::InvalidOperation(
+            "Filter expression too deeply nested (max 64 levels)".to_string(),
+        ));
+    }
     match expr {
         // Binary operations: AND, OR, =, !=, <, >, <=, >=
         Expr::BinaryOp { left, op, right } => match op {
             BinaryOperator::And => {
-                let left_result = evaluate_expr(left, row_data)?;
-                let right_result = evaluate_expr(right, row_data)?;
+                let left_result = evaluate_expr(left, row_data, depth + 1)?;
+                let right_result = evaluate_expr(right, row_data, depth + 1)?;
                 Ok(left_result && right_result)
             }
             BinaryOperator::Or => {
-                let left_result = evaluate_expr(left, row_data)?;
-                let right_result = evaluate_expr(right, row_data)?;
+                let left_result = evaluate_expr(left, row_data, depth + 1)?;
+                let right_result = evaluate_expr(right, row_data, depth + 1)?;
                 Ok(left_result || right_result)
             }
             BinaryOperator::Eq => evaluate_comparison(left, right, row_data, scalars_equal),
@@ -116,12 +124,12 @@ fn evaluate_expr(expr: &Expr, row_data: &Row) -> Result<bool, KalamDbError> {
         },
 
         // Parentheses: (expression)
-        Expr::Nested(inner) => evaluate_expr(inner, row_data),
+        Expr::Nested(inner) => evaluate_expr(inner, row_data, depth + 1),
 
         // NOT expression
         Expr::UnaryOp { op, expr } => match op {
             datafusion::sql::sqlparser::ast::UnaryOperator::Not => {
-                let result = evaluate_expr(expr, row_data)?;
+                let result = evaluate_expr(expr, row_data, depth + 1)?;
                 Ok(!result)
             }
             _ => Err(KalamDbError::InvalidOperation(format!(

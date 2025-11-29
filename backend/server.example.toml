@@ -16,6 +16,16 @@ port = 8080
 # Number of worker threads (0 = number of CPU cores)
 workers = 0
 
+# Enable HTTP/2 protocol support (default: true)
+# When true, server uses automatic HTTP/1.1 and HTTP/2 cleartext (h2c) negotiation
+# When false, server only supports HTTP/1.1
+# HTTP/2 offers:
+# - Multiplexed requests (multiple requests on single connection)
+# - Header compression (HPACK)
+# - Binary protocol (more efficient parsing)
+# - Server push support (for future features)
+enable_http2 = true
+
 # API version (default: "v1")
 # Controls the versioned endpoint prefix (e.g., /v1/api/sql)
 api_version = "v1"

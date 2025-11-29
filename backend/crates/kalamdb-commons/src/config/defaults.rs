@@ -13,6 +13,10 @@ pub fn default_node_id() -> String {
     "node1".to_string()
 }
 
+pub fn default_enable_http2() -> bool {
+    true // HTTP/2 enabled by default for better performance
+}
+
 pub fn default_flush_job_shutdown_timeout() -> u32 {
     300 // 5 minutes (T158j)
 }

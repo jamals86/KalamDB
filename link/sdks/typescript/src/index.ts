@@ -9,16 +9,30 @@
  * - Real-time subscriptions via WebSocket (single connection, multiple subscriptions)
  * - Subscription management with modern patterns (unsubscribe functions)
  * - Cross-platform support (Node.js & Browser)
+ * - Type-safe authentication with multiple providers (Basic Auth, JWT, Anonymous)
  * 
  * @example
  * ```typescript
- * import { createClient } from '@kalamdb/client';
+ * import { createClient, Auth } from '@kalamdb/client';
  * 
- * const client = await createClient({
+ * // Basic Auth (username/password)
+ * const client = createClient({
  *   url: 'http://localhost:8080',
- *   username: 'admin',
- *   password: 'admin'
+ *   auth: Auth.basic('admin', 'admin')
  * });
+ * 
+ * // JWT Token Auth
+ * const jwtClient = createClient({
+ *   url: 'http://localhost:8080',
+ *   auth: Auth.jwt('eyJhbGciOiJIUzI1NiIs...')
+ * });
+ * 
+ * // Anonymous (localhost bypass)
+ * const anonClient = createClient({
+ *   url: 'http://localhost:8080',
+ *   auth: Auth.none()
+ * });
+ * 
  * await client.connect();
  * 
  * // Subscribe to changes (returns unsubscribe function - Firebase/Supabase style)
@@ -35,6 +49,36 @@
  */
 
 import init, { KalamClient as WasmClient } from '../kalam_link.js';
+
+// Extend WasmClient type with static factory methods that will be available at runtime
+// These are defined in wasm.rs but not in the auto-generated TypeScript types
+declare module '../kalam_link.js' {
+  interface KalamClient {
+    getAuthType(): string;
+  }
+  // eslint-disable-next-line @typescript-eslint/no-namespace
+  namespace KalamClient {
+    function withJwt(url: string, token: string): KalamClient;
+    function anonymous(url: string): KalamClient;
+  }
+}
+
+// Re-export authentication types
+export { 
+  Auth,
+  AuthCredentials,
+  BasicAuthCredentials,
+  JwtAuthCredentials,
+  NoAuthCredentials,
+  buildAuthHeader,
+  encodeBasicAuth,
+  isAuthenticated,
+  isBasicAuth,
+  isJwtAuth,
+  isNoAuth
+} from './auth.js';
+
+import type { AuthCredentials } from './auth.js';
 
 // Re-export types from WASM bindings
 export type { KalamClient as WasmKalamClient } from '../kalam_link.js';
@@ -225,9 +269,38 @@ export interface SubscriptionOptions {
 export type SubscribeOptions = SubscriptionOptions;
 
 /**
- * Configuration options for KalamDB client
+ * Configuration options for KalamDB client (new type-safe API)
+ * 
+ * Uses discriminated unions for type-safe authentication.
+ * 
+ * @example
+ * ```typescript
+ * // Type-safe auth options
+ * const client = createClient({
+ *   url: 'http://localhost:8080',
+ *   auth: Auth.basic('admin', 'admin')
+ * });
+ * 
+ * // JWT authentication
+ * const jwtClient = createClient({
+ *   url: 'http://localhost:8080',
+ *   auth: Auth.jwt('eyJhbGciOiJIUzI1NiIs...')
+ * });
+ * ```
  */
-export interface ClientOptions {
+export interface ClientOptionsWithAuth {
+  /** Server URL (e.g., 'http://localhost:8080') */
+  url: string;
+  /** Authentication credentials (type-safe) */
+  auth: AuthCredentials;
+}
+
+/**
+ * Configuration options for KalamDB client (legacy API)
+ * 
+ * @deprecated Use ClientOptionsWithAuth with Auth.basic() instead
+ */
+export interface ClientOptionsLegacy {
   /** Server URL (e.g., 'http://localhost:8080') */
   url: string;
   /** Username for authentication */
@@ -237,19 +310,51 @@ export interface ClientOptions {
 }
 
 /**
+ * Configuration options for KalamDB client
+ * 
+ * Supports both new type-safe auth API and legacy username/password API.
+ */
+export type ClientOptions = ClientOptionsWithAuth | ClientOptionsLegacy;
+
+/**
+ * Type guard to check if options use the new auth API
+ */
+function isAuthOptions(options: ClientOptions): options is ClientOptionsWithAuth {
+  return 'auth' in options;
+}
+
+/**
  * KalamDB Client - TypeScript wrapper around WASM bindings
  * 
  * Provides a type-safe interface to KalamDB with support for:
  * - SQL query execution
  * - Real-time WebSocket subscriptions
- * - HTTP Basic authentication
+ * - Multiple authentication methods (Basic Auth, JWT, Anonymous)
  * - Cross-platform (Node.js & Browser)
  * - Subscription tracking and management
  * 
  * @example
  * ```typescript
- * // Create and connect
- * const client = new KalamDBClient('http://localhost:8080', 'alice', 'password123');
+ * // New API with type-safe auth (recommended)
+ * import { createClient, Auth } from '@kalamdb/client';
+ * 
+ * const client = createClient({
+ *   url: 'http://localhost:8080',
+ *   auth: Auth.basic('alice', 'password123')
+ * });
+ * 
+ * // JWT authentication
+ * const jwtClient = createClient({
+ *   url: 'http://localhost:8080',
+ *   auth: Auth.jwt('eyJhbGciOiJIUzI1NiIs...')
+ * });
+ * 
+ * // Anonymous (no auth - localhost bypass)
+ * const anonClient = createClient({
+ *   url: 'http://localhost:8080',
+ *   auth: Auth.none()
+ * });
+ * 
  * await client.connect();
  * 
  * // Execute queries
@@ -266,12 +371,8 @@ export interface ClientOptions {
  * // Check subscription count
  * console.log(`Active: ${client.getSubscriptionCount()}`);
  * 
- * // Cleanup - option 1: call returned function
+ * // Cleanup
  * await unsubscribe();
- * 
- * // Cleanup - option 2: unsubscribe all
- * await client.unsubscribeAll();
- * 
  * await client.disconnect();
  * ```
  */
@@ -279,29 +380,75 @@ export class KalamDBClient {
   private wasmClient: WasmClient | null = null;
   private initialized = false;
   private url: string;
-  private username: string;
-  private password: string;
+  private auth: AuthCredentials;
   
   /** Track active subscriptions for management */
   private subscriptions: Map<string, SubscriptionInfo> = new Map();
 
   /**
-   * Create a new KalamDB client
+   * Create a new KalamDB client with type-safe auth options
+   * 
+   * @param options - Client options with URL and auth credentials
+   * 
+   * @throws Error if url is empty
+   * 
+   * @example
+   * ```typescript
+   * import { KalamDBClient, Auth } from '@kalamdb/client';
+   * 
+   * const client = new KalamDBClient({
+   *   url: 'http://localhost:8080',
+   *   auth: Auth.basic('admin', 'secret')
+   * });
+   * ```
+   */
+  constructor(options: ClientOptionsWithAuth);
+  
+  /**
+   * Create a new KalamDB client with username/password (legacy API)
    * 
    * @param url - Server URL (e.g., 'http://localhost:8080')
    * @param username - Username for authentication
    * @param password - Password for authentication
    * 
    * @throws Error if url, username, or password is empty
+   * 
+   * @deprecated Use constructor with ClientOptionsWithAuth and Auth.basic() instead
    */
-  constructor(url: string, username: string, password: string) {
-    if (!url) throw new Error('KalamDBClient: url parameter is required');
-    if (!username) throw new Error('KalamDBClient: username parameter is required');
-    if (!password) throw new Error('KalamDBClient: password parameter is required');
+  constructor(url: string, username: string, password: string);
+  
+  constructor(
+    urlOrOptions: string | ClientOptionsWithAuth, 
+    username?: string, 
+    password?: string
+  ) {
+    // Handle new options-based API
+    if (typeof urlOrOptions === 'object') {
+      if (!urlOrOptions.url) throw new Error('KalamDBClient: url is required');
+      if (!urlOrOptions.auth) throw new Error('KalamDBClient: auth is required');
+      
+      this.url = urlOrOptions.url;
+      this.auth = urlOrOptions.auth;
+    } 
+    // Handle legacy API (string url, username, password)
+    else {
+      if (!urlOrOptions) throw new Error('KalamDBClient: url parameter is required');
+      if (!username) throw new Error('KalamDBClient: username parameter is required');
+      if (!password) throw new Error('KalamDBClient: password parameter is required');
+      
+      this.url = urlOrOptions;
+      // Convert legacy API to new auth format
+      this.auth = { type: 'basic', username, password };
+    }
+  }
 
-    this.url = url;
-    this.username = username;
-    this.password = password;
+  /**
+   * Get the current authentication type
+   * 
+   * @returns 'basic', 'jwt', or 'none'
+   */
+  getAuthType(): 'basic' | 'jwt' | 'none' {
+    return this.auth.type;
   }
 
   /**
@@ -319,7 +466,23 @@ export class KalamDBClient {
       // Browser environment - WASM will be fetched automatically
       await init();
       
-      this.wasmClient = new WasmClient(this.url, this.username, this.password);
+      // Create WASM client based on auth type
+      switch (this.auth.type) {
+        case 'basic':
+          this.wasmClient = new WasmClient(this.url, this.auth.username, this.auth.password);
+          break;
+        case 'jwt':
+          this.wasmClient = WasmClient.withJwt(this.url, this.auth.token);
+          break;
+        case 'none':
+          this.wasmClient = WasmClient.anonymous(this.url);
+          break;
+        default:
+          // This should never happen due to TypeScript's exhaustiveness checking
+          const _exhaustive: never = this.auth;
+          throw new Error(`Unknown auth type: ${(_exhaustive as AuthCredentials).type}`);
+      }
+      
       this.initialized = true;
     } catch (error) {
       throw new Error(`Failed to initialize WASM client: ${error}`);
@@ -774,13 +937,49 @@ export class KalamDBClient {
 /**
  * Create a KalamDB client with the given configuration
  * 
- * Factory function alternative to constructor
+ * Factory function that supports both the new type-safe auth API and legacy API.
  * 
- * @param options - Client configuration
+ * @param options - Client configuration with URL and authentication
  * @returns Configured KalamDB client
+ * 
+ * @example
+ * ```typescript
+ * import { createClient, Auth } from '@kalamdb/client';
+ * 
+ * // New type-safe API (recommended)
+ * const client = createClient({
+ *   url: 'http://localhost:8080',
+ *   auth: Auth.basic('admin', 'admin')
+ * });
+ * 
+ * // JWT authentication
+ * const jwtClient = createClient({
+ *   url: 'http://localhost:8080',
+ *   auth: Auth.jwt('eyJhbGciOiJIUzI1NiIs...')
+ * });
+ * 
+ * // Anonymous (no authentication)
+ * const anonClient = createClient({
+ *   url: 'http://localhost:8080',
+ *   auth: Auth.none()
+ * });
+ * 
+ * // Legacy API (deprecated but still works)
+ * const legacyClient = createClient({
+ *   url: 'http://localhost:8080',
+ *   username: 'admin',
+ *   password: 'admin'
+ * });
+ * ```
  */
 export function createClient(options: ClientOptions): KalamDBClient {
-  return new KalamDBClient(options.url, options.username, options.password);
+  // Handle both new and legacy API
+  if (isAuthOptions(options)) {
+    return new KalamDBClient(options);
+  } else {
+    // Legacy API: convert to new format
+    return new KalamDBClient(options.url, options.username, options.password);
+  }
 }
 
 // Default export

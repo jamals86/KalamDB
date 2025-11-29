@@ -94,6 +94,7 @@
 pub mod error;
 pub mod live;
 pub mod models;
+pub mod compression;
 #[cfg(feature = "tokio-runtime")]
 mod normalize;
 pub mod seq_id;
@@ -126,8 +127,8 @@ pub use credentials::{CredentialStore, Credentials, MemoryCredentialStore};
 pub use error::{KalamLinkError, Result};
 pub use live::LiveConnection;
 pub use models::{
-    ChangeEvent, ConnectionOptions, ErrorDetail, HealthCheckResponse, QueryRequest, QueryResponse,
-    SubscriptionConfig, SubscriptionOptions,
+    ChangeEvent, ConnectionOptions, ErrorDetail, HealthCheckResponse, HttpVersion, QueryRequest,
+    QueryResponse, SubscriptionConfig, SubscriptionOptions,
 };
 pub use seq_id::SeqId;
 pub use timeouts::{KalamLinkTimeouts, KalamLinkTimeoutsBuilder};

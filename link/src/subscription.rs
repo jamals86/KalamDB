@@ -126,18 +126,17 @@ async fn send_auth_and_wait(
     auth: &AuthProvider,
     auth_timeout: Duration,
 ) -> Result<()> {
-    use crate::models::ClientMessage;
+    use crate::models::{ClientMessage, WsAuthCredentials};
 
-    // Extract credentials from auth provider
-    let (username, password) = match auth {
-        AuthProvider::BasicAuth(username, password) => (username.clone(), password.clone()),
-        AuthProvider::JwtToken(_) => {
-            // JWT tokens should use a different auth flow (not yet implemented)
-            // For now, return error - JWT WebSocket auth needs server-side support
-            return Err(KalamLinkError::AuthenticationError(
-                "JWT authentication for WebSocket not yet implemented. Use Basic Auth.".to_string(),
-            ));
-        }
+    // Convert auth provider to WsAuthCredentials
+    let credentials = match auth {
+        AuthProvider::BasicAuth(username, password) => WsAuthCredentials::Basic {
+            username: username.clone(),
+            password: password.clone(),
+        },
+        AuthProvider::JwtToken(token) => WsAuthCredentials::Jwt {
+            token: token.clone(),
+        },
         AuthProvider::None => {
             return Err(KalamLinkError::AuthenticationError(
                 "Authentication required for WebSocket subscriptions".to_string(),
@@ -145,8 +144,8 @@ async fn send_auth_and_wait(
         }
     };
 
-    // Send Authenticate message
-    let auth_message = ClientMessage::Authenticate { username, password };
+    // Send Authenticate message with credentials
+    let auth_message = ClientMessage::Authenticate { credentials };
     let payload = serde_json::to_string(&auth_message).map_err(|e| {
         KalamLinkError::WebSocketError(format!("Failed to serialize auth message: {}", e))
     })?;
@@ -522,6 +521,87 @@ impl SubscriptionManager {
                         Err(e) => return Some(Err(e)),
                     }
                 }
+                Some(Ok(Message::Binary(data))) => {
+                    // Binary messages are gzip-compressed JSON
+                    let text = match crate::compression::decompress_gzip(&data) {
+                        Ok(decompressed) => match String::from_utf8(decompressed) {
+                            Ok(s) => s,
+                            Err(e) => {
+                                return Some(Err(KalamLinkError::WebSocketError(format!(
+                                    "Invalid UTF-8 in decompressed message: {}",
+                                    e
+                                ))));
+                            }
+                        },
+                        Err(e) => {
+                            return Some(Err(KalamLinkError::WebSocketError(format!(
+                                "Failed to decompress message: {}",
+                                e
+                            ))));
+                        }
+                    };
+
+                    match parse_message(&text) {
+                        Ok(Some(event)) => {
+                            if let Some(id) = event.subscription_id() {
+                                if id != self.subscription_id {
+                                    self.subscription_id = id.to_string();
+                                }
+                            }
+
+                            // Check if this is an initial data batch with more batches pending
+                            // and automatically request the next batch
+                            if let ChangeEvent::InitialDataBatch {
+                                ref batch_control, ..
+                            } = event
+                            {
+                                if batch_control.has_more {
+                                    if let Err(e) =
+                                        self.request_next_batch(batch_control.last_seq_id).await
+                                    {
+                                        return Some(Err(e));
+                                    }
+                                }
+                            }
+
+                            // Handle buffering logic
+                            match event {
+                                ChangeEvent::Ack {
+                                    ref batch_control, ..
+                                } => {
+                                    self.is_loading = batch_control.status != BatchStatus::Ready;
+                                    self.event_queue.push_back(event);
+                                    if !self.is_loading {
+                                        self.flush_buffered_changes();
+                                    }
+                                }
+                                ChangeEvent::InitialDataBatch {
+                                    ref batch_control, ..
+                                } => {
+                                    self.is_loading = batch_control.status != BatchStatus::Ready;
+                                    self.event_queue.push_back(event);
+                                    if !self.is_loading {
+                                        self.flush_buffered_changes();
+                                    }
+                                }
+                                ChangeEvent::Insert { .. }
+                                | ChangeEvent::Update { .. }
+                                | ChangeEvent::Delete { .. } => {
+                                    if self.is_loading {
+                                        self.buffered_changes.push(event);
+                                    } else {
+                                        self.event_queue.push_back(event);
+                                    }
+                                }
+                                _ => {
+                                    self.event_queue.push_back(event);
+                                }
+                            }
+                        }
+                        Ok(None) => continue,
+                        Err(e) => return Some(Err(e)),
+                    }
+                }
                 Some(Ok(Message::Close(_))) => {
                     // WebSocket closed normally
                     return None;
@@ -537,8 +617,8 @@ impl SubscriptionManager {
                     // Keepalive response
                     continue;
                 }
-                Some(Ok(_)) => {
-                    // Ignore binary, ping, pong messages
+                Some(Ok(Message::Frame(_))) => {
+                    // Raw frame - ignore
                     continue;
                 }
                 Some(Err(e)) => {

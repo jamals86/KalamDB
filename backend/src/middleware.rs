@@ -256,6 +256,9 @@ where
 }
 
 /// Extract client IP from request, handling proxies
+/// 
+/// Security: Rejects localhost values in proxy headers to prevent rate limit bypass.
+/// Attackers cannot spoof X-Forwarded-For: 127.0.0.1 to bypass protections.
 fn extract_client_ip(req: &ServiceRequest) -> IpAddr {
     // Try X-Forwarded-For header first (for reverse proxies)
     if let Some(forwarded) = req.headers().get("X-Forwarded-For") {
@@ -263,8 +266,12 @@ fn extract_client_ip(req: &ServiceRequest) -> IpAddr {
             // X-Forwarded-For can contain multiple IPs: "client, proxy1, proxy2"
             // The first one is the original client
             if let Some(first_ip) = forwarded_str.split(',').next() {
-                if let Ok(ip) = first_ip.trim().parse::<IpAddr>() {
-                    return ip;
+                let trimmed = first_ip.trim();
+                // Security: Reject localhost in header (spoofing attempt)
+                if !is_localhost_header_value(trimmed) {
+                    if let Ok(ip) = trimmed.parse::<IpAddr>() {
+                        return ip;
+                    }
                 }
             }
         }
@@ -273,8 +280,12 @@ fn extract_client_ip(req: &ServiceRequest) -> IpAddr {
     // Try X-Real-IP header (nginx style)
     if let Some(real_ip) = req.headers().get("X-Real-IP") {
         if let Ok(real_ip_str) = real_ip.to_str() {
-            if let Ok(ip) = real_ip_str.trim().parse::<IpAddr>() {
-                return ip;
+            let trimmed = real_ip_str.trim();
+            // Security: Reject localhost in header (spoofing attempt)
+            if !is_localhost_header_value(trimmed) {
+                if let Ok(ip) = trimmed.parse::<IpAddr>() {
+                    return ip;
+                }
             }
         }
     }
@@ -283,4 +294,10 @@ fn extract_client_ip(req: &ServiceRequest) -> IpAddr {
     req.peer_addr()
         .map(|addr| addr.ip())
         .unwrap_or_else(|| "127.0.0.1".parse().unwrap())
+}
+
+/// Check if a header value is a localhost address (potential spoofing attempt)
+#[inline]
+fn is_localhost_header_value(ip: &str) -> bool {
+    ip == "127.0.0.1" || ip == "::1" || ip.starts_with("127.") || ip.eq_ignore_ascii_case("localhost")
 }

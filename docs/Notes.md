@@ -214,22 +214,9 @@ instead of: 1 failed: Invalid operation: No handler registered for statement typ
 158) extract_seq_bounds is duplicated we cna combine it
 159) Add tests to cover the indexes and manifest reading - check if it's actually working and the planner works with indexes now and doesnt read the un-needed parquet files
 
-160) I can see stuck websockets in the server, make sure we have a timeout if no ping recieved from the client for a specific time we close the connection
-[2025-11-17 18:52:28.766] [INFO ] - actix-rt|system:0|arbiter:7 - actix_web::middleware::logger:450 - 127.0.0.1 "GET /v1/ws HTTP/1.1" 101 13659 "-" "-" 69671.679608
-[2025-11-17 18:52:28.766] [INFO ] - actix-rt|system:0|arbiter:8 - actix_web::middleware::logger:450 - 127.0.0.1 "GET /v1/ws HTTP/1.1" 101 13323 "-" "-" 68830.506443
-[2025-11-17 18:52:28.768] [INFO ] - actix-rt|system:0|arbiter:7 - kalamdb_api::actors::ws_session:178 - WebSocket connection closed: baf68a9f-ff08-4ba9-a433-80174dad0d73
-[2025-11-17 18:52:28.768] [INFO ] - actix-rt|system:0|arbiter:8 - kalamdb_api::actors::ws_session:178 - WebSocket connection closed: 81013e3a-e61c-4880-9b2d-eea92a336e3a
-
 162) Whenever we shutdown the server we force all subscrioptions to be closed and websockets as well gracefully with an event set to the user
 
 163) If there is any stuck live_query when starting the server clear them all, might be the server crashed without graceful shutdown
-
-164) Instead of doing this:         let table_name = format!(
-            "{}.{}",
-            table_id.namespace_id().as_str(),
-            table_id.table_name().as_str()
-        );
-      add function which returns this full name directly from TableId
 
 165) No need to have tableType in tableOptions since we already have it as column
 
@@ -280,14 +267,11 @@ instead of: 1 failed: Invalid operation: No handler registered for statement typ
 
 184) i see when the system is idle again after a high load Open Files: 421 this is too high we need to investigate why and make sure we close all file handles correctly, add a logging or display logs when we request it to see where its leaking from
 
-185)     /// FIXME: Delete always by prefix of LiveQueryId which is user_id + connection_id
-    pub fn delete_by_connection_id(&self, connection_id: &str) -> Result<(), SystemError>
-
 186) delete_by_connection_id_async should use an index in live_queries table instead of scanning all the rows to find the matching connection_id
 
-187) remove notify_table_change from pushing to 2 places user and admin! the pushing/notification is only for the user side not admin
+187) Add to the link libr and the sdk an ability to pass a query with parameters to avoid sql injection attacks and support caching of the sql in the backend
 
-
+188) Check why websocket is not using the http2 protocol even if we set it in the config file
 
 
 
@@ -344,7 +328,12 @@ Code Cleanup Operations:
 9) Use clippy suggestions to improve code quality
 10) Use todo!() instead of unimplemented!() where needed
 11) Remove all commented code across the codebase
-
+12) Instead of doing this:         let table_name = format!(
+            "{}.{}",
+            table_id.namespace_id().as_str(),
+            table_id.table_name().as_str()
+        );
+      add function which returns this full name directly from TableId
 
 Tasks To Repo:
 1) Add ci/cd pipelines to the new repo

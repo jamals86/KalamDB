@@ -40,6 +40,9 @@ thiserror = { workspace = true }
 # Logging
 log = { workspace = true }
 
+# Decompression (pure Rust, WASM-compatible)
+miniz_oxide = { workspace = true }
+
 # WASM bindings (T039, T040, T063A-T063B)
 wasm-bindgen = { workspace = true, optional = true }
 wasm-bindgen-futures = { workspace = true, optional = true }

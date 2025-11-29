@@ -51,6 +51,11 @@ pub struct ServerSettings {
     /// Unique node identifier for this server instance (default: "node1")
     #[serde(default = "default_node_id")]
     pub node_id: String,
+    /// Enable HTTP/2 protocol support (default: true)
+    /// When true, server uses bind_auto_h2c() for automatic HTTP/1.1 and HTTP/2 cleartext negotiation
+    /// When false, server only supports HTTP/1.1
+    #[serde(default = "default_enable_http2")]
+    pub enable_http2: bool,
 }
 
 /// Storage settings
@@ -628,6 +633,7 @@ impl Default for ServerConfig {
                 workers: 0,
                 api_version: default_api_version(),
                 node_id: default_node_id(),
+                enable_http2: default_enable_http2(),
             },
             storage: StorageSettings {
                 rocksdb_path: "./data/rocksdb".to_string(),

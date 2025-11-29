@@ -6,7 +6,7 @@
 
 use crate::models::{
     ClientMessage, ConnectionOptions, QueryRequest, ServerMessage, SubscriptionOptions,
-    SubscriptionRequest,
+    SubscriptionRequest, WsAuthCredentials,
 };
 use crate::seq_id::SeqId;
 use base64::{engine::general_purpose, Engine as _};
@@ -34,18 +34,83 @@ struct SubscriptionState {
     last_seq_id: Option<SeqId>,
 }
 
+/// Authentication provider for WASM clients
+///
+/// Supports three authentication modes:
+/// - Basic: HTTP Basic Auth with username/password
+/// - Jwt: Bearer token authentication with JWT
+/// - None: No authentication (localhost bypass)
+#[derive(Clone)]
+enum WasmAuthProvider {
+    /// HTTP Basic Authentication (username/password)
+    Basic { username: String, password: String },
+    /// JWT Token Authentication (Bearer token)
+    Jwt { token: String },
+    /// No authentication (for localhost bypass)
+    None,
+}
+
+impl WasmAuthProvider {
+    /// Get the Authorization header value for HTTP requests
+    fn to_http_header(&self) -> Option<String> {
+        match self {
+            WasmAuthProvider::Basic { username, password } => {
+                let credentials = format!("{}:{}", username, password);
+                let encoded = general_purpose::STANDARD.encode(credentials.as_bytes());
+                Some(format!("Basic {}", encoded))
+            }
+            WasmAuthProvider::Jwt { token } => Some(format!("Bearer {}", token)),
+            WasmAuthProvider::None => None,
+        }
+    }
+
+    /// Get the WebSocket authentication message using unified WsAuthCredentials
+    fn to_ws_auth_message(&self) -> Option<ClientMessage> {
+        match self {
+            WasmAuthProvider::Basic { username, password } => Some(ClientMessage::Authenticate {
+                credentials: WsAuthCredentials::Basic {
+                    username: username.clone(),
+                    password: password.clone(),
+                },
+            }),
+            WasmAuthProvider::Jwt { token } => Some(ClientMessage::Authenticate {
+                credentials: WsAuthCredentials::Jwt {
+                    token: token.clone(),
+                },
+            }),
+            WasmAuthProvider::None => None,
+        }
+    }
+}
+
 /// WASM-compatible KalamDB client with auto-reconnection support
+///
+/// Supports multiple authentication methods:
+/// - Basic Auth: `new KalamClient(url, username, password)`
+/// - JWT Token: `KalamClient.withJwt(url, token)`
+/// - Anonymous: `KalamClient.anonymous(url)`
 ///
 /// # Example (JavaScript)
 /// ```js
-/// import init, { KalamClient } from './pkg/kalam_link.js';
+/// import init, { KalamClient, KalamClientWithJwt, KalamClientAnonymous } from './pkg/kalam_link.js';
 ///
 /// await init();
+///
+/// // Basic Auth (username/password)
 /// const client = new KalamClient(
 ///   "http://localhost:8080",
 ///   "username",
 ///   "password"
 /// );
+///
+/// // JWT Token Auth
+/// const jwtClient = KalamClientWithJwt.new(
+///   "http://localhost:8080",
+///   "eyJhbGciOiJIUzI1NiIs..."
+/// );
+///
+/// // Anonymous (localhost bypass)
+/// const anonClient = KalamClientAnonymous.new("http://localhost:8080");
 ///
 /// // Configure auto-reconnect (enabled by default)
 /// client.setAutoReconnect(true);
@@ -66,6 +131,9 @@ struct SubscriptionState {
 #[wasm_bindgen]
 pub struct KalamClient {
     url: String,
+    /// Authentication provider (Basic, JWT, or None)
+    auth: WasmAuthProvider,
+    /// Legacy fields for Basic Auth (kept for backwards compatibility in reconnection)
     username: String,
     password: String,
     ws: Rc<RefCell<Option<WebSocket>>>,
@@ -81,7 +149,7 @@ pub struct KalamClient {
 
 #[wasm_bindgen]
 impl KalamClient {
-    /// Create a new KalamDB client (T042, T043, T044)
+    /// Create a new KalamDB client with HTTP Basic Authentication (T042, T043, T044)
     ///
     /// # Arguments
     /// * `url` - KalamDB server URL (required, e.g., "http://localhost:8080")
@@ -111,6 +179,10 @@ impl KalamClient {
 
         Ok(KalamClient {
             url,
+            auth: WasmAuthProvider::Basic {
+                username: username.clone(),
+                password: password.clone(),
+            },
             username,
             password,
             ws: Rc::new(RefCell::new(None)),
@@ -119,6 +191,98 @@ impl KalamClient {
             reconnect_attempts: Rc::new(RefCell::new(0)),
             is_reconnecting: Rc::new(RefCell::new(false)),
         })
+    }
+
+    /// Create a new KalamDB client with JWT Token Authentication
+    ///
+    /// # Arguments
+    /// * `url` - KalamDB server URL (required, e.g., "http://localhost:8080")
+    /// * `token` - JWT token for authentication (required)
+    ///
+    /// # Errors
+    /// Returns JsValue error if url or token is empty
+    ///
+    /// # Example (JavaScript)
+    /// ```js
+    /// const client = KalamClient.withJwt(
+    ///   "http://localhost:8080",
+    ///   "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9..."
+    /// );
+    /// await client.connect();
+    /// ```
+    #[wasm_bindgen(js_name = withJwt)]
+    pub fn with_jwt(url: String, token: String) -> Result<KalamClient, JsValue> {
+        if url.is_empty() {
+            return Err(JsValue::from_str(
+                "KalamClient.withJwt: 'url' parameter is required and cannot be empty",
+            ));
+        }
+        if token.is_empty() {
+            return Err(JsValue::from_str(
+                "KalamClient.withJwt: 'token' parameter is required and cannot be empty",
+            ));
+        }
+
+        Ok(KalamClient {
+            url,
+            auth: WasmAuthProvider::Jwt { token },
+            username: String::new(),
+            password: String::new(),
+            ws: Rc::new(RefCell::new(None)),
+            subscription_state: Rc::new(RefCell::new(HashMap::new())),
+            connection_options: Rc::new(RefCell::new(ConnectionOptions::default())),
+            reconnect_attempts: Rc::new(RefCell::new(0)),
+            is_reconnecting: Rc::new(RefCell::new(false)),
+        })
+    }
+
+    /// Create a new KalamDB client with no authentication
+    ///
+    /// Useful for localhost connections where the server allows
+    /// unauthenticated access, or for development/testing scenarios.
+    ///
+    /// # Arguments
+    /// * `url` - KalamDB server URL (required, e.g., "http://localhost:8080")
+    ///
+    /// # Errors
+    /// Returns JsValue error if url is empty
+    ///
+    /// # Example (JavaScript)
+    /// ```js
+    /// const client = KalamClient.anonymous("http://localhost:8080");
+    /// await client.connect();
+    /// ```
+    #[wasm_bindgen(js_name = anonymous)]
+    pub fn anonymous(url: String) -> Result<KalamClient, JsValue> {
+        if url.is_empty() {
+            return Err(JsValue::from_str(
+                "KalamClient.anonymous: 'url' parameter is required and cannot be empty",
+            ));
+        }
+
+        Ok(KalamClient {
+            url,
+            auth: WasmAuthProvider::None,
+            username: String::new(),
+            password: String::new(),
+            ws: Rc::new(RefCell::new(None)),
+            subscription_state: Rc::new(RefCell::new(HashMap::new())),
+            connection_options: Rc::new(RefCell::new(ConnectionOptions::default())),
+            reconnect_attempts: Rc::new(RefCell::new(0)),
+            is_reconnecting: Rc::new(RefCell::new(false)),
+        })
+    }
+
+    /// Get the current authentication type
+    ///
+    /// Returns one of: "basic", "jwt", or "none"
+    #[wasm_bindgen(js_name = getAuthType)]
+    pub fn get_auth_type(&self) -> String {
+        match &self.auth {
+            WasmAuthProvider::Basic { .. } => "basic".to_string(),
+            WasmAuthProvider::Jwt { .. } => "jwt".to_string(),
+            WasmAuthProvider::None => "none".to_string(),
+        }
     }
 
     /// Enable or disable automatic reconnection
@@ -217,6 +381,9 @@ impl KalamClient {
             (promise, resolve_fn.unwrap(), reject_fn.unwrap())
         };
 
+        // For anonymous auth, we don't need to wait for auth_promise
+        let requires_auth = !matches!(self.auth, WasmAuthProvider::None);
+
         let (auth_promise, auth_resolve, auth_reject) = {
             let mut resolve_fn: Option<js_sys::Function> = None;
             let mut reject_fn: Option<js_sys::Function> = None;
@@ -229,26 +396,27 @@ impl KalamClient {
             (promise, resolve_fn.unwrap(), reject_fn.unwrap())
         };
 
-        // Clone credentials for the onopen handler
-        let username = self.username.clone();
-        let password = self.password.clone();
+        // Clone auth message for the onopen handler
+        let auth_message = self.auth.to_ws_auth_message();
         let ws_clone_for_auth = ws.clone();
+        let auth_resolve_for_anon = auth_resolve.clone();
         
         // Set up onopen handler to send authentication message
         let connect_resolve_clone = connect_resolve.clone();
         let onopen_callback = Closure::wrap(Box::new(move || {
             console_log("KalamClient: WebSocket connected, sending authentication...");
             
-            // Send authentication message
-            let auth_msg = ClientMessage::Authenticate {
-                username: username.clone(),
-                password: password.clone(),
-            };
-            
-            if let Ok(json) = serde_json::to_string(&auth_msg) {
-                if let Err(e) = ws_clone_for_auth.send_with_str(&json) {
-                    console_log(&format!("KalamClient: Failed to send auth message: {:?}", e));
+            // Send authentication message if we have one
+            if let Some(auth_msg) = &auth_message {
+                if let Ok(json) = serde_json::to_string(&auth_msg) {
+                    if let Err(e) = ws_clone_for_auth.send_with_str(&json) {
+                        console_log(&format!("KalamClient: Failed to send auth message: {:?}", e));
+                    }
                 }
+            } else {
+                // No auth needed (anonymous), resolve auth immediately
+                console_log("KalamClient: Anonymous connection, skipping authentication");
+                let _ = auth_resolve_for_anon.call0(&JsValue::NULL);
             }
             
             let _ = connect_resolve_clone.call0(&JsValue::NULL);
@@ -286,7 +454,7 @@ impl KalamClient {
         let subscriptions = Rc::clone(&self.subscription_state);
         let auth_resolve_clone = auth_resolve.clone();
         let auth_reject_clone2 = auth_reject.clone();
-        let auth_handled = Rc::new(RefCell::new(false));
+        let auth_handled = Rc::new(RefCell::new(!requires_auth)); // Already handled if anonymous
         let auth_handled_clone = Rc::clone(&auth_handled);
         
         let onmessage_callback = Closure::wrap(Box::new(move |e: MessageEvent| {
@@ -635,19 +803,19 @@ impl KalamClient {
         let window =
             web_sys::window().ok_or_else(|| JsValue::from_str("No window object available"))?;
 
-        // T063F: Implement HTTP fetch for SQL queries with Basic Auth
+        // T063F: Implement HTTP fetch for SQL queries with authentication
         let opts = RequestInit::new();
         opts.set_method("POST");
         opts.set_mode(RequestMode::Cors);
 
-        // Set headers with HTTP Basic Auth
+        // Set headers with authentication
         let headers = Headers::new()?;
         headers.set("Content-Type", "application/json")?;
 
-        // Encode username:password as base64 for Authorization: Basic header
-        let credentials = format!("{}:{}", self.username, self.password);
-        let encoded = general_purpose::STANDARD.encode(credentials.as_bytes());
-        headers.set("Authorization", &format!("Basic {}", encoded))?;
+        // Add Authorization header if we have authentication
+        if let Some(auth_header) = self.auth.to_http_header() {
+            headers.set("Authorization", &auth_header)?;
+        }
         opts.set_headers(&headers);
 
         // Set body
@@ -689,8 +857,7 @@ impl KalamClient {
         let is_reconnecting = Rc::clone(&self.is_reconnecting);
         let ws_ref = Rc::clone(&self.ws);
         let url = self.url.clone();
-        let username = self.username.clone();
-        let password = self.password.clone();
+        let auth = self.auth.clone();
 
         let onclose_reconnect = Closure::wrap(Box::new(move |_e: CloseEvent| {
             let opts = connection_options.borrow();
@@ -727,23 +894,21 @@ impl KalamClient {
             let subscription_state_clone = subscription_state.clone();
             let ws_ref_clone = ws_ref.clone();
             let url_clone = url.clone();
-            let username_clone = username.clone();
-            let password_clone = password.clone();
+            let auth_clone = auth.clone();
 
             let reconnect_fn = Closure::wrap(Box::new(move || {
                 *is_reconnecting_clone.borrow_mut() = true;
                 *reconnect_attempts_clone.borrow_mut() += 1;
 
                 let url = url_clone.clone();
-                let username = username_clone.clone();
-                let password = password_clone.clone();
+                let auth = auth_clone.clone();
                 let ws_ref = ws_ref_clone.clone();
                 let subscription_state = subscription_state_clone.clone();
                 let is_reconnecting = is_reconnecting_clone.clone();
                 let reconnect_attempts = reconnect_attempts_clone.clone();
 
                 wasm_bindgen_futures::spawn_local(async move {
-                    match reconnect_internal(url, username, password, ws_ref.clone()).await {
+                    match reconnect_internal_with_auth(url, auth, ws_ref.clone()).await {
                         Ok(()) => {
                             console_log("KalamClient: Reconnection successful");
                             *reconnect_attempts.borrow_mut() = 0; // Reset attempts on success
@@ -784,11 +949,10 @@ fn md5_hash(s: &str) -> u64 {
     hasher.finish()
 }
 
-/// Internal reconnection logic
-async fn reconnect_internal(
+/// Internal reconnection logic with auth provider support
+async fn reconnect_internal_with_auth(
     url: String,
-    username: String,
-    password: String,
+    auth: WasmAuthProvider,
     ws_ref: Rc<RefCell<Option<WebSocket>>>,
 ) -> Result<(), JsValue> {
     let ws_url = url
@@ -801,18 +965,21 @@ async fn reconnect_internal(
     let (connect_promise, connect_resolve, connect_reject) = create_promise();
     let (auth_promise, auth_resolve, auth_reject) = create_promise();
 
-    let username_clone = username.clone();
-    let password_clone = password.clone();
+    // Check if auth is required
+    let requires_auth = !matches!(auth, WasmAuthProvider::None);
+    let auth_message = auth.to_ws_auth_message();
     let ws_clone = ws.clone();
+    let auth_resolve_for_anon = auth_resolve.clone();
 
     let connect_resolve_clone = connect_resolve.clone();
     let onopen = Closure::wrap(Box::new(move || {
-        let auth_msg = ClientMessage::Authenticate {
-            username: username_clone.clone(),
-            password: password_clone.clone(),
-        };
-        if let Ok(json) = serde_json::to_string(&auth_msg) {
-            let _ = ws_clone.send_with_str(&json);
+        if let Some(auth_msg) = &auth_message {
+            if let Ok(json) = serde_json::to_string(&auth_msg) {
+                let _ = ws_clone.send_with_str(&json);
+            }
+        } else {
+            // No auth needed (anonymous), resolve auth immediately
+            let _ = auth_resolve_for_anon.call0(&JsValue::NULL);
         }
         let _ = connect_resolve_clone.call0(&JsValue::NULL);
     }) as Box<dyn FnMut()>);
@@ -831,7 +998,7 @@ async fn reconnect_internal(
 
     let auth_resolve_clone = auth_resolve.clone();
     let auth_reject_clone2 = auth_reject.clone();
-    let auth_handled = Rc::new(RefCell::new(false));
+    let auth_handled = Rc::new(RefCell::new(!requires_auth));
     let auth_handled_clone = auth_handled.clone();
 
     let onmessage = Closure::wrap(Box::new(move |e: MessageEvent| {

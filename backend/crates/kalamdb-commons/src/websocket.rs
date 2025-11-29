@@ -171,6 +171,49 @@ pub enum WebSocketMessage {
     Notification(Notification),
 }
 
+/// Authentication credentials for WebSocket connection
+///
+/// This enum is the **client-facing** authentication model for WebSocket connections.
+/// It maps 1:1 with `AuthRequest` variants in `kalamdb-auth` via the `From` impl.
+///
+/// # Supported Methods
+///
+/// - `Basic` - Username/password authentication
+/// - `Jwt` - JWT token (Bearer) authentication
+///
+/// # JSON Wire Format
+///
+/// ```json
+/// // Basic Auth
+/// {"type": "authenticate", "method": "basic", "username": "alice", "password": "secret"}
+///
+/// // JWT Auth  
+/// {"type": "authenticate", "method": "jwt", "token": "eyJhbGciOiJIUzI1NiIs..."}
+/// ```
+///
+/// # Adding a New Authentication Method
+///
+/// 1. Add variant here with appropriate fields
+/// 2. Add corresponding variant to `AuthRequest` in `kalamdb-auth/unified.rs`
+/// 3. Update `From<WsAuthCredentials> for AuthRequest` impl
+/// 4. Update client SDKs (TypeScript `Auth` class, WASM `WasmAuthProvider`)
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(tag = "method", rename_all = "snake_case")]
+pub enum WsAuthCredentials {
+    /// Username and password authentication
+    Basic {
+        username: String,
+        password: String,
+    },
+    /// JWT token authentication
+    Jwt {
+        token: String,
+    },
+    // Future auth methods can be added here:
+    // ApiKey { key: String },
+    // OAuth { provider: String, token: String },
+}
+
 /// Client-to-server request messages
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
@@ -180,12 +223,12 @@ pub enum ClientMessage {
     /// Client sends this immediately after establishing WebSocket connection.
     /// Server must receive this within 3 seconds or connection will be closed.
     /// Server responds with AuthSuccess or AuthError.
+    ///
+    /// Supports multiple authentication methods via the `credentials` field.
     Authenticate {
-        //TODO: Add also jwt option
-        /// Username for authentication
-        username: String,
-        /// Password for authentication (sent over encrypted WebSocket in production)
-        password: String,
+        /// Authentication credentials (basic, jwt, or future methods)
+        #[serde(flatten)]
+        credentials: WsAuthCredentials,
     },
 
     /// Subscribe to live query updates

@@ -289,13 +289,12 @@ async fn handle_text_message(
         serde_json::from_str(text).map_err(|e| format!("Invalid message: {}", e))?;
 
     match msg {
-        ClientMessage::Authenticate { username, password } => {
+        ClientMessage::Authenticate { credentials } => {
             connection_state.write().mark_auth_started();
             handle_authenticate(
                 connection_state,
                 client_ip,
-                &username,
-                &password,
+                credentials,
                 session,
                 registry,
                 app_context,

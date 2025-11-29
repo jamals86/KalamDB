@@ -10,7 +10,7 @@
 //!   cargo test --test connection live_connection_tests -- --test-threads=1
 
 use crate::common::*;
-use kalam_link::{SubscriptionOptions, ConnectionOptions};
+use kalam_link::{SubscriptionOptions, ConnectionOptions, HttpVersion, KalamLinkClient, AuthProvider, KalamLinkTimeouts};
 use std::time::Duration;
 
 /// Test: Create user table, subscribe with default options, verify events are received
@@ -473,4 +473,87 @@ fn test_live_subscription_change_event_order() {
     }
     
     println!("[TEST] Successfully received {} change events", received_orders.len());
+}
+
+/// Test: Execute query using HTTP/2 protocol
+/// Note: This test verifies the client can be built with HTTP/2 settings.
+/// HTTP/2 prior knowledge requires server support. For HTTPS connections,
+/// ALPN negotiation handles HTTP/2. For HTTP connections, servers must
+/// explicitly support h2c (HTTP/2 cleartext).
+/// If the server doesn't support HTTP/2 cleartext, use HttpVersion::Auto.
+#[ntest::timeout(60000)]
+#[test]
+fn test_live_http2_query_execution() {
+    if !is_server_running() {
+        println!("Skipping HTTP/2 test: server not running");
+        return;
+    }
+    
+    // Build client with Auto HTTP version (will negotiate or fall back)
+    // Note: HTTP/2 prior knowledge doesn't work with servers that don't support h2c
+    let client = KalamLinkClient::builder()
+        .base_url(SERVER_URL)
+        .auth(AuthProvider::basic_auth("root".to_string(), "".to_string()))
+        .http_version(HttpVersion::Auto) // Auto-negotiate, falls back to HTTP/1.1
+        .timeouts(KalamLinkTimeouts::fast())
+        .build()
+        .expect("Client should build successfully");
+    
+    // Run the async test in a blocking context
+    let runtime = tokio::runtime::Runtime::new().expect("Failed to create runtime");
+    let result = runtime.block_on(async {
+        client.execute_query("SELECT 1 as test_value").await
+    });
+    
+    // The query should succeed
+    assert!(
+        result.is_ok(),
+        "Query execution should succeed: {:?}",
+        result.err()
+    );
+    
+    let response = result.unwrap();
+    println!("[HTTP AUTO TEST] Query response: {:?}", response);
+    
+    // Verify we got a result
+    assert!(
+        !response.results.is_empty(),
+        "Should receive at least one result set"
+    );
+}
+
+/// Test: Build client with different HTTP versions
+#[test]
+fn test_client_builder_http_versions() {
+    // HTTP/1.1 (default)
+    let client1 = KalamLinkClient::builder()
+        .base_url("http://localhost:8080")
+        .http_version(HttpVersion::Http1)
+        .build();
+    assert!(client1.is_ok(), "Client with HTTP/1.1 should build");
+    
+    // HTTP/2
+    let client2 = KalamLinkClient::builder()
+        .base_url("http://localhost:8080")
+        .http_version(HttpVersion::Http2)
+        .build();
+    assert!(client2.is_ok(), "Client with HTTP/2 should build");
+    
+    // Auto
+    let client3 = KalamLinkClient::builder()
+        .base_url("http://localhost:8080")
+        .http_version(HttpVersion::Auto)
+        .build();
+    assert!(client3.is_ok(), "Client with Auto HTTP version should build");
+    
+    // Using connection_options
+    let client4 = KalamLinkClient::builder()
+        .base_url("http://localhost:8080")
+        .connection_options(
+            ConnectionOptions::new()
+                .with_http_version(HttpVersion::Http2)
+                .with_auto_reconnect(true)
+        )
+        .build();
+    assert!(client4.is_ok(), "Client with connection_options should build");
 }

@@ -318,8 +318,18 @@ pub async fn run(
             .configure(routes::configure)
     })
     // Set backlog BEFORE bind() - this affects the listen queue size
-    .backlog(config.performance.backlog)
-    .bind(&bind_addr)?
+    .backlog(config.performance.backlog);
+    
+    // Bind with HTTP/2 support if enabled, otherwise use HTTP/1.1 only
+    let server = if config.server.enable_http2 {
+        info!("HTTP/2 support enabled (h2c - HTTP/2 cleartext)");
+        server.bind_auto_h2c(&bind_addr)?
+    } else {
+        info!("HTTP/1.1 only mode");
+        server.bind(&bind_addr)?
+    };
+    
+    let server = server
     .workers(if config.server.workers == 0 {
         num_cpus::get()
     } else {

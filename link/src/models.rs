@@ -8,6 +8,37 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value as JsonValue;
 use std::collections::HashMap;
 
+/// HTTP protocol version to use for connections.
+///
+/// HTTP/2 provides benefits like multiplexing multiple requests over a single
+/// connection, header compression, and improved performance for multiple
+/// concurrent requests.
+///
+/// # Example
+///
+/// ```rust
+/// use kalam_link::{ConnectionOptions, HttpVersion};
+///
+/// let options = ConnectionOptions::new()
+///     .with_http_version(HttpVersion::Http2);
+/// ```
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[serde(rename_all = "lowercase")]
+pub enum HttpVersion {
+    /// HTTP/1.1 (default) - widely compatible, one request per connection
+    #[default]
+    #[serde(rename = "http1", alias = "http/1.1", alias = "1.1")]
+    Http1,
+
+    /// HTTP/2 - multiplexed requests, header compression, better performance
+    #[serde(rename = "http2", alias = "http/2", alias = "2")]
+    Http2,
+
+    /// Automatic - let the client negotiate the best version with the server
+    #[serde(rename = "auto")]
+    Auto,
+}
+
 /// Batch control metadata for paginated initial data loading
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct BatchControl {
@@ -47,17 +78,64 @@ pub enum BatchStatus {
     Ready,
 }
 
+/// Authentication credentials for WebSocket connection
+///
+/// This enum mirrors `WsAuthCredentials` from the backend (`kalamdb-commons/websocket.rs`).
+/// Both enums must stay in sync for proper serialization/deserialization.
+///
+/// # Supported Methods
+///
+/// - `Basic` - Username/password authentication
+/// - `Jwt` - JWT token (Bearer) authentication
+///
+/// # JSON Wire Format
+///
+/// ```json
+/// // Basic Auth
+/// {"type": "authenticate", "method": "basic", "username": "alice", "password": "secret"}
+///
+/// // JWT Auth  
+/// {"type": "authenticate", "method": "jwt", "token": "eyJhbGciOiJIUzI1NiIs..."}
+/// ```
+///
+/// # Adding a New Authentication Method
+///
+/// 1. Add variant here (client side)
+/// 2. Add matching variant to backend's `WsAuthCredentials`
+/// 3. Update `WasmAuthProvider` in `wasm.rs` if WASM support needed
+/// 4. Update TypeScript `Auth` class in SDK
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(tag = "method", rename_all = "snake_case")]
+pub enum WsAuthCredentials {
+    /// Username and password authentication
+    Basic {
+        username: String,
+        password: String,
+    },
+    /// JWT token authentication
+    Jwt {
+        token: String,
+    },
+    // Future auth methods can be added here:
+    // ApiKey { key: String },
+    // OAuth { provider: String, token: String },
+}
+
 /// Client-to-server request messages
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum ClientMessage {
-    /// Authenticate WebSocket connection (browser clients only)
-    /// Native clients use HTTP Basic Auth headers instead
+    /// Authenticate WebSocket connection
+    ///
+    /// Client sends this immediately after establishing WebSocket connection.
+    /// Server must receive this within 3 seconds or connection will be closed.
+    /// Server responds with AuthSuccess or AuthError.
+    ///
+    /// Supports multiple authentication methods via the credentials field.
     Authenticate {
-        /// Username for authentication
-        username: String,
-        /// Password for authentication
-        password: String,
+        /// Authentication credentials (basic, jwt, or future methods)
+        #[serde(flatten)]
+        credentials: WsAuthCredentials,
     },
 
     /// Subscribe to live query updates
@@ -94,9 +172,10 @@ pub struct SubscriptionRequest {
     pub options: SubscriptionOptions,
 }
 
-/// Connection-level options for the WebSocket client.
+/// Connection-level options for the WebSocket/HTTP client.
 ///
-/// These options control the WebSocket connection behavior including:
+/// These options control connection behavior including:
+/// - HTTP protocol version (HTTP/1.1 or HTTP/2)
 /// - Automatic reconnection on connection loss
 /// - Reconnection timing and retry limits
 ///
@@ -105,15 +184,22 @@ pub struct SubscriptionRequest {
 /// # Example
 ///
 /// ```rust
-/// use kalam_link::ConnectionOptions;
+/// use kalam_link::{ConnectionOptions, HttpVersion};
 ///
 /// let options = ConnectionOptions::default()
+///     .with_http_version(HttpVersion::Http2)
 ///     .with_auto_reconnect(true)
 ///     .with_reconnect_delay_ms(2000)
 ///     .with_max_reconnect_attempts(Some(10));
 /// ```
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ConnectionOptions {
+    /// HTTP protocol version to use for connections
+    /// Default: Http1 (HTTP/1.1) for maximum compatibility
+    /// Use Http2 for better performance with multiple concurrent requests
+    #[serde(default)]
+    pub http_version: HttpVersion,
+
     /// Enable automatic reconnection on connection loss
     /// Default: true - automatically attempts to reconnect
     #[serde(default = "default_auto_reconnect")]
@@ -152,6 +238,7 @@ fn default_max_reconnect_delay_ms() -> u64 {
 impl Default for ConnectionOptions {
     fn default() -> Self {
         Self {
+            http_version: HttpVersion::default(),
             auto_reconnect: true,
             reconnect_delay_ms: 1000,
             max_reconnect_delay_ms: 30000,
@@ -164,6 +251,16 @@ impl ConnectionOptions {
     /// Create new connection options with defaults
     pub fn new() -> Self {
         Self::default()
+    }
+
+    /// Set the HTTP protocol version to use
+    ///
+    /// - `HttpVersion::Http1` - HTTP/1.1 (default, maximum compatibility)
+    /// - `HttpVersion::Http2` - HTTP/2 (better performance for concurrent requests)
+    /// - `HttpVersion::Auto` - Let the client negotiate with the server
+    pub fn with_http_version(mut self, version: HttpVersion) -> Self {
+        self.http_version = version;
+        self
     }
 
     /// Set whether to automatically reconnect on connection loss
@@ -880,6 +977,36 @@ mod tests {
     }
 
     // ==================== ClientMessage Tests ====================
+
+    #[test]
+    fn test_client_message_authenticate_basic_serialization() {
+        let msg = ClientMessage::Authenticate {
+            credentials: WsAuthCredentials::Basic {
+                username: "alice".to_string(),
+                password: "secret123".to_string(),
+            },
+        };
+
+        let json = serde_json::to_string(&msg).unwrap();
+        assert!(json.contains("\"type\":\"authenticate\""));
+        assert!(json.contains("\"method\":\"basic\""));
+        assert!(json.contains("\"username\":\"alice\""));
+        assert!(json.contains("\"password\":\"secret123\""));
+    }
+
+    #[test]
+    fn test_client_message_authenticate_jwt_serialization() {
+        let msg = ClientMessage::Authenticate {
+            credentials: WsAuthCredentials::Jwt {
+                token: "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.test".to_string(),
+            },
+        };
+
+        let json = serde_json::to_string(&msg).unwrap();
+        assert!(json.contains("\"type\":\"authenticate\""));
+        assert!(json.contains("\"method\":\"jwt\""));
+        assert!(json.contains("\"token\":\"eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.test\""));
+    }
 
     #[test]
     fn test_client_message_subscribe_serialization() {
