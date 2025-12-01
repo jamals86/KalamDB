@@ -126,6 +126,14 @@ fn smoke_test_user_table_flush() {
 
     println!("✅ Flush job completed successfully");
 
+    // Verify flush storage files exist (manifest.json and parquet files)
+    assert_flush_storage_files_exist(
+        &namespace,
+        &table_name,
+        true, // is_user_table
+        "USER table flush operations test",
+    );
+
     // Query all data to verify retrieval from both RocksDB and Parquet
     println!("🔍 Querying all data...");
     let select_output = execute_sql_as_root_via_client(&format!(
@@ -279,6 +287,14 @@ fn smoke_test_shared_table_flush() {
 
     println!("✅ Flush job completed successfully");
 
+    // Verify flush storage files exist (manifest.json and parquet files)
+    assert_flush_storage_files_exist(
+        &namespace,
+        &table_name,
+        false, // is_user_table (SHARED)
+        "SHARED table flush operations test",
+    );
+
     // Query all data to verify retrieval from both RocksDB and Parquet
     println!("🔍 Querying all data...");
     let select_output = execute_sql_as_root_via_client(&format!(
@@ -402,6 +418,14 @@ fn smoke_test_mixed_source_query() {
     let job1_id = parse_job_id_from_flush_output(&flush1_output).expect("Failed to parse job ID");
     verify_job_completed(&job1_id, JOB_TIMEOUT).expect("First flush failed");
     println!("✅ First batch flushed to Parquet");
+
+    // Verify flush storage files exist (manifest.json and parquet files)
+    assert_flush_storage_files_exist(
+        &namespace,
+        &table_name,
+        true, // is_user_table
+        "Mixed source query - first flush",
+    );
 
     // Insert second batch (will stay in RocksDB)
     println!("📝 Inserting second batch (20 rows - will stay in RocksDB)...");
