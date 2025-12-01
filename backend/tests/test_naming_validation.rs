@@ -98,15 +98,18 @@ async fn test_reserved_column_names() {
 async fn test_valid_column_names() {
     let server = TestServer::new().await;
 
+    // Use unique namespace to avoid parallel test interference
+    let ns = format!("test_valid_cols_{}", std::process::id());
+
     // Create a test namespace first
-    fixtures::create_namespace(&server, "test_valid_cols").await;
+    fixtures::create_namespace(&server, &ns).await;
 
     let valid_columns = vec![("user_id", "users"), ("firstName", "profiles")];
 
     for (col_name, table_name) in valid_columns {
         let sql = format!(
-            "CREATE TABLE test_valid_cols.{} ({} TEXT PRIMARY KEY) WITH (TYPE = 'USER')",
-            table_name, col_name
+            "CREATE TABLE {}.{} ({} TEXT PRIMARY KEY) WITH (TYPE = 'USER')",
+            ns, table_name, col_name
         );
         let response = server.execute_sql(&sql).await;
 
@@ -119,7 +122,7 @@ async fn test_valid_column_names() {
         );
     }
     // Targeted cleanup for this namespace
-    let _ = server.cleanup_namespace("test_valid_cols").await;
+    let _ = server.cleanup_namespace(&ns).await;
 }
 
 #[actix_web::test]

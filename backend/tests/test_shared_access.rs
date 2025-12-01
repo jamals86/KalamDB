@@ -12,7 +12,7 @@ mod common;
 
 use common::TestServer;
 use kalamdb_api::models::ResponseStatus;
-use kalamdb_commons::{Role, TableAccess};
+use kalamdb_commons::Role;
 
 #[tokio::test]
 async fn test_public_table_read_only_for_users() {
