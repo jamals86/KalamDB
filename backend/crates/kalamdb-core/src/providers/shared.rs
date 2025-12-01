@@ -332,6 +332,97 @@ impl BaseTableProvider<SharedTableRowId, SharedTableRow> for SharedTableProvider
         Ok(row_key)
     }
 
+    /// Optimized batch insert using single RocksDB WriteBatch
+    ///
+    /// **Performance**: This method is significantly faster than calling insert() N times:
+    /// - Single mutex acquisition for all SeqId generation
+    /// - Single RocksDB WriteBatch for all rows (one disk write vs N)
+    /// - Batch PK validation (single scan for all rows)
+    ///
+    /// # Arguments
+    /// * `_user_id` - Ignored for shared tables (no RLS)
+    /// * `rows` - Vector of Row objects to insert
+    ///
+    /// # Returns
+    /// Vector of generated SharedTableRowIds (SeqIds)
+    fn insert_batch(
+        &self,
+        _user_id: &UserId,
+        rows: Vec<Row>,
+    ) -> Result<Vec<SharedTableRowId>, KalamDbError> {
+        use crate::providers::arrow_json_conversion::coerce_rows;
+
+        if rows.is_empty() {
+            return Ok(Vec::new());
+        }
+
+        // Ensure manifest is ready
+        self.ensure_manifest_ready()?;
+
+        // Coerce rows to match schema types
+        let coerced_rows = coerce_rows(rows, &self.schema_ref()).map_err(|e| {
+            KalamDbError::InvalidOperation(format!("Schema coercion failed: {}", e))
+        })?;
+
+        let row_count = coerced_rows.len();
+
+        // Batch PK validation: collect all user-provided PK values
+        let pk_name = self.primary_key_field_name();
+        let mut pk_values_to_check = Vec::new();
+        for row_data in &coerced_rows {
+            if let Some(pk_value) = row_data.get(pk_name) {
+                if !matches!(pk_value, ScalarValue::Null) {
+                    let pk_str = crate::providers::unified_dml::extract_user_pk_value(row_data, pk_name)?;
+                    pk_values_to_check.push(pk_str);
+                }
+            }
+        }
+
+        // Check all PKs in one pass (uses PK index for O(1) lookups each)
+        for pk_str in &pk_values_to_check {
+            if self.find_row_key_by_id_field(&UserId::root(), pk_str)?.is_some() {
+                return Err(KalamDbError::AlreadyExists(format!(
+                    "Primary key violation: value '{}' already exists in column '{}'",
+                    pk_str, pk_name
+                )));
+            }
+        }
+
+        // Generate all SeqIds in single mutex acquisition
+        let sys_cols = self.core.system_columns.clone();
+        let seq_ids = sys_cols.generate_seq_ids(row_count)?;
+
+        // Build all entities and keys
+        let mut entries: Vec<(SharedTableRowId, SharedTableRow)> = Vec::with_capacity(row_count);
+        let mut row_keys: Vec<SharedTableRowId> = Vec::with_capacity(row_count);
+
+        for (row_data, seq_id) in coerced_rows.into_iter().zip(seq_ids.into_iter()) {
+            let row_key = seq_id;
+            let entity = SharedTableRow {
+                _seq: seq_id,
+                _deleted: false,
+                fields: row_data,
+            };
+
+            row_keys.push(row_key);
+            entries.push((row_key, entity));
+        }
+
+        // Single atomic RocksDB WriteBatch for ALL rows
+        self.store.insert_batch(&entries).map_err(|e| {
+            KalamDbError::InvalidOperation(format!("Failed to batch insert shared table rows: {}", e))
+        })?;
+
+        log::debug!(
+            "Batch inserted {} shared table rows with _seq range [{}, {}]",
+            row_count,
+            row_keys.first().map(|k| k.as_i64()).unwrap_or(0),
+            row_keys.last().map(|k| k.as_i64()).unwrap_or(0)
+        );
+
+        Ok(row_keys)
+    }
+
     fn update(
         &self,
         _user_id: &UserId,

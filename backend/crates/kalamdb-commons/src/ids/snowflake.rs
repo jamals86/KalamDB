@@ -157,6 +157,61 @@ impl SnowflakeGenerator {
         let id = id as u64;
         (id & 0xFFF) as u16
     }
+
+    /// Generate multiple Snowflake IDs in a single mutex acquisition
+    ///
+    /// This is significantly more efficient than calling next_id() N times
+    /// when inserting batches, as it acquires the mutex only once.
+    ///
+    /// # Arguments
+    /// * `count` - Number of IDs to generate
+    ///
+    /// # Returns
+    /// Vector of unique, time-ordered Snowflake IDs
+    pub fn next_ids(&self, count: usize) -> Result<Vec<i64>, String> {
+        if count == 0 {
+            return Ok(Vec::new());
+        }
+
+        let mut state = self.state.lock().unwrap();
+        let mut ids = Vec::with_capacity(count);
+
+        for _ in 0..count {
+            let mut timestamp = self.current_timestamp()?;
+
+            // Handle clock going backwards
+            if timestamp < state.last_timestamp {
+                return Err(format!(
+                    "Clock moved backwards. Refusing to generate id for {} milliseconds",
+                    state.last_timestamp - timestamp
+                ));
+            }
+
+            if timestamp == state.last_timestamp {
+                // Same millisecond - increment sequence
+                state.sequence = (state.sequence + 1) & Self::MAX_SEQUENCE;
+
+                if state.sequence == 0 {
+                    // Sequence overflow - wait for next millisecond
+                    timestamp = self.wait_next_millis(state.last_timestamp)?;
+                }
+            } else {
+                // New millisecond - reset sequence
+                state.sequence = 0;
+            }
+
+            state.last_timestamp = timestamp;
+
+            // Construct the ID
+            let id = ((timestamp - self.epoch) << 22)
+                | ((self.worker_id as u64) << 12)
+                | (state.sequence as u64);
+
+            ids.push(id as i64);
+        }
+
+        Ok(ids)
+    }
 }
 
 impl Default for SnowflakeGenerator {
@@ -307,5 +362,69 @@ mod tests {
         }
 
         assert_eq!(all_ids.len(), 1000);
+    }
+
+    #[test]
+    fn test_batch_generation() {
+        let gen = SnowflakeGenerator::new(1);
+        let batch_size = 1000;
+
+        let ids = gen.next_ids(batch_size).unwrap();
+
+        // Verify correct count
+        assert_eq!(ids.len(), batch_size);
+
+        // Verify uniqueness
+        let unique: HashSet<i64> = ids.iter().cloned().collect();
+        assert_eq!(unique.len(), batch_size, "Batch IDs must be unique");
+
+        // Verify ordering
+        for i in 1..ids.len() {
+            assert!(ids[i] > ids[i - 1], "Batch IDs must be ordered");
+        }
+    }
+
+    #[test]
+    fn test_batch_generation_empty() {
+        let gen = SnowflakeGenerator::new(1);
+        let ids = gen.next_ids(0).unwrap();
+        assert!(ids.is_empty());
+    }
+
+    #[test]
+    fn test_batch_vs_single_equivalence() {
+        // Batch generation should produce same type of IDs as single generation
+        let gen = SnowflakeGenerator::new(42);
+
+        let single_id = gen.next_id().unwrap();
+        let batch_ids = gen.next_ids(3).unwrap();
+
+        // All IDs should be positive
+        assert!(single_id > 0);
+        assert!(batch_ids[0] > 0);
+        assert!(batch_ids[1] > 0);
+        assert!(batch_ids[2] > 0);
+
+        // Batch IDs should be strictly increasing within the batch
+        assert!(batch_ids[1] > batch_ids[0]);
+        assert!(batch_ids[2] > batch_ids[1]);
+
+        // Batch IDs generated after single_id should be >= single_id
+        // (could be same millisecond with higher sequence)
+        assert!(batch_ids[0] >= single_id);
+
+        // Worker ID should be consistent across all IDs
+        assert_eq!(gen.extract_worker_id(single_id), 42);
+        assert_eq!(gen.extract_worker_id(batch_ids[0]), 42);
+        assert_eq!(gen.extract_worker_id(batch_ids[1]), 42);
+        assert_eq!(gen.extract_worker_id(batch_ids[2]), 42);
+
+        // All 4 IDs should be unique
+        let mut all_ids = std::collections::HashSet::new();
+        all_ids.insert(single_id);
+        all_ids.insert(batch_ids[0]);
+        all_ids.insert(batch_ids[1]);
+        all_ids.insert(batch_ids[2]);
+        assert_eq!(all_ids.len(), 4, "All IDs must be unique");
     }
 }

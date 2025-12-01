@@ -721,7 +721,6 @@ mod tests {
         init_test_app_context();
         let app_ctx = AppContext::get();
         let registry = HandlerRegistry::new(app_ctx, false);
-        let session = SessionContext::new();
         let ctx =
             ExecutionContext::new(UserId::from("test_user"), Role::User, create_test_session());
 
@@ -781,7 +780,6 @@ mod tests {
         init_test_app_context();
         let app_ctx = AppContext::get();
         let registry = HandlerRegistry::new(app_ctx, false);
-        let session = SessionContext::new();
         let ctx =
             ExecutionContext::new(UserId::from("test_user"), Role::User, create_test_session());
 

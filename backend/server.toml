@@ -69,18 +69,21 @@ compression = "snappy"
 [storage.rocksdb]
 # Write buffer size per column family in bytes (default: 64MB)
 # Larger values improve write throughput but use more memory
-write_buffer_size = 67108864
+# TUNED: Increased to 128MB for better batch write performance
+write_buffer_size = 134217728
 
 # Maximum number of write buffers (default: 3)
 # Allows writes to continue while buffers are being flushed
-max_write_buffers = 3
+# TUNED: Increased to 6 for better concurrent write handling
+max_write_buffers = 6
 
 # Block cache size for reads in bytes (default: 256MB)
 # Larger values improve read performance for hot data
 block_cache_size = 268435456
 
 # Maximum number of background compaction/flush jobs (default: 4)
-max_background_jobs = 4
+# TUNED: Increased to 8 to match typical CPU core count
+max_background_jobs = 8
 
 [datafusion]
 # Memory limit for query execution in bytes (default: 1GB)

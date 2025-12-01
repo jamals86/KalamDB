@@ -80,7 +80,6 @@ mod tests {
         let handler = ShowStoragesHandler::new(app_ctx);
         let stmt = ShowStoragesStatement {};
         let ctx = create_test_context();
-        let session = SessionContext::new();
 
         let result = handler.execute(stmt, vec![], &ctx).await;
 

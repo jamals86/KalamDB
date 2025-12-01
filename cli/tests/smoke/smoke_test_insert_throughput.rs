@@ -5,7 +5,6 @@
 // - Parallel inserts
 
 use crate::common::*;
-use serde_json::Value;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
 use std::time::{Duration, Instant};

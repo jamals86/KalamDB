@@ -352,3 +352,12 @@ Tasks To Repo:
 3) Add rustfmt and clippy checks to the new repo
 
 
+
+│                    BENCHMARK RESULTS                       │
+├────────────────────────────────────────────────────────────┤
+│  Test Type              │  Rows   │  Time    │  Rate       │
+├────────────────────────────────────────────────────────────┤
+│  Single-row inserts     │    200  │    0.13s │    1532.5/s │
+│  Batched (100/batch)    │   2000  │    1.84s │    1088.3/s │
+│  Parallel (10 threads)  │   1000  │    0.26s │    3878.1/s │
+└────────────────────────────────────────────────────────────┘
