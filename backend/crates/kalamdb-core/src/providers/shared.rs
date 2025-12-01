@@ -9,6 +9,7 @@
 //! - No handlers - all DML logic inline
 //! - NO RLS - ignores user_id parameter (operates on all rows)
 //! - SessionState NOT extracted in scan_rows() (scans all rows)
+//! - PK Index: Uses SharedTableIndexedStore for efficient O(1) lookups by PK value
 
 use crate::app_context::AppContext;
 use crate::error::KalamDbError;
@@ -22,12 +23,13 @@ use datafusion::datasource::TableProvider;
 use datafusion::error::Result as DataFusionResult;
 use datafusion::logical_expr::{Expr, TableProviderFilterPushDown};
 use datafusion::physical_plan::ExecutionPlan;
+use datafusion::scalar::ScalarValue;
 use kalamdb_commons::constants::SystemColumnNames;
 use kalamdb_commons::ids::SharedTableRowId;
 use kalamdb_commons::models::{Row, UserId};
 use kalamdb_commons::TableId;
 use kalamdb_store::entity_store::EntityStore;
-use kalamdb_tables::{SharedTableRow, SharedTableStore};
+use kalamdb_tables::{SharedTableIndexedStore, SharedTablePkIndex, SharedTableRow};
 use std::any::Any;
 use std::sync::Arc;
 
@@ -41,12 +43,16 @@ use crate::providers::version_resolution::{merge_versioned_rows, parquet_batch_t
 /// - Direct fields (no wrapper layer)
 /// - Shared core via Arc<TableProviderCore>
 /// - NO RLS - user_id parameter ignored in all operations
+/// - Uses SharedTableIndexedStore for efficient PK lookups
 pub struct SharedTableProvider {
     /// Shared core (app_context, live_query_manager, storage_registry)
     core: Arc<TableProviderCore>,
 
-    /// SharedTableStore for DML operations (public for flush jobs)
-    pub(crate) store: Arc<SharedTableStore>,
+    /// SharedTableIndexedStore for DML operations with PK index
+    pub(crate) store: Arc<SharedTableIndexedStore>,
+
+    /// PK index for efficient lookups
+    pk_index: SharedTablePkIndex,
 
     /// Cached primary key field name
     primary_key_field_name: String,
@@ -61,11 +67,11 @@ impl SharedTableProvider {
     /// # Arguments
     /// * `core` - Shared core with app_context and optional services
     /// * `table_id` - Table identifier
-    /// * `store` - SharedTableStore for this table
+    /// * `store` - SharedTableIndexedStore for this table
     /// * `primary_key_field_name` - Primary key field name from schema
     pub fn new(
         core: Arc<TableProviderCore>,
-        store: Arc<SharedTableStore>,
+        store: Arc<SharedTableIndexedStore>,
         primary_key_field_name: String,
     ) -> Self {
         // Cache schema at creation time to avoid "Table not found" panics if table is dropped
@@ -76,9 +82,17 @@ impl SharedTableProvider {
             .get_arrow_schema(core.table_id())
             .expect("Failed to get Arrow schema from registry during provider creation");
 
+        // Create PK index for efficient lookups
+        let pk_index = SharedTablePkIndex::new(
+            core.table_id().namespace_id().as_str(),
+            core.table_id().table_name().as_str(),
+            &primary_key_field_name,
+        );
+
         Self {
             core,
             store,
+            pk_index,
             primary_key_field_name,
             schema,
         }
@@ -144,6 +158,51 @@ impl SharedTableProvider {
 
         Ok(())
     }
+
+    /// Find a row by PK value using the PK index for efficient O(1) lookup.
+    ///
+    /// This method uses the PK index to find all versions of a row with the given PK value,
+    /// then returns the latest non-deleted version.
+    fn find_by_pk(
+        &self,
+        pk_value: &ScalarValue,
+    ) -> Result<Option<(SharedTableRowId, SharedTableRow)>, KalamDbError> {
+        // Build index prefix for this PK value
+        let prefix = self.pk_index.build_prefix_for_pk(pk_value);
+
+        // Use scan_by_index on the IndexedEntityStore (index 0 is the PK index)
+        // scan_by_index returns (key, entity) pairs directly
+        let results = self
+            .store
+            .scan_by_index(0, Some(&prefix), None)
+            .map_err(|e| KalamDbError::Other(format!("PK index scan failed: {}", e)))?;
+
+        if results.is_empty() {
+            log::trace!(
+                "[SharedTableProvider] PK index returned no entries for pk_value={:?}",
+                pk_value
+            );
+            return Ok(None);
+        }
+
+        log::trace!(
+            "[SharedTableProvider] PK index found {} entries for pk_value={:?}",
+            results.len(),
+            pk_value
+        );
+
+        // Find the latest non-deleted version
+        // Results are ordered by seq (descending due to big-endian encoding)
+        for (row_id, row) in results {
+            if !row._deleted {
+                return Ok(Some((row_id, row)));
+            }
+        }
+
+        // All versions are deleted
+        Ok(None)
+    }
+
     /// Retrieve a specific row version from Parquet storage by SeqId
     fn get_row_from_parquet(
         &self,
@@ -188,6 +247,61 @@ impl BaseTableProvider<SharedTableRowId, SharedTableRow> for SharedTableProvider
         &self.primary_key_field_name
     }
 
+    /// Find row by PK value using the PK index for O(1) lookup.
+    ///
+    /// This overrides the default base implementation that does a full table scan.
+    /// For shared tables, user_id is ignored (no RLS).
+    /// For hot storage (RocksDB), this is O(1). If not found in hot storage,
+    /// falls back to scanning Parquet (cold storage).
+    fn find_row_key_by_id_field(
+        &self,
+        _user_id: &UserId,
+        id_value: &str,
+    ) -> Result<Option<SharedTableRowId>, KalamDbError> {
+        log::trace!(
+            "[SharedTableProvider] find_row_key_by_id_field via PK index: id_value='{}'",
+            id_value
+        );
+
+        // Try to parse id_value as i64 first (most common case)
+        let pk_value = if let Ok(int_val) = id_value.parse::<i64>() {
+            ScalarValue::Int64(Some(int_val))
+        } else {
+            ScalarValue::Utf8(Some(id_value.to_string()))
+        };
+
+        // Use PK index for efficient hot storage lookup (O(1))
+        if let Some((row_id, _row)) = self.find_by_pk(&pk_value)? {
+            log::trace!(
+                "[SharedTableProvider] Found row in hot storage with id={}",
+                id_value
+            );
+            return Ok(Some(row_id));
+        }
+
+        log::trace!(
+            "[SharedTableProvider] Row not found in hot storage for id={}, checking cold storage",
+            id_value
+        );
+
+        // Not found in hot storage - fall back to Parquet scan (cold storage)
+        // This is more expensive but necessary for flushed rows
+        let result = base::find_row_by_pk(self, None, id_value)?;
+        if let Some((row_id, _row)) = result {
+            log::trace!(
+                "[SharedTableProvider] Found row in cold storage with id={}",
+                id_value
+            );
+            return Ok(Some(row_id));
+        }
+
+        log::trace!(
+            "[SharedTableProvider] Row not found anywhere for id={}",
+            id_value
+        );
+        Ok(None)
+    }
+
     fn insert(&self, _user_id: &UserId, row_data: Row) -> Result<SharedTableRowId, KalamDbError> {
         self.ensure_manifest_ready()?;
 
@@ -208,8 +322,8 @@ impl BaseTableProvider<SharedTableRowId, SharedTableRow> for SharedTableProvider
         // Key is just the SeqId (SharedTableRowId is type alias for SeqId)
         let row_key = seq_id;
 
-        // Store the entity in RocksDB (hot storage)
-        self.store.put(&row_key, &entity).map_err(|e| {
+        // Store the entity in RocksDB (hot storage) using insert() to update PK index
+        self.store.insert(&row_key, &entity).map_err(|e| {
             KalamDbError::InvalidOperation(format!("Failed to insert shared table row: {}", e))
         })?;
 
@@ -239,19 +353,24 @@ impl BaseTableProvider<SharedTableRowId, SharedTableRow> for SharedTableProvider
                 .ok_or_else(|| KalamDbError::NotFound("Row not found for update".to_string()))?
         };
 
-        let pk_value = prior
-            .fields
-            .get(&pk_name)
-            .map(|v| v.to_string())
-            .ok_or_else(|| {
-                KalamDbError::InvalidOperation(format!("Prior row missing PK {}", pk_name))
-            })?;
+        let pk_value_scalar = prior.fields.get(&pk_name).cloned().ok_or_else(|| {
+            KalamDbError::InvalidOperation(format!("Prior row missing PK {}", pk_name))
+        })?;
 
-        // Resolve latest per PK
-        let (_latest_key, latest_row) =
-            base::find_row_by_pk(self, None, &pk_value)?.ok_or_else(|| {
-                KalamDbError::NotFound(format!("Row with {}={} not found", pk_name, pk_value))
-            })?;
+        // Resolve latest per PK - first try hot storage (O(1) via PK index), 
+        // then fall back to cold storage (Parquet scan)
+        let (_latest_key, latest_row) = if let Some(result) = self.find_by_pk(&pk_value_scalar)? {
+            result
+        } else {
+            // Not in hot storage, check cold storage
+            let pk_value_str = pk_value_scalar.to_string();
+            base::find_row_by_pk(self, None, &pk_value_str)?.ok_or_else(|| {
+                KalamDbError::NotFound(format!(
+                    "Row with {}={} not found",
+                    pk_name, pk_value_scalar
+                ))
+            })?
+        };
 
         let mut merged = latest_row.fields.values.clone();
         for (k, v) in &updates.values {
@@ -267,7 +386,50 @@ impl BaseTableProvider<SharedTableRowId, SharedTableRow> for SharedTableProvider
             fields: new_fields,
         };
         let row_key = seq_id;
-        self.store.put(&row_key, &entity).map_err(|e| {
+        // Use insert() to update PK index for the new MVCC version
+        self.store.insert(&row_key, &entity).map_err(|e| {
+            KalamDbError::InvalidOperation(format!("Failed to update shared table row: {}", e))
+        })?;
+        Ok(row_key)
+    }
+
+    fn update_by_pk_value(
+        &self,
+        _user_id: &UserId,
+        pk_value: &str,
+        updates: Row,
+    ) -> Result<SharedTableRowId, KalamDbError> {
+        // IGNORE user_id parameter - no RLS for shared tables
+        let pk_name = self.primary_key_field_name().to_string();
+        let pk_value_scalar = ScalarValue::Utf8(Some(pk_value.to_string()));
+
+        // Resolve latest per PK - first try hot storage (O(1) via PK index),
+        // then fall back to cold storage (Parquet scan)
+        let (_latest_key, latest_row) = if let Some(result) = self.find_by_pk(&pk_value_scalar)? {
+            result
+        } else {
+            // Not in hot storage, check cold storage
+            base::find_row_by_pk(self, None, pk_value)?.ok_or_else(|| {
+                KalamDbError::NotFound(format!("Row with {}={} not found", pk_name, pk_value))
+            })?
+        };
+
+        let mut merged = latest_row.fields.values.clone();
+        for (k, v) in &updates.values {
+            merged.insert(k.clone(), v.clone());
+        }
+        let new_fields = Row::new(merged);
+
+        let sys_cols = self.core.system_columns.clone();
+        let seq_id = sys_cols.generate_seq_id()?;
+        let entity = SharedTableRow {
+            _seq: seq_id,
+            _deleted: false,
+            fields: new_fields,
+        };
+        let row_key = seq_id;
+        // Use insert() to update PK index for the new MVCC version
+        self.store.insert(&row_key, &entity).map_err(|e| {
             KalamDbError::InvalidOperation(format!("Failed to update shared table row: {}", e))
         })?;
         Ok(row_key)
@@ -298,7 +460,8 @@ impl BaseTableProvider<SharedTableRowId, SharedTableRow> for SharedTableProvider
             fields: Row::new(values),
         };
         let row_key = seq_id;
-        self.store.put(&row_key, &entity).map_err(|e| {
+        // Use insert() to update PK index for the tombstone record
+        self.store.insert(&row_key, &entity).map_err(|e| {
             KalamDbError::InvalidOperation(format!("Failed to delete shared table row: {}", e))
         })?;
         Ok(())

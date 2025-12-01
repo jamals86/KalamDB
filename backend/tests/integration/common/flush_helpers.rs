@@ -11,7 +11,7 @@ use super::TestServer;
 use kalamdb_commons::models::{NamespaceId, StorageId, TableId, TableName};
 use kalamdb_core::providers::flush::{FlushJobResult, SharedTableFlushJob, UserTableFlushJob};
 use kalamdb_core::providers::TableFlush;
-use kalamdb_tables::new_user_table_store;
+use kalamdb_tables::new_indexed_user_table_store;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::Duration;
@@ -71,11 +71,21 @@ pub async fn execute_flush_synchronously(
     let unified_cache = server.app_context.schema_registry();
     let table_id_arc = Arc::new(table_id.clone());
 
-    // Construct a per-table UserTableStore directly (avoids reaching into provider internals)
-    let user_table_store = Arc::new(new_user_table_store(
+    // Determine PK field name from schema
+    let pk_field = arrow_schema
+        .schema
+        .fields()
+        .iter()
+        .find(|f| !f.name().starts_with('_'))
+        .map(|f| f.name().clone())
+        .unwrap_or_else(|| "id".to_string());
+
+    // Construct a per-table UserTableIndexedStore directly (avoids reaching into provider internals)
+    let user_table_store = Arc::new(new_indexed_user_table_store(
         server.app_context.storage_backend(),
         &namespace_id,
         &table_name_id,
+        &pk_field,
     ));
 
     let flush_job = UserTableFlushJob::new(
@@ -126,12 +136,23 @@ pub async fn execute_shared_flush_synchronously(
         )
         .map_err(|e| format!("Failed to parse Arrow schema: {}", e))?;
 
-    // Get per-table SharedTableStore and registry from AppContext
+    // Get per-table SharedTableIndexedStore and registry from AppContext
     let unified_cache = server.app_context.schema_registry();
-    let shared_table_store = Arc::new(kalamdb_tables::new_shared_table_store(
+
+    // Determine PK field name
+    let pk_field = arrow_schema
+        .schema
+        .fields()
+        .iter()
+        .find(|f| !f.name().starts_with('_'))
+        .map(|f| f.name().clone())
+        .unwrap_or_else(|| "id".to_string());
+
+    let shared_table_store = Arc::new(kalamdb_tables::new_indexed_shared_table_store(
         server.app_context.storage_backend(),
         &namespace_id,
         &table_name_id,
+        &pk_field,
     ));
 
     let flush_job = SharedTableFlushJob::new(

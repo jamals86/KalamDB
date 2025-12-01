@@ -209,105 +209,59 @@ pub trait BaseTableProvider<K: StorageKey, V>: Send + Sync + TableProvider {
     /// * `id_value` - Value to search for in the ID field
     ///
     /// # Performance
-    /// - User tables: RocksDB prefix scan on {user_id} for efficient scoping
-    /// - Shared tables: Full table scan (consider adding index for large tables)
+    /// - User tables: Override uses PK index for O(1) lookup
+    /// - Shared tables: Override uses PK index for O(1) lookup
+    /// - Stream tables: Uses default implementation (full scan)
+    ///
+    /// # Note
+    /// Providers with PK indexes should override this method for efficient lookups.
     fn find_row_key_by_id_field(
         &self,
         user_id: &UserId,
         id_value: &str,
     ) -> Result<Option<K>, KalamDbError> {
-        // Default implementation: scan rows with user scoping and version resolution
+        // Default implementation: full table scan with version resolution
+        // Providers with PK indexes override this for O(1) lookups
         let rows = self.scan_with_version_resolution_to_kvs(user_id, None, None, None, false)?;
 
         log::trace!(
-            "[find_row_key_by_id_field] Scanning for pk_name='{}' id_value='{}' user='{}', found {} rows",
+            "[find_row_key_by_id_field] Scanning {} rows for pk='{}', value='{}', user='{}'",
+            rows.len(),
             self.primary_key_field_name(),
             id_value,
-            user_id.as_str(),
-            rows.len()
+            user_id.as_str()
         );
 
         for (key, row) in rows {
             let fields = Self::extract_row(&row);
-            log::trace!(
-                "[find_row_key_by_id_field] Checking row: pk_field='{}', row_keys={:?}",
-                self.primary_key_field_name(),
-                fields.values.keys().collect::<Vec<_>>()
-            );
-            let pk_value = fields.get(self.primary_key_field_name());
-            log::trace!(
-                "[find_row_key_by_id_field] pk_value={:?}, searching for id_value='{}'",
-                pk_value,
-                id_value
-            );
-            if let Some(id) = pk_value {
-                // Compare robustly: support numeric and string IDs
-                let matches = match id {
-                    ScalarValue::Utf8(Some(s)) | ScalarValue::LargeUtf8(Some(s)) => s == id_value,
-                    ScalarValue::Int64(Some(n)) => {
-                        // Compare as exact string, and also as i64 if parseable
-                        let num_str = n.to_string();
-                        if num_str == id_value {
-                            true
-                        } else if let Ok(iv) = id_value.parse::<i64>() {
-                            *n == iv
-                        } else {
-                            false
-                        }
-                    }
-                    ScalarValue::Int32(Some(n)) => {
-                        // Compare as exact string, and also as i32 if parseable
-                        let num_str = n.to_string();
-                        if num_str == id_value {
-                            true
-                        } else if let Ok(iv) = id_value.parse::<i32>() {
-                            *n == iv
-                        } else {
-                            false
-                        }
-                    }
-                    ScalarValue::Int16(Some(n)) => {
-                        let num_str = n.to_string();
-                        if num_str == id_value {
-                            true
-                        } else if let Ok(iv) = id_value.parse::<i16>() {
-                            *n == iv
-                        } else {
-                            false
-                        }
-                    }
-                    ScalarValue::UInt64(Some(n)) => {
-                        let num_str = n.to_string();
-                        if num_str == id_value {
-                            true
-                        } else if let Ok(iv) = id_value.parse::<u64>() {
-                            *n == iv
-                        } else {
-                            false
-                        }
-                    }
-                    ScalarValue::UInt32(Some(n)) => {
-                        let num_str = n.to_string();
-                        if num_str == id_value {
-                            true
-                        } else if let Ok(iv) = id_value.parse::<u32>() {
-                            *n == iv
-                        } else {
-                            false
-                        }
-                    }
-                    _ => false,
-                };
-                if matches {
-                    log::trace!("[find_row_key_by_id_field] Found matching row with id={}", id_value);
+            if let Some(pk_val) = fields.get(self.primary_key_field_name()) {
+                if scalar_value_matches_id(pk_val, id_value) {
                     return Ok(Some(key));
                 }
             }
         }
 
-        log::trace!("[find_row_key_by_id_field] No matching row found for id={}", id_value);
         Ok(None)
     }
+
+    /// Update a row by primary key value directly (no key lookup needed)
+    ///
+    /// This is more efficient than `update()` because it doesn't need to load
+    /// the prior row just to extract the PK value - we already have it.
+    ///
+    /// # Arguments
+    /// * `user_id` - Subject user ID for RLS
+    /// * `pk_value` - Primary key value (e.g., "user123")
+    /// * `updates` - Row object with column updates
+    ///
+    /// # Returns
+    /// New storage key (new SeqId for versioning)
+    fn update_by_pk_value(
+        &self,
+        user_id: &UserId,
+        pk_value: &str,
+        updates: Row,
+    ) -> Result<K, KalamDbError>;
 
     /// Update a row by searching for matching ID field value
     fn update_by_id_field(
@@ -316,16 +270,8 @@ pub trait BaseTableProvider<K: StorageKey, V>: Send + Sync + TableProvider {
         id_value: &str,
         updates: Row,
     ) -> Result<K, KalamDbError> {
-        let key = self
-            .find_row_key_by_id_field(user_id, id_value)?
-            .ok_or_else(|| {
-                KalamDbError::NotFound(format!(
-                    "Row with {}={} not found",
-                    self.primary_key_field_name(),
-                    id_value
-                ))
-            })?;
-        self.update(user_id, &key, updates)
+        // Directly update by PK value - no need to find key first, then load row to extract PK
+        self.update_by_pk_value(user_id, id_value, updates)
     }
 
     /// Delete a row by searching for matching ID field value
@@ -480,10 +426,27 @@ pub trait BaseTableProvider<K: StorageKey, V>: Send + Sync + TableProvider {
     fn extract_row(row: &V) -> &Row;
 }
 
-fn json_value_matches_pk(value: &ScalarValue, target: &str) -> bool {
+/// Check if a ScalarValue matches a target string value
+///
+/// Supports string and numeric comparisons for primary key lookups.
+fn scalar_value_matches_id(value: &ScalarValue, target: &str) -> bool {
     match value {
         ScalarValue::Utf8(Some(s)) | ScalarValue::LargeUtf8(Some(s)) => s == target,
-        ScalarValue::Int64(Some(n)) => n.to_string() == target,
+        ScalarValue::Int64(Some(n)) => {
+            n.to_string() == target || target.parse::<i64>().map(|t| *n == t).unwrap_or(false)
+        }
+        ScalarValue::Int32(Some(n)) => {
+            n.to_string() == target || target.parse::<i32>().map(|t| *n == t).unwrap_or(false)
+        }
+        ScalarValue::Int16(Some(n)) => {
+            n.to_string() == target || target.parse::<i16>().map(|t| *n == t).unwrap_or(false)
+        }
+        ScalarValue::UInt64(Some(n)) => {
+            n.to_string() == target || target.parse::<u64>().map(|t| *n == t).unwrap_or(false)
+        }
+        ScalarValue::UInt32(Some(n)) => {
+            n.to_string() == target || target.parse::<u32>().map(|t| *n == t).unwrap_or(false)
+        }
         ScalarValue::Boolean(Some(b)) => b.to_string() == target,
         _ => false,
     }
@@ -519,7 +482,7 @@ where
     for (key, row) in resolved.into_iter() {
         let fields = P::extract_row(&row);
         if let Some(val) = fields.get(pk_name) {
-            if json_value_matches_pk(val, pk_value) {
+            if scalar_value_matches_id(val, pk_value) {
                 return Ok(Some((key, row)));
             }
         }
@@ -529,6 +492,9 @@ where
 }
 
 /// Ensure an INSERT payload either auto-generates or provides a unique primary-key value
+///
+/// This uses find_row_key_by_id_field which providers can override to use PK indexes
+/// for O(1) lookup instead of scanning all rows.
 pub fn ensure_unique_pk_value<P, K, V>(
     provider: &P,
     scope: Option<&UserId>,
@@ -542,7 +508,12 @@ where
     if let Some(pk_value) = row_data.get(pk_name) {
         if !matches!(pk_value, ScalarValue::Null) {
             let pk_str = unified_dml::extract_user_pk_value(row_data, pk_name)?;
-            if find_row_by_pk(provider, scope, &pk_str)?.is_some() {
+            let user_scope = resolve_user_scope(scope);
+            // Use find_row_key_by_id_field which can use PK index (O(1) vs O(n))
+            if provider
+                .find_row_key_by_id_field(user_scope, &pk_str)?
+                .is_some()
+            {
                 return Err(KalamDbError::AlreadyExists(format!(
                     "Primary key violation: value '{}' already exists in column '{}'",
                     pk_str, pk_name

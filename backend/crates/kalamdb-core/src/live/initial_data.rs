@@ -368,7 +368,9 @@ mod tests {
     use kalamdb_commons::UserId;
     use kalamdb_store::entity_store::EntityStore;
     use kalamdb_store::test_utils::InMemoryBackend;
-    use kalamdb_tables::user_tables::user_table_store::{new_user_table_store, UserTableRow};
+    use kalamdb_tables::user_tables::user_table_store::{
+        new_indexed_user_table_store, UserTableRow,
+    };
     use std::sync::Arc;
     use tokio::sync::Mutex;
 
@@ -440,7 +442,7 @@ mod tests {
         let ns = NamespaceId::new(user_id.as_str());
         let tbl = TableName::new("items");
         let table_id = kalamdb_commons::models::TableId::new(ns.clone(), tbl.clone());
-        let store = Arc::new(new_user_table_store(backend.clone(), &ns, &tbl));
+        let store = Arc::new(new_indexed_user_table_store(backend.clone(), &ns, &tbl, "id"));
 
         let seq = SeqId::new(1234567890);
         let row_id = UserTableRowId::new(user_id.clone(), seq);
@@ -452,8 +454,8 @@ mod tests {
             _deleted: false,
         };
 
-        // Insert row using EntityStore trait
-        EntityStore::put(&*store, &row_id, &row).expect("put row");
+        // Insert row using IndexedEntityStore (maintains PK index)
+        store.insert(&row_id, &row).expect("insert row");
 
         // Register table definition so get_arrow_schema works
         use crate::schema_registry::CachedTableData;
@@ -572,7 +574,7 @@ mod tests {
         let ns = NamespaceId::new(user_id.as_str());
         let tbl = TableName::new("batch_items");
         let table_id = kalamdb_commons::models::TableId::new(ns.clone(), tbl.clone());
-        let store = Arc::new(new_user_table_store(backend.clone(), &ns, &tbl));
+        let store = Arc::new(new_indexed_user_table_store(backend.clone(), &ns, &tbl, "id"));
 
         // Insert 3 rows with increasing seq
         for i in 1..=3 {
@@ -588,7 +590,7 @@ mod tests {
                 _deleted: false,
             };
 
-            EntityStore::put(&*store, &row_id, &row).expect("put row");
+            store.insert(&row_id, &row).expect("insert row");
         }
 
         // Register table definition
@@ -742,7 +744,7 @@ mod tests {
         let ns = NamespaceId::new(user_id.as_str());
         let tbl = TableName::new("last_items");
         let table_id = kalamdb_commons::models::TableId::new(ns.clone(), tbl.clone());
-        let store = Arc::new(new_user_table_store(backend.clone(), &ns, &tbl));
+        let store = Arc::new(new_indexed_user_table_store(backend.clone(), &ns, &tbl, "id"));
 
         // Insert 10 rows with increasing seq
         for i in 1..=10 {
@@ -758,7 +760,7 @@ mod tests {
                 _deleted: false,
             };
 
-            EntityStore::put(&*store, &row_id, &row).expect("put row");
+            store.insert(&row_id, &row).expect("insert row");
         }
 
         // Register table definition

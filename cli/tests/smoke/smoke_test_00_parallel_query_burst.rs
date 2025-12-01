@@ -60,11 +60,9 @@ fn smoke_test_00_parallel_query_burst() {
     let max_id_sql = format!("SELECT COALESCE(MAX(id), -1) AS max_id FROM {}", full_table_name);
     let max_id_output = execute_sql_as_root_via_client_json(&max_id_sql)
         .expect("MAX(id) query should succeed");
-    let mut next_id = extract_scalar(&max_id_output, "max_id");
-    if next_id < 0 {
-        next_id = 0;
-    }
-    let next_id = next_id as usize;
+    let max_id = extract_scalar(&max_id_output, "max_id");
+    // next_id is MAX(id) + 1, or 0 if table is empty
+    let next_id = if max_id < 0 { 0 } else { (max_id + 1) as usize };
 
     if current_rows >= MAX_ROWS_IN_TABLE {
         println!(

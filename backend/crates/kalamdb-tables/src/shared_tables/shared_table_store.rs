@@ -9,14 +9,21 @@
 //! - SharedTableRow: Minimal structure with _seq, _deleted, fields (JSON)
 //! - Storage key format: {_seq} (big-endian bytes)
 //! - NO access_level field (cached in schema definition, not per-row)
+//!
+//! **PK Index Support**:
+//! - SharedTableIndexedStore: IndexedEntityStore with PK index for efficient lookups
+//! - Enables O(1) row lookup by PK value instead of full scan
+//! - Used by UPDATE/DELETE to find target rows
 
 use kalamdb_commons::ids::{SeqId, SharedTableRowId};
 use kalamdb_commons::models::row::Row;
 use kalamdb_commons::models::{NamespaceId, TableName};
 use kalamdb_store::entity_store::{EntityStore, KSerializable};
-use kalamdb_store::StorageBackend;
+use kalamdb_store::{IndexedEntityStore, StorageBackend};
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
+
+use super::pk_index::create_shared_table_pk_index;
 
 /// Shared table row data
 ///
@@ -67,6 +74,11 @@ impl EntityStore<SharedTableRowId, SharedTableRow> for SharedTableStore {
     }
 }
 
+/// Type alias for shared table store with PK index support.
+///
+/// This enables efficient O(1) lookups by PK value for UPDATE/DELETE operations.
+pub type SharedTableIndexedStore = IndexedEntityStore<SharedTableRowId, SharedTableRow>;
+
 /// Helper function to create a new shared table store
 ///
 /// # Arguments
@@ -92,6 +104,51 @@ pub fn new_shared_table_store(
     let _ = backend.create_partition(&partition); // Ignore error if already exists
 
     SharedTableStore::new(backend, partition_name)
+}
+
+/// Create a new shared table store with PK index for efficient lookups.
+///
+/// This store automatically maintains a secondary index on the PK field,
+/// enabling O(1) row lookups by PK value (instead of full scan).
+///
+/// # Arguments
+/// * `backend` - Storage backend (RocksDB or mock)
+/// * `namespace_id` - Namespace identifier
+/// * `table_name` - Table name
+/// * `pk_field_name` - Name of the primary key column
+///
+/// # Returns
+/// A new SharedTableIndexedStore instance with PK index
+pub fn new_indexed_shared_table_store(
+    backend: Arc<dyn StorageBackend>,
+    namespace_id: &NamespaceId,
+    table_name: &TableName,
+    pk_field_name: &str,
+) -> SharedTableIndexedStore {
+    let partition_name = format!(
+        "{}{}:{}",
+        kalamdb_commons::constants::ColumnFamilyNames::SHARED_TABLE_PREFIX,
+        namespace_id.as_str(),
+        table_name.as_str()
+    );
+
+    // Ensure the partition exists in RocksDB
+    let partition = kalamdb_store::Partition::new(partition_name.clone());
+    let _ = backend.create_partition(&partition); // Ignore error if already exists
+
+    // Create PK index
+    let pk_index = create_shared_table_pk_index(
+        namespace_id.as_str(),
+        table_name.as_str(),
+        pk_field_name,
+    );
+
+    // Create index partition
+    let index_partition_name = format!("shared_{}:{}_pk_idx", namespace_id.as_str(), table_name.as_str());
+    let index_partition = kalamdb_store::Partition::new(index_partition_name);
+    let _ = backend.create_partition(&index_partition);
+
+    IndexedEntityStore::new(Arc::clone(&backend), partition_name, vec![pk_index])
 }
 
 #[cfg(test)]

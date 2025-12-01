@@ -16,13 +16,13 @@ use datafusion::scalar::ScalarValue;
 use kalamdb_commons::models::{Row, TableId, UserId};
 use kalamdb_commons::{NamespaceId, TableName};
 use kalamdb_store::entity_store::EntityStore;
-use kalamdb_tables::{SharedTableRow, SharedTableStore};
+use kalamdb_tables::{SharedTableIndexedStore, SharedTableRow};
 use std::path::PathBuf;
 use std::sync::Arc;
 
 /// Shared table flush job
 pub struct SharedTableFlushJob {
-    store: Arc<SharedTableStore>,
+    store: Arc<SharedTableIndexedStore>,
     table_id: Arc<TableId>,
     schema: SchemaRef,                                 //TODO: needed?
     unified_cache: Arc<SchemaRegistry>,                //TODO: We have AppContext now
@@ -34,7 +34,7 @@ impl SharedTableFlushJob {
     /// Create a new shared table flush job
     pub fn new(
         table_id: Arc<TableId>,
-        store: Arc<SharedTableStore>,
+        store: Arc<SharedTableIndexedStore>,
         schema: SchemaRef,
         unified_cache: Arc<SchemaRegistry>,
         manifest_service: Arc<ManifestService>,
@@ -90,9 +90,9 @@ impl SharedTableFlushJob {
     }
 
     /// Delete flushed rows from RocksDB after successful Parquet write
-    fn delete_flushed_rows(&self, rows: &[(Vec<u8>, Row)]) -> Result<(), KalamDbError> {
+    fn delete_flushed_rows(&self, keys: &[Vec<u8>]) -> Result<(), KalamDbError> {
         let mut parsed_keys = Vec::new();
-        for (key_bytes, _) in rows {
+        for key_bytes in keys {
             let key = kalamdb_commons::ids::SharedTableRowId::from_bytes(key_bytes)
                 .map_err(|e| KalamDbError::InvalidOperation(format!("Invalid key bytes: {}", e)))?;
             parsed_keys.push(key);
@@ -102,9 +102,11 @@ impl SharedTableFlushJob {
             return Ok(());
         }
 
-        // Delete each key individually (no batch_delete in EntityStore trait)
+        // Delete each key individually using IndexedEntityStore::delete
+        // IMPORTANT: Must use self.store.delete() instead of EntityStore::delete()
+        // to ensure both the entity AND its index entries are removed atomically.
         for key in &parsed_keys {
-            EntityStore::delete(self.store.as_ref(), key)
+            self.store.delete(key)
                 .map_err(|e| KalamDbError::Other(format!("Failed to delete flushed row: {}", e)))?;
         }
 
@@ -121,27 +123,9 @@ impl TableFlush for SharedTableFlushJob {
             self.table_name().as_str()
         );
 
-        // Scan all rows (EntityStore::scan_all returns Vec<(Vec<u8>, V)>)
-        let entries =
-            EntityStore::scan_all(self.store.as_ref(), None, None, None).map_err(|e| {
-                log::error!(
-                    "❌ Failed to scan rows for shared table={}.{}: {}",
-                    self.namespace_id().as_str(),
-                    self.table_name().as_str(),
-                    e
-                );
-                KalamDbError::Other(format!("Failed to scan rows: {}", e))
-            })?;
+        // STEP 1: Scan rows in batches to avoid loading all into memory at once
+        const BATCH_SIZE: usize = 10000;
 
-        let rows_before_dedup = entries.len();
-        log::info!(
-            "📊 [FLUSH DEDUP] Scanned {} total rows from hot storage (table={}.{})",
-            rows_before_dedup,
-            self.namespace_id().as_str(),
-            self.table_name().as_str()
-        );
-
-        // STEP 1: Deduplicate using MAX(_seq) per PK (version resolution)
         use std::collections::HashMap;
 
         // Get primary key field name from schema
@@ -157,57 +141,92 @@ impl TableFlush for SharedTableFlushJob {
 
         // Map: pk_value -> (key_bytes, row, _seq)
         let mut latest_versions: HashMap<String, (Vec<u8>, SharedTableRow, i64)> = HashMap::new();
+        // Track ALL keys to delete (including old versions)
+        let mut all_keys_to_delete: Vec<Vec<u8>> = Vec::new();
         let mut deleted_count = 0;
+        let mut rows_before_dedup = 0;
 
-        for (key_bytes, row) in entries {
-            // Extract PK value from fields
-            let pk_value = match row.fields.get(&pk_field) {
-                Some(v) if !v.is_null() => v.to_string(),
-                _ => {
-                    // No PK or null PK - use unique _seq as fallback
-                    format!("_seq:{}", row._seq.as_i64())
-                }
-            };
+        // Batched scan with cursor
+        let mut cursor: Option<Vec<u8>> = None;
+        loop {
+            let batch = self
+                .store
+                .scan_limited_with_prefix_and_start(None, cursor.as_deref(), BATCH_SIZE)
+                .map_err(|e| {
+                    log::error!(
+                        "❌ Failed to scan rows for shared table={}.{}: {}",
+                        self.namespace_id().as_str(),
+                        self.table_name().as_str(),
+                        e
+                    );
+                    KalamDbError::Other(format!("Failed to scan rows: {}", e))
+                })?;
 
-            let seq_val = row._seq.as_i64();
-
-            // Track deleted rows
-            if row._deleted {
-                deleted_count += 1;
+            if batch.is_empty() {
+                break;
             }
 
-            // Keep MAX(_seq) per pk_value
-            match latest_versions.get(&pk_value) {
-                Some((_existing_key, _existing_row, existing_seq)) => {
-                    if seq_val > *existing_seq {
-                        log::trace!(
-                            "[FLUSH DEDUP] Replacing pk={}: old_seq={}, new_seq={}, deleted={}",
-                            pk_value,
-                            existing_seq,
-                            seq_val,
-                            row._deleted
-                        );
+            log::trace!(
+                "[FLUSH] Processing batch of {} rows (cursor={:?})",
+                batch.len(),
+                cursor.as_ref().map(|c| c.len())
+            );
+
+            // Update cursor for next batch (last key + 1 byte to skip it)
+            cursor = batch.last().map(|(key, _)| {
+                let mut next = key.clone();
+                next.push(0);
+                next
+            });
+
+            let batch_len = batch.len();
+            rows_before_dedup += batch_len;
+
+            for (key_bytes, row) in batch {
+                // Track ALL keys for deletion (before dedup)
+                all_keys_to_delete.push(key_bytes.clone());
+
+                // Extract PK value from fields
+                let pk_value = match row.fields.get(&pk_field) {
+                    Some(v) if !v.is_null() => v.to_string(),
+                    _ => {
+                        // No PK or null PK - use unique _seq as fallback
+                        format!("_seq:{}", row._seq.as_i64())
+                    }
+                };
+
+                let seq_val = row._seq.as_i64();
+
+                // Track deleted rows
+                if row._deleted {
+                    deleted_count += 1;
+                }
+
+                // Keep MAX(_seq) per pk_value
+                match latest_versions.get(&pk_value) {
+                    Some((_existing_key, _existing_row, existing_seq)) => {
+                        if seq_val > *existing_seq {
+                            latest_versions.insert(pk_value, (key_bytes, row, seq_val));
+                        }
+                    }
+                    None => {
                         latest_versions.insert(pk_value, (key_bytes, row, seq_val));
-                    } else {
-                        log::trace!(
-                            "[FLUSH DEDUP] Keeping existing pk={}: existing_seq={} >= new_seq={}",
-                            pk_value,
-                            existing_seq,
-                            seq_val
-                        );
                     }
                 }
-                None => {
-                    log::trace!(
-                        "[FLUSH DEDUP] First version pk={}: _seq={}, deleted={}",
-                        pk_value,
-                        seq_val,
-                        row._deleted
-                    );
-                    latest_versions.insert(pk_value, (key_bytes, row, seq_val));
-                }
+            }
+
+            // Check if we got fewer rows than batch size (end of data)
+            if batch_len < BATCH_SIZE {
+                break;
             }
         }
+
+        log::info!(
+            "📊 [FLUSH DEDUP] Scanned {} total rows from hot storage (table={}.{})",
+            rows_before_dedup,
+            self.namespace_id().as_str(),
+            self.table_name().as_str()
+        );
 
         let rows_after_dedup = latest_versions.len();
         let dedup_ratio = if rows_before_dedup > 0 {
@@ -346,14 +365,13 @@ impl TableFlush for SharedTableFlushJob {
             &bloom_filter_columns,
         )?;
 
-        // Delete flushed rows from RocksDB
-        log::debug!(
-            "🗑️  Deleting {} flushed rows from RocksDB (table={}.{})",
-            rows_count,
-            self.namespace_id().as_str(),
-            self.table_name().as_str()
+        // Delete ALL flushed rows from RocksDB (including old versions)
+        log::info!(
+            "📊 [FLUSH CLEANUP] Deleting {} rows from hot storage (including {} old versions)",
+            all_keys_to_delete.len(),
+            all_keys_to_delete.len() - rows_count
         );
-        self.delete_flushed_rows(&rows)?;
+        self.delete_flushed_rows(&all_keys_to_delete)?;
 
         let parquet_path = output_path.to_string_lossy().to_string();
 

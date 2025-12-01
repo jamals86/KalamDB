@@ -28,7 +28,7 @@ pub fn register_user_table_provider(
     _arrow_schema: SchemaRef,
 ) -> Result<(), KalamDbError> {
     use crate::providers::{TableProviderCore, UserTableProvider};
-    use kalamdb_tables::new_user_table_store;
+    use kalamdb_tables::new_indexed_user_table_store;
 
     log::debug!(
         "📋 Registering USER table provider: {}.{}",
@@ -36,26 +36,8 @@ pub fn register_user_table_provider(
         table_id.table_name().as_str()
     );
 
-    // Create user table store (partition is automatically created)
-    let user_table_store = Arc::new(new_user_table_store(
-        app_context.storage_backend(),
-        table_id.namespace_id(),
-        table_id.table_name(),
-    ));
-
-    log::debug!(
-        "Created user table store for {}.{}",
-        table_id.namespace_id().as_str(),
-        table_id.table_name().as_str()
-    );
-
-    // Create TableProviderCore and provider (wire LiveQueryManager for notifications)
-    let core = Arc::new(
-        TableProviderCore::from_app_context(app_context, table_id.clone(), TableType::User)
-            .with_live_query_manager(app_context.live_query_manager()),
-    );
-
-    // Determine primary key field name from TableDefinition
+    // Determine primary key field name from TableDefinition first
+    // (needed for creating indexed store with PK index)
     let table_def = app_context
         .schema_registry()
         .get_table_definition(table_id)?
@@ -73,6 +55,27 @@ pub fn register_user_table_provider(
         .find(|c| c.is_primary_key)
         .map(|c| c.column_name.clone())
         .unwrap_or_else(|| "id".to_string());
+
+    // Create indexed user table store with PK index (partition is automatically created)
+    let user_table_store = Arc::new(new_indexed_user_table_store(
+        app_context.storage_backend(),
+        table_id.namespace_id(),
+        table_id.table_name(),
+        &pk_field,
+    ));
+
+    log::debug!(
+        "Created indexed user table store for {}.{} with pk_field='{}'",
+        table_id.namespace_id().as_str(),
+        table_id.table_name().as_str(),
+        pk_field
+    );
+
+    // Create TableProviderCore and provider (wire LiveQueryManager for notifications)
+    let core = Arc::new(
+        TableProviderCore::from_app_context(app_context, table_id.clone(), TableType::User)
+            .with_live_query_manager(app_context.live_query_manager()),
+    );
 
     let provider = UserTableProvider::new(core, user_table_store, pk_field);
     let provider_arc: Arc<dyn TableProvider> = Arc::new(provider);
@@ -108,7 +111,7 @@ pub fn register_shared_table_provider(
     _arrow_schema: SchemaRef,
 ) -> Result<(), KalamDbError> {
     use crate::providers::{SharedTableProvider, TableProviderCore};
-    use kalamdb_tables::new_shared_table_store;
+    use kalamdb_tables::new_indexed_shared_table_store;
 
     log::debug!(
         "📋 Registering SHARED table provider: {}.{}",
@@ -116,26 +119,7 @@ pub fn register_shared_table_provider(
         table_id.table_name().as_str()
     );
 
-    // Create shared table store
-    let shared_store = Arc::new(new_shared_table_store(
-        app_context.storage_backend(),
-        table_id.namespace_id(),
-        table_id.table_name(),
-    ));
-
-    log::debug!(
-        "Created shared table store for {}.{}",
-        table_id.namespace_id().as_str(),
-        table_id.table_name().as_str()
-    );
-
-    // Create and register new providers::SharedTableProvider
-    let core = Arc::new(
-        TableProviderCore::from_app_context(app_context, table_id.clone(), TableType::Shared)
-            .with_live_query_manager(app_context.live_query_manager()),
-    );
-
-    // Determine primary key field name
+    // Determine primary key field name first (needed for indexed store)
     let table_def = app_context
         .schema_registry()
         .get_table_definition(table_id)?
@@ -152,6 +136,27 @@ pub fn register_shared_table_provider(
         .find(|c| c.is_primary_key)
         .map(|c| c.column_name.clone())
         .unwrap_or_else(|| "id".to_string());
+
+    // Create indexed shared table store with PK index for efficient lookups
+    let shared_store = Arc::new(new_indexed_shared_table_store(
+        app_context.storage_backend(),
+        table_id.namespace_id(),
+        table_id.table_name(),
+        &pk_field,
+    ));
+
+    log::debug!(
+        "Created indexed shared table store for {}.{} with pk_field='{}'",
+        table_id.namespace_id().as_str(),
+        table_id.table_name().as_str(),
+        pk_field
+    );
+
+    // Create and register new providers::SharedTableProvider
+    let core = Arc::new(
+        TableProviderCore::from_app_context(app_context, table_id.clone(), TableType::Shared)
+            .with_live_query_manager(app_context.live_query_manager()),
+    );
 
     let provider = SharedTableProvider::new(core, shared_store, pk_field);
 

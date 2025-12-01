@@ -9,10 +9,27 @@ static SYSTEM_USER_ID: Lazy<UserId> = Lazy::new(|| UserId::from("_system"));
 /// Shared core state for all table providers
 /// Returns (since_seq, until_seq)
 /// since_seq is exclusive (>), until_seq is inclusive (<=)
+/// For equality (_seq = X), returns (X-1, X) to match exactly that value
 pub fn extract_seq_bounds_from_filter(expr: &Expr) -> (Option<SeqId>, Option<SeqId>) {
     match expr {
         Expr::BinaryExpr(binary) => {
             match binary.op {
+                Operator::Eq => {
+                    // Handle _seq = X (equality)
+                    // Convert to range: since_seq = X-1 (exclusive), until_seq = X (inclusive)
+                    // This matches only rows where _seq == X
+                    if let Expr::Column(col) = &*binary.left {
+                        if col.name == "_seq" {
+                            if let Expr::Literal(ScalarValue::Int64(Some(val)), _) = &*binary.right
+                            {
+                                // since_seq is exclusive (>), so X-1 means only X and above
+                                // until_seq is inclusive (<=), so X means only X and below
+                                return (Some(SeqId::from(*val - 1)), Some(SeqId::from(*val)));
+                            }
+                        }
+                    }
+                    (None, None)
+                }
                 Operator::Gt | Operator::GtEq => {
                     // Handle _seq > X or _seq >= X
                     if let Expr::Column(col) = &*binary.left {

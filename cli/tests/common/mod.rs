@@ -699,10 +699,9 @@ pub fn verify_job_completed(
             job_id
         );
 
-        match execute_sql_as_root_via_cli_json(&query) {
+        match execute_sql_as_root_via_client_json(&query) {
             Ok(output) => {
-                println!("Query output: {}", output); // DEBUG
-                                                      // Parse JSON output
+                // Parse JSON output
                 let json: serde_json::Value = serde_json::from_str(&output).map_err(|e| {
                     format!("Failed to parse JSON output: {}. Output: {}", e, output)
                 })?;
@@ -722,9 +721,6 @@ pub fn verify_job_completed(
                         .get("error_message")
                         .and_then(|v| v.as_str())
                         .unwrap_or("");
-
-                    // Debug print status
-                    println!("Job {} status: {}", job_id, status);
 
                     if status.eq_ignore_ascii_case("completed") {
                         return Ok(());
@@ -785,7 +781,7 @@ pub fn wait_for_job_finished(
             job_id
         );
 
-        match execute_sql_as_root_via_cli(&query) {
+        match execute_sql_as_root_via_client(&query) {
             Ok(output) => {
                 let lower = output.to_lowercase();
                 if lower.contains("completed") {
