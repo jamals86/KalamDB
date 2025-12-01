@@ -8,12 +8,17 @@
 //! - UserTableRowId: Composite struct with user_id and _seq fields (from kalamdb_commons)
 //! - UserTableRow: Minimal structure with user_id, _seq, _deleted, fields (JSON)
 //! - Storage key format: {user_id}:{_seq} (big-endian bytes)
+//!
+//! **PK Index (Phase 14)**:
+//! - IndexedEntityStore variant maintains a secondary index on the PK field
+//! - Enables O(1) lookup of row by PK value instead of O(n) scan
 
+use super::pk_index::create_user_table_pk_index;
 use kalamdb_commons::ids::{SeqId, UserTableRowId};
 use kalamdb_commons::models::row::Row;
 use kalamdb_commons::models::{KTableRow, NamespaceId, TableName, UserId};
 use kalamdb_store::entity_store::{EntityStore, KSerializable};
-use kalamdb_store::StorageBackend;
+use kalamdb_store::{IndexedEntityStore, StorageBackend};
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 
@@ -106,6 +111,49 @@ pub fn new_user_table_store(
     let _ = backend.create_partition(&partition); // Ignore error if already exists
 
     UserTableStore::new(backend, partition_name)
+}
+
+/// Type alias for indexed user table store with PK index.
+///
+/// This store automatically maintains a secondary index on the primary key field,
+/// enabling O(1) lookup of rows by PK value.
+pub type UserTableIndexedStore = IndexedEntityStore<UserTableRowId, UserTableRow>;
+
+/// Create a new indexed user table store with PK index.
+///
+/// # Arguments
+/// * `backend` - Storage backend (RocksDB or mock)
+/// * `namespace_id` - Namespace identifier
+/// * `table_name` - Table name
+/// * `pk_field_name` - Name of the primary key column
+///
+/// # Returns
+/// A new IndexedEntityStore configured with PK index for efficient lookups
+pub fn new_indexed_user_table_store(
+    backend: Arc<dyn StorageBackend>,
+    namespace_id: &NamespaceId,
+    table_name: &TableName,
+    pk_field_name: &str,
+) -> UserTableIndexedStore {
+    let partition_name = format!(
+        "{}{}:{}",
+        kalamdb_commons::constants::ColumnFamilyNames::USER_TABLE_PREFIX,
+        namespace_id.as_str(),
+        table_name.as_str()
+    );
+
+    // Ensure the partition exists in RocksDB
+    let partition = kalamdb_store::Partition::new(partition_name.clone());
+    let _ = backend.create_partition(&partition); // Ignore error if already exists
+
+    // Create PK index
+    let pk_index = create_user_table_pk_index(
+        namespace_id.as_str(),
+        table_name.as_str(),
+        pk_field_name,
+    );
+
+    IndexedEntityStore::new(backend, partition_name, vec![pk_index])
 }
 
 #[cfg(test)]

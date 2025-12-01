@@ -353,7 +353,8 @@ async fn test_delete_as_user() {
 #[actix_web::test]
 async fn test_as_user_on_shared_table_rejected() {
     let server = TestServer::new().await;
-    let ns = "test_as_user_shared";
+    // Use unique namespace to avoid parallel test interference
+    let ns = format!("test_as_user_shared_{}", std::process::id());
 
     let admin_user = insert_user(&server, "admin4", Role::Dba).await;
     let user_eve = insert_user(&server, "eve", Role::User).await;

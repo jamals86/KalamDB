@@ -85,8 +85,8 @@ fn create_test_service() -> (ManifestService, TempDir) {
 }
 
 // T128: create_manifest() → generates valid JSON with version=1
-#[test]
-fn test_create_manifest_generates_valid_json() {
+#[tokio::test]
+async fn test_create_manifest_generates_valid_json() {
     let (service, _temp_dir) = create_test_service();
     let namespace = NamespaceId::new("test_ns");
     let table = TableName::new("test_table");
@@ -112,8 +112,8 @@ fn test_create_manifest_generates_valid_json() {
 }
 
 // T129: update_manifest() → increments version, appends SegmentMetadata
-#[test]
-fn test_update_manifest_increments_version() {
+#[tokio::test]
+async fn test_update_manifest_increments_version() {
     let (service, _temp_dir) = create_test_service();
     let namespace = NamespaceId::new("test_ns");
     let table = TableName::new("orders");
@@ -189,8 +189,8 @@ fn test_update_manifest_increments_version() {
 }
 
 // T130: flush 5 batches → manifest.json tracks all batch metadata
-#[test]
-fn test_flush_five_batches_manifest_tracking() {
+#[tokio::test]
+async fn test_flush_five_batches_manifest_tracking() {
     let (service, _temp_dir) = create_test_service();
     let namespace = NamespaceId::new("prod");
     let table = TableName::new("events");
@@ -261,8 +261,8 @@ fn test_flush_five_batches_manifest_tracking() {
 }
 
 // T128 (additional): Verify manifest persistence across reads
-#[test]
-fn test_manifest_persistence_across_reads() {
+#[tokio::test]
+async fn test_manifest_persistence_across_reads() {
     let (service, _temp_dir) = create_test_service();
     let namespace = NamespaceId::new("test_ns");
     let table = TableName::new("persistent_table");
@@ -302,8 +302,8 @@ fn test_manifest_persistence_across_reads() {
 }
 
 // T129 (additional): Verify batch entry metadata is preserved
-#[test]
-fn test_batch_entry_metadata_preservation() {
+#[tokio::test]
+async fn test_batch_entry_metadata_preservation() {
     let (service, _temp_dir) = create_test_service();
     let namespace = NamespaceId::new("test_ns");
     let table = TableName::new("metadata_table");
@@ -344,8 +344,8 @@ fn test_batch_entry_metadata_preservation() {
 }
 
 // T130 (additional): Verify manifest validation detects corruption
-#[test]
-fn test_manifest_validation_detects_corruption() {
+#[tokio::test]
+async fn test_manifest_validation_detects_corruption() {
     use kalamdb_commons::models::TableId;
     use kalamdb_commons::{NamespaceId, TableName};
 

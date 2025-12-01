@@ -8,30 +8,7 @@
 //! Reference: README.md lines 58-67, docs/SQL.md flush section
 
 use crate::common::*;
-use std::fs;
-use std::path::PathBuf;
 use std::time::Duration;
-
-const BACKEND_STORAGE_DIR: &str = "../backend/data/storage"; // Server's storage directory (from backend/)
-
-fn get_storage_dir() -> PathBuf {
-    // The backend server writes to ./data/storage from backend/ directory
-    // When tests run from cli/, we need to access ../backend/data/storage
-    // Check this FIRST because ../data/storage may exist from old test runs
-    let backend_path = PathBuf::from(BACKEND_STORAGE_DIR);
-    if backend_path.exists() {
-        return backend_path;
-    }
-
-    // Fallback for different working directory contexts (legacy root path)
-    let root_path = PathBuf::from("../data/storage");
-    if root_path.exists() {
-        return root_path;
-    }
-
-    // Default to backend path (will fail in test if it doesn't exist)
-    backend_path
-}
 
 /// Test manifest.json creation after flushing USER table
 ///
@@ -105,91 +82,14 @@ fn smoke_test_user_table_flush_manifest() {
         .expect("Flush job did not complete successfully");
 
     println!("✅ Flush job completed");
-    
-    // Give filesystem a moment to sync after async flush
-    std::thread::sleep(Duration::from_millis(500));
 
-    // Filesystem verification: check manifest.json exists
-    // For USER tables, path is: storage/{namespace}/{table}/{user_id}/manifest.json (based on config.toml)
-    // When running via CLI as root, user_id is typically "root" or system user
-    // We need to find the actual user_id from the flush job or test context
-
-    let storage_dir = get_storage_dir();
-    assert!(
-        storage_dir.exists(),
-        "Storage directory {:?} should exist",
-        storage_dir
+    // Use the common helper function to verify storage files
+    assert_flush_storage_files_exist(
+        &namespace,
+        &table,
+        true, // is_user_table
+        "USER table flush manifest test",
     );
-
-    // Check if this namespace/table directory exists
-    let table_dir = storage_dir.join(&namespace).join(&table);
-    
-    println!("  Storage dir: {:?}", storage_dir);
-    println!("  Table dir: {:?}", table_dir);
-    println!("  Table dir exists: {}", table_dir.exists());
-    
-    if table_dir.exists() {
-        println!("✅ Table directory exists: {:?}", table_dir);
-
-        // Try to find any user subdirectory (we don't know exact user_id in test)
-        if let Ok(entries) = fs::read_dir(&table_dir) {
-            let mut found_manifest = false;
-            let mut found_parquet = false;
-
-            for entry in entries.flatten() {
-                let user_dir = entry.path();
-                if user_dir.is_dir() {
-                    // Check for manifest.json in user directory
-                    let manifest_path = user_dir.join("manifest.json");
-                    if manifest_path.exists() {
-                        println!("  ✅ Found manifest.json: {:?}", manifest_path);
-                        found_manifest = true;
-
-                        // Verify manifest is non-empty
-                        let manifest_content = fs::read_to_string(&manifest_path)
-                            .expect("Failed to read manifest.json");
-                        assert!(
-                            !manifest_content.is_empty(),
-                            "manifest.json should not be empty"
-                        );
-                        assert!(
-                            manifest_content.contains("schema")
-                                || manifest_content.contains("batches")
-                                || manifest_content.len() > 10,
-                            "manifest.json should contain metadata, got: {}",
-                            manifest_content
-                        );
-                    }
-
-                    // Check for batch-*.parquet files
-                    if let Ok(user_entries) = fs::read_dir(&user_dir) {
-                        for user_entry in user_entries.flatten() {
-                            let filename = user_entry.file_name();
-                            let filename_str = filename.to_string_lossy();
-                            if filename_str.starts_with("batch-")
-                                && filename_str.ends_with(".parquet")
-                            {
-                                println!("  ✅ Found parquet file: {:?}", user_entry.path());
-                                found_parquet = true;
-                            }
-                        }
-                    }
-                }
-            }
-
-            assert!(
-                found_manifest,
-                "Expected to find manifest.json in user table storage after flush"
-            );
-            assert!(
-                found_parquet,
-                "Expected to find at least one batch-*.parquet file after flush"
-            );
-        }
-    } else {
-        println!("⚠️  Table directory does not exist yet, skipping filesystem checks");
-        // This is acceptable in some test scenarios where flush hasn't triggered yet
-    }
 
     println!("✅ Verified manifest.json and parquet files exist after flush");
 }
@@ -263,43 +163,13 @@ fn smoke_test_shared_table_flush_manifest() {
 
     println!("✅ Flush job completed");
 
-    // Filesystem verification: check shared table path
-    // Shared table path is {namespace}/{table} (based on config.toml)
-    let storage_dir = get_storage_dir();
-    let table_dir = storage_dir.join(&namespace).join(&table);
-
-    if table_dir.exists() {
-        println!("✅ Shared table directory exists: {:?}", table_dir);
-
-        // Check for manifest.json
-        let manifest_path = table_dir.join("manifest.json");
-        assert!(
-            manifest_path.exists(),
-            "manifest.json should exist at {:?}",
-            manifest_path
-        );
-        println!("  ✅ Found manifest.json: {:?}", manifest_path);
-
-        // Check for parquet files
-        let mut found_parquet = false;
-        if let Ok(entries) = fs::read_dir(&table_dir) {
-            for entry in entries.flatten() {
-                let filename = entry.file_name();
-                let filename_str = filename.to_string_lossy();
-                if filename_str.starts_with("batch-") && filename_str.ends_with(".parquet") {
-                    println!("  ✅ Found parquet file: {:?}", entry.path());
-                    found_parquet = true;
-                }
-            }
-        }
-
-        assert!(
-            found_parquet,
-            "Expected at least one batch-*.parquet file in shared table storage"
-        );
-    } else {
-        println!("⚠️  Shared table directory does not exist yet, skipping filesystem checks");
-    }
+    // Use the common helper function to verify storage files
+    assert_flush_storage_files_exist(
+        &namespace,
+        &table,
+        false, // is_user_table (SHARED)
+        "SHARED table flush manifest test",
+    );
 
     println!("✅ Verified manifest.json exists for shared table");
 }
@@ -363,30 +233,11 @@ fn smoke_test_manifest_updated_on_second_flush() {
         .expect("First flush job did not complete");
 
     println!("✅ First flush completed");
-    
-    // Give filesystem a moment to sync after async flush
-    std::thread::sleep(Duration::from_millis(500));
 
-    // Count parquet files after first flush
-    let storage_dir = get_storage_dir();
-    // Shared table path is {namespace}/{table} (based on config.toml)
-    let table_dir = storage_dir.join(&namespace).join(&table);
-    
-    println!("  Storage dir: {:?}", storage_dir);
-    println!("  Table dir: {:?}", table_dir);
-    println!("  Table dir exists: {}", table_dir.exists());
-
-    let mut parquet_count_after_first_flush = 0;
-    if table_dir.exists() {
-        if let Ok(entries) = fs::read_dir(&table_dir) {
-            for entry in entries.flatten() {
-                let filename = entry.file_name().to_string_lossy().to_string();
-                if filename.starts_with("batch-") && filename.ends_with(".parquet") {
-                    parquet_count_after_first_flush += 1;
-                }
-            }
-        }
-    }
+    // Verify files exist after first flush and get parquet count
+    let first_result = verify_flush_storage_files_shared(&namespace, &table);
+    first_result.assert_valid("First flush");
+    let parquet_count_after_first_flush = first_result.parquet_file_count;
 
     println!(
         "  Parquet files after first flush: {}",
@@ -411,20 +262,12 @@ fn smoke_test_manifest_updated_on_second_flush() {
         .expect("Second flush job did not complete");
 
     println!("✅ Second flush completed");
-    
-    // Give filesystem a moment to sync after async flush
-    std::thread::sleep(Duration::from_millis(500));
 
-    // Count parquet files after second flush
-    let mut parquet_count_after_second_flush = 0;
-    if let Ok(entries) = fs::read_dir(&table_dir) {
-        for entry in entries.flatten() {
-            let filename = entry.file_name().to_string_lossy().to_string();
-            if filename.starts_with("batch-") && filename.ends_with(".parquet") {
-                parquet_count_after_second_flush += 1;
-            }
-        }
-    }
+    // Verify files exist after second flush and get parquet count
+    std::thread::sleep(Duration::from_millis(500)); // Give filesystem time to sync
+    let second_result = verify_flush_storage_files_shared(&namespace, &table);
+    second_result.assert_valid("Second flush");
+    let parquet_count_after_second_flush = second_result.parquet_file_count;
 
     println!(
         "  Parquet files after second flush: {}",
@@ -437,20 +280,6 @@ fn smoke_test_manifest_updated_on_second_flush() {
         "Expected same or more parquet files after second flush ({} vs {})",
         parquet_count_after_second_flush,
         parquet_count_after_first_flush
-    );
-
-    // Verify manifest.json still exists and is valid
-    let manifest_path = table_dir.join("manifest.json");
-    assert!(
-        manifest_path.exists(),
-        "manifest.json should exist after second flush"
-    );
-
-    let manifest_content =
-        fs::read_to_string(&manifest_path).expect("Failed to read manifest.json");
-    assert!(
-        !manifest_content.is_empty(),
-        "manifest.json should not be empty after second flush"
     );
 
     println!("✅ Verified manifest.json updated after second flush");

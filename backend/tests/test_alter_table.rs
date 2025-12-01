@@ -19,11 +19,15 @@ use kalamdb_api::models::ResponseStatus;
 async fn test_alter_table_add_column() {
     let server = TestServer::new().await;
 
+    // Use unique namespace per test to avoid parallel test interference
+    let ns = format!("test_add_col_{}", std::process::id());
+
     // Setup
-    fixtures::create_namespace(&server, "test_ns").await;
+    fixtures::create_namespace(&server, &ns).await;
     let create_response = server
         .execute_sql_as_user(
-            r#"CREATE TABLE test_ns.products (
+            &format!(
+                r#"CREATE TABLE {}.products (
                 id TEXT PRIMARY KEY,
                 name TEXT,
                 price INT
@@ -31,6 +35,8 @@ async fn test_alter_table_add_column() {
                 TYPE = 'USER',
                 STORAGE_ID = 'local'
             )"#,
+                ns
+            ),
             "user1",
         )
         .await;
@@ -39,8 +45,11 @@ async fn test_alter_table_add_column() {
     // Insert initial data
     server
         .execute_sql_as_user(
-            r#"INSERT INTO test_ns.products (id, name, price) 
+            &format!(
+                r#"INSERT INTO {}.products (id, name, price) 
                VALUES ('p1', 'Widget', 100)"#,
+                ns
+            ),
             "user1",
         )
         .await;
@@ -48,7 +57,7 @@ async fn test_alter_table_add_column() {
     // ALTER TABLE: ADD COLUMN
     let alter_response = server
         .execute_sql_as_user(
-            r#"ALTER TABLE test_ns.products ADD COLUMN stock INT"#,
+            &format!(r#"ALTER TABLE {}.products ADD COLUMN stock INT"#, ns),
             "user1",
         )
         .await;
@@ -63,7 +72,10 @@ async fn test_alter_table_add_column() {
     // Verify new column exists in schema (query should work)
     let query_response = server
         .execute_sql_as_user(
-            "SELECT id, name, price, stock FROM test_ns.products WHERE id = 'p1'",
+            &format!(
+                "SELECT id, name, price, stock FROM {}.products WHERE id = 'p1'",
+                ns
+            ),
             "user1",
         )
         .await;
@@ -92,11 +104,15 @@ async fn test_alter_table_add_column() {
 async fn test_alter_table_drop_column() {
     let server = TestServer::new().await;
 
+    // Use unique namespace per test to avoid parallel test interference
+    let ns = format!("test_drop_col_{}", std::process::id());
+
     // Setup
-    fixtures::create_namespace(&server, "test_ns").await;
+    fixtures::create_namespace(&server, &ns).await;
     server
         .execute_sql_as_user(
-            r#"CREATE TABLE test_ns.inventory (
+            &format!(
+                r#"CREATE TABLE {}.inventory (
                 id TEXT PRIMARY KEY,
                 item TEXT,
                 quantity INT,
@@ -105,6 +121,8 @@ async fn test_alter_table_drop_column() {
                 TYPE = 'USER',
                 STORAGE_ID = 'local'
             )"#,
+                ns
+            ),
             "user1",
         )
         .await;
@@ -112,8 +130,11 @@ async fn test_alter_table_drop_column() {
     // Insert data
     server
         .execute_sql_as_user(
-            r#"INSERT INTO test_ns.inventory (id, item, quantity, warehouse) 
+            &format!(
+                r#"INSERT INTO {}.inventory (id, item, quantity, warehouse) 
                VALUES ('i1', 'Laptop', 10, 'WH1')"#,
+                ns
+            ),
             "user1",
         )
         .await;
@@ -121,7 +142,7 @@ async fn test_alter_table_drop_column() {
     // ALTER TABLE: DROP COLUMN
     let alter_response = server
         .execute_sql_as_user(
-            r#"ALTER TABLE test_ns.inventory DROP COLUMN warehouse"#,
+            &format!(r#"ALTER TABLE {}.inventory DROP COLUMN warehouse"#, ns),
             "user1",
         )
         .await;
@@ -136,7 +157,10 @@ async fn test_alter_table_drop_column() {
     // Verify column no longer accessible
     let query_response = server
         .execute_sql_as_user(
-            "SELECT id, item, quantity FROM test_ns.inventory WHERE id = 'i1'",
+            &format!(
+                "SELECT id, item, quantity FROM {}.inventory WHERE id = 'i1'",
+                ns
+            ),
             "user1",
         )
         .await;
@@ -159,11 +183,15 @@ async fn test_alter_table_drop_column() {
 async fn test_alter_table_rename_column() {
     let server = TestServer::new().await;
 
+    // Use unique namespace per test to avoid parallel test interference
+    let ns = format!("test_rename_col_{}", std::process::id());
+
     // Setup
-    fixtures::create_namespace(&server, "test_ns").await;
+    fixtures::create_namespace(&server, &ns).await;
     server
         .execute_sql_as_user(
-            r#"CREATE TABLE test_ns.customers (
+            &format!(
+                r#"CREATE TABLE {}.customers (
                 id TEXT PRIMARY KEY,
                 customer_name TEXT,
                 email TEXT
@@ -171,6 +199,8 @@ async fn test_alter_table_rename_column() {
                 TYPE = 'USER',
                 STORAGE_ID = 'local'
             )"#,
+                ns
+            ),
             "user1",
         )
         .await;
@@ -178,8 +208,11 @@ async fn test_alter_table_rename_column() {
     // Insert data
     server
         .execute_sql_as_user(
-            r#"INSERT INTO test_ns.customers (id, customer_name, email) 
+            &format!(
+                r#"INSERT INTO {}.customers (id, customer_name, email) 
                VALUES ('c1', 'Alice', 'alice@example.com')"#,
+                ns
+            ),
             "user1",
         )
         .await;
@@ -187,7 +220,10 @@ async fn test_alter_table_rename_column() {
     // ALTER TABLE: RENAME COLUMN
     let alter_response = server
         .execute_sql_as_user(
-            r#"ALTER TABLE test_ns.customers RENAME COLUMN customer_name TO name"#,
+            &format!(
+                r#"ALTER TABLE {}.customers RENAME COLUMN customer_name TO name"#,
+                ns
+            ),
             "user1",
         )
         .await;
@@ -202,12 +238,9 @@ async fn test_alter_table_rename_column() {
     // Note: Data written before RENAME still has old column name in Parquet files.
     // Full schema evolution support (column aliasing during scan) is not yet implemented.
     // For now, verify that the schema metadata was updated by checking DESCRIBE TABLE.
-    
+
     let describe_response = server
-        .execute_sql_as_user(
-            "DESCRIBE TABLE test_ns.customers",
-            "user1",
-        )
+        .execute_sql_as_user(&format!("DESCRIBE TABLE {}.customers", ns), "user1")
         .await;
 
     assert_eq!(
@@ -223,7 +256,7 @@ async fn test_alter_table_rename_column() {
             .iter()
             .map(|row| row.get("column_name").unwrap().as_str().unwrap().to_string())
             .collect();
-        
+
         assert!(
             column_names.contains(&"name".to_string()),
             "Schema should contain 'name' column after RENAME, got: {:?}",
@@ -244,11 +277,15 @@ async fn test_alter_table_rename_column() {
 async fn test_alter_table_modify_column() {
     let server = TestServer::new().await;
 
+    // Use unique namespace per test to avoid parallel test interference
+    let ns = format!("test_modify_col_{}", std::process::id());
+
     // Setup
-    fixtures::create_namespace(&server, "test_ns").await;
+    fixtures::create_namespace(&server, &ns).await;
     server
         .execute_sql_as_user(
-            r#"CREATE TABLE test_ns.metrics (
+            &format!(
+                r#"CREATE TABLE {}.metrics (
                 id TEXT PRIMARY KEY,
                 value INT,
                 description TEXT
@@ -256,6 +293,8 @@ async fn test_alter_table_modify_column() {
                 TYPE = 'USER',
                 STORAGE_ID = 'local'
             )"#,
+                ns
+            ),
             "user1",
         )
         .await;
@@ -263,7 +302,7 @@ async fn test_alter_table_modify_column() {
     // ALTER TABLE: MODIFY COLUMN (change type)
     let alter_response = server
         .execute_sql_as_user(
-            r#"ALTER TABLE test_ns.metrics MODIFY COLUMN value BIGINT"#,
+            &format!(r#"ALTER TABLE {}.metrics MODIFY COLUMN value BIGINT"#, ns),
             "user1",
         )
         .await;
@@ -278,15 +317,18 @@ async fn test_alter_table_modify_column() {
     // Verify table still works (schema updated)
     server
         .execute_sql_as_user(
-            r#"INSERT INTO test_ns.metrics (id, value, description) 
+            &format!(
+                r#"INSERT INTO {}.metrics (id, value, description) 
                VALUES ('m1', 99999999, 'large value')"#,
+                ns
+            ),
             "user1",
         )
         .await;
 
     let query_response = server
         .execute_sql_as_user(
-            "SELECT id, value FROM test_ns.metrics WHERE id = 'm1'",
+            &format!("SELECT id, value FROM {}.metrics WHERE id = 'm1'", ns),
             "user1",
         )
         .await;
@@ -301,17 +343,23 @@ async fn test_alter_table_modify_column() {
 async fn test_alter_table_schema_versioning() {
     let server = TestServer::new().await;
 
+    // Use unique namespace per test to avoid parallel test interference
+    let ns = format!("test_version_{}", std::process::id());
+
     // Setup
-    fixtures::create_namespace(&server, "test_ns").await;
+    fixtures::create_namespace(&server, &ns).await;
     server
         .execute_sql_as_user(
-            r#"CREATE TABLE test_ns.versioned (
+            &format!(
+                r#"CREATE TABLE {}.versioned (
                 id TEXT PRIMARY KEY,
                 col1 TEXT
             ) WITH (
                 TYPE = 'USER',
                 STORAGE_ID = 'local'
             )"#,
+                ns
+            ),
             "user1",
         )
         .await;
@@ -319,14 +367,14 @@ async fn test_alter_table_schema_versioning() {
     // Perform multiple ALTER operations
     server
         .execute_sql_as_user(
-            r#"ALTER TABLE test_ns.versioned ADD COLUMN col2 INT"#,
+            &format!(r#"ALTER TABLE {}.versioned ADD COLUMN col2 INT"#, ns),
             "user1",
         )
         .await;
 
     server
         .execute_sql_as_user(
-            r#"ALTER TABLE test_ns.versioned ADD COLUMN col3 TEXT"#,
+            &format!(r#"ALTER TABLE {}.versioned ADD COLUMN col3 TEXT"#, ns),
             "user1",
         )
         .await;
@@ -334,7 +382,7 @@ async fn test_alter_table_schema_versioning() {
     // Query should work with all columns (schema evolution tracked internally)
     let query_response = server
         .execute_sql_as_user(
-            "SELECT id, col1, col2, col3 FROM test_ns.versioned",
+            &format!("SELECT id, col1, col2, col3 FROM {}.versioned", ns),
             "user1",
         )
         .await;

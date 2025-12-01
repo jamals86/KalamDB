@@ -699,10 +699,9 @@ pub fn verify_job_completed(
             job_id
         );
 
-        match execute_sql_as_root_via_cli_json(&query) {
+        match execute_sql_as_root_via_client_json(&query) {
             Ok(output) => {
-                println!("Query output: {}", output); // DEBUG
-                                                      // Parse JSON output
+                // Parse JSON output
                 let json: serde_json::Value = serde_json::from_str(&output).map_err(|e| {
                     format!("Failed to parse JSON output: {}. Output: {}", e, output)
                 })?;
@@ -722,9 +721,6 @@ pub fn verify_job_completed(
                         .get("error_message")
                         .and_then(|v| v.as_str())
                         .unwrap_or("");
-
-                    // Debug print status
-                    println!("Job {} status: {}", job_id, status);
 
                     if status.eq_ignore_ascii_case("completed") {
                         return Ok(());
@@ -785,7 +781,7 @@ pub fn wait_for_job_finished(
             job_id
         );
 
-        match execute_sql_as_root_via_cli(&query) {
+        match execute_sql_as_root_via_client(&query) {
             Ok(output) => {
                 let lower = output.to_lowercase();
                 if lower.contains("completed") {
@@ -1016,4 +1012,248 @@ pub fn start_subscription_listener(
     });
 
     Ok(event_receiver)
+}
+
+// ============================================================================
+// FLUSH STORAGE VERIFICATION HELPERS
+// ============================================================================
+
+/// Default backend storage directory path (relative from cli/ directory)
+const BACKEND_STORAGE_DIR: &str = "../backend/data/storage";
+
+/// Get the storage directory path for flush verification
+pub fn get_storage_dir() -> std::path::PathBuf {
+    use std::path::PathBuf;
+    
+    // The backend server writes to ./data/storage from backend/ directory
+    // When tests run from cli/, we need to access ../backend/data/storage
+    let backend_path = PathBuf::from(BACKEND_STORAGE_DIR);
+    if backend_path.exists() {
+        return backend_path;
+    }
+
+    // Fallback for different working directory contexts (legacy root path)
+    let root_path = PathBuf::from("../data/storage");
+    if root_path.exists() {
+        return root_path;
+    }
+
+    // Default to backend path (will fail in test if it doesn't exist)
+    backend_path
+}
+
+/// Result of verifying flush storage files
+#[derive(Debug)]
+pub struct FlushStorageVerificationResult {
+    /// Whether manifest.json was found
+    pub manifest_found: bool,
+    /// Size of manifest.json in bytes (0 if not found)
+    pub manifest_size: u64,
+    /// Number of parquet files found
+    pub parquet_file_count: usize,
+    /// Total size of all parquet files in bytes
+    pub parquet_total_size: u64,
+    /// Path to the manifest.json file (if found)
+    pub manifest_path: Option<std::path::PathBuf>,
+    /// Paths to all parquet files found
+    pub parquet_paths: Vec<std::path::PathBuf>,
+}
+
+impl FlushStorageVerificationResult {
+    /// Check if the verification found valid flush artifacts
+    pub fn is_valid(&self) -> bool {
+        self.manifest_found && self.manifest_size > 0 && self.parquet_file_count > 0 && self.parquet_total_size > 0
+    }
+    
+    /// Assert that flush storage files exist and are valid
+    pub fn assert_valid(&self, context: &str) {
+        assert!(
+            self.manifest_found,
+            "{}: manifest.json should exist after flush",
+            context
+        );
+        assert!(
+            self.manifest_size > 0,
+            "{}: manifest.json should not be empty (size: {} bytes)",
+            context,
+            self.manifest_size
+        );
+        assert!(
+            self.parquet_file_count > 0,
+            "{}: at least one batch-*.parquet file should exist after flush",
+            context
+        );
+        assert!(
+            self.parquet_total_size > 0,
+            "{}: parquet files should not be empty (total size: {} bytes)",
+            context,
+            self.parquet_total_size
+        );
+    }
+}
+
+/// Verify flush storage files for a SHARED table
+///
+/// Checks that manifest.json and batch-*.parquet files exist with non-zero size
+/// in the expected storage path for a shared table.
+///
+/// # Arguments
+/// * `namespace` - The namespace name
+/// * `table_name` - The table name (without namespace prefix)
+///
+/// # Returns
+/// A `FlushStorageVerificationResult` with details about found files
+pub fn verify_flush_storage_files_shared(
+    namespace: &str,
+    table_name: &str,
+) -> FlushStorageVerificationResult {
+    use std::fs;
+    
+    let storage_dir = get_storage_dir();
+    let table_dir = storage_dir.join(namespace).join(table_name);
+    
+    verify_flush_storage_files_in_dir(&table_dir)
+}
+
+/// Verify flush storage files for a USER table
+///
+/// Checks that manifest.json and batch-*.parquet files exist with non-zero size
+/// in the expected storage path for a user table. Since user tables have per-user
+/// subdirectories, this function searches through all user directories.
+///
+/// # Arguments
+/// * `namespace` - The namespace name
+/// * `table_name` - The table name (without namespace prefix)
+///
+/// # Returns
+/// A `FlushStorageVerificationResult` with details about found files (aggregated across all users)
+pub fn verify_flush_storage_files_user(
+    namespace: &str,
+    table_name: &str,
+) -> FlushStorageVerificationResult {
+    use std::fs;
+    
+    let storage_dir = get_storage_dir();
+    let table_dir = storage_dir.join(namespace).join(table_name);
+    
+    let mut result = FlushStorageVerificationResult {
+        manifest_found: false,
+        manifest_size: 0,
+        parquet_file_count: 0,
+        parquet_total_size: 0,
+        manifest_path: None,
+        parquet_paths: Vec::new(),
+    };
+    
+    if !table_dir.exists() {
+        return result;
+    }
+    
+    // For user tables, iterate through user subdirectories
+    if let Ok(entries) = fs::read_dir(&table_dir) {
+        for entry in entries.flatten() {
+            let user_dir = entry.path();
+            if user_dir.is_dir() {
+                let user_result = verify_flush_storage_files_in_dir(&user_dir);
+                
+                // Aggregate results across all users
+                if user_result.manifest_found {
+                    result.manifest_found = true;
+                    result.manifest_size = result.manifest_size.max(user_result.manifest_size);
+                    result.manifest_path = user_result.manifest_path;
+                }
+                result.parquet_file_count += user_result.parquet_file_count;
+                result.parquet_total_size += user_result.parquet_total_size;
+                result.parquet_paths.extend(user_result.parquet_paths);
+            }
+        }
+    }
+    
+    result
+}
+
+/// Verify flush storage files in a specific directory
+///
+/// Internal helper that checks for manifest.json and batch-*.parquet files in a directory.
+fn verify_flush_storage_files_in_dir(dir: &std::path::Path) -> FlushStorageVerificationResult {
+    use std::fs;
+    
+    let mut result = FlushStorageVerificationResult {
+        manifest_found: false,
+        manifest_size: 0,
+        parquet_file_count: 0,
+        parquet_total_size: 0,
+        manifest_path: None,
+        parquet_paths: Vec::new(),
+    };
+    
+    if !dir.exists() {
+        return result;
+    }
+    
+    // Check for manifest.json
+    let manifest_path = dir.join("manifest.json");
+    if manifest_path.exists() {
+        if let Ok(metadata) = fs::metadata(&manifest_path) {
+            result.manifest_found = true;
+            result.manifest_size = metadata.len();
+            result.manifest_path = Some(manifest_path);
+        }
+    }
+    
+    // Check for batch-*.parquet files
+    if let Ok(entries) = fs::read_dir(dir) {
+        for entry in entries.flatten() {
+            let filename = entry.file_name();
+            let filename_str = filename.to_string_lossy();
+            if filename_str.starts_with("batch-") && filename_str.ends_with(".parquet") {
+                if let Ok(metadata) = entry.metadata() {
+                    result.parquet_file_count += 1;
+                    result.parquet_total_size += metadata.len();
+                    result.parquet_paths.push(entry.path());
+                }
+            }
+        }
+    }
+    
+    result
+}
+
+/// Verify flush storage files exist after a flush operation
+///
+/// This is a convenience function that combines the flush job verification with
+/// storage file verification. Use after calling FLUSH TABLE and before cleanup.
+///
+/// # Arguments
+/// * `namespace` - The namespace name
+/// * `table_name` - The table name (without namespace prefix)
+/// * `is_user_table` - Whether this is a USER table (true) or SHARED table (false)
+/// * `context` - Context string for assertion error messages
+///
+/// # Panics
+/// Panics with descriptive error if manifest.json or parquet files are missing or empty
+pub fn assert_flush_storage_files_exist(
+    namespace: &str,
+    table_name: &str,
+    is_user_table: bool,
+    context: &str,
+) {
+    // Give filesystem a moment to sync after async flush
+    std::thread::sleep(Duration::from_millis(500));
+    
+    let result = if is_user_table {
+        verify_flush_storage_files_user(namespace, table_name)
+    } else {
+        verify_flush_storage_files_shared(namespace, table_name)
+    };
+    
+    result.assert_valid(context);
+    
+    println!(
+        "✅ [{}] Verified flush storage: manifest.json ({} bytes), {} parquet file(s) ({} bytes total)",
+        context,
+        result.manifest_size,
+        result.parquet_file_count,
+        result.parquet_total_size
+    );
 }

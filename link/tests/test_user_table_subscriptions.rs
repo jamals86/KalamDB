@@ -58,11 +58,15 @@ async fn execute_sql(sql: &str) -> Result<QueryResponse, Box<dyn std::error::Err
 
 /// Generate a unique table name
 fn generate_table_name() -> String {
+    use std::sync::atomic::{AtomicU64, Ordering};
+    static COUNTER: AtomicU64 = AtomicU64::new(0);
+    
     let timestamp = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .unwrap()
         .as_nanos();
-    format!("messages_{}", timestamp)
+    let counter = COUNTER.fetch_add(1, Ordering::SeqCst);
+    format!("messages_{}_{}", timestamp, counter)
 }
 
 /// Setup test namespace and USER table for subscription tests

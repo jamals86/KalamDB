@@ -94,6 +94,26 @@ impl SystemColumnsService {
         Ok(SeqId::new(id))
     }
 
+    /// Generate multiple unique SeqIds in a single call
+    ///
+    /// **Performance Optimization**: Acquires the internal mutex only once,
+    /// making batch inserts significantly faster than calling `generate_seq_id()` N times.
+    ///
+    /// # Arguments
+    /// * `count` - Number of SeqIds to generate
+    ///
+    /// # Returns
+    /// Vector of unique, time-ordered SeqIds
+    ///
+    /// # Errors
+    /// Returns `RegistryError::InvalidOperation` if clock moves backwards
+    pub fn generate_seq_ids(&self, count: usize) -> Result<Vec<SeqId>, RegistryError> {
+        let ids = self.snowflake_gen.next_ids(count).map_err(|e| {
+            RegistryError::InvalidOperation(format!("Batch SeqId generation failed: {}", e))
+        })?;
+        Ok(ids.into_iter().map(SeqId::new).collect())
+    }
+
     /// Add system columns to a table definition
     ///
     /// **MVCC Architecture**: Injects `_seq BIGINT` and `_deleted BOOLEAN`

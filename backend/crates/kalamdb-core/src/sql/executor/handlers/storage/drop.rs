@@ -100,7 +100,6 @@ impl TypedStatementHandler<DropStorageStatement> for DropStorageHandler {
 mod tests {
     use super::*;
     use crate::test_helpers::create_test_session;
-    use datafusion::prelude::SessionContext;
     use kalamdb_commons::models::UserId;
     use kalamdb_commons::{Role, StorageId};
 

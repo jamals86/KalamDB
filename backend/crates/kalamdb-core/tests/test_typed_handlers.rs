@@ -22,7 +22,6 @@ fn init_app_context() -> Arc<AppContext> {
 async fn test_typed_handler_create_namespace() {
     let app_ctx = init_app_context();
     let executor = SqlExecutor::new(app_ctx, false);
-    let session = SessionContext::new();
     let exec_ctx = ExecutionContext::new(UserId::from("admin"), Role::Dba, create_test_session());
 
     // Test CREATE NAMESPACE with typed handler

@@ -49,13 +49,19 @@ pub mod user_tables;
 pub use error::{Result, TableError};
 
 // Re-export table stores
+pub use shared_tables::pk_index::{create_shared_table_pk_index, SharedTablePkIndex};
 pub use shared_tables::shared_table_store::{
-    new_shared_table_store, SharedTableRow, SharedTableStore,
+    new_indexed_shared_table_store, new_shared_table_store, SharedTableIndexedStore,
+    SharedTableRow, SharedTableStore,
 };
 pub use stream_tables::stream_table_store::{
     new_stream_table_store, StreamTableRow, StreamTableStore,
 };
-pub use user_tables::user_table_store::{new_user_table_store, UserTableRow, UserTableStore};
+pub use user_tables::pk_index::{create_user_table_pk_index, UserTablePkIndex};
+pub use user_tables::user_table_store::{
+    new_indexed_user_table_store, new_user_table_store, UserTableIndexedStore, UserTableRow,
+    UserTableStore,
+};
 
 // Re-export extension traits
 pub use store_ext::{SharedTableStoreExt, StreamTableStoreExt, UserTableStoreExt};

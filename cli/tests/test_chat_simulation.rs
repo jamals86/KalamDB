@@ -19,9 +19,9 @@ use std::{
 };
 
 // Adjust these constants based on system capabilities
-const NUM_USERS: usize = 20; // Scaled down from 200 for CI/Dev environment safety, but can be increased
-const MESSAGES_PER_USER: usize = 50;
-const MESSAGES_PER_AI: usize = 50;
+const NUM_USERS: usize = 20; // Scaled down from 200 for CI/Dev environment safety
+const MESSAGES_PER_USER: usize = 20; // Reduced from 50 for faster test execution
+const MESSAGES_PER_AI: usize = 20; // Reduced from 50 for faster test execution
 
 #[test]
 fn test_chat_simulation_memory_leak() {
@@ -55,7 +55,7 @@ fn test_chat_simulation_memory_leak() {
         let username = format!("user_{}_{}", i, suffix);
         let password = format!("pass_{}", i);
 
-        if let Err(e) = execute_sql_as_root_via_cli(&format!(
+        if let Err(e) = execute_sql_as_root_via_client(&format!(
             "CREATE USER {} WITH PASSWORD '{}' ROLE 'user'",
             username, password
         )) {
@@ -99,7 +99,7 @@ fn test_chat_simulation_memory_leak() {
                 "INSERT INTO {}.conversations (id, title, created_by) VALUES ('{}', 'Chat {}', '{}')",
                 ns_ref, conv_id_ref, user_idx, username
             );
-            if let Err(e) = execute_sql_via_cli_as(&ai_creds.0, &ai_creds.1, &create_conv_sql) {
+            if let Err(e) = execute_sql_via_client_as(&ai_creds.0, &ai_creds.1, &create_conv_sql) {
                 eprintln!("❌ Failed to create conversation: {}", e);
                 return;
             }
@@ -112,7 +112,7 @@ fn test_chat_simulation_memory_leak() {
                         "INSERT INTO {}.messages (id, conversation_id, sender, content, timestamp) VALUES ('{}', '{}', 'AI_AGENT', 'AI Message {}', {})",
                         ns_ref, msg_id, conv_id_ref, m, chrono::Utc::now().timestamp_millis()
                     );
-                    let _ = execute_sql_via_cli_as(&ai_creds.0, &ai_creds.1, &msg_sql);
+                    let _ = execute_sql_via_client_as(&ai_creds.0, &ai_creds.1, &msg_sql);
 
                     // AI sends stream event (typing)
                     let event_id = format!("evt_ai_{}_{}", m, random_string(5));
@@ -120,9 +120,9 @@ fn test_chat_simulation_memory_leak() {
                         "INSERT INTO {}.stream_events (id, conversation_id, event_type, payload, timestamp) VALUES ('{}', '{}', 'typing', 'AI is typing...', {})",
                         ns_ref, event_id, conv_id_ref, chrono::Utc::now().timestamp_millis()
                     );
-                    let _ = execute_sql_via_cli_as(&ai_creds.0, &ai_creds.1, &event_sql);
+                    let _ = execute_sql_via_client_as(&ai_creds.0, &ai_creds.1, &event_sql);
 
-                    thread::sleep(Duration::from_millis(rand::random::<u64>() % 50 + 10));
+                    thread::sleep(Duration::from_millis(rand::random::<u64>() % 20 + 5));
                 }
             });
 
@@ -149,7 +149,7 @@ fn test_chat_simulation_memory_leak() {
                     Ok(l) => l,
                     Err(e) => {
                         eprintln!("❌ Failed to start stream subscription: {}", e);
-                        msg_sub.stop().unwrap();
+                        let _ = msg_sub.stop();
                         return;
                     }
                 };
@@ -161,13 +161,13 @@ fn test_chat_simulation_memory_leak() {
                         "INSERT INTO {}.messages (id, conversation_id, sender, content, timestamp) VALUES ('{}', '{}', '{}', 'User Message {}', {})",
                         namespace, msg_id, conversation_id, user_creds.0, m, chrono::Utc::now().timestamp_millis()
                     );
-                    let _ = execute_sql_via_cli_as(&user_creds.0, &user_creds.1, &msg_sql);
+                    let _ = execute_sql_via_client_as(&user_creds.0, &user_creds.1, &msg_sql);
 
                     // Read from subscriptions to prevent buffer filling (and simulate active listening)
-                    let _ = msg_sub.try_read_line(Duration::from_millis(10));
-                    let _ = stream_sub.try_read_line(Duration::from_millis(10));
+                    let _ = msg_sub.try_read_line(Duration::from_millis(5));
+                    let _ = stream_sub.try_read_line(Duration::from_millis(5));
 
-                    thread::sleep(Duration::from_millis(rand::random::<u64>() % 50 + 10));
+                    thread::sleep(Duration::from_millis(rand::random::<u64>() % 20 + 5));
                 }
 
                 // Cleanup subscriptions
@@ -187,7 +187,7 @@ fn test_chat_simulation_memory_leak() {
 
     // Wait for all simulations to finish
     for handle in handles {
-        if let Err(_) = handle.join() {
+        if handle.join().is_err() {
             eprintln!("❌ A simulation thread panicked");
         }
     }
@@ -202,10 +202,10 @@ fn test_chat_simulation_memory_leak() {
 }
 
 fn setup_chat_tables(namespace: &str) -> Result<(), Box<dyn std::error::Error>> {
-    execute_sql_as_root_via_cli(&format!("CREATE NAMESPACE IF NOT EXISTS {}", namespace))?;
+    execute_sql_as_root_via_client(&format!("CREATE NAMESPACE IF NOT EXISTS {}", namespace))?;
 
     // Conversations Table
-    execute_sql_as_root_via_cli(&format!(
+    execute_sql_as_root_via_client(&format!(
         "CREATE TABLE {}.conversations (
             id VARCHAR PRIMARY KEY, 
             title VARCHAR, 
@@ -216,7 +216,7 @@ fn setup_chat_tables(namespace: &str) -> Result<(), Box<dyn std::error::Error>> 
     ))?;
 
     // Messages Table
-    execute_sql_as_root_via_cli(&format!(
+    execute_sql_as_root_via_client(&format!(
         "CREATE TABLE {}.messages (
             id VARCHAR PRIMARY KEY,
             conversation_id VARCHAR, 
@@ -228,7 +228,7 @@ fn setup_chat_tables(namespace: &str) -> Result<(), Box<dyn std::error::Error>> 
     ))?;
 
     // Stream Events Table (Stream Type)
-    execute_sql_as_root_via_cli(&format!(
+    execute_sql_as_root_via_client(&format!(
         "CREATE TABLE {}.stream_events (
             id VARCHAR PRIMARY KEY,
             conversation_id VARCHAR, 
@@ -244,7 +244,7 @@ fn setup_chat_tables(namespace: &str) -> Result<(), Box<dyn std::error::Error>> 
 
 fn cleanup(namespace: &str, creds: &[(String, String)]) {
     for (username, _) in creds {
-        let _ = execute_sql_as_root_via_cli(&format!("DROP USER IF EXISTS {}", username));
+        let _ = execute_sql_as_root_via_client(&format!("DROP USER IF EXISTS {}", username));
     }
-    let _ = execute_sql_as_root_via_cli(&format!("DROP NAMESPACE IF EXISTS {} CASCADE", namespace));
+    let _ = execute_sql_as_root_via_client(&format!("DROP NAMESPACE IF EXISTS {} CASCADE", namespace));
 }

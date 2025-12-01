@@ -261,6 +261,17 @@ impl BaseTableProvider<StreamTableRowId, StreamTableRow> for StreamTableProvider
         self.insert(user_id, updates)
     }
 
+    fn update_by_pk_value(
+        &self,
+        user_id: &UserId,
+        _pk_value: &str,
+        updates: Row,
+    ) -> Result<StreamTableRowId, KalamDbError> {
+        // TODO: Implement full UPDATE logic for stream tables
+        // Stream tables are typically append-only, so UPDATE just inserts a new event
+        self.insert(user_id, updates)
+    }
+
     fn delete(&self, user_id: &UserId, key: &StreamTableRowId) -> Result<(), KalamDbError> {
         // TODO: Implement DELETE logic for stream tables
         // Stream tables may use hard delete or tombstone depending on requirements

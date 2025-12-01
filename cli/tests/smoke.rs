@@ -40,3 +40,5 @@ mod smoke_test_timing_output;
 mod smoke_test_user_table_rls;
 #[path = "smoke/smoke_test_user_table_subscription.rs"]
 mod smoke_test_user_table_subscription;
+#[path = "smoke/smoke_test_insert_throughput.rs"]
+mod smoke_test_insert_throughput;

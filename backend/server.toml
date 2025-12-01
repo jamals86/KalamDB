@@ -19,8 +19,28 @@ workers = 0
 # Enable HTTP/2 protocol support (default: true)
 # When true, server uses automatic HTTP/1.1 and HTTP/2 cleartext (h2c) negotiation
 # When false, server only supports HTTP/1.1
-# HTTP/2 offers multiplexing, header compression, and better performance for concurrent requests
+# HTTP/2 offers:
+# - Multiplexed requests (multiple requests on single connection)
+# - Header compression (HPACK)
+# - Binary protocol (more efficient parsing)
+# - Server push support (for future features)
 enable_http2 = true
+
+# API version (default: "v1")
+# Controls the versioned endpoint prefix (e.g., /v1/api/sql)
+api_version = "v1"
+
+# Unique node identifier for this server instance (Phase 10, US0, FR-000)
+# Used for:
+# - Distributed coordination in multi-node deployments
+# - Logging context (appears in all log entries)
+# - Live query routing (WebSocket connection tracking)
+# - Job execution tracking (which node executed which job)
+#
+# **IMPORTANT**: Each server instance MUST have a unique node_id in distributed setups
+# Format: alphanumeric string with hyphens (e.g., "node-prod-01", "us-west-2-node-3")
+# Default: "node1"
+node_id = "node1"
 
 [storage]
 # RocksDB data directory path (relative or absolute)
@@ -28,7 +48,17 @@ rocksdb_path = "./data/rocksdb"
 
 # Default storage path for 'local' storage (when base_directory='')
 # Used for table flushes to Parquet files (default: "./data/storage")
+# Default base path for flushed Parquet files (relative paths resolve from server CWD)
 default_storage_path = "./data/storage"
+
+# Templates for table storage paths (used by 'local' storage)
+# Available placeholders: {namespace}, {tableName}, {userId}
+# Final paths: {default_storage_path}/{template}
+# Examples:
+#   Shared table: ./data/storage/myapp/products
+#   User table: ./data/storage/myapp/preferences/user123
+shared_tables_template = "{namespace}/{tableName}"
+user_tables_template = "{namespace}/{tableName}/{userId}"
 
 # Enable Write-Ahead Log for durability (default: true)
 enable_wal = true
@@ -39,18 +69,21 @@ compression = "snappy"
 [storage.rocksdb]
 # Write buffer size per column family in bytes (default: 64MB)
 # Larger values improve write throughput but use more memory
-write_buffer_size = 67108864
+# TUNED: Increased to 128MB for better batch write performance
+write_buffer_size = 134217728
 
 # Maximum number of write buffers (default: 3)
 # Allows writes to continue while buffers are being flushed
-max_write_buffers = 3
+# TUNED: Increased to 6 for better concurrent write handling
+max_write_buffers = 6
 
 # Block cache size for reads in bytes (default: 256MB)
 # Larger values improve read performance for hot data
 block_cache_size = 268435456
 
 # Maximum number of background compaction/flush jobs (default: 4)
-max_background_jobs = 4
+# TUNED: Increased to 8 to match typical CPU core count
+max_background_jobs = 8
 
 [datafusion]
 # Memory limit for query execution in bytes (default: 1GB)
@@ -77,6 +110,12 @@ default_row_limit = 10000
 # Default time interval for flush in seconds (default: 300s = 5 minutes)
 # Tables will flush to Parquet after this duration
 default_time_interval = 300
+
+# Batch size for flush operations (default: 10000 rows)
+# Controls how many rows are loaded into memory at once during flush
+# Lower values reduce memory usage but may increase flush duration
+# Set to 0 to load all rows at once (not recommended for large tables)
+flush_batch_size = 10000
 
 # T158j: Flush job shutdown timeout in seconds (default: 300s = 5 minutes)
 # Server waits this duration for active flush jobs to complete during shutdown
@@ -105,6 +144,10 @@ default_ttl_seconds = 10
 # Oldest rows are evicted when buffer exceeds this limit
 default_max_buffer = 10000
 
+# Stream eviction interval in seconds (default: 60 seconds = 1 minute)
+# How often the background task checks and evicts expired events
+eviction_interval_seconds = 60
+
 [limits]
 # Maximum message size for REST API requests in bytes (default: 1MB)
 max_message_size = 1048576
@@ -117,16 +160,23 @@ default_query_limit = 50
 
 [logging]
 # Log level: error, warn, info, debug, trace (default: info)
-level = "debug"
+level = "info"
 
-# Log file path (relative or absolute)
-file_path = "./logs/app.log"
+# Directory for all log files (default: "./logs")
+# Server will create app.log, slow.log, and other log files in this directory
+logs_path = "./logs"
 
 # Also log to console/stdout (default: true)
 log_to_console = true
 
 # Log format: compact, pretty, json (default: compact)
 format = "compact"
+
+# Slow query logging threshold in milliseconds (default: 1000ms = 1 second)
+# Queries taking longer than this threshold will be logged to slow.log
+# AND displayed as WARN in the console
+# Set to a high value (e.g., 999999) to disable slow query logging
+slow_query_threshold_ms = 1000
 
 [performance]
 # Request timeout in seconds (default: 30s)
@@ -136,137 +186,142 @@ request_timeout = 30
 # Keep-alive timeout in seconds (default: 75s)
 keepalive_timeout = 75
 
-# Maximum concurrent connections per worker (default: 25000)
+# Maximum concurrent connections (default: 25000)
 # Includes both REST API and WebSocket connections
 max_connections = 25000
-
-# Backlog size for pending connections (default: 2048)
-# Increase for high-traffic servers to prevent connection rejections
-# This is the OS-level listen queue size
-backlog = 2048
-
-# Maximum blocking threads per worker (default: 512)
-# Used for CPU-intensive operations like RocksDB, bcrypt, etc.
-# Higher values allow more concurrent blocking operations but use more memory
-worker_max_blocking_threads = 512
-
-# Client request timeout in seconds (default: 5)
-# Time allowed for client to send complete request headers
-# Prevents slow-loris attacks
-client_request_timeout = 5
-
-# Client disconnect timeout in seconds (default: 2)
-# Time allowed for graceful connection shutdown
-client_disconnect_timeout = 2
 
 [rate_limit]
 # Maximum SQL queries per second per user (default: 100)
 # Prevents query flooding from a single user
-max_queries_per_sec = 100000
+# NOTE: Set higher for development/testing environments
+max_queries_per_sec = 1000
 
 # Maximum WebSocket messages per second per connection (default: 50)
 # Prevents message flooding on WebSocket connections
-max_messages_per_sec = 5000
+max_messages_per_sec = 100
 
 # Maximum concurrent live query subscriptions per user (default: 10)
 # Limits total active subscriptions to prevent resource exhaustion
-max_subscriptions_per_user = 1500
+max_subscriptions_per_user = 50
 
 # ============================================================================
-# Connection Protection (DoS Prevention)
+# Security Settings
 # ============================================================================
+# CORS, WebSocket, and request limit configuration
 
-# Enable connection protection middleware (default: true)
-# When true, applies per-IP rate limiting and connection limits
-# Disable only for testing or trusted networks
-enable_connection_protection = false
+[security]
+# Maximum request body size in bytes (default: 10MB)
+# Prevents memory exhaustion from large payloads
+max_request_body_size = 10485760
 
-# Maximum concurrent connections per IP address (default: 100)
-# Prevents a single IP from exhausting all server connections
-max_connections_per_ip = 100
+# Maximum WebSocket message size in bytes (default: 1MB)
+# Prevents memory exhaustion from large WebSocket messages
+max_ws_message_size = 1048576
 
-# Maximum requests per second per IP before authentication (default: 200)
-# Applied BEFORE auth to protect against unauthenticated floods
-# Set higher for load balancers or reverse proxies
-max_requests_per_ip_per_sec = 200
+# Allowed WebSocket origins (if different from CORS origins)
+# Leave empty to use CORS allowed_origins for WebSocket validation
+allowed_ws_origins = []
 
-# Maximum request body size in bytes (default: 10485760 = 10MB)
-# Prevents memory exhaustion from huge request payloads
-request_body_limit_bytes = 10485760
+# Strict WebSocket origin checking (default: false)
+# If true, rejects WebSocket connections without Origin header
+strict_ws_origin_check = false
 
-# Duration in seconds to ban abusive IPs (default: 300 = 5 minutes)
-# IPs that persistently violate rate limits are temporarily banned
-ban_duration_seconds = 300
+# CORS Configuration (uses actix-cors)
+# See: https://docs.rs/actix-cors
+[security.cors]
+# Allowed origins for CORS requests
+# Use ["*"] or empty [] for any origin (development mode)
+# For production, specify exact origins: ["https://app.example.com", "https://admin.example.com"]
+allowed_origins = []
 
-# T105 - Phase 7, User Story 5: System User Management
-[auth]
-# Allow remote (non-localhost) connections for system users (default: false)
-# When false, system users with auth_type='internal' can only authenticate from localhost
-# When true, system users can authenticate from any IP (requires password in metadata)
-allow_remote_access = false
+# Allowed HTTP methods (default: common REST methods)
+allowed_methods = ["GET", "POST", "PUT", "DELETE", "PATCH", "OPTIONS"]
 
-# JWT secret for token validation (REQUIRED for JWT auth)
-# IMPORTANT: Change this in production! Use a long, random string
-jwt_secret = "CHANGE_ME_IN_PRODUCTION"
+# Allowed HTTP headers
+# Use ["*"] to allow any header
+allowed_headers = ["Authorization", "Content-Type", "Accept", "Origin", "X-Requested-With"]
 
-# Trusted JWT issuers (comma-separated list of domains)
-# Example: "auth.example.com,login.company.com"
-# Empty list means JWT authentication is disabled
-jwt_trusted_issuers = ""
+# Headers to expose to the browser (default: none)
+# Example: ["X-Custom-Header", "X-Request-Id"]
+expose_headers = []
 
-# Minimum password length (default: 8 characters)
-min_password_length = 8
+# Allow credentials (cookies, authorization headers) (default: true)
+# Note: If true, allowed_origins cannot be ["*"] in browsers
+allow_credentials = true
 
-# Maximum password length (default: 1024 characters)
-max_password_length = 1024
+# Preflight request cache max age in seconds (default: 3600 = 1 hour)
+max_age = 3600
 
-# Bcrypt cost factor (default: 12, range: 4-31)
-# Higher values are more secure but slower
-# 12 is recommended for production (good balance of security and performance)
+# Allow private network requests (default: false)
+# Enables Access-Control-Request-Private-Network header support
+allow_private_network = false
+
+[authentication]
+# Bcrypt cost factor for password hashing (default: 12, range: 10-14)
+# Higher values = more secure but slower
+# Changing this only affects NEW passwords
 bcrypt_cost = 12
 
-# Phase 10, User Story 8: OAuth Integration
-[oauth]
-# Enable OAuth authentication (default: false)
-# When true, users can authenticate using OAuth providers
-enabled = false
+# Minimum password length (default: 8)
+min_password_length = 8
 
-# Auto-provision users on first OAuth login (default: false)
-# When true, new users will be created automatically on first successful OAuth authentication
-# When false, users must be created explicitly with CREATE USER ... WITH OAUTH before they can authenticate
-auto_provision = false
+# Maximum password length (default: 72, bcrypt limit)
+# Note: Passwords longer than 72 bytes are truncated by bcrypt
+max_password_length = 72
 
-# Default role for auto-provisioned OAuth users (default: "user")
-# Only used when auto_provision = true
-# Valid values: "user", "service", "dba", "system"
-default_role = "user"
+# Disable common password checking (default: false)
+# If true, allows passwords like "password", "123456", etc.
+# WARNING: Only disable for testing/development environments!
+disable_common_password_check = false
 
-# Supported OAuth providers configuration
-# Each provider requires:
-# - issuer: OAuth provider's issuer URL (for JWT validation)
-# - jwks_uri: JSON Web Key Set endpoint for public keys
-# - client_id: OAuth application client ID (optional, for additional validation)
+# JWT configuration (for JWT Bearer token authentication)
+# Secret key for JWT signature validation (minimum 32 characters recommended)
+# IMPORTANT: Change this in production! Use a strong, random secret.
+jwt_secret = "your-secret-key-at-least-32-chars-change-me-in-production"
 
-# Google OAuth configuration
-[oauth.providers.google]
-enabled = false
-issuer = "https://accounts.google.com"
-jwks_uri = "https://www.googleapis.com/oauth2/v3/certs"
-# client_id = "your-google-client-id.apps.googleusercontent.com"
+# List of trusted JWT issuers (leave empty to accept any issuer)
+# Add your OAuth provider domains here (e.g., "https://accounts.google.com", "https://github.com")
+# Example for Google OAuth: ["https://accounts.google.com"]
+# Example for GitHub OAuth: ["https://github.com"]
+# Multiple issuers: ["https://accounts.google.com", "https://github.com", "https://kalamdb.io"]
+jwt_trusted_issuers = ""
 
-# GitHub OAuth configuration
-[oauth.providers.github]
-enabled = false
-issuer = "https://github.com"
-# GitHub doesn't use standard JWKS - requires custom token validation
-# See: https://docs.github.com/en/developers/apps/building-oauth-apps/authorizing-oauth-apps
-# client_id = "your-github-client-id"
-# client_secret = "your-github-client-secret"
+# Allow remote access for system users (default: false)
+# If true, system users can authenticate remotely (requires password)
+# If false, system users can only authenticate from localhost
+allow_remote_access = false
 
-# Azure AD (Microsoft) OAuth configuration
-[oauth.providers.azure]
-enabled = false
-issuer = "https://login.microsoftonline.com/{tenant}/v2.0"
-jwks_uri = "https://login.microsoftonline.com/{tenant}/discovery/v2.0/keys"
-# tenant = "your-tenant-id"
-# client_id = "your-azure-client-id"
+[shutdown]
+# Timeout settings for graceful shutdown
+
+[shutdown.flush]
+# Timeout in seconds to wait for flush jobs to complete during graceful shutdown (default: 300)
+timeout = 300
+
+# Maximum number of concurrent jobs (default: 10)
+# Controls how many jobs can execute simultaneously
+max_concurrent = 10
+
+# Maximum number of retry attempts per job (default: 3)
+# Jobs will be retried this many times before being marked as permanently failed
+max_retries = 3
+
+# Initial retry backoff delay in milliseconds (default: 100ms)
+# Delay increases exponentially with each retry (100ms, 200ms, 400ms, etc.)
+retry_backoff_ms = 100
+
+# Phase 11, T026: SQL Handler Execution Configuration
+[execution]
+# Handler execution timeout in seconds (default: 30)
+# Maximum time allowed for a single SQL statement to execute
+# Prevents hung requests from blocking resources
+handler_timeout_seconds = 30
+
+# Maximum number of parameters per statement (default: 50)
+# Prevents memory exhaustion from excessive parameter arrays
+max_parameters = 50
+
+# Maximum size per parameter in bytes (default: 524288 = 512KB)
+# Prevents memory exhaustion from individual large parameters
+max_parameter_size_bytes = 524288
+

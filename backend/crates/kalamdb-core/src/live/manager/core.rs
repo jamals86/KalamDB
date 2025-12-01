@@ -4,6 +4,7 @@
 //! Uses SharedConnectionState pattern for efficient state access.
 
 use crate::error::KalamDbError;
+use crate::live::filter_eval::parse_where_clause;
 use crate::live::initial_data::{InitialDataFetcher, InitialDataOptions, InitialDataResult};
 use crate::live::notification::NotificationService;
 use crate::live::query_parser::QueryParser;
@@ -163,8 +164,19 @@ impl LiveQueryManager {
         let batch_size = request.options.batch_size.unwrap_or(kalamdb_commons::websocket::MAX_ROWS_PER_BATCH);
 
         // Parse filter expression from WHERE clause (if present)
-        // TODO: Parse filter_expr from SQL using DataFusion
-        let filter_expr: Option<Expr> = None;
+        let filter_expr: Option<Expr> = QueryParser::extract_where_clause(&request.sql)
+            .map(|where_clause| {
+                // Resolve placeholders like CURRENT_USER() before parsing
+                let resolved = QueryParser::resolve_where_clause_placeholders(&where_clause, &user_id);
+                parse_where_clause(&resolved)
+            })
+            .transpose()
+            .map_err(|e| {
+                log::warn!("Failed to parse WHERE clause for filter: {}", e);
+                e
+            })
+            .ok()
+            .flatten();
 
         // Register the subscription
         let live_id = self.register_subscription(

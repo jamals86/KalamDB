@@ -123,6 +123,10 @@ pub fn default_flush_time_interval() -> u64 {
     300 // 5 minutes
 }
 
+pub fn default_flush_batch_size() -> usize {
+    10000 // 10k rows per batch to avoid loading all into memory
+}
+
 // Manifest cache defaults (Phase 4 - US6)
 pub fn default_manifest_cache_ttl() -> i64 {
     3600 // 1 hour

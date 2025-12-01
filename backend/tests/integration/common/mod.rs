@@ -994,26 +994,37 @@ mod tests {
     async fn test_cleanup() {
         let server = TestServer::new().await;
 
+        // Use unique namespace to avoid test interference
+        let ns = format!("test_cleanup_{}", std::process::id());
+
         // Create namespace
         server
-            .execute_sql("CREATE NAMESPACE IF NOT EXISTS test_ns")
+            .execute_sql(&format!("CREATE NAMESPACE IF NOT EXISTS {}", ns))
             .await;
-        assert!(server.namespace_exists("test_ns").await);
+        assert!(server.namespace_exists(&ns).await);
 
         // Cleanup
         server.cleanup().await.unwrap();
-        assert!(!server.namespace_exists("test_ns").await);
+        assert!(!server.namespace_exists(&ns).await);
     }
 
     #[actix_web::test]
     async fn test_namespace_exists() {
         let server = TestServer::new().await;
 
+        // Use unique namespace to avoid test interference
+        let ns = format!("test_ns_exists_{}", std::process::id());
+
         assert!(!server.namespace_exists("nonexistent").await);
 
         server
-            .execute_sql("CREATE NAMESPACE IF NOT EXISTS test_ns")
+            .execute_sql(&format!("CREATE NAMESPACE IF NOT EXISTS {}", ns))
             .await;
-        assert!(server.namespace_exists("test_ns").await);
+        assert!(server.namespace_exists(&ns).await);
+
+        // Cleanup
+        server
+            .execute_sql(&format!("DROP NAMESPACE {} CASCADE", ns))
+            .await;
     }
 }

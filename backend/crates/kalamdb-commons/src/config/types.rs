@@ -329,6 +329,12 @@ pub struct FlushSettings {
     /// Default time interval for flush in seconds (default: 300s = 5 minutes)
     #[serde(default = "default_flush_time_interval")]
     pub default_time_interval: u64,
+
+    /// Batch size for flush operations (default: 10000 rows)
+    /// Controls how many rows are loaded into memory at once during flush
+    /// Lower values reduce memory usage but may increase flush duration
+    #[serde(default = "default_flush_batch_size")]
+    pub flush_batch_size: usize,
 }
 
 /// Manifest cache settings (Phase 4 - US6)
@@ -661,6 +667,7 @@ impl Default for FlushSettings {
         Self {
             default_row_limit: default_flush_row_limit(),
             default_time_interval: default_flush_time_interval(),
+            flush_batch_size: default_flush_batch_size(),
         }
     }
 }

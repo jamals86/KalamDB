@@ -343,6 +343,74 @@ where
         self.backend.batch(operations)
     }
 
+    /// Inserts multiple entities with all indexes atomically in a single WriteBatch.
+    ///
+    /// This is significantly more efficient than calling `insert()` N times,
+    /// as it performs a single disk write instead of N writes.
+    ///
+    /// # Arguments
+    ///
+    /// * `entries` - Vector of (key, entity) pairs to insert
+    ///
+    /// # Returns
+    ///
+    /// `Ok(())` if all entities were inserted successfully.
+    ///
+    /// # Errors
+    ///
+    /// Returns error if:
+    /// - Serialization fails for any entity
+    /// - Storage backend fails
+    /// - The entire batch is rolled back on any failure (atomic)
+    ///
+    /// # Example
+    ///
+    /// ```rust,ignore
+    /// let entries = vec![
+    ///     (row_id1, entity1),
+    ///     (row_id2, entity2),
+    ///     (row_id3, entity3),
+    /// ];
+    /// store.insert_batch(&entries)?;  // Single atomic write for all
+    /// ```
+    pub fn insert_batch(&self, entries: &[(K, V)]) -> Result<()> {
+        if entries.is_empty() {
+            return Ok(());
+        }
+
+        // Pre-allocate: each entry = 1 entity write + N index writes
+        let ops_per_entry = 1 + self.indexes.len();
+        let mut operations = Vec::with_capacity(entries.len() * ops_per_entry);
+
+        let partition = Partition::new(&self.partition);
+
+        for (key, entity) in entries {
+            // 1. Main entity write
+            let value = entity.encode()?;
+            operations.push(Operation::Put {
+                partition: partition.clone(),
+                key: key.storage_key(),
+                value,
+            });
+
+            // 2. Index writes for this entity
+            for index in &self.indexes {
+                if let Some(index_key) = index.extract_key(key, entity) {
+                    let index_partition = Partition::new(index.partition());
+                    let index_value = index.index_value(key, entity);
+                    operations.push(Operation::Put {
+                        partition: index_partition,
+                        key: index_key,
+                        value: index_value,
+                    });
+                }
+            }
+        }
+
+        // Single atomic batch write for ALL entities
+        self.backend.batch(operations)
+    }
+
     /// Updates an entity and its indexes atomically.
     ///
     /// 1. Fetches old entity to determine stale index entries
