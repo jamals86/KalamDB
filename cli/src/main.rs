@@ -31,7 +31,15 @@ use connect::create_session;
 #[tokio::main]
 async fn main() -> Result<()> {
     // Parse command-line arguments
-    let cli = Cli::parse();
+    let mut cli = Cli::parse();
+
+    // If --password flag was provided without a value (empty string), prompt interactively
+    // This keeps the password out of the process list for security
+    if cli.password.as_ref().map(|p| p.is_empty()).unwrap_or(false) {
+        let password = rpassword::prompt_password("Password: ")
+            .map_err(|e| CLIError::FileError(format!("Failed to read password: {}", e)))?;
+        cli.password = Some(password);
+    }
 
     // Initialize logging (basic)
     if cli.verbose {
