@@ -46,8 +46,8 @@ pub struct Cli {
     #[arg(long = "username")]
     pub username: Option<String>,
 
-    /// HTTP Basic Auth password
-    #[arg(long = "password")]
+    /// HTTP Basic Auth password (if flag is present without value, prompts interactively)
+    #[arg(long = "password", num_args = 0..=1, default_missing_value = "")]
     pub password: Option<String>,
 
     /// Database instance name (for credential storage)
