@@ -72,10 +72,6 @@ impl AsRef<[u8]> for UserName {
     }
 }
 
-// Ensure Send and Sync are implemented
-unsafe impl Send for UserName {}
-unsafe impl Sync for UserName {}
-
 impl StorageKey for UserName {
     fn storage_key(&self) -> Vec<u8> {
         self.0.as_bytes().to_vec()

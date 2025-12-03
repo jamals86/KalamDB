@@ -67,10 +67,6 @@ impl fmt::Display for RowId {
     }
 }
 
-// Ensure Send and Sync are implemented
-unsafe impl Send for RowId {}
-unsafe impl Sync for RowId {}
-
 #[cfg(test)]
 mod tests {
     use super::*;

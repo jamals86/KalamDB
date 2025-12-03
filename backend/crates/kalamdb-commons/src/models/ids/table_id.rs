@@ -104,10 +104,6 @@ impl fmt::Display for TableId {
     }
 }
 
-// Ensure Send and Sync are implemented
-unsafe impl Send for TableId {}
-unsafe impl Sync for TableId {}
-
 impl StorageKey for TableId {
     fn storage_key(&self) -> Vec<u8> {
         self.as_storage_key()

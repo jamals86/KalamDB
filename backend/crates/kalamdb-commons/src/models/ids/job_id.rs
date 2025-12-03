@@ -66,10 +66,6 @@ impl AsRef<[u8]> for JobId {
     }
 }
 
-// Ensure Send and Sync are implemented
-unsafe impl Send for JobId {}
-unsafe impl Sync for JobId {}
-
 impl StorageKey for JobId {
     fn storage_key(&self) -> Vec<u8> {
         self.0.as_bytes().to_vec()
