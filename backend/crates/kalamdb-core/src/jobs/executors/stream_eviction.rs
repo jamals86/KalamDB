@@ -186,7 +186,7 @@ impl JobExecutor for StreamEvictionExecutor {
     }
 
     async fn execute(&self, ctx: &JobContext<Self::Params>) -> Result<JobDecision, KalamDbError> {
-        ctx.log_info("Starting stream eviction operation");
+        ctx.log_debug("Starting stream eviction operation");
 
         // Parameters already validated in JobContext - type-safe access
         let params = ctx.params();
@@ -194,7 +194,7 @@ impl JobExecutor for StreamEvictionExecutor {
         let ttl_seconds = params.ttl_seconds;
         let batch_size = params.batch_size;
 
-        ctx.log_info(&format!(
+        ctx.log_debug(&format!(
             "Evicting expired records from stream {} (ttl: {}s, batch: {})",
             table_id, ttl_seconds, batch_size
         ));
