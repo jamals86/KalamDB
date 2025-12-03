@@ -90,10 +90,6 @@ impl fmt::Display for UserRowId {
     }
 }
 
-// Ensure Send and Sync are implemented
-unsafe impl Send for UserRowId {}
-unsafe impl Sync for UserRowId {}
-
 impl StorageKey for UserRowId {
     fn storage_key(&self) -> Vec<u8> {
         self.as_storage_key()

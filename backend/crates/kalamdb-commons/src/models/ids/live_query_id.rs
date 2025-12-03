@@ -135,10 +135,6 @@ impl AsRef<[u8]> for LiveQueryId {
     }
 }
 
-// Ensure Send and Sync are implemented
-unsafe impl Send for LiveQueryId {}
-unsafe impl Sync for LiveQueryId {}
-
 impl StorageKey for LiveQueryId {
     fn storage_key(&self) -> Vec<u8> {
         self.to_string().into_bytes()

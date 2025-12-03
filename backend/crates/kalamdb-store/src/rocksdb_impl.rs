@@ -5,7 +5,7 @@
 //! RocksDB column families.
 
 use crate::storage_trait::{Operation, Partition, Result, StorageBackend, StorageError};
-use rocksdb::{ColumnFamily, IteratorMode, Options, DB};
+use rocksdb::{BoundColumnFamily, IteratorMode, Options, DB};
 use std::sync::Arc;
 
 /// RocksDB implementation of the StorageBackend trait.
@@ -45,7 +45,7 @@ impl RocksDBBackend {
     }
 
     /// Gets a column family handle by partition name.
-    fn get_cf(&self, partition: &Partition) -> Result<&ColumnFamily> {
+    fn get_cf(&self, partition: &Partition) -> Result<Arc<BoundColumnFamily<'_>>> {
         self.db
             .cf_handle(partition.name())
             .ok_or_else(|| StorageError::PartitionNotFound(partition.name().to_string()))
@@ -56,21 +56,21 @@ impl StorageBackend for RocksDBBackend {
     fn get(&self, partition: &Partition, key: &[u8]) -> Result<Option<Vec<u8>>> {
         let cf = self.get_cf(partition)?;
         self.db
-            .get_cf(cf, key)
+            .get_cf(&cf, key)
             .map_err(|e| StorageError::IoError(e.to_string()))
     }
 
     fn put(&self, partition: &Partition, key: &[u8], value: &[u8]) -> Result<()> {
         let cf = self.get_cf(partition)?;
         self.db
-            .put_cf(cf, key, value)
+            .put_cf(&cf, key, value)
             .map_err(|e| StorageError::IoError(e.to_string()))
     }
 
     fn delete(&self, partition: &Partition, key: &[u8]) -> Result<()> {
         let cf = self.get_cf(partition)?;
         self.db
-            .delete_cf(cf, key)
+            .delete_cf(&cf, key)
             .map_err(|e| StorageError::IoError(e.to_string()))
     }
 
@@ -87,11 +87,11 @@ impl StorageBackend for RocksDBBackend {
                     value,
                 } => {
                     let cf = self.get_cf(&partition)?;
-                    batch.put_cf(cf, key, value);
+                    batch.put_cf(&cf, key, value);
                 }
                 Operation::Delete { partition, key } => {
                     let cf = self.get_cf(&partition)?;
-                    batch.delete_cf(cf, key);
+                    batch.delete_cf(&cf, key);
                 }
             }
         }
@@ -129,7 +129,7 @@ impl StorageBackend for RocksDBBackend {
         // RocksDB iterator over the snapshot: bind snapshot to ReadOptions
         let mut readopts = rocksdb::ReadOptions::default();
         readopts.set_snapshot(&snapshot);
-        let inner = self.db.iterator_cf_opt(cf, readopts, iter_mode);
+        let inner = self.db.iterator_cf_opt(&cf, readopts, iter_mode);
 
         struct SnapshotScanIter<'a, D: rocksdb::DBAccess> {
             // Hold the snapshot to keep it alive for 'a
@@ -138,12 +138,6 @@ impl StorageBackend for RocksDBBackend {
             prefix: Option<Vec<u8>>,
             remaining: Option<usize>,
         }
-
-        // SAFETY: SnapshotScanIter is Send because:
-        // 1. rocksdb::SnapshotWithThreadMode is Send (RocksDB handles thread safety)
-        // 2. rocksdb::DBIteratorWithThreadMode is Send
-        // 3. Vec and Option are Send
-        unsafe impl<'a, D: rocksdb::DBAccess> Send for SnapshotScanIter<'a, D> {}
 
         impl<'a, D: rocksdb::DBAccess> Iterator for SnapshotScanIter<'a, D> {
             type Item = (Vec<u8>, Vec<u8>);
@@ -193,30 +187,21 @@ impl StorageBackend for RocksDBBackend {
         }
 
         // Create new column family
+        // Note: With multi-threaded-cf feature, create_cf takes &self and handles locking internally
         let opts = Options::default();
-        unsafe {
-            // SAFETY: This is safe because:
-            // 1. We're not holding any references to the DB that could be invalidated
-            // 2. RocksDB's create_cf is thread-safe
-            // 3. We're not accessing any column families during creation
-            // 4. The Arc ensures the DB is valid for the duration of this call
-            let db_ptr = Arc::as_ptr(&self.db) as *mut DB;
-            match (*db_ptr).create_cf(partition.name(), &opts) {
-                Ok(()) => {}
-                Err(e) => {
-                    let msg = e.to_string();
-                    // Handle benign race: another thread created the CF between exists-check and create
-                    if msg.contains("Column family already exists")
-                        || msg.contains("column family already exists")
-                    {
-                        return Ok(());
-                    }
-                    return Err(StorageError::IoError(msg));
+        match self.db.create_cf(partition.name(), &opts) {
+            Ok(()) => Ok(()),
+            Err(e) => {
+                let msg = e.to_string();
+                // Handle benign race: another thread created the CF between exists-check and create
+                if msg.contains("Column family already exists")
+                    || msg.contains("column family already exists")
+                {
+                    return Ok(());
                 }
+                Err(StorageError::IoError(msg))
             }
         }
-
-        Ok(())
     }
 
     fn list_partitions(&self) -> Result<Vec<Partition>> {
@@ -243,13 +228,10 @@ impl StorageBackend for RocksDBBackend {
             return Ok(());
         }
 
-        unsafe {
-            // SAFETY: Similar reasoning as create_partition
-            let db_ptr = Arc::as_ptr(&self.db) as *mut DB;
-            (*db_ptr)
-                .drop_cf(partition.name())
-                .map_err(|e| StorageError::IoError(e.to_string()))?;
-        }
+        // Note: With multi-threaded-cf feature, drop_cf takes &self and handles locking internally
+        self.db
+            .drop_cf(partition.name())
+            .map_err(|e| StorageError::IoError(e.to_string()))?;
 
         Ok(())
     }

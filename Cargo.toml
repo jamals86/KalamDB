@@ -51,7 +51,7 @@ tokio-tungstenite = { version = "0.28.0", features = ["rustls-tls-webpki-roots"]
 chrono = { version = "0.4.38", features = ["serde"] }
 
 # Storage
-rocksdb = { version = "0.24.0", default-features = false, features = ["snappy"] }
+rocksdb = { version = "0.24.0", default-features = false, features = ["snappy", "multi-threaded-cf"] }
 
 # Apache Arrow ecosystem
 arrow = { version = "57.0.0", features = ["prettyprint"] }

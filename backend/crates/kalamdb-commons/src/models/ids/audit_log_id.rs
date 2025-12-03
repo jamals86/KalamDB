@@ -63,10 +63,6 @@ impl AsRef<[u8]> for AuditLogId {
     }
 }
 
-// Safety: string wrapper is naturally Send + Sync.
-unsafe impl Send for AuditLogId {}
-unsafe impl Sync for AuditLogId {}
-
 impl StorageKey for AuditLogId {
     fn storage_key(&self) -> Vec<u8> {
         self.0.as_bytes().to_vec()

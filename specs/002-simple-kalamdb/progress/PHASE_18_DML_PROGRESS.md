@@ -296,7 +296,6 @@
 ## 💡 Lessons Learned
 
 1. **System columns must be in Arrow schema**: DataFusion needs to know about all columns for SELECT queries
-2. **RocksDB CF creation is safe with unsafe code**: RocksDB's internal locking makes Arc→mut cast safe
 3. **Test schema consistency matters**: Generic "name/value" doesn't match realistic conversations schema
 4. **Empty batch handling is critical**: Zero rows must still return correct schema
 5. **Projection requires field cloning**: Can't just slice arrays, need to rebuild schema too
