@@ -64,6 +64,9 @@ bcrypt = { workspace = true }
 # Single-assignment statics
 once_cell = { workspace = true }
 
+# CPU detection for parallelism
+num_cpus = { workspace = true }
+
 # Regular expressions
 regex = { workspace = true }
 

@@ -184,8 +184,9 @@ impl AppContext {
                 system_tables.set_stats_provider(stats_provider);
 
                 // Register all system tables in DataFusion
+                // Use config-driven DataFusion settings for parallelism
                 let session_factory = Arc::new(
-                    DataFusionSessionFactory::new()
+                    DataFusionSessionFactory::with_config(&config.datafusion)
                         .expect("Failed to create DataFusion session factory"),
                 );
                 let base_session_context = Arc::new(session_factory.create_session());
