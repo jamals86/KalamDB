@@ -5,7 +5,7 @@
 //! RocksDB column families.
 
 use crate::storage_trait::{Operation, Partition, Result, StorageBackend, StorageError};
-use rocksdb::{BoundColumnFamily, IteratorMode, Options, DB};
+use rocksdb::{BoundColumnFamily, IteratorMode, Options, WriteOptions, DB};
 use std::sync::Arc;
 
 /// RocksDB implementation of the StorageBackend trait.
@@ -31,12 +31,31 @@ use std::sync::Arc;
 /// ```
 pub struct RocksDBBackend {
     db: Arc<DB>,
+    /// Cached write options for fast writes (no sync)
+    write_opts: WriteOptions,
 }
 
 impl RocksDBBackend {
     /// Creates a new RocksDB backend with the given database handle.
+    /// Uses default write options (no sync for better write performance).
     pub fn new(db: Arc<DB>) -> Self {
-        Self { db }
+        let mut write_opts = WriteOptions::default();
+        write_opts.set_sync(false); // Don't sync on each write - WAL provides durability
+        write_opts.disable_wal(false); // Keep WAL enabled for crash safety
+        Self { db, write_opts }
+    }
+
+    /// Creates a new RocksDB backend with custom write options.
+    ///
+    /// # Arguments
+    /// * `db` - Database handle
+    /// * `sync_writes` - If true, sync to disk on each write (slower but more durable)
+    /// * `disable_wal` - If true, disable WAL entirely (fastest but data loss on crash)
+    pub fn with_options(db: Arc<DB>, sync_writes: bool, disable_wal: bool) -> Self {
+        let mut write_opts = WriteOptions::default();
+        write_opts.set_sync(sync_writes);
+        write_opts.disable_wal(disable_wal);
+        Self { db, write_opts }
     }
 
     /// Returns a reference to the underlying database.
@@ -63,14 +82,14 @@ impl StorageBackend for RocksDBBackend {
     fn put(&self, partition: &Partition, key: &[u8], value: &[u8]) -> Result<()> {
         let cf = self.get_cf(partition)?;
         self.db
-            .put_cf(&cf, key, value)
+            .put_cf_opt(&cf, key, value, &self.write_opts)
             .map_err(|e| StorageError::IoError(e.to_string()))
     }
 
     fn delete(&self, partition: &Partition, key: &[u8]) -> Result<()> {
         let cf = self.get_cf(partition)?;
         self.db
-            .delete_cf(&cf, key)
+            .delete_cf_opt(&cf, key, &self.write_opts)
             .map_err(|e| StorageError::IoError(e.to_string()))
     }
 
@@ -97,7 +116,7 @@ impl StorageBackend for RocksDBBackend {
         }
 
         self.db
-            .write(batch)
+            .write_opt(batch, &self.write_opts)
             .map_err(|e| StorageError::IoError(e.to_string()))
     }
 

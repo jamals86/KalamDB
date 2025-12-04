@@ -186,7 +186,8 @@ pub struct StorageSettings {
     #[serde(default = "default_user_tables_template")]
     pub user_tables_template: String,
     #[serde(default = "default_true")]
-    pub enable_wal: bool,
+    #[deprecated(note = "WAL is always enabled and this setting will be removed")]
+    pub enable_wal: bool, //TODO: Remove this, since we always want WAL enabled
     #[serde(default = "default_compression")]
     pub compression: String,
     #[serde(default)]
@@ -211,6 +212,18 @@ pub struct RocksDbSettings {
     /// Maximum number of background jobs (default: 4)
     #[serde(default = "default_rocksdb_max_background_jobs")]
     pub max_background_jobs: i32,
+
+    /// Sync writes to WAL on each write (default: false for performance)
+    /// When false, writes are buffered and synced periodically by OS.
+    /// Setting to true guarantees durability but reduces write throughput 10-100x.
+    /// Data is still safe with WAL enabled - only ~1 second of data could be lost on crash.
+    #[serde(default = "default_rocksdb_sync_writes")]
+    pub sync_writes: bool,
+
+    /// Disable WAL for maximum write performance (default: false)
+    /// WARNING: Setting to true means data loss on crash. Only for ephemeral/cacheable data.
+    #[serde(default)]
+    pub disable_wal: bool,
 }
 
 impl Default for RocksDbSettings {
@@ -220,6 +233,8 @@ impl Default for RocksDbSettings {
             max_write_buffers: default_rocksdb_max_write_buffers(),
             block_cache_size: default_rocksdb_block_cache_size(),
             max_background_jobs: default_rocksdb_max_background_jobs(),
+            sync_writes: default_rocksdb_sync_writes(),
+            disable_wal: false,
         }
     }
 }

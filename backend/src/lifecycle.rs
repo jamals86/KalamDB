@@ -54,8 +54,17 @@ pub async fn bootstrap(
         phase_start.elapsed().as_secs_f64() * 1000.0
     );
 
-    // Initialize RocksDB backend for all components (single StorageBackend trait)
-    let backend = Arc::new(RocksDBBackend::new(db.clone()));
+    // Initialize RocksDB backend with performance settings from config
+    // sync_writes=false (default) gives 10-100x better write throughput
+    // WAL is still enabled so data is safe from crashes (only ~1s of data could be lost)
+    let backend = Arc::new(RocksDBBackend::with_options(
+        db.clone(),
+        config.storage.rocksdb.sync_writes,
+        config.storage.rocksdb.disable_wal,
+    ));
+    if !config.storage.rocksdb.sync_writes {
+        debug!("RocksDB async writes enabled (sync_writes=false) for high throughput");
+    }
 
     // Initialize core stores from generic backend (uses kalamdb_store::StorageBackend)
     // Phase 5: AppContext now creates all dependencies internally!
