@@ -293,6 +293,10 @@ pub fn default_rocksdb_max_background_jobs() -> i32 {
     4
 }
 
+pub fn default_rocksdb_sync_writes() -> bool {
+    false // Don't sync on each write for performance (WAL still provides durability)
+}
+
 // Security defaults
 pub fn default_max_ws_message_size() -> usize {
     1024 * 1024 // 1MB - prevents memory exhaustion from large messages

@@ -54,8 +54,17 @@ pub async fn bootstrap(
         phase_start.elapsed().as_secs_f64() * 1000.0
     );
 
-    // Initialize RocksDB backend for all components (single StorageBackend trait)
-    let backend = Arc::new(RocksDBBackend::new(db.clone()));
+    // Initialize RocksDB backend with performance settings from config
+    // sync_writes=false (default) gives 10-100x better write throughput
+    // WAL is still enabled so data is safe from crashes (only ~1s of data could be lost)
+    let backend = Arc::new(RocksDBBackend::with_options(
+        db.clone(),
+        config.storage.rocksdb.sync_writes,
+        config.storage.rocksdb.disable_wal,
+    ));
+    if !config.storage.rocksdb.sync_writes {
+        debug!("RocksDB async writes enabled (sync_writes=false) for high throughput");
+    }
 
     // Initialize core stores from generic backend (uses kalamdb_store::StorageBackend)
     // Phase 5: AppContext now creates all dependencies internally!
@@ -342,9 +351,9 @@ pub async fn run(
     .max_connections(config.performance.max_connections)
     // Blocking thread pool size per worker for RocksDB and CPU-intensive ops
     .worker_max_blocking_threads(config.performance.worker_max_blocking_threads)
-    // Disable HTTP keep-alive to prevent CLOSE_WAIT accumulation in tests
-    // Each request gets a fresh connection that closes immediately after response
-    .keep_alive(std::time::Duration::ZERO)
+    // Enable HTTP keep-alive for connection reuse (improves throughput 2-3x)
+    // Connections stay open for reuse, reducing TCP handshake overhead
+    .keep_alive(std::time::Duration::from_secs(config.performance.keepalive_timeout))
     // Client must send request headers within this time
     .client_request_timeout(std::time::Duration::from_secs(config.performance.client_request_timeout))
     // Allow time for graceful connection shutdown
