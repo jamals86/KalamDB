@@ -12,12 +12,19 @@
     "url": "https://github.com/jamals86/KalamDB"
   },
   "files": [
+    "dist/",
     "kalam_link_bg.wasm",
     "kalam_link.js",
     "kalam_link.d.ts"
   ],
-  "main": "kalam_link.js",
-  "types": "kalam_link.d.ts",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    }
+  },
   "sideEffects": [
     "./snippets/*"
   ],

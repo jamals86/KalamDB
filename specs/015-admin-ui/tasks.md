@@ -23,13 +23,13 @@
 
 **Purpose**: Project initialization and basic structure for both backend and frontend
 
-- [ ] T001 Create `ui/` directory structure per implementation plan
-- [ ] T002 Initialize React project with Vite in `ui/package.json`
-- [ ] T003 [P] Configure TypeScript in `ui/tsconfig.json`
-- [ ] T004 [P] Configure Tailwind CSS in `ui/tailwind.config.ts`
-- [ ] T005 [P] Initialize shadcn/ui with `ui/components.json`
-- [ ] T006 [P] Configure Vite with API proxy in `ui/vite.config.ts`
-- [ ] T007 [P] Add workspace dependency `cookie` to root `Cargo.toml`
+- [x] T001 Create `ui/` directory structure per implementation plan
+- [x] T002 Initialize React project with Vite in `ui/package.json`
+- [x] T003 [P] Configure TypeScript in `ui/tsconfig.json`
+- [x] T004 [P] Configure Tailwind CSS in `ui/tailwind.config.ts`
+- [x] T005 [P] Initialize shadcn/ui with `ui/components.json`
+- [x] T006 [P] Configure Vite with API proxy in `ui/vite.config.ts`
+- [x] T007 [P] Add workspace dependency `cookie` to root `Cargo.toml`
 
 ---
 
@@ -41,29 +41,29 @@
 
 ### Backend Auth Infrastructure
 
-- [ ] T008 Create HttpOnly cookie handling module in `backend/crates/kalamdb-auth/src/cookie.rs`
-- [ ] T009 Add JWT token generation function to `backend/crates/kalamdb-auth/src/jwt_auth.rs`
-- [ ] T010 Add JWT token refresh function to `backend/crates/kalamdb-auth/src/jwt_auth.rs`
-- [ ] T011 Create auth handlers module in `backend/crates/kalamdb-api/src/handlers/auth.rs`
-- [ ] T012 Implement POST `/v1/api/auth/login` handler in `backend/crates/kalamdb-api/src/handlers/auth.rs`
-- [ ] T013 Implement POST `/v1/api/auth/refresh` handler in `backend/crates/kalamdb-api/src/handlers/auth.rs`
-- [ ] T014 Implement POST `/v1/api/auth/logout` handler in `backend/crates/kalamdb-api/src/handlers/auth.rs`
-- [ ] T015 Implement GET `/v1/api/auth/me` handler in `backend/crates/kalamdb-api/src/handlers/auth.rs`
-- [ ] T016 Add auth routes to `backend/crates/kalamdb-api/src/routes.rs`
-- [ ] T017 Add cookie-based auth middleware/extractor in `backend/crates/kalamdb-auth/src/extractor.rs`
-- [ ] T018 Configure static file serving for `/ui` route in `backend/crates/kalamdb-api/src/routes.rs`
+- [x] T008 Create HttpOnly cookie handling module in `backend/crates/kalamdb-auth/src/cookie.rs`
+- [x] T009 Add JWT token generation function to `backend/crates/kalamdb-auth/src/jwt_auth.rs`
+- [x] T010 Add JWT token refresh function to `backend/crates/kalamdb-auth/src/jwt_auth.rs`
+- [x] T011 Create auth handlers module in `backend/crates/kalamdb-api/src/handlers/auth.rs`
+- [x] T012 Implement POST `/v1/api/auth/login` handler in `backend/crates/kalamdb-api/src/handlers/auth.rs`
+- [x] T013 Implement POST `/v1/api/auth/refresh` handler in `backend/crates/kalamdb-api/src/handlers/auth.rs`
+- [x] T014 Implement POST `/v1/api/auth/logout` handler in `backend/crates/kalamdb-api/src/handlers/auth.rs`
+- [x] T015 Implement GET `/v1/api/auth/me` handler in `backend/crates/kalamdb-api/src/handlers/auth.rs`
+- [x] T016 Add auth routes to `backend/crates/kalamdb-api/src/routes.rs`
+- [x] T017 Add cookie-based auth middleware/extractor in `backend/crates/kalamdb-auth/src/extractor.rs`
+- [x] T018 Configure static file serving for `/ui` route in `backend/crates/kalamdb-api/src/routes.rs`
 
 ### Frontend Core Infrastructure
 
-- [ ] T019 [P] Create API client with cookie auth in `ui/src/lib/api.ts`
-- [ ] T020 [P] Create auth context and hooks in `ui/src/lib/auth.tsx`
-- [ ] T021 [P] Install and configure shadcn Button component in `ui/src/components/ui/button.tsx`
-- [ ] T022 [P] Install and configure shadcn Input component in `ui/src/components/ui/input.tsx`
-- [ ] T023 [P] Install and configure shadcn Card component in `ui/src/components/ui/card.tsx`
-- [ ] T024 Create app entry point with router in `ui/src/App.tsx`
-- [ ] T025 Create main layout with sidebar in `ui/src/components/layout/Layout.tsx`
-- [ ] T026 [P] Create sidebar navigation in `ui/src/components/layout/Sidebar.tsx`
-- [ ] T027 [P] Create header with user menu in `ui/src/components/layout/Header.tsx`
+- [x] T019 [P] Create API client with cookie auth in `ui/src/lib/api.ts`
+- [x] T020 [P] Create auth context and hooks in `ui/src/lib/auth.tsx`
+- [x] T021 [P] Install and configure shadcn Button component in `ui/src/components/ui/button.tsx`
+- [x] T022 [P] Install and configure shadcn Input component in `ui/src/components/ui/input.tsx`
+- [x] T023 [P] Install and configure shadcn Card component in `ui/src/components/ui/card.tsx`
+- [x] T024 Create app entry point with router in `ui/src/App.tsx`
+- [x] T025 Create main layout with sidebar in `ui/src/components/layout/Layout.tsx`
+- [x] T026 [P] Create sidebar navigation in `ui/src/components/layout/Sidebar.tsx`
+- [x] T027 [P] Create header with user menu in `ui/src/components/layout/Header.tsx`
 
 **Checkpoint**: Foundation ready - user story implementation can now begin
 
@@ -77,15 +77,15 @@
 
 ### Implementation for User Story 1
 
-- [ ] T028 [US1] Create Login page component in `ui/src/pages/Login.tsx`
-- [ ] T029 [US1] Create login form with validation in `ui/src/components/auth/LoginForm.tsx`
-- [ ] T030 [US1] Implement login API call in `ui/src/lib/auth.tsx`
-- [ ] T031 [US1] Implement token refresh logic (silent refresh before expiry) in `ui/src/lib/auth.tsx`
-- [ ] T032 [US1] Implement logout functionality in `ui/src/lib/auth.tsx`
-- [ ] T033 [US1] Create protected route wrapper in `ui/src/components/auth/ProtectedRoute.tsx`
-- [ ] T034 [US1] Create Dashboard page (landing after login) in `ui/src/pages/Dashboard.tsx`
-- [ ] T035 [US1] Add role check to restrict UI to dba/system roles in `ui/src/components/auth/ProtectedRoute.tsx`
-- [ ] T036 [US1] Handle 401 responses globally and redirect to login in `ui/src/lib/api.ts`
+- [x] T028 [US1] Create Login page component in `ui/src/pages/Login.tsx`
+- [x] T029 [US1] Create login form with validation in `ui/src/components/auth/LoginForm.tsx`
+- [x] T030 [US1] Implement login API call in `ui/src/lib/auth.tsx`
+- [x] T031 [US1] Implement token refresh logic (silent refresh before expiry) in `ui/src/lib/auth.tsx`
+- [x] T032 [US1] Implement logout functionality in `ui/src/lib/auth.tsx`
+- [x] T033 [US1] Create protected route wrapper in `ui/src/components/auth/ProtectedRoute.tsx`
+- [x] T034 [US1] Create Dashboard page (landing after login) in `ui/src/pages/Dashboard.tsx`
+- [x] T035 [US1] Add role check to restrict UI to dba/system roles in `ui/src/components/auth/ProtectedRoute.tsx`
+- [x] T036 [US1] Handle 401 responses globally and redirect to login in `ui/src/lib/api.ts`
 
 **Checkpoint**: User Story 1 complete - login/logout flow fully functional
 
@@ -99,19 +99,19 @@
 
 ### Implementation for User Story 2
 
-- [ ] T037 [P] [US2] Install Monaco Editor package (`@monaco-editor/react`) in `ui/package.json`
-- [ ] T038 [P] [US2] Install TanStack Table package (`@tanstack/react-table`) in `ui/package.json`
-- [ ] T039 [US2] Create SQL Studio page in `ui/src/pages/SqlStudio.tsx`
-- [ ] T040 [US2] Create Monaco Editor wrapper component in `ui/src/components/sql-studio/Editor.tsx`
-- [ ] T041 [US2] Implement SQL syntax highlighting config in `ui/src/components/sql-studio/sql-language.ts`
-- [ ] T042 [US2] Create autocomplete provider (fetches schema via SQL) in `ui/src/components/sql-studio/Autocomplete.ts`
-- [ ] T043 [US2] Create query execution hook in `ui/src/hooks/useQueryExecution.ts`
-- [ ] T044 [US2] Create results data grid component in `ui/src/components/sql-studio/Results.tsx`
-- [ ] T045 [US2] Implement sorting and filtering in results grid in `ui/src/components/sql-studio/Results.tsx`
-- [ ] T046 [US2] Implement pagination for large result sets in `ui/src/components/sql-studio/Results.tsx`
-- [ ] T047 [US2] Add 10,000 row limit warning display in `ui/src/components/sql-studio/Results.tsx`
-- [ ] T048 [US2] Add query execution timer and cancel button in `ui/src/components/sql-studio/Editor.tsx`
-- [ ] T049 [US2] Display query errors clearly in `ui/src/components/sql-studio/ErrorDisplay.tsx`
+- [x] T037 [P] [US2] Install Monaco Editor package (`@monaco-editor/react`) in `ui/package.json`
+- [x] T038 [P] [US2] Install TanStack Table package (`@tanstack/react-table`) in `ui/package.json`
+- [x] T039 [US2] Create SQL Studio page in `ui/src/pages/SqlStudio.tsx`
+- [x] T040 [US2] Create Monaco Editor wrapper component in `ui/src/components/sql-studio/Editor.tsx`
+- [x] T041 [US2] Implement SQL syntax highlighting config in `ui/src/components/sql-studio/sql-language.ts`
+- [x] T042 [US2] Create autocomplete provider (fetches schema via SQL) in `ui/src/components/sql-studio/Autocomplete.ts`
+- [x] T043 [US2] Create query execution hook in `ui/src/hooks/useQueryExecution.ts`
+- [x] T044 [US2] Create results data grid component in `ui/src/components/sql-studio/Results.tsx`
+- [x] T045 [US2] Implement sorting and filtering in results grid in `ui/src/components/sql-studio/Results.tsx`
+- [x] T046 [US2] Implement pagination for large result sets in `ui/src/components/sql-studio/Results.tsx`
+- [x] T047 [US2] Add 10,000 row limit warning display in `ui/src/components/sql-studio/Results.tsx`
+- [x] T048 [US2] Add query execution timer and cancel button in `ui/src/components/sql-studio/Editor.tsx`
+- [x] T049 [US2] Display query errors clearly in `ui/src/components/sql-studio/ErrorDisplay.tsx`
 
 **Checkpoint**: User Story 2 complete - SQL Studio fully functional
 
@@ -125,16 +125,16 @@
 
 ### Implementation for User Story 3
 
-- [ ] T050 [P] [US3] Install shadcn Table component in `ui/src/components/ui/table.tsx`
-- [ ] T051 [P] [US3] Install shadcn Dialog component in `ui/src/components/ui/dialog.tsx`
-- [ ] T052 [P] [US3] Install shadcn Form component in `ui/src/components/ui/form.tsx`
-- [ ] T053 [US3] Create Users page in `ui/src/pages/Users.tsx`
-- [ ] T054 [US3] Create users list component with data fetching in `ui/src/components/users/UsersList.tsx`
-- [ ] T055 [US3] Create user form (create/edit) dialog in `ui/src/components/users/UserForm.tsx`
-- [ ] T056 [US3] Implement user CRUD via SQL queries in `ui/src/hooks/useUsers.ts`
-- [ ] T057 [US3] Add delete confirmation dialog in `ui/src/components/users/DeleteUserDialog.tsx`
-- [ ] T058 [US3] Add self-deletion prevention check in `ui/src/hooks/useUsers.ts`
-- [ ] T059 [US3] Add search and filter functionality in `ui/src/components/users/UsersList.tsx`
+- [x] T050 [P] [US3] Install shadcn Table component in `ui/src/components/ui/table.tsx`
+- [x] T051 [P] [US3] Install shadcn Dialog component in `ui/src/components/ui/dialog.tsx`
+- [x] T052 [P] [US3] Install shadcn Form component in `ui/src/components/ui/form.tsx`
+- [x] T053 [US3] Create Users page in `ui/src/pages/Users.tsx`
+- [x] T054 [US3] Create users list component with data fetching in `ui/src/components/users/UsersList.tsx`
+- [x] T055 [US3] Create user form (create/edit) dialog in `ui/src/components/users/UserForm.tsx`
+- [x] T056 [US3] Implement user CRUD via SQL queries in `ui/src/hooks/useUsers.ts`
+- [x] T057 [US3] Add delete confirmation dialog in `ui/src/components/users/DeleteUserDialog.tsx`
+- [x] T058 [US3] Add self-deletion prevention check in `ui/src/hooks/useUsers.ts`
+- [x] T059 [US3] Add search and filter functionality in `ui/src/components/users/UsersList.tsx`
 
 **Checkpoint**: User Story 3 complete - User management fully functional
 
@@ -148,10 +148,10 @@
 
 ### Implementation for User Story 4
 
-- [ ] T060 [US4] Create Storages page in `ui/src/pages/Storages.tsx`
-- [ ] T061 [US4] Create storage list component in `ui/src/components/storages/StorageList.tsx`
-- [ ] T062 [US4] Create storage detail view in `ui/src/components/storages/StorageDetail.tsx`
-- [ ] T063 [US4] Implement storage data fetching via SQL in `ui/src/hooks/useStorages.ts`
+- [x] T060 [US4] Create Storages page in `ui/src/pages/Storages.tsx`
+- [x] T061 [US4] Create storage list component in `ui/src/components/storages/StorageList.tsx`
+- [x] T062 [US4] Create storage detail view in `ui/src/components/storages/StorageDetail.tsx`
+- [x] T063 [US4] Implement storage data fetching via SQL in `ui/src/hooks/useStorages.ts`
 
 **Checkpoint**: User Story 4 complete - Storage viewing fully functional
 
@@ -165,11 +165,11 @@
 
 ### Implementation for User Story 5
 
-- [ ] T064 [US5] Create Namespaces page in `ui/src/pages/Namespaces.tsx`
-- [ ] T065 [US5] Create namespace list component in `ui/src/components/namespaces/NamespaceList.tsx`
-- [ ] T066 [US5] Create namespace detail view with tables in `ui/src/components/namespaces/NamespaceDetail.tsx`
-- [ ] T067 [US5] Create namespace form dialog in `ui/src/components/namespaces/NamespaceForm.tsx`
-- [ ] T068 [US5] Implement namespace operations via SQL in `ui/src/hooks/useNamespaces.ts`
+- [x] T064 [US5] Create Namespaces page in `ui/src/pages/Namespaces.tsx`
+- [x] T065 [US5] Create namespace list component in `ui/src/components/namespaces/NamespaceList.tsx`
+- [x] T066 [US5] Create namespace detail view with tables in `ui/src/components/namespaces/NamespaceDetail.tsx`
+- [x] T067 [US5] Create namespace form dialog in `ui/src/components/namespaces/NamespaceForm.tsx`
+- [x] T068 [US5] Implement namespace operations via SQL in `ui/src/hooks/useNamespaces.ts`
 
 **Checkpoint**: User Story 5 complete - Namespace management fully functional
 
@@ -183,11 +183,11 @@
 
 ### Implementation for User Story 6
 
-- [ ] T069 [US6] Create storage browser component in `ui/src/components/storages/StorageBrowser.tsx`
-- [ ] T070 [US6] Create folder/file list view in `ui/src/components/storages/FileList.tsx`
-- [ ] T071 [US6] Create breadcrumb navigation in `ui/src/components/storages/Breadcrumbs.tsx`
-- [ ] T072 [US6] Implement file browsing via SQL (if system.storage_files available) in `ui/src/hooks/useStorageBrowser.ts`
-- [ ] T073 [US6] Add file metadata display (size, date) in `ui/src/components/storages/FileList.tsx`
+- [x] T069 [US6] Create storage browser component in `ui/src/components/storages/StorageBrowser.tsx`
+- [x] T070 [US6] Create folder/file list view in `ui/src/components/storages/FileList.tsx`
+- [x] T071 [US6] Create breadcrumb navigation in `ui/src/components/storages/Breadcrumbs.tsx`
+- [x] T072 [US6] Implement file browsing via SQL (if system.storage_files available) in `ui/src/hooks/useStorageBrowser.ts`
+- [x] T073 [US6] Add file metadata display (size, date) in `ui/src/components/storages/FileList.tsx`
 
 **Checkpoint**: User Story 6 complete - Storage browsing fully functional
 
@@ -201,10 +201,10 @@
 
 ### Implementation for User Story 7
 
-- [ ] T074 [US7] Create Settings page in `ui/src/pages/Settings.tsx`
-- [ ] T075 [US7] Create settings display component in `ui/src/components/settings/SettingsView.tsx`
-- [ ] T076 [US7] Implement settings fetching via SQL in `ui/src/hooks/useSettings.ts`
-- [ ] T077 [US7] Group settings by category in display in `ui/src/components/settings/SettingsView.tsx`
+- [x] T074 [US7] Create Settings page in `ui/src/pages/Settings.tsx`
+- [x] T075 [US7] Create settings display component in `ui/src/components/settings/SettingsView.tsx`
+- [x] T076 [US7] Implement settings fetching via SQL in `ui/src/hooks/useSettings.ts`
+- [x] T077 [US7] Group settings by category in display in `ui/src/components/settings/SettingsView.tsx`
 
 **Checkpoint**: User Story 7 complete - Settings viewing fully functional
 
@@ -214,14 +214,14 @@
 
 **Purpose**: Improvements that affect multiple user stories
 
-- [ ] T078 [P] Add loading states and skeletons across all pages
-- [ ] T079 [P] Add error boundary component in `ui/src/components/ErrorBoundary.tsx`
-- [ ] T080 [P] Add toast notifications for success/error in `ui/src/components/ui/toast.tsx`
-- [ ] T081 Build production frontend bundle with `pnpm build` in `ui/`
-- [ ] T082 Configure backend to serve built UI from `ui/dist/` in `backend/crates/kalamdb-api/src/routes.rs`
-- [ ] T083 [P] Update `ui/README.md` with development instructions
-- [ ] T084 Run quickstart.md validation - verify login flow works end-to-end
-- [ ] T085 Create backend integration test for auth endpoints in `backend/tests/test_auth_api.rs`
+- [x] T078 [P] Add loading states and skeletons across all pages
+- [x] T079 [P] Add error boundary component in `ui/src/components/ErrorBoundary.tsx`
+- [x] T080 [P] Add toast notifications for success/error in `ui/src/components/ui/toast.tsx`
+- [x] T081 Build production frontend bundle with `pnpm build` in `ui/`
+- [x] T082 Configure backend to serve built UI from `ui/dist/` in `backend/crates/kalamdb-api/src/routes.rs`
+- [x] T083 [P] Update `ui/README.md` with development instructions
+- [x] T084 Run quickstart.md validation - verify login flow works end-to-end
+- [x] T085 Create backend integration test for auth endpoints in `backend/tests/test_auth_api.rs`
 
 ---
 

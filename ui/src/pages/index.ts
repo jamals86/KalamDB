@@ -1,0 +1,7 @@
+export { default as Dashboard } from "./Dashboard";
+export { default as Login } from "./Login";
+export { default as SqlStudio } from "./SqlStudio";
+export { default as Users } from "./Users";
+export { default as Storages } from "./Storages";
+export { default as Namespaces } from "./Namespaces";
+export { default as Settings } from "./Settings";

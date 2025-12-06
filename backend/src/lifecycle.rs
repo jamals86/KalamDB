@@ -9,6 +9,7 @@ use crate::routes;
 use crate::ServerConfig;
 use actix_web::{web, App, HttpServer};
 use anyhow::Result;
+use kalamdb_api::handlers::AuthConfig;
 use kalamdb_api::rate_limiter::{RateLimitConfig, RateLimiter};
 use kalamdb_commons::{AuthType, Role, StorageId, StorageMode, UserId};
 use kalamdb_core::live::ConnectionsManager;
@@ -313,6 +314,7 @@ pub async fn run(
 
     let app_context_for_handler = app_context.clone();
     let connection_registry_for_handler = connection_registry.clone();
+    let auth_config = AuthConfig::default();
     let server = HttpServer::new(move || {
         App::new()
             // Connection protection (first middleware - drops bad requests early)
@@ -327,6 +329,7 @@ pub async fn run(
             .app_data(web::Data::new(live_query_manager.clone()))
             .app_data(web::Data::new(user_repo.clone()))
             .app_data(web::Data::new(connection_registry_for_handler.clone()))
+            .app_data(web::Data::new(auth_config.clone()))
             .configure(routes::configure)
     })
     // Set backlog BEFORE bind() - this affects the listen queue size

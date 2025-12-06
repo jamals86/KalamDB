@@ -383,8 +383,10 @@ struct JwtConfig {
 static JWT_CONFIG: Lazy<JwtConfig> = Lazy::new(|| {
     let secret = std::env::var("KALAMDB_JWT_SECRET")
         .unwrap_or_else(|_| "kalamdb-dev-secret-key-change-in-production".to_string());
+    // Default trusted issuer is "kalamdb" (matching KALAMDB_ISSUER in jwt_auth.rs)
+    // Additional issuers can be added via KALAMDB_JWT_TRUSTED_ISSUERS env var
     let trusted = std::env::var("KALAMDB_JWT_TRUSTED_ISSUERS")
-        .unwrap_or_else(|_| "kalamdb-test".to_string());
+        .unwrap_or_else(|_| "kalamdb".to_string());
     let trusted_issuers: Vec<String> = trusted.split(',').map(|s| s.trim().to_string()).collect();
     
     JwtConfig {
