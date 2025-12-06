@@ -16,11 +16,11 @@
 //! - Automatic IP banning for persistent abusers
 //! - Request body size limits prevent memory exhaustion
 
+use dashmap::DashMap;
 use kalamdb_commons::models::UserId;
 use kalamdb_core::live::ConnectionId;
-use std::collections::HashMap;
 use std::net::IpAddr;
-use std::sync::{Arc, RwLock};
+use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 /// Rate limit configuration
@@ -120,9 +120,9 @@ impl TokenBucket {
 /// Rate limiter for users and connections
 pub struct RateLimiter {
     config: RateLimitConfig,
-    user_query_buckets: Arc<RwLock<HashMap<String, TokenBucket>>>,
-    user_subscription_counts: Arc<RwLock<HashMap<String, u32>>>,
-    connection_message_buckets: Arc<RwLock<HashMap<ConnectionId, TokenBucket>>>,
+    user_query_buckets: Arc<dashmap::DashMap<String, TokenBucket>>,
+    user_subscription_counts: Arc<dashmap::DashMap<String, u32>>,
+    connection_message_buckets: Arc<dashmap::DashMap<ConnectionId, TokenBucket>>,
 }
 
 impl RateLimiter {
@@ -135,9 +135,9 @@ impl RateLimiter {
     pub fn with_config(config: RateLimitConfig) -> Self {
         Self {
             config,
-            user_query_buckets: Arc::new(RwLock::new(HashMap::new())),
-            user_subscription_counts: Arc::new(RwLock::new(HashMap::new())),
-            connection_message_buckets: Arc::new(RwLock::new(HashMap::new())),
+            user_query_buckets: Arc::new(dashmap::DashMap::new()),
+            user_subscription_counts: Arc::new(dashmap::DashMap::new()),
+            connection_message_buckets: Arc::new(dashmap::DashMap::new()),
         }
     }
 
@@ -145,15 +145,16 @@ impl RateLimiter {
     /// Returns true if allowed, false if rate limit exceeded
     pub fn check_query_rate(&self, user_id: &UserId) -> bool {
         let user_key = user_id.as_str().to_string();
-        let mut buckets = self.user_query_buckets.write().unwrap();
-
-        let bucket = buckets.entry(user_key.clone()).or_insert_with(|| {
-            TokenBucket::new(
-                self.config.max_queries_per_user,
-                self.config.max_queries_per_user,
-                self.config.window,
-            )
-        });
+        let mut bucket = self
+            .user_query_buckets
+            .entry(user_key)
+            .or_insert_with(|| {
+                TokenBucket::new(
+                    self.config.max_queries_per_user,
+                    self.config.max_queries_per_user,
+                    self.config.window,
+                )
+            });
 
         bucket.try_consume(1)
     }
@@ -162,10 +163,9 @@ impl RateLimiter {
     /// Returns true if allowed, false if limit exceeded
     pub fn check_subscription_limit(&self, user_id: &UserId) -> bool {
         let user_key = user_id.as_str().to_string();
-        let counts = self.user_subscription_counts.read().unwrap();
 
-        match counts.get(&user_key) {
-            Some(&count) => count < self.config.max_subscriptions_per_user,
+        match self.user_subscription_counts.get(&user_key) {
+            Some(count) => *count < self.config.max_subscriptions_per_user,
             None => true, // No subscriptions yet
         }
     }
@@ -173,15 +173,17 @@ impl RateLimiter {
     /// Increment user subscription count
     pub fn increment_subscription(&self, user_id: &UserId) {
         let user_key = user_id.as_str().to_string();
-        let mut counts = self.user_subscription_counts.write().unwrap();
-        *counts.entry(user_key).or_insert(0) += 1;
+        let mut count = self
+            .user_subscription_counts
+            .entry(user_key)
+            .or_insert(0);
+        *count += 1;
     }
 
     /// Decrement user subscription count
     pub fn decrement_subscription(&self, user_id: &UserId) {
         let user_key = user_id.as_str().to_string();
-        let mut counts = self.user_subscription_counts.write().unwrap();
-        if let Some(count) = counts.get_mut(&user_key) {
+        if let Some(mut count) = self.user_subscription_counts.get_mut(&user_key) {
             *count = count.saturating_sub(1);
         }
     }
@@ -189,23 +191,23 @@ impl RateLimiter {
     /// Check if a connection can send a message
     /// Returns true if allowed, false if rate limit exceeded
     pub fn check_message_rate(&self, connection_id: &ConnectionId) -> bool {
-        let mut buckets = self.connection_message_buckets.write().unwrap();
-
-        let bucket = buckets.entry(connection_id.clone()).or_insert_with(|| {
-            TokenBucket::new(
-                self.config.max_messages_per_connection,
-                self.config.max_messages_per_connection,
-                self.config.window,
-            )
-        });
+        let mut bucket = self
+            .connection_message_buckets
+            .entry(connection_id.clone())
+            .or_insert_with(|| {
+                TokenBucket::new(
+                    self.config.max_messages_per_connection,
+                    self.config.max_messages_per_connection,
+                    self.config.window,
+                )
+            });
 
         bucket.try_consume(1)
     }
 
     /// Clean up rate limit state for a connection
     pub fn cleanup_connection(&self, connection_id: &ConnectionId) {
-        let mut buckets = self.connection_message_buckets.write().unwrap();
-        buckets.remove(connection_id);
+        self.connection_message_buckets.remove(connection_id);
     }
 
     /// Get current rate limit stats for a user
@@ -213,16 +215,18 @@ impl RateLimiter {
         let user_key = user_id.as_str().to_string();
 
         let available_queries = {
-            let mut buckets = self.user_query_buckets.write().unwrap();
-            buckets
-                .get_mut(&user_key)
-                .map(|b| b.available_tokens())
-                .unwrap_or(self.config.max_queries_per_user)
+            if let Some(mut bucket) = self.user_query_buckets.get_mut(&user_key) {
+                bucket.available_tokens()
+            } else {
+                self.config.max_queries_per_user
+            }
         };
 
         let subscription_count = {
-            let counts = self.user_subscription_counts.read().unwrap();
-            counts.get(&user_key).copied().unwrap_or(0)
+            self.user_subscription_counts
+                .get(&user_key)
+                .map(|count| *count)
+                .unwrap_or(0)
         };
 
         (available_queries, subscription_count)
@@ -328,7 +332,7 @@ pub enum ConnectionGuardResult {
 /// 4. Request body size limits
 pub struct ConnectionGuard {
     config: ConnectionGuardConfig,
-    ip_states: Arc<RwLock<HashMap<IpAddr, IpState>>>,
+    ip_states: Arc<DashMap<IpAddr, IpState>>,
 }
 
 impl ConnectionGuard {
@@ -341,7 +345,7 @@ impl ConnectionGuard {
     pub fn with_config(config: ConnectionGuardConfig) -> Self {
         Self {
             config,
-            ip_states: Arc::new(RwLock::new(HashMap::new())),
+            ip_states: Arc::new(DashMap::new()),
         }
     }
 
@@ -381,8 +385,8 @@ impl ConnectionGuard {
             }
         }
 
-        let mut states = self.ip_states.write().unwrap();
-        let state = states
+        let mut state = self
+            .ip_states
             .entry(ip)
             .or_insert_with(|| IpState::new(&self.config));
 
@@ -436,8 +440,8 @@ impl ConnectionGuard {
             return ConnectionGuardResult::Allowed;
         }
 
-        let mut states = self.ip_states.write().unwrap();
-        let state = states
+        let mut state = self
+            .ip_states
             .entry(ip)
             .or_insert_with(|| IpState::new(&self.config));
 
@@ -483,16 +487,14 @@ impl ConnectionGuard {
             return;
         }
 
-        let mut states = self.ip_states.write().unwrap();
-        if let Some(state) = states.get_mut(&ip) {
+        if let Some(mut state) = self.ip_states.get_mut(&ip) {
             state.active_connections = state.active_connections.saturating_sub(1);
         }
     }
 
     /// Get the current connection count for an IP
     pub fn get_connection_count(&self, ip: IpAddr) -> u32 {
-        let states = self.ip_states.read().unwrap();
-        states
+        self.ip_states
             .get(&ip)
             .map(|s| s.active_connections)
             .unwrap_or(0)
@@ -500,19 +502,17 @@ impl ConnectionGuard {
 
     /// Check if an IP is currently banned
     pub fn is_banned(&self, ip: IpAddr) -> bool {
-        let states = self.ip_states.read().unwrap();
-        if let Some(state) = states.get(&ip) {
-            if let Some(banned_until) = state.banned_until {
-                return Instant::now() < banned_until;
-            }
-        }
-        false
+        self.ip_states
+            .get(&ip)
+            .and_then(|state| state.banned_until)
+            .map(|banned_until| Instant::now() < banned_until)
+            .unwrap_or(false)
     }
 
     /// Manually ban an IP (for external threat detection)
     pub fn ban_ip(&self, ip: IpAddr, duration: Duration) {
-        let mut states = self.ip_states.write().unwrap();
-        let state = states
+        let mut state = self
+            .ip_states
             .entry(ip)
             .or_insert_with(|| IpState::new(&self.config));
 
@@ -524,8 +524,7 @@ impl ConnectionGuard {
 
     /// Unban an IP
     pub fn unban_ip(&self, ip: IpAddr) {
-        let mut states = self.ip_states.write().unwrap();
-        if let Some(state) = states.get_mut(&ip) {
+        if let Some(mut state) = self.ip_states.get_mut(&ip) {
             state.banned_until = None;
             log::info!("[CONN_GUARD] IP {} unbanned", ip);
         }
@@ -533,10 +532,9 @@ impl ConnectionGuard {
 
     /// Clean up old IP state entries (call periodically)
     pub fn cleanup_stale_entries(&self) {
-        let mut states = self.ip_states.write().unwrap();
         let now = Instant::now();
 
-        states.retain(|ip, state| {
+        self.ip_states.retain(|ip, state| {
             // Keep if has active connections
             if state.active_connections > 0 {
                 return true;
@@ -566,15 +564,19 @@ impl ConnectionGuard {
 
     /// Get statistics for monitoring
     pub fn get_stats(&self) -> ConnectionGuardStats {
-        let states = self.ip_states.read().unwrap();
-
-        let total_ips = states.len();
-        let banned_ips = states
-            .values()
-            .filter(|s| s.banned_until.map(|t| Instant::now() < t).unwrap_or(false))
+        let total_ips = self.ip_states.len();
+        let now = Instant::now();
+        let banned_ips = self
+            .ip_states
+            .iter()
+            .filter(|entry| entry.banned_until.map(|t| now < t).unwrap_or(false))
             .count();
-        let total_connections: u32 = states.values().map(|s| s.active_connections).sum();
-        let total_violations: u32 = states.values().map(|s| s.violation_count).sum();
+        let total_connections: u32 = self
+            .ip_states
+            .iter()
+            .map(|entry| entry.active_connections)
+            .sum();
+        let total_violations: u32 = self.ip_states.iter().map(|entry| entry.violation_count).sum();
 
         ConnectionGuardStats {
             tracked_ips: total_ips,

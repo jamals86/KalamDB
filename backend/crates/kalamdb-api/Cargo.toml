@@ -51,6 +51,9 @@ base64 = { workspace = true }
 # Compression
 flate2 = { workspace = true }
 
+# Concurrency
+dashmap = { workspace = true }
+
 [build-dependencies]
 chrono = { workspace = true }
 

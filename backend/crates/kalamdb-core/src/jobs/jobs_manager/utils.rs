@@ -78,7 +78,7 @@ impl JobsManager {
             self.jobs_provider
                 .update_job_async(job)
                 .await
-                .map_err(|e| KalamDbError::IoError(format!("Failed to recover job: {}", e)))?;
+                .map_err(|e| KalamDbError::io_message(format!("Failed to recover job: {}", e)))?;
 
             self.log_job_event(&job_id, "error", "Job marked as failed (server restart)");
         }

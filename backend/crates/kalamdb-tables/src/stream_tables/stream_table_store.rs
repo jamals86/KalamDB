@@ -23,11 +23,19 @@ use std::sync::Arc;
 /// - Removed: event_id (redundant with _seq), timestamp (embedded in _seq Snowflake ID), row_id, inserted_at, _updated
 /// - Kept: user_id (event owner), _seq (unique version ID with embedded timestamp), fields (all event data)
 /// - Note: NO _deleted field (stream tables don't use soft deletes, only TTL eviction)
+///
+/// **Note on System Column Naming**:
+/// The underscore prefix (`_seq`) follows SQL convention for system-managed columns.
+/// This name matches the SQL column name exactly for consistency across the codebase.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct StreamTableRow {
+    /// User who owns this event
     pub user_id: UserId,
-    pub _seq: SeqId, //TODO: Rename this to seq without the _
-    pub fields: Row, // All event data
+    /// Monotonically increasing sequence ID (Snowflake ID with embedded timestamp)
+    /// Maps to SQL column `_seq`
+    pub _seq: SeqId,
+    /// All event data (serialized as JSON map)
+    pub fields: Row,
 }
 
 impl KSerializable for StreamTableRow {}

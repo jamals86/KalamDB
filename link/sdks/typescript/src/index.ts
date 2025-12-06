@@ -50,19 +50,6 @@
 
 import init, { KalamClient as WasmClient } from '../kalam_link.js';
 
-// Extend WasmClient type with static factory methods that will be available at runtime
-// These are defined in wasm.rs but not in the auto-generated TypeScript types
-declare module '../kalam_link.js' {
-  interface KalamClient {
-    getAuthType(): string;
-  }
-  // eslint-disable-next-line @typescript-eslint/no-namespace
-  namespace KalamClient {
-    function withJwt(url: string, token: string): KalamClient;
-    function anonymous(url: string): KalamClient;
-  }
-}
-
 // Re-export authentication types
 export { 
   Auth,

@@ -17,7 +17,7 @@ impl JobsManager {
         self.jobs_provider
             .get_job_async(job_id)
             .await
-            .map_err(|e| KalamDbError::IoError(format!("Failed to get job: {}", e)))
+            .map_err(|e| KalamDbError::io_message(format!("Failed to get job: {}", e)))
     }
 
     /// List jobs matching filter criteria
@@ -33,7 +33,7 @@ impl JobsManager {
         self.jobs_provider
             .list_jobs_filtered_async(filter)
             .await
-            .map_err(|e| KalamDbError::IoError(format!("Failed to list jobs: {}", e)))
+            .map_err(|e| KalamDbError::io_message(format!("Failed to list jobs: {}", e)))
     }
 
     /// Check if active job with idempotency key exists

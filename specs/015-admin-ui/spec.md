@@ -169,25 +169,25 @@ As a system administrator, I want to view database configuration settings, so th
 - **FR-020**: System MUST limit query results to a maximum of 10,000 rows, displaying a warning when limit is reached
 - **FR-021**: System MUST enforce a 30-second query execution timeout with user-visible countdown and cancellation option
 
-**User Management**:
-- **FR-022**: System MUST provide CRUD operations for user accounts through the API
-- **FR-023**: UI MUST display a list of all users with search and filter capabilities
-- **FR-024**: UI MUST provide forms for creating and editing users
+**User Management** (via SQL):
+- **FR-022**: UI MUST display users by executing `SELECT * FROM system.users`
+- **FR-023**: UI MUST create users by executing `INSERT INTO system.users`
+- **FR-024**: UI MUST update users by executing `UPDATE system.users`
 - **FR-025**: System MUST enforce role-based access control (user, service, dba, system roles)
 - **FR-026**: System MUST prevent users from deleting their own account
 
-**Storage & Namespace Management**:
-- **FR-027**: System MUST provide read access to storage configurations
-- **FR-028**: System MUST provide CRUD operations for namespaces
-- **FR-029**: UI MUST display storage and namespace lists with relevant metadata
+**Storage & Namespace Management** (via SQL):
+- **FR-027**: UI MUST display storages by executing `SELECT * FROM system.storages`
+- **FR-028**: UI MUST manage namespaces via `CREATE NAMESPACE` / `DROP NAMESPACE` SQL
+- **FR-029**: UI MUST display namespace/table lists via `information_schema` queries
 
 **Storage Browser**:
-- **FR-030**: System MUST provide an API to list folder contents within storages
+- **FR-030**: UI MAY browse storage files via `SELECT * FROM system.storage_files` (if available)
 - **FR-031**: UI MUST provide hierarchical navigation through storage folders
 - **FR-032**: UI MUST display file metadata (name, size, modification date)
 
-**Settings**:
-- **FR-033**: System MUST provide an API to retrieve current configuration settings
+**Settings** (via SQL):
+- **FR-033**: UI MUST display settings by executing `SELECT * FROM system.settings` or similar
 - **FR-034**: UI MUST display settings in organized, readable format
 
 ### Key Entities

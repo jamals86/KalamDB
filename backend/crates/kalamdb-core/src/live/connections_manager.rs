@@ -324,7 +324,7 @@ impl ConnectionsManager {
         };
 
         let shared_state = Arc::new(RwLock::new(state));
-        self.connections.insert(connection_id.clone(), shared_state.clone());
+        self.connections.insert(connection_id.clone(), Arc::clone(&shared_state));
         let count = self.total_connections.fetch_add(1, Ordering::AcqRel) + 1;
 
         debug!("Connection registered: {} (total: {})", connection_id, count);

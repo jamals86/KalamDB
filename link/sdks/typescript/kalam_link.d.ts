@@ -3,16 +3,32 @@
 /**
  * WASM-compatible KalamDB client with auto-reconnection support
  *
+ * Supports multiple authentication methods:
+ * - Basic Auth: `new KalamClient(url, username, password)`
+ * - JWT Token: `KalamClient.withJwt(url, token)`
+ * - Anonymous: `KalamClient.anonymous(url)`
+ *
  * # Example (JavaScript)
  * ```js
- * import init, { KalamClient } from './pkg/kalam_link.js';
+ * import init, { KalamClient, KalamClientWithJwt, KalamClientAnonymous } from './pkg/kalam_link.js';
  *
  * await init();
+ *
+ * // Basic Auth (username/password)
  * const client = new KalamClient(
  *   "http://localhost:8080",
  *   "username",
  *   "password"
  * );
+ *
+ * // JWT Token Auth
+ * const jwtClient = KalamClientWithJwt.new(
+ *   "http://localhost:8080",
+ *   "eyJhbGciOiJIUzI1NiIs..."
+ * );
+ *
+ * // Anonymous (localhost bypass)
+ * const anonClient = KalamClientAnonymous.new("http://localhost:8080");
  *
  * // Configure auto-reconnect (enabled by default)
  * client.setAutoReconnect(true);
@@ -35,7 +51,7 @@ export class KalamClient {
   free(): void;
   [Symbol.dispose](): void;
   /**
-   * Create a new KalamDB client (T042, T043, T044)
+   * Create a new KalamDB client with HTTP Basic Authentication (T042, T043, T044)
    *
    * # Arguments
    * * `url` - KalamDB server URL (required, e.g., "http://localhost:8080")
@@ -46,6 +62,51 @@ export class KalamClient {
    * Returns JsValue error if url, username, or password is empty
    */
   constructor(url: string, username: string, password: string);
+  /**
+   * Create a new KalamDB client with JWT Token Authentication
+   *
+   * # Arguments
+   * * `url` - KalamDB server URL (required, e.g., "http://localhost:8080")
+   * * `token` - JWT token for authentication (required)
+   *
+   * # Errors
+   * Returns JsValue error if url or token is empty
+   *
+   * # Example (JavaScript)
+   * ```js
+   * const client = KalamClient.withJwt(
+   *   "http://localhost:8080",
+   *   "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9..."
+   * );
+   * await client.connect();
+   * ```
+   */
+  static withJwt(url: string, token: string): KalamClient;
+  /**
+   * Create a new KalamDB client with no authentication
+   *
+   * Useful for localhost connections where the server allows
+   * unauthenticated access, or for development/testing scenarios.
+   *
+   * # Arguments
+   * * `url` - KalamDB server URL (required, e.g., "http://localhost:8080")
+   *
+   * # Errors
+   * Returns JsValue error if url is empty
+   *
+   * # Example (JavaScript)
+   * ```js
+   * const client = KalamClient.anonymous("http://localhost:8080");
+   * await client.connect();
+   * ```
+   */
+  static anonymous(url: string): KalamClient;
+  /**
+   * Get the current authentication type
+   *
+   * Returns one of: "basic", "jwt", or "none"
+   */
+  getAuthType(): string;
   /**
    * Enable or disable automatic reconnection
    *
@@ -192,6 +253,9 @@ export interface InitOutput {
   readonly memory: WebAssembly.Memory;
   readonly __wbg_kalamclient_free: (a: number, b: number) => void;
   readonly kalamclient_new: (a: number, b: number, c: number, d: number, e: number, f: number) => [number, number, number];
+  readonly kalamclient_withJwt: (a: number, b: number, c: number, d: number) => [number, number, number];
+  readonly kalamclient_anonymous: (a: number, b: number) => [number, number, number];
+  readonly kalamclient_getAuthType: (a: number) => [number, number];
   readonly kalamclient_setAutoReconnect: (a: number, b: number) => void;
   readonly kalamclient_setReconnectDelay: (a: number, b: bigint, c: bigint) => void;
   readonly kalamclient_setMaxReconnectAttempts: (a: number, b: number) => void;
@@ -207,11 +271,11 @@ export interface InitOutput {
   readonly kalamclient_subscribe: (a: number, b: number, c: number, d: any) => any;
   readonly kalamclient_subscribeWithSql: (a: number, b: number, c: number, d: number, e: number, f: any) => any;
   readonly kalamclient_unsubscribe: (a: number, b: number, c: number) => any;
-  readonly wasm_bindgen__convert__closures_____invoke__hbe312fe94906cca5: (a: number, b: number, c: any) => void;
-  readonly wasm_bindgen__closure__destroy__h07a7edbb3f89726e: (a: number, b: number) => void;
+  readonly wasm_bindgen__convert__closures_____invoke__h02d0d0b65f8fb1b8: (a: number, b: number, c: any) => void;
+  readonly wasm_bindgen__closure__destroy__h622f07521e60402f: (a: number, b: number) => void;
   readonly wasm_bindgen__convert__closures_____invoke__h58212949185b0233: (a: number, b: number, c: any) => void;
   readonly wasm_bindgen__closure__destroy__h882e84b55e202da7: (a: number, b: number) => void;
-  readonly wasm_bindgen__convert__closures_____invoke__h762ee00b4618786e: (a: number, b: number) => void;
+  readonly wasm_bindgen__convert__closures_____invoke__h09e89bcd79e5a5aa: (a: number, b: number) => void;
   readonly wasm_bindgen__convert__closures_____invoke__h631465b85669de06: (a: number, b: number, c: any, d: any) => void;
   readonly __wbindgen_malloc: (a: number, b: number) => number;
   readonly __wbindgen_realloc: (a: number, b: number, c: number, d: number) => number;

@@ -1,8 +1,36 @@
-// Error types module
+//! Error types for KalamDB Core.
+//!
+//! This module provides a unified error hierarchy for all KalamDB operations.
+//! Errors are structured to provide context while remaining ergonomic to use.
+//!
+//! # Error Categories
+//!
+//! - **Storage errors**: RocksDB, Parquet, and IO operations
+//! - **Schema errors**: Table definitions, schema evolution, and validation
+//! - **Authentication errors**: Permission denied, unauthorized access
+//! - **Operational errors**: Invalid operations, resource conflicts
+//!
+//! # Example
+//!
+//! ```rust,ignore
+//! use kalamdb_core::error::KalamDbError;
+//!
+//! fn create_table(name: &str) -> Result<(), KalamDbError> {
+//!     if name.is_empty() {
+//!         return Err(KalamDbError::InvalidOperation("Table name cannot be empty".into()));
+//!     }
+//!     Ok(())
+//! }
+//! ```
+
 use thiserror::Error;
 
-/// Main error type for KalamDB
+/// Main error type for KalamDB.
+///
+/// This enum encompasses all possible errors that can occur during KalamDB operations.
+/// Use the specific variants to provide context-rich error messages.
 #[derive(Error, Debug)]
+#[must_use = "errors should be handled or propagated"]
 pub enum KalamDbError {
     #[error("Storage error: {0}")]
     Storage(#[from] StorageError),
@@ -28,8 +56,14 @@ pub enum KalamDbError {
     #[error("IO error: {0}")]
     Io(#[from] std::io::Error),
 
-    #[error("IO error: {0}")]
-    IoError(String),
+    /// IO error with string message (for errors that can't carry std::io::Error)
+    #[error("IO error: {message}")]
+    IoMessage {
+        message: String,
+        /// Optional source context (e.g., file path, operation)
+        #[source]
+        source: Option<Box<dyn std::error::Error + Send + Sync>>,
+    },
 
     #[error("Invalid SQL: {0}")]
     InvalidSql(String),
@@ -117,7 +151,7 @@ impl From<kalamdb_store::StorageError> for KalamDbError {
     fn from(err: kalamdb_store::StorageError) -> Self {
         match err {
             kalamdb_store::StorageError::PartitionNotFound(msg) => KalamDbError::NotFound(msg),
-            kalamdb_store::StorageError::IoError(msg) => KalamDbError::IoError(msg),
+            kalamdb_store::StorageError::IoError(msg) => KalamDbError::io_message(msg),
             kalamdb_store::StorageError::SerializationError(msg) => {
                 KalamDbError::SerializationError(msg)
             }
@@ -576,6 +610,31 @@ impl KalamDbError {
     /// Create an invalid schema evolution error
     pub fn invalid_schema_evolution<S: Into<String>>(msg: S) -> Self {
         KalamDbError::InvalidSchemaEvolution(msg.into())
+    }
+
+    /// Create an IO error with a message (without source error).
+    ///
+    /// Use this when the original IO error has already been converted to a string,
+    /// or when creating an IO-like error from other contexts.
+    pub fn io_message<S: Into<String>>(message: S) -> Self {
+        KalamDbError::IoMessage {
+            message: message.into(),
+            source: None,
+        }
+    }
+
+    /// Create an IO error with a message and source error.
+    ///
+    /// Use this when you have access to the original error for better error chains.
+    pub fn io_with_source<S, E>(message: S, source: E) -> Self
+    where
+        S: Into<String>,
+        E: std::error::Error + Send + Sync + 'static,
+    {
+        KalamDbError::IoMessage {
+            message: message.into(),
+            source: Some(Box::new(source)),
+        }
     }
 }
 

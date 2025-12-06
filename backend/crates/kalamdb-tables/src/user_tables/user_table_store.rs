@@ -27,12 +27,22 @@ use std::sync::Arc;
 /// **MVCC Architecture (Phase 12, User Story 5)**:
 /// - Removed: row_id (redundant with _seq), _updated (timestamp embedded in _seq Snowflake ID)
 /// - Kept: user_id (row owner), _seq (version identifier with embedded timestamp), _deleted (tombstone), fields (all user columns including PK)
+///
+/// **Note on System Column Naming**:
+/// The underscore prefix (`_seq`, `_deleted`) follows SQL convention for system-managed columns.
+/// These names match the SQL column names exactly for consistency across the codebase.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct UserTableRow {
+    /// User who owns this row
     pub user_id: UserId,
-    pub _seq: SeqId,    //TODO: Rename this to seq without the _
-    pub _deleted: bool, //TODO: Rename this to deleted without the _
-    pub fields: Row,    // All user-defined columns including PK
+    /// Monotonically increasing sequence ID (Snowflake ID with embedded timestamp)
+    /// Maps to SQL column `_seq`
+    pub _seq: SeqId,
+    /// Soft delete tombstone marker
+    /// Maps to SQL column `_deleted`
+    pub _deleted: bool,
+    /// All user-defined columns including PK (serialized as JSON map)
+    pub fields: Row,
 }
 
 impl KSerializable for UserTableRow {}

@@ -101,6 +101,22 @@ fn validate_column_name(name: &str) -> Result<(), JsValue> {
     validate_sql_identifier(name, "Column name")
 }
 
+/// Quote a table name properly, handling namespace.table format.
+/// Converts "namespace.table" to "namespace"."table" for correct SQL parsing.
+fn quote_table_name(table_name: &str) -> String {
+    if let Some(dot_pos) = table_name.find('.') {
+        let namespace = &table_name[..dot_pos];
+        let table = &table_name[dot_pos + 1..];
+        format!(
+            "\"{}\".\"{}\"",
+            namespace.replace('"', "\"\""),
+            table.replace('"', "\"\"")
+        )
+    } else {
+        format!("\"{}\"", table_name.replace('"', "\"\""))
+    }
+}
+
 // ============================================================================
 // Subscription State
 // ============================================================================
@@ -753,10 +769,10 @@ impl KalamClient {
             }
         }).collect();
         
-        // Security: Quote table name with double quotes
+        // Security: Quote table name with double quotes, handling namespace.table format
         let sql = format!(
-            "INSERT INTO \"{}\" ({}) VALUES ({})",
-            table_name.replace('"', "\"\""), // Escape any double quotes in table name
+            "INSERT INTO {} ({}) VALUES ({})",
+            quote_table_name(&table_name),
             columns.join(", "),
             values.join(", ")
         );
@@ -775,10 +791,10 @@ impl KalamClient {
         validate_row_id(&row_id)?;
         
         // T063H: Implement using fetch API to execute DELETE statement via /v1/api/sql
-        // Security: Quote table name and use parameterized-style value
+        // Security: Quote table name (handling namespace.table format) and use parameterized-style value
         let sql = format!(
-            "DELETE FROM \"{}\" WHERE id = '{}'",
-            table_name.replace('"', "\"\""),
+            "DELETE FROM {} WHERE id = '{}'",
+            quote_table_name(&table_name),
             row_id.replace("'", "''")
         );
         self.execute_sql(&sql).await?;

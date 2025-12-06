@@ -344,6 +344,7 @@ where
     ///     println!("Found user: {}", user.name);
     /// }
     /// ```
+    #[must_use = "the retrieved entity should be used"]
     fn get(&self, key: &K) -> Result<Option<V>> {
         let partition = Partition::new(self.partition());
         match self.backend().get(&partition, &key.storage_key())? {

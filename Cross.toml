@@ -1,0 +1,22 @@
+# Cross-compilation configuration for KalamDB
+# Required for building Linux binaries on macOS
+# See: https://github.com/cross-rs/cross
+
+[build.env]
+passthrough = [
+    "RUST_BACKTRACE",
+    "RUST_LOG",
+]
+
+# Use custom Dockerfile for x86_64 Linux with proper LLVM for RocksDB
+[target.x86_64-unknown-linux-gnu]
+dockerfile = "./tools/Dockerfile.cross-x86_64"
+
+# Use custom Dockerfile for aarch64 Linux with proper LLVM for RocksDB  
+[target.aarch64-unknown-linux-gnu]
+dockerfile = "./tools/Dockerfile.cross-aarch64"
+
+# Windows cross-compilation (if needed)
+[target.x86_64-pc-windows-gnu]
+image = "ghcr.io/cross-rs/x86_64-pc-windows-gnu:edge"
+

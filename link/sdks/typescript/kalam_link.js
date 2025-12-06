@@ -177,6 +177,11 @@ function handleError(f, args) {
     }
 }
 
+function getArrayU8FromWasm0(ptr, len) {
+    ptr = ptr >>> 0;
+    return getUint8ArrayMemory0().subarray(ptr / 1, ptr / 1 + len);
+}
+
 const CLOSURE_DTORS = (typeof FinalizationRegistry === 'undefined')
     ? { register: () => {}, unregister: () => {} }
     : new FinalizationRegistry(state => state.dtor(state.a, state.b));
@@ -214,16 +219,16 @@ function takeFromExternrefTable0(idx) {
     wasm.__externref_table_dealloc(idx);
     return value;
 }
-function wasm_bindgen__convert__closures_____invoke__hbe312fe94906cca5(arg0, arg1, arg2) {
-    wasm.wasm_bindgen__convert__closures_____invoke__hbe312fe94906cca5(arg0, arg1, arg2);
+function wasm_bindgen__convert__closures_____invoke__h02d0d0b65f8fb1b8(arg0, arg1, arg2) {
+    wasm.wasm_bindgen__convert__closures_____invoke__h02d0d0b65f8fb1b8(arg0, arg1, arg2);
 }
 
 function wasm_bindgen__convert__closures_____invoke__h58212949185b0233(arg0, arg1, arg2) {
     wasm.wasm_bindgen__convert__closures_____invoke__h58212949185b0233(arg0, arg1, arg2);
 }
 
-function wasm_bindgen__convert__closures_____invoke__h762ee00b4618786e(arg0, arg1) {
-    wasm.wasm_bindgen__convert__closures_____invoke__h762ee00b4618786e(arg0, arg1);
+function wasm_bindgen__convert__closures_____invoke__h09e89bcd79e5a5aa(arg0, arg1) {
+    wasm.wasm_bindgen__convert__closures_____invoke__h09e89bcd79e5a5aa(arg0, arg1);
 }
 
 function wasm_bindgen__convert__closures_____invoke__h631465b85669de06(arg0, arg1, arg2, arg3) {
@@ -238,16 +243,32 @@ const KalamClientFinalization = (typeof FinalizationRegistry === 'undefined')
 /**
  * WASM-compatible KalamDB client with auto-reconnection support
  *
+ * Supports multiple authentication methods:
+ * - Basic Auth: `new KalamClient(url, username, password)`
+ * - JWT Token: `KalamClient.withJwt(url, token)`
+ * - Anonymous: `KalamClient.anonymous(url)`
+ *
  * # Example (JavaScript)
  * ```js
- * import init, { KalamClient } from './pkg/kalam_link.js';
+ * import init, { KalamClient, KalamClientWithJwt, KalamClientAnonymous } from './pkg/kalam_link.js';
  *
  * await init();
+ *
+ * // Basic Auth (username/password)
  * const client = new KalamClient(
  *   "http://localhost:8080",
  *   "username",
  *   "password"
  * );
+ *
+ * // JWT Token Auth
+ * const jwtClient = KalamClientWithJwt.new(
+ *   "http://localhost:8080",
+ *   "eyJhbGciOiJIUzI1NiIs..."
+ * );
+ *
+ * // Anonymous (localhost bypass)
+ * const anonClient = KalamClientAnonymous.new("http://localhost:8080");
  *
  * // Configure auto-reconnect (enabled by default)
  * client.setAutoReconnect(true);
@@ -268,6 +289,14 @@ const KalamClientFinalization = (typeof FinalizationRegistry === 'undefined')
  */
 export class KalamClient {
 
+    static __wrap(ptr) {
+        ptr = ptr >>> 0;
+        const obj = Object.create(KalamClient.prototype);
+        obj.__wbg_ptr = ptr;
+        KalamClientFinalization.register(obj, obj.__wbg_ptr, obj);
+        return obj;
+    }
+
     __destroy_into_raw() {
         const ptr = this.__wbg_ptr;
         this.__wbg_ptr = 0;
@@ -280,7 +309,7 @@ export class KalamClient {
         wasm.__wbg_kalamclient_free(ptr, 0);
     }
     /**
-     * Create a new KalamDB client (T042, T043, T044)
+     * Create a new KalamDB client with HTTP Basic Authentication (T042, T043, T044)
      *
      * # Arguments
      * * `url` - KalamDB server URL (required, e.g., "http://localhost:8080")
@@ -307,6 +336,86 @@ export class KalamClient {
         this.__wbg_ptr = ret[0] >>> 0;
         KalamClientFinalization.register(this, this.__wbg_ptr, this);
         return this;
+    }
+    /**
+     * Create a new KalamDB client with JWT Token Authentication
+     *
+     * # Arguments
+     * * `url` - KalamDB server URL (required, e.g., "http://localhost:8080")
+     * * `token` - JWT token for authentication (required)
+     *
+     * # Errors
+     * Returns JsValue error if url or token is empty
+     *
+     * # Example (JavaScript)
+     * ```js
+     * const client = KalamClient.withJwt(
+     *   "http://localhost:8080",
+     *   "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9..."
+     * );
+     * await client.connect();
+     * ```
+     * @param {string} url
+     * @param {string} token
+     * @returns {KalamClient}
+     */
+    static withJwt(url, token) {
+        const ptr0 = passStringToWasm0(url, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        const len0 = WASM_VECTOR_LEN;
+        const ptr1 = passStringToWasm0(token, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        const len1 = WASM_VECTOR_LEN;
+        const ret = wasm.kalamclient_withJwt(ptr0, len0, ptr1, len1);
+        if (ret[2]) {
+            throw takeFromExternrefTable0(ret[1]);
+        }
+        return KalamClient.__wrap(ret[0]);
+    }
+    /**
+     * Create a new KalamDB client with no authentication
+     *
+     * Useful for localhost connections where the server allows
+     * unauthenticated access, or for development/testing scenarios.
+     *
+     * # Arguments
+     * * `url` - KalamDB server URL (required, e.g., "http://localhost:8080")
+     *
+     * # Errors
+     * Returns JsValue error if url is empty
+     *
+     * # Example (JavaScript)
+     * ```js
+     * const client = KalamClient.anonymous("http://localhost:8080");
+     * await client.connect();
+     * ```
+     * @param {string} url
+     * @returns {KalamClient}
+     */
+    static anonymous(url) {
+        const ptr0 = passStringToWasm0(url, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        const len0 = WASM_VECTOR_LEN;
+        const ret = wasm.kalamclient_anonymous(ptr0, len0);
+        if (ret[2]) {
+            throw takeFromExternrefTable0(ret[1]);
+        }
+        return KalamClient.__wrap(ret[0]);
+    }
+    /**
+     * Get the current authentication type
+     *
+     * Returns one of: "basic", "jwt", or "none"
+     * @returns {string}
+     */
+    getAuthType() {
+        let deferred1_0;
+        let deferred1_1;
+        try {
+            const ret = wasm.kalamclient_getAuthType(this.__wbg_ptr);
+            deferred1_0 = ret[0];
+            deferred1_1 = ret[1];
+            return getStringFromWasm0(ret[0], ret[1]);
+        } finally {
+            wasm.__wbindgen_free(deferred1_0, deferred1_1, 1);
+        }
     }
     /**
      * Enable or disable automatic reconnection
@@ -641,6 +750,16 @@ function __wbg_get_imports() {
         const ret = arg0.fetch(arg1);
         return ret;
     };
+    imports.wbg.__wbg_instanceof_ArrayBuffer_70beb1189ca63b38 = function(arg0) {
+        let result;
+        try {
+            result = arg0 instanceof ArrayBuffer;
+        } catch (_) {
+            result = false;
+        }
+        const ret = result;
+        return ret;
+    };
     imports.wbg.__wbg_instanceof_Response_f4f3e87e07f3135c = function(arg0) {
         let result;
         try {
@@ -659,6 +778,10 @@ function __wbg_get_imports() {
             result = false;
         }
         const ret = result;
+        return ret;
+    };
+    imports.wbg.__wbg_length_69bca3cb64fc8748 = function(arg0) {
+        const ret = arg0.length;
         return ret;
     };
     imports.wbg.__wbg_log_74fab41b36a979d6 = function(arg0, arg1) {
@@ -686,6 +809,10 @@ function __wbg_get_imports() {
             state0.a = state0.b = 0;
         }
     };
+    imports.wbg.__wbg_new_5a79be3ab53b8aa5 = function(arg0) {
+        const ret = new Uint8Array(arg0);
+        return ret;
+    };
     imports.wbg.__wbg_new_881c4fe631eee9ad = function() { return handleError(function (arg0, arg1) {
         const ret = new WebSocket(getStringFromWasm0(arg0, arg1));
         return ret;
@@ -705,6 +832,9 @@ function __wbg_get_imports() {
     imports.wbg.__wbg_ok_5749966cb2b8535e = function(arg0) {
         const ret = arg0.ok;
         return ret;
+    };
+    imports.wbg.__wbg_prototypesetcall_2a6620b6922694b2 = function(arg0, arg1, arg2) {
+        Uint8Array.prototype.set.call(getArrayU8FromWasm0(arg0, arg1), arg2);
     };
     imports.wbg.__wbg_queueMicrotask_34d692c25c47d05b = function(arg0) {
         const ret = arg0.queueMicrotask;
@@ -794,34 +924,34 @@ function __wbg_get_imports() {
         const ret = arg0.then(arg1, arg2);
         return ret;
     };
+    imports.wbg.__wbindgen_cast_200dd177aae4d15f = function(arg0, arg1) {
+        // Cast intrinsic for `Closure(Closure { dtor_idx: 110, function: Function { arguments: [], shim_idx: 113, ret: Unit, inner_ret: Some(Unit) }, mutable: true }) -> Externref`.
+        const ret = makeMutClosure(arg0, arg1, wasm.wasm_bindgen__closure__destroy__h622f07521e60402f, wasm_bindgen__convert__closures_____invoke__h09e89bcd79e5a5aa);
+        return ret;
+    };
     imports.wbg.__wbindgen_cast_2241b6af4c4b2941 = function(arg0, arg1) {
         // Cast intrinsic for `Ref(String) -> Externref`.
         const ret = getStringFromWasm0(arg0, arg1);
         return ret;
     };
-    imports.wbg.__wbindgen_cast_3f4d5247b4ce7d6e = function(arg0, arg1) {
-        // Cast intrinsic for `Closure(Closure { dtor_idx: 137, function: Function { arguments: [Externref], shim_idx: 138, ret: Unit, inner_ret: Some(Unit) }, mutable: true }) -> Externref`.
+    imports.wbg.__wbindgen_cast_8ee03dd0088c7f28 = function(arg0, arg1) {
+        // Cast intrinsic for `Closure(Closure { dtor_idx: 142, function: Function { arguments: [Externref], shim_idx: 143, ret: Unit, inner_ret: Some(Unit) }, mutable: true }) -> Externref`.
         const ret = makeMutClosure(arg0, arg1, wasm.wasm_bindgen__closure__destroy__h882e84b55e202da7, wasm_bindgen__convert__closures_____invoke__h58212949185b0233);
         return ret;
     };
-    imports.wbg.__wbindgen_cast_a91464ec264f28b2 = function(arg0, arg1) {
-        // Cast intrinsic for `Closure(Closure { dtor_idx: 127, function: Function { arguments: [], shim_idx: 130, ret: Unit, inner_ret: Some(Unit) }, mutable: true }) -> Externref`.
-        const ret = makeMutClosure(arg0, arg1, wasm.wasm_bindgen__closure__destroy__h07a7edbb3f89726e, wasm_bindgen__convert__closures_____invoke__h762ee00b4618786e);
+    imports.wbg.__wbindgen_cast_91e9c101c684ea62 = function(arg0, arg1) {
+        // Cast intrinsic for `Closure(Closure { dtor_idx: 110, function: Function { arguments: [NamedExternref("CloseEvent")], shim_idx: 111, ret: Unit, inner_ret: Some(Unit) }, mutable: true }) -> Externref`.
+        const ret = makeMutClosure(arg0, arg1, wasm.wasm_bindgen__closure__destroy__h622f07521e60402f, wasm_bindgen__convert__closures_____invoke__h02d0d0b65f8fb1b8);
         return ret;
     };
-    imports.wbg.__wbindgen_cast_b48dacc5733dd187 = function(arg0, arg1) {
-        // Cast intrinsic for `Closure(Closure { dtor_idx: 127, function: Function { arguments: [NamedExternref("ErrorEvent")], shim_idx: 128, ret: Unit, inner_ret: Some(Unit) }, mutable: true }) -> Externref`.
-        const ret = makeMutClosure(arg0, arg1, wasm.wasm_bindgen__closure__destroy__h07a7edbb3f89726e, wasm_bindgen__convert__closures_____invoke__hbe312fe94906cca5);
+    imports.wbg.__wbindgen_cast_b6d8ae0eb6c13458 = function(arg0, arg1) {
+        // Cast intrinsic for `Closure(Closure { dtor_idx: 110, function: Function { arguments: [NamedExternref("ErrorEvent")], shim_idx: 111, ret: Unit, inner_ret: Some(Unit) }, mutable: true }) -> Externref`.
+        const ret = makeMutClosure(arg0, arg1, wasm.wasm_bindgen__closure__destroy__h622f07521e60402f, wasm_bindgen__convert__closures_____invoke__h02d0d0b65f8fb1b8);
         return ret;
     };
-    imports.wbg.__wbindgen_cast_b63583c0874725e5 = function(arg0, arg1) {
-        // Cast intrinsic for `Closure(Closure { dtor_idx: 127, function: Function { arguments: [NamedExternref("CloseEvent")], shim_idx: 128, ret: Unit, inner_ret: Some(Unit) }, mutable: true }) -> Externref`.
-        const ret = makeMutClosure(arg0, arg1, wasm.wasm_bindgen__closure__destroy__h07a7edbb3f89726e, wasm_bindgen__convert__closures_____invoke__hbe312fe94906cca5);
-        return ret;
-    };
-    imports.wbg.__wbindgen_cast_e1500c65d50d7621 = function(arg0, arg1) {
-        // Cast intrinsic for `Closure(Closure { dtor_idx: 127, function: Function { arguments: [NamedExternref("MessageEvent")], shim_idx: 128, ret: Unit, inner_ret: Some(Unit) }, mutable: true }) -> Externref`.
-        const ret = makeMutClosure(arg0, arg1, wasm.wasm_bindgen__closure__destroy__h07a7edbb3f89726e, wasm_bindgen__convert__closures_____invoke__hbe312fe94906cca5);
+    imports.wbg.__wbindgen_cast_ca9a57407874719c = function(arg0, arg1) {
+        // Cast intrinsic for `Closure(Closure { dtor_idx: 110, function: Function { arguments: [NamedExternref("MessageEvent")], shim_idx: 111, ret: Unit, inner_ret: Some(Unit) }, mutable: true }) -> Externref`.
+        const ret = makeMutClosure(arg0, arg1, wasm.wasm_bindgen__closure__destroy__h622f07521e60402f, wasm_bindgen__convert__closures_____invoke__h02d0d0b65f8fb1b8);
         return ret;
     };
     imports.wbg.__wbindgen_init_externref_table = function() {

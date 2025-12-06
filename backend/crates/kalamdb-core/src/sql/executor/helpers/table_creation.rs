@@ -528,7 +528,7 @@ fn ensure_table_directory_exists(
 
     let dir = std::path::Path::new(&path);
     std::fs::create_dir_all(dir).map_err(|e| {
-        KalamDbError::IoError(format!(
+        KalamDbError::io_message(format!(
             "Failed to create table directory '{}': {}",
             dir.display(),
             e

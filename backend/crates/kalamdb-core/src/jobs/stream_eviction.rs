@@ -21,7 +21,7 @@ impl StreamEvictionScheduler {
             .schema_registry()
             .scan_all_table_definitions()
             .map_err(|e| {
-                KalamDbError::IoError(format!("Failed to scan table definitions: {}", e))
+                KalamDbError::io_message(format!("Failed to scan table definitions: {}", e))
             })?;
 
         let mut stream_tables_found = 0;

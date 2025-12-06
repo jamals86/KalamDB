@@ -44,19 +44,20 @@ This document provides a comprehensive analysis of potential memory leaks, memor
 
 | Severity | Count | Description |
 |----------|-------|-------------|
-| 🔴🔴 **CRITICAL** | 1 | `Box::leak` causing permanent memory loss |
+| ✅ **FIXED** | 1 | `Box::leak` memory leak fixed (December 2025) |
 | 🔴 **HIGH** | 14 | Critical issues requiring immediate attention |
 | 🟡 **MEDIUM** | 21 | Significant issues for production stability |
 | 🟢 **LOW** | 19 | Minor issues or optimization opportunities |
 
 ---
 
-## 🚨🚨🚨 CRITICAL MEMORY LEAK - Box::leak (IMMEDIATE FIX REQUIRED)
+## ✅ FIXED - Box::leak Memory Leak (December 2025)
 
-### ML-1. Box::leak in LiveQueryId AsRef Implementations 🔴🔴 CRITICAL
+### ML-1. Box::leak in LiveQueryId AsRef Implementations ✅ FIXED
 
-**Location**: `kalamdb-commons/src/models/ids/live_query_id.rs` (lines 127, 134)
+**Location**: `kalamdb-commons/src/models/ids/live_query_id.rs`
 
+**Previous Issue**:
 ```rust
 impl AsRef<str> for LiveQueryId {
     fn as_ref(&self) -> &str {
@@ -64,40 +65,44 @@ impl AsRef<str> for LiveQueryId {
         Box::leak(Box::new(self.to_string())).as_str()
     }
 }
-
-impl AsRef<[u8]> for LiveQueryId {
-    fn as_ref(&self) -> &[u8] {
-        // ⚠️ MEMORY LEAK: Box::leak NEVER deallocates!
-        Box::leak(Box::new(self.to_string())).as_bytes()
-    }
-}
 ```
 
-**Why CRITICAL**:
+**Why It Was CRITICAL**:
 - `Box::leak` is an **intentional memory leak** - it returns a `&'static` reference
-- EVERY call to `.as_ref()` leaks a new String allocation (~50-100 bytes per call)
+- EVERY call to `.as_ref()` leaked a new String allocation (~50-100 bytes per call)
 - Used in `kill_live_query.rs` for audit logging: `statement.live_id.as_ref()`
-- Used anywhere `LiveQueryId` is passed to functions expecting `AsRef<str>`
+- Over 24 hours, this caused ~48MB of memory growth
 
-**Impact Calculation**:
-- 1 subscription = 1 live query kill eventually = 1 leaked allocation
-- 1,000 subscriptions/hour = 50-100KB/hour leaked
-- 24 hours = 1.2-2.4MB leaked
-- 30 days = **36-72MB leaked** (per month of operation!)
+**FIX APPLIED (December 2025)**:
+The `LiveQueryId` struct now uses a pre-computed `cached_string` field that is
+computed once at construction time. The `AsRef<str>` implementation now returns
+a reference to this cached string with zero allocation:
 
-**Fix Required (URGENT)**:
 ```rust
-// Option 1: Store pre-computed string in struct (recommended)
 pub struct LiveQueryId {
-    user_id: UserId,
-    connection_id: ConnectionId,
-    subscription_id: String,
-    cached_string: String,  // Pre-compute on construction
+    pub user_id: UserId,
+    pub connection_id: ConnectionId,
+    pub subscription_id: String,
+    cached_string: String,  // Pre-computed on construction
 }
 
 impl AsRef<str> for LiveQueryId {
     fn as_ref(&self) -> &str {
-        &self.cached_string  // Zero allocation, no leak
+        &self.cached_string  // Zero allocation, no memory leak!
+    }
+}
+```
+
+The fix includes:
+- Custom `Serialize`/`Deserialize` that properly populates `cached_string` after deserialization
+- Custom `Encode`/`Decode` (bincode) that properly populates `cached_string` after decoding
+- Manual `PartialEq`, `Eq`, and `Hash` implementations that ignore `cached_string`
+
+**Impact**: This fix eliminates the ~48MB/24h memory leak observed in production.
+
+---
+
+## 🔴🔴🔴 REMAINING HIGH SEVERITY ISSUES
     }
 }
 

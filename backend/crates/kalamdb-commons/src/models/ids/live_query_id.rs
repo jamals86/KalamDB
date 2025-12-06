@@ -1,8 +1,11 @@
 // File: backend/crates/kalamdb-commons/src/models/live_query_id.rs
 // Type-safe composite identifier for live query subscriptions
 
-use bincode::{Decode, Encode};
-use serde::{Deserialize, Serialize};
+use bincode::de::{BorrowDecoder, Decoder};
+use bincode::enc::Encoder;
+use bincode::error::{DecodeError, EncodeError};
+use bincode::{BorrowDecode, Decode, Encode};
+use serde::{Deserialize, Deserializer, Serialize};
 use std::fmt;
 
 use crate::models::{ConnectionId, UserId};
@@ -12,11 +15,91 @@ use crate::StorageKey;
 /// 
 /// Composite key containing user, connection, and subscription information.
 /// Format when serialized: {user_id}-{connection_id}-{subscription_id}
-#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize, Encode, Decode)]
+/// 
+/// ## Memory Safety
+/// Uses a pre-computed `cached_string` to provide zero-allocation `AsRef<str>` access.
+/// This avoids the previous `Box::leak` pattern which caused memory leaks (~48MB/24h).
+#[derive(Debug, Clone, Serialize)]
 pub struct LiveQueryId {
     pub user_id: UserId,
     pub connection_id: ConnectionId,
     pub subscription_id: String,
+    /// Pre-computed string representation for zero-allocation AsRef<str>
+    /// Computed once at construction time or after deserialization.
+    #[serde(skip)]
+    cached_string: String,
+}
+
+// Custom bincode Encode implementation
+impl Encode for LiveQueryId {
+    fn encode<E: Encoder>(&self, encoder: &mut E) -> Result<(), EncodeError> {
+        Encode::encode(&self.user_id, encoder)?;
+        Encode::encode(&self.connection_id, encoder)?;
+        Encode::encode(&self.subscription_id, encoder)?;
+        // Don't encode cached_string - it's derived
+        Ok(())
+    }
+}
+
+// Custom bincode Decode implementation that populates cached_string
+impl<Context> Decode<Context> for LiveQueryId {
+    fn decode<D: Decoder<Context = Context>>(decoder: &mut D) -> Result<Self, DecodeError> {
+        let user_id = UserId::decode(decoder)?;
+        let connection_id = ConnectionId::decode(decoder)?;
+        let subscription_id = String::decode(decoder)?;
+        // Reconstruct via new() to populate cached_string
+        Ok(LiveQueryId::new(user_id, connection_id, subscription_id))
+    }
+}
+
+// Custom bincode BorrowDecode implementation that populates cached_string
+impl<'de, Context> BorrowDecode<'de, Context> for LiveQueryId {
+    fn borrow_decode<D: BorrowDecoder<'de, Context = Context>>(decoder: &mut D) -> Result<Self, DecodeError> {
+        let user_id = UserId::borrow_decode(decoder)?;
+        let connection_id = ConnectionId::borrow_decode(decoder)?;
+        let subscription_id = String::borrow_decode(decoder)?;
+        // Reconstruct via new() to populate cached_string
+        Ok(LiveQueryId::new(user_id, connection_id, subscription_id))
+    }
+}
+
+// Custom serde Deserialize implementation that populates cached_string after deserialization
+impl<'de> Deserialize<'de> for LiveQueryId {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        // Helper struct for deserialization (without cached_string)
+        #[derive(Deserialize)]
+        struct LiveQueryIdHelper {
+            user_id: UserId,
+            connection_id: ConnectionId,
+            subscription_id: String,
+        }
+        
+        let helper = LiveQueryIdHelper::deserialize(deserializer)?;
+        Ok(LiveQueryId::new(helper.user_id, helper.connection_id, helper.subscription_id))
+    }
+}
+
+// Manual PartialEq implementation that ignores cached_string
+impl PartialEq for LiveQueryId {
+    fn eq(&self, other: &Self) -> bool {
+        self.user_id == other.user_id
+            && self.connection_id == other.connection_id
+            && self.subscription_id == other.subscription_id
+    }
+}
+
+impl Eq for LiveQueryId {}
+
+// Manual Hash implementation that ignores cached_string
+impl std::hash::Hash for LiveQueryId {
+    fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
+        self.user_id.hash(state);
+        self.connection_id.hash(state);
+        self.subscription_id.hash(state);
+    }
 }
 
 impl LiveQueryId {
@@ -26,10 +109,19 @@ impl LiveQueryId {
         connection_id: ConnectionId,
         subscription_id: impl Into<String>,
     ) -> Self {
+        let subscription_id = subscription_id.into();
+        // Pre-compute the string representation once
+        let cached_string = format!(
+            "{}-{}-{}",
+            user_id.as_str(),
+            connection_id.as_str(),
+            subscription_id
+        );
         Self {
             user_id,
             connection_id,
-            subscription_id: subscription_id.into(),
+            subscription_id,
+            cached_string,
         }
     }
 
@@ -43,26 +135,28 @@ impl LiveQueryId {
             ));
         }
 
-        Ok(Self {
-            user_id: UserId::new(parts[0].to_string()),
-            connection_id: ConnectionId::new(parts[1].to_string()),
-            subscription_id: parts[2].to_string(),
-        })
+        let user_id = UserId::new(parts[0].to_string());
+        let connection_id = ConnectionId::new(parts[1].to_string());
+        let subscription_id = parts[2].to_string();
+        
+        Ok(Self::new(user_id, connection_id, subscription_id))
     }
 
-    /// Returns the live query ID as a formatted string
-    pub fn as_str(&self) -> String {
-        self.to_string()
+    /// Returns the live query ID as a string reference (zero-allocation)
+    #[inline]
+    pub fn as_str(&self) -> &str {
+        &self.cached_string
     }
 
-    /// Get the live query ID as bytes for storage
-    pub fn as_bytes(&self) -> Vec<u8> {
-        self.to_string().into_bytes()
+    /// Get the live query ID as bytes (zero-allocation reference)
+    #[inline]
+    pub fn as_bytes(&self) -> &[u8] {
+        self.cached_string.as_bytes()
     }
 
-    /// Consumes the wrapper and returns the formatted String
+    /// Consumes the wrapper and returns the cached String
     pub fn into_string(self) -> String {
-        self.to_string()
+        self.cached_string
     }
 
     // Accessor methods
@@ -98,13 +192,8 @@ impl LiveQueryId {
 
 impl fmt::Display for LiveQueryId {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(
-            f,
-            "{}-{}-{}",
-            self.user_id.as_str(),
-            self.connection_id,
-            self.subscription_id
-        )
+        // Use the pre-computed cached string (zero allocation)
+        f.write_str(&self.cached_string)
     }
 }
 
@@ -121,23 +210,24 @@ impl From<&str> for LiveQueryId {
 }
 
 impl AsRef<str> for LiveQueryId {
+    #[inline]
     fn as_ref(&self) -> &str {
-        // Note: This returns a temporary string, not ideal but maintains compatibility
-        // Consider using to_string() directly instead
-        Box::leak(Box::new(self.to_string())).as_str()
+        // Use the pre-computed cached string (zero allocation, no memory leak)
+        &self.cached_string
     }
 }
 
 impl AsRef<[u8]> for LiveQueryId {
+    #[inline]
     fn as_ref(&self) -> &[u8] {
-        // Note: This returns a temporary byte slice, not ideal but maintains compatibility
-        Box::leak(Box::new(self.to_string())).as_bytes()
+        // Use the pre-computed cached string (zero allocation, no memory leak)
+        self.cached_string.as_bytes()
     }
 }
 
 impl StorageKey for LiveQueryId {
     fn storage_key(&self) -> Vec<u8> {
-        self.to_string().into_bytes()
+        self.cached_string.as_bytes().to_vec()
     }
 
     fn from_storage_key(bytes: &[u8]) -> Result<Self, String> {

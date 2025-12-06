@@ -63,10 +63,14 @@ use std::any::Any;
 use std::fmt;
 
 /// Result type for storage operations.
+///
+/// All storage operations return this result type. Callers should always
+/// handle both success and error cases.
 pub type Result<T> = std::result::Result<T, StorageError>;
 
 /// Errors that can occur during storage operations.
 #[derive(Debug, Clone)]
+#[must_use = "errors should be handled or propagated"]
 pub enum StorageError {
     /// Partition (column family, tree, namespace) not found
     PartitionNotFound(String),
