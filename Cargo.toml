@@ -35,7 +35,7 @@ thiserror = "2.0"
 anyhow = "1.0"
 
 # Logging
-log = "0.4"
+log = "0.4.29"
 env_logger = "0.11"
 
 # Async runtime
@@ -62,15 +62,15 @@ sqlparser = { version = "0.59.0" }
 parquet = { version = "57.0.0" }
 
 # Web framework
-actix-web = { version = "4.12.0", features = ["http2"] }
+actix-web = { version = "4.12.1", features = ["http2"] }
 actix-ws = "0.3"
 actix = "0.13"
 actix-cors = "0.7"
 actix-rt = "2.10"
-actix-files = "0.6"
+actix-files = "0.6.9"
 
 # UUID generation
-uuid = { version = "1.6", features = ["v4", "v7", "serde"] }
+uuid = { version = "1.19.0", features = ["v4", "v7", "serde"] }
 
 # ULID generation
 ulid = "1.1"
@@ -96,7 +96,7 @@ tempfile = "3.13"
 wait-timeout = "0.2"
 
 # Benchmarking
-criterion = { version = "0.7.0", features = ["html_reports"] }
+criterion = { version = "0.8.1", features = ["html_reports"] }
 
 # Additional dependencies
 bcrypt = "0.17.1"
@@ -126,11 +126,13 @@ ntest = "0.9"
 wasm-bindgen = { version = "0.2.105" }
 wasm-bindgen-futures = { version = "0.4" }
 js-sys = { version = "0.3" }
-libc = "0.2"
+libc = "0.2.178"
 web-sys = { version = "0.3" }
 getrandom = { version = "0.2", features = ["js"] }
 flate2 = "1.0"
 miniz_oxide = "0.8"
+rust-embed = { version = "8.5", features = ["compression"] }
+mime_guess = "2.0"
 
 # Custom profile for distribution builds (smaller, optimized binaries)
 # Use with: cargo build --profile release-dist

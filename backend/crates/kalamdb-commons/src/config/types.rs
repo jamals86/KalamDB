@@ -170,6 +170,11 @@ pub struct ServerSettings {
     /// When false, server only supports HTTP/1.1
     #[serde(default = "default_enable_http2")]
     pub enable_http2: bool,
+    /// Path to the Admin UI static files (e.g., "./ui/dist")
+    /// When set, the server will serve the UI at /ui route
+    /// Set to None/null to disable UI serving
+    #[serde(default = "default_ui_path")]
+    pub ui_path: Option<String>,
 }
 
 /// Storage settings
@@ -770,6 +775,7 @@ impl Default for ServerConfig {
                 api_version: default_api_version(),
                 node_id: default_node_id(),
                 enable_http2: default_enable_http2(),
+                ui_path: default_ui_path(),
             },
             storage: StorageSettings {
                 rocksdb_path: "./data/rocksdb".to_string(),

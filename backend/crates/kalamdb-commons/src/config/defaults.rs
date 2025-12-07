@@ -17,6 +17,10 @@ pub fn default_enable_http2() -> bool {
     true // HTTP/2 enabled by default for better performance
 }
 
+pub fn default_ui_path() -> Option<String> {
+    None // UI disabled by default; set to path like "./ui/dist" to enable
+}
+
 pub fn default_flush_job_shutdown_timeout() -> u32 {
     300 // 5 minutes (T158j)
 }

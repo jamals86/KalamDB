@@ -4,6 +4,7 @@
 // including HTTP handlers, routes, and request/response models.
 
 pub mod compression;
+pub mod embedded_ui;
 pub mod handlers;
 pub mod models;
 pub mod rate_limiter;

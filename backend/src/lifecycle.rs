@@ -315,8 +315,19 @@ pub async fn run(
     let app_context_for_handler = app_context.clone();
     let connection_registry_for_handler = connection_registry.clone();
     let auth_config = AuthConfig::default();
+    let ui_path = config.server.ui_path.clone();
+    
+    // Log UI serving status
+    if kalamdb_api::routes::is_embedded_ui_available() {
+        info!("Admin UI enabled at /ui (embedded in binary)");
+    } else if let Some(ref path) = ui_path {
+        info!("Admin UI enabled at /ui (serving from filesystem: {})", path);
+    } else {
+        info!("Admin UI not available (run 'npm run build' in ui/ and rebuild server)");
+    }
+    
     let server = HttpServer::new(move || {
-        App::new()
+        let mut app = App::new()
             // Connection protection (first middleware - drops bad requests early)
             .wrap(connection_protection.clone())
             // Standard middleware
@@ -330,7 +341,19 @@ pub async fn run(
             .app_data(web::Data::new(user_repo.clone()))
             .app_data(web::Data::new(connection_registry_for_handler.clone()))
             .app_data(web::Data::new(auth_config.clone()))
-            .configure(routes::configure)
+            .configure(routes::configure);
+        
+        // Add UI routes - prefer embedded, fallback to filesystem path
+        if kalamdb_api::routes::is_embedded_ui_available() {
+            app = app.configure(kalamdb_api::routes::configure_embedded_ui_routes);
+        } else if let Some(ref path) = ui_path {
+            let path = path.clone();
+            app = app.configure(move |cfg| {
+                kalamdb_api::routes::configure_ui_routes(cfg, &path);
+            });
+        }
+        
+        app
     })
     // Set backlog BEFORE bind() - this affects the listen queue size
     .backlog(config.performance.backlog);

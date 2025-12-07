@@ -2,6 +2,7 @@
 //!
 //! This module configures all HTTP and WebSocket routes for the KalamDB API.
 
+use crate::embedded_ui;
 use crate::handlers;
 use actix_web::{web, HttpResponse};
 use serde_json::json;
@@ -36,10 +37,24 @@ pub fn configure_routes(cfg: &mut web::ServiceConfig) {
     );
 }
 
-/// Configure static file serving for Admin UI
+/// Configure embedded UI routes (recommended - UI is compiled into binary)
 ///
-/// Serves the built React app from /ui route.
-/// Falls back to index.html for client-side routing.
+/// Serves the Admin UI from embedded assets at /ui route.
+/// The UI is compressed and included in the binary at compile time.
+pub fn configure_embedded_ui_routes(cfg: &mut web::ServiceConfig) {
+    embedded_ui::configure_embedded_ui(cfg);
+}
+
+/// Check if embedded UI is available
+pub fn is_embedded_ui_available() -> bool {
+    embedded_ui::is_ui_embedded()
+}
+
+/// Configure static file serving for Admin UI (filesystem fallback)
+///
+/// Serves the built React app from /ui route using filesystem.
+/// Use this only if you need to serve UI from a custom path.
+/// For most cases, use `configure_embedded_ui_routes` instead.
 pub fn configure_ui_routes(cfg: &mut web::ServiceConfig, ui_path: &str) {
     use std::path::PathBuf;
 
