@@ -69,8 +69,8 @@ web-sys = { workspace = true, features = [
 # Default to tokio-runtime for native builds
 # WASM builds use wasm-pack which doesn't use default features
 default = ["tokio-runtime"]
-tokio-runtime = ["tokio", "reqwest", "tokio-tungstenite", "getrandom"]
-wasm = ["wasm-bindgen", "wasm-bindgen-futures", "js-sys", "web-sys"]
+tokio-runtime = ["tokio", "reqwest", "tokio-tungstenite"]
+wasm = ["wasm-bindgen", "wasm-bindgen-futures", "js-sys", "web-sys", "getrandom/js"]
 
 [dev-dependencies]
 tokio = { workspace = true, features = ["test-util", "macros"] }
