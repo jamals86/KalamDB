@@ -6,6 +6,8 @@ import SqlStudio from "./pages/SqlStudio";
 import Users from "./pages/Users";
 import Storages from "./pages/Storages";
 import Namespaces from "./pages/Namespaces";
+import AuditLogs from "./pages/AuditLogs";
+import ServerLogs from "./pages/ServerLogs";
 import Settings from "./pages/Settings";
 import ProtectedRoute from "./components/auth/ProtectedRoute";
 import Layout from "./components/layout/Layout";
@@ -30,6 +32,8 @@ function App() {
             <Route path="users" element={<Users />} />
             <Route path="storages" element={<Storages />} />
             <Route path="namespaces" element={<Namespaces />} />
+            <Route path="audit-logs" element={<AuditLogs />} />
+            <Route path="server-logs" element={<ServerLogs />} />
             <Route path="settings" element={<Settings />} />
           </Route>
         </Routes>

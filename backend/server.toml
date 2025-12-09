@@ -151,7 +151,7 @@ logs_path = "./logs"
 log_to_console = true
 
 # Log format: compact, pretty, json (default: compact)
-format = "compact"
+format = "json"
 
 # Slow query logging threshold in milliseconds (default: 1000ms = 1 second)
 # Queries taking longer than this threshold will be logged to slow.log

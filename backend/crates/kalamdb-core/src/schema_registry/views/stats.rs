@@ -14,7 +14,11 @@ use super::view_base::VirtualView;
 use datafusion::arrow::array::{ArrayRef, StringBuilder};
 use datafusion::arrow::datatypes::{DataType, Field, Schema, SchemaRef};
 use datafusion::arrow::record_batch::RecordBatch;
-use std::sync::{Arc, OnceLock};
+use std::sync::{Arc, OnceLock, RwLock};
+
+/// Metrics provider callback type
+/// Returns a vector of (metric_name, metric_value) tuples
+pub type MetricsCallback = Arc<dyn Fn() -> Vec<(String, String)> + Send + Sync>;
 
 /// Static schema for system.stats
 static STATS_SCHEMA: OnceLock<SchemaRef> = OnceLock::new();
@@ -36,17 +40,45 @@ fn stats_schema() -> SchemaRef {
 /// **DataFusion Design**:
 /// - Implements VirtualView trait
 /// - Returns TableType::View
-/// - Computes batch dynamically in compute_batch()
-#[derive(Debug)]
+/// - Computes batch dynamically in compute_batch() using the metrics callback
 pub struct StatsView {
-    // SchemaRegistry moved to kalamdb-core, so we can't use it here
-    // TODO: Pass metrics via a trait or callback if needed
+    /// Callback to fetch metrics from AppContext
+    /// Set after AppContext initialization to avoid circular dependencies
+    metrics_callback: Arc<RwLock<Option<MetricsCallback>>>,
+}
+
+impl std::fmt::Debug for StatsView {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("StatsView")
+            .field("has_callback", &self.metrics_callback.read().unwrap().is_some())
+            .finish()
+    }
 }
 
 impl StatsView {
-    /// Create a new stats view
-    pub fn new(_schema_registry: Option<Arc<()>>) -> Self {
-        Self {}
+    /// Create a new stats view without a callback (placeholder mode)
+    pub fn new() -> Self {
+        Self {
+            metrics_callback: Arc::new(RwLock::new(None)),
+        }
+    }
+
+    /// Create a new stats view with a metrics callback
+    pub fn with_callback(callback: MetricsCallback) -> Self {
+        Self {
+            metrics_callback: Arc::new(RwLock::new(Some(callback))),
+        }
+    }
+
+    /// Set the metrics callback (called after AppContext init)
+    pub fn set_metrics_callback(&self, callback: MetricsCallback) {
+        *self.metrics_callback.write().unwrap() = Some(callback);
+    }
+}
+
+impl Default for StatsView {
+    fn default() -> Self {
+        Self::new()
     }
 }
 
@@ -59,19 +91,29 @@ impl VirtualView for StatsView {
         let mut names = StringBuilder::new();
         let mut values = StringBuilder::new();
 
-        // Schema cache metrics (SchemaRegistry moved to kalamdb-core)
-        names.append_value("schema_cache_hit_rate");
-        values.append_value("N/A");
+        // Try to get metrics from the callback
+        let callback_guard = self.metrics_callback.read().unwrap();
+        if let Some(ref callback) = *callback_guard {
+            // Use real metrics from AppContext
+            let metrics = callback();
+            for (name, value) in metrics {
+                names.append_value(&name);
+                values.append_value(&value);
+            }
+        } else {
+            // Fallback to placeholder metrics when callback not set
+            names.append_value("server_uptime_seconds");
+            values.append_value("N/A (metrics callback not initialized)");
 
-        names.append_value("schema_cache_size");
-        values.append_value("0");
+            names.append_value("total_users");
+            values.append_value("N/A");
 
-        // Placeholders for future metrics
-        names.append_value("type_conversion_cache_hit_rate");
-        values.append_value("N/A");
+            names.append_value("total_namespaces");
+            values.append_value("N/A");
 
-        names.append_value("server_uptime_seconds");
-        values.append_value("N/A");
+            names.append_value("total_tables");
+            values.append_value("N/A");
+        }
 
         RecordBatch::try_new(
             self.schema(),
@@ -94,8 +136,8 @@ impl VirtualView for StatsView {
 pub type StatsTableProvider = super::view_base::ViewTableProvider<StatsView>;
 
 /// Helper function to create a stats table provider
-pub fn create_stats_provider(_schema_registry: Option<Arc<()>>) -> StatsTableProvider {
-    StatsTableProvider::new(Arc::new(StatsView::new(None)))
+pub fn create_stats_provider() -> StatsTableProvider {
+    StatsTableProvider::new(Arc::new(StatsView::new()))
 }
 
 #[cfg(test)]
@@ -111,16 +153,30 @@ mod tests {
     }
 
     #[test]
-    fn test_stats_view_compute() {
-        let view = StatsView::new(None);
+    fn test_stats_view_compute_without_callback() {
+        let view = StatsView::new();
         let batch = view.compute_batch().expect("compute batch");
         assert!(batch.num_rows() >= 3); // at least the placeholder metrics
         assert_eq!(batch.num_columns(), 2);
     }
 
     #[test]
+    fn test_stats_view_compute_with_callback() {
+        let callback: MetricsCallback = Arc::new(|| {
+            vec![
+                ("test_metric_1".to_string(), "100".to_string()),
+                ("test_metric_2".to_string(), "200".to_string()),
+            ]
+        });
+        let view = StatsView::with_callback(callback);
+        let batch = view.compute_batch().expect("compute batch");
+        assert_eq!(batch.num_rows(), 2);
+        assert_eq!(batch.num_columns(), 2);
+    }
+
+    #[test]
     fn test_table_provider() {
-        let view = Arc::new(StatsView::new(None));
+        let view = Arc::new(StatsView::new());
         let provider = StatsTableProvider::new(view);
         use datafusion::datasource::TableProvider;
         use datafusion::datasource::TableType;

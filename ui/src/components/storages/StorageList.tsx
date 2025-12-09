@@ -1,5 +1,6 @@
-import { useEffect } from 'react';
+import { useEffect, useState } from 'react';
 import { useStorages, Storage } from '@/hooks/useStorages';
+import { StorageForm } from './StorageForm';
 import {
   Table,
   TableBody,
@@ -10,7 +11,7 @@ import {
 } from '@/components/ui/table';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
-import { Loader2, RefreshCw, Database, HardDrive, Cloud } from 'lucide-react';
+import { Loader2, RefreshCw, Database, HardDrive, Cloud, Plus, Pencil } from 'lucide-react';
 
 interface StorageListProps {
   onSelectStorage?: (storage: Storage) => void;
@@ -18,10 +19,29 @@ interface StorageListProps {
 
 export function StorageList({ onSelectStorage }: StorageListProps) {
   const { storages, isLoading, error, fetchStorages } = useStorages();
+  const [showForm, setShowForm] = useState(false);
+  const [editingStorage, setEditingStorage] = useState<Storage | undefined>(undefined);
 
   useEffect(() => {
     fetchStorages();
   }, [fetchStorages]);
+
+  const handleCreateNew = () => {
+    setEditingStorage(undefined);
+    setShowForm(true);
+  };
+
+  const handleEdit = (storage: Storage, e: React.MouseEvent) => {
+    e.stopPropagation();
+    setEditingStorage(storage);
+    setShowForm(true);
+  };
+
+  const handleFormSuccess = () => {
+    setShowForm(false);
+    setEditingStorage(undefined);
+    fetchStorages();
+  };
 
   const getStorageIcon = (type: string) => {
     switch (type.toLowerCase()) {
@@ -64,11 +84,23 @@ export function StorageList({ onSelectStorage }: StorageListProps) {
   return (
     <div className="space-y-4">
       {/* Toolbar */}
-      <div className="flex items-center justify-end">
+      <div className="flex items-center justify-between">
+        <Button onClick={handleCreateNew}>
+          <Plus className="h-4 w-4 mr-2" />
+          Create Storage
+        </Button>
         <Button variant="outline" size="icon" onClick={fetchStorages} disabled={isLoading}>
           <RefreshCw className={`h-4 w-4 ${isLoading ? 'animate-spin' : ''}`} />
         </Button>
       </div>
+
+      {/* Storage Form Dialog */}
+      <StorageForm
+        open={showForm}
+        onOpenChange={setShowForm}
+        storage={editingStorage}
+        onSuccess={handleFormSuccess}
+      />
 
       {/* Table */}
       {isLoading && storages.length === 0 ? (
@@ -93,6 +125,7 @@ export function StorageList({ onSelectStorage }: StorageListProps) {
                 <TableHead>Type</TableHead>
                 <TableHead>Path</TableHead>
                 <TableHead>Created</TableHead>
+                <TableHead className="w-[80px]">Actions</TableHead>
               </TableRow>
             </TableHeader>
             <TableBody>
@@ -105,7 +138,12 @@ export function StorageList({ onSelectStorage }: StorageListProps) {
                   <TableCell className="font-medium">
                     <div className="flex items-center gap-2">
                       {getStorageIcon(storage.storage_type)}
-                      {storage.storage_name}
+                      <div>
+                        <div>{storage.storage_name}</div>
+                        <div className="text-xs text-muted-foreground font-mono">
+                          {storage.storage_id}
+                        </div>
+                      </div>
                     </div>
                   </TableCell>
                   <TableCell>
@@ -113,11 +151,21 @@ export function StorageList({ onSelectStorage }: StorageListProps) {
                       {storage.storage_type}
                     </span>
                   </TableCell>
-                  <TableCell className="text-muted-foreground font-mono text-sm">
+                  <TableCell className="text-muted-foreground font-mono text-sm max-w-[300px] truncate">
                     {storage.base_directory}
                   </TableCell>
                   <TableCell className="text-muted-foreground">
                     {new Date(storage.created_at).toLocaleDateString()}
+                  </TableCell>
+                  <TableCell>
+                    <Button
+                      variant="ghost"
+                      size="icon"
+                      onClick={(e) => handleEdit(storage, e)}
+                      title="Edit storage"
+                    >
+                      <Pencil className="h-4 w-4" />
+                    </Button>
                   </TableCell>
                 </TableRow>
               ))}

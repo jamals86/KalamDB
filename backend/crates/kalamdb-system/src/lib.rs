@@ -56,6 +56,6 @@ pub use system_table_trait::SystemTableProviderExt;
 // Re-export all providers
 pub use providers::{
     AuditLogsTableProvider, JobsTableProvider, LiveQueriesTableProvider, ManifestTableProvider,
-    NamespacesTableProvider, StatsTableProvider, StoragesTableProvider, TablesTableProvider,
-    UsersTableProvider,
+    NamespacesTableProvider, ServerLogsTableProvider, StatsTableProvider, StoragesTableProvider,
+    TablesTableProvider, UsersTableProvider,
 };

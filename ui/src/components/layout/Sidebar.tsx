@@ -5,6 +5,8 @@ import {
   Users,
   HardDrive,
   FolderTree,
+  ScrollText,
+  FileText,
   Settings,
   Database,
 } from "lucide-react";
@@ -16,6 +18,8 @@ const navigation = [
   { name: "Users", href: "/users", icon: Users },
   { name: "Storages", href: "/storages", icon: HardDrive },
   { name: "Namespaces", href: "/namespaces", icon: FolderTree },
+  { name: "Audit Logs", href: "/audit-logs", icon: ScrollText },
+  { name: "Server Logs", href: "/server-logs", icon: FileText },
   { name: "Settings", href: "/settings", icon: Settings },
 ];
 

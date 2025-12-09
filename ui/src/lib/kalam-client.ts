@@ -143,7 +143,17 @@ export async function executeQuery(sql: string): Promise<QueryResponse> {
   }
   
   console.log('[kalam-client] Executing query via SDK:', sql.substring(0, 50) + (sql.length > 50 ? '...' : ''));
-  return client!.query(sql);
+  
+  try {
+    const response = await client!.query(sql);
+    console.log('[kalam-client] Query response:', response);
+    return response;
+  } catch (err) {
+    console.error('[kalam-client] Query execution error:', err);
+    // Convert WASM errors to a proper error response
+    const errorMessage = err instanceof Error ? err.message : String(err);
+    throw new Error(errorMessage);
+  }
 }
 
 /**
@@ -151,13 +161,19 @@ export async function executeQuery(sql: string): Promise<QueryResponse> {
  * Convenience function for hooks that just need rows
  */
 export async function executeSql(sql: string): Promise<Record<string, unknown>[]> {
-  const response = await executeQuery(sql);
-  
-  if (response.status === 'error' && response.error) {
-    throw new Error(response.error.message);
+  try {
+    const response = await executeQuery(sql);
+    
+    if (response.status === 'error' && response.error) {
+      console.error('[kalam-client] SQL execution error:', response.error);
+      throw new Error(response.error.message);
+    }
+    
+    return (response.results?.[0]?.rows as Record<string, unknown>[]) ?? [];
+  } catch (err) {
+    console.error('[kalam-client] executeSql failed:', err);
+    throw err;
   }
-  
-  return (response.results?.[0]?.rows as Record<string, unknown>[]) ?? [];
 }
 
 /**

@@ -135,13 +135,17 @@ default_query_limit = 50
 level = "info"
 
 # Directory for all log files (default: "./logs")
-# Server will create app.log, slow.log, and other log files in this directory
+# Server will create server.log (or server.jsonl for JSON format), slow.log, etc.
 logs_path = "./logs"
 
 # Also log to console/stdout (default: true)
 log_to_console = true
 
-# Log format: compact, pretty, json (default: compact)
+# Log format: compact, json (default: compact)
+# - compact: Human-readable text format -> server.log
+#   Format: [timestamp] [LEVEL] [thread - target:line] - message
+# - json: JSON Lines format -> server.jsonl (queryable via system.server_logs)
+#   Each line is a valid JSON object with timestamp, level, thread, target, line, message
 format = "compact"
 
 # Slow query logging threshold in milliseconds (default: 1000ms = 1 second)
