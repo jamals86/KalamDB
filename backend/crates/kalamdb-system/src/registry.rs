@@ -8,8 +8,8 @@
 
 use super::{
     AuditLogsTableProvider, JobsTableProvider, LiveQueriesTableProvider, ManifestTableProvider,
-    NamespacesTableProvider, StatsTableProvider, StoragesTableProvider, TablesTableProvider,
-    UsersTableProvider,
+    NamespacesTableProvider, ServerLogsTableProvider, StatsTableProvider, StoragesTableProvider,
+    TablesTableProvider, UsersTableProvider,
 };
 // SchemaRegistry will be passed as Arc parameter from kalamdb-core
 use datafusion::datasource::TableProvider;
@@ -35,6 +35,8 @@ pub struct SystemTablesRegistry {
 
     // ===== Virtual tables =====
     stats: RwLock<Arc<dyn TableProvider + Send + Sync>>,
+    settings: RwLock<Arc<dyn TableProvider + Send + Sync>>,
+    server_logs: RwLock<Option<Arc<ServerLogsTableProvider>>>,
 
     // ===== information_schema.* tables (lazy-initialized, using VirtualView pattern) =====
     information_schema_tables: RwLock<Option<Arc<dyn TableProvider>>>,
@@ -76,6 +78,8 @@ impl SystemTablesRegistry {
 
             // Virtual tables
             stats: RwLock::new(Arc::new(StatsTableProvider::new(None))), // Will be wired with cache later
+            settings: RwLock::new(Arc::new(StatsTableProvider::new(None))), // Placeholder, will be replaced from kalamdb-core
+            server_logs: RwLock::new(None), // Initialized via set_server_logs_provider()
 
             // Information schema providers (lazy-initialized in set_information_schema_dependencies)
             information_schema_tables: RwLock::new(None),
@@ -144,6 +148,28 @@ impl SystemTablesRegistry {
         *self.stats.write().unwrap() = provider;
     }
 
+    /// Get the system.settings provider (virtual table)
+    pub fn settings(&self) -> Arc<dyn TableProvider + Send + Sync> {
+        self.settings.read().unwrap().clone()
+    }
+
+    /// Set the system.settings provider (called from kalamdb-core)
+    pub fn set_settings_provider(&self, provider: Arc<dyn TableProvider + Send + Sync>) {
+        log::info!("SystemTablesRegistry: Setting settings provider");
+        *self.settings.write().unwrap() = provider;
+    }
+
+    /// Get the system.server_logs provider (virtual table reading JSON logs)
+    pub fn server_logs(&self) -> Option<Arc<ServerLogsTableProvider>> {
+        self.server_logs.read().unwrap().clone()
+    }
+
+    /// Set the system.server_logs provider (called from kalamdb-core with logs path)
+    pub fn set_server_logs_provider(&self, provider: Arc<ServerLogsTableProvider>) {
+        log::info!("SystemTablesRegistry: Setting server_logs provider");
+        *self.server_logs.write().unwrap() = Some(provider);
+    }
+
     /// Get the system.manifest provider
     pub fn manifest(&self) -> Arc<ManifestTableProvider> {
         self.manifest.clone()
@@ -177,7 +203,7 @@ impl SystemTablesRegistry {
     pub fn all_system_providers(
         &self,
     ) -> Vec<(&'static str, Arc<dyn datafusion::datasource::TableProvider>)> {
-        vec![
+        let mut providers = vec![
             (
                 "users",
                 self.users.clone() as Arc<dyn datafusion::datasource::TableProvider>,
@@ -212,10 +238,25 @@ impl SystemTablesRegistry {
                     as Arc<dyn datafusion::datasource::TableProvider>,
             ),
             (
+                "settings",
+                self.settings.read().unwrap().clone()
+                    as Arc<dyn datafusion::datasource::TableProvider>,
+            ),
+            (
                 "manifest",
                 self.manifest.clone() as Arc<dyn datafusion::datasource::TableProvider>,
             ),
-        ]
+        ];
+
+        // Add server_logs if initialized
+        if let Some(server_logs) = self.server_logs.read().unwrap().clone() {
+            providers.push((
+                "server_logs",
+                server_logs as Arc<dyn datafusion::datasource::TableProvider>,
+            ));
+        }
+
+        providers
     }
 
     /// Get all information_schema.* providers as a vector

@@ -17,15 +17,37 @@ fn format_level_colored(level: Level) -> ColoredString {
     }
 }
 
+/// Log format type
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum LogFormat {
+    /// Compact text format: [timestamp] [LEVEL] [thread - target:line] - message
+    Compact,
+    /// JSON Lines format for structured logging and DataFusion queries
+    Json,
+}
+
+impl LogFormat {
+    pub fn from_str(s: &str) -> Self {
+        match s.to_lowercase().as_str() {
+            "json" | "jsonl" => LogFormat::Json,
+            _ => LogFormat::Compact,
+        }
+    }
+}
+
 /// Initialize logging based on configuration
 /// Console pattern (colored): [timestamp] [LEVEL] - thread - module:line - message
-/// File pattern (plain): [timestamp] [LEVEL] [thread - module:line] - message
+/// File pattern (compact): [timestamp] [LEVEL] [thread - module:line] - message
+/// File pattern (json): {"timestamp":"...","level":"...","thread":"...","target":"...","line":N,"message":"..."}
 pub fn init_logging(
     level: &str,
     file_path: &str,
     log_to_console: bool,
     target_levels: Option<&HashMap<String, String>>,
+    format: &str,
 ) -> anyhow::Result<()> {
+    // Parse log format
+    let log_format = LogFormat::from_str(format);
     // Parse log level
     let level_filter = parse_log_level(level)?;
 
@@ -94,20 +116,38 @@ pub fn init_logging(
             })
             .chain(std::io::stdout());
 
-        // File output without colors
-        let file_config = fern::Dispatch::new()
-            .format(|out, message, record| {
-                out.finish(format_args!(
-                    "[{}] [{:5}] [{} - {}:{}] - {}",
-                    chrono::Local::now().format("%Y-%m-%d %H:%M:%S%.3f"),
-                    record.level(),
-                    std::thread::current().name().unwrap_or("main"),
-                    record.target(),
-                    record.line().unwrap_or(0),
-                    message
-                ))
-            })
-            .chain(log_file);
+        // File output - format depends on config
+        let file_config = if log_format == LogFormat::Json {
+            // JSON Lines format for structured logging
+            fern::Dispatch::new()
+                .format(|out, message, record| {
+                    let json = serde_json::json!({
+                        "timestamp": chrono::Local::now().format("%Y-%m-%dT%H:%M:%S%.3f%:z").to_string(),
+                        "level": record.level().to_string(),
+                        "thread": std::thread::current().name().unwrap_or("main"),
+                        "target": record.target(),
+                        "line": record.line().unwrap_or(0),
+                        "message": message.to_string()
+                    });
+                    out.finish(format_args!("{}", json))
+                })
+                .chain(log_file)
+        } else {
+            // Compact text format
+            fern::Dispatch::new()
+                .format(|out, message, record| {
+                    out.finish(format_args!(
+                        "[{}] [{:5}] [{} - {}:{}] - {}",
+                        chrono::Local::now().format("%Y-%m-%d %H:%M:%S%.3f"),
+                        record.level(),
+                        std::thread::current().name().unwrap_or("main"),
+                        record.target(),
+                        record.line().unwrap_or(0),
+                        message
+                    ))
+                })
+                .chain(log_file)
+        };
 
         // Combine console and file outputs
         base_config
@@ -121,8 +161,22 @@ pub fn init_logging(
             file_path
         );
     } else {
-        // File only output without colors
-        let mut file_only =
+        // File only output - use JSON or compact format based on config
+        let mut file_only = if log_format == LogFormat::Json {
+            fern::Dispatch::new()
+                .level(level_filter)
+                .format(|out, message, record| {
+                    let json = serde_json::json!({
+                        "timestamp": chrono::Local::now().format("%Y-%m-%dT%H:%M:%S%.3f%:z").to_string(),
+                        "level": record.level().to_string(),
+                        "thread": std::thread::current().name().unwrap_or("main"),
+                        "target": record.target(),
+                        "line": record.line().unwrap_or(0),
+                        "message": message.to_string()
+                    });
+                    out.finish(format_args!("{}", json))
+                })
+        } else {
             fern::Dispatch::new()
                 .level(level_filter)
                 .format(|out, message, record| {
@@ -135,7 +189,8 @@ pub fn init_logging(
                         record.line().unwrap_or(0),
                         message
                     ))
-                });
+                })
+        };
 
         // Apply per-target overrides from configuration (if any)
         if let Some(map) = target_levels {

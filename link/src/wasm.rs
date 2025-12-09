@@ -625,13 +625,23 @@ impl KalamClient {
                 // Look for subscription_id in the event and update last_seq_id
                 let subscription_id = match &event {
                     ServerMessage::SubscriptionAck {
-                        subscription_id, ..
-                    } => Some(subscription_id.clone()),
+                        subscription_id, total_rows, ..
+                    } => {
+                        console_log(&format!(
+                            "KalamClient: Parsed SubscriptionAck - id: {}, total_rows: {}",
+                            subscription_id, total_rows
+                        ));
+                        Some(subscription_id.clone())
+                    },
                     ServerMessage::InitialDataBatch {
                         subscription_id,
                         batch_control,
-                        ..
+                        rows,
                     } => {
+                        console_log(&format!(
+                            "KalamClient: Parsed InitialDataBatch - id: {}, rows: {}, status: {:?}",
+                            subscription_id, rows.len(), batch_control.status
+                        ));
                         // Update last_seq_id from batch_control
                         if let Some(seq_id) = &batch_control.last_seq_id {
                             let mut subs = subscriptions.borrow_mut();
@@ -646,27 +656,50 @@ impl KalamClient {
                         Some(subscription_id.clone())
                     }
                     ServerMessage::Change {
-                        subscription_id, ..
-                    } => Some(subscription_id.clone()),
+                        subscription_id, change_type, rows, ..
+                    } => {
+                        console_log(&format!(
+                            "KalamClient: Parsed Change - id: {}, type: {:?}, rows: {:?}",
+                            subscription_id, change_type, rows.as_ref().map(|r| r.len())
+                        ));
+                        Some(subscription_id.clone())
+                    },
                     ServerMessage::Error {
-                        subscription_id, ..
-                    } => Some(subscription_id.clone()),
+                        subscription_id, code, message, ..
+                    } => {
+                        console_log(&format!(
+                            "KalamClient: Parsed Error - id: {}, code: {}, msg: {}",
+                            subscription_id, code, message
+                        ));
+                        Some(subscription_id.clone())
+                    },
                     _ => None, // Auth messages don't have subscription_id
                 };
 
-                if let Some(id) = subscription_id {
+                if let Some(id) = subscription_id.clone() {
                     let subs = subscriptions.borrow();
+                    console_log(&format!(
+                        "KalamClient: Looking for callback for subscription_id: {} (registered subs: {:?})",
+                        id, subs.keys().collect::<Vec<_>>()
+                    ));
                     // First try exact match
                     if let Some(state) = subs.get(&id) {
+                        console_log(&format!("KalamClient: Found exact match for {}, calling callback", id));
                         let _ = state.callback.call1(&JsValue::NULL, &JsValue::from_str(&message));
                     } else {
                         // Server may prefix subscription_id with user_id-session_id-
                         // Try to find a callback where the server's ID ends with our client ID
+                        let mut found = false;
                         for (client_id, state) in subs.iter() {
                             if id.ends_with(client_id) {
+                                console_log(&format!("KalamClient: Found suffix match {} -> {}, calling callback", id, client_id));
                                 let _ = state.callback.call1(&JsValue::NULL, &JsValue::from_str(&message));
+                                found = true;
                                 break;
                             }
+                        }
+                        if !found {
+                            console_log(&format!("KalamClient: No callback found for subscription_id: {}", id));
                         }
                     }
                 }
@@ -777,7 +810,7 @@ impl KalamClient {
             values.join(", ")
         );
         
-        self.execute_sql(&sql).await
+        self.execute_sql_internal(&sql, None).await
     }
 
     /// Delete a row from a table (T049, T063H)
@@ -797,7 +830,7 @@ impl KalamClient {
             quote_table_name(&table_name),
             row_id.replace("'", "''")
         );
-        self.execute_sql(&sql).await?;
+        self.execute_sql_internal(&sql, None).await?;
         Ok(())
     }
 
@@ -816,7 +849,41 @@ impl KalamClient {
     /// ```
     pub async fn query(&self, sql: String) -> Result<String, JsValue> {
         // T063F: Implement query() using web-sys fetch API
-        self.execute_sql(&sql).await
+        self.execute_sql_internal(&sql, None).await
+    }
+
+    /// Execute a SQL query with parameters
+    ///
+    /// # Arguments
+    /// * `sql` - SQL query string with placeholders ($1, $2, ...)
+    /// * `params` - JSON array string of parameter values
+    ///
+    /// # Returns
+    /// JSON string with query results
+    ///
+    /// # Example (JavaScript)
+    /// ```js
+    /// const result = await client.queryWithParams(
+    ///   "SELECT * FROM users WHERE id = $1 AND age > $2",
+    ///   JSON.stringify([42, 18])
+    /// );
+    /// const data = JSON.parse(result);
+    /// ```
+    #[wasm_bindgen(js_name = queryWithParams)]
+    pub async fn query_with_params(
+        &self,
+        sql: String,
+        params: Option<String>,
+    ) -> Result<String, JsValue> {
+        let parsed_params: Option<Vec<serde_json::Value>> = match params {
+            Some(p) if !p.is_empty() => {
+                Some(serde_json::from_str(&p).map_err(|e| {
+                    JsValue::from_str(&format!("Invalid params JSON: {}", e))
+                })?)
+            }
+            _ => None,
+        };
+        self.execute_sql_internal(&sql, parsed_params).await
     }
 
     /// Subscribe to table changes (T051, T063I-T063J)
@@ -836,8 +903,8 @@ impl KalamClient {
         validate_sql_identifier(&table_name, "Table name")?;
         
         // Default: SELECT * FROM table with default options
-        // Security: Quote table name
-        let sql = format!("SELECT * FROM \"{}\"", table_name.replace('"', "\"\""));
+        // Security: Quote table name properly (handles namespace.table format)
+        let sql = format!("SELECT * FROM {}", quote_table_name(&table_name));
         self.subscribe_with_sql(sql, None, callback).await
     }
 
@@ -904,12 +971,13 @@ impl KalamClient {
             let subscribe_msg = ClientMessage::Subscribe {
                 subscription: SubscriptionRequest {
                     id: subscription_id.clone(),
-                    sql,
+                    sql: sql.clone(),
                     options: subscription_options,
                 },
             };
             let payload = serde_json::to_string(&subscribe_msg)
                 .map_err(|e| JsValue::from_str(&format!("Serialization error: {}", e)))?;
+            console_log(&format!("KalamClient: Sending subscribe request - id: {}, sql: {}", subscription_id, sql));
             ws.send_with_str(&payload)?;
         }
 
@@ -949,7 +1017,11 @@ impl KalamClient {
     }
 
     /// Internal: Execute SQL via HTTP POST to /v1/api/sql (T063F)
-    async fn execute_sql(&self, sql: &str) -> Result<String, JsValue> {
+    async fn execute_sql_internal(
+        &self,
+        sql: &str,
+        params: Option<Vec<serde_json::Value>>,
+    ) -> Result<String, JsValue> {
         // T063N: Add proper error handling with JsValue conversion
         let window =
             web_sys::window().ok_or_else(|| JsValue::from_str("No window object available"))?;
@@ -972,7 +1044,7 @@ impl KalamClient {
         // Set body
         let body = QueryRequest {
             sql: sql.to_string(),
-            params: None,
+            params,
         };
         let body_str = serde_json::to_string(&body)
             .map_err(|e| JsValue::from_str(&format!("Serialization error: {}", e)))?;

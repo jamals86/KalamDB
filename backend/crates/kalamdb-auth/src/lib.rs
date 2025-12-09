@@ -12,6 +12,7 @@ pub mod extractor;
 pub mod impersonation;
 pub mod ip_extractor;
 pub mod jwt_auth;
+pub mod login_tracker;
 pub mod oauth;
 pub mod password;
 pub mod rbac;
@@ -27,6 +28,7 @@ pub use extractor::{AuthExtractError, AuthSession, OptionalAuth};
 pub use impersonation::{ImpersonationContext, ImpersonationOrigin};
 pub use ip_extractor::{extract_client_ip_secure, is_localhost_address};
 pub use jwt_auth::{generate_jwt_token, refresh_jwt_token, JwtClaims, DEFAULT_JWT_EXPIRY_HOURS, KALAMDB_ISSUER};
+pub use login_tracker::{LoginTracker, LoginTrackingConfig};
 pub use unified::{
     authenticate, extract_username_for_audit, AuthMethod, AuthRequest, AuthenticationResult,
 };

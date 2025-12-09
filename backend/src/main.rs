@@ -100,12 +100,19 @@ async fn main() -> Result<()> {
     }
 
     // Logging before any other side effects
-    let server_log_path = format!("{}/server.log", config.logging.logs_path);
+    // Use .jsonl extension for JSON format, .log for compact format
+    let log_extension = if config.logging.format.eq_ignore_ascii_case("json") {
+        "jsonl"
+    } else {
+        "log"
+    };
+    let server_log_path = format!("{}/server.{}", config.logging.logs_path, log_extension);
     logging::init_logging(
         &config.logging.level,
         &server_log_path,
         config.logging.log_to_console,
         Some(&config.logging.targets),
+        &config.logging.format,
     )?;
 
     // Display enhanced version information

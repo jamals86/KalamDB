@@ -190,11 +190,6 @@ pub struct StorageSettings {
     /// Template for user table paths (placeholders: {namespace}, {tableName}, {userId})
     #[serde(default = "default_user_tables_template")]
     pub user_tables_template: String,
-    #[serde(default = "default_true")]
-    #[deprecated(note = "WAL is always enabled and this setting will be removed")]
-    pub enable_wal: bool, //TODO: Remove this, since we always want WAL enabled
-    #[serde(default = "default_compression")]
-    pub compression: String,
     #[serde(default)]
     pub rocksdb: RocksDbSettings,
 }
@@ -782,8 +777,6 @@ impl Default for ServerConfig {
                 default_storage_path: default_storage_path(),
                 shared_tables_template: default_shared_tables_template(),
                 user_tables_template: default_user_tables_template(),
-                enable_wal: true,
-                compression: "lz4".to_string(),
                 rocksdb: RocksDbSettings::default(),
             },
             limits: LimitsSettings {

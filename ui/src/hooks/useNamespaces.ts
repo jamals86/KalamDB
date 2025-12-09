@@ -25,18 +25,17 @@ export function useNamespaces() {
     setIsLoading(true);
     setError(null);
     try {
-      // Query namespaces from information_schema
-      // Show all namespaces including system ones for admin visibility
+      // Query namespaces from system.namespaces table (includes all namespaces)
       const rows = await executeSql(`
-        SELECT DISTINCT table_schema as namespace
-        FROM information_schema.tables
-        ORDER BY table_schema
+        SELECT namespace_id, name, created_at, table_count
+        FROM system.namespaces
+        ORDER BY name
       `);
       
       const namespaceList = rows.map((row) => ({
-        name: String(row.namespace ?? ''),
-        table_count: 0, // Will be populated separately
-        created_at: new Date().toISOString(),
+        name: String(row.name ?? ''),
+        table_count: Number(row.table_count ?? 0),
+        created_at: String(row.created_at ?? new Date().toISOString()),
       }));
       
       setNamespaces(namespaceList);
