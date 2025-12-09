@@ -29,10 +29,6 @@ pub fn default_true() -> bool {
     true
 }
 
-pub fn default_compression() -> String {
-    "lz4".to_string()
-}
-
 pub fn default_storage_path() -> String {
     "./data/storage".to_string() // Default dev path; normalized to absolute at runtime
 }

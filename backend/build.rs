@@ -1,6 +1,7 @@
 // Build script to capture Git commit hash and build timestamp
 // Sets environment variables for use in the binary at compile time
 // Falls back to version.toml if git is not available (e.g., Docker builds)
+// Note: UI building is handled by kalamdb-api/build.rs (where rust-embed runs)
 
 use std::fs;
 use std::process::Command;

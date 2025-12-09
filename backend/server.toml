@@ -60,12 +60,6 @@ default_storage_path = "./data/storage"
 shared_tables_template = "{namespace}/{tableName}"
 user_tables_template = "{namespace}/{tableName}/{userId}"
 
-# Enable Write-Ahead Log for durability (default: true)
-enable_wal = true
-
-# Compression algorithm: none, snappy, zlib, lz4, zstd (default: snappy)
-compression = "snappy"
-
 [storage.rocksdb]
 # Write buffer size per column family in bytes (default: 64MB)
 # Larger values improve write throughput but use more memory
@@ -116,19 +110,6 @@ default_time_interval = 300
 # Lower values reduce memory usage but may increase flush duration
 # Set to 0 to load all rows at once (not recommended for large tables)
 flush_batch_size = 10000
-
-# T158j: Flush job shutdown timeout in seconds (default: 300s = 5 minutes)
-# Server waits this duration for active flush jobs to complete during shutdown
-flush_job_shutdown_timeout_seconds = 300
-
-# T158q: Job retention days (default: 30 days)
-# Job records older than this are deleted during cleanup
-job_retention_days = 30
-
-# T158r: Job cleanup schedule (cron format, default: daily at midnight UTC)
-# Format: "second minute hour day_of_month month day_of_week"
-# Example: "0 0 * * *" = daily at midnight
-job_cleanup_schedule = "0 0 * * *"
 
 [retention]
 # Default retention hours for soft-deleted rows (default: 168 hours = 7 days)

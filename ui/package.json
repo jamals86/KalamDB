@@ -4,7 +4,10 @@
   "version": "0.1.0",
   "type": "module",
   "scripts": {
+    "build:link": "cd ../link/sdks/typescript && npx tsc",
+    "predev": "npm run build:link",
     "dev": "vite",
+    "prebuild": "npm run build:link",
     "build": "tsc && vite build",
     "lint": "eslint . --ext ts,tsx --report-unused-disable-directives --max-warnings 0",
     "preview": "vite preview",

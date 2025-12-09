@@ -219,20 +219,20 @@ function takeFromExternrefTable0(idx) {
     wasm.__externref_table_dealloc(idx);
     return value;
 }
-function wasm_bindgen__convert__closures_____invoke__h02d0d0b65f8fb1b8(arg0, arg1, arg2) {
-    wasm.wasm_bindgen__convert__closures_____invoke__h02d0d0b65f8fb1b8(arg0, arg1, arg2);
+function wasm_bindgen__convert__closures_____invoke__hd75e56b83013f17b(arg0, arg1) {
+    wasm.wasm_bindgen__convert__closures_____invoke__hd75e56b83013f17b(arg0, arg1);
 }
 
-function wasm_bindgen__convert__closures_____invoke__h58212949185b0233(arg0, arg1, arg2) {
-    wasm.wasm_bindgen__convert__closures_____invoke__h58212949185b0233(arg0, arg1, arg2);
+function wasm_bindgen__convert__closures_____invoke__h8a410ccdbaca7a80(arg0, arg1, arg2) {
+    wasm.wasm_bindgen__convert__closures_____invoke__h8a410ccdbaca7a80(arg0, arg1, arg2);
 }
 
-function wasm_bindgen__convert__closures_____invoke__h09e89bcd79e5a5aa(arg0, arg1) {
-    wasm.wasm_bindgen__convert__closures_____invoke__h09e89bcd79e5a5aa(arg0, arg1);
+function wasm_bindgen__convert__closures_____invoke__h4f4829089d542869(arg0, arg1, arg2) {
+    wasm.wasm_bindgen__convert__closures_____invoke__h4f4829089d542869(arg0, arg1, arg2);
 }
 
-function wasm_bindgen__convert__closures_____invoke__h631465b85669de06(arg0, arg1, arg2, arg3) {
-    wasm.wasm_bindgen__convert__closures_____invoke__h631465b85669de06(arg0, arg1, arg2, arg3);
+function wasm_bindgen__convert__closures_____invoke__h14e8fa85ad019085(arg0, arg1, arg2, arg3) {
+    wasm.wasm_bindgen__convert__closures_____invoke__h14e8fa85ad019085(arg0, arg1, arg2, arg3);
 }
 
 const __wbindgen_enum_RequestMode = ["same-origin", "no-cors", "cors", "navigate"];
@@ -309,6 +309,160 @@ export class KalamClient {
         wasm.__wbg_kalamclient_free(ptr, 0);
     }
     /**
+     * Disconnect from KalamDB server (T046, T063E)
+     * @returns {Promise<void>}
+     */
+    disconnect() {
+        const ret = wasm.kalamclient_disconnect(this.__wbg_ptr);
+        return ret;
+    }
+    /**
+     * Unsubscribe from table changes (T052, T063M)
+     *
+     * # Arguments
+     * * `subscription_id` - ID returned from subscribe()
+     * @param {string} subscription_id
+     * @returns {Promise<void>}
+     */
+    unsubscribe(subscription_id) {
+        const ptr0 = passStringToWasm0(subscription_id, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        const len0 = WASM_VECTOR_LEN;
+        const ret = wasm.kalamclient_unsubscribe(this.__wbg_ptr, ptr0, len0);
+        return ret;
+    }
+    /**
+     * Check if client is currently connected (T047)
+     *
+     * # Returns
+     * true if WebSocket connection is active, false otherwise
+     * @returns {boolean}
+     */
+    isConnected() {
+        const ret = wasm.kalamclient_isConnected(this.__wbg_ptr);
+        return ret !== 0;
+    }
+    /**
+     * Get the current authentication type
+     *
+     * Returns one of: "basic", "jwt", or "none"
+     * @returns {string}
+     */
+    getAuthType() {
+        let deferred1_0;
+        let deferred1_1;
+        try {
+            const ret = wasm.kalamclient_getAuthType(this.__wbg_ptr);
+            deferred1_0 = ret[0];
+            deferred1_1 = ret[1];
+            return getStringFromWasm0(ret[0], ret[1]);
+        } finally {
+            wasm.__wbindgen_free(deferred1_0, deferred1_1, 1);
+        }
+    }
+    /**
+     * Get the last received seq_id for a subscription
+     *
+     * Useful for debugging or manual resumption tracking
+     * @param {string} subscription_id
+     * @returns {string | undefined}
+     */
+    getLastSeqId(subscription_id) {
+        const ptr0 = passStringToWasm0(subscription_id, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        const len0 = WASM_VECTOR_LEN;
+        const ret = wasm.kalamclient_getLastSeqId(this.__wbg_ptr, ptr0, len0);
+        let v2;
+        if (ret[0] !== 0) {
+            v2 = getStringFromWasm0(ret[0], ret[1]).slice();
+            wasm.__wbindgen_free(ret[0], ret[1] * 1, 1);
+        }
+        return v2;
+    }
+    /**
+     * Enable or disable automatic reconnection
+     *
+     * # Arguments
+     * * `enabled` - Whether to automatically reconnect on connection loss
+     * @param {boolean} enabled
+     */
+    setAutoReconnect(enabled) {
+        wasm.kalamclient_setAutoReconnect(this.__wbg_ptr, enabled);
+    }
+    /**
+     * Subscribe to a SQL query with optional subscription options
+     *
+     * # Arguments
+     * * `sql` - SQL SELECT query to subscribe to
+     * * `options` - Optional JSON string with subscription options:
+     *   - `batch_size`: Number of rows per batch (default: server-configured)
+     *   - `auto_reconnect`: Override client auto-reconnect for this subscription (default: true)
+     *   - `include_old_values`: Include old values in UPDATE/DELETE events (default: false)
+     *   - `resume_from_seq_id`: Resume from a specific sequence ID (internal use)
+     * * `callback` - JavaScript function to call when changes occur
+     *
+     * # Returns
+     * Subscription ID for later unsubscribe
+     *
+     * # Example (JavaScript)
+     * ```js
+     * // Subscribe with options
+     * const subId = await client.subscribeWithSql(
+     *   "SELECT * FROM chat.messages WHERE conversation_id = 1",
+     *   JSON.stringify({ batch_size: 50, include_old_values: true }),
+     *   (event) => console.log('Change:', event)
+     * );
+     * ```
+     * @param {string} sql
+     * @param {string | null | undefined} options
+     * @param {Function} callback
+     * @returns {Promise<string>}
+     */
+    subscribeWithSql(sql, options, callback) {
+        const ptr0 = passStringToWasm0(sql, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        const len0 = WASM_VECTOR_LEN;
+        var ptr1 = isLikeNone(options) ? 0 : passStringToWasm0(options, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        var len1 = WASM_VECTOR_LEN;
+        const ret = wasm.kalamclient_subscribeWithSql(this.__wbg_ptr, ptr0, len0, ptr1, len1, callback);
+        return ret;
+    }
+    /**
+     * Set reconnection delay parameters
+     *
+     * # Arguments
+     * * `initial_delay_ms` - Initial delay in milliseconds between reconnection attempts
+     * * `max_delay_ms` - Maximum delay (for exponential backoff)
+     * @param {bigint} initial_delay_ms
+     * @param {bigint} max_delay_ms
+     */
+    setReconnectDelay(initial_delay_ms, max_delay_ms) {
+        wasm.kalamclient_setReconnectDelay(this.__wbg_ptr, initial_delay_ms, max_delay_ms);
+    }
+    /**
+     * Check if currently reconnecting
+     * @returns {boolean}
+     */
+    isReconnecting() {
+        const ret = wasm.kalamclient_isReconnecting(this.__wbg_ptr);
+        return ret !== 0;
+    }
+    /**
+     * Get the current reconnection attempt count
+     * @returns {number}
+     */
+    getReconnectAttempts() {
+        const ret = wasm.kalamclient_getReconnectAttempts(this.__wbg_ptr);
+        return ret >>> 0;
+    }
+    /**
+     * Set maximum reconnection attempts
+     *
+     * # Arguments
+     * * `max_attempts` - Maximum number of attempts (0 = infinite)
+     * @param {number} max_attempts
+     */
+    setMaxReconnectAttempts(max_attempts) {
+        wasm.kalamclient_setMaxReconnectAttempts(this.__wbg_ptr, max_attempts);
+    }
+    /**
      * Create a new KalamDB client with HTTP Basic Authentication (T042, T043, T044)
      *
      * # Arguments
@@ -336,6 +490,84 @@ export class KalamClient {
         this.__wbg_ptr = ret[0] >>> 0;
         KalamClientFinalization.register(this, this.__wbg_ptr, this);
         return this;
+    }
+    /**
+     * Execute a SQL query (T050, T063F)
+     *
+     * # Arguments
+     * * `sql` - SQL query string
+     *
+     * # Returns
+     * JSON string with query results
+     *
+     * # Example (JavaScript)
+     * ```js
+     * const result = await client.query("SELECT * FROM todos WHERE completed = false");
+     * const data = JSON.parse(result);
+     * ```
+     * @param {string} sql
+     * @returns {Promise<string>}
+     */
+    query(sql) {
+        const ptr0 = passStringToWasm0(sql, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        const len0 = WASM_VECTOR_LEN;
+        const ret = wasm.kalamclient_query(this.__wbg_ptr, ptr0, len0);
+        return ret;
+    }
+    /**
+     * Delete a row from a table (T049, T063H)
+     *
+     * # Arguments
+     * * `table_name` - Name of the table
+     * * `row_id` - ID of the row to delete
+     * @param {string} table_name
+     * @param {string} row_id
+     * @returns {Promise<void>}
+     */
+    delete(table_name, row_id) {
+        const ptr0 = passStringToWasm0(table_name, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        const len0 = WASM_VECTOR_LEN;
+        const ptr1 = passStringToWasm0(row_id, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        const len1 = WASM_VECTOR_LEN;
+        const ret = wasm.kalamclient_delete(this.__wbg_ptr, ptr0, len0, ptr1, len1);
+        return ret;
+    }
+    /**
+     * Insert data into a table (T048, T063G)
+     *
+     * # Arguments
+     * * `table_name` - Name of the table to insert into
+     * * `data` - JSON string representing the row data
+     *
+     * # Example (JavaScript)
+     * ```js
+     * await client.insert("todos", JSON.stringify({
+     *   title: "Buy groceries",
+     *   completed: false
+     * }));
+     * ```
+     * @param {string} table_name
+     * @param {string} data
+     * @returns {Promise<string>}
+     */
+    insert(table_name, data) {
+        const ptr0 = passStringToWasm0(table_name, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        const len0 = WASM_VECTOR_LEN;
+        const ptr1 = passStringToWasm0(data, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        const len1 = WASM_VECTOR_LEN;
+        const ret = wasm.kalamclient_insert(this.__wbg_ptr, ptr0, len0, ptr1, len1);
+        return ret;
+    }
+    /**
+     * Connect to KalamDB server via WebSocket (T045, T063C-T063D)
+     *
+     * # Returns
+     * Promise that resolves when connection is established and authenticated
+     * @returns {Promise<void>}
+     */
+    connect() {
+        const ret = wasm.kalamclient_connect(this.__wbg_ptr);
+        return ret;
     }
     /**
      * Create a new KalamDB client with JWT Token Authentication
@@ -400,187 +632,6 @@ export class KalamClient {
         return KalamClient.__wrap(ret[0]);
     }
     /**
-     * Get the current authentication type
-     *
-     * Returns one of: "basic", "jwt", or "none"
-     * @returns {string}
-     */
-    getAuthType() {
-        let deferred1_0;
-        let deferred1_1;
-        try {
-            const ret = wasm.kalamclient_getAuthType(this.__wbg_ptr);
-            deferred1_0 = ret[0];
-            deferred1_1 = ret[1];
-            return getStringFromWasm0(ret[0], ret[1]);
-        } finally {
-            wasm.__wbindgen_free(deferred1_0, deferred1_1, 1);
-        }
-    }
-    /**
-     * Enable or disable automatic reconnection
-     *
-     * # Arguments
-     * * `enabled` - Whether to automatically reconnect on connection loss
-     * @param {boolean} enabled
-     */
-    setAutoReconnect(enabled) {
-        wasm.kalamclient_setAutoReconnect(this.__wbg_ptr, enabled);
-    }
-    /**
-     * Set reconnection delay parameters
-     *
-     * # Arguments
-     * * `initial_delay_ms` - Initial delay in milliseconds between reconnection attempts
-     * * `max_delay_ms` - Maximum delay (for exponential backoff)
-     * @param {bigint} initial_delay_ms
-     * @param {bigint} max_delay_ms
-     */
-    setReconnectDelay(initial_delay_ms, max_delay_ms) {
-        wasm.kalamclient_setReconnectDelay(this.__wbg_ptr, initial_delay_ms, max_delay_ms);
-    }
-    /**
-     * Set maximum reconnection attempts
-     *
-     * # Arguments
-     * * `max_attempts` - Maximum number of attempts (0 = infinite)
-     * @param {number} max_attempts
-     */
-    setMaxReconnectAttempts(max_attempts) {
-        wasm.kalamclient_setMaxReconnectAttempts(this.__wbg_ptr, max_attempts);
-    }
-    /**
-     * Get the current reconnection attempt count
-     * @returns {number}
-     */
-    getReconnectAttempts() {
-        const ret = wasm.kalamclient_getReconnectAttempts(this.__wbg_ptr);
-        return ret >>> 0;
-    }
-    /**
-     * Check if currently reconnecting
-     * @returns {boolean}
-     */
-    isReconnecting() {
-        const ret = wasm.kalamclient_isReconnecting(this.__wbg_ptr);
-        return ret !== 0;
-    }
-    /**
-     * Get the last received seq_id for a subscription
-     *
-     * Useful for debugging or manual resumption tracking
-     * @param {string} subscription_id
-     * @returns {string | undefined}
-     */
-    getLastSeqId(subscription_id) {
-        const ptr0 = passStringToWasm0(subscription_id, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
-        const len0 = WASM_VECTOR_LEN;
-        const ret = wasm.kalamclient_getLastSeqId(this.__wbg_ptr, ptr0, len0);
-        let v2;
-        if (ret[0] !== 0) {
-            v2 = getStringFromWasm0(ret[0], ret[1]).slice();
-            wasm.__wbindgen_free(ret[0], ret[1] * 1, 1);
-        }
-        return v2;
-    }
-    /**
-     * Connect to KalamDB server via WebSocket (T045, T063C-T063D)
-     *
-     * # Returns
-     * Promise that resolves when connection is established and authenticated
-     * @returns {Promise<void>}
-     */
-    connect() {
-        const ret = wasm.kalamclient_connect(this.__wbg_ptr);
-        return ret;
-    }
-    /**
-     * Disconnect from KalamDB server (T046, T063E)
-     * @returns {Promise<void>}
-     */
-    disconnect() {
-        const ret = wasm.kalamclient_disconnect(this.__wbg_ptr);
-        return ret;
-    }
-    /**
-     * Check if client is currently connected (T047)
-     *
-     * # Returns
-     * true if WebSocket connection is active, false otherwise
-     * @returns {boolean}
-     */
-    isConnected() {
-        const ret = wasm.kalamclient_isConnected(this.__wbg_ptr);
-        return ret !== 0;
-    }
-    /**
-     * Insert data into a table (T048, T063G)
-     *
-     * # Arguments
-     * * `table_name` - Name of the table to insert into
-     * * `data` - JSON string representing the row data
-     *
-     * # Example (JavaScript)
-     * ```js
-     * await client.insert("todos", JSON.stringify({
-     *   title: "Buy groceries",
-     *   completed: false
-     * }));
-     * ```
-     * @param {string} table_name
-     * @param {string} data
-     * @returns {Promise<string>}
-     */
-    insert(table_name, data) {
-        const ptr0 = passStringToWasm0(table_name, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
-        const len0 = WASM_VECTOR_LEN;
-        const ptr1 = passStringToWasm0(data, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
-        const len1 = WASM_VECTOR_LEN;
-        const ret = wasm.kalamclient_insert(this.__wbg_ptr, ptr0, len0, ptr1, len1);
-        return ret;
-    }
-    /**
-     * Delete a row from a table (T049, T063H)
-     *
-     * # Arguments
-     * * `table_name` - Name of the table
-     * * `row_id` - ID of the row to delete
-     * @param {string} table_name
-     * @param {string} row_id
-     * @returns {Promise<void>}
-     */
-    delete(table_name, row_id) {
-        const ptr0 = passStringToWasm0(table_name, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
-        const len0 = WASM_VECTOR_LEN;
-        const ptr1 = passStringToWasm0(row_id, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
-        const len1 = WASM_VECTOR_LEN;
-        const ret = wasm.kalamclient_delete(this.__wbg_ptr, ptr0, len0, ptr1, len1);
-        return ret;
-    }
-    /**
-     * Execute a SQL query (T050, T063F)
-     *
-     * # Arguments
-     * * `sql` - SQL query string
-     *
-     * # Returns
-     * JSON string with query results
-     *
-     * # Example (JavaScript)
-     * ```js
-     * const result = await client.query("SELECT * FROM todos WHERE completed = false");
-     * const data = JSON.parse(result);
-     * ```
-     * @param {string} sql
-     * @returns {Promise<string>}
-     */
-    query(sql) {
-        const ptr0 = passStringToWasm0(sql, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
-        const len0 = WASM_VECTOR_LEN;
-        const ret = wasm.kalamclient_query(this.__wbg_ptr, ptr0, len0);
-        return ret;
-    }
-    /**
      * Subscribe to table changes (T051, T063I-T063J)
      *
      * # Arguments
@@ -597,57 +648,6 @@ export class KalamClient {
         const ptr0 = passStringToWasm0(table_name, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
         const len0 = WASM_VECTOR_LEN;
         const ret = wasm.kalamclient_subscribe(this.__wbg_ptr, ptr0, len0, callback);
-        return ret;
-    }
-    /**
-     * Subscribe to a SQL query with optional subscription options
-     *
-     * # Arguments
-     * * `sql` - SQL SELECT query to subscribe to
-     * * `options` - Optional JSON string with subscription options:
-     *   - `batch_size`: Number of rows per batch (default: server-configured)
-     *   - `auto_reconnect`: Override client auto-reconnect for this subscription (default: true)
-     *   - `include_old_values`: Include old values in UPDATE/DELETE events (default: false)
-     *   - `resume_from_seq_id`: Resume from a specific sequence ID (internal use)
-     * * `callback` - JavaScript function to call when changes occur
-     *
-     * # Returns
-     * Subscription ID for later unsubscribe
-     *
-     * # Example (JavaScript)
-     * ```js
-     * // Subscribe with options
-     * const subId = await client.subscribeWithSql(
-     *   "SELECT * FROM chat.messages WHERE conversation_id = 1",
-     *   JSON.stringify({ batch_size: 50, include_old_values: true }),
-     *   (event) => console.log('Change:', event)
-     * );
-     * ```
-     * @param {string} sql
-     * @param {string | null | undefined} options
-     * @param {Function} callback
-     * @returns {Promise<string>}
-     */
-    subscribeWithSql(sql, options, callback) {
-        const ptr0 = passStringToWasm0(sql, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
-        const len0 = WASM_VECTOR_LEN;
-        var ptr1 = isLikeNone(options) ? 0 : passStringToWasm0(options, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
-        var len1 = WASM_VECTOR_LEN;
-        const ret = wasm.kalamclient_subscribeWithSql(this.__wbg_ptr, ptr0, len0, ptr1, len1, callback);
-        return ret;
-    }
-    /**
-     * Unsubscribe from table changes (T052, T063M)
-     *
-     * # Arguments
-     * * `subscription_id` - ID returned from subscribe()
-     * @param {string} subscription_id
-     * @returns {Promise<void>}
-     */
-    unsubscribe(subscription_id) {
-        const ptr0 = passStringToWasm0(subscription_id, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
-        const len0 = WASM_VECTOR_LEN;
-        const ret = wasm.kalamclient_unsubscribe(this.__wbg_ptr, ptr0, len0);
         return ret;
     }
 }
@@ -798,7 +798,7 @@ function __wbg_get_imports() {
                 const a = state0.a;
                 state0.a = 0;
                 try {
-                    return wasm_bindgen__convert__closures_____invoke__h631465b85669de06(a, state0.b, arg0, arg1);
+                    return wasm_bindgen__convert__closures_____invoke__h14e8fa85ad019085(a, state0.b, arg0, arg1);
                 } finally {
                     state0.a = a;
                 }
@@ -924,9 +924,14 @@ function __wbg_get_imports() {
         const ret = arg0.then(arg1, arg2);
         return ret;
     };
-    imports.wbg.__wbindgen_cast_200dd177aae4d15f = function(arg0, arg1) {
-        // Cast intrinsic for `Closure(Closure { dtor_idx: 110, function: Function { arguments: [], shim_idx: 113, ret: Unit, inner_ret: Some(Unit) }, mutable: true }) -> Externref`.
-        const ret = makeMutClosure(arg0, arg1, wasm.wasm_bindgen__closure__destroy__h622f07521e60402f, wasm_bindgen__convert__closures_____invoke__h09e89bcd79e5a5aa);
+    imports.wbg.__wbindgen_cast_0761cecce3c198d3 = function(arg0, arg1) {
+        // Cast intrinsic for `Closure(Closure { dtor_idx: 112, function: Function { arguments: [], shim_idx: 115, ret: Unit, inner_ret: Some(Unit) }, mutable: true }) -> Externref`.
+        const ret = makeMutClosure(arg0, arg1, wasm.wasm_bindgen__closure__destroy__h1bc171d9f47ef810, wasm_bindgen__convert__closures_____invoke__hd75e56b83013f17b);
+        return ret;
+    };
+    imports.wbg.__wbindgen_cast_106a2c34b11d47e2 = function(arg0, arg1) {
+        // Cast intrinsic for `Closure(Closure { dtor_idx: 112, function: Function { arguments: [NamedExternref("MessageEvent")], shim_idx: 113, ret: Unit, inner_ret: Some(Unit) }, mutable: true }) -> Externref`.
+        const ret = makeMutClosure(arg0, arg1, wasm.wasm_bindgen__closure__destroy__h1bc171d9f47ef810, wasm_bindgen__convert__closures_____invoke__h8a410ccdbaca7a80);
         return ret;
     };
     imports.wbg.__wbindgen_cast_2241b6af4c4b2941 = function(arg0, arg1) {
@@ -934,24 +939,19 @@ function __wbg_get_imports() {
         const ret = getStringFromWasm0(arg0, arg1);
         return ret;
     };
-    imports.wbg.__wbindgen_cast_8ee03dd0088c7f28 = function(arg0, arg1) {
-        // Cast intrinsic for `Closure(Closure { dtor_idx: 142, function: Function { arguments: [Externref], shim_idx: 143, ret: Unit, inner_ret: Some(Unit) }, mutable: true }) -> Externref`.
-        const ret = makeMutClosure(arg0, arg1, wasm.wasm_bindgen__closure__destroy__h882e84b55e202da7, wasm_bindgen__convert__closures_____invoke__h58212949185b0233);
+    imports.wbg.__wbindgen_cast_369639d421d437de = function(arg0, arg1) {
+        // Cast intrinsic for `Closure(Closure { dtor_idx: 141, function: Function { arguments: [Externref], shim_idx: 142, ret: Unit, inner_ret: Some(Unit) }, mutable: true }) -> Externref`.
+        const ret = makeMutClosure(arg0, arg1, wasm.wasm_bindgen__closure__destroy__haaf0e2d57ce7f6f7, wasm_bindgen__convert__closures_____invoke__h4f4829089d542869);
         return ret;
     };
-    imports.wbg.__wbindgen_cast_91e9c101c684ea62 = function(arg0, arg1) {
-        // Cast intrinsic for `Closure(Closure { dtor_idx: 110, function: Function { arguments: [NamedExternref("CloseEvent")], shim_idx: 111, ret: Unit, inner_ret: Some(Unit) }, mutable: true }) -> Externref`.
-        const ret = makeMutClosure(arg0, arg1, wasm.wasm_bindgen__closure__destroy__h622f07521e60402f, wasm_bindgen__convert__closures_____invoke__h02d0d0b65f8fb1b8);
+    imports.wbg.__wbindgen_cast_739fcb72540faeb0 = function(arg0, arg1) {
+        // Cast intrinsic for `Closure(Closure { dtor_idx: 112, function: Function { arguments: [NamedExternref("ErrorEvent")], shim_idx: 113, ret: Unit, inner_ret: Some(Unit) }, mutable: true }) -> Externref`.
+        const ret = makeMutClosure(arg0, arg1, wasm.wasm_bindgen__closure__destroy__h1bc171d9f47ef810, wasm_bindgen__convert__closures_____invoke__h8a410ccdbaca7a80);
         return ret;
     };
-    imports.wbg.__wbindgen_cast_b6d8ae0eb6c13458 = function(arg0, arg1) {
-        // Cast intrinsic for `Closure(Closure { dtor_idx: 110, function: Function { arguments: [NamedExternref("ErrorEvent")], shim_idx: 111, ret: Unit, inner_ret: Some(Unit) }, mutable: true }) -> Externref`.
-        const ret = makeMutClosure(arg0, arg1, wasm.wasm_bindgen__closure__destroy__h622f07521e60402f, wasm_bindgen__convert__closures_____invoke__h02d0d0b65f8fb1b8);
-        return ret;
-    };
-    imports.wbg.__wbindgen_cast_ca9a57407874719c = function(arg0, arg1) {
-        // Cast intrinsic for `Closure(Closure { dtor_idx: 110, function: Function { arguments: [NamedExternref("MessageEvent")], shim_idx: 111, ret: Unit, inner_ret: Some(Unit) }, mutable: true }) -> Externref`.
-        const ret = makeMutClosure(arg0, arg1, wasm.wasm_bindgen__closure__destroy__h622f07521e60402f, wasm_bindgen__convert__closures_____invoke__h02d0d0b65f8fb1b8);
+    imports.wbg.__wbindgen_cast_e9a492d3b240540c = function(arg0, arg1) {
+        // Cast intrinsic for `Closure(Closure { dtor_idx: 112, function: Function { arguments: [NamedExternref("CloseEvent")], shim_idx: 113, ret: Unit, inner_ret: Some(Unit) }, mutable: true }) -> Externref`.
+        const ret = makeMutClosure(arg0, arg1, wasm.wasm_bindgen__closure__destroy__h1bc171d9f47ef810, wasm_bindgen__convert__closures_____invoke__h8a410ccdbaca7a80);
         return ret;
     };
     imports.wbg.__wbindgen_init_externref_table = function() {

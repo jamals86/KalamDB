@@ -777,7 +777,7 @@ impl KalamClient {
             values.join(", ")
         );
         
-        self.execute_sql(&sql).await
+        self.execute_sql_internal(&sql, None).await
     }
 
     /// Delete a row from a table (T049, T063H)
@@ -797,7 +797,7 @@ impl KalamClient {
             quote_table_name(&table_name),
             row_id.replace("'", "''")
         );
-        self.execute_sql(&sql).await?;
+        self.execute_sql_internal(&sql, None).await?;
         Ok(())
     }
 
@@ -816,7 +816,41 @@ impl KalamClient {
     /// ```
     pub async fn query(&self, sql: String) -> Result<String, JsValue> {
         // T063F: Implement query() using web-sys fetch API
-        self.execute_sql(&sql).await
+        self.execute_sql_internal(&sql, None).await
+    }
+
+    /// Execute a SQL query with parameters
+    ///
+    /// # Arguments
+    /// * `sql` - SQL query string with placeholders ($1, $2, ...)
+    /// * `params` - JSON array string of parameter values
+    ///
+    /// # Returns
+    /// JSON string with query results
+    ///
+    /// # Example (JavaScript)
+    /// ```js
+    /// const result = await client.queryWithParams(
+    ///   "SELECT * FROM users WHERE id = $1 AND age > $2",
+    ///   JSON.stringify([42, 18])
+    /// );
+    /// const data = JSON.parse(result);
+    /// ```
+    #[wasm_bindgen(js_name = queryWithParams)]
+    pub async fn query_with_params(
+        &self,
+        sql: String,
+        params: Option<String>,
+    ) -> Result<String, JsValue> {
+        let parsed_params: Option<Vec<serde_json::Value>> = match params {
+            Some(p) if !p.is_empty() => {
+                Some(serde_json::from_str(&p).map_err(|e| {
+                    JsValue::from_str(&format!("Invalid params JSON: {}", e))
+                })?)
+            }
+            _ => None,
+        };
+        self.execute_sql_internal(&sql, parsed_params).await
     }
 
     /// Subscribe to table changes (T051, T063I-T063J)
@@ -949,7 +983,11 @@ impl KalamClient {
     }
 
     /// Internal: Execute SQL via HTTP POST to /v1/api/sql (T063F)
-    async fn execute_sql(&self, sql: &str) -> Result<String, JsValue> {
+    async fn execute_sql_internal(
+        &self,
+        sql: &str,
+        params: Option<Vec<serde_json::Value>>,
+    ) -> Result<String, JsValue> {
         // T063N: Add proper error handling with JsValue conversion
         let window =
             web_sys::window().ok_or_else(|| JsValue::from_str("No window object available"))?;
@@ -972,7 +1010,7 @@ impl KalamClient {
         // Set body
         let body = QueryRequest {
             sql: sql.to_string(),
-            params: None,
+            params,
         };
         let body_str = serde_json::to_string(&body)
             .map_err(|e| JsValue::from_str(&format!("Serialization error: {}", e)))?;

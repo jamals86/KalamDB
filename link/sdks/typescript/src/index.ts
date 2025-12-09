@@ -464,10 +464,6 @@ export class KalamDBClient {
         case 'none':
           this.wasmClient = WasmClient.anonymous(this.url);
           break;
-        default:
-          // This should never happen due to TypeScript's exhaustiveness checking
-          const _exhaustive: never = this.auth;
-          throw new Error(`Unknown auth type: ${(_exhaustive as AuthCredentials).type}`);
       }
       
       this.initialized = true;
@@ -624,35 +620,51 @@ export class KalamDBClient {
   }
 
   /**
-   * Execute a SQL query
+   * Execute a SQL query with optional parameters
    * 
    * Supports all SQL statements: SELECT, INSERT, UPDATE, DELETE, CREATE, DROP, etc.
+   * Use parameterized queries to prevent SQL injection.
    * 
-   * @param sql - SQL query string
+   * @param sql - SQL query string (may contain $1, $2, ... placeholders)
+   * @param params - Optional array of parameter values for placeholders
    * @returns Parsed query response with results
    * 
    * @throws Error if query execution fails
    * 
    * @example
    * ```typescript
-   * // SELECT query
-   * const result = await client.query('SELECT * FROM users WHERE id = 1');
-   * console.log(result.results[0].rows);
+   * // Simple query
+   * const result = await client.query('SELECT * FROM users');
    * 
-   * // INSERT query
-   * await client.query("INSERT INTO users (name, email) VALUES ('Alice', 'alice@example.com')");
+   * // Parameterized query (recommended for user input)
+   * const users = await client.query(
+   *   'SELECT * FROM users WHERE id = $1 AND age > $2',
+   *   [42, 18]
+   * );
+   * console.log(users.results[0].rows);
    * 
-   * // DDL statements
+   * // INSERT with parameters
+   * await client.query(
+   *   "INSERT INTO users (name, email) VALUES ($1, $2)",
+   *   ['Alice', 'alice@example.com']
+   * );
+   * 
+   * // DDL statements (no params)
    * await client.query('CREATE TABLE products (id BIGINT PRIMARY KEY, name TEXT)');
    * ```
    */
-  async query(sql: string): Promise<QueryResponse> {
+  async query(sql: string, params?: any[]): Promise<QueryResponse> {
     await this.initialize();
     if (!this.wasmClient) {
       throw new Error('WASM client not initialized');
     }
 
-    const resultStr = await this.wasmClient.query(sql);
+    let resultStr: string;
+    if (params && params.length > 0) {
+      resultStr = await this.wasmClient.queryWithParams(sql, JSON.stringify(params));
+    } else {
+      resultStr = await this.wasmClient.query(sql);
+    }
     return JSON.parse(resultStr) as QueryResponse;
   }
 

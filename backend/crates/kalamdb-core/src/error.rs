@@ -136,6 +136,9 @@ pub enum KalamDbError {
     #[error("Parameters not supported for {statement_type} statements")]
     ParamsNotSupported { statement_type: String },
 
+    #[error("Parameter binding error: {message}")]
+    ParameterBindingError { message: String },
+
     #[error("Handler execution timeout: exceeded {timeout_seconds}s")]
     Timeout { timeout_seconds: u64 },
 

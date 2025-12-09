@@ -5,10 +5,12 @@
 //! - DataFusion LogicalPlan placeholder replacement ($1, $2, ...)
 //! - ScalarValue type checking
 
-use crate::error::KalamDbError;
 use arrow::array::Array;
+use datafusion::common::ParamValues;
 use datafusion::logical_expr::LogicalPlan;
 use datafusion::scalar::ScalarValue;
+
+use crate::error::KalamDbError;
 
 /// Maximum number of parameters allowed per statement
 const MAX_PARAMS: usize = 50;
@@ -92,7 +94,10 @@ fn estimate_scalar_value_size(value: &ScalarValue) -> usize {
 
 /// Replace placeholders ($1, $2, ...) in LogicalPlan with ScalarValue literals
 ///
-/// **Status**: Infrastructure complete, full implementation pending DataFusion API research
+/// Uses DataFusion's built-in `with_param_values()` method which handles:
+/// - Type inference for placeholders
+/// - Subquery traversal
+/// - Schema updates after replacement
 ///
 /// # Arguments
 /// * `plan` - LogicalPlan to process
@@ -100,12 +105,7 @@ fn estimate_scalar_value_size(value: &ScalarValue) -> usize {
 ///
 /// # Returns
 /// * `Ok(LogicalPlan)` - Plan with all placeholders replaced
-/// * `Err(KalamDbError)` - If placeholder index is out of bounds or not yet implemented
-///
-/// # Implementation Note
-/// DataFusion's LogicalPlan API for expression transformation varies across versions.
-/// The correct approach is to use `LogicalPlan::with_exprs()` or a custom visitor pattern.
-/// This will be completed when DataFusion's stable API is determined.
+/// * `Err(KalamDbError)` - If placeholder index is out of bounds or type mismatch
 ///
 /// # Example
 /// ```ignore
@@ -117,25 +117,26 @@ fn estimate_scalar_value_size(value: &ScalarValue) -> usize {
 /// let bound_plan = replace_placeholders_in_plan(plan, &params)?;
 /// ```
 pub fn replace_placeholders_in_plan(
-    _plan: LogicalPlan,
+    plan: LogicalPlan,
     params: &[ScalarValue],
 ) -> Result<LogicalPlan, KalamDbError> {
     // If no params, return plan unchanged
     if params.is_empty() {
-        return Ok(_plan);
+        return Ok(plan);
     }
 
-    // TODO: Implement LogicalPlan expression traversal
-    // Research needed: DataFusion 40.0 API for recursive expression replacement
-    // Options:
-    // 1. LogicalPlan::with_exprs() + custom ExprRewriter
-    // 2. LogicalPlan visitor pattern with mutable state
-    // 3. DataFrame API with parameter binding support (if available)
+    // Convert to ParamValues (DataFusion's wrapper type for positional params)
+    // ParamValues::List expects Vec<ScalarValue>
+    let param_values: ParamValues = params.to_vec().into();
 
-    Err(KalamDbError::NotImplemented {
-        feature: "Parameter binding via LogicalPlan rewrite".to_string(),
-        message: "validate_params() works, placeholder replacement pending DataFusion API research"
-            .to_string(),
+    // Use DataFusion's built-in method which handles:
+    // - Type inference via infer_placeholder_types
+    // - Subquery traversal
+    // - Schema updates after replacement
+    plan.with_param_values(param_values).map_err(|e| {
+        KalamDbError::ParameterBindingError {
+            message: e.to_string(),
+        }
     })
 }
 

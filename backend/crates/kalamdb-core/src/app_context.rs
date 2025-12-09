@@ -9,6 +9,7 @@ use crate::jobs::executors::{
 };
 use crate::live::ConnectionsManager;
 use crate::live_query::LiveQueryManager;
+use crate::schema_registry::settings::{SettingsTableProvider, SettingsView};
 use crate::schema_registry::stats::StatsTableProvider;
 use crate::schema_registry::SchemaRegistry;
 use crate::sql::datafusion_session::DataFusionSessionFactory;
@@ -182,6 +183,11 @@ impl AppContext {
                 let stats_provider =
                     Arc::new(StatsTableProvider::new(Some(schema_registry.clone())));
                 system_tables.set_stats_provider(stats_provider);
+
+                // Inject SettingsTableProvider with config access (Phase 15)
+                let settings_view = Arc::new(SettingsView::with_config((*config).clone()));
+                let settings_provider = Arc::new(SettingsTableProvider::new(settings_view));
+                system_tables.set_settings_provider(settings_provider);
 
                 // Register all system tables in DataFusion
                 // Use config-driven DataFusion settings for parallelism
@@ -399,6 +405,11 @@ impl AppContext {
         let stats_provider = Arc::new(StatsTableProvider::new(Some(schema_registry.clone())));
         system_tables.set_stats_provider(stats_provider);
 
+        // Inject SettingsTableProvider with default config for testing
+        let settings_view = Arc::new(SettingsView::with_config(ServerConfig::default()));
+        let settings_provider = Arc::new(SettingsTableProvider::new(settings_view));
+        system_tables.set_settings_provider(settings_provider);
+
         // Create DataFusion session
         let session_factory = Arc::new(
             DataFusionSessionFactory::new().expect("Failed to create test session factory"),
@@ -526,6 +537,11 @@ impl AppContext {
         // Inject real StatsTableProvider with schema registry access
         let stats_provider = Arc::new(StatsTableProvider::new(Some(schema_registry.clone())));
         system_tables.set_stats_provider(stats_provider);
+
+        // Inject SettingsTableProvider with default config
+        let settings_view = Arc::new(SettingsView::with_config(ServerConfig::default()));
+        let settings_provider = Arc::new(SettingsTableProvider::new(settings_view));
+        system_tables.set_settings_provider(settings_provider);
 
         // Register all system tables in DataFusion
         let session_factory = Arc::new(

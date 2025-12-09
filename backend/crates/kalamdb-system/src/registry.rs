@@ -35,6 +35,7 @@ pub struct SystemTablesRegistry {
 
     // ===== Virtual tables =====
     stats: RwLock<Arc<dyn TableProvider + Send + Sync>>,
+    settings: RwLock<Arc<dyn TableProvider + Send + Sync>>,
 
     // ===== information_schema.* tables (lazy-initialized, using VirtualView pattern) =====
     information_schema_tables: RwLock<Option<Arc<dyn TableProvider>>>,
@@ -76,6 +77,7 @@ impl SystemTablesRegistry {
 
             // Virtual tables
             stats: RwLock::new(Arc::new(StatsTableProvider::new(None))), // Will be wired with cache later
+            settings: RwLock::new(Arc::new(StatsTableProvider::new(None))), // Placeholder, will be replaced from kalamdb-core
 
             // Information schema providers (lazy-initialized in set_information_schema_dependencies)
             information_schema_tables: RwLock::new(None),
@@ -144,6 +146,17 @@ impl SystemTablesRegistry {
         *self.stats.write().unwrap() = provider;
     }
 
+    /// Get the system.settings provider (virtual table)
+    pub fn settings(&self) -> Arc<dyn TableProvider + Send + Sync> {
+        self.settings.read().unwrap().clone()
+    }
+
+    /// Set the system.settings provider (called from kalamdb-core)
+    pub fn set_settings_provider(&self, provider: Arc<dyn TableProvider + Send + Sync>) {
+        log::info!("SystemTablesRegistry: Setting settings provider");
+        *self.settings.write().unwrap() = provider;
+    }
+
     /// Get the system.manifest provider
     pub fn manifest(&self) -> Arc<ManifestTableProvider> {
         self.manifest.clone()
@@ -209,6 +222,11 @@ impl SystemTablesRegistry {
             (
                 "stats",
                 self.stats.read().unwrap().clone()
+                    as Arc<dyn datafusion::datasource::TableProvider>,
+            ),
+            (
+                "settings",
+                self.settings.read().unwrap().clone()
                     as Arc<dyn datafusion::datasource::TableProvider>,
             ),
             (

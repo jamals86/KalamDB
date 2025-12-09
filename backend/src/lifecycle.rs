@@ -516,6 +516,9 @@ async fn create_default_system_user(
                 auth_data: None,               // No allow_remote flag = localhost-only by default
                 storage_mode: StorageMode::Table,
                 storage_id: Some(StorageId::local()),
+                failed_login_attempts: 0,
+                locked_until: None,
+                last_login_at: None,
                 created_at,
                 updated_at: created_at,
                 last_seen: None,

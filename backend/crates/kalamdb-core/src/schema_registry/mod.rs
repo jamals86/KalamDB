@@ -28,6 +28,8 @@ pub use provider_registry::ProviderRegistry;
 pub use registry::SchemaRegistry;
 pub use stats::StatsTableProvider;
 pub use system_columns_service::SystemColumnsService;
+pub use views::settings;
+pub use views::settings::{SettingsTableProvider, SettingsView};
 pub use table_cache::TableCache;
 
 // Re-export common types from kalamdb_commons for convenience

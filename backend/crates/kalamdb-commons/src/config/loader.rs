@@ -111,16 +111,6 @@ impl ServerConfig {
             ));
         }
 
-        // Validate compression type
-        let valid_compressions = ["none", "snappy", "zlib", "lz4", "zstd"];
-        if !valid_compressions.contains(&self.storage.compression.as_str()) {
-            return Err(anyhow::anyhow!(
-                "Invalid compression type '{}'. Must be one of: {}",
-                self.storage.compression,
-                valid_compressions.join(", ")
-            ));
-        }
-
         // Validate log format
         let valid_formats = ["compact", "pretty", "json"];
         if !valid_formats.contains(&self.logging.format.as_str()) {
@@ -205,13 +195,6 @@ mod tests {
     fn test_invalid_log_level() {
         let mut config = ServerConfig::default();
         config.logging.level = "invalid".to_string();
-        assert!(config.validate().is_err());
-    }
-
-    #[test]
-    fn test_invalid_compression() {
-        let mut config = ServerConfig::default();
-        config.storage.compression = "invalid".to_string();
         assert!(config.validate().is_err());
     }
 

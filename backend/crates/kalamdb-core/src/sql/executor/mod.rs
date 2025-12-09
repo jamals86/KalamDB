@@ -120,19 +120,11 @@ impl SqlExecutor {
         params: Vec<ScalarValue>,
         exec_ctx: &ExecutionContext,
     ) -> Result<ExecutionResult, KalamDbError> {
-        use crate::sql::executor::parameter_binding::validate_params;
+        use crate::sql::executor::parameter_binding::{replace_placeholders_in_plan, validate_params};
 
-        // Validate parameters if present (binding will be added in future iteration)
+        // Validate parameters if present
         if !params.is_empty() {
             validate_params(&params)?;
-            // TODO: Implement actual parameter binding via LogicalPlan traversal
-            // For now, reject queries with parameters
-            return Err(KalamDbError::NotImplemented {
-                feature: "Parameter binding".to_string(),
-                message:
-                    "Parameter validation is implemented, binding will be added in next iteration"
-                        .to_string(),
-            });
         }
 
         // Create per-request SessionContext with user_id injected
@@ -140,60 +132,62 @@ impl SqlExecutor {
         // The user_id injection allows UserTableProvider::scan() to filter by current user
         let session = exec_ctx.create_session_with_user();
 
-        // Try to get cached plan first
-        let df = if let Some(plan) = self.plan_cache.get(sql) {
-            // Cache hit: Create DataFrame directly from plan
-            // This skips parsing, logical planning, and optimization (~1-5ms)
-            match session.execute_logical_plan(plan).await {
-                Ok(df) => df,
-                Err(e) => {
-                    log::warn!("Failed to create DataFrame from cached plan: {}", e);
-                    // Fallback to full planning if cache fails
-                    match session.sql(sql).await {
-                        Ok(df) => df,
-                        Err(e) => return Err(KalamDbError::ExecutionError(e.to_string())),
+        // Try to get cached plan first (only if no params - parameterized queries can't use cached plans)
+        let df = if params.is_empty() {
+            if let Some(plan) = self.plan_cache.get(sql) {
+                // Cache hit: Create DataFrame directly from plan
+                // This skips parsing, logical planning, and optimization (~1-5ms)
+                match session.execute_logical_plan(plan).await {
+                    Ok(df) => df,
+                    Err(e) => {
+                        log::warn!("Failed to create DataFrame from cached plan: {}", e);
+                        // Fallback to full planning if cache fails
+                        match session.sql(sql).await {
+                            Ok(df) => df,
+                            Err(e) => return Err(KalamDbError::ExecutionError(e.to_string())),
+                        }
+                    }
+                }
+            } else {
+                // Cache miss: Parse SQL and get DataFrame (with detailed logging on failure)
+                match session.sql(sql).await {
+                    Ok(df) => {
+                        // Cache the optimized logical plan for future use
+                        // Note: We cache the optimized plan from the DataFrame
+                        let plan = df.logical_plan().clone();
+                        self.plan_cache.insert(sql.to_string(), plan);
+                        df
+                    }
+                    Err(e) => {
+                        return Err(self.log_sql_error(sql, exec_ctx, e));
                     }
                 }
             }
         } else {
-            // Cache miss: Parse SQL and get DataFrame (with detailed logging on failure)
-            match session.sql(sql).await {
-                Ok(df) => {
-                    // Cache the optimized logical plan for future use
-                    // Note: We cache the optimized plan from the DataFrame
-                    let plan = df.logical_plan().clone();
-                    self.plan_cache.insert(sql.to_string(), plan);
-                    df
-                }
+            // Parameterized query: Parse, bind parameters, then execute
+            // Don't cache parameterized queries (cache key would need to include params)
+            let df = match session.sql(sql).await {
+                Ok(df) => df,
                 Err(e) => {
-                    // Check if this is a table not found error (likely user typo)
-                    let error_msg = e.to_string().to_lowercase();
-                    let is_table_not_found = error_msg.contains("table")
-                        && error_msg.contains("not found")
-                        || error_msg.contains("relation") && error_msg.contains("does not exist")
-                        || error_msg.contains("unknown table");
+                    return Err(self.log_sql_error(sql, exec_ctx, e));
+                }
+            };
 
-                    if is_table_not_found {
-                        // Log as warning for table not found (likely user typo)
-                        log::warn!(
-                            target: "sql::plan",
-                            "⚠️  Table not found | sql='{}' | user='{}' | role='{:?}' | error='{}'",
-                            sql,
-                            exec_ctx.user_id.as_str(),
-                            exec_ctx.user_role,
-                            e
-                        );
-                    } else {
-                        // Log planning failure with rich context
-                        log::error!(
-                            target: "sql::plan",
-                            "❌ SQL planning failed | sql='{}' | user='{}' | role='{:?}' | error='{}'",
-                            sql,
-                            exec_ctx.user_id.as_str(),
-                            exec_ctx.user_role,
-                            e
-                        );
-                    }
+            // Get the logical plan and replace placeholders with parameter values
+            let plan = df.logical_plan().clone();
+            let bound_plan = replace_placeholders_in_plan(plan, &params)?;
+
+            // Execute the bound plan
+            match session.execute_logical_plan(bound_plan).await {
+                Ok(df) => df,
+                Err(e) => {
+                    log::error!(
+                        target: "sql::exec",
+                        "❌ Parameter binding execution failed | sql='{}' | params={} | error='{}'",
+                        sql,
+                        params.len(),
+                        e
+                    );
                     return Err(KalamDbError::ExecutionError(e.to_string()));
                 }
             }
@@ -223,6 +217,40 @@ impl SqlExecutor {
 
         // Return batches with row count
         Ok(ExecutionResult::Rows { batches, row_count })
+    }
+
+    /// Log SQL errors with appropriate level (warn for user errors, error for system errors)
+    fn log_sql_error(
+        &self,
+        sql: &str,
+        exec_ctx: &ExecutionContext,
+        e: datafusion::error::DataFusionError,
+    ) -> KalamDbError {
+        let error_msg = e.to_string().to_lowercase();
+        let is_table_not_found = error_msg.contains("table") && error_msg.contains("not found")
+            || error_msg.contains("relation") && error_msg.contains("does not exist")
+            || error_msg.contains("unknown table");
+
+        if is_table_not_found {
+            log::warn!(
+                target: "sql::plan",
+                "⚠️  Table not found | sql='{}' | user='{}' | role='{:?}' | error='{}'",
+                sql,
+                exec_ctx.user_id.as_str(),
+                exec_ctx.user_role,
+                e
+            );
+        } else {
+            log::error!(
+                target: "sql::plan",
+                "❌ SQL planning failed | sql='{}' | user='{}' | role='{:?}' | error='{}'",
+                sql,
+                exec_ctx.user_id.as_str(),
+                exec_ctx.user_role,
+                e
+            );
+        }
+        KalamDbError::ExecutionError(e.to_string())
     }
 
     /// Load existing tables from system.tables and register providers
