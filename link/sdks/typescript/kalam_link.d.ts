@@ -81,6 +81,26 @@ export class KalamClient {
    */
   getLastSeqId(subscription_id: string): string | undefined;
   /**
+   * Execute a SQL query with parameters
+   *
+   * # Arguments
+   * * `sql` - SQL query string with placeholders ($1, $2, ...)
+   * * `params` - JSON array string of parameter values
+   *
+   * # Returns
+   * JSON string with query results
+   *
+   * # Example (JavaScript)
+   * ```js
+   * const result = await client.queryWithParams(
+   *   "SELECT * FROM users WHERE id = $1 AND age > $2",
+   *   JSON.stringify([42, 18])
+   * );
+   * const data = JSON.parse(result);
+   * ```
+   */
+  queryWithParams(sql: string, params?: string | null): Promise<string>;
+  /**
    * Enable or disable automatic reconnection
    *
    * # Arguments
@@ -164,26 +184,6 @@ export class KalamClient {
    * ```
    */
   query(sql: string): Promise<string>;
-  /**
-   * Execute a SQL query with parameters
-   *
-   * # Arguments
-   * * `sql` - SQL query string with placeholders ($1, $2, ...)
-   * * `params` - JSON array string of parameter values (optional)
-   *
-   * # Returns
-   * JSON string with query results
-   *
-   * # Example (JavaScript)
-   * ```js
-   * const result = await client.queryWithParams(
-   *   "SELECT * FROM users WHERE id = $1 AND age > $2",
-   *   JSON.stringify([42, 18])
-   * );
-   * const data = JSON.parse(result);
-   * ```
-   */
-  queryWithParams(sql: string, params?: string | null): Promise<string>;
   /**
    * Delete a row from a table (T049, T063H)
    *
@@ -284,6 +284,7 @@ export interface InitOutput {
   readonly kalamclient_isReconnecting: (a: number) => number;
   readonly kalamclient_new: (a: number, b: number, c: number, d: number, e: number, f: number) => [number, number, number];
   readonly kalamclient_query: (a: number, b: number, c: number) => any;
+  readonly kalamclient_queryWithParams: (a: number, b: number, c: number, d: number, e: number) => any;
   readonly kalamclient_setAutoReconnect: (a: number, b: number) => void;
   readonly kalamclient_setMaxReconnectAttempts: (a: number, b: number) => void;
   readonly kalamclient_setReconnectDelay: (a: number, b: bigint, c: bigint) => void;
@@ -291,9 +292,9 @@ export interface InitOutput {
   readonly kalamclient_subscribeWithSql: (a: number, b: number, c: number, d: number, e: number, f: any) => any;
   readonly kalamclient_unsubscribe: (a: number, b: number, c: number) => any;
   readonly kalamclient_withJwt: (a: number, b: number, c: number, d: number) => [number, number, number];
-  readonly wasm_bindgen__convert__closures_____invoke__hd75e56b83013f17b: (a: number, b: number) => void;
-  readonly wasm_bindgen__closure__destroy__h1bc171d9f47ef810: (a: number, b: number) => void;
   readonly wasm_bindgen__convert__closures_____invoke__h8a410ccdbaca7a80: (a: number, b: number, c: any) => void;
+  readonly wasm_bindgen__closure__destroy__h1bc171d9f47ef810: (a: number, b: number) => void;
+  readonly wasm_bindgen__convert__closures_____invoke__hd75e56b83013f17b: (a: number, b: number) => void;
   readonly wasm_bindgen__convert__closures_____invoke__h4f4829089d542869: (a: number, b: number, c: any) => void;
   readonly wasm_bindgen__closure__destroy__haaf0e2d57ce7f6f7: (a: number, b: number) => void;
   readonly wasm_bindgen__convert__closures_____invoke__h14e8fa85ad019085: (a: number, b: number, c: any, d: any) => void;

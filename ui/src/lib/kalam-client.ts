@@ -9,7 +9,7 @@
  * which demonstrates proper WASM initialization and query execution.
  */
 
-import { KalamDBClient, Auth, type QueryResponse, type ServerMessage, type Unsubscribe } from 'kalam-link';
+import { KalamDBClient, Auth, type QueryResponse, type ServerMessage, type Unsubscribe, type SubscriptionOptions } from 'kalam-link';
 
 let client: KalamDBClient | null = null;
 let currentToken: string | null = null;
@@ -229,12 +229,62 @@ export async function connectWebSocket(): Promise<void> {
 }
 
 /**
+ * Parse CLI-style OPTIONS from SQL query
+ * Example: "SELECT * FROM chat.messages OPTIONS (last_rows=20);" 
+ * Returns: { sql: "SELECT * FROM chat.messages", options: { last_rows: 20 } }
+ */
+function parseOptionsFromSql(sql: string): { sql: string; options: SubscriptionOptions } {
+  const options: SubscriptionOptions = {};
+  let cleanSql = sql;
+  
+  // Match OPTIONS (...) at the end of the query (before optional semicolon)
+  const optionsMatch = sql.match(/\s+OPTIONS\s*\(([^)]+)\)\s*;?\s*$/i);
+  
+  if (optionsMatch) {
+    // Remove OPTIONS clause from SQL
+    cleanSql = sql.substring(0, optionsMatch.index).trim();
+    // Remove trailing semicolon if present
+    if (cleanSql.endsWith(';')) {
+      cleanSql = cleanSql.slice(0, -1).trim();
+    }
+    
+    // Parse options: "last_rows=20, batch_size=100"
+    const optionsStr = optionsMatch[1];
+    const optionPairs = optionsStr.split(',');
+    
+    for (const pair of optionPairs) {
+      const [key, value] = pair.split('=').map(s => s.trim());
+      if (key && value) {
+        const keyLower = key.toLowerCase();
+        if (keyLower === 'last_rows') {
+          options.last_rows = parseInt(value, 10);
+        } else if (keyLower === 'batch_size') {
+          options.batch_size = parseInt(value, 10);
+        } else if (keyLower === 'from_seq_id') {
+          options.from_seq_id = value;
+        }
+      }
+    }
+    
+    console.log('[kalam-client] Parsed OPTIONS from SQL:', options);
+  }
+  
+  return { sql: cleanSql, options };
+}
+
+/**
  * Subscribe to table changes
  * Returns an unsubscribe function (Firebase/Supabase style)
+ * 
+ * Accepts either:
+ * - A table name: "chat.messages" or "namespace.table"
+ * - A SQL query: "SELECT * FROM chat.messages WHERE ..."
+ * - A SQL query with OPTIONS: "SELECT * FROM chat.messages OPTIONS (last_rows=20);"
  */
 export async function subscribe(
   tableOrQuery: string,
-  callback: (event: ServerMessage) => void
+  callback: (event: ServerMessage) => void,
+  options?: SubscriptionOptions
 ): Promise<Unsubscribe> {
   if (!currentToken) {
     throw new Error('Not authenticated. Please log in first.');
@@ -246,10 +296,42 @@ export async function subscribe(
   
   // Ensure WebSocket is connected
   if (!client!.isConnected()) {
+    console.log('[kalam-client] Connecting WebSocket for subscription...');
     await client!.connect();
   }
   
-  return client!.subscribe(tableOrQuery, callback);
+  // Parse OPTIONS from SQL if present (CLI-style syntax)
+  const { sql: cleanSql, options: parsedOptions } = parseOptionsFromSql(tableOrQuery);
+  
+  // Merge options: parsed from SQL > passed options > defaults
+  const subscribeOptions: SubscriptionOptions = {
+    last_rows: parsedOptions.last_rows ?? options?.last_rows ?? 100,
+    batch_size: parsedOptions.batch_size ?? options?.batch_size ?? 1000,
+    from_seq_id: parsedOptions.from_seq_id ?? options?.from_seq_id,
+  };
+  
+  console.log('[kalam-client] Subscribing to:', cleanSql, 'with options:', subscribeOptions);
+  
+  // Detect if input is a SQL query or just a table name
+  const trimmed = cleanSql.trim().toLowerCase();
+  const isSqlQuery = trimmed.startsWith('select ') || 
+                     trimmed.startsWith('select\n') || 
+                     trimmed.startsWith('select\t');
+  
+  let unsubscribe: Unsubscribe;
+  if (isSqlQuery) {
+    // Full SQL query - use subscribeWithSql
+    console.log('[kalam-client] Detected SQL query, using subscribeWithSql');
+    unsubscribe = await client!.subscribeWithSql(cleanSql, callback, subscribeOptions);
+  } else {
+    // Just a table name - use subscribe (which wraps in SELECT * FROM)
+    console.log('[kalam-client] Detected table name, using subscribe');
+    unsubscribe = await client!.subscribe(cleanSql, callback, subscribeOptions);
+  }
+  
+  console.log('[kalam-client] Subscription registered successfully');
+  
+  return unsubscribe;
 }
 
 /**
@@ -260,4 +342,4 @@ export function getSubscriptionCount(): number {
 }
 
 // Re-export types for convenience
-export type { QueryResponse, ServerMessage, Unsubscribe };
+export type { QueryResponse, ServerMessage, Unsubscribe, SubscriptionOptions };

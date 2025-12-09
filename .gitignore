@@ -71,3 +71,8 @@ examples/simple-typescript/package-lock.json
 backend/logs/test-backend.out
 *.bak
 version.toml
+backend/logs/server.jsonl
+ui/package-lock.json
+link/sdks/typescript/kalam_link.js
+link/sdks/typescript/kalam_link_bg.wasm.d.ts
+link/sdks/typescript/kalam_link.d.ts

@@ -10,24 +10,19 @@ import {
   Columns3,
   ChevronRight,
   ChevronDown,
-  Zap,
-  ZapOff,
+  ChevronLeft,
+  ChevronsLeft,
+  ChevronsRight,
   Clock,
   Trash2,
-  Copy,
-  Download,
-  RotateCcw,
   Search,
-  Code,
-  TableIcon,
+  Save,
+  FileText,
+  MoreHorizontal,
+  ArrowUpDown,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
-import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import {
-  ResizableHandle,
-  ResizablePanel,
-  ResizablePanelGroup,
-} from "@/components/ui/resizable";
+import { Switch } from "@/components/ui/switch";
 import {
   Tooltip,
   TooltipContent,
@@ -35,7 +30,6 @@ import {
   TooltipTrigger,
 } from "@/components/ui/tooltip";
 import { ScrollArea } from "@/components/ui/scroll-area";
-import { Badge } from "@/components/ui/badge";
 import { Input } from "@/components/ui/input";
 import { cn } from "@/lib/utils";
 import { executeSql, executeQuery as executeQueryApi, subscribe, type Unsubscribe } from "@/lib/kalam-client";
@@ -49,26 +43,28 @@ import {
   type SortingState,
 } from "@tanstack/react-table";
 import {
-  Table,
-  TableBody,
-  TableCell,
-  TableHead,
-  TableHeader,
-  TableRow,
-} from "@/components/ui/table";
-import {
-  ContextMenu,
-  ContextMenuContent,
-  ContextMenuItem,
-  ContextMenuTrigger,
-} from "@/components/ui/context-menu";
-import {
-  Dialog,
-  DialogContent,
-  DialogHeader,
-  DialogTitle,
-} from "@/components/ui/dialog";
-import { ArrowUpDown } from "lucide-react";
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
+
+const STORAGE_KEY = "kalamdb-sql-studio-tabs";
+
+// Persisted tab state (subset of QueryTab that we save to localStorage)
+interface PersistedTab {
+  id: string;
+  name: string;
+  query: string;
+  isLive: boolean;
+}
+
+interface PersistedState {
+  tabs: PersistedTab[];
+  activeTabId: string;
+  tabCounter: number;
+}
 
 interface QueryTab {
   id: string;
@@ -82,6 +78,9 @@ interface QueryTab {
   unsubscribeFn: Unsubscribe | null;
   executionTime: number | null;
   rowCount: number | null;
+  message: string | null; // For DML statements (INSERT/UPDATE/DELETE)
+  subscriptionStatus: 'idle' | 'connecting' | 'connected' | 'error'; // Subscription state
+  subscriptionLog: string[]; // Log messages for subscription activity
 }
 
 interface SchemaNode {
@@ -103,37 +102,93 @@ interface QueryHistoryItem {
   success: boolean;
 }
 
+// Load persisted state from localStorage
+function loadPersistedState(): { tabs: QueryTab[]; activeTabId: string; tabCounter: number } {
+  try {
+    const stored = localStorage.getItem(STORAGE_KEY);
+    if (stored) {
+      const parsed: PersistedState = JSON.parse(stored);
+      if (parsed.tabs && parsed.tabs.length > 0) {
+        const tabs: QueryTab[] = parsed.tabs.map((t) => ({
+          id: t.id,
+          name: t.name,
+          query: t.query,
+          results: null,
+          columns: [],
+          error: null,
+          isLoading: false,
+          isLive: t.isLive,
+          unsubscribeFn: null,
+          executionTime: null,
+          rowCount: null,
+          message: null,
+          subscriptionStatus: 'idle' as const,
+          subscriptionLog: [],
+        }));
+        return {
+          tabs,
+          activeTabId: parsed.activeTabId || tabs[0].id,
+          tabCounter: parsed.tabCounter || tabs.length + 1,
+        };
+      }
+    }
+  } catch (e) {
+    console.error("Failed to load persisted tabs:", e);
+  }
+  // Default state
+  return {
+    tabs: [
+      {
+        id: "1",
+        name: "Query 1",
+        query: "SELECT * FROM system.namespaces LIMIT 100",
+        results: null,
+        columns: [],
+        error: null,
+        isLoading: false,
+        isLive: false,
+        unsubscribeFn: null,
+        executionTime: null,
+        rowCount: null,
+        message: null,
+        subscriptionStatus: 'idle' as const,
+        subscriptionLog: [],
+      },
+    ],
+    activeTabId: "1",
+    tabCounter: 2,
+  };
+}
+
 export default function SqlStudio() {
-  const [tabs, setTabs] = useState<QueryTab[]>([
-    {
-      id: "1",
-      name: "Query 1",
-      query: "SELECT * FROM system.namespaces LIMIT 100",
-      results: null,
-      columns: [],
-      error: null,
-      isLoading: false,
-      isLive: false,
-      unsubscribeFn: null,
-      executionTime: null,
-      rowCount: null,
-    },
-  ]);
-  const [activeTabId, setActiveTabId] = useState("1");
+  const initialState = loadPersistedState();
+  const [tabs, setTabs] = useState<QueryTab[]>(initialState.tabs);
+  const [activeTabId, setActiveTabId] = useState(initialState.activeTabId);
   const [schema, setSchema] = useState<SchemaNode[]>([]);
   const [schemaLoading, setSchemaLoading] = useState(true);
   const [queryHistory, setQueryHistory] = useState<QueryHistoryItem[]>([]);
   const [showHistory, setShowHistory] = useState(false);
   const [sorting, setSorting] = useState<SortingState>([]);
   const [schemaFilter, setSchemaFilter] = useState("");
-  const [resultView, setResultView] = useState<"table" | "json">("table");
-  const [selectedCell, setSelectedCell] = useState<{ row: number; col: string } | null>(null);
-  const [cellViewerOpen, setCellViewerOpen] = useState(false);
-  const [cellViewerContent, setCellViewerContent] = useState<{ column: string; value: unknown } | null>(null);
-  const tabCounter = useRef(2);
+  const tabCounter = useRef(initialState.tabCounter);
   const monacoRef = useRef<Monaco | null>(null);
 
   const activeTab = tabs.find((t) => t.id === activeTabId) || tabs[0];
+
+  // Persist tabs to localStorage whenever tabs or activeTabId changes
+  useEffect(() => {
+    const persistedState: PersistedState = {
+      tabs: tabs.map((t) => ({
+        id: t.id,
+        name: t.name,
+        query: t.query,
+        isLive: t.isLive,
+      })),
+      activeTabId,
+      tabCounter: tabCounter.current,
+    };
+    localStorage.setItem(STORAGE_KEY, JSON.stringify(persistedState));
+  }, [tabs, activeTabId]);
 
   // Load schema on mount
   useEffect(() => {
@@ -221,6 +276,8 @@ export default function SqlStudio() {
       // Get results and column names from response
       const results = (response.results?.[0]?.rows as Record<string, unknown>[]) ?? [];
       const columnNames = (response.results?.[0]?.columns as string[]) ?? [];
+      const rowCount = response.results?.[0]?.row_count ?? results.length;
+      const message = (response.results?.[0]?.message as string) ?? null;
 
       // Build columns from the columns array (preserves order from query)
       const columns: ColumnDef<Record<string, unknown>>[] = columnNames.map((key) => ({
@@ -250,7 +307,8 @@ export default function SqlStudio() {
         columns,
         isLoading: false,
         executionTime,
-        rowCount: results.length,
+        rowCount,
+        message,
         error: null,
       });
 
@@ -261,7 +319,7 @@ export default function SqlStudio() {
           query: tab.query,
           timestamp: new Date(),
           executionTime,
-          rowCount: results.length,
+          rowCount,
           success: true,
         },
         ...prev.slice(0, 49), // Keep last 50
@@ -277,6 +335,7 @@ export default function SqlStudio() {
         columns: [],
         executionTime,
         rowCount: null,
+        message: null,
       });
 
       setQueryHistory((prev) => [
@@ -300,73 +359,265 @@ export default function SqlStudio() {
     if (tab.isLive && tab.unsubscribeFn) {
       // Unsubscribe by calling the function
       try {
+        updateTab(activeTabId, {
+          subscriptionStatus: "idle",
+          subscriptionLog: [...tab.subscriptionLog, `[${new Date().toLocaleTimeString()}] Unsubscribing...`],
+        });
         tab.unsubscribeFn();
         updateTab(activeTabId, {
           isLive: false,
           unsubscribeFn: null,
+          subscriptionStatus: "idle",
+          subscriptionLog: [...tab.subscriptionLog, `[${new Date().toLocaleTimeString()}] Unsubscribed successfully`],
         });
       } catch (error) {
         console.error("Failed to unsubscribe:", error);
+        updateTab(activeTabId, {
+          isLive: false,
+          unsubscribeFn: null,
+          subscriptionStatus: "error",
+          subscriptionLog: [...tab.subscriptionLog, `[${new Date().toLocaleTimeString()}] Unsubscribe error: ${error instanceof Error ? error.message : "Unknown error"}`],
+        });
       }
     } else {
-      // Subscribe
-      try {
-        // First execute the query to get initial results
-        await executeQuery();
+      // Subscribe - DON'T call executeQuery first, let subscribe handle initial data
+      // Capture the tab ID to avoid stale closure issues
+      const subscribingTabId = activeTabId;
+      
+      updateTab(subscribingTabId, {
+        subscriptionStatus: "connecting",
+        subscriptionLog: [`[${new Date().toLocaleTimeString()}] Connecting to live query...`],
+        error: null,
+      });
 
+      try {
         const unsubscribeFn = await subscribe(
           tab.query,
           (event) => {
-            // Handle the server message - it contains the data
-            const data = event as unknown as Record<string, unknown>[];
-            // Build columns from data
-            const columns: ColumnDef<Record<string, unknown>>[] =
-              Array.isArray(data) && data.length > 0
-                ? Object.keys(data[0]).map((key) => ({
-                    accessorKey: key,
-                    header: ({ column }) => (
-                      <Button
-                        variant="ghost"
-                        onClick={() =>
-                          column.toggleSorting(column.getIsSorted() === "asc")
-                        }
-                        className="h-8 px-2 font-semibold"
-                      >
-                        {key}
-                        <ArrowUpDown className="ml-2 h-4 w-4" />
-                      </Button>
-                    ),
-                    cell: ({ row }) => {
-                      const value = row.getValue(key);
-                      if (value === null) return <span className="text-muted-foreground italic">null</span>;
-                      if (typeof value === "object") return JSON.stringify(value);
-                      return String(value);
-                    },
-                  }))
-                : [];
+            // Check if event is a ServerMessage object with type field
+            const serverMsg = event as { 
+              type?: string; 
+              subscription_id?: string;
+              code?: string;
+              message?: string;
+              rows?: Record<string, unknown>[];
+              total_rows?: number;
+              batch_control?: { status?: string };
+              change_type?: 'insert' | 'update' | 'delete';
+            };
+            
+            // Helper to build columns with _change_type as first column
+            const buildColumnsWithChangeType = (sampleRow: Record<string, unknown>) => {
+              const dataKeys = Object.keys(sampleRow).filter(k => k !== '_change_type');
+              const columns: ColumnDef<Record<string, unknown>>[] = [
+                // Change type column first
+                {
+                  accessorKey: '_change_type',
+                  header: () => <span className="font-semibold">Type</span>,
+                  cell: ({ row }) => {
+                    const changeType = row.getValue('_change_type') as string;
+                    const colorClass = {
+                      'initial': 'text-blue-600 bg-blue-50 dark:bg-blue-950/50',
+                      'insert': 'text-green-600 bg-green-50 dark:bg-green-950/50',
+                      'update': 'text-yellow-600 bg-yellow-50 dark:bg-yellow-950/50',
+                      'delete': 'text-red-600 bg-red-50 dark:bg-red-950/50',
+                    }[changeType] || 'text-muted-foreground';
+                    return (
+                      <span className={`px-2 py-0.5 rounded text-xs font-medium uppercase ${colorClass}`}>
+                        {changeType}
+                      </span>
+                    );
+                  },
+                },
+                // Data columns
+                ...dataKeys.map((key) => ({
+                  accessorKey: key,
+                  header: ({ column }: { column: { toggleSorting: (asc: boolean) => void; getIsSorted: () => string | false } }) => (
+                    <Button
+                      variant="ghost"
+                      onClick={() => column.toggleSorting(column.getIsSorted() === "asc")}
+                      className="h-8 px-2 font-semibold"
+                    >
+                      {key}
+                      <ArrowUpDown className="ml-2 h-4 w-4" />
+                    </Button>
+                  ),
+                  cell: ({ row }: { row: { getValue: (key: string) => unknown } }) => {
+                    const value = row.getValue(key);
+                    if (value === null) return <span className="text-muted-foreground italic">null</span>;
+                    if (typeof value === "object") return JSON.stringify(value);
+                    return String(value);
+                  },
+                })),
+              ];
+              return columns;
+            };
+            
+            // Handle error messages from server
+            if (serverMsg.type === 'error') {
+              console.error("Subscription error from server:", serverMsg);
+              setTabs((prev) =>
+                prev.map((t) =>
+                  t.id === subscribingTabId
+                    ? {
+                        ...t,
+                        isLive: false,
+                        unsubscribeFn: null,
+                        subscriptionStatus: "error",
+                        error: `Live query failed: ${serverMsg.message || serverMsg.code || "Unknown error"}`,
+                        subscriptionLog: [...t.subscriptionLog, `[${new Date().toLocaleTimeString()}] Error: ${serverMsg.message || serverMsg.code}`],
+                      }
+                    : t
+                )
+              );
+              return;
+            }
 
-            if (Array.isArray(data)) {
-              updateTab(activeTabId, {
-                results: data,
-                columns,
-                rowCount: data.length,
-              });
+            // Handle subscription acknowledgment
+            if (serverMsg.type === 'subscription_ack') {
+              setTabs((prev) =>
+                prev.map((t) =>
+                  t.id === subscribingTabId
+                    ? {
+                        ...t,
+                        subscriptionStatus: "connected",
+                        // Clear results for fresh subscription
+                        results: [],
+                        subscriptionLog: [...t.subscriptionLog, `[${new Date().toLocaleTimeString()}] Subscribed! Total rows: ${serverMsg.total_rows ?? 'unknown'}`],
+                      }
+                    : t
+                )
+              );
+              return;
+            }
+
+            // Handle initial data batch - append with _change_type: 'initial'
+            if (serverMsg.type === 'initial_data_batch' && Array.isArray(serverMsg.rows)) {
+              const newRows = serverMsg.rows.map(row => ({ _change_type: 'initial', ...row }));
+              const batchStatus = serverMsg.batch_control?.status;
+              
+              setTabs((prev) =>
+                prev.map((t) => {
+                  if (t.id !== subscribingTabId) return t;
+                  
+                  // Append to existing results
+                  const existingResults = t.results || [];
+                  const combinedResults = [...existingResults, ...newRows];
+                  
+                  // Build columns from first row if we have data
+                  const columns = combinedResults.length > 0 
+                    ? buildColumnsWithChangeType(combinedResults[0])
+                    : t.columns;
+                  
+                  return {
+                    ...t,
+                    results: combinedResults,
+                    columns,
+                    rowCount: combinedResults.length,
+                    subscriptionLog: [...t.subscriptionLog, `[${new Date().toLocaleTimeString()}] Initial data: +${newRows.length} rows (total: ${combinedResults.length})${batchStatus === 'ready' ? ' ✓' : '...'}`],
+                  };
+                })
+              );
+              return;
+            }
+
+            // Handle change events (insert/update/delete) - append with change type
+            if (serverMsg.type === 'change' && Array.isArray(serverMsg.rows)) {
+              const changeType = serverMsg.change_type || 'change';
+              const newRows = serverMsg.rows.map(row => ({ _change_type: changeType, ...row }));
+              
+              setTabs((prev) =>
+                prev.map((t) => {
+                  if (t.id !== subscribingTabId) return t;
+                  
+                  // Append new changes to existing results
+                  const existingResults = t.results || [];
+                  const combinedResults = [...existingResults, ...newRows];
+                  
+                  // Build columns from first row if we have data
+                  const columns = combinedResults.length > 0 
+                    ? buildColumnsWithChangeType(combinedResults[0])
+                    : t.columns;
+                  
+                  return {
+                    ...t,
+                    results: combinedResults,
+                    columns,
+                    rowCount: combinedResults.length,
+                    subscriptionLog: [...t.subscriptionLog, `[${new Date().toLocaleTimeString()}] ${changeType.toUpperCase()}: +${newRows.length} rows (total: ${combinedResults.length})`],
+                  };
+                })
+              );
+              return;
+            }
+
+            // Fallback: Handle raw data array (legacy format)
+            const data = event as unknown as Record<string, unknown>[];
+            if (Array.isArray(data) && data.length > 0) {
+              const newRows = data.map(row => ({ _change_type: 'data', ...row }));
+              
+              setTabs((prev) =>
+                prev.map((t) => {
+                  if (t.id !== subscribingTabId) return t;
+                  
+                  const existingResults = t.results || [];
+                  const combinedResults = [...existingResults, ...newRows];
+                  const columns = combinedResults.length > 0 
+                    ? buildColumnsWithChangeType(combinedResults[0])
+                    : t.columns;
+                  
+                  return {
+                    ...t,
+                    results: combinedResults,
+                    columns,
+                    rowCount: combinedResults.length,
+                    subscriptionLog: [...t.subscriptionLog, `[${new Date().toLocaleTimeString()}] Data: +${newRows.length} rows (total: ${combinedResults.length})`],
+                  };
+                })
+              );
             }
           }
         );
 
-        updateTab(activeTabId, {
-          isLive: true,
-          unsubscribeFn,
-        });
+        // Only set isLive if not already in error state (error callback might have fired)
+        setTabs((prev) =>
+          prev.map((t) =>
+            t.id === subscribingTabId && t.subscriptionStatus !== "error"
+              ? {
+                  ...t,
+                  isLive: true,
+                  unsubscribeFn,
+                  subscriptionLog: [...t.subscriptionLog, `[${new Date().toLocaleTimeString()}] Subscription registered, waiting for server response...`],
+                }
+              : t
+          )
+        );
+
+        // Set a timeout to detect if server doesn't respond
+        setTimeout(() => {
+          setTabs((prev) =>
+            prev.map((t) =>
+              t.id === subscribingTabId && t.subscriptionStatus === "connecting"
+                ? {
+                    ...t,
+                    subscriptionStatus: "error",
+                    error: "Connection timeout: Server did not respond within 10 seconds. Please check your query format (e.g., SELECT * FROM namespace.table).",
+                    subscriptionLog: [...t.subscriptionLog, `[${new Date().toLocaleTimeString()}] Timeout: No response from server`],
+                  }
+                : t
+            )
+          );
+        }, 10000);
       } catch (error) {
         console.error("Failed to subscribe:", error);
-        updateTab(activeTabId, {
+        updateTab(subscribingTabId, {
           error: `Live query failed: ${error instanceof Error ? error.message : "Unknown error"}`,
+          subscriptionStatus: "error",
+          subscriptionLog: [...tab.subscriptionLog, `[${new Date().toLocaleTimeString()}] Error: ${error instanceof Error ? error.message : "Unknown error"}`],
         });
       }
     }
-  }, [activeTabId, tabs, updateTab, executeQuery]);
+  }, [activeTabId, tabs, updateTab]);
 
   const addTab = useCallback(() => {
     const newId = tabCounter.current.toString();
@@ -383,6 +634,9 @@ export default function SqlStudio() {
       unsubscribeFn: null,
       executionTime: null,
       rowCount: null,
+      message: null,
+      subscriptionStatus: "idle",
+      subscriptionLog: [],
     };
     setTabs((prev) => [...prev, newTab]);
     setActiveTabId(newId);
@@ -446,34 +700,6 @@ export default function SqlStudio() {
       navigator.clipboard.writeText(JSON.stringify(activeTab.results, null, 2));
     }
   }, [activeTab?.results]);
-
-  const downloadCsv = useCallback(() => {
-    if (!activeTab?.results || activeTab.results.length === 0) return;
-
-    const headers = Object.keys(activeTab.results[0]);
-    const csvContent = [
-      headers.join(","),
-      ...activeTab.results.map((row) =>
-        headers
-          .map((h) => {
-            const val = row[h];
-            if (val === null) return "";
-            if (typeof val === "string" && val.includes(","))
-              return `"${val}"`;
-            return String(val);
-          })
-          .join(",")
-      ),
-    ].join("\n");
-
-    const blob = new Blob([csvContent], { type: "text/csv" });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement("a");
-    a.href = url;
-    a.download = `${activeTab.name.replace(/\s+/g, "_")}.csv`;
-    a.click();
-    URL.revokeObjectURL(url);
-  }, [activeTab]);
 
   const table = useReactTable({
     data: activeTab?.results || [],
@@ -704,532 +930,509 @@ export default function SqlStudio() {
   };
 
   return (
-    <div className="h-[calc(100vh-4rem)] flex flex-col">
-      {/* Toolbar - stats and utility buttons only */}
-      <div className="border-b bg-muted/30 px-4 py-2 flex items-center gap-2">
-        {activeTab?.executionTime !== null && (
-          <Badge variant="outline" className="gap-1">
-            <Clock className="h-3 w-3" />
-            {activeTab.executionTime}ms
-          </Badge>
-        )}
-        {activeTab?.rowCount !== null && (
-          <Badge variant="outline">{activeTab.rowCount} rows</Badge>
-        )}
-        {activeTab?.isLive && (
-          <Badge variant="default" className="bg-green-500 animate-pulse gap-1">
-            <Zap className="h-3 w-3" />
-            Live
-          </Badge>
-        )}
-
-        <div className="flex-1" />
-
-        <TooltipProvider>
-          <Tooltip>
-            <TooltipTrigger asChild>
-              <Button
-                size="sm"
-                variant="ghost"
-                onClick={() => setShowHistory(!showHistory)}
-              >
-                <Clock className="h-4 w-4" />
-              </Button>
-            </TooltipTrigger>
-            <TooltipContent>Query History</TooltipContent>
-          </Tooltip>
-
-          <Tooltip>
-            <TooltipTrigger asChild>
-              <Button
-                size="sm"
-                variant="ghost"
-                onClick={copyResults}
-                disabled={!activeTab?.results}
-              >
-                <Copy className="h-4 w-4" />
-              </Button>
-            </TooltipTrigger>
-            <TooltipContent>Copy as JSON</TooltipContent>
-          </Tooltip>
-
-          <Tooltip>
-            <TooltipTrigger asChild>
-              <Button
-                size="sm"
-                variant="ghost"
-                onClick={downloadCsv}
-                disabled={!activeTab?.results}
-              >
-                <Download className="h-4 w-4" />
-              </Button>
-            </TooltipTrigger>
-            <TooltipContent>Download CSV</TooltipContent>
-          </Tooltip>
-
-          <Tooltip>
-            <TooltipTrigger asChild>
-              <Button size="sm" variant="ghost" onClick={loadSchema}>
-                <RotateCcw className="h-4 w-4" />
-              </Button>
-            </TooltipTrigger>
-            <TooltipContent>Refresh Schema</TooltipContent>
-          </Tooltip>
-
-          {/* View toggle */}
-          <div className="flex items-center border rounded-md">
-            <Tooltip>
-              <TooltipTrigger asChild>
-                <Button
-                  size="sm"
-                  variant={resultView === "table" ? "secondary" : "ghost"}
-                  onClick={() => setResultView("table")}
-                  className="rounded-r-none h-8"
-                >
-                  <TableIcon className="h-4 w-4" />
-                </Button>
-              </TooltipTrigger>
-              <TooltipContent>Table View</TooltipContent>
-            </Tooltip>
-            <Tooltip>
-              <TooltipTrigger asChild>
-                <Button
-                  size="sm"
-                  variant={resultView === "json" ? "secondary" : "ghost"}
-                  onClick={() => setResultView("json")}
-                  className="rounded-l-none h-8"
-                >
-                  <Code className="h-4 w-4" />
-                </Button>
-              </TooltipTrigger>
-              <TooltipContent>JSON View</TooltipContent>
-            </Tooltip>
+    <div className="h-[calc(100vh-4rem)] flex">
+      {/* Schema sidebar */}
+      <div className="w-56 border-r flex flex-col shrink-0">
+        <div className="p-2 border-b font-medium text-sm flex items-center gap-2">
+          <Database className="h-4 w-4" />
+          Schema Browser
+        </div>
+        <div className="p-2 border-b">
+          <div className="relative">
+            <Search className="absolute left-2 top-2 h-4 w-4 text-muted-foreground" />
+            <Input
+              placeholder="Filter..."
+              value={schemaFilter}
+              onChange={(e) => setSchemaFilter(e.target.value)}
+              className="pl-8 h-8 text-sm"
+            />
           </div>
-        </TooltipProvider>
+        </div>
+        <ScrollArea className="flex-1 p-2">
+          {schemaLoading ? (
+            <div className="text-sm text-muted-foreground p-2">Loading schema...</div>
+          ) : filteredSchema.length === 0 ? (
+            <div className="text-sm text-muted-foreground p-2">
+              {schemaFilter ? "No matches found" : "No schemas found"}
+            </div>
+          ) : (
+            renderSchemaTree(filteredSchema)
+          )}
+        </ScrollArea>
       </div>
 
       {/* Main content */}
-      <ResizablePanelGroup direction="horizontal" className="flex-1">
-        {/* Schema sidebar */}
-        <ResizablePanel defaultSize={20} minSize={15} maxSize={30}>
-          <div className="h-full border-r flex flex-col">
-            <div className="p-3 border-b font-medium text-sm flex items-center gap-2">
-              <Database className="h-4 w-4" />
-              Schema Browser
-            </div>
-            <div className="p-2 border-b">
-              <div className="relative">
-                <Search className="absolute left-2 top-2.5 h-4 w-4 text-muted-foreground" />
-                <Input
-                  placeholder="Filter..."
-                  value={schemaFilter}
-                  onChange={(e) => setSchemaFilter(e.target.value)}
-                  className="pl-8 h-9"
-                />
-              </div>
-            </div>
-            <ScrollArea className="flex-1 p-2">
-              {schemaLoading ? (
-                <div className="text-sm text-muted-foreground p-2">
-                  Loading schema...
-                </div>
-              ) : filteredSchema.length === 0 ? (
-                <div className="text-sm text-muted-foreground p-2">
-                  {schemaFilter ? "No matches found" : "No schemas found"}
-                </div>
-              ) : (
-                renderSchemaTree(filteredSchema)
-              )}
-            </ScrollArea>
-          </div>
-        </ResizablePanel>
-
-        <ResizableHandle withHandle />
-
-        {/* Editor and results */}
-        <ResizablePanel defaultSize={showHistory ? 60 : 80}>
-          <ResizablePanelGroup direction="vertical">
-            {/* Query tabs and editor */}
-            <ResizablePanel defaultSize={40} minSize={20}>
-              <div className="h-full flex flex-col">
-                {/* Tabs */}
-                <div className="border-b flex items-center bg-muted/30">
-                  <Tabs value={activeTabId} className="flex-1">
-                    <TabsList className="h-9 bg-transparent rounded-none border-0 p-0">
-                      {tabs.map((tab) => (
-                        <TabsTrigger
-                          key={tab.id}
-                          value={tab.id}
-                          onClick={() => setActiveTabId(tab.id)}
-                          className={cn(
-                            "relative h-9 rounded-none border-r px-4 data-[state=active]:bg-background",
-                            tab.isLive && "text-green-600"
-                          )}
-                        >
-                          {tab.isLive && (
-                            <Zap className="h-3 w-3 mr-1 text-green-500" />
-                          )}
-                          {tab.name}
-                          {tabs.length > 1 && (
-                            <button
-                              onClick={(e) => closeTab(tab.id, e)}
-                              className="ml-2 hover:bg-muted rounded p-0.5"
-                            >
-                              <X className="h-3 w-3" />
-                            </button>
-                          )}
-                        </TabsTrigger>
-                      ))}
-                    </TabsList>
-                  </Tabs>
-                  <Button
-                    size="sm"
-                    variant="ghost"
-                    onClick={addTab}
-                    className="h-9 px-2"
+      <div className="flex-1 flex flex-col min-w-0">
+        {/* Header: Tabs + Run + Live Toggle + Actions */}
+        <div className="border-b flex items-center h-12 px-2 gap-2 shrink-0 bg-background">
+          {/* Query Tabs */}
+          <div className="flex items-center gap-1">
+            {tabs.map((tab) => (
+              <div
+                key={tab.id}
+                onClick={() => setActiveTabId(tab.id)}
+                className={cn(
+                  "flex items-center gap-1 px-3 py-1.5 rounded cursor-pointer text-sm",
+                  activeTabId === tab.id
+                    ? "bg-muted font-medium"
+                    : "hover:bg-muted/50"
+                )}
+              >
+                {/* Green dot for live subscribed tabs */}
+                {tab.subscriptionStatus === "connected" && (
+                  <span className="relative flex h-2 w-2 mr-1">
+                    <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-green-400 opacity-75"></span>
+                    <span className="relative inline-flex rounded-full h-2 w-2 bg-green-500"></span>
+                  </span>
+                )}
+                {tab.name}
+                {tabs.length > 1 && (
+                  <button
+                    onClick={(e) => closeTab(tab.id, e)}
+                    className="ml-1 hover:bg-muted-foreground/20 rounded p-0.5"
                   >
-                    <Plus className="h-4 w-4" />
-                  </Button>
-                </div>
-
-                {/* Editor */}
-                <div className="flex-1 relative">
-                  <Editor
-                    height="100%"
-                    defaultLanguage="sql"
-                    theme="vs-dark"
-                    value={activeTab?.query || ""}
-                    onChange={(value) =>
-                      updateTab(activeTabId, { query: value || "" })
-                    }
-                    options={{
-                      minimap: { enabled: false },
-                      fontSize: 14,
-                      lineNumbers: "on",
-                      scrollBeyondLastLine: false,
-                      automaticLayout: true,
-                      tabSize: 2,
-                      wordWrap: "on",
-                      padding: { top: 8, bottom: 40 },
-                    }}
-                    onMount={handleEditorMount}
-                  />
-                  {/* Run/Live buttons - bottom right of editor */}
-                  <div className="absolute bottom-2 right-4 flex items-center gap-2 z-10">
-                    <TooltipProvider>
-                      <Tooltip>
-                        <TooltipTrigger asChild>
-                          <Button
-                            size="sm"
-                            onClick={executeQuery}
-                            disabled={activeTab?.isLoading}
-                            className="gap-2 shadow-md"
-                          >
-                            <Play className="h-4 w-4" />
-                            Run
-                          </Button>
-                        </TooltipTrigger>
-                        <TooltipContent>Execute query (Ctrl+Enter)</TooltipContent>
-                      </Tooltip>
-
-                      <Tooltip>
-                        <TooltipTrigger asChild>
-                          <Button
-                            size="sm"
-                            variant={activeTab?.isLive ? "destructive" : "outline"}
-                            onClick={toggleLiveQuery}
-                            disabled={activeTab?.isLoading || !activeTab?.query.trim()}
-                            className="gap-2 shadow-md"
-                          >
-                            {activeTab?.isLive ? (
-                              <>
-                                <ZapOff className="h-4 w-4" />
-                                Stop
-                              </>
-                            ) : (
-                              <>
-                                <Zap className="h-4 w-4" />
-                                Live
-                              </>
-                            )}
-                          </Button>
-                        </TooltipTrigger>
-                        <TooltipContent>
-                          {activeTab?.isLive
-                            ? "Stop live subscription"
-                            : "Subscribe to live changes"}
-                        </TooltipContent>
-                      </Tooltip>
-                    </TooltipProvider>
-                  </div>
-                </div>
+                    <X className="h-3 w-3" />
+                  </button>
+                )}
               </div>
-            </ResizablePanel>
-
-            <ResizableHandle withHandle />
-
-            {/* Results */}
-            <ResizablePanel defaultSize={60}>
-              <div className="h-full flex flex-col">
-                <div className="flex-1 overflow-auto">
-                  {activeTab?.isLoading ? (
-                    <div className="flex items-center justify-center h-full text-muted-foreground">
-                      <div className="animate-spin mr-2">⏳</div>
-                      Executing query...
-                    </div>
-                  ) : activeTab?.error ? (
-                    <div className="p-4 text-red-500 bg-red-50 dark:bg-red-950/30 m-2 rounded border border-red-200 dark:border-red-800">
-                      <pre className="whitespace-pre-wrap font-mono text-sm">
-                        {activeTab.error}
-                      </pre>
-                    </div>
-                  ) : activeTab?.results === null ? (
-                    <div className="flex items-center justify-center h-full text-muted-foreground">
-                      Run a query to see results
-                    </div>
-                  ) : resultView === "json" ? (
-                    /* JSON View */
-                    <div className="p-4">
-                      <pre className="font-mono text-sm bg-muted/30 p-4 rounded-lg overflow-auto max-h-full">
-                        {JSON.stringify(activeTab.results, null, 2)}
-                      </pre>
-                    </div>
-                  ) : (
-                    /* Table View */
-                    <div className="p-2">
-                      <Table>
-                        <TableHeader>
-                          {table.getHeaderGroups().map((headerGroup) => (
-                            <TableRow key={headerGroup.id}>
-                              {headerGroup.headers.map((header) => (
-                                <TableHead key={header.id} className="bg-muted/50">
-                                  {header.isPlaceholder
-                                    ? null
-                                    : flexRender(
-                                        header.column.columnDef.header,
-                                        header.getContext()
-                                      )}
-                                </TableHead>
-                              ))}
-                            </TableRow>
-                          ))}
-                        </TableHeader>
-                        <TableBody>
-                          {table.getRowModel().rows.length === 0 ? (
-                            <TableRow>
-                              <TableCell 
-                                colSpan={activeTab?.columns?.length || 1} 
-                                className="h-24 text-center text-muted-foreground"
-                              >
-                                No results
-                              </TableCell>
-                            </TableRow>
-                          ) : (
-                            table.getRowModel().rows.map((row, rowIndex) => (
-                              <TableRow key={row.id} className="hover:bg-muted/30">
-                                {row.getVisibleCells().map((cell) => {
-                                  const colId = cell.column.id;
-                                  const value = cell.getValue();
-                                  const isSelected = selectedCell?.row === rowIndex && selectedCell?.col === colId;
-                                  const displayValue = value === null 
-                                    ? <span className="text-muted-foreground italic">null</span>
-                                    : typeof value === "object" 
-                                      ? JSON.stringify(value)
-                                      : String(value);
-                                  const isLongText = typeof value === "string" && value.length > 50;
-                                  
-                                  return (
-                                    <ContextMenu key={cell.id}>
-                                      <ContextMenuTrigger asChild>
-                                        <TableCell 
-                                          className={cn(
-                                            "font-mono text-sm cursor-pointer max-w-[300px] truncate border",
-                                            isSelected 
-                                              ? "bg-primary/20 border-primary ring-2 ring-primary ring-inset" 
-                                              : "border-transparent hover:bg-muted/50"
-                                          )}
-                                          onClick={() => setSelectedCell({ row: rowIndex, col: colId })}
-                                        >
-                                          {isLongText ? (
-                                            <span title={value as string}>{displayValue}</span>
-                                          ) : (
-                                            displayValue
-                                          )}
-                                        </TableCell>
-                                      </ContextMenuTrigger>
-                                      <ContextMenuContent>
-                                        <ContextMenuItem 
-                                          onClick={() => {
-                                            setCellViewerContent({ column: colId, value });
-                                            setCellViewerOpen(true);
-                                          }}
-                                        >
-                                          <Search className="h-4 w-4 mr-2" />
-                                          View Full Content
-                                        </ContextMenuItem>
-                                        <ContextMenuItem 
-                                          onClick={() => {
-                                            const text = value === null ? "null" : typeof value === "object" ? JSON.stringify(value, null, 2) : String(value);
-                                            navigator.clipboard.writeText(text);
-                                          }}
-                                        >
-                                          <Copy className="h-4 w-4 mr-2" />
-                                          Copy Value
-                                        </ContextMenuItem>
-                                        <ContextMenuItem 
-                                          onClick={() => {
-                                            const rowData = row.original;
-                                            navigator.clipboard.writeText(JSON.stringify(rowData, null, 2));
-                                          }}
-                                        >
-                                          <Copy className="h-4 w-4 mr-2" />
-                                          Copy Row as JSON
-                                        </ContextMenuItem>
-                                      </ContextMenuContent>
-                                    </ContextMenu>
-                                  );
-                                })}
-                              </TableRow>
-                            ))
-                          )}
-                        </TableBody>
-                      </Table>
-
-                      {/* Pagination */}
-                      {table.getPageCount() > 1 && (
-                        <div className="flex items-center justify-between px-2 py-4 border-t">
-                          <div className="text-sm text-muted-foreground">
-                            Page {table.getState().pagination.pageIndex + 1} of{" "}
-                            {table.getPageCount()}
-                          </div>
-                          <div className="flex gap-2">
-                            <Button
-                              size="sm"
-                              variant="outline"
-                              onClick={() => table.previousPage()}
-                              disabled={!table.getCanPreviousPage()}
-                            >
-                              Previous
-                            </Button>
-                            <Button
-                              size="sm"
-                              variant="outline"
-                              onClick={() => table.nextPage()}
-                              disabled={!table.getCanNextPage()}
-                            >
-                              Next
-                            </Button>
-                          </div>
-                        </div>
-                      )}
-                    </div>
-                  )}
-                </div>
-              </div>
-            </ResizablePanel>
-          </ResizablePanelGroup>
-        </ResizablePanel>
-
-        {/* Query history sidebar */}
-        {showHistory && (
-          <>
-            <ResizableHandle withHandle />
-            <ResizablePanel defaultSize={20} minSize={15} maxSize={30}>
-              <div className="h-full border-l flex flex-col">
-                <div className="p-3 border-b font-medium text-sm flex items-center justify-between">
-                  <div className="flex items-center gap-2">
-                    <Clock className="h-4 w-4" />
-                    History
-                  </div>
-                  <Button
-                    size="sm"
-                    variant="ghost"
-                    onClick={() => setQueryHistory([])}
-                    className="h-6 px-2"
-                  >
-                    <Trash2 className="h-3 w-3" />
-                  </Button>
-                </div>
-                <ScrollArea className="flex-1">
-                  {queryHistory.length === 0 ? (
-                    <div className="p-4 text-sm text-muted-foreground">
-                      No query history
-                    </div>
-                  ) : (
-                    <div className="p-2 space-y-2">
-                      {queryHistory.map((item) => (
-                        <div
-                          key={item.id}
-                          className={cn(
-                            "p-2 rounded border text-sm cursor-pointer hover:bg-muted/50",
-                            item.success
-                              ? "border-green-200 dark:border-green-800"
-                              : "border-red-200 dark:border-red-800"
-                          )}
-                          onClick={() => {
-                            updateTab(activeTabId, { query: item.query });
-                          }}
-                        >
-                          <div className="font-mono text-xs truncate">
-                            {item.query.slice(0, 100)}
-                            {item.query.length > 100 && "..."}
-                          </div>
-                          <div className="flex items-center gap-2 mt-1 text-xs text-muted-foreground">
-                            <span>{item.executionTime}ms</span>
-                            <span>·</span>
-                            <span>{item.rowCount} rows</span>
-                            <span>·</span>
-                            <span>
-                              {item.timestamp.toLocaleTimeString()}
-                            </span>
-                          </div>
-                        </div>
-                      ))}
-                    </div>
-                  )}
-                </ScrollArea>
-              </div>
-            </ResizablePanel>
-          </>
-        )}
-      </ResizablePanelGroup>
-
-      {/* Cell Viewer Dialog */}
-      <Dialog open={cellViewerOpen} onOpenChange={setCellViewerOpen}>
-        <DialogContent className="max-w-2xl max-h-[80vh]">
-          <DialogHeader>
-            <DialogTitle className="font-mono text-sm">
-              {cellViewerContent?.column}
-            </DialogTitle>
-          </DialogHeader>
-          <ScrollArea className="max-h-[60vh]">
-            <pre className="font-mono text-sm whitespace-pre-wrap break-all bg-muted/30 p-4 rounded-lg">
-              {cellViewerContent?.value === null 
-                ? "null"
-                : typeof cellViewerContent?.value === "object"
-                  ? JSON.stringify(cellViewerContent.value, null, 2)
-                  : String(cellViewerContent?.value ?? "")}
-            </pre>
-          </ScrollArea>
-          <div className="flex justify-end gap-2 pt-2">
-            <Button
-              size="sm"
-              variant="outline"
-              onClick={() => {
-                const text = cellViewerContent?.value === null 
-                  ? "null" 
-                  : typeof cellViewerContent?.value === "object" 
-                    ? JSON.stringify(cellViewerContent.value, null, 2) 
-                    : String(cellViewerContent?.value ?? "");
-                navigator.clipboard.writeText(text);
-              }}
-            >
-              <Copy className="h-4 w-4 mr-2" />
-              Copy
+            ))}
+            <Button size="sm" variant="ghost" onClick={addTab} className="h-7 w-7 p-0">
+              <Plus className="h-4 w-4" />
             </Button>
           </div>
-        </DialogContent>
-      </Dialog>
+
+          <div className="w-px h-6 bg-border mx-1" />
+
+          {/* Run Button */}
+          <Button
+            size="sm"
+            onClick={activeTab?.isLive ? toggleLiveQuery : executeQuery}
+            disabled={activeTab?.isLoading || !activeTab?.query?.trim() || activeTab?.subscriptionStatus === "connecting"}
+            className={cn(
+              "gap-1.5 h-8",
+              activeTab?.isLive && activeTab?.subscriptionStatus === "connected"
+                ? "bg-red-600 hover:bg-red-700 text-white"
+                : "bg-blue-600 hover:bg-blue-700 text-white"
+            )}
+          >
+            {activeTab?.subscriptionStatus === "connecting" ? (
+              <>
+                <div className="animate-spin h-3.5 w-3.5 border-2 border-white border-t-transparent rounded-full" />
+                Connecting...
+              </>
+            ) : activeTab?.isLive && activeTab?.subscriptionStatus === "connected" ? (
+              <>
+                <X className="h-3.5 w-3.5" />
+                Stop
+              </>
+            ) : activeTab?.isLive ? (
+              <>
+                <Play className="h-3.5 w-3.5" />
+                Subscribe
+              </>
+            ) : (
+              <>
+                <Play className="h-3.5 w-3.5" />
+                Run
+              </>
+            )}
+          </Button>
+
+          {/* Live Query Toggle */}
+          <div className="flex items-center gap-2 ml-2">
+            <span className="text-sm font-medium">Live Query</span>
+            <div className="flex items-center gap-1.5">
+              <span className={cn("text-xs", !activeTab?.isLive && "text-muted-foreground")}>
+                {activeTab?.isLive ? "ON" : "OFF"}
+              </span>
+              <Switch
+                checked={activeTab?.isLive ?? false}
+                onCheckedChange={(checked) => {
+                  if (!checked && activeTab?.unsubscribeFn) {
+                    // When turning off and subscribed, call toggleLiveQuery to unsubscribe properly
+                    toggleLiveQuery();
+                  } else if (!checked) {
+                    // Just turning off the flag (not subscribed yet)
+                    updateTab(activeTabId, { 
+                      isLive: false, 
+                      subscriptionStatus: "idle",
+                    });
+                  } else {
+                    // Turning on - just set the flag, Run button will subscribe
+                    updateTab(activeTabId, { 
+                      isLive: true,
+                      subscriptionStatus: "idle",
+                      subscriptionLog: [],
+                    });
+                  }
+                }}
+                className="data-[state=checked]:bg-blue-600"
+              />
+              {activeTab?.isLive && activeTab?.subscriptionStatus === "connected" && (
+                <span className="text-xs text-green-600 flex items-center gap-1">
+                  (<span className="w-1.5 h-1.5 rounded-full bg-green-500 animate-pulse" />)
+                </span>
+              )}
+            </div>
+          </div>
+
+          <div className="flex-1" />
+
+          {/* Right side actions */}
+          <div className="flex items-center gap-1">
+            <TooltipProvider>
+              <Tooltip>
+                <TooltipTrigger asChild>
+                  <Button size="sm" variant="ghost" onClick={copyResults} disabled={!activeTab?.results} className="h-8 gap-1.5">
+                    <Save className="h-4 w-4" />
+                    Save
+                  </Button>
+                </TooltipTrigger>
+                <TooltipContent>Save to clipboard as JSON</TooltipContent>
+              </Tooltip>
+              <Tooltip>
+                <TooltipTrigger asChild>
+                  <Button size="sm" variant="ghost" onClick={loadSchema} className="h-8 gap-1.5">
+                    <FileText className="h-4 w-4" />
+                    Format
+                  </Button>
+                </TooltipTrigger>
+                <TooltipContent>Refresh Schema</TooltipContent>
+              </Tooltip>
+              <Tooltip>
+                <TooltipTrigger asChild>
+                  <Button size="sm" variant="outline" onClick={() => setShowHistory(!showHistory)} className="h-8 gap-1.5">
+                    <Clock className="h-4 w-4" />
+                    Explain
+                  </Button>
+                </TooltipTrigger>
+                <TooltipContent>Query History</TooltipContent>
+              </Tooltip>
+              <Button size="sm" variant="ghost" className="h-8 w-8 p-0">
+                <MoreHorizontal className="h-4 w-4" />
+              </Button>
+            </TooltipProvider>
+          </div>
+        </div>
+
+        {/* Editor */}
+        <div className="h-32 shrink-0 border-b">
+          <Editor
+            height="100%"
+            defaultLanguage="sql"
+            theme="vs-dark"
+            value={activeTab?.query || ""}
+            onChange={(value) => updateTab(activeTabId, { query: value || "" })}
+            options={{
+              minimap: { enabled: false },
+              fontSize: 13,
+              lineNumbers: "on",
+              scrollBeyondLastLine: false,
+              automaticLayout: true,
+              tabSize: 2,
+              wordWrap: "on",
+              padding: { top: 8, bottom: 8 },
+              lineHeight: 20,
+            }}
+            onMount={handleEditorMount}
+          />
+        </div>
+
+        {/* Results area */}
+        <div className="flex-1 flex flex-col min-h-0 overflow-hidden">
+          {/* Live Query Status Bar */}
+          {activeTab?.isLive && (
+            <div className={cn(
+              "px-4 py-2 border-b flex items-center gap-3 shrink-0",
+              activeTab.subscriptionStatus === "connected" && "bg-green-50 dark:bg-green-950/30",
+              activeTab.subscriptionStatus === "connecting" && "bg-yellow-50 dark:bg-yellow-950/30",
+              activeTab.subscriptionStatus === "error" && "bg-red-50 dark:bg-red-950/30",
+            )}>
+              <div className="flex items-center gap-2">
+                {activeTab.subscriptionStatus === "connecting" && (
+                  <>
+                    <div className="animate-spin h-4 w-4 border-2 border-yellow-500 border-t-transparent rounded-full" />
+                    <span className="text-sm text-yellow-600 dark:text-yellow-400">Connecting...</span>
+                  </>
+                )}
+                {activeTab.subscriptionStatus === "connected" && (
+                  <>
+                    <span className="relative flex h-2 w-2">
+                      <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-green-400 opacity-75"></span>
+                      <span className="relative inline-flex rounded-full h-2 w-2 bg-green-500"></span>
+                    </span>
+                    <span className="text-sm text-green-600 dark:text-green-400">Live - Subscribed</span>
+                  </>
+                )}
+                {activeTab.subscriptionStatus === "error" && (
+                  <>
+                    <span className="h-2 w-2 rounded-full bg-red-500" />
+                    <span className="text-sm text-red-600 dark:text-red-400">Connection Error</span>
+                  </>
+                )}
+              </div>
+              {/* Subscription Log */}
+              {activeTab.subscriptionLog.length > 0 && (
+                <div className="flex-1 text-xs text-muted-foreground font-mono truncate">
+                  {activeTab.subscriptionLog[activeTab.subscriptionLog.length - 1]}
+                </div>
+              )}
+              {activeTab.subscriptionStatus === "connected" && (
+                <Button
+                  size="sm"
+                  variant="ghost"
+                  onClick={toggleLiveQuery}
+                  className="h-6 text-xs"
+                >
+                  Disconnect
+                </Button>
+              )}
+            </div>
+          )}
+
+          {activeTab?.isLoading ? (
+            <div className="flex items-center justify-center h-full text-muted-foreground">
+              <div className="animate-spin mr-2">⏳</div>
+              Executing query...
+            </div>
+          ) : activeTab?.error ? (
+            <div className="p-4 text-red-500 bg-red-50 dark:bg-red-950/30 m-2 rounded border border-red-200 dark:border-red-800">
+              <pre className="whitespace-pre-wrap font-mono text-sm">{activeTab.error}</pre>
+            </div>
+          ) : activeTab?.results === null && !activeTab?.isLive ? (
+            <div className="flex items-center justify-center h-full text-muted-foreground text-sm">
+              {activeTab?.isLive ? "Click Run to start live query subscription" : "Run a query to see results"}
+            </div>
+          ) : activeTab?.results === null && activeTab?.isLive && activeTab?.subscriptionStatus !== "connected" ? (
+            <div className="flex items-center justify-center h-full text-muted-foreground text-sm">
+              {activeTab?.subscriptionStatus === "connecting" ? "Establishing connection..." : "Click Run to start live query subscription"}
+            </div>
+          ) : activeTab?.message || (activeTab?.results?.length === 0 && activeTab?.columns?.length === 0) ? (
+            <div className="p-4 text-green-600 bg-green-50 dark:bg-green-950/30 m-2 rounded border border-green-200 dark:border-green-800">
+              <div className="flex items-center gap-2">
+                <span className="text-lg">✓</span>
+                <span className="font-medium">
+                  {activeTab?.message || `Query executed successfully. ${activeTab?.rowCount ?? 0} row(s) affected.`}
+                </span>
+              </div>
+            </div>
+          ) : (
+            <>
+              {/* Table with sheet-like cells */}
+              <div className="flex-1 overflow-auto">
+                <table className="w-full border-collapse text-sm">
+                  <thead className="sticky top-0 z-10">
+                    <tr className="bg-muted/80 backdrop-blur">
+                      {table.getHeaderGroups().map((headerGroup) =>
+                        headerGroup.headers.map((header) => (
+                          <th
+                            key={header.id}
+                            className="border border-border px-3 py-2 text-left font-medium text-muted-foreground whitespace-nowrap"
+                          >
+                            {header.isPlaceholder ? null : (
+                              <button
+                                className="flex items-center gap-1 hover:text-foreground"
+                                onClick={() => header.column.toggleSorting()}
+                              >
+                                {flexRender(header.column.columnDef.header, header.getContext())}
+                                <ArrowUpDown className="h-3 w-3" />
+                              </button>
+                            )}
+                          </th>
+                        ))
+                      )}
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {table.getRowModel().rows.length === 0 ? (
+                      <tr>
+                        <td
+                          colSpan={activeTab?.columns?.length || 1}
+                          className="border border-border px-3 py-8 text-center text-muted-foreground"
+                        >
+                          No results
+                        </td>
+                      </tr>
+                    ) : (
+                      table.getRowModel().rows.map((row) => (
+                        <tr key={row.id} className="hover:bg-muted/30">
+                          {row.getVisibleCells().map((cell) => {
+                            const value = cell.getValue();
+                            const displayValue =
+                              value === null ? (
+                                <span className="text-muted-foreground italic">null</span>
+                              ) : typeof value === "object" ? (
+                                JSON.stringify(value)
+                              ) : (
+                                String(value)
+                              );
+                            const isLongText = typeof value === "string" && value.length > 40;
+
+                            return (
+                              <td
+                                key={cell.id}
+                                className="border border-border px-3 py-1.5 font-mono text-sm max-w-[300px] truncate"
+                                title={isLongText ? String(value) : undefined}
+                              >
+                                {displayValue}
+                              </td>
+                            );
+                          })}
+                        </tr>
+                      ))
+                    )}
+                  </tbody>
+                </table>
+              </div>
+
+              {/* Sticky Pagination Footer */}
+              <div className="border-t bg-background px-4 py-2 flex items-center justify-end gap-4 shrink-0">
+                <div className="flex items-center gap-2 text-sm">
+                  <span className="text-muted-foreground">Rows per page:</span>
+                  <Select
+                    value={String(table.getState().pagination.pageSize)}
+                    onValueChange={(value) => table.setPageSize(Number(value))}
+                  >
+                    <SelectTrigger className="h-8 w-16">
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {[10, 25, 50, 100].map((size) => (
+                        <SelectItem key={size} value={String(size)}>
+                          {size}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </div>
+
+                <span className="text-sm text-muted-foreground">
+                  {table.getState().pagination.pageIndex * table.getState().pagination.pageSize + 1}-
+                  {Math.min(
+                    (table.getState().pagination.pageIndex + 1) * table.getState().pagination.pageSize,
+                    activeTab?.rowCount ?? 0
+                  )}{" "}
+                  of {activeTab?.rowCount ?? 0} items
+                </span>
+
+                <div className="flex items-center gap-1">
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    onClick={() => table.setPageIndex(0)}
+                    disabled={!table.getCanPreviousPage()}
+                    className="h-8 w-8 p-0"
+                  >
+                    <ChevronsLeft className="h-4 w-4" />
+                  </Button>
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    onClick={() => table.previousPage()}
+                    disabled={!table.getCanPreviousPage()}
+                    className="h-8 w-8 p-0"
+                  >
+                    <ChevronLeft className="h-4 w-4" />
+                  </Button>
+
+                  {/* Page numbers */}
+                  {Array.from({ length: Math.min(5, table.getPageCount()) }, (_, i) => {
+                    const pageIndex = table.getState().pagination.pageIndex;
+                    const totalPages = table.getPageCount();
+                    let pageNum: number;
+                    if (totalPages <= 5) {
+                      pageNum = i;
+                    } else if (pageIndex < 2) {
+                      pageNum = i;
+                    } else if (pageIndex > totalPages - 3) {
+                      pageNum = totalPages - 5 + i;
+                    } else {
+                      pageNum = pageIndex - 2 + i;
+                    }
+                    return (
+                      <Button
+                        key={pageNum}
+                        size="sm"
+                        variant={pageIndex === pageNum ? "default" : "outline"}
+                        onClick={() => table.setPageIndex(pageNum)}
+                        className="h-8 w-8 p-0"
+                      >
+                        {pageNum + 1}
+                      </Button>
+                    );
+                  })}
+
+                  {table.getPageCount() > 5 && (
+                    <span className="text-muted-foreground px-1">...</span>
+                  )}
+
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    onClick={() => table.nextPage()}
+                    disabled={!table.getCanNextPage()}
+                    className="h-8 w-8 p-0"
+                  >
+                    <ChevronRight className="h-4 w-4" />
+                  </Button>
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    onClick={() => table.setPageIndex(table.getPageCount() - 1)}
+                    disabled={!table.getCanNextPage()}
+                    className="h-8 w-8 p-0"
+                  >
+                    <ChevronsRight className="h-4 w-4" />
+                  </Button>
+                </div>
+              </div>
+            </>
+          )}
+        </div>
+      </div>
+
+      {/* Query history sidebar */}
+      {showHistory && (
+        <div className="w-64 border-l flex flex-col shrink-0">
+          <div className="p-2 border-b font-medium text-sm flex items-center justify-between">
+            <div className="flex items-center gap-2">
+              <Clock className="h-4 w-4" />
+              History
+            </div>
+            <Button size="sm" variant="ghost" onClick={() => setQueryHistory([])} className="h-6 w-6 p-0">
+              <Trash2 className="h-3 w-3" />
+            </Button>
+          </div>
+          <ScrollArea className="flex-1">
+            {queryHistory.length === 0 ? (
+              <div className="p-4 text-sm text-muted-foreground">No query history</div>
+            ) : (
+              <div className="p-2 space-y-2">
+                {queryHistory.map((item) => (
+                  <div
+                    key={item.id}
+                    className={cn(
+                      "p-2 rounded border text-sm cursor-pointer hover:bg-muted/50",
+                      item.success ? "border-green-200 dark:border-green-800" : "border-red-200 dark:border-red-800"
+                    )}
+                    onClick={() => updateTab(activeTabId, { query: item.query })}
+                  >
+                    <div className="font-mono text-xs truncate">
+                      {item.query.slice(0, 80)}
+                      {item.query.length > 80 && "..."}
+                    </div>
+                    <div className="flex items-center gap-2 mt-1 text-xs text-muted-foreground">
+                      <span>{item.executionTime}ms</span>
+                      <span>·</span>
+                      <span>{item.rowCount} rows</span>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
+          </ScrollArea>
+        </div>
+      )}
     </div>
   );
 }

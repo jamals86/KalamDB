@@ -60,6 +60,14 @@ pub async fn handle_subscribe(
 
     let subscription_id = subscription.id.clone();
 
+    info!(
+        "Processing subscription request: id={}, sql='{}', user_id={}, options={:?}",
+        subscription_id,
+        subscription.sql,
+        user_id.as_str(),
+        subscription.options
+    );
+
     // Determine batch size for initial data options
     let batch_size = subscription.options.batch_size.unwrap_or(MAX_ROWS_PER_BATCH);
 
@@ -67,8 +75,14 @@ pub async fn handle_subscribe(
     let initial_opts = subscription
         .options
         .last_rows
-        .map(|n| InitialDataOptions::last(n as usize))
-        .unwrap_or_else(|| InitialDataOptions::batch(None, None, batch_size));
+        .map(|n| {
+            info!("Using last_rows={} for initial data", n);
+            InitialDataOptions::last(n as usize)
+        })
+        .unwrap_or_else(|| {
+            info!("Using default batch size={} for initial data", batch_size);
+            InitialDataOptions::batch(None, None, batch_size)
+        });
 
     // Register subscription with initial data fetch
     // LiveQueryManager handles all SQL parsing, permission checks, and registration internally
@@ -78,10 +92,18 @@ pub async fn handle_subscribe(
     {
         Ok(result) => {
             info!(
-                "Subscription registered: id={}, user_id={}",
+                "Subscription registered: id={}, user_id={}, has_initial_data={}",
                 subscription_id,
-                user_id.as_str()
+                user_id.as_str(),
+                result.initial_data.is_some()
             );
+            if let Some(ref initial) = result.initial_data {
+                info!(
+                    "Initial data: {} rows, has_more={}",
+                    initial.rows.len(),
+                    initial.has_more
+                );
+            }
 
             // Update rate limiter
             rate_limiter.increment_subscription(&user_id);
@@ -113,12 +135,20 @@ pub async fn handle_subscribe(
 
             let ack =
                 WebSocketMessage::subscription_ack(subscription_id.clone(), 0, batch_control.clone());
+            info!("Sending subscription_ack for {}", subscription_id);
             let _ = send_json(session, &ack).await;
 
             if let Some(initial) = result.initial_data {
+                info!(
+                    "Sending initial_data_batch for {} with {} rows",
+                    subscription_id,
+                    initial.rows.len()
+                );
                 let batch_msg =
                     WebSocketMessage::initial_data_batch(subscription_id, initial.rows, batch_control);
                 let _ = send_json(session, &batch_msg).await;
+            } else {
+                info!("No initial data to send for {}", subscription_id);
             }
 
             Ok(())
@@ -136,7 +166,10 @@ pub async fn handle_subscribe(
                 }
                 _ => ("SUBSCRIPTION_FAILED", "Subscription registration failed"),
             };
-            error!("Failed to register subscription {}: {}", subscription_id, e);
+            error!(
+                "Failed to register subscription {}: {} (sql: '{}')",
+                subscription_id, e, subscription.sql
+            );
             let _ = send_error(session, &subscription_id, code, message).await;
             Ok(())
         }

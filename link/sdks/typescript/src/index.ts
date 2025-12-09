@@ -797,7 +797,9 @@ export class KalamDBClient {
     // Wrap callback to parse JSON and provide typed event
     const wrappedCallback = (eventJson: string) => {
       try {
+        console.log('[KalamClient SDK] Received event JSON:', eventJson.substring(0, 200));
         const event = JSON.parse(eventJson) as ServerMessage;
+        console.log('[KalamClient SDK] Parsed event type:', (event as any).type);
         callback(event);
       } catch (error) {
         console.error('Failed to parse subscription event:', error);

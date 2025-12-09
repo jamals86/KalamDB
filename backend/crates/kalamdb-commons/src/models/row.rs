@@ -43,7 +43,7 @@ pub enum RowConversionError {
     ColumnCountMismatch { expected: usize, actual: usize },
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[derive(Debug, Clone, PartialEq)]
 enum StoredScalarValue {
     Null,
     Boolean(Option<bool>),
@@ -89,6 +89,302 @@ enum StoredScalarValue {
         values: Option<Vec<Option<f32>>>,
     },
     Fallback(String),
+}
+
+/// Custom serialization for StoredScalarValue that converts Int64/UInt64 to strings
+/// to avoid JavaScript precision loss for values > Number.MAX_SAFE_INTEGER (2^53 - 1)
+impl Serialize for StoredScalarValue {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: Serializer,
+    {
+        use serde::ser::SerializeMap;
+        
+        match self {
+            // Serialize Int64 as string to preserve precision in JavaScript
+            StoredScalarValue::Int64(v) => {
+                let mut map = serializer.serialize_map(Some(1))?;
+                map.serialize_entry("Int64", &v.map(|n| n.to_string()))?;
+                map.end()
+            }
+            // Serialize UInt64 as string to preserve precision in JavaScript
+            StoredScalarValue::UInt64(v) => {
+                let mut map = serializer.serialize_map(Some(1))?;
+                map.serialize_entry("UInt64", &v.map(|n| n.to_string()))?;
+                map.end()
+            }
+            // Serialize TimestampMillisecond value as string
+            StoredScalarValue::TimestampMillisecond { value, timezone } => {
+                #[derive(Serialize)]
+                struct TsMs {
+                    value: Option<String>,
+                    timezone: Option<String>,
+                }
+                let mut map = serializer.serialize_map(Some(1))?;
+                map.serialize_entry("TimestampMillisecond", &TsMs {
+                    value: value.map(|v| v.to_string()),
+                    timezone: timezone.clone(),
+                })?;
+                map.end()
+            }
+            // Serialize TimestampMicrosecond value as string  
+            StoredScalarValue::TimestampMicrosecond { value, timezone } => {
+                #[derive(Serialize)]
+                struct TsUs {
+                    value: Option<String>,
+                    timezone: Option<String>,
+                }
+                let mut map = serializer.serialize_map(Some(1))?;
+                map.serialize_entry("TimestampMicrosecond", &TsUs {
+                    value: value.map(|v| v.to_string()),
+                    timezone: timezone.clone(),
+                })?;
+                map.end()
+            }
+            // Serialize TimestampNanosecond value as string
+            StoredScalarValue::TimestampNanosecond { value, timezone } => {
+                #[derive(Serialize)]
+                struct TsNs {
+                    value: Option<String>,
+                    timezone: Option<String>,
+                }
+                let mut map = serializer.serialize_map(Some(1))?;
+                map.serialize_entry("TimestampNanosecond", &TsNs {
+                    value: value.map(|v| v.to_string()),
+                    timezone: timezone.clone(),
+                })?;
+                map.end()
+            }
+            // All other types use default derive behavior - use a helper enum
+            _ => {
+                // For all other types, use derive-like serialization
+                #[derive(Serialize)]
+                #[serde(untagged)]
+                enum Helper<'a> {
+                    Null,
+                    Boolean { Boolean: &'a Option<bool> },
+                    Float32 { Float32: &'a Option<f32> },
+                    Float64 { Float64: &'a Option<f64> },
+                    Int8 { Int8: &'a Option<i8> },
+                    Int16 { Int16: &'a Option<i16> },
+                    Int32 { Int32: &'a Option<i32> },
+                    UInt8 { UInt8: &'a Option<u8> },
+                    UInt16 { UInt16: &'a Option<u16> },
+                    UInt32 { UInt32: &'a Option<u32> },
+                    Utf8 { Utf8: &'a Option<String> },
+                    LargeUtf8 { LargeUtf8: &'a Option<String> },
+                    Binary { Binary: &'a Option<Vec<u8>> },
+                    LargeBinary { LargeBinary: &'a Option<Vec<u8>> },
+                    FixedSizeBinary { FixedSizeBinary: FixedSizeBinaryHelper<'a> },
+                    Date32 { Date32: &'a Option<i32> },
+                    Time64Microsecond { Time64Microsecond: &'a Option<i64> },
+                    Decimal128 { Decimal128: Decimal128Helper<'a> },
+                    Embedding { Embedding: EmbeddingHelper<'a> },
+                    Fallback { Fallback: &'a String },
+                }
+                
+                #[derive(Serialize)]
+                struct FixedSizeBinaryHelper<'a> {
+                    size: &'a i32,
+                    value: &'a Option<Vec<u8>>,
+                }
+                
+                #[derive(Serialize)]
+                struct Decimal128Helper<'a> {
+                    value: &'a Option<i128>,
+                    precision: &'a u8,
+                    scale: &'a i8,
+                }
+                
+                #[derive(Serialize)]
+                struct EmbeddingHelper<'a> {
+                    size: &'a i32,
+                    values: &'a Option<Vec<Option<f32>>>,
+                }
+                
+                let helper = match self {
+                    StoredScalarValue::Null => Helper::Null,
+                    StoredScalarValue::Boolean(v) => Helper::Boolean { Boolean: v },
+                    StoredScalarValue::Float32(v) => Helper::Float32 { Float32: v },
+                    StoredScalarValue::Float64(v) => Helper::Float64 { Float64: v },
+                    StoredScalarValue::Int8(v) => Helper::Int8 { Int8: v },
+                    StoredScalarValue::Int16(v) => Helper::Int16 { Int16: v },
+                    StoredScalarValue::Int32(v) => Helper::Int32 { Int32: v },
+                    StoredScalarValue::UInt8(v) => Helper::UInt8 { UInt8: v },
+                    StoredScalarValue::UInt16(v) => Helper::UInt16 { UInt16: v },
+                    StoredScalarValue::UInt32(v) => Helper::UInt32 { UInt32: v },
+                    StoredScalarValue::Utf8(v) => Helper::Utf8 { Utf8: v },
+                    StoredScalarValue::LargeUtf8(v) => Helper::LargeUtf8 { LargeUtf8: v },
+                    StoredScalarValue::Binary(v) => Helper::Binary { Binary: v },
+                    StoredScalarValue::LargeBinary(v) => Helper::LargeBinary { LargeBinary: v },
+                    StoredScalarValue::FixedSizeBinary { size, value } => Helper::FixedSizeBinary {
+                        FixedSizeBinary: FixedSizeBinaryHelper { size, value },
+                    },
+                    StoredScalarValue::Date32(v) => Helper::Date32 { Date32: v },
+                    StoredScalarValue::Time64Microsecond(v) => Helper::Time64Microsecond { Time64Microsecond: v },
+                    StoredScalarValue::Decimal128 { value, precision, scale } => Helper::Decimal128 {
+                        Decimal128: Decimal128Helper { value, precision, scale },
+                    },
+                    StoredScalarValue::Embedding { size, values } => Helper::Embedding {
+                        Embedding: EmbeddingHelper { size, values },
+                    },
+                    StoredScalarValue::Fallback(s) => Helper::Fallback { Fallback: s },
+                    // These are handled above
+                    StoredScalarValue::Int64(_) | StoredScalarValue::UInt64(_) |
+                    StoredScalarValue::TimestampMillisecond { .. } |
+                    StoredScalarValue::TimestampMicrosecond { .. } |
+                    StoredScalarValue::TimestampNanosecond { .. } => unreachable!(),
+                };
+                helper.serialize(serializer)
+            }
+        }
+    }
+}
+
+/// Custom deserialization for StoredScalarValue that handles Int64/UInt64 as strings
+impl<'de> Deserialize<'de> for StoredScalarValue {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        use serde::de::{MapAccess, Visitor};
+        
+        struct StoredScalarValueVisitor;
+        
+        impl<'de> Visitor<'de> for StoredScalarValueVisitor {
+            type Value = StoredScalarValue;
+            
+            fn expecting(&self, formatter: &mut std::fmt::Formatter) -> std::fmt::Result {
+                formatter.write_str("a StoredScalarValue")
+            }
+            
+            fn visit_unit<E>(self) -> Result<Self::Value, E> {
+                Ok(StoredScalarValue::Null)
+            }
+            
+            fn visit_map<A>(self, mut map: A) -> Result<Self::Value, A::Error>
+            where
+                A: MapAccess<'de>,
+            {
+                use serde::de::Error;
+                
+                let key: String = map.next_key()?.ok_or_else(|| Error::custom("empty map"))?;
+                
+                match key.as_str() {
+                    "Null" => Ok(StoredScalarValue::Null),
+                    "Boolean" => Ok(StoredScalarValue::Boolean(map.next_value()?)),
+                    "Float32" => Ok(StoredScalarValue::Float32(map.next_value()?)),
+                    "Float64" => Ok(StoredScalarValue::Float64(map.next_value()?)),
+                    "Int8" => Ok(StoredScalarValue::Int8(map.next_value()?)),
+                    "Int16" => Ok(StoredScalarValue::Int16(map.next_value()?)),
+                    "Int32" => Ok(StoredScalarValue::Int32(map.next_value()?)),
+                    "Int64" => {
+                        // Accept either number or string
+                        #[derive(Deserialize)]
+                        #[serde(untagged)]
+                        enum Int64Value {
+                            Num(Option<i64>),
+                            Str(Option<String>),
+                        }
+                        let v: Int64Value = map.next_value()?;
+                        let parsed = match v {
+                            Int64Value::Num(n) => n,
+                            Int64Value::Str(s) => s.and_then(|s| s.parse().ok()),
+                        };
+                        Ok(StoredScalarValue::Int64(parsed))
+                    }
+                    "UInt8" => Ok(StoredScalarValue::UInt8(map.next_value()?)),
+                    "UInt16" => Ok(StoredScalarValue::UInt16(map.next_value()?)),
+                    "UInt32" => Ok(StoredScalarValue::UInt32(map.next_value()?)),
+                    "UInt64" => {
+                        // Accept either number or string
+                        #[derive(Deserialize)]
+                        #[serde(untagged)]
+                        enum UInt64Value {
+                            Num(Option<u64>),
+                            Str(Option<String>),
+                        }
+                        let v: UInt64Value = map.next_value()?;
+                        let parsed = match v {
+                            UInt64Value::Num(n) => n,
+                            UInt64Value::Str(s) => s.and_then(|s| s.parse().ok()),
+                        };
+                        Ok(StoredScalarValue::UInt64(parsed))
+                    }
+                    "Utf8" => Ok(StoredScalarValue::Utf8(map.next_value()?)),
+                    "LargeUtf8" => Ok(StoredScalarValue::LargeUtf8(map.next_value()?)),
+                    "Binary" => Ok(StoredScalarValue::Binary(map.next_value()?)),
+                    "LargeBinary" => Ok(StoredScalarValue::LargeBinary(map.next_value()?)),
+                    "FixedSizeBinary" => {
+                        #[derive(Deserialize)]
+                        struct Inner { size: i32, value: Option<Vec<u8>> }
+                        let inner: Inner = map.next_value()?;
+                        Ok(StoredScalarValue::FixedSizeBinary { size: inner.size, value: inner.value })
+                    }
+                    "Date32" => Ok(StoredScalarValue::Date32(map.next_value()?)),
+                    "Time64Microsecond" => Ok(StoredScalarValue::Time64Microsecond(map.next_value()?)),
+                    "TimestampMillisecond" => {
+                        #[derive(Deserialize)]
+                        #[serde(untagged)]
+                        enum TsValue {
+                            Str { value: Option<String>, timezone: Option<String> },
+                            Num { value: Option<i64>, timezone: Option<String> },
+                        }
+                        let inner: TsValue = map.next_value()?;
+                        let (value, timezone) = match inner {
+                            TsValue::Str { value, timezone } => (value.and_then(|s| s.parse().ok()), timezone),
+                            TsValue::Num { value, timezone } => (value, timezone),
+                        };
+                        Ok(StoredScalarValue::TimestampMillisecond { value, timezone })
+                    }
+                    "TimestampMicrosecond" => {
+                        #[derive(Deserialize)]
+                        #[serde(untagged)]
+                        enum TsValue {
+                            Str { value: Option<String>, timezone: Option<String> },
+                            Num { value: Option<i64>, timezone: Option<String> },
+                        }
+                        let inner: TsValue = map.next_value()?;
+                        let (value, timezone) = match inner {
+                            TsValue::Str { value, timezone } => (value.and_then(|s| s.parse().ok()), timezone),
+                            TsValue::Num { value, timezone } => (value, timezone),
+                        };
+                        Ok(StoredScalarValue::TimestampMicrosecond { value, timezone })
+                    }
+                    "TimestampNanosecond" => {
+                        #[derive(Deserialize)]
+                        #[serde(untagged)]
+                        enum TsValue {
+                            Str { value: Option<String>, timezone: Option<String> },
+                            Num { value: Option<i64>, timezone: Option<String> },
+                        }
+                        let inner: TsValue = map.next_value()?;
+                        let (value, timezone) = match inner {
+                            TsValue::Str { value, timezone } => (value.and_then(|s| s.parse().ok()), timezone),
+                            TsValue::Num { value, timezone } => (value, timezone),
+                        };
+                        Ok(StoredScalarValue::TimestampNanosecond { value, timezone })
+                    }
+                    "Decimal128" => {
+                        #[derive(Deserialize)]
+                        struct Inner { value: Option<i128>, precision: u8, scale: i8 }
+                        let inner: Inner = map.next_value()?;
+                        Ok(StoredScalarValue::Decimal128 { value: inner.value, precision: inner.precision, scale: inner.scale })
+                    }
+                    "Embedding" => {
+                        #[derive(Deserialize)]
+                        struct Inner { size: i32, values: Option<Vec<Option<f32>>> }
+                        let inner: Inner = map.next_value()?;
+                        Ok(StoredScalarValue::Embedding { size: inner.size, values: inner.values })
+                    }
+                    "Fallback" => Ok(StoredScalarValue::Fallback(map.next_value()?)),
+                    _ => Err(Error::unknown_variant(&key, &["Null", "Boolean", "Int64", "..."]))
+                }
+            }
+        }
+        
+        deserializer.deserialize_any(StoredScalarValueVisitor)
+    }
 }
 
 impl From<&ScalarValue> for StoredScalarValue {

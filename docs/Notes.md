@@ -135,7 +135,6 @@ INSERT INTO <namespace>.<table>
 
 130) We need to have describe table <namespace>.<table> to show the table schema in cli and server as well also to display: cold rows count, hot rows count, total rows count, storage id, primary key(s), indexes, etc
 
-131) InitialDataOptions and InitialDataResult should now have SeqId instead of timestamp we check by it now
 132) add_row_id_column should be removed and all the _updated, _id should be removed from everywhere even deprecation shouldnt be added remove the code completely
 133)  _row_id: &str shouldnt be there we now use SharedTableRowId or UserTableRowId in all places instead of string
 134) Instead of passing namespace/table_name and also tableid pass only TableId also places where there is both of NamespaceId and TableName pass TableId instead  
@@ -280,8 +279,6 @@ instead of: 1 failed: Invalid operation: No handler registered for statement typ
 191) In cli tests whenever we have flush directly after it check the storage files manifest.json and the parquet files if they are exists there and the size is not 0, use one function in common which helps with this if not already having one like that
 
 192) Remove last_seen from user or update it just only once per day to avoid too many writes to rocksdb for no reason
-
-193) is this still supported: job_cleanup_schedule = "0 0 * * *" in config.toml for jobs cleanup?
 
 194) Block update/insert/delete directly on system tables like users/namespaces/tables/live_queries
 
