@@ -281,8 +281,8 @@ async fn execute_single_statement(
     {
         Ok(exec_result) => match exec_result {
             ExecutionResult::Success { message } => Ok(QueryResult::with_message(message)),
-            ExecutionResult::Rows { batches, .. } => {
-                record_batch_to_query_result(batches, Some(&session.user.user_id))
+            ExecutionResult::Rows { batches, schema, .. } => {
+                record_batch_to_query_result(batches, schema, Some(&session.user.user_id))
             }
             ExecutionResult::Inserted { rows_affected } => Ok(QueryResult::with_affected_rows(
                 rows_affected,
@@ -337,15 +337,21 @@ async fn execute_single_statement(
 /// Number.MAX_SAFE_INTEGER are serialized as strings to preserve precision.
 fn record_batch_to_query_result(
     batches: Vec<arrow::record_batch::RecordBatch>,
+    schema: Option<arrow::datatypes::SchemaRef>,
     user_id: Option<&UserId>,
 ) -> Result<QueryResult, Box<dyn std::error::Error>> {
-    if batches.is_empty() {
+    // Get schema from first batch, or from explicitly provided schema for empty results
+    let schema = if !batches.is_empty() {
+        batches[0].schema()
+    } else if let Some(s) = schema {
+        s
+    } else {
+        // No batches and no schema - truly empty result
         return Ok(QueryResult::with_message(
             "Query executed successfully".to_string(),
         ));
-    }
+    };
 
-    let schema = batches[0].schema();
     let column_names: Vec<String> = schema.fields().iter().map(|f| f.name().clone()).collect();
 
     let mut rows = Vec::new();

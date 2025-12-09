@@ -246,9 +246,9 @@ export interface InitOutput {
   readonly kalamclient_subscribe: (a: number, b: number, c: number, d: any) => any;
   readonly kalamclient_subscribeWithSql: (a: number, b: number, c: number, d: number, e: number, f: any) => any;
   readonly kalamclient_unsubscribe: (a: number, b: number, c: number) => any;
-  readonly wasm_bindgen__convert__closures_____invoke__h53534a1ef46f6383: (a: number, b: number, c: any) => void;
-  readonly wasm_bindgen__closure__destroy__h642479b1977f4759: (a: number, b: number) => void;
   readonly wasm_bindgen__convert__closures_____invoke__hedbd134adbce07f2: (a: number, b: number) => void;
+  readonly wasm_bindgen__closure__destroy__h642479b1977f4759: (a: number, b: number) => void;
+  readonly wasm_bindgen__convert__closures_____invoke__h53534a1ef46f6383: (a: number, b: number, c: any) => void;
   readonly wasm_bindgen__convert__closures_____invoke__hd3a7b72008ab54d8: (a: number, b: number, c: any) => void;
   readonly wasm_bindgen__closure__destroy__h3c65cb5d3157b83f: (a: number, b: number) => void;
   readonly wasm_bindgen__convert__closures_____invoke__hc196795d34a3c3f6: (a: number, b: number, c: any, d: any) => void;

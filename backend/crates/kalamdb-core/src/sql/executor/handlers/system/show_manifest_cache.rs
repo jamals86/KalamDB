@@ -55,6 +55,7 @@ impl TypedStatementHandler<ShowManifestStatement> for ShowManifestCacheHandler {
         Ok(ExecutionResult::Rows {
             batches: vec![batch],
             row_count,
+            schema: None,
         })
     }
 }
@@ -83,7 +84,7 @@ mod tests {
         let result = handler.execute(stmt, vec![], &exec_ctx).await;
         assert!(result.is_ok());
 
-        if let Ok(ExecutionResult::Rows { batches, row_count }) = result {
+        if let Ok(ExecutionResult::Rows { batches, row_count, .. }) = result {
             assert_eq!(row_count, 0);
             assert_eq!(batches.len(), 1);
             assert_eq!(batches[0].num_rows(), 0);

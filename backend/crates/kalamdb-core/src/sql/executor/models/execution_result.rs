@@ -1,4 +1,5 @@
 use arrow::array::RecordBatch;
+use arrow::datatypes::SchemaRef;
 
 /// Result type for SQL execution
 #[derive(Debug, Clone)]
@@ -9,6 +10,9 @@ pub enum ExecutionResult {
     Rows {
         batches: Vec<RecordBatch>,
         row_count: usize,
+        /// Optional schema for when batches is empty (0 rows returned)
+        /// This preserves column information for the UI even when no data
+        schema: Option<SchemaRef>,
     },
     /// INSERT result
     Inserted { rows_affected: usize },

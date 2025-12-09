@@ -217,6 +217,11 @@ impl SqlExecutor {
         // Check permissions on the logical plan
         self.check_select_permissions(df.logical_plan(), exec_ctx)?;
 
+        // Capture schema before collecting (needed for 0 row results)
+        // DFSchema -> Arrow Schema via inner() method
+        let schema: arrow::datatypes::SchemaRef =
+            std::sync::Arc::new(df.schema().as_arrow().clone());
+
         // Execute and collect results (log execution errors)
         let batches = match df.collect().await {
             Ok(batches) => batches,
@@ -236,8 +241,12 @@ impl SqlExecutor {
         // Calculate total row count
         let row_count: usize = batches.iter().map(|b| b.num_rows()).sum();
 
-        // Return batches with row count
-        Ok(ExecutionResult::Rows { batches, row_count })
+        // Return batches with row count and schema (schema is needed when batches is empty)
+        Ok(ExecutionResult::Rows {
+            batches,
+            row_count,
+            schema: Some(schema),
+        })
     }
 
     /// Log SQL errors with appropriate level (warn for user errors, error for system errors)
