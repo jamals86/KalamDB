@@ -28,7 +28,7 @@ serde_json = { workspace = true }
 base64 = { workspace = true }
 
 # Random number generation for WASM
-getrandom = { workspace = true, optional = true }
+getrandom = { version = "0.2", optional = true, features = ["js"] }
 
 # Futures utilities
 futures-util = { workspace = true, default-features = false }
@@ -51,11 +51,14 @@ web-sys = { workspace = true, features = [
     "console",
     # WebSocket support (T063A-T063B)
     "WebSocket",
+    "BinaryType",
     "MessageEvent",
     "CloseEvent",
     "ErrorEvent",
     "Event",
     "EventTarget",
+    "Blob",
+    "FileReader",
     # Fetch API support (T063F-T063H)
     "Window",
     "Request",
@@ -70,7 +73,7 @@ web-sys = { workspace = true, features = [
 # WASM builds use wasm-pack which doesn't use default features
 default = ["tokio-runtime"]
 tokio-runtime = ["tokio", "reqwest", "tokio-tungstenite"]
-wasm = ["wasm-bindgen", "wasm-bindgen-futures", "js-sys", "web-sys", "getrandom/js"]
+wasm = ["wasm-bindgen", "wasm-bindgen-futures", "js-sys", "web-sys", "getrandom"]
 
 [dev-dependencies]
 tokio = { workspace = true, features = ["test-util", "macros"] }

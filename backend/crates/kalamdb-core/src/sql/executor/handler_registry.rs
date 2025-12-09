@@ -147,6 +147,7 @@ impl HandlerRegistry {
             SqlStatementKind::DropNamespace(kalamdb_sql::ddl::DropNamespaceStatement {
                 name: NamespaceId::new("_placeholder"),
                 if_exists: false,
+                cascade: false,
             }),
             DropNamespaceHandler::new(app_context.clone()),
             |stmt| match stmt.kind() {

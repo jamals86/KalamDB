@@ -31,6 +31,10 @@ export default defineConfig({
         path.resolve(__dirname, "../link/sdks/typescript"),
       ],
     },
+    // Disable caching for WASM and kalam-link files
+    headers: {
+      "Cache-Control": "no-store",
+    },
   },
   build: {
     outDir: "dist",
@@ -38,6 +42,8 @@ export default defineConfig({
     target: "esnext",
   },
   optimizeDeps: {
+    // Force re-bundling of kalam-link on every server start
+    force: true,
     exclude: ["kalam-link"],
   },
   // Ensure WASM files are handled correctly

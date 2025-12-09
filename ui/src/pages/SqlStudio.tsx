@@ -394,6 +394,10 @@ export default function SqlStudio() {
         const unsubscribeFn = await subscribe(
           tab.query,
           (event) => {
+            // Debug: Log raw event
+            console.log('[SqlStudio] Subscription callback received event:', event);
+            console.log('[SqlStudio] Event type:', typeof event, event?.type);
+            
             // Check if event is a ServerMessage object with type field
             const serverMsg = event as { 
               type?: string; 
@@ -493,6 +497,7 @@ export default function SqlStudio() {
 
             // Handle initial data batch - append with _change_type: 'initial'
             if (serverMsg.type === 'initial_data_batch' && Array.isArray(serverMsg.rows)) {
+              // SDK already transforms typed values, just add change type marker
               const newRows = serverMsg.rows.map(row => ({ _change_type: 'initial', ...row }));
               const batchStatus = serverMsg.batch_control?.status;
               
@@ -524,6 +529,7 @@ export default function SqlStudio() {
             // Handle change events (insert/update/delete) - append with change type
             if (serverMsg.type === 'change' && Array.isArray(serverMsg.rows)) {
               const changeType = serverMsg.change_type || 'change';
+              // SDK already transforms typed values, just add change type marker
               const newRows = serverMsg.rows.map(row => ({ _change_type: changeType, ...row }));
               
               setTabs((prev) =>
@@ -554,6 +560,7 @@ export default function SqlStudio() {
             // Fallback: Handle raw data array (legacy format)
             const data = event as unknown as Record<string, unknown>[];
             if (Array.isArray(data) && data.length > 0) {
+              // SDK already transforms typed values, just add change type marker
               const newRows = data.map(row => ({ _change_type: 'data', ...row }));
               
               setTabs((prev) =>

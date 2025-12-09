@@ -162,6 +162,22 @@ impl TablesTableProvider {
         Ok(tables)
     }
 
+    /// List all tables in a specific namespace
+    pub fn list_tables_in_namespace(
+        &self,
+        namespace_id: &kalamdb_commons::models::NamespaceId,
+    ) -> Result<Vec<TableDefinition>, SystemError> {
+        let iter = self.store.scan_iterator(None, None)?;
+        let mut tables = Vec::new();
+        for item in iter {
+            let (_, table_def) = item?;
+            if &table_def.namespace_id == namespace_id {
+                tables.push(table_def);
+            }
+        }
+        Ok(tables)
+    }
+
     /// Async version of `list_tables()` - offloads to blocking thread pool.
     ///
     /// Use this in async contexts to avoid blocking the Tokio runtime.

@@ -27,7 +27,7 @@ fn smoke_test_snowflake_id_default() {
         return;
     }
 
-    let namespace = generate_unique_namespace("func_ns");
+    let namespace = generate_unique_namespace("snowflake_ns");
     let table = generate_unique_table("snowflake_test");
     let full_table = format!("{}.{}", namespace, table);
 
@@ -111,7 +111,7 @@ fn smoke_test_uuid_v7_default() {
         return;
     }
 
-    let namespace = generate_unique_namespace("func_ns");
+    let namespace = generate_unique_namespace("uuid_ns");
     let table = generate_unique_table("uuid_test");
     let full_table = format!("{}.{}", namespace, table);
 
@@ -201,7 +201,7 @@ fn smoke_test_ulid_default() {
         return;
     }
 
-    let namespace = generate_unique_namespace("func_ns");
+    let namespace = generate_unique_namespace("ulid_ns");
     let table = generate_unique_table("ulid_test");
     let full_table = format!("{}.{}", namespace, table);
 
@@ -285,7 +285,7 @@ fn smoke_test_current_user_default() {
         return;
     }
 
-    let namespace = generate_unique_namespace("func_ns");
+    let namespace = generate_unique_namespace("curuser_ns");
     let table = generate_unique_table("user_tracking");
     let full_table = format!("{}.{}", namespace, table);
 
@@ -370,7 +370,7 @@ fn smoke_test_all_custom_functions_combined() {
         return;
     }
 
-    let namespace = generate_unique_namespace("func_ns");
+    let namespace = generate_unique_namespace("allfuncs_ns");
     let table = generate_unique_table("all_funcs");
     let full_table = format!("{}.{}", namespace, table);
 
