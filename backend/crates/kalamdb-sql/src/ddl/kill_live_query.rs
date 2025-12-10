@@ -68,17 +68,17 @@ mod tests {
 
     #[test]
     fn test_parse_kill_live_query() {
-        let stmt = KillLiveQueryStatement::parse("KILL LIVE QUERY 'user123-conn_abc-messages-q1'")
+        let stmt = KillLiveQueryStatement::parse("KILL LIVE QUERY 'user123-conn_abc-sub1'")
             .unwrap();
         assert_eq!(stmt.live_id.user_id().as_str(), "user123");
         assert_eq!(stmt.live_id.connection_id().as_str(), "conn_abc");
-        assert_eq!(stmt.live_id.subscription_id(), "q1");
+        assert_eq!(stmt.live_id.subscription_id(), "sub1");
     }
 
     #[test]
     fn test_parse_kill_live_query_double_quotes() {
         let stmt =
-            KillLiveQueryStatement::parse("KILL LIVE QUERY \"user456-conn_xyz-notifications-q2\"")
+            KillLiveQueryStatement::parse("KILL LIVE QUERY \"user456-conn_xyz-notifications\"")
                 .unwrap();
         assert_eq!(stmt.live_id.user_id().as_str(), "user456");
         assert_eq!(
@@ -90,13 +90,13 @@ mod tests {
     #[test]
     fn test_parse_kill_live_query_no_quotes() {
         let stmt =
-            KillLiveQueryStatement::parse("KILL LIVE QUERY user789-conn_123-users-q3").unwrap();
+            KillLiveQueryStatement::parse("KILL LIVE QUERY user789-conn_123-sub3").unwrap();
         assert_eq!(stmt.live_id.user_id().as_str(), "user789");
     }
 
     #[test]
     fn test_parse_kill_live_query_lowercase() {
-        let stmt = KillLiveQueryStatement::parse("kill live query 'user123-conn_abc-messages-q1'")
+        let stmt = KillLiveQueryStatement::parse("kill live query 'user123-conn_abc-sub1'")
             .unwrap();
         assert_eq!(stmt.live_id.user_id().as_str(), "user123");
     }
@@ -127,14 +127,14 @@ mod tests {
 
     #[test]
     fn test_user_id_helper() {
-        let stmt = KillLiveQueryStatement::parse("KILL LIVE QUERY 'user123-conn_abc-messages-q1'")
+        let stmt = KillLiveQueryStatement::parse("KILL LIVE QUERY 'user123-conn_abc-sub1'")
             .unwrap();
         assert_eq!(stmt.user_id().as_str(), "user123");
     }
 
     #[test]
     fn test_connection_id_helper() {
-        let stmt = KillLiveQueryStatement::parse("KILL LIVE QUERY 'user123-conn_abc-messages-q1'")
+        let stmt = KillLiveQueryStatement::parse("KILL LIVE QUERY 'user123-conn_abc-sub1'")
             .unwrap();
         assert_eq!(stmt.connection_id().as_str(), "conn_abc");
     }

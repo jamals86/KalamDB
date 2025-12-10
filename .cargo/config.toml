@@ -21,5 +21,7 @@ DYLD_LIBRARY_PATH = "/Library/Developer/CommandLineTools/usr/lib"
 rustflags = []
 
 [build]
-jobs = 8  # Match your CPU cores
-# target = "x86_64-pc-windows-msvc"  # Commented out - use default target for host platform
+incremental = true
+
+[profile.dev]
+debug = 0

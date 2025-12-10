@@ -67,7 +67,7 @@ mod tests {
 
     #[test]
     fn test_classify_create_stream_table_with_retention() {
-        let sql = "CREATE TABLE users (id INT, name VARCHAR) WITH (TYPE='STREAM', TTL_SECONDS=60, MAX_BUFFERED_ROWS=1000)";
+        let sql = "CREATE TABLE users (id INT, name VARCHAR) WITH (TYPE='STREAM', TTL_SECONDS=60, DELETED_RETENTION_HOURS=24)";
         let stmt = SqlStatement::classify(sql);
         assert!(matches!(stmt.kind, SqlStatementKind::CreateTable(_)));
     }
