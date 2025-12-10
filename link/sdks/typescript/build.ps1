@@ -5,44 +5,52 @@ $ErrorActionPreference = "Stop"
 
 Write-Host "🔨 Building KalamDB TypeScript SDK..." -ForegroundColor Cyan
 
-# Navigate to link crate root (parent of sdks/)
+# Get script directory
 $scriptDir = Split-Path -Parent $MyInvocation.MyCommand.Path
-Set-Location (Join-Path $scriptDir "..\..") 
+Set-Location $scriptDir
 
-# Backup package.json (wasm-pack overwrites it)
-$pkgJson = Join-Path $scriptDir "package.json"
-$pkgBackup = Join-Path $scriptDir "package.json.bak"
-if (Test-Path $pkgJson) {
-    Copy-Item $pkgJson $pkgBackup -Force
-    Write-Host "📦 Backed up package.json" -ForegroundColor Yellow
+# Clean previous build
+Write-Host "🧹 Cleaning previous build..." -ForegroundColor Yellow
+if (Test-Path "dist") { Remove-Item -Recurse -Force "dist" }
+if (Test-Path ".wasm-out") { Remove-Item -Recurse -Force ".wasm-out" }
+if (Test-Path "src/wasm") { Remove-Item -Recurse -Force "src/wasm" }
+
+# Install dependencies if needed
+if (-not (Test-Path "node_modules")) {
+    Write-Host "📦 Installing dependencies..." -ForegroundColor Yellow
+    npm install
 }
 
-# Build WASM using wasm-pack
+# Navigate to link crate root (parent of sdks/)
+Set-Location (Join-Path $scriptDir "..\..") 
+
+# Build WASM using wasm-pack (output to .wasm-out to avoid overwriting package.json)
 Write-Host "📦 Compiling Rust to WASM..." -ForegroundColor Yellow
 wasm-pack build `
   --target web `
-  --out-dir sdks/typescript `
+  --out-dir sdks/typescript/.wasm-out `
   --features wasm `
   --no-default-features
 
 if ($LASTEXITCODE -ne 0) {
     Write-Host "❌ WASM build failed!" -ForegroundColor Red
-    # Restore package.json
-    if (Test-Path $pkgBackup) {
-        Move-Item $pkgBackup $pkgJson -Force
-    }
     exit $LASTEXITCODE
 }
 
-# Restore package.json
-if (Test-Path $pkgBackup) {
-    Move-Item $pkgBackup $pkgJson -Force
-    Write-Host "📦 Restored package.json" -ForegroundColor Yellow
+# Return to SDK directory
+Set-Location $scriptDir
+
+# Copy WASM files to src/wasm (for TypeScript compilation) and dist/wasm (for output)
+Write-Host "📁 Copying WASM files..." -ForegroundColor Yellow
+New-Item -ItemType Directory -Force -Path "src/wasm" | Out-Null
+New-Item -ItemType Directory -Force -Path "dist/wasm" | Out-Null
+Get-ChildItem ".wasm-out" -File | Where-Object { $_.Name -notmatch "package\.json|\.gitignore" } | ForEach-Object {
+    Copy-Item $_.FullName -Destination "src/wasm/"
+    Copy-Item $_.FullName -Destination "dist/wasm/"
 }
 
 # Compile TypeScript
 Write-Host "🔧 Compiling TypeScript..." -ForegroundColor Yellow
-Set-Location sdks/typescript
 npx tsc
 
 if ($LASTEXITCODE -ne 0) {
@@ -50,11 +58,16 @@ if ($LASTEXITCODE -ne 0) {
     exit $LASTEXITCODE
 }
 
+# Clean up src/wasm (not needed after compilation)
+Remove-Item -Recurse -Force "src/wasm"
+
 Write-Host "✅ Build complete!" -ForegroundColor Green
 Write-Host ""
-Write-Host "Output files:" -ForegroundColor Cyan
-Write-Host "  - kalam_link.js (WASM bindings)"
-Write-Host "  - kalam_link.d.ts (TypeScript definitions for WASM)"
-Write-Host "  - kalam_link_bg.wasm (WebAssembly module)"
-Write-Host "  - dist/index.js (TypeScript client)"
-Write-Host "  - dist/index.d.ts (TypeScript types)"
+Write-Host "Output files in dist/:" -ForegroundColor Cyan
+Write-Host "  - index.js (TypeScript client)"
+Write-Host "  - index.d.ts (TypeScript types)"
+Write-Host "  - wasm/kalam_link.js (WASM bindings)"
+Write-Host "  - wasm/kalam_link.d.ts (WASM TypeScript definitions)"
+Write-Host "  - wasm/kalam_link_bg.wasm (WebAssembly module)"
+Write-Host ""
+Write-Host "To publish: npm publish" -ForegroundColor Cyan

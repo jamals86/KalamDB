@@ -232,24 +232,8 @@ impl AppContext {
                         .expect("Failed to register system table");
                 }
 
-                // NOW wire up information_schema providers with schema_registry
-                // This must happen BEFORE registering them with DataFusion
-                system_tables.set_information_schema_dependencies(schema_registry.clone());
-
-                // Register information_schema AFTER set_information_schema_dependencies()
-                let info_schema =
-                    Arc::new(datafusion::catalog::memory::MemorySchemaProvider::new());
-                base_session_context
-                    .catalog(&catalog_name)
-                    .expect("Failed to get catalog")
-                    .register_schema("information_schema", info_schema.clone())
-                    .expect("Failed to register information_schema");
-
-                for (table_name, provider) in system_tables.all_information_schema_providers() {
-                    info_schema
-                        .register_table(table_name.to_string(), provider)
-                        .expect("Failed to register information_schema table");
-                }
+                // Note: information_schema.tables and information_schema.columns are provided
+                // by DataFusion's built-in support (enabled via .with_information_schema(true))
 
                 // Create job registry and register all 8 executors (Phase 9, T154)
                 let job_registry = Arc::new(JobRegistry::new());
@@ -599,22 +583,8 @@ impl AppContext {
                 .expect("Failed to register system table");
         }
 
-        // Wire up information_schema providers
-        system_tables.set_information_schema_dependencies(schema_registry.clone());
-
-        // Register information_schema
-        let info_schema = Arc::new(datafusion::catalog::memory::MemorySchemaProvider::new());
-        base_session_context
-            .catalog(&catalog_name)
-            .expect("Failed to get catalog")
-            .register_schema("information_schema", info_schema.clone())
-            .expect("Failed to register information_schema");
-
-        for (table_name, provider) in system_tables.all_information_schema_providers() {
-            info_schema
-                .register_table(table_name.to_string(), provider)
-                .expect("Failed to register information_schema table");
-        }
+        // Note: information_schema.tables and information_schema.columns are provided
+        // by DataFusion's built-in support (enabled via .with_information_schema(true))
 
         // Create job registry and register all executors
         let job_registry = Arc::new(JobRegistry::new());

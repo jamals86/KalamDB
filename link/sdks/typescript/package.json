@@ -1,45 +1,59 @@
 {
   "name": "kalam-link",
   "type": "module",
-  "collaborators": [
-    "KalamDB Team"
-  ],
-  "description": "WebAssembly-compatible KalamDB client library",
   "version": "0.1.0",
+  "description": "WebAssembly-compatible KalamDB client library with TypeScript support",
   "license": "Apache-2.0",
+  "author": "KalamDB Team",
   "repository": {
     "type": "git",
     "url": "https://github.com/jamals86/KalamDB"
   },
-  "scripts": {
-    "clean": "rm -rf dist src/kalam_link*.wasm src/kalam_link.js src/kalam_link.d.ts",
-    "copy-wasm": "cp ../../pkg/kalam_link_bg.wasm src/ && cp ../../pkg/kalam_link.js src/ && cp ../../pkg/kalam_link.d.ts src/ && npm run patch-cache-buster",
-    "patch-cache-buster": "sed -i.bak \"s|module_or_path = new URL('kalam_link_bg.wasm', import.meta.url);|const wasmUrl = new URL('kalam_link_bg.wasm', import.meta.url); wasmUrl.searchParams.set('v', Date.now().toString()); module_or_path = wasmUrl;|\" src/kalam_link.js && rm -f src/kalam_link.js.bak",
-    "build": "npm run clean && npm run copy-wasm && npx tsc",
-    "rebuild": "cd ../.. && wasm-pack build --target web --release --features wasm --no-default-features && cd sdks/typescript && npm run build"
+  "homepage": "https://github.com/jamals86/KalamDB#readme",
+  "bugs": {
+    "url": "https://github.com/jamals86/KalamDB/issues"
   },
-  "files": [
-    "dist/",
-    "kalam_link_bg.wasm",
-    "kalam_link.js",
-    "kalam_link.d.ts"
-  ],
   "main": "dist/index.js",
+  "module": "dist/index.js",
   "types": "dist/index.d.ts",
   "exports": {
     ".": {
       "types": "./dist/index.d.ts",
-      "import": "./dist/index.js"
+      "import": "./dist/index.js",
+      "default": "./dist/index.js"
+    },
+    "./wasm": {
+      "types": "./dist/wasm/kalam_link.d.ts",
+      "import": "./dist/wasm/kalam_link.js"
     }
   },
-  "sideEffects": [
-    "./snippets/*"
+  "files": [
+    "dist"
   ],
+  "sideEffects": false,
+  "scripts": {
+    "clean": "node -e \"const fs=require('fs');const rm=p=>{try{fs.rmSync(p,{recursive:true,force:true})}catch{}};rm('dist');rm('.wasm-out');rm('src/wasm')\"",
+    "build:wasm": "cd ../.. && wasm-pack build --target web --out-dir sdks/typescript/.wasm-out --features wasm --no-default-features",
+    "build:copy-wasm": "node -e \"const fs=require('fs');const p=require('path');['src/wasm','dist/wasm'].forEach(d=>fs.mkdirSync(d,{recursive:true}));fs.readdirSync('.wasm-out').filter(f=>!f.includes('package.json')&&!f.includes('.gitignore')).forEach(f=>{fs.copyFileSync(p.join('.wasm-out',f),p.join('src/wasm',f));fs.copyFileSync(p.join('.wasm-out',f),p.join('dist/wasm',f))})\"",
+    "build:ts": "tsc",
+    "build:cleanup": "node -e \"require('fs').rmSync('src/wasm',{recursive:true,force:true})\"",
+    "build": "npm run clean && npm run build:wasm && npm run build:copy-wasm && npm run build:ts && npm run build:cleanup",
+    "prepublishOnly": "npm run build"
+  },
+  "devDependencies": {
+    "@types/node": "^20.0.0",
+    "typescript": "^5.3.0"
+  },
   "keywords": [
     "kalamdb",
     "database",
     "client",
     "websocket",
-    "wasm"
-  ]
+    "wasm",
+    "realtime",
+    "live-queries"
+  ],
+  "engines": {
+    "node": ">=18.0.0"
+  }
 }

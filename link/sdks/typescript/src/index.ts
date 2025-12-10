@@ -48,7 +48,7 @@
  * ```
  */
 
-import init, { KalamClient as WasmClient } from '../kalam_link.js';
+import init, { KalamClient as WasmClient } from './wasm/kalam_link.js';
 
 // Re-export authentication types
 export { 
@@ -68,7 +68,7 @@ export {
 import type { AuthCredentials } from './auth.js';
 
 // Re-export types from WASM bindings
-export type { KalamClient as WasmKalamClient } from '../kalam_link.js';
+export type { KalamClient as WasmKalamClient } from './wasm/kalam_link.js';
 
 /**
  * Query result structure matching KalamDB server response
