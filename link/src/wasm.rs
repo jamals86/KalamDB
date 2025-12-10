@@ -467,6 +467,9 @@ impl KalamClient {
 
         // T063C: Implement proper WebSocket connection using web-sys::WebSocket
         let ws = WebSocket::new(&ws_url)?;
+        
+        // Set binaryType to arraybuffer so binary messages come as ArrayBuffer, not Blob
+        ws.set_binary_type(web_sys::BinaryType::Arraybuffer);
 
         // Create promises for connection and authentication
         let (connect_promise, connect_resolve, connect_reject) = {
@@ -558,12 +561,12 @@ impl KalamClient {
         let auth_handled_clone = Rc::clone(&auth_handled);
         
         let onmessage_callback = Closure::wrap(Box::new(move |e: MessageEvent| {
-            // Handle both Text and Binary (compressed) messages
+            // Handle Text, ArrayBuffer, and Blob messages
             let message = if let Ok(txt) = e.data().dyn_into::<js_sys::JsString>() {
                 // Plain text message
                 String::from(txt)
             } else if let Ok(array_buffer) = e.data().dyn_into::<js_sys::ArrayBuffer>() {
-                // Binary message - likely gzip compressed
+                // Binary message (ArrayBuffer) - likely gzip compressed
                 let uint8_array = js_sys::Uint8Array::new(&array_buffer);
                 let data = uint8_array.to_vec();
                 
@@ -583,9 +586,39 @@ impl KalamClient {
                         return;
                     }
                 }
+            } else if e.data().is_instance_of::<web_sys::Blob>() {
+                // Blob message - browser may send binary as Blob instead of ArrayBuffer
+                // For now, log and skip - we need async handling for Blob
+                console_log("KalamClient: Received Blob message - binary mode may be misconfigured. Attempting to read as text.");
+                // Try to get it as a string anyway via toString()
+                if let Some(s) = e.data().as_string() {
+                    s
+                } else {
+                    console_log("KalamClient: Could not convert Blob to string");
+                    return;
+                }
             } else {
-                // Unknown message type
-                console_log("KalamClient: Received unknown message type");
+                // Unknown message type - log extensive debugging info
+                let data = e.data();
+                let type_name = js_sys::Reflect::get(&data, &"constructor".into())
+                    .ok()
+                    .and_then(|c| js_sys::Reflect::get(&c, &"name".into()).ok())
+                    .and_then(|n| n.as_string())
+                    .unwrap_or_else(|| "unknown".to_string());
+                
+                // Try to get typeof
+                let typeof_str = data.js_typeof().as_string().unwrap_or_else(|| "?".to_string());
+                
+                // Try to stringify for debugging
+                let data_preview = js_sys::JSON::stringify(&data)
+                    .ok()
+                    .and_then(|s| s.as_string())
+                    .unwrap_or_else(|| format!("{:?}", data));
+                
+                console_log(&format!(
+                    "KalamClient: Received unknown message type: constructor={}, typeof={}, preview={}",
+                    type_name, typeof_str, &data_preview[..data_preview.len().min(200)]
+                ));
                 return;
             };
             
@@ -1184,6 +1217,9 @@ async fn reconnect_internal_with_auth(
     let ws_url = format!("{}/v1/ws", ws_url);
 
     let ws = WebSocket::new(&ws_url)?;
+    
+    // Set binaryType to arraybuffer so binary messages come as ArrayBuffer, not Blob
+    ws.set_binary_type(web_sys::BinaryType::Arraybuffer);
 
     let (connect_promise, connect_resolve, connect_reject) = create_promise();
     let (auth_promise, auth_resolve, auth_reject) = create_promise();

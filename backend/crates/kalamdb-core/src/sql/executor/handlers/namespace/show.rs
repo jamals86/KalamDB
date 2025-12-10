@@ -43,6 +43,7 @@ impl TypedStatementHandler<ShowNamespacesStatement> for ShowNamespacesHandler {
         Ok(ExecutionResult::Rows {
             batches: vec![batches],
             row_count,
+            schema: None,
         })
     }
 

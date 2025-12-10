@@ -17,6 +17,28 @@ let isInitialized = false;
 let initializationPromise: Promise<KalamDBClient> | null = null;
 
 /**
+ * Query queue to prevent concurrent WASM calls which cause "recursive borrow" errors.
+ * WASM clients use RefCell internally which doesn't support concurrent access.
+ */
+let queryQueue: Promise<unknown> = Promise.resolve();
+
+/**
+ * Queue a query to ensure sequential execution and prevent WASM borrow errors.
+ * @param fn The async function to execute
+ * @returns Promise that resolves with the function result
+ */
+async function queueQuery<T>(fn: () => Promise<T>): Promise<T> {
+  // Chain the new query after the current queue
+  const result = queryQueue.then(
+    () => fn(),
+    () => fn() // Even if previous fails, try this one
+  );
+  // Update the queue to wait for this query (ignore errors to not block next queries)
+  queryQueue = result.catch(() => {});
+  return result;
+}
+
+/**
  * Get the backend URL
  * In development, Vite runs on port 5173 but backend is on 8080
  * In production, both are served from the same origin
@@ -131,6 +153,8 @@ export function getCurrentToken(): string | null {
 /**
  * Execute SQL query using the WASM SDK
  * Returns the full QueryResponse
+ * 
+ * Uses a query queue to prevent concurrent WASM calls which cause borrow errors.
  */
 export async function executeQuery(sql: string): Promise<QueryResponse> {
   if (!currentToken) {
@@ -144,16 +168,19 @@ export async function executeQuery(sql: string): Promise<QueryResponse> {
   
   console.log('[kalam-client] Executing query via SDK:', sql.substring(0, 50) + (sql.length > 50 ? '...' : ''));
   
-  try {
-    const response = await client!.query(sql);
-    console.log('[kalam-client] Query response:', response);
-    return response;
-  } catch (err) {
-    console.error('[kalam-client] Query execution error:', err);
-    // Convert WASM errors to a proper error response
-    const errorMessage = err instanceof Error ? err.message : String(err);
-    throw new Error(errorMessage);
-  }
+  // Queue the query to prevent concurrent WASM access
+  return queueQuery(async () => {
+    try {
+      const response = await client!.query(sql);
+      console.log('[kalam-client] Query response:', response);
+      return response;
+    } catch (err) {
+      console.error('[kalam-client] Query execution error:', err);
+      // Convert WASM errors to a proper error response
+      const errorMessage = err instanceof Error ? err.message : String(err);
+      throw new Error(errorMessage);
+    }
+  });
 }
 
 /**
@@ -188,7 +215,7 @@ export async function insert(tableName: string, data: Record<string, unknown>): 
     await initializeClient(currentToken);
   }
   
-  return client!.insert(tableName, data);
+  return queueQuery(() => client!.insert(tableName, data));
 }
 
 /**
@@ -203,7 +230,7 @@ export async function deleteRow(tableName: string, rowId: string | number): Prom
     await initializeClient(currentToken);
   }
   
-  return client!.delete(tableName, rowId);
+  return queueQuery(() => client!.delete(tableName, rowId));
 }
 
 /**

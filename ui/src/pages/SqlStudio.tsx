@@ -16,10 +16,12 @@ import {
   Clock,
   Trash2,
   Search,
-  Save,
-  FileText,
   MoreHorizontal,
   ArrowUpDown,
+  RefreshCw,
+  Radio,
+  Users,
+  User,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Switch } from "@/components/ui/switch";
@@ -86,6 +88,7 @@ interface QueryTab {
 interface SchemaNode {
   name: string;
   type: "namespace" | "table" | "column";
+  tableType?: "user" | "shared" | "stream"; // For table nodes
   dataType?: string;
   isNullable?: boolean;
   isPrimaryKey?: boolean;
@@ -198,53 +201,70 @@ export default function SqlStudio() {
   const loadSchema = async () => {
     setSchemaLoading(true);
     try {
-      // Get all schemas from information_schema (includes system, information_schema, and user namespaces)
-      const schemasResult = await executeSql(
-        "SELECT DISTINCT table_schema FROM information_schema.tables ORDER BY table_schema"
-      );
-      const namespaces: SchemaNode[] = [];
+      // Fetch all schema data in a single query using JOINs
+      const allData = await executeSql(`
+        SELECT 
+          t.table_schema,
+          t.table_name,
+          t.table_type,
+          c.column_name,
+          c.data_type,
+          c.is_nullable,
+          c.ordinal_position
+        FROM information_schema.tables t
+        LEFT JOIN information_schema.columns c 
+          ON t.table_schema = c.table_schema AND t.table_name = c.table_name
+        ORDER BY t.table_schema, t.table_name, c.ordinal_position
+      `);
 
-      for (const schema of schemasResult) {
-        const schemaName = schema.table_schema as string;
-        // Get tables for this schema
-        const tablesResult = await executeSql(
-          `SELECT table_name FROM information_schema.tables WHERE table_schema = '${schemaName}' ORDER BY table_name`
-        );
+      // Build the schema tree from the flat results
+      const namespaceMap = new Map<string, SchemaNode>();
+      const tableMap = new Map<string, SchemaNode>();
 
-        const tables: SchemaNode[] = [];
-        for (const tbl of tablesResult) {
-          const tableName = tbl.table_name as string;
-          // Get columns for this table with full metadata
-          const columnsResult = await executeSql(
-            `SELECT column_name, data_type, is_nullable, ordinal_position FROM information_schema.columns WHERE table_schema = '${schemaName}' AND table_name = '${tableName}' ORDER BY ordinal_position`
-          );
+      for (const row of allData) {
+        const schemaName = row.table_schema as string;
+        const tableName = row.table_name as string;
+        const tableType = (row.table_type as string)?.toLowerCase() as "user" | "shared" | "stream" | undefined;
+        const tableKey = `${schemaName}.${tableName}`;
 
-          const columns: SchemaNode[] = columnsResult.map((col: Record<string, unknown>) => ({
-            name: col.column_name as string,
-            type: "column" as const,
-            dataType: col.data_type as string,
-            isNullable: col.is_nullable === "YES",
-            // First column (ordinal_position 0) is typically the primary key
-            isPrimaryKey: col.ordinal_position === 0,
-          }));
-
-          tables.push({
-            name: tableName,
-            type: "table",
-            children: columns,
-            isExpanded: false,
+        // Create or get namespace node
+        if (!namespaceMap.has(schemaName)) {
+          namespaceMap.set(schemaName, {
+            name: schemaName,
+            type: "namespace",
+            children: [],
+            isExpanded: schemaName === "system",
           });
-          console.log(`Loaded table ${schemaName}.${tableName} with ${columns.length} columns`);
         }
 
-        namespaces.push({
-          name: schemaName,
-          type: "namespace",
-          children: tables,
-          isExpanded: schemaName === "system",
-        });
+        // Create or get table node
+        if (!tableMap.has(tableKey)) {
+          const tableNode: SchemaNode = {
+            name: tableName,
+            type: "table",
+            tableType: tableType,
+            children: [],
+            isExpanded: false,
+          };
+          tableMap.set(tableKey, tableNode);
+          namespaceMap.get(schemaName)!.children!.push(tableNode);
+        }
+
+        // Add column if present (LEFT JOIN may produce null columns for tables with no columns)
+        if (row.column_name) {
+          const columnNode: SchemaNode = {
+            name: row.column_name as string,
+            type: "column",
+            dataType: row.data_type as string,
+            isNullable: row.is_nullable === "YES",
+            isPrimaryKey: row.ordinal_position === 0,
+          };
+          tableMap.get(tableKey)!.children!.push(columnNode);
+        }
       }
 
+      const namespaces = Array.from(namespaceMap.values());
+      console.log(`Loaded schema: ${namespaces.length} namespaces, ${tableMap.size} tables`);
       setSchema(namespaces);
     } catch (error) {
       console.error("Failed to load schema:", error);
@@ -278,6 +298,15 @@ export default function SqlStudio() {
       const columnNames = (response.results?.[0]?.columns as string[]) ?? [];
       const rowCount = response.results?.[0]?.row_count ?? results.length;
       const message = (response.results?.[0]?.message as string) ?? null;
+      
+      // Debug: Log what we received from server
+      console.log('[SqlStudio] Query response:', { 
+        results: results.length, 
+        columnNames, 
+        rowCount, 
+        message,
+        rawResponse: response.results?.[0]
+      });
 
       // Build columns from the columns array (preserves order from query)
       const columns: ColumnDef<Record<string, unknown>>[] = columnNames.map((key) => ({
@@ -394,6 +423,10 @@ export default function SqlStudio() {
         const unsubscribeFn = await subscribe(
           tab.query,
           (event) => {
+            // Debug: Log raw event
+            console.log('[SqlStudio] Subscription callback received event:', event);
+            console.log('[SqlStudio] Event type:', typeof event, event?.type);
+            
             // Check if event is a ServerMessage object with type field
             const serverMsg = event as { 
               type?: string; 
@@ -461,7 +494,7 @@ export default function SqlStudio() {
                   t.id === subscribingTabId
                     ? {
                         ...t,
-                        isLive: false,
+                        // Keep isLive flag on - user can retry by clicking Subscribe again
                         unsubscribeFn: null,
                         subscriptionStatus: "error",
                         error: `Live query failed: ${serverMsg.message || serverMsg.code || "Unknown error"}`,
@@ -493,6 +526,7 @@ export default function SqlStudio() {
 
             // Handle initial data batch - append with _change_type: 'initial'
             if (serverMsg.type === 'initial_data_batch' && Array.isArray(serverMsg.rows)) {
+              // SDK already transforms typed values, just add change type marker
               const newRows = serverMsg.rows.map(row => ({ _change_type: 'initial', ...row }));
               const batchStatus = serverMsg.batch_control?.status;
               
@@ -524,6 +558,7 @@ export default function SqlStudio() {
             // Handle change events (insert/update/delete) - append with change type
             if (serverMsg.type === 'change' && Array.isArray(serverMsg.rows)) {
               const changeType = serverMsg.change_type || 'change';
+              // SDK already transforms typed values, just add change type marker
               const newRows = serverMsg.rows.map(row => ({ _change_type: changeType, ...row }));
               
               setTabs((prev) =>
@@ -554,6 +589,7 @@ export default function SqlStudio() {
             // Fallback: Handle raw data array (legacy format)
             const data = event as unknown as Record<string, unknown>[];
             if (Array.isArray(data) && data.length > 0) {
+              // SDK already transforms typed values, just add change type marker
               const newRows = data.map(row => ({ _change_type: 'data', ...row }));
               
               setTabs((prev) =>
@@ -694,12 +730,6 @@ export default function SqlStudio() {
     },
     [activeTabId, activeTab?.query, updateTab]
   );
-
-  const copyResults = useCallback(() => {
-    if (activeTab?.results) {
-      navigator.clipboard.writeText(JSON.stringify(activeTab.results, null, 2));
-    }
-  }, [activeTab?.results]);
 
   const table = useReactTable({
     data: activeTab?.results || [],
@@ -904,7 +934,22 @@ export default function SqlStudio() {
             {node.type === "namespace" && (
               <Database className="h-4 w-4 text-blue-500" />
             )}
-            {node.type === "table" && (
+            {node.type === "table" && node.tableType === "stream" && (
+              <span title="Stream Table">
+                <Radio className="h-4 w-4 text-purple-500" />
+              </span>
+            )}
+            {node.type === "table" && node.tableType === "shared" && (
+              <span title="Shared Table">
+                <Users className="h-4 w-4 text-cyan-500" />
+              </span>
+            )}
+            {node.type === "table" && node.tableType === "user" && (
+              <span title="User Table">
+                <User className="h-4 w-4 text-green-500" />
+              </span>
+            )}
+            {node.type === "table" && !node.tableType && (
               <Table2 className="h-4 w-4 text-green-500" />
             )}
             {node.type === "column" && (
@@ -933,9 +978,21 @@ export default function SqlStudio() {
     <div className="h-[calc(100vh-4rem)] flex">
       {/* Schema sidebar */}
       <div className="w-56 border-r flex flex-col shrink-0">
-        <div className="p-2 border-b font-medium text-sm flex items-center gap-2">
-          <Database className="h-4 w-4" />
-          Schema Browser
+        <div className="p-2 border-b font-medium text-sm flex items-center justify-between">
+          <div className="flex items-center gap-2">
+            <Database className="h-4 w-4" />
+            Schema Browser
+          </div>
+          <Button
+            size="sm"
+            variant="ghost"
+            onClick={loadSchema}
+            disabled={schemaLoading}
+            className="h-6 w-6 p-0"
+            title="Refresh schema"
+          >
+            <RefreshCw className={cn("h-3.5 w-3.5", schemaLoading && "animate-spin")} />
+          </Button>
         </div>
         <div className="p-2 border-b">
           <div className="relative">
@@ -1083,27 +1140,9 @@ export default function SqlStudio() {
             <TooltipProvider>
               <Tooltip>
                 <TooltipTrigger asChild>
-                  <Button size="sm" variant="ghost" onClick={copyResults} disabled={!activeTab?.results} className="h-8 gap-1.5">
-                    <Save className="h-4 w-4" />
-                    Save
-                  </Button>
-                </TooltipTrigger>
-                <TooltipContent>Save to clipboard as JSON</TooltipContent>
-              </Tooltip>
-              <Tooltip>
-                <TooltipTrigger asChild>
-                  <Button size="sm" variant="ghost" onClick={loadSchema} className="h-8 gap-1.5">
-                    <FileText className="h-4 w-4" />
-                    Format
-                  </Button>
-                </TooltipTrigger>
-                <TooltipContent>Refresh Schema</TooltipContent>
-              </Tooltip>
-              <Tooltip>
-                <TooltipTrigger asChild>
                   <Button size="sm" variant="outline" onClick={() => setShowHistory(!showHistory)} className="h-8 gap-1.5">
                     <Clock className="h-4 w-4" />
-                    Explain
+                    History
                   </Button>
                 </TooltipTrigger>
                 <TooltipContent>Query History</TooltipContent>
@@ -1196,8 +1235,15 @@ export default function SqlStudio() {
               Executing query...
             </div>
           ) : activeTab?.error ? (
-            <div className="p-4 text-red-500 bg-red-50 dark:bg-red-950/30 m-2 rounded border border-red-200 dark:border-red-800">
-              <pre className="whitespace-pre-wrap font-mono text-sm">{activeTab.error}</pre>
+            <div className="p-4 m-2">
+              <div className="text-red-500 bg-red-50 dark:bg-red-950/30 rounded border border-red-200 dark:border-red-800 p-4">
+                <pre className="whitespace-pre-wrap font-mono text-sm">{activeTab.error}</pre>
+              </div>
+              {activeTab?.executionTime !== null && (
+                <div className="mt-2 text-sm text-muted-foreground">
+                  Execution time: {activeTab.executionTime}ms
+                </div>
+              )}
             </div>
           ) : activeTab?.results === null && !activeTab?.isLive ? (
             <div className="flex items-center justify-center h-full text-muted-foreground text-sm">
@@ -1207,16 +1253,23 @@ export default function SqlStudio() {
             <div className="flex items-center justify-center h-full text-muted-foreground text-sm">
               {activeTab?.subscriptionStatus === "connecting" ? "Establishing connection..." : "Click Run to start live query subscription"}
             </div>
-          ) : activeTab?.message || (activeTab?.results?.length === 0 && activeTab?.columns?.length === 0) ? (
+          ) : activeTab?.message && (!activeTab?.columns || activeTab?.columns?.length === 0) ? (
+            // DML statements (INSERT/UPDATE/DELETE) - no columns, just a message
             <div className="p-4 text-green-600 bg-green-50 dark:bg-green-950/30 m-2 rounded border border-green-200 dark:border-green-800">
               <div className="flex items-center gap-2">
                 <span className="text-lg">✓</span>
                 <span className="font-medium">
-                  {activeTab?.message || `Query executed successfully. ${activeTab?.rowCount ?? 0} row(s) affected.`}
+                  {activeTab.message}
                 </span>
               </div>
+              {activeTab?.executionTime !== null && (
+                <div className="mt-2 text-sm text-muted-foreground">
+                  Execution time: {activeTab.executionTime}ms
+                </div>
+              )}
             </div>
           ) : (
+            // SELECT queries - always show table with headers (even if 0 rows)
             <>
               {/* Table with sheet-like cells */}
               <div className="flex-1 overflow-auto">

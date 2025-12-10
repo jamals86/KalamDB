@@ -516,18 +516,39 @@ pub fn json_value_to_scalar_strict(v: &JsonValue) -> Result<ScalarValue, String>
 }
 
 /// Convert DataFusion ScalarValue to serde_json::Value
+/// 
+/// Note: Int64 and UInt64 values are serialized as strings to avoid JavaScript
+/// precision loss for values > Number.MAX_SAFE_INTEGER (2^53 - 1 = 9007199254740991)
 pub fn scalar_value_to_json(value: &ScalarValue) -> Result<JsonValue, KalamDbError> {
+    // JavaScript's Number.MAX_SAFE_INTEGER = 2^53 - 1
+    const JS_MAX_SAFE_INTEGER: i64 = 9007199254740991;
+    const JS_MIN_SAFE_INTEGER: i64 = -9007199254740991;
+    
     match value {
         ScalarValue::Null => Ok(JsonValue::Null),
         ScalarValue::Boolean(Some(b)) => Ok(JsonValue::Bool(*b)),
         ScalarValue::Int8(Some(i)) => Ok(JsonValue::Number((*i).into())),
         ScalarValue::Int16(Some(i)) => Ok(JsonValue::Number((*i).into())),
         ScalarValue::Int32(Some(i)) => Ok(JsonValue::Number((*i).into())),
-        ScalarValue::Int64(Some(i)) => Ok(JsonValue::Number((*i).into())),
+        ScalarValue::Int64(Some(i)) => {
+            // Serialize as string if outside JavaScript safe integer range
+            if *i > JS_MAX_SAFE_INTEGER || *i < JS_MIN_SAFE_INTEGER {
+                Ok(JsonValue::String(i.to_string()))
+            } else {
+                Ok(JsonValue::Number((*i).into()))
+            }
+        }
         ScalarValue::UInt8(Some(i)) => Ok(JsonValue::Number((*i).into())),
         ScalarValue::UInt16(Some(i)) => Ok(JsonValue::Number((*i).into())),
         ScalarValue::UInt32(Some(i)) => Ok(JsonValue::Number((*i).into())),
-        ScalarValue::UInt64(Some(i)) => Ok(JsonValue::Number((*i).into())),
+        ScalarValue::UInt64(Some(i)) => {
+            // Serialize as string if outside JavaScript safe integer range
+            if *i > JS_MAX_SAFE_INTEGER as u64 {
+                Ok(JsonValue::String(i.to_string()))
+            } else {
+                Ok(JsonValue::Number((*i).into()))
+            }
+        }
         ScalarValue::Float32(Some(f)) => serde_json::Number::from_f64(*f as f64)
             .map(JsonValue::Number)
             .ok_or_else(|| KalamDbError::InvalidOperation("Invalid float value".into())),

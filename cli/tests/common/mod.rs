@@ -19,6 +19,8 @@ pub use std::os::unix::fs::PermissionsExt;
 
 pub const SERVER_URL: &str = "http://127.0.0.1:8080";
 pub const TEST_TIMEOUT: Duration = Duration::from_secs(30);
+/// Default password for the root user
+pub const DEFAULT_ROOT_PASSWORD: &str = "admin123";
 
 /// Check if the KalamDB server is running
 pub fn is_server_running() -> bool {
@@ -249,14 +251,14 @@ fn execute_sql_via_cli_as_with_args(
     }
 }
 
-/// Helper to execute SQL as root user via CLI (empty password for localhost)
+/// Helper to execute SQL as root user via CLI
 pub fn execute_sql_as_root_via_cli(sql: &str) -> Result<String, Box<dyn std::error::Error>> {
-    execute_sql_via_cli_as("root", "", sql)
+    execute_sql_via_cli_as("root", DEFAULT_ROOT_PASSWORD, sql)
 }
 
 /// Helper to execute SQL as root user via CLI returning JSON output to avoid table truncation
 pub fn execute_sql_as_root_via_cli_json(sql: &str) -> Result<String, Box<dyn std::error::Error>> {
-    execute_sql_via_cli_as_with_args("root", "", sql, &["--json"])
+    execute_sql_via_cli_as_with_args("root", DEFAULT_ROOT_PASSWORD, sql, &["--json"])
 }
 
 // ============================================================================
@@ -286,7 +288,7 @@ fn get_shared_root_client() -> &'static KalamLinkClient {
     CLIENT.get_or_init(|| {
         KalamLinkClient::builder()
             .base_url(SERVER_URL)
-            .auth(AuthProvider::basic_auth("root".to_string(), "".to_string()))
+            .auth(AuthProvider::basic_auth("root".to_string(), DEFAULT_ROOT_PASSWORD.to_string()))
             .timeouts(KalamLinkTimeouts::fast())
             .build()
             .expect("Failed to create shared root client")
@@ -344,7 +346,7 @@ pub fn execute_sql_via_client_as_with_args(
     let start = std::time::Instant::now();
     
     // Check if we can use the shared root client (most common case)
-    let is_root = username == "root" && password.is_empty();
+    let is_root = username == "root" && password == DEFAULT_ROOT_PASSWORD;
     
     // Clone values for the async block only if needed
     let sql = sql.to_string();
@@ -475,14 +477,14 @@ pub fn execute_sql_via_client_as_with_args(
     }
 }
 
-/// Execute SQL as root user via kalam-link client (empty password for localhost)
+/// Execute SQL as root user via kalam-link client
 pub fn execute_sql_as_root_via_client(sql: &str) -> Result<String, Box<dyn std::error::Error>> {
-    execute_sql_via_client_as("root", "", sql)
+    execute_sql_via_client_as("root", DEFAULT_ROOT_PASSWORD, sql)
 }
 
 /// Execute SQL as root user via kalam-link client returning JSON output
 pub fn execute_sql_as_root_via_client_json(sql: &str) -> Result<String, Box<dyn std::error::Error>> {
-    execute_sql_via_client_as_with_args("root", "", sql, true)
+    execute_sql_via_client_as_with_args("root", DEFAULT_ROOT_PASSWORD, sql, true)
 }
 
 /// Execute SQL via kalam-link client returning JSON output with custom credentials
@@ -497,29 +499,77 @@ pub fn execute_sql_via_client_as_json(
 /// Execute SQL via kalam-link client without authentication (uses default/anonymous)
 /// This is the client equivalent of execute_sql_via_cli (no auth)
 pub fn execute_sql_via_client(sql: &str) -> Result<String, Box<dyn std::error::Error>> {
-    execute_sql_via_client_as("root", "", sql)
+    execute_sql_via_client_as("root", DEFAULT_ROOT_PASSWORD, sql)
+}
+
+/// Extract a numeric ID from a JSON value that might be a number or a string.
+/// 
+/// Large integers (> JS_MAX_SAFE_INTEGER) are serialized as strings to preserve
+/// precision for JavaScript clients. This helper handles both cases.
+/// 
+/// Returns Some(value_as_string) if the value is a number or a numeric string,
+/// None otherwise.
+pub fn json_value_as_id(value: &serde_json::Value) -> Option<String> {
+    match value {
+        serde_json::Value::Number(n) => {
+            if let Some(i) = n.as_i64() {
+                Some(i.to_string())
+            } else if let Some(u) = n.as_u64() {
+                Some(u.to_string())
+            } else {
+                None
+            }
+        }
+        serde_json::Value::String(s) => {
+            // Verify it's a valid numeric string
+            if s.parse::<i64>().is_ok() || s.parse::<u64>().is_ok() {
+                Some(s.clone())
+            } else {
+                None
+            }
+        }
+        _ => None,
+    }
 }
 
 /// Helper to generate unique namespace name
 pub fn generate_unique_namespace(base_name: &str) -> String {
+    use std::sync::atomic::{AtomicU64, Ordering};
+    use std::time::{SystemTime, UNIX_EPOCH};
+    static COUNTER: AtomicU64 = AtomicU64::new(0);
+    
+    let count = COUNTER.fetch_add(1, Ordering::SeqCst);
+    // Use timestamp to ensure uniqueness across process restarts
+    let ts = SystemTime::now().duration_since(UNIX_EPOCH).unwrap();
+    let ts_suffix = (ts.as_millis() % 1_000_000) as u32; // Last 6 digits of ms
     let rng = rand::rng();
     let random_suffix: String = rng
         .sample_iter(Alphanumeric)
-        .take(6)
+        .take(4)
         .map(char::from)
         .collect();
-    format!("{}_{}", base_name, random_suffix).to_lowercase()
+    // Combine: base_random_counter_timestamp
+    format!("{}_{}{}{}", base_name, random_suffix, count, ts_suffix).to_lowercase()
 }
 
 /// Helper to generate unique table name
 pub fn generate_unique_table(base_name: &str) -> String {
+    use std::sync::atomic::{AtomicU64, Ordering};
+    use std::time::{SystemTime, UNIX_EPOCH};
+    static COUNTER: AtomicU64 = AtomicU64::new(0);
+    
+    let count = COUNTER.fetch_add(1, Ordering::SeqCst);
+    // Use timestamp to ensure uniqueness across process restarts
+    let ts = SystemTime::now().duration_since(UNIX_EPOCH).unwrap();
+    let ts_suffix = (ts.as_millis() % 1_000_000) as u32; // Last 6 digits of ms
     let rng = rand::rng();
     let random_suffix: String = rng
         .sample_iter(Alphanumeric)
-        .take(6)
+        .take(4)
         .map(char::from)
         .collect();
-    format!("{}_{}", base_name, random_suffix).to_lowercase()
+    // Combine: base_random_counter_timestamp
+    format!("{}_{}{}{}", base_name, random_suffix, count, ts_suffix).to_lowercase()
 }
 
 /// Helper to create a CLI command with default test settings
@@ -857,7 +907,7 @@ impl SubscriptionListener {
                 // Build client for subscription
                 let client = match KalamLinkClient::builder()
                     .base_url(SERVER_URL)
-                    .auth(AuthProvider::basic_auth("root".to_string(), "".to_string()))
+                    .auth(AuthProvider::basic_auth("root".to_string(), DEFAULT_ROOT_PASSWORD.to_string()))
                     .timeouts(KalamLinkTimeouts::fast())
                     .build()
                 {

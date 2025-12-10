@@ -6,10 +6,10 @@
 use actix_web::{post, web, HttpRequest, HttpResponse, Responder};
 use kalamdb_auth::AuthSession;
 use kalamdb_commons::models::UserId;
-use kalamdb_core::providers::arrow_json_conversion::json_value_to_scalar_strict;
+use kalamdb_core::providers::arrow_json_conversion::{json_value_to_scalar_strict, scalar_value_to_json};
 use kalamdb_core::sql::executor::helpers::audit;
-use kalamdb_core::sql::executor::models::{ExecutionContext, ScalarValue};
-use kalamdb_core::sql::executor::{ExecutorMetadataAlias, SqlExecutor};
+use kalamdb_core::sql::executor::models::ExecutionContext;
+use kalamdb_core::sql::executor::{ExecutorMetadataAlias, ScalarValue, SqlExecutor};
 use kalamdb_core::sql::ExecutionResult;
 use log::error;
 use std::sync::Arc;
@@ -281,8 +281,8 @@ async fn execute_single_statement(
     {
         Ok(exec_result) => match exec_result {
             ExecutionResult::Success { message } => Ok(QueryResult::with_message(message)),
-            ExecutionResult::Rows { batches, .. } => {
-                record_batch_to_query_result(batches, Some(&session.user.user_id))
+            ExecutionResult::Rows { batches, schema, .. } => {
+                record_batch_to_query_result(batches, schema, Some(&session.user.user_id))
             }
             ExecutionResult::Inserted { rows_affected } => Ok(QueryResult::with_affected_rows(
                 rows_affected,
@@ -332,33 +332,51 @@ async fn execute_single_statement(
 }
 
 /// Convert Arrow RecordBatches to QueryResult
+/// 
+/// Uses custom JSON serialization to ensure Int64/UInt64 values exceeding JavaScript's
+/// Number.MAX_SAFE_INTEGER are serialized as strings to preserve precision.
 fn record_batch_to_query_result(
     batches: Vec<arrow::record_batch::RecordBatch>,
+    schema: Option<arrow::datatypes::SchemaRef>,
     user_id: Option<&UserId>,
 ) -> Result<QueryResult, Box<dyn std::error::Error>> {
-    if batches.is_empty() {
+    // Get schema from first batch, or from explicitly provided schema for empty results
+    let schema = if !batches.is_empty() {
+        batches[0].schema()
+    } else if let Some(s) = schema {
+        s
+    } else {
+        // No batches and no schema - truly empty result
         return Ok(QueryResult::with_message(
             "Query executed successfully".to_string(),
         ));
-    }
+    };
 
-    let schema = batches[0].schema();
     let column_names: Vec<String> = schema.fields().iter().map(|f| f.name().clone()).collect();
 
     let mut rows = Vec::new();
     for batch in &batches {
-        let mut buf = Vec::new();
-        let mut writer = arrow::json::LineDelimitedWriter::new(&mut buf);
-        writer.write(batch)?;
-        writer.finish()?;
-
-        let json_str = String::from_utf8(buf)?;
-        for line in json_str.lines() {
-            if !line.is_empty() {
-                let json_row: std::collections::HashMap<String, serde_json::Value> =
-                    serde_json::from_str(line)?;
-                rows.push(json_row);
+        let num_rows = batch.num_rows();
+        let num_cols = batch.num_columns();
+        
+        for row_idx in 0..num_rows {
+            let mut json_row = std::collections::HashMap::new();
+            
+            for col_idx in 0..num_cols {
+                let col_name = column_names[col_idx].clone();
+                let column = batch.column(col_idx);
+                
+                // Extract ScalarValue from the array at this row index
+                let scalar = ScalarValue::try_from_array(column.as_ref(), row_idx)?;
+                
+                // Use our custom conversion that handles large integers as strings
+                let json_value = scalar_value_to_json(&scalar)
+                    .unwrap_or_else(|_| serde_json::Value::Null);
+                
+                json_row.insert(col_name, json_value);
             }
+            
+            rows.push(json_row);
         }
     }
 

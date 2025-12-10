@@ -127,8 +127,12 @@ fn smoke_test_timing_scaling_medium_table() {
     let table = generate_unique_table("medium");
     let full = format!("{}.{}", namespace, table);
 
+    // Cleanup first
+    let _ = execute_sql_as_root_via_cli(&format!("DROP NAMESPACE IF EXISTS {} CASCADE", namespace));
+    std::thread::sleep(std::time::Duration::from_millis(100));
+
     // Create namespace
-    execute_sql_as_root_via_cli(&format!("CREATE NAMESPACE IF NOT EXISTS {}", namespace))
+    execute_sql_as_root_via_cli(&format!("CREATE NAMESPACE {}", namespace))
         .expect("create namespace");
 
     // Create table

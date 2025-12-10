@@ -43,6 +43,7 @@ impl TypedStatementHandler<ShowTablesStatement> for ShowTablesHandler {
             Ok(ExecutionResult::Rows {
                 batches: vec![batch],
                 row_count,
+                schema: None,
             })
         } else {
             // Otherwise, reuse provider's batch for all tables
@@ -51,6 +52,7 @@ impl TypedStatementHandler<ShowTablesStatement> for ShowTablesHandler {
             Ok(ExecutionResult::Rows {
                 batches: vec![batch],
                 row_count,
+                schema: None,
             })
         };
 

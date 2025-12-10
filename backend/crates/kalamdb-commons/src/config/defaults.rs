@@ -97,6 +97,10 @@ pub fn default_client_disconnect_timeout() -> u64 {
     2 // 2 seconds for graceful disconnect
 }
 
+pub fn default_max_header_size() -> usize {
+    16384 // 16KB - increased from default 8KB to support large JWT tokens
+}
+
 // DataFusion defaults
 pub fn default_datafusion_memory_limit() -> usize {
     1024 * 1024 * 1024 // 1GB

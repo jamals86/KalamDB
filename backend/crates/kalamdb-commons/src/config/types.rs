@@ -312,6 +312,10 @@ pub struct PerformanceSettings {
     /// Time allowed for graceful connection shutdown
     #[serde(default = "default_client_disconnect_timeout")]
     pub client_disconnect_timeout: u64,
+    /// Maximum HTTP header size in bytes (default: 16384 = 16KB)
+    /// Increase if you have large JWT tokens or custom headers
+    #[serde(default = "default_max_header_size")]
+    pub max_header_size: usize,
 }
 
 /// DataFusion settings
@@ -800,6 +804,7 @@ impl Default for ServerConfig {
                 worker_max_blocking_threads: default_worker_max_blocking_threads(),
                 client_request_timeout: default_client_request_timeout(),
                 client_disconnect_timeout: default_client_disconnect_timeout(),
+                max_header_size: default_max_header_size(),
             },
             datafusion: DataFusionSettings::default(),
             flush: FlushSettings::default(),

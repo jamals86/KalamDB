@@ -66,6 +66,7 @@ impl TypedStatementHandler<DescribeTableStatement> for DescribeTableHandler {
         Ok(ExecutionResult::Rows {
             batches: vec![batch],
             row_count,
+            schema: None,
         })
     }
 

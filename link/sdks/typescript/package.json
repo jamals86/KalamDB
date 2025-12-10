@@ -11,6 +11,13 @@
     "type": "git",
     "url": "https://github.com/jamals86/KalamDB"
   },
+  "scripts": {
+    "clean": "rm -rf dist src/kalam_link*.wasm src/kalam_link.js src/kalam_link.d.ts",
+    "copy-wasm": "cp ../../pkg/kalam_link_bg.wasm src/ && cp ../../pkg/kalam_link.js src/ && cp ../../pkg/kalam_link.d.ts src/ && npm run patch-cache-buster",
+    "patch-cache-buster": "sed -i.bak \"s|module_or_path = new URL('kalam_link_bg.wasm', import.meta.url);|const wasmUrl = new URL('kalam_link_bg.wasm', import.meta.url); wasmUrl.searchParams.set('v', Date.now().toString()); module_or_path = wasmUrl;|\" src/kalam_link.js && rm -f src/kalam_link.js.bak",
+    "build": "npm run clean && npm run copy-wasm && npx tsc",
+    "rebuild": "cd ../.. && wasm-pack build --target web --release --features wasm --no-default-features && cd sdks/typescript && npm run build"
+  },
   "files": [
     "dist/",
     "kalam_link_bg.wasm",

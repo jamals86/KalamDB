@@ -282,6 +282,8 @@ instead of: 1 failed: Invalid operation: No handler registered for statement typ
 
 194) Block update/insert/delete directly on system tables like users/namespaces/tables/live_queries
 
+195) we should always have a default order by column so we always have the same vlues returned in the same order, this is important for pagination as well
+
 
 Here’s the updated 5-line spec with embedding storage inside Parquet and managed HNSW indexing (with delete handling):
 	1.	Parquet Storage: All embeddings are stored as regular columns in the Parquet file alongside other table columns to keep data unified and versioned per batch.
@@ -368,3 +370,14 @@ Tasks To Repo:
 │  Batched (100/batch)    │   2000  │    1.63s │    1229.0/s │
 │  Parallel (10 threads)  │   1000  │    0.20s │    5119.9/s │
 └────────────────────────────────────────────────────────────┘
+
+
+UI Changes:
+1) The browser should fetch all namespaces/tables/columns in one query not multiple queries for better performance
+2) Display the type of table stream/shared/user tables with icon per type
+3) even when there is an error display the error alone with time took display separatly, we need to be similar to the cli
+4) when subscribe button fails then the subscribe mode is turned off automatically it shouldnt it should stay on
+5) Schema Browser add a refresh button to the right side of the Schema Browser title
+6) no need for save inside sql editor since its auto saved already
+7) the button explain should be history instead
+8) when a query returned 0 rows it should display a table but empty rows currently it displays only green message

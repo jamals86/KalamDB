@@ -95,6 +95,7 @@ impl TypedStatementHandler<ShowTableStatsStatement> for ShowStatsHandler {
         Ok(ExecutionResult::Rows {
             batches: vec![batch],
             row_count: 1,
+            schema: None,
         })
     }
 

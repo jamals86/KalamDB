@@ -4,6 +4,7 @@ use crate::app_context::AppContext;
 use crate::error::KalamDbError;
 use crate::sql::executor::handlers::typed::TypedStatementHandler;
 use crate::sql::executor::models::{ExecutionContext, ExecutionResult, ScalarValue};
+use kalamdb_commons::models::TableId;
 use kalamdb_sql::ddl::DropNamespaceStatement;
 use std::sync::Arc;
 
@@ -48,11 +49,38 @@ impl TypedStatementHandler<DropNamespaceStatement> for DropNamespaceHandler {
 
         // Check if namespace has tables
         if !namespace.can_delete() {
-            return Err(KalamDbError::InvalidOperation(format!(
-                "Cannot drop namespace '{}': namespace contains {} table(s). Drop all tables first.",
-                    namespace.name,
-                namespace.table_count
-            )));
+            if statement.cascade {
+                // CASCADE: Drop all tables in the namespace first
+                let tables_provider = self.app_context.system_tables().tables();
+                let tables_in_namespace = tables_provider.list_tables_in_namespace(&namespace_id)?;
+                
+                for table in tables_in_namespace {
+                    // Construct TableId from namespace and table name
+                    let table_id = TableId::new(table.namespace_id.clone(), table.table_name.clone());
+                    
+                    // Delete from system.tables
+                    tables_provider.delete_table(&table_id)?;
+                    
+                    // Log table drop as part of cascade
+                    use crate::sql::executor::helpers::audit;
+                    let table_ref = format!("{}.{}", namespace_id.as_str(), table.table_name.as_str());
+                    let audit_entry = audit::log_ddl_operation(
+                        context,
+                        "DROP",
+                        "TABLE",
+                        &table_ref,
+                        Some("CASCADE from DROP NAMESPACE".to_string()),
+                        None,
+                    );
+                    audit::persist_audit_entry(&self.app_context, &audit_entry).await?;
+                }
+            } else {
+                return Err(KalamDbError::InvalidOperation(format!(
+                    "Cannot drop namespace '{}': namespace contains {} table(s). Drop all tables first or use CASCADE.",
+                        namespace.name,
+                    namespace.table_count
+                )));
+            }
         }
 
         // Delete namespace via provider
@@ -94,7 +122,6 @@ impl TypedStatementHandler<DropNamespaceStatement> for DropNamespaceHandler {
 mod tests {
     use super::*;
     use crate::test_helpers::create_test_session;
-    use datafusion::prelude::SessionContext;
     use kalamdb_commons::models::UserId;
     use kalamdb_commons::Role;
 
@@ -109,9 +136,9 @@ mod tests {
         let stmt = DropNamespaceStatement {
             name: kalamdb_commons::models::NamespaceId::new("test_namespace"),
             if_exists: false,
+            cascade: false,
         };
         let ctx = create_test_context();
-        let session = SessionContext::new();
 
         // Note: This test would need proper setup of test namespace
         // For now, it demonstrates the pattern
@@ -128,6 +155,7 @@ mod tests {
         let stmt = DropNamespaceStatement {
             name: kalamdb_commons::models::NamespaceId::new("test"),
             if_exists: false,
+            cascade: false,
         };
 
         // Test with non-admin user
@@ -145,9 +173,9 @@ mod tests {
         let stmt = DropNamespaceStatement {
             name: kalamdb_commons::models::NamespaceId::new("nonexistent"),
             if_exists: true,
+            cascade: false,
         };
         let ctx = create_test_context();
-        let session = SessionContext::new();
 
         let result = handler.execute(stmt, vec![], &ctx).await;
 
