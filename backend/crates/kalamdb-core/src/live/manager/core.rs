@@ -92,6 +92,7 @@ impl LiveQueryManager {
     /// - request: Client subscription request
     /// - table_id: Pre-validated table identifier
     /// - filter_expr: Optional parsed WHERE clause
+    /// - projections: Optional column projections (None = SELECT *, all columns)
     /// - batch_size: Batch size for initial data loading
     pub async fn register_subscription(
         &self,
@@ -99,10 +100,11 @@ impl LiveQueryManager {
         request: &SubscriptionRequest,
         table_id: TableId,
         filter_expr: Option<Expr>,
+        projections: Option<Vec<String>>,
         batch_size: usize,
     ) -> Result<LiveQueryId, KalamDbError> {
         self.subscription_service
-            .register_subscription(connection_state, request, table_id, filter_expr, batch_size)
+            .register_subscription(connection_state, request, table_id, filter_expr, projections, batch_size)
             .await
     }
 
@@ -178,12 +180,19 @@ impl LiveQueryManager {
             .ok()
             .flatten();
 
+        // Extract column projections from SELECT clause (None = SELECT *, all columns)
+        let projections = QueryParser::extract_projections(&request.sql);
+        if let Some(ref cols) = projections {
+            log::info!("Subscription projections: {:?}", cols);
+        }
+
         // Register the subscription
         let live_id = self.register_subscription(
             connection_state,
             request,
             table_id.clone(),
             filter_expr,
+            projections.clone(),
             batch_size,
         ).await?;
 
@@ -200,6 +209,7 @@ impl LiveQueryManager {
                     table_def.table_type,
                     fetch_options,
                     where_clause.as_deref(),
+                    projections.as_deref(),
                 )
                 .await?;
 
@@ -257,6 +267,9 @@ impl LiveQueryManager {
         // Extract WHERE clause from stored SQL
         let where_clause = QueryParser::extract_where_clause(&sub_state.sql);
 
+        // Get projections from subscription state (Arc<Vec<String>> -> Option<&[String]>)
+        let projections_ref = sub_state.projections.as_deref().map(|v| v.as_slice());
+
         // Create batch options with metadata from subscription state
         let fetch_options = InitialDataOptions::batch(
             since_seq,
@@ -271,6 +284,7 @@ impl LiveQueryManager {
                 table_def.table_type,
                 fetch_options,
                 where_clause.as_deref(),
+                projections_ref,
             )
             .await
     }

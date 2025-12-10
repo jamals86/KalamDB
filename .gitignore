@@ -78,3 +78,6 @@ link/sdks/typescript/kalam_link_bg.wasm.d.ts
 link/sdks/typescript/kalam_link.d.ts
 backend/logs/*.jsonl
 backend/logs/*.log
+/backend/logs
+backend/logs/server.jsonl
+backend/logs/server.jsonl

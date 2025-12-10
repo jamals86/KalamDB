@@ -7,11 +7,27 @@ use super::filter_eval::matches as filter_matches;
 use super::connections_manager::ConnectionsManager;
 use super::types::{ChangeNotification, ChangeType};
 use crate::error::KalamDbError;
+use datafusion::scalar::ScalarValue;
 use kalamdb_commons::models::{LiveQueryId, Row, TableId, UserId};
 use kalamdb_system::LiveQueriesTableProvider;
 use std::collections::{BTreeMap, HashSet};
 use std::sync::Arc;
 use std::time::{SystemTime, UNIX_EPOCH};
+
+/// Apply column projections to a Row, returning only the requested columns.
+/// If projections is None, returns the original row unchanged.
+fn apply_projections(row: &Row, projections: &Option<Arc<Vec<String>>>) -> Row {
+    match projections {
+        None => row.clone(),
+        Some(cols) => {
+            let filtered_values: BTreeMap<String, ScalarValue> = cols
+                .iter()
+                .filter_map(|col| row.values.get(col).map(|v| (col.clone(), v.clone())))
+                .collect();
+            Row::new(filtered_values)
+        }
+    }
+}
 
 /// Service for notifying subscribers of changes
 ///
@@ -108,8 +124,8 @@ impl NotificationService {
 
         // Gather subscriptions for the specific user AND admin/system observers
         // DashMap provides lock-free access
-        // Collect (live_id, notification_tx) pairs in a single pass
-        let live_ids_to_notify: Vec<(LiveQueryId, _)> = {
+        // Collect (live_id, projections, notification_tx) tuples in a single pass
+        let live_ids_to_notify: Vec<(LiveQueryId, Option<Arc<Vec<String>>>, _)> = {
             let all_handles = self.registry.get_subscriptions_for_table(user_id, table_id);
 
             let mut results = Vec::new();
@@ -128,7 +144,7 @@ impl NotificationService {
                 // FLUSH notifications are metadata events (not row-level changes)
                 // Skip filter evaluation for FLUSH - notify all subscribers
                 if matches!(change_notification.change_type, ChangeType::Flush) {
-                    results.push((handle.live_id, handle.notification_tx));
+                    results.push((handle.live_id, handle.projections, handle.notification_tx));
                     continue;
                 }
 
@@ -138,7 +154,7 @@ impl NotificationService {
                     // Apply filter to row data
                     match filter_matches(filter_expr, filtering_row) {
                         Ok(true) => {
-                            results.push((handle.live_id, handle.notification_tx));
+                            results.push((handle.live_id, handle.projections, handle.notification_tx));
                         }
                         Ok(false) => {
                             log::trace!(
@@ -156,7 +172,7 @@ impl NotificationService {
                     }
                 } else {
                     // No filter, notify all subscribers
-                    results.push((handle.live_id, handle.notification_tx));
+                    results.push((handle.live_id, handle.projections, handle.notification_tx));
                 }
             }
 
@@ -166,28 +182,32 @@ impl NotificationService {
         let notification_count = live_ids_to_notify.len();
 
         // Send notifications and increment changes
-        for (live_id, tx) in live_ids_to_notify {
-            // Build the typed notification
+        for (live_id, projections, tx) in live_ids_to_notify {
+            // Apply projections to row data (filters columns based on subscription)
+            let projected_row_data = apply_projections(&change_notification.row_data, &projections);
+            let projected_old_data = change_notification
+                .old_data
+                .as_ref()
+                .map(|old| apply_projections(old, &projections));
+
+            // Build the typed notification with projected data
             let notification = match change_notification.change_type {
                 ChangeType::Insert => kalamdb_commons::Notification::insert(
                     live_id.to_string(),
-                    vec![change_notification.row_data.clone()],
+                    vec![projected_row_data],
                 ),
                 ChangeType::Update => kalamdb_commons::Notification::update(
                     live_id.to_string(),
-                    vec![change_notification.row_data.clone()],
-                    vec![change_notification
-                        .old_data
-                        .clone()
-                        .unwrap_or_else(|| Row::new(BTreeMap::new()))],
+                    vec![projected_row_data],
+                    vec![projected_old_data.unwrap_or_else(|| Row::new(BTreeMap::new()))],
                 ),
                 ChangeType::Delete => kalamdb_commons::Notification::delete(
                     live_id.to_string(),
-                    vec![change_notification.row_data.clone()],
+                    vec![projected_row_data],
                 ),
                 ChangeType::Flush => kalamdb_commons::Notification::insert(
                     live_id.to_string(),
-                    vec![change_notification.row_data.clone()],
+                    vec![projected_row_data],
                 ),
             };
 
