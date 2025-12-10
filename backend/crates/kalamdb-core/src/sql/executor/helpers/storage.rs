@@ -135,7 +135,7 @@ pub fn ensure_filesystem_directory(path: &str) -> Result<(), KalamDbError> {
 
     let dir = std::path::Path::new(trimmed);
     std::fs::create_dir_all(dir).map_err(|e| {
-        KalamDbError::IoError(format!(
+        KalamDbError::io_message(format!(
             "Failed to create storage directory '{}': {}",
             dir.display(),
             e

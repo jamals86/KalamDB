@@ -13,6 +13,10 @@ pub enum AuthError {
     #[error("Invalid credentials: {0}")]
     InvalidCredentials(String),
 
+    /// Account is locked due to too many failed login attempts
+    #[error("Account locked until {0}. Too many failed login attempts.")]
+    AccountLocked(String),
+
     /// Malformed Authorization header (not properly formatted)
     #[error("Malformed authorization header: {0}")]
     MalformedAuthorization(String),

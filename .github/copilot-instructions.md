@@ -26,6 +26,8 @@ Always refer to `AGENTS.md` for the most up-to-date guidelines and best practice
 - RocksDB fast path with Parquet batch files on filesystem/S3 for flushed segments (012-full-dml-support)
 - Rust 1.90 (edition 2021) for backend; TypeScript (ES2020+) for Kalam-link SDK + Actix-Web 4 for HTTP/WebSocket handling; existing KalamDB live query infrastructure in `kalamdb-core`; Kalam-link TypeScript client stack; RocksDB and Parquet via existing storage abstractions (014-live-queries-websocket)
 - Existing RocksDB-backed write path and Parquet segment storage; `system.live_queries` system table backed by current metadata mechanisms (014-live-queries-websocket)
+- Rust 1.90+ (backend) + TypeScript 5.x / React 18 (frontend) (015-admin-ui)
+- Existing RocksDB + Parquet (no new storage needed) (015-admin-ui)
 
 ## Recent Changes
 - 007-user-auth: Added Rust 1.90 (edition 2021) + DataFusion 40, Apache Arrow 52, Apache Parquet 52, Actix-Web 4, `kalamdb-store` EntityStore traits, `kalamdb-commons` system models

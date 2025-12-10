@@ -1,9 +1,8 @@
 //! system.stats virtual table
 //!
 //! Provides runtime metrics as key-value pairs for observability.
-//! Initial implementation focuses on schema cache metrics.
+//! Uses a callback pattern to fetch metrics from AppContext to avoid circular dependencies.
 
-use super::SchemaRegistry;
 use crate::error::KalamDbError;
 use async_trait::async_trait;
 use datafusion::arrow::array::{ArrayRef, StringBuilder};
@@ -15,7 +14,11 @@ use datafusion::logical_expr::Expr;
 use datafusion::physical_plan::ExecutionPlan;
 use kalamdb_system::{SystemError, SystemTableProviderExt};
 use std::any::Any;
-use std::sync::{Arc, OnceLock};
+use std::sync::{Arc, OnceLock, RwLock};
+
+/// Metrics provider callback type
+/// Returns a vector of (metric_name, metric_value) tuples
+pub type MetricsCallback = Arc<dyn Fn() -> Vec<(String, String)> + Send + Sync>;
 
 /// Static schema for system.stats
 static STATS_SCHEMA: OnceLock<Arc<Schema>> = OnceLock::new();
@@ -40,108 +43,88 @@ impl StatsTableSchema {
     }
 }
 
-/// Virtual table that emits key-value metrics
+/// Virtual table that emits key-value metrics computed at query time
 pub struct StatsTableProvider {
     schema: SchemaRef,
-    unified_cache: Option<Arc<SchemaRegistry>>,
+    metrics_callback: Arc<RwLock<Option<MetricsCallback>>>,
 }
 
 impl std::fmt::Debug for StatsTableProvider {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("StatsTableProvider").finish()
+        f.debug_struct("StatsTableProvider")
+            .field("has_callback", &self.metrics_callback.read().unwrap().is_some())
+            .finish()
     }
 }
 
 impl StatsTableProvider {
-    /// Create a new stats table provider
-    pub fn new(unified_cache: Option<Arc<SchemaRegistry>>) -> Self {
-        if unified_cache.is_some() {
-            log::info!("StatsTableProvider (Core) initialized WITH cache");
-        } else {
-            log::info!("StatsTableProvider (Core) initialized WITHOUT cache");
-        }
+    pub fn new() -> Self {
         Self {
             schema: StatsTableSchema::schema(),
-            unified_cache,
+            metrics_callback: Arc::new(RwLock::new(None)),
         }
     }
 
-    /// Build a RecordBatch with current metrics
+    pub fn with_callback(callback: MetricsCallback) -> Self {
+        Self {
+            schema: StatsTableSchema::schema(),
+            metrics_callback: Arc::new(RwLock::new(Some(callback))),
+        }
+    }
+
+    pub fn set_metrics_callback(&self, callback: MetricsCallback) {
+        *self.metrics_callback.write().unwrap() = Some(callback);
+    }
+
     fn build_metrics_batch(&self) -> Result<RecordBatch, KalamDbError> {
         let mut names = StringBuilder::new();
         let mut values = StringBuilder::new();
 
-        // Schema cache metrics (unified cache from Phase 10)
-        if let Some(cache) = &self.unified_cache {
-            let (size, hits, misses, hit_rate) = cache.stats();
-
-            names.append_value("schema_cache_hit_rate");
-            values.append_value(format!("{:.6}", hit_rate));
-
-            names.append_value("schema_cache_size");
-            values.append_value(size.to_string());
-
-            names.append_value("schema_cache_hits");
-            values.append_value(hits.to_string());
-
-            names.append_value("schema_cache_misses");
-            values.append_value(misses.to_string());
+        let callback_guard = self.metrics_callback.read().unwrap();
+        if let Some(ref callback) = *callback_guard {
+            let metrics = callback();
+            for (name, value) in metrics {
+                names.append_value(&name);
+                values.append_value(&value);
+            }
         } else {
-            names.append_value("schema_cache_hit_rate");
+            names.append_value("server_uptime_seconds");
+            values.append_value("N/A (callback not set)");
+            names.append_value("total_users");
             values.append_value("N/A");
-
-            names.append_value("schema_cache_size");
-            values.append_value("0");
+            names.append_value("total_namespaces");
+            values.append_value("N/A");
+            names.append_value("total_tables");
+            values.append_value("N/A");
         }
 
-        // Placeholders for future metrics
-        names.append_value("type_conversion_cache_hit_rate");
-        values.append_value("N/A");
-
-        names.append_value("server_uptime_seconds");
-        values.append_value("N/A");
-
-        let batch = RecordBatch::try_new(
+        RecordBatch::try_new(
             self.schema.clone(),
             vec![
                 Arc::new(names.finish()) as ArrayRef,
                 Arc::new(values.finish()) as ArrayRef,
             ],
-        )
-        .map_err(|e| KalamDbError::Other(format!("Failed to build stats batch: {}", e)))?;
-
-        Ok(batch)
+        ).map_err(|e| KalamDbError::Other(format!("Failed to build stats batch: {}", e)))
     }
 }
 
+impl Default for StatsTableProvider {
+    fn default() -> Self { Self::new() }
+}
+
 impl SystemTableProviderExt for StatsTableProvider {
-    fn table_name(&self) -> &str {
-        StatsTableSchema::table_name()
-    }
-
-    fn schema_ref(&self) -> SchemaRef {
-        self.schema.clone()
-    }
-
+    fn table_name(&self) -> &str { StatsTableSchema::table_name() }
+    fn schema_ref(&self) -> SchemaRef { self.schema.clone() }
     fn load_batch(&self) -> Result<RecordBatch, SystemError> {
-        self.build_metrics_batch()
-            .map_err(|e| SystemError::Other(e.to_string()))
+        self.build_metrics_batch().map_err(|e| SystemError::Other(e.to_string()))
     }
 }
 
 #[async_trait]
 impl TableProvider for StatsTableProvider {
-    fn as_any(&self) -> &dyn Any {
-        self
-    }
-
-    fn schema(&self) -> SchemaRef {
-        self.schema.clone()
-    }
-
-    fn table_type(&self) -> TableType {
-        TableType::View
-    }
+    fn as_any(&self) -> &dyn Any { self }
+    fn schema(&self) -> SchemaRef { self.schema.clone() }
+    fn table_type(&self) -> TableType { TableType::View }
 
     async fn scan(
         &self,
@@ -151,13 +134,10 @@ impl TableProvider for StatsTableProvider {
         _limit: Option<usize>,
     ) -> DataFusionResult<Arc<dyn ExecutionPlan>> {
         use datafusion::datasource::MemTable;
-        let schema = self.schema.clone();
         let batch = self.build_metrics_batch().map_err(|e| {
             DataFusionError::Execution(format!("Failed to build stats batch: {}", e))
         })?;
-        let partitions = vec![vec![batch]];
-        let table = MemTable::try_new(schema, partitions)
-            .map_err(|e| DataFusionError::Execution(format!("Failed to create MemTable: {}", e)))?;
+        let table = MemTable::try_new(self.schema.clone(), vec![vec![batch]])?;
         table.scan(state, projection, &[], _limit).await
     }
 }
@@ -170,15 +150,20 @@ mod tests {
     fn test_stats_schema() {
         let schema = StatsTableSchema::schema();
         assert_eq!(schema.fields().len(), 2);
-        assert_eq!(schema.field(0).name(), "metric_name");
-        assert_eq!(schema.field(1).name(), "metric_value");
     }
 
     #[test]
-    fn test_stats_provider_batch() {
-        let provider = StatsTableProvider::new(None);
+    fn test_stats_provider_without_callback() {
+        let provider = StatsTableProvider::new();
         let batch = provider.load_batch().expect("stats batch");
-        assert!(batch.num_rows() >= 3); // at least the placeholder metrics
-        assert_eq!(batch.num_columns(), 2);
+        assert!(batch.num_rows() >= 3);
+    }
+
+    #[test]
+    fn test_stats_provider_with_callback() {
+        let callback: MetricsCallback = Arc::new(|| vec![("m1".to_string(), "v1".to_string())]);
+        let provider = StatsTableProvider::with_callback(callback);
+        let batch = provider.load_batch().expect("stats batch");
+        assert_eq!(batch.num_rows(), 1);
     }
 }

@@ -68,6 +68,7 @@ use crate::basic_auth;
 use crate::context::AuthenticatedUser;
 use crate::error::{AuthError, AuthResult};
 use crate::jwt_auth;
+use crate::login_tracker::LoginTracker;
 use crate::password;
 use crate::user_repo::UserRepository;
 use kalamdb_commons::models::ConnectionInfo;
@@ -75,6 +76,9 @@ use kalamdb_commons::{AuthType, Role};
 use log::debug;
 use once_cell::sync::Lazy;
 use std::sync::Arc;
+
+/// Cached login tracker instance
+static LOGIN_TRACKER: Lazy<LoginTracker> = Lazy::new(LoginTracker::new);
 
 /// Authentication method detected from request
 ///
@@ -266,9 +270,11 @@ async fn authenticate_basic(
 /// This is the central authentication function that handles:
 /// - User lookup
 /// - Deleted user check
+/// - Account lockout check
 /// - System/internal user localhost restrictions
 /// - Password verification
 /// - Remote access policies
+/// - Login tracking (failed attempts, successful logins)
 async fn authenticate_username_password(
     username: &str,
     password: &str,
@@ -276,7 +282,7 @@ async fn authenticate_username_password(
     repo: &Arc<dyn UserRepository>,
 ) -> AuthResult<AuthenticatedUser> {
     // Look up user
-    let user = repo.get_user_by_username(username).await?;
+    let mut user = repo.get_user_by_username(username).await?;
 
     // Check if user is deleted
     if user.deleted_at.is_some() {
@@ -286,6 +292,9 @@ async fn authenticate_username_password(
             "Invalid username or password".to_string(),
         ));
     }
+
+    // Check if account is locked BEFORE password verification
+    LOGIN_TRACKER.check_lockout(&user)?;
 
     // OAuth users cannot use password auth
     if user.auth_type == AuthType::OAuth {
@@ -305,6 +314,9 @@ async fn authenticate_username_password(
         .and_then(|v| v.get("allow_remote").and_then(|b| b.as_bool()))
         .unwrap_or(false);
 
+    // Track whether authentication succeeded
+    let mut auth_success = false;
+
     if is_system_internal {
         if is_localhost {
             // Localhost system users: accept empty password OR valid password
@@ -313,12 +325,11 @@ async fn authenticate_username_password(
                     .await
                     .unwrap_or(false);
 
-            if !password_ok {
+            if password_ok {
+                auth_success = true;
+            } else {
                 // Security: Generic message prevents username enumeration
                 debug!("Authentication failed for system user attempt");
-                return Err(AuthError::InvalidCredentials(
-                    "Invalid username or password".to_string(),
-                ));
             }
         } else {
             // Remote system users
@@ -332,15 +343,14 @@ async fn authenticate_username_password(
                     "Remote access is not allowed for this user".to_string(),
                 ));
             }
-            if !password::verify_password(password, &user.password_hash)
+            if password::verify_password(password, &user.password_hash)
                 .await
                 .unwrap_or(false)
             {
+                auth_success = true;
+            } else {
                 // Security: Generic message prevents username enumeration
                 debug!("Authentication failed for remote user attempt");
-                return Err(AuthError::InvalidCredentials(
-                    "Invalid username or password".to_string(),
-                ));
             }
         }
     } else {
@@ -350,16 +360,30 @@ async fn authenticate_username_password(
                 "Invalid username or password".to_string(),
             ));
         }
-        if !password::verify_password(password, &user.password_hash)
+        if password::verify_password(password, &user.password_hash)
             .await
             .unwrap_or(false)
         {
+            auth_success = true;
+        } else {
             // Security: Generic message prevents username enumeration
             debug!("Authentication failed for user attempt");
-            return Err(AuthError::InvalidCredentials(
-                "Invalid username or password".to_string(),
-            ));
         }
+    }
+
+    if !auth_success {
+        // Record failed login attempt (fire and forget, don't fail auth on tracking error)
+        if let Err(e) = LOGIN_TRACKER.record_failed_login(&mut user, repo).await {
+            log::error!("Failed to record failed login: {}", e);
+        }
+        return Err(AuthError::InvalidCredentials(
+            "Invalid username or password".to_string(),
+        ));
+    }
+
+    // Record successful login (fire and forget, don't fail auth on tracking error)
+    if let Err(e) = LOGIN_TRACKER.record_successful_login(&mut user, repo).await {
+        log::error!("Failed to record successful login: {}", e);
     }
 
     Ok(AuthenticatedUser::new(
@@ -383,8 +407,10 @@ struct JwtConfig {
 static JWT_CONFIG: Lazy<JwtConfig> = Lazy::new(|| {
     let secret = std::env::var("KALAMDB_JWT_SECRET")
         .unwrap_or_else(|_| "kalamdb-dev-secret-key-change-in-production".to_string());
+    // Default trusted issuer is "kalamdb" (matching KALAMDB_ISSUER in jwt_auth.rs)
+    // Additional issuers can be added via KALAMDB_JWT_TRUSTED_ISSUERS env var
     let trusted = std::env::var("KALAMDB_JWT_TRUSTED_ISSUERS")
-        .unwrap_or_else(|_| "kalamdb-test".to_string());
+        .unwrap_or_else(|_| "kalamdb".to_string());
     let trusted_issuers: Vec<String> = trusted.split(',').map(|s| s.trim().to_string()).collect();
     
     JwtConfig {

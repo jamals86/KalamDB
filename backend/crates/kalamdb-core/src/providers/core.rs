@@ -61,7 +61,7 @@ impl TableProviderCore {
         table_id: TableId,
         table_type: TableType,
     ) -> Self {
-        Self::new(app_context.clone(), table_id, table_type)
+        Self::new(Arc::clone(app_context), table_id, table_type)
     }
 
     /// Add LiveQueryManager to core

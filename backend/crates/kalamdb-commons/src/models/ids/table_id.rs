@@ -72,6 +72,14 @@ impl TableId {
     pub fn into_parts(self) -> (NamespaceId, TableName) {
         (self.namespace_id, self.table_name)
     }
+
+    /// Returns the fully qualified table name in SQL format: "namespace.table"
+    ///
+    /// This is the format used in SQL queries (e.g., `SELECT * FROM app.users`).
+    /// For storage key format (namespace:table), use `as_storage_key()` instead.
+    pub fn full_name(&self) -> String {
+        format!("{}.{}", self.namespace_id.as_str(), self.table_name.as_str())
+    }
 }
 
 impl AsRef<str> for TableId {
@@ -164,6 +172,15 @@ mod tests {
     fn test_table_id_display() {
         let table_id = TableId::from_strings("ns1", "users");
         assert_eq!(format!("{}", table_id), "ns1:users");
+    }
+
+    #[test]
+    fn test_table_id_full_name() {
+        let table_id = TableId::from_strings("app", "messages");
+        assert_eq!(table_id.full_name(), "app.messages");
+
+        let table_id2 = TableId::from_strings("my_namespace", "user_table");
+        assert_eq!(table_id2.full_name(), "my_namespace.user_table");
     }
 
     #[test]

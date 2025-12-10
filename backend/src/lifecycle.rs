@@ -9,6 +9,7 @@ use crate::routes;
 use crate::ServerConfig;
 use actix_web::{web, App, HttpServer};
 use anyhow::Result;
+use kalamdb_api::handlers::AuthConfig;
 use kalamdb_api::rate_limiter::{RateLimitConfig, RateLimiter};
 use kalamdb_commons::{AuthType, Role, StorageId, StorageMode, UserId};
 use kalamdb_core::live::ConnectionsManager;
@@ -54,8 +55,17 @@ pub async fn bootstrap(
         phase_start.elapsed().as_secs_f64() * 1000.0
     );
 
-    // Initialize RocksDB backend for all components (single StorageBackend trait)
-    let backend = Arc::new(RocksDBBackend::new(db.clone()));
+    // Initialize RocksDB backend with performance settings from config
+    // sync_writes=false (default) gives 10-100x better write throughput
+    // WAL is still enabled so data is safe from crashes (only ~1s of data could be lost)
+    let backend = Arc::new(RocksDBBackend::with_options(
+        db.clone(),
+        config.storage.rocksdb.sync_writes,
+        config.storage.rocksdb.disable_wal,
+    ));
+    if !config.storage.rocksdb.sync_writes {
+        debug!("RocksDB async writes enabled (sync_writes=false) for high throughput");
+    }
 
     // Initialize core stores from generic backend (uses kalamdb_store::StorageBackend)
     // Phase 5: AppContext now creates all dependencies internally!
@@ -304,8 +314,20 @@ pub async fn run(
 
     let app_context_for_handler = app_context.clone();
     let connection_registry_for_handler = connection_registry.clone();
+    let auth_config = AuthConfig::default();
+    let ui_path = config.server.ui_path.clone();
+    
+    // Log UI serving status
+    if kalamdb_api::routes::is_embedded_ui_available() {
+        info!("Admin UI enabled at /ui (embedded in binary)");
+    } else if let Some(ref path) = ui_path {
+        info!("Admin UI enabled at /ui (serving from filesystem: {})", path);
+    } else {
+        info!("Admin UI not available (run 'npm run build' in ui/ and rebuild server)");
+    }
+    
     let server = HttpServer::new(move || {
-        App::new()
+        let mut app = App::new()
             // Connection protection (first middleware - drops bad requests early)
             .wrap(connection_protection.clone())
             // Standard middleware
@@ -318,7 +340,20 @@ pub async fn run(
             .app_data(web::Data::new(live_query_manager.clone()))
             .app_data(web::Data::new(user_repo.clone()))
             .app_data(web::Data::new(connection_registry_for_handler.clone()))
-            .configure(routes::configure)
+            .app_data(web::Data::new(auth_config.clone()))
+            .configure(routes::configure);
+        
+        // Add UI routes - prefer embedded, fallback to filesystem path
+        if kalamdb_api::routes::is_embedded_ui_available() {
+            app = app.configure(kalamdb_api::routes::configure_embedded_ui_routes);
+        } else if let Some(ref path) = ui_path {
+            let path = path.clone();
+            app = app.configure(move |cfg| {
+                kalamdb_api::routes::configure_ui_routes(cfg, &path);
+            });
+        }
+        
+        app
     })
     // Set backlog BEFORE bind() - this affects the listen queue size
     .backlog(config.performance.backlog);
@@ -342,9 +377,9 @@ pub async fn run(
     .max_connections(config.performance.max_connections)
     // Blocking thread pool size per worker for RocksDB and CPU-intensive ops
     .worker_max_blocking_threads(config.performance.worker_max_blocking_threads)
-    // Disable HTTP keep-alive to prevent CLOSE_WAIT accumulation in tests
-    // Each request gets a fresh connection that closes immediately after response
-    .keep_alive(std::time::Duration::ZERO)
+    // Enable HTTP keep-alive for connection reuse (improves throughput 2-3x)
+    // Connections stay open for reuse, reducing TCP handshake overhead
+    .keep_alive(std::time::Duration::from_secs(config.performance.keepalive_timeout))
     // Client must send request headers within this time
     .client_request_timeout(std::time::Duration::from_secs(config.performance.client_request_timeout))
     // Allow time for graceful connection shutdown
@@ -481,6 +516,9 @@ async fn create_default_system_user(
                 auth_data: None,               // No allow_remote flag = localhost-only by default
                 storage_mode: StorageMode::Table,
                 storage_id: Some(StorageId::local()),
+                failed_login_attempts: 0,
+                locked_until: None,
+                last_login_at: None,
                 created_at,
                 updated_at: created_at,
                 last_seen: None,

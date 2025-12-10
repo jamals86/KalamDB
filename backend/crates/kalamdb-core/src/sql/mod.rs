@@ -1,4 +1,31 @@
-//! SQL module for DataFusion integration and query processing
+//! SQL module for DataFusion integration and query processing.
+//!
+//! This module provides the SQL execution layer for KalamDB, built on Apache DataFusion.
+//!
+//! # Architecture
+//!
+//! - [`SqlExecutor`]: Main entry point for executing SQL statements
+//! - [`DataFusionSessionFactory`]: Creates configured DataFusion session contexts
+//! - [`plan_cache`]: Query plan caching for improved performance
+//! - [`functions`]: Custom SQL functions (e.g., `CURRENT_USER()`)
+//!
+//! # Handler Pattern
+//!
+//! SQL statements are routed through the `executor::handlers` module which provides
+//! specialized handlers for:
+//! - DDL (CREATE/DROP TABLE, ALTER TABLE)
+//! - DML (INSERT, UPDATE, DELETE)
+//! - Queries (SELECT)
+//! - System operations (FLUSH, OPTIMIZE)
+//!
+//! # Example
+//!
+//! ```rust,ignore
+//! use kalamdb_core::sql::SqlExecutor;
+//!
+//! let executor = SqlExecutor::new(app_context, false);
+//! let result = executor.execute("SELECT * FROM users", None, None).await?;
+//! ```
 
 pub mod datafusion_session;
 pub mod executor;

@@ -170,6 +170,11 @@ pub struct ServerSettings {
     /// When false, server only supports HTTP/1.1
     #[serde(default = "default_enable_http2")]
     pub enable_http2: bool,
+    /// Path to the Admin UI static files (e.g., "./ui/dist")
+    /// When set, the server will serve the UI at /ui route
+    /// Set to None/null to disable UI serving
+    #[serde(default = "default_ui_path")]
+    pub ui_path: Option<String>,
 }
 
 /// Storage settings
@@ -185,10 +190,6 @@ pub struct StorageSettings {
     /// Template for user table paths (placeholders: {namespace}, {tableName}, {userId})
     #[serde(default = "default_user_tables_template")]
     pub user_tables_template: String,
-    #[serde(default = "default_true")]
-    pub enable_wal: bool,
-    #[serde(default = "default_compression")]
-    pub compression: String,
     #[serde(default)]
     pub rocksdb: RocksDbSettings,
 }
@@ -211,6 +212,18 @@ pub struct RocksDbSettings {
     /// Maximum number of background jobs (default: 4)
     #[serde(default = "default_rocksdb_max_background_jobs")]
     pub max_background_jobs: i32,
+
+    /// Sync writes to WAL on each write (default: false for performance)
+    /// When false, writes are buffered and synced periodically by OS.
+    /// Setting to true guarantees durability but reduces write throughput 10-100x.
+    /// Data is still safe with WAL enabled - only ~1 second of data could be lost on crash.
+    #[serde(default = "default_rocksdb_sync_writes")]
+    pub sync_writes: bool,
+
+    /// Disable WAL for maximum write performance (default: false)
+    /// WARNING: Setting to true means data loss on crash. Only for ephemeral/cacheable data.
+    #[serde(default)]
+    pub disable_wal: bool,
 }
 
 impl Default for RocksDbSettings {
@@ -220,6 +233,8 @@ impl Default for RocksDbSettings {
             max_write_buffers: default_rocksdb_max_write_buffers(),
             block_cache_size: default_rocksdb_block_cache_size(),
             max_background_jobs: default_rocksdb_max_background_jobs(),
+            sync_writes: default_rocksdb_sync_writes(),
+            disable_wal: false,
         }
     }
 }
@@ -297,6 +312,10 @@ pub struct PerformanceSettings {
     /// Time allowed for graceful connection shutdown
     #[serde(default = "default_client_disconnect_timeout")]
     pub client_disconnect_timeout: u64,
+    /// Maximum HTTP header size in bytes (default: 16384 = 16KB)
+    /// Increase if you have large JWT tokens or custom headers
+    #[serde(default = "default_max_header_size")]
+    pub max_header_size: usize,
 }
 
 /// DataFusion settings
@@ -755,14 +774,13 @@ impl Default for ServerConfig {
                 api_version: default_api_version(),
                 node_id: default_node_id(),
                 enable_http2: default_enable_http2(),
+                ui_path: default_ui_path(),
             },
             storage: StorageSettings {
                 rocksdb_path: "./data/rocksdb".to_string(),
                 default_storage_path: default_storage_path(),
                 shared_tables_template: default_shared_tables_template(),
                 user_tables_template: default_user_tables_template(),
-                enable_wal: true,
-                compression: "lz4".to_string(),
                 rocksdb: RocksDbSettings::default(),
             },
             limits: LimitsSettings {
@@ -786,6 +804,7 @@ impl Default for ServerConfig {
                 worker_max_blocking_threads: default_worker_max_blocking_threads(),
                 client_request_timeout: default_client_request_timeout(),
                 client_disconnect_timeout: default_client_disconnect_timeout(),
+                max_header_size: default_max_header_size(),
             },
             datafusion: DataFusionSettings::default(),
             flush: FlushSettings::default(),

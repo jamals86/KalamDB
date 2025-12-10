@@ -1,0 +1,240 @@
+openapi: 3.1.0
+info:
+  title: KalamDB Admin API
+  description: Authentication API for Admin UI - all data operations use SQL
+  version: 1.0.0
+  contact:
+    name: KalamDB Team
+
+servers:
+  - url: /v1
+    description: API v1
+
+security:
+  - cookieAuth: []
+
+components:
+  securitySchemes:
+    cookieAuth:
+      type: apiKey
+      in: cookie
+      name: kalamdb_auth
+
+  schemas:
+    LoginRequest:
+      type: object
+      required:
+        - username
+        - password
+      properties:
+        username:
+          type: string
+          minLength: 3
+          maxLength: 64
+        password:
+          type: string
+          minLength: 8
+          maxLength: 72
+
+    LoginResponse:
+      type: object
+      properties:
+        user:
+          $ref: '#/components/schemas/User'
+        expires_at:
+          type: string
+          format: date-time
+
+    User:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        username:
+          type: string
+        role:
+          type: string
+          enum: [user, service, dba, system]
+        email:
+          type: string
+          format: email
+          nullable: true
+        created_at:
+          type: string
+          format: date-time
+        updated_at:
+          type: string
+          format: date-time
+
+    SqlRequest:
+      type: object
+      required:
+        - sql
+      properties:
+        sql:
+          type: string
+        namespace:
+          type: string
+          default: default
+
+    SqlResponse:
+      type: object
+      properties:
+        columns:
+          type: array
+          items:
+            type: object
+            properties:
+              name:
+                type: string
+              data_type:
+                type: string
+        rows:
+          type: array
+          items:
+            type: array
+        row_count:
+          type: integer
+        truncated:
+          type: boolean
+        execution_time_ms:
+          type: number
+
+    Error:
+      type: object
+      properties:
+        error:
+          type: string
+        message:
+          type: string
+        details:
+          type: object
+
+paths:
+  /api/auth/login:
+    post:
+      summary: Login and receive auth cookie
+      operationId: login
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/LoginRequest'
+      responses:
+        '200':
+          description: Login successful
+          headers:
+            Set-Cookie:
+              description: HttpOnly auth cookie
+              schema:
+                type: string
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/LoginResponse'
+        '401':
+          description: Invalid credentials
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '403':
+          description: Role not allowed for admin UI
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+
+  /api/auth/refresh:
+    post:
+      summary: Refresh auth token
+      operationId: refreshToken
+      responses:
+        '200':
+          description: Token refreshed
+          headers:
+            Set-Cookie:
+              description: New HttpOnly auth cookie
+              schema:
+                type: string
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/LoginResponse'
+        '401':
+          description: Invalid or expired token
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+
+  /api/auth/logout:
+    post:
+      summary: Logout and clear auth cookie
+      operationId: logout
+      responses:
+        '200':
+          description: Logged out
+          headers:
+            Set-Cookie:
+              description: Cleared auth cookie
+              schema:
+                type: string
+
+  /api/auth/me:
+    get:
+      summary: Get current user info
+      operationId: getCurrentUser
+      responses:
+        '200':
+          description: Current user
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/User'
+        '401':
+          description: Not authenticated
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+
+  /api/sql:
+    post:
+      summary: Execute SQL query (existing endpoint)
+      description: |
+        All data operations use this endpoint:
+        - Schema: SELECT * FROM information_schema.tables / columns
+        - Users: SELECT/INSERT/UPDATE/DELETE FROM system.users
+        - Namespaces: CREATE/DROP NAMESPACE, SELECT FROM system.namespaces
+        - Storages: SELECT FROM system.storages
+        - Settings: SELECT FROM system.settings
+      operationId: executeSql
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/SqlRequest'
+      responses:
+        '200':
+          description: Query results
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SqlResponse'
+        '400':
+          description: Invalid SQL
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '408':
+          description: Query timeout (30s)
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'

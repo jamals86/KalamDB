@@ -389,6 +389,26 @@ impl TableDefinition {
         self.updated_at = Utc::now();
         Ok(removed)
     }
+
+    /// Get the names of primary key columns, sorted by ordinal position
+    ///
+    /// Returns an empty vector if no primary key columns are defined.
+    /// This is used for default ORDER BY clauses to ensure consistent
+    /// ordering across hot and cold storage queries.
+    ///
+    /// # Example
+    ///
+    /// ```rust,ignore
+    /// let pk_columns = table_def.get_primary_key_columns();
+    /// // Returns: vec!["id"] or vec!["user_id", "order_id"] for composite keys
+    /// ```
+    pub fn get_primary_key_columns(&self) -> Vec<&str> {
+        self.columns
+            .iter()
+            .filter(|col| col.is_primary_key)
+            .map(|col| col.column_name.as_str())
+            .collect()
+    }
 }
 
 #[cfg(test)]
@@ -789,5 +809,50 @@ mod tests {
             decoded.columns[1].default_value,
             table.columns[1].default_value
         );
+    }
+
+    #[test]
+    fn test_get_primary_key_columns_single() {
+        let columns = vec![
+            ColumnDefinition::primary_key("id", 1, KalamDataType::BigInt),
+            ColumnDefinition::simple("name", 2, KalamDataType::Text),
+            ColumnDefinition::simple("age", 3, KalamDataType::Int),
+        ];
+
+        let table = TableDefinition::new(
+            NamespaceId::new("default"),
+            TableName::new("users"),
+            TableType::User,
+            columns,
+            TableOptions::user(),
+            None,
+        )
+        .unwrap();
+
+        let pk_columns = table.get_primary_key_columns();
+        assert_eq!(pk_columns.len(), 1);
+        assert_eq!(pk_columns[0], "id");
+    }
+
+    #[test]
+    fn test_get_primary_key_columns_empty() {
+        // Table without any primary key column
+        let columns = vec![
+            ColumnDefinition::simple("field1", 1, KalamDataType::Text),
+            ColumnDefinition::simple("field2", 2, KalamDataType::Int),
+        ];
+
+        let table = TableDefinition::new(
+            NamespaceId::new("default"),
+            TableName::new("no_pk"),
+            TableType::Shared,
+            columns,
+            TableOptions::shared(),
+            None,
+        )
+        .unwrap();
+
+        let pk_columns = table.get_primary_key_columns();
+        assert!(pk_columns.is_empty());
     }
 }

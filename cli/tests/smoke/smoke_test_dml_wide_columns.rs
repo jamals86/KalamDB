@@ -9,8 +9,9 @@ fn create_namespace(ns: &str) {
     let _ = execute_sql_as_root_via_client(&format!("CREATE NAMESPACE IF NOT EXISTS {}", ns));
 }
 
-fn extract_first_id_from_json(json_output: &str) -> Option<i64> {
+fn extract_first_id_from_json(json_output: &str) -> Option<String> {
     // Parse JSON response and extract the first id value
+    // Handles both number and string IDs (large integers are serialized as strings for JS safety)
     let value: serde_json::Value = serde_json::from_str(json_output).ok()?;
     value
         .get("results")
@@ -20,7 +21,7 @@ fn extract_first_id_from_json(json_output: &str) -> Option<i64> {
         .and_then(|v| v.as_array())
         .and_then(|rows| rows.first())
         .and_then(|row| row.get("id"))
-        .and_then(|id| id.as_i64())
+        .and_then(json_value_as_id)
 }
 
 // reserved: count extractor kept for potential future stricter checks

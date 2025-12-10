@@ -38,6 +38,9 @@
 //!     auth_data: None,
 //!     storage_mode: StorageMode::Table,
 //!     storage_id: Some(StorageId::new("storage_1")),
+//!     failed_login_attempts: 0,
+//!     locked_until: None,
+//!     last_login_at: None,
 //!     created_at: 1730000000000,
 //!     updated_at: 1730000000000,
 //!     last_seen: None,
@@ -62,7 +65,7 @@ pub use live_query_status::LiveQueryStatus;
 pub use manifest::{ColumnStats, Manifest, ManifestCacheEntry, SegmentMetadata, SyncState};
 pub use namespace::Namespace;
 pub use storage::Storage;
-pub use user::User;
+pub use user::{User, DEFAULT_LOCKOUT_DURATION_MINUTES, DEFAULT_MAX_FAILED_ATTEMPTS};
 pub use user_table_counter::UserTableCounter;
 
 // Re-export for backward compatibility (legacy imports from `system` module)

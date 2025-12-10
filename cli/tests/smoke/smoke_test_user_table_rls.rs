@@ -93,13 +93,13 @@ fn smoke_user_table_rls_isolation() {
     let mut row_c_id: Option<String> = None;
     for row in rows {
         let content = row.get("content").and_then(|v| v.as_str()).unwrap_or("");
-        let id = row.get("id").and_then(|v| v.as_i64());
+        let id = row.get("id").and_then(json_value_as_id);
         if let Some(id_val) = id {
             if content == "user_row_b" {
-                row_b_id = Some(id_val.to_string());
+                row_b_id = Some(id_val.clone());
             }
             if content == "user_row_c" {
-                row_c_id = Some(id_val.to_string());
+                row_c_id = Some(id_val);
             }
         }
     }

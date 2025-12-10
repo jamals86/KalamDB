@@ -195,7 +195,7 @@ fn extract_scalar(json_output: &str, field: &str) -> i64 {
     let value: Value = serde_json::from_str(json_output)
         .unwrap_or_else(|e| panic!("Failed to parse JSON output: {} in: {}", e, json_output));
 
-    value
+    let field_value = value
         .get("results")
         .and_then(|v| v.as_array())
         .and_then(|arr| arr.first())
@@ -203,6 +203,16 @@ fn extract_scalar(json_output: &str, field: &str) -> i64 {
         .and_then(|rows| rows.as_array())
         .and_then(|rows| rows.first())
         .and_then(|row| row.get(field))
-        .and_then(|count| count.as_i64())
-        .unwrap_or_else(|| panic!("JSON response missing field '{}': {}", field, json_output))
+        .unwrap_or_else(|| panic!("JSON response missing field '{}': {}", field, json_output));
+    
+    // Handle both number and string representations (large ints are serialized as strings for JS safety)
+    match field_value {
+        Value::Number(n) => n.as_i64().unwrap_or_else(|| {
+            panic!("Field '{}' is not a valid i64: {}", field, json_output)
+        }),
+        Value::String(s) => s.parse::<i64>().unwrap_or_else(|_| {
+            panic!("Field '{}' string is not a valid i64: {}", field, json_output)
+        }),
+        _ => panic!("Field '{}' is neither a number nor a string: {}", field, json_output),
+    }
 }

@@ -117,13 +117,13 @@ fn smoke_all_datatypes_user_shared_stream() {
     let mut second_id: Option<String> = None;
     for row in rows {
         let text_col = row.get("text_col").and_then(|v| v.as_str()).unwrap_or("");
-        let id = row.get("id").and_then(|v| v.as_i64());
+        let id = row.get("id").and_then(json_value_as_id);
         if let Some(id_val) = id {
             if text_col == "hello" {
-                first_id = Some(id_val.to_string());
+                first_id = Some(id_val.clone());
             }
             if text_col == "world" {
-                second_id = Some(id_val.to_string());
+                second_id = Some(id_val);
             }
         }
     }
@@ -176,13 +176,13 @@ fn smoke_all_datatypes_user_shared_stream() {
     let mut s_second: Option<String> = None;
     for row in shared_rows {
         let text_col = row.get("text_col").and_then(|v| v.as_str()).unwrap_or("");
-        let id = row.get("id").and_then(|v| v.as_i64());
+        let id = row.get("id").and_then(json_value_as_id);
         if let Some(id_val) = id {
             if text_col == "hello" {
-                s_first = Some(id_val.to_string());
+                s_first = Some(id_val.clone());
             }
             if text_col == "world" {
-                s_second = Some(id_val.to_string());
+                s_second = Some(id_val);
             }
         }
     }

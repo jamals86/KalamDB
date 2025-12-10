@@ -42,3 +42,5 @@ mod smoke_test_user_table_rls;
 mod smoke_test_user_table_subscription;
 #[path = "smoke/smoke_test_insert_throughput.rs"]
 mod smoke_test_insert_throughput;
+#[path = "smoke/smoke_test_int64_precision.rs"]
+mod smoke_test_int64_precision;

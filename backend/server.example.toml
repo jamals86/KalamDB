@@ -60,12 +60,6 @@ default_storage_path = "./data/storage"
 shared_tables_template = "{namespace}/{tableName}"
 user_tables_template = "{namespace}/{tableName}/{userId}"
 
-# Enable Write-Ahead Log for durability (default: true)
-enable_wal = true
-
-# Compression algorithm: none, snappy, zlib, lz4, zstd (default: snappy)
-compression = "snappy"
-
 [storage.rocksdb]
 # Write buffer size per column family in bytes (default: 64MB)
 # Larger values improve write throughput but use more memory
@@ -108,19 +102,6 @@ default_row_limit = 10000
 # Tables will flush to Parquet after this duration
 default_time_interval = 300
 
-# T158j: Flush job shutdown timeout in seconds (default: 300s = 5 minutes)
-# Server waits this duration for active flush jobs to complete during shutdown
-flush_job_shutdown_timeout_seconds = 300
-
-# T158q: Job retention days (default: 30 days)
-# Job records older than this are deleted during cleanup
-job_retention_days = 30
-
-# T158r: Job cleanup schedule (cron format, default: daily at midnight UTC)
-# Format: "second minute hour day_of_month month day_of_week"
-# Example: "0 0 * * *" = daily at midnight
-job_cleanup_schedule = "0 0 * * *"
-
 [retention]
 # Default retention hours for soft-deleted rows (default: 168 hours = 7 days)
 # Rows with _deleted=true will be kept in Parquet files for this duration
@@ -154,13 +135,17 @@ default_query_limit = 50
 level = "info"
 
 # Directory for all log files (default: "./logs")
-# Server will create app.log, slow.log, and other log files in this directory
+# Server will create server.log (or server.jsonl for JSON format), slow.log, etc.
 logs_path = "./logs"
 
 # Also log to console/stdout (default: true)
 log_to_console = true
 
-# Log format: compact, pretty, json (default: compact)
+# Log format: compact, json (default: compact)
+# - compact: Human-readable text format -> server.log
+#   Format: [timestamp] [LEVEL] [thread - target:line] - message
+# - json: JSON Lines format -> server.jsonl (queryable via system.server_logs)
+#   Each line is a valid JSON object with timestamp, level, thread, target, line, message
 format = "compact"
 
 # Slow query logging threshold in milliseconds (default: 1000ms = 1 second)

@@ -135,7 +135,6 @@ INSERT INTO <namespace>.<table>
 
 130) We need to have describe table <namespace>.<table> to show the table schema in cli and server as well also to display: cold rows count, hot rows count, total rows count, storage id, primary key(s), indexes, etc
 
-131) InitialDataOptions and InitialDataResult should now have SeqId instead of timestamp we check by it now
 132) add_row_id_column should be removed and all the _updated, _id should be removed from everywhere even deprecation shouldnt be added remove the code completely
 133)  _row_id: &str shouldnt be there we now use SharedTableRowId or UserTableRowId in all places instead of string
 134) Instead of passing namespace/table_name and also tableid pass only TableId also places where there is both of NamespaceId and TableName pass TableId instead  
@@ -281,9 +280,9 @@ instead of: 1 failed: Invalid operation: No handler registered for statement typ
 
 192) Remove last_seen from user or update it just only once per day to avoid too many writes to rocksdb for no reason
 
-193) is this still supported: job_cleanup_schedule = "0 0 * * *" in config.toml for jobs cleanup?
-
 194) Block update/insert/delete directly on system tables like users/namespaces/tables/live_queries
+
+195) we should always have a default order by column so we always have the same vlues returned in the same order, this is important for pagination as well
 
 
 Here’s the updated 5-line spec with embedding storage inside Parquet and managed HNSW indexing (with delete handling):
@@ -361,3 +360,24 @@ Tasks To Repo:
 │  Batched (100/batch)    │   2000  │    1.84s │    1088.3/s │
 │  Parallel (10 threads)  │   1000  │    0.26s │    3878.1/s │
 └────────────────────────────────────────────────────────────┘
+
+┌────────────────────────────────────────────────────────────┐
+│                    BENCHMARK RESULTS                       │
+├────────────────────────────────────────────────────────────┤
+│  Test Type              │  Rows   │  Time    │  Rate       │
+├────────────────────────────────────────────────────────────┤
+│  Single-row inserts     │    200  │    0.14s │    1445.0/s │
+│  Batched (100/batch)    │   2000  │    1.63s │    1229.0/s │
+│  Parallel (10 threads)  │   1000  │    0.20s │    5119.9/s │
+└────────────────────────────────────────────────────────────┘
+
+
+UI Changes:
+1) The browser should fetch all namespaces/tables/columns in one query not multiple queries for better performance
+2) Display the type of table stream/shared/user tables with icon per type
+3) even when there is an error display the error alone with time took display separatly, we need to be similar to the cli
+4) when subscribe button fails then the subscribe mode is turned off automatically it shouldnt it should stay on
+5) Schema Browser add a refresh button to the right side of the Schema Browser title
+6) no need for save inside sql editor since its auto saved already
+7) the button explain should be history instead
+8) when a query returned 0 rows it should display a table but empty rows currently it displays only green message

@@ -80,13 +80,13 @@ fn smoke_shared_table_crud() {
     let mut beta_id: Option<String> = None;
     for row in rows {
         let name = row.get("name").and_then(|v| v.as_str()).unwrap_or("");
-        let id = row.get("id").and_then(|v| v.as_i64());
+        let id = row.get("id").and_then(json_value_as_id);
         if let Some(id_val) = id {
             if name == "alpha" {
-                alpha_id = Some(id_val.to_string());
+                alpha_id = Some(id_val.clone());
             }
             if name == "beta" {
-                beta_id = Some(id_val.to_string());
+                beta_id = Some(id_val);
             }
         }
     }

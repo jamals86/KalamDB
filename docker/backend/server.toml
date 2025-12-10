@@ -13,8 +13,6 @@ enable_http2 = true
 # Data paths inside the container
 rocksdb_path = "/data/rocksdb"
 default_storage_path = "/data/storage"
-enable_wal = true
-compression = "snappy"
 
 [storage.rocksdb]
 write_buffer_size = 67108864
@@ -31,9 +29,6 @@ batch_size = 8192
 [flush]
 default_row_limit = 10000
 default_time_interval = 300
-flush_job_shutdown_timeout_seconds = 300
-job_retention_days = 30
-job_cleanup_schedule = "0 0 * * *"
 
 [retention]
 default_deleted_retention_hours = 168

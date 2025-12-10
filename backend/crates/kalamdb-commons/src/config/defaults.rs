@@ -17,16 +17,16 @@ pub fn default_enable_http2() -> bool {
     true // HTTP/2 enabled by default for better performance
 }
 
+pub fn default_ui_path() -> Option<String> {
+    None // UI disabled by default; set to path like "./ui/dist" to enable
+}
+
 pub fn default_flush_job_shutdown_timeout() -> u32 {
     300 // 5 minutes (T158j)
 }
 
 pub fn default_true() -> bool {
     true
-}
-
-pub fn default_compression() -> String {
-    "lz4".to_string()
 }
 
 pub fn default_storage_path() -> String {
@@ -95,6 +95,10 @@ pub fn default_client_request_timeout() -> u64 {
 
 pub fn default_client_disconnect_timeout() -> u64 {
     2 // 2 seconds for graceful disconnect
+}
+
+pub fn default_max_header_size() -> usize {
+    16384 // 16KB - increased from default 8KB to support large JWT tokens
 }
 
 // DataFusion defaults
@@ -291,6 +295,10 @@ pub fn default_rocksdb_block_cache_size() -> usize {
 
 pub fn default_rocksdb_max_background_jobs() -> i32 {
     4
+}
+
+pub fn default_rocksdb_sync_writes() -> bool {
+    false // Don't sync on each write for performance (WAL still provides durability)
 }
 
 // Security defaults

@@ -36,6 +36,7 @@ impl TypedStatementHandler<ShowStoragesStatement> for ShowStoragesHandler {
         Ok(ExecutionResult::Rows {
             batches: vec![batches],
             row_count,
+            schema: None,
         })
     }
 

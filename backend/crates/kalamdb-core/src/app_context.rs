@@ -9,6 +9,7 @@ use crate::jobs::executors::{
 };
 use crate::live::ConnectionsManager;
 use crate::live_query::LiveQueryManager;
+use crate::schema_registry::settings::{SettingsTableProvider, SettingsView};
 use crate::schema_registry::stats::StatsTableProvider;
 use crate::schema_registry::SchemaRegistry;
 use crate::sql::datafusion_session::DataFusionSessionFactory;
@@ -22,7 +23,7 @@ use kalamdb_system::SystemTablesRegistry;
 use kalamdb_tables::{SharedTableStore, StreamTableStore, UserTableStore};
 use once_cell::sync::OnceCell;
 use std::sync::{Arc, OnceLock};
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 static APP_CONTEXT: OnceLock<Arc<AppContext>> = OnceLock::new();
 
@@ -85,6 +86,9 @@ pub struct AppContext {
 
     // ===== Shared SqlExecutor =====
     sql_executor: OnceCell<Arc<SqlExecutor>>,
+
+    // ===== Server Start Time (for uptime calculation) =====
+    server_start_time: Instant,
 }
 
 impl std::fmt::Debug for AppContext {
@@ -178,14 +182,25 @@ impl AppContext {
                 // Create schema cache (Phase 10 unified cache)
                 let schema_registry = Arc::new(SchemaRegistry::new(10000));
 
-                // Inject real StatsTableProvider with schema registry access (Phase 13)
-                let stats_provider =
-                    Arc::new(StatsTableProvider::new(Some(schema_registry.clone())));
-                system_tables.set_stats_provider(stats_provider);
+                // Create StatsTableProvider (callback will be set after AppContext is created)
+                let stats_provider = Arc::new(StatsTableProvider::new());
+                system_tables.set_stats_provider(stats_provider.clone());
+
+                // Inject SettingsTableProvider with config access (Phase 15)
+                let settings_view = Arc::new(SettingsView::with_config((*config).clone()));
+                let settings_provider = Arc::new(SettingsTableProvider::new(settings_view));
+                system_tables.set_settings_provider(settings_provider);
+
+                // Inject ServerLogsTableProvider with logs path (reads JSON log files)
+                let server_logs_provider = Arc::new(
+                    kalamdb_system::ServerLogsTableProvider::new(&config.logging.logs_path),
+                );
+                system_tables.set_server_logs_provider(server_logs_provider);
 
                 // Register all system tables in DataFusion
+                // Use config-driven DataFusion settings for parallelism
                 let session_factory = Arc::new(
-                    DataFusionSessionFactory::new()
+                    DataFusionSessionFactory::with_config(&config.datafusion)
                         .expect("Failed to create DataFusion session factory"),
                 );
                 let base_session_context = Arc::new(session_factory.create_session());
@@ -318,10 +333,17 @@ impl AppContext {
                     manifest_cache_service,
                     manifest_service,
                     sql_executor: OnceCell::new(),
+                    server_start_time: Instant::now(),
                 });
 
                 // Attach AppContext to components that require it (JobsManager)
                 job_manager.set_app_context(Arc::clone(&app_ctx));
+
+                // Wire up StatsTableProvider metrics callback now that AppContext exists
+                let app_ctx_for_stats = Arc::clone(&app_ctx);
+                stats_provider.set_metrics_callback(Arc::new(move || {
+                    app_ctx_for_stats.compute_metrics()
+                }));
 
                 app_ctx
             })
@@ -394,9 +416,19 @@ impl AppContext {
         // Create minimal schema registry
         let schema_registry = Arc::new(SchemaRegistry::new(100));
 
-        // Inject real StatsTableProvider with schema registry access
-        let stats_provider = Arc::new(StatsTableProvider::new(Some(schema_registry.clone())));
-        system_tables.set_stats_provider(stats_provider);
+        // Create StatsTableProvider (callback will be set after AppContext is created for tests)
+        let stats_provider = Arc::new(StatsTableProvider::new());
+        system_tables.set_stats_provider(stats_provider.clone());
+
+        // Inject SettingsTableProvider with default config for testing
+        let settings_view = Arc::new(SettingsView::with_config(ServerConfig::default()));
+        let settings_provider = Arc::new(SettingsTableProvider::new(settings_view));
+        system_tables.set_settings_provider(settings_provider);
+
+        // Inject ServerLogsTableProvider with temp path for testing
+        let server_logs_provider =
+            Arc::new(kalamdb_system::ServerLogsTableProvider::new("/tmp/kalamdb-test/logs"));
+        system_tables.set_server_logs_provider(server_logs_provider);
 
         // Create DataFusion session
         let session_factory = Arc::new(
@@ -469,6 +501,7 @@ impl AppContext {
             manifest_cache_service,
             manifest_service,
             sql_executor: OnceCell::new(),
+            server_start_time: Instant::now(),
         }
     }
 
@@ -522,9 +555,20 @@ impl AppContext {
         // Create schema cache
         let schema_registry = Arc::new(SchemaRegistry::new(10000));
 
-        // Inject real StatsTableProvider with schema registry access
-        let stats_provider = Arc::new(StatsTableProvider::new(Some(schema_registry.clone())));
-        system_tables.set_stats_provider(stats_provider);
+        // Create StatsTableProvider (callback will be set after AppContext is created)
+        let stats_provider = Arc::new(StatsTableProvider::new());
+        system_tables.set_stats_provider(stats_provider.clone());
+
+        // Inject SettingsTableProvider with default config
+        let settings_view = Arc::new(SettingsView::with_config(ServerConfig::default()));
+        let settings_provider = Arc::new(SettingsTableProvider::new(settings_view));
+        system_tables.set_settings_provider(settings_provider);
+
+        // Inject ServerLogsTableProvider with default logs path
+        let default_logs_path = format!("{}/logs", storage_base_path);
+        let server_logs_provider =
+            Arc::new(kalamdb_system::ServerLogsTableProvider::new(&default_logs_path));
+        system_tables.set_server_logs_provider(server_logs_provider);
 
         // Register all system tables in DataFusion
         let session_factory = Arc::new(
@@ -648,6 +692,7 @@ impl AppContext {
             manifest_cache_service,
             manifest_service,
             sql_executor: OnceCell::new(),
+            server_start_time: Instant::now(),
         });
 
         // Attach AppContext to job_manager
@@ -816,5 +861,100 @@ impl AppContext {
             .jobs()
             .list_jobs()
             .map_err(|e| crate::error::KalamDbError::Other(format!("Failed to scan jobs: {}", e)))
+    }
+
+    /// Get server uptime in seconds
+    pub fn uptime_seconds(&self) -> u64 {
+        self.server_start_time.elapsed().as_secs()
+    }
+
+    /// Compute current system metrics snapshot
+    ///
+    /// Returns a vector of (metric_name, metric_value) tuples for display
+    /// in system.stats virtual view.
+    pub fn compute_metrics(&self) -> Vec<(String, String)> {
+        let mut metrics = Vec::new();
+
+        // Server uptime
+        let uptime = self.uptime_seconds();
+        metrics.push(("server_uptime_seconds".to_string(), uptime.to_string()));
+
+        // Format uptime as human-readable
+        let days = uptime / 86400;
+        let hours = (uptime % 86400) / 3600;
+        let minutes = (uptime % 3600) / 60;
+        let uptime_human = if days > 0 {
+            format!("{}d {}h {}m", days, hours, minutes)
+        } else if hours > 0 {
+            format!("{}h {}m", hours, minutes)
+        } else {
+            format!("{}m", minutes)
+        };
+        metrics.push(("server_uptime_human".to_string(), uptime_human));
+
+        // Count entities from system tables
+        // Users count
+        if let Ok(batch) = self.system_tables.users().scan_all_users() {
+            metrics.push(("total_users".to_string(), batch.num_rows().to_string()));
+        } else {
+            metrics.push(("total_users".to_string(), "0".to_string()));
+        }
+
+        // Namespaces count
+        if let Ok(namespaces) = self.system_tables.namespaces().scan_all() {
+            metrics.push(("total_namespaces".to_string(), namespaces.len().to_string()));
+        } else {
+            metrics.push(("total_namespaces".to_string(), "0".to_string()));
+        }
+
+        // Tables count
+        if let Ok(tables) = self.system_tables.tables().scan_all() {
+            metrics.push(("total_tables".to_string(), tables.len().to_string()));
+        } else {
+            metrics.push(("total_tables".to_string(), "0".to_string()));
+        }
+
+        // Jobs count
+        if let Ok(jobs) = self.system_tables.jobs().list_jobs() {
+            metrics.push(("total_jobs".to_string(), jobs.len().to_string()));
+        } else {
+            metrics.push(("total_jobs".to_string(), "0".to_string()));
+        }
+
+        // Storages count
+        if let Ok(batch) = self.system_tables.storages().scan_all_storages() {
+            metrics.push(("total_storages".to_string(), batch.num_rows().to_string()));
+        } else {
+            metrics.push(("total_storages".to_string(), "0".to_string()));
+        }
+
+        // Live queries count
+        if let Ok(batch) = self.system_tables.live_queries().scan_all_live_queries() {
+            metrics.push(("total_live_queries".to_string(), batch.num_rows().to_string()));
+        } else {
+            metrics.push(("total_live_queries".to_string(), "0".to_string()));
+        }
+
+        // Active WebSocket connections
+        let active_connections = self.connection_registry.connection_count();
+        metrics.push(("active_connections".to_string(), active_connections.to_string()));
+
+        // Schema cache size and stats
+        let cache_size = self.schema_registry.len();
+        metrics.push(("schema_cache_size".to_string(), cache_size.to_string()));
+
+        // Schema cache hit rate
+        let (_, hits, misses, hit_rate) = self.schema_registry.stats();
+        metrics.push(("schema_cache_hits".to_string(), hits.to_string()));
+        metrics.push(("schema_cache_misses".to_string(), misses.to_string()));
+        metrics.push(("schema_cache_hit_rate".to_string(), format!("{:.2}%", hit_rate * 100.0)));
+
+        // Node ID
+        metrics.push(("node_id".to_string(), self.node_id.as_str().to_string()));
+
+        // Server version (from config)
+        metrics.push(("server_version".to_string(), "0.1.1".to_string()));
+
+        metrics
     }
 }

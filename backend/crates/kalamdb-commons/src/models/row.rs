@@ -43,7 +43,11 @@ pub enum RowConversionError {
     ColumnCountMismatch { expected: usize, actual: usize },
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+/// Internal storage representation for ScalarValue
+/// Uses derive for bincode compatibility (storage)
+/// Note: Int64 and UInt64 are stored as strings to preserve precision in JSON
+/// (JavaScript's Number.MAX_SAFE_INTEGER = 2^53-1 causes precision loss for large i64/u64)
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 enum StoredScalarValue {
     Null,
     Boolean(Option<bool>),
@@ -52,11 +56,13 @@ enum StoredScalarValue {
     Int8(Option<i8>),
     Int16(Option<i16>),
     Int32(Option<i32>),
-    Int64(Option<i64>),
+    /// Int64 stored as string to preserve precision in JSON
+    Int64(Option<String>),
     UInt8(Option<u8>),
     UInt16(Option<u16>),
     UInt32(Option<u32>),
-    UInt64(Option<u64>),
+    /// UInt64 stored as string to preserve precision in JSON
+    UInt64(Option<String>),
     Utf8(Option<String>),
     LargeUtf8(Option<String>),
     Binary(Option<Vec<u8>>),
@@ -101,11 +107,11 @@ impl From<&ScalarValue> for StoredScalarValue {
             ScalarValue::Int8(v) => StoredScalarValue::Int8(*v),
             ScalarValue::Int16(v) => StoredScalarValue::Int16(*v),
             ScalarValue::Int32(v) => StoredScalarValue::Int32(*v),
-            ScalarValue::Int64(v) => StoredScalarValue::Int64(*v),
+            ScalarValue::Int64(v) => StoredScalarValue::Int64(v.map(|i| i.to_string())),
             ScalarValue::UInt8(v) => StoredScalarValue::UInt8(*v),
             ScalarValue::UInt16(v) => StoredScalarValue::UInt16(*v),
             ScalarValue::UInt32(v) => StoredScalarValue::UInt32(*v),
-            ScalarValue::UInt64(v) => StoredScalarValue::UInt64(*v),
+            ScalarValue::UInt64(v) => StoredScalarValue::UInt64(v.map(|i| i.to_string())),
             ScalarValue::Utf8(v) => StoredScalarValue::Utf8(v.clone()),
             ScalarValue::LargeUtf8(v) => StoredScalarValue::LargeUtf8(v.clone()),
             ScalarValue::Binary(v) => StoredScalarValue::Binary(v.clone()),
@@ -152,11 +158,15 @@ impl From<StoredScalarValue> for ScalarValue {
             StoredScalarValue::Int8(v) => ScalarValue::Int8(v),
             StoredScalarValue::Int16(v) => ScalarValue::Int16(v),
             StoredScalarValue::Int32(v) => ScalarValue::Int32(v),
-            StoredScalarValue::Int64(v) => ScalarValue::Int64(v),
+            StoredScalarValue::Int64(v) => {
+                ScalarValue::Int64(v.and_then(|s| s.parse::<i64>().ok()))
+            }
             StoredScalarValue::UInt8(v) => ScalarValue::UInt8(v),
             StoredScalarValue::UInt16(v) => ScalarValue::UInt16(v),
             StoredScalarValue::UInt32(v) => ScalarValue::UInt32(v),
-            StoredScalarValue::UInt64(v) => ScalarValue::UInt64(v),
+            StoredScalarValue::UInt64(v) => {
+                ScalarValue::UInt64(v.and_then(|s| s.parse::<u64>().ok()))
+            }
             StoredScalarValue::Utf8(v) => ScalarValue::Utf8(v),
             StoredScalarValue::LargeUtf8(v) => ScalarValue::LargeUtf8(v),
             StoredScalarValue::Binary(v) => ScalarValue::Binary(v),

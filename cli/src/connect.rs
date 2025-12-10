@@ -90,7 +90,9 @@ pub async fn create_session(
         .or_else(|| config.auth.as_ref().and_then(|a| a.jwt_token.clone()))
     {
         AuthProvider::jwt_token(token)
-    } else if let (Some(username), Some(password)) = (cli.username.clone(), cli.password.clone()) {
+    } else if let Some(username) = cli.username.clone() {
+        // If --username is provided, use it with password (or empty if not provided)
+        let password = cli.password.clone().unwrap_or_default();
         AuthProvider::basic_auth(username, password)
     } else if let Some(creds) = credential_store
         .get_credentials(&cli.instance)
@@ -102,11 +104,12 @@ pub async fn create_session(
         }
         AuthProvider::basic_auth(creds.username, creds.password)
     } else if is_localhost_url(&server_url) {
-        // Auto-authenticate with root user for localhost connections (no password needed from localhost)
+        // Auto-authenticate with root user for localhost connections
         if cli.verbose {
             eprintln!("Auto-authenticating with root user for localhost connection");
         }
-        AuthProvider::basic_auth("root".to_string(), String::new())
+        // Use default root password (admin123)
+        AuthProvider::basic_auth("root".to_string(), "admin123".to_string())
     } else {
         AuthProvider::None
     };

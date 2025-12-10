@@ -1,0 +1,27 @@
+# Custom cross-compilation image for x86_64-unknown-linux-gnu
+# Includes LLVM 16 for RocksDB bindgen compatibility
+FROM ghcr.io/cross-rs/x86_64-unknown-linux-gnu:main
+
+# Remove old LLVM and install newer version for bindgen (RocksDB requires clang_Type_getValueType)
+RUN apt-get update && \
+    apt-get remove -y --purge llvm-10* libclang-10* clang-10* || true && \
+    apt-get autoremove -y && \
+    apt-get install -y \
+        wget \
+        lsb-release \
+        software-properties-common \
+        gnupg && \
+    wget https://apt.llvm.org/llvm.sh && \
+    chmod +x llvm.sh && \
+    ./llvm.sh 16 all && \
+    apt-get install -y libclang-16-dev llvm-16-dev && \
+    update-alternatives --install /usr/bin/clang clang /usr/bin/clang-16 100 && \
+    update-alternatives --install /usr/bin/clang++ clang++ /usr/bin/clang++-16 100 && \
+    update-alternatives --install /usr/bin/llvm-config llvm-config /usr/bin/llvm-config-16 100 && \
+    rm -rf /var/lib/apt/lists/* llvm.sh
+
+# Set environment for bindgen/clang-sys
+ENV LIBCLANG_PATH=/usr/lib/llvm-16/lib
+ENV LLVM_CONFIG_PATH=/usr/bin/llvm-config-16
+ENV CLANG_PATH=/usr/bin/clang-16
+

@@ -268,27 +268,19 @@ impl KalamLinkClientBuilder {
 
     /// Build the client
     pub fn build(self) -> Result<KalamLinkClient> {
-        use reqwest::header::{HeaderMap, HeaderValue, CONNECTION};
-        
         let base_url = self
             .base_url
             .ok_or_else(|| KalamLinkError::ConfigurationError("base_url is required".into()))?;
 
-        // Set Connection: close header to force immediate connection closure
-        // This prevents CLOSE_WAIT accumulation and 30s delays
-        let mut default_headers = HeaderMap::new();
-        default_headers.insert(CONNECTION, HeaderValue::from_static("close"));
-
-        // Build HTTP client with protocol version configuration
+        // Build HTTP client with connection pooling for better throughput
+        // Keep-alive connections reduce TCP handshake overhead significantly
         let mut client_builder = reqwest::Client::builder()
             .timeout(self.timeout)
             .connect_timeout(self.timeouts.connection_timeout)
-            // Disable connection pooling completely
-            .pool_max_idle_per_host(0)
-            // Set idle timeout to 0 to immediately close unused connections  
-            .pool_idle_timeout(std::time::Duration::from_millis(0))
-            // Add Connection: close header to all requests
-            .default_headers(default_headers);
+            // Enable connection pooling for high throughput (keep-alive)
+            .pool_max_idle_per_host(10)
+            // Keep idle connections for 90 seconds (slightly longer than server's 75s)
+            .pool_idle_timeout(std::time::Duration::from_secs(90));
 
         // Configure HTTP version based on connection options
         client_builder = match self.connection_options.http_version {

@@ -1,5 +1,5 @@
 // Snowflake ID generator
-use std::sync::Mutex;
+use parking_lot::Mutex;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 /// Snowflake ID generator for time-ordered unique identifiers
@@ -63,7 +63,7 @@ impl SnowflakeGenerator {
 
     /// Generate the next Snowflake ID
     pub fn next_id(&self) -> Result<i64, String> {
-        let mut state = self.state.lock().unwrap();
+        let mut state = self.state.lock();
 
         let mut timestamp = self.current_timestamp()?;
 
@@ -173,7 +173,7 @@ impl SnowflakeGenerator {
             return Ok(Vec::new());
         }
 
-        let mut state = self.state.lock().unwrap();
+        let mut state = self.state.lock();
         let mut ids = Vec::with_capacity(count);
 
         for _ in 0..count {

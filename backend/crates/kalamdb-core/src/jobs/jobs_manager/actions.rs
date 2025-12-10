@@ -12,7 +12,7 @@ impl JobsManager {
         self.jobs_provider
             .insert_job_async(job)
             .await
-            .map_err(|e| KalamDbError::IoError(format!("Failed to insert job: {}", e)))
+            .map_err(|e| KalamDbError::io_message(format!("Failed to insert job: {}", e)))
     }
 
     /// Create a new job
@@ -198,7 +198,7 @@ impl JobsManager {
         self.jobs_provider
             .update_job_async(cancelled_job)
             .await
-            .map_err(|e| KalamDbError::IoError(format!("Failed to cancel job: {}", e)))?;
+            .map_err(|e| KalamDbError::io_message(format!("Failed to cancel job: {}", e)))?;
 
         // Log cancellation
         self.log_job_event(job_id, "warn", "Job cancelled by user");

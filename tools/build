@@ -36,6 +36,7 @@ REPO_OWNER="jamals86"
 REPO_NAME="KalamDB"
 DOCKERHUB_REPO="jamals86/kalamdb"
 PROFILE="release-dist"
+CROSS_PROFILE="docker"  # Use docker profile for cross-compilation (less memory intensive)
 
 # Platform configurations: name:rust_target:file_ext
 PLATFORMS=(
@@ -326,7 +327,6 @@ build_platform() {
     
     local cli_bin="kalam${file_ext}"
     local server_bin="kalamdb-server${file_ext}"
-    local build_dir="$ROOT_DIR/target/${rust_target}/${PROFILE}"
     local output_dir="$DIST_DIR/$version"
     
     mkdir -p "$output_dir"
@@ -345,18 +345,48 @@ build_platform() {
         Linux-aarch64) current_target="aarch64-unknown-linux-gnu" ;;
     esac
     
-    if [[ "$rust_target" != "$current_target" ]]; then
+    # Check if cross-compilation is needed
+    local needs_cross=false
+    case "$(uname -s)" in
+        Darwin)
+            # macOS can only natively build for macOS targets
+            if [[ "$rust_target" == *"linux"* ]] || [[ "$rust_target" == *"windows"* ]]; then
+                needs_cross=true
+            fi
+            ;;
+        Linux)
+            # Linux can only natively build for Linux targets (same arch)
+            if [[ "$rust_target" == *"darwin"* ]] || [[ "$rust_target" == *"windows"* ]]; then
+                needs_cross=true
+            elif [[ "$rust_target" != "$current_target" ]]; then
+                needs_cross=true
+            fi
+            ;;
+    esac
+    
+    if [[ "$needs_cross" == true ]]; then
         if command -v cross &> /dev/null; then
             build_cmd="cross"
         else
-            print_warning "cross not installed, attempting native build (may fail for $platform_name)"
+            print_error "Cannot build $platform_name on $(uname -s) without 'cross' tool"
+            print_info "Install cross: cargo install cross"
+            print_info "Note: cross requires Docker to be running"
+            return 1
         fi
     fi
+    
+    # Select profile based on whether we're cross-compiling
+    local selected_profile="$PROFILE"
+    if [[ "$build_cmd" == "cross" ]]; then
+        selected_profile="$CROSS_PROFILE"
+        print_info "Using '$CROSS_PROFILE' profile for cross-compilation (less memory intensive)"
+    fi
+    local build_dir="$ROOT_DIR/target/${rust_target}/${selected_profile}"
     
     # Build with full output
     echo ""
     cd "$ROOT_DIR"
-    if ! $build_cmd build --profile "$PROFILE" --target "$rust_target"; then
+    if ! $build_cmd build --profile "$selected_profile" --target "$rust_target"; then
         print_error "Build command failed for $platform_name"
         return 1
     fi

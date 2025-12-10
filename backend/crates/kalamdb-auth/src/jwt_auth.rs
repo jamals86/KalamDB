@@ -1,8 +1,14 @@
 // JWT authentication and validation module
 
 use crate::error::{AuthError, AuthResult};
-use jsonwebtoken::{decode, decode_header, Algorithm, DecodingKey, Validation};
+use jsonwebtoken::{decode, decode_header, encode, Algorithm, DecodingKey, EncodingKey, Header, Validation};
 use serde::{Deserialize, Serialize};
+
+/// Default JWT expiration time in hours
+pub const DEFAULT_JWT_EXPIRY_HOURS: i64 = 24;
+
+/// Default issuer for KalamDB tokens
+pub const KALAMDB_ISSUER: &str = "kalamdb";
 
 /// JWT claims structure for KalamDB tokens.
 ///
@@ -23,6 +29,94 @@ pub struct JwtClaims {
     pub email: Option<String>,
     /// Role (custom claim)
     pub role: Option<String>,
+}
+
+impl JwtClaims {
+    /// Create new JWT claims for a user.
+    ///
+    /// # Arguments
+    /// * `user_id` - User's unique identifier
+    /// * `username` - Username
+    /// * `role` - User's role
+    /// * `email` - Optional email address
+    /// * `expiry_hours` - Token expiration in hours (defaults to DEFAULT_JWT_EXPIRY_HOURS)
+    pub fn new(
+        user_id: &str,
+        username: &str,
+        role: &str,
+        email: Option<&str>,
+        expiry_hours: Option<i64>,
+    ) -> Self {
+        let now = chrono::Utc::now();
+        let exp_hours = expiry_hours.unwrap_or(DEFAULT_JWT_EXPIRY_HOURS);
+        let exp = now + chrono::Duration::hours(exp_hours);
+
+        Self {
+            sub: user_id.to_string(),
+            iss: KALAMDB_ISSUER.to_string(),
+            exp: exp.timestamp() as usize,
+            iat: now.timestamp() as usize,
+            username: Some(username.to_string()),
+            email: email.map(|e| e.to_string()),
+            role: Some(role.to_string()),
+        }
+    }
+}
+
+/// Generate a new JWT token.
+///
+/// # Arguments
+/// * `claims` - JWT claims to encode
+/// * `secret` - Secret key for signing
+///
+/// # Returns
+/// Encoded JWT token string
+///
+/// # Errors
+/// Returns `AuthError::HashingError` if encoding fails
+pub fn generate_jwt_token(claims: &JwtClaims, secret: &str) -> AuthResult<String> {
+    let header = Header::new(Algorithm::HS256);
+    let encoding_key = EncodingKey::from_secret(secret.as_bytes());
+
+    encode(&header, claims, &encoding_key)
+        .map_err(|e| AuthError::HashingError(format!("JWT encoding error: {}", e)))
+}
+
+/// Refresh a JWT token by generating a new token with extended expiration.
+///
+/// This validates the existing token first, then creates a new token
+/// with the same claims but a new expiration time.
+///
+/// # Arguments
+/// * `token` - Existing JWT token
+/// * `secret` - Secret key for validation and signing
+/// * `expiry_hours` - New expiration time in hours
+///
+/// # Returns
+/// New JWT token with extended expiration
+///
+/// # Errors
+/// Returns error if existing token is invalid or expired
+pub fn refresh_jwt_token(
+    token: &str,
+    secret: &str,
+    expiry_hours: Option<i64>,
+) -> AuthResult<(String, JwtClaims)> {
+    // First validate the existing token (with trusted issuer = kalamdb)
+    let trusted_issuers = vec![KALAMDB_ISSUER.to_string()];
+    let old_claims = validate_jwt_token(token, secret, &trusted_issuers)?;
+
+    // Create new claims with same user info but new expiration
+    let new_claims = JwtClaims::new(
+        &old_claims.sub,
+        old_claims.username.as_deref().unwrap_or(""),
+        old_claims.role.as_deref().unwrap_or("user"),
+        old_claims.email.as_deref(),
+        expiry_hours,
+    );
+
+    let new_token = generate_jwt_token(&new_claims, secret)?;
+    Ok((new_token, new_claims))
 }
 
 /// Validate a JWT token and extract claims.

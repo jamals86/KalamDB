@@ -24,6 +24,7 @@ use datafusion::error::Result as DataFusionResult;
 use datafusion::logical_expr::{Expr, TableProviderFilterPushDown};
 use datafusion::physical_plan::ExecutionPlan;
 use datafusion::scalar::ScalarValue;
+use kalamdb_commons::constants::SystemColumnNames;
 use kalamdb_commons::ids::StreamTableRowId;
 use kalamdb_commons::models::UserId;
 use kalamdb_commons::{Role, StorageKey, TableId};
@@ -92,6 +93,19 @@ impl StreamTableProvider {
             primary_key_field_name,
             schema,
         }
+    }
+
+    /// Build a complete Row from StreamTableRow including system column (_seq)
+    ///
+    /// This ensures live query notifications include all columns, not just user-defined fields.
+    /// Stream tables don't have _deleted column.
+    fn build_notification_row(entity: &StreamTableRow) -> Row {
+        let mut values = entity.fields.values.clone();
+        values.insert(
+            SystemColumnNames::SEQ.to_string(),
+            ScalarValue::Int64(Some(entity._seq.as_i64())),
+        );
+        Row::new(values)
     }
 
     /// Expose the underlying store (used by maintenance jobs such as stream eviction)
@@ -228,9 +242,8 @@ impl BaseTableProvider<StreamTableRowId, StreamTableRow> for StreamTableProvider
                 table_id.table_name().as_str()
             );
 
-            // Flatten event fields (user_id injected by manager)
-            let obj = entity.fields.values.clone();
-            let row = Row::new(obj);
+            // Build complete row including system column (_seq)
+            let row = Self::build_notification_row(&entity);
 
             let notification = ChangeNotification::insert(table_id.clone(), row);
             log::debug!(
