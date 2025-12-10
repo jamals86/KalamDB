@@ -1,6 +1,7 @@
 import { useAuth } from "@/lib/auth";
 import { Button } from "@/components/ui/button";
 import { LogOut, User } from "lucide-react";
+import { NotificationsDropdown } from "./NotificationsDropdown";
 
 export default function Header() {
   const { user, logout } = useAuth();
@@ -15,6 +16,7 @@ export default function Header() {
         {/* Breadcrumbs or page title can go here */}
       </div>
       <div className="flex items-center gap-4">
+        <NotificationsDropdown />
         <div className="flex items-center gap-2 text-sm">
           <User className="h-4 w-4" />
           <span>{user?.username}</span>

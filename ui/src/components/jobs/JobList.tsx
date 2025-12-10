@@ -1,0 +1,403 @@
+import { useEffect, useState } from 'react';
+import { useJobs, Job, JobFilters } from '@/hooks/useJobs';
+import {
+  Table,
+  TableBody,
+  TableCell,
+  TableHead,
+  TableHeader,
+  TableRow,
+} from '@/components/ui/table';
+import { Button } from '@/components/ui/button';
+import { Input } from '@/components/ui/input';
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogHeader,
+  DialogTitle,
+} from '@/components/ui/dialog';
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from '@/components/ui/select';
+import { Loader2, RefreshCw, Filter, X, Eye, Play, CheckCircle, XCircle, Clock, AlertCircle } from 'lucide-react';
+
+const STATUS_COLORS: Record<string, string> = {
+  'New': 'bg-gray-100 text-gray-800',
+  'Queued': 'bg-blue-100 text-blue-800',
+  'Running': 'bg-yellow-100 text-yellow-800',
+  'Completed': 'bg-green-100 text-green-800',
+  'Failed': 'bg-red-100 text-red-800',
+  'Cancelled': 'bg-gray-100 text-gray-800',
+  'Retrying': 'bg-orange-100 text-orange-800',
+};
+
+const STATUS_ICONS: Record<string, React.ReactNode> = {
+  'New': <Clock className="h-3 w-3" />,
+  'Queued': <Clock className="h-3 w-3" />,
+  'Running': <Play className="h-3 w-3 animate-pulse" />,
+  'Completed': <CheckCircle className="h-3 w-3" />,
+  'Failed': <XCircle className="h-3 w-3" />,
+  'Cancelled': <XCircle className="h-3 w-3" />,
+  'Retrying': <AlertCircle className="h-3 w-3" />,
+};
+
+function getStatusColor(status: string): string {
+  return STATUS_COLORS[status] || 'bg-gray-100 text-gray-800';
+}
+
+function formatTimestamp(timestamp: string | number | null): string {
+  if (!timestamp) return '-';
+  try {
+    // Handle both string and number (unix timestamp in ms)
+    const date = typeof timestamp === 'number' 
+      ? new Date(timestamp) 
+      : new Date(timestamp);
+    return date.toLocaleString();
+  } catch {
+    return String(timestamp);
+  }
+}
+
+function formatDuration(startedAt: string | null, completedAt: string | null): string {
+  if (!startedAt) return '-';
+  
+  const start = new Date(startedAt).getTime();
+  const end = completedAt ? new Date(completedAt).getTime() : Date.now();
+  const durationMs = end - start;
+  
+  if (durationMs < 1000) return `${durationMs}ms`;
+  if (durationMs < 60000) return `${(durationMs / 1000).toFixed(1)}s`;
+  return `${(durationMs / 60000).toFixed(1)}m`;
+}
+
+interface JobListProps {
+  initialFilters?: JobFilters;
+  compact?: boolean;
+  onJobClick?: (job: Job) => void;
+}
+
+export function JobList({ initialFilters, compact = false, onJobClick }: JobListProps) {
+  const { jobs, isLoading, error, fetchJobs } = useJobs();
+  const [showFilters, setShowFilters] = useState(false);
+  const [selectedJob, setSelectedJob] = useState<Job | null>(null);
+  const [filters, setFilters] = useState<JobFilters>(initialFilters || {
+    limit: 100,
+  });
+
+  useEffect(() => {
+    fetchJobs(filters);
+  }, []);
+
+  const handleApplyFilters = () => {
+    fetchJobs(filters);
+    setShowFilters(false);
+  };
+
+  const handleClearFilters = () => {
+    const clearedFilters = { limit: 100 };
+    setFilters(clearedFilters);
+    fetchJobs(clearedFilters);
+    setShowFilters(false);
+  };
+
+  const hasActiveFilters = filters.status || filters.job_type || filters.namespace_id;
+
+  const handleJobClick = (job: Job) => {
+    if (onJobClick) {
+      onJobClick(job);
+    } else {
+      setSelectedJob(job);
+    }
+  };
+
+  if (error) {
+    return (
+      <Card className="border-red-200">
+        <CardContent className="py-6">
+          <p className="text-red-700">{error}</p>
+          <Button variant="outline" onClick={() => fetchJobs(filters)} className="mt-2">
+            Retry
+          </Button>
+        </CardContent>
+      </Card>
+    );
+  }
+
+  return (
+    <div className="space-y-4">
+      {/* Toolbar */}
+      {!compact && (
+        <div className="flex items-center justify-between">
+          <div className="flex items-center gap-2">
+            <Button
+              variant={showFilters ? 'secondary' : 'outline'}
+              onClick={() => setShowFilters(!showFilters)}
+            >
+              <Filter className="h-4 w-4 mr-2" />
+              Filters
+              {hasActiveFilters && (
+                <span className="ml-2 px-1.5 py-0.5 bg-primary text-primary-foreground rounded-full text-xs">
+                  Active
+                </span>
+              )}
+            </Button>
+            {hasActiveFilters && (
+              <Button variant="ghost" size="sm" onClick={handleClearFilters}>
+                <X className="h-4 w-4 mr-1" />
+                Clear
+              </Button>
+            )}
+          </div>
+          <div className="flex items-center gap-2">
+            <span className="text-sm text-muted-foreground">
+              {jobs.length} job{jobs.length !== 1 ? 's' : ''}
+            </span>
+            <Button variant="outline" size="icon" onClick={() => fetchJobs(filters)} disabled={isLoading}>
+              <RefreshCw className={`h-4 w-4 ${isLoading ? 'animate-spin' : ''}`} />
+            </Button>
+          </div>
+        </div>
+      )}
+
+      {/* Filter Panel */}
+      {showFilters && !compact && (
+        <Card>
+          <CardContent className="pt-4">
+            <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
+              <div className="space-y-1">
+                <label className="text-sm font-medium">Status</label>
+                <Select
+                  value={filters.status || ''}
+                  onValueChange={(value) => setFilters({ ...filters, status: value || undefined })}
+                >
+                  <SelectTrigger>
+                    <SelectValue placeholder="All statuses" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="">All</SelectItem>
+                    <SelectItem value="New">New</SelectItem>
+                    <SelectItem value="Queued">Queued</SelectItem>
+                    <SelectItem value="Running">Running</SelectItem>
+                    <SelectItem value="Completed">Completed</SelectItem>
+                    <SelectItem value="Failed">Failed</SelectItem>
+                    <SelectItem value="Cancelled">Cancelled</SelectItem>
+                    <SelectItem value="Retrying">Retrying</SelectItem>
+                  </SelectContent>
+                </Select>
+              </div>
+              <div className="space-y-1">
+                <label className="text-sm font-medium">Job Type</label>
+                <Input
+                  placeholder="e.g., Flush, Cleanup"
+                  value={filters.job_type || ''}
+                  onChange={(e) => setFilters({ ...filters, job_type: e.target.value || undefined })}
+                />
+              </div>
+              <div className="space-y-1">
+                <label className="text-sm font-medium">Namespace</label>
+                <Input
+                  placeholder="Filter by namespace"
+                  value={filters.namespace_id || ''}
+                  onChange={(e) => setFilters({ ...filters, namespace_id: e.target.value || undefined })}
+                />
+              </div>
+              <div className="flex items-end">
+                <Button onClick={handleApplyFilters} className="w-full">
+                  Apply Filters
+                </Button>
+              </div>
+            </div>
+          </CardContent>
+        </Card>
+      )}
+
+      {/* Table */}
+      {isLoading && jobs.length === 0 ? (
+        <div className="flex items-center justify-center py-8">
+          <Loader2 className="h-6 w-6 animate-spin text-muted-foreground" />
+        </div>
+      ) : jobs.length === 0 ? (
+        <Card>
+          <CardHeader>
+            <CardTitle>No Jobs Found</CardTitle>
+            <CardDescription>
+              {hasActiveFilters 
+                ? 'No jobs match the current filters. Try adjusting your filters.'
+                : 'No jobs have been recorded yet.'}
+            </CardDescription>
+          </CardHeader>
+        </Card>
+      ) : (
+        <div className="border rounded-lg">
+          <Table>
+            <TableHeader>
+              <TableRow>
+                <TableHead>Status</TableHead>
+                <TableHead>Job Type</TableHead>
+                <TableHead>Namespace / Table</TableHead>
+                <TableHead>Created</TableHead>
+                <TableHead>Duration</TableHead>
+                {!compact && <TableHead>Node</TableHead>}
+                <TableHead className="w-[50px]"></TableHead>
+              </TableRow>
+            </TableHeader>
+            <TableBody>
+              {jobs.map((job) => (
+                <TableRow 
+                  key={job.job_id} 
+                  className="cursor-pointer hover:bg-muted/50"
+                  onClick={() => handleJobClick(job)}
+                >
+                  <TableCell>
+                    <span className={`inline-flex items-center gap-1.5 px-2 py-1 rounded-full text-xs font-medium ${getStatusColor(job.status)}`}>
+                      {STATUS_ICONS[job.status]}
+                      {job.status}
+                    </span>
+                  </TableCell>
+                  <TableCell className="font-medium">{job.job_type}</TableCell>
+                  <TableCell>
+                    <span className="text-muted-foreground">{job.namespace_id}</span>
+                    {job.table_name && (
+                      <span>.{job.table_name}</span>
+                    )}
+                  </TableCell>
+                  <TableCell className="text-sm text-muted-foreground">
+                    {formatTimestamp(job.created_at)}
+                  </TableCell>
+                  <TableCell className="text-sm">
+                    {job.status === 'Running' ? (
+                      <span className="text-yellow-600 font-medium">
+                        {formatDuration(job.started_at, null)}
+                      </span>
+                    ) : (
+                      formatDuration(job.started_at, job.completed_at)
+                    )}
+                  </TableCell>
+                  {!compact && (
+                    <TableCell className="text-sm text-muted-foreground">
+                      {job.node_id}
+                    </TableCell>
+                  )}
+                  <TableCell>
+                    <Button variant="ghost" size="sm">
+                      <Eye className="h-4 w-4" />
+                    </Button>
+                  </TableCell>
+                </TableRow>
+              ))}
+            </TableBody>
+          </Table>
+        </div>
+      )}
+
+      {/* Job Details Dialog */}
+      <Dialog open={!!selectedJob} onOpenChange={() => setSelectedJob(null)}>
+        <DialogContent className="max-w-2xl max-h-[80vh] overflow-auto">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2">
+              Job Details
+              {selectedJob && (
+                <span className={`inline-flex items-center gap-1.5 px-2 py-1 rounded-full text-xs font-medium ${getStatusColor(selectedJob.status)}`}>
+                  {STATUS_ICONS[selectedJob.status]}
+                  {selectedJob.status}
+                </span>
+              )}
+            </DialogTitle>
+            <DialogDescription>
+              {selectedJob?.job_id}
+            </DialogDescription>
+          </DialogHeader>
+          {selectedJob && (
+            <div className="space-y-4">
+              <div className="grid grid-cols-2 gap-4">
+                <div>
+                  <label className="text-sm font-medium text-muted-foreground">Job Type</label>
+                  <p className="font-medium">{selectedJob.job_type}</p>
+                </div>
+                <div>
+                  <label className="text-sm font-medium text-muted-foreground">Target</label>
+                  <p className="font-medium">
+                    {selectedJob.namespace_id}
+                    {selectedJob.table_name && `.${selectedJob.table_name}`}
+                  </p>
+                </div>
+                <div>
+                  <label className="text-sm font-medium text-muted-foreground">Created At</label>
+                  <p>{formatTimestamp(selectedJob.created_at)}</p>
+                </div>
+                <div>
+                  <label className="text-sm font-medium text-muted-foreground">Started At</label>
+                  <p>{formatTimestamp(selectedJob.started_at)}</p>
+                </div>
+                <div>
+                  <label className="text-sm font-medium text-muted-foreground">Completed At</label>
+                  <p>{formatTimestamp(selectedJob.completed_at)}</p>
+                </div>
+                <div>
+                  <label className="text-sm font-medium text-muted-foreground">Duration</label>
+                  <p>{formatDuration(selectedJob.started_at, selectedJob.completed_at)}</p>
+                </div>
+                <div>
+                  <label className="text-sm font-medium text-muted-foreground">Node</label>
+                  <p>{selectedJob.node_id}</p>
+                </div>
+              </div>
+              
+              {selectedJob.error_message && (
+                <div>
+                  <label className="text-sm font-medium text-red-600">Error Message</label>
+                  <div className="mt-1 p-3 bg-red-50 dark:bg-red-950/30 rounded-md">
+                    <pre className="text-sm whitespace-pre-wrap text-red-700 dark:text-red-300">{selectedJob.error_message}</pre>
+                  </div>
+                </div>
+              )}
+              
+              {selectedJob.result && (
+                <div>
+                  <label className="text-sm font-medium text-muted-foreground">Result</label>
+                  <div className="mt-1 p-3 bg-muted rounded-md">
+                    <pre className="text-sm whitespace-pre-wrap">{selectedJob.result}</pre>
+                  </div>
+                </div>
+              )}
+              
+              {selectedJob.parameters && (
+                <div>
+                  <label className="text-sm font-medium text-muted-foreground">Parameters</label>
+                  <div className="mt-1 p-3 bg-muted rounded-md overflow-auto">
+                    <pre className="text-sm whitespace-pre-wrap font-mono">
+                      {(() => {
+                        try {
+                          return JSON.stringify(JSON.parse(selectedJob.parameters), null, 2);
+                        } catch {
+                          return selectedJob.parameters;
+                        }
+                      })()}
+                    </pre>
+                  </div>
+                </div>
+              )}
+              
+              {selectedJob.trace && (
+                <div>
+                  <label className="text-sm font-medium text-red-600">Stack Trace</label>
+                  <div className="mt-1 p-3 bg-red-50 dark:bg-red-950/30 rounded-md overflow-auto">
+                    <pre className="text-sm whitespace-pre-wrap font-mono text-red-700 dark:text-red-300">
+                      {selectedJob.trace}
+                    </pre>
+                  </div>
+                </div>
+              )}
+            </div>
+          )}
+        </DialogContent>
+      </Dialog>
+    </div>
+  );
+}

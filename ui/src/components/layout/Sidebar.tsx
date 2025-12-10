@@ -9,6 +9,7 @@ import {
   FileText,
   Settings,
   Database,
+  Cog,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 
@@ -18,6 +19,7 @@ const navigation = [
   { name: "Users", href: "/users", icon: Users },
   { name: "Storages", href: "/storages", icon: HardDrive },
   { name: "Namespaces", href: "/namespaces", icon: FolderTree },
+  { name: "Jobs", href: "/jobs", icon: Cog },
   { name: "Audit Logs", href: "/audit-logs", icon: ScrollText },
   { name: "Server Logs", href: "/server-logs", icon: FileText },
   { name: "Settings", href: "/settings", icon: Settings },

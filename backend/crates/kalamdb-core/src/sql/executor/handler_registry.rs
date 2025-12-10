@@ -454,13 +454,13 @@ impl HandlerRegistry {
         // ============================================================================
         // SUBSCRIPTION HANDLER
         // ============================================================================
-        use kalamdb_sql::ddl::{SubscribeOptions, SubscribeStatement};
+        use kalamdb_sql::ddl::{SubscribeStatement, SubscriptionOptions};
         registry.register_typed(
             SqlStatementKind::Subscribe(SubscribeStatement {
                 select_query: "SELECT * FROM _placeholder._placeholder".to_string(),
                 namespace: NamespaceId::new("_placeholder"),
                 table_name: TableName::new("_placeholder"),
-                options: SubscribeOptions::default(),
+                options: SubscriptionOptions::default(),
             }),
             SubscribeHandler::new(app_context.clone()),
             |stmt| match stmt.kind() {

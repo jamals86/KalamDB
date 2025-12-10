@@ -52,7 +52,9 @@ pub use show_tables::ShowTablesStatement;
 pub use storage_commands::{
     AlterStorageStatement, CreateStorageStatement, DropStorageStatement, ShowStoragesStatement,
 };
-pub use subscribe_commands::{SubscribeOptions, SubscribeStatement};
+pub use subscribe_commands::SubscribeStatement;
+// Re-export SubscriptionOptions from kalamdb_commons for convenience
+pub use kalamdb_commons::websocket::SubscriptionOptions;
 pub use user_commands::{
     AlterUserStatement, CreateUserStatement, DropUserStatement, UserModification,
 };

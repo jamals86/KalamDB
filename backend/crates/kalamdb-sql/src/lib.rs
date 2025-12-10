@@ -54,7 +54,7 @@ pub use compatibility::{
 pub use ddl::{
     parse_job_command, AlterStorageStatement, CreateStorageStatement, DropStorageStatement,
     FlushAllTablesStatement, FlushTableStatement, JobCommand, ShowManifestStatement,
-    ShowStoragesStatement, SubscribeOptions, SubscribeStatement,
+    ShowStoragesStatement, SubscribeStatement, SubscriptionOptions,
 };
 pub use ddl_parent::DdlAst;
 pub use parser::SqlParser;

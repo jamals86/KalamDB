@@ -376,8 +376,8 @@ UI Changes:
 1) The browser should fetch all namespaces/tables/columns in one query not multiple queries for better performance
 2) Display the type of table stream/shared/user tables with icon per type
 3) even when there is an error display the error alone with time took display separatly, we need to be similar to the cli
-4) when subscribe button fails then the subscribe mode is turned off automatically it shouldnt it should stay on
-5) Schema Browser add a refresh button to the right side of the Schema Browser title
-6) no need for save inside sql editor since its auto saved already
-7) the button explain should be history instead
-8) when a query returned 0 rows it should display a table but empty rows currently it displays only green message
+9) whenever subscribing: Live - Subscribed [2:11:04 PM] INSERT: +1 rows (total: 16) add another button which you can open a dialog to view all the mesages/logging which was recieved from the websocket subscription
+10) whenever there is an error in query display only the error not the json: {"status":"error","results":[],"took":4.9274000000000004,"error":{"code":"SQL_EXECUTION_ERROR","message":"Statement 1 failed: Execution error: Schema error: No field named i44d. Valid fields are chat.messages.id, chat.messages.conversation_id, chat.messages.role_id, chat.messages.content, chat.messages.created_at, chat.messages._seq, chat.messages._deleted.","details":"select * from chat.messages where i44d = 256810499606478848"}}
+11) currently when stoping subscription the live checkbox is turned off automatically, it should stay on
+12) The table cells should be selectable when clicking on them, and on each cell you can right mouse click -> view data if it has more data there
+13) when subscribing the first column which is the type should indicate its not an actual column which the user can query its only indication what event type is this, also add to it's left side a timestamp column to indicate when this event came, and whenever a new change is added the newly added row should splash

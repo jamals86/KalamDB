@@ -102,9 +102,10 @@ async fn test_connection_refused() {
     // Should fail with connection refused (very fast)
     assert!(result.is_err(), "Should fail to connect");
     
-    // Connection refused should be nearly instant
+    // Connection refused should be reasonably fast
+    // Note: On Windows, connection refused can take longer due to retry behavior
     assert!(
-        elapsed < Duration::from_secs(2),
+        elapsed < Duration::from_secs(15),
         "Connection refused should be fast, but took {:?}",
         elapsed
     );

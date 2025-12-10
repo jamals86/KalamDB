@@ -277,15 +277,29 @@ pub struct SubscriptionRequest {
 }
 
 /// Options for live query subscriptions
-#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+///
+/// These options control individual subscription behavior including:
+/// - Initial data loading (batch_size, last_rows)
+/// - Data resumption after reconnection (from_seq_id)
+///
+/// Used by both SQL SUBSCRIBE TO command and WebSocket subscribe messages.
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq)]
 pub struct SubscriptionOptions {
-    /// Optional: Configure batch size for initial data streaming
+    /// Hint for server-side batch sizing during initial data load
+    /// Default: server-configured (typically 1000 rows per batch)
     #[serde(skip_serializing_if = "Option::is_none")]
     pub batch_size: Option<usize>,
 
-    /// Optional: Number of last rows to fetch for initial data
+    /// Number of last (newest) rows to fetch for initial data
+    /// Default: None (fetch all matching rows)
     #[serde(skip_serializing_if = "Option::is_none")]
     pub last_rows: Option<u32>,
+
+    /// Resume subscription from a specific sequence ID
+    /// When set, the server will only send changes after this seq_id
+    /// Typically set automatically during reconnection to resume from last received event
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub from_seq_id: Option<SeqId>,
 }
 
 /// Batch control metadata for paginated initial data loading

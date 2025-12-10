@@ -173,6 +173,11 @@ export default function SqlStudio() {
   const [showHistory, setShowHistory] = useState(false);
   const [sorting, setSorting] = useState<SortingState>([]);
   const [schemaFilter, setSchemaFilter] = useState("");
+  // Cell selection and context menu state
+  const [selectedCell, setSelectedCell] = useState<{ rowIndex: number; columnId: string; value: unknown } | null>(null);
+  const [contextMenu, setContextMenu] = useState<{ x: number; y: number; value: unknown } | null>(null);
+  // WebSocket log modal state
+  const [showWsLogModal, setShowWsLogModal] = useState(false);
   const tabCounter = useRef(initialState.tabCounter);
   const monacoRef = useRef<Monaco | null>(null);
 
@@ -386,7 +391,7 @@ export default function SqlStudio() {
     if (!tab) return;
 
     if (tab.isLive && tab.unsubscribeFn) {
-      // Unsubscribe by calling the function
+      // Unsubscribe by calling the function - keep isLive flag ON so user can resubscribe easily
       try {
         updateTab(activeTabId, {
           subscriptionStatus: "idle",
@@ -394,7 +399,7 @@ export default function SqlStudio() {
         });
         tab.unsubscribeFn();
         updateTab(activeTabId, {
-          isLive: false,
+          isLive: true, // Keep isLive ON - user can click Subscribe again
           unsubscribeFn: null,
           subscriptionStatus: "idle",
           subscriptionLog: [...tab.subscriptionLog, `[${new Date().toLocaleTimeString()}] Unsubscribed successfully`],
@@ -402,7 +407,7 @@ export default function SqlStudio() {
       } catch (error) {
         console.error("Failed to unsubscribe:", error);
         updateTab(activeTabId, {
-          isLive: false,
+          isLive: true, // Keep isLive ON even on error
           unsubscribeFn: null,
           subscriptionStatus: "error",
           subscriptionLog: [...tab.subscriptionLog, `[${new Date().toLocaleTimeString()}] Unsubscribe error: ${error instanceof Error ? error.message : "Unknown error"}`],
@@ -439,14 +444,35 @@ export default function SqlStudio() {
               change_type?: 'insert' | 'update' | 'delete';
             };
             
-            // Helper to build columns with _change_type as first column
+            // Helper to build columns with _received_at timestamp and _change_type as first columns
             const buildColumnsWithChangeType = (sampleRow: Record<string, unknown>) => {
-              const dataKeys = Object.keys(sampleRow).filter(k => k !== '_change_type');
+              const dataKeys = Object.keys(sampleRow).filter(k => k !== '_change_type' && k !== '_received_at');
               const columns: ColumnDef<Record<string, unknown>>[] = [
-                // Change type column first
+                // Timestamp column first - when event was received
+                {
+                  accessorKey: '_received_at',
+                  header: () => (
+                    <span className="font-semibold text-muted-foreground" title="When this event was received (UI-only, not queryable)">
+                      ⏱ Received
+                    </span>
+                  ),
+                  cell: ({ row }) => {
+                    const timestamp = row.getValue('_received_at') as string;
+                    return (
+                      <span className="text-xs text-muted-foreground font-mono">
+                        {timestamp}
+                      </span>
+                    );
+                  },
+                },
+                // Change type column - with indicator that it's not a queryable column
                 {
                   accessorKey: '_change_type',
-                  header: () => <span className="font-semibold">Type</span>,
+                  header: () => (
+                    <span className="font-semibold text-muted-foreground" title="Event type indicator (UI-only, not a table column)">
+                      📌 Type
+                    </span>
+                  ),
                   cell: ({ row }) => {
                     const changeType = row.getValue('_change_type') as string;
                     const colorClass = {
@@ -456,7 +482,7 @@ export default function SqlStudio() {
                       'delete': 'text-red-600 bg-red-50 dark:bg-red-950/50',
                     }[changeType] || 'text-muted-foreground';
                     return (
-                      <span className={`px-2 py-0.5 rounded text-xs font-medium uppercase ${colorClass}`}>
+                      <span className={`px-2 py-0.5 rounded text-xs font-medium uppercase ${colorClass}`} title="Event type - not a table column">
                         {changeType}
                       </span>
                     );
@@ -524,10 +550,11 @@ export default function SqlStudio() {
               return;
             }
 
-            // Handle initial data batch - append with _change_type: 'initial'
+            // Handle initial data batch - append with _change_type: 'initial' and _received_at timestamp
             if (serverMsg.type === 'initial_data_batch' && Array.isArray(serverMsg.rows)) {
-              // SDK already transforms typed values, just add change type marker
-              const newRows = serverMsg.rows.map(row => ({ _change_type: 'initial', ...row }));
+              // SDK already transforms typed values, add change type marker and received timestamp
+              const receivedAt = new Date().toLocaleTimeString();
+              const newRows = serverMsg.rows.map(row => ({ _received_at: receivedAt, _change_type: 'initial', ...row }));
               const batchStatus = serverMsg.batch_control?.status;
               
               setTabs((prev) =>
@@ -555,11 +582,12 @@ export default function SqlStudio() {
               return;
             }
 
-            // Handle change events (insert/update/delete) - append with change type
+            // Handle change events (insert/update/delete) - append with change type and timestamp
             if (serverMsg.type === 'change' && Array.isArray(serverMsg.rows)) {
               const changeType = serverMsg.change_type || 'change';
-              // SDK already transforms typed values, just add change type marker
-              const newRows = serverMsg.rows.map(row => ({ _change_type: changeType, ...row }));
+              // SDK already transforms typed values, add change type marker and received timestamp
+              const receivedAt = new Date().toLocaleTimeString();
+              const newRows = serverMsg.rows.map(row => ({ _received_at: receivedAt, _change_type: changeType, _isNew: true, ...row }));
               
               setTabs((prev) =>
                 prev.map((t) => {
@@ -589,8 +617,9 @@ export default function SqlStudio() {
             // Fallback: Handle raw data array (legacy format)
             const data = event as unknown as Record<string, unknown>[];
             if (Array.isArray(data) && data.length > 0) {
-              // SDK already transforms typed values, just add change type marker
-              const newRows = data.map(row => ({ _change_type: 'data', ...row }));
+              // SDK already transforms typed values, add change type marker and received timestamp
+              const receivedAt = new Date().toLocaleTimeString();
+              const newRows = data.map(row => ({ _received_at: receivedAt, _change_type: 'data', ...row }));
               
               setTabs((prev) =>
                 prev.map((t) => {
@@ -1226,6 +1255,17 @@ export default function SqlStudio() {
                   Disconnect
                 </Button>
               )}
+              {/* View WebSocket Log button - show when there are log entries */}
+              {activeTab.subscriptionLog.length > 0 && (
+                <Button
+                  size="sm"
+                  variant="outline"
+                  onClick={() => setShowWsLogModal(true)}
+                  className="h-6 text-xs gap-1"
+                >
+                  <span>📜</span> Log ({activeTab.subscriptionLog.length})
+                </Button>
+              )}
             </div>
           )}
 
@@ -1237,7 +1277,30 @@ export default function SqlStudio() {
           ) : activeTab?.error ? (
             <div className="p-4 m-2">
               <div className="text-red-500 bg-red-50 dark:bg-red-950/30 rounded border border-red-200 dark:border-red-800 p-4">
-                <pre className="whitespace-pre-wrap font-mono text-sm">{activeTab.error}</pre>
+                {(() => {
+                  // Try to parse JSON error and extract only the message
+                  try {
+                    const parsed = JSON.parse(activeTab.error);
+                    if (parsed.error?.message) {
+                      return (
+                        <div className="space-y-2">
+                          <div className="font-medium text-red-600 dark:text-red-400">
+                            {parsed.error.code || 'Error'}
+                          </div>
+                          <pre className="whitespace-pre-wrap font-mono text-sm">{parsed.error.message}</pre>
+                        </div>
+                      );
+                    }
+                  } catch {
+                    // Not JSON or doesn't have error.message structure
+                  }
+                  // Fallback: display as-is but try to extract message if it looks like JSON
+                  const jsonMatch = activeTab.error.match(/"message"\s*:\s*"([^"]+)"/)
+                  if (jsonMatch) {
+                    return <pre className="whitespace-pre-wrap font-mono text-sm">{jsonMatch[1]}</pre>;
+                  }
+                  return <pre className="whitespace-pre-wrap font-mono text-sm">{activeTab.error}</pre>;
+                })()}
               </div>
               {activeTab?.executionTime !== null && (
                 <div className="mt-2 text-sm text-muted-foreground">
@@ -1307,32 +1370,70 @@ export default function SqlStudio() {
                         </td>
                       </tr>
                     ) : (
-                      table.getRowModel().rows.map((row) => (
-                        <tr key={row.id} className="hover:bg-muted/30">
-                          {row.getVisibleCells().map((cell) => {
-                            const value = cell.getValue();
-                            const displayValue =
-                              value === null ? (
-                                <span className="text-muted-foreground italic">null</span>
-                              ) : typeof value === "object" ? (
-                                JSON.stringify(value)
-                              ) : (
-                                String(value)
-                              );
-                            const isLongText = typeof value === "string" && value.length > 40;
+                      table.getRowModel().rows.map((row) => {
+                        const rowData = row.original as Record<string, unknown>;
+                        const isNewRow = rowData._isNew === true;
+                        
+                        return (
+                          <tr 
+                            key={row.id} 
+                            className={cn(
+                              "hover:bg-muted/30 transition-colors",
+                              isNewRow && "animate-pulse bg-green-50 dark:bg-green-950/30"
+                            )}
+                            onAnimationEnd={() => {
+                              // Clear the _isNew flag after animation completes
+                              if (isNewRow) {
+                                setTabs(prev => prev.map(t => {
+                                  if (t.id !== activeTabId || !t.results) return t;
+                                  return {
+                                    ...t,
+                                    results: t.results.map((r, idx) => 
+                                      idx === row.index ? { ...r, _isNew: false } : r
+                                    )
+                                  };
+                                }));
+                              }
+                            }}
+                          >
+                            {row.getVisibleCells().map((cell) => {
+                              const value = cell.getValue();
+                              const displayValue =
+                                value === null ? (
+                                  <span className="text-muted-foreground italic">null</span>
+                                ) : typeof value === "object" ? (
+                                  JSON.stringify(value)
+                                ) : (
+                                  String(value)
+                                );
+                              const isLongText = typeof value === "string" && value.length > 40;
+                              const isSelected = selectedCell?.rowIndex === row.index && selectedCell?.columnId === cell.column.id;
 
-                            return (
-                              <td
-                                key={cell.id}
-                                className="border border-border px-3 py-1.5 font-mono text-sm max-w-[300px] truncate"
-                                title={isLongText ? String(value) : undefined}
-                              >
-                                {displayValue}
-                              </td>
-                            );
-                          })}
-                        </tr>
-                      ))
+                              return (
+                                <td
+                                  key={cell.id}
+                                  className={cn(
+                                    "border border-border px-3 py-1.5 font-mono text-sm max-w-[300px] truncate cursor-pointer select-text",
+                                    isSelected && "ring-2 ring-blue-500 ring-inset bg-blue-50 dark:bg-blue-950/30"
+                                  )}
+                                  title={isLongText ? String(value) : undefined}
+                                  onClick={() => setSelectedCell({ rowIndex: row.index, columnId: cell.column.id, value })}
+                                  onContextMenu={(e) => {
+                                    e.preventDefault();
+                                    setSelectedCell({ rowIndex: row.index, columnId: cell.column.id, value });
+                                    // Only show context menu if there's data worth viewing
+                                    if (value !== null && (typeof value === "object" || (typeof value === "string" && value.length > 40))) {
+                                      setContextMenu({ x: e.clientX, y: e.clientY, value });
+                                    }
+                                  }}
+                                >
+                                  {displayValue}
+                                </td>
+                              );
+                            })}
+                          </tr>
+                        );
+                      })
                     )}
                   </tbody>
                 </table>
@@ -1484,6 +1585,166 @@ export default function SqlStudio() {
               </div>
             )}
           </ScrollArea>
+        </div>
+      )}
+
+      {/* Context menu for viewing cell data */}
+      {contextMenu && (
+        <>
+          {/* Backdrop to close context menu on click outside */}
+          <div 
+            className="fixed inset-0 z-40" 
+            onClick={() => setContextMenu(null)}
+          />
+          <div
+            className="fixed z-50 bg-background border border-border rounded-md shadow-lg py-1 min-w-[120px]"
+            style={{ 
+              left: contextMenu.x, 
+              top: contextMenu.y,
+              // Ensure menu stays within viewport
+              maxHeight: 'calc(100vh - 100px)',
+            }}
+          >
+            <button
+              className="w-full px-3 py-2 text-sm text-left hover:bg-muted flex items-center gap-2"
+              onClick={() => {
+                // Show full data in a dialog/modal
+                const value = contextMenu.value;
+                const formattedValue = typeof value === "object" 
+                  ? JSON.stringify(value, null, 2) 
+                  : String(value);
+                
+                // Create a simple modal to show the data
+                const modal = document.createElement('div');
+                modal.className = 'fixed inset-0 z-50 flex items-center justify-center bg-black/50';
+                modal.innerHTML = `
+                  <div class="bg-background border rounded-lg shadow-xl max-w-2xl max-h-[80vh] overflow-auto p-4 m-4">
+                    <div class="flex justify-between items-center mb-3">
+                      <h3 class="font-semibold text-lg">Cell Data</h3>
+                      <button class="p-1 hover:bg-muted rounded" id="close-modal">✕</button>
+                    </div>
+                    <pre class="font-mono text-sm whitespace-pre-wrap bg-muted/50 p-3 rounded overflow-auto max-h-[60vh]">${formattedValue.replace(/</g, '&lt;').replace(/>/g, '&gt;')}</pre>
+                    <div class="mt-3 flex justify-end gap-2">
+                      <button class="px-3 py-1.5 text-sm bg-blue-600 text-white rounded hover:bg-blue-700" id="copy-data">Copy</button>
+                    </div>
+                  </div>
+                `;
+                document.body.appendChild(modal);
+                
+                modal.addEventListener('click', (e) => {
+                  if (e.target === modal) {
+                    modal.remove();
+                  }
+                });
+                modal.querySelector('#close-modal')?.addEventListener('click', () => modal.remove());
+                modal.querySelector('#copy-data')?.addEventListener('click', () => {
+                  navigator.clipboard.writeText(formattedValue);
+                  const btn = modal.querySelector('#copy-data') as HTMLButtonElement;
+                  if (btn) {
+                    btn.textContent = 'Copied!';
+                    setTimeout(() => btn.textContent = 'Copy', 1500);
+                  }
+                });
+                
+                setContextMenu(null);
+              }}
+            >
+              <span>👁</span> View Data
+            </button>
+            <button
+              className="w-full px-3 py-2 text-sm text-left hover:bg-muted flex items-center gap-2"
+              onClick={() => {
+                const value = contextMenu.value;
+                const textValue = typeof value === "object" 
+                  ? JSON.stringify(value, null, 2) 
+                  : String(value);
+                navigator.clipboard.writeText(textValue);
+                setContextMenu(null);
+              }}
+            >
+              <span>📋</span> Copy Value
+            </button>
+          </div>
+        </>
+      )}
+
+      {/* WebSocket Log Modal */}
+      {showWsLogModal && activeTab && (
+        <div 
+          className="fixed inset-0 z-50 flex items-center justify-center bg-black/50"
+          onClick={(e) => {
+            if (e.target === e.currentTarget) setShowWsLogModal(false);
+          }}
+        >
+          <div className="bg-background border rounded-lg shadow-xl w-[600px] max-w-[90vw] max-h-[80vh] flex flex-col m-4">
+            <div className="flex justify-between items-center p-4 border-b">
+              <h3 className="font-semibold text-lg flex items-center gap-2">
+                <span>📜</span> WebSocket Messages Log
+                <span className="text-sm font-normal text-muted-foreground">
+                  ({activeTab.subscriptionLog.length} entries)
+                </span>
+              </h3>
+              <button 
+                className="p-1 hover:bg-muted rounded text-muted-foreground hover:text-foreground"
+                onClick={() => setShowWsLogModal(false)}
+              >
+                ✕
+              </button>
+            </div>
+            <div className="flex-1 overflow-auto p-4">
+              {activeTab.subscriptionLog.length === 0 ? (
+                <div className="text-center text-muted-foreground py-8">
+                  No log entries yet
+                </div>
+              ) : (
+                <div className="space-y-1 font-mono text-xs">
+                  {activeTab.subscriptionLog.map((entry, idx) => (
+                    <div 
+                      key={idx} 
+                      className={cn(
+                        "p-2 rounded",
+                        entry.includes("Error") || entry.includes("error") 
+                          ? "bg-red-50 dark:bg-red-950/30 text-red-700 dark:text-red-300" 
+                          : entry.includes("INSERT") || entry.includes("insert")
+                          ? "bg-green-50 dark:bg-green-950/30 text-green-700 dark:text-green-300"
+                          : entry.includes("UPDATE") || entry.includes("update")
+                          ? "bg-yellow-50 dark:bg-yellow-950/30 text-yellow-700 dark:text-yellow-300"
+                          : entry.includes("DELETE") || entry.includes("delete")
+                          ? "bg-red-50 dark:bg-red-950/30 text-red-700 dark:text-red-300"
+                          : entry.includes("Subscribed") || entry.includes("connected")
+                          ? "bg-blue-50 dark:bg-blue-950/30 text-blue-700 dark:text-blue-300"
+                          : "bg-muted/50"
+                      )}
+                    >
+                      {entry}
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+            <div className="flex justify-between items-center p-4 border-t">
+              <Button
+                size="sm"
+                variant="outline"
+                onClick={() => {
+                  updateTab(activeTabId, { subscriptionLog: [] });
+                }}
+                className="text-xs"
+              >
+                Clear Log
+              </Button>
+              <Button
+                size="sm"
+                variant="outline"
+                onClick={() => {
+                  navigator.clipboard.writeText(activeTab.subscriptionLog.join('\n'));
+                }}
+                className="text-xs"
+              >
+                Copy All
+              </Button>
+            </div>
+          </div>
         </div>
       )}
     </div>
