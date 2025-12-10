@@ -338,12 +338,7 @@ Code Cleanup Operations:
 9) Use clippy suggestions to improve code quality
 10) Use todo!() instead of unimplemented!() where needed
 11) Remove all commented code across the codebase
-12) Instead of doing this:         let table_name = format!(
-            "{}.{}",
-            table_id.namespace_id().as_str(),
-            table_id.table_name().as_str()
-        );
-      add function which returns this full name directly from TableId
+12) Check all unwrap() and expect() calls and replace them with proper error handling
 
 Tasks To Repo:
 1) Add ci/cd pipelines to the new repo

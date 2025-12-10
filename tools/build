@@ -500,62 +500,121 @@ SHA256 checksums available in \`SHA256SUMS\`.
         --repo "$REPO_OWNER/$REPO_NAME" \
         --title "KalamDB $tag" \
         --notes "$release_notes" \
+        --draft \
         "${upload_files[@]}"; then
         print_error "Failed to create GitHub release"
         return 1
     fi
     
-    print_success "GitHub release created: https://github.com/$REPO_OWNER/$REPO_NAME/releases/tag/$tag"
+    print_success "GitHub draft release created: https://github.com/$REPO_OWNER/$REPO_NAME/releases/tag/$tag"
 }
 
 build_docker_image() {
     local version="$1"
+    local push="${2:-false}"  # Optional: push after build (needed for multi-arch)
     
     print_step "Building Docker image ${BOLD}$DOCKERHUB_REPO:$version${NC}..."
     echo ""
     
     cd "$ROOT_DIR"
     
-    # Build and tag with full output
-    if ! DOCKER_BUILDKIT=1 docker build \
-        --tag "$DOCKERHUB_REPO:$version" \
-        --tag "$DOCKERHUB_REPO:latest" \
-        --file "$DOCKER_DIR/Dockerfile" \
-        --progress=plain \
-        .; then
-        print_error "Docker build failed"
-        return 1
+    # Check if buildx is available for multi-platform builds
+    if docker buildx version &>/dev/null; then
+        print_info "Using Docker Buildx for multi-architecture build (linux/amd64, linux/arm64)"
+        
+        # Create/use a builder with multi-platform support
+        if ! docker buildx inspect kalamdb-builder &>/dev/null; then
+            print_info "Creating buildx builder..."
+            docker buildx create --name kalamdb-builder --use --bootstrap
+        else
+            docker buildx use kalamdb-builder
+        fi
+        
+        # Build command args
+        local build_args=(
+            "--platform" "linux/amd64,linux/arm64"
+            "--tag" "$DOCKERHUB_REPO:$version"
+            "--tag" "$DOCKERHUB_REPO:latest"
+            "--file" "$DOCKER_DIR/Dockerfile"
+            "--progress=plain"
+        )
+        
+        # For multi-arch, we need to either push or load
+        # --load only works for single platform, so we push for multi-arch
+        if [[ "$push" == "true" ]]; then
+            build_args+=("--push")
+            print_info "Building and pushing multi-arch image..."
+        else
+            print_warning "Multi-arch build requires --push. Building for local arch only."
+            build_args=("--tag" "$DOCKERHUB_REPO:$version" "--tag" "$DOCKERHUB_REPO:latest" "--file" "$DOCKER_DIR/Dockerfile" "--load" "--progress=plain")
+        fi
+        
+        if ! DOCKER_BUILDKIT=1 docker buildx build "${build_args[@]}" .; then
+            print_error "Docker build failed"
+            return 1
+        fi
+    else
+        print_warning "Docker Buildx not available. Building for local architecture only."
+        print_info "Install buildx for multi-arch support: https://docs.docker.com/buildx/working-with-buildx/"
+        
+        # Fallback to regular build
+        if ! DOCKER_BUILDKIT=1 docker build \
+            --tag "$DOCKERHUB_REPO:$version" \
+            --tag "$DOCKERHUB_REPO:latest" \
+            --file "$DOCKER_DIR/Dockerfile" \
+            --progress=plain \
+            .; then
+            print_error "Docker build failed"
+            return 1
+        fi
     fi
     
     echo ""
     print_success "Docker image built: $DOCKERHUB_REPO:$version"
     
-    # Show image size
-    local image_size
-    image_size=$(docker image inspect "$DOCKERHUB_REPO:$version" --format='{{.Size}}' 2>/dev/null | awk '{printf "%.1f MB", $1/1024/1024}')
-    print_info "Image size: $image_size"
+    # Show image size (only works for local images)
+    if docker image inspect "$DOCKERHUB_REPO:$version" &>/dev/null; then
+        local image_size
+        image_size=$(docker image inspect "$DOCKERHUB_REPO:$version" --format='{{.Size}}' 2>/dev/null | awk '{printf "%.1f MB", $1/1024/1024}')
+        print_info "Image size: $image_size"
+    fi
 }
 
 push_docker_image() {
     local version="$1"
     
-    print_step "Pushing ${BOLD}$DOCKERHUB_REPO:$version${NC} to Docker Hub..."
+    print_step "Building and pushing multi-arch Docker image to Docker Hub..."
     echo ""
     
-    if ! docker push "$DOCKERHUB_REPO:$version"; then
-        print_error "Failed to push $DOCKERHUB_REPO:$version"
-        return 1
+    # For multi-arch, we need to build and push in one step
+    # This is because buildx can't load multi-arch images locally
+    if docker buildx version &>/dev/null; then
+        # Use the build function with push=true for multi-arch
+        build_docker_image "$version" "true"
+        
+        echo ""
+        print_success "Pushed multi-arch image to Docker Hub: $DOCKERHUB_REPO:$version"
+        print_info "Platforms: linux/amd64, linux/arm64"
+        print_info "View at: https://hub.docker.com/r/$DOCKERHUB_REPO"
+    else
+        # Fallback: push single-arch image
+        print_warning "Docker Buildx not available. Pushing single-arch image only."
+        
+        if ! docker push "$DOCKERHUB_REPO:$version"; then
+            print_error "Failed to push $DOCKERHUB_REPO:$version"
+            return 1
+        fi
+        
+        print_step "Pushing ${BOLD}$DOCKERHUB_REPO:latest${NC} to Docker Hub..."
+        if ! docker push "$DOCKERHUB_REPO:latest"; then
+            print_error "Failed to push $DOCKERHUB_REPO:latest"
+            return 1
+        fi
+        
+        echo ""
+        print_success "Pushed to Docker Hub: $DOCKERHUB_REPO:$version"
+        print_info "View at: https://hub.docker.com/r/$DOCKERHUB_REPO"
     fi
-    
-    print_step "Pushing ${BOLD}$DOCKERHUB_REPO:latest${NC} to Docker Hub..."
-    if ! docker push "$DOCKERHUB_REPO:latest"; then
-        print_error "Failed to push $DOCKERHUB_REPO:latest"
-        return 1
-    fi
-    
-    echo ""
-    print_success "Pushed to Docker Hub: $DOCKERHUB_REPO:$version"
-    print_info "View at: https://hub.docker.com/r/$DOCKERHUB_REPO"
 }
 
 # Check Docker prerequisites

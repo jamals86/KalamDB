@@ -285,8 +285,7 @@ async fn test_update_as_user() {
 
     // Verify update via charlie's credentials
     let select_sql = format!(
-        "SELECT status FROM {}.profiles WHERE profile_id = 'PROF-1'",
-        ns
+        "SELECT * FROM {ns}.profiles WHERE profile_id = 'PROF-1'"
     );
     let resp = server
         .execute_sql_as_user(&select_sql, user_charlie.as_str())
@@ -295,7 +294,9 @@ async fn test_update_as_user() {
     assert_eq!(resp.status, ResponseStatus::Success);
     let rows = resp.results[0].rows.as_ref().unwrap();
     assert_eq!(rows.len(), 1);
-    // Note: DataFusion returns columns as arrays, check the status value
+    // Verify the status was updated to 'inactive'
+    let status = rows[0].get("status").and_then(|v| v.as_str());
+    assert_eq!(status, Some("inactive"), "Status should be updated to 'inactive'");
 }
 
 /// T172: DELETE AS USER removes record as impersonated user
@@ -363,9 +364,16 @@ async fn test_as_user_on_shared_table_rejected() {
     let user_eve = insert_user(&server, "eve", Role::User).await;
 
     // Create namespace and SHARED table
-    server
-        .execute_sql(&format!("CREATE NAMESPACE {}", ns))
+    let ns_resp = server
+        .execute_sql_as_user(&format!("CREATE NAMESPACE {}", ns), admin_user.as_str())
         .await;
+    assert_eq!(
+        ns_resp.status,
+        ResponseStatus::Success,
+        "Failed to create namespace: {:?}",
+        ns_resp.error
+    );
+
     let create_table = format!(
         "CREATE TABLE {}.global_config (config_key VARCHAR PRIMARY KEY, value VARCHAR) WITH (TYPE = 'SHARED')",
         ns

@@ -67,8 +67,8 @@ pub async fn execute_sql(server: &TestServer, sql: &str, user_id: &str) -> Resul
 /// ```
 pub async fn create_namespace(server: &TestServer, namespace: &str) -> SqlResponse {
     let sql = format!("CREATE NAMESPACE IF NOT EXISTS {}", namespace);
-    // Perform namespace creation as 'system' admin user for RBAC enforcement
-    let resp = server.execute_sql_as_user(&sql, "system").await;
+    // Perform namespace creation as 'root' admin user for RBAC enforcement
+    let resp = server.execute_sql_as_user(&sql, "root").await;
     if resp.status != kalamdb_api::models::ResponseStatus::Success {
         eprintln!(
             "CREATE NAMESPACE failed: ns={}, error={:?}",

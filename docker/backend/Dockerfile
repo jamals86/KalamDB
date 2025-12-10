@@ -1,13 +1,14 @@
 # Multi-stage Docker build for KalamDB backend + CLI
 # Feature: 006-docker-wasm-examples
 # This Dockerfile builds both kalamdb-server and kalam-cli binaries
+# Supports multi-architecture: linux/amd64, linux/arm64
 
 # ============================================================================
 # Stage 1: Builder
 # ============================================================================
 FROM rust:1.90-bookworm AS builder
 
-# Install build dependencies
+# Install build dependencies including Node.js for UI build
 RUN apt-get update && \
     apt-get install -y \
         build-essential \
@@ -16,7 +17,21 @@ RUN apt-get update && \
         libclang-dev \
         clang \
         cmake \
+        curl \
+        ca-certificates \
     && rm -rf /var/lib/apt/lists/*
+
+# Install Node.js 20 LTS for UI build
+RUN curl -fsSL https://deb.nodesource.com/setup_20.x | bash - && \
+    apt-get install -y nodejs && \
+    npm install -g npm@latest && \
+    rm -rf /var/lib/apt/lists/*
+
+# Install wasm-pack for building WASM SDK
+RUN curl https://rustwasm.github.io/wasm-pack/installer/init.sh -sSf | sh
+
+# Install wasm32 target for Rust
+RUN rustup target add wasm32-unknown-unknown
 
 # Set working directory
 WORKDIR /build
@@ -32,17 +47,21 @@ COPY backend/crates ./backend/crates
 # Copy CLI Cargo file and source
 COPY cli/Cargo.toml ./cli/
 COPY cli/src ./cli/src
+COPY cli/build.rs ./cli/
 
-# Copy link (dependency for CLI)
+# Copy link (dependency for CLI and UI SDK)
 COPY link/Cargo.toml ./link/
 COPY link/src ./link/src
+COPY link/sdks ./link/sdks
+
+# Copy UI source for embedded admin UI
+COPY ui ./ui
 
 # Copy benchmark (needed for workspace, but we won't build it)
 COPY benchmark/Cargo.toml ./benchmark/
 RUN mkdir -p benchmark/src && echo "fn main() {}" > benchmark/src/main.rs
 
 # Copy build scripts
-COPY cli/build.rs ./cli/
 COPY backend/build.rs ./backend/
 
 # Copy or generate version.toml for compile-time version info
