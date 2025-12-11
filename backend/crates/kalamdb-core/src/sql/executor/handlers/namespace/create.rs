@@ -2,11 +2,15 @@
 //!
 //! This module demonstrates the TypedStatementHandler pattern where handlers
 //! receive fully parsed AST structs instead of raw SQL strings.
+//!
+//! When a namespace is created, it is also registered as a DataFusion schema
+//! so that queries like `SELECT * FROM namespace.table` work correctly.
 
 use crate::app_context::AppContext;
 use crate::error::KalamDbError;
 use crate::sql::executor::handlers::typed::TypedStatementHandler;
 use crate::sql::executor::models::{ExecutionContext, ExecutionResult, ScalarValue};
+use datafusion::catalog::MemorySchemaProvider;
 use kalamdb_commons::models::NamespaceId;
 use kalamdb_commons::system::Namespace;
 use kalamdb_sql::ddl::CreateNamespaceStatement;
@@ -20,6 +24,49 @@ pub struct CreateNamespaceHandler {
 impl CreateNamespaceHandler {
     pub fn new(app_context: Arc<AppContext>) -> Self {
         Self { app_context }
+    }
+
+    /// Register namespace as a DataFusion schema in the kalam catalog
+    ///
+    /// This enables queries like `SELECT * FROM namespace.table` to work.
+    /// Uses DataFusion's native MemorySchemaProvider for dynamic schema registration.
+    fn register_namespace_schema(&self, namespace_id: &NamespaceId) -> Result<(), KalamDbError> {
+        let base_session = self.app_context.base_session_context();
+
+        // Get the "kalam" catalog (default catalog configured in DataFusionSessionFactory)
+        let catalog = base_session.catalog("kalam").ok_or_else(|| {
+            KalamDbError::CatalogError("kalam catalog not found in session".to_string())
+        })?;
+
+        // Check if schema already registered (idempotent)
+        if catalog.schema(namespace_id.as_str()).is_some() {
+            log::debug!(
+                "Schema '{}' already registered in DataFusion catalog",
+                namespace_id.as_str()
+            );
+            return Ok(());
+        }
+
+        // Create a new schema provider for this namespace
+        // Tables will be registered here when CREATE TABLE is executed
+        let schema_provider = Arc::new(MemorySchemaProvider::new());
+
+        catalog
+            .register_schema(namespace_id.as_str(), schema_provider)
+            .map_err(|e| {
+                KalamDbError::CatalogError(format!(
+                    "Failed to register schema '{}': {}",
+                    namespace_id.as_str(),
+                    e
+                ))
+            })?;
+
+        log::info!(
+            "Registered DataFusion schema for namespace '{}'",
+            namespace_id.as_str()
+        );
+
+        Ok(())
     }
 }
 
@@ -58,6 +105,9 @@ impl TypedStatementHandler<CreateNamespaceStatement> for CreateNamespaceHandler 
 
         // Insert namespace via provider
         namespaces_provider.create_namespace(namespace)?;
+
+        // Register namespace as DataFusion schema for SQL queries
+        self.register_namespace_schema(&namespace_id)?;
 
         // Log DDL operation
         use crate::sql::executor::helpers::audit;

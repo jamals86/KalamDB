@@ -157,16 +157,19 @@ async fn test_as_user_with_dba_role() {
     let target_user = insert_user(&server, "target_dba", Role::User).await;
 
     // Create namespace and USER table
-    server
-        .execute_sql(&format!("CREATE NAMESPACE {}", ns))
+    let ns_resp = server
+        .execute_sql_as_user(&format!("CREATE NAMESPACE IF NOT EXISTS {}", ns), "root")
         .await;
+    assert_eq!(ns_resp.status, ResponseStatus::Success, "CREATE NAMESPACE failed: {:?}", ns_resp.error);
+    
     let create_table = format!(
         "CREATE TABLE {}.logs (log_id VARCHAR PRIMARY KEY, message VARCHAR) WITH (TYPE = 'USER', STORAGE_ID = 'local')",
         ns
     );
-    server
+    let table_resp = server
         .execute_sql_as_user(&create_table, dba_user.as_str())
         .await;
+    assert_eq!(table_resp.status, ResponseStatus::Success, "CREATE TABLE failed: {:?}", table_resp.error);
 
     // INSERT AS USER (should succeed)
     let insert_sql = format!(
@@ -458,16 +461,19 @@ async fn test_as_user_performance() {
     let target_user = insert_user(&server, "target_perf", Role::User).await;
 
     // Create namespace and USER table as DBA
-    server
-        .execute_sql(&format!("CREATE NAMESPACE {}", ns))
+    let ns_resp = server
+        .execute_sql_as_user(&format!("CREATE NAMESPACE IF NOT EXISTS {}", ns), "root")
         .await;
+    assert_eq!(ns_resp.status, ResponseStatus::Success, "CREATE NAMESPACE failed: {:?}", ns_resp.error);
+    
     let create_table = format!(
         "CREATE TABLE {}.perf_test (id VARCHAR PRIMARY KEY, data VARCHAR) WITH (TYPE = 'USER', STORAGE_ID = 'local')",
         ns
     );
-    server
+    let table_resp = server
         .execute_sql_as_user(&create_table, admin_user.as_str())
         .await;
+    assert_eq!(table_resp.status, ResponseStatus::Success, "CREATE TABLE failed: {:?}", table_resp.error);
 
     // Measure 10 INSERT AS USER operations
     let mut durations = Vec::new();

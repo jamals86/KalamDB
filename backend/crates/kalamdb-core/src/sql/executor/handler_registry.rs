@@ -25,6 +25,7 @@ use crate::sql::executor::handlers::flush::{FlushAllTablesHandler, FlushTableHan
 use crate::sql::executor::handlers::jobs::{KillJobHandler, KillLiveQueryHandler};
 use crate::sql::executor::handlers::namespace::{
     AlterNamespaceHandler, CreateNamespaceHandler, DropNamespaceHandler, ShowNamespacesHandler,
+    UseNamespaceHandler,
 };
 use crate::sql::executor::handlers::storage::{
     AlterStorageHandler, CreateStorageHandler, DropStorageHandler, ShowStoragesHandler,
@@ -161,6 +162,17 @@ impl HandlerRegistry {
             ShowNamespacesHandler::new(app_context.clone()),
             |stmt| match stmt.kind() {
                 SqlStatementKind::ShowNamespaces(s) => Some(s.clone()),
+                _ => None,
+            },
+        );
+
+        registry.register_typed(
+            SqlStatementKind::UseNamespace(kalamdb_sql::ddl::UseNamespaceStatement {
+                namespace: NamespaceId::new("_placeholder"),
+            }),
+            UseNamespaceHandler::new(app_context.clone()),
+            |stmt| match stmt.kind() {
+                SqlStatementKind::UseNamespace(s) => Some(s.clone()),
                 _ => None,
             },
         );

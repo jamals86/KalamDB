@@ -15,12 +15,12 @@ use kalamdb_commons::Role;
 async fn system_tables_shows_created_tables() {
     let server = TestServer::new().await;
 
-    // Create namespace and table
-    let resp = server.execute_sql("CREATE NAMESPACE app").await;
-    assert_eq!(resp.status, ResponseStatus::Success);
+    // Use unique namespace to avoid conflicts with other tests
+    let resp = server.execute_sql_as_user("CREATE NAMESPACE IF NOT EXISTS app_systab", "root").await;
+    assert_eq!(resp.status, ResponseStatus::Success, "CREATE NAMESPACE failed: {:?}", resp.error);
 
     let create_table = r#"
-        CREATE TABLE app.messages (
+        CREATE TABLE app_systab.messages (
             id TEXT PRIMARY KEY,
             content TEXT NOT NULL,
             timestamp BIGINT
@@ -32,7 +32,7 @@ async fn system_tables_shows_created_tables() {
 
     // Query system.tables
     let resp = server
-        .execute_sql("SELECT namespace_id, table_name, table_type FROM system.tables WHERE table_name = 'messages'")
+        .execute_sql("SELECT namespace_id, table_name, table_type FROM system.tables WHERE namespace_id = 'app_systab' AND table_name = 'messages'")
         .await;
 
     assert_eq!(resp.status, ResponseStatus::Success);
@@ -47,7 +47,7 @@ async fn system_tables_shows_created_tables() {
         );
         assert_eq!(
             row.get("namespace_id").unwrap().as_str().unwrap(),
-            "app",
+            "app_systab",
             "Namespace should match"
         );
         assert_eq!(
@@ -169,20 +169,21 @@ async fn system_jobs_tracks_flush_operations() {
         0
     };
 
-    // Trigger flush
-    let flush_sql = format!("FLUSH TABLE app_jobs.logs AS {}", user_id.as_str());
+    // Trigger flush (FLUSH TABLE doesn't need AS USER syntax - it flushes all data)
+    let flush_sql = "FLUSH TABLE app_jobs.logs".to_string();
     let resp = server.execute_sql(&flush_sql).await;
-    assert_eq!(resp.status, ResponseStatus::Success);
+    assert_eq!(resp.status, ResponseStatus::Success, "FLUSH TABLE failed: {:?}", resp.error);
 
     // Wait briefly for async job processing
     tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
 
     // Check system.jobs for new flush job
+    // Note: namespace_id and table_name are now in the 'parameters' JSON field, not separate columns
     let resp = server
-        .execute_sql("SELECT job_type, status, namespace_id, table_name FROM system.jobs WHERE job_type = 'flush'")
+        .execute_sql("SELECT job_type, status, parameters FROM system.jobs WHERE job_type = 'flush'")
         .await;
 
-    assert_eq!(resp.status, ResponseStatus::Success);
+    assert_eq!(resp.status, ResponseStatus::Success, "Query system.jobs failed: {:?}", resp.error);
     if let Some(rows) = resp.results.first().and_then(|r| r.rows.as_ref()) {
         let count_after = rows.len() as i64;
         assert!(
@@ -192,21 +193,17 @@ async fn system_jobs_tracks_flush_operations() {
             count_after
         );
 
-        // Find our flush job
+        // Find our flush job by checking parameters JSON
         let flush_job = rows.iter().find(|r| {
-            r.get("table_name")
+            r.get("parameters")
                 .and_then(|v| v.as_str())
-                .map(|s| s == "logs")
+                .map(|s| s.contains("app_jobs") && s.contains("logs"))
                 .unwrap_or(false)
-                && r.get("namespace_id")
-                    .and_then(|v| v.as_str())
-                    .map(|s| s == "app_jobs")
-                    .unwrap_or(false)
         });
 
         assert!(
             flush_job.is_some(),
-            "Should find flush job for app_jobs.logs table"
+            "Should find flush job for app_jobs.logs table in parameters"
         );
 
         let job = flush_job.unwrap();

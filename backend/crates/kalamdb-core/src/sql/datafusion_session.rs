@@ -128,6 +128,69 @@ impl DataFusionSessionFactory {
         // Register CURRENT_USER() function with user context if available
         ctx.register_udf(ScalarUDF::from(CurrentUserFunction::new()));
     }
+
+    /// Register all existing namespaces as DataFusion schemas
+    ///
+    /// Called during server startup to ensure all namespaces persisted in RocksDB
+    /// are available as schemas for SQL queries.
+    ///
+    /// This uses DataFusion's native MemorySchemaProvider for each namespace,
+    /// enabling queries like `SELECT * FROM namespace.table` to work correctly.
+    ///
+    /// # Arguments
+    /// * `session` - The DataFusion SessionContext to register schemas in
+    /// * `namespaces` - List of namespace names to register
+    ///
+    /// # Returns
+    /// Number of namespaces successfully registered
+    pub fn register_namespaces(
+        &self,
+        session: &SessionContext,
+        namespaces: &[String],
+    ) -> usize {
+        use datafusion::catalog::MemorySchemaProvider;
+
+        let catalog = match session.catalog("kalam") {
+            Some(c) => c,
+            None => {
+                log::error!("kalam catalog not found in session - cannot register namespaces");
+                return 0;
+            }
+        };
+
+        let mut registered = 0;
+        for namespace in namespaces {
+            // Skip if already registered (e.g., "default" or "system")
+            if catalog.schema(namespace).is_some() {
+                log::debug!("Schema '{}' already registered, skipping", namespace);
+                continue;
+            }
+
+            let schema_provider = std::sync::Arc::new(MemorySchemaProvider::new());
+            match catalog.register_schema(namespace, schema_provider) {
+                Ok(_) => {
+                    log::debug!("Registered DataFusion schema for namespace '{}'", namespace);
+                    registered += 1;
+                }
+                Err(e) => {
+                    log::warn!(
+                        "Failed to register schema for namespace '{}': {}",
+                        namespace,
+                        e
+                    );
+                }
+            }
+        }
+
+        if registered > 0 {
+            log::info!(
+                "Registered {} namespace(s) as DataFusion schemas",
+                registered
+            );
+        }
+
+        registered
+    }
 }
 
 impl Default for DataFusionSessionFactory {

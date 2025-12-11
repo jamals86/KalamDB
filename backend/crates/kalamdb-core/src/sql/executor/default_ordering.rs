@@ -104,6 +104,30 @@ fn get_default_sort_columns(
     Ok(None)
 }
 
+/// Check if all sort columns exist in the output schema
+///
+/// This is needed because aggregate queries (like SELECT COUNT(*)) change the
+/// output schema and the original table columns may not be present.
+fn sort_columns_in_schema(sort_exprs: &[SortExpr], plan: &LogicalPlan) -> bool {
+    let schema = plan.schema();
+
+    for sort_expr in sort_exprs {
+        // Extract column name from sort expression
+        if let datafusion::logical_expr::Expr::Column(col) = &sort_expr.expr {
+            // Check if this column exists in the output schema
+            if schema.qualified_field_from_column(col).is_err() {
+                log::trace!(
+                    target: "sql::ordering",
+                    "Sort column '{}' not found in output schema, skipping default ORDER BY",
+                    col.name
+                );
+                return false;
+            }
+        }
+    }
+    true
+}
+
 /// Add default ORDER BY to a LogicalPlan if not already present
 ///
 /// This function only applies to USER, SHARED, and STREAM tables.
@@ -180,6 +204,17 @@ pub fn apply_default_order_by(
             return Ok(plan);
         }
     };
+
+    // Skip if sort columns are not in the output schema
+    // This handles aggregate queries like SELECT COUNT(*) where original columns aren't available
+    if !sort_columns_in_schema(&sort_exprs, &plan) {
+        log::trace!(
+            target: "sql::ordering",
+            "Sort columns not in output schema for {}, skipping default ORDER BY",
+            table_id.full_name()
+        );
+        return Ok(plan);
+    }
 
     // Create Sort node wrapping the original plan
     let sort_plan = LogicalPlan::Sort(datafusion::logical_expr::Sort {

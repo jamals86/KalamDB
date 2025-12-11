@@ -861,8 +861,6 @@ mod tests {
         Job {
             job_id: JobId::new(id),
             job_type: JobType::Flush,
-            namespace_id: NamespaceId::new("default"),
-            table_name: None,
             status,
             parameters: None,
             message: None,

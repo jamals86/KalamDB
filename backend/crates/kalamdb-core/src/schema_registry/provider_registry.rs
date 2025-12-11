@@ -54,14 +54,10 @@ impl ProviderRegistry {
 
         // Also register with DataFusion's catalog if available
         if let Some(base_session) = self.base_session_context.get() {
-            let catalog_name = base_session
-                .catalog_names()
-                .first()
-                .ok_or_else(|| KalamDbError::InvalidOperation("No catalogs available".to_string()))?
-                .clone();
-
-            let catalog = base_session.catalog(&catalog_name).ok_or_else(|| {
-                KalamDbError::InvalidOperation(format!("Catalog '{}' not found", catalog_name))
+            // Use constant catalog name "kalam" instead of catalog_names().first()
+            // to avoid Vec allocation and be more explicit
+            let catalog = base_session.catalog("kalam").ok_or_else(|| {
+                KalamDbError::InvalidOperation("Catalog 'kalam' not found".to_string())
             })?;
 
             // Get or create namespace schema

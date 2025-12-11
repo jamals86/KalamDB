@@ -51,7 +51,10 @@ impl StatementHandler for UpdateHandler {
             ));
         }
         let sql = statement.as_str();
-        let (namespace, table_name, assignments, where_pair) = self.simple_parse_update(sql)?;
+        // Pass the current default namespace from session context for unqualified table names
+        let default_namespace = context.default_namespace();
+        let (namespace, table_name, assignments, where_pair) =
+            self.simple_parse_update(sql, &default_namespace)?;
 
         // Get table definition early to access schema for type coercion
         let schema_registry = app_context.schema_registry();
@@ -297,9 +300,15 @@ impl StatementHandler for UpdateHandler {
 }
 
 impl UpdateHandler {
+    /// Simple UPDATE parser for basic UPDATE statements
+    ///
+    /// # Arguments
+    /// * `sql` - The SQL UPDATE statement
+    /// * `default_namespace` - The default namespace to use for unqualified table names
     fn simple_parse_update(
         &self,
         sql: &str,
+        default_namespace: &NamespaceId,
     ) -> Result<
         (
             NamespaceId,
@@ -330,7 +339,7 @@ impl UpdateHandler {
             let parts: Vec<&str> = table_part.split('.').collect();
             match parts.len() {
                 1 => (
-                    NamespaceId::new("default"),
+                    default_namespace.clone(),
                     TableName::new(parts[0].trim().to_string()),
                 ),
                 2 => (

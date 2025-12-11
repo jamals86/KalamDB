@@ -51,13 +51,10 @@ impl CreateViewHandler {
 
     fn ensure_namespace_schema(&self, namespace: &NamespaceId) -> Result<(), KalamDbError> {
         let session = self.app_context.base_session_context();
-        let catalog_name =
-            session.catalog_names().first().cloned().ok_or_else(|| {
-                KalamDbError::InvalidOperation("No catalogs available".to_string())
-            })?;
-
-        let catalog = session.catalog(&catalog_name).ok_or_else(|| {
-            KalamDbError::InvalidOperation(format!("Catalog '{}' not found", catalog_name))
+        // Use constant catalog name "kalam" instead of catalog_names().first()
+        // This avoids unnecessary Vec allocation and is clearer since we always use "kalam"
+        let catalog = session.catalog("kalam").ok_or_else(|| {
+            KalamDbError::InvalidOperation("Catalog 'kalam' not found".to_string())
         })?;
 
         if catalog.schema(namespace.as_str()).is_none() {

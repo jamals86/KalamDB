@@ -15,6 +15,9 @@ async fn test_flush_table_persists_job() {
     let server = TestServer::new().await;
     let app_context = &server.app_context;
 
+    // Count existing jobs before we insert (other tests may have run first)
+    let jobs_before = app_context.scan_all_jobs().expect("Failed to scan jobs").len();
+
     // Create a job directly using the Jobs API
     use kalamdb_commons::{JobId, JobStatus, JobType, NodeId};
 
@@ -43,12 +46,13 @@ async fn test_flush_table_persists_job() {
     // Insert the job
     app_context.insert_job(&job).expect("Failed to insert job");
 
-    // Verify it was persisted
+    // Verify it was persisted (exactly 1 more job than before)
     let jobs = app_context.scan_all_jobs().expect("Failed to scan jobs");
-    assert_eq!(jobs.len(), 1, "Should have exactly 1 job");
+    assert_eq!(jobs.len(), jobs_before + 1, "Should have exactly 1 more job");
 
-    let retrieved_job = &jobs[0];
-    assert_eq!(retrieved_job.job_id.as_str(), "test-flush-123");
+    // Find our specific job
+    let retrieved_job = jobs.iter().find(|j| j.job_id.as_str() == "test-flush-123")
+        .expect("Should find the test job");
     assert_eq!(retrieved_job.job_type, JobType::Flush);
     // namespace_id and table_name are now extracted from parameters
     assert_eq!(retrieved_job.namespace_id().unwrap().as_str(), "app");

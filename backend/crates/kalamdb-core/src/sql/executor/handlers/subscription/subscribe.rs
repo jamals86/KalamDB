@@ -27,26 +27,49 @@ impl TypedStatementHandler<SubscribeStatement> for SubscribeHandler {
         &self,
         statement: SubscribeStatement,
         _params: Vec<ScalarValue>,
-        _context: &ExecutionContext,
+        context: &ExecutionContext,
     ) -> Result<ExecutionResult, KalamDbError> {
+        // Use the session's default namespace if the statement used "default"
+        // This allows SUBSCRIBE TO messages to use the current USE NAMESPACE
+        let effective_namespace = if statement.namespace.as_str() == "default" {
+            context.default_namespace()
+        } else {
+            statement.namespace.clone()
+        };
+        
         // Generate a subscription id (actual registration happens over WebSocket handshake)
         let subscription_id = format!(
             "sub-{}-{}-{}",
-            statement.namespace.as_str(),
+            effective_namespace.as_str(),
             statement.table_name.as_str(),
             Uuid::new_v4().simple()
         );
         // Channel placeholder (could read from server.toml later)
         let channel = "ws://localhost:8080/ws".to_string();
 
+        // Update select_query to use effective namespace if needed
+        let select_query = if effective_namespace.as_str() != statement.namespace.as_str() {
+            // Replace table reference in the query
+            statement.select_query.replace(
+                &format!("FROM {}", statement.table_name.as_str()),
+                &format!(
+                    "FROM {}.{}",
+                    effective_namespace.as_str(),
+                    statement.table_name.as_str()
+                ),
+            )
+        } else {
+            statement.select_query.clone()
+        };
+
         // Log query operation
         use crate::sql::executor::helpers::audit;
         let audit_entry = audit::log_query_operation(
-            _context,
+            context,
             "SUBSCRIBE",
             &format!(
                 "{}.{}",
-                statement.namespace.as_str(),
+                effective_namespace.as_str(),
                 statement.table_name.as_str()
             ),
             0.0, // Duration is negligible for registration
@@ -58,7 +81,7 @@ impl TypedStatementHandler<SubscribeStatement> for SubscribeHandler {
         Ok(ExecutionResult::Subscription {
             subscription_id,
             channel,
-            select_query: statement.select_query,
+            select_query,
         })
     }
 

@@ -253,4 +253,20 @@ impl ExecutionContext {
 
         ctx
     }
+
+    /// Get the current default namespace (schema) from DataFusion session config
+    ///
+    /// This reads `datafusion.catalog.default_schema` from the session configuration.
+    /// The default schema is set to "default" initially and can be changed using:
+    /// - `USE namespace`
+    /// - `USE NAMESPACE namespace`  
+    /// - `SET NAMESPACE namespace`
+    ///
+    /// # Returns
+    /// The current default namespace as a NamespaceId (defaults to "default")
+    pub fn default_namespace(&self) -> NamespaceId {
+        let state = self.base_session_context.state();
+        let default_schema = state.config().options().catalog.default_schema.clone();
+        NamespaceId::new(default_schema)
+    }
 }
