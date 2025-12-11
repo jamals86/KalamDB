@@ -59,7 +59,6 @@ impl TypedStatementHandler<FlushTableStatement> for FlushTableHandler {
         let job_id: JobId = job_manager
             .create_job_typed(
                 JobType::Flush,
-                statement.namespace.clone(),
                 params,
                 Some(idempotency_key),
                 None,

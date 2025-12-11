@@ -67,7 +67,6 @@ impl StreamEvictionScheduler {
             match jobs_manager
                 .create_job_typed(
                     JobType::StreamEviction,
-                    namespace_id.clone(),
                     params,
                     Some(idempotency_key),
                     None,

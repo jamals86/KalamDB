@@ -2,7 +2,7 @@ use super::types::JobsManager;
 use crate::error::KalamDbError;
 use crate::jobs::executors::JobParams;
 use kalamdb_commons::system::{Job, JobOptions};
-use kalamdb_commons::{JobId, JobStatus, JobType, NamespaceId};
+use kalamdb_commons::{JobId, JobStatus, JobType};
 
 impl JobsManager {
     /// Insert a job in the database asynchronously
@@ -19,8 +19,7 @@ impl JobsManager {
     ///
     /// # Arguments
     /// * `job_type` - Type of job to create
-    /// * `namespace_id` - Namespace for the job
-    /// * `parameters` - Job parameters as JSON value
+    /// * `parameters` - Job parameters as JSON value (should contain namespace_id, table_name, etc.)
     /// * `idempotency_key` - Optional key to prevent duplicate jobs
     /// * `options` - Optional job creation options (retry, priority, queue)
     ///
@@ -33,7 +32,6 @@ impl JobsManager {
     pub async fn create_job(
         &self,
         job_type: JobType,
-        namespace_id: NamespaceId,
         parameters: serde_json::Value,
         idempotency_key: Option<String>,
         options: Option<JobOptions>,
@@ -51,19 +49,12 @@ impl JobsManager {
         // Generate job ID with type-specific prefix
         let job_id = self.generate_job_id(&job_type);
 
-        // Extract optional table_name from parameters (if provided)
-        let table_name_from_params: Option<kalamdb_commons::models::TableName> = parameters
-            .get("table_name")
-            .and_then(|v| v.as_str())
-            .map(|s| kalamdb_commons::models::TableName::new(s.to_string()));
-
         // Create job with Queued status
+        // Note: namespace_id and table_name are now stored in the parameters JSON
         let now_ms = chrono::Utc::now().timestamp_millis();
         let mut job = Job {
             job_id: job_id.clone(),
             job_type,
-            namespace_id,
-            table_name: table_name_from_params,
             status: JobStatus::Queued,
             parameters: Some(parameters.to_string()),
             message: None,
@@ -111,8 +102,7 @@ impl JobsManager {
     ///
     /// # Arguments
     /// * `job_type` - Type of job to create
-    /// * `namespace_id` - Namespace for the job
-    /// * `params` - Typed parameters (automatically validated and serialized)
+    /// * `params` - Typed parameters (automatically validated and serialized, should contain namespace_id, table_name)
     /// * `idempotency_key` - Optional key to prevent duplicate jobs
     /// * `options` - Optional job configuration (retries, priority, queue)
     ///
@@ -125,7 +115,6 @@ impl JobsManager {
     pub async fn create_job_typed<T: JobParams>(
         &self,
         job_type: JobType,
-        namespace_id: NamespaceId,
         params: T,
         idempotency_key: Option<String>,
         options: Option<JobOptions>,
@@ -148,9 +137,8 @@ impl JobsManager {
         if !should_create {
             // Log skip and return a special "skipped" job ID (or error)
             log::trace!(
-                "Job pre-validation returned false; skipping job creation for {:?} in namespace {}",
-                job_type,
-                namespace_id
+                "Job pre-validation returned false; skipping job creation for {:?}",
+                job_type
             );
             return Err(KalamDbError::Other(format!(
                 "Job {:?} skipped: pre-validation returned false (nothing to do)",
@@ -163,7 +151,7 @@ impl JobsManager {
         })?;
 
         // Delegate to existing create_job method
-        self.create_job(job_type, namespace_id, parameters, idempotency_key, options)
+        self.create_job(job_type, parameters, idempotency_key, options)
             .await
     }
 

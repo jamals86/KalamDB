@@ -10,21 +10,23 @@ use crate::error::KalamDbError;
 use datafusion::scalar::ScalarValue;
 use kalamdb_commons::models::{LiveQueryId, Row, TableId, UserId};
 use kalamdb_system::LiveQueriesTableProvider;
+use std::borrow::Cow;
 use std::collections::{BTreeMap, HashSet};
 use std::sync::Arc;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 /// Apply column projections to a Row, returning only the requested columns.
-/// If projections is None, returns the original row unchanged.
-fn apply_projections(row: &Row, projections: &Option<Arc<Vec<String>>>) -> Row {
+/// Uses Cow to avoid cloning when no projections are needed (SELECT *).
+#[inline]
+fn apply_projections<'a>(row: &'a Row, projections: &Option<Arc<Vec<String>>>) -> Cow<'a, Row> {
     match projections {
-        None => row.clone(),
+        None => Cow::Borrowed(row),
         Some(cols) => {
             let filtered_values: BTreeMap<String, ScalarValue> = cols
                 .iter()
                 .filter_map(|col| row.values.get(col).map(|v| (col.clone(), v.clone())))
                 .collect();
-            Row::new(filtered_values)
+            Cow::Owned(Row::new(filtered_values))
         }
     }
 }
@@ -184,6 +186,7 @@ impl NotificationService {
         // Send notifications and increment changes
         for (live_id, projections, tx) in live_ids_to_notify {
             // Apply projections to row data (filters columns based on subscription)
+            // Uses Cow to avoid cloning when no projections (SELECT *)
             let projected_row_data = apply_projections(&change_notification.row_data, &projections);
             let projected_old_data = change_notification
                 .old_data
@@ -191,23 +194,24 @@ impl NotificationService {
                 .map(|old| apply_projections(old, &projections));
 
             // Build the typed notification with projected data
+            // into_owned() only clones when we had Cow::Borrowed, which is cheap
             let notification = match change_notification.change_type {
                 ChangeType::Insert => kalamdb_commons::Notification::insert(
                     live_id.to_string(),
-                    vec![projected_row_data],
+                    vec![projected_row_data.into_owned()],
                 ),
                 ChangeType::Update => kalamdb_commons::Notification::update(
                     live_id.to_string(),
-                    vec![projected_row_data],
-                    vec![projected_old_data.unwrap_or_else(|| Row::new(BTreeMap::new()))],
+                    vec![projected_row_data.into_owned()],
+                    vec![projected_old_data.map(Cow::into_owned).unwrap_or_else(|| Row::new(BTreeMap::new()))],
                 ),
                 ChangeType::Delete => kalamdb_commons::Notification::delete(
                     live_id.to_string(),
-                    vec![projected_row_data],
+                    vec![projected_row_data.into_owned()],
                 ),
                 ChangeType::Flush => kalamdb_commons::Notification::insert(
                     live_id.to_string(),
-                    vec![projected_row_data],
+                    vec![projected_row_data.into_owned()],
                 ),
             };
 

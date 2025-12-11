@@ -12,7 +12,7 @@ pub mod jobs_table;
 
 pub use jobs_indexes::{
     create_jobs_indexes, parse_job_status, status_to_u8, JobIdempotencyKeyIndex,
-    JobNamespaceTableIndex, JobStatusCreatedAtIndex,
+    JobStatusCreatedAtIndex,
 };
 pub use jobs_provider::{JobsStore, JobsTableProvider};
 pub use jobs_table::JobsTableSchema;

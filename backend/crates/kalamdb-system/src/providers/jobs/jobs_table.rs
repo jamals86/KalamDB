@@ -57,14 +57,15 @@ mod tests {
     #[test]
     fn test_jobs_table_schema() {
         let schema = JobsTableSchema::schema();
-        // Schema is built from TableDefinition which has 15 columns
-        assert_eq!(schema.fields().len(), 15);
+        // Schema is built from TableDefinition which has 13 columns
+        // (namespace_id and table_name were removed - now stored in parameters JSON)
+        assert_eq!(schema.fields().len(), 13);
 
         // Verify columns are ordered by ordinal_position (from TableDefinition)
         assert_eq!(schema.field(0).name(), "job_id"); // ordinal 1
         assert_eq!(schema.field(1).name(), "job_type"); // ordinal 2
-        assert_eq!(schema.field(2).name(), "namespace_id"); // ordinal 3
-                                                            // ... other fields follow ordinal_position order from jobs_table_definition()
+        assert_eq!(schema.field(2).name(), "status"); // ordinal 3
+        assert_eq!(schema.field(3).name(), "parameters"); // ordinal 4
     }
 
     #[test]

@@ -16,16 +16,14 @@ async fn test_flush_table_persists_job() {
     let app_context = &server.app_context;
 
     // Create a job directly using the Jobs API
-    use kalamdb_commons::{JobId, JobStatus, JobType, NamespaceId, NodeId, TableName};
+    use kalamdb_commons::{JobId, JobStatus, JobType, NodeId};
 
     let now = chrono::Utc::now().timestamp_millis();
     let job = kalamdb_commons::system::Job {
         job_id: JobId::new("test-flush-123"),
         job_type: JobType::Flush,
-        namespace_id: NamespaceId::new("app"),
-        table_name: Some(TableName::new("app.conversations")),
         status: JobStatus::New,
-        parameters: None,
+        parameters: Some(r#"{"namespace_id":"app","table_name":"app.conversations"}"#.to_string()),
         message: None,
         exception_trace: None,
         idempotency_key: None,
@@ -52,9 +50,10 @@ async fn test_flush_table_persists_job() {
     let retrieved_job = &jobs[0];
     assert_eq!(retrieved_job.job_id.as_str(), "test-flush-123");
     assert_eq!(retrieved_job.job_type, JobType::Flush);
-    assert_eq!(retrieved_job.namespace_id.as_str(), "app");
+    // namespace_id and table_name are now extracted from parameters
+    assert_eq!(retrieved_job.namespace_id().unwrap().as_str(), "app");
     assert_eq!(
-        retrieved_job.table_name.as_ref().unwrap().as_str(),
+        retrieved_job.table_name().unwrap().as_str(),
         "app.conversations"
     );
 
@@ -145,8 +144,8 @@ async fn test_flush_all_tables_persists_jobs() {
         .iter()
         .filter(|job| {
             job.job_type == JobType::Flush
-                && (job.table_name.as_ref().map(|t| t.as_str()) == Some("table1")
-                    || job.table_name.as_ref().map(|t| t.as_str()) == Some("table2"))
+                && (job.table_name().map(|t| t.as_str().to_string()) == Some("table1".to_string())
+                    || job.table_name().map(|t| t.as_str().to_string()) == Some("table2".to_string()))
         })
         .collect();
 
