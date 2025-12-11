@@ -15,7 +15,7 @@ use log::error;
 use std::sync::Arc;
 use std::time::Instant;
 
-use crate::models::{QueryResult, SqlRequest, SqlResponse};
+use crate::models::{QueryRequest, QueryResult, SqlResponse};
 use crate::rate_limiter::RateLimiter;
 
 /// POST /v1/api/sql - Execute SQL statement(s)
@@ -52,7 +52,7 @@ use crate::rate_limiter::RateLimiter;
 pub async fn execute_sql_v1(
     session: AuthSession,
     http_req: HttpRequest,
-    req: web::Json<SqlRequest>,
+    req: web::Json<QueryRequest>,
     app_context: web::Data<Arc<kalamdb_core::app_context::AppContext>>,
     sql_executor: web::Data<Arc<SqlExecutor>>,
     rate_limiter: Option<web::Data<Arc<RateLimiter>>>,
@@ -155,6 +155,9 @@ pub async fn execute_sql_v1(
     let mut total_updated = 0usize;
     let mut total_deleted = 0usize;
 
+    // Get namespace_id from request (client-provided or None for default)
+    let namespace_id = req.namespace_id.clone();
+
     for (idx, sql) in statements.iter().enumerate() {
         let stmt_start = Instant::now();
         match execute_single_statement(
@@ -165,6 +168,7 @@ pub async fn execute_sql_v1(
             request_id.as_deref(),
             None,
             params.clone(),
+            namespace_id.clone(),
         )
         .await
         {
@@ -260,13 +264,21 @@ async fn execute_single_statement(
     request_id: Option<&str>,
     metadata: Option<&ExecutorMetadataAlias>,
     params: Vec<ScalarValue>,
+    namespace_id: Option<String>,
 ) -> Result<QueryResult, Box<dyn std::error::Error>> {
+    use kalamdb_commons::NamespaceId;
+    
     let base_session = app_context.base_session_context();
     let mut exec_ctx = ExecutionContext::new(
         session.user.user_id.clone(),
         session.user.role,
         Arc::clone(&base_session),
     );
+
+    // Apply namespace if provided by client
+    if let Some(ns) = namespace_id {
+        exec_ctx = exec_ctx.with_namespace_id(NamespaceId::new(ns));
+    }
 
     if let Some(rid) = request_id {
         exec_ctx = exec_ctx.with_request_id(rid.to_string());

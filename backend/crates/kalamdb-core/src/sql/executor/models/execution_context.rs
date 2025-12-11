@@ -204,6 +204,12 @@ impl ExecutionContext {
         self
     }
 
+    /// Set the namespace for this execution context
+    pub fn with_namespace_id(mut self, namespace_id: NamespaceId) -> Self {
+        self.namespace_id = Some(namespace_id);
+        self
+    }
+
     /// Create a per-request SessionContext with current user_id and role injected
     ///
     /// Clones the base SessionState and injects the current user_id and role into config.extensions.
@@ -226,6 +232,11 @@ impl ExecutionContext {
     /// UserTableProvider and StreamTableProvider will read SessionUserContext from
     /// state.config().options().extensions during scan() to filter data by user.
     ///
+    /// # Namespace Handling
+    /// If `namespace_id` is set on this ExecutionContext, it will override the
+    /// default_schema in the session config. This allows clients to specify the
+    /// active namespace per-request.
+    ///
     /// # Returns
     /// SessionContext with user_id and role injected, ready for query execution
     pub fn create_session_with_user(&self) -> SessionContext {
@@ -242,6 +253,15 @@ impl ExecutionContext {
                 user_id: self.user_id.clone(),
                 role: self.user_role,
             });
+
+        // Override default_schema if namespace_id is set on this context
+        if let Some(ref ns) = self.namespace_id {
+            session_state
+                .config_mut()
+                .options_mut()
+                .catalog
+                .default_schema = ns.as_str().to_string();
+        }
 
         // Create SessionContext from the per-user state
         let ctx = SessionContext::new_with_state(session_state);
