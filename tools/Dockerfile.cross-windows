@@ -1,8 +1,9 @@
-# Custom cross-compilation image for x86_64-unknown-linux-gnu
+# Custom cross-compilation image for x86_64-pc-windows-gnu
 # Includes LLVM 16 for RocksDB bindgen compatibility and Node.js for UI build
-FROM ghcr.io/cross-rs/x86_64-unknown-linux-gnu:main
+FROM ghcr.io/cross-rs/x86_64-pc-windows-gnu:edge
 
-# Remove old LLVM and install newer version for bindgen (RocksDB requires clang_Type_getValueType)
+# Install LLVM 16 for bindgen (RocksDB requires clang_Type_getValueType)
+# The build script runs on Linux host, so we need Linux libclang
 RUN apt-get update && \
     apt-get remove -y --purge llvm-10* libclang-10* clang-10* || true && \
     apt-get autoremove -y && \
@@ -41,4 +42,3 @@ ENV LIBCLANG_PATH=/usr/lib/llvm-16/lib
 ENV LLVM_CONFIG_PATH=/usr/bin/llvm-config-16
 ENV CLANG_PATH=/usr/bin/clang-16
 ENV LIBCLANG_STATIC=0
-

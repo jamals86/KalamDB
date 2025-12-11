@@ -69,15 +69,18 @@ fn build_ui_if_release() {
     // Check if we should skip UI build (for CI or when UI is pre-built)
     if std::env::var("SKIP_UI_BUILD").is_ok() {
         println!("cargo:warning=Skipping UI build (SKIP_UI_BUILD is set)");
-        ensure_ui_dist_exists();
+        // Verify UI dist exists when skipping build
+        let dist_dir = std::path::Path::new("../../../ui/dist");
+        let index_file = dist_dir.join("index.html");
+        if !index_file.exists() {
+            panic!("SKIP_UI_BUILD is set but ui/dist/index.html does not exist! Build UI first or unset SKIP_UI_BUILD.");
+        }
         return;
     }
 
     let ui_dir = std::path::Path::new("../../../ui");
     if !ui_dir.exists() {
-        println!("cargo:warning=UI directory not found, skipping UI build");
-        ensure_ui_dist_exists();
-        return;
+        panic!("UI directory not found at ../../../ui - UI is required for release builds!");
     }
 
     // Check if npm is available
@@ -88,9 +91,7 @@ fn build_ui_if_release() {
     };
 
     if npm_check.is_err() || !npm_check.as_ref().unwrap().status.success() {
-        println!("cargo:warning=npm not found, skipping UI build");
-        ensure_ui_dist_exists();
-        return;
+        panic!("npm not found - npm is required for building the UI for release builds!");
     }
 
     println!("cargo:warning=Building UI for release...");
@@ -111,38 +112,52 @@ fn build_ui_if_release() {
                 .status()
         };
 
-        if let Err(e) = install_status {
-            println!("cargo:warning=Failed to install UI dependencies: {}", e);
-            ensure_ui_dist_exists();
-            return;
+        match install_status {
+            Ok(status) if status.success() => {}
+            Ok(status) => {
+                panic!("npm install failed with status: {} - UI dependencies are required for release builds!", status);
+            }
+            Err(e) => {
+                panic!("Failed to run npm install: {} - UI dependencies are required for release builds!", e);
+            }
         }
     }
 
     // Run npm run build
-    let build_status = if cfg!(target_os = "windows") {
+    let build_output = if cfg!(target_os = "windows") {
         Command::new("cmd")
             .args(["/C", "npm", "run", "build"])
             .current_dir(ui_dir)
-            .status()
+            .output()
     } else {
         Command::new("npm")
             .args(["run", "build"])
             .current_dir(ui_dir)
-            .status()
+            .output()
     };
 
-    match build_status {
-        Ok(status) if status.success() => {
+    match build_output {
+        Ok(output) if output.status.success() => {
             println!("cargo:warning=UI build completed successfully");
         }
-        Ok(status) => {
-            println!("cargo:warning=UI build failed with status: {}", status);
-            ensure_ui_dist_exists();
+        Ok(output) => {
+            let stderr = String::from_utf8_lossy(&output.stderr);
+            let stdout = String::from_utf8_lossy(&output.stdout);
+            panic!(
+                "UI build failed with status: {}\n\nSTDOUT:\n{}\n\nSTDERR:\n{}\n\nUI is required for release builds!",
+                output.status, stdout, stderr
+            );
         }
         Err(e) => {
-            println!("cargo:warning=Failed to run UI build: {}", e);
-            ensure_ui_dist_exists();
+            panic!("Failed to run npm build: {} - UI is required for release builds!", e);
         }
+    }
+
+    // Verify dist was created
+    let dist_dir = ui_dir.join("dist");
+    let index_file = dist_dir.join("index.html");
+    if !index_file.exists() {
+        panic!("UI build completed but ui/dist/index.html not found - UI build may have failed!");
     }
 
     // Rerun if UI source files change
