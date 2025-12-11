@@ -205,18 +205,6 @@ impl StatementHandler for InsertHandler {
             )
             .await?;
 
-        // Log DML operation
-        use crate::sql::executor::helpers::audit;
-        let subject_user_id = statement.as_user_id().cloned();
-        let audit_entry = audit::log_dml_operation(
-            context,
-            "INSERT",
-            &format!("{}.{}", namespace.as_str(), table_name.as_str()),
-            rows_affected,
-            subject_user_id,
-        );
-        audit::persist_audit_entry(&self.app_context, &audit_entry).await?;
-
         Ok(ExecutionResult::Inserted { rows_affected })
     }
 

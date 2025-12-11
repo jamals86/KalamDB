@@ -77,7 +77,7 @@ impl StatementHandler for DeleteHandler {
             ));
         }
 
-        let result = match def.table_type {
+        match def.table_type {
             TableType::User => {
                 // Get provider from unified cache and downcast to UserTableProvider
                 let provider_arc = schema_registry.get_provider(&table_id).ok_or_else(|| {
@@ -202,23 +202,7 @@ impl StatementHandler for DeleteHandler {
             TableType::System => Err(KalamDbError::InvalidOperation(
                 "Cannot DELETE from SYSTEM tables".into(),
             )),
-        };
-
-        // Log DML operation if successful
-        if let Ok(ExecutionResult::Deleted { rows_affected }) = &result {
-            use crate::sql::executor::helpers::audit;
-            let subject_user_id = statement.as_user_id().cloned();
-            let audit_entry = audit::log_dml_operation(
-                context,
-                "DELETE",
-                &format!("{}.{}", namespace.as_str(), table_name.as_str()),
-                *rows_affected,
-                subject_user_id,
-            );
-            audit::persist_audit_entry(&AppContext::get(), &audit_entry).await?;
         }
-
-        result
     }
 
     async fn check_authorization(

@@ -93,8 +93,8 @@ impl StatementHandler for UpdateHandler {
             ));
         }
 
-        let result = match (def.table_type, updates) {
-            (kalamdb_commons::schemas::TableType::User, updates) => {
+        match def.table_type {
+            kalamdb_commons::schemas::TableType::User => {
                 // Get provider from unified cache and downcast to UserTableProvider
                 let provider_arc = schema_registry.get_provider(&table_id).ok_or_else(|| {
                     KalamDbError::InvalidOperation("User table provider not found".into())
@@ -204,7 +204,7 @@ impl StatementHandler for UpdateHandler {
                     ))
                 }
             }
-            (kalamdb_commons::schemas::TableType::Shared, updates) => {
+            kalamdb_commons::schemas::TableType::Shared => {
                 // Check write permissions for Shared tables
                 use kalamdb_auth::rbac::can_write_shared_table;
                 use kalamdb_commons::schemas::TableOptions;
@@ -259,29 +259,13 @@ impl StatementHandler for UpdateHandler {
                     ))
                 }
             }
-            (kalamdb_commons::schemas::TableType::Stream, _) => Err(
+            kalamdb_commons::schemas::TableType::Stream => Err(
                 KalamDbError::InvalidOperation("UPDATE not supported for STREAM tables".into()),
             ),
-            (kalamdb_commons::schemas::TableType::System, _) => Err(
+            kalamdb_commons::schemas::TableType::System => Err(
                 KalamDbError::InvalidOperation("Cannot UPDATE SYSTEM tables".into()),
             ),
-        };
-
-        // Log DML operation if successful
-        if let Ok(ExecutionResult::Updated { rows_affected }) = &result {
-            use crate::sql::executor::helpers::audit;
-            let subject_user_id = statement.as_user_id().cloned();
-            let audit_entry = audit::log_dml_operation(
-                context,
-                "UPDATE",
-                &format!("{}.{}", namespace.as_str(), table_name.as_str()),
-                *rows_affected,
-                subject_user_id,
-            );
-            audit::persist_audit_entry(&app_context, &audit_entry).await?;
         }
-
-        result
     }
 
     async fn check_authorization(
