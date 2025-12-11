@@ -391,8 +391,6 @@ mod tests {
         Job {
             job_id: JobId::new(id),
             job_type,
-            namespace_id: NamespaceId::new(ns),
-            table_name: None,
             status: kalamdb_commons::JobStatus::Running,
             parameters: None,
             message: None,
