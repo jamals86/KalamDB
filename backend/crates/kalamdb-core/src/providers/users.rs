@@ -158,10 +158,9 @@ impl UserTableProvider {
 
     /// Fast existence check for primary key in hot storage (RocksDB).
     ///
-    /// This is optimized for INSERT validation - only checks if a non-deleted
-    /// version exists in hot storage. Much faster than `find_by_pk` because:
-    /// 1. Limits index scan to 1 result (latest version only)
-    /// 2. Only fetches that single entity to check `_deleted` flag
+    /// **OPTIMIZED**: Single round-trip to RocksDB.
+    /// Uses scan_by_index with limit=1 directly instead of exists_by_index + scan_by_index.
+    /// This halves the number of RocksDB operations for PK validation.
     ///
     /// # Returns
     /// - `Some(true)` if non-deleted version exists in hot storage
@@ -180,29 +179,22 @@ impl UserTableProvider {
         )
         .build_prefix_for_pk(user_id.as_str(), pk_value);
 
-        // Quick check: does any version exist in index?
-        let exists = self
-            .store
-            .exists_by_index(0, &prefix)
-            .map_err(|e| KalamDbError::Other(format!("PK index exists check failed: {}", e)))?;
-
-        if !exists {
-            return Ok(None); // No version in hot storage
-        }
-
-        // At least one version exists - fetch just the latest (limit 1)
-        // Due to descending seq order, first result is the latest
-        let index_results = self
+        // Single round-trip: scan index with limit=1
+        // Due to descending seq order (big-endian), first result is the latest version
+        let results = self
             .store
             .scan_by_index(0, Some(&prefix), Some(1))
             .map_err(|e| KalamDbError::Other(format!("PK index scan failed: {}", e)))?;
 
-        if let Some((_row_id, row)) = index_results.into_iter().next() {
-            // Return whether the latest version is deleted or not
-            Ok(Some(!row._deleted))
-        } else {
-            // Shouldn't happen since exists_by_index returned true
-            Ok(None)
+        match results.into_iter().next() {
+            Some((_row_id, row)) => {
+                // Return whether the latest version is deleted or not
+                Ok(Some(!row._deleted))
+            }
+            None => {
+                // No version in hot storage
+                Ok(None)
+            }
         }
     }
 
@@ -368,13 +360,8 @@ impl BaseTableProvider<UserTableRowId, UserTableRow> for UserTableProvider {
         user_id: &UserId,
         id_value: &str,
     ) -> Result<Option<UserTableRowId>, KalamDbError> {
-        // Try to parse id_value as the appropriate scalar type
-        // Most PKs are Int64, so try that first
-        let pk_value = if let Ok(n) = id_value.parse::<i64>() {
-            ScalarValue::Int64(Some(n))
-        } else {
-            ScalarValue::Utf8(Some(id_value.to_string()))
-        };
+        // Use shared helper to parse PK value
+        let pk_value = crate::providers::pk_helpers::parse_pk_value(id_value);
 
         // Fast path: check hot storage using optimized existence check
         match self.pk_exists_in_hot(user_id, &pk_value)? {

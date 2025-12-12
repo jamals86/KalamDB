@@ -195,7 +195,9 @@ impl SharedTableProvider {
 
     /// Fast existence check for primary key in hot storage (RocksDB).
     ///
-    /// Optimized for INSERT validation - only checks if a non-deleted version exists.
+    /// **OPTIMIZED**: Single round-trip to RocksDB.
+    /// Uses scan_by_index with limit=1 directly instead of exists_by_index + scan_by_index.
+    /// This halves the number of RocksDB operations for PK validation.
     ///
     /// # Returns
     /// - `Some(true)` if non-deleted version exists in hot storage
@@ -208,26 +210,22 @@ impl SharedTableProvider {
         // Build index prefix for this PK value
         let prefix = self.pk_index.build_prefix_for_pk(pk_value);
 
-        // Quick check: does any version exist in index?
-        let exists = self
-            .store
-            .exists_by_index(0, &prefix)
-            .map_err(|e| KalamDbError::Other(format!("PK index exists check failed: {}", e)))?;
-
-        if !exists {
-            return Ok(None); // No version in hot storage
-        }
-
-        // At least one version exists - fetch just the latest (limit 1)
+        // Single round-trip: scan index with limit=1
+        // Due to descending seq order (big-endian), first result is the latest version
         let results = self
             .store
             .scan_by_index(0, Some(&prefix), Some(1))
             .map_err(|e| KalamDbError::Other(format!("PK index scan failed: {}", e)))?;
 
-        if let Some((_row_id, row)) = results.into_iter().next() {
-            Ok(Some(!row._deleted))
-        } else {
-            Ok(None)
+        match results.into_iter().next() {
+            Some((_row_id, row)) => {
+                // Return whether the latest version is deleted or not
+                Ok(Some(!row._deleted))
+            }
+            None => {
+                // No version in hot storage
+                Ok(None)
+            }
         }
     }
 
@@ -285,12 +283,8 @@ impl BaseTableProvider<SharedTableRowId, SharedTableRow> for SharedTableProvider
         _user_id: &UserId,
         id_value: &str,
     ) -> Result<Option<SharedTableRowId>, KalamDbError> {
-        // Try to parse id_value as i64 first (most common case)
-        let pk_value = if let Ok(int_val) = id_value.parse::<i64>() {
-            ScalarValue::Int64(Some(int_val))
-        } else {
-            ScalarValue::Utf8(Some(id_value.to_string()))
-        };
+        // Use shared helper to parse PK value
+        let pk_value = crate::providers::pk_helpers::parse_pk_value(id_value);
 
         // Fast path: check hot storage using optimized existence check
         match self.pk_exists_in_hot(&pk_value)? {

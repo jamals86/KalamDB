@@ -28,6 +28,7 @@ pub mod core;
 pub mod flush; // Phase 13.7: Consolidated flush logic from tables/
 pub mod helpers;
 pub mod parquet;
+pub mod pk_helpers; // PK index helpers - parse_pk_value and other common utilities
 pub mod scan_row;
 pub mod shared;
 pub mod streams;
