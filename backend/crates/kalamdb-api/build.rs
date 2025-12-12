@@ -58,9 +58,10 @@ fn main() {
 /// Build the UI for release builds
 /// This ensures the UI is always up-to-date when building for release
 fn build_ui_if_release() {
-    // Only build UI for release builds
+    // Only build UI for release-like builds (release, release-dist, docker profiles)
     let profile = std::env::var("PROFILE").unwrap_or_default();
-    if profile != "release" {
+    let is_release_build = profile == "release" || profile == "release-dist" || profile == "docker";
+    if !is_release_build {
         // For debug builds, just ensure the dist folder exists with a placeholder
         ensure_ui_dist_exists();
         return;
