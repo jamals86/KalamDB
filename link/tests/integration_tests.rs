@@ -163,7 +163,10 @@ async fn test_execute_query_with_results() {
     // Create table and insert data
     client
         .execute_query(
-            &format!("CREATE USER TABLE {}.items (id INT PRIMARY KEY, name VARCHAR)", ns),
+            &format!(
+                "CREATE TABLE {}.items (id INT PRIMARY KEY, name VARCHAR) WITH (TYPE = 'USER')",
+                ns
+            ),
             None,
             None,
         )
@@ -268,7 +271,10 @@ async fn test_subscription_basic() {
     // Create table
     client
         .execute_query(
-            &format!("CREATE USER TABLE {}.events (id INT PRIMARY KEY, data VARCHAR)", ns),
+            &format!(
+                "CREATE TABLE {}.events (id INT PRIMARY KEY, data VARCHAR) WITH (TYPE = 'USER')",
+                ns
+            ),
             None,
             None,
         )
@@ -314,7 +320,10 @@ async fn test_subscription_with_custom_config() {
     // Create table
     client
         .execute_query(
-            &format!("CREATE USER TABLE {}.data (id INT PRIMARY KEY, val VARCHAR)", ns),
+            &format!(
+                "CREATE TABLE {}.data (id INT PRIMARY KEY, val VARCHAR) WITH (TYPE = 'USER')",
+                ns
+            ),
             None,
             None,
         )
@@ -460,7 +469,10 @@ async fn test_create_and_drop_table() {
     // Create table
     let create = client
         .execute_query(
-            &format!("CREATE USER TABLE {}.test (id INT PRIMARY KEY, name VARCHAR)", ns),
+            &format!(
+                "CREATE TABLE {}.test (id INT PRIMARY KEY, name VARCHAR) WITH (TYPE = 'USER')",
+                ns
+            ),
             None,
             None,
         )
@@ -489,7 +501,10 @@ async fn test_insert_and_select() {
     // Create table
     client
         .execute_query(
-            &format!("CREATE USER TABLE {}.data (id INT PRIMARY KEY, value VARCHAR)", ns),
+            &format!(
+                "CREATE TABLE {}.data (id INT PRIMARY KEY, value VARCHAR) WITH (TYPE = 'USER')",
+                ns
+            ),
             None,
             None,
         )
@@ -534,7 +549,10 @@ async fn test_update_operation() {
     // Setup
     client
         .execute_query(
-            &format!("CREATE USER TABLE {}.items (id INT PRIMARY KEY, status VARCHAR)", ns),
+            &format!(
+                "CREATE TABLE {}.items (id INT PRIMARY KEY, status VARCHAR) WITH (TYPE = 'USER')",
+                ns
+            ),
             None,
             None,
         )
@@ -577,7 +595,10 @@ async fn test_delete_operation() {
 
     let create_result = client
         .execute_query(
-            &format!("CREATE USER TABLE {} (id INT PRIMARY KEY, data VARCHAR)", full_table),
+            &format!(
+                "CREATE TABLE {} (id INT PRIMARY KEY, data VARCHAR) WITH (TYPE = 'USER')",
+                full_table
+            ),
             None,
             None,
         )
@@ -677,7 +698,10 @@ async fn test_where_clause_operators() {
     // Setup
     client
         .execute_query(
-            &format!("CREATE USER TABLE {}.data (id INT PRIMARY KEY, val VARCHAR)", ns),
+            &format!(
+                "CREATE TABLE {}.data (id INT PRIMARY KEY, val VARCHAR) WITH (TYPE = 'USER')",
+                ns
+            ),
             None,
             None,
         )
@@ -726,7 +750,10 @@ async fn test_limit_clause() {
     // Setup
     client
         .execute_query(
-            &format!("CREATE USER TABLE {}.items (id INT PRIMARY KEY)", ns),
+            &format!(
+                "CREATE TABLE {}.items (id INT PRIMARY KEY) WITH (TYPE = 'USER')",
+                ns
+            ),
             None,
             None,
         )
@@ -771,7 +798,10 @@ async fn test_order_by_clause() {
     // Setup
     client
         .execute_query(
-            &format!("CREATE USER TABLE {}.data (val VARCHAR PRIMARY KEY)", ns),
+            &format!(
+                "CREATE TABLE {}.data (val VARCHAR PRIMARY KEY) WITH (TYPE = 'USER')",
+                ns
+            ),
             None,
             None,
         )
@@ -818,7 +848,10 @@ async fn test_concurrent_queries() {
     // Setup table
     client
         .execute_query(
-            &format!("CREATE USER TABLE {}.data (id INT PRIMARY KEY)", ns),
+            &format!(
+                "CREATE TABLE {}.data (id INT PRIMARY KEY) WITH (TYPE = 'USER')",
+                ns
+            ),
             None,
             None,
         )

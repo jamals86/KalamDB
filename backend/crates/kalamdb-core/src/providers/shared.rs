@@ -267,9 +267,12 @@ impl BaseTableProvider<SharedTableRowId, SharedTableRow> for SharedTableProvider
                 "[SharedTableProvider] PK {} exists in cold storage",
                 id_value
             );
-            // For insert uniqueness check, we just need to know it exists
-            // Return a dummy row_id (the actual _seq doesn't matter for uniqueness)
-            return Ok(Some(kalamdb_commons::ids::SeqId::from(0)));
+            // Load the actual row_id from cold storage so DML (DELETE/UPDATE) can target it
+            if let Some((row_id, _row)) = base::find_row_by_pk(self, None, id_value)? {
+                return Ok(Some(row_id));
+            }
+
+            return Ok(None);
         }
 
         Ok(None)

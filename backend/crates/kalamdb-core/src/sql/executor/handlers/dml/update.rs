@@ -124,18 +124,34 @@ impl StatementHandler for UpdateHandler {
                         println!("[DEBUG UpdateHandler] Calling provider.update_by_id_field for user={}, pk_column={}, pk_value={}", 
                             effective_user_id.as_str(), pk_column, id_value);
 
-                        match provider.update_by_id_field(effective_user_id, &id_value, updates) {
+                        match provider.update_by_id_field(
+                            effective_user_id,
+                            &id_value,
+                            updates.clone(),
+                        ) {
                             Ok(_) => {
                                 println!("[DEBUG UpdateHandler] update_by_id_field succeeded");
                                 Ok(ExecutionResult::Updated { rows_affected: 1 })
                             }
                             Err(e) => {
                                 println!("[DEBUG UpdateHandler] update_by_id_field failed: {}", e);
-                                // Isolation-friendly semantics: updating a non-existent row under this user_id
-                                // should return success with 0 rows affected (no-op), not an error.
+                                // Common case: PK is not a string (e.g. INT). Our update_by_id_field
+                                // fast-path delegates to update_by_pk_value(&str), which may not be able
+                                // to locate the row for non-string PK encodings.
+                                // Fall back to a key lookup that compares ScalarValues correctly.
                                 if matches!(e, crate::error::KalamDbError::NotFound(_)) {
+                                    if let Some(key) = provider
+                                        .find_row_key_by_id_field(effective_user_id, &id_value)?
+                                    {
+                                        provider.update(effective_user_id, &key, updates)?;
+                                        return Ok(ExecutionResult::Updated { rows_affected: 1 });
+                                    }
+
+                                    // Isolation-friendly semantics: updating a non-existent row under this user_id
+                                    // should return success with 0 rows affected (no-op), not an error.
                                     return Ok(ExecutionResult::Updated { rows_affected: 0 });
                                 }
+
                                 Err(e)
                             }
                         }
@@ -248,8 +264,25 @@ impl StatementHandler for UpdateHandler {
                         self.extract_row_id_for_column(&where_pair, pk_column, &params)?
                     {
                         // SharedTableProvider ignores user_id parameter (no RLS)
-                        provider.update_by_id_field(effective_user_id, &id_value, updates)?;
-                        Ok(ExecutionResult::Updated { rows_affected: 1 })
+                        match provider.update_by_id_field(
+                            effective_user_id,
+                            &id_value,
+                            updates.clone(),
+                        ) {
+                            Ok(_) => Ok(ExecutionResult::Updated { rows_affected: 1 }),
+                            Err(e) if matches!(e, crate::error::KalamDbError::NotFound(_)) => {
+                                // Same fallback as USER tables: allow non-string PKs.
+                                if let Some(key) = provider
+                                    .find_row_key_by_id_field(effective_user_id, &id_value)?
+                                {
+                                    provider.update(effective_user_id, &key, updates)?;
+                                    Ok(ExecutionResult::Updated { rows_affected: 1 })
+                                } else {
+                                    Ok(ExecutionResult::Updated { rows_affected: 0 })
+                                }
+                            }
+                            Err(e) => Err(e),
+                        }
                     } else {
                         Err(KalamDbError::InvalidOperation(format!(
                             "UPDATE on SHARED tables requires WHERE {} = <value> (predicate updates not yet supported)",

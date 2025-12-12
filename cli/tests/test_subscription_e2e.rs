@@ -5,7 +5,6 @@ use common::*;
 use std::time::Duration;
 
 #[test]
-#[ignore = "Backend issue: UPDATE on user tables returns 0 rows affected (NotFound error)"]
 fn test_cli_subscription_initial_and_changes() {
     if !is_server_running() {
         eprintln!("⚠️  Server not running. Skipping test.");

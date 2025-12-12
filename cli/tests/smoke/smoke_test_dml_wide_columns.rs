@@ -209,7 +209,6 @@ fn smoke_shared_table_dml_wide_columns() {
 // _updated/_deleted columns.
 #[ntest::timeout(180000)]
 #[test]
-#[ignore = "Backend issue: UPDATE on user tables returns 0 rows affected (NotFound error)"]
 fn smoke_subscription_update_delete_notifications() {
     if !is_server_running() {
         eprintln!("⚠️  Server not running. Skipping test.");

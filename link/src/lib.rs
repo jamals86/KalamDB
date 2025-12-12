@@ -27,7 +27,9 @@
 //!         .build()?;
 //!
 //!     // Execute a query
-//!     let response = client.execute_query("SELECT * FROM users LIMIT 10").await?;
+//!     let response = client
+//!         .execute_query("SELECT * FROM users LIMIT 10", None, None)
+//!         .await?;
 //!     println!("Results: {:?}", response.results);
 //!
 //!     // Subscribe to real-time changes

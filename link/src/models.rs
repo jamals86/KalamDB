@@ -300,7 +300,7 @@ impl ConnectionOptions {
 /// # Example
 ///
 /// ```rust
-/// use kalam_link::SubscriptionOptions;
+/// use kalam_link::{SeqId, SubscriptionOptions};
 ///
 /// // Fetch last 100 rows with batch size of 50
 /// let options = SubscriptionOptions::default()
@@ -308,6 +308,7 @@ impl ConnectionOptions {
 ///     .with_last_rows(100);
 ///
 /// // Resume from a specific sequence ID after reconnection
+/// let some_seq_id = SeqId::new(123);
 /// let options = SubscriptionOptions::default()
 ///     .with_from_seq_id(some_seq_id);
 /// ```
@@ -455,12 +456,14 @@ pub enum ChangeTypeRaw {
 /// let request = QueryRequest {
 ///     sql: "SELECT * FROM users".to_string(),
 ///     params: None,
+///     namespace_id: None,
 /// };
 ///
 /// // Parametrized query
 /// let request = QueryRequest {
 ///     sql: "SELECT * FROM users WHERE id = $1".to_string(),
 ///     params: Some(vec![json!(42)]),
+///     namespace_id: None,
 /// };
 /// ```
 #[derive(Debug, Clone, Serialize, Deserialize)]

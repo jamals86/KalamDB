@@ -32,7 +32,7 @@ use tokio::sync::Mutex;
 ///     .timeout(std::time::Duration::from_secs(30))
 ///     .build()?;
 ///
-/// let response = client.execute_query("SELECT 1").await?;
+/// let response = client.execute_query("SELECT 1", None, None).await?;
 /// println!("Result: {:?}", response);
 /// # Ok(())
 /// # }

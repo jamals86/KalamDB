@@ -324,10 +324,14 @@ impl BaseTableProvider<UserTableRowId, UserTableRow> for UserTableProvider {
                 "[UserTableProvider] PK {} exists in cold storage",
                 id_value
             );
-            // For insert uniqueness check, we just need to know it exists
-            // Return a dummy row_id (the actual _seq doesn't matter for uniqueness)
-            // We use SeqId(0) as a marker since the caller only checks is_some()
-            return Ok(Some(UserTableRowId::new(user_id.clone(), kalamdb_commons::ids::SeqId::from(0))));
+            // Load the actual row_id from cold storage so DELETE/UPDATE can target correct version
+            if let Some((row_id, _row)) =
+                base::find_row_by_pk(self, Some(user_id), id_value)?
+            {
+                return Ok(Some(row_id));
+            }
+
+            return Ok(None);
         }
 
         Ok(None)
