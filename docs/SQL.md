@@ -52,12 +52,15 @@ KalamDB is a **SQL-first database** built for real-time chat and AI message hist
 CREATE NAMESPACE app;
 CREATE TABLE app.messages (id BIGINT PRIMARY KEY DEFAULT SNOWFLAKE_ID(), content TEXT) WITH (TYPE='USER', FLUSH_POLICY='rows:1000');
 
--- Insert and query data
-INSERT INTO app.messages (content) VALUES ('Hello World');
-SELECT * FROM app.messages ORDER BY id DESC LIMIT 10;
+-- Set default namespace for session
+USE app;
 
--- Real-time subscriptions
-SUBSCRIBE TO app.messages WHERE timestamp > NOW() - INTERVAL '1 hour' OPTIONS (last_rows=10);
+-- Insert and query data (unqualified table names now work)
+INSERT INTO messages (content) VALUES ('Hello World');
+SELECT * FROM messages ORDER BY id DESC LIMIT 10;
+
+-- Real-time subscriptions (also work with default namespace)
+SUBSCRIBE TO messages WHERE timestamp > NOW() - INTERVAL '1 hour' OPTIONS (last_rows=10);
 
 -- User management
 CREATE USER 'alice' WITH PASSWORD 'Secret123!' ROLE 'user';
@@ -109,6 +112,62 @@ DROP NAMESPACE IF EXISTS old_namespace;
 ```
 
 **Warning**: Drops all tables in the namespace and deletes all data (including Parquet files).
+
+---
+
+### USE NAMESPACE
+
+Sets the default namespace for the current session. Unqualified table names in SQL statements will resolve to this namespace.
+
+```sql
+USE <namespace_name>;
+USE NAMESPACE <namespace_name>;
+SET NAMESPACE <namespace_name>;
+```
+
+**Examples**:
+```sql
+-- Set default namespace for the session
+USE app;
+
+-- Alternative syntax
+USE NAMESPACE production;
+SET NAMESPACE dev;
+
+-- After USE NAMESPACE, unqualified table names resolve to that namespace
+USE app;
+SELECT * FROM messages;     -- Resolves to app.messages
+INSERT INTO users (name) VALUES ('Alice');  -- Resolves to app.users
+
+-- Fully qualified names still work and override the default
+USE app;
+SELECT * FROM production.messages;  -- Uses production namespace
+```
+
+**Integration with DML**:
+
+After setting a namespace, all INSERT, UPDATE, DELETE, and SELECT statements can use unqualified table names:
+
+```sql
+-- Set working namespace
+USE myapp;
+
+-- All these use myapp namespace
+INSERT INTO messages (content) VALUES ('Hello');
+UPDATE users SET active = true WHERE id = 1;
+DELETE FROM logs WHERE timestamp < NOW() - INTERVAL '30 days';
+SELECT * FROM messages ORDER BY id DESC LIMIT 10;
+
+-- SUBSCRIBE also supports unqualified table names
+SUBSCRIBE TO messages;
+SUBSCRIBE TO messages WHERE user_id = CURRENT_USER();
+```
+
+**Notes**:
+- Default namespace is `default` when no USE statement has been executed
+- The namespace setting persists for the duration of the session (HTTP connection or WebSocket session)
+- Each session has its own independent namespace setting
+- Fully qualified table names (`namespace.table`) always override the session default
 
 ---
 

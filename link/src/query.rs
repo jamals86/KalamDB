@@ -26,15 +26,17 @@ impl QueryExecutor {
         }
     }
 
-    /// Execute a SQL query with optional parameters
+    /// Execute a SQL query with optional parameters and namespace
     pub async fn execute(
         &self,
         sql: &str,
         params: Option<Vec<serde_json::Value>>,
+        namespace_id: Option<String>,
     ) -> Result<QueryResponse> {
         let request = QueryRequest {
             sql: sql.to_string(),
             params,
+            namespace_id,
         };
 
         // Send request with retry logic

@@ -36,7 +36,7 @@ async fn test_connection_timeout_unreachable_server() {
     let start = Instant::now();
     
     // Attempt to execute a query (which requires connection)
-    let result = client.execute_query("SELECT 1").await;
+    let result = client.execute_query("SELECT 1", None, None).await;
     
     let elapsed = start.elapsed();
     
@@ -68,7 +68,7 @@ async fn test_fast_timeout_preset() {
         .expect("Client build should succeed");
     
     let start = Instant::now();
-    let result = client.execute_query("SELECT 1").await;
+    let result = client.execute_query("SELECT 1", None, None).await;
     let elapsed = start.elapsed();
     
     assert!(result.is_err(), "Should fail to connect");
@@ -96,7 +96,7 @@ async fn test_connection_refused() {
         .expect("Client build should succeed");
     
     let start = Instant::now();
-    let result = client.execute_query("SELECT 1").await;
+    let result = client.execute_query("SELECT 1", None, None).await;
     let elapsed = start.elapsed();
     
     // Should fail with connection refused (very fast)

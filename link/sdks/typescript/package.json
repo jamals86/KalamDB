@@ -33,7 +33,7 @@
   "sideEffects": false,
   "scripts": {
     "clean": "node -e \"const fs=require('fs');const rm=p=>{try{fs.rmSync(p,{recursive:true,force:true})}catch{}};rm('dist');rm('.wasm-out');rm('src/wasm')\"",
-    "build:wasm": "cd ../.. && wasm-pack build --target web --out-dir sdks/typescript/.wasm-out --features wasm --no-default-features",
+    "build:wasm": "cd ../.. && CARGO_ENCODED_RUSTFLAGS= RUSTFLAGS= wasm-pack build --target web --out-dir sdks/typescript/.wasm-out --features wasm --no-default-features",
     "build:copy-wasm": "node -e \"const fs=require('fs');const p=require('path');['src/wasm','dist/wasm'].forEach(d=>fs.mkdirSync(d,{recursive:true}));fs.readdirSync('.wasm-out').filter(f=>!f.includes('package.json')&&!f.includes('.gitignore')).forEach(f=>{fs.copyFileSync(p.join('.wasm-out',f),p.join('src/wasm',f));fs.copyFileSync(p.join('.wasm-out',f),p.join('dist/wasm',f))})\"",
     "build:ts": "tsc",
     "build:cleanup": "node -e \"require('fs').rmSync('src/wasm',{recursive:true,force:true})\"",

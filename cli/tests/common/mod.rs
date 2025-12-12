@@ -362,7 +362,7 @@ pub fn execute_sql_via_client_as_with_args(
             if is_root {
                 // Reuse shared root client to avoid creating new TCP connections
                 let client = get_shared_root_client();
-                let response = client.execute_query(&sql).await?;
+                let response = client.execute_query(&sql, None, None).await?;
                 Ok::<_, Box<dyn std::error::Error + Send + Sync>>(response)
             } else {
                 // For non-root users, we need a client with different auth
@@ -372,7 +372,7 @@ pub fn execute_sql_via_client_as_with_args(
                     .auth(AuthProvider::basic_auth(username_owned, password_owned))
                     .timeouts(KalamLinkTimeouts::fast())
                     .build()?;
-                let response = client.execute_query(&sql).await?;
+                let response = client.execute_query(&sql, None, None).await?;
                 Ok(response)
             }
         }.await;

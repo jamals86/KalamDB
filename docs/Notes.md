@@ -284,6 +284,8 @@ instead of: 1 failed: Invalid operation: No handler registered for statement typ
 
 195) we should always have a default order by column so we always have the same vlues returned in the same order, this is important for pagination as well
 
+196) why having both: pub struct QueryRequest and pub struct SqlRequest they are almost the same we can have one only
+
 
 Here’s the updated 5-line spec with embedding storage inside Parquet and managed HNSW indexing (with delete handling):
 	1.	Parquet Storage: All embeddings are stored as regular columns in the Parquet file alongside other table columns to keep data unified and versioned per batch.

@@ -8,6 +8,20 @@
 # Usage:
 #   ./tools/build              # Interactive mode
 #   ./tools/build --help       # Show help
+#   ./tools/build --batch      # Non-interactive mode (uses defaults/flags)
+#
+# Batch mode flags:
+#   --batch                    # Enable non-interactive mode
+#   --platforms <list>         # Comma-separated platforms (e.g., linux-aarch64,macos-aarch64)
+#   --all-platforms            # Build all platforms
+#   --docker                   # Build Docker image
+#   --docker-push              # Build and push Docker image
+#   --github-release           # Create GitHub release
+#   --version-tag <tag>        # Version tag (default: v<version>)
+#
+# Examples:
+#   ./tools/build --batch --platforms linux-aarch64,macos-aarch64 --docker-push
+#   ./tools/build --batch --all-platforms --github-release --docker-push
 #
 # Features:
 #   - Auto-detects version from Cargo.toml
@@ -95,6 +109,28 @@ Interactive build tool for creating releases, binaries, and Docker images.
 ${BOLD}USAGE:${NC}
     ./tools/build              Run in interactive mode
     ./tools/build --help       Show this help message
+    ./tools/build --batch      Run in non-interactive batch mode
+
+${BOLD}BATCH MODE FLAGS:${NC}
+    --batch                    Enable non-interactive mode
+    --platforms <list>         Comma-separated platforms to build
+                               Available: linux-x86_64, linux-aarch64, macos-x86_64,
+                                          macos-aarch64, windows-x86_64
+    --all-platforms            Build all platforms
+    --docker                   Build Docker image (local only)
+    --docker-push              Build and push Docker image to Docker Hub
+    --github-release           Create GitHub release
+    --version-tag <tag>        Version tag (default: v<version from Cargo.toml>)
+
+${BOLD}EXAMPLES:${NC}
+    # Build Linux ARM, macOS ARM, and push Docker
+    ./tools/build --batch --platforms linux-aarch64,macos-aarch64 --docker-push
+
+    # Build all platforms and create GitHub release
+    ./tools/build --batch --all-platforms --github-release
+
+    # Full release: all platforms, GitHub, and Docker
+    ./tools/build --batch --all-platforms --github-release --docker-push
 
 ${BOLD}FEATURES:${NC}
     • Auto-detects version from Cargo.toml
@@ -448,7 +484,11 @@ create_github_release() {
     
     # Check if release exists
     if gh release view "$tag" --repo "$REPO_OWNER/$REPO_NAME" &> /dev/null; then
-        if prompt_yes_no "Release $tag already exists. Delete and recreate?"; then
+        if [[ "$BATCH_MODE" == true ]]; then
+            # In batch mode, auto-delete existing release
+            print_warning "Release $tag already exists. Deleting in batch mode..."
+            gh release delete "$tag" --repo "$REPO_OWNER/$REPO_NAME" --yes
+        elif prompt_yes_no "Release $tag already exists. Delete and recreate?"; then
             gh release delete "$tag" --repo "$REPO_OWNER/$REPO_NAME" --yes
         else
             print_warning "Skipping GitHub release"
@@ -677,8 +717,64 @@ check_docker_login() {
 # Main
 # ============================================================================
 
+# Parse command line arguments for batch mode
+parse_args() {
+    BATCH_MODE=false
+    BATCH_PLATFORMS=""
+    BATCH_ALL_PLATFORMS=false
+    BATCH_DOCKER=false
+    BATCH_DOCKER_PUSH=false
+    BATCH_GITHUB_RELEASE=false
+    BATCH_VERSION_TAG=""
+    
+    while [[ $# -gt 0 ]]; do
+        case "$1" in
+            --help|-h)
+                show_help
+                ;;
+            --batch)
+                BATCH_MODE=true
+                shift
+                ;;
+            --platforms)
+                BATCH_PLATFORMS="$2"
+                shift 2
+                ;;
+            --all-platforms)
+                BATCH_ALL_PLATFORMS=true
+                shift
+                ;;
+            --docker)
+                BATCH_DOCKER=true
+                shift
+                ;;
+            --docker-push)
+                BATCH_DOCKER=true
+                BATCH_DOCKER_PUSH=true
+                shift
+                ;;
+            --github-release)
+                BATCH_GITHUB_RELEASE=true
+                shift
+                ;;
+            --version-tag)
+                BATCH_VERSION_TAG="$2"
+                shift 2
+                ;;
+            *)
+                print_error "Unknown option: $1"
+                echo "Use --help for usage information"
+                exit 1
+                ;;
+        esac
+    done
+}
+
 main() {
-    # Handle --help
+    # Parse arguments first
+    parse_args "$@"
+    
+    # Handle --help (already handled in parse_args, but keep for direct calls)
     if [[ "${1:-}" == "--help" ]] || [[ "${1:-}" == "-h" ]]; then
         show_help
     fi
@@ -690,68 +786,151 @@ main() {
     print_info "Detected version from Cargo.toml: ${BOLD}$VERSION${NC}"
     echo ""
     
-    # Ask for version tag
-    read -p "$(echo -e "${CYAN}?${NC} Version tag for release [v$VERSION]: ")" VERSION_TAG
-    VERSION_TAG="${VERSION_TAG:-v$VERSION}"
-    echo ""
-    
-    # Select target platforms
-    platform_names=()
-    for p in "${PLATFORMS[@]}"; do
-        platform_names+=("${p%%:*}")
-    done
-    
-    multi_select "Select target platforms:" "${platform_names[@]}"
-    
-    SELECTED_PLATFORMS=()
-    for idx in "${SELECTED_INDICES[@]}"; do
-        SELECTED_PLATFORMS+=("${PLATFORMS[$idx]}")
-    done
-    
-    if [[ ${#SELECTED_PLATFORMS[@]} -eq 0 ]]; then
-        print_error "No platforms selected"
-        exit 1
-    fi
-    
-    # Ask about GitHub release
-    CREATE_GITHUB_RELEASE=false
-    if prompt_yes_no "Create GitHub release?"; then
-        CREATE_GITHUB_RELEASE=true
-        
-        # Check gh CLI
-        if ! command -v gh &> /dev/null; then
-            print_error "GitHub CLI (gh) is not installed"
-            print_info "Install with: brew install gh && gh auth login"
-            exit 1
-        fi
-        
-        if ! gh auth status &> /dev/null; then
-            print_error "Not logged in to GitHub"
-            print_info "Run: gh auth login"
-            exit 1
-        fi
-    fi
-    
-    # Ask about Docker
-    BUILD_DOCKER=false
-    PUSH_DOCKER=false
-    
-    if prompt_yes_no "Build Docker image?"; then
-        # Run Docker pre-flight checks
+    if [[ "$BATCH_MODE" == true ]]; then
+        # ========== BATCH MODE ==========
+        print_info "Running in batch (non-interactive) mode"
         echo ""
-        print_step "Checking Docker prerequisites..."
-        if ! check_docker_prereqs; then
-            print_error "Docker prerequisites not met"
+        
+        # Set version tag
+        VERSION_TAG="${BATCH_VERSION_TAG:-v$VERSION}"
+        
+        # Determine platforms
+        SELECTED_PLATFORMS=()
+        if [[ "$BATCH_ALL_PLATFORMS" == true ]]; then
+            SELECTED_PLATFORMS=("${PLATFORMS[@]}")
+        elif [[ -n "$BATCH_PLATFORMS" ]]; then
+            IFS=',' read -ra requested_platforms <<< "$BATCH_PLATFORMS"
+            for req_platform in "${requested_platforms[@]}"; do
+                req_platform=$(echo "$req_platform" | xargs)  # trim whitespace
+                local found=false
+                for p in "${PLATFORMS[@]}"; do
+                    platform_name="${p%%:*}"
+                    if [[ "$platform_name" == "$req_platform" ]]; then
+                        SELECTED_PLATFORMS+=("$p")
+                        found=true
+                        break
+                    fi
+                done
+                if [[ "$found" == false ]]; then
+                    print_error "Unknown platform: $req_platform"
+                    print_info "Available platforms: linux-x86_64, linux-aarch64, macos-x86_64, macos-aarch64, windows-x86_64"
+                    exit 1
+                fi
+            done
+        fi
+        
+        if [[ ${#SELECTED_PLATFORMS[@]} -eq 0 ]] && [[ "$BATCH_DOCKER" == false ]]; then
+            print_error "No platforms selected and no Docker build requested"
+            print_info "Use --platforms, --all-platforms, or --docker/--docker-push"
             exit 1
         fi
         
-        BUILD_DOCKER=true
+        CREATE_GITHUB_RELEASE="$BATCH_GITHUB_RELEASE"
+        BUILD_DOCKER="$BATCH_DOCKER"
+        PUSH_DOCKER="$BATCH_DOCKER_PUSH"
         
-        if prompt_yes_no "Push to Docker Hub?"; then
-            check_docker_login
-            PUSH_DOCKER=true
+        # Check prerequisites for GitHub release
+        if [[ "$CREATE_GITHUB_RELEASE" == true ]]; then
+            if ! command -v gh &> /dev/null; then
+                print_error "GitHub CLI (gh) is not installed"
+                print_info "Install with: brew install gh && gh auth login"
+                exit 1
+            fi
+            
+            if ! gh auth status &> /dev/null; then
+                print_error "Not logged in to GitHub"
+                print_info "Run: gh auth login"
+                exit 1
+            fi
+            print_success "GitHub CLI authenticated"
         fi
+        
+        # Check Docker prerequisites
+        if [[ "$BUILD_DOCKER" == true ]]; then
+            print_step "Checking Docker prerequisites..."
+            if ! check_docker_prereqs; then
+                print_error "Docker prerequisites not met"
+                exit 1
+            fi
+            
+            if [[ "$PUSH_DOCKER" == true ]]; then
+                # In batch mode, just check if credentials exist (don't prompt)
+                if [[ -f "$HOME/.docker/config.json" ]] && grep -q "index.docker.io" "$HOME/.docker/config.json" 2>/dev/null; then
+                    print_success "Docker Hub credentials found"
+                elif docker info 2>/dev/null | grep -qi "Username:"; then
+                    print_success "Logged in to Docker Hub"
+                else
+                    print_error "Not logged in to Docker Hub. Run 'docker login' first."
+                    exit 1
+                fi
+            fi
+        fi
+        
+    else
+        # ========== INTERACTIVE MODE ==========
+        # Ask for version tag
+        read -p "$(echo -e "${CYAN}?${NC} Version tag for release [v$VERSION]: ")" VERSION_TAG
+        VERSION_TAG="${VERSION_TAG:-v$VERSION}"
         echo ""
+        
+        # Select target platforms
+        platform_names=()
+        for p in "${PLATFORMS[@]}"; do
+            platform_names+=("${p%%:*}")
+        done
+        
+        multi_select "Select target platforms:" "${platform_names[@]}"
+        
+        SELECTED_PLATFORMS=()
+        for idx in "${SELECTED_INDICES[@]}"; do
+            SELECTED_PLATFORMS+=("${PLATFORMS[$idx]}")
+        done
+        
+        if [[ ${#SELECTED_PLATFORMS[@]} -eq 0 ]]; then
+            print_error "No platforms selected"
+            exit 1
+        fi
+        
+        # Ask about GitHub release
+        CREATE_GITHUB_RELEASE=false
+        if prompt_yes_no "Create GitHub release?"; then
+            CREATE_GITHUB_RELEASE=true
+            
+            # Check gh CLI
+            if ! command -v gh &> /dev/null; then
+                print_error "GitHub CLI (gh) is not installed"
+                print_info "Install with: brew install gh && gh auth login"
+                exit 1
+            fi
+            
+            if ! gh auth status &> /dev/null; then
+                print_error "Not logged in to GitHub"
+                print_info "Run: gh auth login"
+                exit 1
+            fi
+        fi
+        
+        # Ask about Docker
+        BUILD_DOCKER=false
+        PUSH_DOCKER=false
+        
+        if prompt_yes_no "Build Docker image?"; then
+            # Run Docker pre-flight checks
+            echo ""
+            print_step "Checking Docker prerequisites..."
+            if ! check_docker_prereqs; then
+                print_error "Docker prerequisites not met"
+                exit 1
+            fi
+            
+            BUILD_DOCKER=true
+            
+            if prompt_yes_no "Push to Docker Hub?"; then
+                check_docker_login
+                PUSH_DOCKER=true
+            fi
+            echo ""
+        fi
     fi
     
     # Summary
@@ -769,12 +948,18 @@ main() {
     echo -e "  Docker Build:     ${BOLD}$BUILD_DOCKER${NC}"
     echo -e "  Docker Push:      ${BOLD}$PUSH_DOCKER${NC}"
     echo -e "  Profile:          ${BOLD}$PROFILE${NC}"
+    echo -e "  Mode:             ${BOLD}$(if [[ "$BATCH_MODE" == true ]]; then echo "batch"; else echo "interactive"; fi)${NC}"
     echo -e "${BLUE}════════════════════════════════════════════════════════════${NC}"
     echo ""
     
-    if ! prompt_yes_no "Proceed with build?" "y"; then
-        print_warning "Build cancelled"
-        exit 0
+    # In batch mode, proceed without asking. In interactive mode, ask for confirmation.
+    if [[ "$BATCH_MODE" != true ]]; then
+        if ! prompt_yes_no "Proceed with build?" "y"; then
+            print_warning "Build cancelled"
+            exit 0
+        fi
+    else
+        print_info "Proceeding with build (batch mode)..."
     fi
     
     echo ""

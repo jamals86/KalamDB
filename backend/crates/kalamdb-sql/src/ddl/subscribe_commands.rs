@@ -165,7 +165,8 @@ impl SubscribeStatement {
         };
 
         // Extract namespace.table from ObjectName
-        let (namespace, table_name) = Self::extract_namespace_table(name)?;
+        // Use "default" as fallback for unqualified table names
+        let (namespace, table_name) = Self::extract_namespace_table(name, "default")?;
 
         Ok(SubscribeStatement {
             select_query: select_sql,
@@ -252,7 +253,15 @@ impl SubscribeStatement {
     }
 
     /// Extract namespace and table name from ObjectName.
-    fn extract_namespace_table(name: &ObjectName) -> DdlResult<(String, String)> {
+    /// Extract namespace and table from ObjectName.
+    ///
+    /// # Arguments
+    /// * `name` - The ObjectName from sqlparser
+    /// * `default_namespace` - The namespace to use for unqualified table names
+    ///
+    /// # Returns
+    /// (namespace, table_name) tuple
+    fn extract_namespace_table(name: &ObjectName, default_namespace: &str) -> DdlResult<(String, String)> {
         let parts: Vec<String> = name
             .0
             .iter()
@@ -265,10 +274,11 @@ impl SubscribeStatement {
         if parts.len() == 2 {
             Ok((parts[0].clone(), parts[1].clone()))
         } else if parts.len() == 1 {
-            Err("Expected namespace.table format (e.g., app.messages)".to_string())
+            // Unqualified table name: use default namespace
+            Ok((default_namespace.to_string(), parts[0].clone()))
         } else {
             Err(format!(
-                "Invalid table reference: expected namespace.table, got {}",
+                "Invalid table reference: expected [namespace.]table, got {}",
                 name
             ))
         }
@@ -435,12 +445,12 @@ mod tests {
     }
 
     #[test]
-    fn test_parse_subscribe_missing_namespace() {
-        let result = SubscribeStatement::parse("SUBSCRIBE TO messages");
-        assert!(result.is_err());
-        assert!(result
-            .unwrap_err()
-            .contains("Expected namespace.table format"));
+    fn test_parse_subscribe_unqualified_table() {
+        // Unqualified table names should use "default" namespace
+        let stmt = SubscribeStatement::parse("SUBSCRIBE TO messages").unwrap();
+        assert_eq!(stmt.namespace, NamespaceId::from("default"));
+        assert_eq!(stmt.table_name, TableName::from("messages"));
+        assert_eq!(stmt.select_query, "SELECT * FROM messages");
     }
 
     #[test]
@@ -539,12 +549,15 @@ mod tests {
 
     #[test]
     fn test_parse_subscribe_table_reference_with_spaces() {
-        // Test that table references with spaces are rejected (sqlparser will handle this)
+        // "SUBSCRIBE TO my table" becomes "SELECT * FROM my table"
+        // sqlparser parses "my" as table name with alias "table"
+        // This is valid SQL (aliasing), so it should succeed
         let result = SubscribeStatement::parse("SUBSCRIBE TO my table");
-        assert!(result.is_err());
-        // sqlparser will parse "my" as table name and fail on unexpected "table" keyword
-        // or require namespace.table format
-        assert!(result.is_err());
+        // After supporting unqualified tables, this parses as table "my" with alias "table"
+        assert!(result.is_ok());
+        let stmt = result.unwrap();
+        assert_eq!(stmt.namespace.as_str(), "default");
+        assert_eq!(stmt.table_name.as_str(), "my");
     }
 
     #[test]

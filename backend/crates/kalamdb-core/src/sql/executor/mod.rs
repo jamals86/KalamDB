@@ -105,7 +105,28 @@ impl SqlExecutor {
             // Tables are already registered in base session, we just inject user_id
             SqlStatementKind::Select => self.execute_via_datafusion(sql, params, exec_ctx).await,
 
-            // All other statements: Delegate to handler registry
+            // DDL operations that modify table/view structure require plan cache invalidation
+            // This prevents stale cached plans from referencing dropped/altered tables
+            SqlStatementKind::CreateTable(_)
+            | SqlStatementKind::DropTable(_)
+            | SqlStatementKind::AlterTable(_)
+            | SqlStatementKind::CreateView(_)
+            | SqlStatementKind::CreateNamespace(_)
+            | SqlStatementKind::DropNamespace(_) => {
+                let result = self
+                    .handler_registry
+                    .handle(classified, params, exec_ctx)
+                    .await;
+                // Clear plan cache after DDL to invalidate any cached plans
+                // that may reference the modified schema
+                if result.is_ok() {
+                    self.plan_cache.clear();
+                    log::debug!("Plan cache cleared after DDL operation");
+                }
+                result
+            }
+
+            // All other statements: Delegate to handler registry (no cache invalidation needed)
             _ => {
                 self.handler_registry
                     .handle(classified, params, exec_ctx)

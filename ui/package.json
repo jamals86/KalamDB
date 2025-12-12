@@ -4,7 +4,7 @@
   "version": "0.1.0",
   "type": "module",
   "scripts": {
-    "build:sdk": "cd ../link/sdks/typescript && npm run build",
+    "build:sdk": "cd ../link/sdks/typescript && npm install && npm run build",
     "clean": "node -e \"const fs=require('fs');const rm=(p)=>{try{fs.rmSync(p,{recursive:true,force:true})}catch{}};rm('node_modules/.vite');rm('dist')\"",
     "clean:all": "node -e \"const fs=require('fs');const rm=(p)=>{try{fs.rmSync(p,{recursive:true,force:true})}catch{}};rm('node_modules/.vite');rm('dist');rm('node_modules/kalam-link')\"",
     "reinstall": "npm run clean:all && npm run build:sdk && npm install && vite",

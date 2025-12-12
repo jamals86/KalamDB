@@ -209,16 +209,12 @@ impl AppContext {
                 schema_registry.set_base_session_context(Arc::clone(&base_session_context));
 
                 // Register system schema
+                // Use constant catalog name "kalam" - configured in DataFusionSessionFactory
                 let system_schema =
                     Arc::new(datafusion::catalog::memory::MemorySchemaProvider::new());
-                let catalog_name = base_session_context
-                    .catalog_names()
-                    .first()
-                    .expect("No catalogs available")
-                    .clone();
                 let catalog = base_session_context
-                    .catalog(&catalog_name)
-                    .expect("Failed to get catalog");
+                    .catalog("kalam")
+                    .expect("Catalog 'kalam' not found - ensure DataFusionSessionFactory is properly configured");
 
                 // Register the system schema with the catalog
                 catalog
@@ -230,6 +226,17 @@ impl AppContext {
                     system_schema
                         .register_table(table_name.to_string(), provider)
                         .expect("Failed to register system table");
+                }
+
+                // Register existing namespaces as DataFusion schemas
+                // This ensures all namespaces persisted in RocksDB are available for SQL queries
+                let namespaces_provider = system_tables.namespaces();
+                if let Ok(namespaces) = namespaces_provider.list_namespaces() {
+                    let namespace_names: Vec<String> = namespaces
+                        .iter()
+                        .map(|ns| ns.namespace_id.as_str().to_string())
+                        .collect();
+                    session_factory.register_namespaces(&base_session_context, &namespace_names);
                 }
 
                 // Note: information_schema.tables and information_schema.columns are provided
@@ -564,15 +571,11 @@ impl AppContext {
         schema_registry.set_base_session_context(Arc::clone(&base_session_context));
 
         // Register system schema
+        // Use constant catalog name "kalam" - configured in DataFusionSessionFactory
         let system_schema = Arc::new(datafusion::catalog::memory::MemorySchemaProvider::new());
-        let catalog_name = base_session_context
-            .catalog_names()
-            .first()
-            .expect("No catalogs available")
-            .clone();
         base_session_context
-            .catalog(&catalog_name)
-            .expect("Failed to get catalog")
+            .catalog("kalam")
+            .expect("Catalog 'kalam' not found - ensure DataFusionSessionFactory is properly configured")
             .register_schema("system", system_schema.clone())
             .expect("Failed to register system schema");
 
@@ -581,6 +584,16 @@ impl AppContext {
             system_schema
                 .register_table(table_name.to_string(), provider)
                 .expect("Failed to register system table");
+        }
+
+        // Register existing namespaces as DataFusion schemas (for tests)
+        let namespaces_provider = system_tables.namespaces();
+        if let Ok(namespaces) = namespaces_provider.list_namespaces() {
+            let namespace_names: Vec<String> = namespaces
+                .iter()
+                .map(|ns| ns.namespace_id.as_str().to_string())
+                .collect();
+            session_factory.register_namespaces(&base_session_context, &namespace_names);
         }
 
         // Note: information_schema.tables and information_schema.columns are provided

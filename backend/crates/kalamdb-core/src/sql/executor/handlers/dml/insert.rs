@@ -73,7 +73,10 @@ impl StatementHandler for InsertHandler {
         let sql = statement.as_str();
 
         // Parse INSERT using sqlparser-rs (handles multi-line, comments, complex expressions)
-        let (namespace, table_name, columns, rows_data) = self.parse_insert_with_sqlparser(sql)?;
+        // Pass the current default namespace from session context for unqualified table names
+        let default_namespace = context.default_namespace();
+        let (namespace, table_name, columns, rows_data) =
+            self.parse_insert_with_sqlparser(sql, &default_namespace)?;
 
         // Validate table exists via SchemaRegistry fast path (using TableId)
         use kalamdb_commons::models::TableId;
@@ -239,9 +242,14 @@ impl StatementHandler for InsertHandler {
 impl InsertHandler {
     /// Parse INSERT statement using sqlparser-rs
     /// Returns (namespace, table_name, columns, rows_of_exprs)
+    ///
+    /// # Arguments
+    /// * `sql` - The SQL INSERT statement
+    /// * `default_namespace` - The default namespace to use for unqualified table names
     fn parse_insert_with_sqlparser(
         &self,
         sql: &str,
+        default_namespace: &NamespaceId,
     ) -> Result<(NamespaceId, TableName, Vec<String>, Vec<Vec<Expr>>), KalamDbError> {
         let dialect = GenericDialect {};
         let stmts = Parser::parse_sql(&dialect, sql)
@@ -278,7 +286,7 @@ impl InsertHandler {
 
         let (namespace, table_name) = match table_parts.len() {
             1 => (
-                NamespaceId::new("default"),
+                default_namespace.clone(),
                 TableName::new(table_parts[0].clone()),
             ),
             2 => (
