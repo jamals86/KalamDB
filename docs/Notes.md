@@ -284,7 +284,8 @@ instead of: 1 failed: Invalid operation: No handler registered for statement typ
 
 195) we should always have a default order by column so we always have the same vlues returned in the same order, this is important for pagination as well
 
-196) why having both: pub struct QueryRequest and pub struct SqlRequest they are almost the same we can have one only
+196) Make sure after flush to compact th rocksdb column family to free space and optimize reads as well
+
 
 
 Here’s the updated 5-line spec with embedding storage inside Parquet and managed HNSW indexing (with delete handling):
@@ -375,9 +376,9 @@ Tasks To Repo:
 ├────────────────────────────────────────────────────────────┤
 │  Test Type              │  Rows   │  Time    │  Rate       │
 ├────────────────────────────────────────────────────────────┤
-│  Single-row inserts     │    200  │    0.13s │    1560.9/s  │
-│  Batched (100/batch)    │   2000  │    0.03s │   57156.8/s  │
-│  Parallel (10 threads)  │   1000  │    0.11s │    9267.9/s  │
+│  Single-row inserts     │    200  │    0.09s │    2260.2/s │
+│  Batched (100/batch)    │   2000  │    0.03s │   73093.1/s │
+│  Parallel (10 threads)  │    980  │    0.09s │   10943.2/s │
 └────────────────────────────────────────────────────────────┘
 
 UI Changes:

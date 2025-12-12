@@ -59,8 +59,7 @@ pub fn register_user_table_provider(
     // Create indexed user table store with PK index (partition is automatically created)
     let user_table_store = Arc::new(new_indexed_user_table_store(
         app_context.storage_backend(),
-        table_id.namespace_id(),
-        table_id.table_name(),
+        table_id,
         &pk_field,
     ));
 
@@ -140,8 +139,7 @@ pub fn register_shared_table_provider(
     // Create indexed shared table store with PK index for efficient lookups
     let shared_store = Arc::new(new_indexed_shared_table_store(
         app_context.storage_backend(),
-        table_id.namespace_id(),
-        table_id.table_name(),
+        table_id,
         &pk_field,
     ));
 
@@ -204,8 +202,7 @@ pub fn register_stream_table_provider(
 
     // Create stream table store
     let stream_store = Arc::new(new_stream_table_store(
-        table_id.namespace_id(),
-        table_id.table_name(),
+        table_id,
     ));
 
     log::debug!(

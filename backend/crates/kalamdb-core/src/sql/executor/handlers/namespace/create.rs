@@ -139,7 +139,6 @@ impl TypedStatementHandler<CreateNamespaceStatement> for CreateNamespaceHandler 
 mod tests {
     use super::*;
     use crate::test_helpers::{create_test_session, init_test_app_context};
-    use datafusion::prelude::SessionContext;
     use kalamdb_commons::models::UserId;
     use kalamdb_commons::Role;
 
@@ -152,7 +151,6 @@ mod tests {
         init_test_app_context();
         let app_ctx = AppContext::get();
         let handler = CreateNamespaceHandler::new(app_ctx);
-        let session = SessionContext::new();
         let ctx = test_context();
 
         let stmt = CreateNamespaceStatement {
@@ -177,7 +175,6 @@ mod tests {
         init_test_app_context();
         let app_ctx = AppContext::get();
         let handler = CreateNamespaceHandler::new(app_ctx);
-        let session = SessionContext::new();
         let ctx = test_context();
 
         let stmt = CreateNamespaceStatement {

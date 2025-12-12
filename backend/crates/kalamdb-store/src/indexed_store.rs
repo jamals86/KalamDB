@@ -851,7 +851,7 @@ mod tests {
     use super::*;
     use crate::test_utils::InMemoryBackend;
     use kalamdb_commons::system::Job;
-    use kalamdb_commons::{JobId, JobStatus, JobType, NamespaceId, NodeId};
+    use kalamdb_commons::{JobId, JobStatus, JobType, NodeId};
 
     // Test index: Jobs by status
     struct TestStatusIndex;

@@ -14,6 +14,8 @@
 use super::base::{self, BaseTableProvider, TableProviderCore};
 use crate::app_context::AppContext;
 use crate::error::KalamDbError;
+use crate::providers::helpers::extract_user_context;
+use crate::providers::manifest_helpers::{ensure_manifest_ready, load_row_from_parquet_by_seq};
 use crate::schema_registry::TableType;
 use async_trait::async_trait;
 use datafusion::arrow::datatypes::SchemaRef;
@@ -205,25 +207,7 @@ impl UserTableProvider {
     ///
     /// **Returns**: (UserId, Role) tuple for RLS enforcement
     fn extract_user_context(state: &dyn Session) -> Result<(UserId, Role), KalamDbError> {
-        use crate::sql::executor::models::SessionUserContext;
-
-        let session_state = state
-            .as_any()
-            .downcast_ref::<datafusion::execution::context::SessionState>()
-            .ok_or_else(|| KalamDbError::InvalidOperation("Expected SessionState".to_string()))?;
-
-        let user_ctx = session_state
-            .config()
-            .options()
-            .extensions
-            .get::<SessionUserContext>()
-            .ok_or_else(|| {
-                KalamDbError::InvalidOperation(
-                    "SessionUserContext not found in extensions".to_string(),
-                )
-            })?;
-
-        Ok((user_ctx.user_id.clone(), user_ctx.role))
+        extract_user_context(state)
     }
 
     /// Scan Parquet files from cold storage for a specific user
@@ -249,80 +233,6 @@ impl UserTableProvider {
         )
     }
 
-    /// Ensure manifest.json exists (and is cached) for the current user scope before hot writes
-    fn ensure_manifest_ready(&self, user_id: &UserId) -> Result<(), KalamDbError> {
-        let table_id = self.core.table_id();
-        let namespace = table_id.namespace_id().clone();
-        let table = table_id.table_name().clone();
-        let manifest_cache = self.core.app_context.manifest_cache_service();
-
-        match manifest_cache.get_or_load(table_id, Some(user_id)) {
-            Ok(Some(_)) => return Ok(()),
-            Ok(None) => {}
-            Err(e) => {
-                log::warn!(
-                    "[UserTableProvider] Manifest cache lookup failed for {}.{} user={} err={}",
-                    namespace.as_str(),
-                    table.as_str(),
-                    user_id.as_str(),
-                    e
-                );
-            }
-        }
-
-        let manifest_service = self.core.app_context.manifest_service();
-        let manifest = manifest_service.ensure_manifest_initialized(
-            table_id,
-            self.core.table_type(),
-            Some(user_id),
-        )?;
-
-        let manifest_path = manifest_service
-            .manifest_path(table_id, Some(user_id))?
-            .to_string_lossy()
-            .to_string();
-
-        manifest_cache.stage_before_flush(table_id, Some(user_id), &manifest, manifest_path)?;
-
-        Ok(())
-    }
-
-    /// Retrieve a specific row version from Parquet storage by SeqId
-    fn get_row_from_parquet(
-        &self,
-        user_id: &UserId,
-        seq_id: kalamdb_commons::ids::SeqId,
-    ) -> Result<Option<UserTableRow>, KalamDbError> {
-        use datafusion::prelude::{col, lit};
-        let filter = col(SystemColumnNames::SEQ).eq(lit(seq_id.as_i64()));
-        let batch = self.scan_parquet_files_as_batch(user_id, Some(&filter))?;
-        let rows = parquet_batch_to_rows(&batch)?;
-        log::trace!(
-            "[get_row_from_parquet] Loaded {} rows from Parquet, filtering for _seq={}",
-            rows.len(),
-            seq_id.as_i64()
-        );
-
-        // Post-filter to find exact _seq match (Parquet only does file-level pruning)
-        for row_data in rows.into_iter() {
-            if row_data.seq_id == seq_id {
-                log::trace!(
-                    "[get_row_from_parquet] Found exact match: _seq={}, id={:?}",
-                    row_data.seq_id.as_i64(),
-                    row_data.fields.values.get("id")
-                );
-                return Ok(Some(UserTableRow {
-                    user_id: user_id.clone(),
-                    _seq: row_data.seq_id,
-                    _deleted: row_data.deleted,
-                    fields: row_data.fields,
-                }));
-            }
-        }
-
-        log::trace!("[get_row_from_parquet] No exact match found for _seq={}", seq_id.as_i64());
-        Ok(None)
-    }
 }
 
 impl BaseTableProvider<UserTableRowId, UserTableRow> for UserTableProvider {
@@ -420,7 +330,12 @@ impl BaseTableProvider<UserTableRowId, UserTableRow> for UserTableProvider {
     }
 
     fn insert(&self, user_id: &UserId, row_data: Row) -> Result<UserTableRowId, KalamDbError> {
-        self.ensure_manifest_ready(user_id)?;
+        ensure_manifest_ready(
+            &self.core,
+            self.core.table_type(),
+            Some(user_id),
+            "UserTableProvider",
+        )?;
 
         // Validate PRIMARY KEY uniqueness if user provided PK value
         base::ensure_unique_pk_value(self, Some(user_id), &row_data)?;
@@ -490,7 +405,12 @@ impl BaseTableProvider<UserTableRowId, UserTableRow> for UserTableProvider {
         }
 
         // Ensure manifest is ready
-        self.ensure_manifest_ready(user_id)?;
+        ensure_manifest_ready(
+            &self.core,
+            self.core.table_type(),
+            Some(user_id),
+            "UserTableProvider",
+        )?;
 
         // Coerce rows to match schema types (e.g. String -> Timestamp)
         let coerced_rows = coerce_rows(rows, &self.schema_ref()).map_err(|e| {
@@ -584,8 +504,20 @@ impl BaseTableProvider<UserTableRowId, UserTableRow> for UserTableProvider {
         let prior = if let Some(p) = prior_opt {
             p
         } else {
-            self.get_row_from_parquet(user_id, key.seq)?
-                .ok_or_else(|| KalamDbError::NotFound("Row not found for update".to_string()))?
+            load_row_from_parquet_by_seq(
+                &self.core,
+                self.core.table_type(),
+                &self.schema,
+                Some(user_id),
+                key.seq,
+                |row_data| UserTableRow {
+                    user_id: user_id.clone(),
+                    _seq: row_data.seq_id,
+                    _deleted: row_data.deleted,
+                    fields: row_data.fields,
+                },
+            )?
+            .ok_or_else(|| KalamDbError::NotFound("Row not found for update".to_string()))?
         };
 
         let pk_name = self.primary_key_field_name().to_string();
@@ -727,8 +659,20 @@ impl BaseTableProvider<UserTableRowId, UserTableRow> for UserTableProvider {
         let prior = if let Some(p) = prior_opt {
             p
         } else {
-            self.get_row_from_parquet(user_id, key.seq)?
-                .ok_or_else(|| KalamDbError::NotFound("Row not found for delete".to_string()))?
+            load_row_from_parquet_by_seq(
+                &self.core,
+                self.core.table_type(),
+                &self.schema,
+                Some(user_id),
+                key.seq,
+                |row_data| UserTableRow {
+                    user_id: user_id.clone(),
+                    _seq: row_data.seq_id,
+                    _deleted: row_data.deleted,
+                    fields: row_data.fields,
+                },
+            )?
+            .ok_or_else(|| KalamDbError::NotFound("Row not found for delete".to_string()))?
         };
 
         let sys_cols = self.core.system_columns.clone();

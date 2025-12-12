@@ -40,12 +40,10 @@ impl FlushManifestHelper {
     /// Returns 0 if no manifest exists (first batch)
     pub fn get_next_batch_number(
         &self,
-        namespace: &NamespaceId,
-        table: &TableName,
+        table_id: &TableId,
         user_id: Option<&UserId>,
     ) -> Result<u64, KalamDbError> {
-        let table_id = TableId::new(namespace.clone(), table.clone());
-        match self.manifest_service.read_manifest(&table_id, user_id) {
+        match self.manifest_service.read_manifest(table_id, user_id) {
             Ok(manifest) => {
                 // Use last_sequence_number which tracks the last batch index
                 // Next batch should be last_sequence_number + 1

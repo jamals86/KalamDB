@@ -1,6 +1,7 @@
 use crate::error::KalamDbError;
 use kalamdb_commons::models::schemas::TableDefinition;
 use kalamdb_commons::models::StorageId;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, RwLock};
 
 /// Cached table data containing all metadata and schema information
@@ -8,13 +9,10 @@ use std::sync::{Arc, RwLock};
 /// This struct consolidates data previously split between separate caches
 /// to eliminate duplication.
 ///
-/// **Performance Note**: `last_accessed` timestamp is stored separately in SchemaRegistry
-/// to avoid cloning this entire struct on every cache access.
-///
-/// **Clone Semantics**: Clone is cheap (O(1)) because all owned data is behind Arc pointers.
-/// Cloning only increments Arc reference counts without copying the underlying TableDefinition.
-/// This enables zero-copy sharing of table metadata across multiple threads and components.
-#[derive(Debug, Clone)]
+/// **Performance Note**: Cache access updates `last_accessed` via an atomic field.
+/// This avoids a separate "LRU timestamps" map (which would otherwise duplicate keys and add
+/// extra DashMap overhead) while keeping per-access work O(1).
+#[derive(Debug)]
 pub struct CachedTableData {
     /// Full schema definition with all columns
     pub table: Arc<TableDefinition>,
@@ -37,9 +35,35 @@ pub struct CachedTableData {
     /// **Performance**: 50-100× speedup for repeated schema access (75μs → 1.5μs)
     /// **Thread Safety**: RwLock allows concurrent reads, exclusive writes for initialization
     arrow_schema: Arc<RwLock<Option<Arc<datafusion::arrow::datatypes::Schema>>>>,
+
+    /// Last access timestamp in milliseconds since Unix epoch.
+    ///
+    /// Used for LRU eviction in `TableCache` without maintaining a separate timestamp map.
+    last_accessed_ms: AtomicU64,
+}
+
+impl Clone for CachedTableData {
+    fn clone(&self) -> Self {
+        Self {
+            table: Arc::clone(&self.table),
+            storage_id: self.storage_id.clone(),
+            storage_path_template: self.storage_path_template.clone(),
+            schema_version: self.schema_version,
+            arrow_schema: Arc::clone(&self.arrow_schema),
+            last_accessed_ms: AtomicU64::new(self.last_accessed_ms.load(Ordering::Relaxed)),
+        }
+    }
 }
 
 impl CachedTableData {
+    fn now_millis() -> u64 {
+        use std::time::{SystemTime, UNIX_EPOCH};
+        SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_millis() as u64
+    }
+
     /// Create new cached table data
     #[allow(clippy::too_many_arguments)]
     pub fn new(schema: Arc<TableDefinition>) -> Self {
@@ -50,7 +74,17 @@ impl CachedTableData {
             storage_path_template: String::new(),
             schema_version,
             arrow_schema: Arc::new(RwLock::new(None)), // Phase 10, US1, FR-002: Lazy init on first access
+            last_accessed_ms: AtomicU64::new(Self::now_millis()),
         }
+    }
+
+    pub fn touch_at(&self, timestamp_ms: u64) {
+        self.last_accessed_ms
+            .store(timestamp_ms, Ordering::Relaxed);
+    }
+
+    pub fn last_accessed_ms(&self) -> u64 {
+        self.last_accessed_ms.load(Ordering::Relaxed)
     }
 
     /// Get or compute Arrow schema with double-check locking (Phase 10, US1, FR-003)

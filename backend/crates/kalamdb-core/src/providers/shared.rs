@@ -14,6 +14,7 @@
 use crate::app_context::AppContext;
 use crate::error::KalamDbError;
 use crate::providers::base::{self, BaseTableProvider, TableProviderCore};
+use crate::providers::manifest_helpers::{ensure_manifest_ready, load_row_from_parquet_by_seq};
 use crate::schema_registry::TableType;
 use async_trait::async_trait;
 use datafusion::arrow::datatypes::SchemaRef;
@@ -24,7 +25,6 @@ use datafusion::error::Result as DataFusionResult;
 use datafusion::logical_expr::{Expr, TableProviderFilterPushDown};
 use datafusion::physical_plan::ExecutionPlan;
 use datafusion::scalar::ScalarValue;
-use kalamdb_commons::constants::SystemColumnNames;
 use kalamdb_commons::ids::SharedTableRowId;
 use kalamdb_commons::models::{Row, UserId};
 use kalamdb_commons::TableId;
@@ -126,39 +126,6 @@ impl SharedTableProvider {
         )
     }
 
-    fn ensure_manifest_ready(&self) -> Result<(), KalamDbError> {
-        let table_id = self.core.table_id();
-        let namespace = table_id.namespace_id().clone();
-        let table = table_id.table_name().clone();
-        let manifest_cache = self.core.app_context.manifest_cache_service();
-
-        match manifest_cache.get_or_load(table_id, None) {
-            Ok(Some(_)) => return Ok(()),
-            Ok(None) => {}
-            Err(e) => {
-                log::warn!(
-                    "[SharedTableProvider] Manifest cache lookup failed for {}.{} err={}",
-                    namespace.as_str(),
-                    table.as_str(),
-                    e
-                );
-            }
-        }
-
-        let manifest_service = self.core.app_context.manifest_service();
-        let manifest =
-            manifest_service.ensure_manifest_initialized(table_id, self.core.table_type(), None)?;
-
-        let manifest_path = manifest_service
-            .manifest_path(table_id, None)?
-            .to_string_lossy()
-            .to_string();
-
-        manifest_cache.stage_before_flush(table_id, None, &manifest, manifest_path)?;
-
-        Ok(())
-    }
-
     /// Find a row by PK value using the PK index for efficient O(1) lookup.
     ///
     /// This method uses the PK index to find all versions of a row with the given PK value,
@@ -229,26 +196,6 @@ impl SharedTableProvider {
         }
     }
 
-    /// Retrieve a specific row version from Parquet storage by SeqId
-    fn get_row_from_parquet(
-        &self,
-        seq_id: kalamdb_commons::ids::SeqId,
-    ) -> Result<Option<SharedTableRow>, KalamDbError> {
-        use datafusion::prelude::{col, lit};
-        let filter = col(SystemColumnNames::SEQ).eq(lit(seq_id.as_i64()));
-        let batch = self.scan_parquet_files_as_batch(Some(&filter))?;
-        let rows = parquet_batch_to_rows(&batch)?;
-
-        if let Some(row_data) = rows.into_iter().next() {
-            Ok(Some(SharedTableRow {
-                _seq: row_data.seq_id,
-                _deleted: row_data.deleted,
-                fields: row_data.fields,
-            }))
-        } else {
-            Ok(None)
-        }
-    }
 }
 
 impl BaseTableProvider<SharedTableRowId, SharedTableRow> for SharedTableProvider {
@@ -329,7 +276,12 @@ impl BaseTableProvider<SharedTableRowId, SharedTableRow> for SharedTableProvider
     }
 
     fn insert(&self, _user_id: &UserId, row_data: Row) -> Result<SharedTableRowId, KalamDbError> {
-        self.ensure_manifest_ready()?;
+        ensure_manifest_ready(
+            &self.core,
+            self.core.table_type(),
+            None,
+            "SharedTableProvider",
+        )?;
 
         // IGNORE user_id parameter - no RLS for shared tables
         base::ensure_unique_pk_value(self, None, &row_data)?;
@@ -383,7 +335,12 @@ impl BaseTableProvider<SharedTableRowId, SharedTableRow> for SharedTableProvider
         }
 
         // Ensure manifest is ready
-        self.ensure_manifest_ready()?;
+        ensure_manifest_ready(
+            &self.core,
+            self.core.table_type(),
+            None,
+            "SharedTableProvider",
+        )?;
 
         // Coerce rows to match schema types
         let coerced_rows = coerce_rows(rows, &self.schema_ref()).map_err(|e| {
@@ -466,8 +423,19 @@ impl BaseTableProvider<SharedTableRowId, SharedTableRow> for SharedTableProvider
         let prior = if let Some(p) = prior_opt {
             p
         } else {
-            self.get_row_from_parquet(*key)?
-                .ok_or_else(|| KalamDbError::NotFound("Row not found for update".to_string()))?
+            load_row_from_parquet_by_seq(
+                &self.core,
+                self.core.table_type(),
+                &self.schema,
+                None,
+                *key,
+                |row_data| SharedTableRow {
+                    _seq: row_data.seq_id,
+                    _deleted: row_data.deleted,
+                    fields: row_data.fields,
+                },
+            )?
+            .ok_or_else(|| KalamDbError::NotFound("Row not found for update".to_string()))?
         };
 
         let pk_value_scalar = prior.fields.get(&pk_name).cloned().ok_or_else(|| {
@@ -562,8 +530,19 @@ impl BaseTableProvider<SharedTableRowId, SharedTableRow> for SharedTableProvider
         let prior = if let Some(p) = prior_opt {
             p
         } else {
-            self.get_row_from_parquet(*key)?
-                .ok_or_else(|| KalamDbError::NotFound("Row not found for delete".to_string()))?
+            load_row_from_parquet_by_seq(
+                &self.core,
+                self.core.table_type(),
+                &self.schema,
+                None,
+                *key,
+                |row_data| SharedTableRow {
+                    _seq: row_data.seq_id,
+                    _deleted: row_data.deleted,
+                    fields: row_data.fields,
+                },
+            )?
+            .ok_or_else(|| KalamDbError::NotFound("Row not found for delete".to_string()))?
         };
 
         let sys_cols = self.core.system_columns.clone();

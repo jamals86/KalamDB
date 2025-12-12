@@ -60,7 +60,7 @@ fn create_test_client() -> Result<KalamLinkClient, kalam_link::KalamLinkError> {
 /// Helper to execute SQL via HTTP (for test setup)
 async fn execute_sql(sql: &str) -> Result<QueryResponse, Box<dyn std::error::Error>> {
     let client = create_test_client()?;
-    Ok(client.execute_query(sql).await?)
+    Ok(client.execute_query(sql, None, None).await?)
 }
 
 /// Helper to setup test namespace and table
@@ -124,7 +124,9 @@ async fn test_kalam_link_query_execution() {
     }
 
     let client = create_test_client().expect("Failed to create client");
-    let result = client.execute_query("SELECT 1 as test_value").await;
+    let result = client
+        .execute_query("SELECT 1 as test_value", None, None)
+        .await;
 
     assert!(result.is_ok(), "Query should execute successfully");
     let response = result.unwrap();
@@ -164,7 +166,7 @@ async fn test_kalam_link_parametrized_query() {
         .execute_query(&format!(
             "INSERT INTO {} (event_type, data) VALUES ('test', 'param_test')",
             table
-        ))
+        ), None, None)
         .await;
 
     assert!(insert_result.is_ok(), "Insert should succeed");
@@ -174,7 +176,7 @@ async fn test_kalam_link_parametrized_query() {
         .execute_query(&format!(
             "SELECT * FROM {} WHERE event_type = 'test'",
             table
-        ))
+        ), None, None)
         .await;
 
     assert!(query_result.is_ok(), "Query should succeed");
@@ -486,15 +488,17 @@ async fn test_sql_create_namespace() {
 
     // Cleanup
     let _ = client
-        .execute_query("DROP NAMESPACE IF EXISTS test_ns CASCADE")
+        .execute_query("DROP NAMESPACE IF EXISTS test_ns CASCADE", None, None)
         .await;
     sleep(Duration::from_millis(100)).await;
 
-    let result = client.execute_query("CREATE NAMESPACE test_ns").await;
+    let result = client.execute_query("CREATE NAMESPACE test_ns", None, None).await;
     assert!(result.is_ok(), "CREATE NAMESPACE should succeed");
 
     // Cleanup
-    let _ = client.execute_query("DROP NAMESPACE test_ns CASCADE").await;
+    let _ = client
+        .execute_query("DROP NAMESPACE test_ns CASCADE", None, None)
+        .await;
 }
 
 #[tokio::test]
@@ -515,6 +519,8 @@ async fn test_sql_create_user_table() {
                 name VARCHAR NOT NULL,
                 age INT
             ) FLUSH ROWS 10"#,
+            None,
+            None,
         )
         .await;
 
@@ -542,7 +548,7 @@ async fn test_sql_insert_select() {
         .execute_query(&format!(
             "INSERT INTO {} (event_type, data) VALUES ('test', 'data')",
             table
-        ))
+        ), None, None)
         .await;
     assert!(insert.is_ok(), "INSERT should succeed");
 
@@ -551,7 +557,7 @@ async fn test_sql_insert_select() {
         .execute_query(&format!(
             "SELECT * FROM {} WHERE event_type = 'test'",
             table
-        ))
+        ), None, None)
         .await;
     assert!(select.is_ok(), "SELECT should succeed");
 
@@ -575,12 +581,18 @@ async fn test_sql_drop_table() {
 
     // Create a table to drop
     client
-        .execute_query(r#"CREATE USER TABLE ws_test.temp_table (id INT) FLUSH ROWS 10"#)
+        .execute_query(
+            r#"CREATE USER TABLE ws_test.temp_table (id INT) FLUSH ROWS 10"#,
+            None,
+            None,
+        )
         .await
         .ok();
 
     // Drop it
-    let result = client.execute_query("DROP TABLE ws_test.temp_table").await;
+    let result = client
+        .execute_query("DROP TABLE ws_test.temp_table", None, None)
+        .await;
     assert!(result.is_ok(), "DROP TABLE should succeed");
 
     cleanup_test_data(&table).await.ok();
@@ -596,17 +608,21 @@ async fn test_sql_system_tables() {
     let client = create_test_client().expect("Failed to create client");
 
     // Query system.users
-    let users = client.execute_query("SELECT * FROM system.users").await;
+    let users = client
+        .execute_query("SELECT * FROM system.users", None, None)
+        .await;
     assert!(users.is_ok(), "Should query system.users");
 
     // Query system.namespaces
     let namespaces = client
-        .execute_query("SELECT * FROM system.namespaces")
+        .execute_query("SELECT * FROM system.namespaces", None, None)
         .await;
     assert!(namespaces.is_ok(), "Should query system.namespaces");
 
     // Query system.tables
-    let tables = client.execute_query("SELECT * FROM system.tables").await;
+    let tables = client
+        .execute_query("SELECT * FROM system.tables", None, None)
+        .await;
     assert!(tables.is_ok(), "Should query system.tables");
 }
 
@@ -627,14 +643,18 @@ async fn test_sql_where_clause_operators() {
             .execute_query(&format!(
                 "INSERT INTO {} (event_type, data) VALUES ('op_test', '{}')",
                 table, i
-            ))
+            ), None, None)
             .await
             .ok();
     }
 
     // Test LIKE
     let like = client
-        .execute_query(&format!("SELECT * FROM {} WHERE data LIKE '%3%'", table))
+        .execute_query(
+            &format!("SELECT * FROM {} WHERE data LIKE '%3%'", table),
+            None,
+            None,
+        )
         .await;
     assert!(like.is_ok(), "LIKE operator should work");
 
@@ -643,7 +663,7 @@ async fn test_sql_where_clause_operators() {
         .execute_query(&format!(
             "SELECT * FROM {} WHERE data IN ('1', '2', '3')",
             table
-        ))
+        ), None, None)
         .await;
     assert!(in_op.is_ok(), "IN operator should work");
 
@@ -667,7 +687,7 @@ async fn test_sql_limit_offset() {
             .execute_query(&format!(
                 "INSERT INTO {} (event_type, data) VALUES ('limit_test', '{}')",
                 table, i
-            ))
+            ), None, None)
             .await
             .ok();
     }
@@ -677,7 +697,7 @@ async fn test_sql_limit_offset() {
         .execute_query(&format!(
             "SELECT * FROM {} WHERE event_type = 'limit_test' LIMIT 5",
             table
-        ))
+        ), None, None)
         .await;
     assert!(limit.is_ok(), "LIMIT should work");
     let response = limit.unwrap();
@@ -704,14 +724,14 @@ async fn test_sql_order_by() {
         .execute_query(&format!(
             "INSERT INTO {} (event_type, data) VALUES ('sort', 'z')",
             table
-        ))
+        ), None, None)
         .await
         .ok();
     client
         .execute_query(&format!(
             "INSERT INTO {} (event_type, data) VALUES ('sort', 'a')",
             table
-        ))
+        ), None, None)
         .await
         .ok();
 
@@ -720,7 +740,7 @@ async fn test_sql_order_by() {
         .execute_query(&format!(
             "SELECT * FROM {} WHERE event_type = 'sort' ORDER BY data ASC",
             table
-        ))
+        ), None, None)
         .await;
     assert!(ordered.is_ok(), "ORDER BY should work");
 
@@ -740,7 +760,9 @@ async fn test_error_invalid_sql() {
 
     let client = create_test_client().expect("Failed to create client");
 
-    let result = client.execute_query("INVALID SQL STATEMENT").await;
+    let result = client
+        .execute_query("INVALID SQL STATEMENT", None, None)
+        .await;
     assert!(
         result.is_err() || result.unwrap().status == ResponseStatus::Error,
         "Invalid SQL should return error"
@@ -757,7 +779,7 @@ async fn test_error_table_not_found() {
     let client = create_test_client().expect("Failed to create client");
 
     let result = client
-        .execute_query("SELECT * FROM nonexistent.table")
+        .execute_query("SELECT * FROM nonexistent.table", None, None)
         .await;
     assert!(
         result.is_err() || result.unwrap().status == ResponseStatus::Error,
@@ -774,7 +796,7 @@ async fn test_error_connection_refused() {
         .build()
         .expect("Client creation should succeed");
 
-    let result = client.execute_query("SELECT 1").await;
+    let result = client.execute_query("SELECT 1", None, None).await;
     assert!(
         result.is_err(),
         "Connection to non-existent server should fail"

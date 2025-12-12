@@ -68,11 +68,9 @@ impl SharedTableFlushJob {
     /// Generate batch filename using manifest max_batch (T115)
     /// Returns (batch_number, filename)
     fn generate_batch_filename(&self) -> Result<(u64, String), KalamDbError> {
-        let batch_number = self.manifest_helper.get_next_batch_number(
-            self.namespace_id(),
-            self.table_name(),
-            None,
-        )?;
+        let batch_number =
+            self.manifest_helper
+                .get_next_batch_number(&self.table_id, None)?;
         let filename = FlushManifestHelper::generate_batch_filename(batch_number);
         log::debug!(
             "[MANIFEST] Generated batch filename: {} (batch_number={})",

@@ -12,6 +12,7 @@
 //! - TTL-based eviction in scan operations
 
 use super::base::{extract_seq_bounds_from_filter, BaseTableProvider, TableProviderCore};
+use super::helpers::extract_user_context;
 use crate::app_context::AppContext;
 use crate::error::KalamDbError;
 use crate::schema_registry::TableType;
@@ -120,25 +121,7 @@ impl StreamTableProvider {
     ///
     /// **Returns**: (UserId, Role) tuple for RLS enforcement
     fn extract_user_context(state: &dyn Session) -> Result<(UserId, Role), KalamDbError> {
-        use crate::sql::executor::models::SessionUserContext;
-
-        let session_state = state
-            .as_any()
-            .downcast_ref::<datafusion::execution::context::SessionState>()
-            .ok_or_else(|| KalamDbError::InvalidOperation("Expected SessionState".to_string()))?;
-
-        let user_ctx = session_state
-            .config()
-            .options()
-            .extensions
-            .get::<SessionUserContext>()
-            .ok_or_else(|| {
-                KalamDbError::InvalidOperation(
-                    "SessionUserContext not found in extensions".to_string(),
-                )
-            })?;
-
-        Ok((user_ctx.user_id.clone(), user_ctx.role))
+        extract_user_context(state)
     }
 }
 

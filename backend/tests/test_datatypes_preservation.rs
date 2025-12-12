@@ -93,7 +93,7 @@ async fn test_datatypes_preservation_values() {
         .expect("Failed to convert to Arrow schema");
 
     // Create user table store
-    let store = Arc::new(new_user_table_store(backend.clone(), &ns, &tbl_name));
+    let store = Arc::new(new_user_table_store(backend.clone(), &table_id));
 
     // Insert deterministically-generated rows for user "userA"
     let user_id = "userA";

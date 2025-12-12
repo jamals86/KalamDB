@@ -19,14 +19,6 @@ use kalamdb_api::models::ResponseStatus;
 use std::sync::Arc;
 use tokio::task::JoinSet;
 
-/// Generate unique namespace name for test isolation
-fn unique_namespace(prefix: &str) -> String {
-    use std::sync::atomic::{AtomicU32, Ordering};
-    static COUNTER: AtomicU32 = AtomicU32::new(0);
-    let count = COUNTER.fetch_add(1, Ordering::SeqCst);
-    format!("{}_{}", prefix, count)
-}
-
 /// T060: Unit test UPDATE in fast storage
 #[actix_web::test]
 async fn test_update_in_fast_storage() {

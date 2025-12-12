@@ -61,7 +61,6 @@ impl TypedStatementHandler<ShowNamespacesStatement> for ShowNamespacesHandler {
 mod tests {
     use super::*;
     use crate::test_helpers::create_test_session;
-    use datafusion::prelude::SessionContext;
     use kalamdb_commons::models::UserId;
     use kalamdb_commons::Role;
 
@@ -88,7 +87,6 @@ mod tests {
         let handler = ShowNamespacesHandler::new(app_ctx);
         let stmt = ShowNamespacesStatement {};
         let ctx = create_test_context();
-        let session = SessionContext::new();
 
         let result = handler.execute(stmt, vec![], &ctx).await;
 

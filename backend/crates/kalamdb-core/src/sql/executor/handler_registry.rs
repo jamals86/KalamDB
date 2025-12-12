@@ -622,7 +622,6 @@ impl HandlerRegistry {
 mod tests {
     use super::*;
     use crate::test_helpers::{create_test_session, init_test_app_context};
-    use datafusion::prelude::SessionContext;
     use kalamdb_commons::models::{NamespaceId, UserId};
     use kalamdb_commons::Role;
 
@@ -637,7 +636,6 @@ mod tests {
         init_test_app_context();
         let app_ctx = AppContext::get();
         let registry = HandlerRegistry::new(app_ctx, false);
-        let session = SessionContext::new();
         let ctx = test_context();
 
         let stmt = SqlStatement::new(
@@ -670,7 +668,6 @@ mod tests {
         init_test_app_context();
         let app_ctx = AppContext::get();
         let registry = HandlerRegistry::new(app_ctx, false);
-        let session = SessionContext::new();
         let ctx = test_context();
 
         // Use an unclassified statement (not in SqlStatementKind)
@@ -702,7 +699,6 @@ mod tests {
         init_test_app_context();
         let app_ctx = AppContext::get();
         let registry = HandlerRegistry::new(app_ctx, false);
-        let session: SessionContext = SessionContext::new();
         let user_ctx = ExecutionContext::new(
             UserId::from("regular_user"),
             Role::User,
@@ -763,7 +759,6 @@ mod tests {
         init_test_app_context();
         let app_ctx = AppContext::get();
         let registry = HandlerRegistry::new(app_ctx, false);
-        let _session = SessionContext::new();
         let ctx =
             ExecutionContext::new(UserId::from("test_user"), Role::User, create_test_session());
 

@@ -83,8 +83,7 @@ pub async fn execute_flush_synchronously(
     // Construct a per-table UserTableIndexedStore directly (avoids reaching into provider internals)
     let user_table_store = Arc::new(new_indexed_user_table_store(
         server.app_context.storage_backend(),
-        &namespace_id,
-        &table_name_id,
+        &table_id,
         &pk_field,
     ));
 
@@ -150,8 +149,7 @@ pub async fn execute_shared_flush_synchronously(
 
     let shared_table_store = Arc::new(kalamdb_tables::new_indexed_shared_table_store(
         server.app_context.storage_backend(),
-        &namespace_id,
-        &table_name_id,
+        &table_id,
         &pk_field,
     ));
 

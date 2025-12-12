@@ -1,4 +1,3 @@
-use super::*;
 use crate::classifier::types::{SqlStatement, SqlStatementKind};
 use kalamdb_commons::models::NamespaceId;
 use kalamdb_commons::Role;

@@ -146,12 +146,10 @@ pub trait TableFlush: Send + Sync {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use kalamdb_commons::NamespaceId;
 
     struct MockFlushJob {
         should_fail: bool,
         rows_count: usize,
-        namespace_id: NamespaceId,
     }
 
     impl TableFlush for MockFlushJob {
@@ -174,11 +172,9 @@ mod tests {
 
     #[test]
     fn test_flush_execution_success() {
-        let namespace_id = NamespaceId::new("test".to_string());
         let job = MockFlushJob {
             should_fail: false,
             rows_count: 100,
-            namespace_id: namespace_id.clone(),
         };
 
         let result = job.execute();
@@ -191,11 +187,9 @@ mod tests {
 
     #[test]
     fn test_flush_execution_failure() {
-        let namespace_id = NamespaceId::new("test".to_string());
         let job = MockFlushJob {
             should_fail: true,
             rows_count: 0,
-            namespace_id: namespace_id.clone(),
         };
 
         let result = job.execute();

@@ -10,7 +10,7 @@
 //! - T101: cache eviction and re-population
 use kalamdb_commons::{
     config::ManifestCacheSettings,
-    models::{schemas::TableType, TableId},
+    models::TableId,
     types::{Manifest, SyncState},
     NamespaceId, TableName, UserId,
 };

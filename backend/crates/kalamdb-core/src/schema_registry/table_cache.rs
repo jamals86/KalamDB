@@ -8,15 +8,14 @@ use std::sync::Arc;
 ///
 /// Replaces dual-cache architecture with single DashMap for all table data.
 ///
-/// **Performance Optimization**: LRU timestamps are stored separately to avoid
-/// cloning large CachedTableData structs on every access.
+/// **Performance Optimization**: Cache access updates `last_accessed_ms` via an
+/// atomic field stored inside `CachedTableData`. This avoids a separate
+/// timestamps map (which would duplicate keys and add extra DashMap overhead)
+/// while keeping per-access work O(1) and avoiding any deep clones.
 #[derive(Debug)]
 pub struct TableCache {
     /// Cached table data indexed by TableId
     cache: DashMap<TableId, Arc<CachedTableData>>,
-
-    /// LRU timestamps indexed by TableId (separate to avoid cloning CachedTableData)
-    lru_timestamps: DashMap<TableId, AtomicU64>,
 
     /// Maximum number of entries before LRU eviction
     max_size: usize,
@@ -33,7 +32,6 @@ impl TableCache {
     pub fn new(max_size: usize) -> Self {
         Self {
             cache: DashMap::new(),
-            lru_timestamps: DashMap::new(),
             max_size,
             hits: AtomicU64::new(0),
             misses: AtomicU64::new(0),
@@ -54,10 +52,8 @@ impl TableCache {
         if let Some(entry) = self.cache.get(table_id) {
             self.hits.fetch_add(1, Ordering::Relaxed);
 
-            // Update LRU timestamp in separate map (avoids cloning CachedTableData)
-            if let Some(timestamp) = self.lru_timestamps.get(table_id) {
-                timestamp.store(Self::current_timestamp(), Ordering::Relaxed);
-            }
+            // Update LRU timestamp directly on the cached value (atomic, no extra map)
+            entry.value().touch_at(Self::current_timestamp());
 
             // Return Arc clone (cheap - just increments reference count)
             Some(Arc::clone(entry.value()))
@@ -76,9 +72,8 @@ impl TableCache {
             evicted = self.evict_lru();
         }
 
-        // Insert data and initialize LRU timestamp
-        self.lru_timestamps
-            .insert(table_id.clone(), AtomicU64::new(Self::current_timestamp()));
+        // Initialize last-accessed timestamp for LRU tracking
+        data.touch_at(Self::current_timestamp());
         self.cache.insert(table_id, data);
 
         evicted
@@ -87,7 +82,6 @@ impl TableCache {
     /// Invalidate (remove) cached table data
     pub fn invalidate(&self, table_id: &TableId) {
         self.cache.remove(table_id);
-        self.lru_timestamps.remove(table_id);
     }
 
     /// Evict least-recently-used entry from cache
@@ -96,18 +90,17 @@ impl TableCache {
         let mut oldest_timestamp = u64::MAX;
 
         // Find entry with oldest last_accessed timestamp
-        for entry in self.lru_timestamps.iter() {
-            let timestamp = entry.value().load(Ordering::Relaxed);
-            if timestamp < oldest_timestamp {
-                oldest_timestamp = timestamp;
+        for entry in self.cache.iter() {
+            let ts = entry.value().last_accessed_ms();
+            if ts < oldest_timestamp {
+                oldest_timestamp = ts;
                 oldest_key = Some(entry.key().clone());
             }
         }
 
-        // Remove oldest entry from both maps
+        // Remove oldest entry
         if let Some(key) = &oldest_key {
             self.cache.remove(key);
-            self.lru_timestamps.remove(key);
         }
 
         oldest_key
@@ -139,7 +132,6 @@ impl TableCache {
     /// Clear all cached data
     pub fn clear(&self) {
         self.cache.clear();
-        self.lru_timestamps.clear();
         self.hits.store(0, Ordering::Relaxed);
         self.misses.store(0, Ordering::Relaxed);
     }

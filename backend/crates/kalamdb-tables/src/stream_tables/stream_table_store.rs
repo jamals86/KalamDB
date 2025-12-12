@@ -9,9 +9,11 @@
 //! - StreamTableRow: Minimal structure with user_id, _seq, fields (JSON)
 //! - Storage key format: {user_id}:{_seq} (big-endian bytes)
 
+use crate::common::partition_name;
 use kalamdb_commons::ids::{SeqId, StreamTableRowId};
 use kalamdb_commons::models::row::Row;
-use kalamdb_commons::models::{KTableRow, NamespaceId, TableName, UserId};
+use kalamdb_commons::models::{KTableRow, UserId};
+use kalamdb_commons::TableId;
 use kalamdb_store::entity_store::{EntityStore, KSerializable};
 use kalamdb_store::{test_utils::InMemoryBackend, StorageBackend};
 use serde::{Deserialize, Serialize};
@@ -96,14 +98,11 @@ impl EntityStore<StreamTableRowId, StreamTableRow> for StreamTableStore {
 /// # Returns
 /// A new StreamTableStore instance configured for the stream table (in-memory backend)
 pub fn new_stream_table_store(
-    namespace_id: &NamespaceId,
-    table_name: &TableName,
+    table_id: &TableId,
 ) -> StreamTableStore {
-    let partition_name = format!(
-        "{}{}:{}",
+    let partition_name = partition_name(
         kalamdb_commons::constants::ColumnFamilyNames::STREAM_TABLE_PREFIX,
-        namespace_id.as_str(),
-        table_name.as_str()
+        table_id,
     );
     // Always use in-memory backend for stream tables (ephemeral, no persistence)
     let backend: Arc<dyn StorageBackend> = Arc::new(InMemoryBackend::new());
@@ -114,10 +113,12 @@ pub fn new_stream_table_store(
 mod tests {
     use super::*;
     use datafusion::scalar::ScalarValue;
+    use kalamdb_commons::models::{NamespaceId, TableId, TableName};
     use std::collections::BTreeMap;
 
     fn create_test_store() -> StreamTableStore {
-        new_stream_table_store(&NamespaceId::new("test_ns"), &TableName::new("test_stream"))
+        let table_id = TableId::new(NamespaceId::new("test_ns"), TableName::new("test_stream"));
+        new_stream_table_store(&table_id)
     }
 
     fn create_test_row(user_id: &str, seq: i64) -> StreamTableRow {

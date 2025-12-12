@@ -386,7 +386,7 @@ mod tests {
     use std::sync::Arc;
     use tokio::time::{sleep, Duration};
 
-    fn make_job(id: &str, job_type: JobType, ns: &str) -> Job {
+    fn make_job(id: &str, job_type: JobType, _ns: &str) -> Job {
         let now = chrono::Utc::now().timestamp_millis();
         Job {
             job_id: JobId::new(id),
@@ -462,7 +462,7 @@ mod tests {
             Arc::new(CachedTableData::new(Arc::new(table_def))),
         );
 
-        let stream_store = Arc::new(kalamdb_tables::new_stream_table_store(&namespace, &tbl));
+        let stream_store = Arc::new(kalamdb_tables::new_stream_table_store(&table_id));
         let core = Arc::new(TableProviderCore::from_app_context(
             app_ctx,
             table_id.clone(),

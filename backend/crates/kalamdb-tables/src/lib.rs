@@ -40,6 +40,7 @@
 //! ```
 
 pub mod error;
+pub mod common;
 pub mod shared_tables;
 pub mod store_ext;
 pub mod stream_tables;

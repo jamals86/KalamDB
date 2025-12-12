@@ -702,7 +702,7 @@ fn record_batch_to_query_result(
                         serde_json::Value::Bool(array.value(row_idx))
                     }
                 }
-                DataType::Timestamp(unit, tz) => {
+                DataType::Timestamp(unit, _tz) => {
                     match unit {
                         datafusion::arrow::datatypes::TimeUnit::Millisecond => {
                             let array = column

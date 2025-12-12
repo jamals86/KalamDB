@@ -1,7 +1,9 @@
+use crate::error::KalamDbError;
+use datafusion::catalog::Session;
 use datafusion::logical_expr::{Expr, Operator};
 use datafusion::scalar::ScalarValue;
 use kalamdb_commons::ids::SeqId;
-use kalamdb_commons::models::UserId;
+use kalamdb_commons::models::{Role, UserId};
 use once_cell::sync::Lazy;
 
 static SYSTEM_USER_ID: Lazy<UserId> = Lazy::new(|| UserId::from("_system"));
@@ -99,4 +101,25 @@ pub fn system_user_id() -> &'static UserId {
 /// Resolve user scope, defaulting to the shared system identifier for scope-less tables
 pub fn resolve_user_scope(scope: Option<&UserId>) -> &UserId {
     scope.unwrap_or_else(|| system_user_id())
+}
+
+/// Extract (user_id, role) from DataFusion SessionState extensions.
+pub fn extract_user_context(state: &dyn Session) -> Result<(UserId, Role), KalamDbError> {
+    use crate::sql::executor::models::SessionUserContext;
+
+    let session_state = state
+        .as_any()
+        .downcast_ref::<datafusion::execution::context::SessionState>()
+        .ok_or_else(|| KalamDbError::InvalidOperation("Expected SessionState".to_string()))?;
+
+    let user_ctx = session_state
+        .config()
+        .options()
+        .extensions
+        .get::<SessionUserContext>()
+        .ok_or_else(|| {
+            KalamDbError::InvalidOperation("SessionUserContext not found in extensions".to_string())
+        })?;
+
+    Ok((user_ctx.user_id.clone(), user_ctx.role))
 }

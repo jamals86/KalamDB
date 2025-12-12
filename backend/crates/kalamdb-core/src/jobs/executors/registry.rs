@@ -25,7 +25,7 @@ use std::sync::Arc;
 /// parameter types in a single DashMap. Handles deserialization and
 /// validation at runtime.
 #[async_trait]
-trait DynJobExecutor: Send + Sync {
+pub(crate) trait DynJobExecutor: Send + Sync {
     /// Returns the executor name for logging
     fn name(&self) -> &'static str;
 
@@ -322,7 +322,7 @@ mod tests {
     use super::*;
     use crate::jobs::executors::JobParams;
     use crate::test_helpers::init_test_app_context;
-    use kalamdb_commons::models::{JobId, JobStatus, NamespaceId, NodeId};
+    use kalamdb_commons::models::{JobId, JobStatus, NodeId};
     use serde::{Deserialize, Serialize};
 
     #[derive(Clone, Serialize, Deserialize)]

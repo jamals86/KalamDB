@@ -1,13 +1,11 @@
 use super::*;
 use crate::app_context::AppContext;
 use crate::live::connections_manager::ConnectionsManager;
-use crate::live::types::ChangeNotification;
-use crate::providers::arrow_json_conversion::json_to_row;
 use crate::schema_registry::SchemaRegistry;
 use crate::sql::executor::SqlExecutor;
 use crate::test_helpers::{create_test_session, init_test_app_context};
 use kalamdb_commons::datatypes::KalamDataType;
-use kalamdb_commons::models::{ConnectionId, ConnectionInfo, Row, TableId};
+use kalamdb_commons::models::{ConnectionId, ConnectionInfo, TableId};
 use kalamdb_commons::schemas::{ColumnDefinition, TableDefinition, TableOptions, TableType};
 use kalamdb_commons::websocket::{SubscriptionOptions, SubscriptionRequest};
 use kalamdb_commons::{NamespaceId, TableName};
@@ -18,10 +16,6 @@ use kalamdb_tables::{new_shared_table_store, new_stream_table_store, new_user_ta
 use std::sync::Arc;
 use std::time::Duration;
 use tempfile::TempDir;
-
-fn to_row(v: serde_json::Value) -> Row {
-    json_to_row(&v).unwrap()
-}
 
 /// Helper function to create a SubscriptionRequest for tests
 fn create_test_subscription_request(
@@ -56,17 +50,16 @@ async fn create_test_manager() -> (Arc<ConnectionsManager>, LiveQueryManager, Te
     // Create table stores for testing (using default namespace and table)
     let test_namespace = NamespaceId::new("user1");
     let test_table = TableName::new("messages");
+    let table_id = TableId::new(test_namespace.clone(), test_table.clone());
     let _user_table_store = Arc::new(new_user_table_store(
         backend.clone(),
-        &test_namespace,
-        &test_table,
+        &table_id,
     ));
     let _shared_table_store = Arc::new(new_shared_table_store(
         backend.clone(),
-        &test_namespace,
-        &test_table,
+        &table_id,
     ));
-    let _stream_table_store = Arc::new(new_stream_table_store(&test_namespace, &test_table));
+    let _stream_table_store = Arc::new(new_stream_table_store(&table_id));
 
     // Create test table definitions via SchemaRegistry
     let messages_table = TableDefinition::new(

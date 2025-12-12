@@ -12,13 +12,38 @@ use kalamdb_commons::{
 };
 use kalamdb_store::{entity_store::EntityStore, StorageBackend, StorageError};
 use kalamdb_system::providers::manifest::{new_manifest_store, ManifestCacheKey, ManifestStore};
+use std::sync::atomic::{AtomicI64, Ordering};
 use std::sync::Arc;
+
+#[derive(Debug)]
+struct HotManifestEntry {
+    entry: Arc<ManifestCacheEntry>,
+    last_accessed_ts: AtomicI64,
+}
+
+impl HotManifestEntry {
+    fn new(entry: Arc<ManifestCacheEntry>, last_accessed_ts: i64) -> Self {
+        Self {
+            entry,
+            last_accessed_ts: AtomicI64::new(last_accessed_ts),
+        }
+    }
+
+    fn touch_at(&self, ts: i64) {
+        self.last_accessed_ts.store(ts, Ordering::Relaxed);
+    }
+
+    fn last_accessed_ts(&self) -> i64 {
+        self.last_accessed_ts.load(Ordering::Relaxed)
+    }
+}
 
 /// Manifest cache service with hot cache + RocksDB persistence.
 ///
 /// Architecture:
-/// - Hot cache: DashMap<String, Arc<ManifestCacheEntry>> for fast reads
-/// - last_accessed: DashMap<String, i64> (in-memory only, not persisted)
+/// - Hot cache: DashMap<String, HotManifestEntry> for fast reads
+///   - `HotManifestEntry.entry`: Arc<ManifestCacheEntry>
+///   - `HotManifestEntry.last_accessed_ts`: AtomicI64 (in-memory only, not persisted)
 /// - Persistent store: RocksDB manifest_cache column family
 /// - TTL enforcement: Background eviction job + freshness validation
 pub struct ManifestCacheService {
@@ -26,10 +51,7 @@ pub struct ManifestCacheService {
     store: ManifestStore,
 
     /// In-memory hot cache for fast lookups
-    hot_cache: DashMap<String, Arc<ManifestCacheEntry>>,
-
-    /// Last access timestamps (in-memory only)
-    last_accessed: DashMap<String, i64>,
+    hot_cache: DashMap<String, HotManifestEntry>,
 
     /// Configuration settings
     config: ManifestCacheSettings,
@@ -41,7 +63,6 @@ impl ManifestCacheService {
         Self {
             store: new_manifest_store(backend),
             hot_cache: DashMap::new(),
-            last_accessed: DashMap::new(),
             config,
         }
     }
@@ -63,8 +84,8 @@ impl ManifestCacheService {
 
         // 1. Check hot cache
         if let Some(entry) = self.hot_cache.get(cache_key.as_str()) {
-            self.update_last_accessed(cache_key.as_str());
-            return Ok(Some(Arc::clone(entry.value())));
+            entry.value().touch_at(chrono::Utc::now().timestamp());
+            return Ok(Some(Arc::clone(&entry.value().entry)));
         }
 
         // 2. Check RocksDB CF
@@ -127,7 +148,7 @@ impl ManifestCacheService {
     pub fn validate_freshness(&self, cache_key: &str) -> Result<bool, StorageError> {
         if let Some(entry) = self.hot_cache.get(cache_key) {
             let now = chrono::Utc::now().timestamp();
-            Ok(!entry.is_stale(self.config.ttl_seconds, now))
+            Ok(!entry.value().entry.is_stale(self.config.ttl_seconds, now))
         } else if let Some(entry) =
             EntityStore::get(&self.store, &ManifestCacheKey::from(cache_key))?
         {
@@ -151,7 +172,6 @@ impl ManifestCacheService {
         let cache_key_str = self.make_cache_key(&table_id, user_id);
         let cache_key = ManifestCacheKey::from(cache_key_str.clone());
         self.hot_cache.remove(&cache_key_str);
-        self.last_accessed.remove(&cache_key_str);
         EntityStore::delete(&self.store, &cache_key)
     }
 
@@ -161,28 +181,18 @@ impl ManifestCacheService {
         let mut oldest_timestamp = i64::MAX;
 
         // Find entry with oldest last_accessed timestamp
-        for entry in self.last_accessed.iter() {
-            let timestamp = *entry.value();
-            if timestamp < oldest_timestamp {
-                oldest_timestamp = timestamp;
+        for entry in self.hot_cache.iter() {
+            let ts = entry.value().last_accessed_ts();
+            if ts < oldest_timestamp {
+                oldest_timestamp = ts;
                 oldest_key = Some(entry.key().clone());
             }
         }
 
-        // Remove oldest entry from hot cache and last_accessed
+        // Remove oldest entry from hot cache
         // Note: We do NOT remove from RocksDB (L2 cache)
         if let Some(key) = oldest_key {
             self.hot_cache.remove(&key);
-            self.last_accessed.remove(&key);
-            return;
-        }
-
-        // Fallback: remove any entry if last_accessed is empty/out-of-sync
-        if let Some(entry) = self.hot_cache.iter().next() {
-            let key = entry.key().clone();
-            drop(entry);
-            self.hot_cache.remove(&key);
-            self.last_accessed.remove(&key);
         }
     }
 
@@ -207,7 +217,6 @@ impl ManifestCacheService {
     /// Clear all cache entries (for testing/maintenance).
     pub fn clear(&self) -> Result<(), StorageError> {
         self.hot_cache.clear();
-        self.last_accessed.clear();
         let keys = EntityStore::scan_all(&self.store, None, None, None)?;
         for (key_bytes, _) in keys {
             let key = ManifestCacheKey::from(String::from_utf8_lossy(&key_bytes).to_string());
@@ -281,11 +290,6 @@ impl ManifestCacheService {
         Ok(())
     }
 
-    fn update_last_accessed(&self, cache_key: &str) {
-        let now = chrono::Utc::now().timestamp();
-        self.last_accessed.insert(cache_key.to_string(), now);
-    }
-
     fn insert_into_hot_cache(
         &self,
         cache_key: String,
@@ -294,8 +298,7 @@ impl ManifestCacheService {
     ) {
         self.evict_to_capacity();
         self.hot_cache
-            .insert(cache_key.clone(), Arc::clone(&entry));
-        self.last_accessed.insert(cache_key, last_accessed_ts);
+            .insert(cache_key, HotManifestEntry::new(entry, last_accessed_ts));
     }
 
     fn evict_to_capacity(&self) {
@@ -314,7 +317,9 @@ impl ManifestCacheService {
 
     /// Get last accessed timestamp for a key (used by eviction job).
     pub fn get_last_accessed(&self, cache_key: &str) -> Option<i64> {
-        self.last_accessed.get(cache_key).map(|v| *v)
+        self.hot_cache
+            .get(cache_key)
+            .map(|v| v.value().last_accessed_ts())
     }
 
     /// Get cache configuration.
