@@ -70,9 +70,11 @@ impl ManifestCacheService {
         // 2. Check RocksDB CF
         if let Some(entry) = EntityStore::get(&self.store, &cache_key)? {
             let entry_arc = Arc::new(entry);
-            self.hot_cache
-                .insert(cache_key.as_str().to_string(), Arc::clone(&entry_arc));
-            self.update_last_accessed(cache_key.as_str());
+            self.insert_into_hot_cache(
+                cache_key.as_str().to_string(),
+                Arc::clone(&entry_arc),
+                chrono::Utc::now().timestamp(),
+            );
             return Ok(Some(entry_arc));
         }
 
@@ -172,6 +174,15 @@ impl ManifestCacheService {
         if let Some(key) = oldest_key {
             self.hot_cache.remove(&key);
             self.last_accessed.remove(&key);
+            return;
+        }
+
+        // Fallback: remove any entry if last_accessed is empty/out-of-sync
+        if let Some(entry) = self.hot_cache.iter().next() {
+            let key = entry.key().clone();
+            drop(entry);
+            self.hot_cache.remove(&key);
+            self.last_accessed.remove(&key);
         }
     }
 
@@ -210,10 +221,21 @@ impl ManifestCacheService {
     /// Loads all entries from RocksDB CF into hot cache.
     /// Called during AppContext initialization.
     pub fn restore_from_rocksdb(&self) -> Result<(), StorageError> {
+        let now = chrono::Utc::now().timestamp();
         let entries = EntityStore::scan_all(&self.store, None, None, None)?;
         for (key_bytes, entry) in entries {
             if let Ok(key_str) = String::from_utf8(key_bytes) {
-                self.hot_cache.insert(key_str, Arc::new(entry));
+                // Skip stale entries to avoid loading expired manifests into RAM
+                if entry.is_stale(self.config.ttl_seconds, now) {
+                    continue;
+                }
+
+                let last_refreshed = entry.last_refreshed;
+                self.insert_into_hot_cache(
+                    key_str,
+                    Arc::new(entry),
+                    last_refreshed,
+                );
             }
         }
         Ok(())
@@ -240,11 +262,6 @@ impl ManifestCacheService {
         source_path: String,
         sync_state: SyncState,
     ) -> Result<(), StorageError> {
-        // Check if we need to evict before inserting
-        if self.config.max_entries > 0 && self.hot_cache.len() >= self.config.max_entries {
-            self.evict_lru();
-        }
-
         let cache_key_str = self.make_cache_key(table_id, user_id);
         let cache_key = ManifestCacheKey::from(cache_key_str.clone());
         let now = chrono::Utc::now().timestamp();
@@ -259,9 +276,7 @@ impl ManifestCacheService {
 
         EntityStore::put(&self.store, &cache_key, &entry)?;
 
-        self.hot_cache
-            .insert(cache_key_str.clone(), Arc::new(entry));
-        self.update_last_accessed(&cache_key_str);
+        self.insert_into_hot_cache(cache_key_str, Arc::new(entry), now);
 
         Ok(())
     }
@@ -269,6 +284,32 @@ impl ManifestCacheService {
     fn update_last_accessed(&self, cache_key: &str) {
         let now = chrono::Utc::now().timestamp();
         self.last_accessed.insert(cache_key.to_string(), now);
+    }
+
+    fn insert_into_hot_cache(
+        &self,
+        cache_key: String,
+        entry: Arc<ManifestCacheEntry>,
+        last_accessed_ts: i64,
+    ) {
+        self.evict_to_capacity();
+        self.hot_cache
+            .insert(cache_key.clone(), Arc::clone(&entry));
+        self.last_accessed.insert(cache_key, last_accessed_ts);
+    }
+
+    fn evict_to_capacity(&self) {
+        if self.config.max_entries == 0 {
+            return;
+        }
+
+        while self.hot_cache.len() >= self.config.max_entries {
+            let before = self.hot_cache.len();
+            self.evict_lru();
+            if self.hot_cache.len() == before {
+                break;
+            }
+        }
     }
 
     /// Get last accessed timestamp for a key (used by eviction job).
@@ -286,7 +327,9 @@ impl ManifestCacheService {
 mod tests {
     use super::*;
     use kalamdb_commons::TableId;
+    use kalamdb_store::entity_store::EntityStore;
     use kalamdb_store::test_utils::InMemoryBackend;
+    use kalamdb_system::providers::manifest::ManifestCacheKey;
 
     fn create_test_service() -> ManifestCacheService {
         let backend: Arc<dyn StorageBackend> = Arc::new(InMemoryBackend::new());
@@ -302,6 +345,15 @@ mod tests {
     fn create_test_manifest() -> Manifest {
         let table_id = TableId::new(NamespaceId::new("test"), TableName::new("table"));
         Manifest::new(table_id, Some(UserId::from("u_123")))
+    }
+
+    fn insert_entry(
+        service: &ManifestCacheService,
+        table_id: &TableId,
+        entry: ManifestCacheEntry,
+    ) {
+        let key = ManifestCacheKey::from(service.make_cache_key(table_id, None));
+        EntityStore::put(&service.store, &key, &entry).unwrap();
     }
 
     #[test]
@@ -492,5 +544,80 @@ mod tests {
 
         service.clear().unwrap();
         assert_eq!(service.count().unwrap(), 0);
+    }
+
+    #[test]
+    fn test_get_or_load_respects_capacity_on_rocksdb_load() {
+        let backend: Arc<dyn StorageBackend> = Arc::new(InMemoryBackend::new());
+        let mut config = ManifestCacheSettings::default();
+        config.max_entries = 1;
+
+        let service = ManifestCacheService::new(Arc::clone(&backend), config.clone());
+        let table1 = TableId::new(NamespaceId::new("ns1"), TableName::new("t1"));
+        let table2 = TableId::new(NamespaceId::new("ns1"), TableName::new("t2"));
+
+        let mut manifest1 = create_test_manifest();
+        manifest1.table_id = table1.clone();
+        let mut manifest2 = create_test_manifest();
+        manifest2.table_id = table2.clone();
+
+        service
+            .update_after_flush(&table1, Some(&UserId::from("u_123")), &manifest1, None, "p1".to_string())
+            .unwrap();
+        service
+            .update_after_flush(&table2, Some(&UserId::from("u_123")), &manifest2, None, "p2".to_string())
+            .unwrap();
+
+        // New instance to force loading from RocksDB
+        let service_reader = ManifestCacheService::new(backend, config);
+        let key1 = service_reader.make_cache_key(&table1, Some(&UserId::from("u_123")));
+        let key2 = service_reader.make_cache_key(&table2, Some(&UserId::from("u_123")));
+
+        service_reader
+            .get_or_load(&table1, Some(&UserId::from("u_123")))
+            .unwrap();
+        assert_eq!(service_reader.hot_cache.len(), 1);
+        assert!(service_reader.hot_cache.contains_key(&key1));
+
+        service_reader
+            .get_or_load(&table2, Some(&UserId::from("u_123")))
+            .unwrap();
+        assert_eq!(service_reader.hot_cache.len(), 1);
+        assert!(service_reader.hot_cache.contains_key(&key2));
+    }
+
+    #[test]
+    fn test_restore_from_rocksdb_skips_stale_and_limits_capacity() {
+        let backend: Arc<dyn StorageBackend> = Arc::new(InMemoryBackend::new());
+        let mut config = ManifestCacheSettings::default();
+        config.ttl_seconds = 5;
+        config.max_entries = 1;
+
+        let service = ManifestCacheService::new(Arc::clone(&backend), config.clone());
+        let table1 = TableId::new(NamespaceId::new("ns1"), TableName::new("fresh"));
+        let table2 = TableId::new(NamespaceId::new("ns1"), TableName::new("stale"));
+        let now = chrono::Utc::now().timestamp();
+
+        let fresh_entry =
+            ManifestCacheEntry::new("{}".to_string(), None, now, "p1".to_string(), SyncState::InSync);
+        let stale_entry = ManifestCacheEntry::new(
+            "{}".to_string(),
+            None,
+            now - 10,
+            "p2".to_string(),
+            SyncState::InSync,
+        );
+
+        insert_entry(&service, &table1, fresh_entry);
+        insert_entry(&service, &table2, stale_entry);
+
+        let restored = ManifestCacheService::new(backend, config);
+        restored.restore_from_rocksdb().unwrap();
+
+        assert_eq!(restored.hot_cache.len(), 1);
+        let fresh_key = restored.make_cache_key(&table1, None);
+        let stale_key = restored.make_cache_key(&table2, None);
+        assert!(restored.hot_cache.contains_key(&fresh_key));
+        assert!(!restored.hot_cache.contains_key(&stale_key));
     }
 }

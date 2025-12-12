@@ -375,11 +375,10 @@ Tasks To Repo:
 ├────────────────────────────────────────────────────────────┤
 │  Test Type              │  Rows   │  Time    │  Rate       │
 ├────────────────────────────────────────────────────────────┤
-│  Single-row inserts     │    200  │    0.43s │     468.1/s  │
-│  Batched (100/batch)    │   2000  │    3.62s │     552.6/s  │
-│  Parallel (10 threads)  │   1000  │    1.09s │     915.4/s  │
+│  Single-row inserts     │    200  │    0.13s │    1560.9/s  │
+│  Batched (100/batch)    │   2000  │    0.03s │   57156.8/s  │
+│  Parallel (10 threads)  │   1000  │    0.11s │    9267.9/s  │
 └────────────────────────────────────────────────────────────┘
-
 
 UI Changes:
 1) The browser should fetch all namespaces/tables/columns in one query not multiple queries for better performance
