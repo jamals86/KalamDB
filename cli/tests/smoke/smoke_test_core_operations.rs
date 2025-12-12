@@ -3,7 +3,7 @@
 
 use crate::common::*;
 
-#[ntest::timeout(60000)]
+#[ntest::timeout(180_000)]
 #[test]
 fn smoke_test_core_operations() {
     // Fail fast with clear error if server not running

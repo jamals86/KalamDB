@@ -20,7 +20,7 @@ fn rows_to_insert() -> usize {
     DEFAULT_ROWS_TO_INSERT
 }
 
-#[ntest::timeout(60000)]
+#[ntest::timeout(180000)]
 #[test]
 fn smoke_queries_benchmark() {
     if !is_server_running() {

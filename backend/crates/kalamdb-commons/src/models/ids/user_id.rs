@@ -41,9 +41,6 @@ impl UserId {
     pub fn is_admin(&self) -> bool {
         self.as_str() == AuthConstants::DEFAULT_ROOT_USER_ID || self.as_str() == "sys_root"
     }
-    // pub fn root() -> Self {
-    //     Self("root".to_string())
-    // }
 }
 
 impl fmt::Display for UserId {

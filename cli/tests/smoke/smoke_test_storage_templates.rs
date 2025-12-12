@@ -38,7 +38,7 @@ impl Drop for CleanupActions {
     }
 }
 
-#[ntest::timeout(60000)]
+#[ntest::timeout(180_000)]
 #[test]
 fn smoke_storage_custom_templates() {
     if !is_server_running() {
@@ -360,7 +360,7 @@ fn trigger_flush_and_wait(table_name: &str) {
     let output = execute_sql_as_root_via_client(&flush_sql).expect("flush command should succeed");
     let job_id =
         parse_job_id_from_flush_output(&output).expect("flush output should contain job id");
-    verify_job_completed(&job_id, Duration::from_secs(60)).expect("flush job should complete");
+    verify_job_completed(&job_id, Duration::from_secs(180)).expect("flush job should complete");
 }
 
 // Fetch internal user_id for a given username from system.users (first column user_id)

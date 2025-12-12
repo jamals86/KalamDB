@@ -29,7 +29,7 @@ pub async fn cleanup_connection(
         )
     };
 
-    info!("Cleaning up connection: {}", connection_id);
+    //debug!("Cleaning up connection: {}", connection_id);
 
     // Unregister from unified registry (handles subscription cleanup)
     let removed_live_ids = registry.unregister_connection(&connection_id);

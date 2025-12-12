@@ -654,6 +654,7 @@ pub struct HealthCheckResponse {
     pub status: String,
 
     /// Server version
+    #[serde(default)]
     pub version: String,
 
     /// API version (e.g., "v1")

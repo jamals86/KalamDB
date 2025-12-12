@@ -1,5 +1,6 @@
 mod common;
 use common::*;
+use serde_json::Value;
 use std::thread;
 use std::time::Duration;
 
@@ -278,6 +279,84 @@ fn test_update_all_types_shared_table() {
     }
 
     // Verify initial data is still readable after flush
+    let output = execute_sql_as_root_via_cli_json(&query_sql).unwrap();
+    assert!(
+        output.contains("initial text"),
+        "Initial data not found after flush: {}",
+        output
+    );
+    assert!(output.contains("123"), "Initial int not found after flush");
+    // ---------------------------------------------------------------------
+
+    // Update all columns
+    let update_sql = format!(
+        r#"UPDATE {} SET 
+            col_bool = false,
+            col_int = 456,
+            col_bigint = 9876543210,
+            col_double = 987.65,
+            col_float = 56.78,
+            col_text = 'updated text',
+            col_timestamp = '2023-12-31 23:59:59',
+            col_date = '2023-12-31',
+            col_datetime = '2023-12-31 23:59:59',
+            col_time = '23:59:59',
+            col_json = '{{"key": "updated"}}',
+            col_uuid = '123e4567-e89b-12d3-a456-426614174000',
+            col_decimal = 200.75,
+            col_smallint = 200
+        WHERE id = 'row1'"#,
+        full_table_name
+    );
+
+    let output = execute_sql_as_root_via_cli(&update_sql).unwrap();
+    assert!(
+        output.contains("1 row(s) affected")
+            || output.contains("1 rows affected")
+            || output.contains("Updated 1 row(s)")
+            || output.contains("Success"),
+        "Update failed: {}",
+        output
+    );
+
+    // Verify updated data (before flush)
+    let output = execute_sql_as_root_via_cli_json(&query_sql).unwrap();
+    assert!(
+        output.contains("updated text"),
+        "Updated text not found: {}",
+        output
+    );
+    assert!(output.contains("456"), "Updated int not found");
+    assert!(output.contains("200.75"), "Updated decimal not found");
+    assert!(output.contains("updated"), "Updated JSON content not found");
+
+    // Flush table
+    let flush_sql = format!("FLUSH TABLE {}", full_table_name);
+    let output = execute_sql_as_root_via_cli(&flush_sql).unwrap();
+
+    // Wait for flush to complete
+    if let Ok(job_id) = parse_job_id_from_flush_output(&output) {
+        println!("Waiting for flush job {}...", job_id);
+        if let Err(e) = verify_job_completed(&job_id, Duration::from_secs(10)) {
+            eprintln!("Flush job failed or timed out: {}", e);
+        }
+    } else {
+        thread::sleep(Duration::from_secs(2));
+    }
+
+    // Verify updated data (after flush)
+    let output = execute_sql_as_root_via_cli_json(&query_sql).unwrap();
+    assert!(
+        output.contains("updated text"),
+        "Updated text not found after flush: {}",
+        output
+    );
+    assert!(output.contains("456"), "Updated int not found after flush");
+    assert!(
+        output.contains("200.75"),
+        "Updated decimal not found after flush"
+    );
+
     let output = execute_sql_as_root_via_cli_json(&query_sql).unwrap();
     assert!(
         output.contains("initial text"),

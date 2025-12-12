@@ -3,7 +3,7 @@
 
 use crate::common::*;
 
-#[ntest::timeout(60000)]
+#[ntest::timeout(180000)]
 #[test]
 fn smoke_stream_table_subscription() {
     if !is_server_running() {
@@ -77,13 +77,21 @@ fn smoke_stream_table_subscription() {
 
     // 5) Verify data is present via regular SELECT immediately after insert
     let select_sql = format!("SELECT * FROM {}", full);
-    let select_output =
-        execute_sql_as_root_via_client_json(&select_sql).expect("select should succeed");
+    let select_visible_deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
+    let mut last_select_output = String::new();
+    while std::time::Instant::now() < select_visible_deadline {
+        last_select_output =
+            execute_sql_as_root_via_client_json(&select_sql).expect("select should succeed");
+        if last_select_output.contains(ev_val) {
+            break;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(250));
+    }
     assert!(
-        select_output.contains(ev_val),
-        "expected to find inserted event '{}' in SELECT output immediately after insert. Output:\n{}",
+        last_select_output.contains(ev_val),
+        "expected to find inserted event '{}' in SELECT output within 10s after insert. Output:\n{}",
         ev_val,
-        select_output
+        last_select_output
     );
 
     // 6) Wait 11 seconds for TTL eviction

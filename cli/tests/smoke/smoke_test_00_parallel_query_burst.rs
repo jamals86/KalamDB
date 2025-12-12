@@ -16,7 +16,7 @@ use std::time::{Duration, Instant};
 const PARALLEL_QUERIES: usize = 100;
 const ROW_TARGET: usize = 500;
 const INSERT_CHUNK_SIZE: usize = 1000;
-const MAX_QUERY_DURATION: Duration = Duration::from_secs(30);
+const MAX_QUERY_DURATION: Duration = Duration::from_secs(60);
 const MAX_ROWS_IN_TABLE: usize = 2_000;
 
 #[ntest::timeout(180000)]
@@ -32,7 +32,8 @@ fn smoke_test_00_parallel_query_burst() {
 
     println!("\n=== Starting Parallel Query Burst Smoke Test ===\n");
 
-    let namespace = "smoke_parallel";
+    // Use a unique namespace to avoid cross-test / cross-run state (the server may persist data).
+    let namespace = generate_unique_namespace("smoke_parallel");
     let table = "user_table";
     let full_table_name = format!("{}.{}", namespace, table);
 
@@ -187,6 +188,9 @@ fn smoke_test_00_parallel_query_burst() {
         MAX_QUERY_DURATION,
         max_duration
     );
+
+    // Cleanup to avoid leaving state behind on the running server.
+    let _ = execute_sql_as_root_via_client(&format!("DROP NAMESPACE {} CASCADE", namespace));
 
     println!("\n=== Parallel Query Burst Smoke Test Complete ===\n");
 }

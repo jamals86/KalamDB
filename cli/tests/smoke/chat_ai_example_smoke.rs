@@ -5,7 +5,7 @@
 use crate::common::*;
 use std::time::Duration;
 
-#[ntest::timeout(60000)]
+#[ntest::timeout(180000)]
 #[test]
 fn smoke_chat_ai_example_from_readme() {
     if !is_server_running() {

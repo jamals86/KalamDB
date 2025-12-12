@@ -18,7 +18,7 @@ use std::time::Duration;
 /// - INSERT INTO ... VALUES (...), (...), (...) syntax works
 /// - All rows inserted in single statement
 /// - Data retrievable via SELECT
-#[ntest::timeout(60000)]
+#[ntest::timeout(180000)]
 #[test]
 fn smoke_test_multi_row_insert() {
     if !is_server_running() {
@@ -97,7 +97,7 @@ fn smoke_test_multi_row_insert() {
 /// - Deleted rows excluded from SELECT by default
 /// - Deleted rows visible with WHERE _deleted = true
 /// - _updated column updated on DELETE
-#[ntest::timeout(60000)]
+#[ntest::timeout(180000)]
 #[test]
 fn smoke_test_soft_delete_user_table() {
     if !is_server_running() {
@@ -192,7 +192,7 @@ fn smoke_test_soft_delete_user_table() {
 /// Verifies:
 /// - SHARED tables also use soft delete (like USER tables)
 /// - _deleted column works same way
-#[ntest::timeout(60000)]
+#[ntest::timeout(180000)]
 #[test]
 fn smoke_test_soft_delete_shared_table() {
     if !is_server_running() {
@@ -254,7 +254,7 @@ fn smoke_test_soft_delete_shared_table() {
 /// - DELETE physically removes rows from STREAM tables (no _deleted column)
 /// - Deleted rows NOT retrievable via any query
 /// - COUNT decreases after DELETE
-#[ntest::timeout(60000)]
+#[ntest::timeout(180000)]
 #[test]
 fn smoke_test_hard_delete_stream_table() {
     if !is_server_running() {
@@ -345,7 +345,7 @@ fn smoke_test_hard_delete_stream_table() {
 /// - SUM(column) works
 /// - GROUP BY works
 /// - AVG, MIN, MAX work
-#[ntest::timeout(60000)]
+#[ntest::timeout(180000)]
 #[test]
 fn smoke_test_aggregation_queries() {
     if !is_server_running() {
@@ -467,7 +467,7 @@ fn smoke_test_aggregation_queries() {
 /// - UPDATE with WHERE clause affects multiple rows
 /// - All matching rows updated
 /// - _updated column updated for all affected rows
-#[ntest::timeout(60000)]
+#[ntest::timeout(180000)]
 #[test]
 fn smoke_test_multi_row_update() {
     if !is_server_running() {

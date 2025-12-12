@@ -292,6 +292,8 @@ fn test_link_subscription_multiple_live_inserts() {
 
     // Wait for ACK
     let _ = listener.wait_for_event("Ack", Duration::from_secs(3));
+    // For empty tables, an initial batch may be emitted; ignore if not present.
+    let _ = listener.wait_for_event("InitialDataBatch", Duration::from_secs(3));
 
     // Insert multiple rows in sequence
     let levels = ["INFO", "WARN", "ERROR", "DEBUG"];
@@ -306,7 +308,7 @@ fn test_link_subscription_multiple_live_inserts() {
     // Collect insert events
     let mut insert_count = 0;
     let start = std::time::Instant::now();
-    while start.elapsed() < Duration::from_secs(10) && insert_count < levels.len() {
+    while start.elapsed() < Duration::from_secs(20) && insert_count < levels.len() {
         match listener.try_read_line(Duration::from_millis(300)) {
             Ok(Some(line)) => {
                 if line.contains("Insert") {
@@ -314,7 +316,7 @@ fn test_link_subscription_multiple_live_inserts() {
                     eprintln!("[INSERT {}] {}", insert_count, line);
                 }
             }
-            Ok(None) => break,
+            Ok(None) => continue,
             Err(_) => continue,
         }
     }

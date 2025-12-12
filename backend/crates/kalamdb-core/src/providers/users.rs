@@ -55,6 +55,9 @@ pub struct UserTableProvider {
     /// IndexedEntityStore with PK index for DML operations (public for flush jobs)
     pub(crate) store: Arc<UserTableIndexedStore>,
 
+    /// PK index for efficient lookups
+    pk_index: UserTablePkIndex,
+
     /// Cached primary key field name
     primary_key_field_name: String,
 
@@ -82,9 +85,16 @@ impl UserTableProvider {
             .get_arrow_schema(core.table_id())
             .expect("Failed to get Arrow schema from registry during provider creation");
 
+        let pk_index = UserTablePkIndex::new(
+            core.table_id().namespace_id().as_str(),
+            core.table_id().table_name().as_str(),
+            &primary_key_field_name,
+        );
+
         Self {
             core,
             store,
+            pk_index,
             primary_key_field_name,
             schema,
         }
@@ -128,12 +138,9 @@ impl UserTableProvider {
         pk_value: &ScalarValue,
     ) -> Result<Option<(UserTableRowId, UserTableRow)>, KalamDbError> {
         // Build prefix for PK index scan
-        let prefix = UserTablePkIndex::new(
-            self.core.table_id().namespace_id().as_str(),
-            self.core.table_id().table_name().as_str(),
-            &self.primary_key_field_name,
-        )
-        .build_prefix_for_pk(user_id.as_str(), pk_value);
+        let prefix = self
+            .pk_index
+            .build_prefix_for_pk(user_id.as_str(), pk_value);
 
         // Scan index for all versions with this PK
         let index_results = self
@@ -174,12 +181,9 @@ impl UserTableProvider {
         pk_value: &ScalarValue,
     ) -> Result<Option<bool>, KalamDbError> {
         // Build prefix for PK index scan
-        let prefix = UserTablePkIndex::new(
-            self.core.table_id().namespace_id().as_str(),
-            self.core.table_id().table_name().as_str(),
-            &self.primary_key_field_name,
-        )
-        .build_prefix_for_pk(user_id.as_str(), pk_value);
+        let prefix = self
+            .pk_index
+            .build_prefix_for_pk(user_id.as_str(), pk_value);
 
         // Single round-trip: scan index with limit=1
         // Due to descending seq order (big-endian), first result is the latest version

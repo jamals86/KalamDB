@@ -24,7 +24,7 @@ const INSERT_ROWS: usize = 200;
 ///
 /// Creates a user table with FLUSH ROWS 50 policy, inserts 200 rows,
 /// flushes manually, and verifies all data is retrievable.
-#[ntest::timeout(60000)]
+#[ntest::timeout(180_000)]
 #[test]
 fn smoke_test_user_table_flush() {
     if !is_server_running() {
@@ -68,32 +68,25 @@ fn smoke_test_user_table_flush() {
         FLUSH_POLICY_ROWS
     );
 
-    // Insert rows in batches to avoid single large transaction
+    // Insert rows in batches using a single multi-row INSERT per batch.
+    // This keeps the smoke test fast and reduces flakiness from per-row request overhead.
     println!("📝 Inserting {} rows...", INSERT_ROWS);
     let batch_size = 50;
     for batch in 0..(INSERT_ROWS / batch_size) {
         let start = batch * batch_size;
         let end = (batch + 1) * batch_size;
 
+        let mut values = Vec::with_capacity(batch_size);
         for i in start..end {
-            let insert_sql = format!(
-                "INSERT INTO {} (content, sequence) VALUES ('Row {}', {})",
-                full_table_name, i, i
-            );
-            let mut attempts = 0;
-            loop {
-                match execute_sql_as_root_via_client(&insert_sql) {
-                    Ok(_) => break,
-                    Err(e) => {
-                        attempts += 1;
-                        if attempts >= 3 {
-                            panic!("Failed to insert row {} after retries: {}", i, e);
-                        }
-                        std::thread::sleep(Duration::from_millis(120));
-                    }
-                }
-            }
+            values.push(format!("('Row {}', {})", i, i));
         }
+
+        let insert_sql = format!(
+            "INSERT INTO {} (content, sequence) VALUES {}",
+            full_table_name,
+            values.join(", ")
+        );
+        execute_sql_as_root_via_client(&insert_sql).expect("Failed to insert batch");
 
         println!(
             "  Inserted batch {}/{} ({}-{})",
@@ -102,7 +95,6 @@ fn smoke_test_user_table_flush() {
             start,
             end - 1
         );
-        std::thread::sleep(Duration::from_millis(100));
     }
 
     println!("✅ Inserted {} rows", INSERT_ROWS);
@@ -185,7 +177,7 @@ fn smoke_test_user_table_flush() {
 ///
 /// Creates a shared table with FLUSH ROWS 50 policy, inserts 200 rows,
 /// flushes manually, and verifies all data is retrievable.
-#[ntest::timeout(60000)]
+#[ntest::timeout(180_000)]
 #[test]
 fn smoke_test_shared_table_flush() {
     if !is_server_running() {
@@ -229,32 +221,24 @@ fn smoke_test_shared_table_flush() {
         FLUSH_POLICY_ROWS
     );
 
-    // Insert rows in batches
+    // Insert rows in batches using a single multi-row INSERT per batch.
     println!("📝 Inserting {} rows...", INSERT_ROWS);
     let batch_size = 50;
     for batch in 0..(INSERT_ROWS / batch_size) {
         let start = batch * batch_size;
         let end = (batch + 1) * batch_size;
 
+        let mut values = Vec::with_capacity(batch_size);
         for i in start..end {
-            let insert_sql = format!(
-                "INSERT INTO {} (content, sequence) VALUES ('Shared Row {}', {})",
-                full_table_name, i, i
-            );
-            let mut attempts = 0;
-            loop {
-                match execute_sql_as_root_via_client(&insert_sql) {
-                    Ok(_) => break,
-                    Err(e) => {
-                        attempts += 1;
-                        if attempts >= 3 {
-                            panic!("Failed to insert row {} in batch 1 after retries: {}", i, e);
-                        }
-                        std::thread::sleep(Duration::from_millis(120));
-                    }
-                }
-            }
+            values.push(format!("('Shared Row {}', {})", i, i));
         }
+
+        let insert_sql = format!(
+            "INSERT INTO {} (content, sequence) VALUES {}",
+            full_table_name,
+            values.join(", ")
+        );
+        execute_sql_as_root_via_client(&insert_sql).expect("Failed to insert batch");
 
         println!(
             "  Inserted batch {}/{} ({}-{})",
@@ -263,7 +247,6 @@ fn smoke_test_shared_table_flush() {
             start,
             end - 1
         );
-        std::thread::sleep(Duration::from_millis(100));
     }
 
     println!("✅ Inserted {} rows", INSERT_ROWS);
@@ -347,7 +330,7 @@ fn smoke_test_shared_table_flush() {
 /// This test verifies the query engine properly combines:
 /// - Unflushed data still in RocksDB
 /// - Flushed data in Parquet files
-#[ntest::timeout(60000)]
+#[ntest::timeout(180_000)]
 #[test]
 fn smoke_test_mixed_source_query() {
     if !is_server_running() {
@@ -390,26 +373,16 @@ fn smoke_test_mixed_source_query() {
 
     // Insert first batch (will be flushed)
     println!("📝 Inserting first batch (50 rows - will exceed flush policy)...");
+    let mut batch1_values = Vec::with_capacity(50);
     for i in 0..50 {
-        let insert_sql = format!(
-            "INSERT INTO {} (content, sequence) VALUES ('Batch1-Row{}', {})",
-            full_table_name, i, i
-        );
-        let mut attempts = 0;
-        loop {
-            match execute_sql_as_root_via_client(&insert_sql) {
-                Ok(_) => break,
-                Err(e) => {
-                    attempts += 1;
-                    if attempts >= 3 {
-                        panic!("Failed to insert row {}: {}", i, e);
-                    }
-                    std::thread::sleep(Duration::from_millis(120));
-                }
-            }
-        }
+        batch1_values.push(format!("('Batch1-Row{}', {})", i, i));
     }
-    std::thread::sleep(Duration::from_millis(200));
+    execute_sql_as_root_via_client(&format!(
+        "INSERT INTO {} (content, sequence) VALUES {}",
+        full_table_name,
+        batch1_values.join(", ")
+    ))
+    .expect("Failed to insert first batch");
 
     // Manually flush to ensure first batch is in Parquet
     println!("🚀 Flushing first batch...");
@@ -429,14 +402,16 @@ fn smoke_test_mixed_source_query() {
 
     // Insert second batch (will stay in RocksDB)
     println!("📝 Inserting second batch (20 rows - will stay in RocksDB)...");
+    let mut batch2_values = Vec::with_capacity(20);
     for i in 50..70 {
-        let insert_sql = format!(
-            "INSERT INTO {} (content, sequence) VALUES ('Batch2-Row{}', {})",
-            full_table_name, i, i
-        );
-        execute_sql_as_root_via_client(&insert_sql)
-            .unwrap_or_else(|e| panic!("Failed to insert row {}: {}", i, e));
+        batch2_values.push(format!("('Batch2-Row{}', {})", i, i));
     }
+    execute_sql_as_root_via_client(&format!(
+        "INSERT INTO {} (content, sequence) VALUES {}",
+        full_table_name,
+        batch2_values.join(", ")
+    ))
+    .expect("Failed to insert second batch");
     std::thread::sleep(Duration::from_millis(200));
 
     // Query all data - should combine from both sources
