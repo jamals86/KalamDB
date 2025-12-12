@@ -81,41 +81,6 @@ pub fn log_ddl_operation(
     create_audit_entry(context, &action, object_name, details, subject_user_id)
 }
 
-/// Create audit entry for DML operations
-///
-/// Logs INSERT, UPDATE, DELETE operations with optional AS USER impersonation tracking.
-///
-/// # Arguments
-/// * `context` - Execution context
-/// * `operation` - DML operation (INSERT, UPDATE, DELETE)
-/// * `table_name` - Fully qualified table name
-/// * `rows_affected` - Number of rows affected
-/// * `subject_user_id` - User being impersonated (for AS USER operations)
-pub fn log_dml_operation(
-    context: &ExecutionContext,
-    operation: &str,
-    table_name: &str,
-    rows_affected: usize,
-    subject_user_id: Option<kalamdb_commons::UserId>,
-) -> AuditLogEntry {
-    let mut details_json = serde_json::json!({
-        "rows_affected": rows_affected,
-    });
-
-    // If AS USER impersonation, add to details
-    if let Some(ref subject_id) = subject_user_id {
-        details_json["impersonated_user"] = serde_json::json!(subject_id.as_str());
-    }
-
-    create_audit_entry(
-        context,
-        operation,
-        table_name,
-        Some(details_json.to_string()),
-        subject_user_id,
-    )
-}
-
 /// Create audit entry for query operations
 ///
 /// Logs SELECT and other read operations.
@@ -247,17 +212,6 @@ mod tests {
     }
 
     #[test]
-    fn test_log_dml_operation() {
-        let ctx = ExecutionContext::new(UserId::from("charlie"), Role::User, create_test_session());
-
-        let entry = log_dml_operation(&ctx, "INSERT", "default.logs", 1000, None);
-
-        assert_eq!(entry.action, "INSERT");
-        assert_eq!(entry.target, "default.logs");
-        assert!(entry.details.unwrap().contains("1000"));
-    }
-
-    #[test]
     fn test_log_query_operation() {
         let ctx = ExecutionContext::new(UserId::from("dave"), Role::User, create_test_session());
 
@@ -278,23 +232,5 @@ mod tests {
         assert_eq!(entry.target, "user:eve");
         assert_eq!(entry.ip_address, Some("10.0.0.1".to_string()));
         assert!(entry.details.unwrap().contains("true"));
-    }
-
-    #[test]
-    fn test_log_dml_with_as_user() {
-        let ctx = ExecutionContext::new(UserId::from("admin"), Role::Dba, create_test_session());
-        let subject = UserId::from("user123");
-
-        let entry = log_dml_operation(&ctx, "INSERT", "default.orders", 5, Some(subject.clone()));
-
-        assert_eq!(entry.action, "INSERT");
-        assert_eq!(entry.target, "default.orders");
-        assert_eq!(entry.actor_user_id.as_str(), "admin");
-        assert_eq!(entry.subject_user_id, Some(subject));
-
-        // Verify impersonation details in JSON
-        let details_str = entry.details.unwrap();
-        assert!(details_str.contains("user123"));
-        assert!(details_str.contains("rows_affected"));
     }
 }

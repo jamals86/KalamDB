@@ -10,9 +10,15 @@ use kalamdb_commons::{NamespaceId, TableName};
 /// - job_id TEXT PRIMARY KEY
 /// - job_type TEXT NOT NULL
 /// - status TEXT NOT NULL
-/// - created_at TIMESTAMP NOT NULL
+/// - parameters TEXT (JSON containing namespace_id, table_name, etc.)
+/// - result TEXT
+/// - trace TEXT
+/// - memory_used BIGINT
+/// - cpu_used BIGINT
+/// - created_at TIMESTAMP NOT NULL DEFAULT NOW()
 /// - started_at TIMESTAMP
 /// - completed_at TIMESTAMP
+/// - node_id TEXT NOT NULL
 /// - error_message TEXT
 pub fn jobs_table_definition() -> TableDefinition {
     let columns = vec![
@@ -37,28 +43,8 @@ pub fn jobs_table_definition() -> TableDefinition {
             Some("Job type: flush, retention, cleanup, etc.".to_string()),
         ),
         ColumnDefinition::new(
-            "namespace_id",
-            3,
-            KalamDataType::Text,
-            false,
-            false,
-            false,
-            ColumnDefault::None,
-            Some("Namespace ID".to_string()),
-        ),
-        ColumnDefinition::new(
-            "table_name",
-            4,
-            KalamDataType::Text,
-            true,
-            false,
-            false,
-            ColumnDefault::None,
-            Some("Table name (optional)".to_string()),
-        ),
-        ColumnDefinition::new(
             "status",
-            5,
+            3,
             KalamDataType::Text,
             false,
             false,
@@ -68,17 +54,17 @@ pub fn jobs_table_definition() -> TableDefinition {
         ),
         ColumnDefinition::new(
             "parameters",
-            6,
+            4,
             KalamDataType::Text,
             true,
             false,
             false,
             ColumnDefault::None,
-            Some("Job parameters (JSON)".to_string()),
+            Some("Job parameters (JSON) - contains namespace_id, table_name, etc.".to_string()),
         ),
         ColumnDefinition::new(
             "result",
-            7,
+            5,
             KalamDataType::Text,
             true,
             false,
@@ -88,7 +74,7 @@ pub fn jobs_table_definition() -> TableDefinition {
         ),
         ColumnDefinition::new(
             "trace",
-            8,
+            6,
             KalamDataType::Text,
             true,
             false,
@@ -98,7 +84,7 @@ pub fn jobs_table_definition() -> TableDefinition {
         ),
         ColumnDefinition::new(
             "memory_used",
-            9,
+            7,
             KalamDataType::BigInt,
             true,
             false,
@@ -108,7 +94,7 @@ pub fn jobs_table_definition() -> TableDefinition {
         ),
         ColumnDefinition::new(
             "cpu_used",
-            10,
+            8,
             KalamDataType::BigInt,
             true,
             false,
@@ -118,17 +104,20 @@ pub fn jobs_table_definition() -> TableDefinition {
         ),
         ColumnDefinition::new(
             "created_at",
-            11,
+            9,
             KalamDataType::Timestamp,
             false,
             false,
             false,
-            ColumnDefault::None,
+            ColumnDefault::FunctionCall {
+                name: "NOW".to_string(),
+                args: vec![],
+            },
             Some("Job creation timestamp".to_string()),
         ),
         ColumnDefinition::new(
             "started_at",
-            12,
+            10,
             KalamDataType::Timestamp,
             true,
             false,
@@ -138,7 +127,7 @@ pub fn jobs_table_definition() -> TableDefinition {
         ),
         ColumnDefinition::new(
             "completed_at",
-            13,
+            11,
             KalamDataType::Timestamp,
             true,
             false,
@@ -148,7 +137,7 @@ pub fn jobs_table_definition() -> TableDefinition {
         ),
         ColumnDefinition::new(
             "node_id",
-            14,
+            12,
             KalamDataType::Text,
             false,
             false,
@@ -158,7 +147,7 @@ pub fn jobs_table_definition() -> TableDefinition {
         ),
         ColumnDefinition::new(
             "error_message",
-            15,
+            13,
             KalamDataType::Text,
             true,
             false,

@@ -361,8 +361,6 @@ mod tests {
         Job {
             job_id: JobId::new("TEST-001"),
             job_type,
-            namespace_id: NamespaceId::new("default"),
-            table_name: None,
             status: JobStatus::Running,
             parameters: Some(params.to_string()),
             message: None,

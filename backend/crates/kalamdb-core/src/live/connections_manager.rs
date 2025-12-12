@@ -53,6 +53,8 @@ pub struct SubscriptionHandle {
     pub live_id: LiveQueryId,
     /// Shared filter expression (Arc for zero-copy across indices)
     pub filter_expr: Option<Arc<Expr>>,
+    /// Column projections for filtering notification payload (None = all columns)
+    pub projections: Option<Arc<Vec<String>>>,
     /// Shared notification channel
     pub notification_tx: Arc<NotificationSender>,
 }
@@ -61,6 +63,7 @@ pub struct SubscriptionHandle {
 ///
 /// Contains all metadata needed for:
 /// - Notification filtering (filter_expr)
+/// - Column projections (projections)
 /// - Initial data batch fetching (sql, batch_size, snapshot_end_seq)
 ///
 /// Memory optimization: Uses Arc<str> for SQL and Arc<Expr> for filter
@@ -75,6 +78,9 @@ pub struct SubscriptionState {
     /// None means no filter (SELECT * without WHERE)
     /// Arc-wrapped for sharing with SubscriptionHandle
     pub filter_expr: Option<Arc<Expr>>,
+    /// Column projections from SELECT clause (None = SELECT *, i.e., all columns)
+    /// Arc-wrapped for sharing with SubscriptionHandle
+    pub projections: Option<Arc<Vec<String>>>,
     /// Batch size for initial data loading
     pub batch_size: usize,
     /// Snapshot boundary SeqId for consistent batch loading

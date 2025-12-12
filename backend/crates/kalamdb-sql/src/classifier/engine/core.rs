@@ -269,6 +269,29 @@ impl SqlStatement {
                 }))
             }
 
+            // USE NAMESPACE / USE / SET NAMESPACE - switch default schema
+            ["USE", "NAMESPACE", ..] | ["SET", "NAMESPACE", ..] => {
+                // Allowed for all users (actual table access is checked per-query)
+                Ok(Self::wrap(sql, || {
+                    UseNamespaceStatement::parse(sql)
+                        .ok()
+                        .map(SqlStatementKind::UseNamespace)
+                }))
+            }
+            ["USE", ..] => {
+                // USE <name> shorthand (must not be USE NAMESPACE which is handled above)
+                // Check it's not "USE NAMESPACE" which would have matched above
+                if word_refs.len() >= 2 && word_refs[1] != "NAMESPACE" {
+                    Ok(Self::wrap(sql, || {
+                        UseNamespaceStatement::parse(sql)
+                            .ok()
+                            .map(SqlStatementKind::UseNamespace)
+                    }))
+                } else {
+                    Ok(Self::new(sql.to_string(), SqlStatementKind::Unknown))
+                }
+            }
+
             // Storage operations - require admin
             ["CREATE", "STORAGE", ..] => {
                 if !is_admin {
@@ -580,7 +603,8 @@ impl SqlStatement {
             | SqlStatementKind::ShowStorages(_)
             | SqlStatementKind::ShowStats(_)
             | SqlStatementKind::ShowManifest(_)
-            | SqlStatementKind::DescribeTable(_) => Ok(()),
+            | SqlStatementKind::DescribeTable(_)
+            | SqlStatementKind::UseNamespace(_) => Ok(()),
 
             // CREATE TABLE/VIEW, DROP TABLE, FLUSH TABLE, ALTER TABLE - defer to ownership checks
             SqlStatementKind::CreateTable(_)

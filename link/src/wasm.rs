@@ -1078,6 +1078,7 @@ impl KalamClient {
         let body = QueryRequest {
             sql: sql.to_string(),
             params,
+            namespace_id: None,
         };
         let body_str = serde_json::to_string(&body)
             .map_err(|e| JsValue::from_str(&format!("Serialization error: {}", e)))?;

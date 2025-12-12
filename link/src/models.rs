@@ -471,6 +471,11 @@ pub struct QueryRequest {
     /// Optional parameter values for placeholders
     #[serde(skip_serializing_if = "Option::is_none")]
     pub params: Option<Vec<JsonValue>>,
+
+    /// Optional namespace ID for unqualified table names.
+    /// When set, queries like `SELECT * FROM users` resolve to `namespace_id.users`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub namespace_id: Option<String>,
 }
 
 /// Response from SQL query execution.
@@ -1214,6 +1219,7 @@ mod tests {
         let request = QueryRequest {
             sql: "SELECT * FROM users WHERE id = $1".to_string(),
             params: Some(vec![json!(42)]),
+            namespace_id: None,
         };
 
         let json = serde_json::to_string(&request).unwrap();

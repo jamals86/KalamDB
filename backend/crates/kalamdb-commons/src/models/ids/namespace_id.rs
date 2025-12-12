@@ -36,6 +36,13 @@ impl NamespaceId {
     pub fn system() -> Self {
         Self("system".to_string())
     }
+
+    pub fn is_system_namespace(&self) -> bool {
+        matches!(
+            self.as_str(),
+            "system" | "information_schema" | "pg_catalog" | "datafusion"
+        )
+    }
 }
 
 impl fmt::Display for NamespaceId {

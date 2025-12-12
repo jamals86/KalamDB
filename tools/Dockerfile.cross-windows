@@ -1,0 +1,44 @@
+# Custom cross-compilation image for x86_64-pc-windows-gnu
+# Includes LLVM 16 for RocksDB bindgen compatibility and Node.js for UI build
+FROM ghcr.io/cross-rs/x86_64-pc-windows-gnu:edge
+
+# Install LLVM 16 for bindgen (RocksDB requires clang_Type_getValueType)
+# The build script runs on Linux host, so we need Linux libclang
+RUN apt-get update && \
+    apt-get remove -y --purge llvm-10* libclang-10* clang-10* || true && \
+    apt-get autoremove -y && \
+    apt-get install -y \
+        wget \
+        lsb-release \
+        software-properties-common \
+        gnupg \
+        curl \
+        ca-certificates && \
+    wget https://apt.llvm.org/llvm.sh && \
+    chmod +x llvm.sh && \
+    ./llvm.sh 16 all && \
+    apt-get install -y libclang-16-dev llvm-16-dev && \
+    update-alternatives --install /usr/bin/clang clang /usr/bin/clang-16 100 && \
+    update-alternatives --install /usr/bin/clang++ clang++ /usr/bin/clang++-16 100 && \
+    update-alternatives --install /usr/bin/llvm-config llvm-config /usr/bin/llvm-config-16 100 && \
+    rm -rf llvm.sh
+
+# Install Node.js 20 LTS for UI build
+RUN curl -fsSL https://deb.nodesource.com/setup_20.x | bash - && \
+    apt-get install -y nodejs && \
+    npm install -g npm@latest && \
+    rm -rf /var/lib/apt/lists/*
+
+# Install wasm-pack for building WASM SDK
+RUN curl https://rustwasm.github.io/wasm-pack/installer/init.sh -sSf | sh
+
+# Install wasm32 target for Rust
+RUN rustup target add wasm32-unknown-unknown
+
+# Set environment for bindgen/clang-sys
+# LIBCLANG_PATH for finding libclang.so at runtime (bindgen uses dlopen)
+# LIBCLANG_STATIC=0 forces dynamic loading instead of linking
+ENV LIBCLANG_PATH=/usr/lib/llvm-16/lib
+ENV LLVM_CONFIG_PATH=/usr/bin/llvm-config-16
+ENV CLANG_PATH=/usr/bin/clang-16
+ENV LIBCLANG_STATIC=0

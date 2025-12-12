@@ -55,6 +55,8 @@ pub enum SqlStatementKind {
     DropNamespace(DropNamespaceStatement),
     /// SHOW NAMESPACES
     ShowNamespaces(ShowNamespacesStatement),
+    /// USE NAMESPACE <name> / USE <name> / SET NAMESPACE <name>
+    UseNamespace(UseNamespaceStatement),
 
     // ===== Storage Operations =====
     /// CREATE STORAGE <name> ...
@@ -202,6 +204,7 @@ impl SqlStatement {
             SqlStatementKind::AlterNamespace(_) => "ALTER NAMESPACE",
             SqlStatementKind::DropNamespace(_) => "DROP NAMESPACE",
             SqlStatementKind::ShowNamespaces(_) => "SHOW NAMESPACES",
+            SqlStatementKind::UseNamespace(_) => "USE NAMESPACE",
             SqlStatementKind::CreateStorage(_) => "CREATE STORAGE",
             SqlStatementKind::AlterStorage(_) => "ALTER STORAGE",
             SqlStatementKind::DropStorage(_) => "DROP STORAGE",

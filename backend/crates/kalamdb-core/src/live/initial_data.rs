@@ -155,6 +155,7 @@ impl InitialDataFetcher {
     /// * `table_type` - User or Shared table
     /// * `options` - Options for the fetch (timestamp, limit, etc.)
     /// * `where_clause` - Optional WHERE clause string to include in the query
+    /// * `projections` - Optional column projections (None = SELECT *, all columns)
     ///
     /// # Returns
     /// InitialDataResult with rows and metadata
@@ -165,13 +166,15 @@ impl InitialDataFetcher {
         table_type: TableType,
         options: InitialDataOptions,
         where_clause: Option<&str>,
+        projections: Option<&[String]>,
     ) -> Result<InitialDataResult, KalamDbError> {
         log::info!(
-            "fetch_initial_data called: table={}, type={:?}, limit={}, since={:?}",
+            "fetch_initial_data called: table={}, type={:?}, limit={}, since={:?}, projections={:?}",
             table_id,
             table_type,
             options.limit,
-            options.since_seq
+            options.since_seq,
+            projections
         );
 
         let limit = options.limit;
@@ -208,13 +211,27 @@ impl InitialDataFetcher {
             Arc::clone(&self.base_session_context),
         );
 
-        // Construct SQL query
+        // Construct SQL query with projections
         let table_name = format!(
             "{}.{}",
             table_id.namespace_id().as_str(),
             table_id.table_name().as_str()
         );
-        let mut sql = format!("SELECT * FROM {}", table_name);
+
+        // Build SELECT clause: either specific columns or *
+        // Always include _seq column for pagination, even if not in projections
+        let select_clause = if let Some(cols) = projections {
+            // Ensure _seq is always included for pagination tracking
+            let mut columns = cols.to_vec();
+            if !columns.iter().any(|c| c == SystemColumnNames::SEQ) {
+                columns.push(SystemColumnNames::SEQ.to_string());
+            }
+            columns.join(", ")
+        } else {
+            "*".to_string()
+        };
+
+        let mut sql = format!("SELECT {} FROM {}", select_clause, table_name);
 
         let mut where_clauses = Vec::new();
 
@@ -536,6 +553,7 @@ mod tests {
                 TableType::User,
                 InitialDataOptions::last(100),
                 None,
+                None,
             )
             .await
             .expect("initial fetch");
@@ -668,6 +686,7 @@ mod tests {
                 TableType::User,
                 InitialDataOptions::default().with_limit(1),
                 None,
+                None
             )
             .await
             .expect("fetch batch 1");
@@ -688,6 +707,7 @@ mod tests {
                 TableType::User,
                 InitialDataOptions::since(res1.last_seq.unwrap()).with_limit(1),
                 None,
+                None
             )
             .await
             .expect("fetch batch 2");
@@ -708,6 +728,7 @@ mod tests {
                 TableType::User,
                 InitialDataOptions::since(res2.last_seq.unwrap()).with_limit(1),
                 None,
+                None
             )
             .await
             .expect("fetch batch 3");
@@ -837,6 +858,7 @@ mod tests {
                 &table_id,
                 TableType::User,
                 InitialDataOptions::last(3),
+                None,
                 None,
             )
             .await

@@ -25,6 +25,7 @@ use crate::sql::executor::handlers::flush::{FlushAllTablesHandler, FlushTableHan
 use crate::sql::executor::handlers::jobs::{KillJobHandler, KillLiveQueryHandler};
 use crate::sql::executor::handlers::namespace::{
     AlterNamespaceHandler, CreateNamespaceHandler, DropNamespaceHandler, ShowNamespacesHandler,
+    UseNamespaceHandler,
 };
 use crate::sql::executor::handlers::storage::{
     AlterStorageHandler, CreateStorageHandler, DropStorageHandler, ShowStoragesHandler,
@@ -161,6 +162,17 @@ impl HandlerRegistry {
             ShowNamespacesHandler::new(app_context.clone()),
             |stmt| match stmt.kind() {
                 SqlStatementKind::ShowNamespaces(s) => Some(s.clone()),
+                _ => None,
+            },
+        );
+
+        registry.register_typed(
+            SqlStatementKind::UseNamespace(kalamdb_sql::ddl::UseNamespaceStatement {
+                namespace: NamespaceId::new("_placeholder"),
+            }),
+            UseNamespaceHandler::new(app_context.clone()),
+            |stmt| match stmt.kind() {
+                SqlStatementKind::UseNamespace(s) => Some(s.clone()),
                 _ => None,
             },
         );
@@ -454,13 +466,13 @@ impl HandlerRegistry {
         // ============================================================================
         // SUBSCRIPTION HANDLER
         // ============================================================================
-        use kalamdb_sql::ddl::{SubscribeOptions, SubscribeStatement};
+        use kalamdb_sql::ddl::{SubscribeStatement, SubscriptionOptions};
         registry.register_typed(
             SqlStatementKind::Subscribe(SubscribeStatement {
                 select_query: "SELECT * FROM _placeholder._placeholder".to_string(),
                 namespace: NamespaceId::new("_placeholder"),
                 table_name: TableName::new("_placeholder"),
-                options: SubscribeOptions::default(),
+                options: SubscriptionOptions::default(),
             }),
             SubscribeHandler::new(app_context.clone()),
             |stmt| match stmt.kind() {

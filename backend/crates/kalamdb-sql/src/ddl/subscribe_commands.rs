@@ -4,8 +4,13 @@
 //!
 //! **Syntax**:
 //! ```sql
-//! SUBSCRIBE TO [namespace.]table_name [WHERE condition] [OPTIONS (last_rows=N)];
+//! SUBSCRIBE TO [namespace.]table_name [WHERE condition] [OPTIONS (...)];
 //! ```
+//!
+//! **Supported Options**:
+//! - `last_rows=N` - Number of recent rows to fetch initially (default: fetch all)
+//! - `batch_size=N` - Hint for server-side batch sizing during initial data load
+//! - `from_seq_id=N` - Resume subscription from a specific sequence ID
 //!
 //! **Examples**:
 //! ```sql
@@ -17,6 +22,12 @@
 //!
 //! -- With initial data fetch (last 10 rows)
 //! SUBSCRIBE TO app.messages WHERE user_id = CURRENT_USER() OPTIONS (last_rows=10);
+//!
+//! -- With multiple options
+//! SUBSCRIBE TO app.messages OPTIONS (last_rows=100, batch_size=50);
+//!
+//! -- Resume from specific sequence ID
+//! SUBSCRIBE TO app.messages OPTIONS (from_seq_id=12345);
 //!
 //! -- Shared table subscription
 //! SUBSCRIBE TO shared.announcements WHERE priority > 5;
@@ -34,53 +45,14 @@
 //!   "subscription": {
 //!     "id": "auto-generated-id",
 //!     "sql": "SELECT * FROM app.messages WHERE user_id = CURRENT_USER()",
-//!     "options": {"last_rows": 10}
+//!     "options": {"last_rows": 10, "batch_size": 50}
 //!   }
 //! }
 //! ```
-
-//! SUBSCRIBE TO command parser for live query subscriptions.
-//!
-//! **Purpose**: Enable SQL-based syntax for creating live query subscriptions via WebSocket.
-//!
-//! **Syntax**:
-//! ```sql
-//! SUBSCRIBE TO [namespace.]table_name [WHERE condition] [OPTIONS (last_rows=N)];
-//! ```
-//!
-//! **Examples**:
-//! ```sql
-//! -- Basic subscription
-//! SUBSCRIBE TO app.messages;
-//!
-//! -- With WHERE clause filter
-//! SUBSCRIBE TO app.messages WHERE user_id = CURRENT_USER();
-//!
-//! -- With initial data fetch (last 10 rows)
-//! SUBSCRIBE TO app.messages WHERE user_id = CURRENT_USER() OPTIONS (last_rows=10);
-//!
-//! -- Shared table subscription
-//! SUBSCRIBE TO shared.announcements WHERE priority > 5;
-//! ```
-//!
-//! **Integration**:
-//! When executed via /api/sql endpoint, this command returns metadata instructing
-//! the client to establish a WebSocket connection with the appropriate subscription message.
-//!
-//! **Response Format**:
-//! ```json
-//! {
-//!   "status": "subscription_required",
-//!   "ws_url": "ws://localhost:8080/ws",
-//!   "subscription": {
-//!     "id": "auto-generated-id",
-//!     "sql": "SELECT * FROM app.messages WHERE user_id = CURRENT_USER()",
-//!     "options": {"last_rows": 10}
-//!   }
-//! }
 //! ```
 
 use super::DdlResult;
+use kalamdb_commons::websocket::SubscriptionOptions;
 use kalamdb_commons::{NamespaceId, TableName};
 use sqlparser::ast::{ObjectName, ObjectNamePart, SetExpr, Statement, TableFactor};
 use sqlparser::dialect::{GenericDialect, PostgreSqlDialect};
@@ -97,15 +69,8 @@ pub struct SubscribeStatement {
     pub namespace: NamespaceId,
     /// Table name (e.g., "messages") - extracted from query
     pub table_name: TableName,
-    /// Optional subscription options (e.g., last_rows=10)
-    pub options: SubscribeOptions,
-}
-
-/// Options for SUBSCRIBE TO command.
-#[derive(Debug, Clone, PartialEq, Default)]
-pub struct SubscribeOptions {
-    /// Number of recent rows to fetch initially (default: 0, no initial fetch)
-    pub last_rows: Option<usize>,
+    /// Optional subscription options (e.g., last_rows=10, batch_size=100, from_seq_id=123)
+    pub options: SubscriptionOptions,
 }
 
 impl SubscribeStatement {
@@ -200,7 +165,8 @@ impl SubscribeStatement {
         };
 
         // Extract namespace.table from ObjectName
-        let (namespace, table_name) = Self::extract_namespace_table(name)?;
+        // Use "default" as fallback for unqualified table names
+        let (namespace, table_name) = Self::extract_namespace_table(name, "default")?;
 
         Ok(SubscribeStatement {
             select_query: select_sql,
@@ -213,7 +179,7 @@ impl SubscribeStatement {
     /// Extract OPTIONS clause from SUBSCRIBE TO SQL, return modified SQL and parsed options.
     ///
     /// Uses sqlparser tokenizer to find OPTIONS keyword, avoiding false matches in strings.
-    fn extract_options_clause(sql: &str) -> DdlResult<(String, SubscribeOptions)> {
+    fn extract_options_clause(sql: &str) -> DdlResult<(String, SubscriptionOptions)> {
         use sqlparser::tokenizer::{Token, Tokenizer};
 
         let dialect = GenericDialect {};
@@ -250,7 +216,7 @@ impl SubscribeStatement {
 
         // If no OPTIONS found, return SQL as-is (will be processed later)
         let Some(_) = options_byte_pos else {
-            return Ok((sql.to_string(), SubscribeOptions::default()));
+            return Ok((sql.to_string(), SubscriptionOptions::default()));
         };
 
         // Find actual OPTIONS keyword position in SQL (case-insensitive)
@@ -287,7 +253,15 @@ impl SubscribeStatement {
     }
 
     /// Extract namespace and table name from ObjectName.
-    fn extract_namespace_table(name: &ObjectName) -> DdlResult<(String, String)> {
+    /// Extract namespace and table from ObjectName.
+    ///
+    /// # Arguments
+    /// * `name` - The ObjectName from sqlparser
+    /// * `default_namespace` - The namespace to use for unqualified table names
+    ///
+    /// # Returns
+    /// (namespace, table_name) tuple
+    fn extract_namespace_table(name: &ObjectName, default_namespace: &str) -> DdlResult<(String, String)> {
         let parts: Vec<String> = name
             .0
             .iter()
@@ -300,10 +274,11 @@ impl SubscribeStatement {
         if parts.len() == 2 {
             Ok((parts[0].clone(), parts[1].clone()))
         } else if parts.len() == 1 {
-            Err("Expected namespace.table format (e.g., app.messages)".to_string())
+            // Unqualified table name: use default namespace
+            Ok((default_namespace.to_string(), parts[0].clone()))
         } else {
             Err(format!(
-                "Invalid table reference: expected namespace.table, got {}",
+                "Invalid table reference: expected [namespace.]table, got {}",
                 name
             ))
         }
@@ -331,8 +306,17 @@ impl SubscribeStatement {
 
 /// Parse OPTIONS clause for SUBSCRIBE TO command.
 ///
-/// Expected format: `(last_rows=N)`
-fn parse_subscribe_options(options_str: &str) -> DdlResult<SubscribeOptions> {
+/// Expected format: `(key=value, key=value, ...)`
+///
+/// Supported options:
+/// - `last_rows=N` - Number of recent rows to fetch initially
+/// - `batch_size=N` - Hint for server-side batch sizing during initial data load
+/// - `from_seq_id=N` - Resume subscription from a specific sequence ID
+///
+/// Unknown options are rejected with an error to catch typos early.
+fn parse_subscribe_options(options_str: &str) -> DdlResult<SubscriptionOptions> {
+    use kalamdb_commons::ids::SeqId;
+    
     let options_str = options_str.trim();
 
     // Expect options wrapped in parentheses
@@ -346,10 +330,15 @@ fn parse_subscribe_options(options_str: &str) -> DdlResult<SubscribeOptions> {
     let inner = &options_str[1..options_str.len() - 1].trim();
 
     // Parse key=value pairs
+    let mut batch_size = None;
     let mut last_rows = None;
+    let mut from_seq_id = None;
 
     for part in inner.split(',') {
         let part = part.trim();
+        if part.is_empty() {
+            continue;
+        }
         if let Some((key, value)) = part.split_once('=') {
             let key = key.trim().to_lowercase();
             let value = value.trim();
@@ -358,20 +347,37 @@ fn parse_subscribe_options(options_str: &str) -> DdlResult<SubscribeOptions> {
                 "last_rows" => {
                     last_rows = Some(
                         value
-                            .parse::<usize>()
+                            .parse::<u32>()
                             .map_err(|_| format!("Invalid last_rows value: {}", value))?,
                     );
                 }
+                "batch_size" => {
+                    batch_size = Some(
+                        value
+                            .parse::<usize>()
+                            .map_err(|_| format!("Invalid batch_size value: {}", value))?,
+                    );
+                }
+                "from_seq_id" => {
+                    let seq_val = value
+                        .parse::<i64>()
+                        .map_err(|_| format!("Invalid from_seq_id value: {}", value))?;
+                    from_seq_id = Some(SeqId::new(seq_val));
+                }
                 _ => {
-                    return Err(format!("Unknown subscription option: {}", key));
+                    return Err(format!("Unknown subscription option: '{}'. Valid options are: last_rows, batch_size, from_seq_id", key));
                 }
             }
         } else {
-            return Err(format!("Invalid option format: {}", part));
+            return Err(format!("Invalid option format: '{}'. Expected key=value", part));
         }
     }
 
-    Ok(SubscribeOptions { last_rows })
+    Ok(SubscriptionOptions {
+        batch_size,
+        last_rows,
+        from_seq_id,
+    })
 }
 
 #[cfg(test)]
@@ -439,12 +445,12 @@ mod tests {
     }
 
     #[test]
-    fn test_parse_subscribe_missing_namespace() {
-        let result = SubscribeStatement::parse("SUBSCRIBE TO messages");
-        assert!(result.is_err());
-        assert!(result
-            .unwrap_err()
-            .contains("Expected namespace.table format"));
+    fn test_parse_subscribe_unqualified_table() {
+        // Unqualified table names should use "default" namespace
+        let stmt = SubscribeStatement::parse("SUBSCRIBE TO messages").unwrap();
+        assert_eq!(stmt.namespace, NamespaceId::from("default"));
+        assert_eq!(stmt.table_name, TableName::from("messages"));
+        assert_eq!(stmt.select_query, "SELECT * FROM messages");
     }
 
     #[test]
@@ -543,17 +549,137 @@ mod tests {
 
     #[test]
     fn test_parse_subscribe_table_reference_with_spaces() {
-        // Test that table references with spaces are rejected (sqlparser will handle this)
+        // "SUBSCRIBE TO my table" becomes "SELECT * FROM my table"
+        // sqlparser parses "my" as table name with alias "table"
+        // This is valid SQL (aliasing), so it should succeed
         let result = SubscribeStatement::parse("SUBSCRIBE TO my table");
-        assert!(result.is_err());
-        // sqlparser will parse "my" as table name and fail on unexpected "table" keyword
-        // or require namespace.table format
-        assert!(result.is_err());
+        // After supporting unqualified tables, this parses as table "my" with alias "table"
+        assert!(result.is_ok());
+        let stmt = result.unwrap();
+        assert_eq!(stmt.namespace.as_str(), "default");
+        assert_eq!(stmt.table_name.as_str(), "my");
     }
 
     #[test]
     fn test_parse_subscribe_invalid_option_format() {
         let result = SubscribeStatement::parse("SUBSCRIBE TO app.messages OPTIONS invalid");
         assert!(result.is_err());
+    }
+
+    // ========================================================================
+    // Tests for new subscription options: batch_size, from_seq_id
+    // ========================================================================
+
+    #[test]
+    fn test_parse_subscribe_with_batch_size() {
+        let stmt = SubscribeStatement::parse(
+            "SUBSCRIBE TO app.messages OPTIONS (batch_size=500)",
+        )
+        .unwrap();
+        assert_eq!(stmt.namespace, NamespaceId::from("app"));
+        assert_eq!(stmt.table_name, TableName::from("messages"));
+        assert_eq!(stmt.select_query, "SELECT * FROM app.messages");
+        assert_eq!(stmt.options.batch_size, Some(500));
+        assert!(stmt.options.last_rows.is_none());
+        assert!(stmt.options.from_seq_id.is_none());
+    }
+
+    #[test]
+    fn test_parse_subscribe_with_from_seq_id() {
+        use kalamdb_commons::ids::SeqId;
+
+        let stmt = SubscribeStatement::parse(
+            "SUBSCRIBE TO app.messages OPTIONS (from_seq_id=12345)",
+        )
+        .unwrap();
+        assert_eq!(stmt.namespace, NamespaceId::from("app"));
+        assert_eq!(stmt.table_name, TableName::from("messages"));
+        assert_eq!(stmt.options.from_seq_id, Some(SeqId::new(12345)));
+        assert!(stmt.options.batch_size.is_none());
+        assert!(stmt.options.last_rows.is_none());
+    }
+
+    #[test]
+    fn test_parse_subscribe_with_multiple_options() {
+        use kalamdb_commons::ids::SeqId;
+
+        let stmt = SubscribeStatement::parse(
+            "SUBSCRIBE TO app.messages OPTIONS (last_rows=100, batch_size=50, from_seq_id=999)",
+        )
+        .unwrap();
+        assert_eq!(stmt.namespace, NamespaceId::from("app"));
+        assert_eq!(stmt.table_name, TableName::from("messages"));
+        assert_eq!(stmt.options.last_rows, Some(100));
+        assert_eq!(stmt.options.batch_size, Some(50));
+        assert_eq!(stmt.options.from_seq_id, Some(SeqId::new(999)));
+    }
+
+    #[test]
+    fn test_parse_subscribe_with_where_and_multiple_options() {
+        let stmt = SubscribeStatement::parse(
+            "SUBSCRIBE TO app.messages WHERE user_id = 'alice' OPTIONS (last_rows=50, batch_size=25)",
+        )
+        .unwrap();
+        assert_eq!(stmt.namespace, NamespaceId::from("app"));
+        assert_eq!(stmt.table_name, TableName::from("messages"));
+        assert_eq!(
+            stmt.select_query,
+            "SELECT * FROM app.messages WHERE user_id = 'alice'"
+        );
+        assert_eq!(stmt.options.last_rows, Some(50));
+        assert_eq!(stmt.options.batch_size, Some(25));
+    }
+
+    #[test]
+    fn test_parse_subscribe_invalid_batch_size() {
+        let result = SubscribeStatement::parse(
+            "SUBSCRIBE TO app.messages OPTIONS (batch_size=abc)",
+        );
+        assert!(result.is_err());
+        assert!(result.unwrap_err().contains("Invalid batch_size value"));
+    }
+
+    #[test]
+    fn test_parse_subscribe_invalid_from_seq_id() {
+        let result = SubscribeStatement::parse(
+            "SUBSCRIBE TO app.messages OPTIONS (from_seq_id=not_a_number)",
+        );
+        assert!(result.is_err());
+        assert!(result.unwrap_err().contains("Invalid from_seq_id value"));
+    }
+
+    #[test]
+    fn test_parse_subscribe_unknown_option() {
+        let result = SubscribeStatement::parse(
+            "SUBSCRIBE TO app.messages OPTIONS (unknown_option=123)",
+        );
+        assert!(result.is_err());
+        let err = result.unwrap_err();
+        assert!(err.contains("Unknown subscription option"));
+        assert!(err.contains("unknown_option"));
+        assert!(err.contains("Valid options are"));
+    }
+
+    #[test]
+    fn test_parse_subscribe_negative_from_seq_id() {
+        use kalamdb_commons::ids::SeqId;
+
+        // Negative seq_id should be valid (might be used for special cases)
+        let stmt = SubscribeStatement::parse(
+            "SUBSCRIBE TO app.messages OPTIONS (from_seq_id=-1)",
+        )
+        .unwrap();
+        assert_eq!(stmt.options.from_seq_id, Some(SeqId::new(-1)));
+    }
+
+    #[test]
+    fn test_parse_subscribe_options_with_spaces() {
+        // Test that options parsing handles spaces correctly
+        let stmt = SubscribeStatement::parse(
+            "SUBSCRIBE TO app.messages OPTIONS ( last_rows = 10 , batch_size = 20 )",
+        )
+        .unwrap();
+        assert_eq!(stmt.options.last_rows, Some(10));
+        assert_eq!(stmt.options.batch_size, Some(20));
     }
 }

@@ -29,7 +29,9 @@ pub use crate::ddl::flush_commands::{FlushAllTablesStatement, FlushTableStatemen
 pub use crate::ddl::job_commands::{parse_job_command, JobCommand};
 
 // Subscribe commands (SUBSCRIBE TO)
-pub use crate::ddl::subscribe_commands::{SubscribeOptions, SubscribeStatement};
+pub use crate::ddl::subscribe_commands::SubscribeStatement;
+// Re-export SubscriptionOptions from kalamdb_commons
+pub use kalamdb_commons::websocket::SubscriptionOptions;
 
 // User commands (CREATE USER, ALTER USER, DROP USER)
 pub use crate::ddl::user_commands::{

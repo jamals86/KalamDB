@@ -50,7 +50,10 @@ impl StatementHandler for DeleteHandler {
         }
 
         let sql = statement.as_str();
-        let (namespace, table_name, where_pair) = self.simple_parse_delete(sql)?;
+        // Pass the current default namespace from session context for unqualified table names
+        let default_namespace = context.default_namespace();
+        let (namespace, table_name, where_pair) =
+            self.simple_parse_delete(sql, &default_namespace)?;
 
         // T153: Use effective user_id for impersonation support (Phase 7)
         let effective_user_id = statement.as_user_id().unwrap_or(&context.user_id);
@@ -77,7 +80,7 @@ impl StatementHandler for DeleteHandler {
             ));
         }
 
-        let result = match def.table_type {
+        match def.table_type {
             TableType::User => {
                 // Get provider from unified cache and downcast to UserTableProvider
                 let provider_arc = schema_registry.get_provider(&table_id).ok_or_else(|| {
@@ -202,23 +205,7 @@ impl StatementHandler for DeleteHandler {
             TableType::System => Err(KalamDbError::InvalidOperation(
                 "Cannot DELETE from SYSTEM tables".into(),
             )),
-        };
-
-        // Log DML operation if successful
-        if let Ok(ExecutionResult::Deleted { rows_affected }) = &result {
-            use crate::sql::executor::helpers::audit;
-            let subject_user_id = statement.as_user_id().cloned();
-            let audit_entry = audit::log_dml_operation(
-                context,
-                "DELETE",
-                &format!("{}.{}", namespace.as_str(), table_name.as_str()),
-                *rows_affected,
-                subject_user_id,
-            );
-            audit::persist_audit_entry(&AppContext::get(), &audit_entry).await?;
         }
-
-        result
     }
 
     async fn check_authorization(
@@ -414,9 +401,15 @@ impl DeleteHandler {
         }
     }
 
+    /// Simple DELETE parser for basic DELETE statements
+    ///
+    /// # Arguments
+    /// * `sql` - The SQL DELETE statement
+    /// * `default_namespace` - The default namespace to use for unqualified table names
     fn simple_parse_delete(
         &self,
         sql: &str,
+        default_namespace: &NamespaceId,
     ) -> Result<(NamespaceId, TableName, Option<(String, String)>), KalamDbError> {
         // Expect: DELETE FROM <ns>.<table> WHERE <col> = <value>
         let upper = sql.to_uppercase();
@@ -433,7 +426,7 @@ impl DeleteHandler {
             let parts: Vec<&str> = head.trim().split('.').collect();
             match parts.len() {
                 1 => (
-                    NamespaceId::new("default"),
+                    default_namespace.clone(),
                     TableName::new(parts[0].trim().to_string()),
                 ),
                 2 => (

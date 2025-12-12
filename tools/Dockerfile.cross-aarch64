@@ -1,5 +1,5 @@
 # Custom cross-compilation image for aarch64-unknown-linux-gnu
-# Includes LLVM 16 for RocksDB bindgen compatibility
+# Includes LLVM 16 for RocksDB bindgen compatibility and Node.js for UI build
 FROM ghcr.io/cross-rs/aarch64-unknown-linux-gnu:main
 
 # Remove old LLVM and install newer version for bindgen (RocksDB requires clang_Type_getValueType)
@@ -10,7 +10,9 @@ RUN apt-get update && \
         wget \
         lsb-release \
         software-properties-common \
-        gnupg && \
+        gnupg \
+        curl \
+        ca-certificates && \
     wget https://apt.llvm.org/llvm.sh && \
     chmod +x llvm.sh && \
     ./llvm.sh 16 all && \
@@ -18,9 +20,22 @@ RUN apt-get update && \
     update-alternatives --install /usr/bin/clang clang /usr/bin/clang-16 100 && \
     update-alternatives --install /usr/bin/clang++ clang++ /usr/bin/clang++-16 100 && \
     update-alternatives --install /usr/bin/llvm-config llvm-config /usr/bin/llvm-config-16 100 && \
-    rm -rf /var/lib/apt/lists/* llvm.sh
+    rm -rf llvm.sh
+
+# Install Node.js 20 LTS for UI build
+RUN curl -fsSL https://deb.nodesource.com/setup_20.x | bash - && \
+    apt-get install -y nodejs && \
+    npm install -g npm@latest && \
+    rm -rf /var/lib/apt/lists/*
+
+# Install wasm-pack for building WASM SDK
+RUN curl https://rustwasm.github.io/wasm-pack/installer/init.sh -sSf | sh
+
+# Install wasm32 target for Rust
+RUN rustup target add wasm32-unknown-unknown
 
 # Set environment for bindgen/clang-sys
 ENV LIBCLANG_PATH=/usr/lib/llvm-16/lib
 ENV LLVM_CONFIG_PATH=/usr/bin/llvm-config-16
 ENV CLANG_PATH=/usr/bin/clang-16
+ENV LIBCLANG_STATIC=0

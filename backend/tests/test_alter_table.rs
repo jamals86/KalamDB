@@ -107,9 +107,16 @@ async fn test_alter_table_drop_column() {
     // Use unique namespace per test to avoid parallel test interference
     let ns = format!("test_drop_col_{}", std::process::id());
 
-    // Setup
-    fixtures::create_namespace(&server, &ns).await;
-    server
+    // Setup - create namespace and verify it succeeded
+    let ns_resp = fixtures::create_namespace(&server, &ns).await;
+    assert_eq!(
+        ns_resp.status,
+        ResponseStatus::Success,
+        "Failed to create namespace: {:?}",
+        ns_resp.error
+    );
+    
+    let create_resp = server
         .execute_sql_as_user(
             &format!(
                 r#"CREATE TABLE {}.inventory (
@@ -126,6 +133,12 @@ async fn test_alter_table_drop_column() {
             "user1",
         )
         .await;
+    assert_eq!(
+        create_resp.status,
+        ResponseStatus::Success,
+        "Failed to create table: {:?}",
+        create_resp.error
+    );
 
     // Insert data
     server

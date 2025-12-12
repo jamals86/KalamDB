@@ -71,18 +71,23 @@ pub async fn handle_subscribe(
     // Determine batch size for initial data options
     let batch_size = subscription.options.batch_size.unwrap_or(MAX_ROWS_PER_BATCH);
 
-    // Create initial data options
-    let initial_opts = subscription
-        .options
-        .last_rows
-        .map(|n| {
-            info!("Using last_rows={} for initial data", n);
-            InitialDataOptions::last(n as usize)
-        })
-        .unwrap_or_else(|| {
-            info!("Using default batch size={} for initial data", batch_size);
-            InitialDataOptions::batch(None, None, batch_size)
-        });
+    // Create initial data options respecting all three options:
+    // - from_seq_id: Resume from a specific sequence ID
+    // - last_rows: Fetch the last N rows
+    // - batch_size: Hint for server-side batch sizing
+    let initial_opts = if let Some(from_seq) = subscription.options.from_seq_id {
+        // Resume from specific sequence ID - use since_seq for filtering
+        info!("Using from_seq_id={} for initial data (resuming)", from_seq.as_i64());
+        InitialDataOptions::batch(Some(from_seq), None, batch_size)
+    } else if let Some(n) = subscription.options.last_rows {
+        // Fetch last N rows
+        info!("Using last_rows={} for initial data", n);
+        InitialDataOptions::last(n as usize)
+    } else {
+        // Default batch fetch
+        info!("Using default batch size={} for initial data", batch_size);
+        InitialDataOptions::batch(None, None, batch_size)
+    };
 
     // Register subscription with initial data fetch
     // LiveQueryManager handles all SQL parsing, permission checks, and registration internally

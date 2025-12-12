@@ -56,51 +56,6 @@ impl IndexDefinition<JobId, Job> for JobStatusCreatedAtIndex {
     }
 }
 
-/// Index for querying jobs by namespace + table.
-///
-/// Key format: `{namespace_id}:{table_name}:{job_id}`
-///
-/// This index allows efficient queries like:
-/// - "All jobs for namespace 'default'"
-/// - "All jobs for table 'default.events'"
-pub struct JobNamespaceTableIndex;
-
-impl IndexDefinition<JobId, Job> for JobNamespaceTableIndex {
-    fn partition(&self) -> &str {
-        "system_jobs_ns_table_idx"
-    }
-
-    fn indexed_columns(&self) -> Vec<&str> {
-        vec!["namespace_id", "table_name"]
-    }
-
-    fn extract_key(&self, _primary_key: &JobId, job: &Job) -> Option<Vec<u8>> {
-        // Only index jobs that have a table_name
-        let table_name = job.table_name.as_ref()?;
-        let key = format!(
-            "{}:{}:{}",
-            job.namespace_id.as_str(),
-            table_name.as_str(),
-            job.job_id.as_str()
-        );
-        Some(key.into_bytes())
-    }
-
-    fn filter_to_prefix(
-        &self,
-        filter: &datafusion::logical_expr::Expr,
-    ) -> Option<Vec<u8>> {
-        use kalamdb_store::extract_string_equality;
-        
-        if let Some((col, val)) = extract_string_equality(filter) {
-            if col == "namespace_id" {
-                return Some(format!("{}:", val).into_bytes());
-            }
-        }
-        None
-    }
-}
-
 /// Index for querying jobs by idempotency key.
 ///
 /// Key format: `{idempotency_key}` → `{job_id}`
@@ -161,7 +116,6 @@ pub fn parse_job_status(s: &str) -> Option<JobStatus> {
 pub fn create_jobs_indexes() -> Vec<Arc<dyn IndexDefinition<JobId, Job>>> {
     vec![
         Arc::new(JobStatusCreatedAtIndex),
-        Arc::new(JobNamespaceTableIndex),
         Arc::new(JobIdempotencyKeyIndex),
     ]
 }
@@ -169,17 +123,15 @@ pub fn create_jobs_indexes() -> Vec<Arc<dyn IndexDefinition<JobId, Job>>> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use kalamdb_commons::{JobType, NamespaceId, NodeId, TableName};
+    use kalamdb_commons::{JobType, NodeId};
 
     fn create_test_job(id: &str, status: JobStatus) -> Job {
         let now = chrono::Utc::now().timestamp_millis();
         Job {
             job_id: JobId::new(id),
             job_type: JobType::Flush,
-            namespace_id: NamespaceId::new("default"),
-            table_name: Some(TableName::new("events")),
             status,
-            parameters: None,
+            parameters: Some(r#"{"namespace_id":"default","table_name":"events"}"#.to_string()),
             message: None,
             exception_trace: None,
             idempotency_key: Some(format!("FL:default:events:{}", id)),
@@ -228,18 +180,6 @@ mod tests {
         // Rest is job_id
         let job_id_bytes = &key[9..];
         assert_eq!(job_id_bytes, job.job_id.as_bytes());
-    }
-
-    #[test]
-    fn test_namespace_table_index_key_format() {
-        let job = create_test_job("job1", JobStatus::Running);
-        let job_id = job.job_id.clone();
-
-        let index = JobNamespaceTableIndex;
-        let key = index.extract_key(&job_id, &job).unwrap();
-
-        let key_str = String::from_utf8(key).unwrap();
-        assert_eq!(key_str, "default:events:job1");
     }
 
     #[test]

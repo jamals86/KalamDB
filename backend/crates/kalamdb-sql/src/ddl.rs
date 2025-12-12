@@ -25,6 +25,7 @@ pub mod show_table_stats;
 pub mod show_tables;
 pub mod storage_commands;
 pub mod subscribe_commands;
+pub mod use_namespace;
 pub mod user_commands;
 
 /// Result type used by the DDL parsers.
@@ -52,7 +53,10 @@ pub use show_tables::ShowTablesStatement;
 pub use storage_commands::{
     AlterStorageStatement, CreateStorageStatement, DropStorageStatement, ShowStoragesStatement,
 };
-pub use subscribe_commands::{SubscribeOptions, SubscribeStatement};
+pub use subscribe_commands::SubscribeStatement;
+// Re-export SubscriptionOptions from kalamdb_commons for convenience
+pub use kalamdb_commons::websocket::SubscriptionOptions;
+pub use use_namespace::UseNamespaceStatement;
 pub use user_commands::{
     AlterUserStatement, CreateUserStatement, DropUserStatement, UserModification,
 };

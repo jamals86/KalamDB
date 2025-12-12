@@ -61,40 +61,38 @@ shared_tables_template = "{namespace}/{tableName}"
 user_tables_template = "{namespace}/{tableName}/{userId}"
 
 [storage.rocksdb]
-# Write buffer size per column family in bytes (default: 64MB)
-# Larger values improve write throughput but use more memory
-# TUNED: Increased to 128MB for better batch write performance
-write_buffer_size = 134217728
+# Write buffer size per column family in bytes (default: 4MB)
+# Lower values reduce memory with many column families
+# Formula: memory ~= write_buffer_size × max_write_buffers × num_column_families
+write_buffer_size = 4194304
 
-# Maximum number of write buffers (default: 3)
+# Maximum number of write buffers (default: 2)
 # Allows writes to continue while buffers are being flushed
-# TUNED: Increased to 6 for better concurrent write handling
-max_write_buffers = 6
+max_write_buffers = 2
 
-# Block cache size for reads in bytes (default: 256MB)
-# Larger values improve read performance for hot data
-block_cache_size = 268435456
+# Block cache size for reads in bytes (default: 16MB)
+# Shared LRU cache across all column families
+block_cache_size = 16777216
 
 # Maximum number of background compaction/flush jobs (default: 4)
-# TUNED: Increased to 8 to match typical CPU core count
-max_background_jobs = 8
+max_background_jobs = 4
 
 [datafusion]
-# Memory limit for query execution in bytes (default: 1GB)
+# Memory limit for query execution in bytes (default: 256MB)
 # Queries exceeding this limit will be terminated
-memory_limit = 1073741824
+memory_limit = 268435456
 
 # Number of parallel threads for query execution (default: number of CPU cores)
 # Set to 0 to auto-detect CPU count
 query_parallelism = 0
 
-# Maximum number of partitions per query (default: 16)
+# Maximum number of partitions per query (default: 8)
 # Higher values increase parallelism but use more resources
-max_partitions = 16
+max_partitions = 8
 
-# Batch size for record processing (default: 8192 rows)
-# Larger batches improve throughput but use more memory
-batch_size = 8192
+# Batch size for record processing (default: 4096 rows)
+# Lower batch size reduces memory pressure
+batch_size = 4096
 
 [flush]
 # Default row limit for flush policies (default: 10000 rows)

@@ -493,7 +493,7 @@ fn test_live_http2_query_execution() {
     // Note: HTTP/2 prior knowledge doesn't work with servers that don't support h2c
     let client = KalamLinkClient::builder()
         .base_url(SERVER_URL)
-        .auth(AuthProvider::basic_auth("root".to_string(), "".to_string()))
+        .auth(AuthProvider::basic_auth("root".to_string(), DEFAULT_ROOT_PASSWORD.to_string()))
         .http_version(HttpVersion::Auto) // Auto-negotiate, falls back to HTTP/1.1
         .timeouts(KalamLinkTimeouts::fast())
         .build()
@@ -502,7 +502,7 @@ fn test_live_http2_query_execution() {
     // Run the async test in a blocking context
     let runtime = tokio::runtime::Runtime::new().expect("Failed to create runtime");
     let result = runtime.block_on(async {
-        client.execute_query("SELECT 1 as test_value").await
+        client.execute_query("SELECT 1 as test_value", None, None).await
     });
     
     // The query should succeed

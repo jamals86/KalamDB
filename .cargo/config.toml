@@ -15,11 +15,17 @@ LIBCLANG_PATH = "/Library/Developer/CommandLineTools/usr/lib"
 DYLD_FALLBACK_LIBRARY_PATH = "/Library/Developer/CommandLineTools/usr/lib"
 DYLD_LIBRARY_PATH = "/Library/Developer/CommandLineTools/usr/lib"
 
+# --- WASM target - no special flags (avoid macOS linker flags) ---
+[target.wasm32-unknown-unknown]
+rustflags = []
+
 # --- Windows (MSVC) ---
 [target.x86_64-pc-windows-msvc]
 # Usually no special flags are needed, but you can add linker hints if needed
 rustflags = []
 
 [build]
-jobs = 8  # Match your CPU cores
-# target = "x86_64-pc-windows-msvc"  # Commented out - use default target for host platform
+incremental = true
+
+[profile.dev]
+debug = 0

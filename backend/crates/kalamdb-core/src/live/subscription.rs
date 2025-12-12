@@ -60,6 +60,7 @@ impl SubscriptionService {
     /// - request: Client subscription request containing SQL and options
     /// - table_id: Pre-validated table identifier (validated in ws_handler)
     /// - filter_expr: Optional parsed WHERE clause expression
+    /// - projections: Optional column projections (None = SELECT *, i.e., all columns)
     /// - batch_size: Batch size for initial data fetching
     pub async fn register_subscription(
         &self,
@@ -67,6 +68,7 @@ impl SubscriptionService {
         request: &SubscriptionRequest,
         table_id: TableId,
         filter_expr: Option<Expr>,
+        projections: Option<Vec<String>>,
         batch_size: usize,
     ) -> Result<LiveQueryId, KalamDbError> {
         // Read connection info from state
@@ -118,8 +120,9 @@ impl SubscriptionService {
             .await
             .map_err(|e| KalamDbError::Other(format!("Failed to insert live query: {}", e)))?;
 
-        // Wrap filter_expr in Arc for zero-copy sharing between state and handle
+        // Wrap filter_expr and projections in Arc for zero-copy sharing between state and handle
         let filter_expr_arc = filter_expr.map(Arc::new);
+        let projections_arc = projections.map(Arc::new);
 
         // Create SubscriptionState with all necessary data (stored in ConnectionState)
         let subscription_state = SubscriptionState {
@@ -127,6 +130,7 @@ impl SubscriptionService {
             table_id: table_id.clone(),
             sql: request.sql.as_str().into(),  // Arc<str> for zero-copy
             filter_expr: filter_expr_arc.clone(),
+            projections: projections_arc.clone(),
             batch_size,
             snapshot_end_seq: None,
             notification_tx: notification_tx.clone(),
@@ -136,6 +140,7 @@ impl SubscriptionService {
         let subscription_handle = SubscriptionHandle {
             live_id: live_id.clone(),
             filter_expr: filter_expr_arc,
+            projections: projections_arc,
             notification_tx,
         };
 

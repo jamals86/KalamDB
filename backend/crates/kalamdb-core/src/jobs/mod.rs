@@ -29,9 +29,9 @@
 //! // Create job with typed JobId (idempotency enforced)
 //! let job_id = job_manager.create_job(
 //!     JobType::Flush,
-//!     "namespace_id",
-//!     "flush-table-xyz",  // Idempotency key
-//!     serde_json::json!({"table_id": "xyz"}),
+//!     serde_json::json!({"namespace_id": "default", "table_name": "xyz"}),
+//!     Some("flush-table-xyz".to_string()),  // Idempotency key
+//!     None,  // JobOptions
 //! ).await.unwrap();
 //!
 //! // Job processing loop (spawned in lifecycle.rs)

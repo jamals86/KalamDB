@@ -385,8 +385,6 @@ impl TypedStatementHandler<DropTableStatement> for DropTableHandler {
         let flush_filter = kalamdb_commons::system::JobFilter {
             job_type: Some(kalamdb_commons::JobType::Flush),
             status: None, // Check all non-completed statuses
-            namespace_id: Some(statement.namespace_id.clone()),
-            table_name: Some(statement.table_name.clone()),
             idempotency_key: None,
             limit: None,
             created_after: None,
@@ -397,7 +395,19 @@ impl TypedStatementHandler<DropTableStatement> for DropTableHandler {
         let flush_jobs = job_manager.list_jobs(flush_filter).await?;
         let mut cancelled_count = 0;
 
+        // Filter jobs by namespace and table from parameters
+        let target_namespace = statement.namespace_id.clone();
+        let target_table = statement.table_name.clone();
+
         for job in flush_jobs {
+            // Check if this job is for the target table (namespace_id and table_name in parameters)
+            let matches_table = job.namespace_id().as_ref() == Some(&target_namespace)
+                && job.table_name().as_ref() == Some(&target_table);
+
+            if !matches_table {
+                continue;
+            }
+
             // Only cancel jobs that are not already completed/failed/cancelled
             if matches!(
                 job.status,
@@ -463,7 +473,6 @@ impl TypedStatementHandler<DropTableStatement> for DropTableHandler {
         let job_id = job_manager
             .create_job_typed(
                 JobType::Cleanup,
-                statement.namespace_id.clone(),
                 params,
                 Some(idempotency_key),
                 None,

@@ -5,19 +5,17 @@
 //!
 //! ## Indexes
 //!
-//! The jobs table has three secondary indexes (managed automatically):
+//! The jobs table has two secondary indexes (managed automatically):
 //!
 //! 1. **JobStatusCreatedAtIndex** - Queries by status + created_at
 //!    - Key: `[status_byte][created_at_be][job_id]`
 //!    - Enables: "All Running jobs sorted by created_at"
 //!
-//! 2. **JobNamespaceTableIndex** - Queries by namespace + table
-//!    - Key: `{namespace}:{table}:{job_id}`
-//!    - Enables: "All jobs for namespace 'default'"
-//!
-//! 3. **JobIdempotencyKeyIndex** - Lookup by idempotency key
+//! 2. **JobIdempotencyKeyIndex** - Lookup by idempotency key
 //!    - Key: `{idempotency_key}`
 //!    - Enables: Duplicate job prevention
+//!
+//! Note: namespace_id and table_name are now stored in the parameters JSON field
 
 use super::jobs_indexes::{create_jobs_indexes, status_to_u8};
 use super::JobsTableSchema;
@@ -379,20 +377,6 @@ impl JobsTableProvider {
             }
         }
 
-        // Filter by namespace
-        if let Some(ref namespace) = filter.namespace_id {
-            if namespace != &job.namespace_id {
-                return false;
-            }
-        }
-
-        // Filter by table name
-        if let Some(ref table_name) = filter.table_name {
-            if job.table_name.as_ref() != Some(table_name) {
-                return false;
-            }
-        }
-
         // Filter by idempotency key
         if let Some(ref key) = filter.idempotency_key {
             if job.idempotency_key.as_ref() != Some(key) {
@@ -527,8 +511,6 @@ impl JobsTableProvider {
         // Pre-allocate builders for optimal performance
         let mut job_ids = StringBuilder::with_capacity(row_count, row_count * 16);
         let mut job_types = StringBuilder::with_capacity(row_count, row_count * 16);
-        let mut namespace_ids = StringBuilder::with_capacity(row_count, row_count * 16);
-        let mut table_names = StringBuilder::with_capacity(row_count, row_count * 16);
         let mut statuses = StringBuilder::with_capacity(row_count, row_count * 16);
         let mut parameters = StringBuilder::with_capacity(row_count, row_count * 64);
         let mut results = StringBuilder::with_capacity(row_count, row_count * 64);
@@ -544,8 +526,6 @@ impl JobsTableProvider {
         for (_key, job) in jobs {
             job_ids.append_value(job.job_id.as_str());
             job_types.append_value(job.job_type.as_str());
-            namespace_ids.append_value(job.namespace_id.as_str());
-            table_names.append_option(job.table_name.as_ref().map(|t| t.as_str()));
             statuses.append_value(job.status.as_str());
             parameters.append_option(job.parameters.as_deref());
             // Note: Job struct uses 'message' and 'exception_trace' instead of 'result'/'trace'/'error_message'
@@ -565,8 +545,6 @@ impl JobsTableProvider {
             vec![
                 Arc::new(job_ids.finish()) as ArrayRef,
                 Arc::new(job_types.finish()) as ArrayRef,
-                Arc::new(namespace_ids.finish()) as ArrayRef,
-                Arc::new(table_names.finish()) as ArrayRef,
                 Arc::new(statuses.finish()) as ArrayRef,
                 Arc::new(parameters.finish()) as ArrayRef,
                 Arc::new(results.finish()) as ArrayRef,
@@ -645,16 +623,6 @@ fn matches_filter_sync(job: &Job, filter: &JobFilter) -> bool {
     }
     if let Some(ref job_type) = filter.job_type {
         if job_type != &job.job_type {
-            return false;
-        }
-    }
-    if let Some(ref namespace) = filter.namespace_id {
-        if namespace != &job.namespace_id {
-            return false;
-        }
-    }
-    if let Some(ref table_name) = filter.table_name {
-        if job.table_name.as_ref() != Some(table_name) {
             return false;
         }
     }
@@ -761,7 +729,7 @@ impl SystemTableProviderExt for JobsTableProvider {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use kalamdb_commons::{JobStatus, JobType, NamespaceId, NodeId, TableName};
+    use kalamdb_commons::{JobStatus, JobType, NodeId};
     use kalamdb_store::test_utils::InMemoryBackend;
 
     fn make_job(job_id: &str, job_type: JobType, ns: &str) -> Job {
@@ -769,10 +737,8 @@ mod tests {
         Job {
             job_id: JobId::new(job_id),
             job_type,
-            namespace_id: NamespaceId::new(ns),
-            table_name: None,
             status: JobStatus::Running,
-            parameters: None,
+            parameters: Some(format!(r#"{{"namespace_id":"{}"}}"#, ns)),
             message: None,
             exception_trace: None,
             idempotency_key: None,
@@ -796,7 +762,27 @@ mod tests {
     }
 
     fn create_test_job(job_id: &str) -> Job {
-        make_job(job_id, JobType::Flush, "default").with_table_name(TableName::new("events"))
+        let now = chrono::Utc::now().timestamp_millis();
+        Job {
+            job_id: JobId::new(job_id),
+            job_type: JobType::Flush,
+            status: JobStatus::Running,
+            parameters: Some(r#"{"namespace_id":"default","table_name":"events"}"#.to_string()),
+            message: None,
+            exception_trace: None,
+            idempotency_key: None,
+            retry_count: 0,
+            max_retries: 3,
+            memory_used: None,
+            cpu_used: None,
+            created_at: now,
+            updated_at: now,
+            started_at: Some(now),
+            finished_at: None,
+            node_id: NodeId::from("server-01"),
+            queue: None,
+            priority: None,
+        }
     }
 
     #[test]
@@ -894,7 +880,7 @@ mod tests {
         // Scan
         let batch = provider.scan_all_jobs().unwrap();
         assert_eq!(batch.num_rows(), 3);
-        assert_eq!(batch.num_columns(), 15);
+        assert_eq!(batch.num_columns(), 13); // namespace_id and table_name removed (now in parameters JSON)
     }
 
     #[tokio::test]

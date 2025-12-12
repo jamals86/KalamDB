@@ -69,11 +69,13 @@ const MAX_EXPR_DEPTH: usize = 64;
 /// # Returns
 ///
 /// `true` if the row matches the filter, `false` otherwise
+#[inline]
 pub fn matches(expr: &Expr, row_data: &Row) -> Result<bool, KalamDbError> {
     evaluate_expr(expr, row_data, 0)
 }
 
 /// Recursively evaluate an expression against row data
+#[inline]
 fn evaluate_expr(expr: &Expr, row_data: &Row, depth: usize) -> Result<bool, KalamDbError> {
     if depth > MAX_EXPR_DEPTH {
         return Err(KalamDbError::InvalidOperation(
@@ -84,14 +86,20 @@ fn evaluate_expr(expr: &Expr, row_data: &Row, depth: usize) -> Result<bool, Kala
         // Binary operations: AND, OR, =, !=, <, >, <=, >=
         Expr::BinaryOp { left, op, right } => match op {
             BinaryOperator::And => {
+                // Short-circuit: if left is false, skip right evaluation
                 let left_result = evaluate_expr(left, row_data, depth + 1)?;
-                let right_result = evaluate_expr(right, row_data, depth + 1)?;
-                Ok(left_result && right_result)
+                if !left_result {
+                    return Ok(false);
+                }
+                evaluate_expr(right, row_data, depth + 1)
             }
             BinaryOperator::Or => {
+                // Short-circuit: if left is true, skip right evaluation
                 let left_result = evaluate_expr(left, row_data, depth + 1)?;
-                let right_result = evaluate_expr(right, row_data, depth + 1)?;
-                Ok(left_result || right_result)
+                if left_result {
+                    return Ok(true);
+                }
+                evaluate_expr(right, row_data, depth + 1)
             }
             BinaryOperator::Eq => evaluate_comparison(left, right, row_data, scalars_equal),
             BinaryOperator::NotEq => {

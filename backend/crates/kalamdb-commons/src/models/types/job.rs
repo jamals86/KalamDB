@@ -16,10 +16,8 @@ use serde::{Deserialize, Serialize};
 /// ## Fields
 /// - `job_id`: Unique job identifier (e.g., "job_123456")
 /// - `job_type`: Type of job (Flush, Compact, Cleanup, Backup, Restore)
-/// - `namespace_id`: Namespace this job operates on
-/// - `table_name`: Optional table name for table-specific jobs
 /// - `status`: Job status (Running, Completed, Failed, Cancelled)
-/// - `parameters`: Optional JSON array of job parameters
+/// - `parameters`: Optional JSON object containing job parameters (includes namespace_id, table_name, etc.)
 /// - `result`: Optional result message (for completed jobs)
 /// - `trace`: Optional stack trace (for failed jobs)
 /// - `memory_used`: Optional memory usage in bytes
@@ -38,15 +36,13 @@ use serde::{Deserialize, Serialize};
 ///
 /// ```rust,ignore
 /// use kalamdb_commons::types::Job;
-/// use kalamdb_commons::{NamespaceId, TableName, JobType, JobStatus, JobId, NodeId};
+/// use kalamdb_commons::{JobType, JobStatus, JobId, NodeId};
 ///
 /// let job = Job {
 ///     job_id: JobId::new("job_123456"),
 ///     job_type: JobType::Flush,
-///     namespace_id: NamespaceId::new("default"),
-///     table_name: Some(TableName::new("events")),
 ///     status: JobStatus::Running,
-///     parameters: None,
+///     parameters: Some(r#"{"namespace_id":"default","table_name":"events"}"#.to_string()),
 ///     message: None,
 ///     exception_trace: None,
 ///     idempotency_key: None,
@@ -61,19 +57,14 @@ use serde::{Deserialize, Serialize};
 ///     node_id: NodeId::from("server-01"),
 ///     queue: None,
 ///     priority: None,
-///     result: None,
-///     error_message: None,
-///     trace: None,
 /// };
 /// ```
 #[derive(Serialize, Deserialize, Encode, Decode, Clone, Debug, PartialEq)]
 pub struct Job {
     pub job_id: JobId,
     pub job_type: JobType,
-    pub namespace_id: NamespaceId, //TODO: Should we use these? since in the params we already have them
-    pub table_name: Option<TableName>, //TODO: Should we use these? since in the params we already have them
     pub status: JobStatus,
-    pub parameters: Option<String>, // JSON object (migrated from array)
+    pub parameters: Option<String>, // JSON object containing namespace_id, table_name, and other params
     pub message: Option<String>,    // Unified field replacing result/error_message
     pub exception_trace: Option<String>, // Full stack trace on failures
     pub idempotency_key: Option<String>, // For preventing duplicate jobs
@@ -122,10 +113,22 @@ impl Job {
         self.retry_count < self.max_retries
     }
 
-    /// Set table name
-    pub fn with_table_name(mut self, table_name: TableName) -> Self {
-        self.table_name = Some(table_name);
-        self
+    /// Extract namespace_id from parameters JSON
+    pub fn namespace_id(&self) -> Option<NamespaceId> {
+        self.parameters.as_ref().and_then(|p| {
+            serde_json::from_str::<serde_json::Value>(p)
+                .ok()
+                .and_then(|v| v.get("namespace_id")?.as_str().map(|s| NamespaceId::new(s)))
+        })
+    }
+
+    /// Extract table_name from parameters JSON
+    pub fn table_name(&self) -> Option<TableName> {
+        self.parameters.as_ref().and_then(|p| {
+            serde_json::from_str::<serde_json::Value>(p)
+                .ok()
+                .and_then(|v| v.get("table_name")?.as_str().map(|s| TableName::new(s)))
+        })
     }
 
     /// Set parameters (JSON object)
@@ -227,10 +230,6 @@ pub struct JobFilter {
     pub status: Option<JobStatus>,
     /// Filter by multiple job statuses
     pub statuses: Option<Vec<JobStatus>>,
-    /// Filter by namespace
-    pub namespace_id: Option<NamespaceId>,
-    /// Filter by table name
-    pub table_name: Option<TableName>,
     /// Filter by idempotency key
     pub idempotency_key: Option<String>,
     /// Limit number of results
@@ -251,8 +250,6 @@ impl Default for JobFilter {
             job_type: None,
             status: None,
             statuses: None,
-            namespace_id: None,
-            table_name: None,
             idempotency_key: None,
             limit: Some(100),
             created_after: None,
@@ -273,10 +270,8 @@ mod tests {
         let job = Job {
             job_id: "job_123".into(),
             job_type: JobType::Flush,
-            namespace_id: NamespaceId::new("default"),
-            table_name: Some(TableName::new("events")),
             status: JobStatus::Completed,
-            parameters: None,
+            parameters: Some(r#"{"namespace_id":"default","table_name":"events"}"#.to_string()),
             message: Some("Job completed successfully".to_string()),
             exception_trace: None,
             idempotency_key: None,
@@ -305,10 +300,8 @@ mod tests {
         let job = Job {
             job_id: JobId::new("job_123"),
             job_type: JobType::Flush,
-            namespace_id: NamespaceId::new("default"),
-            table_name: Some(TableName::new("events")),
             status: JobStatus::Running,
-            parameters: None,
+            parameters: Some(r#"{"namespace_id":"default","table_name":"events"}"#.to_string()),
             message: None,
             exception_trace: None,
             idempotency_key: None,

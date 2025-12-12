@@ -1,10 +1,23 @@
 import { defineConfig } from "vite";
 import react from "@vitejs/plugin-react";
 import path from "path";
+import fs from "fs";
+
+// Plugin to clean up duplicate kalam-link folder after build
+const cleanupPlugin = () => ({
+  name: 'cleanup-kalam-link',
+  closeBundle() {
+    const duplicatePath = path.resolve(__dirname, 'dist/kalam-link');
+    if (fs.existsSync(duplicatePath)) {
+      fs.rmSync(duplicatePath, { recursive: true, force: true });
+      console.log('Cleaned up duplicate kalam-link folder');
+    }
+  }
+});
 
 // https://vite.dev/config/
 export default defineConfig({
-  plugins: [react()],
+  plugins: [react(), cleanupPlugin()],
   // Base path for production build (embedded in server at /ui/)
   base: "/ui/",
   resolve: {
@@ -40,10 +53,23 @@ export default defineConfig({
     outDir: "dist",
     sourcemap: true,
     target: "esnext",
+    rollupOptions: {
+      output: {
+        // Ensure WASM files have consistent naming
+        assetFileNames: (assetInfo) => {
+          if (assetInfo.name?.endsWith('.wasm')) {
+            return 'assets/[name]-[hash][extname]';
+          }
+          return 'assets/[name]-[hash][extname]';
+        },
+      },
+    },
   },
   optimizeDeps: {
-    // Force re-bundling of kalam-link on every server start
+    // Force re-bundling on every server start
     force: true,
+    // Exclude kalam-link from pre-bundling so WASM files load correctly
+    // When pre-bundled, import.meta.url points to .vite/deps which breaks WASM loading
     exclude: ["kalam-link"],
   },
   // Ensure WASM files are handled correctly

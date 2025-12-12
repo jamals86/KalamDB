@@ -1,8 +1,12 @@
 //! Default ORDER BY injection for consistent query results
 //!
-//! This module ensures that SELECT queries return results in a consistent order,
-//! even when no explicit ORDER BY is specified. This is critical for:
+//! This module ensures that SELECT queries on USER, SHARED, and STREAM tables
+//! return results in a consistent order, even when no explicit ORDER BY is specified.
+//! 
+//! **Note**: System tables (system.*) and information_schema tables do NOT get
+//! default ordering applied, as they don't have the _seq system column.
 //!
+//! This is critical for:
 //! 1. **Pagination consistency**: Users expect the same order across paginated requests
 //! 2. **Hot/Cold storage consistency**: Data from RocksDB and Parquet must be ordered identically
 //! 3. **Deterministic results**: Same query should always return same row order
@@ -60,14 +64,14 @@ fn extract_table_reference(plan: &LogicalPlan) -> Option<(NamespaceId, TableName
     }
 }
 
-/// Get the default sort columns for a table
+/// Get the default sort columns for a user/shared/stream table
 ///
 /// Returns primary key columns if defined, otherwise falls back to _seq.
-/// The columns are returned as SortExpr with ASC ordering.
+/// This function assumes system tables have already been filtered out.
 fn get_default_sort_columns(
     app_context: &Arc<AppContext>,
     table_id: &TableId,
-) -> Result<Vec<SortExpr>, KalamDbError> {
+) -> Result<Option<Vec<SortExpr>>, KalamDbError> {
     let schema_registry = app_context.schema_registry();
 
     // Try to get table definition
@@ -76,7 +80,7 @@ fn get_default_sort_columns(
 
         if !pk_columns.is_empty() {
             // Use primary key columns
-            return Ok(pk_columns
+            return Ok(Some(pk_columns
                 .into_iter()
                 .map(|col_name| {
                     SortExpr::new(
@@ -85,25 +89,56 @@ fn get_default_sort_columns(
                         false, // nulls_first
                     )
                 })
-                .collect());
+                .collect()));
         }
+
+        // Fallback: use _seq system column (user/shared/stream tables always have this)
+        return Ok(Some(vec![SortExpr::new(
+            datafusion::logical_expr::col(SystemColumnNames::SEQ),
+            true,  // ascending
+            false, // nulls_first
+        )]));
     }
 
-    // Fallback: use _seq system column
-    Ok(vec![SortExpr::new(
-        datafusion::logical_expr::col(SystemColumnNames::SEQ),
-        true,  // ascending
-        false, // nulls_first
-    )])
+    // Table not found in registry
+    Ok(None)
+}
+
+/// Check if all sort columns exist in the output schema
+///
+/// This is needed because aggregate queries (like SELECT COUNT(*)) change the
+/// output schema and the original table columns may not be present.
+fn sort_columns_in_schema(sort_exprs: &[SortExpr], plan: &LogicalPlan) -> bool {
+    let schema = plan.schema();
+
+    for sort_expr in sort_exprs {
+        // Extract column name from sort expression
+        if let datafusion::logical_expr::Expr::Column(col) = &sort_expr.expr {
+            // Check if this column exists in the output schema
+            if schema.qualified_field_from_column(col).is_err() {
+                log::trace!(
+                    target: "sql::ordering",
+                    "Sort column '{}' not found in output schema, skipping default ORDER BY",
+                    col.name
+                );
+                return false;
+            }
+        }
+    }
+    true
 }
 
 /// Add default ORDER BY to a LogicalPlan if not already present
 ///
+/// This function only applies to USER, SHARED, and STREAM tables.
+/// System tables (system.*, information_schema.*, etc.) are skipped.
+///
 /// This function:
 /// 1. Checks if the plan already has an ORDER BY clause
 /// 2. Extracts the table reference from the plan
-/// 3. Looks up primary key columns from the schema registry
-/// 4. Wraps the plan with a Sort node using those columns
+/// 3. Skips system namespace tables (no _seq column)
+/// 4. Looks up primary key columns from the schema registry
+/// 5. Wraps the plan with a Sort node using those columns (or _seq fallback)
 ///
 /// # Arguments
 /// * `plan` - The LogicalPlan to potentially wrap with ORDER BY
@@ -133,11 +168,32 @@ pub fn apply_default_order_by(
     };
 
     let (namespace_id, table_name) = table_ref;
+
+    // Skip system namespace tables - they don't have _seq column
+    if namespace_id.is_system_namespace() {
+        log::trace!(
+            target: "sql::ordering",
+            "Skipping default ORDER BY for system table {}.{}",
+            namespace_id.as_str(),
+            table_name.as_str()
+        );
+        return Ok(plan);
+    }
+
     let table_id = TableId::new(namespace_id, table_name);
 
-    // Get sort columns for this table
+    // Get sort columns for this table (user/shared/stream tables only)
     let sort_exprs = match get_default_sort_columns(app_context, &table_id) {
-        Ok(exprs) => exprs,
+        Ok(Some(exprs)) => exprs,
+        Ok(None) => {
+            // Table not found in registry - might be a new table or external source
+            log::trace!(
+                target: "sql::ordering",
+                "Table {} has no default sort columns, skipping ORDER BY",
+                table_id.full_name()
+            );
+            return Ok(plan);
+        }
         Err(e) => {
             log::warn!(
                 target: "sql::ordering",
@@ -148,6 +204,17 @@ pub fn apply_default_order_by(
             return Ok(plan);
         }
     };
+
+    // Skip if sort columns are not in the output schema
+    // This handles aggregate queries like SELECT COUNT(*) where original columns aren't available
+    if !sort_columns_in_schema(&sort_exprs, &plan) {
+        log::trace!(
+            target: "sql::ordering",
+            "Sort columns not in output schema for {}, skipping default ORDER BY",
+            table_id.full_name()
+        );
+        return Ok(plan);
+    }
 
     // Create Sort node wrapping the original plan
     let sort_plan = LogicalPlan::Sort(datafusion::logical_expr::Sort {

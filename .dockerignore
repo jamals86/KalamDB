@@ -5,11 +5,13 @@
 # Build artifacts
 target/
 **/target/
-dist/
-build/
 
-# Dependencies
+# Release dist (not ui/dist which is built in Docker)
+/dist/
+
+# Dependencies (installed in Docker)
 node_modules/
+**/node_modules/
 
 # Docker files
 Dockerfile*

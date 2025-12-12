@@ -141,7 +141,7 @@ pub fn default_manifest_cache_eviction_interval() -> i64 {
 }
 
 pub fn default_manifest_cache_max_entries() -> usize {
-    50000
+    1000 // Reduced from 50000 for lower memory footprint
 }
 
 pub fn default_manifest_cache_memory_window() -> i64 {
@@ -282,15 +282,15 @@ pub fn default_oauth_provider_enabled() -> bool {
 
 // RocksDB defaults (memory-optimized for many column families)
 pub fn default_rocksdb_write_buffer_size() -> usize {
-    8 * 1024 * 1024 // 8MB (reduced from 64MB to handle many CFs)
+    4 * 1024 * 1024 // 4MB (reduced from 8MB for many-CF scenarios)
 }
 
 pub fn default_rocksdb_max_write_buffers() -> i32 {
-    2 // Reduced from 3 to save memory
+    2 // 2 write buffers per CF (memory = 4MB × 2 = 8MB per CF)
 }
 
 pub fn default_rocksdb_block_cache_size() -> usize {
-    32 * 1024 * 1024 // 32MB shared cache (reduced from 256MB)
+    16 * 1024 * 1024 // 16MB shared cache (reduced for low-memory profiles)
 }
 
 pub fn default_rocksdb_max_background_jobs() -> i32 {

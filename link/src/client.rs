@@ -53,18 +53,38 @@ impl KalamLinkClient {
         KalamLinkClientBuilder::new()
     }
 
-    /// Execute a SQL query
-    pub async fn execute_query(&self, sql: &str) -> Result<QueryResponse> {
-        self.query_executor.execute(sql, None).await
-    }
-
-    /// Execute a SQL query with parameters
-    pub async fn execute_query_with_params(
+    /// Execute a SQL query with optional parameters and namespace context
+    ///
+    /// # Arguments
+    /// * `sql` - The SQL query string
+    /// * `params` - Optional query parameters for $1, $2, ... placeholders
+    /// * `namespace_id` - Optional namespace for unqualified table names
+    ///
+    /// # Example
+    /// ```rust,no_run
+    /// # async fn example() -> Result<(), Box<dyn std::error::Error>> {
+    /// # let client = kalam_link::KalamLinkClient::builder().base_url("http://localhost:3000").build()?;
+    /// // Simple query
+    /// let result = client.execute_query("SELECT * FROM users", None, None).await?;
+    ///
+    /// // Query with parameters
+    /// let params = vec![serde_json::json!(42)];
+    /// let result = client.execute_query("SELECT * FROM users WHERE id = $1", Some(params), None).await?;
+    ///
+    /// // Query in specific namespace
+    /// let result = client.execute_query("SELECT * FROM messages", None, Some("chat")).await?;
+    /// # Ok(())
+    /// # }
+    /// ```
+    pub async fn execute_query(
         &self,
         sql: &str,
-        params: Vec<serde_json::Value>,
+        params: Option<Vec<serde_json::Value>>,
+        namespace_id: Option<&str>,
     ) -> Result<QueryResponse> {
-        self.query_executor.execute(sql, Some(params)).await
+        self.query_executor
+            .execute(sql, params, namespace_id.map(|s| s.to_string()))
+            .await
     }
 
     /// Subscribe to real-time changes

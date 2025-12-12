@@ -62,6 +62,64 @@ impl QueryParser {
             .replace("CURRENT_USER()", &replacement)
             .replace("current_user()", &replacement)
     }
+
+    /// Extract column projections from SQL query
+    ///
+    /// Returns None if SELECT * (all columns), otherwise returns the list of column names.
+    /// Handles:
+    /// - SELECT * FROM ... -> None (all columns)
+    /// - SELECT col1, col2 FROM ... -> Some(["col1", "col2"])
+    /// - SELECT col1 as alias FROM ... -> Some(["col1"]) (uses original name, not alias)
+    ///
+    /// TODO: Replace with proper DataFusion SQL parsing for complex expressions
+    pub fn extract_projections(query: &str) -> Option<Vec<String>> {
+        let query_upper = query.to_uppercase();
+
+        // Find SELECT and FROM positions
+        let select_pos = query_upper.find("SELECT")?;
+        let from_pos = query_upper.find(" FROM ")?;
+
+        if select_pos >= from_pos {
+            return None; // Invalid query
+        }
+
+        // Extract the part between SELECT and FROM
+        let select_clause = &query[(select_pos + 6)..from_pos].trim();
+
+        // Check for SELECT *
+        if select_clause.trim() == "*" {
+            return None; // All columns
+        }
+
+        // Parse comma-separated column list
+        let columns: Vec<String> = select_clause
+            .split(',')
+            .map(|col| {
+                let col = col.trim();
+                // Handle "column AS alias" - extract just the column name
+                let col = if let Some(as_pos) = col.to_uppercase().find(" AS ") {
+                    col[..as_pos].trim()
+                } else {
+                    col
+                };
+                // Handle "table.column" - extract just the column name
+                let col = if let Some(dot_pos) = col.rfind('.') {
+                    &col[(dot_pos + 1)..]
+                } else {
+                    col
+                };
+                // Remove any quotes
+                col.trim_matches(|c| c == '"' || c == '\'' || c == '`').to_string()
+            })
+            .filter(|s| !s.is_empty())
+            .collect();
+
+        if columns.is_empty() {
+            None
+        } else {
+            Some(columns)
+        }
+    }
 }
 
 #[cfg(test)]
@@ -101,5 +159,35 @@ mod tests {
         let clause = "user_id = CURRENT_USER()";
         let resolved = QueryParser::resolve_where_clause_placeholders(clause, &user_id);
         assert_eq!(resolved, "user_id = 'alice'");
+    }
+
+    #[test]
+    fn test_extract_projections_star() {
+        let projections = QueryParser::extract_projections("SELECT * FROM test.users");
+        assert!(projections.is_none());
+    }
+
+    #[test]
+    fn test_extract_projections_single_column() {
+        let projections = QueryParser::extract_projections("SELECT id FROM test.users").unwrap();
+        assert_eq!(projections, vec!["id"]);
+    }
+
+    #[test]
+    fn test_extract_projections_multiple_columns() {
+        let projections = QueryParser::extract_projections("SELECT id, name, email FROM test.users").unwrap();
+        assert_eq!(projections, vec!["id", "name", "email"]);
+    }
+
+    #[test]
+    fn test_extract_projections_with_alias() {
+        let projections = QueryParser::extract_projections("SELECT id, name AS user_name FROM test.users").unwrap();
+        assert_eq!(projections, vec!["id", "name"]);
+    }
+
+    #[test]
+    fn test_extract_projections_with_where() {
+        let projections = QueryParser::extract_projections("SELECT id, message FROM chat.messages WHERE user_id = 'alice'").unwrap();
+        assert_eq!(projections, vec!["id", "message"]);
     }
 }
