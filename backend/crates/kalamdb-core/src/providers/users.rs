@@ -156,6 +156,56 @@ impl UserTableProvider {
         Ok(None)
     }
 
+    /// Fast existence check for primary key in hot storage (RocksDB).
+    ///
+    /// This is optimized for INSERT validation - only checks if a non-deleted
+    /// version exists in hot storage. Much faster than `find_by_pk` because:
+    /// 1. Limits index scan to 1 result (latest version only)
+    /// 2. Only fetches that single entity to check `_deleted` flag
+    ///
+    /// # Returns
+    /// - `Some(true)` if non-deleted version exists in hot storage
+    /// - `Some(false)` if only deleted versions exist in hot storage
+    /// - `None` if no version exists in hot storage (may exist in cold)
+    pub fn pk_exists_in_hot(
+        &self,
+        user_id: &UserId,
+        pk_value: &ScalarValue,
+    ) -> Result<Option<bool>, KalamDbError> {
+        // Build prefix for PK index scan
+        let prefix = UserTablePkIndex::new(
+            self.core.table_id().namespace_id().as_str(),
+            self.core.table_id().table_name().as_str(),
+            &self.primary_key_field_name,
+        )
+        .build_prefix_for_pk(user_id.as_str(), pk_value);
+
+        // Quick check: does any version exist in index?
+        let exists = self
+            .store
+            .exists_by_index(0, &prefix)
+            .map_err(|e| KalamDbError::Other(format!("PK index exists check failed: {}", e)))?;
+
+        if !exists {
+            return Ok(None); // No version in hot storage
+        }
+
+        // At least one version exists - fetch just the latest (limit 1)
+        // Due to descending seq order, first result is the latest
+        let index_results = self
+            .store
+            .scan_by_index(0, Some(&prefix), Some(1))
+            .map_err(|e| KalamDbError::Other(format!("PK index scan failed: {}", e)))?;
+
+        if let Some((_row_id, row)) = index_results.into_iter().next() {
+            // Return whether the latest version is deleted or not
+            Ok(Some(!row._deleted))
+        } else {
+            // Shouldn't happen since exists_by_index returned true
+            Ok(None)
+        }
+    }
+
     /// Extract user context from DataFusion SessionState
     ///
     /// **Purpose**: Read (user_id, role) from SessionState.config.options.extensions
@@ -308,20 +358,16 @@ impl BaseTableProvider<UserTableRowId, UserTableRow> for UserTableProvider {
     /// Override find_row_key_by_id_field to use PK index for efficient lookup
     ///
     /// This avoids scanning all rows and instead uses the secondary index.
-    /// For hot storage (RocksDB), this is O(1). If not found in hot storage,
-    /// falls back to scanning Parquet (cold storage).
+    /// For hot storage (RocksDB), uses fast existence check. If not found in hot storage,
+    /// falls back to checking cold storage using manifest-based pruning.
+    ///
+    /// OPTIMIZED: Uses `pk_exists_in_hot` for fast hot-path check (single index lookup + 1 entity fetch max).
+    /// OPTIMIZED: Uses `pk_exists_in_cold` with manifest-based segment pruning for cold storage.
     fn find_row_key_by_id_field(
         &self,
         user_id: &UserId,
         id_value: &str,
     ) -> Result<Option<UserTableRowId>, KalamDbError> {
-        log::debug!(
-            "[UserTableProvider::find_row_key_by_id_field] user='{}', id_value='{}', pk_name='{}'",
-            user_id.as_str(),
-            id_value,
-            self.primary_key_field_name
-        );
-
         // Try to parse id_value as the appropriate scalar type
         // Most PKs are Int64, so try that first
         let pk_value = if let Ok(n) = id_value.parse::<i64>() {
@@ -330,38 +376,59 @@ impl BaseTableProvider<UserTableRowId, UserTableRow> for UserTableProvider {
             ScalarValue::Utf8(Some(id_value.to_string()))
         };
 
-        // Use find_by_pk which leverages the PK index for hot storage (O(1))
-        match self.find_by_pk(user_id, &pk_value)? {
-            Some((row_id, _row)) => {
-                log::debug!(
-                    "[UserTableProvider::find_row_key_by_id_field] Found row in hot storage with id={}",
+        // Fast path: check hot storage using optimized existence check
+        match self.pk_exists_in_hot(user_id, &pk_value)? {
+            Some(true) => {
+                // Non-deleted version exists in hot storage - need to get the actual row_id
+                // This is rare during inserts (PK collision), so full lookup is acceptable
+                if let Some((row_id, _row)) = self.find_by_pk(user_id, &pk_value)? {
+                    log::trace!(
+                        "[UserTableProvider] PK collision in hot storage: id={}",
+                        id_value
+                    );
+                    return Ok(Some(row_id));
+                }
+            }
+            Some(false) => {
+                // Only deleted versions in hot storage - PK is available for reuse
+                log::trace!(
+                    "[UserTableProvider] PK {} has only deleted versions in hot storage",
                     id_value
                 );
-                return Ok(Some(row_id));
+                return Ok(None);
             }
             None => {
-                log::debug!(
-                    "[UserTableProvider::find_row_key_by_id_field] Row not found in hot storage for id={}, checking cold storage",
+                // Not in hot storage - check cold storage
+                log::trace!(
+                    "[UserTableProvider] PK {} not in hot storage, checking cold",
                     id_value
                 );
             }
         }
 
-        // Not found in hot storage - fall back to Parquet scan (cold storage)
-        // This is more expensive but necessary for flushed rows
-        let result = base::find_row_by_pk(self, Some(user_id), id_value)?;
-        if let Some((row_id, _row)) = result {
-            log::debug!(
-                "[UserTableProvider::find_row_key_by_id_field] Found row in cold storage with id={}",
+        // Not found in hot storage - check cold storage using optimized manifest-based lookup
+        // This uses column_stats to prune segments that can't contain the PK
+        let pk_name = self.primary_key_field_name();
+        let exists_in_cold = base::pk_exists_in_cold(
+            &self.core,
+            self.core.table_id(),
+            self.core.table_type(),
+            Some(user_id),
+            pk_name,
+            id_value,
+        )?;
+
+        if exists_in_cold {
+            log::trace!(
+                "[UserTableProvider] PK {} exists in cold storage",
                 id_value
             );
-            return Ok(Some(row_id));
+            // For insert uniqueness check, we just need to know it exists
+            // Return a dummy row_id (the actual _seq doesn't matter for uniqueness)
+            // We use SeqId(0) as a marker since the caller only checks is_some()
+            return Ok(Some(UserTableRowId::new(user_id.clone(), kalamdb_commons::ids::SeqId::from(0))));
         }
 
-        log::debug!(
-            "[UserTableProvider::find_row_key_by_id_field] Row not found anywhere for id={}",
-            id_value
-        );
         Ok(None)
     }
 

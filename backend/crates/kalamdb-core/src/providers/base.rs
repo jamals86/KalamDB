@@ -465,6 +465,9 @@ pub fn filter_uses_deleted_column(filter: &Expr) -> bool {
 }
 
 /// Locate the latest non-deleted row matching the provided primary-key value
+///
+/// **DEPRECATED**: Use `pk_exists_in_cold` for existence checks (returns bool, faster).
+/// This function is kept for UPDATE/DELETE operations that need the actual row data.
 pub fn find_row_by_pk<P, K, V>(
     provider: &P,
     scope: Option<&UserId>,
@@ -489,6 +492,281 @@ where
     }
 
     Ok(None)
+}
+
+/// Check if a PK value exists in cold storage (Parquet files) using manifest-based pruning.
+///
+/// **Optimized for PK existence checks during INSERT**:
+/// 1. Load manifest from cache (no disk I/O if cached)
+/// 2. Use column_stats min/max to prune segments that definitely don't contain the PK
+/// 3. Only scan relevant Parquet files (if any)
+/// 4. Scan with version resolution to handle MVCC (latest non-deleted wins)
+///
+/// This is much faster than `find_row_by_pk` which scans ALL cold storage rows.
+///
+/// # Arguments
+/// * `core` - TableProviderCore for app_context access
+/// * `table_id` - Table identifier
+/// * `table_type` - TableType (User, Shared, Stream)
+/// * `user_id` - Optional user ID for scoping (User tables)
+/// * `pk_column` - Name of the primary key column
+/// * `pk_value` - The PK value to check for
+///
+/// # Returns
+/// * `Ok(true)` - PK exists in cold storage (non-deleted)
+/// * `Ok(false)` - PK does not exist in cold storage
+pub fn pk_exists_in_cold(
+    core: &TableProviderCore,
+    table_id: &TableId,
+    table_type: TableType,
+    user_id: Option<&UserId>,
+    pk_column: &str,
+    pk_value: &str,
+) -> Result<bool, KalamDbError> {
+    use crate::manifest::ManifestAccessPlanner;
+    use kalamdb_commons::types::Manifest;
+    use std::path::PathBuf;
+
+    let namespace = table_id.namespace_id();
+    let table = table_id.table_name();
+    let scope_label = user_id
+        .map(|uid| format!("user={}", uid.as_str()))
+        .unwrap_or_else(|| format!("scope={}", table_type.as_str()));
+
+    // 1. Get storage path and check if it exists
+    let storage_path = core
+        .app_context
+        .schema_registry()
+        .get_storage_path(table_id, user_id, None)?;
+    let storage_dir = PathBuf::from(&storage_path);
+
+    if !storage_dir.exists() {
+        log::trace!(
+            "[pk_exists_in_cold] No storage dir for {}.{} {} - PK not in cold",
+            namespace.as_str(),
+            table.as_str(),
+            scope_label
+        );
+        return Ok(false);
+    }
+
+    // 2. Load manifest from cache
+    let manifest_cache_service = core.app_context.manifest_cache_service();
+    let cache_result = manifest_cache_service.get_or_load(table_id, user_id);
+
+    let manifest: Option<Manifest> = match &cache_result {
+        Ok(Some(entry)) => match serde_json::from_str::<Manifest>(&entry.manifest_json) {
+            Ok(m) => Some(m),
+            Err(e) => {
+                log::warn!(
+                    "[pk_exists_in_cold] Failed to parse manifest for {}.{} {}: {}",
+                    namespace.as_str(),
+                    table.as_str(),
+                    scope_label,
+                    e
+                );
+                None
+            }
+        },
+        Ok(None) => {
+            log::trace!(
+                "[pk_exists_in_cold] No manifest for {}.{} {} - checking all files",
+                namespace.as_str(),
+                table.as_str(),
+                scope_label
+            );
+            None
+        }
+        Err(e) => {
+            log::warn!(
+                "[pk_exists_in_cold] Manifest cache error for {}.{} {}: {}",
+                namespace.as_str(),
+                table.as_str(),
+                scope_label,
+                e
+            );
+            None
+        }
+    };
+
+    // 3. Use manifest to prune segments
+    let planner = ManifestAccessPlanner::new();
+    let files_to_scan: Vec<PathBuf> = if let Some(ref m) = manifest {
+        let pruned_paths = planner.plan_by_pk_value(m, pk_column, pk_value);
+        if pruned_paths.is_empty() {
+            log::trace!(
+                "[pk_exists_in_cold] Manifest pruning: PK {} not in any segment range for {}.{} {}",
+                pk_value,
+                namespace.as_str(),
+                table.as_str(),
+                scope_label
+            );
+            return Ok(false); // PK definitely not in cold storage
+        }
+        log::trace!(
+            "[pk_exists_in_cold] Manifest pruning: {} of {} segments may contain PK {} for {}.{} {}",
+            pruned_paths.len(),
+            m.segments.len(),
+            pk_value,
+            namespace.as_str(),
+            table.as_str(),
+            scope_label
+        );
+        pruned_paths
+            .into_iter()
+            .map(|p| storage_dir.join(p))
+            .collect()
+    } else {
+        // No manifest - scan all Parquet files (fallback)
+        let entries = std::fs::read_dir(&storage_dir).map_err(KalamDbError::Io)?;
+        entries
+            .filter_map(|e| e.ok())
+            .map(|e| e.path())
+            .filter(|p| p.extension().and_then(|s| s.to_str()) == Some("parquet"))
+            .collect()
+    };
+
+    if files_to_scan.is_empty() {
+        return Ok(false);
+    }
+
+    // 4. Scan pruned Parquet files and check for PK
+    // We need to apply version resolution (latest _seq wins, _deleted=false)
+    for parquet_file in files_to_scan {
+        if pk_exists_in_parquet_file(&parquet_file, pk_column, pk_value)? {
+            log::trace!(
+                "[pk_exists_in_cold] Found PK {} in {:?} for {}.{} {}",
+                pk_value,
+                parquet_file,
+                namespace.as_str(),
+                table.as_str(),
+                scope_label
+            );
+            return Ok(true);
+        }
+    }
+
+    Ok(false)
+}
+
+/// Check if a PK value exists in a single Parquet file (with MVCC version resolution).
+///
+/// Reads the file and checks if any non-deleted row has the matching PK value.
+fn pk_exists_in_parquet_file(
+    parquet_file: &std::path::Path,
+    pk_column: &str,
+    pk_value: &str,
+) -> Result<bool, KalamDbError> {
+    use datafusion::arrow::array::{
+        Array, BooleanArray, Int64Array, UInt64Array,
+    };
+    use datafusion::parquet::arrow::arrow_reader::ParquetRecordBatchReaderBuilder;
+    use std::collections::HashMap;
+
+    let file = std::fs::File::open(parquet_file).map_err(KalamDbError::Io)?;
+    let builder = ParquetRecordBatchReaderBuilder::try_new(file)
+        .map_err(|e| KalamDbError::Other(format!("Failed to create Parquet reader: {}", e)))?;
+    let reader = builder
+        .build()
+        .map_err(|e| KalamDbError::Other(format!("Failed to build Parquet reader: {}", e)))?;
+
+    // Track latest version per PK value: pk_value -> (max_seq, is_deleted)
+    let mut versions: HashMap<String, (i64, bool)> = HashMap::new();
+
+    for batch_result in reader {
+        let batch = batch_result
+            .map_err(|e| KalamDbError::Other(format!("Failed to read Parquet batch: {}", e)))?;
+
+        // Find column indices
+        let pk_idx = batch.schema().index_of(pk_column).ok();
+        let seq_idx = batch.schema().index_of("_seq").ok();
+        let deleted_idx = batch.schema().index_of("_deleted").ok();
+
+        let (Some(pk_i), Some(seq_i)) = (pk_idx, seq_idx) else {
+            continue; // Missing required columns
+        };
+
+        let pk_col = batch.column(pk_i);
+        let seq_col = batch.column(seq_i);
+        let deleted_col = deleted_idx.map(|i| batch.column(i));
+
+        for row_idx in 0..batch.num_rows() {
+            // Extract PK value as string
+            let row_pk = extract_pk_as_string(pk_col.as_ref(), row_idx);
+            let Some(row_pk_str) = row_pk else { continue };
+
+            // Only check rows matching target PK
+            if row_pk_str != pk_value {
+                continue;
+            }
+
+            // Extract _seq
+            let seq = if let Some(arr) = seq_col.as_any().downcast_ref::<Int64Array>() {
+                arr.value(row_idx)
+            } else if let Some(arr) = seq_col.as_any().downcast_ref::<UInt64Array>() {
+                arr.value(row_idx) as i64
+            } else {
+                continue;
+            };
+
+            // Extract _deleted
+            let deleted = if let Some(del_col) = &deleted_col {
+                if let Some(arr) = del_col.as_any().downcast_ref::<BooleanArray>() {
+                    arr.value(row_idx)
+                } else {
+                    false
+                }
+            } else {
+                false
+            };
+
+            // Update version tracking
+            if let Some((max_seq, _)) = versions.get(&row_pk_str) {
+                if seq > *max_seq {
+                    versions.insert(row_pk_str, (seq, deleted));
+                }
+            } else {
+                versions.insert(row_pk_str, (seq, deleted));
+            }
+        }
+    }
+
+    // Check if target PK has a non-deleted latest version
+    if let Some((_, is_deleted)) = versions.get(pk_value) {
+        Ok(!*is_deleted)
+    } else {
+        Ok(false)
+    }
+}
+
+/// Extract PK value as string from an Arrow array at given index.
+fn extract_pk_as_string(col: &dyn datafusion::arrow::array::Array, idx: usize) -> Option<String> {
+    use datafusion::arrow::array::{Int16Array, Int32Array, Int64Array, StringArray, UInt32Array, UInt64Array};
+
+    if col.is_null(idx) {
+        return None;
+    }
+
+    if let Some(arr) = col.as_any().downcast_ref::<StringArray>() {
+        return Some(arr.value(idx).to_string());
+    }
+    if let Some(arr) = col.as_any().downcast_ref::<Int64Array>() {
+        return Some(arr.value(idx).to_string());
+    }
+    if let Some(arr) = col.as_any().downcast_ref::<Int32Array>() {
+        return Some(arr.value(idx).to_string());
+    }
+    if let Some(arr) = col.as_any().downcast_ref::<Int16Array>() {
+        return Some(arr.value(idx).to_string());
+    }
+    if let Some(arr) = col.as_any().downcast_ref::<UInt64Array>() {
+        return Some(arr.value(idx).to_string());
+    }
+    if let Some(arr) = col.as_any().downcast_ref::<UInt32Array>() {
+        return Some(arr.value(idx).to_string());
+    }
+
+    None
 }
 
 /// Ensure an INSERT payload either auto-generates or provides a unique primary-key value

@@ -178,18 +178,8 @@ impl SharedTableProvider {
             .map_err(|e| KalamDbError::Other(format!("PK index scan failed: {}", e)))?;
 
         if results.is_empty() {
-            log::trace!(
-                "[SharedTableProvider] PK index returned no entries for pk_value={:?}",
-                pk_value
-            );
             return Ok(None);
         }
-
-        log::trace!(
-            "[SharedTableProvider] PK index found {} entries for pk_value={:?}",
-            results.len(),
-            pk_value
-        );
 
         // Find the latest non-deleted version
         // Results are ordered by seq (descending due to big-endian encoding)
@@ -201,6 +191,44 @@ impl SharedTableProvider {
 
         // All versions are deleted
         Ok(None)
+    }
+
+    /// Fast existence check for primary key in hot storage (RocksDB).
+    ///
+    /// Optimized for INSERT validation - only checks if a non-deleted version exists.
+    ///
+    /// # Returns
+    /// - `Some(true)` if non-deleted version exists in hot storage
+    /// - `Some(false)` if only deleted versions exist in hot storage
+    /// - `None` if no version exists in hot storage (may exist in cold)
+    fn pk_exists_in_hot(
+        &self,
+        pk_value: &ScalarValue,
+    ) -> Result<Option<bool>, KalamDbError> {
+        // Build index prefix for this PK value
+        let prefix = self.pk_index.build_prefix_for_pk(pk_value);
+
+        // Quick check: does any version exist in index?
+        let exists = self
+            .store
+            .exists_by_index(0, &prefix)
+            .map_err(|e| KalamDbError::Other(format!("PK index exists check failed: {}", e)))?;
+
+        if !exists {
+            return Ok(None); // No version in hot storage
+        }
+
+        // At least one version exists - fetch just the latest (limit 1)
+        let results = self
+            .store
+            .scan_by_index(0, Some(&prefix), Some(1))
+            .map_err(|e| KalamDbError::Other(format!("PK index scan failed: {}", e)))?;
+
+        if let Some((_row_id, row)) = results.into_iter().next() {
+            Ok(Some(!row._deleted))
+        } else {
+            Ok(None)
+        }
     }
 
     /// Retrieve a specific row version from Parquet storage by SeqId
@@ -249,20 +277,14 @@ impl BaseTableProvider<SharedTableRowId, SharedTableRow> for SharedTableProvider
 
     /// Find row by PK value using the PK index for O(1) lookup.
     ///
-    /// This overrides the default base implementation that does a full table scan.
+    /// OPTIMIZED: Uses `pk_exists_in_hot` for fast hot-path check.
+    /// OPTIMIZED: Uses `pk_exists_in_cold` with manifest-based segment pruning for cold storage.
     /// For shared tables, user_id is ignored (no RLS).
-    /// For hot storage (RocksDB), this is O(1). If not found in hot storage,
-    /// falls back to scanning Parquet (cold storage).
     fn find_row_key_by_id_field(
         &self,
         _user_id: &UserId,
         id_value: &str,
     ) -> Result<Option<SharedTableRowId>, KalamDbError> {
-        log::trace!(
-            "[SharedTableProvider] find_row_key_by_id_field via PK index: id_value='{}'",
-            id_value
-        );
-
         // Try to parse id_value as i64 first (most common case)
         let pk_value = if let Ok(int_val) = id_value.parse::<i64>() {
             ScalarValue::Int64(Some(int_val))
@@ -270,35 +292,45 @@ impl BaseTableProvider<SharedTableRowId, SharedTableRow> for SharedTableProvider
             ScalarValue::Utf8(Some(id_value.to_string()))
         };
 
-        // Use PK index for efficient hot storage lookup (O(1))
-        if let Some((row_id, _row)) = self.find_by_pk(&pk_value)? {
-            log::trace!(
-                "[SharedTableProvider] Found row in hot storage with id={}",
-                id_value
-            );
-            return Ok(Some(row_id));
+        // Fast path: check hot storage using optimized existence check
+        match self.pk_exists_in_hot(&pk_value)? {
+            Some(true) => {
+                // Non-deleted version exists - get the actual row_id
+                if let Some((row_id, _row)) = self.find_by_pk(&pk_value)? {
+                    return Ok(Some(row_id));
+                }
+            }
+            Some(false) => {
+                // Only deleted versions in hot storage - PK is available
+                return Ok(None);
+            }
+            None => {
+                // Not in hot storage - check cold storage
+            }
         }
 
-        log::trace!(
-            "[SharedTableProvider] Row not found in hot storage for id={}, checking cold storage",
-            id_value
-        );
+        // Not found in hot storage - check cold storage using optimized manifest-based lookup
+        // This uses column_stats to prune segments that can't contain the PK
+        let pk_name = self.primary_key_field_name();
+        let exists_in_cold = base::pk_exists_in_cold(
+            &self.core,
+            self.core.table_id(),
+            self.core.table_type(),
+            None, // No user scoping for shared tables
+            pk_name,
+            id_value,
+        )?;
 
-        // Not found in hot storage - fall back to Parquet scan (cold storage)
-        // This is more expensive but necessary for flushed rows
-        let result = base::find_row_by_pk(self, None, id_value)?;
-        if let Some((row_id, _row)) = result {
+        if exists_in_cold {
             log::trace!(
-                "[SharedTableProvider] Found row in cold storage with id={}",
+                "[SharedTableProvider] PK {} exists in cold storage",
                 id_value
             );
-            return Ok(Some(row_id));
+            // For insert uniqueness check, we just need to know it exists
+            // Return a dummy row_id (the actual _seq doesn't matter for uniqueness)
+            return Ok(Some(kalamdb_commons::ids::SeqId::from(0)));
         }
 
-        log::trace!(
-            "[SharedTableProvider] Row not found anywhere for id={}",
-            id_value
-        );
         Ok(None)
     }
 

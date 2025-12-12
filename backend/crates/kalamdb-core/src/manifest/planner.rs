@@ -180,6 +180,101 @@ impl ManifestAccessPlanner {
 
         selections
     }
+
+    /// Prune segments that definitely cannot contain a PK value based on column_stats min/max
+    ///
+    /// Returns segments where the PK value could exist (i.e., value is within [min, max] range).
+    /// If a segment has no column_stats for the PK column, it's included (conservative).
+    ///
+    /// # Arguments
+    /// * `manifest` - The manifest containing segment metadata
+    /// * `pk_column` - Name of the primary key column
+    /// * `pk_value` - The PK value to search for (as string for comparison)
+    ///
+    /// # Returns
+    /// List of segment file paths that could contain the PK value
+    pub fn plan_by_pk_value(
+        &self,
+        manifest: &Manifest,
+        pk_column: &str,
+        pk_value: &str,
+    ) -> Vec<String> {
+        if manifest.segments.is_empty() {
+            return Vec::new();
+        }
+
+        let mut selected_paths: Vec<String> = Vec::new();
+
+        for segment in &manifest.segments {
+            // Skip tombstoned segments
+            if segment.tombstone {
+                continue;
+            }
+
+            // Check if segment has column_stats for the PK column
+            if let Some(stats) = segment.column_stats.get(pk_column) {
+                // Check if PK value could be in this segment's range
+                if !Self::pk_value_in_range(pk_value, stats) {
+                    // Definitely not in this segment, skip
+                    continue;
+                }
+            }
+            // No column_stats for PK column = conservative, include the segment
+
+            selected_paths.push(segment.path.clone());
+        }
+
+        selected_paths
+    }
+
+    /// Check if a PK value could be within the min/max range of column stats
+    ///
+    /// Supports string and numeric comparisons.
+    fn pk_value_in_range(pk_value: &str, stats: &kalamdb_commons::types::ColumnStats) -> bool {
+        // If no min/max stats, conservatively assume it could be in range
+        let (Some(min), Some(max)) = (&stats.min, &stats.max) else {
+            return true;
+        };
+
+        // Try numeric comparison first (most common for PKs)
+        if let Ok(pk_num) = pk_value.parse::<i64>() {
+            let min_num = Self::json_value_as_i64(min);
+            let max_num = Self::json_value_as_i64(max);
+
+            if let (Some(min_n), Some(max_n)) = (min_num, max_num) {
+                return pk_num >= min_n && pk_num <= max_n;
+            }
+        }
+
+        // Fall back to string comparison
+        let min_str = Self::json_value_as_str(min);
+        let max_str = Self::json_value_as_str(max);
+
+        if let (Some(min_s), Some(max_s)) = (min_str, max_str) {
+            return pk_value >= min_s.as_str() && pk_value <= max_s.as_str();
+        }
+
+        // Can't compare, conservatively include
+        true
+    }
+
+    /// Extract i64 from serde_json::Value
+    fn json_value_as_i64(value: &serde_json::Value) -> Option<i64> {
+        match value {
+            serde_json::Value::Number(n) => n.as_i64(),
+            serde_json::Value::String(s) => s.parse::<i64>().ok(),
+            _ => None,
+        }
+    }
+
+    /// Extract String from serde_json::Value
+    fn json_value_as_str(value: &serde_json::Value) -> Option<String> {
+        match value {
+            serde_json::Value::String(s) => Some(s.clone()),
+            serde_json::Value::Number(n) => Some(n.to_string()),
+            _ => None,
+        }
+    }
 }
 
 #[cfg(test)]
