@@ -625,11 +625,14 @@ impl BaseTableProvider<SharedTableRowId, SharedTableRow> for SharedTableProvider
     fn scan_with_version_resolution_to_kvs(
         &self,
         _user_id: &UserId,
-        _filter: Option<&Expr>,
+        filter: Option<&Expr>,
         since_seq: Option<kalamdb_commons::ids::SeqId>,
         limit: Option<usize>,
         keep_deleted: bool,
     ) -> Result<Vec<(SharedTableRowId, SharedTableRow)>, KalamDbError> {
+        // Warn if no filter or limit - potential performance issue
+        base::warn_if_unfiltered_scan(self.core.table_id(), filter, limit, self.core.table_type());
+
         // IGNORE user_id parameter - scan ALL rows (hot storage)
 
         // Construct start_key if since_seq is provided
@@ -641,10 +644,8 @@ impl BaseTableProvider<SharedTableRowId, SharedTableRow> for SharedTableProvider
             None
         };
 
-        // Use limit if provided, otherwise default to 100,000
-        // Note: We might need to scan more than limit to account for version resolution/tombstones
-        // For now, let's use limit * 2 + 1000 as a heuristic if limit is small, or just 100,000
-        let scan_limit = limit.map(|l| std::cmp::max(l * 2, 1000)).unwrap_or(100_000);
+        // Calculate scan limit using common helper
+        let scan_limit = base::calculate_scan_limit(limit);
 
         let raw = self
             .store
@@ -657,8 +658,8 @@ impl BaseTableProvider<SharedTableRowId, SharedTableRow> for SharedTableProvider
             })?;
         log::debug!("[SharedProvider] RocksDB scan returned {} rows", raw.len());
 
-        // Scan cold storage (Parquet files)
-        let parquet_batch = self.scan_parquet_files_as_batch(_filter)?;
+        // Scan cold storage (Parquet files) - pass filter for pruning
+        let parquet_batch = self.scan_parquet_files_as_batch(filter)?;
 
         let pk_name = self.primary_key_field_name().to_string();
 
@@ -693,12 +694,8 @@ impl BaseTableProvider<SharedTableRowId, SharedTableRow> for SharedTableProvider
 
         let mut result = merge_versioned_rows(&pk_name, hot_rows, cold_rows, keep_deleted);
 
-        // Apply limit after resolution
-        if let Some(l) = limit {
-            if result.len() > l {
-                result.truncate(l);
-            }
-        }
+        // Apply limit after resolution using common helper
+        base::apply_limit(&mut result, limit);
 
         log::debug!(
             "[SharedProvider] Version-resolved rows (post-tombstone filter): {}",

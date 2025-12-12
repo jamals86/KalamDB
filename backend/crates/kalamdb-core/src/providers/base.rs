@@ -801,3 +801,49 @@ where
     }
     Ok(())
 }
+
+/// Log a warning when scanning version resolution without filter or limit.
+///
+/// This helps identify potential performance issues where full table scans are happening.
+/// Called by `scan_with_version_resolution_to_kvs` implementations.
+///
+/// # Arguments
+/// * `table_id` - Table identifier for logging
+/// * `filter` - Optional filter expression
+/// * `limit` - Optional limit
+/// * `table_type` - Type of table (User, Shared, Stream)
+pub fn warn_if_unfiltered_scan(
+    table_id: &TableId,
+    filter: Option<&Expr>,
+    limit: Option<usize>,
+    table_type: TableType,
+) {
+    if filter.is_none() && limit.is_none() {
+        log::warn!(
+            "⚠️  [UNFILTERED SCAN] table={}.{} type={} | No filter or limit provided - scanning ALL rows. \
+             This may cause performance issues for large tables.",
+            table_id.namespace_id().as_str(),
+            table_id.table_name().as_str(),
+            table_type.as_str()
+        );
+    }
+}
+
+/// Apply limit to a vector of results after version resolution.
+///
+/// Common helper used by both User and Shared table providers.
+pub fn apply_limit<T>(result: &mut Vec<T>, limit: Option<usize>) {
+    if let Some(l) = limit {
+        if result.len() > l {
+            result.truncate(l);
+        }
+    }
+}
+
+/// Calculate scan limit for RocksDB based on user-provided limit.
+///
+/// We scan more than the limit to account for version resolution and tombstones.
+/// Default is 100,000 if no limit is provided.
+pub fn calculate_scan_limit(limit: Option<usize>) -> usize {
+    limit.map(|l| std::cmp::max(l * 2, 1000)).unwrap_or(100_000)
+}

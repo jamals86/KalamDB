@@ -830,12 +830,16 @@ impl BaseTableProvider<UserTableRowId, UserTableRow> for UserTableProvider {
     fn scan_with_version_resolution_to_kvs(
         &self,
         user_id: &UserId,
-        _filter: Option<&Expr>,
+        filter: Option<&Expr>,
         since_seq: Option<kalamdb_commons::ids::SeqId>,
         limit: Option<usize>,
         keep_deleted: bool,
     ) -> Result<Vec<(UserTableRowId, UserTableRow)>, KalamDbError> {
         let table_id = self.core.table_id();
+        
+        // Warn if no filter or limit - potential performance issue
+        base::warn_if_unfiltered_scan(table_id, filter, limit, self.core.table_type());
+
         // 1) Scan hot storage (RocksDB) with per-user filtering using prefix scan
         let user_bytes = user_id.as_str().as_bytes();
         let len = (user_bytes.len().min(255)) as u8;
@@ -853,8 +857,8 @@ impl BaseTableProvider<UserTableRowId, UserTableRow> for UserTableProvider {
             None
         };
 
-        // Use limit if provided, otherwise default to 100,000
-        let scan_limit = limit.map(|l| std::cmp::max(l * 2, 1000)).unwrap_or(100_000);
+        // Calculate scan limit using common helper
+        let scan_limit = base::calculate_scan_limit(limit);
 
         let raw_all = self
             .store
@@ -891,8 +895,8 @@ impl BaseTableProvider<UserTableRowId, UserTableRow> for UserTableProvider {
             table_id.table_name().as_str()
         );
 
-        // 2) Scan cold storage (Parquet files)
-        let parquet_batch = self.scan_parquet_files_as_batch(user_id, _filter)?;
+        // 2) Scan cold storage (Parquet files) - pass filter for pruning
+        let parquet_batch = self.scan_parquet_files_as_batch(user_id, filter)?;
 
         let cold_rows: Vec<(UserTableRowId, UserTableRow)> = parquet_batch_to_rows(&parquet_batch)?
             .into_iter()
@@ -922,12 +926,8 @@ impl BaseTableProvider<UserTableRowId, UserTableRow> for UserTableProvider {
         let pk_name = self.primary_key_field_name().to_string();
         let mut result = merge_versioned_rows(&pk_name, hot_rows, cold_rows, keep_deleted);
 
-        // Apply limit after resolution
-        if let Some(l) = limit {
-            if result.len() > l {
-                result.truncate(l);
-            }
-        }
+        // Apply limit after resolution using common helper
+        base::apply_limit(&mut result, limit);
 
         if log::log_enabled!(log::Level::Trace) {
             log::trace!(

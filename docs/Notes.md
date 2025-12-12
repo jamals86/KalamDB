@@ -341,6 +341,8 @@ Code Cleanup Operations:
 10) Use todo!() instead of unimplemented!() where needed
 11) Remove all commented code across the codebase
 12) Check all unwrap() and expect() calls and replace them with proper error handling
+13) make sure "_seq" and "_deleted" we use the enums statics instead of strings
+
 
 Tasks To Repo:
 1) Add ci/cd pipelines to the new repo
