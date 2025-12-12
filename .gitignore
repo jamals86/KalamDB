@@ -81,3 +81,4 @@ backend/logs/*.log
 /backend/logs
 backend/logs/server.jsonl
 backend/logs/server.jsonl
+/link/sdks/typescript/.wasm-target

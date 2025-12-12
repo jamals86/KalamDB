@@ -125,28 +125,29 @@ fn build_ui_if_release() {
     }
 
     // Run npm run build
-    let build_output = if cfg!(target_os = "windows") {
+    // IMPORTANT: use `.status()` (stream output) instead of `.output()`.
+    // Capturing large stdout/stderr can make builds appear "stuck" at `kalamdb-api(build)`.
+    println!("cargo:warning=Running UI build (npm run build) — this can take a few minutes...");
+    let build_status = if cfg!(target_os = "windows") {
         Command::new("cmd")
             .args(["/C", "npm", "run", "build"])
             .current_dir(ui_dir)
-            .output()
+            .status()
     } else {
         Command::new("npm")
             .args(["run", "build"])
             .current_dir(ui_dir)
-            .output()
+            .status()
     };
 
-    match build_output {
-        Ok(output) if output.status.success() => {
+    match build_status {
+        Ok(status) if status.success() => {
             println!("cargo:warning=UI build completed successfully");
         }
-        Ok(output) => {
-            let stderr = String::from_utf8_lossy(&output.stderr);
-            let stdout = String::from_utf8_lossy(&output.stdout);
+        Ok(status) => {
             panic!(
-                "UI build failed with status: {}\n\nSTDOUT:\n{}\n\nSTDERR:\n{}\n\nUI is required for release builds!",
-                output.status, stdout, stderr
+                "UI build failed with status: {}\n\nUI is required for release builds!",
+                status
             );
         }
         Err(e) => {
