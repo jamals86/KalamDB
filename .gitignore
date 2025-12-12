@@ -83,3 +83,5 @@ backend/logs/server.jsonl
 backend/logs/server.jsonl
 /link/sdks/typescript/.wasm-target
 link/sdks/typescript/package-lock.json
+/link/sdks/typescript/.wasm-cargo-home
+/link/sdks/typescript/.wasm-cargo-home
