@@ -12,7 +12,8 @@ fn main() {
     let manifest_dir = PathBuf::from(std::env::var("CARGO_MANIFEST_DIR").unwrap_or_default());
     let repo_root = find_repo_root(&manifest_dir).unwrap_or_else(|| manifest_dir.clone());
 
-    // Build UI for release builds FIRST (before rust-embed macro runs) – only for kalamdb-api.
+    // Build UI for release builds FIRST (before rust-embed macro runs).
+    // Run for the top-level server crate (project-level) and kalamdb-api when applicable.
     if package_name == "kalamdb-api" {
         build_ui_if_release(&repo_root);
     }
@@ -131,17 +132,28 @@ fn build_ui_if_release(repo_root: &Path) {
 
     println!("cargo:warning=Building UI for release...");
 
+    // Use isolated cargo dirs for nested wasm-pack to avoid lock contention with the outer cargo build.
+    let isolated_target = repo_root.join("ui").join(".cargo-target");
+    let isolated_home = repo_root.join("ui").join(".cargo-home");
+
     // Run npm install if node_modules doesn't exist
     let node_modules = ui_dir.join("node_modules");
     if !node_modules.exists() {
         println!("cargo:warning=Installing UI dependencies...");
         let install_status = if cfg!(target_os = "windows") {
-            Command::new("cmd")
-                .args(["/C", "npm", "install"])
+            let mut cmd = Command::new("cmd");
+            cmd.args(["/C", "npm", "install"])
                 .current_dir(&ui_dir)
-                .status()
+                .env("CARGO_TARGET_DIR", &isolated_target)
+                .env("CARGO_HOME", &isolated_home);
+            cmd.status()
         } else {
-            Command::new("npm").arg("install").current_dir(&ui_dir).status()
+            let mut cmd = Command::new("npm");
+            cmd.arg("install")
+                .current_dir(&ui_dir)
+                .env("CARGO_TARGET_DIR", &isolated_target)
+                .env("CARGO_HOME", &isolated_home);
+            cmd.status()
         };
 
         match install_status {
@@ -166,12 +178,19 @@ fn build_ui_if_release(repo_root: &Path) {
     // Capturing large stdout/stderr can make builds appear "stuck".
     println!("cargo:warning=Running UI build (npm run build) — this can take a few minutes...");
     let build_status = if cfg!(target_os = "windows") {
-        Command::new("cmd")
-            .args(["/C", "npm", "run", "build"])
+        let mut cmd = Command::new("cmd");
+        cmd.args(["/C", "npm", "run", "build"])
             .current_dir(&ui_dir)
-            .status()
+            .env("CARGO_TARGET_DIR", &isolated_target)
+            .env("CARGO_HOME", &isolated_home);
+        cmd.status()
     } else {
-        Command::new("npm").args(["run", "build"]).current_dir(&ui_dir).status()
+        let mut cmd = Command::new("npm");
+        cmd.args(["run", "build"])
+            .current_dir(&ui_dir)
+            .env("CARGO_TARGET_DIR", &isolated_target)
+            .env("CARGO_HOME", &isolated_home);
+        cmd.status()
     };
 
     match build_status {

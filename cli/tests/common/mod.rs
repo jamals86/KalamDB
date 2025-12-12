@@ -20,7 +20,7 @@ pub use std::os::unix::fs::PermissionsExt;
 pub const SERVER_URL: &str = "http://127.0.0.1:8080";
 pub const TEST_TIMEOUT: Duration = Duration::from_secs(30);
 /// Default password for the root user
-pub const DEFAULT_ROOT_PASSWORD: &str = "admin123";
+pub const DEFAULT_ROOT_PASSWORD: &str = "";
 
 /// Check if the KalamDB server is running
 pub fn is_server_running() -> bool {

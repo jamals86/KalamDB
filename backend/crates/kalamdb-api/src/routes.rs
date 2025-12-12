@@ -86,8 +86,8 @@ pub fn configure_ui_routes(cfg: &mut web::ServiceConfig, ui_path: &str) {
 async fn healthcheck_handler() -> HttpResponse {
     HttpResponse::Ok().json(json!({
         "status": "healthy",
-        "version": env!("CARGO_PKG_VERSION"),
+        //"version": env!("CARGO_PKG_VERSION"),
         "api_version": "v1",
-        "build_date": env!("BUILD_DATE")
+        //"build_date": env!("BUILD_DATE")
     }))
 }
