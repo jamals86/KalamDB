@@ -47,6 +47,16 @@ const STATUS_ICONS: Record<string, React.ReactNode> = {
   'Retrying': <AlertCircle className="h-3 w-3" />,
 };
 
+// Helper to extract namespace_id and table_name from parameters JSON
+function parseJobParams(parameters: string | null): { namespace_id?: string; table_name?: string } {
+  if (!parameters) return {};
+  try {
+    return JSON.parse(parameters);
+  } catch {
+    return {};
+  }
+}
+
 function getStatusColor(status: string): string {
   return STATUS_COLORS[status] || 'bg-gray-100 text-gray-800';
 }
@@ -106,7 +116,7 @@ export function JobList({ initialFilters, compact = false, onJobClick }: JobList
     setShowFilters(false);
   };
 
-  const hasActiveFilters = filters.status || filters.job_type || filters.namespace_id;
+  const hasActiveFilters = filters.status || filters.job_type;
 
   const handleJobClick = (job: Job) => {
     if (onJobClick) {
@@ -199,14 +209,6 @@ export function JobList({ initialFilters, compact = false, onJobClick }: JobList
                   onChange={(e) => setFilters({ ...filters, job_type: e.target.value || undefined })}
                 />
               </div>
-              <div className="space-y-1">
-                <label className="text-sm font-medium">Namespace</label>
-                <Input
-                  placeholder="Filter by namespace"
-                  value={filters.namespace_id || ''}
-                  onChange={(e) => setFilters({ ...filters, namespace_id: e.target.value || undefined })}
-                />
-              </div>
               <div className="flex items-end">
                 <Button onClick={handleApplyFilters} className="w-full">
                   Apply Filters
@@ -262,10 +264,17 @@ export function JobList({ initialFilters, compact = false, onJobClick }: JobList
                   </TableCell>
                   <TableCell className="font-medium">{job.job_type}</TableCell>
                   <TableCell>
-                    <span className="text-muted-foreground">{job.namespace_id}</span>
-                    {job.table_name && (
-                      <span>.{job.table_name}</span>
-                    )}
+                    {(() => {
+                      const params = parseJobParams(job.parameters);
+                      return (
+                        <>
+                          <span className="text-muted-foreground">{params.namespace_id || '-'}</span>
+                          {params.table_name && (
+                            <span>.{params.table_name}</span>
+                          )}
+                        </>
+                      );
+                    })()}
                   </TableCell>
                   <TableCell className="text-sm text-muted-foreground">
                     {formatTimestamp(job.created_at)}
@@ -323,8 +332,15 @@ export function JobList({ initialFilters, compact = false, onJobClick }: JobList
                 <div>
                   <label className="text-sm font-medium text-muted-foreground">Target</label>
                   <p className="font-medium">
-                    {selectedJob.namespace_id}
-                    {selectedJob.table_name && `.${selectedJob.table_name}`}
+                    {(() => {
+                      const params = parseJobParams(selectedJob.parameters);
+                      return (
+                        <>
+                          {params.namespace_id || '-'}
+                          {params.table_name && `.${params.table_name}`}
+                        </>
+                      );
+                    })()}
                   </p>
                 </div>
                 <div>

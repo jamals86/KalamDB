@@ -39,6 +39,16 @@ const ACTION_COLORS: Record<string, string> = {
   'DROP': 'text-red-600',
 };
 
+// Helper to extract namespace_id and table_name from parameters JSON
+function parseJobParams(parameters: string | null): { namespace_id?: string; table_name?: string } {
+  if (!parameters) return {};
+  try {
+    return JSON.parse(parameters);
+  } catch {
+    return {};
+  }
+}
+
 function getActionColor(action: string): string {
   for (const [key, color] of Object.entries(ACTION_COLORS)) {
     if (action.toUpperCase().startsWith(key)) {
@@ -161,7 +171,10 @@ export function NotificationsDropdown() {
                           </span>
                         </div>
                         <p className="text-xs text-muted-foreground truncate">
-                          {job.namespace_id}{job.table_name && `.${job.table_name}`}
+                          {(() => {
+                            const params = parseJobParams(job.parameters);
+                            return `${params.namespace_id || '-'}${params.table_name ? `.${params.table_name}` : ''}`;
+                          })()}
                         </p>
                         <p className="text-xs text-muted-foreground">
                           {formatTimestamp(job.created_at)}
@@ -259,8 +272,15 @@ export function NotificationsDropdown() {
                 <div>
                   <label className="text-muted-foreground">Target</label>
                   <p className="font-medium">
-                    {selectedJob.namespace_id}
-                    {selectedJob.table_name && `.${selectedJob.table_name}`}
+                    {(() => {
+                      const params = parseJobParams(selectedJob.parameters);
+                      return (
+                        <>
+                          {params.namespace_id || '-'}
+                          {params.table_name && `.${params.table_name}`}
+                        </>
+                      );
+                    })()}
                   </p>
                 </div>
                 <div>

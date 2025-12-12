@@ -25,7 +25,7 @@ export function useNotifications(refreshInterval = 3000) {
     try {
       // Fetch running/queued jobs
       const jobsSql = `
-        SELECT job_id, job_type, namespace_id, table_name, status, created_at, started_at, node_id
+        SELECT job_id, job_type, status, parameters, created_at, started_at, node_id
         FROM system.jobs
         WHERE status = 'Running' OR status = 'Queued' OR status = 'New'
         ORDER BY created_at DESC
@@ -48,10 +48,8 @@ export function useNotifications(refreshInterval = 3000) {
       const runningJobs = jobRows.map((row) => ({
         job_id: String(row.job_id ?? ''),
         job_type: String(row.job_type ?? ''),
-        namespace_id: String(row.namespace_id ?? ''),
-        table_name: row.table_name as string | null,
         status: String(row.status ?? ''),
-        parameters: null,
+        parameters: row.parameters as string | null,
         result: null,
         trace: null,
         error_message: null,

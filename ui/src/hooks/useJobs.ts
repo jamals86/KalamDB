@@ -4,8 +4,6 @@ import { executeSql } from '../lib/kalam-client';
 export interface Job {
   job_id: string;
   job_type: string;
-  namespace_id: string;
-  table_name: string | null;
   status: string;
   parameters: string | null;
   result: string | null;
@@ -22,7 +20,6 @@ export interface Job {
 export interface JobFilters {
   status?: string;
   job_type?: string;
-  namespace_id?: string;
   limit?: number;
 }
 
@@ -36,7 +33,7 @@ export function useJobs() {
     setError(null);
     try {
       let sql = `
-        SELECT job_id, job_type, namespace_id, table_name, status, parameters, result, 
+        SELECT job_id, job_type, status, parameters, result, 
                trace, error_message, memory_used, cpu_used, created_at, started_at, 
                completed_at, node_id
         FROM system.jobs
@@ -49,9 +46,6 @@ export function useJobs() {
       }
       if (filters?.job_type) {
         conditions.push(`job_type = '${filters.job_type}'`);
-      }
-      if (filters?.namespace_id) {
-        conditions.push(`namespace_id = '${filters.namespace_id}'`);
       }
       
       if (conditions.length > 0) {
@@ -71,8 +65,6 @@ export function useJobs() {
       const jobList = rows.map((row) => ({
         job_id: String(row.job_id ?? ''),
         job_type: String(row.job_type ?? ''),
-        namespace_id: String(row.namespace_id ?? ''),
-        table_name: row.table_name as string | null,
         status: String(row.status ?? ''),
         parameters: row.parameters as string | null,
         result: row.result as string | null,
@@ -100,7 +92,7 @@ export function useJobs() {
   const fetchRunningJobs = useCallback(async () => {
     try {
       const sql = `
-        SELECT job_id, job_type, namespace_id, table_name, status, created_at, started_at, node_id
+        SELECT job_id, job_type, status, parameters, created_at, started_at, node_id
         FROM system.jobs
         WHERE status = 'Running' OR status = 'Queued'
         ORDER BY created_at DESC
@@ -112,10 +104,8 @@ export function useJobs() {
       return rows.map((row) => ({
         job_id: String(row.job_id ?? ''),
         job_type: String(row.job_type ?? ''),
-        namespace_id: String(row.namespace_id ?? ''),
-        table_name: row.table_name as string | null,
         status: String(row.status ?? ''),
-        parameters: null,
+        parameters: row.parameters as string | null,
         result: null,
         trace: null,
         error_message: null,
