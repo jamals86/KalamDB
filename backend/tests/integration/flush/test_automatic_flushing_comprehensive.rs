@@ -18,7 +18,13 @@ async fn test_manual_flush_multi_user_partitions() {
     let table_name = "inbox";
     let users = ["alice", "bob"];
 
-    fixtures::create_namespace(&server, namespace).await;
+    let ns_response = fixtures::create_namespace(&server, namespace).await;
+    assert_eq!(
+        ns_response.status,
+        ResponseStatus::Success,
+        "Failed to create namespace: {:?}",
+        ns_response.error
+    );
 
     let create_sql = format!(
         "CREATE TABLE {}.{} (
@@ -78,7 +84,13 @@ async fn test_flush_table_sql_job_and_files() {
     let table_name = "audit_log";
     let user_id = "auditor";
 
-    fixtures::create_namespace(&server, namespace).await;
+    let ns_response = fixtures::create_namespace(&server, namespace).await;
+    assert_eq!(
+        ns_response.status,
+        ResponseStatus::Success,
+        "Failed to create namespace: {:?}",
+        ns_response.error
+    );
 
     let create_sql = format!(
         "CREATE TABLE {}.{} (

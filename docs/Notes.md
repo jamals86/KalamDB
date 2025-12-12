@@ -286,6 +286,7 @@ instead of: 1 failed: Invalid operation: No handler registered for statement typ
 
 196) Make sure after flush to compact th rocksdb column family to free space and optimize reads as well
 
+Make sure there is tests which insert/updte data and then check if the actual data we inserted/updated is there and exists in select then flush the data and check again if insert/update works with the flushed data in cold storage, check that insert fails when inserting a row id primary key which already exists and update do works
 
 
 Here’s the updated 5-line spec with embedding storage inside Parquet and managed HNSW indexing (with delete handling):

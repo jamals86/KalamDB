@@ -70,7 +70,7 @@ pub async fn create_namespace(server: &TestServer, namespace: &str) -> SqlRespon
     // Perform namespace creation as 'root' admin user for RBAC enforcement
     let resp = server.execute_sql_as_user(&sql, "root").await;
     if resp.status != kalamdb_api::models::ResponseStatus::Success {
-        eprintln!(
+        panic!(
             "CREATE NAMESPACE failed: ns={}, error={:?}",
             namespace, resp.error
         );

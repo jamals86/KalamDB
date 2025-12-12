@@ -22,6 +22,8 @@ mod smoke_test_dml_wide_columns;
 mod smoke_test_flush_manifest;
 #[path = "smoke/smoke_test_flush_operations.rs"]
 mod smoke_test_flush_operations;
+#[path = "smoke/smoke_test_flush_pk_integrity.rs"]
+mod smoke_test_flush_pk_integrity;
 #[path = "smoke/smoke_test_queries_benchmark.rs"]
 mod smoke_test_queries_benchmark;
 #[path = "smoke/smoke_test_shared_table_crud.rs"]

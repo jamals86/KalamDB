@@ -20,7 +20,13 @@ async fn test_manual_flush_respects_row_threshold() {
     let table_name = "messages";
     let user_id = "user_rt_001";
 
-    fixtures::create_namespace(&server, namespace).await;
+    let ns_response = fixtures::create_namespace(&server, namespace).await;
+    assert_eq!(
+        ns_response.status,
+        ResponseStatus::Success,
+        "Failed to create namespace: {:?}",
+        ns_response.error
+    );
 
     let create_sql = format!(
         "CREATE TABLE {}.{} (

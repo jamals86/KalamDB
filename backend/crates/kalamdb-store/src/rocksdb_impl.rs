@@ -255,6 +255,17 @@ impl StorageBackend for RocksDBBackend {
         Ok(())
     }
 
+    fn compact_partition(&self, partition: &Partition) -> Result<()> {
+        let cf = self.get_cf(partition)?;
+        
+        // Compact the entire column family range
+        // This removes tombstones and optimizes storage after flush operations
+        // Note: compact_range_cf is infallible (no Result return)
+        self.db.compact_range_cf(&cf, None::<&[u8]>, None::<&[u8]>);
+        
+        Ok(())
+    }
+
     fn as_any(&self) -> &dyn std::any::Any {
         self
     }
