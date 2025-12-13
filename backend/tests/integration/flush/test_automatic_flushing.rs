@@ -16,7 +16,7 @@ use kalamdb_api::models::ResponseStatus;
 #[tokio::test]
 async fn test_manual_flush_respects_row_threshold() {
     let server = TestServer::start_test_server().await;
-    let namespace = "flush_row_threshold";
+    let namespace = "flush_row_threshold_01";
     let table_name = "messages";
     let user_id = "user_rt_001";
 
@@ -26,6 +26,12 @@ async fn test_manual_flush_respects_row_threshold() {
         ResponseStatus::Success,
         "Failed to create namespace: {:?}",
         ns_response.error
+    );
+    
+    // Verify namespace exists before proceeding
+    assert!(
+        server.namespace_exists(namespace).await,
+        "Namespace should exist after creation"
     );
 
     let create_sql = format!(
@@ -74,11 +80,17 @@ async fn test_manual_flush_respects_row_threshold() {
 #[tokio::test]
 async fn test_manual_flush_multiple_batches() {
     let server = TestServer::start_test_server().await;
-    let namespace = "flush_multi_batch";
+    let namespace = "flush_multi_batch_02";
     let table_name = "events";
     let user_id = "user_mb_001";
 
     fixtures::create_namespace(&server, namespace).await;
+    
+    // Verify namespace exists before proceeding
+    assert!(
+        server.namespace_exists(namespace).await,
+        "Namespace should exist after creation"
+    );
 
     let create_sql = format!(
         "CREATE TABLE {}.{} (

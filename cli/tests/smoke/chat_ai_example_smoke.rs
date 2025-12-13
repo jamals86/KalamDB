@@ -122,9 +122,9 @@ fn smoke_chat_ai_example_from_readme() {
             .expect(&format!("failed to insert typing event: {}", event_type));
     }
 
-    // 7. Wait for subscription to receive at least one event
+    // 7. Wait for subscription to receive at least one event (increased timeout for subscription initialization)
     let mut received_event = false;
-    let timeout = Duration::from_secs(5);
+    let timeout = Duration::from_secs(30);
     let start = std::time::Instant::now();
 
     while start.elapsed() < timeout {

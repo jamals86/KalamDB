@@ -41,13 +41,13 @@ async fn test_stream_table_create_and_basic_insert() {
     let server = TestServer::new().await;
 
     // Setup
-    fixtures::create_namespace(&server, "test_ns").await;
-    create_stream_table(&server, "test_ns", "events").await;
+    fixtures::create_namespace(&server, "test_st_create").await;
+    create_stream_table(&server, "test_st_create", "events").await;
 
     // Insert event
     let response = server
         .execute_sql(
-            r#"INSERT INTO test_ns.events (id, event_type, data) 
+            r#"INSERT INTO test_st_create.events (id, event_type, data) 
                VALUES (1, 'user_login', 'user_123')"#,
         )
         .await;
@@ -68,13 +68,13 @@ async fn test_stream_table_multiple_inserts() {
     let server = TestServer::new().await;
 
     // Setup
-    fixtures::create_namespace(&server, "test_ns").await;
-    create_stream_table(&server, "test_ns", "events").await;
+    fixtures::create_namespace(&server, "test_st_multi").await;
+    create_stream_table(&server, "test_st_multi", "events").await;
 
     // Insert multiple events
     let response = server
         .execute_sql(
-            r#"INSERT INTO test_ns.events (id, event_type, data) 
+            r#"INSERT INTO test_st_multi.events (id, event_type, data) 
                VALUES (1, 'user_login', 'user_123')"#,
         )
         .await;
@@ -82,7 +82,7 @@ async fn test_stream_table_multiple_inserts() {
 
     let response = server
         .execute_sql(
-            r#"INSERT INTO test_ns.events (id, event_type, data) 
+            r#"INSERT INTO test_st_multi.events (id, event_type, data) 
                VALUES (2, 'page_view', 'page_home')"#,
         )
         .await;
@@ -90,7 +90,7 @@ async fn test_stream_table_multiple_inserts() {
 
     let response = server
         .execute_sql(
-            r#"INSERT INTO test_ns.events (id, event_type, data) 
+            r#"INSERT INTO test_st_multi.events (id, event_type, data) 
                VALUES (3, 'user_logout', 'user_123')"#,
         )
         .await;
@@ -102,13 +102,13 @@ async fn test_stream_table_no_system_columns() {
     let server = TestServer::new().await;
 
     // Setup
-    fixtures::create_namespace(&server, "test_ns").await;
-    create_stream_table(&server, "test_ns", "events").await;
+    fixtures::create_namespace(&server, "test_st_syscol").await;
+    create_stream_table(&server, "test_st_syscol", "events").await;
 
     // Insert with only user-defined columns (no _updated, _deleted)
     let response = server
         .execute_sql(
-            r#"INSERT INTO test_ns.events (id, event_type, data) 
+            r#"INSERT INTO test_st_syscol.events (id, event_type, data) 
                VALUES (1, 'test_event', 'test_data')"#,
         )
         .await;

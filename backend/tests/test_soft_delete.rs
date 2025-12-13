@@ -94,10 +94,10 @@ async fn test_soft_delete_preserves_data() {
     let server = TestServer::new().await;
 
     // Setup
-    fixtures::create_namespace(&server, "test_ns").await;
+    fixtures::create_namespace(&server, "test_soft_preserves").await;
     server
         .execute_sql_as_user(
-            r#"CREATE TABLE test_ns.tasks (
+            r#"CREATE TABLE test_soft_preserves.tasks (
                 id TEXT PRIMARY KEY,
                 title TEXT,
                 completed BOOLEAN
@@ -112,20 +112,20 @@ async fn test_soft_delete_preserves_data() {
     // Insert and delete
     server
         .execute_sql_as_user(
-            r#"INSERT INTO test_ns.tasks (id, title, completed) 
+            r#"INSERT INTO test_soft_preserves.tasks (id, title, completed) 
                VALUES ('task1', 'Important task', false)"#,
             "user1",
         )
         .await;
 
     server
-        .execute_sql_as_user("DELETE FROM test_ns.tasks WHERE id = 'task1'", "user1")
+        .execute_sql_as_user("DELETE FROM test_soft_preserves.tasks WHERE id = 'task1'", "user1")
         .await;
 
     // Query with explicit _deleted column
     let response = server
         .execute_sql_as_user(
-            "SELECT id, title, _deleted FROM test_ns.tasks WHERE id = 'task1'",
+            "SELECT id, title, _deleted FROM test_soft_preserves.tasks WHERE id = 'task1'",
             "user1",
         )
         .await;
@@ -150,10 +150,10 @@ async fn test_deleted_field_default_false() {
     let server = TestServer::new().await;
 
     // Setup
-    fixtures::create_namespace(&server, "test_ns").await;
+    fixtures::create_namespace(&server, "test_soft_deleted_field").await;
     server
         .execute_sql_as_user(
-            r#"CREATE TABLE test_ns.tasks (
+            r#"CREATE TABLE test_soft_deleted_field.tasks (
                 id TEXT PRIMARY KEY,
                 title TEXT
             ) WITH (
@@ -167,7 +167,7 @@ async fn test_deleted_field_default_false() {
     // Insert data
     server
         .execute_sql_as_user(
-            r#"INSERT INTO test_ns.tasks (id, title) 
+            r#"INSERT INTO test_soft_deleted_field.tasks (id, title) 
                VALUES ('task1', 'New task')"#,
             "user1",
         )
@@ -175,7 +175,7 @@ async fn test_deleted_field_default_false() {
 
     // Select with _deleted column
     let response = server
-        .execute_sql_as_user("SELECT id, title, _deleted FROM test_ns.tasks", "user1")
+        .execute_sql_as_user("SELECT id, title, _deleted FROM test_soft_deleted_field.tasks", "user1")
         .await;
 
     assert_eq!(response.status, ResponseStatus::Success);
@@ -198,10 +198,10 @@ async fn test_multiple_deletes() {
     let server = TestServer::new().await;
 
     // Setup
-    fixtures::create_namespace(&server, "test_ns").await;
+    fixtures::create_namespace(&server, "test_soft_multiple").await;
     server
         .execute_sql_as_user(
-            r#"CREATE TABLE test_ns.tasks (
+            r#"CREATE TABLE test_soft_multiple.tasks (
                 id TEXT PRIMARY KEY,
                 title TEXT
             ) WITH (
@@ -217,7 +217,7 @@ async fn test_multiple_deletes() {
         server
             .execute_sql_as_user(
                 &format!(
-                    "INSERT INTO test_ns.tasks (id, title) VALUES ('task{}', 'Task {}')",
+                    "INSERT INTO test_soft_multiple.tasks (id, title) VALUES ('task{}', 'Task {}')",
                     i, i
                 ),
                 "user1",
@@ -227,16 +227,16 @@ async fn test_multiple_deletes() {
 
     // Delete tasks 2 and 4
     server
-        .execute_sql_as_user("DELETE FROM test_ns.tasks WHERE id = 'task2'", "user1")
+        .execute_sql_as_user("DELETE FROM test_soft_multi.tasks WHERE id = 'task2'", "user1")
         .await;
 
     server
-        .execute_sql_as_user("DELETE FROM test_ns.tasks WHERE id = 'task4'", "user1")
+        .execute_sql_as_user("DELETE FROM test_soft_multi.tasks WHERE id = 'task4'", "user1")
         .await;
 
     // Verify only 3 tasks remain
     let response = server
-        .execute_sql_as_user("SELECT id FROM test_ns.tasks ORDER BY id", "user1")
+        .execute_sql_as_user("SELECT id FROM test_soft_multi.tasks ORDER BY id", "user1")
         .await;
 
     assert_eq!(response.status, ResponseStatus::Success);
@@ -259,10 +259,10 @@ async fn test_delete_with_where_clause() {
     let server = TestServer::new().await;
 
     // Setup
-    fixtures::create_namespace(&server, "test_ns").await;
+    fixtures::create_namespace(&server, "test_soft_where").await;
     server
         .execute_sql_as_user(
-            r#"CREATE TABLE test_ns.tasks (
+            r#"CREATE TABLE test_soft_where.tasks (
                 id TEXT PRIMARY KEY,
                 title TEXT,
                 priority INT
@@ -277,7 +277,7 @@ async fn test_delete_with_where_clause() {
     // Insert tasks with different priorities
     server
         .execute_sql_as_user(
-            r#"INSERT INTO test_ns.tasks (id, title, priority) 
+            r#"INSERT INTO test_soft_where.tasks (id, title, priority) 
                VALUES ('task1', 'Low priority', 1)"#,
             "user1",
         )
@@ -285,7 +285,7 @@ async fn test_delete_with_where_clause() {
 
     server
         .execute_sql_as_user(
-            r#"INSERT INTO test_ns.tasks (id, title, priority) 
+            r#"INSERT INTO test_soft_where.tasks (id, title, priority) 
                VALUES ('task2', 'High priority', 5)"#,
             "user1",
         )
@@ -293,7 +293,7 @@ async fn test_delete_with_where_clause() {
 
     server
         .execute_sql_as_user(
-            r#"INSERT INTO test_ns.tasks (id, title, priority) 
+            r#"INSERT INTO test_soft_where.tasks (id, title, priority) 
                VALUES ('task3', 'Low priority', 1)"#,
             "user1",
         )
@@ -301,14 +301,14 @@ async fn test_delete_with_where_clause() {
 
     // Delete all low priority tasks
     let response = server
-        .execute_sql_as_user("DELETE FROM test_ns.tasks WHERE priority = 1", "user1")
+        .execute_sql_as_user("DELETE FROM test_soft_where.tasks WHERE priority = 1", "user1")
         .await;
 
     assert_eq!(response.status, ResponseStatus::Success);
 
     // Verify only high priority task remains
     let response = server
-        .execute_sql_as_user("SELECT id FROM test_ns.tasks", "user1")
+        .execute_sql_as_user("SELECT id FROM test_soft_where.tasks", "user1")
         .await;
 
     assert_eq!(response.status, ResponseStatus::Success);
@@ -325,10 +325,10 @@ async fn test_count_excludes_deleted_rows() {
     let server = TestServer::new().await;
 
     // Setup
-    fixtures::create_namespace(&server, "test_ns").await;
+    fixtures::create_namespace(&server, "test_soft_count").await;
     server
         .execute_sql_as_user(
-            r#"CREATE TABLE test_ns.tasks (
+            r#"CREATE TABLE test_soft_count.tasks (
                 id TEXT PRIMARY KEY,
                 title TEXT
             ) WITH (
@@ -344,7 +344,7 @@ async fn test_count_excludes_deleted_rows() {
         server
             .execute_sql_as_user(
                 &format!(
-                    "INSERT INTO test_ns.tasks (id, title) VALUES ('task{}', 'Task {}')",
+                    "INSERT INTO test_soft_count.tasks (id, title) VALUES ('task{}', 'Task {}')",
                     i, i
                 ),
                 "user1",
@@ -354,7 +354,7 @@ async fn test_count_excludes_deleted_rows() {
 
     // Count before delete
     let response = server
-        .execute_sql_as_user("SELECT COUNT(*) as count FROM test_ns.tasks", "user1")
+        .execute_sql_as_user("SELECT COUNT(*) as count FROM test_soft_count.tasks", "user1")
         .await;
 
     assert_eq!(response.status, ResponseStatus::Success);
@@ -366,14 +366,14 @@ async fn test_count_excludes_deleted_rows() {
     // Delete 2 tasks
     server
         .execute_sql_as_user(
-            "DELETE FROM test_ns.tasks WHERE id IN ('task1', 'task3')",
+            "DELETE FROM test_soft_count.tasks WHERE id IN ('task1', 'task3')",
             "user1",
         )
         .await;
 
     // Count after delete
     let response = server
-        .execute_sql_as_user("SELECT COUNT(*) as count FROM test_ns.tasks", "user1")
+        .execute_sql_as_user("SELECT COUNT(*) as count FROM test_soft_count.tasks", "user1")
         .await;
 
     assert_eq!(response.status, ResponseStatus::Success);

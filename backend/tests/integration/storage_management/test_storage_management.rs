@@ -104,18 +104,24 @@ async fn test_02_show_storages_basic() {
 async fn test_03_create_storage_filesystem() {
     let server = TestServer::new().await;
 
-    // Create a filesystem storage
-    let sql = r#"
+    // Create a filesystem storage using temp directory
+    let storage_path = server.storage_base_path.join("archive");
+    let sql = format!(
+        r#"
         CREATE STORAGE archive
         TYPE filesystem
         NAME 'Archive Storage'
         DESCRIPTION 'Cold storage for archived data'
-        PATH '/data/archive'
-        SHARED_TABLES_TEMPLATE '/data/archive/shared/{namespace}/{tableName}'
-        USER_TABLES_TEMPLATE '/data/archive/users/{namespace}/{tableName}/{userId}'
-    "#;
+        PATH '{}'
+        SHARED_TABLES_TEMPLATE '{}/shared/{{namespace}}/{{tableName}}'
+        USER_TABLES_TEMPLATE '{}/users/{{namespace}}/{{tableName}}/{{userId}}'
+    "#,
+        storage_path.display(),
+        storage_path.display(),
+        storage_path.display()
+    );
 
-    let response = server.execute_sql(sql).await;
+    let response = server.execute_sql(&sql).await;
 
     assert_eq!(
         response.status,
@@ -232,7 +238,7 @@ async fn test_05_create_storage_duplicate_error() {
         CREATE STORAGE local
         TYPE filesystem
         NAME 'Duplicate Local'
-        PATH '/data/duplicate'
+        PATH '/tmp/kalamdb_test_duplicate'
     "#;
 
     let response = server.execute_sql(sql).await;
@@ -268,7 +274,7 @@ async fn test_06_create_storage_invalid_template() {
         CREATE STORAGE bad_template
         TYPE filesystem
         NAME 'Bad Template Storage'
-        PATH '/data/bad'
+        PATH '/tmp/kalamdb_test_bad'
         USER_TABLES_TEMPLATE '/data/{userId}/{tableName}/{namespace}'
     "#;
 
@@ -307,7 +313,7 @@ async fn test_07_alter_storage_all_fields() {
         CREATE STORAGE temp_storage
         TYPE filesystem
         NAME 'Temporary Storage'
-        PATH '/data/temp'
+        PATH '/tmp/kalamdb_test_temp'
     "#;
 
     let response = server.execute_sql(create_sql).await;
@@ -382,7 +388,7 @@ async fn test_08_alter_storage_partial() {
         TYPE filesystem
         NAME 'Original Name'
         DESCRIPTION 'Original description'
-        PATH '/data/partial'
+        PATH '/tmp/kalamdb_test_partial'
     "#;
 
     let response = server.execute_sql(create_sql).await;
@@ -437,7 +443,7 @@ async fn test_09_alter_storage_invalid_template() {
         CREATE STORAGE alter_invalid
         TYPE filesystem
         NAME 'Alter Invalid Test'
-        PATH '/data/alter_invalid'
+        PATH '/tmp/kalamdb_test_alter_invalid'
     "#;
 
     let response = server.execute_sql(create_sql).await;
@@ -483,7 +489,7 @@ async fn test_10_drop_storage_basic() {
         CREATE STORAGE drop_test
         TYPE filesystem
         NAME 'Drop Test Storage'
-        PATH '/data/drop_test'
+        PATH '/tmp/kalamdb_test_drop_test'
     "#;
 
     let response = server.execute_sql(create_sql).await;
@@ -587,7 +593,7 @@ async fn test_13_template_validation_correct_order() {
         CREATE STORAGE valid_order
         TYPE filesystem
         NAME 'Valid Order Storage'
-        PATH '/data/valid'
+        PATH '/tmp/kalamdb_test_valid'
         USER_TABLES_TEMPLATE '/data/{namespace}/{tableName}/{shard}/{userId}/data'
     "#;
 
@@ -613,7 +619,7 @@ async fn test_14_template_validation_invalid_order() {
         CREATE STORAGE invalid_order
         TYPE filesystem
         NAME 'Invalid Order Storage'
-        PATH '/data/invalid'
+        PATH '/tmp/kalamdb_test_invalid'
         USER_TABLES_TEMPLATE '/data/{userId}/{namespace}/{tableName}'
     "#;
 
@@ -638,7 +644,7 @@ async fn test_15_storage_lookup_table_level() {
         CREATE STORAGE table_storage
         TYPE filesystem
         NAME 'Table-level Storage'
-        PATH '/data/table_storage'
+        PATH '/tmp/kalamdb_test_table_storage'
     "#;
     server.execute_sql(create_storage).await;
 
@@ -756,7 +762,7 @@ async fn test_17_concurrent_storage_operations() {
 
     // Create storage
     let create =
-        "CREATE STORAGE concurrent TYPE filesystem NAME 'Concurrent' PATH '/data/concurrent'";
+        "CREATE STORAGE concurrent TYPE filesystem NAME 'Concurrent' PATH '/tmp/kalamdb_test_concurrent'";
     server.execute_sql(create).await;
 
     // Concurrent ALTER operations (simulated sequentially - actual concurrency would need tokio::spawn)
@@ -810,7 +816,7 @@ async fn test_18_invalid_storage_type() {
         CREATE STORAGE invalid_type_test
         TYPE invalid_backend
         NAME 'Invalid Type'
-        PATH '/data/invalid'
+        PATH '/tmp/kalamdb_test_invalid'
     "#;
 
     let response = server.execute_sql(sql).await;
@@ -844,7 +850,7 @@ async fn test_19_minimal_storage_config() {
         CREATE STORAGE minimal
         TYPE filesystem
         NAME 'Minimal Storage'
-        PATH '/data/minimal'
+        PATH '/tmp/kalamdb_test_minimal'
     "#;
 
     let response = server.execute_sql(sql).await;
@@ -887,7 +893,7 @@ async fn test_20_storage_with_namespace() {
         CREATE STORAGE ns_storage
         TYPE filesystem
         NAME 'Namespace Storage'
-        PATH '/data/ns_storage'
+        PATH '/tmp/kalamdb_test_ns_storage'
         SHARED_TABLES_TEMPLATE '/data/ns_storage/shared/{namespace}/{tableName}'
     "#;
     server.execute_sql(create_storage).await;
@@ -1260,7 +1266,7 @@ async fn test_29_delete_storage_with_tables() {
         CREATE STORAGE protected_storage
         TYPE filesystem
         NAME 'Protected Storage'
-        PATH '/data/protected'
+        PATH '/tmp/kalamdb_test_protected'
     "#;
     server.execute_sql(create_storage).await;
 
@@ -1376,13 +1382,13 @@ async fn test_32_show_storages_ordering() {
 
     // Create multiple storages
     server
-        .execute_sql("CREATE STORAGE z_storage TYPE filesystem NAME 'Z Storage' PATH '/data/z'")
+        .execute_sql("CREATE STORAGE z_storage TYPE filesystem NAME 'Z Storage' PATH '/tmp/kalamdb_test_z'")
         .await;
     server
-        .execute_sql("CREATE STORAGE a_storage TYPE filesystem NAME 'A Storage' PATH '/data/a'")
+        .execute_sql("CREATE STORAGE a_storage TYPE filesystem NAME 'A Storage' PATH '/tmp/kalamdb_test_a'")
         .await;
     server
-        .execute_sql("CREATE STORAGE m_storage TYPE filesystem NAME 'M Storage' PATH '/data/m'")
+        .execute_sql("CREATE STORAGE m_storage TYPE filesystem NAME 'M Storage' PATH '/tmp/kalamdb_test_m'")
         .await;
 
     // Query SHOW STORAGES
@@ -1439,7 +1445,7 @@ async fn test_33_storage_template_validation() {
         CREATE STORAGE invalid_order
         TYPE filesystem
         NAME 'Invalid Template Order'
-        PATH '/data/invalid'
+        PATH '/tmp/kalamdb_test_invalid'
         USER_TABLES_TEMPLATE '/data/invalid/{namespace}/{tableName}/{userId}/{shard}'
     "#;
 
@@ -1482,7 +1488,7 @@ async fn test_34_shared_table_template_ordering() {
         CREATE STORAGE correct_shared
         TYPE filesystem
         NAME 'Correct Shared Template'
-        PATH '/data/shared'
+        PATH '/tmp/kalamdb_test_shared'
         SHARED_TABLES_TEMPLATE '/data/shared/{namespace}/{tableName}'
     "#;
 
@@ -1517,7 +1523,7 @@ async fn test_35_user_table_template_ordering() {
         CREATE STORAGE correct_user
         TYPE filesystem
         NAME 'Correct User Template'
-        PATH '/data/users'
+        PATH '/tmp/kalamdb_test_users'
         USER_TABLES_TEMPLATE '/data/users/{namespace}/{tableName}/{shard}/{userId}'
     "#;
 
@@ -1543,7 +1549,7 @@ async fn test_36_user_table_template_requires_userId() {
         CREATE STORAGE missing_userId
         TYPE filesystem
         NAME 'Missing UserId Template'
-        PATH '/data/bad'
+        PATH '/tmp/kalamdb_test_bad'
         USER_TABLES_TEMPLATE '/data/bad/{namespace}/{tableName}'
     "#;
 
@@ -1587,7 +1593,7 @@ async fn test_37_flush_with_use_user_storage() {
         CREATE STORAGE user_storage
         TYPE filesystem
         NAME 'User Storage'
-        PATH '/data/user_storage'
+        PATH '/tmp/kalamdb_test_user_storage'
         USER_TABLES_TEMPLATE '/data/user_storage/{namespace}/{tableName}/{userId}'
     "#;
     server.execute_sql(create_storage).await;
@@ -1766,7 +1772,7 @@ async fn test_41_multi_storage_flush() {
         CREATE STORAGE fs_storage_1
         TYPE filesystem
         NAME 'Filesystem Storage 1'
-        PATH '/data/fs1'
+        PATH '/tmp/kalamdb_test_fs1'
         SHARED_TABLES_TEMPLATE '/data/fs1/{namespace}/{tableName}'
     "#,
         )
@@ -1778,7 +1784,7 @@ async fn test_41_multi_storage_flush() {
         CREATE STORAGE fs_storage_2
         TYPE filesystem
         NAME 'Filesystem Storage 2'
-        PATH '/data/fs2'
+        PATH '/tmp/kalamdb_test_fs2'
         SHARED_TABLES_TEMPLATE '/data/fs2/{namespace}/{tableName}'
     "#,
         )

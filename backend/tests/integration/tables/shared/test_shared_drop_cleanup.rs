@@ -27,10 +27,10 @@ async fn test_drop_shared_table_deletes_partitions_and_parquet() {
     // Create shared table
     let create_sql = format!(
         r#"CREATE TABLE {}.{} (
-            conversation_id TEXT,
+            conversation_id TEXT PRIMARY KEY,
             title TEXT,
             participant_count INT
-        ) TABLE_TYPE shared STORAGE local"#,
+        ) WITH (TYPE='SHARED', STORAGE_ID='local')"#,
         namespace, table
     );
     let resp = server.execute_sql(&create_sql).await;

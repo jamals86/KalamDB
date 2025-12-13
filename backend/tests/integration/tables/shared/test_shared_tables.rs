@@ -21,7 +21,7 @@ async fn test_shared_table_create_and_drop() {
     let server = TestServer::new().await;
 
     // Create namespace first
-    let response = fixtures::create_namespace(&server, "test_ns").await;
+    let response = fixtures::create_namespace(&server, "test_sh_create").await;
     assert_eq!(
         response.status,
         ResponseStatus::Success,
@@ -30,7 +30,7 @@ async fn test_shared_table_create_and_drop() {
     );
 
     // Create shared table
-    let response = fixtures::create_shared_table(&server, "test_ns", "conversations").await;
+    let response = fixtures::create_shared_table(&server, "test_sh_create", "conversations").await;
     assert_eq!(
         response.status,
         ResponseStatus::Success,
@@ -40,12 +40,12 @@ async fn test_shared_table_create_and_drop() {
 
     // Verify table exists
     assert!(
-        server.table_exists("test_ns", "conversations").await,
+        server.table_exists("test_sh_create", "conversations").await,
         "Table should exist"
     );
 
     // Drop table
-    let response = fixtures::drop_table(&server, "test_ns", "conversations").await;
+    let response = fixtures::drop_table(&server, "test_sh_create", "conversations").await;
     assert_eq!(
         response.status,
         ResponseStatus::Success,
@@ -55,7 +55,7 @@ async fn test_shared_table_create_and_drop() {
 
     // Verify table no longer exists
     assert!(
-        !server.table_exists("test_ns", "conversations").await,
+        !server.table_exists("test_sh_create", "conversations").await,
         "Table should be dropped"
     );
 }
@@ -65,13 +65,13 @@ async fn test_shared_table_insert_and_select() {
     let server = TestServer::new().await;
 
     // Setup: Create namespace and table
-    fixtures::create_namespace(&server, "test_ns").await;
-    fixtures::create_shared_table(&server, "test_ns", "conversations").await;
+    fixtures::create_namespace(&server, "test_shared_insert_select").await;
+    fixtures::create_shared_table(&server, "test_shared_insert_select", "conversations").await;
 
     // Insert data
     let response = server
         .execute_sql(
-            r#"INSERT INTO test_ns.conversations (conversation_id, title, participant_count) 
+            r#"INSERT INTO test_shared_insert_select.conversations (conversation_id, title, participant_count) 
            VALUES ('conv001', 'Team Standup', 5)"#,
         )
         .await;
@@ -85,7 +85,7 @@ async fn test_shared_table_insert_and_select() {
 
     // Select data back
     let response = server.execute_sql(
-        "SELECT conversation_id, title, participant_count FROM test_ns.conversations WHERE conversation_id = 'conv001'"
+        "SELECT conversation_id, title, participant_count FROM test_sh_insert.conversations WHERE conversation_id = 'conv001'"
     ).await;
 
     assert_eq!(
@@ -114,14 +114,14 @@ async fn test_shared_table_multiple_inserts() {
     let server = TestServer::new().await;
 
     // Setup
-    fixtures::create_namespace(&server, "test_ns").await;
-    fixtures::create_shared_table(&server, "test_ns", "conversations").await;
+    fixtures::create_namespace(&server, "test_shared_multi").await;
+    fixtures::create_shared_table(&server, "test_shared_multi", "conversations").await;
 
     // Insert multiple rows
     let response = server
         .execute_sql(
             r#"
-        INSERT INTO test_ns.conversations (conversation_id, title) VALUES 
+        INSERT INTO test_shared_multi.conversations (conversation_id, title) VALUES 
             ('conv001', 'Standup'),
             ('conv002', 'Planning'),
             ('conv003', 'Review')
@@ -138,7 +138,7 @@ async fn test_shared_table_multiple_inserts() {
     // Verify all rows exist
     let response = server
         .execute_sql(
-            "SELECT conversation_id, title FROM test_ns.conversations ORDER BY conversation_id",
+            "SELECT conversation_id, title FROM test_sh_multi.conversations ORDER BY conversation_id",
         )
         .await;
 
@@ -165,14 +165,14 @@ async fn test_shared_table_update() {
     let server = TestServer::new().await;
 
     // Setup namespace and table
-    fixtures::create_namespace(&server, "test_ns").await;
-    fixtures::create_shared_table(&server, "test_ns", "conversations").await;
+    fixtures::create_namespace(&server, "test_shared_update").await;
+    fixtures::create_shared_table(&server, "test_shared_update", "conversations").await;
 
     // Insert initial data
     let response = server
         .execute_sql(
             r#"
-        INSERT INTO test_ns.conversations (conversation_id, title, status)
+        INSERT INTO test_shared_update.conversations (conversation_id, title, status)
         VALUES ('conv001', 'Planning Meeting', 'active')
     "#,
         )
@@ -183,7 +183,7 @@ async fn test_shared_table_update() {
     let response = server
         .execute_sql(
             r#"
-        UPDATE test_ns.conversations 
+        UPDATE test_shared_update.conversations 
         SET title = 'Updated Planning Meeting', status = 'archived'
         WHERE conversation_id = 'conv001'
     "#,
@@ -199,7 +199,7 @@ async fn test_shared_table_update() {
     // Verify update
     let response = server
         .execute_sql(
-            "SELECT title, status FROM test_ns.conversations WHERE conversation_id = 'conv001'",
+            "SELECT title, status FROM test_sh_update.conversations WHERE conversation_id = 'conv001'",
         )
         .await;
 
@@ -219,13 +219,13 @@ async fn test_shared_table_select() {
     let server = TestServer::new().await;
 
     // Setup and insert data
-    fixtures::create_namespace(&server, "test_ns").await;
-    fixtures::create_shared_table(&server, "test_ns", "conversations").await;
+    fixtures::create_namespace(&server, "test_shared_select").await;
+    fixtures::create_shared_table(&server, "test_shared_select", "conversations").await;
 
     server
         .execute_sql(
             r#"
-        INSERT INTO test_ns.conversations (conversation_id, title, status)
+        INSERT INTO test_shared_select.conversations (conversation_id, title, status)
         VALUES 
             ('conv001', 'Meeting 1', 'active'),
             ('conv002', 'Meeting 2', 'archived'),
@@ -236,7 +236,7 @@ async fn test_shared_table_select() {
 
     // Select data
     let response = server
-        .execute_sql("SELECT * FROM test_ns.conversations ORDER BY conversation_id")
+        .execute_sql("SELECT * FROM test_shared_select.conversations ORDER BY conversation_id")
         .await;
 
     assert_eq!(
@@ -258,24 +258,24 @@ async fn test_shared_table_delete() {
     let server = TestServer::new().await;
 
     // Setup
-    fixtures::create_namespace(&server, "test_ns").await;
-    fixtures::create_shared_table(&server, "test_ns", "conversations").await;
+    fixtures::create_namespace(&server, "test_sh_delete").await;
+    fixtures::create_shared_table(&server, "test_sh_delete", "conversations").await;
 
     // Insert data
     server
         .execute_sql(
-            r#"INSERT INTO test_ns.conversations (conversation_id, title, status) VALUES ('conv001', 'To Delete', 'active')"#,
+            r#"INSERT INTO test_sh_delete.conversations (conversation_id, title, status) VALUES ('conv001', 'To Delete', 'active')"#,
         )
         .await;
     server
         .execute_sql(
-            r#"INSERT INTO test_ns.conversations (conversation_id, title, status) VALUES ('conv002', 'To Keep', 'active')"#,
+            r#"INSERT INTO test_sh_delete.conversations (conversation_id, title, status) VALUES ('conv002', 'To Keep', 'active')"#,
         )
         .await;
 
     // Delete one row (soft delete)
     let response = server
-        .execute_sql("DELETE FROM test_ns.conversations WHERE conversation_id = 'conv001'")
+        .execute_sql("DELETE FROM test_sh_delete.conversations WHERE conversation_id = 'conv001'")
         .await;
 
     assert_eq!(
@@ -287,7 +287,7 @@ async fn test_shared_table_delete() {
 
     // Verify deletion (soft delete should hide the row)
     let response = server
-        .execute_sql("SELECT conversation_id FROM test_ns.conversations ORDER BY conversation_id")
+        .execute_sql("SELECT conversation_id FROM test_sh_delete.conversations ORDER BY conversation_id")
         .await;
 
     assert_eq!(response.status, ResponseStatus::Success);
@@ -298,17 +298,17 @@ async fn test_shared_table_system_columns() {
     let server = TestServer::new().await;
 
     // Setup
-    fixtures::create_namespace(&server, "test_ns").await;
-    fixtures::create_shared_table(&server, "test_ns", "conversations").await;
+    fixtures::create_namespace(&server, "test_sh_syscol").await;
+    fixtures::create_shared_table(&server, "test_sh_syscol", "conversations").await;
 
     // Insert data
     server.execute_sql(
-        r#"INSERT INTO test_ns.conversations (conversation_id, title, participant_count) VALUES ('conv001', 'Test Conversation', 5)"#
+        r#"INSERT INTO test_sh_syscol.conversations (conversation_id, title, participant_count) VALUES ('conv001', 'Test Conversation', 5)"#
     ).await;
 
     // Query including system columns
     let response = server
-        .execute_sql("SELECT conversation_id, title, _seq, _deleted FROM test_ns.conversations")
+        .execute_sql("SELECT conversation_id, title, _seq, _deleted FROM test_sh_syscol.conversations")
         .await;
 
     assert_eq!(
@@ -331,9 +331,9 @@ async fn test_shared_table_if_not_exists() {
     let server = TestServer::new().await;
 
     // Setup
-    fixtures::create_namespace(&server, "test_ns").await;
+    fixtures::create_namespace(&server, "test_shared_if_not_exists").await;
 
-    let create_sql = r#"CREATE TABLE IF NOT EXISTS test_ns.conversations (
+    let create_sql = r#"CREATE TABLE IF NOT EXISTS test_shared_if_not_exists.conversations (
         id INT AUTO_INCREMENT,
         name VARCHAR NOT NULL,
         value VARCHAR
@@ -361,9 +361,9 @@ async fn test_shared_table_flush_policy_rows() {
     let server = TestServer::new().await;
 
     // Setup
-    fixtures::create_namespace(&server, "test_ns").await;
+    fixtures::create_namespace(&server, "test_shared_flush_rows").await;
 
-    let create_sql = r#"CREATE TABLE test_ns.conversations (
+    let create_sql = r#"CREATE TABLE test_shared_flush_rows.conversations (
         id INT AUTO_INCREMENT,
         name VARCHAR NOT NULL,
         value VARCHAR
@@ -381,7 +381,7 @@ async fn test_shared_table_flush_policy_rows() {
     );
 
     // Verify table exists
-    assert!(server.table_exists("test_ns", "conversations").await);
+    assert!(server.table_exists("test_sh_flush", "conversations").await);
 }
 
 #[actix_web::test]
@@ -389,20 +389,20 @@ async fn test_shared_table_query_filtering() {
     let server = TestServer::new().await;
 
     // Setup
-    fixtures::create_namespace(&server, "test_ns").await;
-    fixtures::create_shared_table(&server, "test_ns", "conversations").await;
+    fixtures::create_namespace(&server, "test_sh_filter").await;
+    fixtures::create_shared_table(&server, "test_sh_filter", "conversations").await;
 
     // Insert test data
     server.execute_sql(
-        r#"INSERT INTO test_ns.conversations (conversation_id, title, status) VALUES ('conv001', 'Active Conversation', 'active')"#
+        r#"INSERT INTO test_sh_filter.conversations (conversation_id, title, status) VALUES ('conv001', 'Active Conversation', 'active')"#
     ).await;
     server.execute_sql(
-        r#"INSERT INTO test_ns.conversations (conversation_id, title, status) VALUES ('conv002', 'Archived Conversation', 'archived')"#
+        r#"INSERT INTO test_sh_filter.conversations (conversation_id, title, status) VALUES ('conv002', 'Archived Conversation', 'archived')"#
     ).await;
 
     // Query with filter
     let response = server
-        .execute_sql("SELECT * FROM test_ns.conversations WHERE status = 'active'")
+        .execute_sql("SELECT * FROM test_sh_filter.conversations WHERE status = 'active'")
         .await;
 
     assert_eq!(
@@ -418,30 +418,30 @@ async fn test_shared_table_ordering() {
     let server = TestServer::new().await;
 
     // Setup
-    fixtures::create_namespace(&server, "test_ns").await;
-    fixtures::create_shared_table(&server, "test_ns", "conversations").await;
+    fixtures::create_namespace(&server, "test_sh_order").await;
+    fixtures::create_shared_table(&server, "test_sh_order", "conversations").await;
 
     // Insert data in random order
     server
         .execute_sql(
-            r#"INSERT INTO test_ns.conversations (conversation_id, title) VALUES ('conv003', 'Third')"#,
+            r#"INSERT INTO test_sh_order.conversations (conversation_id, title) VALUES ('conv003', 'Third')"#,
         )
         .await;
     server
         .execute_sql(
-            r#"INSERT INTO test_ns.conversations (conversation_id, title) VALUES ('conv001', 'First')"#,
+            r#"INSERT INTO test_sh_order.conversations (conversation_id, title) VALUES ('conv001', 'First')"#,
         )
         .await;
     server
         .execute_sql(
-            r#"INSERT INTO test_ns.conversations (conversation_id, title) VALUES ('conv002', 'Second')"#,
+            r#"INSERT INTO test_sh_order.conversations (conversation_id, title) VALUES ('conv002', 'Second')"#,
         )
         .await;
 
     // Query with ORDER BY
     let response = server
         .execute_sql(
-            "SELECT conversation_id, title FROM test_ns.conversations ORDER BY conversation_id ASC",
+            "SELECT conversation_id, title FROM test_sh_order.conversations ORDER BY conversation_id ASC",
         )
         .await;
 
@@ -458,21 +458,21 @@ async fn test_shared_table_drop_with_data() {
     let server = TestServer::new().await;
 
     // Setup
-    fixtures::create_namespace(&server, "test_ns").await;
-    fixtures::create_shared_table(&server, "test_ns", "conversations").await;
+    fixtures::create_namespace(&server, "test_sh_dropdata").await;
+    fixtures::create_shared_table(&server, "test_sh_dropdata", "conversations").await;
 
     // Insert data
     for i in 0..5 {
         server
             .execute_sql(&format!(
-                r#"INSERT INTO test_ns.conversations (conversation_id, title, participant_count) VALUES ('conv{}', 'Data {}', {})"#,
+                r#"INSERT INTO test_sh_dropdata.conversations (conversation_id, title, participant_count) VALUES ('conv{}', 'Data {}', {})"#,
                 i, i, i + 1
             ))
             .await;
     }
 
     // Drop table with data
-    let response = fixtures::drop_table(&server, "test_ns", "conversations").await;
+    let response = fixtures::drop_table(&server, "test_sh_dropdata", "conversations").await;
     assert_eq!(
         response.status,
         ResponseStatus::Success,
@@ -482,7 +482,7 @@ async fn test_shared_table_drop_with_data() {
 
     // Verify table no longer exists
     assert!(
-        !server.table_exists("test_ns", "conversations").await,
+        !server.table_exists("test_sh_dropdata", "conversations").await,
         "Table should be dropped"
     );
 }
@@ -492,29 +492,29 @@ async fn test_shared_table_multiple_tables_same_namespace() {
     let server = TestServer::new().await;
 
     // Setup
-    fixtures::create_namespace(&server, "test_ns").await;
+    fixtures::create_namespace(&server, "test_sh_multitbl").await;
 
     // Create multiple shared tables
-    fixtures::create_shared_table(&server, "test_ns", "conversations").await;
-    fixtures::create_shared_table(&server, "test_ns", "config").await;
+    fixtures::create_shared_table(&server, "test_sh_multitbl", "conversations").await;
+    fixtures::create_shared_table(&server, "test_sh_multitbl", "config").await;
 
     // Verify both tables exist
-    assert!(server.table_exists("test_ns", "conversations").await);
-    assert!(server.table_exists("test_ns", "config").await);
+    assert!(server.table_exists("test_sh_multitbl", "conversations").await);
+    assert!(server.table_exists("test_sh_multitbl", "config").await);
 
     // Insert data into both tables
     server
-        .execute_sql(r#"INSERT INTO test_ns.conversations (conversation_id, title) VALUES ('conv1', 'Test')"#)
+        .execute_sql(r#"INSERT INTO test_sh_multitbl.conversations (conversation_id, title) VALUES ('conv1', 'Test')"#)
         .await;
     server
-        .execute_sql(r#"INSERT INTO test_ns.config (name, value) VALUES ('setting1', 'value1')"#)
+        .execute_sql(r#"INSERT INTO test_sh_multitbl.config (name, value) VALUES ('setting1', 'value1')"#)
         .await;
 
     // Query both tables
     let response1 = server
-        .execute_sql("SELECT * FROM test_ns.conversations")
+        .execute_sql("SELECT * FROM test_sh_multitbl.conversations")
         .await;
-    let response2 = server.execute_sql("SELECT * FROM test_ns.config").await;
+    let response2 = server.execute_sql("SELECT * FROM test_sh_multitbl.config").await;
 
     assert_eq!(response1.status, ResponseStatus::Success);
     assert_eq!(response2.status, ResponseStatus::Success);
