@@ -198,10 +198,10 @@ async fn test_multiple_deletes() {
     let server = TestServer::new().await;
 
     // Setup
-    fixtures::create_namespace(&server, "test_soft_multiple").await;
+    fixtures::create_namespace(&server, "test_soft_multi").await;
     server
         .execute_sql_as_user(
-            r#"CREATE TABLE test_soft_multiple.tasks (
+            r#"CREATE TABLE test_soft_multi.tasks (
                 id TEXT PRIMARY KEY,
                 title TEXT
             ) WITH (
@@ -217,7 +217,7 @@ async fn test_multiple_deletes() {
         server
             .execute_sql_as_user(
                 &format!(
-                    "INSERT INTO test_soft_multiple.tasks (id, title) VALUES ('task{}', 'Task {}')",
+                    "INSERT INTO test_soft_multi.tasks (id, title) VALUES ('task{}', 'Task {}')",
                     i, i
                 ),
                 "user1",

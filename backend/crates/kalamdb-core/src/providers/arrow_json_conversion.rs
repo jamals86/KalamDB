@@ -276,7 +276,7 @@ mod tests {
         let ts_col = batch
             .column(0)
             .as_any()
-            .downcast_ref::<TimestampMillisecondArray>()
+            .downcast_ref::<TimestampMicrosecondArray>()
             .unwrap();
         assert_eq!(ts_col.value(0), 1609459200000i64);
 
@@ -289,7 +289,7 @@ mod tests {
         let ts_col = batch
             .column(0)
             .as_any()
-            .downcast_ref::<TimestampMillisecondArray>()
+            .downcast_ref::<TimestampMicrosecondArray>()
             .unwrap();
         assert_eq!(ts_col.value(0), 1609459200000i64);
     }
@@ -363,7 +363,7 @@ pub fn arrow_value_to_scalar(
         DataType::Timestamp(TimeUnit::Millisecond, tz) => {
             let arr = array
                 .as_any()
-                .downcast_ref::<TimestampMillisecondArray>()
+                .downcast_ref::<TimestampMicrosecondArray>()
                 .unwrap();
             Ok(ScalarValue::TimestampMillisecond(
                 Some(arr.value(row_idx)),

@@ -182,18 +182,21 @@ async fn test_04_query_system_namespaces() {
 }
 
 #[actix_web::test]
-#[ignore = "Test uses create_shared_table which requires pre-created column families at DB init."]
 async fn test_05_query_system_tables() {
     let server = TestServer::new().await;
+    let namespace = format!("sys_tables_5_{}", std::process::id());
 
     // Create namespace and tables
-    fixtures::create_namespace(&server, "test_ns").await;
-    fixtures::create_messages_table(&server, "test_ns", Some("user1")).await;
-    fixtures::create_shared_table(&server, "test_ns", "config").await;
+    fixtures::create_namespace(&server, &namespace).await;
+    fixtures::create_messages_table(&server, &namespace, Some("user1")).await;
+    fixtures::create_shared_table(&server, &namespace, "config").await;
 
     // Query tables with WHERE
     let response = server
-        .execute_sql("SELECT table_name, table_type FROM system.tables WHERE namespace_id = 'test_ns' ORDER BY table_name")
+        .execute_sql(&format!(
+            "SELECT table_name, table_type FROM system.tables WHERE namespace_id = '{}' ORDER BY table_name",
+            namespace
+        ))
         .await;
 
     assert_eq!(
@@ -221,6 +224,8 @@ async fn test_05_query_system_tables() {
             assert_eq!(table_type, "shared", "config should be shared table");
         }
     }
+
+    let _ = fixtures::drop_namespace(&server, &namespace).await;
 }
 
 #[actix_web::test]
@@ -510,7 +515,6 @@ async fn test_11_drop_table_and_verify_cleanup() {
 // ============================================================================
 
 #[actix_web::test]
-#[ignore = "Test uses create_shared_table which requires pre-created column families at DB init."]
 async fn test_12_view_table_types_from_system_tables() {
     let server = TestServer::new().await;
 
@@ -604,14 +608,13 @@ async fn test_12_view_table_types_from_system_tables() {
 }
 
 #[actix_web::test]
-#[ignore = "Shared tables require pre-created column families at DB init."]
 async fn test_13_filter_tables_by_type() {
     let server = TestServer::new().await;
 
     // Setup: Create namespace and mixed table types
     fixtures::create_namespace(&server, "filter_test").await;
     fixtures::create_messages_table(&server, "filter_test", Some("user1")).await;
-    fixtures::create_shared_table(&server, "filter_test", "settings").await;
+    fixtures::create_shared_table(&server, "filter_test", "shared_settings").await;
     fixtures::create_shared_table(&server, "filter_test", "metadata").await;
 
     // Query only shared tables
@@ -634,7 +637,10 @@ async fn test_13_filter_tables_by_type() {
             .filter_map(|r| r.get("table_name").and_then(|v| v.as_str()))
             .collect();
 
-        assert!(names.contains(&"settings"), "settings table not found");
+        assert!(
+            names.contains(&"shared_settings"),
+            "shared_settings table not found"
+        );
         assert!(names.contains(&"metadata"), "metadata table not found");
     }
 
@@ -772,7 +778,6 @@ async fn test_15_update_multiple_users() {
 }
 
 #[actix_web::test]
-#[ignore = "Test uses create_shared_table which requires pre-created column families at DB init."]
 async fn test_20_complex_system_queries() {
     let server = TestServer::new().await;
 

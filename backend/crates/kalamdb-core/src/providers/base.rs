@@ -274,18 +274,20 @@ pub trait BaseTableProvider<K: StorageKey, V>: Send + Sync + TableProvider {
         self.update_by_pk_value(user_id, id_value, updates)
     }
 
-    /// Delete a row by searching for matching ID field value
-    fn delete_by_id_field(&self, user_id: &UserId, id_value: &str) -> Result<(), KalamDbError> {
-        let key = self
-            .find_row_key_by_id_field(user_id, id_value)?
-            .ok_or_else(|| {
-                KalamDbError::NotFound(format!(
-                    "Row with {}={} not found",
-                    self.primary_key_field_name(),
-                    id_value
-                ))
-            })?;
-        self.delete(user_id, &key)
+    /// Delete a row by searching for matching ID field value.
+    ///
+    /// Returns `true` if a row was deleted, `false` if the row did not exist.
+    fn delete_by_id_field(
+        &self,
+        user_id: &UserId,
+        id_value: &str,
+    ) -> Result<bool, KalamDbError> {
+        if let Some(key) = self.find_row_key_by_id_field(user_id, id_value)? {
+            self.delete(user_id, &key)?;
+            Ok(true)
+        } else {
+            Ok(false)
+        }
     }
 
     // ===========================

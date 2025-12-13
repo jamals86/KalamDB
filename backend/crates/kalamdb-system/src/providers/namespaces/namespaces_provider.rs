@@ -8,7 +8,7 @@ use crate::error::SystemError;
 use crate::system_table_trait::SystemTableProviderExt;
 use async_trait::async_trait;
 use datafusion::arrow::array::{
-    ArrayRef, Int32Array, RecordBatch, StringBuilder, TimestampMillisecondArray,
+    ArrayRef, Int32Array, RecordBatch, StringBuilder, TimestampMicrosecondArray,
 };
 use datafusion::arrow::datatypes::SchemaRef;
 use datafusion::datasource::{TableProvider, TableType};
@@ -222,7 +222,12 @@ impl NamespacesTableProvider {
             vec![
                 Arc::new(namespace_ids.finish()) as ArrayRef,
                 Arc::new(names.finish()) as ArrayRef,
-                Arc::new(TimestampMillisecondArray::from(created_ats)) as ArrayRef,
+                Arc::new(TimestampMicrosecondArray::from(
+                    created_ats
+                        .into_iter()
+                        .map(|ts| ts.map(|ms| ms * 1000))
+                        .collect::<Vec<_>>(),
+                )) as ArrayRef,
                 Arc::new(options.finish()) as ArrayRef,
                 Arc::new(Int32Array::from(table_counts)) as ArrayRef,
             ],

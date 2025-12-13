@@ -226,9 +226,11 @@ async fn test_complexity_alter_user_requires_special_character() {
         session_ctx.clone(),
     );
 
+    let username = format!("alter_target_{}", std::process::id());
+    
     executor
         .execute(
-            "CREATE USER 'alter_target' WITH PASSWORD 'ValidPass1!' ROLE user",
+            &format!("CREATE USER '{}' WITH PASSWORD 'ValidPass1!' ROLE user", username),
             &exec_ctx,
             Vec::new(),
         )
@@ -237,7 +239,7 @@ async fn test_complexity_alter_user_requires_special_character() {
 
     let result = executor
         .execute(
-            "ALTER USER 'alter_target' SET PASSWORD 'NoSpecial2'",
+            &format!("ALTER USER '{}' SET PASSWORD 'NoSpecial2'", username),
             &exec_ctx,
             Vec::new(),
         )
@@ -256,9 +258,11 @@ async fn test_complexity_alter_user_valid_password_succeeds() {
         session_ctx.clone(),
     );
 
+    let username = format!("alter_target_ok_{}", std::process::id());
+    
     executor
         .execute(
-            "CREATE USER 'alter_target_ok' WITH PASSWORD 'ValidPass1!' ROLE user",
+            &format!("CREATE USER '{}' WITH PASSWORD 'ValidPass1!' ROLE user", username),
             &exec_ctx,
             Vec::new(),
         )
@@ -267,7 +271,7 @@ async fn test_complexity_alter_user_valid_password_succeeds() {
 
     let result = executor
         .execute(
-            "ALTER USER 'alter_target_ok' SET PASSWORD 'AnotherPass2@'",
+            &format!("ALTER USER '{}' SET PASSWORD 'AnotherPass2@'", username),
             &exec_ctx,
             Vec::new(),
         )

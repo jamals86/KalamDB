@@ -7,7 +7,7 @@ use super::{new_storages_store, StoragesStore, StoragesTableSchema};
 use crate::error::SystemError;
 use crate::system_table_trait::SystemTableProviderExt;
 use async_trait::async_trait;
-use datafusion::arrow::array::{ArrayRef, RecordBatch, StringBuilder, TimestampMillisecondArray};
+use datafusion::arrow::array::{ArrayRef, RecordBatch, StringBuilder, TimestampMicrosecondArray};
 use datafusion::arrow::datatypes::SchemaRef;
 use datafusion::datasource::{TableProvider, TableType};
 use datafusion::error::{DataFusionError, Result as DataFusionResult};
@@ -185,6 +185,20 @@ impl StoragesTableProvider {
         for item in iter {
             storages.push(item?);
         }
+        storages.sort_by(|a, b| {
+            let storage_a = &a.1;
+            let storage_b = &b.1;
+            if storage_a.storage_id.is_local() {
+                std::cmp::Ordering::Less
+            } else if storage_b.storage_id.is_local() {
+                std::cmp::Ordering::Greater
+            } else {
+                storage_a
+                    .storage_id
+                    .as_str()
+                    .cmp(storage_b.storage_id.as_str())
+            }
+        });
         let row_count = storages.len();
 
         // Pre-allocate builders for optimal performance
@@ -223,8 +237,18 @@ impl StoragesTableProvider {
                 Arc::new(credentials.finish()) as ArrayRef,
                 Arc::new(shared_tables_templates.finish()) as ArrayRef,
                 Arc::new(user_tables_templates.finish()) as ArrayRef,
-                Arc::new(TimestampMillisecondArray::from(created_ats)) as ArrayRef,
-                Arc::new(TimestampMillisecondArray::from(updated_ats)) as ArrayRef,
+                Arc::new(TimestampMicrosecondArray::from(
+                    created_ats
+                        .into_iter()
+                        .map(|ts| ts.map(|ms| ms * 1000))
+                        .collect::<Vec<_>>(),
+                )) as ArrayRef,
+                Arc::new(TimestampMicrosecondArray::from(
+                    updated_ats
+                        .into_iter()
+                        .map(|ts| ts.map(|ms| ms * 1000))
+                        .collect::<Vec<_>>(),
+                )) as ArrayRef,
             ],
         )
         .map_err(|e| SystemError::Other(format!("Arrow error: {}", e)))?;

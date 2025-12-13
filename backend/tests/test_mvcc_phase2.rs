@@ -754,7 +754,6 @@ async fn test_rocksdb_prefix_scan_user_isolation() {
 /// **NOTE**: This test has an UPDATE handler bug preventing validation.
 /// The range scan logic works correctly, but UPDATE fails with "Row not found".
 #[actix_web::test]
-#[ignore = "UPDATE handler has Row not found bug - needs investigation"]
 async fn test_rocksdb_range_scan_efficiency() {
     let server = TestServer::new().await;
 

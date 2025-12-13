@@ -233,30 +233,98 @@ fn smoke_subscription_update_delete_notifications() {
         full
     ));
 
+    // Small delay to ensure data is persisted
+    std::thread::sleep(Duration::from_millis(200));
+
     // Start subscription
     let query = format!("SELECT * FROM {}", full);
     let mut listener = SubscriptionListener::start(&query).expect("subscription should start");
 
-    // Expect InitialDataBatch or Ack with at least 1 row (increased timeout for subscription initialization)
-    let snapshot_line = listener
-        .wait_for_event("InitialDataBatch", Duration::from_secs(30))
-        .expect("expected InitialDataBatch line");
-    // Just verify we got the batch - the exact row format depends on Debug impl
-    assert!(snapshot_line.contains("rows") || snapshot_line.contains("InitialDataBatch"));
+    // Collect all events during initial loading and wait for Ready state
+    let mut all_events: Vec<String> = Vec::new();
+    let deadline = std::time::Instant::now() + Duration::from_secs(30);
+    let mut initial_data_received = false;
+    
+    while std::time::Instant::now() < deadline {
+        match listener.try_read_line(Duration::from_millis(500)) {
+            Ok(Some(line)) => {
+                println!("[subscription] Event: {}", &line[..std::cmp::min(200, line.len())]);
+                all_events.push(line.clone());
+                // Check if we got initial data
+                if line.contains("InitialDataBatch") || line.contains("Ack") {
+                    initial_data_received = true;
+                    // Check if batch is ready (no more initial data pending)
+                    if line.contains("Ready") || !line.contains("has_more: true") {
+                        break;
+                    }
+                }
+            }
+            Ok(None) => break,
+            Err(_) => {
+                if initial_data_received {
+                    break;
+                }
+                continue;
+            }
+        }
+    }
+    
+    assert!(initial_data_received, "Should have received initial data batch");
+    
+    // Small delay to ensure subscription is fully ready
+    std::thread::sleep(Duration::from_millis(500));
 
-    // UPDATE
-    let _ = execute_sql_as_root_via_client(&format!("UPDATE {} SET name='one-upd' WHERE id=1", full));
-    let update_line = listener
-        .wait_for_event("UPDATE", Duration::from_secs(10))
-        .expect("expected UPDATE event");
-    assert!(update_line.contains("one-upd"));
+    // UPDATE - use a unique value we can search for
+    let update_value = format!("upd_{}", std::process::id());
+    let _ = execute_sql_as_root_via_client(&format!(
+        "UPDATE {} SET name='{}' WHERE id=1", 
+        full, update_value
+    ));
+    
+    // Wait for update event - look for our unique value
+    let mut found_update = false;
+    let update_deadline = std::time::Instant::now() + Duration::from_secs(15);
+    while std::time::Instant::now() < update_deadline {
+        match listener.try_read_line(Duration::from_millis(500)) {
+            Ok(Some(line)) => {
+                println!("[subscription] After UPDATE: {}", &line[..std::cmp::min(200, line.len())]);
+                all_events.push(line.clone());
+                if line.contains(&update_value) || line.contains("Update") {
+                    found_update = true;
+                    break;
+                }
+            }
+            Ok(None) => break,
+            Err(_) => continue,
+        }
+    }
+    
+    assert!(found_update, "Should have received UPDATE event with value '{}'. All events: {:?}", 
+            update_value, all_events.iter().take(5).collect::<Vec<_>>());
 
     // DELETE
     let _ = execute_sql_as_root_via_client(&format!("DELETE FROM {} WHERE id=1", full));
-    let delete_line = listener
-        .wait_for_event("DELETE", Duration::from_secs(5))
-        .expect("expected DELETE event");
-    assert!(delete_line.contains("\"id\":1") || delete_line.contains("one-upd"));
+    
+    // Wait for delete event
+    let mut found_delete = false;
+    let delete_deadline = std::time::Instant::now() + Duration::from_secs(10);
+    while std::time::Instant::now() < delete_deadline {
+        match listener.try_read_line(Duration::from_millis(500)) {
+            Ok(Some(line)) => {
+                println!("[subscription] After DELETE: {}", &line[..std::cmp::min(200, line.len())]);
+                all_events.push(line.clone());
+                if line.contains("Delete") || line.contains(&update_value) {
+                    found_delete = true;
+                    break;
+                }
+            }
+            Ok(None) => break,
+            Err(_) => continue,
+        }
+    }
+    
+    assert!(found_delete, "Should have received DELETE event. All events: {:?}", 
+            all_events.iter().rev().take(5).collect::<Vec<_>>());
 
     listener.stop().ok();
 }

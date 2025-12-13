@@ -212,7 +212,6 @@ async fn test_delete_returns_correct_row_count() {
 }
 
 #[actix_web::test]
-#[ignore = "Soft delete row count behavior needs investigation - returns 1 instead of 0 for already-deleted rows"]
 async fn test_delete_already_deleted_returns_zero() {
     let server = TestServer::new().await;
 

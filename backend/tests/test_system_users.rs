@@ -18,9 +18,13 @@ mod common;
 
 use actix_web::{test, web, App};
 use common::{auth_helper, TestServer};
+use kalamdb_api::repositories::CoreUsersRepo;
 use kalamdb_commons::models::UserName;
 use kalamdb_commons::system::User;
 use kalamdb_commons::{AuthType, Role, StorageId, StorageMode, UserId};
+use kalamdb_auth::UserRepository;
+use std::net::SocketAddr;
+use std::sync::Arc;
 
 /// Helper function to create a system user with specific settings
 async fn create_system_user(
@@ -84,19 +88,23 @@ async fn test_system_user_localhost_no_password() {
     let req = test::TestRequest::post()
         .uri("/v1/api/sql")
         .insert_header(("Authorization", auth_header.as_str()))
-        .insert_header(("X-Forwarded-For", "127.0.0.1")) // Simulate localhost
         .insert_header(("Content-Type", "application/json"))
+        .peer_addr(SocketAddr::from(([127, 0, 0, 1], 8080)))
         .set_json(serde_json::json!({
             "sql": "SELECT * FROM system.users LIMIT 1"
         }))
         .to_request();
 
     // Initialize app with authentication middleware
+    let user_repo: Arc<dyn UserRepository> =
+        Arc::new(CoreUsersRepo::new(server.app_context.system_tables().users()));
     let app = test::init_service(
         App::new()
             .app_data(web::Data::new(server.app_context.session_factory()))
             .app_data(web::Data::new(server.sql_executor.clone()))
             .app_data(web::Data::new(server.app_context.live_query_manager()))
+            .app_data(web::Data::new(server.app_context.clone()))
+            .app_data(web::Data::new(user_repo))
             .configure(kalamdb_api::routes::configure_routes),
     )
     .await;
@@ -138,17 +146,22 @@ async fn test_system_user_remote_denied_by_default() {
         .insert_header(("Authorization", auth_header.as_str()))
         .insert_header(("X-Forwarded-For", "192.168.1.100")) // Remote IP
         .insert_header(("Content-Type", "application/json"))
+        .peer_addr(SocketAddr::from(([192, 168, 1, 100], 8080)))
         .set_json(serde_json::json!({
             "sql": "SELECT * FROM system.users LIMIT 1"
         }))
         .to_request();
 
     // Initialize app
+    let user_repo: Arc<dyn UserRepository> =
+        Arc::new(CoreUsersRepo::new(server.app_context.system_tables().users()));
     let app = test::init_service(
         App::new()
             .app_data(web::Data::new(server.app_context.session_factory()))
             .app_data(web::Data::new(server.sql_executor.clone()))
             .app_data(web::Data::new(server.app_context.live_query_manager()))
+            .app_data(web::Data::new(server.app_context.clone()))
+            .app_data(web::Data::new(user_repo))
             .configure(kalamdb_api::routes::configure_routes),
     )
     .await;
@@ -157,10 +170,10 @@ async fn test_system_user_remote_denied_by_default() {
     let resp = test::call_service(&app, req).await;
     let status = resp.status();
 
-    // Should fail with 401 Unauthorized - remote access not allowed for system users by default
+    // Remote access without allow_remote should be forbidden
     assert_eq!(
-        status, 401,
-        "T098 FAILED: Expected 401 Unauthorized for remote system user without allow_remote, got {}",
+        status, 403,
+        "T098 FAILED: Expected 403 Forbidden for remote system user without allow_remote, got {}",
         status
     );
 
@@ -190,17 +203,22 @@ async fn test_system_user_remote_with_password() {
         .insert_header(("Authorization", auth_header.as_str()))
         .insert_header(("X-Forwarded-For", "192.168.1.100")) // Remote IP
         .insert_header(("Content-Type", "application/json"))
+        .peer_addr(SocketAddr::from(([192, 168, 1, 100], 8080)))
         .set_json(serde_json::json!({
             "sql": "SELECT * FROM system.users LIMIT 1"
         }))
         .to_request();
 
     // Initialize app
+    let user_repo: Arc<dyn UserRepository> =
+        Arc::new(CoreUsersRepo::new(server.app_context.system_tables().users()));
     let app = test::init_service(
         App::new()
             .app_data(web::Data::new(server.app_context.session_factory()))
             .app_data(web::Data::new(server.sql_executor.clone()))
             .app_data(web::Data::new(server.app_context.live_query_manager()))
+            .app_data(web::Data::new(server.app_context.clone()))
+            .app_data(web::Data::new(user_repo))
             .configure(kalamdb_api::routes::configure_routes),
     )
     .await;
@@ -240,17 +258,22 @@ async fn test_system_user_remote_no_password_denied() {
         .insert_header(("Authorization", auth_header.as_str()))
         .insert_header(("X-Forwarded-For", "192.168.1.100")) // Remote IP
         .insert_header(("Content-Type", "application/json"))
+        .peer_addr(SocketAddr::from(([192, 168, 1, 100], 8080)))
         .set_json(serde_json::json!({
             "sql": "SELECT * FROM system.users LIMIT 1"
         }))
         .to_request();
 
     // Initialize app
+    let user_repo: Arc<dyn UserRepository> =
+        Arc::new(CoreUsersRepo::new(server.app_context.system_tables().users()));
     let app = test::init_service(
         App::new()
             .app_data(web::Data::new(server.app_context.session_factory()))
             .app_data(web::Data::new(server.sql_executor.clone()))
             .app_data(web::Data::new(server.app_context.live_query_manager()))
+            .app_data(web::Data::new(server.app_context.clone()))
+            .app_data(web::Data::new(user_repo))
             .configure(kalamdb_api::routes::configure_routes),
     )
     .await;
@@ -259,10 +282,10 @@ async fn test_system_user_remote_no_password_denied() {
     let resp = test::call_service(&app, req).await;
     let status = resp.status();
 
-    // Should fail with 401 - password required for remote system users
+    // Should fail with 403 - password required for remote system users
     assert_eq!(
-        status, 401,
-        "T100 FAILED: Expected 401 Unauthorized for remote system user without password, got {}",
+        status, 403,
+        "T100 FAILED: Expected 403 Forbidden for remote system user without password, got {}",
         status
     );
 

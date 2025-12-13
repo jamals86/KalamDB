@@ -8,7 +8,7 @@ use crate::error::SystemError;
 use crate::system_table_trait::SystemTableProviderExt;
 use async_trait::async_trait;
 use datafusion::arrow::array::{
-    ArrayRef, Int32Array, RecordBatch, StringBuilder, TimestampMillisecondArray,
+    ArrayRef, Int32Array, RecordBatch, StringBuilder, TimestampMicrosecondArray,
 };
 use datafusion::arrow::datatypes::SchemaRef;
 use datafusion::datasource::{TableProvider, TableType};
@@ -261,10 +261,20 @@ impl TablesTableProvider {
                 Arc::new(table_names.finish()) as ArrayRef, // 2 table_name
                 Arc::new(namespaces.finish()) as ArrayRef,  // 3 namespace_id
                 Arc::new(table_types.finish()) as ArrayRef, // 4 table_type
-                Arc::new(TimestampMillisecondArray::from(created_ats)) as ArrayRef, // 5 created_at
+                Arc::new(TimestampMicrosecondArray::from(
+                    created_ats
+                        .into_iter()
+                        .map(|ts| ts.map(|ms| ms * 1000))
+                        .collect::<Vec<_>>(),
+                )) as ArrayRef,
                 Arc::new(Int32Array::from(schema_versions)) as ArrayRef, // 6 schema_version
                 Arc::new(table_comments.finish()) as ArrayRef, // 7 table_comment
-                Arc::new(TimestampMillisecondArray::from(updated_ats)) as ArrayRef, // 8 updated_at
+                Arc::new(TimestampMicrosecondArray::from(
+                    updated_ats
+                        .into_iter()
+                        .map(|ts| ts.map(|ms| ms * 1000))
+                        .collect::<Vec<_>>(),
+                )) as ArrayRef,
                 Arc::new(options_json.finish()) as ArrayRef, // 9 options
                 Arc::new(access_levels.finish()) as ArrayRef, // 10 access_level
             ],

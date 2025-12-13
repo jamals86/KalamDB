@@ -152,55 +152,17 @@ impl UserTableProvider {
             return Ok(None);
         }
 
-        // Find the latest non-deleted version
-        // Results are ordered by seq (descending due to big-endian encoding)
-        // so we iterate and find the first non-deleted row
-        for (row_id, row) in index_results {
-            if !row._deleted {
-                return Ok(Some((row_id, row)));
-            }
-        }
-
-        // All versions are deleted
-        Ok(None)
-    }
-
-    /// Fast existence check for primary key in hot storage (RocksDB).
-    ///
-    /// **OPTIMIZED**: Single round-trip to RocksDB.
-    /// Uses scan_by_index with limit=1 directly instead of exists_by_index + scan_by_index.
-    /// This halves the number of RocksDB operations for PK validation.
-    ///
-    /// # Returns
-    /// - `Some(true)` if non-deleted version exists in hot storage
-    /// - `Some(false)` if only deleted versions exist in hot storage
-    /// - `None` if no version exists in hot storage (may exist in cold)
-    pub fn pk_exists_in_hot(
-        &self,
-        user_id: &UserId,
-        pk_value: &ScalarValue,
-    ) -> Result<Option<bool>, KalamDbError> {
-        // Build prefix for PK index scan
-        let prefix = self
-            .pk_index
-            .build_prefix_for_pk(user_id.as_str(), pk_value);
-
-        // Single round-trip: scan index with limit=1
-        // Due to descending seq order (big-endian), first result is the latest version
-        let results = self
-            .store
-            .scan_by_index(0, Some(&prefix), Some(1))
-            .map_err(|e| KalamDbError::Other(format!("PK index scan failed: {}", e)))?;
-
-        match results.into_iter().next() {
-            Some((_row_id, row)) => {
-                // Return whether the latest version is deleted or not
-                Ok(Some(!row._deleted))
-            }
-            None => {
-                // No version in hot storage
+        if let Some((row_id, row)) = index_results
+            .into_iter()
+            .max_by_key(|(row_id, _)| row_id.seq)
+        {
+            if row._deleted {
                 Ok(None)
+            } else {
+                Ok(Some((row_id, row)))
             }
+        } else {
+            Ok(None)
         }
     }
 
@@ -277,35 +239,35 @@ impl BaseTableProvider<UserTableRowId, UserTableRow> for UserTableProvider {
         // Use shared helper to parse PK value
         let pk_value = crate::providers::pk_helpers::parse_pk_value(id_value);
 
-        // Fast path: check hot storage using optimized existence check
-        match self.pk_exists_in_hot(user_id, &pk_value)? {
-            Some(true) => {
-                // Non-deleted version exists in hot storage - need to get the actual row_id
-                // This is rare during inserts (PK collision), so full lookup is acceptable
-                if let Some((row_id, _row)) = self.find_by_pk(user_id, &pk_value)? {
-                    log::trace!(
-                        "[UserTableProvider] PK collision in hot storage: id={}",
-                        id_value
-                    );
-                    return Ok(Some(row_id));
-                }
-            }
-            Some(false) => {
-                // Only deleted versions in hot storage - PK is available for reuse
-                log::trace!(
-                    "[UserTableProvider] PK {} has only deleted versions in hot storage",
-                    id_value
-                );
-                return Ok(None);
-            }
-            None => {
-                // Not in hot storage - check cold storage
-                log::trace!(
-                    "[UserTableProvider] PK {} not in hot storage, checking cold",
-                    id_value
-                );
-            }
+        // Fast path: check hot storage for a non-deleted version
+        if let Some((row_id, _row)) = self.find_by_pk(user_id, &pk_value)? {
+            log::trace!(
+                "[UserTableProvider] PK collision in hot storage: id={}",
+                id_value
+            );
+            return Ok(Some(row_id));
         }
+
+        // If hot storage has entries but all are deleted, the PK can be reused.
+        let hot_prefix = self
+            .pk_index
+            .build_prefix_for_pk(user_id.as_str(), &pk_value);
+        let hot_has_versions = self
+            .store
+            .exists_by_index(0, &hot_prefix)
+            .map_err(|e| KalamDbError::Other(format!("PK index scan failed: {}", e)))?;
+        if hot_has_versions {
+            log::trace!(
+                "[UserTableProvider] PK {} has only deleted versions in hot storage",
+                id_value
+            );
+            return Ok(None);
+        }
+
+        log::trace!(
+            "[UserTableProvider] PK {} not in hot storage, checking cold",
+            id_value
+        );
 
         // Not found in hot storage - check cold storage using optimized manifest-based lookup
         // This uses column_stats to prune segments that can't contain the PK

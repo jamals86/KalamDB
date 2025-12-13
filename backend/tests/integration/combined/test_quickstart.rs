@@ -233,7 +233,6 @@ async fn test_06_delete_data() {
 }
 
 #[actix_web::test]
-#[ignore = "Shared tables require pre-created column families at DB init. TestServer::new() creates in-memory DB without these CFs."]
 async fn test_07_create_shared_table() {
     let server = TestServer::new().await;
     fixtures::create_namespace(&server, "test_qs_07").await;
@@ -256,7 +255,6 @@ async fn test_07_create_shared_table() {
 }
 
 #[actix_web::test]
-#[ignore = "Shared tables require pre-created column families at DB init. TestServer::new() creates in-memory DB without these CFs."]
 async fn test_08_insert_into_shared_table() {
     let server = TestServer::new().await;
     fixtures::create_namespace(&server, "test_qs_08").await;
@@ -461,11 +459,7 @@ async fn test_16_complete_workflow() {
     let response = fixtures::query_user_messages(&server, "test_qs_16", "user123").await;
     assert_eq!(response.status, ResponseStatus::Success);
 
-    // 5. Cleanup - skip explicit drop to avoid test fragility
-    // Note: Namespace will be cleaned up automatically by server.cleanup()
-    // let drop_resp = fixtures::drop_namespace(&server, "test_qs_16").await;
-    // assert_eq!(drop_resp.status, ResponseStatus::Success);
-    // assert!(!server.namespace_exists("test_qs_16").await);
+    let _ = fixtures::drop_namespace(&server, "test_qs_16").await;
 }
 
 #[actix_web::test]
@@ -499,6 +493,8 @@ async fn test_17_performance_write_latency() {
     );
 
     println!("Average write latency: {}ms", avg_latency.as_millis());
+
+    let _ = fixtures::drop_namespace(&server, "test_qs_17").await;
 }
 
 #[actix_web::test]
@@ -523,6 +519,8 @@ async fn test_18_performance_query_latency() {
     );
 
     println!("Query latency for 100 rows: {}ms", duration.as_millis());
+
+    let _ = fixtures::drop_namespace(&server, "test_qs_18").await;
 }
 
 #[actix_web::test]
@@ -536,21 +534,19 @@ async fn test_19_multiple_namespaces() {
         assert!(server.namespace_exists(ns).await);
     }
 
-    // Cleanup all
-    server.cleanup().await.expect("Cleanup failed");
-
     for ns in ["test_qs_19a", "test_qs_19b", "test_qs_19c"] {
+        let _ = fixtures::drop_namespace(&server, ns).await;
         assert!(!server.namespace_exists(ns).await);
     }
 }
 
 #[actix_web::test]
-#[ignore = "setup_complete_environment creates shared table which requires pre-created column families at DB init."]
 async fn test_20_complete_environment_setup() {
     let server = TestServer::new().await;
+    let namespace = format!("qs_env_20_{}", std::process::id());
 
     // Use the fixtures utility to set up complete environment
-    let result = fixtures::setup_complete_environment(&server, "test_qs_20").await;
+    let result = fixtures::setup_complete_environment(&server, &namespace).await;
 
     assert!(
         result.is_ok(),
@@ -559,11 +555,11 @@ async fn test_20_complete_environment_setup() {
     );
 
     // Verify all components
-    assert!(server.namespace_exists("test_qs_20").await);
-    assert!(server.table_exists("test_qs_20", "messages").await);
-    assert!(server.table_exists("test_qs_20", "config").await);
-    assert!(server.table_exists("test_qs_20", "events").await);
+    assert!(server.namespace_exists(&namespace).await);
+    assert!(server.table_exists(&namespace, "messages").await);
+    assert!(server.table_exists(&namespace, "config").await);
+    assert!(server.table_exists(&namespace, "events").await);
 
     // Cleanup
-    server.cleanup().await.expect("Cleanup failed");
+    let _ = fixtures::drop_namespace(&server, &namespace).await;
 }

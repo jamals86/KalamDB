@@ -207,6 +207,21 @@ async fn test_full_workflow_insert_flush_update() {
         )
         .await;
 
+    server
+        .execute_sql_as_user(
+            r#"CREATE TABLE test_uv_workflow.orders (
+                id TEXT PRIMARY KEY,
+                customer TEXT,
+                total INT,
+                status TEXT
+            ) WITH (
+                TYPE = 'USER',
+                STORAGE_ID = 'local'
+            )"#,
+            "user1",
+        )
+        .await;
+
     // Step 1: INSERT
     server
         .execute_sql_as_user(

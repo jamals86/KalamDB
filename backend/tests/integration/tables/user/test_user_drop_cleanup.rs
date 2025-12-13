@@ -13,6 +13,18 @@ use common::flush_helpers::{check_user_parquet_files, execute_flush_synchronousl
 use common::{fixtures, TestServer};
 use kalamdb_api::models::ResponseStatus;
 use std::path::Path;
+use tokio::time::{sleep, Duration, Instant};
+
+async fn wait_for_path_absent(path: &Path, timeout: Duration) -> bool {
+    let deadline = Instant::now() + timeout;
+    while path.exists() {
+        if Instant::now() >= deadline {
+            return false;
+        }
+        sleep(Duration::from_millis(50)).await;
+    }
+    true
+}
 
 #[actix_web::test]
 async fn test_drop_user_table_deletes_partitions_and_parquet() {
@@ -127,12 +139,12 @@ async fn test_drop_user_table_deletes_partitions_and_parquet() {
 
     // Verify per-user Parquet directories are removed
     assert!(
-        !Path::new(&dir_user1).exists(),
+        wait_for_path_absent(&dir_user1, Duration::from_secs(2)).await,
         "User1 Parquet dir still exists after drop: {}",
         dir_user1.display()
     );
     assert!(
-        !Path::new(&dir_user2).exists(),
+        wait_for_path_absent(&dir_user2, Duration::from_secs(2)).await,
         "User2 Parquet dir still exists after drop: {}",
         dir_user2.display()
     );

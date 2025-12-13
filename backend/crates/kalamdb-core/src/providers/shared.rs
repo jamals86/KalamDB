@@ -148,51 +148,17 @@ impl SharedTableProvider {
             return Ok(None);
         }
 
-        // Find the latest non-deleted version
-        // Results are ordered by seq (descending due to big-endian encoding)
-        for (row_id, row) in results {
-            if !row._deleted {
-                return Ok(Some((row_id, row)));
-            }
-        }
-
-        // All versions are deleted
-        Ok(None)
-    }
-
-    /// Fast existence check for primary key in hot storage (RocksDB).
-    ///
-    /// **OPTIMIZED**: Single round-trip to RocksDB.
-    /// Uses scan_by_index with limit=1 directly instead of exists_by_index + scan_by_index.
-    /// This halves the number of RocksDB operations for PK validation.
-    ///
-    /// # Returns
-    /// - `Some(true)` if non-deleted version exists in hot storage
-    /// - `Some(false)` if only deleted versions exist in hot storage
-    /// - `None` if no version exists in hot storage (may exist in cold)
-    fn pk_exists_in_hot(
-        &self,
-        pk_value: &ScalarValue,
-    ) -> Result<Option<bool>, KalamDbError> {
-        // Build index prefix for this PK value
-        let prefix = self.pk_index.build_prefix_for_pk(pk_value);
-
-        // Single round-trip: scan index with limit=1
-        // Due to descending seq order (big-endian), first result is the latest version
-        let results = self
-            .store
-            .scan_by_index(0, Some(&prefix), Some(1))
-            .map_err(|e| KalamDbError::Other(format!("PK index scan failed: {}", e)))?;
-
-        match results.into_iter().next() {
-            Some((_row_id, row)) => {
-                // Return whether the latest version is deleted or not
-                Ok(Some(!row._deleted))
-            }
-            None => {
-                // No version in hot storage
+        if let Some((row_id, row)) = results
+            .into_iter()
+            .max_by_key(|(row_id, _)| row_id.as_i64())
+        {
+            if row._deleted {
                 Ok(None)
+            } else {
+                Ok(Some((row_id, row)))
             }
+        } else {
+            Ok(None)
         }
     }
 
@@ -233,21 +199,19 @@ impl BaseTableProvider<SharedTableRowId, SharedTableRow> for SharedTableProvider
         // Use shared helper to parse PK value
         let pk_value = crate::providers::pk_helpers::parse_pk_value(id_value);
 
-        // Fast path: check hot storage using optimized existence check
-        match self.pk_exists_in_hot(&pk_value)? {
-            Some(true) => {
-                // Non-deleted version exists - get the actual row_id
-                if let Some((row_id, _row)) = self.find_by_pk(&pk_value)? {
-                    return Ok(Some(row_id));
-                }
-            }
-            Some(false) => {
-                // Only deleted versions in hot storage - PK is available
-                return Ok(None);
-            }
-            None => {
-                // Not in hot storage - check cold storage
-            }
+        // Fast path: return the latest non-deleted row from hot storage if it exists.
+        if let Some((row_id, _row)) = self.find_by_pk(&pk_value)? {
+            return Ok(Some(row_id));
+        }
+
+        // If hot storage has entries but they're all deleted, allow PK reuse.
+        let prefix = self.pk_index.build_prefix_for_pk(&pk_value);
+        let hot_has_versions = self
+            .store
+            .exists_by_index(0, &prefix)
+            .map_err(|e| KalamDbError::Other(format!("PK index scan failed: {}", e)))?;
+        if hot_has_versions {
+            return Ok(None);
         }
 
         // Not found in hot storage - check cold storage using optimized manifest-based lookup

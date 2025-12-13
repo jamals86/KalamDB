@@ -23,7 +23,7 @@ use crate::error::SystemError;
 use crate::system_table_trait::SystemTableProviderExt;
 use async_trait::async_trait;
 use datafusion::arrow::array::{
-    ArrayRef, Int64Array, RecordBatch, StringBuilder, TimestampMillisecondArray,
+    ArrayRef, Int64Array, RecordBatch, StringBuilder, TimestampMicrosecondArray,
 };
 use datafusion::arrow::datatypes::SchemaRef;
 use datafusion::datasource::{TableProvider, TableType};
@@ -551,9 +551,24 @@ impl JobsTableProvider {
                 Arc::new(traces.finish()) as ArrayRef,
                 Arc::new(Int64Array::from(memory_useds)) as ArrayRef,
                 Arc::new(Int64Array::from(cpu_useds)) as ArrayRef,
-                Arc::new(TimestampMillisecondArray::from(created_ats)) as ArrayRef,
-                Arc::new(TimestampMillisecondArray::from(started_ats)) as ArrayRef,
-                Arc::new(TimestampMillisecondArray::from(finished_ats)) as ArrayRef,
+                Arc::new(TimestampMicrosecondArray::from(
+                    created_ats
+                        .into_iter()
+                        .map(|ts| ts.map(|ms| ms * 1000))
+                        .collect::<Vec<_>>(),
+                )) as ArrayRef,
+                Arc::new(TimestampMicrosecondArray::from(
+                    started_ats
+                        .into_iter()
+                        .map(|ts| ts.map(|ms| ms * 1000))
+                        .collect::<Vec<_>>(),
+                )) as ArrayRef,
+                Arc::new(TimestampMicrosecondArray::from(
+                    finished_ats
+                        .into_iter()
+                        .map(|ts| ts.map(|ms| ms * 1000))
+                        .collect::<Vec<_>>(),
+                )) as ArrayRef,
                 Arc::new(node_ids.finish()) as ArrayRef,
                 Arc::new(error_messages.finish()) as ArrayRef,
             ],

@@ -313,7 +313,7 @@ async fn test_datatypes_preservation_values() {
             let ts_arr = batch
                 .column(batch.schema().index_of("ts").unwrap())
                 .as_any()
-                .downcast_ref::<arrow::array::TimestampMillisecondArray>()
+                .downcast_ref::<arrow::array::TimestampMicrosecondArray>()
                 .unwrap();
             let date_arr = batch
                 .column(batch.schema().index_of("date").unwrap())
@@ -323,7 +323,7 @@ async fn test_datatypes_preservation_values() {
             let dt_arr = batch
                 .column(batch.schema().index_of("dt").unwrap())
                 .as_any()
-                .downcast_ref::<arrow::array::TimestampMillisecondArray>()
+                .downcast_ref::<arrow::array::TimestampMicrosecondArray>()
                 .unwrap();
             let time_arr = batch
                 .column(batch.schema().index_of("time").unwrap())

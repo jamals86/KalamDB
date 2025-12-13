@@ -65,13 +65,13 @@ async fn test_shared_table_insert_and_select() {
     let server = TestServer::new().await;
 
     // Setup: Create namespace and table
-    fixtures::create_namespace(&server, "test_shared_insert_select").await;
-    fixtures::create_shared_table(&server, "test_shared_insert_select", "conversations").await;
+    fixtures::create_namespace(&server, "test_sh_insert").await;
+    fixtures::create_shared_table(&server, "test_sh_insert", "conversations").await;
 
     // Insert data
     let response = server
         .execute_sql(
-            r#"INSERT INTO test_shared_insert_select.conversations (conversation_id, title, participant_count) 
+            r#"INSERT INTO test_sh_insert.conversations (conversation_id, title, participant_count) 
            VALUES ('conv001', 'Team Standup', 5)"#,
         )
         .await;
@@ -114,14 +114,14 @@ async fn test_shared_table_multiple_inserts() {
     let server = TestServer::new().await;
 
     // Setup
-    fixtures::create_namespace(&server, "test_shared_multi").await;
-    fixtures::create_shared_table(&server, "test_shared_multi", "conversations").await;
+    fixtures::create_namespace(&server, "test_sh_multi").await;
+    fixtures::create_shared_table(&server, "test_sh_multi", "conversations").await;
 
     // Insert multiple rows
     let response = server
         .execute_sql(
             r#"
-        INSERT INTO test_shared_multi.conversations (conversation_id, title) VALUES 
+        INSERT INTO test_sh_multi.conversations (conversation_id, title) VALUES 
             ('conv001', 'Standup'),
             ('conv002', 'Planning'),
             ('conv003', 'Review')
@@ -165,14 +165,14 @@ async fn test_shared_table_update() {
     let server = TestServer::new().await;
 
     // Setup namespace and table
-    fixtures::create_namespace(&server, "test_shared_update").await;
-    fixtures::create_shared_table(&server, "test_shared_update", "conversations").await;
+    fixtures::create_namespace(&server, "test_sh_update").await;
+    fixtures::create_shared_table(&server, "test_sh_update", "conversations").await;
 
     // Insert initial data
     let response = server
         .execute_sql(
             r#"
-        INSERT INTO test_shared_update.conversations (conversation_id, title, status)
+        INSERT INTO test_sh_update.conversations (conversation_id, title, status)
         VALUES ('conv001', 'Planning Meeting', 'active')
     "#,
         )
@@ -183,7 +183,7 @@ async fn test_shared_table_update() {
     let response = server
         .execute_sql(
             r#"
-        UPDATE test_shared_update.conversations 
+        UPDATE test_sh_update.conversations 
         SET title = 'Updated Planning Meeting', status = 'archived'
         WHERE conversation_id = 'conv001'
     "#,
@@ -334,7 +334,7 @@ async fn test_shared_table_if_not_exists() {
     fixtures::create_namespace(&server, "test_shared_if_not_exists").await;
 
     let create_sql = r#"CREATE TABLE IF NOT EXISTS test_shared_if_not_exists.conversations (
-        id INT AUTO_INCREMENT,
+        id INT AUTO_INCREMENT PRIMARY KEY,
         name VARCHAR NOT NULL,
         value VARCHAR
     ) WITH (
@@ -361,10 +361,10 @@ async fn test_shared_table_flush_policy_rows() {
     let server = TestServer::new().await;
 
     // Setup
-    fixtures::create_namespace(&server, "test_shared_flush_rows").await;
+    fixtures::create_namespace(&server, "test_sh_flush").await;
 
-    let create_sql = r#"CREATE TABLE test_shared_flush_rows.conversations (
-        id INT AUTO_INCREMENT,
+    let create_sql = r#"CREATE TABLE test_sh_flush.conversations (
+        id INT AUTO_INCREMENT PRIMARY KEY,
         name VARCHAR NOT NULL,
         value VARCHAR
     ) WITH (
@@ -563,5 +563,5 @@ async fn test_shared_table_complete_lifecycle() {
     assert!(!server.table_exists("lifecycle_test", "conversations").await);
 
     // 8. Cleanup namespace
-    server.cleanup().await.expect("Cleanup failed");
+    let _ = fixtures::drop_namespace(&server, "lifecycle_test").await;
 }

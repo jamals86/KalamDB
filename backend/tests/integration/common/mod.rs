@@ -707,7 +707,7 @@ fn record_batch_to_query_result(
                         datafusion::arrow::datatypes::TimeUnit::Millisecond => {
                             let array = column
                                 .as_any()
-                                .downcast_ref::<TimestampMillisecondArray>()
+                                .downcast_ref::<TimestampMicrosecondArray>()
                                 .unwrap();
                             if array.is_null(row_idx) {
                                 serde_json::Value::Null
@@ -780,12 +780,10 @@ impl TestServer {
             .scan_all()
             .map_err(|e| anyhow::anyhow!("Failed to list namespaces: {:?}", e))?;
 
-        // Only drop namespaces that look test-scoped to avoid cross-test interference
-        // Convention: tests create namespaces prefixed with 'test', 'tmp', or 'flush_'
+        // Only drop namespaces with the dedicated cleanup prefix to avoid cross-test interference.
         for ns in namespaces {
             let name = ns.namespace_id.as_str();
-            if !(name.starts_with("test") || name.starts_with("tmp") || name.starts_with("flush_"))
-            {
+            if !name.starts_with("cleanup_") {
                 continue;
             }
             let sql = format!("DROP NAMESPACE {} CASCADE", ns.namespace_id);
@@ -798,7 +796,7 @@ impl TestServer {
             }
         }
 
-        Ok(())
+        self.cleanup_storages().await
     }
 
     /// Drop all tables in a specific namespace.
@@ -829,6 +827,31 @@ impl TestServer {
                 eprintln!(
                     "Warning: Failed to drop table {}.{}: {:?}",
                     namespace, table.table_name, response.error
+                );
+            }
+        }
+
+        Ok(())
+    }
+
+    /// Remove all non-default storage configurations created during tests.
+    pub async fn cleanup_storages(&self) -> Result<()> {
+        let storages_provider = self.app_context.system_tables().storages();
+        let storages = storages_provider
+            .list_storages()
+            .map_err(|e| anyhow::anyhow!("Failed to list storages: {:?}", e))?;
+
+        for storage in storages {
+            if storage.storage_id.is_local() {
+                continue;
+            }
+            let sql = format!("DROP STORAGE {}", storage.storage_id.as_str());
+            let response = self.execute_sql(&sql).await;
+            if response.status != ResponseStatus::Success {
+                eprintln!(
+                    "Warning: Failed to drop storage {}: {:?}",
+                    storage.storage_id.as_str(),
+                    response.error
                 );
             }
         }
@@ -1001,7 +1024,7 @@ mod tests {
         let server = TestServer::new().await;
 
         // Use unique namespace to avoid test interference
-        let ns = format!("test_cleanup_{}", std::process::id());
+        let ns = format!("cleanup_ns_{}", std::process::id());
 
         // Create namespace
         server

@@ -46,3 +46,5 @@ mod smoke_test_user_table_subscription;
 mod smoke_test_insert_throughput;
 #[path = "smoke/smoke_test_int64_precision.rs"]
 mod smoke_test_int64_precision;
+#[path = "smoke/smoke_test_subscription_advanced.rs"]
+mod smoke_test_subscription_advanced;

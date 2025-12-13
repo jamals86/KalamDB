@@ -66,7 +66,7 @@ impl ToArrowType for KalamDataType {
             KalamDataType::Double => ArrowDataType::Float64,
             KalamDataType::Float => ArrowDataType::Float32,
             KalamDataType::Text => ArrowDataType::Utf8,
-            KalamDataType::Timestamp => ArrowDataType::Timestamp(TimeUnit::Millisecond, None),
+            KalamDataType::Timestamp => ArrowDataType::Timestamp(TimeUnit::Microsecond, None),
             KalamDataType::Date => ArrowDataType::Date32,
             KalamDataType::DateTime => {
                 // DateTime with timezone stored as Timestamp (microsecond precision) UTC

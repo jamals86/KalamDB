@@ -30,7 +30,10 @@
 use crate::common::TestServer;
 use anyhow::Result;
 use kalamdb_api::models::{QueryResult, ResponseStatus, SqlResponse};
+use kalamdb_commons::models::NamespaceId;
 use serde_json::json;
+use std::time::{Duration, Instant};
+use tokio::time::sleep;
 
 /// Execute SQL with a specific user context.
 ///
@@ -74,6 +77,26 @@ pub async fn create_namespace(server: &TestServer, namespace: &str) -> SqlRespon
             "CREATE NAMESPACE failed: ns={}, error={:?}",
             namespace, resp.error
         );
+    }
+    // Namespaces are registered asynchronously, so poll until the system catalog observes it.
+    let namespaces_provider = server.app_context.system_tables().namespaces();
+    let namespace_id = NamespaceId::new(namespace);
+    let deadline = Instant::now() + Duration::from_secs(2);
+    loop {
+        match namespaces_provider.get_namespace(&namespace_id) {
+            Ok(Some(_)) => break,
+            Ok(None) => {}
+            Err(err) => {
+                panic!("Failed to verify namespace '{}': {:?}", namespace, err);
+            }
+        }
+        if Instant::now() >= deadline {
+            panic!(
+                "Namespace '{}' was not visible within 2s after creation",
+                namespace
+            );
+        }
+        sleep(Duration::from_millis(25)).await;
     }
     resp
 }

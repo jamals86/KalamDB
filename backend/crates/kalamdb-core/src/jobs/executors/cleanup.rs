@@ -25,6 +25,7 @@ use crate::sql::executor::handlers::table::drop::{
     cleanup_metadata_internal, cleanup_parquet_files_internal, cleanup_table_data_internal,
 };
 use async_trait::async_trait;
+use kalamdb_commons::models::StorageId;
 use kalamdb_commons::schemas::TableType;
 use kalamdb_commons::{JobType, TableId};
 use serde::{Deserialize, Serialize};
@@ -42,6 +43,17 @@ pub enum CleanupOperation {
     RemoveOrphaned,
 }
 
+/// Storage details needed to delete Parquet trees after metadata removal.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct StorageCleanupDetails {
+    /// Storage identifier
+    pub storage_id: StorageId,
+    /// Base directory resolved for this storage
+    pub base_directory: String,
+    /// Relative path template with static placeholders substituted
+    pub relative_path_template: String,
+}
+
 /// Typed parameters for cleanup operations (T191)
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CleanupParams {
@@ -52,6 +64,8 @@ pub struct CleanupParams {
     pub table_type: TableType,
     /// Cleanup operation (required)
     pub operation: CleanupOperation,
+    /// Storage cleanup details captured at DROP time
+    pub storage: StorageCleanupDetails,
 }
 
 impl JobParams for CleanupParams {
@@ -107,7 +121,13 @@ impl JobExecutor for CleanupExecutor {
         ctx.log_info(&format!("Cleaned up {} rows from table data", rows_deleted));
 
         // 2. Clean up Parquet files from storage backend
-        let bytes_freed = cleanup_parquet_files_internal(&ctx.app_ctx, &table_id).await?;
+        let bytes_freed = cleanup_parquet_files_internal(
+            &ctx.app_ctx,
+            &table_id,
+            table_type,
+            &params.storage,
+        )
+        .await?;
 
         ctx.log_info(&format!("Freed {} bytes from Parquet files", bytes_freed));
 
@@ -169,6 +189,11 @@ mod tests {
             table_id: TableId::new(NamespaceId::new("default"), TableName::new("users")),
             table_type: TableType::User,
             operation: CleanupOperation::DropTable,
+            storage: StorageCleanupDetails {
+                storage_id: StorageId::local(),
+                base_directory: "/tmp".to_string(),
+                relative_path_template: "users/{userId}".to_string(),
+            },
         };
         assert!(params.validate().is_ok());
     }

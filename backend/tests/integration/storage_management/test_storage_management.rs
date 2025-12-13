@@ -18,6 +18,35 @@ mod common;
 
 use common::{fixtures, TestServer};
 use kalamdb_api::models::ResponseStatus;
+use std::time::{Duration, Instant};
+use tokio::time::sleep;
+
+async fn wait_for_storage_rows(
+    server: &TestServer,
+    storage_id: &str,
+) -> Vec<std::collections::HashMap<String, serde_json::Value>> {
+    let deadline = Instant::now() + Duration::from_secs(2);
+    loop {
+        let response = server
+            .execute_sql(&format!(
+                "SELECT * FROM system.storages WHERE storage_id = '{}'",
+                storage_id
+            ))
+            .await;
+        if response.status == ResponseStatus::Success {
+            if let Some(rows) = response.results.first().and_then(|r| r.rows.as_ref()) {
+                if !rows.is_empty() {
+                    return rows.clone();
+                }
+            }
+        }
+        if Instant::now() >= deadline {
+            break;
+        }
+        sleep(Duration::from_millis(50)).await;
+    }
+    Vec::new()
+}
 
 // ============================================================================
 // Test 1: Default Storage Creation
@@ -130,6 +159,9 @@ async fn test_03_create_storage_filesystem() {
         response.error
     );
 
+    // Delay to ensure storage creation propagates to system.storages
+    tokio::time::sleep(std::time::Duration::from_millis(1000)).await;
+
     // Verify storage was created
     let response = server
         .execute_sql("SELECT * FROM system.storages WHERE storage_id = 'archive'")
@@ -195,6 +227,9 @@ async fn test_04_create_storage_s3() {
         "CREATE STORAGE (S3) failed: {:?}",
         response.error
     );
+
+    // Delay to ensure storage creation propagates
+    tokio::time::sleep(std::time::Duration::from_millis(1000)).await;
 
     // Verify storage was created
     let response = server
@@ -654,7 +689,7 @@ async fn test_15_storage_lookup_table_level() {
     // Create table with explicit storage
     let create_table = r#"
         CREATE TABLE lookup_ns.lookup_table (
-            id BIGINT,
+            id BIGINT PRIMARY KEY,
             message TEXT
         ) WITH (
             TYPE = 'USER',
@@ -699,16 +734,30 @@ async fn test_15_storage_lookup_table_level() {
 #[actix_web::test]
 async fn test_16_show_storages_ordered() {
     let server = TestServer::new().await;
+    let storage_root = server.storage_base_path.join("storages_ordering");
+    let _ = std::fs::create_dir_all(&storage_root);
+    let z_path = storage_root.join("z_last");
+    let a_path = storage_root.join("a_first");
+    let m_path = storage_root.join("m_middle");
 
     // Create multiple storages
     server
-        .execute_sql("CREATE STORAGE z_last TYPE filesystem NAME 'Z Last' PATH '/z'")
+        .execute_sql(&format!(
+            "CREATE STORAGE z_last TYPE filesystem NAME 'Z Last' PATH '{}'",
+            z_path.display()
+        ))
         .await;
     server
-        .execute_sql("CREATE STORAGE a_first TYPE filesystem NAME 'A First' PATH '/a'")
+        .execute_sql(&format!(
+            "CREATE STORAGE a_first TYPE filesystem NAME 'A First' PATH '{}'",
+            a_path.display()
+        ))
         .await;
     server
-        .execute_sql("CREATE STORAGE m_middle TYPE filesystem NAME 'M Middle' PATH '/m'")
+        .execute_sql(&format!(
+            "CREATE STORAGE m_middle TYPE filesystem NAME 'M Middle' PATH '{}'",
+            m_path.display()
+        ))
         .await;
 
     // Show storages (should be ordered with 'local' first, then alphabetically)
@@ -904,9 +953,11 @@ async fn test_20_storage_with_namespace() {
     // Create shared table in namespace (implicitly uses namespace's storage or default)
     let create_table = r#"
         CREATE TABLE storage_ns.shared_data (
-            id BIGINT,
+            id BIGINT PRIMARY KEY,
             data TEXT
-        ) TABLE_TYPE shared
+        ) WITH (
+            TYPE = 'SHARED'
+        )
     "#;
 
     let response = server.execute_sql(create_table).await;
@@ -1087,10 +1138,12 @@ async fn test_25_create_table_with_storage() {
     // Create table with explicit storage
     let create_table = r#"
         CREATE TABLE test_ns.products (
-            product_id BIGINT,
+            product_id BIGINT PRIMARY KEY,
             name TEXT
-        ) TABLE_TYPE shared
-        STORAGE custom_s3
+        ) WITH (
+            TYPE = 'SHARED',
+            STORAGE_ID = 'custom_s3'
+        )
     "#;
 
     let response = server.execute_sql(create_table).await;
@@ -1128,9 +1181,11 @@ async fn test_26_create_table_default_storage() {
     // Create table without explicit STORAGE clause
     let create_table = r#"
         CREATE TABLE default_ns.items (
-            item_id BIGINT,
+            item_id BIGINT PRIMARY KEY,
             description TEXT
-        ) TABLE_TYPE shared
+        ) WITH (
+            TYPE = 'SHARED'
+        )
     "#;
 
     let response = server.execute_sql(create_table).await;
@@ -1171,9 +1226,11 @@ async fn test_27_create_table_invalid_storage() {
     // This is acceptable behavior - storage is validated at flush time
     let create_table = r#"
         CREATE TABLE invalid_ns.bad_table (
-            id BIGINT
-        ) TABLE_TYPE shared
-        STORAGE nonexistent_storage
+            id BIGINT PRIMARY KEY
+        ) WITH (
+            TYPE = 'SHARED',
+            STORAGE_ID = 'nonexistent_storage'
+        )
     "#;
 
     let response = server.execute_sql(create_table).await;
@@ -1219,9 +1276,11 @@ async fn test_28_table_storage_assignment() {
     // (Testing storage assignment, not user table specifics)
     let create_table = r#"
         CREATE TABLE storage_ns.data_table (
-            id BIGINT,
+            id BIGINT PRIMARY KEY,
             data TEXT
-        ) TABLE_TYPE shared
+        ) WITH (
+            TYPE = 'SHARED'
+        )
     "#;
 
     let response = server.execute_sql(create_table).await;
@@ -1273,9 +1332,11 @@ async fn test_29_delete_storage_with_tables() {
     // Create table using this storage
     let create_table = r#"
         CREATE TABLE protected_ns.dependent_table (
-            id BIGINT
-        ) TABLE_TYPE shared
-        STORAGE protected_storage
+            id BIGINT PRIMARY KEY
+        ) WITH (
+            TYPE = 'SHARED',
+            STORAGE_ID = 'protected_storage'
+        )
     "#;
     server.execute_sql(create_table).await;
 
@@ -1500,6 +1561,9 @@ async fn test_34_shared_table_template_ordering() {
         response.error
     );
 
+    // Delay to ensure storage creation propagates
+    tokio::time::sleep(std::time::Duration::from_millis(1000)).await;
+
     // Verify storage created
     let query = "SELECT storage_id FROM system.storages WHERE storage_id = 'correct_shared'";
     let check = server.execute_sql(query).await;
@@ -1603,10 +1667,12 @@ async fn test_37_flush_with_use_user_storage() {
     // Current implementation uses table.storage_id directly
     let create_table = r#"
         CREATE TABLE storage_test.user_data (
-            id BIGINT,
+            id BIGINT PRIMARY KEY,
             value TEXT
-        ) TABLE_TYPE shared
-        STORAGE user_storage
+        ) WITH (
+            TYPE = 'SHARED',
+            STORAGE_ID = 'user_storage'
+        )
     "#;
 
     let response = server.execute_sql(create_table).await;
@@ -1646,9 +1712,11 @@ async fn test_38_user_storage_mode_region() {
     // Create table with default storage
     let create_table = r#"
         CREATE TABLE region_test.data (
-            id BIGINT,
+            id BIGINT PRIMARY KEY,
             value TEXT
-        ) TABLE_TYPE shared
+        ) WITH (
+            TYPE = 'SHARED'
+        )
     "#;
 
     let response = server.execute_sql(create_table).await;
@@ -1677,9 +1745,11 @@ async fn test_39_user_storage_mode_table() {
 
     let create_table = r#"
         CREATE TABLE table_mode_test.data (
-            id BIGINT,
+            id BIGINT PRIMARY KEY,
             value TEXT
-        ) TABLE_TYPE shared
+        ) WITH (
+            TYPE = 'SHARED'
+        )
     "#;
 
     let response = server.execute_sql(create_table).await;
@@ -1726,10 +1796,12 @@ async fn test_40_flush_resolves_s3_storage() {
     // Create table with S3 storage
     let create_table = r#"
         CREATE TABLE s3_flush_test.data (
-            id BIGINT,
+            id BIGINT PRIMARY KEY,
             value TEXT
-        ) TABLE_TYPE shared
-        STORAGE s3_flush
+        ) WITH (
+            TYPE = 'SHARED',
+            STORAGE_ID = 's3_flush'
+        )
     "#;
 
     let response = server.execute_sql(create_table).await;
@@ -1808,10 +1880,12 @@ async fn test_41_multi_storage_flush() {
         .execute_sql(
             r#"
         CREATE TABLE multi_storage.table1 (
-            id BIGINT,
+            id BIGINT PRIMARY KEY,
             data TEXT
-        ) TABLE_TYPE shared
-        STORAGE fs_storage_1
+        ) WITH (
+            TYPE = 'SHARED',
+            STORAGE_ID = 'fs_storage_1'
+        )
     "#,
         )
         .await;
@@ -1820,10 +1894,12 @@ async fn test_41_multi_storage_flush() {
         .execute_sql(
             r#"
         CREATE TABLE multi_storage.table2 (
-            id BIGINT,
+            id BIGINT PRIMARY KEY,
             data TEXT
-        ) TABLE_TYPE shared
-        STORAGE fs_storage_2
+        ) WITH (
+            TYPE = 'SHARED',
+            STORAGE_ID = 'fs_storage_2'
+        )
     "#,
         )
         .await;
@@ -1832,10 +1908,12 @@ async fn test_41_multi_storage_flush() {
         .execute_sql(
             r#"
         CREATE TABLE multi_storage.table3 (
-            id BIGINT,
+            id BIGINT PRIMARY KEY,
             data TEXT
-        ) TABLE_TYPE shared
-        STORAGE s3_storage
+        ) WITH (
+            TYPE = 'SHARED',
+            STORAGE_ID = 's3_storage'
+        )
     "#,
         )
         .await;
