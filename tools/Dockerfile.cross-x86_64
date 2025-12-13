@@ -22,23 +22,8 @@ RUN apt-get update && \
     update-alternatives --install /usr/bin/llvm-config llvm-config /usr/bin/llvm-config-16 100 && \
     rm -rf llvm.sh
 
-# Install Node.js 20 LTS for UI build
-RUN curl -fsSL https://deb.nodesource.com/setup_20.x | bash - && \
-    apt-get install -y nodejs && \
-    npm install -g npm@latest && \
-    rm -rf /var/lib/apt/lists/*
-
-# Install wasm-pack for building WASM SDK
-RUN set -eux; \
-        curl -fsSL --retry 5 --retry-delay 2 --retry-connrefused \
-            https://rustwasm.github.io/wasm-pack/installer/init.sh | sh; \
-        command -v wasm-pack; \
-        wasm-pack --version
-
-ENV PATH=/usr/local/cargo/bin:$PATH
-
-# Install wasm32 target for Rust
-RUN rustup target add wasm32-unknown-unknown
+# Node.js/npm not needed for cross-compilation (UI is pre-built in CI)
+# wasm-pack not needed for cross-compilation (SDK is pre-built in CI)
 
 # Set environment for bindgen/clang-sys
 # LIBCLANG_PATH for finding libclang.so at runtime (bindgen uses dlopen)
