@@ -6,6 +6,7 @@
 passthrough = [
     "RUST_BACKTRACE",
     "RUST_LOG",
+    "SKIP_UI_BUILD",
 ]
 
 # Use custom Dockerfile for x86_64 Linux with proper LLVM for RocksDB
