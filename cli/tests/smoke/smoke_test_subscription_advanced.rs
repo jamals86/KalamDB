@@ -714,3 +714,221 @@ impl SubscriptionListenerExt for SubscriptionListener {
         events
     }
 }
+
+// ============================================================================
+// TEST 5: Column projection in subscriptions
+// Verify that SELECT with specific columns only returns those columns
+// plus system columns (_seq, _deleted), not all table columns.
+// ============================================================================
+
+#[ntest::timeout(180000)]
+#[test]
+fn smoke_subscription_column_projection() {
+    if !is_server_running() {
+        eprintln!("⚠️  Server not running. Skipping test.");
+        return;
+    }
+
+    let namespace = generate_unique_namespace("smoke_ns");
+    let table = generate_unique_table("col_proj");
+    let full = format!("{}.{}", namespace, table);
+
+    create_namespace(&namespace);
+
+    // Create a table with multiple columns
+    let create_sql = format!(
+        "CREATE TABLE {} (
+            id INT PRIMARY KEY,
+            username VARCHAR,
+            email VARCHAR,
+            age INT,
+            status VARCHAR,
+            bio TEXT,
+            created_at TIMESTAMP
+        ) WITH (TYPE = 'USER')",
+        full
+    );
+    execute_sql_as_root_via_client(&create_sql).expect("create user table should succeed");
+
+    // Insert a row with all columns populated
+    let test_username = format!("user_{}", std::process::id());
+    let insert_sql = format!(
+        "INSERT INTO {} (id, username, email, age, status, bio, created_at) VALUES (1, '{}', 'test@example.com', 25, 'active', 'A long bio text here', 1730497770045)",
+        full, test_username
+    );
+    execute_sql_as_root_via_client(&insert_sql).expect("insert should succeed");
+
+    // Give time for the data to be visible
+    std::thread::sleep(Duration::from_millis(500));
+
+    // Subscribe with column projection - only select username
+    let query = format!("SELECT username FROM {}", full);
+    let mut listener = SubscriptionListener::start(&query).expect("subscription should start");
+
+    // Collect all initial events (including InitialDataBatch if any)
+    let mut initial_events: Vec<String> = Vec::new();
+    let deadline = std::time::Instant::now() + Duration::from_secs(20);
+    let mut ready = false;
+
+    while std::time::Instant::now() < deadline && !ready {
+        match listener.try_read_line(Duration::from_millis(500)) {
+            Ok(Some(line)) => {
+                println!("[TEST] Initial event: {}", &line[..std::cmp::min(400, line.len())]);
+                initial_events.push(line.clone());
+                // Check if we're done with initial loading
+                if line.contains("status: Ready") || 
+                   (line.contains("Ack") && !line.contains("has_more: true")) {
+                    ready = true;
+                }
+            }
+            Ok(None) => break,
+            Err(_) => continue,
+        }
+    }
+    
+    println!("[TEST] Total initial events received: {}", initial_events.len());
+
+    // Verify initial data contains username but NOT other columns
+    let initial_str = initial_events.join("\n");
+    
+    // Check if we got initial data at all - the data should be in InitialDataBatch or Ack
+    // If total_rows: 0 in Ack, the row may not have been visible yet
+    let has_initial_data = initial_str.contains("InitialDataBatch") || 
+                           initial_str.contains(&test_username) ||
+                           initial_str.contains("total_rows: 1");
+    
+    if !has_initial_data {
+        // The initial snapshot may have missed the row - wait for it as an Insert event
+        println!("[TEST] No initial data found, waiting for Insert event...");
+        let mut found_insert = false;
+        let insert_deadline = std::time::Instant::now() + Duration::from_secs(10);
+        while std::time::Instant::now() < insert_deadline {
+            match listener.try_read_line(Duration::from_millis(500)) {
+                Ok(Some(line)) => {
+                    println!("[TEST] Event while waiting: {}", &line[..std::cmp::min(300, line.len())]);
+                    initial_events.push(line.clone());
+                    if line.contains(&test_username) || line.contains("Insert") {
+                        found_insert = true;
+                        break;
+                    }
+                }
+                Ok(None) => break,
+                Err(_) => continue,
+            }
+        }
+        if found_insert {
+            // Re-check initial_str with new events
+            let initial_str = initial_events.join("\n");
+            // Verify column projection on Insert event
+            assert!(
+                initial_str.contains(&test_username) || initial_str.contains("username"),
+                "Insert event should contain username"
+            );
+            assert!(
+                !initial_str.contains("test@example.com"),
+                "Insert event should NOT contain email value"
+            );
+        }
+    } else {
+        // Should contain username
+        assert!(
+            initial_str.contains(&test_username) || initial_str.contains("username"),
+            "Initial data should contain username. Events: {}",
+            &initial_str[..std::cmp::min(500, initial_str.len())]
+        );
+
+        // Should NOT contain email, age, status, bio (non-selected columns)
+        // Note: We check for the actual values to avoid false positives from field names in debug output
+        assert!(
+            !initial_str.contains("test@example.com"),
+            "Initial data should NOT contain email value. Events: {}",
+            &initial_str[..std::cmp::min(500, initial_str.len())]
+        );
+        assert!(
+            !initial_str.contains("A long bio text here"),
+            "Initial data should NOT contain bio value. Events: {}",
+            &initial_str[..std::cmp::min(500, initial_str.len())]
+        );
+    }
+
+    std::thread::sleep(Duration::from_millis(500));
+
+    // Now perform an UPDATE and verify the change event also respects projection
+    let updated_username = format!("updated_{}", std::process::id());
+    let update_sql = format!(
+        "UPDATE {} SET username = '{}', email = 'newemail@example.com', status = 'inactive' WHERE id = 1",
+        full, updated_username
+    );
+    execute_sql_as_root_via_client(&update_sql).expect("update should succeed");
+
+    // Collect update event
+    let mut update_events: Vec<String> = Vec::new();
+    let deadline = std::time::Instant::now() + Duration::from_secs(15);
+
+    while std::time::Instant::now() < deadline {
+        match listener.try_read_line(Duration::from_millis(500)) {
+            Ok(Some(line)) => {
+                println!("[TEST] Update event: {}", &line[..std::cmp::min(300, line.len())]);
+                update_events.push(line.clone());
+                if line.contains("Update") || line.contains(&updated_username) {
+                    break;
+                }
+            }
+            Ok(None) => break,
+            Err(_) => {
+                if !update_events.is_empty() {
+                    break;
+                }
+                continue;
+            }
+        }
+    }
+
+    assert!(
+        !update_events.is_empty(),
+        "Should receive update event"
+    );
+
+    let update_str = update_events.join("\n");
+
+    // Update event should contain username (the updated value)
+    assert!(
+        update_str.contains(&updated_username) || update_str.contains("username"),
+        "Update event should contain username. Events: {}",
+        &update_str[..std::cmp::min(500, update_str.len())]
+    );
+
+    // Update event should have old_rows with old username value
+    assert!(
+        update_str.contains("old_rows"),
+        "Update event should contain old_rows. Events: {}",
+        &update_str[..std::cmp::min(500, update_str.len())]
+    );
+
+    // Update event should NOT contain the new email value (not in projection)
+    assert!(
+        !update_str.contains("newemail@example.com"),
+        "Update event should NOT contain email value (not in SELECT projection). Events: {}",
+        &update_str[..std::cmp::min(500, update_str.len())]
+    );
+
+    // Update event should NOT contain status value
+    assert!(
+        !update_str.contains("\"inactive\""),
+        "Update event should NOT contain status value (not in SELECT projection). Events: {}",
+        &update_str[..std::cmp::min(500, update_str.len())]
+    );
+
+    // Verify InitialDataBatch had _seq (system column) along with username
+    let has_seq_in_initial = initial_events.iter().any(|e| 
+        e.contains("InitialDataBatch") && e.contains("_seq")
+    );
+    assert!(
+        has_seq_in_initial,
+        "InitialDataBatch should contain _seq system column. Events: {:?}",
+        initial_events.iter().filter(|e| e.contains("InitialDataBatch")).collect::<Vec<_>>()
+    );
+
+    listener.stop().ok();
+    println!("[TEST] Column projection test passed! Only selected columns returned in subscription events.");
+}
