@@ -276,13 +276,13 @@ async fn test_shared_table_defaults_to_private() {
     );
 
     // Verify the table was created with default "private" access level
-    // Query system.tables to get the table metadata
+    // Query system.tables to get the table metadata (requires admin privileges)
     let query_table_sql = format!(
         "SELECT access_level FROM system.tables WHERE table_id = '{}:default_access'",
         namespace
     );
     let query_result = server
-        .execute_sql_as_user(&query_table_sql, service_id_str)
+        .execute_sql_as_user(&query_table_sql, admin_id_str)
         .await;
 
     assert_eq!(
