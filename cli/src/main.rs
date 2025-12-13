@@ -16,6 +16,7 @@
 //! ```
 
 use clap::Parser;
+use std::io::IsTerminal;
 
 use kalam_cli::{CLIConfiguration, CLIError, FileCredentialStore, Result};
 
@@ -33,9 +34,10 @@ async fn main() -> Result<()> {
     // Parse command-line arguments
     let mut cli = Cli::parse();
 
-    // If --password flag was provided without a value (empty string), prompt interactively
-    // This keeps the password out of the process list for security
-    if cli.password.as_ref().map(|p| p.is_empty()).unwrap_or(false) {
+    // If the password is explicitly set to an empty string, only prompt in interactive mode.
+    // In non-interactive modes (--command/--file), an empty password may be valid (e.g. default root).
+    let is_interactive_mode = cli.command.is_none() && cli.file.is_none();
+    if cli.password.as_deref() == Some("") && is_interactive_mode && std::io::stdin().is_terminal() {
         let password = rpassword::prompt_password("Password: ")
             .map_err(|e| CLIError::FileError(format!("Failed to read password: {}", e)))?;
         cli.password = Some(password);

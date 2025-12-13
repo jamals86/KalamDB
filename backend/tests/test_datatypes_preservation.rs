@@ -93,7 +93,7 @@ async fn test_datatypes_preservation_values() {
         .expect("Failed to convert to Arrow schema");
 
     // Create user table store
-    let store = Arc::new(new_user_table_store(backend.clone(), &ns, &tbl_name));
+    let store = Arc::new(new_user_table_store(backend.clone(), &table_id));
 
     // Insert deterministically-generated rows for user "userA"
     let user_id = "userA";
@@ -313,7 +313,7 @@ async fn test_datatypes_preservation_values() {
             let ts_arr = batch
                 .column(batch.schema().index_of("ts").unwrap())
                 .as_any()
-                .downcast_ref::<arrow::array::TimestampMillisecondArray>()
+                .downcast_ref::<arrow::array::TimestampMicrosecondArray>()
                 .unwrap();
             let date_arr = batch
                 .column(batch.schema().index_of("date").unwrap())
@@ -323,7 +323,7 @@ async fn test_datatypes_preservation_values() {
             let dt_arr = batch
                 .column(batch.schema().index_of("dt").unwrap())
                 .as_any()
-                .downcast_ref::<arrow::array::TimestampMillisecondArray>()
+                .downcast_ref::<arrow::array::TimestampMicrosecondArray>()
                 .unwrap();
             let time_arr = batch
                 .column(batch.schema().index_of("time").unwrap())

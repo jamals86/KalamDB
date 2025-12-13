@@ -14,6 +14,7 @@
 use crate::app_context::AppContext;
 use crate::error::KalamDbError;
 use crate::providers::base::{self, BaseTableProvider, TableProviderCore};
+use crate::providers::manifest_helpers::{ensure_manifest_ready, load_row_from_parquet_by_seq};
 use crate::schema_registry::TableType;
 use async_trait::async_trait;
 use datafusion::arrow::datatypes::SchemaRef;
@@ -24,7 +25,6 @@ use datafusion::error::Result as DataFusionResult;
 use datafusion::logical_expr::{Expr, TableProviderFilterPushDown};
 use datafusion::physical_plan::ExecutionPlan;
 use datafusion::scalar::ScalarValue;
-use kalamdb_commons::constants::SystemColumnNames;
 use kalamdb_commons::ids::SharedTableRowId;
 use kalamdb_commons::models::{Row, UserId};
 use kalamdb_commons::TableId;
@@ -126,39 +126,6 @@ impl SharedTableProvider {
         )
     }
 
-    fn ensure_manifest_ready(&self) -> Result<(), KalamDbError> {
-        let table_id = self.core.table_id();
-        let namespace = table_id.namespace_id().clone();
-        let table = table_id.table_name().clone();
-        let manifest_cache = self.core.app_context.manifest_cache_service();
-
-        match manifest_cache.get_or_load(table_id, None) {
-            Ok(Some(_)) => return Ok(()),
-            Ok(None) => {}
-            Err(e) => {
-                log::warn!(
-                    "[SharedTableProvider] Manifest cache lookup failed for {}.{} err={}",
-                    namespace.as_str(),
-                    table.as_str(),
-                    e
-                );
-            }
-        }
-
-        let manifest_service = self.core.app_context.manifest_service();
-        let manifest =
-            manifest_service.ensure_manifest_initialized(table_id, self.core.table_type(), None)?;
-
-        let manifest_path = manifest_service
-            .manifest_path(table_id, None)?
-            .to_string_lossy()
-            .to_string();
-
-        manifest_cache.stage_before_flush(table_id, None, &manifest, manifest_path)?;
-
-        Ok(())
-    }
-
     /// Find a row by PK value using the PK index for efficient O(1) lookup.
     ///
     /// This method uses the PK index to find all versions of a row with the given PK value,
@@ -178,51 +145,23 @@ impl SharedTableProvider {
             .map_err(|e| KalamDbError::Other(format!("PK index scan failed: {}", e)))?;
 
         if results.is_empty() {
-            log::trace!(
-                "[SharedTableProvider] PK index returned no entries for pk_value={:?}",
-                pk_value
-            );
             return Ok(None);
         }
 
-        log::trace!(
-            "[SharedTableProvider] PK index found {} entries for pk_value={:?}",
-            results.len(),
-            pk_value
-        );
-
-        // Find the latest non-deleted version
-        // Results are ordered by seq (descending due to big-endian encoding)
-        for (row_id, row) in results {
-            if !row._deleted {
-                return Ok(Some((row_id, row)));
+        if let Some((row_id, row)) = results
+            .into_iter()
+            .max_by_key(|(row_id, _)| row_id.as_i64())
+        {
+            if row._deleted {
+                Ok(None)
+            } else {
+                Ok(Some((row_id, row)))
             }
-        }
-
-        // All versions are deleted
-        Ok(None)
-    }
-
-    /// Retrieve a specific row version from Parquet storage by SeqId
-    fn get_row_from_parquet(
-        &self,
-        seq_id: kalamdb_commons::ids::SeqId,
-    ) -> Result<Option<SharedTableRow>, KalamDbError> {
-        use datafusion::prelude::{col, lit};
-        let filter = col(SystemColumnNames::SEQ).eq(lit(seq_id.as_i64()));
-        let batch = self.scan_parquet_files_as_batch(Some(&filter))?;
-        let rows = parquet_batch_to_rows(&batch)?;
-
-        if let Some(row_data) = rows.into_iter().next() {
-            Ok(Some(SharedTableRow {
-                _seq: row_data.seq_id,
-                _deleted: row_data.deleted,
-                fields: row_data.fields,
-            }))
         } else {
             Ok(None)
         }
     }
+
 }
 
 impl BaseTableProvider<SharedTableRowId, SharedTableRow> for SharedTableProvider {
@@ -249,61 +188,67 @@ impl BaseTableProvider<SharedTableRowId, SharedTableRow> for SharedTableProvider
 
     /// Find row by PK value using the PK index for O(1) lookup.
     ///
-    /// This overrides the default base implementation that does a full table scan.
+    /// OPTIMIZED: Uses `pk_exists_in_hot` for fast hot-path check.
+    /// OPTIMIZED: Uses `pk_exists_in_cold` with manifest-based segment pruning for cold storage.
     /// For shared tables, user_id is ignored (no RLS).
-    /// For hot storage (RocksDB), this is O(1). If not found in hot storage,
-    /// falls back to scanning Parquet (cold storage).
     fn find_row_key_by_id_field(
         &self,
         _user_id: &UserId,
         id_value: &str,
     ) -> Result<Option<SharedTableRowId>, KalamDbError> {
-        log::trace!(
-            "[SharedTableProvider] find_row_key_by_id_field via PK index: id_value='{}'",
-            id_value
-        );
+        // Use shared helper to parse PK value
+        let pk_value = crate::providers::pk_helpers::parse_pk_value(id_value);
 
-        // Try to parse id_value as i64 first (most common case)
-        let pk_value = if let Ok(int_val) = id_value.parse::<i64>() {
-            ScalarValue::Int64(Some(int_val))
-        } else {
-            ScalarValue::Utf8(Some(id_value.to_string()))
-        };
-
-        // Use PK index for efficient hot storage lookup (O(1))
+        // Fast path: return the latest non-deleted row from hot storage if it exists.
         if let Some((row_id, _row)) = self.find_by_pk(&pk_value)? {
-            log::trace!(
-                "[SharedTableProvider] Found row in hot storage with id={}",
-                id_value
-            );
             return Ok(Some(row_id));
         }
 
-        log::trace!(
-            "[SharedTableProvider] Row not found in hot storage for id={}, checking cold storage",
-            id_value
-        );
-
-        // Not found in hot storage - fall back to Parquet scan (cold storage)
-        // This is more expensive but necessary for flushed rows
-        let result = base::find_row_by_pk(self, None, id_value)?;
-        if let Some((row_id, _row)) = result {
-            log::trace!(
-                "[SharedTableProvider] Found row in cold storage with id={}",
-                id_value
-            );
-            return Ok(Some(row_id));
+        // If hot storage has entries but they're all deleted, allow PK reuse.
+        let prefix = self.pk_index.build_prefix_for_pk(&pk_value);
+        let hot_has_versions = self
+            .store
+            .exists_by_index(0, &prefix)
+            .map_err(|e| KalamDbError::Other(format!("PK index scan failed: {}", e)))?;
+        if hot_has_versions {
+            return Ok(None);
         }
 
-        log::trace!(
-            "[SharedTableProvider] Row not found anywhere for id={}",
-            id_value
-        );
+        // Not found in hot storage - check cold storage using optimized manifest-based lookup
+        // This uses column_stats to prune segments that can't contain the PK
+        let pk_name = self.primary_key_field_name();
+        let exists_in_cold = base::pk_exists_in_cold(
+            &self.core,
+            self.core.table_id(),
+            self.core.table_type(),
+            None, // No user scoping for shared tables
+            pk_name,
+            id_value,
+        )?;
+
+        if exists_in_cold {
+            log::trace!(
+                "[SharedTableProvider] PK {} exists in cold storage",
+                id_value
+            );
+            // Load the actual row_id from cold storage so DML (DELETE/UPDATE) can target it
+            if let Some((row_id, _row)) = base::find_row_by_pk(self, None, id_value)? {
+                return Ok(Some(row_id));
+            }
+
+            return Ok(None);
+        }
+
         Ok(None)
     }
 
     fn insert(&self, _user_id: &UserId, row_data: Row) -> Result<SharedTableRowId, KalamDbError> {
-        self.ensure_manifest_ready()?;
+        ensure_manifest_ready(
+            &self.core,
+            self.core.table_type(),
+            None,
+            "SharedTableProvider",
+        )?;
 
         // IGNORE user_id parameter - no RLS for shared tables
         base::ensure_unique_pk_value(self, None, &row_data)?;
@@ -357,7 +302,12 @@ impl BaseTableProvider<SharedTableRowId, SharedTableRow> for SharedTableProvider
         }
 
         // Ensure manifest is ready
-        self.ensure_manifest_ready()?;
+        ensure_manifest_ready(
+            &self.core,
+            self.core.table_type(),
+            None,
+            "SharedTableProvider",
+        )?;
 
         // Coerce rows to match schema types
         let coerced_rows = coerce_rows(rows, &self.schema_ref()).map_err(|e| {
@@ -440,8 +390,19 @@ impl BaseTableProvider<SharedTableRowId, SharedTableRow> for SharedTableProvider
         let prior = if let Some(p) = prior_opt {
             p
         } else {
-            self.get_row_from_parquet(*key)?
-                .ok_or_else(|| KalamDbError::NotFound("Row not found for update".to_string()))?
+            load_row_from_parquet_by_seq(
+                &self.core,
+                self.core.table_type(),
+                &self.schema,
+                None,
+                *key,
+                |row_data| SharedTableRow {
+                    _seq: row_data.seq_id,
+                    _deleted: row_data.deleted,
+                    fields: row_data.fields,
+                },
+            )?
+            .ok_or_else(|| KalamDbError::NotFound("Row not found for update".to_string()))?
         };
 
         let pk_value_scalar = prior.fields.get(&pk_name).cloned().ok_or_else(|| {
@@ -536,8 +497,19 @@ impl BaseTableProvider<SharedTableRowId, SharedTableRow> for SharedTableProvider
         let prior = if let Some(p) = prior_opt {
             p
         } else {
-            self.get_row_from_parquet(*key)?
-                .ok_or_else(|| KalamDbError::NotFound("Row not found for delete".to_string()))?
+            load_row_from_parquet_by_seq(
+                &self.core,
+                self.core.table_type(),
+                &self.schema,
+                None,
+                *key,
+                |row_data| SharedTableRow {
+                    _seq: row_data.seq_id,
+                    _deleted: row_data.deleted,
+                    fields: row_data.fields,
+                },
+            )?
+            .ok_or_else(|| KalamDbError::NotFound("Row not found for delete".to_string()))?
         };
 
         let sys_cols = self.core.system_columns.clone();
@@ -593,11 +565,14 @@ impl BaseTableProvider<SharedTableRowId, SharedTableRow> for SharedTableProvider
     fn scan_with_version_resolution_to_kvs(
         &self,
         _user_id: &UserId,
-        _filter: Option<&Expr>,
+        filter: Option<&Expr>,
         since_seq: Option<kalamdb_commons::ids::SeqId>,
         limit: Option<usize>,
         keep_deleted: bool,
     ) -> Result<Vec<(SharedTableRowId, SharedTableRow)>, KalamDbError> {
+        // Warn if no filter or limit - potential performance issue
+        base::warn_if_unfiltered_scan(self.core.table_id(), filter, limit, self.core.table_type());
+
         // IGNORE user_id parameter - scan ALL rows (hot storage)
 
         // Construct start_key if since_seq is provided
@@ -609,10 +584,8 @@ impl BaseTableProvider<SharedTableRowId, SharedTableRow> for SharedTableProvider
             None
         };
 
-        // Use limit if provided, otherwise default to 100,000
-        // Note: We might need to scan more than limit to account for version resolution/tombstones
-        // For now, let's use limit * 2 + 1000 as a heuristic if limit is small, or just 100,000
-        let scan_limit = limit.map(|l| std::cmp::max(l * 2, 1000)).unwrap_or(100_000);
+        // Calculate scan limit using common helper
+        let scan_limit = base::calculate_scan_limit(limit);
 
         let raw = self
             .store
@@ -625,8 +598,8 @@ impl BaseTableProvider<SharedTableRowId, SharedTableRow> for SharedTableProvider
             })?;
         log::debug!("[SharedProvider] RocksDB scan returned {} rows", raw.len());
 
-        // Scan cold storage (Parquet files)
-        let parquet_batch = self.scan_parquet_files_as_batch(_filter)?;
+        // Scan cold storage (Parquet files) - pass filter for pruning
+        let parquet_batch = self.scan_parquet_files_as_batch(filter)?;
 
         let pk_name = self.primary_key_field_name().to_string();
 
@@ -661,12 +634,8 @@ impl BaseTableProvider<SharedTableRowId, SharedTableRow> for SharedTableProvider
 
         let mut result = merge_versioned_rows(&pk_name, hot_rows, cold_rows, keep_deleted);
 
-        // Apply limit after resolution
-        if let Some(l) = limit {
-            if result.len() > l {
-                result.truncate(l);
-            }
-        }
+        // Apply limit after resolution using common helper
+        base::apply_limit(&mut result, limit);
 
         log::debug!(
             "[SharedProvider] Version-resolved rows (post-tombstone filter): {}",

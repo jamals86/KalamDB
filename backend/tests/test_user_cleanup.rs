@@ -17,6 +17,7 @@ use kalamdb_core::jobs::{JobExecutor, JobResult, UserCleanupConfig, UserCleanupJ
 use kalamdb_store::{RocksDBBackend, StorageBackend};
 use kalamdb_system::JobsTableProvider;
 use kalamdb_tables::UserTableStoreExt;
+use kalamdb_commons::TableId;
 use kalamdb_tables::{new_user_table_store, UserTableStore};
 use std::sync::Arc;
 
@@ -24,11 +25,8 @@ const DAY_MS: i64 = 24 * 60 * 60 * 1000;
 
 fn user_store(server: &TestServer, namespace: &str, table_name: &str) -> Arc<UserTableStore> {
     let backend: Arc<dyn StorageBackend> = Arc::new(RocksDBBackend::new(server.db.clone()));
-    Arc::new(new_user_table_store(
-        backend,
-        &NamespaceId::new(namespace),
-        &TableName::new(table_name),
-    ))
+    let table_id = TableId::new(NamespaceId::new(namespace), TableName::new(table_name));
+    Arc::new(new_user_table_store(backend, &table_id))
 }
 
 fn cleanup_job(server: &TestServer, store: Arc<UserTableStore>) -> UserCleanupJob {

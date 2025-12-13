@@ -98,7 +98,6 @@ impl TypedStatementHandler<AlterStorageStatement> for AlterStorageHandler {
 mod tests {
     use super::*;
     use crate::test_helpers::create_test_session;
-    use datafusion::prelude::SessionContext;
     use kalamdb_commons::models::UserId;
     use kalamdb_commons::system::Storage;
     use kalamdb_commons::{Role, StorageId};
@@ -161,7 +160,6 @@ mod tests {
             user_tables_template: None,
         };
         let ctx = create_test_context(Role::System);
-        let session = SessionContext::new();
 
         let result = handler.execute(stmt, vec![], &ctx).await;
 

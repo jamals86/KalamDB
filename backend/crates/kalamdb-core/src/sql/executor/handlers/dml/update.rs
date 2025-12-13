@@ -13,6 +13,12 @@ use kalamdb_commons::models::datatypes::KalamDataType;
 use kalamdb_commons::models::{NamespaceId, Row, TableName};
 use kalamdb_sql::statement_classifier::{SqlStatement, SqlStatementKind};
 use std::collections::BTreeMap;
+use sqlparser::ast::{
+    AssignmentTarget, BinaryOperator, Expr as SqlExpr, Ident, ObjectNamePart,
+    Statement as SqlStatementAst, TableFactor,
+};
+use sqlparser::dialect::GenericDialect;
+use sqlparser::parser::Parser;
 
 /// Handler for UPDATE statements
 ///
@@ -54,7 +60,7 @@ impl StatementHandler for UpdateHandler {
         // Pass the current default namespace from session context for unqualified table names
         let default_namespace = context.default_namespace();
         let (namespace, table_name, assignments, where_pair) =
-            self.simple_parse_update(sql, &default_namespace)?;
+            self.parse_update_with_sqlparser(sql, &default_namespace)?;
 
         // Get table definition early to access schema for type coercion
         let schema_registry = app_context.schema_registry();
@@ -124,18 +130,34 @@ impl StatementHandler for UpdateHandler {
                         println!("[DEBUG UpdateHandler] Calling provider.update_by_id_field for user={}, pk_column={}, pk_value={}", 
                             effective_user_id.as_str(), pk_column, id_value);
 
-                        match provider.update_by_id_field(effective_user_id, &id_value, updates) {
+                        match provider.update_by_id_field(
+                            effective_user_id,
+                            &id_value,
+                            updates.clone(),
+                        ) {
                             Ok(_) => {
                                 println!("[DEBUG UpdateHandler] update_by_id_field succeeded");
                                 Ok(ExecutionResult::Updated { rows_affected: 1 })
                             }
                             Err(e) => {
                                 println!("[DEBUG UpdateHandler] update_by_id_field failed: {}", e);
-                                // Isolation-friendly semantics: updating a non-existent row under this user_id
-                                // should return success with 0 rows affected (no-op), not an error.
+                                // Common case: PK is not a string (e.g. INT). Our update_by_id_field
+                                // fast-path delegates to update_by_pk_value(&str), which may not be able
+                                // to locate the row for non-string PK encodings.
+                                // Fall back to a key lookup that compares ScalarValues correctly.
                                 if matches!(e, crate::error::KalamDbError::NotFound(_)) {
+                                    if let Some(key) = provider
+                                        .find_row_key_by_id_field(effective_user_id, &id_value)?
+                                    {
+                                        provider.update(effective_user_id, &key, updates)?;
+                                        return Ok(ExecutionResult::Updated { rows_affected: 1 });
+                                    }
+
+                                    // Isolation-friendly semantics: updating a non-existent row under this user_id
+                                    // should return success with 0 rows affected (no-op), not an error.
                                     return Ok(ExecutionResult::Updated { rows_affected: 0 });
                                 }
+
                                 Err(e)
                             }
                         }
@@ -248,8 +270,25 @@ impl StatementHandler for UpdateHandler {
                         self.extract_row_id_for_column(&where_pair, pk_column, &params)?
                     {
                         // SharedTableProvider ignores user_id parameter (no RLS)
-                        provider.update_by_id_field(effective_user_id, &id_value, updates)?;
-                        Ok(ExecutionResult::Updated { rows_affected: 1 })
+                        match provider.update_by_id_field(
+                            effective_user_id,
+                            &id_value,
+                            updates.clone(),
+                        ) {
+                            Ok(_) => Ok(ExecutionResult::Updated { rows_affected: 1 }),
+                            Err(e) if matches!(e, crate::error::KalamDbError::NotFound(_)) => {
+                                // Same fallback as USER tables: allow non-string PKs.
+                                if let Some(key) = provider
+                                    .find_row_key_by_id_field(effective_user_id, &id_value)?
+                                {
+                                    provider.update(effective_user_id, &key, updates)?;
+                                    Ok(ExecutionResult::Updated { rows_affected: 1 })
+                                } else {
+                                    Ok(ExecutionResult::Updated { rows_affected: 0 })
+                                }
+                            }
+                            Err(e) => Err(e),
+                        }
                     } else {
                         Err(KalamDbError::InvalidOperation(format!(
                             "UPDATE on SHARED tables requires WHERE {} = <value> (predicate updates not yet supported)",
@@ -300,12 +339,8 @@ impl StatementHandler for UpdateHandler {
 }
 
 impl UpdateHandler {
-    /// Simple UPDATE parser for basic UPDATE statements
-    ///
-    /// # Arguments
-    /// * `sql` - The SQL UPDATE statement
-    /// * `default_namespace` - The default namespace to use for unqualified table names
-    fn simple_parse_update(
+    /// Parse UPDATE using sqlparser-rs to avoid string-splitting edge cases
+    fn parse_update_with_sqlparser(
         &self,
         sql: &str,
         default_namespace: &NamespaceId,
@@ -318,73 +353,89 @@ impl UpdateHandler {
         ),
         KalamDbError,
     > {
-        // Expect: UPDATE <ns>.<table> SET col1=val1, col2=$2 WHERE <pk> = <v>
-        let upper = sql.to_uppercase();
-        let set_pos = upper
-            .find(" SET ")
-            .ok_or_else(|| KalamDbError::InvalidOperation("Missing SET clause".into()))?;
-        let where_pos = upper.find(" WHERE ");
-        let head = sql[0..set_pos].trim(); // "UPDATE <table_ref>"
+        let dialect = GenericDialect {};
+        let mut stmts = Parser::parse_sql(&dialect, sql)
+            .map_err(|e| KalamDbError::InvalidOperation(format!("Invalid UPDATE syntax: {}", e)))?;
+        let stmt = stmts
+            .pop()
+            .ok_or_else(|| KalamDbError::InvalidOperation("Empty UPDATE statement".into()))?;
 
-        // Extract table reference by removing "UPDATE" keyword
-        let table_part = if head.to_uppercase().starts_with("UPDATE ") {
-            head["UPDATE ".len()..].trim()
-        } else {
-            return Err(KalamDbError::InvalidOperation(
-                "Invalid UPDATE syntax".into(),
-            ));
-        };
+        let (ns, tbl, assigns, where_pair) = match stmt {
+            SqlStatementAst::Update { table, assignments, selection, .. } => {
+                let (ns, tbl) = match table.relation {
+                    TableFactor::Table { name, .. } => {
+                        let parts: Vec<String> = name
+                            .0
+                            .iter()
+                            .filter_map(ObjectNamePart::as_ident)
+                            .map(|id| id.value.clone())
+                            .collect();
+                        match parts.as_slice() {
+                            [table] => (default_namespace.clone(), TableName::new(table.clone())),
+                            [ns, table] => {
+                                (NamespaceId::new(ns.clone()), TableName::new(table.clone()))
+                            }
+                            _ => {
+                                return Err(KalamDbError::InvalidOperation(
+                                    "Invalid UPDATE table reference".into(),
+                                ))
+                            }
+                        }
+                    }
+                    _ => {
+                        return Err(KalamDbError::InvalidOperation(
+                            "Unsupported UPDATE target (only base tables allowed)".into(),
+                        ))
+                    }
+                };
 
-        let (ns, tbl) = {
-            let parts: Vec<&str> = table_part.split('.').collect();
-            match parts.len() {
-                1 => (
-                    default_namespace.clone(),
-                    TableName::new(parts[0].trim().to_string()),
-                ),
-                2 => (
-                    NamespaceId::new(parts[0].trim().to_string()),
-                    TableName::new(parts[1].trim().to_string()),
-                ),
-                _ => {
-                    return Err(KalamDbError::InvalidOperation(
-                        "Invalid table reference".into(),
-                    ))
+                let mut assigns = Vec::new();
+                for assign in assignments {
+                    let col = match assign.target {
+                        AssignmentTarget::ColumnName(obj_name) => {
+                            obj_name
+                                .0
+                                .iter()
+                                .filter_map(ObjectNamePart::as_ident)
+                                .map(|id| id.value.clone())
+                                .last()
+                                .ok_or_else(|| {
+                                    KalamDbError::InvalidOperation(
+                                        "Invalid column name in assignment".into(),
+                                    )
+                                })?
+                        }
+                        AssignmentTarget::Tuple(_) => {
+                            return Err(KalamDbError::InvalidOperation(
+                                "Tuple assignments are not supported".into(),
+                            ))
+                        }
+                    };
+                    assigns.push((col, assign.value.to_string()));
                 }
+
+                let where_pair = selection.and_then(|expr| match expr {
+                    SqlExpr::BinaryOp { left, op: BinaryOperator::Eq, right } => {
+                        match *left {
+                            SqlExpr::Identifier(ident) => Some((ident.value, right.to_string())),
+                            SqlExpr::CompoundIdentifier(idents) => idents
+                                .last()
+                                .map(|Ident { value, .. }| (value.clone(), right.to_string())),
+                            _ => None,
+                        }
+                    }
+                    _ => None,
+                });
+
+                (ns, tbl, assigns, where_pair)
+            }
+            _ => {
+                return Err(KalamDbError::InvalidOperation(
+                    "Expected UPDATE statement".into(),
+                ))
             }
         };
-        let set_clause = if let Some(wp) = where_pos {
-            &sql[set_pos + 5..wp]
-        } else {
-            &sql[set_pos + 5..]
-        };
-        let mut assigns = Vec::new();
-        for pair in set_clause.split(',') {
-            let mut it = pair.splitn(2, '=');
-            let col = it
-                .next()
-                .ok_or_else(|| KalamDbError::InvalidOperation("Malformed SET".into()))?
-                .trim()
-                .to_string();
-            let val = it
-                .next()
-                .ok_or_else(|| KalamDbError::InvalidOperation("Malformed SET value".into()))?
-                .trim()
-                .to_string();
-            assigns.push((col, val));
-        }
-        let where_pair = where_pos.and_then(|wp| {
-            let where_clause_raw = sql[wp + 7..].trim();
-            // Parse simple "<col> = <value>" pattern
-            let parts: Vec<&str> = where_clause_raw.splitn(2, '=').collect();
-            if parts.len() == 2 {
-                let col = parts[0].trim().to_string();
-                let val = parts[1].trim().to_string();
-                Some((col, val))
-            } else {
-                None
-            }
-        });
+
         Ok((ns, tbl, assigns, where_pair))
     }
 

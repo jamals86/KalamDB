@@ -10,6 +10,18 @@ use common::flush_helpers::{check_shared_parquet_files, execute_shared_flush_syn
 use common::{fixtures, TestServer};
 use kalamdb_api::models::ResponseStatus;
 use std::path::Path;
+use tokio::time::{sleep, Duration, Instant};
+
+async fn wait_for_path_absent(path: &Path, timeout: Duration) -> bool {
+    let deadline = Instant::now() + timeout;
+    while path.exists() {
+        if Instant::now() >= deadline {
+            return false;
+        }
+        sleep(Duration::from_millis(50)).await;
+    }
+    true
+}
 
 #[actix_web::test]
 async fn test_drop_shared_table_deletes_partitions_and_parquet() {
@@ -27,10 +39,10 @@ async fn test_drop_shared_table_deletes_partitions_and_parquet() {
     // Create shared table
     let create_sql = format!(
         r#"CREATE TABLE {}.{} (
-            conversation_id TEXT,
+            conversation_id TEXT PRIMARY KEY,
             title TEXT,
             participant_count INT
-        ) TABLE_TYPE shared STORAGE local"#,
+        ) WITH (TYPE='SHARED', STORAGE_ID='local')"#,
         namespace, table
     );
     let resp = server.execute_sql(&create_sql).await;
@@ -92,7 +104,7 @@ async fn test_drop_shared_table_deletes_partitions_and_parquet() {
 
     // Verify Parquet directory removed
     assert!(
-        !Path::new(&shared_dir).exists(),
+        wait_for_path_absent(&shared_dir, Duration::from_secs(2)).await,
         "Shared Parquet dir still exists after drop: {}",
         shared_dir.display()
     );

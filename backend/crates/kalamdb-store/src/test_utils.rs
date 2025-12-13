@@ -164,6 +164,11 @@ impl StorageBackend for InMemoryBackend {
         Ok(())
     }
 
+    fn compact_partition(&self, _partition: &Partition) -> crate::storage_trait::Result<()> {
+        // No-op for in-memory backend (no compaction needed)
+        Ok(())
+    }
+
     fn as_any(&self) -> &dyn std::any::Any {
         self
     }

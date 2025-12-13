@@ -472,16 +472,17 @@ async fn test_cli_flush_table() {
     tokio::time::sleep(Duration::from_secs(2)).await;
 
     // If we have a job ID, query for that specific job
+    // Note: system.jobs stores namespace/table info inside the JSON `parameters` column.
     let jobs_query = if let Some(ref job_id) = job_id {
         format!(
-            "SELECT job_id, job_type, status, namespace_id, table_name, result FROM system.jobs \
+            "SELECT job_id, job_type, status, parameters, result FROM system.jobs \
              WHERE job_id = '{}' LIMIT 1",
             job_id
         )
     } else {
-        // Fallback to querying by type and table name
-        "SELECT job_id, job_type, status, namespace_id, table_name, result FROM system.jobs \
-         WHERE job_type = 'flush' AND table_name = 'metrics' \
+        // Fallback to querying by type and table name (from `parameters` JSON)
+        "SELECT job_id, job_type, status, parameters, result FROM system.jobs \
+         WHERE job_type = 'flush' AND parameters LIKE '%\"table_name\":\"metrics\"%' \
          ORDER BY created_at DESC LIMIT 1"
             .to_string()
     };
@@ -561,16 +562,25 @@ async fn test_cli_flush_table() {
         "flush",
         "Job type should be 'flush'"
     );
+
+    let params = job["parameters"].as_str().and_then(|s| {
+        if s.is_empty() {
+            None
+        } else {
+            serde_json::from_str::<serde_json::Value>(s).ok()
+        }
+    });
+    let params = params.as_ref().unwrap_or(&serde_json::Value::Null);
+
     assert_eq!(
-        job["namespace_id"].as_str().unwrap(),
+        params["namespace_id"].as_str().unwrap_or(""),
         &namespace_name,
-        "Job should reference correct namespace"
+        "Job parameters should reference correct namespace"
     );
-    // table_name stores only the table identifier (namespace is in namespace_id)
     assert_eq!(
-        job["table_name"].as_str().unwrap(),
+        params["table_name"].as_str().unwrap_or(""),
         "metrics",
-        "Job should reference correct table name"
+        "Job parameters should reference correct table name"
     );
 
     // Actively poll until the job leaves 'running' (avoid false positives on stuck jobs)
@@ -593,12 +603,28 @@ async fn test_cli_flush_table() {
             .cloned()
             .unwrap_or_default();
         if let Some(updated) = rows.get(0) {
-            // Shadow 'job' binding by reassigning serialized map
-            // Note: using direct indexing to keep diff small
-            if let Some(s) = updated["status"].as_str() {
-                if s != "running" {
-                    break s.to_string();
+            // DataFusion may return rows as arrays; normalize using columns metadata if needed.
+            let status = if updated.is_array() {
+                let mut obj = serde_json::Map::new();
+                let columns_vec = refetch["results"][0]["columns"]
+                    .as_array()
+                    .cloned()
+                    .unwrap_or_default();
+                let values = updated.as_array().unwrap();
+                for (idx, col) in columns_vec.iter().enumerate() {
+                    if let Some(col_name) = col.as_str() {
+                        let val = values.get(idx).cloned().unwrap_or(serde_json::Value::Null);
+                        obj.insert(col_name.to_string(), val);
+                    }
                 }
+                let updated_value = serde_json::Value::Object(obj);
+                updated_value["status"].as_str().unwrap_or("").to_string()
+            } else {
+                updated["status"].as_str().unwrap_or("").to_string()
+            };
+
+            if status != "running" {
+                break status;
             }
         }
     };
@@ -743,7 +769,7 @@ async fn test_cli_flush_all_tables() {
             .collect::<Vec<_>>()
             .join(", ");
         format!(
-            "SELECT job_id, job_type, status, namespace_id, table_name, result FROM system.jobs \
+            "SELECT job_id, job_type, status, parameters, result FROM system.jobs \
              WHERE job_id IN ({}) \
              ORDER BY created_at DESC",
             job_id_list
@@ -751,8 +777,8 @@ async fn test_cli_flush_all_tables() {
     } else {
         // Fallback to querying by namespace
         format!(
-            "SELECT job_id, job_type, status, namespace_id, table_name, result FROM system.jobs \
-         WHERE job_type = 'flush' AND namespace_id = '{}' \
+            "SELECT job_id, job_type, status, parameters, result FROM system.jobs \
+         WHERE job_type = 'flush' AND parameters LIKE '%\"namespace_id\":\"{}\"%' \
          ORDER BY created_at DESC",
             namespace_name
         )
@@ -772,7 +798,9 @@ async fn test_cli_flush_all_tables() {
     } else if let Some(results) = jobs_result["results"].as_array() {
         // Results format - extract from first result if available
         if let Some(first_result) = results.get(0) {
-            if let Some(data) = first_result["data"].as_array() {
+            if let Some(rows) = first_result["rows"].as_array() {
+                rows
+            } else if let Some(data) = first_result["data"].as_array() {
                 data
             } else {
                 &vec![]
@@ -783,6 +811,30 @@ async fn test_cli_flush_all_tables() {
     } else {
         &vec![]
     };
+
+    // Normalize rows to objects if DataFusion returns arrays.
+    let columns_vec = jobs_result["results"][0]["columns"]
+        .as_array()
+        .cloned()
+        .unwrap_or_default();
+    let jobs_data: Vec<serde_json::Value> = jobs_data
+        .iter()
+        .map(|row| {
+            if row.is_array() {
+                let mut obj = serde_json::Map::new();
+                let values = row.as_array().unwrap();
+                for (idx, col) in columns_vec.iter().enumerate() {
+                    if let Some(col_name) = col.as_str() {
+                        let val = values.get(idx).cloned().unwrap_or(serde_json::Value::Null);
+                        obj.insert(col_name.to_string(), val);
+                    }
+                }
+                serde_json::Value::Object(obj)
+            } else {
+                row.clone()
+            }
+        })
+        .collect();
 
     // Note: May have 0 jobs if tables were empty and nothing to flush
     if jobs_data.is_empty() {
@@ -814,16 +866,22 @@ async fn test_cli_flush_all_tables() {
         }
     }
 
-    // If we have jobs, verify table names
+    // If we have jobs, verify table names (from `parameters` JSON)
     if !jobs_data.is_empty() {
         // Verify both tables have flush jobs
-        let table_names: Vec<&str> = jobs_data
+        let table_names: Vec<String> = jobs_data
             .iter()
-            .filter_map(|job| job["table_name"].as_str())
+            .filter_map(|job| {
+                job["parameters"].as_str().and_then(|s| {
+                    serde_json::from_str::<serde_json::Value>(s)
+                        .ok()
+                        .and_then(|p| p["table_name"].as_str().map(|t| t.to_string()))
+                })
+            })
             .collect();
 
         assert!(
-            table_names.contains(&"table1") || table_names.contains(&"table2"),
+            table_names.iter().any(|t| t == "table1") || table_names.iter().any(|t| t == "table2"),
             "Should have flush jobs for table1 and/or table2, got: {:?}",
             table_names
         );

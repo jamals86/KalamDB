@@ -52,7 +52,7 @@ impl StatementHandler for DeleteHandler {
         let sql = statement.as_str();
         // Pass the current default namespace from session context for unqualified table names
         let default_namespace = context.default_namespace();
-        let (namespace, table_name, where_pair) =
+        let (namespace, table_name, where_pair, has_where_clause) =
             self.simple_parse_delete(sql, &default_namespace)?;
 
         // T153: Use effective user_id for impersonation support (Phase 7)
@@ -95,9 +95,12 @@ impl StatementHandler for DeleteHandler {
 
                     // Try to extract simple WHERE pk = value first (fast path)
                     if let Some(row_id) = self.extract_row_id_for_column(&where_pair, pk_column)? {
-                        let _deleted = provider.delete_by_id_field(effective_user_id, &row_id)?;
-                        Ok(ExecutionResult::Deleted { rows_affected: 1 })
-                    } else if where_pair.is_some() {
+                        let deleted =
+                            provider.delete_by_id_field(effective_user_id, &row_id)?;
+                        Ok(ExecutionResult::Deleted {
+                            rows_affected: if deleted { 1 } else { 0 },
+                        })
+                    } else if has_where_clause {
                         // Complex WHERE clause - use DataFusion to find matching rows
                         let rows_affected = self
                             .delete_with_datafusion(
@@ -153,9 +156,12 @@ impl StatementHandler for DeleteHandler {
 
                     // Try to extract simple WHERE pk = value first (fast path)
                     if let Some(row_id) = self.extract_row_id_for_column(&where_pair, pk_column)? {
-                        provider.delete_by_id_field(effective_user_id, &row_id)?;
-                        Ok(ExecutionResult::Deleted { rows_affected: 1 })
-                    } else if where_pair.is_some() {
+                        let deleted =
+                            provider.delete_by_id_field(effective_user_id, &row_id)?;
+                        Ok(ExecutionResult::Deleted {
+                            rows_affected: if deleted { 1 } else { 0 },
+                        })
+                    } else if has_where_clause {
                         // Complex WHERE clause - use DataFusion to find matching rows
                         let rows_affected = self
                             .delete_with_datafusion(
@@ -184,7 +190,7 @@ impl StatementHandler for DeleteHandler {
                     KalamDbError::InvalidOperation("Stream table provider not found".into())
                 })?;
 
-                if where_pair.is_some() {
+                if has_where_clause {
                     // Use DataFusion to find matching rows for deletion
                     let rows_affected = self
                         .delete_with_datafusion(
@@ -410,7 +416,15 @@ impl DeleteHandler {
         &self,
         sql: &str,
         default_namespace: &NamespaceId,
-    ) -> Result<(NamespaceId, TableName, Option<(String, String)>), KalamDbError> {
+    ) -> Result<
+        (
+            NamespaceId,
+            TableName,
+            Option<(String, String)>,
+            bool,
+        ),
+        KalamDbError,
+    > {
         // Expect: DELETE FROM <ns>.<table> WHERE <col> = <value>
         let upper = sql.to_uppercase();
         let from_pos = upper
@@ -440,21 +454,21 @@ impl DeleteHandler {
                 }
             }
         };
-        let where_pair = if let Some(wp) = where_pos {
+        let (where_pair, has_where_clause) = if let Some(wp) = where_pos {
             let cond = sql[wp + 7..].trim();
             // Support '<col> = <literal>' - handle both numeric and quoted string values
             let parts: Vec<&str> = cond.splitn(2, '=').collect();
             if parts.len() == 2 {
                 let col = parts[0].trim().to_string();
                 let val = parts[1].trim().to_string();
-                Some((col, val))
+                (Some((col, val)), true)
             } else {
-                None
+                (None, true)
             }
         } else {
-            None
+            (None, false)
         };
-        Ok((ns, tbl, where_pair))
+        Ok((ns, tbl, where_pair, has_where_clause))
     }
 
     fn extract_row_id_for_column(

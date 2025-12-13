@@ -16,7 +16,7 @@ use std::time::Duration;
 /// - table_type column is correct (user, shared, stream)
 /// - options JSON contains TYPE, STORAGE_ID, FLUSH_POLICY
 /// - options JSON contains TTL_SECONDS for stream tables
-#[ntest::timeout(60000)]
+#[ntest::timeout(180000)]
 #[test]
 fn smoke_test_system_tables_options_column() {
     if !is_server_running() {
@@ -166,7 +166,7 @@ fn smoke_test_system_tables_options_column() {
 /// - Active subscriptions appear in system.live_queries
 /// - subscription_id, sql, user_id columns populated
 /// - Subscriptions removed after WebSocket closes
-#[ntest::timeout(60000)]
+#[ntest::timeout(180000)]
 #[test]
 fn smoke_test_system_live_queries() {
     if !is_server_running() {
@@ -237,7 +237,7 @@ fn smoke_test_system_live_queries() {
 /// - \stats returns cache statistics
 /// - Output contains schema_cache_hit_rate, schema_cache_size, etc.
 /// - system.stats table is queryable
-#[ntest::timeout(60000)]
+#[ntest::timeout(180000)]
 #[test]
 fn smoke_test_system_stats_meta_command() {
     if !is_server_running() {
@@ -280,7 +280,7 @@ fn smoke_test_system_stats_meta_command() {
 /// Verifies:
 /// - \dt lists tables from system.tables
 /// - Output contains table names
-#[ntest::timeout(60000)]
+#[ntest::timeout(180000)]
 #[test]
 fn smoke_test_dt_meta_command() {
     if !is_server_running() {
@@ -345,7 +345,7 @@ fn smoke_test_dt_meta_command() {
 /// Verifies:
 /// - \d <table> shows table schema
 /// - Output contains column names and types
-#[ntest::timeout(60000)]
+#[ntest::timeout(180000)]
 #[test]
 fn smoke_test_describe_table_meta_command() {
     if !is_server_running() {

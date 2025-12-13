@@ -19,24 +19,16 @@ use kalamdb_api::models::ResponseStatus;
 use std::sync::Arc;
 use tokio::task::JoinSet;
 
-/// Generate unique namespace name for test isolation
-fn unique_namespace(prefix: &str) -> String {
-    use std::sync::atomic::{AtomicU32, Ordering};
-    static COUNTER: AtomicU32 = AtomicU32::new(0);
-    let count = COUNTER.fetch_add(1, Ordering::SeqCst);
-    format!("{}_{}", prefix, count)
-}
-
 /// T060: Unit test UPDATE in fast storage
 #[actix_web::test]
 async fn test_update_in_fast_storage() {
     let server = TestServer::new().await;
 
     // Setup
-    fixtures::create_namespace(&server, "test_ns").await;
+    fixtures::create_namespace(&server, "test_uv_fast").await;
     let create_response = server
         .execute_sql_as_user(
-            r#"CREATE TABLE test_ns.products (
+            r#"CREATE TABLE test_uv_fast.products (
                 id TEXT PRIMARY KEY,
                 name TEXT,
                 price INT,
@@ -58,7 +50,7 @@ async fn test_update_in_fast_storage() {
     // Insert record (stays in RocksDB/fast storage)
     server
         .execute_sql_as_user(
-            r#"INSERT INTO test_ns.products (id, name, price, stock) 
+            r#"INSERT INTO test_uv_fast.products (id, name, price, stock) 
                VALUES ('prod1', 'Widget', 100, 50)"#,
             "user1",
         )
@@ -67,7 +59,7 @@ async fn test_update_in_fast_storage() {
     // Update record (in-place update in fast storage)
     let response = server
         .execute_sql_as_user(
-            r#"UPDATE test_ns.products 
+            r#"UPDATE test_uv_fast.products 
                SET price = 120, stock = 45 
                WHERE id = 'prod1'"#,
             "user1",
@@ -84,7 +76,7 @@ async fn test_update_in_fast_storage() {
     // Verify updated values
     let response = server
         .execute_sql_as_user(
-            "SELECT id, name, price, stock FROM test_ns.products WHERE id = 'prod1'",
+            "SELECT id, name, price, stock FROM test_uv_fast.products WHERE id = 'prod1'",
             "user1",
         )
         .await;
@@ -116,10 +108,10 @@ async fn test_update_in_parquet() {
     let server = TestServer::new().await;
 
     // Setup
-    fixtures::create_namespace(&server, "test_ns").await;
+    fixtures::create_namespace(&server, "test_uv_parquet").await;
     server
         .execute_sql_as_user(
-            r#"CREATE TABLE test_ns.inventory (
+            r#"CREATE TABLE test_uv_parquet.inventory (
                 id TEXT PRIMARY KEY,
                 item TEXT,
                 quantity INT
@@ -134,7 +126,7 @@ async fn test_update_in_parquet() {
     // Insert record
     server
         .execute_sql_as_user(
-            r#"INSERT INTO test_ns.inventory (id, item, quantity) 
+            r#"INSERT INTO test_uv_parquet.inventory (id, item, quantity) 
                VALUES ('inv1', 'Laptop', 10)"#,
             "user1",
         )
@@ -142,14 +134,14 @@ async fn test_update_in_parquet() {
 
     // Flush to Parquet (moves record to long-term storage)
     // Flush user table to Parquet
-    flush_helpers::execute_flush_synchronously(&server, "test_ns", "inventory")
+    flush_helpers::execute_flush_synchronously(&server, "test_uv_parquet", "inventory")
         .await
         .expect("Flush should succeed");
 
     // Update record (creates new version in fast storage)
     let response = server
         .execute_sql_as_user(
-            r#"UPDATE test_ns.inventory 
+            r#"UPDATE test_uv_parquet.inventory 
                SET quantity = 8 
                WHERE id = 'inv1'"#,
             "user1",
@@ -167,7 +159,7 @@ async fn test_update_in_parquet() {
     // Verify version resolution returns latest value
     let response = server
         .execute_sql_as_user(
-            "SELECT id, item, quantity FROM test_ns.inventory WHERE id = 'inv1'",
+            "SELECT id, item, quantity FROM test_uv_parquet.inventory WHERE id = 'inv1'",
             "user1",
         )
         .await;
@@ -200,12 +192,27 @@ async fn test_full_workflow_insert_flush_update() {
     let server = TestServer::new().await;
 
     // Setup
-    fixtures::create_namespace(&server, "test_ns").await;
+    fixtures::create_namespace(&server, "test_uv_workflow").await;
     server
         .execute_sql_as_user(
-            r#"CREATE TABLE test_ns.users (
+            r#"CREATE TABLE test_uv_workflow.users (
                 user_id TEXT PRIMARY KEY,
                 name TEXT,
+                status TEXT
+            ) WITH (
+                TYPE = 'USER',
+                STORAGE_ID = 'local'
+            )"#,
+            "user1",
+        )
+        .await;
+
+    server
+        .execute_sql_as_user(
+            r#"CREATE TABLE test_uv_workflow.orders (
+                id TEXT PRIMARY KEY,
+                customer TEXT,
+                total INT,
                 status TEXT
             ) WITH (
                 TYPE = 'USER',
@@ -218,21 +225,21 @@ async fn test_full_workflow_insert_flush_update() {
     // Step 1: INSERT
     server
         .execute_sql_as_user(
-            r#"INSERT INTO test_ns.orders (id, customer, total, status) 
+            r#"INSERT INTO test_uv_workflow.orders (id, customer, total, status) 
                VALUES ('order1', 'Alice', 500, 'pending')"#,
             "user1",
         )
         .await;
 
     // Step 2: FLUSH
-    flush_helpers::execute_flush_synchronously(&server, "test_ns", "orders")
+    flush_helpers::execute_flush_synchronously(&server, "test_uv_workflow", "orders")
         .await
         .expect("Flush should succeed");
 
     // Step 3: UPDATE (creates new version in fast storage)
     server
         .execute_sql_as_user(
-            r#"UPDATE test_ns.orders 
+            r#"UPDATE test_uv_workflow.orders 
                SET status = 'shipped', total = 550 
                WHERE id = 'order1'"#,
             "user1",
@@ -242,7 +249,7 @@ async fn test_full_workflow_insert_flush_update() {
     // Step 4: Query returns latest version
     let response = server
         .execute_sql_as_user(
-            "SELECT id, status, total FROM test_ns.orders WHERE id = 'order1'",
+            "SELECT id, status, total FROM test_uv_workflow.orders WHERE id = 'order1'",
             "user1",
         )
         .await;
@@ -264,10 +271,10 @@ async fn test_multi_version_query() {
     let server = TestServer::new().await;
 
     // Setup
-    fixtures::create_namespace(&server, "test_ns").await;
+    fixtures::create_namespace(&server, "test_uv_multivers").await;
     server
         .execute_sql_as_user(
-            r#"CREATE TABLE test_ns.counters (
+            r#"CREATE TABLE test_uv_multivers.counters (
                 id TEXT PRIMARY KEY,
                 value INT
             ) WITH (
@@ -281,46 +288,46 @@ async fn test_multi_version_query() {
     // Insert initial version
     server
         .execute_sql_as_user(
-            r#"INSERT INTO test_ns.counters (id, value) VALUES ('counter1', 0)"#,
+            r#"INSERT INTO test_uv_multivers.counters (id, value) VALUES ('counter1', 0)"#,
             "user1",
         )
         .await;
 
     // Flush version 1
-    flush_helpers::execute_flush_synchronously(&server, "test_ns", "counters")
+    flush_helpers::execute_flush_synchronously(&server, "test_uv_multivers", "counters")
         .await
         .expect("Flush should succeed");
 
     // Update to version 2
     server
         .execute_sql_as_user(
-            r#"UPDATE test_ns.counters SET value = 10 WHERE id = 'counter1'"#,
+            r#"UPDATE test_uv_multivers.counters SET value = 10 WHERE id = 'counter1'"#,
             "user1",
         )
         .await;
 
     // Flush version 2
-    flush_helpers::execute_flush_synchronously(&server, "test_ns", "counters")
+    flush_helpers::execute_flush_synchronously(&server, "test_uv_multivers", "counters")
         .await
         .expect("Flush should succeed");
 
     // Update to version 3
     server
         .execute_sql_as_user(
-            r#"UPDATE test_ns.counters SET value = 20 WHERE id = 'counter1'"#,
+            r#"UPDATE test_uv_multivers.counters SET value = 20 WHERE id = 'counter1'"#,
             "user1",
         )
         .await;
 
     // Flush version 3
-    flush_helpers::execute_flush_synchronously(&server, "test_ns", "counters")
+    flush_helpers::execute_flush_synchronously(&server, "test_uv_multivers", "counters")
         .await
         .expect("Flush should succeed");
 
     // Query should return latest version (value = 20)
     let response = server
         .execute_sql_as_user(
-            "SELECT id, value FROM test_ns.counters WHERE id = 'counter1'",
+            "SELECT id, value FROM test_uv_multivers.counters WHERE id = 'counter1'",
             "user1",
         )
         .await;
@@ -349,10 +356,10 @@ async fn test_delete_excludes_record() {
     let server = TestServer::new().await;
 
     // Setup
-    fixtures::create_namespace(&server, "test_ns").await;
+    fixtures::create_namespace(&server, "test_uv_delexc").await;
     server
         .execute_sql_as_user(
-            r#"CREATE TABLE test_ns.users (
+            r#"CREATE TABLE test_uv_delexc.users (
                 id TEXT PRIMARY KEY,
                 name TEXT,
                 active BOOLEAN
@@ -367,7 +374,7 @@ async fn test_delete_excludes_record() {
     // Insert records
     server
         .execute_sql_as_user(
-            r#"INSERT INTO test_ns.users (id, name, active) 
+            r#"INSERT INTO test_uv_delexc.users (id, name, active) 
                VALUES ('user1', 'Alice', true), ('user2', 'Bob', true)"#,
             "user1",
         )
@@ -375,12 +382,12 @@ async fn test_delete_excludes_record() {
 
     // Delete user1
     server
-        .execute_sql_as_user(r#"DELETE FROM test_ns.users WHERE id = 'user1'"#, "user1")
+        .execute_sql_as_user(r#"DELETE FROM test_uv_delexc.users WHERE id = 'user1'"#, "user1")
         .await;
 
     // Query should exclude deleted record
     let response = server
-        .execute_sql_as_user("SELECT id, name FROM test_ns.users ORDER BY id", "user1")
+        .execute_sql_as_user("SELECT id, name FROM test_uv_delexc.users ORDER BY id", "user1")
         .await;
 
     assert_eq!(response.status, ResponseStatus::Success);
@@ -398,10 +405,10 @@ async fn test_delete_in_parquet() {
     let server = TestServer::new().await;
 
     // Setup
-    fixtures::create_namespace(&server, "test_ns").await;
+    fixtures::create_namespace(&server, "test_uv_delpq").await;
     server
         .execute_sql_as_user(
-            r#"CREATE TABLE test_ns.accounts (
+            r#"CREATE TABLE test_uv_delpq.accounts (
                 id TEXT PRIMARY KEY,
                 email TEXT,
                 balance INT
@@ -416,20 +423,20 @@ async fn test_delete_in_parquet() {
     // Insert record
     server
         .execute_sql_as_user(
-            r#"INSERT INTO test_ns.accounts (id, email, balance) 
+            r#"INSERT INTO test_uv_delpq.accounts (id, email, balance) 
                VALUES ('acc1', 'alice@example.com', 1000)"#,
             "user1",
         )
         .await;
 
     // Flush to Parquet
-    flush_helpers::execute_flush_synchronously(&server, "test_ns", "accounts")
+    flush_helpers::execute_flush_synchronously(&server, "test_uv_delpq", "accounts")
         .await
         .expect("Flush should succeed");
 
     // Delete record (creates new version with _deleted=true in fast storage)
     let response = server
-        .execute_sql_as_user(r#"DELETE FROM test_ns.accounts WHERE id = 'acc1'"#, "user1")
+        .execute_sql_as_user(r#"DELETE FROM test_uv_delpq.accounts WHERE id = 'acc1'"#, "user1")
         .await;
 
     assert_eq!(
@@ -441,7 +448,7 @@ async fn test_delete_in_parquet() {
 
     // Query should return no results (deleted record excluded)
     let response = server
-        .execute_sql_as_user("SELECT id FROM test_ns.accounts WHERE id = 'acc1'", "user1")
+        .execute_sql_as_user("SELECT id FROM test_uv_delpq.accounts WHERE id = 'acc1'", "user1")
         .await;
 
     assert_eq!(response.status, ResponseStatus::Success);
@@ -462,10 +469,10 @@ async fn test_concurrent_updates() {
     let server = Arc::new(TestServer::new().await);
 
     // Setup
-    fixtures::create_namespace(&server, "test_ns").await;
+    fixtures::create_namespace(&server, "test_uv_concur").await;
     server
         .execute_sql_as_user(
-            r#"CREATE TABLE test_ns.shared_counter (
+            r#"CREATE TABLE test_uv_concur.shared_counter (
                 id TEXT PRIMARY KEY,
                 count INT
             ) WITH (
@@ -479,7 +486,7 @@ async fn test_concurrent_updates() {
     // Insert initial record
     server
         .execute_sql_as_user(
-            r#"INSERT INTO test_ns.shared_counter (id, count) VALUES ('counter', 0)"#,
+            r#"INSERT INTO test_uv_concur.shared_counter (id, count) VALUES ('counter', 0)"#,
             "user1",
         )
         .await;
@@ -493,7 +500,7 @@ async fn test_concurrent_updates() {
             server_clone
                 .execute_sql_as_user(
                     &format!(
-                        "UPDATE test_ns.shared_counter SET count = {} WHERE id = 'counter'",
+                        "UPDATE test_uv_concur.shared_counter SET count = {} WHERE id = 'counter'",
                         i + 1
                     ),
                     "user1",
@@ -520,7 +527,7 @@ async fn test_concurrent_updates() {
     // Query should return some final value (1-10)
     let response = server
         .execute_sql_as_user(
-            "SELECT id, count FROM test_ns.shared_counter WHERE id = 'counter'",
+            "SELECT id, count FROM test_uv_concur.shared_counter WHERE id = 'counter'",
             "user1",
         )
         .await;
@@ -545,10 +552,10 @@ async fn test_nanosecond_collision_handling() {
     let server = TestServer::new().await;
 
     // Setup
-    fixtures::create_namespace(&server, "test_ns").await;
+    fixtures::create_namespace(&server, "test_uv_nano").await;
     server
         .execute_sql_as_user(
-            r#"CREATE TABLE test_ns.rapid_updates (
+            r#"CREATE TABLE test_uv_nano.rapid_updates (
                 id TEXT PRIMARY KEY,
                 iteration INT
             ) WITH (
@@ -562,7 +569,7 @@ async fn test_nanosecond_collision_handling() {
     // Insert initial record
     server
         .execute_sql_as_user(
-            r#"INSERT INTO test_ns.rapid_updates (id, iteration) VALUES ('rec1', 0)"#,
+            r#"INSERT INTO test_uv_nano.rapid_updates (id, iteration) VALUES ('rec1', 0)"#,
             "user1",
         )
         .await;
@@ -572,7 +579,7 @@ async fn test_nanosecond_collision_handling() {
         server
             .execute_sql_as_user(
                 &format!(
-                    "UPDATE test_ns.rapid_updates SET iteration = {} WHERE id = 'rec1'",
+                    "UPDATE test_uv_nano.rapid_updates SET iteration = {} WHERE id = 'rec1'",
                     i
                 ),
                 "user1",
@@ -583,7 +590,7 @@ async fn test_nanosecond_collision_handling() {
     // Verify final state (should have latest iteration)
     let response = server
         .execute_sql_as_user(
-            "SELECT id, iteration FROM test_ns.rapid_updates WHERE id = 'rec1'",
+            "SELECT id, iteration FROM test_uv_nano.rapid_updates WHERE id = 'rec1'",
             "user1",
         )
         .await;
@@ -607,10 +614,10 @@ async fn test_query_performance_with_multiple_versions() {
     let server = TestServer::new().await;
 
     // Setup
-    fixtures::create_namespace(&server, "test_ns").await;
+    fixtures::create_namespace(&server, "test_uv_perf").await;
     server
         .execute_sql_as_user(
-            r#"CREATE TABLE test_ns.perf_test (
+            r#"CREATE TABLE test_uv_perf.perf_test (
                 id TEXT PRIMARY KEY,
                 version INT
             ) WITH (
@@ -624,7 +631,7 @@ async fn test_query_performance_with_multiple_versions() {
     // Insert initial version
     server
         .execute_sql_as_user(
-            r#"INSERT INTO test_ns.perf_test (id, version) VALUES ('rec1', 0)"#,
+            r#"INSERT INTO test_uv_perf.perf_test (id, version) VALUES ('rec1', 0)"#,
             "user1",
         )
         .await;
@@ -633,7 +640,7 @@ async fn test_query_performance_with_multiple_versions() {
     let start = std::time::Instant::now();
     server
         .execute_sql_as_user(
-            "SELECT id, version FROM test_ns.perf_test WHERE id = 'rec1'",
+            "SELECT id, version FROM test_uv_perf.perf_test WHERE id = 'rec1'",
             "user1",
         )
         .await;
@@ -644,13 +651,13 @@ async fn test_query_performance_with_multiple_versions() {
         server
             .execute_sql_as_user(
                 &format!(
-                    "UPDATE test_ns.perf_test SET version = {} WHERE id = 'rec1'",
+                    "UPDATE test_uv_perf.perf_test SET version = {} WHERE id = 'rec1'",
                     i
                 ),
                 "user1",
             )
             .await;
-        flush_helpers::execute_flush_synchronously(&server, "test_ns", "perf_test")
+        flush_helpers::execute_flush_synchronously(&server, "test_uv_perf", "perf_test")
             .await
             .expect("Flush should succeed");
     }
@@ -659,7 +666,7 @@ async fn test_query_performance_with_multiple_versions() {
     let start = std::time::Instant::now();
     server
         .execute_sql_as_user(
-            "SELECT id, version FROM test_ns.perf_test WHERE id = 'rec1'",
+            "SELECT id, version FROM test_uv_perf.perf_test WHERE id = 'rec1'",
             "user1",
         )
         .await;
@@ -670,13 +677,13 @@ async fn test_query_performance_with_multiple_versions() {
         server
             .execute_sql_as_user(
                 &format!(
-                    "UPDATE test_ns.perf_test SET version = {} WHERE id = 'rec1'",
+                    "UPDATE test_uv_perf.perf_test SET version = {} WHERE id = 'rec1'",
                     i
                 ),
                 "user1",
             )
             .await;
-        flush_helpers::execute_flush_synchronously(&server, "test_ns", "perf_test")
+        flush_helpers::execute_flush_synchronously(&server, "test_uv_perf", "perf_test")
             .await
             .expect("Flush should succeed");
     }
@@ -685,7 +692,7 @@ async fn test_query_performance_with_multiple_versions() {
     let start = std::time::Instant::now();
     server
         .execute_sql_as_user(
-            "SELECT id, version FROM test_ns.perf_test WHERE id = 'rec1'",
+            "SELECT id, version FROM test_uv_perf.perf_test WHERE id = 'rec1'",
             "user1",
         )
         .await;

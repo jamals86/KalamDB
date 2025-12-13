@@ -116,6 +116,12 @@ async fn test_alter_table_drop_column() {
         ns_resp.error
     );
     
+    // Verify namespace exists before proceeding
+    assert!(
+        server.namespace_exists(&ns).await,
+        "Namespace should exist after creation"
+    );
+    
     let create_resp = server
         .execute_sql_as_user(
             &format!(

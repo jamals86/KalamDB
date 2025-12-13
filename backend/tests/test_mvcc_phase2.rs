@@ -24,7 +24,13 @@ async fn test_create_table_without_pk_rejected() {
     let server = TestServer::new().await;
 
     // Setup
-    fixtures::create_namespace(&server, "test_ns_t051").await;
+    let ns_response = fixtures::create_namespace(&server, "test_ns_t051").await;
+    assert_eq!(
+        ns_response.status,
+        ResponseStatus::Success,
+        "Failed to create namespace: {:?}",
+        ns_response.error
+    );
 
     // Try to create table without PRIMARY KEY specification
     let response = server
@@ -748,7 +754,6 @@ async fn test_rocksdb_prefix_scan_user_isolation() {
 /// **NOTE**: This test has an UPDATE handler bug preventing validation.
 /// The range scan logic works correctly, but UPDATE fails with "Row not found".
 #[actix_web::test]
-#[ignore = "UPDATE handler has Row not found bug - needs investigation"]
 async fn test_rocksdb_range_scan_efficiency() {
     let server = TestServer::new().await;
 

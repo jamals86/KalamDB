@@ -7,7 +7,7 @@ use super::{new_audit_logs_store, AuditLogsStore, AuditLogsTableSchema};
 use crate::error::SystemError;
 use crate::system_table_trait::SystemTableProviderExt;
 use async_trait::async_trait;
-use datafusion::arrow::array::{ArrayRef, RecordBatch, StringBuilder, TimestampMillisecondArray};
+use datafusion::arrow::array::{ArrayRef, RecordBatch, StringBuilder, TimestampMicrosecondArray};
 use datafusion::arrow::datatypes::SchemaRef;
 use datafusion::datasource::{TableProvider, TableType};
 use datafusion::error::{DataFusionError, Result as DataFusionResult};
@@ -127,7 +127,12 @@ impl AuditLogsTableProvider {
             self.schema.clone(),
             vec![
                 Arc::new(audit_ids.finish()) as ArrayRef,
-                Arc::new(TimestampMillisecondArray::from(timestamps)) as ArrayRef,
+                Arc::new(TimestampMicrosecondArray::from(
+                    timestamps
+                        .into_iter()
+                        .map(|ts| ts.map(|ms| ms * 1000))
+                        .collect::<Vec<_>>(),
+                )) as ArrayRef,
                 Arc::new(actor_user_ids.finish()) as ArrayRef,
                 Arc::new(actor_usernames.finish()) as ArrayRef,
                 Arc::new(actions.finish()) as ArrayRef,
@@ -447,7 +452,7 @@ mod tests {
         let timestamps_col = batch
             .column(1)
             .as_any()
-            .downcast_ref::<TimestampMillisecondArray>()
+            .downcast_ref::<TimestampMicrosecondArray>()
             .unwrap();
         assert_eq!(timestamps_col.len(), 3);
     }

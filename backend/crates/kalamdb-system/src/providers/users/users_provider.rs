@@ -20,7 +20,7 @@ use super::UsersTableSchema;
 use crate::error::SystemError;
 use crate::system_table_trait::SystemTableProviderExt;
 use async_trait::async_trait;
-use datafusion::arrow::array::{ArrayRef, RecordBatch, StringBuilder, TimestampMillisecondArray};
+use datafusion::arrow::array::{ArrayRef, RecordBatch, StringBuilder, TimestampMicrosecondArray};
 use datafusion::arrow::datatypes::SchemaRef;
 use datafusion::datasource::{TableProvider, TableType};
 use datafusion::error::{DataFusionError, Result as DataFusionResult};
@@ -243,10 +243,30 @@ impl UsersTableProvider {
                 Arc::new(auth_datas.finish()) as ArrayRef,
                 Arc::new(storage_modes.finish()) as ArrayRef,
                 Arc::new(storage_ids.finish()) as ArrayRef,
-                Arc::new(TimestampMillisecondArray::from(created_ats)) as ArrayRef,
-                Arc::new(TimestampMillisecondArray::from(updated_ats)) as ArrayRef,
-                Arc::new(TimestampMillisecondArray::from(last_seens)) as ArrayRef,
-                Arc::new(TimestampMillisecondArray::from(deleted_ats)) as ArrayRef,
+                Arc::new(TimestampMicrosecondArray::from(
+                    created_ats
+                        .into_iter()
+                        .map(|ts| ts.map(|ms| ms * 1000))
+                        .collect::<Vec<_>>(),
+                )) as ArrayRef,
+                Arc::new(TimestampMicrosecondArray::from(
+                    updated_ats
+                        .into_iter()
+                        .map(|ts| ts.map(|ms| ms * 1000))
+                        .collect::<Vec<_>>(),
+                )) as ArrayRef,
+                Arc::new(TimestampMicrosecondArray::from(
+                    last_seens
+                        .into_iter()
+                        .map(|ts| ts.map(|ms| ms * 1000))
+                        .collect::<Vec<_>>(),
+                )) as ArrayRef,
+                Arc::new(TimestampMicrosecondArray::from(
+                    deleted_ats
+                        .into_iter()
+                        .map(|ts| ts.map(|ms| ms * 1000))
+                        .collect::<Vec<_>>(),
+                )) as ArrayRef,
             ],
         )
         .map_err(|e| SystemError::Other(format!("Failed to create RecordBatch: {}", e)))?;

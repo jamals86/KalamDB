@@ -284,7 +284,13 @@ instead of: 1 failed: Invalid operation: No handler registered for statement typ
 
 195) we should always have a default order by column so we always have the same vlues returned in the same order, this is important for pagination as well
 
-196) why having both: pub struct QueryRequest and pub struct SqlRequest they are almost the same we can have one only
+196) Make sure after flush to compact th rocksdb column family to free space and optimize reads as well
+
+197) why do we have things like this? shouldnt we prevent entering if no rows?
+[2025-12-13 01:51:58.957] [INFO ] - main - kalamdb_core::jobs::jobs_manager::utils:38 - [CL-a258332a4315] Job completed: Cleaned up table insert_bench_mj3iu8zz_0:single_mj3iu900_0 successfully - 0 rows deleted, 0 bytes freed
+
+
+Make sure there is tests which insert/updte data and then check if the actual data we inserted/updated is there and exists in select then flush the data and check again if insert/update works with the flushed data in cold storage, check that insert fails when inserting a row id primary key which already exists and update do works
 
 
 Here’s the updated 5-line spec with embedding storage inside Parquet and managed HNSW indexing (with delete handling):
@@ -341,6 +347,8 @@ Code Cleanup Operations:
 10) Use todo!() instead of unimplemented!() where needed
 11) Remove all commented code across the codebase
 12) Check all unwrap() and expect() calls and replace them with proper error handling
+13) make sure "_seq" and "_deleted" we use the enums statics instead of strings
+
 
 Tasks To Repo:
 1) Add ci/cd pipelines to the new repo
@@ -368,6 +376,15 @@ Tasks To Repo:
 │  Parallel (10 threads)  │   1000  │    0.20s │    5119.9/s │
 └────────────────────────────────────────────────────────────┘
 
+┌────────────────────────────────────────────────────────────┐
+│                    BENCHMARK RESULTS                       │
+├────────────────────────────────────────────────────────────┤
+│  Test Type              │  Rows   │  Time    │  Rate       │
+├────────────────────────────────────────────────────────────┤
+│  Single-row inserts     │    200  │    0.09s │    2260.2/s │
+│  Batched (100/batch)    │   2000  │    0.03s │   73093.1/s │
+│  Parallel (10 threads)  │    980  │    0.09s │   10943.2/s │
+└────────────────────────────────────────────────────────────┘
 
 UI Changes:
 1) The browser should fetch all namespaces/tables/columns in one query not multiple queries for better performance

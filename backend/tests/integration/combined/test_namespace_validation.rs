@@ -45,7 +45,6 @@ async fn test_create_table_nonexistent_namespace_error() {
 }
 
 #[actix_web::test]
-#[ignore = "CREATE TABLE (shared) requires pre-created column families at DB init"]
 async fn test_create_table_after_namespace_creation() {
     let server = TestServer::new().await;
     let create_sql = r#"CREATE TABLE audit.trail (
@@ -110,7 +109,6 @@ async fn test_user_table_namespace_validation() {
 }
 
 #[actix_web::test]
-#[ignore = "Shared table creation requires pre-created column families at DB init"]
 async fn test_shared_table_namespace_validation() {
     let server = TestServer::new().await;
 
@@ -134,7 +132,7 @@ async fn test_shared_table_namespace_validation() {
     let retry = server
         .execute_sql(
             r#"CREATE TABLE ops.config (
-                setting TEXT,
+                setting TEXT PRIMARY KEY,
                 value TEXT
             ) WITH (
                 TYPE = 'SHARED'
@@ -191,7 +189,6 @@ async fn test_stream_table_namespace_validation() {
 }
 
 #[actix_web::test]
-#[ignore = "CREATE TABLE (shared) requires pre-created column families at DB init"]
 async fn test_namespace_validation_race_condition() {
     let server = TestServer::new().await;
     let table_sql = r#"CREATE TABLE race_ns.logs (

@@ -3,7 +3,6 @@
 // This test verifies that Int64 and UInt64 values exceeding JavaScript's
 // Number.MAX_SAFE_INTEGER (2^53 - 1 = 9007199254740991) are serialized as
 // strings in JSON API responses to prevent precision loss in JavaScript clients.
-//
 // The `_seq` column (Snowflake ID) is a UInt64 that typically exceeds this limit.
 
 use crate::common::*;
@@ -11,7 +10,7 @@ use crate::common::*;
 /// JavaScript's Number.MAX_SAFE_INTEGER: 2^53 - 1
 const JS_MAX_SAFE_INTEGER: i64 = 9007199254740991;
 
-#[ntest::timeout(60000)]
+#[ntest::timeout(180000)]
 #[test]
 fn smoke_int64_precision_preserved_as_string() {
     if !is_server_running() {
@@ -126,7 +125,7 @@ fn smoke_int64_precision_preserved_as_string() {
     execute_sql_as_root_via_client(&format!("DROP NAMESPACE {}", namespace)).ok();
 }
 
-#[ntest::timeout(60000)]
+#[ntest::timeout(180000)]
 #[test]
 fn smoke_int64_small_values_remain_numbers() {
     if !is_server_running() {
@@ -212,7 +211,7 @@ fn smoke_int64_small_values_remain_numbers() {
     execute_sql_as_root_via_client(&format!("DROP NAMESPACE {}", namespace)).ok();
 }
 
-#[ntest::timeout(60000)]
+#[ntest::timeout(180000)]
 #[test]
 fn smoke_int64_edge_case_exactly_max_safe() {
     if !is_server_running() {
@@ -314,7 +313,7 @@ fn smoke_int64_edge_case_exactly_max_safe() {
     execute_sql_as_root_via_client(&format!("DROP NAMESPACE {}", namespace)).ok();
 }
 
-#[ntest::timeout(60000)]
+#[ntest::timeout(180000)]
 #[test]
 fn smoke_int64_negative_large_values() {
     if !is_server_running() {

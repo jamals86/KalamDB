@@ -234,8 +234,6 @@ pub fn apply_default_order_by(
 
 #[cfg(test)]
 mod tests {
-    use super::*;
-
     #[test]
     fn test_has_order_by_false_for_table_scan() {
         // A simple TableScan plan should not have ORDER BY

@@ -16,7 +16,7 @@ const DEFAULT_MAX_ENTRIES: usize = 1000;
 /// Uses random eviction when full (simple and fast for concurrent access).
 #[derive(Debug, Clone)]
 pub struct PlanCache {
-    /// Map of SQL query string -> Optimized LogicalPlan
+    /// Map of scoped cache key -> Optimized LogicalPlan
     cache: Arc<DashMap<String, LogicalPlan>>,
     /// Maximum number of entries before eviction
     max_entries: usize,
@@ -42,9 +42,9 @@ impl PlanCache {
         }
     }
 
-    /// Retrieve a cached plan for the given SQL
-    pub fn get(&self, sql: &str) -> Option<LogicalPlan> {
-        if let Some(entry) = self.cache.get(sql) {
+    /// Retrieve a cached plan for the given key
+    pub fn get(&self, cache_key: &str) -> Option<LogicalPlan> {
+        if let Some(entry) = self.cache.get(cache_key) {
             self.hits.fetch_add(1, Ordering::Relaxed);
             Some(entry.value().clone())
         } else {
@@ -54,7 +54,7 @@ impl PlanCache {
     }
 
     /// Store an optimized plan (evicts random entry if cache is full)
-    pub fn insert(&self, sql: String, plan: LogicalPlan) {
+    pub fn insert(&self, cache_key: String, plan: LogicalPlan) {
         // Evict if at capacity (simple random eviction for performance)
         if self.max_entries > 0 && self.cache.len() >= self.max_entries {
             // Remove first entry we can find (fast, no ordering overhead)
@@ -64,7 +64,7 @@ impl PlanCache {
                 self.cache.remove(&key);
             }
         }
-        self.cache.insert(sql, plan);
+        self.cache.insert(cache_key, plan);
     }
 
     /// Clear cache (MUST be called on any DDL operation like CREATE/DROP/ALTER)

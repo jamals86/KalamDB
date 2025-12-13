@@ -10,18 +10,29 @@ mod common;
 
 use common::{fixtures, flush_helpers, TestServer};
 use kalamdb_api::models::ResponseStatus;
-use kalamdb_store::entity_store::EntityStore;
 
 /// Create a user table with `FLUSH ROWS`, insert data, invoke a manual flush,
 /// and verify that Parquet files are created on disk.
 #[tokio::test]
 async fn test_manual_flush_respects_row_threshold() {
     let server = TestServer::start_test_server().await;
-    let namespace = "flush_row_threshold";
+    let namespace = "flush_row_threshold_01";
     let table_name = "messages";
     let user_id = "user_rt_001";
 
-    fixtures::create_namespace(&server, namespace).await;
+    let ns_response = fixtures::create_namespace(&server, namespace).await;
+    assert_eq!(
+        ns_response.status,
+        ResponseStatus::Success,
+        "Failed to create namespace: {:?}",
+        ns_response.error
+    );
+    
+    // Verify namespace exists before proceeding
+    assert!(
+        server.namespace_exists(namespace).await,
+        "Namespace should exist after creation"
+    );
 
     let create_sql = format!(
         "CREATE TABLE {}.{} (
@@ -69,11 +80,17 @@ async fn test_manual_flush_respects_row_threshold() {
 #[tokio::test]
 async fn test_manual_flush_multiple_batches() {
     let server = TestServer::start_test_server().await;
-    let namespace = "flush_multi_batch";
+    let namespace = "flush_multi_batch_02";
     let table_name = "events";
     let user_id = "user_mb_001";
 
     fixtures::create_namespace(&server, namespace).await;
+    
+    // Verify namespace exists before proceeding
+    assert!(
+        server.namespace_exists(namespace).await,
+        "Namespace should exist after creation"
+    );
 
     let create_sql = format!(
         "CREATE TABLE {}.{} (
@@ -115,17 +132,16 @@ async fn test_manual_flush_multiple_batches() {
 
         {
             use kalamdb_commons::models::{
-                NamespaceId as ModelNamespaceId, TableName as ModelTableName,
+                NamespaceId as ModelNamespaceId, TableId, TableName as ModelTableName,
             };
             use kalamdb_store::entity_store::EntityStore;
-            use kalamdb_tables::UserTableStoreExt;
 
             // Use the SAME backend as AppContext to ensure consistency
             let backend = server.app_context.storage_backend();
             let model_namespace = ModelNamespaceId::new(namespace);
             let model_table = ModelTableName::new(table_name);
-            let store =
-                kalamdb_tables::new_user_table_store(backend, &model_namespace, &model_table);
+            let table_id = TableId::new(model_namespace.clone(), model_table.clone());
+            let store = kalamdb_tables::new_user_table_store(backend, &table_id);
             let buffered_rows = EntityStore::scan_all(&store, None, None, None)
                 .expect("scan_all should succeed before flush");
             assert_eq!(

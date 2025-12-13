@@ -22,10 +22,10 @@ async fn test_update_complex_predicate_and() {
     let server = TestServer::new().await;
 
     // Setup
-    fixtures::create_namespace(&server, "test_ns").await;
+    fixtures::create_namespace(&server, "test_dml_and").await;
     let create_response = server
         .execute_sql_as_user(
-            r#"CREATE TABLE test_ns.products (
+            r#"CREATE TABLE test_dml_and.products (
                 id TEXT PRIMARY KEY,
                 category TEXT,
                 price INT,
@@ -48,7 +48,7 @@ async fn test_update_complex_predicate_and() {
     // Insert test data
     server
         .execute_sql_as_user(
-            r#"INSERT INTO test_ns.products (id, category, price, stock, active) 
+            r#"INSERT INTO test_dml_and.products (id, category, price, stock, active) 
                VALUES 
                 ('p1', 'electronics', 100, 50, true),
                 ('p2', 'electronics', 200, 30, true),
@@ -61,7 +61,7 @@ async fn test_update_complex_predicate_and() {
     // UPDATE by primary key (fast path)
     let update_response = server
         .execute_sql_as_user(
-            r#"UPDATE test_ns.products 
+            r#"UPDATE test_dml_and.products 
                SET stock = 100 
                WHERE id = 'p2'"#,
             "user1",
@@ -78,7 +78,7 @@ async fn test_update_complex_predicate_and() {
     // Verify: Should update only p2
     let query_response = server
         .execute_sql_as_user(
-            "SELECT id, stock FROM test_ns.products WHERE id = 'p2'",
+            "SELECT id, stock FROM test_dml_and.products WHERE id = 'p2'",
             "user1",
         )
         .await;
@@ -99,10 +99,10 @@ async fn test_update_complex_predicate_or() {
     let server = TestServer::new().await;
 
     // Setup
-    fixtures::create_namespace(&server, "test_ns").await;
+    fixtures::create_namespace(&server, "test_dml_or").await;
     server
         .execute_sql_as_user(
-            r#"CREATE TABLE test_ns.inventory (
+            r#"CREATE TABLE test_dml_or.inventory (
                 id TEXT PRIMARY KEY,
                 item TEXT,
                 quantity INT,
@@ -118,7 +118,7 @@ async fn test_update_complex_predicate_or() {
     // Insert test data
     server
         .execute_sql_as_user(
-            r#"INSERT INTO test_ns.inventory (id, item, quantity, restock_needed) 
+            r#"INSERT INTO test_dml_or.inventory (id, item, quantity, restock_needed) 
                VALUES 
                 ('i1', 'laptop', 5, true),
                 ('i2', 'mouse', 100, false),
@@ -131,7 +131,7 @@ async fn test_update_complex_predicate_or() {
     // UPDATE by primary key
     let update_response = server
         .execute_sql_as_user(
-            r#"UPDATE test_ns.inventory 
+            r#"UPDATE test_dml_or.inventory 
                SET restock_needed = true 
                WHERE id = 'i1'"#,
             "user1",
@@ -148,7 +148,7 @@ async fn test_update_complex_predicate_or() {
     // Verify
     let query_response = server
         .execute_sql_as_user(
-            "SELECT id FROM test_ns.inventory WHERE id = 'i1'",
+            "SELECT id FROM test_dml_or.inventory WHERE id = 'i1'",
             "user1",
         )
         .await;
@@ -168,10 +168,10 @@ async fn test_delete_complex_predicate() {
     let server = TestServer::new().await;
 
     // Setup
-    fixtures::create_namespace(&server, "test_ns").await;
+    fixtures::create_namespace(&server, "test_dml_del").await;
     server
         .execute_sql_as_user(
-            r#"CREATE TABLE test_ns.users (
+            r#"CREATE TABLE test_dml_del.users (
                 id TEXT PRIMARY KEY,
                 name TEXT,
                 age INT,
@@ -187,7 +187,7 @@ async fn test_delete_complex_predicate() {
     // Insert test data
     server
         .execute_sql_as_user(
-            r#"INSERT INTO test_ns.users (id, name, age, status) 
+            r#"INSERT INTO test_dml_del.users (id, name, age, status)
                VALUES 
                 ('u1', 'Alice', 25, 'active'),
                 ('u2', 'Bob', 17, 'inactive'),
@@ -200,7 +200,7 @@ async fn test_delete_complex_predicate() {
     // DELETE by primary key
     let delete_response = server
         .execute_sql_as_user(
-            r#"DELETE FROM test_ns.users 
+            r#"DELETE FROM test_dml_del.users 
                WHERE id = 'u2'"#,
             "user1",
         )
@@ -215,7 +215,7 @@ async fn test_delete_complex_predicate() {
 
     // Verify
     let query_response = server
-        .execute_sql_as_user("SELECT id FROM test_ns.users ORDER BY id", "user1")
+        .execute_sql_as_user("SELECT id FROM test_dml_del.users ORDER BY id", "user1")
         .await;
 
     if let Some(rows) = &query_response.results[0].rows {
@@ -234,10 +234,10 @@ async fn test_update_across_flush_boundary() {
     let server = TestServer::new().await;
 
     // Setup
-    fixtures::create_namespace(&server, "test_ns").await;
+    fixtures::create_namespace(&server, "test_dml_upflush").await;
     server
         .execute_sql_as_user(
-            r#"CREATE TABLE test_ns.orders (
+            r#"CREATE TABLE test_dml_upflush.orders (
                 id TEXT PRIMARY KEY,
                 customer TEXT,
                 amount INT,
@@ -253,7 +253,7 @@ async fn test_update_across_flush_boundary() {
     // Insert and flush first batch
     server
         .execute_sql_as_user(
-            r#"INSERT INTO test_ns.orders (id, customer, amount, status) 
+            r#"INSERT INTO test_dml_upflush.orders (id, customer, amount, status) 
                VALUES 
                 ('o1', 'Alice', 100, 'pending'),
                 ('o2', 'Bob', 200, 'pending')"#,
@@ -261,14 +261,14 @@ async fn test_update_across_flush_boundary() {
         )
         .await;
 
-    flush_helpers::execute_flush_synchronously(&server, "test_ns", "orders")
+    flush_helpers::execute_flush_synchronously(&server, "test_dml_upflush", "orders")
         .await
         .expect("Flush should succeed");
 
     // Update a flushed row (should scan Parquet and create new version in RocksDB)
     let update_response = server
         .execute_sql_as_user(
-            r#"UPDATE test_ns.orders 
+            r#"UPDATE test_dml_upflush.orders 
                SET status = 'completed' 
                WHERE id = 'o1'"#,
             "user1",
@@ -285,7 +285,7 @@ async fn test_update_across_flush_boundary() {
     // Verify row updated
     let query_response = server
         .execute_sql_as_user(
-            "SELECT id, status FROM test_ns.orders WHERE id = 'o1'",
+            "SELECT id, status FROM test_dml_upflush.orders WHERE id = 'o1'",
             "user1",
         )
         .await;
@@ -304,10 +304,10 @@ async fn test_delete_across_flush_boundary() {
     let server = TestServer::new().await;
 
     // Setup
-    fixtures::create_namespace(&server, "test_ns").await;
+    fixtures::create_namespace(&server, "test_dml_delflush").await;
     server
         .execute_sql_as_user(
-            r#"CREATE TABLE test_ns.logs (
+            r#"CREATE TABLE test_dml_delflush.logs (
                 id TEXT PRIMARY KEY,
                 level TEXT,
                 message TEXT
@@ -322,7 +322,7 @@ async fn test_delete_across_flush_boundary() {
     // Insert and flush first batch
     server
         .execute_sql_as_user(
-            r#"INSERT INTO test_ns.logs (id, level, message) 
+            r#"INSERT INTO test_dml_delflush.logs (id, level, message) 
                VALUES 
                 ('l1', 'INFO', 'msg1'),
                 ('l2', 'DEBUG', 'msg2')"#,
@@ -330,14 +330,14 @@ async fn test_delete_across_flush_boundary() {
         )
         .await;
 
-    flush_helpers::execute_flush_synchronously(&server, "test_ns", "logs")
+    flush_helpers::execute_flush_synchronously(&server, "test_dml_delflush", "logs")
         .await
         .expect("Flush should succeed");
 
     // Insert second batch
     server
         .execute_sql_as_user(
-            r#"INSERT INTO test_ns.logs (id, level, message) 
+            r#"INSERT INTO test_dml_delflush.logs (id, level, message) 
                VALUES 
                 ('l3', 'INFO', 'msg3'),
                 ('l4', 'DEBUG', 'msg4')"#,
@@ -348,7 +348,7 @@ async fn test_delete_across_flush_boundary() {
     // DELETE all DEBUG logs (spans flushed + unflushed)
     let delete_response = server
         .execute_sql_as_user(
-            r#"DELETE FROM test_ns.logs 
+            r#"DELETE FROM test_dml_delflush.logs 
                WHERE level = 'DEBUG'"#,
             "user1",
         )
@@ -363,7 +363,7 @@ async fn test_delete_across_flush_boundary() {
 
     // Verify only INFO logs remain
     let query_response = server
-        .execute_sql_as_user("SELECT id FROM test_ns.logs ORDER BY id", "user1")
+        .execute_sql_as_user("SELECT id FROM test_dml_delflush.logs ORDER BY id", "user1")
         .await;
 
     if let Some(rows) = &query_response.results[0].rows {

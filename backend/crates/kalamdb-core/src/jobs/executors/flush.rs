@@ -214,6 +214,52 @@ impl JobExecutor for FlushExecutor {
             result.parquet_files.len()
         ));
 
+        // Compact RocksDB partition after flush to reclaim space from tombstones
+        ctx.log_info("Running RocksDB compaction to clean up tombstones...");
+        let backend = app_ctx.storage_backend();
+        let partition_name = match table_type {
+            TableType::User => {
+                use kalamdb_commons::constants::ColumnFamilyNames;
+                format!(
+                    "{}{}:{}",
+                    ColumnFamilyNames::USER_TABLE_PREFIX,
+                    table_id.namespace_id().as_str(),
+                    table_id.table_name().as_str()
+                )
+            }
+            TableType::Shared => {
+                use kalamdb_commons::constants::ColumnFamilyNames;
+                format!(
+                    "{}{}:{}",
+                    ColumnFamilyNames::SHARED_TABLE_PREFIX,
+                    table_id.namespace_id().as_str(),
+                    table_id.table_name().as_str()
+                )
+            }
+            _ => {
+                // For Stream/System tables, skip compaction
+                return Ok(JobDecision::Completed {
+                    message: Some(format!(
+                        "Flushed {} successfully ({} rows, {} files)",
+                        table_id, result.rows_flushed, result.parquet_files.len()
+                    )),
+                });
+            }
+        };
+
+        use kalamdb_store::storage_trait::Partition;
+        let partition = Partition::new(partition_name);
+        
+        match backend.compact_partition(&partition) {
+            Ok(()) => {
+                ctx.log_info("RocksDB compaction completed successfully");
+            }
+            Err(e) => {
+                // Log compaction failure but don't fail the flush job
+                ctx.log_warn(&format!("RocksDB compaction failed (non-critical): {}", e));
+            }
+        }
+
         Ok(JobDecision::Completed {
             message: Some(format!(
                 "Flushed {} successfully ({} rows, {} files)",

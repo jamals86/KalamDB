@@ -5,11 +5,11 @@
 
 use crate::app_context::AppContext;
 use crate::error::KalamDbError;
-use crate::jobs::executors::cleanup::{CleanupOperation, CleanupParams};
+use crate::jobs::executors::cleanup::{CleanupOperation, CleanupParams, StorageCleanupDetails};
 use crate::schema_registry::SchemaRegistry;
 use crate::sql::executor::handlers::typed::TypedStatementHandler;
 use crate::sql::executor::models::{ExecutionContext, ExecutionResult, ScalarValue};
-use kalamdb_commons::models::TableId;
+use kalamdb_commons::models::{StorageId, TableId};
 use kalamdb_commons::schemas::TableType;
 use kalamdb_commons::JobType;
 use kalamdb_sql::ddl::DropTableStatement;
@@ -195,60 +195,19 @@ pub async fn cleanup_table_data_internal(
 pub async fn cleanup_parquet_files_internal(
     _app_context: &Arc<AppContext>,
     table_id: &TableId,
+    table_type: TableType,
+    storage: &StorageCleanupDetails,
 ) -> Result<u64, KalamDbError> {
     log::info!(
-        "[CleanupHelper] Cleaning up Parquet files for {:?}",
-        table_id
+        "[CleanupHelper] Cleaning up Parquet files for {:?} using storage {}",
+        table_id,
+        storage.storage_id.as_str()
     );
 
-    // 1) Load table definition to determine type (and ensure it still exists)
-    let registry = _app_context.schema_registry();
-    let table_def = match registry.get_table_definition(table_id)? {
-        Some(def) => def,
-        None => {
-            log::warn!(
-                "[CleanupHelper] Skipping Parquet cleanup: table definition not found for {}",
-                table_id
-            );
-            return Ok(0);
-        }
-    };
-
-    // 2) Determine storage_id and template
-    let cached = registry.get(table_id);
-    let storage_id = cached
-        .as_ref()
-        .and_then(|c| c.storage_id.clone())
-        .unwrap_or_else(kalamdb_commons::models::StorageId::local);
-
-    // Resolve relative template: substitutes {namespace} and {tableName};
-    // leaves {userId}/{shard} placeholders intact for expansion below.
-    let relative_template =
-        registry.resolve_storage_path_template(table_id, table_def.table_type, &storage_id)?;
-
-    // 3) Resolve base directory using storage config or default base path
-    let default_base = _app_context
-        .storage_registry()
-        .default_storage_path()
-        .to_string();
-    let storages = _app_context.system_tables().storages();
-    let base_dir = match storages.get_storage(&storage_id) {
-        Ok(Some(storage)) => {
-            let trimmed = storage.base_directory.trim();
-            if trimmed.is_empty() {
-                default_base.clone()
-            } else {
-                trimmed.to_string()
-            }
-        }
-        _ => default_base.clone(),
-    };
-
-    // 4) Delegate deletion to kalamdb-filestore to keep FS logic isolated
     let bytes_freed = kalamdb_filestore::delete_parquet_tree_for_table(
-        &base_dir,
-        &relative_template,
-        table_def.table_type,
+        &storage.base_directory,
+        &storage.relative_path_template,
+        table_type,
     )
     .map_err(|e| KalamDbError::Other(format!("Filestore delete failed: {}", e)))?;
 
@@ -275,6 +234,14 @@ pub async fn cleanup_metadata_internal(
 ) -> Result<(), KalamDbError> {
     log::info!("[CleanupHelper] Cleaning up metadata for {:?}", table_id);
 
+    if !schema_registry.table_exists(table_id)? {
+        log::info!(
+            "[CleanupHelper] Metadata already removed for {:?}, skipping",
+            table_id
+        );
+        return Ok(());
+    }
+
     // Delete table definition from SchemaRegistry
     // This removes from both cache and persistent store (delete-through pattern)
     schema_registry.delete_table_definition(table_id)?;
@@ -291,6 +258,57 @@ pub struct DropTableHandler {
 impl DropTableHandler {
     pub fn new(app_context: Arc<AppContext>) -> Self {
         Self { app_context }
+    }
+
+    fn capture_storage_cleanup_details(
+        &self,
+        table_id: &TableId,
+        table_type: TableType,
+    ) -> Result<StorageCleanupDetails, KalamDbError> {
+        let registry = self.app_context.schema_registry();
+        let cached = registry.get(table_id).ok_or_else(|| {
+            KalamDbError::InvalidOperation(format!(
+                "Table cache entry not found for {}",
+                table_id
+            ))
+        })?;
+
+        let storage_id = cached
+            .storage_id
+            .clone()
+            .unwrap_or_else(StorageId::local);
+
+        let relative_template = if cached.storage_path_template.is_empty() {
+            registry.resolve_storage_path_template(table_id, table_type, &storage_id)?
+        } else {
+            cached.storage_path_template.clone()
+        };
+
+        let storages_provider = self.app_context.system_tables().storages();
+        let base_dir = match storages_provider.get_storage(&storage_id) {
+            Ok(Some(storage)) => {
+                let trimmed = storage.base_directory.trim();
+                if trimmed.is_empty() {
+                    self.app_context
+                        .storage_registry()
+                        .default_storage_path()
+                        .to_string()
+                } else {
+                    storage.base_directory.clone()
+                }
+            }
+            _ => self
+                .app_context
+                .storage_registry()
+                .default_storage_path()
+                .to_string(),
+        };
+
+        Ok(StorageCleanupDetails {
+            storage_id,
+            base_directory: base_dir,
+            relative_path_template: relative_template,
+        })
     }
 }
 
@@ -380,6 +398,8 @@ impl TypedStatementHandler<DropTableStatement> for DropTableHandler {
             );
         }
 
+        let storage_details = self.capture_storage_cleanup_details(&table_id, actual_type)?;
+
         // Cancel any active flush jobs for this table before dropping
         let job_manager = self.app_context.job_manager();
         let flush_filter = kalamdb_commons::system::JobFilter {
@@ -461,6 +481,7 @@ impl TypedStatementHandler<DropTableStatement> for DropTableHandler {
             table_id: table_id.clone(),
             table_type: actual_type,
             operation: CleanupOperation::DropTable,
+            storage: storage_details,
         };
 
         let idempotency_key = format!(

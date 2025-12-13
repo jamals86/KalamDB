@@ -21,7 +21,7 @@ impl SchemaPersistence {
         }
 
         // Check if it's a system table
-        if table_id.namespace_id().as_str() == "system" {
+        if table_id.namespace_id().is_system_namespace() {
             use kalamdb_system::system_table_definitions::all_system_table_definitions;
             let all_defs = all_system_table_definitions();
             if let Some((_, def)) = all_defs.into_iter().find(|(id, _)| id == table_id) {
@@ -34,7 +34,13 @@ impl SchemaPersistence {
         let tables_provider = app_ctx.system_tables().tables();
 
         match tables_provider.get_table_by_id(table_id)? {
-            Some(table_def) => Ok(Some(Arc::new(table_def))),
+            Some(table_def) => {
+                // Cache the result for future fast-path access
+                let table_arc = Arc::new(table_def);
+                let data = CachedTableData::new(table_arc.clone());
+                cache.insert(table_id.clone(), Arc::new(data));
+                Ok(Some(table_arc))
+            }
             None => Ok(None),
         }
     }
@@ -52,8 +58,9 @@ impl SchemaPersistence {
         // Persist to storage
         tables_provider.create_table(table_id, table_def)?;
 
-        // Invalidate cache to force reload on next access
-        cache.invalidate(table_id);
+        // Populate cache immediately to avoid RocksDB lookup on next access
+        let data = CachedTableData::new(Arc::new(table_def.clone()));
+        cache.insert(table_id.clone(), Arc::new(data));
 
         Ok(())
     }
@@ -95,11 +102,19 @@ impl SchemaPersistence {
             return Ok(true);
         }
 
-        // Slow path: query persistence via AppContext
+        // Slow path: query persistence via AppContext and cache result
         let app_ctx = crate::app_context::AppContext::get();
         let tables_provider = app_ctx.system_tables().tables();
 
-        Ok(tables_provider.get_table_by_id(table_id)?.is_some())
+        match tables_provider.get_table_by_id(table_id)? {
+            Some(table_def) => {
+                // Cache for future access
+                let data = CachedTableData::new(Arc::new(table_def));
+                cache.insert(table_id.clone(), Arc::new(data));
+                Ok(true)
+            }
+            None => Ok(false),
+        }
     }
 
     /// Get Arrow schema for a table (Phase 10: Arrow Schema Memoization)

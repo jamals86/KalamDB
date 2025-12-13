@@ -142,11 +142,8 @@ impl UserTableFlushJob {
 
         // Generate batch filename using manifest
         let user_id_typed = kalamdb_commons::models::UserId::from(user_id);
-        let batch_number = self.manifest_helper.get_next_batch_number(
-            self.namespace_id(),
-            self.table_name(),
-            Some(&user_id_typed),
-        )?;
+        let batch_number = self.manifest_helper
+            .get_next_batch_number(&self.table_id, Some(&user_id_typed))?;
         let batch_filename = FlushManifestHelper::generate_batch_filename(batch_number);
         let output_path = PathBuf::from(&storage_path).join(&batch_filename);
 

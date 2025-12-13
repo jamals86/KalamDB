@@ -78,27 +78,20 @@ impl StatementHandler for InsertHandler {
         let (namespace, table_name, columns, rows_data) =
             self.parse_insert_with_sqlparser(sql, &default_namespace)?;
 
-        // Validate table exists via SchemaRegistry fast path (using TableId)
+        // Get table definition (validates existence and uses cached value if available)
         use kalamdb_commons::models::TableId;
         let namespace_owned = namespace.clone();
         let table_name_owned = table_name.clone();
         let table_id = TableId::new(namespace_owned.clone(), table_name_owned.clone());
         let schema_registry = AppContext::get().schema_registry();
-        let exists = schema_registry.table_exists(&table_id)?;
-        if !exists {
-            return Err(KalamDbError::InvalidOperation(format!(
-                "Table '{}.{}' does not exist",
-                namespace.as_str(),
-                table_name.as_str()
-            )));
-        }
-
-        // Get table definition to access column_defaults
+        
+        // Single lookup: get_table_definition returns None if table doesn't exist
+        // This is more efficient than calling table_exists + get_table_definition
         let table_def = schema_registry
             .get_table_definition(&table_id)?
             .ok_or_else(|| {
                 KalamDbError::InvalidOperation(format!(
-                    "Table definition not found: {}.{}",
+                    "Table '{}.{}' does not exist",
                     namespace.as_str(),
                     table_name.as_str()
                 ))
@@ -205,6 +198,7 @@ impl StatementHandler for InsertHandler {
                 effective_user_id,
                 context.user_role,
                 rows,
+                table_def, // Pass already-fetched table definition to avoid redundant lookup
             )
             .await?;
 
@@ -559,24 +553,13 @@ impl InsertHandler {
         user_id: &kalamdb_commons::models::UserId,
         role: kalamdb_commons::Role,
         rows: Vec<Row>,
+        table_def: std::sync::Arc<kalamdb_commons::models::schemas::TableDefinition>, // Reuse already-fetched definition
     ) -> Result<usize, KalamDbError> {
-        // Get schema registry to access table providers
-        let schema_registry = self.app_context.schema_registry();
-
         // Construct TableId from namespace and table_name
         use kalamdb_commons::models::TableId;
         let table_id = TableId::new(namespace.clone(), table_name.clone());
 
-        // Get table definition (validates table exists) and determine table type
-        let table_def = schema_registry
-            .get_table_definition(&table_id)?
-            .ok_or_else(|| {
-                KalamDbError::InvalidOperation(format!(
-                    "Table not found: {}.{}",
-                    namespace.as_str(),
-                    table_name.as_str()
-                ))
-            })?;
+        // Use already-fetched table definition (no redundant lookup)
         let table_type = table_def.table_type;
         let table_options = table_def.table_options.clone();
 

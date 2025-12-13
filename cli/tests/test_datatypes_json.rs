@@ -2,6 +2,7 @@
 
 mod common;
 use common::*;
+// (apply_patch sanity check)
 use serde_json::Value;
 use std::time::Duration;
 
@@ -98,8 +99,15 @@ fn test_datatypes_json_preservation() {
     // Float
     let col_float = row.get("col_float").expect("Missing col_float");
     assert!(col_float.is_number(), "col_float should be a number");
-    // Use epsilon comparison for float if needed, but exact match might work for simple values
-    assert_eq!(col_float.as_f64().unwrap(), 45.67);
+    // FLOAT is typically stored as 32-bit and may not round-trip exactly through JSON.
+    let actual_float = col_float.as_f64().unwrap();
+    let expected_float = 45.67_f64;
+    assert!(
+        (actual_float - expected_float).abs() < 1e-4,
+        "col_float should be approximately {} but was {}",
+        expected_float,
+        actual_float
+    );
 
     // Boolean
     let col_bool = row.get("col_bool").expect("Missing col_bool");

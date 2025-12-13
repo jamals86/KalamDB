@@ -20,7 +20,6 @@ use crate::sql::executor::handler_registry::HandlerRegistry;
 use crate::sql::executor::models::{ExecutionContext, ExecutionMetadata, ExecutionResult};
 use crate::sql::plan_cache::PlanCache;
 pub use datafusion::scalar::ScalarValue;
-use kalamdb_commons::NamespaceId;
 use kalamdb_sql::statement_classifier::SqlStatement;
 use std::sync::Arc;
 
@@ -85,7 +84,7 @@ impl SqlExecutor {
         // TODO: Pass namespace context from ExecutionContext
         let classified = SqlStatement::classify_and_parse(
             sql,
-            &NamespaceId::new("default"),
+            &exec_ctx.default_namespace(),
             exec_ctx.user_role,
         )
         .map_err(|e| match e {
@@ -157,8 +156,16 @@ impl SqlExecutor {
 
         // Try to get cached plan first (only if no params - parameterized queries can't use cached plans)
         // Note: Cached plans already have default ORDER BY applied
+        let cache_key = format!(
+            "{}|{}|{:?}|{}",
+            exec_ctx.default_namespace().as_str(),
+            exec_ctx.user_id.as_str(),
+            exec_ctx.user_role,
+            sql
+        );
+
         let df = if params.is_empty() {
-            if let Some(plan) = self.plan_cache.get(sql) {
+            if let Some(plan) = self.plan_cache.get(&cache_key) {
                 // Cache hit: Create DataFrame directly from plan
                 // This skips parsing, logical planning, and optimization (~1-5ms)
                 // The cached plan already has default ORDER BY applied
@@ -189,8 +196,8 @@ impl SqlExecutor {
                         let plan = df.logical_plan().clone();
                         let ordered_plan = apply_default_order_by(plan, &self.app_context)?;
 
-                        // Cache the ordered plan for future use
-                        self.plan_cache.insert(sql.to_string(), ordered_plan.clone());
+                        // Cache the ordered plan for future use (scoped by namespace+user+role)
+                        self.plan_cache.insert(cache_key.clone(), ordered_plan.clone());
 
                         // Execute the ordered plan
                         session.execute_logical_plan(ordered_plan).await.map_err(|e| {

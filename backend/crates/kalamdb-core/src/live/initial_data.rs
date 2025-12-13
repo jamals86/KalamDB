@@ -383,7 +383,6 @@ mod tests {
     use kalamdb_commons::models::{ConnectionId as ConnId, LiveQueryId as CommonsLiveQueryId};
     use kalamdb_commons::models::{NamespaceId, TableName};
     use kalamdb_commons::UserId;
-    use kalamdb_store::entity_store::EntityStore;
     use kalamdb_store::test_utils::InMemoryBackend;
     use kalamdb_tables::user_tables::user_table_store::{
         new_indexed_user_table_store, UserTableRow,
@@ -459,7 +458,11 @@ mod tests {
         let ns = NamespaceId::new(user_id.as_str());
         let tbl = TableName::new("items");
         let table_id = kalamdb_commons::models::TableId::new(ns.clone(), tbl.clone());
-        let store = Arc::new(new_indexed_user_table_store(backend.clone(), &ns, &tbl, "id"));
+        let store = Arc::new(new_indexed_user_table_store(
+            backend.clone(),
+            &table_id,
+            "id",
+        ));
 
         let seq = SeqId::new(1234567890);
         let row_id = UserTableRowId::new(user_id.clone(), seq);
@@ -592,7 +595,11 @@ mod tests {
         let ns = NamespaceId::new(user_id.as_str());
         let tbl = TableName::new("batch_items");
         let table_id = kalamdb_commons::models::TableId::new(ns.clone(), tbl.clone());
-        let store = Arc::new(new_indexed_user_table_store(backend.clone(), &ns, &tbl, "id"));
+        let store = Arc::new(new_indexed_user_table_store(
+            backend.clone(),
+            &table_id,
+            "id",
+        ));
 
         // Insert 3 rows with increasing seq
         for i in 1..=3 {
@@ -765,7 +772,11 @@ mod tests {
         let ns = NamespaceId::new(user_id.as_str());
         let tbl = TableName::new("last_items");
         let table_id = kalamdb_commons::models::TableId::new(ns.clone(), tbl.clone());
-        let store = Arc::new(new_indexed_user_table_store(backend.clone(), &ns, &tbl, "id"));
+        let store = Arc::new(new_indexed_user_table_store(
+            backend.clone(),
+            &table_id,
+            "id",
+        ));
 
         // Insert 10 rows with increasing seq
         for i in 1..=10 {

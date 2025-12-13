@@ -7,7 +7,7 @@
 use crate::common::*;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
-use std::time::{Duration, Instant};
+use std::time::Instant;
 
 // Test configuration
 const SINGLE_INSERT_COUNT: usize = 100;        // Single-row inserts to test
@@ -15,7 +15,6 @@ const BATCH_SIZE: usize = 100;                 // Rows per batch insert
 const BATCH_COUNT: usize = 10;                 // Number of batch inserts
 const PARALLEL_WORKERS: usize = 10;            // Concurrent insert workers
 const PARALLEL_INSERTS_PER_WORKER: usize = 50; // Inserts per worker
-const TEST_TIMEOUT_SECS: u64 = 120;
 
 #[ntest::timeout(180000)]
 #[test]

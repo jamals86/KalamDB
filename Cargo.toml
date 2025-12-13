@@ -122,7 +122,7 @@ parking_lot = "0.12"
 tokio-util = "0.7.17"
 hex = "0.4"
 moka = { version = "0.12", features = ["future"] }
-ntest = "0.9"
+ntest = "0.9.4"
 wasm-bindgen = { version = "0.2.105" }
 wasm-bindgen-futures = { version = "0.4" }
 js-sys = { version = "0.3" }

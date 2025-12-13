@@ -2,7 +2,6 @@
 //!
 //! Shows how the executor classifies SQL, parses once, and dispatches to typed handlers.
 
-use datafusion::prelude::SessionContext;
 use kalamdb_commons::models::UserId;
 use kalamdb_commons::Role;
 use kalamdb_core::app_context::AppContext;
@@ -43,7 +42,6 @@ async fn test_typed_handler_create_namespace() {
 async fn test_typed_handler_authorization() {
     let app_ctx = init_app_context();
     let executor = SqlExecutor::new(app_ctx, false);
-    let session = SessionContext::new();
     let user_ctx = ExecutionContext::new(
         UserId::from("regular_user"),
         Role::User,
@@ -66,7 +64,6 @@ async fn test_classifier_prioritizes_select() {
     // without attempting DDL parsing
     let app_ctx = init_app_context();
     let executor = SqlExecutor::new(app_ctx, false);
-    let session = SessionContext::new();
     let exec_ctx = ExecutionContext::new(UserId::from("user"), Role::User, create_test_session());
 
     // SELECT should hit the DataFusion path immediately

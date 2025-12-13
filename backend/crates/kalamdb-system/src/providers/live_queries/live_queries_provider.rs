@@ -8,7 +8,7 @@ use crate::error::SystemError;
 use crate::system_table_trait::SystemTableProviderExt;
 use async_trait::async_trait;
 use datafusion::arrow::array::{
-    ArrayRef, Int64Array, RecordBatch, StringBuilder, TimestampMillisecondArray,
+    ArrayRef, Int64Array, RecordBatch, StringBuilder, TimestampMicrosecondArray,
 };
 use datafusion::arrow::datatypes::SchemaRef;
 use datafusion::datasource::{TableProvider, TableType};
@@ -375,8 +375,18 @@ impl LiveQueriesTableProvider {
                 Arc::new(queries.finish()) as ArrayRef,
                 Arc::new(options.finish()) as ArrayRef,
                 Arc::new(statuses.finish()) as ArrayRef,
-                Arc::new(TimestampMillisecondArray::from(created_ats)) as ArrayRef,
-                Arc::new(TimestampMillisecondArray::from(last_updates)) as ArrayRef,
+                Arc::new(TimestampMicrosecondArray::from(
+                    created_ats
+                        .into_iter()
+                        .map(|ts| ts.map(|ms| ms * 1000))
+                        .collect::<Vec<_>>(),
+                )) as ArrayRef,
+                Arc::new(TimestampMicrosecondArray::from(
+                    last_updates
+                        .into_iter()
+                        .map(|ts| ts.map(|ms| ms * 1000))
+                        .collect::<Vec<_>>(),
+                )) as ArrayRef,
                 Arc::new(Int64Array::from(changes)) as ArrayRef,
                 Arc::new(nodes.finish()) as ArrayRef,
             ],

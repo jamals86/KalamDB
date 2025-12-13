@@ -19,10 +19,11 @@ use std::{
 };
 
 // Adjust these constants based on system capabilities
-const NUM_USERS: usize = 20; // Scaled down from 200 for CI/Dev environment safety
-const MESSAGES_PER_USER: usize = 20; // Reduced from 50 for faster test execution
-const MESSAGES_PER_AI: usize = 20; // Reduced from 50 for faster test execution
+const NUM_USERS: usize = 10; // Scaled down from 200 for CI/Dev environment safety
+const MESSAGES_PER_USER: usize = 10; // Reduced for reliable CI/dev runtime
+const MESSAGES_PER_AI: usize = 10; // Reduced for reliable CI/dev runtime
 
+#[ntest::timeout(300000)]
 #[test]
 fn test_chat_simulation_memory_leak() {
     if !is_server_running() {

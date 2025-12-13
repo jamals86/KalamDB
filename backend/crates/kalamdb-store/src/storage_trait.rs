@@ -254,6 +254,16 @@ pub trait StorageBackend: Send + Sync {
     /// **Warning**: This is a destructive operation and cannot be undone.
     fn drop_partition(&self, partition: &Partition) -> Result<()>;
 
+    /// Compacts a partition to clean up tombstones and optimize storage.
+    ///
+    /// This is a blocking operation that can take significant time depending on
+    /// partition size. It's typically called after flush operations to reclaim
+    /// space from deleted/updated rows.
+    ///
+    /// Returns `Ok(())` if compaction succeeds or if the backend doesn't support
+    /// compaction (no-op for backends without compaction).
+    fn compact_partition(&self, partition: &Partition) -> Result<()>;
+
     /// Downcast support to enable integration paths that need concrete backends.
     ///
     /// This should be used sparingly; prefer the trait methods above. It exists
@@ -302,6 +312,9 @@ pub trait StorageBackendAsync: Send + Sync {
         start_key: Option<Vec<u8>>,
         limit: Option<usize>,
     ) -> Result<Vec<(Vec<u8>, Vec<u8>)>>;
+
+    /// Async version of `compact_partition()` - compacts a partition to clean up tombstones.
+    async fn compact_partition_async(&self, partition: &Partition) -> Result<()>;
 }
 
 // Blanket implementation for Arc<dyn StorageBackend>
@@ -362,6 +375,14 @@ impl StorageBackendAsync for std::sync::Arc<dyn StorageBackend> {
         })
         .await
         .map_err(|e| StorageError::Other(format!("spawn_blocking join error: {}", e)))?
+    }
+
+    async fn compact_partition_async(&self, partition: &Partition) -> Result<()> {
+        let backend = self.clone();
+        let partition = partition.clone();
+        tokio::task::spawn_blocking(move || backend.compact_partition(&partition))
+            .await
+            .map_err(|e| StorageError::Other(format!("spawn_blocking join error: {}", e)))?
     }
 }
 

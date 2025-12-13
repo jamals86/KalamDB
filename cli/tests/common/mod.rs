@@ -20,7 +20,7 @@ pub use std::os::unix::fs::PermissionsExt;
 pub const SERVER_URL: &str = "http://127.0.0.1:8080";
 pub const TEST_TIMEOUT: Duration = Duration::from_secs(30);
 /// Default password for the root user
-pub const DEFAULT_ROOT_PASSWORD: &str = "admin123";
+pub const DEFAULT_ROOT_PASSWORD: &str = "";
 
 /// Check if the KalamDB server is running
 pub fn is_server_running() -> bool {
@@ -177,7 +177,6 @@ fn execute_sql_via_cli_as_with_args(
         .arg(username)
         .arg("--password")
         .arg(password)
-        .arg("--fast-timeouts")  // Use fast timeouts for tests
         .arg("--no-spinner")     // Disable spinner for cleaner output
         .args(extra_args)
         .arg("--command")
@@ -289,7 +288,18 @@ fn get_shared_root_client() -> &'static KalamLinkClient {
         KalamLinkClient::builder()
             .base_url(SERVER_URL)
             .auth(AuthProvider::basic_auth("root".to_string(), DEFAULT_ROOT_PASSWORD.to_string()))
-            .timeouts(KalamLinkTimeouts::fast())
+            // DDL/DML can take several seconds; using `fast()` causes HTTP timeouts and
+            // kalam-link will retry on timeouts, which is unsafe for non-idempotent queries.
+            .timeouts(
+                KalamLinkTimeouts::builder()
+                    .connection_timeout_secs(5)
+                    .receive_timeout_secs(120)
+                    .send_timeout_secs(30)
+                    .subscribe_timeout_secs(10)
+                    .auth_timeout_secs(10)
+                    .initial_data_timeout(Duration::from_secs(120))
+                    .build(),
+            )
             .build()
             .expect("Failed to create shared root client")
     })
@@ -370,7 +380,16 @@ pub fn execute_sql_via_client_as_with_args(
                 let client = KalamLinkClient::builder()
                     .base_url(SERVER_URL)
                     .auth(AuthProvider::basic_auth(username_owned, password_owned))
-                    .timeouts(KalamLinkTimeouts::fast())
+                    .timeouts(
+                        KalamLinkTimeouts::builder()
+                            .connection_timeout_secs(5)
+                            .receive_timeout_secs(120)
+                            .send_timeout_secs(30)
+                            .subscribe_timeout_secs(10)
+                            .auth_timeout_secs(10)
+                            .initial_data_timeout(Duration::from_secs(120))
+                            .build(),
+                    )
                     .build()?;
                 let response = client.execute_query(&sql, None, None).await?;
                 Ok(response)
@@ -537,19 +556,21 @@ pub fn generate_unique_namespace(base_name: &str) -> String {
     use std::sync::atomic::{AtomicU64, Ordering};
     use std::time::{SystemTime, UNIX_EPOCH};
     static COUNTER: AtomicU64 = AtomicU64::new(0);
-    
+
     let count = COUNTER.fetch_add(1, Ordering::SeqCst);
-    // Use timestamp to ensure uniqueness across process restarts
-    let ts = SystemTime::now().duration_since(UNIX_EPOCH).unwrap();
-    let ts_suffix = (ts.as_millis() % 1_000_000) as u32; // Last 6 digits of ms
-    let rng = rand::rng();
-    let random_suffix: String = rng
-        .sample_iter(Alphanumeric)
-        .take(4)
-        .map(char::from)
-        .collect();
-    // Combine: base_random_counter_timestamp
-    format!("{}_{}{}{}", base_name, random_suffix, count, ts_suffix).to_lowercase()
+    // Use a short base36-encoded millisecond timestamp + counter.
+    // This stays short enough for identifier limits while remaining unique across reruns.
+    let ts_ms = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap()
+        .as_millis();
+    let ts36 = to_base36(ts_ms);
+    let suffix = if ts36.len() > 8 {
+        &ts36[ts36.len() - 8..]
+    } else {
+        ts36.as_str()
+    };
+    format!("{}_{}_{}", base_name, suffix, count).to_lowercase()
 }
 
 /// Helper to generate unique table name
@@ -557,19 +578,36 @@ pub fn generate_unique_table(base_name: &str) -> String {
     use std::sync::atomic::{AtomicU64, Ordering};
     use std::time::{SystemTime, UNIX_EPOCH};
     static COUNTER: AtomicU64 = AtomicU64::new(0);
-    
+
     let count = COUNTER.fetch_add(1, Ordering::SeqCst);
-    // Use timestamp to ensure uniqueness across process restarts
-    let ts = SystemTime::now().duration_since(UNIX_EPOCH).unwrap();
-    let ts_suffix = (ts.as_millis() % 1_000_000) as u32; // Last 6 digits of ms
-    let rng = rand::rng();
-    let random_suffix: String = rng
-        .sample_iter(Alphanumeric)
-        .take(4)
-        .map(char::from)
-        .collect();
-    // Combine: base_random_counter_timestamp
-    format!("{}_{}{}{}", base_name, random_suffix, count, ts_suffix).to_lowercase()
+    // Use a short base36-encoded millisecond timestamp + counter.
+    // This stays short enough for identifier limits while remaining unique across reruns.
+    let ts_ms = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap()
+        .as_millis();
+    let ts36 = to_base36(ts_ms);
+    let suffix = if ts36.len() > 8 {
+        &ts36[ts36.len() - 8..]
+    } else {
+        ts36.as_str()
+    };
+    format!("{}_{}_{}", base_name, suffix, count).to_lowercase()
+}
+
+fn to_base36(mut value: u128) -> String {
+    const DIGITS: &[u8] = b"0123456789abcdefghijklmnopqrstuvwxyz";
+    if value == 0 {
+        return "0".to_string();
+    }
+    let mut buf = Vec::new();
+    while value > 0 {
+        let rem = (value % 36) as usize;
+        buf.push(DIGITS[rem]);
+        value /= 36;
+    }
+    buf.reverse();
+    String::from_utf8(buf).unwrap_or_else(|_| "0".to_string())
 }
 
 /// Helper to create a CLI command with default test settings
@@ -908,7 +946,16 @@ impl SubscriptionListener {
                 let client = match KalamLinkClient::builder()
                     .base_url(SERVER_URL)
                     .auth(AuthProvider::basic_auth("root".to_string(), DEFAULT_ROOT_PASSWORD.to_string()))
-                    .timeouts(KalamLinkTimeouts::fast())
+                    .timeouts(
+                        KalamLinkTimeouts::builder()
+                            .connection_timeout_secs(5)
+                            .receive_timeout_secs(120)
+                            .send_timeout_secs(30)
+                            .subscribe_timeout_secs(10)
+                            .auth_timeout_secs(10)
+                            .initial_data_timeout(Duration::from_secs(120))
+                            .build(),
+                    )
                     .build()
                 {
                     Ok(c) => c,

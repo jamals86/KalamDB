@@ -308,8 +308,6 @@ async fn test_batch_entry_metadata_preservation() {
     let namespace = NamespaceId::new("test_ns");
     let table = TableName::new("metadata_table");
     // Use shared scope to avoid user-table schema registry resolution issues in test harness
-    let scope = "shared";
-    let scope_user: Option<UserId> = None;
     let scope_user_ref: Option<&UserId> = None;
     let table_id = TableId::new(namespace.clone(), table.clone());
 

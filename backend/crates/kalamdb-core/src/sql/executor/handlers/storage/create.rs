@@ -123,7 +123,6 @@ impl TypedStatementHandler<CreateStorageStatement> for CreateStorageHandler {
 mod tests {
     use super::*;
     use crate::test_helpers::create_test_session;
-    use datafusion::prelude::SessionContext;
     use kalamdb_commons::models::UserId;
     use kalamdb_commons::{Role, StorageId};
 
@@ -173,7 +172,6 @@ mod tests {
             user_tables_template: String::new(),
         };
         let ctx = create_test_context(Role::System);
-        let session = SessionContext::new();
 
         let result = handler.execute(stmt, vec![], &ctx).await;
 
@@ -199,7 +197,6 @@ mod tests {
             user_tables_template: String::new(),
         };
         let ctx = create_test_context(Role::System);
-        let session = SessionContext::new();
 
         // First creation should succeed
         let result1 = handler.execute(stmt.clone(), vec![], &ctx).await;

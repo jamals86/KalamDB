@@ -14,6 +14,8 @@
 use super::base::{self, BaseTableProvider, TableProviderCore};
 use crate::app_context::AppContext;
 use crate::error::KalamDbError;
+use crate::providers::helpers::extract_user_context;
+use crate::providers::manifest_helpers::{ensure_manifest_ready, load_row_from_parquet_by_seq};
 use crate::schema_registry::TableType;
 use async_trait::async_trait;
 use datafusion::arrow::datatypes::SchemaRef;
@@ -53,6 +55,9 @@ pub struct UserTableProvider {
     /// IndexedEntityStore with PK index for DML operations (public for flush jobs)
     pub(crate) store: Arc<UserTableIndexedStore>,
 
+    /// PK index for efficient lookups
+    pk_index: UserTablePkIndex,
+
     /// Cached primary key field name
     primary_key_field_name: String,
 
@@ -80,9 +85,16 @@ impl UserTableProvider {
             .get_arrow_schema(core.table_id())
             .expect("Failed to get Arrow schema from registry during provider creation");
 
+        let pk_index = UserTablePkIndex::new(
+            core.table_id().namespace_id().as_str(),
+            core.table_id().table_name().as_str(),
+            &primary_key_field_name,
+        );
+
         Self {
             core,
             store,
+            pk_index,
             primary_key_field_name,
             schema,
         }
@@ -126,12 +138,9 @@ impl UserTableProvider {
         pk_value: &ScalarValue,
     ) -> Result<Option<(UserTableRowId, UserTableRow)>, KalamDbError> {
         // Build prefix for PK index scan
-        let prefix = UserTablePkIndex::new(
-            self.core.table_id().namespace_id().as_str(),
-            self.core.table_id().table_name().as_str(),
-            &self.primary_key_field_name,
-        )
-        .build_prefix_for_pk(user_id.as_str(), pk_value);
+        let prefix = self
+            .pk_index
+            .build_prefix_for_pk(user_id.as_str(), pk_value);
 
         // Scan index for all versions with this PK
         let index_results = self
@@ -143,17 +152,18 @@ impl UserTableProvider {
             return Ok(None);
         }
 
-        // Find the latest non-deleted version
-        // Results are ordered by seq (descending due to big-endian encoding)
-        // so we iterate and find the first non-deleted row
-        for (row_id, row) in index_results {
-            if !row._deleted {
-                return Ok(Some((row_id, row)));
+        if let Some((row_id, row)) = index_results
+            .into_iter()
+            .max_by_key(|(row_id, _)| row_id.seq)
+        {
+            if row._deleted {
+                Ok(None)
+            } else {
+                Ok(Some((row_id, row)))
             }
+        } else {
+            Ok(None)
         }
-
-        // All versions are deleted
-        Ok(None)
     }
 
     /// Extract user context from DataFusion SessionState
@@ -163,25 +173,7 @@ impl UserTableProvider {
     ///
     /// **Returns**: (UserId, Role) tuple for RLS enforcement
     fn extract_user_context(state: &dyn Session) -> Result<(UserId, Role), KalamDbError> {
-        use crate::sql::executor::models::SessionUserContext;
-
-        let session_state = state
-            .as_any()
-            .downcast_ref::<datafusion::execution::context::SessionState>()
-            .ok_or_else(|| KalamDbError::InvalidOperation("Expected SessionState".to_string()))?;
-
-        let user_ctx = session_state
-            .config()
-            .options()
-            .extensions
-            .get::<SessionUserContext>()
-            .ok_or_else(|| {
-                KalamDbError::InvalidOperation(
-                    "SessionUserContext not found in extensions".to_string(),
-                )
-            })?;
-
-        Ok((user_ctx.user_id.clone(), user_ctx.role))
+        extract_user_context(state)
     }
 
     /// Scan Parquet files from cold storage for a specific user
@@ -207,80 +199,6 @@ impl UserTableProvider {
         )
     }
 
-    /// Ensure manifest.json exists (and is cached) for the current user scope before hot writes
-    fn ensure_manifest_ready(&self, user_id: &UserId) -> Result<(), KalamDbError> {
-        let table_id = self.core.table_id();
-        let namespace = table_id.namespace_id().clone();
-        let table = table_id.table_name().clone();
-        let manifest_cache = self.core.app_context.manifest_cache_service();
-
-        match manifest_cache.get_or_load(table_id, Some(user_id)) {
-            Ok(Some(_)) => return Ok(()),
-            Ok(None) => {}
-            Err(e) => {
-                log::warn!(
-                    "[UserTableProvider] Manifest cache lookup failed for {}.{} user={} err={}",
-                    namespace.as_str(),
-                    table.as_str(),
-                    user_id.as_str(),
-                    e
-                );
-            }
-        }
-
-        let manifest_service = self.core.app_context.manifest_service();
-        let manifest = manifest_service.ensure_manifest_initialized(
-            table_id,
-            self.core.table_type(),
-            Some(user_id),
-        )?;
-
-        let manifest_path = manifest_service
-            .manifest_path(table_id, Some(user_id))?
-            .to_string_lossy()
-            .to_string();
-
-        manifest_cache.stage_before_flush(table_id, Some(user_id), &manifest, manifest_path)?;
-
-        Ok(())
-    }
-
-    /// Retrieve a specific row version from Parquet storage by SeqId
-    fn get_row_from_parquet(
-        &self,
-        user_id: &UserId,
-        seq_id: kalamdb_commons::ids::SeqId,
-    ) -> Result<Option<UserTableRow>, KalamDbError> {
-        use datafusion::prelude::{col, lit};
-        let filter = col(SystemColumnNames::SEQ).eq(lit(seq_id.as_i64()));
-        let batch = self.scan_parquet_files_as_batch(user_id, Some(&filter))?;
-        let rows = parquet_batch_to_rows(&batch)?;
-        log::trace!(
-            "[get_row_from_parquet] Loaded {} rows from Parquet, filtering for _seq={}",
-            rows.len(),
-            seq_id.as_i64()
-        );
-
-        // Post-filter to find exact _seq match (Parquet only does file-level pruning)
-        for row_data in rows.into_iter() {
-            if row_data.seq_id == seq_id {
-                log::trace!(
-                    "[get_row_from_parquet] Found exact match: _seq={}, id={:?}",
-                    row_data.seq_id.as_i64(),
-                    row_data.fields.values.get("id")
-                );
-                return Ok(Some(UserTableRow {
-                    user_id: user_id.clone(),
-                    _seq: row_data.seq_id,
-                    _deleted: row_data.deleted,
-                    fields: row_data.fields,
-                }));
-            }
-        }
-
-        log::trace!("[get_row_from_parquet] No exact match found for _seq={}", seq_id.as_i64());
-        Ok(None)
-    }
 }
 
 impl BaseTableProvider<UserTableRowId, UserTableRow> for UserTableProvider {
@@ -308,65 +226,86 @@ impl BaseTableProvider<UserTableRowId, UserTableRow> for UserTableProvider {
     /// Override find_row_key_by_id_field to use PK index for efficient lookup
     ///
     /// This avoids scanning all rows and instead uses the secondary index.
-    /// For hot storage (RocksDB), this is O(1). If not found in hot storage,
-    /// falls back to scanning Parquet (cold storage).
+    /// For hot storage (RocksDB), uses fast existence check. If not found in hot storage,
+    /// falls back to checking cold storage using manifest-based pruning.
+    ///
+    /// OPTIMIZED: Uses `pk_exists_in_hot` for fast hot-path check (single index lookup + 1 entity fetch max).
+    /// OPTIMIZED: Uses `pk_exists_in_cold` with manifest-based segment pruning for cold storage.
     fn find_row_key_by_id_field(
         &self,
         user_id: &UserId,
         id_value: &str,
     ) -> Result<Option<UserTableRowId>, KalamDbError> {
-        log::debug!(
-            "[UserTableProvider::find_row_key_by_id_field] user='{}', id_value='{}', pk_name='{}'",
-            user_id.as_str(),
-            id_value,
-            self.primary_key_field_name
-        );
+        // Use shared helper to parse PK value
+        let pk_value = crate::providers::pk_helpers::parse_pk_value(id_value);
 
-        // Try to parse id_value as the appropriate scalar type
-        // Most PKs are Int64, so try that first
-        let pk_value = if let Ok(n) = id_value.parse::<i64>() {
-            ScalarValue::Int64(Some(n))
-        } else {
-            ScalarValue::Utf8(Some(id_value.to_string()))
-        };
-
-        // Use find_by_pk which leverages the PK index for hot storage (O(1))
-        match self.find_by_pk(user_id, &pk_value)? {
-            Some((row_id, _row)) => {
-                log::debug!(
-                    "[UserTableProvider::find_row_key_by_id_field] Found row in hot storage with id={}",
-                    id_value
-                );
-                return Ok(Some(row_id));
-            }
-            None => {
-                log::debug!(
-                    "[UserTableProvider::find_row_key_by_id_field] Row not found in hot storage for id={}, checking cold storage",
-                    id_value
-                );
-            }
-        }
-
-        // Not found in hot storage - fall back to Parquet scan (cold storage)
-        // This is more expensive but necessary for flushed rows
-        let result = base::find_row_by_pk(self, Some(user_id), id_value)?;
-        if let Some((row_id, _row)) = result {
-            log::debug!(
-                "[UserTableProvider::find_row_key_by_id_field] Found row in cold storage with id={}",
+        // Fast path: check hot storage for a non-deleted version
+        if let Some((row_id, _row)) = self.find_by_pk(user_id, &pk_value)? {
+            log::trace!(
+                "[UserTableProvider] PK collision in hot storage: id={}",
                 id_value
             );
             return Ok(Some(row_id));
         }
 
-        log::debug!(
-            "[UserTableProvider::find_row_key_by_id_field] Row not found anywhere for id={}",
+        // If hot storage has entries but all are deleted, the PK can be reused.
+        let hot_prefix = self
+            .pk_index
+            .build_prefix_for_pk(user_id.as_str(), &pk_value);
+        let hot_has_versions = self
+            .store
+            .exists_by_index(0, &hot_prefix)
+            .map_err(|e| KalamDbError::Other(format!("PK index scan failed: {}", e)))?;
+        if hot_has_versions {
+            log::trace!(
+                "[UserTableProvider] PK {} has only deleted versions in hot storage",
+                id_value
+            );
+            return Ok(None);
+        }
+
+        log::trace!(
+            "[UserTableProvider] PK {} not in hot storage, checking cold",
             id_value
         );
+
+        // Not found in hot storage - check cold storage using optimized manifest-based lookup
+        // This uses column_stats to prune segments that can't contain the PK
+        let pk_name = self.primary_key_field_name();
+        let exists_in_cold = base::pk_exists_in_cold(
+            &self.core,
+            self.core.table_id(),
+            self.core.table_type(),
+            Some(user_id),
+            pk_name,
+            id_value,
+        )?;
+
+        if exists_in_cold {
+            log::trace!(
+                "[UserTableProvider] PK {} exists in cold storage",
+                id_value
+            );
+            // Load the actual row_id from cold storage so DELETE/UPDATE can target correct version
+            if let Some((row_id, _row)) =
+                base::find_row_by_pk(self, Some(user_id), id_value)?
+            {
+                return Ok(Some(row_id));
+            }
+
+            return Ok(None);
+        }
+
         Ok(None)
     }
 
     fn insert(&self, user_id: &UserId, row_data: Row) -> Result<UserTableRowId, KalamDbError> {
-        self.ensure_manifest_ready(user_id)?;
+        ensure_manifest_ready(
+            &self.core,
+            self.core.table_type(),
+            Some(user_id),
+            "UserTableProvider",
+        )?;
 
         // Validate PRIMARY KEY uniqueness if user provided PK value
         base::ensure_unique_pk_value(self, Some(user_id), &row_data)?;
@@ -436,7 +375,12 @@ impl BaseTableProvider<UserTableRowId, UserTableRow> for UserTableProvider {
         }
 
         // Ensure manifest is ready
-        self.ensure_manifest_ready(user_id)?;
+        ensure_manifest_ready(
+            &self.core,
+            self.core.table_type(),
+            Some(user_id),
+            "UserTableProvider",
+        )?;
 
         // Coerce rows to match schema types (e.g. String -> Timestamp)
         let coerced_rows = coerce_rows(rows, &self.schema_ref()).map_err(|e| {
@@ -530,8 +474,20 @@ impl BaseTableProvider<UserTableRowId, UserTableRow> for UserTableProvider {
         let prior = if let Some(p) = prior_opt {
             p
         } else {
-            self.get_row_from_parquet(user_id, key.seq)?
-                .ok_or_else(|| KalamDbError::NotFound("Row not found for update".to_string()))?
+            load_row_from_parquet_by_seq(
+                &self.core,
+                self.core.table_type(),
+                &self.schema,
+                Some(user_id),
+                key.seq,
+                |row_data| UserTableRow {
+                    user_id: user_id.clone(),
+                    _seq: row_data.seq_id,
+                    _deleted: row_data.deleted,
+                    fields: row_data.fields,
+                },
+            )?
+            .ok_or_else(|| KalamDbError::NotFound("Row not found for update".to_string()))?
         };
 
         let pk_name = self.primary_key_field_name().to_string();
@@ -673,8 +629,20 @@ impl BaseTableProvider<UserTableRowId, UserTableRow> for UserTableProvider {
         let prior = if let Some(p) = prior_opt {
             p
         } else {
-            self.get_row_from_parquet(user_id, key.seq)?
-                .ok_or_else(|| KalamDbError::NotFound("Row not found for delete".to_string()))?
+            load_row_from_parquet_by_seq(
+                &self.core,
+                self.core.table_type(),
+                &self.schema,
+                Some(user_id),
+                key.seq,
+                |row_data| UserTableRow {
+                    user_id: user_id.clone(),
+                    _seq: row_data.seq_id,
+                    _deleted: row_data.deleted,
+                    fields: row_data.fields,
+                },
+            )?
+            .ok_or_else(|| KalamDbError::NotFound("Row not found for delete".to_string()))?
         };
 
         let sys_cols = self.core.system_columns.clone();
@@ -763,12 +731,16 @@ impl BaseTableProvider<UserTableRowId, UserTableRow> for UserTableProvider {
     fn scan_with_version_resolution_to_kvs(
         &self,
         user_id: &UserId,
-        _filter: Option<&Expr>,
+        filter: Option<&Expr>,
         since_seq: Option<kalamdb_commons::ids::SeqId>,
         limit: Option<usize>,
         keep_deleted: bool,
     ) -> Result<Vec<(UserTableRowId, UserTableRow)>, KalamDbError> {
         let table_id = self.core.table_id();
+        
+        // Warn if no filter or limit - potential performance issue
+        base::warn_if_unfiltered_scan(table_id, filter, limit, self.core.table_type());
+
         // 1) Scan hot storage (RocksDB) with per-user filtering using prefix scan
         let user_bytes = user_id.as_str().as_bytes();
         let len = (user_bytes.len().min(255)) as u8;
@@ -786,8 +758,8 @@ impl BaseTableProvider<UserTableRowId, UserTableRow> for UserTableProvider {
             None
         };
 
-        // Use limit if provided, otherwise default to 100,000
-        let scan_limit = limit.map(|l| std::cmp::max(l * 2, 1000)).unwrap_or(100_000);
+        // Calculate scan limit using common helper
+        let scan_limit = base::calculate_scan_limit(limit);
 
         let raw_all = self
             .store
@@ -824,8 +796,8 @@ impl BaseTableProvider<UserTableRowId, UserTableRow> for UserTableProvider {
             table_id.table_name().as_str()
         );
 
-        // 2) Scan cold storage (Parquet files)
-        let parquet_batch = self.scan_parquet_files_as_batch(user_id, _filter)?;
+        // 2) Scan cold storage (Parquet files) - pass filter for pruning
+        let parquet_batch = self.scan_parquet_files_as_batch(user_id, filter)?;
 
         let cold_rows: Vec<(UserTableRowId, UserTableRow)> = parquet_batch_to_rows(&parquet_batch)?
             .into_iter()
@@ -855,12 +827,8 @@ impl BaseTableProvider<UserTableRowId, UserTableRow> for UserTableProvider {
         let pk_name = self.primary_key_field_name().to_string();
         let mut result = merge_versioned_rows(&pk_name, hot_rows, cold_rows, keep_deleted);
 
-        // Apply limit after resolution
-        if let Some(l) = limit {
-            if result.len() > l {
-                result.truncate(l);
-            }
-        }
+        // Apply limit after resolution using common helper
+        base::apply_limit(&mut result, limit);
 
         if log::log_enabled!(log::Level::Trace) {
             log::trace!(

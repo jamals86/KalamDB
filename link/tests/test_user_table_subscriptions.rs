@@ -53,7 +53,7 @@ fn create_test_client() -> Result<KalamLinkClient, kalam_link::KalamLinkError> {
 /// Helper to execute SQL via HTTP
 async fn execute_sql(sql: &str) -> Result<QueryResponse, Box<dyn std::error::Error + Send + Sync>> {
     let client = create_test_client()?;
-    Ok(client.execute_query(sql).await?)
+    Ok(client.execute_query(sql, None, None).await?)
 }
 
 /// Generate a unique table name

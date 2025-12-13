@@ -11,7 +11,6 @@ mod common;
 
 use common::TestServer;
 use kalamdb_api::models::ResponseStatus;
-use kalamdb_commons::{AuthType, Role};
 
 #[tokio::test]
 async fn test_create_user_with_password_success() {

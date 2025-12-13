@@ -5,7 +5,7 @@ use crate::error::KalamDbError;
 use crate::sql::executor::handlers::typed::TypedStatementHandler;
 use crate::sql::executor::models::{ExecutionContext, ExecutionResult, ScalarValue};
 use datafusion::arrow::array::{
-    ArrayRef, Int32Array, RecordBatch, StringBuilder, TimestampMillisecondArray,
+    ArrayRef, Int32Array, RecordBatch, StringBuilder, TimestampMicrosecondArray,
 };
 use kalamdb_commons::schemas::TableDefinition;
 use kalamdb_sql::ddl::ShowTablesStatement;
@@ -107,10 +107,20 @@ fn build_tables_batch(tables: Vec<TableDefinition>) -> Result<RecordBatch, Kalam
             Arc::new(table_names.finish()) as ArrayRef,
             Arc::new(namespaces.finish()) as ArrayRef,
             Arc::new(table_types.finish()) as ArrayRef,
-            Arc::new(TimestampMillisecondArray::from(created_ats)) as ArrayRef,
+            Arc::new(TimestampMicrosecondArray::from(
+                created_ats
+                    .into_iter()
+                    .map(|ts| ts.map(|ms| ms * 1000))
+                    .collect::<Vec<_>>(),
+            )) as ArrayRef,
             Arc::new(Int32Array::from(schema_versions)) as ArrayRef,
             Arc::new(table_comments.finish()) as ArrayRef,
-            Arc::new(TimestampMillisecondArray::from(updated_ats)) as ArrayRef,
+            Arc::new(TimestampMicrosecondArray::from(
+                updated_ats
+                    .into_iter()
+                    .map(|ts| ts.map(|ms| ms * 1000))
+                    .collect::<Vec<_>>(),
+            )) as ArrayRef,
         ],
     )
     .map_err(|e| KalamDbError::Other(format!("Arrow error: {}", e)))?;

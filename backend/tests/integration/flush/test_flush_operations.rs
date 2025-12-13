@@ -5,7 +5,6 @@ mod common;
 
 use common::{fixtures, flush_helpers, TestServer};
 use kalamdb_api::models::ResponseStatus;
-use std::sync::Arc;
 
 /// Manual flush on a user table should create Parquet files under the configured storage path.
 #[actix_web::test]
@@ -76,15 +75,15 @@ async fn test_user_table_manual_flush_creates_parquet() {
 
     {
         use kalamdb_commons::models::{
-            NamespaceId as ModelNamespaceId, TableName as ModelTableName,
+            NamespaceId as ModelNamespaceId, TableId, TableName as ModelTableName,
         };
-        use kalamdb_tables::UserTableStoreExt;
 
         // Use the SAME backend as AppContext to ensure consistency
         let backend = server.app_context.storage_backend();
         let model_namespace = ModelNamespaceId::new(namespace);
         let model_table = ModelTableName::new(table_name);
-        let store = kalamdb_tables::new_user_table_store(backend, &model_namespace, &model_table);
+        let table_id = TableId::new(model_namespace.clone(), model_table.clone());
+        let store = kalamdb_tables::new_user_table_store(backend, &table_id);
         use kalamdb_store::entity_store::EntityStore;
         let buffered_rows =
             EntityStore::scan_all(&store, None, None, None).expect("scan_all() should succeed");

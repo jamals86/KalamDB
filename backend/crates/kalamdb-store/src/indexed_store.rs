@@ -620,6 +620,33 @@ where
         Ok(results)
     }
 
+    /// Checks if any entry exists in an index with the given prefix.
+    ///
+    /// This is the most efficient check - only scans index, no entity fetch,
+    /// stops at first match. Use this for PK uniqueness validation.
+    ///
+    /// # Arguments
+    ///
+    /// * `index_idx` - Index number (0-based, typically 0 for PK index)
+    /// * `prefix` - Prefix to search for
+    ///
+    /// # Returns
+    ///
+    /// `true` if at least one entry exists with this prefix
+    pub fn exists_by_index(&self, index_idx: usize, prefix: &[u8]) -> Result<bool> {
+        let index = self
+            .indexes
+            .get(index_idx)
+            .ok_or_else(|| StorageError::Other(format!("Index {} not found", index_idx)))?;
+
+        let index_partition = Partition::new(index.partition());
+        // Only fetch 1 result - we just need to know if anything exists
+        let iter = self.backend.scan(&index_partition, Some(prefix), None, Some(1))?;
+
+        // If we got any result, the prefix exists
+        Ok(iter.into_iter().next().is_some())
+    }
+
     /// Scans an index returning raw (index_key, primary_key) pairs.
     ///
     /// Useful when you need access to the index key itself.
@@ -824,7 +851,7 @@ mod tests {
     use super::*;
     use crate::test_utils::InMemoryBackend;
     use kalamdb_commons::system::Job;
-    use kalamdb_commons::{JobId, JobStatus, JobType, NamespaceId, NodeId};
+    use kalamdb_commons::{JobId, JobStatus, JobType, NodeId};
 
     // Test index: Jobs by status
     struct TestStatusIndex;

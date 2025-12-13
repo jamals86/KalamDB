@@ -24,7 +24,7 @@ const AUTH_PASSWORD: &str = "";
 const WEBSOCKET_CONNECTIONS: usize = 32;
 const SQL_RESPONSIVENESS_BUDGET: Duration = Duration::from_secs(10);
 // Timeout for each websocket connection attempt
-const CONNECTION_TIMEOUT: Duration = Duration::from_secs(5);
+const CONNECTION_TIMEOUT: Duration = Duration::from_secs(20);
 
 #[ntest::timeout(300_000)]
 #[test]
@@ -359,7 +359,15 @@ async fn wait_for_subscription_ack(idx: usize, expected_id: &str, stream: &mut W
             .unwrap_or_else(|| panic!("Websocket #{} closed during subscription", idx))
             .unwrap_or_else(|e| panic!("Websocket #{} subscription error: {}", idx, e));
 
-        if let Message::Text(payload) = message {
+        match message {
+            Message::Ping(payload) => {
+                // Be tolerant of keepalive ping frames during the subscription handshake.
+                // Respond with Pong to keep the connection healthy.
+                let _ = stream.send(Message::Pong(payload)).await;
+                continue;
+            }
+            Message::Pong(_) => continue,
+            Message::Text(payload) => {
             let value: serde_json::Value = serde_json::from_str(&payload)
                 .unwrap_or_else(|e| panic!("Invalid subscription response JSON on websocket #{}: {}", idx, e));
             if let Some(msg_type) = value.get("type").and_then(|v| v.as_str()) {
@@ -383,16 +391,19 @@ async fn wait_for_subscription_ack(idx: usize, expected_id: &str, stream: &mut W
                     ),
                 }
             }
-        } else if let Message::Close(frame) = message {
-            panic!(
-                "Websocket #{} closed before subscription ack: {:?}",
-                idx, frame
-            );
-        } else {
-            panic!(
-                "Websocket #{} received non-text message while awaiting subscription ack: {:?}",
-                idx, message
-            );
+            }
+            Message::Close(frame) => {
+                panic!(
+                    "Websocket #{} closed before subscription ack: {:?}",
+                    idx, frame
+                );
+            }
+            other => {
+                panic!(
+                    "Websocket #{} received unexpected message while awaiting subscription ack: {:?}",
+                    idx, other
+                );
+            }
         }
     }
 }

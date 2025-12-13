@@ -16,8 +16,9 @@ use std::sync::Arc;
 ///
 /// Replaces dual-cache architecture with single DashMap for all table data.
 ///
-/// **Performance Optimization**: LRU timestamps are stored separately to avoid
-/// cloning large CachedTableData structs on every access.
+/// **Performance Optimization**: Cache access updates `last_accessed_ms` via an
+/// atomic field stored inside `CachedTableData`. This avoids a separate
+/// timestamps map while keeping per-access work O(1) and avoiding any deep clones.
 #[derive(Debug)]
 pub struct SchemaRegistry {
     /// Cache for table data

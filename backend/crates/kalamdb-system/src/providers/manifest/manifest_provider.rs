@@ -8,7 +8,7 @@ use crate::error::SystemError;
 use crate::system_table_trait::SystemTableProviderExt;
 use async_trait::async_trait;
 use datafusion::arrow::array::{
-    ArrayRef, Int64Array, RecordBatch, StringBuilder, TimestampMillisecondArray,
+    ArrayRef, Int64Array, RecordBatch, StringBuilder, TimestampMicrosecondArray,
 };
 use datafusion::arrow::datatypes::SchemaRef;
 use datafusion::datasource::{TableProvider, TableType};
@@ -100,8 +100,18 @@ impl ManifestTableProvider {
                 Arc::new(table_names.finish()) as ArrayRef,
                 Arc::new(scopes.finish()) as ArrayRef,
                 Arc::new(etags.finish()) as ArrayRef,
-                Arc::new(TimestampMillisecondArray::from(last_refreshed_vals)) as ArrayRef,
-                Arc::new(TimestampMillisecondArray::from(last_accessed_vals)) as ArrayRef,
+                Arc::new(TimestampMicrosecondArray::from(
+                    last_refreshed_vals
+                        .into_iter()
+                        .map(|ts| ts.map(|ms| ms * 1000))
+                        .collect::<Vec<_>>(),
+                )) as ArrayRef,
+                Arc::new(TimestampMicrosecondArray::from(
+                    last_accessed_vals
+                        .into_iter()
+                        .map(|ts| ts.map(|ms| ms * 1000))
+                        .collect::<Vec<_>>(),
+                )) as ArrayRef,
                 Arc::new(Int64Array::from(ttl_vals)) as ArrayRef,
                 Arc::new(source_paths.finish()) as ArrayRef,
                 Arc::new(sync_states.finish()) as ArrayRef,

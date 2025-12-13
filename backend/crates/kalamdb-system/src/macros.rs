@@ -34,7 +34,7 @@ macro_rules! build_record_batch {
             $($field_name:ident => $field_type:ident($($capacity:expr,)? $extractor:expr)),+ $(,)?
         ]
     ) => {{
-        use datafusion::arrow::array::{ArrayRef, Int32Array, Int64Array, BooleanArray, StringBuilder, TimestampMillisecondArray};
+        use datafusion::arrow::array::{ArrayRef, Int32Array, Int64Array, BooleanArray, StringBuilder, TimestampMicrosecondArray};
         use std::sync::Arc;
 
         let row_count = $entries.len();
@@ -148,13 +148,19 @@ macro_rules! finish_array {
         Arc::new($builder.finish()) as ArrayRef
     };
     ($builder:ident, Timestamp) => {
-        Arc::new(datafusion::arrow::array::TimestampMillisecondArray::from(
-            $builder,
+        Arc::new(datafusion::arrow::array::TimestampMicrosecondArray::from(
+            $builder
+                .into_iter()
+                .map(|ts| ts.map(|ms| ms * 1000))
+                .collect::<Vec<_>>(),
         )) as ArrayRef
     };
     ($builder:ident, OptionalTimestamp) => {
-        Arc::new(datafusion::arrow::array::TimestampMillisecondArray::from(
-            $builder,
+        Arc::new(datafusion::arrow::array::TimestampMicrosecondArray::from(
+            $builder
+                .into_iter()
+                .map(|ts| ts.map(|ms| ms * 1000))
+                .collect::<Vec<_>>(),
         )) as ArrayRef
     };
     ($builder:ident, Int64) => {

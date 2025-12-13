@@ -15,15 +15,77 @@ pub struct QueryExecutor {
     base_url: String,
     http_client: reqwest::Client,
     auth: AuthProvider,
+    max_retries: u32,
 }
 
 impl QueryExecutor {
-    pub(crate) fn new(base_url: String, http_client: reqwest::Client, auth: AuthProvider) -> Self {
+    pub(crate) fn new(
+        base_url: String,
+        http_client: reqwest::Client,
+        auth: AuthProvider,
+        max_retries: u32,
+    ) -> Self {
         Self {
             base_url,
             http_client,
             auth,
+            max_retries,
         }
+    }
+
+    fn is_retry_safe_sql(sql: &str) -> bool {
+        // Very conservative: only retry simple, read-only statements.
+        // Avoid retrying DDL/DML (CREATE/INSERT/UPDATE/DELETE/...) because
+        // a request might succeed server-side but time out client-side.
+        matches!(Self::first_keyword(sql).as_deref(), Some("SELECT" | "SHOW" | "DESCRIBE" | "EXPLAIN"))
+    }
+
+    fn first_keyword(sql: &str) -> Option<String> {
+        let bytes = sql.as_bytes();
+        let mut i = 0;
+        while i < bytes.len() {
+            // Skip whitespace
+            while i < bytes.len() && bytes[i].is_ascii_whitespace() {
+                i += 1;
+            }
+            if i >= bytes.len() {
+                return None;
+            }
+
+            // Skip line comments: -- ...\n
+            if bytes[i] == b'-' && i + 1 < bytes.len() && bytes[i + 1] == b'-' {
+                i += 2;
+                while i < bytes.len() && bytes[i] != b'\n' {
+                    i += 1;
+                }
+                continue;
+            }
+
+            // Skip block comments: /* ... */
+            if bytes[i] == b'/' && i + 1 < bytes.len() && bytes[i + 1] == b'*' {
+                i += 2;
+                while i + 1 < bytes.len() {
+                    if bytes[i] == b'*' && bytes[i + 1] == b'/' {
+                        i += 2;
+                        break;
+                    }
+                    i += 1;
+                }
+                continue;
+            }
+
+            // Read keyword
+            let start = i;
+            while i < bytes.len() && bytes[i].is_ascii_alphabetic() {
+                i += 1;
+            }
+            if start == i {
+                return None;
+            }
+            return Some(sql[start..i].to_ascii_uppercase());
+        }
+
+        None
     }
 
     /// Execute a SQL query with optional parameters and namespace
@@ -40,8 +102,9 @@ impl QueryExecutor {
         };
 
         // Send request with retry logic
-        let mut retries = 0;
-        let max_retries = 3;
+        let mut retries: u32 = 0;
+        let max_retries = self.max_retries;
+        let retry_safe_sql = Self::is_retry_safe_sql(sql);
         
         // Log query start
         let sql_preview = if sql.len() > 80 {
@@ -127,7 +190,7 @@ impl QueryExecutor {
                         });
                     }
                 }
-                Err(e) if retries < max_retries && Self::is_retriable(&e) => {
+                Err(e) if retry_safe_sql && retries < max_retries && Self::is_retriable(&e) => {
                     let http_duration_ms = attempt_start.elapsed().as_millis();
                     warn!(
                         "[LINK_HTTP] Retriable error (attempt {}/{}): {} duration_ms={}",

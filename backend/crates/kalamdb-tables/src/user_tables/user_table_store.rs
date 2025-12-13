@@ -14,9 +14,11 @@
 //! - Enables O(1) lookup of row by PK value instead of O(n) scan
 
 use super::pk_index::create_user_table_pk_index;
+use crate::common::{ensure_partition, new_indexed_store_with_pk, partition_name};
 use kalamdb_commons::ids::{SeqId, UserTableRowId};
 use kalamdb_commons::models::row::Row;
-use kalamdb_commons::models::{KTableRow, NamespaceId, TableName, UserId};
+use kalamdb_commons::models::{KTableRow, UserId};
+use kalamdb_commons::TableId;
 use kalamdb_store::entity_store::{EntityStore, KSerializable};
 use kalamdb_store::{IndexedEntityStore, StorageBackend};
 use serde::{Deserialize, Serialize};
@@ -105,22 +107,14 @@ impl EntityStore<UserTableRowId, UserTableRow> for UserTableStore {
 /// A new UserTableStore instance configured for the user table
 pub fn new_user_table_store(
     backend: Arc<dyn StorageBackend>,
-    namespace_id: &NamespaceId, //TODO: Use TableId instead of both namespace and table name
-    table_name: &TableName,
+    table_id: &TableId,
 ) -> UserTableStore {
-    //TODO: Use a template function inside: kalamdb_store::Partition::new_user_table_partition
-    let partition_name = format!(
-        "{}{}:{}",
+    let name = partition_name(
         kalamdb_commons::constants::ColumnFamilyNames::USER_TABLE_PREFIX,
-        namespace_id.as_str(),
-        table_name.as_str()
+        table_id,
     );
-
-    // Ensure the partition exists in RocksDB
-    let partition = kalamdb_store::Partition::new(partition_name.clone());
-    let _ = backend.create_partition(&partition); // Ignore error if already exists
-
-    UserTableStore::new(backend, partition_name)
+    ensure_partition(&backend, &name);
+    UserTableStore::new(backend, name)
 }
 
 /// Type alias for indexed user table store with PK index.
@@ -141,44 +135,37 @@ pub type UserTableIndexedStore = IndexedEntityStore<UserTableRowId, UserTableRow
 /// A new IndexedEntityStore configured with PK index for efficient lookups
 pub fn new_indexed_user_table_store(
     backend: Arc<dyn StorageBackend>,
-    namespace_id: &NamespaceId,
-    table_name: &TableName,
+    table_id: &TableId,
     pk_field_name: &str,
 ) -> UserTableIndexedStore {
-    let partition_name = format!(
-        "{}{}:{}",
+    let name = partition_name(
         kalamdb_commons::constants::ColumnFamilyNames::USER_TABLE_PREFIX,
-        namespace_id.as_str(),
-        table_name.as_str()
+        table_id,
     );
+    ensure_partition(&backend, &name);
 
-    // Ensure the partition exists in RocksDB
-    let partition = kalamdb_store::Partition::new(partition_name.clone());
-    let _ = backend.create_partition(&partition); // Ignore error if already exists
-
-    // Create PK index
     let pk_index = create_user_table_pk_index(
-        namespace_id.as_str(),
-        table_name.as_str(),
+        table_id.namespace_id().as_str(),
+        table_id.table_name().as_str(),
         pk_field_name,
     );
-
-    IndexedEntityStore::new(backend, partition_name, vec![pk_index])
+    new_indexed_store_with_pk(backend, name, vec![pk_index])
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
     use datafusion::scalar::ScalarValue;
+    use kalamdb_commons::models::{NamespaceId, TableId, TableName};
     use kalamdb_store::test_utils::InMemoryBackend;
     use std::collections::BTreeMap;
 
     fn create_test_store() -> UserTableStore {
         let backend: Arc<dyn StorageBackend> = Arc::new(InMemoryBackend::new());
+        let table_id = TableId::new(NamespaceId::new("test_ns"), TableName::new("test_table"));
         new_user_table_store(
             backend,
-            &NamespaceId::new("test_ns"),
-            &TableName::new("test_table"),
+            &table_id,
         )
     }
 

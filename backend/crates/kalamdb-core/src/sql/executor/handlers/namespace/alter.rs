@@ -93,7 +93,6 @@ impl TypedStatementHandler<AlterNamespaceStatement> for AlterNamespaceHandler {
 mod tests {
     use super::*;
     use crate::test_helpers::create_test_session;
-    use datafusion::prelude::SessionContext;
     use kalamdb_commons::models::UserId;
     use kalamdb_commons::Role;
 
@@ -130,7 +129,6 @@ mod tests {
             options,
         };
         let ctx = create_test_context();
-        let session = SessionContext::new();
 
         // Note: This test would need proper setup of test namespace
         let result = handler.execute(stmt, vec![], &ctx).await;

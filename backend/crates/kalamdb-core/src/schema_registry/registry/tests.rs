@@ -302,38 +302,26 @@ fn bench_cache_memory_efficiency() {
     }
 
     // Measure memory footprint
-    // The key insight: we store Arc<CachedTableData> in cache, but separate AtomicU64 for timestamps
-    // This avoids cloning CachedTableData on every access
+    // The key insight: the cache stores `Arc<CachedTableData>`, and LRU tracking uses an
+    // `AtomicU64` stored inside `CachedTableData` (updated in-place, no deep cloning).
 
-    let cached_data_size = mem::size_of::<Arc<CachedTableData>>(); // Just the Arc pointer
-    let timestamp_size = mem::size_of::<AtomicU64>(); // Just the timestamp
+    let cached_table_data_size = mem::size_of::<CachedTableData>();
+    let timestamp_size = mem::size_of::<AtomicU64>();
 
-    let total_cached_data_size = cached_data_size * num_tables;
-    let total_timestamp_size = timestamp_size * num_tables;
-
-    // LRU overhead = timestamp storage / (cached data pointers + timestamps)
-    // We're comparing overhead of separate timestamp storage vs inline storage
-    let lru_overhead_ratio =
-        total_timestamp_size as f64 / (total_cached_data_size + total_timestamp_size) as f64;
-
+    // Rough sanity check: the timestamp should be a small fraction of the cached value.
+    // This is intentionally conservative since struct padding/layout may vary.
+    let ts_ratio = timestamp_size as f64 / cached_table_data_size as f64;
     assert!(
-        lru_overhead_ratio <= 0.50, // Relaxed to 50% since TableId keys dominate overhead, not timestamps
-        "LRU timestamps overhead {:.2}% exceeds 50% target",
-        lru_overhead_ratio * 100.0
+        ts_ratio <= 0.20,
+        "LRU timestamp field {:.2}% exceeds 20% of CachedTableData size",
+        ts_ratio * 100.0
     );
 
     println!(
-        "✅ Arc<CachedTableData> size: {} bytes ({} entries × {} bytes)",
-        total_cached_data_size, num_tables, cached_data_size
-    );
-    println!(
-        "✅ AtomicU64 timestamps: {} bytes ({} entries × {} bytes)",
-        total_timestamp_size, num_tables, timestamp_size
-    );
-    println!(
-        "✅ Total overhead: {} bytes (LRU overhead: {:.2}%)",
-        total_cached_data_size + total_timestamp_size,
-        lru_overhead_ratio * 100.0
+        "✅ CachedTableData size: {} bytes (timestamp: {} bytes, {:.2}%)",
+        cached_table_data_size,
+        timestamp_size,
+        ts_ratio * 100.0
     );
 
     // More meaningful metric: Compare to what we'd waste if we cloned CachedTableData on every access
@@ -342,7 +330,7 @@ fn bench_cache_memory_efficiency() {
     // Rough estimate: ~200-300 bytes per struct
     let approx_cached_data_struct_size = 256; // Conservative estimate
     let waste_if_cloning = approx_cached_data_struct_size * num_tables;
-    let actual_overhead = total_timestamp_size;
+    let actual_overhead = timestamp_size * num_tables;
     let savings_ratio = 1.0 - (actual_overhead as f64 / waste_if_cloning as f64);
 
     println!(
