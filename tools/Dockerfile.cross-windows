@@ -30,7 +30,13 @@ RUN curl -fsSL https://deb.nodesource.com/setup_20.x | bash - && \
     rm -rf /var/lib/apt/lists/*
 
 # Install wasm-pack for building WASM SDK
-RUN curl https://rustwasm.github.io/wasm-pack/installer/init.sh -sSf | sh
+RUN set -eux; \
+        curl -fsSL --retry 5 --retry-delay 2 --retry-connrefused \
+            https://rustwasm.github.io/wasm-pack/installer/init.sh | sh; \
+        command -v wasm-pack; \
+        wasm-pack --version
+
+ENV PATH=/usr/local/cargo/bin:$PATH
 
 # Install wasm32 target for Rust
 RUN rustup target add wasm32-unknown-unknown
