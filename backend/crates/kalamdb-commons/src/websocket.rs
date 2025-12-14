@@ -107,6 +107,11 @@ use crate::models::Row;
 pub type Row = serde_json::Map<String, serde_json::Value>;
 
 use serde::{Deserialize, Serialize};
+use serde_json::Value as JsonValue;
+use std::collections::HashMap;
+
+/// Type alias for row data in WebSocket messages (column_name -> JSON value)
+pub type RowData = HashMap<String, JsonValue>;
 
 /// Batch size in bytes (8KB) for chunking large initial data payloads
 pub const BATCH_SIZE_BYTES: usize = 8 * 1024;
@@ -158,7 +163,7 @@ pub enum WebSocketMessage {
         /// The subscription ID this data is for
         subscription_id: String,
         /// The rows in this batch
-        rows: Vec<Row>,
+        rows: Vec<RowData>,
         /// Batch control information
         batch_control: BatchControl,
     },
@@ -281,6 +286,7 @@ pub struct SubscriptionRequest {
 /// These options control individual subscription behavior including:
 /// - Initial data loading (batch_size, last_rows)
 /// - Data resumption after reconnection (from_seq_id)
+/// - Serialization format (simple vs typed)
 ///
 /// Used by both SQL SUBSCRIBE TO command and WebSocket subscribe messages.
 #[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq)]
@@ -294,6 +300,13 @@ pub struct SubscriptionOptions {
     /// Default: None (fetch all matching rows)
     #[serde(skip_serializing_if = "Option::is_none")]
     pub last_rows: Option<u32>,
+
+    /// Serialization mode for row data (Simple or Typed)
+    /// Default: Typed (preserves type information for type-safe clients)
+    /// - Simple: Plain JSON values like {"id": "123", "name": "Alice"}
+    /// - Typed: Type wrappers like {"id": {"Int64": "123"}, "name": {"Utf8": "Alice"}}
+    #[serde(default = "default_serialization_mode")]
+    pub serialization_mode: SerializationMode,
 
     /// Resume subscription from a specific sequence ID
     /// When set, the server will only send changes after this seq_id
@@ -423,11 +436,11 @@ pub enum Notification {
 
         /// New/current row values (for INSERT and UPDATE)
         #[serde(skip_serializing_if = "Option::is_none")]
-        rows: Option<Vec<Row>>,
+        rows: Option<Vec<RowData>>,
 
         /// Previous row values (for UPDATE and DELETE)
         #[serde(skip_serializing_if = "Option::is_none")]
-        old_values: Option<Vec<Row>>,
+        old_values: Option<Vec<RowData>>,
     },
 
     /// Error notification (e.g., subscription query failed)
@@ -457,6 +470,21 @@ pub enum ChangeType {
     Delete,
 }
 
+/// Serialization mode for WebSocket messages (re-exported for convenience)
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum SerializationMode {
+    /// Simple JSON values without type information
+    Simple,
+    /// Values with type wrappers (default for backward compatibility)
+    #[default]
+    Typed,
+}
+
+fn default_serialization_mode() -> SerializationMode {
+    SerializationMode::Typed
+}
+
 impl WebSocketMessage {
     /// Create a subscription acknowledgement message with batch control
     pub fn subscription_ack(
@@ -474,7 +502,7 @@ impl WebSocketMessage {
     /// Create an initial data batch message
     pub fn initial_data_batch(
         subscription_id: String,
-        rows: Vec<Row>,
+        rows: Vec<RowData>,
         batch_control: BatchControl,
     ) -> Self {
         Self::InitialDataBatch {
@@ -566,7 +594,7 @@ impl BatchControl {
 
 impl Notification {
     /// Create an INSERT change notification
-    pub fn insert(subscription_id: String, rows: Vec<Row>) -> Self {
+    pub fn insert(subscription_id: String, rows: Vec<RowData>) -> Self {
         Self::Change {
             subscription_id,
             change_type: ChangeType::Insert,
@@ -576,7 +604,7 @@ impl Notification {
     }
 
     /// Create an UPDATE change notification
-    pub fn update(subscription_id: String, new_rows: Vec<Row>, old_rows: Vec<Row>) -> Self {
+    pub fn update(subscription_id: String, new_rows: Vec<RowData>, old_rows: Vec<RowData>) -> Self {
         Self::Change {
             subscription_id,
             change_type: ChangeType::Update,
@@ -586,7 +614,7 @@ impl Notification {
     }
 
     /// Create a DELETE change notification
-    pub fn delete(subscription_id: String, old_rows: Vec<Row>) -> Self {
+    pub fn delete(subscription_id: String, old_rows: Vec<RowData>) -> Self {
         Self::Change {
             subscription_id,
             change_type: ChangeType::Delete,

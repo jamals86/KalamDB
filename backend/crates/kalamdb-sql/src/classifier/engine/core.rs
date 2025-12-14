@@ -536,6 +536,85 @@ impl SqlStatement {
                 }))
             }
 
+            // DataFusion Meta Commands - Admin only
+            // These commands are passed directly to DataFusion for parsing and execution.
+            // No custom parsing needed - DataFusion handles them natively.
+            // Supported: EXPLAIN, SET, SHOW (options), SHOW ALL, SHOW COLUMNS, DESCRIBE/DESC
+            ["EXPLAIN", ..] => {
+                if !is_admin {
+                    return Err(StatementClassificationError::Unauthorized(
+                        "Admin privileges (DBA or System role) required for EXPLAIN commands"
+                            .to_string(),
+                    ));
+                }
+                Ok(Self::new(
+                    sql.to_string(),
+                    SqlStatementKind::DataFusionMetaCommand,
+                ))
+            }
+            ["SET", ..] => {
+                if !is_admin {
+                    return Err(StatementClassificationError::Unauthorized(
+                        "Admin privileges (DBA or System role) required for SET commands"
+                            .to_string(),
+                    ));
+                }
+                Ok(Self::new(
+                    sql.to_string(),
+                    SqlStatementKind::DataFusionMetaCommand,
+                ))
+            }
+            ["SHOW", "COLUMNS", ..] => {
+                if !is_admin {
+                    return Err(StatementClassificationError::Unauthorized(
+                        "Admin privileges (DBA or System role) required for SHOW COLUMNS"
+                            .to_string(),
+                    ));
+                }
+                Ok(Self::new(
+                    sql.to_string(),
+                    SqlStatementKind::DataFusionMetaCommand,
+                ))
+            }
+            ["SHOW", "ALL", ..] => {
+                if !is_admin {
+                    return Err(StatementClassificationError::Unauthorized(
+                        "Admin privileges (DBA or System role) required for SHOW ALL"
+                            .to_string(),
+                    ));
+                }
+                Ok(Self::new(
+                    sql.to_string(),
+                    SqlStatementKind::DataFusionMetaCommand,
+                ))
+            }
+            // DESCRIBE <table> or DESC <table> (without TABLE keyword) - DataFusion style
+            // Note: DESCRIBE TABLE is handled above as KalamDB custom command
+            ["DESCRIBE", next, ..] if *next != "TABLE" => {
+                if !is_admin {
+                    return Err(StatementClassificationError::Unauthorized(
+                        "Admin privileges (DBA or System role) required for DESCRIBE"
+                            .to_string(),
+                    ));
+                }
+                Ok(Self::new(
+                    sql.to_string(),
+                    SqlStatementKind::DataFusionMetaCommand,
+                ))
+            }
+            ["DESC", next, ..] if *next != "TABLE" => {
+                if !is_admin {
+                    return Err(StatementClassificationError::Unauthorized(
+                        "Admin privileges (DBA or System role) required for DESC"
+                            .to_string(),
+                    ));
+                }
+                Ok(Self::new(
+                    sql.to_string(),
+                    SqlStatementKind::DataFusionMetaCommand,
+                ))
+            }
+
             // Unknown
             _ => Ok(Self::new(sql.to_string(), SqlStatementKind::Unknown)),
         }
@@ -636,6 +715,10 @@ impl SqlStatement {
             | SqlStatementKind::BeginTransaction
             | SqlStatementKind::CommitTransaction
             | SqlStatementKind::RollbackTransaction => Ok(()),
+
+            // DataFusion meta commands are already admin-checked in classify_from_tokens
+            // This branch should only be reached by admin users (DBA/System)
+            SqlStatementKind::DataFusionMetaCommand => Ok(()),
 
             SqlStatementKind::Unknown => {
                 // Unknown statements will fail in execute anyway

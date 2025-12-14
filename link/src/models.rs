@@ -4,6 +4,7 @@
 //! WebSocket subscription messages.
 
 use crate::seq_id::SeqId;
+use crate::timestamp::{TimestampFormat, TimestampFormatter};
 use serde::{Deserialize, Serialize};
 use serde_json::Value as JsonValue;
 use std::collections::HashMap;
@@ -221,6 +222,12 @@ pub struct ConnectionOptions {
     /// Set to Some(0) to disable reconnection entirely
     #[serde(default)]
     pub max_reconnect_attempts: Option<u32>,
+
+    /// Timestamp format to use for displaying timestamp columns
+    /// Default: Iso8601 (2024-12-14T15:30:45.123Z)
+    /// This allows clients to control how timestamps are displayed
+    #[serde(default)]
+    pub timestamp_format: TimestampFormat,
 }
 
 fn default_auto_reconnect() -> bool {
@@ -243,6 +250,7 @@ impl Default for ConnectionOptions {
             reconnect_delay_ms: 1000,
             max_reconnect_delay_ms: 30000,
             max_reconnect_attempts: None,
+            timestamp_format: TimestampFormat::Iso8601,
         }
     }
 }
@@ -286,6 +294,29 @@ impl ConnectionOptions {
     pub fn with_max_reconnect_attempts(mut self, max_attempts: Option<u32>) -> Self {
         self.max_reconnect_attempts = max_attempts;
         self
+    }
+
+    /// Set the timestamp format for displaying timestamp columns
+    ///
+    /// Controls how timestamp values (milliseconds since epoch) are formatted
+    /// in query results and subscription updates.
+    ///
+    /// # Example
+    ///
+    /// ```rust
+    /// use kalam_link::{ConnectionOptions, TimestampFormat};
+    ///
+    /// let options = ConnectionOptions::new()
+    ///     .with_timestamp_format(TimestampFormat::Iso8601);  // 2024-12-14T15:30:45.123Z
+    /// ```
+    pub fn with_timestamp_format(mut self, format: TimestampFormat) -> Self {
+        self.timestamp_format = format;
+        self
+    }
+
+    /// Create a timestamp formatter from this configuration
+    pub fn create_formatter(&self) -> TimestampFormatter {
+        TimestampFormatter::new(self.timestamp_format)
     }
 }
 
@@ -457,6 +488,7 @@ pub enum ChangeTypeRaw {
 ///     sql: "SELECT * FROM users".to_string(),
 ///     params: None,
 ///     namespace_id: None,
+///     serialization_mode: SerializationMode::Typed,
 /// };
 ///
 /// // Parametrized query
@@ -464,6 +496,7 @@ pub enum ChangeTypeRaw {
 ///     sql: "SELECT * FROM users WHERE id = $1".to_string(),
 ///     params: Some(vec![json!(42)]),
 ///     namespace_id: None,
+///     serialization_mode: SerializationMode::Typed,
 /// };
 /// ```
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -479,6 +512,42 @@ pub struct QueryRequest {
     /// When set, queries like `SELECT * FROM users` resolve to `namespace_id.users`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub namespace_id: Option<String>,
+
+    /// Serialization mode for response data.
+    /// 
+    /// - `simple`: Plain JSON values, Int64/UInt64 as strings
+    /// - `typed`: Values with type wrappers and formatted timestamps (default for kalam-link)
+    #[serde(default = "SerializationMode::typed")]
+    pub serialization_mode: SerializationMode,
+}
+
+/// Serialization mode for converting Arrow data to JSON
+///
+/// Controls how ScalarValue types are serialized in query responses.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum SerializationMode {
+    /// Simple JSON values without type information
+    /// Example: `{"id": "123", "name": "Alice"}`
+    Simple,
+
+    /// Values with type wrappers and formatted timestamps
+    /// Example: `{"id": {"Int64": "123"}, "created_at": {"TimestampMicrosecond": {...}}}`
+    Typed,
+}
+
+impl Default for SerializationMode {
+    fn default() -> Self {
+        // kalam-link always uses typed mode by default
+        Self::Typed
+    }
+}
+
+impl SerializationMode {
+    /// Create typed mode (used as serde default)
+    pub fn typed() -> Self {
+        Self::Typed
+    }
 }
 
 /// Response from SQL query execution.
@@ -1224,11 +1293,13 @@ mod tests {
             sql: "SELECT * FROM users WHERE id = $1".to_string(),
             params: Some(vec![json!(42)]),
             namespace_id: None,
+            serialization_mode: SerializationMode::Typed,
         };
 
         let json = serde_json::to_string(&request).unwrap();
         assert!(json.contains("SELECT * FROM users"));
         assert!(json.contains("params"));
+        assert!(json.contains("typed")); // serialization_mode is typed by default
     }
 
     #[test]

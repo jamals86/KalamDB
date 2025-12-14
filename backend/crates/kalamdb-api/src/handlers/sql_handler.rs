@@ -6,7 +6,9 @@
 use actix_web::{post, web, HttpRequest, HttpResponse, Responder};
 use kalamdb_auth::AuthSession;
 use kalamdb_commons::models::UserId;
-use kalamdb_core::providers::arrow_json_conversion::{json_value_to_scalar_strict, scalar_value_to_json};
+use kalamdb_core::providers::arrow_json_conversion::{
+    json_value_to_scalar_strict, record_batch_to_json_rows, SerializationMode,
+};
 use kalamdb_core::sql::executor::helpers::audit;
 use kalamdb_core::sql::executor::models::ExecutionContext;
 use kalamdb_core::sql::executor::{ExecutorMetadataAlias, ScalarValue, SqlExecutor};
@@ -157,6 +159,9 @@ pub async fn execute_sql_v1(
 
     // Get namespace_id from request (client-provided or None for default)
     let namespace_id = req.namespace_id.clone();
+    
+    // Get serialization mode from request (default: Simple)
+    let serialization_mode = req.serialization_mode;
 
     for (idx, sql) in statements.iter().enumerate() {
         let stmt_start = Instant::now();
@@ -169,6 +174,7 @@ pub async fn execute_sql_v1(
             None,
             params.clone(),
             namespace_id.clone(),
+            serialization_mode,
         )
         .await
         {
@@ -265,6 +271,7 @@ async fn execute_single_statement(
     metadata: Option<&ExecutorMetadataAlias>,
     params: Vec<ScalarValue>,
     namespace_id: Option<String>,
+    serialization_mode: SerializationMode,
 ) -> Result<QueryResult, Box<dyn std::error::Error>> {
     use kalamdb_commons::NamespaceId;
     
@@ -294,7 +301,7 @@ async fn execute_single_statement(
         Ok(exec_result) => match exec_result {
             ExecutionResult::Success { message } => Ok(QueryResult::with_message(message)),
             ExecutionResult::Rows { batches, schema, .. } => {
-                record_batch_to_query_result(batches, schema, Some(&session.user.user_id))
+                record_batch_to_query_result(batches, schema, Some(&session.user.user_id), serialization_mode)
             }
             ExecutionResult::Inserted { rows_affected } => Ok(QueryResult::with_affected_rows(
                 rows_affected,
@@ -345,12 +352,14 @@ async fn execute_single_statement(
 
 /// Convert Arrow RecordBatches to QueryResult
 /// 
-/// Uses custom JSON serialization to ensure Int64/UInt64 values exceeding JavaScript's
-/// Number.MAX_SAFE_INTEGER are serialized as strings to preserve precision.
+/// Uses the unified record_batch_to_json_rows function with configurable serialization mode.
+/// - Simple mode: Plain JSON values (Int64/UInt64 as strings for precision)
+/// - Typed mode: Values with type wrappers and formatted timestamps
 fn record_batch_to_query_result(
     batches: Vec<arrow::record_batch::RecordBatch>,
     schema: Option<arrow::datatypes::SchemaRef>,
     user_id: Option<&UserId>,
+    mode: SerializationMode,
 ) -> Result<QueryResult, Box<dyn std::error::Error>> {
     // Get schema from first batch, or from explicitly provided schema for empty results
     let schema = if !batches.is_empty() {
@@ -368,28 +377,9 @@ fn record_batch_to_query_result(
 
     let mut rows = Vec::new();
     for batch in &batches {
-        let num_rows = batch.num_rows();
-        let num_cols = batch.num_columns();
-        
-        for row_idx in 0..num_rows {
-            let mut json_row = std::collections::HashMap::new();
-            
-            for col_idx in 0..num_cols {
-                let col_name = column_names[col_idx].clone();
-                let column = batch.column(col_idx);
-                
-                // Extract ScalarValue from the array at this row index
-                let scalar = ScalarValue::try_from_array(column.as_ref(), row_idx)?;
-                
-                // Use our custom conversion that handles large integers as strings
-                let json_value = scalar_value_to_json(&scalar)
-                    .unwrap_or_else(|_| serde_json::Value::Null);
-                
-                json_row.insert(col_name, json_value);
-            }
-            
-            rows.push(json_row);
-        }
+        let batch_rows = record_batch_to_json_rows(batch, mode)
+            .map_err(|e| format!("Failed to convert batch to JSON: {}", e))?;
+        rows.extend(batch_rows);
     }
 
     let mut result = QueryResult::with_rows(rows, column_names.clone());

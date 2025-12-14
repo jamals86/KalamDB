@@ -128,6 +128,12 @@ pub enum SqlStatementKind {
     /// ROLLBACK [WORK]
     RollbackTransaction,
 
+    // ===== DataFusion Meta Commands (Admin Only) =====
+    /// DataFusion built-in commands (EXPLAIN, SET, SHOW COLUMNS, etc.)
+    /// These are passed directly to DataFusion for parsing and execution.
+    /// Restricted to DBA/System roles only.
+    DataFusionMetaCommand,
+
     // ===== Unknown/Unsupported =====
     /// Unrecognized statement
     Unknown,
@@ -232,6 +238,7 @@ impl SqlStatement {
             SqlStatementKind::Delete(_) => "DELETE",
             SqlStatementKind::Select => "SELECT",
             SqlStatementKind::Insert(_) => "INSERT",
+            SqlStatementKind::DataFusionMetaCommand => "DATAFUSION META",
             SqlStatementKind::Unknown => "UNKNOWN",
         }
     }

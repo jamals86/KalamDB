@@ -104,6 +104,13 @@ impl SqlExecutor {
             // Tables are already registered in base session, we just inject user_id
             SqlStatementKind::Select => self.execute_via_datafusion(sql, params, exec_ctx).await,
 
+            // DataFusion meta commands (EXPLAIN, SET, SHOW, etc.) - admin only
+            // No caching needed - these are diagnostic/config commands
+            // Authorization already checked in classifier
+            SqlStatementKind::DataFusionMetaCommand => {
+                self.execute_meta_command(sql, exec_ctx).await
+            }
+
             // DDL operations that modify table/view structure require plan cache invalidation
             // This prevents stale cached plans from referencing dropped/altered tables
             SqlStatementKind::CreateTable(_)
@@ -270,6 +277,73 @@ impl SqlExecutor {
         let row_count: usize = batches.iter().map(|b| b.num_rows()).sum();
 
         // Return batches with row count and schema (schema is needed when batches is empty)
+        Ok(ExecutionResult::Rows {
+            batches,
+            row_count,
+            schema: Some(schema),
+        })
+    }
+
+    /// Execute DataFusion meta commands (EXPLAIN, SET, SHOW, etc.)
+    ///
+    /// These commands are passed directly to DataFusion without custom parsing.
+    /// No plan caching is performed since these are diagnostic/config commands.
+    /// Authorization is already checked in the classifier (admin only).
+    async fn execute_meta_command(
+        &self,
+        sql: &str,
+        exec_ctx: &ExecutionContext,
+    ) -> Result<ExecutionResult, KalamDbError> {
+        // Create per-request SessionContext with user_id injected
+        let session = exec_ctx.create_session_with_user();
+
+        // Execute the command directly via DataFusion
+        let df = match session.sql(sql).await {
+            Ok(df) => df,
+            Err(e) => {
+                log::error!(
+                    target: "sql::meta",
+                    "❌ Meta command failed | sql='{}' | user='{}' | role='{:?}' | error='{}'",
+                    sql,
+                    exec_ctx.user_id.as_str(),
+                    exec_ctx.user_role,
+                    e
+                );
+                return Err(KalamDbError::ExecutionError(e.to_string()));
+            }
+        };
+
+        // Capture schema before collecting
+        let schema: arrow::datatypes::SchemaRef =
+            std::sync::Arc::new(df.schema().as_arrow().clone());
+
+        // Execute and collect results
+        let batches = match df.collect().await {
+            Ok(batches) => batches,
+            Err(e) => {
+                log::error!(
+                    target: "sql::meta",
+                    "❌ Meta command execution failed | sql='{}' | user='{}' | error='{}'",
+                    sql,
+                    exec_ctx.user_id.as_str(),
+                    e
+                );
+                return Err(KalamDbError::Other(format!(
+                    "Error executing meta command: {}",
+                    e
+                )));
+            }
+        };
+
+        let row_count: usize = batches.iter().map(|b| b.num_rows()).sum();
+
+        log::debug!(
+            target: "sql::meta",
+            "✅ Meta command completed | sql='{}' | rows={}",
+            sql,
+            row_count
+        );
+
         Ok(ExecutionResult::Rows {
             batches,
             row_count,

@@ -8,6 +8,7 @@ use kalamdb_commons::websocket::{
 };
 use kalamdb_commons::WebSocketMessage;
 use kalamdb_core::live::{InitialDataOptions, LiveQueryManager, SharedConnectionState};
+use kalamdb_core::providers::arrow_json_conversion::row_to_json_map;
 use log::{error, info};
 use std::sync::Arc;
 
@@ -149,8 +150,28 @@ pub async fn handle_subscribe(
                     subscription_id,
                     initial.rows.len()
                 );
+                
+                // Convert Row objects to HashMap using the subscription's serialization mode
+                let mut rows_json = Vec::with_capacity(initial.rows.len());
+                for row in initial.rows {
+                    match row_to_json_map(&row, subscription.options.serialization_mode) {
+                        Ok(json) => rows_json.push(json),
+                        Err(e) => {
+                            error!("Failed to convert row to JSON: {}", e);
+                            return send_error(
+                                session,
+                                &subscription_id,
+                                "CONVERSION_ERROR",
+                                &format!("Failed to convert row data: {}", e),
+                            )
+                            .await
+                            .map_err(|_| "Failed to send error message".to_string());
+                        }
+                    }
+                }
+                
                 let batch_msg =
-                    WebSocketMessage::initial_data_batch(subscription_id, initial.rows, batch_control);
+                    WebSocketMessage::initial_data_batch(subscription_id, rows_json, batch_control);
                 let _ = send_json(session, &batch_msg).await;
             } else {
                 info!("No initial data to send for {}", subscription_id);
