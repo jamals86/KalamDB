@@ -36,13 +36,15 @@ mod tests {
     }
 
     fn create_test_storage(storage_id: &str, name: &str) -> Storage {
+        use kalamdb_commons::models::StorageType;
         Storage {
             storage_id: StorageId::new(storage_id),
             storage_name: name.to_string(),
             description: Some("Test storage".to_string()),
-            storage_type: "filesystem".to_string(),
+            storage_type: StorageType::Filesystem,
             base_directory: "/data".to_string(),
             credentials: None,
+            config_json: None,
             shared_tables_template: "{base}/shared/{namespace}/{table}".to_string(),
             user_tables_template: "{base}/user/{namespace}/{table}/{user_id}".to_string(),
             created_at: 1000,

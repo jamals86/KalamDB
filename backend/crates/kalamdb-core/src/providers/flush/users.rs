@@ -9,14 +9,14 @@ use crate::live_query::{ChangeNotification, LiveQueryManager};
 use crate::manifest::{FlushManifestHelper, ManifestCacheService, ManifestService};
 use crate::providers::arrow_json_conversion::json_rows_to_arrow_batch;
 use crate::schema_registry::SchemaRegistry;
-use crate::storage::ParquetWriter;
+use crate::app_context::AppContext;
+use crate::storage::write_parquet_to_storage_sync;
 use datafusion::arrow::datatypes::SchemaRef;
 use datafusion::arrow::record_batch::RecordBatch;
 use datafusion::scalar::ScalarValue;
-use kalamdb_commons::models::{Row, TableId, UserId};
+use kalamdb_commons::models::{Row, StorageId, TableId, UserId};
 use kalamdb_store::entity_store::EntityStore;
 use kalamdb_tables::UserTableIndexedStore;
-use std::path::PathBuf;
 use std::sync::Arc;
 
 /// User table flush job
@@ -145,33 +145,50 @@ impl UserTableFlushJob {
         let batch_number = self.manifest_helper
             .get_next_batch_number(&self.table_id, Some(&user_id_typed))?;
         let batch_filename = FlushManifestHelper::generate_batch_filename(batch_number);
-        let output_path = PathBuf::from(&storage_path).join(&batch_filename);
+        let destination_path = if storage_path.ends_with('/') {
+            format!("{}{}", storage_path, batch_filename)
+        } else {
+            format!("{}/{}", storage_path, batch_filename)
+        };
 
-        // Ensure directory exists
-        if let Some(parent) = output_path.parent() {
-            std::fs::create_dir_all(parent)
-                .map_err(|e| KalamDbError::Other(format!("Failed to create directory: {}", e)))?;
-        }
+        let app_ctx = AppContext::get();
+        let cached = self
+            .unified_cache
+            .get(&self.table_id)
+            .ok_or_else(|| KalamDbError::TableNotFound(format!("Table not found: {}", self.table_id)))?;
+
+        let storage_id = cached.storage_id.clone().unwrap_or_else(StorageId::local);
+        let storage = app_ctx
+            .system_tables()
+            .storages()
+            .get_storage(&storage_id)
+            .map_err(|e| KalamDbError::Other(format!("Failed to load storage: {}", e)))?
+            .ok_or_else(|| {
+                KalamDbError::InvalidOperation(format!(
+                    "Storage '{}' not found",
+                    storage_id.as_str()
+                ))
+            })?;
 
         // Write to Parquet with Bloom filters on PRIMARY KEY + _seq (FR-054, FR-055)
         log::debug!(
             "📝 Writing Parquet file: path={}, rows={}",
-            output_path.display(),
+            destination_path,
             rows_count
         );
-        let writer = ParquetWriter::new(output_path.to_str().unwrap());
-        writer.write_with_bloom_filter(
+        let result = write_parquet_to_storage_sync(
+            &storage,
+            &destination_path,
             self.schema.clone(),
             vec![batch.clone()],
             Some(bloom_filter_columns.to_vec()),
-        )?;
+        )
+        .map_err(|e| KalamDbError::Other(format!("Filestore error: {}", e)))?;
 
-        // Calculate file size
-        let size_bytes = std::fs::metadata(&output_path)
-            .map(|m| m.len())
-            .unwrap_or(0);
+        let size_bytes = result.size_bytes;
 
         // Update manifest and cache using helper (with row-group stats)
+        // Note: For remote storage, we don't have a local path; pass destination_path for stats
         self.manifest_helper.update_manifest_after_flush(
             self.namespace_id(),
             self.table_name(),
@@ -179,7 +196,7 @@ impl UserTableFlushJob {
             Some(&user_id_typed),
             batch_number,
             batch_filename.clone(),
-            &output_path,
+            &std::path::PathBuf::from(&destination_path),
             &batch,
             size_bytes,
             bloom_filter_columns,
@@ -189,11 +206,11 @@ impl UserTableFlushJob {
             "✅ Flushed {} rows for user {} to {} (batch={})",
             rows_count,
             user_id,
-            output_path.display(),
+            destination_path,
             batch_number
         );
 
-        parquet_files.push(output_path.to_string_lossy().to_string());
+        parquet_files.push(destination_path);
         Ok(rows_count)
     }
 

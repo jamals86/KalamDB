@@ -66,6 +66,25 @@ impl TypedStatementHandler<AlterStorageStatement> for AlterStorageHandler {
             storage.user_tables_template = user_template;
         }
 
+        if let Some(raw_config) = statement.config_json {
+            let value: serde_json::Value = serde_json::from_str(&raw_config).map_err(|e| {
+                KalamDbError::InvalidOperation(format!("Invalid CONFIG JSON: {}", e))
+            })?;
+
+            if !value.is_object() {
+                return Err(KalamDbError::InvalidOperation(
+                    "CONFIG must be a JSON object".to_string(),
+                ));
+            }
+
+            storage.config_json = Some(serde_json::to_string(&value).map_err(|e| {
+                KalamDbError::InvalidOperation(format!(
+                    "Failed to normalize CONFIG JSON: {}",
+                    e
+                ))
+            })?);
+        }
+
         // Update timestamp
         storage.updated_at = chrono::Utc::now().timestamp();
 
@@ -116,6 +135,7 @@ mod tests {
             description: None,
             shared_tables_template: None,
             user_tables_template: None,
+            config_json: None,
         };
 
         // User role should be denied
@@ -140,9 +160,10 @@ mod tests {
             storage_id: StorageId::from(storage_id.as_str()),
             storage_name: "Original Name".to_string(),
             description: None,
-            storage_type: "local".to_string(),
+            storage_type: kalamdb_commons::models::StorageType::Filesystem,
             base_directory: "/tmp/test".to_string(),
             credentials: None,
+            config_json: None,
             shared_tables_template: String::new(),
             user_tables_template: String::new(),
             created_at: chrono::Utc::now().timestamp(),
@@ -158,6 +179,7 @@ mod tests {
             description: Some("New description".to_string()),
             shared_tables_template: None,
             user_tables_template: None,
+            config_json: None,
         };
         let ctx = create_test_context(Role::System);
 

@@ -8,16 +8,16 @@ use crate::error::KalamDbError;
 use crate::live_query::{ChangeNotification, LiveQueryManager};
 use crate::manifest::{FlushManifestHelper, ManifestCacheService, ManifestService};
 use crate::providers::arrow_json_conversion::json_rows_to_arrow_batch;
+use crate::app_context::AppContext;
 use crate::schema_registry::SchemaRegistry;
-use crate::storage::ParquetWriter;
+use crate::storage::write_parquet_to_storage_sync;
 use datafusion::arrow::datatypes::SchemaRef;
 use datafusion::arrow::record_batch::RecordBatch;
 use datafusion::scalar::ScalarValue;
-use kalamdb_commons::models::{Row, TableId, UserId};
+use kalamdb_commons::models::{Row, StorageId, TableId, UserId};
 use kalamdb_commons::{NamespaceId, TableName};
 use kalamdb_store::entity_store::EntityStore;
 use kalamdb_tables::{SharedTableIndexedStore, SharedTableRow};
-use std::path::PathBuf;
 use std::sync::Arc;
 
 /// Shared table flush job
@@ -291,17 +291,33 @@ impl TableFlush for SharedTableFlushJob {
 
         // T114-T115: Generate batch filename using manifest (sequential numbering)
         let (batch_number, batch_filename) = self.generate_batch_filename()?;
-        let full_path = self
+        let full_dir = self
             .unified_cache
             .get_storage_path(&self.table_id, None, None)?;
-        let table_dir = PathBuf::from(full_path);
-        let output_path = table_dir.join(&batch_filename);
+        let destination_path = if full_dir.ends_with('/') {
+            format!("{}{}", full_dir, batch_filename)
+        } else {
+            format!("{}/{}", full_dir, batch_filename)
+        };
 
-        // Ensure directory exists
-        if let Some(parent) = output_path.parent() {
-            std::fs::create_dir_all(parent)
-                .map_err(|e| KalamDbError::Other(format!("Failed to create directory: {}", e)))?;
-        }
+        let app_ctx = AppContext::get();
+        let cached = self
+            .unified_cache
+            .get(&self.table_id)
+            .ok_or_else(|| KalamDbError::TableNotFound(format!("Table not found: {}", self.table_id)))?;
+
+        let storage_id = cached.storage_id.clone().unwrap_or_else(StorageId::local);
+        let storage = app_ctx
+            .system_tables()
+            .storages()
+            .get_storage(&storage_id)
+            .map_err(|e| KalamDbError::Other(format!("Failed to load storage: {}", e)))?
+            .ok_or_else(|| {
+                KalamDbError::InvalidOperation(format!(
+                    "Storage '{}' not found",
+                    storage_id.as_str()
+                ))
+            })?;
 
         // Extract PRIMARY KEY columns from TableDefinition for Bloom filter optimization (FR-054, FR-055)
         // Fetch once per flush job instead of per-batch for efficiency
@@ -325,30 +341,30 @@ impl TableFlush for SharedTableFlushJob {
         // Write to Parquet with Bloom filters on PRIMARY KEY + _seq
         log::debug!(
             "📝 Writing Parquet file: path={}, rows={}",
-            output_path.display(),
+            destination_path,
             rows_count
         );
-        let writer = ParquetWriter::new(output_path.to_str().unwrap());
-        writer.write_with_bloom_filter(
+        let result = write_parquet_to_storage_sync(
+            &storage,
+            &destination_path,
             self.schema.clone(),
             vec![batch.clone()],
             Some(bloom_filter_columns.clone()),
-        )?;
+        )
+        .map_err(|e| KalamDbError::Other(format!("Filestore error: {}", e)))?;
 
         log::info!(
             "✅ Flushed {} rows for shared table={}.{} to {}",
             rows_count,
             self.namespace_id().as_str(),
             self.table_name().as_str(),
-            output_path.display()
+            destination_path
         );
 
-        // Get file size
-        let size_bytes = std::fs::metadata(&output_path)
-            .map(|m| m.len())
-            .unwrap_or(0);
+        let size_bytes = result.size_bytes;
 
         // Update manifest and cache using helper (with row-group stats)
+        // Note: For remote storage, we don't have a local path; pass destination_path for stats
         self.manifest_helper.update_manifest_after_flush(
             self.namespace_id(),
             self.table_name(),
@@ -356,7 +372,7 @@ impl TableFlush for SharedTableFlushJob {
             None,
             batch_number,
             batch_filename.clone(),
-            &output_path,
+            &std::path::PathBuf::from(&destination_path),
             &batch,
             size_bytes,
             &bloom_filter_columns,
@@ -370,7 +386,7 @@ impl TableFlush for SharedTableFlushJob {
         );
         self.delete_flushed_rows(&all_keys_to_delete)?;
 
-        let parquet_path = output_path.to_string_lossy().to_string();
+        let parquet_path = destination_path;
 
         // Send flush notification if LiveQueryManager configured
         if let Some(manager) = &self.live_query_manager {

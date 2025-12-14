@@ -80,14 +80,37 @@ impl TypedStatementHandler<CreateStorageStatement> for CreateStorageHandler {
             None
         };
 
+        // Validate config JSON (if provided)
+        let normalized_config_json = if let Some(raw) = statement.config_json.as_ref() {
+            let value: serde_json::Value = serde_json::from_str(raw).map_err(|e| {
+                KalamDbError::InvalidOperation(format!("Invalid CONFIG JSON: {}", e))
+            })?;
+
+            if !value.is_object() {
+                return Err(KalamDbError::InvalidOperation(
+                    "CONFIG must be a JSON object".to_string(),
+                ));
+            }
+
+            Some(serde_json::to_string(&value).map_err(|e| {
+                KalamDbError::InvalidOperation(format!(
+                    "Failed to normalize CONFIG JSON: {}",
+                    e
+                ))
+            })?)
+        } else {
+            None
+        };
+
         // Create storage record
         let storage = kalamdb_commons::system::Storage {
             storage_id: statement.storage_id.clone(),
             storage_name: statement.storage_name,
             description: statement.description,
-            storage_type: statement.storage_type.to_string(),
+            storage_type: statement.storage_type,
             base_directory: statement.base_directory,
             credentials: normalized_credentials,
+            config_json: normalized_config_json,
             shared_tables_template: statement.shared_tables_template,
             user_tables_template: statement.user_tables_template,
             created_at: chrono::Utc::now().timestamp(),
@@ -141,6 +164,7 @@ mod tests {
             storage_type: kalamdb_commons::models::StorageType::from("local"),
             base_directory: "/tmp/storage".to_string(),
             credentials: None,
+            config_json: None,
             shared_tables_template: String::new(),
             user_tables_template: String::new(),
         };
@@ -168,6 +192,7 @@ mod tests {
             storage_type: kalamdb_commons::models::StorageType::from("local"),
             base_directory: "/tmp/test".to_string(),
             credentials: None,
+            config_json: None,
             shared_tables_template: String::new(),
             user_tables_template: String::new(),
         };
@@ -193,6 +218,7 @@ mod tests {
             storage_type: kalamdb_commons::models::StorageType::from("local"),
             base_directory: "/tmp/test".to_string(),
             credentials: None,
+            config_json: None,
             shared_tables_template: String::new(),
             user_tables_template: String::new(),
         };

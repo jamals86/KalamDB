@@ -194,6 +194,12 @@ impl From<kalamdb_filestore::FilestoreError> for KalamDbError {
             kalamdb_filestore::FilestoreError::Serialization(e) => {
                 KalamDbError::SerializationError(e.to_string())
             }
+            kalamdb_filestore::FilestoreError::Config(msg) => {
+                KalamDbError::InvalidOperation(format!("Storage config error: {}", msg))
+            }
+            kalamdb_filestore::FilestoreError::ObjectStore(msg) => {
+                KalamDbError::Other(format!("ObjectStore error: {}", msg))
+            }
             kalamdb_filestore::FilestoreError::Other(msg) => KalamDbError::Other(msg),
         }
     }

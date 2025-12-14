@@ -208,6 +208,7 @@ impl StoragesTableProvider {
         let mut storage_types = StringBuilder::with_capacity(row_count, row_count * 16);
         let mut base_directories = StringBuilder::with_capacity(row_count, row_count * 64);
         let mut credentials = StringBuilder::with_capacity(row_count, row_count * 128);
+        let mut config_json = StringBuilder::with_capacity(row_count, row_count * 256);
         let mut shared_tables_templates = StringBuilder::with_capacity(row_count, row_count * 64);
         let mut user_tables_templates = StringBuilder::with_capacity(row_count, row_count * 64);
         let mut created_ats = Vec::with_capacity(row_count);
@@ -217,9 +218,10 @@ impl StoragesTableProvider {
             storage_ids.append_value(storage.storage_id.as_str());
             storage_names.append_value(&storage.storage_name);
             descriptions.append_option(storage.description.as_deref());
-            storage_types.append_value(&storage.storage_type);
+            storage_types.append_value(&storage.storage_type.to_string());
             base_directories.append_value(&storage.base_directory);
             credentials.append_option(storage.credentials.as_deref());
+            config_json.append_option(storage.config_json.as_deref());
             shared_tables_templates.append_value(&storage.shared_tables_template);
             user_tables_templates.append_value(&storage.user_tables_template);
             created_ats.push(Some(storage.created_at));
@@ -235,6 +237,7 @@ impl StoragesTableProvider {
                 Arc::new(storage_types.finish()) as ArrayRef,
                 Arc::new(base_directories.finish()) as ArrayRef,
                 Arc::new(credentials.finish()) as ArrayRef,
+                Arc::new(config_json.finish()) as ArrayRef,
                 Arc::new(shared_tables_templates.finish()) as ArrayRef,
                 Arc::new(user_tables_templates.finish()) as ArrayRef,
                 Arc::new(TimestampMicrosecondArray::from(
@@ -315,13 +318,15 @@ mod tests {
     }
 
     fn create_test_storage(storage_id: &str, name: &str) -> Storage {
+        use kalamdb_commons::models::StorageType;
         Storage {
             storage_id: StorageId::new(storage_id),
             storage_name: name.to_string(),
             description: Some("Test storage".to_string()),
-            storage_type: "filesystem".to_string(),
+            storage_type: StorageType::Filesystem,
             base_directory: "/data".to_string(),
             credentials: None,
+            config_json: None,
             shared_tables_template: "{base}/shared/{namespace}/{table}".to_string(),
             user_tables_template: "{base}/user/{namespace}/{table}/{user_id}".to_string(),
             created_at: 1000,
@@ -403,7 +408,7 @@ mod tests {
         // Scan
         let batch = provider.scan_all_storages().unwrap();
         assert_eq!(batch.num_rows(), 1);
-        assert_eq!(batch.num_columns(), 10);
+        assert_eq!(batch.num_columns(), 11); // storage_id, storage_name, description, storage_type, base_directory, credentials, config_json, shared_tables_template, user_tables_template, created_at, updated_at
     }
 
     #[tokio::test]

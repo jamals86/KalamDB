@@ -31,6 +31,7 @@
 pub mod datatypes; // Unified data type system (KalamDataType)
 pub mod ids; // Type-safe identifier wrappers
 pub mod schemas; // Table and column schema definitions
+pub mod storage; // Storage backend configuration types
 pub mod types; // System table models (User, Job, Namespace, etc.)
 
 // Standalone type modules (not IDs, not system tables)
@@ -47,9 +48,6 @@ mod k_table_row;
 pub mod row;
 
 mod role;
-mod storage_config;
-mod storage_mode;
-mod storage_type;
 mod table_access;
 mod table_name;
 mod user_name;
@@ -69,9 +67,10 @@ pub use role::Role;
 #[cfg(feature = "full")]
 pub use row::{Row, RowEnvelope};
 
-pub use storage_config::StorageConfig;
-pub use storage_mode::StorageMode;
-pub use storage_type::StorageType;
+pub use storage::{
+    AzureStorageConfig, GcsStorageConfig, LocalStorageConfig, S3StorageConfig, StorageConfig,
+    StorageLocationConfig, StorageLocationConfigError, StorageMode, StorageType,
+};
 pub use table_access::TableAccess;
 pub use table_name::TableName;
 pub use user_name::UserName;

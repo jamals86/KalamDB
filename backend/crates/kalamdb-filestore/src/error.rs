@@ -27,6 +27,12 @@ pub enum FilestoreError {
     #[error("Serialization error: {0}")]
     Serialization(#[from] serde_json::Error),
 
+    #[error("Configuration error: {0}")]
+    Config(String),
+
+    #[error("ObjectStore error: {0}")]
+    ObjectStore(String),
+
     #[error("Other error: {0}")]
     Other(String),
 }

@@ -191,6 +191,7 @@ impl HandlerRegistry {
                 shared_tables_template: String::new(),
                 user_tables_template: String::new(),
                 credentials: None,
+                config_json: None,
             }),
             CreateStorageHandler::new(app_context.clone()),
             |stmt| match stmt.kind() {
@@ -206,6 +207,7 @@ impl HandlerRegistry {
                 description: None,
                 shared_tables_template: None,
                 user_tables_template: None,
+                config_json: None,
             }),
             AlterStorageHandler::new(app_context.clone()),
             |stmt| match stmt.kind() {

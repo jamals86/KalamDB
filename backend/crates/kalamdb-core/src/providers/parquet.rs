@@ -2,6 +2,7 @@ use crate::error::KalamDbError;
 use crate::manifest::ManifestAccessPlanner;
 use crate::providers::core::TableProviderCore;
 use crate::schema_registry::TableType;
+use crate::storage::{is_remote_url, materialize_remote_parquet_dir_sync};
 use datafusion::arrow::datatypes::SchemaRef;
 use datafusion::arrow::record_batch::RecordBatch;
 use datafusion::logical_expr::Expr;
@@ -29,7 +30,38 @@ pub(crate) fn scan_parquet_files_as_batch(
         .app_context
         .schema_registry()
         .get_storage_path(table_id, user_id, None)?;
-    let storage_dir = PathBuf::from(&storage_path);
+
+    let storage_dir = if is_remote_url(&storage_path) {
+        // Remote object store: materialize to local temp dir.
+        let cached = core
+            .app_context
+            .schema_registry()
+            .get(table_id)
+            .ok_or_else(|| KalamDbError::TableNotFound(format!("Table not found: {}", table_id)))?;
+
+        let storage_id = cached
+            .storage_id
+            .clone()
+            .unwrap_or_else(kalamdb_commons::models::StorageId::local);
+
+        let storage = core
+            .app_context
+            .system_tables()
+            .storages()
+            .get_storage(&storage_id)
+            .map_err(|e| KalamDbError::Other(format!("Failed to load storage: {}", e)))?
+            .ok_or_else(|| {
+                KalamDbError::InvalidOperation(format!(
+                    "Storage '{}' not found",
+                    storage_id.as_str()
+                ))
+            })?;
+
+        materialize_remote_parquet_dir_sync(&storage, &storage_path)
+            .map_err(|e| KalamDbError::Other(format!("Filestore error: {}", e)))?
+    } else {
+        PathBuf::from(&storage_path)
+    };
 
     if !storage_dir.exists() {
         log::trace!(

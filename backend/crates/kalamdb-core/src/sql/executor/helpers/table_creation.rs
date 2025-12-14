@@ -512,7 +512,7 @@ fn resolve_storage_info(
             ))
         })?;
 
-    let storage_type = StorageType::from(storage.storage_type.as_str());
+    let storage_type = storage.storage_type;
     Ok((storage_id, storage_type))
 }
 

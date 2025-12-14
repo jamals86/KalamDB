@@ -1,6 +1,6 @@
 //! Schema definition for system.storages table
 //!
-//! Provides Arrow schema for the storages table with 10 fields.
+//! Provides Arrow schema for the storages table with 11 fields.
 //!
 //! Phase 4 (Column Ordering): Uses storages_table_definition().to_arrow_schema()
 //! to ensure consistent column ordering via ordinal_position field.
@@ -25,6 +25,7 @@ impl StoragesTableSchema {
     /// - storage_type: Utf8
     /// - base_directory: Utf8
     /// - credentials: Utf8 (nullable)
+    /// - config_json: Utf8 (nullable)
     /// - shared_tables_template: Utf8
     /// - user_tables_template: Utf8
     /// - created_at: Timestamp(Millisecond, None)

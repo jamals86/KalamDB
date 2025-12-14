@@ -14,10 +14,11 @@ use serde::{Deserialize, Serialize};
 /// Syntax:
 /// ```sql
 /// CREATE STORAGE storage_id
-///   TYPE 'filesystem' | 's3'
+///   TYPE 'filesystem' | 's3' | 'gcs' | 'azure'
 ///   NAME 'storage_name'
 ///   [DESCRIPTION 'description']
 ///   BASE_DIRECTORY 'path'
+///   [CONFIG '{...json...}']
 ///   SHARED_TABLES_TEMPLATE 'template'
 ///   USER_TABLES_TEMPLATE 'template';
 /// ```
@@ -57,6 +58,11 @@ pub struct CreateStorageStatement {
 
     /// Optional credentials JSON for secure storage backends
     pub credentials: Option<String>,
+
+    /// Optional backend-specific configuration JSON.
+    ///
+    /// This is stored in `system.storages.config_json` as raw JSON text.
+    pub config_json: Option<String>,
 }
 
 impl CreateStorageStatement {
@@ -81,11 +87,14 @@ impl CreateStorageStatement {
 
         // Extract TYPE (unquoted keyword)
         let storage_type = extract_keyword_value(&normalized, "TYPE")?;
-        if storage_type != "filesystem" && storage_type != "s3" {
-            return Err(format!(
-                "Invalid storage type '{}'. Must be 'filesystem' or 's3'",
-                storage_type
-            ));
+        match storage_type.as_str() {
+            "filesystem" | "s3" | "gcs" | "azure" => {}
+            other => {
+                return Err(format!(
+                    "Invalid storage type '{}'. Must be 'filesystem', 's3', 'gcs', or 'azure'",
+                    other
+                ))
+            }
         }
 
         // Extract NAME (optional); default to storage_id when omitted
@@ -141,6 +150,7 @@ impl CreateStorageStatement {
             shared_tables_template,
             user_tables_template,
             credentials: extract_quoted_keyword_value(&normalized, "CREDENTIALS").ok(),
+            config_json: extract_quoted_keyword_value(&normalized, "CONFIG").ok(),
         })
     }
 }
@@ -178,6 +188,9 @@ pub struct AlterStorageStatement {
 
     /// New user tables template (if updating)
     pub user_tables_template: Option<String>,
+
+    /// New backend-specific configuration JSON
+    pub config_json: Option<String>,
 }
 
 impl AlterStorageStatement {
@@ -203,6 +216,7 @@ impl AlterStorageStatement {
             Self::extract_set_value(&normalized, "SHARED_TABLES_TEMPLATE").ok();
         let user_tables_template =
             Self::extract_set_value(&normalized, "USER_TABLES_TEMPLATE").ok();
+        let config_json = Self::extract_set_value(&normalized, "CONFIG").ok();
 
         Ok(AlterStorageStatement {
             storage_id: StorageId::from(storage_id.as_str()),
@@ -210,6 +224,7 @@ impl AlterStorageStatement {
             description,
             shared_tables_template,
             user_tables_template,
+            config_json,
         })
     }
 
