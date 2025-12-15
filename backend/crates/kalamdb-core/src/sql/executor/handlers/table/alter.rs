@@ -317,12 +317,45 @@ impl TypedStatementHandler<AlterTableStatement> for AlterTableHandler {
             KalamDbError::Other(format!("Failed to update table definition: {}", e))
         })?;
 
-        // Prime cache with updated definition so existing providers retain memoized access
+        // Prime cache with updated definition, preserving storage fields from old cache entry
         {
             use crate::schema_registry::CachedTableData;
-            registry.insert(
-                table_id.clone(),
-                Arc::new(CachedTableData::new(Arc::new(table_def.clone()))),
+            use kalamdb_commons::schemas::TableOptions;
+            
+            // Retrieve old cache entry to preserve storage_id and storage_path_template
+            let old_entry = registry.get(&table_id);
+            let (storage_id_opt, storage_path_template) = if let Some(old_data) = old_entry {
+                (old_data.storage_id.clone(), old_data.storage_path_template.clone())
+            } else {
+                // Fallback: extract storage_id from table_options and resolve template
+                log::warn!(
+                    "⚠️  ALTER TABLE: No existing cache entry for {}. Resolving storage fields...",
+                    table_id
+                );
+                let storage_id = match &table_def.table_options {
+                    TableOptions::User(opts) => Some(opts.storage_id.clone()),
+                    TableOptions::Shared(opts) => Some(opts.storage_id.clone()),
+                    TableOptions::Stream(_) => None,
+                    TableOptions::System(_) => None,
+                };
+                let template = if let Some(ref sid) = storage_id {
+                    registry.resolve_storage_path_template(&table_id, table_def.table_type, sid).ok()
+                } else {
+                    None
+                };
+                (storage_id, template.unwrap_or_default())
+            };
+            
+            let mut new_data = CachedTableData::new(Arc::new(table_def.clone()));
+            new_data.storage_id = storage_id_opt.clone();
+            new_data.storage_path_template = storage_path_template.clone();
+            registry.insert(table_id.clone(), Arc::new(new_data));
+            
+            log::debug!(
+                "✓ Updated cache for {}: storage_id={:?}, template={}",
+                table_id,
+                storage_id_opt.as_ref().map(|s| s.as_str()),
+                storage_path_template
             );
         }
 
