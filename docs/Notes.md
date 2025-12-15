@@ -292,6 +292,10 @@ instead of: 1 failed: Invalid operation: No handler registered for statement typ
 198) fix the slashes here: Flushed 24 rows for user root to ./data/storage\chat/messages/root/batch-2.parquet (batch=2)
 and make sure we use the right slashes everywhere in paths
 
+199) change the cli history to storing the history of queries as regular queries and not base64 but keeping in mind adding quotes to preserve adding the multi-lines queries, and also replacing password on alter user to remove the password
+
+200)
+
 
 
 
