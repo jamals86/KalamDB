@@ -324,8 +324,8 @@ and make sure we use the right slashes everywhere in paths
       },
       "min_seq": 258874983321862144,
       "max_seq": 258874997628633091,
-      "row_count": 24,  //TODO: Change to count
-      "size_bytes": 2701,  //TODO: Change to size
+      "row_count": 24,  //TODO: Change to rows
+      "size_bytes": 2701,  //TODO: Change to bytes
       "created_at": 1765787814, 
       "tombstone": false
     },
@@ -333,6 +333,7 @@ and make sure we use the right slashes everywhere in paths
   "last_sequence_number": 3 //TODO: Change to last
 }
 
+202) instead of consucting: table_def.to_arrow_schema() add it with the cache
 
 
 

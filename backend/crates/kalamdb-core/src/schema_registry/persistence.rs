@@ -1,6 +1,5 @@
 use crate::error::KalamDbError;
 use crate::schema_registry::cached_table_data::CachedTableData;
-use crate::schema_registry::path_resolver::PathResolver;
 use crate::schema_registry::table_cache::TableCache;
 use kalamdb_commons::models::schemas::TableDefinition;
 use kalamdb_commons::models::TableId;
@@ -35,9 +34,9 @@ impl SchemaPersistence {
 
         match tables_provider.get_table_by_id(table_id)? {
             Some(table_def) => {
-                // Cache the result for future fast-path access
+                // Cache the result with fully initialized storage config
                 let table_arc = Arc::new(table_def);
-                let data = CachedTableData::new(table_arc.clone());
+                let data = CachedTableData::from_table_definition(table_id, table_arc.clone())?;
                 cache.insert(table_id.clone(), Arc::new(data));
                 Ok(Some(table_arc))
             }
@@ -58,8 +57,9 @@ impl SchemaPersistence {
         // Persist to storage
         tables_provider.create_table(table_id, table_def)?;
 
-        // Populate cache immediately to avoid RocksDB lookup on next access
-        let data = CachedTableData::new(Arc::new(table_def.clone()));
+        // Populate cache immediately with fully initialized storage config
+        let table_arc = Arc::new(table_def.clone());
+        let data = CachedTableData::from_table_definition(table_id, table_arc)?;
         cache.insert(table_id.clone(), Arc::new(data));
 
         Ok(())
@@ -108,8 +108,9 @@ impl SchemaPersistence {
 
         match tables_provider.get_table_by_id(table_id)? {
             Some(table_def) => {
-                // Cache for future access
-                let data = CachedTableData::new(Arc::new(table_def));
+                // Cache with fully initialized storage config
+                let table_arc = Arc::new(table_def);
+                let data = CachedTableData::from_table_definition(table_id, table_arc)?;
                 cache.insert(table_id.clone(), Arc::new(data));
                 Ok(true)
             }
@@ -153,9 +154,9 @@ impl SchemaPersistence {
 
         match tables_provider.get_table_by_id(table_id)? {
             Some(table_def) => {
-                // Cache the result for future fast-path access
+                // Cache the result with fully initialized storage config
                 let table_arc = Arc::new(table_def);
-                let data = CachedTableData::new(table_arc.clone());
+                let data = CachedTableData::from_table_definition(table_id, table_arc.clone())?;
                 cache.insert(table_id.clone(), Arc::new(data));
                 Ok(Some(table_arc))
             }
@@ -174,47 +175,15 @@ impl SchemaPersistence {
         }
 
         // Slow path: try to load from persistence (lazy loading)
-        if let Some(table_def) = Self::get_table_definition(cache, table_id)? {
+        // get_table_definition now properly initializes storage config in cache
+        if Self::get_table_definition(cache, table_id)?.is_some() {
             log::debug!("Lazy loading table definition for {}", table_id);
 
-            // Reconstruct CachedTableData
-            // Extract storage_id from options
-            let storage_id = match &table_def.table_options {
-                kalamdb_commons::models::schemas::TableOptions::User(opts) => {
-                    Some(opts.storage_id.clone())
-                }
-                kalamdb_commons::models::schemas::TableOptions::Shared(opts) => {
-                    Some(opts.storage_id.clone())
-                }
-                kalamdb_commons::models::schemas::TableOptions::Stream(_) => {
-                    Some(kalamdb_commons::models::StorageId::from("local"))
-                } // Default for streams
-                kalamdb_commons::models::schemas::TableOptions::System(_) => None,
-            };
-
-            let mut data = CachedTableData::new(table_def.clone());
-
-            if let Some(sid) = storage_id {
-                data.storage_id = Some(sid.clone());
-                // Resolve template
-                match PathResolver::resolve_storage_path_template(
-                    table_id,
-                    table_def.table_type,
-                    &sid,
-                ) {
-                    Ok(template) => data.storage_path_template = template,
-                    Err(e) => log::warn!(
-                        "Failed to resolve storage path template during lazy load for {}: {}",
-                        table_id,
-                        e
-                    ),
-                }
+            // Cache is now populated with fully initialized entry - retrieve it
+            if let Some(cached) = cache.get(table_id) {
+                let evicted = None; // Already inserted in get_table_definition
+                return Ok((cached.arrow_schema()?, evicted));
             }
-
-            let data_arc = Arc::new(data);
-            let evicted = cache.insert(table_id.clone(), data_arc.clone());
-
-            return Ok((data_arc.arrow_schema()?, evicted));
         }
 
         Err(KalamDbError::TableNotFound(format!(

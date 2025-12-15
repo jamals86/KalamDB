@@ -191,6 +191,8 @@ pub(crate) fn scan_parquet_files_as_batch(
         seq_range,
         use_degraded_mode,
         schema.clone(),
+        table_id,
+        &core.app_context,
     )?;
 
     if total_batches > 0 {

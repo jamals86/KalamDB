@@ -78,9 +78,20 @@ pub fn tables_table_definition() -> TableDefinition {
             ColumnDefault::None,
             Some("Current schema version number".to_string()),
         ),
+        // New: expose column definitions as JSON
+        ColumnDefinition::new(
+            "columns",
+            7,
+            KalamDataType::Text, // Stored as JSON array
+            false,
+            false,
+            false,
+            ColumnDefault::None,
+            Some("Column definitions as JSON array".to_string()),
+        ),
         ColumnDefinition::new(
             "table_comment",
-            7,
+            8,
             KalamDataType::Text,
             true, // NULLABLE
             false,
@@ -90,7 +101,7 @@ pub fn tables_table_definition() -> TableDefinition {
         ),
         ColumnDefinition::new(
             "updated_at",
-            8,
+            9,
             KalamDataType::Timestamp,
             false,
             false,
@@ -101,7 +112,7 @@ pub fn tables_table_definition() -> TableDefinition {
         // New in Phase 11: expose serialized TableOptions for visibility via SELECT * FROM system.tables
         ColumnDefinition::new(
             "options",
-            9,
+            10,
             KalamDataType::Text, // Stored as JSON string (variant-aware)
             true,                // NULLABLE for forward compatibility (older rows may not have it)
             false,
@@ -112,7 +123,7 @@ pub fn tables_table_definition() -> TableDefinition {
         // New in Phase 16: expose access_level for Shared tables
         ColumnDefinition::new(
             "access_level",
-            10,
+            11,
             KalamDataType::Text,
             true, // NULLABLE (only for Shared tables)
             false,
@@ -123,7 +134,7 @@ pub fn tables_table_definition() -> TableDefinition {
         // Phase 16: is_latest flag for schema versioning
         ColumnDefinition::new(
             "is_latest",
-            11,
+            12,
             KalamDataType::Boolean,
             false,
             false,

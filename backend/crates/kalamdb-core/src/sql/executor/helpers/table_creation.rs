@@ -252,9 +252,11 @@ pub fn create_user_table(
             TableType::User,
             &storage_id,
         )?;
-        let mut data = CachedTableData::new(Arc::clone(&table_def));
-        data.storage_id = Some(storage_id.clone());
-        data.storage_path_template = template.clone();
+        let data = CachedTableData::with_storage_config(
+            Arc::clone(&table_def),
+            Some(storage_id.clone()),
+            template.clone(),
+        );
         schema_registry.insert(table_id.clone(), Arc::new(data));
         log::debug!(
             "Primed cache for user table {}.{} with template: {}",
@@ -466,9 +468,11 @@ pub fn create_shared_table(
             TableType::Shared,
             &storage_id,
         )?;
-        let mut data = CachedTableData::new(Arc::clone(&table_def));
-        data.storage_id = Some(storage_id.clone());
-        data.storage_path_template = template.clone();
+        let data = CachedTableData::with_storage_config(
+            Arc::clone(&table_def),
+            Some(storage_id.clone()),
+            template.clone(),
+        );
         schema_registry.insert(table_id.clone(), Arc::new(data));
         log::debug!(
             "Primed cache for shared table {}.{} with template: {}",
@@ -719,9 +723,11 @@ pub fn create_stream_table(
             TableType::Stream,
             &storage_id,
         )?;
-        let mut data = CachedTableData::new(Arc::clone(&table_def));
-        data.storage_id = Some(storage_id.clone());
-        data.storage_path_template = template.clone();
+        let data = CachedTableData::with_storage_config(
+            Arc::clone(&table_def),
+            Some(storage_id.clone()),
+            template.clone(),
+        );
         schema_registry.insert(table_id.clone(), Arc::new(data));
         log::debug!(
             "Primed cache for stream table {}.{} with template: {}",

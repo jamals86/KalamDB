@@ -147,6 +147,17 @@ impl TablesTableProvider {
         Ok(self.store.get_latest(table_id)?)
     }
 
+    /// Get a specific version of a table definition
+    ///
+    /// Used for schema evolution when reading flushed Parquet files.
+    pub fn get_version(
+        &self,
+        table_id: &TableId,
+        version: u32,
+    ) -> Result<Option<TableDefinition>, SystemError> {
+        Ok(self.store.get_version(table_id, version)?)
+    }
+
     /// Async version of `get_table_by_id()`
     pub async fn get_table_by_id_async(
         &self,
@@ -203,6 +214,7 @@ impl TablesTableProvider {
         let mut table_types = StringBuilder::with_capacity(row_count, row_count * 16);
         let mut created_ats = Vec::with_capacity(row_count);
         let mut schema_versions = Vec::with_capacity(row_count);
+        let mut columns_json = StringBuilder::with_capacity(row_count, row_count * 512);
         let mut table_comments = StringBuilder::with_capacity(row_count, row_count * 64);
         let mut updated_ats = Vec::with_capacity(row_count);
         let mut options_json = StringBuilder::with_capacity(row_count, row_count * 128);
@@ -222,6 +234,16 @@ impl TablesTableProvider {
             table_types.append_value(table_def.table_type.as_str());
             created_ats.push(Some(table_def.created_at.timestamp_millis()));
             schema_versions.push(Some(table_def.schema_version as i32));
+            
+            // Serialize columns as JSON array
+            match serde_json::to_string(&table_def.columns) {
+                Ok(json) => columns_json.append_value(&json),
+                Err(e) => columns_json.append_value(format!(
+                    "{{\"error\":\"failed to serialize columns: {}\"}}",
+                    e
+                )),
+            }
+            
             table_comments.append_option(table_def.table_comment.as_deref());
             updated_ats.push(Some(table_def.updated_at.timestamp_millis()));
             
@@ -264,6 +286,7 @@ impl TablesTableProvider {
                         .collect::<Vec<_>>(),
                 )) as ArrayRef,
                 Arc::new(Int32Array::from(schema_versions)) as ArrayRef,
+                Arc::new(columns_json.finish()) as ArrayRef,
                 Arc::new(table_comments.finish()) as ArrayRef,
                 Arc::new(TimestampMicrosecondArray::from(
                     updated_ats

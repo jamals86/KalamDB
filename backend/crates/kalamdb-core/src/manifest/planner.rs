@@ -4,12 +4,16 @@
 //! concrete file/row-group selections for efficient reads.
 
 use crate::error::KalamDbError;
+use crate::app_context::AppContext;
+use datafusion::arrow::compute::cast;
 use datafusion::arrow::datatypes::SchemaRef;
 use datafusion::arrow::record_batch::RecordBatch;
 use datafusion::parquet::arrow::arrow_reader::ParquetRecordBatchReaderBuilder;
 use kalamdb_commons::types::Manifest;
+use kalamdb_commons::TableId;
 use std::fs;
 use std::path::PathBuf;
+use std::sync::Arc;
 
 /// Planned selection for a single Parquet file
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -47,14 +51,16 @@ impl ManifestAccessPlanner {
 
     /// Unified scan method: returns combined RecordBatch from Parquet files
     ///
-    /// Handles manifest-based pruning, file loading, and batch concatenation.
+    /// Handles manifest-based pruning, file loading, schema evolution, and batch concatenation.
     ///
     /// # Arguments
     /// * `manifest_opt` - Optional manifest for metadata-driven selection
     /// * `storage_dir` - Base directory containing Parquet files
     /// * `seq_range` - Optional (min, max) seq range for pruning
     /// * `use_degraded_mode` - If true, skip manifest and list directory
-    /// * `schema` - Arrow schema for empty batch if no files found
+    /// * `schema` - Current Arrow schema (target schema for projection)
+    /// * `table_id` - Table identifier for retrieving historical schemas
+    /// * `app_context` - AppContext for accessing system tables
     ///
     /// # Returns
     /// (batch: RecordBatch, stats: (total_batches, skipped, scanned))
@@ -65,8 +71,11 @@ impl ManifestAccessPlanner {
         seq_range: Option<(i64, i64)>,
         use_degraded_mode: bool,
         schema: SchemaRef,
+        table_id: &TableId,
+        app_context: &Arc<AppContext>,
     ) -> Result<(RecordBatch, (usize, usize, usize)), KalamDbError> {
         let mut parquet_files: Vec<PathBuf> = Vec::new();
+        let mut file_schema_versions: std::collections::HashMap<PathBuf, u32> = std::collections::HashMap::new();
         let (mut total_batches, mut skipped, mut scanned) = (0usize, 0usize, 0usize);
 
         if !use_degraded_mode {
@@ -86,7 +95,12 @@ impl ManifestAccessPlanner {
                 skipped = total_batches.saturating_sub(scanned);
 
                 for file_path in selected_files {
-                    parquet_files.push(storage_dir.join(&file_path));
+                    let full_path = storage_dir.join(&file_path);
+                    // Find the schema_version for this file from manifest
+                    if let Some(segment) = manifest.segments.iter().find(|s| s.path == file_path) {
+                        file_schema_versions.insert(full_path.clone(), segment.schema_version);
+                    }
+                    parquet_files.push(full_path);
                 }
             }
         }
@@ -127,12 +141,36 @@ impl ManifestAccessPlanner {
                 KalamDbError::Other(format!("Failed to build Parquet reader: {}", e))
             })?;
 
+            // Get the schema version for this file (default to 1 if not found)
+            let file_schema_version = file_schema_versions.get(parquet_file).copied().unwrap_or(1);
+            
+            // Check if schema version matches current version
+            let current_version = app_context
+                .schema_registry()
+                .get(table_id)
+                .map(|cached| cached.table.schema_version)
+                .unwrap_or(1);
+
             // Read all batches from this file
             for batch_result in reader {
                 let batch = batch_result.map_err(|e| {
                     KalamDbError::Other(format!("Failed to read Parquet batch: {}", e))
                 })?;
-                all_batches.push(batch);
+                
+                // If schema versions differ, project the batch to current schema
+                let projected_batch = if file_schema_version != current_version {
+                    self.project_batch_to_current_schema(
+                        batch,
+                        file_schema_version,
+                        &schema,
+                        table_id,
+                        app_context,
+                    )?
+                } else {
+                    batch
+                };
+                
+                all_batches.push(projected_batch);
             }
         }
 
@@ -179,6 +217,110 @@ impl ManifestAccessPlanner {
         }
 
         selections
+    }
+
+    /// Project a RecordBatch from an old schema version to the current schema
+    ///
+    /// Handles:
+    /// - New columns added after flush (filled with NULLs)
+    /// - Dropped columns (removed from projection)
+    /// - Column reordering
+    ///
+    /// # Arguments
+    /// * `batch` - RecordBatch with old schema
+    /// * `old_schema_version` - Schema version used when data was flushed
+    /// * `current_schema` - Target Arrow schema (current version)
+    /// * `table_id` - Table identifier
+    /// * `app_context` - AppContext for accessing historical schemas
+    fn project_batch_to_current_schema(
+        &self,
+        batch: RecordBatch,
+        old_schema_version: u32,
+        current_schema: &SchemaRef,
+        table_id: &TableId,
+        app_context: &Arc<AppContext>,
+    ) -> Result<RecordBatch, KalamDbError> {
+        // Get the historical schema definition
+        let old_table_def = app_context
+            .system_tables()
+            .tables()
+            .get_version(table_id, old_schema_version)
+            .map_err(|e| {
+                KalamDbError::Other(format!(
+                    "Failed to retrieve schema version {}: {}",
+                    old_schema_version, e
+                ))
+            })?
+            .ok_or_else(|| {
+                KalamDbError::Other(format!(
+                    "Schema version {} not found for table {}",
+                    old_schema_version, table_id
+                ))
+            })?;
+
+        let old_schema = old_table_def.to_arrow_schema().map_err(|e| {
+            KalamDbError::Other(format!("Failed to convert old schema to Arrow: {}", e))
+        })?;
+
+        // If schemas are identical, no projection needed
+        if old_schema.fields() == current_schema.fields() {
+            return Ok(batch);
+        }
+
+        log::debug!(
+            "[Schema Evolution] Projecting batch from schema v{} to current schema for table {}",
+            old_schema_version,
+            table_id
+        );
+
+        // Build projection: for each field in current_schema, find it in old_schema or create NULL array
+        let mut projected_columns: Vec<Arc<dyn datafusion::arrow::array::Array>> = Vec::new();
+
+        for current_field in current_schema.fields() {
+            // Check if field exists in old schema
+            if let Ok(old_col_index) = old_schema.index_of(current_field.name()) {
+                // Column existed in old schema - extract it
+                let old_column = batch.column(old_col_index).clone();
+                
+                // Check if data types match
+                let old_field = old_schema.field(old_col_index);
+                if old_field.data_type() == current_field.data_type() {
+                    // Types match - use as-is
+                    projected_columns.push(old_column);
+                } else {
+                    // Type changed - attempt cast
+                    let casted = cast(&old_column, current_field.data_type()).map_err(|e| {
+                        KalamDbError::Other(format!(
+                            "Failed to cast column '{}' from {:?} to {:?}: {}",
+                            current_field.name(),
+                            old_field.data_type(),
+                            current_field.data_type(),
+                            e
+                        ))
+                    })?;
+                    projected_columns.push(casted);
+                }
+            } else {
+                // Column didn't exist in old schema - create NULL array
+                use datafusion::arrow::array::{new_null_array, ArrayRef};
+                let null_array: ArrayRef = new_null_array(current_field.data_type(), batch.num_rows());
+                projected_columns.push(null_array);
+                
+                log::trace!(
+                    "[Schema Evolution] Column '{}' not in old schema v{}, filled with NULLs",
+                    current_field.name(),
+                    old_schema_version
+                );
+            }
+        }
+
+        // Create new RecordBatch with projected columns
+        let projected_batch = RecordBatch::try_new(current_schema.clone(), projected_columns)
+            .map_err(|e| {
+                KalamDbError::Other(format!("Failed to create projected RecordBatch: {}", e))
+            })?;
+
+        Ok(projected_batch)
     }
 
     /// Prune segments that definitely cannot contain a PK value based on column_stats min/max
