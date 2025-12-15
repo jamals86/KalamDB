@@ -209,8 +209,10 @@ fn extract_scalar(json_output: &str, field: &str) -> i64 {
         .and_then(|row| row.get(field))
         .unwrap_or_else(|| panic!("JSON response missing field '{}': {}", field, json_output));
     
+    let field_value = extract_typed_value(field_value);
+    
     // Handle both number and string representations (large ints are serialized as strings for JS safety)
-    match field_value {
+    match &field_value {
         Value::Number(n) => n.as_i64().unwrap_or_else(|| {
             panic!("Field '{}' is not a valid i64: {}", field, json_output)
         }),

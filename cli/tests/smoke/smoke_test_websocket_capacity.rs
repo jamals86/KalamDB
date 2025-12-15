@@ -339,8 +339,10 @@ async fn count_live_query_subscriptions(prefix: String) -> usize {
             .map(|rows| {
                 rows.iter()
                     .filter(|row| {
-                        row.get("subscription_id")
-                            .and_then(|id| id.as_str())
+                        let id_value = row.get("subscription_id")
+                            .map(extract_typed_value)
+                            .unwrap_or(serde_json::Value::Null);
+                        id_value.as_str()
                             .map(|id| id.starts_with(&prefix))
                             .unwrap_or(false)
                     })

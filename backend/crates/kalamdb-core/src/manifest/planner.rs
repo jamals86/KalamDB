@@ -422,17 +422,18 @@ impl ManifestAccessPlanner {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::app_context::AppContext;
     use datafusion::arrow::array::{Int32Array, Int64Array};
     use datafusion::arrow::datatypes::Schema;
     use datafusion::arrow::record_batch::RecordBatch as ArrowRecordBatch;
     use kalamdb_commons::types::{Manifest, SegmentMetadata};
+    use kalamdb_commons::{NamespaceId, TableId, TableName};
     use parquet::arrow::arrow_writer::ArrowWriter;
     use std::fs as stdfs;
     use std::sync::Arc;
     use std::time::{SystemTime, UNIX_EPOCH};
 
     fn make_manifest_with_segments() -> Manifest {
-        use kalamdb_commons::{NamespaceId, TableId, TableName};
         use std::collections::HashMap;
 
         let table_id = TableId::new(NamespaceId::new("ns"), TableName::new("tbl"));
@@ -461,6 +462,21 @@ mod tests {
         mf.add_segment(s1);
 
         mf
+    }
+
+    fn make_test_app_context() -> Arc<AppContext> {
+        let base = std::env::temp_dir();
+        let unique = format!(
+            "kalamdb_test_ctx_{}",
+            SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        );
+        let dir = base.join(unique);
+        stdfs::create_dir_all(&dir).unwrap();
+        
+        Arc::new(AppContext::new(dir.to_str().unwrap()).expect("Failed to create AppContext"))
     }
 
     #[test]
@@ -512,9 +528,12 @@ mod tests {
             vec![] as Vec<datafusion::arrow::datatypes::Field>
         ));
 
+        let app_context = make_test_app_context();
+        let table_id = TableId::new(NamespaceId::new("ns"), TableName::new("tbl"));
+        
         let planner = ManifestAccessPlanner::new();
         let (batch, (_total, _skipped, _scanned)) = planner
-            .scan_parquet_files(None, &dir, None, false, schema.clone())
+            .scan_parquet_files(None, &dir, None, false, schema.clone(), &table_id, &app_context)
             .expect("planner should handle empty directory");
 
         assert_eq!(batch.num_rows(), 0, "Expected empty batch for empty dir");
@@ -567,10 +586,9 @@ mod tests {
         write_parquet_with_rows(&f1, &schema, 10);
 
         // Manifest with two segments
-        use kalamdb_commons::{NamespaceId, TableId, TableName};
         use std::collections::HashMap;
         let table_id = TableId::new(NamespaceId::new("ns"), TableName::new("tbl"));
-        let mut mf = Manifest::new(table_id, None);
+        let mut mf = Manifest::new(table_id.clone(), None);
 
         let s0 = SegmentMetadata::new(
             "uuid-0".to_string(),
@@ -593,11 +611,12 @@ mod tests {
         );
         mf.add_segment(s1);
 
+        let app_context = make_test_app_context();
         let planner = ManifestAccessPlanner::new();
 
         // Range overlaps only first file
         let (batch, (total, skipped, scanned)) = planner
-            .scan_parquet_files(Some(&mf), &dir, Some((0, 90)), false, schema.clone())
+            .scan_parquet_files(Some(&mf), &dir, Some((0, 90)), false, schema.clone(), &table_id, &app_context)
             .expect("planner should read files");
         assert_eq!(total, 2);
         assert_eq!(scanned, 1);
@@ -607,7 +626,7 @@ mod tests {
 
         // Range overlaps only second file
         let (batch2, (total2, skipped2, scanned2)) = planner
-            .scan_parquet_files(Some(&mf), &dir, Some((150, 160)), false, schema.clone())
+            .scan_parquet_files(Some(&mf), &dir, Some((150, 160)), false, schema.clone(), &table_id, &app_context)
             .expect("planner should read files");
         assert_eq!(total2, 2);
         assert_eq!(scanned2, 1);
@@ -616,7 +635,7 @@ mod tests {
 
         // Range overlaps none -> scanned 0, empty batch, no fallback because manifest exists
         let (batch3, (total3, skipped3, scanned3)) = planner
-            .scan_parquet_files(Some(&mf), &dir, Some((300, 400)), false, schema.clone())
+            .scan_parquet_files(Some(&mf), &dir, Some((300, 400)), false, schema.clone(), &table_id, &app_context)
             .expect("planner should handle no-overlap");
         assert_eq!(total3, 2);
         assert_eq!(scanned3, 0);

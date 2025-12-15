@@ -551,6 +551,66 @@ pub fn json_value_as_id(value: &serde_json::Value) -> Option<String> {
     }
 }
 
+/// Extract the actual value from a typed JSON response (ScalarValue format).
+///
+/// The server returns values in typed format like `{"Int64": "42"}` or `{"Utf8": "hello"}`.
+/// This function extracts the inner value, returning it as a simple JSON value.
+///
+/// # Examples
+/// ```ignore
+/// let typed = json!({"Int64": "123"});
+/// assert_eq!(extract_typed_value(&typed), json!("123"));
+///
+/// let simple = json!("hello");
+/// assert_eq!(extract_typed_value(&simple), json!("hello"));
+/// ```
+pub fn extract_typed_value(value: &serde_json::Value) -> serde_json::Value {
+    use serde_json::Value as JsonValue;
+    
+    match value {
+        JsonValue::Object(map) if map.len() == 1 => {
+            // Handle typed ScalarValue format: {"Int64": "42"}, {"Utf8": "hello"}, etc.
+            let (type_name, inner_value) = map.iter().next().unwrap();
+            match type_name.as_str() {
+                "Null" => JsonValue::Null,
+                "Boolean" => inner_value.clone(),
+                "Int8" | "Int16" | "Int32" | "Int64" | "UInt8" | "UInt16" | "UInt32" | "UInt64" => {
+                    // These are stored as strings to preserve precision
+                    inner_value.clone()
+                }
+                "Float32" | "Float64" => inner_value.clone(),
+                "Utf8" | "LargeUtf8" => inner_value.clone(),
+                "Binary" | "LargeBinary" | "FixedSizeBinary" => inner_value.clone(),
+                "Date32" | "Time64Microsecond" => inner_value.clone(),
+                "TimestampMillisecond" | "TimestampMicrosecond" | "TimestampNanosecond" => {
+                    // Timestamp objects have 'value' and optionally 'timezone'
+                    if let Some(obj) = inner_value.as_object() {
+                        if let Some(val) = obj.get("value") {
+                            return val.clone();
+                        }
+                    }
+                    JsonValue::Null
+                }
+                "Decimal128" => {
+                    // Decimal has 'value', 'precision', 'scale'
+                    if let Some(obj) = inner_value.as_object() {
+                        if let Some(val) = obj.get("value") {
+                            return val.clone();
+                        }
+                    }
+                    JsonValue::Null
+                }
+                _ => {
+                    // Fallback for unknown types - return the inner value
+                    inner_value.clone()
+                }
+            }
+        }
+        // Not a typed value, return as-is
+        _ => value.clone(),
+    }
+}
+
 /// Helper to generate unique namespace name
 pub fn generate_unique_namespace(base_name: &str) -> String {
     use std::sync::atomic::{AtomicU64, Ordering};

@@ -317,12 +317,66 @@ impl OutputFormatter {
     }
 
     /// Format JSON value for table display
+    /// Handles both simple JSON values and typed ScalarValue format from the server
     fn format_json_value(&self, value: &JsonValue) -> String {
         match value {
             JsonValue::Null => "NULL".to_string(),
             JsonValue::Bool(b) => b.to_string(),
             JsonValue::Number(n) => n.to_string(),
             JsonValue::String(s) => s.clone(),
+            JsonValue::Object(map) if map.len() == 1 => {
+                // Handle typed ScalarValue format: {"Int64": "42"}, {"Utf8": "hello"}, etc.
+                let (type_name, inner_value) = map.iter().next().unwrap();
+                match type_name.as_str() {
+                    "Null" => "NULL".to_string(),
+                    "Boolean" => {
+                        inner_value.as_bool().map(|b| b.to_string()).unwrap_or_else(|| "NULL".to_string())
+                    }
+                    "Int8" | "Int16" | "Int32" | "Int64" | "UInt8" | "UInt16" | "UInt32" | "UInt64" => {
+                        // These are stored as strings to preserve precision
+                        inner_value.as_str().unwrap_or("NULL").to_string()
+                    }
+                    "Float32" | "Float64" => {
+                        inner_value.as_f64().map(|f| f.to_string()).unwrap_or_else(|| "NULL".to_string())
+                    }
+                    "Utf8" | "LargeUtf8" => {
+                        inner_value.as_str().unwrap_or("NULL").to_string()
+                    }
+                    "Binary" | "LargeBinary" => {
+                        // Binary data - show as hex or indicate it's binary
+                        "<binary>".to_string()
+                    }
+                    "Date32" | "Time64Microsecond" => {
+                        inner_value.as_i64().map(|n| n.to_string()).unwrap_or_else(|| "NULL".to_string())
+                    }
+                    "TimestampMillisecond" | "TimestampMicrosecond" | "TimestampNanosecond" => {
+                        // Timestamp objects have 'value' and optionally 'timezone'
+                        if let Some(obj) = inner_value.as_object() {
+                            if let Some(val) = obj.get("value") {
+                                return val.as_i64().map(|n| n.to_string()).unwrap_or_else(|| "NULL".to_string());
+                            }
+                        }
+                        "NULL".to_string()
+                    }
+                    "Decimal128" => {
+                        // Decimal has 'value', 'precision', 'scale'
+                        if let Some(obj) = inner_value.as_object() {
+                            if let Some(val) = obj.get("value") {
+                                return val.as_str().unwrap_or("NULL").to_string();
+                            }
+                        }
+                        "NULL".to_string()
+                    }
+                    "FixedSizeList" => {
+                        // Complex array type - show abbreviated
+                        "<array>".to_string()
+                    }
+                    _ => {
+                        // Fallback for unknown types - show the inner value
+                        inner_value.to_string()
+                    }
+                }
+            }
             JsonValue::Array(_) | JsonValue::Object(_) => value.to_string(),
         }
     }
