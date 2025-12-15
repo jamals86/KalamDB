@@ -57,15 +57,19 @@ pub struct QueryRequest {
 
     /// Serialization mode for response data.
     ///
-    /// - `simple` (default): Plain JSON values, Int64/UInt64 as strings
+    /// - `simple` (default for REST API): Plain JSON values, Int64/UInt64 as strings
     ///   Example: `{"id": "123", "name": "Alice"}`
     ///
     /// - `typed`: Values with type wrappers and formatted timestamps
     ///   Example: `{"id": {"Int64": "123"}, "created_at": {"TimestampMicrosecond": {"value": 123, "formatted": "2025-12-14T..."}}}`
     ///
     /// Use `typed` mode for type-safe SDKs (kalam-link) that need type information.
-    #[serde(default)]
+    #[serde(default = "default_rest_serialization_mode")]
     pub serialization_mode: SerializationMode,
+}
+
+fn default_rest_serialization_mode() -> SerializationMode {
+    SerializationMode::Simple
 }
 
 #[cfg(test)]

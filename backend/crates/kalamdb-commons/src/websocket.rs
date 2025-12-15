@@ -648,6 +648,18 @@ mod tests {
         );
         Row::new(values)
     }
+    
+    fn row_to_test_json(row: &Row) -> HashMap<String, JsonValue> {
+        // Simple conversion for tests - convert ScalarValue to JSON
+        row.values.iter().map(|(k, v)| {
+            let json_val = match v {
+                ScalarValue::Int64(Some(i)) => JsonValue::String(i.to_string()),
+                ScalarValue::Utf8(Some(s)) => JsonValue::String(s.clone()),
+                _ => JsonValue::Null,
+            };
+            (k.clone(), json_val)
+        }).collect()
+    }
 
     #[test]
     fn test_client_message_serialization() {
@@ -693,7 +705,8 @@ mod tests {
     #[test]
     fn test_insert_notification() {
         let row = create_test_row(1, "Hello");
-        let notification = Notification::insert("sub-1".to_string(), vec![row]);
+        let row_json = row_to_test_json(&row);
+        let notification = Notification::insert("sub-1".to_string(), vec![row_json]);
 
         let json = serde_json::to_string(&notification).unwrap();
         assert!(json.contains("change"));
@@ -706,8 +719,10 @@ mod tests {
     fn test_update_notification() {
         let new_row = create_test_row(1, "Updated");
         let old_row = create_test_row(1, "Original");
+        let new_row_json = row_to_test_json(&new_row);
+        let old_row_json = row_to_test_json(&old_row);
 
-        let notification = Notification::update("sub-1".to_string(), vec![new_row], vec![old_row]);
+        let notification = Notification::update("sub-1".to_string(), vec![new_row_json], vec![old_row_json]);
 
         let json = serde_json::to_string(&notification).unwrap();
         assert!(json.contains("update"));
@@ -718,8 +733,9 @@ mod tests {
     #[test]
     fn test_delete_notification() {
         let old_row = create_test_row(1, "Hello");
+        let old_row_json = row_to_test_json(&old_row);
 
-        let notification = Notification::delete("sub-1".to_string(), vec![old_row]);
+        let notification = Notification::delete("sub-1".to_string(), vec![old_row_json]);
 
         let json = serde_json::to_string(&notification).unwrap();
         assert!(json.contains("delete"));

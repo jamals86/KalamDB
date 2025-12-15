@@ -846,9 +846,9 @@ mod serialization_tests {
 
     #[test]
     fn test_serialization_mode_default() {
-        // SerializationMode should default to Simple
+        // SerializationMode defaults to Typed (for backward compatibility with WebSocket/SDKs)
         let mode: SerializationMode = Default::default();
-        assert_eq!(mode, SerializationMode::Simple);
+        assert_eq!(mode, SerializationMode::Typed);
     }
 
     #[test]
