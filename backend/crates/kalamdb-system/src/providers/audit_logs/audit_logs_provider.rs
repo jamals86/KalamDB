@@ -281,6 +281,7 @@ impl TableProvider for AuditLogsTableProvider {
 mod tests {
     use super::*;
     use arrow::array::Array;
+    use datafusion::arrow::array::TimestampMillisecondArray;
     use kalamdb_commons::{UserId, UserName};
     use kalamdb_store::test_utils::InMemoryBackend;
     use serde_json::json;
@@ -447,7 +448,7 @@ mod tests {
         let timestamps_col = batch
             .column(1)
             .as_any()
-            .downcast_ref::<TimestampMicrosecondArray>()
+            .downcast_ref::<TimestampMillisecondArray>()
             .unwrap();
         assert_eq!(timestamps_col.len(), 3);
     }

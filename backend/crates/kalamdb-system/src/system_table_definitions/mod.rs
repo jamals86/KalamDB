@@ -11,7 +11,7 @@ pub use live_queries::live_queries_table_definition;
 pub use manifest::manifest_table_definition;
 pub use namespaces::namespaces_table_definition;
 pub use storages::storages_table_definition;
-pub use tables::{table_schemas_table_definition, tables_table_definition};
+pub use tables::tables_table_definition;
 pub use users::users_table_definition;
 
 use kalamdb_commons::models::TableId;
@@ -34,10 +34,6 @@ pub fn all_system_table_definitions() -> Vec<(TableId, TableDefinition)> {
             live_queries_table_definition(),
         ),
         (system_table_id("tables"), tables_table_definition()),
-        (
-            system_table_id("table_schemas"),
-            table_schemas_table_definition(),
-        ),
         (system_table_id("manifest"), manifest_table_definition()),
     ]
 }
@@ -62,7 +58,7 @@ mod tests {
     #[test]
     fn test_all_system_tables() {
         let all_tables = all_system_table_definitions();
-        assert_eq!(all_tables.len(), 8);
+        assert_eq!(all_tables.len(), 7);
 
         // Verify all tables are in system namespace
         for (table_id, def) in all_tables {
@@ -72,13 +68,4 @@ mod tests {
         }
     }
 
-    #[test]
-    fn test_table_schemas_definition() {
-        let def = table_schemas_table_definition();
-        assert_eq!(def.namespace_id.as_str(), "system");
-        assert_eq!(def.table_name.as_str(), "table_schemas");
-        assert_eq!(def.columns.len(), 5);
-        assert_eq!(def.columns[2].column_name, "table_definition");
-        assert_eq!(def.columns[2].data_type, KalamDataType::Json);
-    }
 }

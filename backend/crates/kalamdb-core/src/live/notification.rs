@@ -118,8 +118,8 @@ impl NotificationService {
             table_id.table_name().as_str()
         );
 
-        log::info!(
-            "📢 notify_table_change called for table: '{}', user: '{}', change_type: {:?}",
+        log::debug!(
+            "notify_table_change called for table: '{}', user: '{}', change_type: {:?}",
             table_name,
             user_id.as_str(),
             change_notification.change_type

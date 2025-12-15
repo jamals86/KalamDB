@@ -292,26 +292,70 @@ impl TypedStatementHandler<AlterTableStatement> for AlterTableHandler {
         let arrow_schema = table_def
             .to_arrow_schema()
             .map_err(|e| KalamDbError::SchemaError(format!("Arrow conversion failed: {}", e)))?;
-        let schema_json = ArrowSchemaWithOptions::new(arrow_schema.clone())
+        let _schema_json = ArrowSchemaWithOptions::new(arrow_schema.clone())
             .to_json_string()
             .map_err(|e| {
                 KalamDbError::SchemaError(format!("Failed to serialize Arrow schema: {}", e))
             })?;
         let change_desc =
             change_desc_opt.expect("ALTER TABLE operation must set change description");
-        table_def
-            .add_schema_version(change_desc.clone(), schema_json)
-            .map_err(KalamDbError::SchemaError)?;
+        
+        // Phase 16: Increment version (schema history is now stored externally)
+        table_def.increment_version();
 
-        // Persist (write-through) via registry
+        // Persist (write-through) via registry - stores latest in cache
         registry.put_table_definition(&table_id, &table_def)?;
 
-        // Prime cache with updated definition so existing providers retain memoized access
+        // Store versioned entry in versioned tables store (for schema history)
+        let tables_provider = self.app_context.system_tables().tables();
+        tables_provider.put_versioned_schema(&table_id, &table_def).map_err(|e| {
+            KalamDbError::Other(format!("Failed to persist table version: {}", e))
+        })?;
+
+        // Also update the main tables store (for latest table definition lookup)
+        tables_provider.update_table(&table_id, &table_def).map_err(|e| {
+            KalamDbError::Other(format!("Failed to update table definition: {}", e))
+        })?;
+
+        // Prime cache with updated definition, preserving storage fields from old cache entry
         {
             use crate::schema_registry::CachedTableData;
-            registry.insert(
-                table_id.clone(),
-                Arc::new(CachedTableData::new(Arc::new(table_def.clone()))),
+            use kalamdb_commons::schemas::TableOptions;
+            
+            // Retrieve old cache entry to preserve storage_id and storage_path_template
+            let old_entry = registry.get(&table_id);
+            let (storage_id_opt, storage_path_template) = if let Some(old_data) = old_entry {
+                (old_data.storage_id.clone(), old_data.storage_path_template.clone())
+            } else {
+                // Fallback: extract storage_id from table_options and resolve template
+                log::warn!(
+                    "⚠️  ALTER TABLE: No existing cache entry for {}. Resolving storage fields...",
+                    table_id
+                );
+                let storage_id = match &table_def.table_options {
+                    TableOptions::User(opts) => Some(opts.storage_id.clone()),
+                    TableOptions::Shared(opts) => Some(opts.storage_id.clone()),
+                    TableOptions::Stream(_) => None,
+                    TableOptions::System(_) => None,
+                };
+                let template = if let Some(ref sid) = storage_id {
+                    registry.resolve_storage_path_template(&table_id, table_def.table_type, sid).ok()
+                } else {
+                    None
+                };
+                (storage_id, template.unwrap_or_default())
+            };
+            
+            let mut new_data = CachedTableData::new(Arc::new(table_def.clone()));
+            new_data.storage_id = storage_id_opt.clone();
+            new_data.storage_path_template = storage_path_template.clone();
+            registry.insert(table_id.clone(), Arc::new(new_data));
+            
+            log::debug!(
+                "✓ Updated cache for {}: storage_id={:?}, template={}",
+                table_id,
+                storage_id_opt.as_ref().map(|s| s.as_str()),
+                storage_path_template
             );
         }
 

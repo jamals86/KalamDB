@@ -1,7 +1,12 @@
 //! Table definition - single source of truth for table schemas
+//!
+//! **Phase 16 Schema Versioning**: Schema history is now stored separately using TableVersionId keys.
+//! Each TableDefinition stores only its current `schema_version: u32`.
+//! Historical versions are stored as separate entries: `{tableId}<ver>{version:08}` -> TableDefinition
+//! The latest pointer `{tableId}<lat>` points to the current version.
 
 use crate::models::datatypes::{ArrowConversionError, ToArrowType};
-use crate::models::schemas::{ColumnDefinition, SchemaVersion, TableOptions, TableType};
+use crate::models::schemas::{ColumnDefinition, TableOptions, TableType};
 use crate::{NamespaceId, TableName};
 use arrow_schema::{Field, Schema as ArrowSchema};
 use chrono::{DateTime, Utc};
@@ -27,12 +32,11 @@ pub struct TableDefinition {
     /// Column definitions (ordered by ordinal_position)
     pub columns: Vec<ColumnDefinition>,
 
-    /// Current schema version number
+    /// Current schema version number (starts at 1, incremented on ALTER TABLE)
+    ///
+    /// **Phase 16**: Historical versions are stored separately using TableVersionId keys.
+    /// Use `TablesStore::get_version()` to fetch specific historical versions.
     pub schema_version: u32,
-
-    /// Schema version history (embedded for atomic updates)
-    /// Sorted by version (ascending)
-    pub schema_history: Vec<SchemaVersion>,
 
     /// Type-safe table options based on table_type
     pub table_options: TableOptions,
@@ -54,7 +58,6 @@ struct TableDefinitionRepr {
     table_type: TableType,
     columns: Vec<ColumnDefinition>,
     schema_version: u32,
-    schema_history: Vec<SchemaVersion>,
     table_options: TableOptions,
     table_comment: Option<String>,
     created_at: DateTime<Utc>,
@@ -69,7 +72,6 @@ impl From<&TableDefinition> for TableDefinitionRepr {
             table_type: table.table_type,
             columns: table.columns.clone(),
             schema_version: table.schema_version,
-            schema_history: table.schema_history.clone(),
             table_options: table.table_options.clone(),
             table_comment: table.table_comment.clone(),
             created_at: table.created_at,
@@ -86,7 +88,6 @@ impl From<TableDefinitionRepr> for TableDefinition {
             table_type: value.table_type,
             columns: value.columns,
             schema_version: value.schema_version,
-            schema_history: value.schema_history,
             table_options: value.table_options,
             table_comment: value.table_comment,
             created_at: value.created_at,
@@ -109,7 +110,6 @@ impl Serialize for TableDefinition {
                 &self.table_type,
                 &self.columns,
                 self.schema_version,
-                &self.schema_history,
                 &self.table_options,
                 &self.table_comment,
                 &self.created_at,
@@ -135,7 +135,6 @@ impl<'de> Deserialize<'de> for TableDefinition {
                 TableType,
                 Vec<ColumnDefinition>,
                 u32,
-                Vec<SchemaVersion>,
                 TableOptions,
                 Option<String>,
                 DateTime<Utc>,
@@ -148,7 +147,6 @@ impl<'de> Deserialize<'de> for TableDefinition {
                 table_type,
                 columns,
                 schema_version,
-                schema_history,
                 table_options,
                 table_comment,
                 created_at,
@@ -161,7 +159,6 @@ impl<'de> Deserialize<'de> for TableDefinition {
                 table_type,
                 columns,
                 schema_version,
-                schema_history,
                 table_options,
                 table_comment,
                 created_at,
@@ -216,7 +213,6 @@ impl TableDefinition {
             table_type,
             columns: columns_sorted,
             schema_version: 1,
-            schema_history: Vec::new(),
             table_options,
             table_comment,
             created_at: now,
@@ -308,30 +304,14 @@ impl TableDefinition {
         Ok(Arc::new(schema))
     }
 
-    /// Get schema at a specific version
-    pub fn get_schema_at_version(&self, version: u32) -> Option<&SchemaVersion> {
-        self.schema_history.iter().find(|v| v.version == version)
-    }
-
-    /// Add a new schema version to history
-    pub fn add_schema_version(
-        &mut self,
-        changes: impl Into<String>,
-        arrow_schema_json: impl Into<String>,
-    ) -> Result<(), String> {
-        let new_version = self.schema_version + 1;
-        let schema_version = SchemaVersion::new(new_version, changes, arrow_schema_json);
-
-        self.schema_history.push(schema_version);
-        self.schema_version = new_version;
+    /// Increment schema version (for ALTER TABLE operations)
+    ///
+    /// **Phase 16**: Version history is stored externally using TableVersionId keys.
+    /// After calling this method, the caller must persist this TableDefinition
+    /// to the versioned storage using `TablesStore::put_version()`.
+    pub fn increment_version(&mut self) {
+        self.schema_version += 1;
         self.updated_at = Utc::now();
-
-        Ok(())
-    }
-
-    /// Get the latest schema version from history
-    pub fn get_latest_schema_version(&self) -> Option<&SchemaVersion> {
-        self.schema_history.last()
     }
 
     /// Get a reference to the table options
@@ -552,7 +532,7 @@ mod tests {
     }
 
     #[test]
-    fn test_add_schema_version() {
+    fn test_increment_version() {
         let mut table = TableDefinition::new(
             NamespaceId::new("default"),
             TableName::new("users"),
@@ -563,33 +543,11 @@ mod tests {
         )
         .unwrap();
 
-        table
-            .add_schema_version("Added email column", "{}")
-            .unwrap();
+        assert_eq!(table.schema_version, 1);
+        table.increment_version();
         assert_eq!(table.schema_version, 2);
-        assert_eq!(table.schema_history.len(), 1);
-        assert_eq!(table.schema_history[0].version, 2);
-    }
-
-    #[test]
-    fn test_get_schema_at_version() {
-        let mut table = TableDefinition::new(
-            NamespaceId::new("default"),
-            TableName::new("users"),
-            TableType::User,
-            sample_columns(),
-            TableOptions::user(),
-            None,
-        )
-        .unwrap();
-
-        table.add_schema_version("V2", "{}").unwrap();
-        table.add_schema_version("V3", "{}").unwrap();
-
-        assert!(table.get_schema_at_version(2).is_some());
-        assert!(table.get_schema_at_version(3).is_some());
-        assert!(table.get_schema_at_version(1).is_none()); // Version 1 has no history entry
-        assert!(table.get_schema_at_version(4).is_none());
+        table.increment_version();
+        assert_eq!(table.schema_version, 3);
     }
 
     #[test]
@@ -758,11 +716,6 @@ mod tests {
             decode_from_slice(&comment_bytes, config).expect("decode comment");
         assert_eq!(decoded_comment, table.table_comment);
 
-        let history_bytes = encode_to_vec(&table.schema_history, config).expect("encode history");
-        let (decoded_history, _): (Vec<SchemaVersion>, usize) =
-            decode_from_slice(&history_bytes, config).expect("decode history");
-        assert_eq!(decoded_history, table.schema_history);
-
         // Encoding tuple across all fields succeeds, so failure is specific to TableDefinition
         // implementation. This tuple test helps ensure serde data layout remains stable.
         let tuple = (
@@ -771,7 +724,6 @@ mod tests {
             table.table_type,
             table.columns.clone(),
             table.schema_version,
-            table.schema_history.clone(),
             table.table_options.clone(),
             table.table_comment.clone(),
             table.created_at,
@@ -785,7 +737,6 @@ mod tests {
                 TableType,
                 Vec<ColumnDefinition>,
                 u32,
-                Vec<SchemaVersion>,
                 TableOptions,
                 Option<String>,
                 chrono::DateTime<chrono::Utc>,

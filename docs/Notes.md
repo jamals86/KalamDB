@@ -289,7 +289,50 @@ instead of: 1 failed: Invalid operation: No handler registered for statement typ
 197) why do we have things like this? shouldnt we prevent entering if no rows?
 [2025-12-13 01:51:58.957] [INFO ] - main - kalamdb_core::jobs::jobs_manager::utils:38 - [CL-a258332a4315] Job completed: Cleaned up table insert_bench_mj3iu8zz_0:single_mj3iu900_0 successfully - 0 rows deleted, 0 bytes freed
 
-198) i want to go over all system tables and their date field and want all of them to return the date format in one unified date in both the model and the system table definition in arrow schema
+198) fix the slashes here: Flushed 24 rows for user root to ./data/storage\chat/messages/root/batch-2.parquet (batch=2)
+and make sure we use the right slashes everywhere in paths
+
+199) change the cli history to storing the history of queries as regular queries and not base64 but keeping in mind adding quotes to preserve adding the multi-lines queries, and also replacing password on alter user to remove the password
+
+200) in manifest we have duplicated values id and path use only the path:
+  "segments": [
+    {
+      "id": "batch-0.parquet",
+      "path": "batch-0.parquet",
+
+
+201) optimize the manifest by doing:
+{
+  "table_id": {
+    "namespace_id": "chat",
+    "table_name": "messages"
+  },
+  "user_id": "root",
+  "version": 5,
+  "created_at": 1765787805,
+  "updated_at": 1765790837,
+  "segments": [
+    {
+      "id": "batch-0.parquet",
+      "path": "batch-0.parquet",
+      "column_stats": {  //TODO: Change to stats
+        "id": {
+          "min": 258874983317667840,
+          "max": 258874997628633089,
+          "null_count": 0
+        }
+      },
+      "min_seq": 258874983321862144,
+      "max_seq": 258874997628633091,
+      "row_count": 24,  //TODO: Change to count
+      "size_bytes": 2701,  //TODO: Change to size
+      "created_at": 1765787814, 
+      "tombstone": false
+    },
+  ],
+  "last_sequence_number": 3 //TODO: Change to last
+}
+
 
 
 
