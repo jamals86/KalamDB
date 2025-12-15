@@ -292,19 +292,30 @@ impl TypedStatementHandler<AlterTableStatement> for AlterTableHandler {
         let arrow_schema = table_def
             .to_arrow_schema()
             .map_err(|e| KalamDbError::SchemaError(format!("Arrow conversion failed: {}", e)))?;
-        let schema_json = ArrowSchemaWithOptions::new(arrow_schema.clone())
+        let _schema_json = ArrowSchemaWithOptions::new(arrow_schema.clone())
             .to_json_string()
             .map_err(|e| {
                 KalamDbError::SchemaError(format!("Failed to serialize Arrow schema: {}", e))
             })?;
         let change_desc =
             change_desc_opt.expect("ALTER TABLE operation must set change description");
-        table_def
-            .add_schema_version(change_desc.clone(), schema_json)
-            .map_err(KalamDbError::SchemaError)?;
+        
+        // Phase 16: Increment version (schema history is now stored externally)
+        table_def.increment_version();
 
-        // Persist (write-through) via registry
+        // Persist (write-through) via registry - stores latest in cache
         registry.put_table_definition(&table_id, &table_def)?;
+
+        // Store versioned entry in versioned tables store (for schema history)
+        let tables_provider = self.app_context.system_tables().tables();
+        tables_provider.put_versioned_schema(&table_id, &table_def).map_err(|e| {
+            KalamDbError::Other(format!("Failed to persist table version: {}", e))
+        })?;
+
+        // Also update the main tables store (for latest table definition lookup)
+        tables_provider.update_table(&table_id, &table_def).map_err(|e| {
+            KalamDbError::Other(format!("Failed to update table definition: {}", e))
+        })?;
 
         // Prime cache with updated definition so existing providers retain memoized access
         {

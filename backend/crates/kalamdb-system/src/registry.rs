@@ -6,7 +6,7 @@
 //! **Phase 5 Completion**: Consolidates all 10 system table providers into
 //! a single struct for cleaner AppContext API.
 
-use super::{
+use super::providers::{
     AuditLogsTableProvider, JobsTableProvider, LiveQueriesTableProvider, ManifestTableProvider,
     NamespacesTableProvider, ServerLogsTableProvider, StatsTableProvider, StoragesTableProvider,
     TablesTableProvider, UsersTableProvider,

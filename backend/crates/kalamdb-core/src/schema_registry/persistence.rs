@@ -117,6 +117,52 @@ impl SchemaPersistence {
         }
     }
 
+    /// Get table definition if it exists (optimized single-call pattern)
+    ///
+    /// Combines table existence check + definition fetch in one operation.
+    /// Use this instead of calling `table_exists()` followed by `get_table_definition()`.
+    ///
+    /// # Performance
+    /// - Cache hit: Returns immediately (no duplicate lookups)
+    /// - Cache miss: Single persistence query + cache population
+    /// - Prevents double fetch: table_exists() then get_table_definition()
+    pub fn get_table_if_exists(
+        cache: &TableCache,
+        table_id: &TableId,
+    ) -> Result<Option<Arc<TableDefinition>>, KalamDbError> {
+        // Fast path: check cache
+        if let Some(cached) = cache.get(table_id) {
+            return Ok(Some(Arc::clone(&cached.table)));
+        }
+
+        // Check if it's a system table
+        if table_id.namespace_id().is_system_namespace() {
+            use kalamdb_system::system_table_definitions::all_system_table_definitions;
+            let all_defs = all_system_table_definitions();
+            if let Some((_, def)) = all_defs.into_iter().find(|(id, _)| id == table_id) {
+                return Ok(Some(Arc::new(def)));
+            }
+        }
+
+        // Slow path: query persistence layer via AppContext (if available)
+        // Use try_get() to support test contexts where AppContext may not be initialized
+        let Some(app_ctx) = crate::app_context::AppContext::try_get() else {
+            return Ok(None);
+        };
+        let tables_provider = app_ctx.system_tables().tables();
+
+        match tables_provider.get_table_by_id(table_id)? {
+            Some(table_def) => {
+                // Cache the result for future fast-path access
+                let table_arc = Arc::new(table_def);
+                let data = CachedTableData::new(table_arc.clone());
+                cache.insert(table_id.clone(), Arc::new(data));
+                Ok(Some(table_arc))
+            }
+            None => Ok(None),
+        }
+    }
+
     /// Get Arrow schema for a table (Phase 10: Arrow Schema Memoization)
     pub fn get_arrow_schema(
         cache: &TableCache,

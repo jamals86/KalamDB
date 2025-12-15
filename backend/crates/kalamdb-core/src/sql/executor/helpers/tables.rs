@@ -40,11 +40,10 @@ pub fn save_table_definition(
     original_arrow_schema: &Arc<Schema>,
 ) -> Result<(), KalamDbError> {
     use crate::app_context::AppContext;
-    use crate::schema_registry::arrow_schema::ArrowSchemaWithOptions;
     use kalamdb_commons::datatypes::{FromArrowType, KalamDataType};
     use kalamdb_commons::models::TableId;
     use kalamdb_commons::schemas::{
-        ColumnDefinition, SchemaVersion, TableDefinition, TableOptions,
+        ColumnDefinition, TableDefinition, TableOptions,
     };
 
     // Extract columns directly from Arrow schema (user-provided columns only)
@@ -139,23 +138,17 @@ pub fn save_table_definition(
     sys_cols.add_system_columns(&mut table_def)?;
 
     // Build Arrow schema FROM the mutated TableDefinition (includes system columns)
-    let full_arrow_schema = table_def.to_arrow_schema().map_err(|e| {
-        KalamDbError::SchemaError(format!(
-            "Failed to build Arrow schema after system columns injection: {}",
-            e
-        ))
-    })?;
+    // Phase 16: Arrow schema is built for caching and provider registration
+    // let _full_arrow_schema = table_def.to_arrow_schema().map_err(|e| {
+    //     KalamDbError::SchemaError(format!(
+    //         "Failed to build Arrow schema after system columns injection: {}",
+    //         e
+    //     ))
+    // })?;
 
-    // Initialize schema history with version 1 entry (Initial full schema WITH system columns)
-    let schema_json = ArrowSchemaWithOptions::new(full_arrow_schema.clone())
-        .to_json_string()
-        .map_err(|e| {
-            KalamDbError::SchemaError(format!("Failed to serialize Arrow schema: {}", e))
-        })?;
-
-    table_def
-        .schema_history
-        .push(SchemaVersion::initial(schema_json));
+    // Phase 16: Schema history is now stored externally using TableVersionId keys.
+    // The TableDefinition starts with schema_version = 1 (set in new()).
+    // No need to push to schema_history anymore - TablesStore handles this.
 
     // Persist to system.tables AND cache in SchemaRegistry
     let ctx = AppContext::get();

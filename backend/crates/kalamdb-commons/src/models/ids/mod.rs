@@ -18,6 +18,7 @@ mod node_id;
 mod row_id;
 mod storage_id;
 mod table_id;
+mod table_version_id;
 mod user_id;
 mod user_row_id;
 
@@ -30,5 +31,6 @@ pub use node_id::NodeId;
 pub use row_id::RowId;
 pub use storage_id::StorageId;
 pub use table_id::TableId;
+pub use table_version_id::{TableVersionId, LATEST_MARKER, VERSION_MARKER};
 pub use user_id::UserId;
 pub use user_row_id::UserRowId;

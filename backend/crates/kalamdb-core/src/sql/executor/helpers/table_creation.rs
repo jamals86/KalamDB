@@ -135,14 +135,14 @@ pub fn create_user_table(
         ));
     }
 
-    // Check if table already exists
+    // Check if table already exists (single optimized lookup)
     let schema_registry = app_context.schema_registry();
     let table_id = TableId::from_strings(stmt.namespace_id.as_str(), stmt.table_name.as_str());
-    let table_exists = schema_registry
-        .table_exists(&table_id)
+    let existing_def = schema_registry
+        .get_table_if_exists(&table_id)
         .map_err(|e| KalamDbError::Other(format!("Failed to check table existence: {}", e)))?;
 
-    if table_exists {
+    if let Some(def) = existing_def {
         if stmt.if_not_exists {
             // Ensure provider is registered even if table exists
             // This handles cases where table exists in storage but provider is missing from cache
@@ -154,12 +154,10 @@ pub fn create_user_table(
                     stmt.table_name.as_str()
                 );
 
-                if let Some(def) = schema_registry.get_table_definition(&table_id)? {
-                    let arrow_schema = def.to_arrow_schema().map_err(|e| {
-                        KalamDbError::SchemaError(format!("Failed to build Arrow schema: {}", e))
-                    })?;
-                    register_user_table_provider(&app_context, &table_id, arrow_schema)?;
-                }
+                let arrow_schema = def.to_arrow_schema().map_err(|e| {
+                    KalamDbError::SchemaError(format!("Failed to build Arrow schema: {}", e))
+                })?;
+                register_user_table_provider(&app_context, &table_id, arrow_schema)?;
             }
 
             log::info!(
@@ -236,6 +234,13 @@ pub fn create_user_table(
         .create_table(&table_id, &table_def)
         .map_err(|e| {
             KalamDbError::Other(format!("Failed to insert table into system catalog: {}", e))
+        })?;
+
+    // Phase 16: Store initial version (version 1) in versioned schema store
+    tables_provider
+        .put_versioned_schema(&table_id, &table_def)
+        .map_err(|e| {
+            KalamDbError::Other(format!("Failed to store initial schema version: {}", e))
         })?;
 
     // Prime cache entry with storage path template + storage id (needed for flush path resolution)
@@ -356,14 +361,14 @@ pub fn create_shared_table(
         ));
     }
 
-    // Check if table already exists
+    // Check if table already exists (single optimized lookup)
     let schema_registry = app_context.schema_registry();
     let table_id = TableId::from_strings(stmt.namespace_id.as_str(), stmt.table_name.as_str());
-    let table_exists = schema_registry
-        .table_exists(&table_id)
+    let existing_def = schema_registry
+        .get_table_if_exists(&table_id)
         .map_err(|e| KalamDbError::Other(format!("Failed to check table existence: {}", e)))?;
 
-    if table_exists {
+    if let Some(def) = existing_def {
         if stmt.if_not_exists {
             // Ensure provider is registered even if table exists
             if schema_registry.get_provider(&table_id).is_none() {
@@ -373,12 +378,10 @@ pub fn create_shared_table(
                     stmt.table_name.as_str()
                 );
 
-                if let Some(def) = schema_registry.get_table_definition(&table_id)? {
-                    let arrow_schema = def.to_arrow_schema().map_err(|e| {
-                        KalamDbError::SchemaError(format!("Failed to build Arrow schema: {}", e))
-                    })?;
-                    register_shared_table_provider(&app_context, &table_id, arrow_schema)?;
-                }
+                let arrow_schema = def.to_arrow_schema().map_err(|e| {
+                    KalamDbError::SchemaError(format!("Failed to build Arrow schema: {}", e))
+                })?;
+                register_shared_table_provider(&app_context, &table_id, arrow_schema)?;
             }
 
             log::info!(
@@ -443,6 +446,13 @@ pub fn create_shared_table(
         .create_table(&table_id, &table_def)
         .map_err(|e| {
             KalamDbError::Other(format!("Failed to insert table into system catalog: {}", e))
+        })?;
+
+    // Phase 16: Store initial version (version 1) in versioned schema store
+    tables_provider
+        .put_versioned_schema(&table_id, &table_def)
+        .map_err(|e| {
+            KalamDbError::Other(format!("Failed to store initial schema version: {}", e))
         })?;
 
     // Register SharedTableProvider for CRUD/query access
@@ -570,14 +580,14 @@ pub fn create_stream_table(
     // Validate table name
     validate_table_name(stmt.table_name.as_str()).map_err(KalamDbError::InvalidOperation)?;
 
-    // Check if table already exists
+    // Check if table already exists (single optimized lookup)
     let schema_registry = app_context.schema_registry();
     let table_id = TableId::from_strings(stmt.namespace_id.as_str(), stmt.table_name.as_str());
-    let table_exists = schema_registry
-        .table_exists(&table_id)
+    let existing_def = schema_registry
+        .get_table_if_exists(&table_id)
         .map_err(|e| KalamDbError::Other(format!("Failed to check table existence: {}", e)))?;
 
-    if table_exists {
+    if let Some(def) = existing_def {
         if stmt.if_not_exists {
             // Ensure provider is registered even if table exists
             if schema_registry.get_provider(&table_id).is_none() {
@@ -587,27 +597,25 @@ pub fn create_stream_table(
                     stmt.table_name.as_str()
                 );
 
-                if let Some(def) = schema_registry.get_table_definition(&table_id)? {
-                    let arrow_schema = def.to_arrow_schema().map_err(|e| {
-                        KalamDbError::SchemaError(format!("Failed to build Arrow schema: {}", e))
-                    })?;
+                let arrow_schema = def.to_arrow_schema().map_err(|e| {
+                    KalamDbError::SchemaError(format!("Failed to build Arrow schema: {}", e))
+                })?;
 
-                    // Extract TTL from table options if available, otherwise use default
-                    let ttl_seconds = if let kalamdb_commons::schemas::TableOptions::Stream(opts) =
-                        &def.table_options
-                    {
-                        Some(opts.ttl_seconds)
-                    } else {
-                        stmt.ttl_seconds
-                    };
+                // Extract TTL from table options if available, otherwise use default
+                let ttl_seconds = if let kalamdb_commons::schemas::TableOptions::Stream(opts) =
+                    &def.table_options
+                {
+                    Some(opts.ttl_seconds)
+                } else {
+                    stmt.ttl_seconds
+                };
 
-                    register_stream_table_provider(
-                        &app_context,
-                        &table_id,
-                        arrow_schema,
-                        ttl_seconds,
-                    )?;
-                }
+                register_stream_table_provider(
+                    &app_context,
+                    &table_id,
+                    arrow_schema,
+                    ttl_seconds,
+                )?;
             }
 
             log::info!(
@@ -692,6 +700,13 @@ pub fn create_stream_table(
         .create_table(&table_id, &table_def)
         .map_err(|e| {
             KalamDbError::Other(format!("Failed to insert table into system catalog: {}", e))
+        })?;
+
+    // Phase 16: Store initial version (version 1) in versioned schema store
+    tables_provider
+        .put_versioned_schema(&table_id, &table_def)
+        .map_err(|e| {
+            KalamDbError::Other(format!("Failed to store initial schema version: {}", e))
         })?;
 
     // Prime cache entry with storage path template + storage id (needed for flush path resolution)

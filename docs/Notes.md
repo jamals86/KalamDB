@@ -294,7 +294,44 @@ and make sure we use the right slashes everywhere in paths
 
 199) change the cli history to storing the history of queries as regular queries and not base64 but keeping in mind adding quotes to preserve adding the multi-lines queries, and also replacing password on alter user to remove the password
 
-200)
+200) in manifest we have duplicated values id and path use only the path:
+  "segments": [
+    {
+      "id": "batch-0.parquet",
+      "path": "batch-0.parquet",
+
+
+201) optimize the manifest by doing:
+{
+  "table_id": {
+    "namespace_id": "chat",
+    "table_name": "messages"
+  },
+  "user_id": "root",
+  "version": 5,
+  "created_at": 1765787805,
+  "updated_at": 1765790837,
+  "segments": [
+    {
+      "id": "batch-0.parquet",
+      "path": "batch-0.parquet",
+      "column_stats": {  //TODO: Change to stats
+        "id": {
+          "min": 258874983317667840,
+          "max": 258874997628633089,
+          "null_count": 0
+        }
+      },
+      "min_seq": 258874983321862144,
+      "max_seq": 258874997628633091,
+      "row_count": 24,  //TODO: Change to count
+      "size_bytes": 2701,  //TODO: Change to size
+      "created_at": 1765787814, 
+      "tombstone": false
+    },
+  ],
+  "last_sequence_number": 3 //TODO: Change to last
+}
 
 
 

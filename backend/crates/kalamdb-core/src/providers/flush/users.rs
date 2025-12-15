@@ -86,6 +86,16 @@ impl UserTableFlushJob {
         self.table_id.table_name()
     }
 
+    /// Get current schema version for the table
+    fn get_schema_version(&self) -> u32 {
+        self.unified_cache
+            .get_table_definition(&self.table_id)
+            .ok()
+            .flatten()
+            .map(|def| def.schema_version)
+            .unwrap_or(1)
+    }
+
     /// Resolve storage path for a specific user
     fn resolve_storage_path_for_user(&self, user_id: &UserId) -> Result<String, KalamDbError> {
         self.unified_cache
@@ -189,6 +199,8 @@ impl UserTableFlushJob {
 
         // Update manifest and cache using helper (with row-group stats)
         // Note: For remote storage, we don't have a local path; pass destination_path for stats
+        // Phase 16: Include schema version to link Parquet file to specific schema
+        let schema_version = self.get_schema_version();
         self.manifest_helper.update_manifest_after_flush(
             self.namespace_id(),
             self.table_name(),
@@ -200,6 +212,7 @@ impl UserTableFlushJob {
             &batch,
             size_bytes,
             bloom_filter_columns,
+            schema_version,
         )?;
 
         log::info!(

@@ -67,8 +67,8 @@ mod tests {
     fn test_tables_table_schema() {
         let schema = TablesTableSchema::schema();
         // Schema built from TableDefinition, verify field count matches definition
-        // Expecting 10 fields: table_id, table_name, namespace_id, table_type, created_at, schema_version, table_comment, updated_at, options, access_level
-        assert_eq!(schema.fields().len(), 10);
+        // Expecting 11 fields: table_id, table_name, namespace_id, table_type, created_at, schema_version, table_comment, updated_at, options, access_level, is_latest
+        assert_eq!(schema.fields().len(), 11);
 
         // Verify fields exist (order guaranteed by TableDefinition's ordinal_position)
         let field_names: Vec<&str> = schema.fields().iter().map(|f| f.name().as_str()).collect();
@@ -79,6 +79,7 @@ mod tests {
         assert!(field_names.contains(&"created_at"));
         assert!(field_names.contains(&"options"));
         assert!(field_names.contains(&"access_level"));
+        assert!(field_names.contains(&"is_latest"));
     }
 
     #[test]

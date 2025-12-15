@@ -233,6 +233,7 @@ impl FlushManifestHelper {
     /// * `batch` - RecordBatch (for extracting stats)
     /// * `file_size_bytes` - Size of written Parquet file
     /// * `indexed_columns` - Columns with Bloom filters/page stats enabled
+    /// * `schema_version` - Schema version (Phase 16) to link Parquet file to specific schema
     ///
     /// # Returns
     /// Updated Manifest
@@ -248,6 +249,7 @@ impl FlushManifestHelper {
         batch: &RecordBatch,
         file_size_bytes: u64,
         indexed_columns: &[String],
+        schema_version: u32,
     ) -> Result<Manifest, KalamDbError> {
         let table_id = TableId::new(namespace.clone(), table.clone());
         // Extract metadata from batch (batch-level)
@@ -260,7 +262,8 @@ impl FlushManifestHelper {
         // Use filename as ID for now, or generate UUID
         let segment_id = batch_filename.clone();
 
-        let segment = SegmentMetadata::new(
+        // Phase 16: Use with_schema_version to record schema version in manifest
+        let segment = SegmentMetadata::with_schema_version(
             segment_id,
             batch_filename,
             column_stats,
@@ -268,6 +271,7 @@ impl FlushManifestHelper {
             max_seq,
             row_count,
             file_size_bytes,
+            schema_version,
         );
 
         // Update manifest (Hot Store update)
