@@ -370,7 +370,7 @@ where
 
     // Step 4: Filter out deleted records (_deleted = true)
     let filtered_batch = {
-        let deleted_col = resolved_batch.column_by_name("_deleted").ok_or_else(|| {
+        let deleted_col = resolved_batch.column_by_name(SystemColumnNames::DELETED).ok_or_else(|| {
             datafusion::error::DataFusionError::Execution("Missing _deleted column".to_string())
         })?;
         let deleted_array = deleted_col.as_boolean();
@@ -423,9 +423,9 @@ pub fn parquet_batch_to_rows(batch: &RecordBatch) -> Result<Vec<ParquetRowData>,
     let seq_idx = schema
         .fields()
         .iter()
-        .position(|f| f.name() == "_seq")
+        .position(|f| f.name() == SystemColumnNames::SEQ)
         .ok_or_else(|| KalamDbError::Other("Missing _seq column in Parquet batch".to_string()))?;
-    let deleted_idx = schema.fields().iter().position(|f| f.name() == "_deleted");
+    let deleted_idx = schema.fields().iter().position(|f| f.name() == SystemColumnNames::DELETED);
 
     let seq_array = batch
         .column(seq_idx)
@@ -452,7 +452,7 @@ pub fn parquet_batch_to_rows(batch: &RecordBatch) -> Result<Vec<ParquetRowData>,
         let mut values = BTreeMap::new();
         for (col_idx, field) in schema.fields().iter().enumerate() {
             let col_name = field.name();
-            if col_name == "_seq" || col_name == "_deleted" {
+            if col_name == SystemColumnNames::SEQ || col_name == SystemColumnNames::DELETED {
                 continue;
             }
 

@@ -485,7 +485,7 @@ mod tests {
             ColumnDefinition::primary_key("id", 1, KalamDataType::Int),
             ColumnDefinition::simple("name", 2, KalamDataType::Text),
             ColumnDefinition::new(
-                "_seq",
+                SystemColumnNames::SEQ,
                 3,
                 KalamDataType::BigInt,
                 false,
@@ -495,7 +495,7 @@ mod tests {
                 None,
             ),
             ColumnDefinition::new(
-                "_deleted",
+                SystemColumnNames::DELETED,
                 4,
                 KalamDataType::Boolean,
                 false,
@@ -626,7 +626,7 @@ mod tests {
             ColumnDefinition::primary_key("id", 1, KalamDataType::Int),
             ColumnDefinition::simple("val", 2, KalamDataType::Text),
             ColumnDefinition::new(
-                "_seq",
+                SystemColumnNames::SEQ,
                 3,
                 KalamDataType::BigInt,
                 false,
@@ -636,7 +636,7 @@ mod tests {
                 None,
             ),
             ColumnDefinition::new(
-                "_deleted",
+                SystemColumnNames::DELETED,
                 4,
                 KalamDataType::Boolean,
                 false,
@@ -803,7 +803,7 @@ mod tests {
             ColumnDefinition::primary_key("id", 1, KalamDataType::Int),
             ColumnDefinition::simple("val", 2, KalamDataType::Text),
             ColumnDefinition::new(
-                "_seq",
+                SystemColumnNames::SEQ,
                 3,
                 KalamDataType::BigInt,
                 false,
@@ -813,7 +813,7 @@ mod tests {
                 None,
             ),
             ColumnDefinition::new(
-                "_deleted",
+                SystemColumnNames::DELETED,
                 4,
                 KalamDataType::Boolean,
                 false,

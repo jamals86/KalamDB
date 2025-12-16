@@ -18,6 +18,7 @@ use crate::schema_registry::TableType;
 use async_trait::async_trait;
 use datafusion::arrow::datatypes::SchemaRef;
 use datafusion::arrow::record_batch::RecordBatch;
+use kalamdb_commons::constants::SystemColumnNames;
 use datafusion::catalog::Session;
 use datafusion::datasource::memory::MemTable;
 use datafusion::datasource::TableProvider;
@@ -461,7 +462,7 @@ pub fn filter_uses_deleted_column(filter: &Expr) -> bool {
     use std::collections::HashSet;
     let mut columns = HashSet::new();
     if expr_to_columns(filter, &mut columns).is_ok() {
-        columns.iter().any(|c| c.name == "_deleted")
+        columns.iter().any(|c| c.name == SystemColumnNames::DELETED)
     } else {
         false
     }
@@ -682,8 +683,8 @@ fn pk_exists_in_parquet_file(
 
         // Find column indices
         let pk_idx = batch.schema().index_of(pk_column).ok();
-        let seq_idx = batch.schema().index_of("_seq").ok();
-        let deleted_idx = batch.schema().index_of("_deleted").ok();
+        let seq_idx = batch.schema().index_of(SystemColumnNames::SEQ).ok();
+        let deleted_idx = batch.schema().index_of(SystemColumnNames::DELETED).ok();
 
         let (Some(pk_i), Some(seq_i)) = (pk_idx, seq_idx) else {
             continue; // Missing required columns

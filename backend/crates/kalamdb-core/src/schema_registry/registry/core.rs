@@ -7,6 +7,7 @@ use crate::schema_registry::persistence::SchemaPersistence;
 use crate::schema_registry::provider_registry::ProviderRegistry;
 use crate::schema_registry::table_cache::TableCache;
 use datafusion::datasource::TableProvider;
+use kalamdb_commons::constants::SystemColumnNames;
 use kalamdb_commons::models::schemas::TableDefinition;
 use kalamdb_commons::models::{StorageId, TableId, TableVersionId, UserId};
 use kalamdb_commons::schemas::TableType;
@@ -244,7 +245,7 @@ impl SchemaRegistry {
         }
 
         // Add _seq system column (FR-054: default Bloom filter columns)
-        columns.push("_seq".to_string());
+        columns.push(SystemColumnNames::SEQ.to_string());
 
         Ok(columns)
     }

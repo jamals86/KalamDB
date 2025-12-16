@@ -5,7 +5,7 @@
 //!
 //! ## Module Structure
 //!
-//! - `base`: Common flush trait and result types
+//! - `base`: Common flush trait, result types, and helper utilities
 //! - `users`: User table flush implementation (multi-file, RLS-enforced)
 //! - `shared`: Shared table flush implementation (single-file)
 //!
@@ -24,7 +24,10 @@ pub mod users;
 
 // Re-export common types
 pub use base::{
-    FlushJobResult, FlushMetadata, SharedTableFlushMetadata, TableFlush, UserTableFlushMetadata,
+    FlushDedupStats, FlushJobResult, FlushMetadata, SharedTableFlushMetadata, TableFlush,
+    UserTableFlushMetadata,
 };
+// Re-export common configuration and helpers
+pub use base::{config, helpers};
 pub use shared::SharedTableFlushJob;
 pub use users::UserTableFlushJob;

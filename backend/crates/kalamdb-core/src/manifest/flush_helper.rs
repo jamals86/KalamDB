@@ -373,7 +373,7 @@ mod tests {
     #[test]
     fn test_extract_seq_range() {
         let schema = StdArc::new(Schema::new(vec![
-            Field::new("_seq", DataType::Int64, false),
+            Field::new(SystemColumnNames::SEQ, DataType::Int64, false),
             Field::new("data", DataType::Utf8, true),
         ]));
 

@@ -15,6 +15,7 @@ use crate::storage::write_parquet_to_storage_sync;
 use datafusion::arrow::datatypes::SchemaRef;
 use datafusion::arrow::record_batch::RecordBatch;
 use datafusion::scalar::ScalarValue;
+use kalamdb_commons::constants::SystemColumnNames;
 use kalamdb_commons::models::{Row, StorageId, TableId, UserId};
 use kalamdb_commons::{NamespaceId, TableName};
 use kalamdb_store::entity_store::EntityStore;
@@ -22,12 +23,15 @@ use kalamdb_tables::{SharedTableIndexedStore, SharedTableRow};
 use std::sync::Arc;
 
 /// Shared table flush job
+///
+/// Flushes shared table data to Parquet files. All rows are written to a single
+/// Parquet file per flush operation (no user partitioning like user tables).
 pub struct SharedTableFlushJob {
     store: Arc<SharedTableIndexedStore>,
     table_id: Arc<TableId>,
-    schema: SchemaRef,                                 //TODO: needed?
-    unified_cache: Arc<SchemaRegistry>,                //TODO: We have AppContext now
-    live_query_manager: Option<Arc<LiveQueryManager>>, //TODO: We can pass AppContext and has live_query_manager there
+    schema: SchemaRef,
+    unified_cache: Arc<SchemaRegistry>,
+    live_query_manager: Option<Arc<LiveQueryManager>>,
     manifest_helper: FlushManifestHelper,
 }
 
@@ -131,35 +135,25 @@ impl TableFlush for SharedTableFlushJob {
             self.table_name().as_str()
         );
 
-        // STEP 1: Scan rows in batches to avoid loading all into memory at once
-        const BATCH_SIZE: usize = 10000;
-
+        use super::base::{config, helpers, FlushDedupStats};
         use std::collections::HashMap;
 
         // Get primary key field name from schema
-        let pk_field = self
-            .schema
-            .fields()
-            .iter()
-            .find(|f| !f.name().starts_with('_'))
-            .map(|f| f.name().clone())
-            .unwrap_or_else(|| "id".to_string());
-
+        let pk_field = helpers::extract_pk_field_name(&self.schema);
         log::debug!("📊 [FLUSH DEDUP] Using primary key field: {}", pk_field);
 
         // Map: pk_value -> (key_bytes, row, _seq)
         let mut latest_versions: HashMap<String, (Vec<u8>, SharedTableRow, i64)> = HashMap::new();
         // Track ALL keys to delete (including old versions)
         let mut all_keys_to_delete: Vec<Vec<u8>> = Vec::new();
-        let mut deleted_count = 0;
-        let mut rows_before_dedup = 0;
+        let mut stats = FlushDedupStats::default();
 
         // Batched scan with cursor
         let mut cursor: Option<Vec<u8>> = None;
         loop {
             let batch = self
                 .store
-                .scan_limited_with_prefix_and_start(None, cursor.as_deref(), BATCH_SIZE)
+                .scan_limited_with_prefix_and_start(None, cursor.as_deref(), config::BATCH_SIZE)
                 .map_err(|e| {
                     log::error!(
                         "❌ Failed to scan rows for shared table={}.{}: {}",
@@ -180,15 +174,11 @@ impl TableFlush for SharedTableFlushJob {
                 cursor.as_ref().map(|c| c.len())
             );
 
-            // Update cursor for next batch (last key + 1 byte to skip it)
-            cursor = batch.last().map(|(key, _)| {
-                let mut next = key.clone();
-                next.push(0);
-                next
-            });
+            // Update cursor for next batch
+            cursor = batch.last().map(|(key, _)| helpers::advance_cursor(key));
 
             let batch_len = batch.len();
-            rows_before_dedup += batch_len;
+            stats.rows_before_dedup += batch_len;
 
             for (key_bytes, row) in batch {
                 // Track ALL keys for deletion (before dedup)
@@ -207,7 +197,7 @@ impl TableFlush for SharedTableFlushJob {
 
                 // Track deleted rows
                 if row._deleted {
-                    deleted_count += 1;
+                    stats.deleted_count += 1;
                 }
 
                 // Keep MAX(_seq) per pk_value
@@ -224,56 +214,37 @@ impl TableFlush for SharedTableFlushJob {
             }
 
             // Check if we got fewer rows than batch size (end of data)
-            if batch_len < BATCH_SIZE {
+            if batch_len < config::BATCH_SIZE {
                 break;
             }
         }
 
-        log::info!(
-            "📊 [FLUSH DEDUP] Scanned {} total rows from hot storage (table={}.{})",
-            rows_before_dedup,
-            self.namespace_id().as_str(),
-            self.table_name().as_str()
-        );
-
-        let rows_after_dedup = latest_versions.len();
-        let dedup_ratio = if rows_before_dedup > 0 {
-            (rows_before_dedup - rows_after_dedup) as f64 / rows_before_dedup as f64 * 100.0
-        } else {
-            0.0
-        };
-
-        log::info!("📊 [FLUSH DEDUP] Version resolution complete: {} rows → {} unique (dedup: {:.1}%, deleted: {})",
-                   rows_before_dedup, rows_after_dedup, dedup_ratio, deleted_count);
+        stats.rows_after_dedup = latest_versions.len();
 
         // STEP 2: Filter out deleted rows (tombstones) and convert to Rows
         let mut rows: Vec<(Vec<u8>, Row)> = Vec::new();
-        let mut tombstones_filtered = 0;
 
         for (_pk_value, (key_bytes, row, _seq)) in latest_versions {
             // Skip soft-deleted rows (tombstones)
             if row._deleted {
-                tombstones_filtered += 1;
+                stats.tombstones_filtered += 1;
                 continue;
             }
 
             let mut row_data = row.fields.clone();
             row_data.values.insert(
-                "_seq".to_string(),
+                SystemColumnNames::SEQ.to_string(),
                 ScalarValue::Int64(Some(row._seq.as_i64())),
             );
             row_data
                 .values
-                .insert("_deleted".to_string(), ScalarValue::Boolean(Some(false)));
+                .insert(SystemColumnNames::DELETED.to_string(), ScalarValue::Boolean(Some(false)));
 
             rows.push((key_bytes, row_data));
         }
 
-        log::info!(
-            "📊 [FLUSH DEDUP] Final: {} rows to flush ({} tombstones filtered)",
-            rows.len(),
-            tombstones_filtered
-        );
+        // Log dedup statistics
+        stats.log_summary(self.namespace_id().as_str(), self.table_name().as_str());
 
         // If no rows to flush, return early
         if rows.is_empty() {
@@ -341,7 +312,7 @@ impl TableFlush for SharedTableFlushJob {
                     self.table_id,
                     e
                 );
-                vec!["_seq".to_string()]
+                vec![SystemColumnNames::SEQ.to_string()]
             });
 
         log::debug!(

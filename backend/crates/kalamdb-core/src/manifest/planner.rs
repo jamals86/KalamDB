@@ -413,6 +413,7 @@ mod tests {
     use datafusion::arrow::array::{Int32Array, Int64Array};
     use datafusion::arrow::datatypes::Schema;
     use datafusion::arrow::record_batch::RecordBatch as ArrowRecordBatch;
+    use kalamdb_commons::constants::SystemColumnNames;
     use kalamdb_commons::types::{Manifest, SegmentMetadata};
     use kalamdb_commons::{NamespaceId, TableId, TableName};
     use parquet::arrow::arrow_writer::ArrowWriter;
@@ -562,7 +563,7 @@ mod tests {
         // Schema: _seq: Int64, val: Int32
         use datafusion::arrow::datatypes::{DataType, Field};
         let schema: SchemaRef = Arc::new(Schema::new(vec![
-            Field::new("_seq", DataType::Int64, false),
+            Field::new(SystemColumnNames::SEQ, DataType::Int64, false),
             Field::new("val", DataType::Int32, false),
         ]));
 
