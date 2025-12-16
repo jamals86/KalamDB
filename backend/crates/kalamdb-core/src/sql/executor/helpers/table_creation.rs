@@ -143,7 +143,7 @@ pub fn create_user_table(
         .get_table_if_exists(&table_id)
         .into_kalamdb_error("Failed to check table existence")?;
 
-    if let Some(def) = existing_def {
+    if existing_def.is_some() {
         if stmt.if_not_exists {
             // Ensure provider is registered even if table exists
             // This handles cases where table exists in storage but provider is missing from cache
@@ -155,8 +155,8 @@ pub fn create_user_table(
                     stmt.table_name.as_str()
                 );
 
-                let arrow_schema = def.to_arrow_schema()
-                    .into_arrow_error_ctx("Failed to build Arrow schema")?;
+                // Use cached Arrow schema (memoized in CachedTableData) instead of to_arrow_schema()
+                let arrow_schema = schema_registry.get_arrow_schema(&table_id)?;
                 register_user_table_provider(&app_context, &table_id, arrow_schema)?;
             }
 
@@ -263,9 +263,8 @@ pub fn create_user_table(
     }
 
     // Register UserTableProvider for INSERT/UPDATE/DELETE/SELECT operations
-    // Use authoritative Arrow schema rebuilt from TableDefinition (includes system columns)
-    let provider_arrow_schema = table_def.to_arrow_schema()
-        .into_arrow_error_ctx("Failed to build provider Arrow schema")?;
+    // Use cached Arrow schema from SchemaRegistry (memoized in CachedTableData)
+    let provider_arrow_schema = schema_registry.get_arrow_schema(&table_id)?;
     register_user_table_provider(&app_context, &table_id, provider_arrow_schema)?;
 
     // Ensure filesystem table directories exist for the creator
@@ -365,7 +364,7 @@ pub fn create_shared_table(
         .get_table_if_exists(&table_id)
         .into_kalamdb_error("Failed to check table existence")?;
 
-    if let Some(def) = existing_def {
+    if existing_def.is_some() {
         if stmt.if_not_exists {
             // Ensure provider is registered even if table exists
             if schema_registry.get_provider(&table_id).is_none() {
@@ -375,8 +374,8 @@ pub fn create_shared_table(
                     stmt.table_name.as_str()
                 );
 
-                let arrow_schema = def.to_arrow_schema()
-                    .into_arrow_error_ctx("Failed to build Arrow schema")?;
+                // Use cached Arrow schema (memoized in CachedTableData) instead of to_arrow_schema()
+                let arrow_schema = schema_registry.get_arrow_schema(&table_id)?;
                 register_shared_table_provider(&app_context, &table_id, arrow_schema)?;
             }
 
@@ -590,8 +589,8 @@ pub fn create_stream_table(
                     stmt.table_name.as_str()
                 );
 
-                let arrow_schema = def.to_arrow_schema()
-                    .into_arrow_error_ctx("Failed to build Arrow schema")?;
+                // Use cached Arrow schema (memoized in CachedTableData) instead of to_arrow_schema()
+                let arrow_schema = schema_registry.get_arrow_schema(&table_id)?;
 
                 // Extract TTL from table options if available, otherwise use default
                 let ttl_seconds = if let kalamdb_commons::schemas::TableOptions::Stream(opts) =

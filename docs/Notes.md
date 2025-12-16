@@ -353,7 +353,7 @@ IMPORTANT:
 1) Done - Schema information_schema
 2) Done - Datatypes for columns
 3) Parametrized Queries needs to work with ScalarValue and be added to the api endpoint
-4) Add manifest file for each user table, that will help us locate which parquet files we need to read in each query, and if in fact we need to read parquet files at all, since sometimes the data will be only inside rocksdb and no need for file io
+4) Done - Add manifest file for each user table, that will help us locate which parquet files we need to read in each query, and if in fact we need to read parquet files at all, since sometimes the data will be only inside rocksdb and no need for file io
 4) Done - Support update/deleted as a separate join table per user by MAX(_updated)
 5) Storage files compaction
 6) Done - AS USER support for DML statements - to be able to insert/update/delete as a specific user_id (Only service/admin roles can do that)
@@ -367,7 +367,7 @@ IMPORTANT:
 10) use hashbrown instead of hashmap for better performance where possible
 11) Investigate using vortex instead of parquet or as an option for the user to choose which format to use for storing flushed data
 12) aDD objectstore for storing files in s3/azure/gcs compatible storages
-13) add BEGIN TRANSACTION / COMMIT TRANSACTION support for multiple statements in one transaction, This will make the insert batch faster
+13) Add BEGIN TRANSACTION / COMMIT TRANSACTION support for multiple statements in one transaction, This will make the insert batch faster
 14) Add upsert support
 15) Support postgress protocol
 16) Add file DataType for storing files/blobs next to the storage parquet files

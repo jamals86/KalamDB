@@ -237,21 +237,10 @@ impl ManifestAccessPlanner {
         table_id: &TableId,
         app_context: &Arc<AppContext>,
     ) -> Result<RecordBatch, KalamDbError> {
-        // Get the historical schema definition
-        let old_table_def = app_context
-            .system_tables()
-            .tables()
-            .get_version(table_id, old_schema_version)
-            .into_kalamdb_error(&format!("Failed to retrieve schema version {}", old_schema_version))?
-            .ok_or_else(|| {
-                KalamDbError::Other(format!(
-                    "Schema version {} not found for table {}",
-                    old_schema_version, table_id
-                ))
-            })?;
-
-        let old_schema = old_table_def.to_arrow_schema()
-            .into_arrow_error_ctx("Failed to convert old schema to Arrow")?;
+        // Get cached arrow schema for the historical version (uses version cache)
+        let old_schema = app_context
+            .schema_registry()
+            .get_arrow_schema_for_version(table_id, old_schema_version)?;
 
         // If schemas are identical, no projection needed
         if old_schema.fields() == current_schema.fields() {

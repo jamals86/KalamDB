@@ -228,6 +228,45 @@ impl SchemaRegistry {
         Ok(schema)
     }
 
+    /// Get Arrow schema for a specific table version (for reading old Parquet files)
+    ///
+    /// Uses version-specific cache to avoid repeated schema conversions when reading
+    /// multiple Parquet files written with the same historical schema version.
+    pub fn get_arrow_schema_for_version(
+        &self,
+        table_id: &TableId,
+        schema_version: u32,
+    ) -> Result<Arc<arrow::datatypes::Schema>, KalamDbError> {
+        let version_id = TableVersionId::versioned(table_id.clone(), schema_version);
+
+        // Fast path: check version cache
+        if let Some(cached) = self.get_version(&version_id) {
+            return cached.arrow_schema();
+        }
+
+        // Slow path: load from versioned tables store and cache
+        let table_def = crate::app_context::AppContext::get()
+            .system_tables()
+            .tables()
+            .get_version(table_id, schema_version)
+            .map_err(|e| KalamDbError::Other(format!("Failed to retrieve schema version {}: {}", schema_version, e)))?
+            .ok_or_else(|| {
+                KalamDbError::Other(format!(
+                    "Schema version {} not found for table {}",
+                    schema_version, table_id
+                ))
+            })?;
+
+        // Create cached data and compute arrow schema
+        let cached_data = CachedTableData::new(Arc::new(table_def));
+        let arrow_schema = cached_data.arrow_schema()?;
+
+        // Cache for future lookups
+        self.insert_version(version_id, Arc::new(cached_data));
+
+        Ok(arrow_schema)
+    }
+
     /// Get Bloom filter column names for a table (PRIMARY KEY columns + _seq)
     pub fn get_bloom_filter_columns(
         &self,

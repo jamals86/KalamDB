@@ -2,8 +2,6 @@
 
 use crate::app_context::AppContext;
 use crate::error::KalamDbError;
-use crate::error_extensions::KalamDbResultExt;
-use crate::schema_registry::arrow_schema::ArrowSchemaWithOptions;
 use crate::sql::executor::handlers::typed::TypedStatementHandler;
 use crate::sql::executor::helpers::table_registration::{
     register_shared_table_provider, register_stream_table_provider, register_user_table_provider,
@@ -289,13 +287,6 @@ impl TypedStatementHandler<AlterTableStatement> for AlterTableHandler {
             }
         }
 
-        // Serialize new Arrow schema & bump version
-        let arrow_schema = table_def
-            .to_arrow_schema()
-            .into_schema_error("Arrow conversion failed")?;
-        let _schema_json = ArrowSchemaWithOptions::new(arrow_schema.clone())
-            .to_json_string()
-            .into_schema_error("Failed to serialize Arrow schema")?;
         let change_desc =
             change_desc_opt.expect("ALTER TABLE operation must set change description");
         
@@ -340,10 +331,13 @@ impl TypedStatementHandler<AlterTableStatement> for AlterTableHandler {
             registry.insert(table_id.clone(), Arc::new(new_data));
         }
 
+        // Get arrow schema from cache (memoized in CachedTableData) instead of to_arrow_schema()
+        let arrow_schema = registry.get_arrow_schema(&table_id)?;
+
         // Unregister old provider first to ensure DataFusion catalog is updated
         unregister_table_provider(&self.app_context, &table_id)?;
 
-        // Re-register provider to update schema in DataFusion
+        // Re-register provider to update schema in DataFusion (using cached arrow schema)
         match table_def.table_type {
             TableType::User => {
                 register_user_table_provider(&self.app_context, &table_id, arrow_schema)?;
