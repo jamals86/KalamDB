@@ -2,6 +2,7 @@ use crate::error::KalamDbError;
 use datafusion::catalog::Session;
 use datafusion::logical_expr::{Expr, Operator};
 use datafusion::scalar::ScalarValue;
+use kalamdb_commons::constants::SystemColumnNames;
 use kalamdb_commons::ids::SeqId;
 use kalamdb_commons::models::{Role, UserId};
 use once_cell::sync::Lazy;
@@ -21,7 +22,7 @@ pub fn extract_seq_bounds_from_filter(expr: &Expr) -> (Option<SeqId>, Option<Seq
                     // Convert to range: since_seq = X-1 (exclusive), until_seq = X (inclusive)
                     // This matches only rows where _seq == X
                     if let Expr::Column(col) = &*binary.left {
-                        if col.name == "_seq" {
+                        if col.name == SystemColumnNames::SEQ {
                             if let Expr::Literal(ScalarValue::Int64(Some(val)), _) = &*binary.right
                             {
                                 // since_seq is exclusive (>), so X-1 means only X and above
@@ -35,7 +36,7 @@ pub fn extract_seq_bounds_from_filter(expr: &Expr) -> (Option<SeqId>, Option<Seq
                 Operator::Gt | Operator::GtEq => {
                     // Handle _seq > X or _seq >= X
                     if let Expr::Column(col) = &*binary.left {
-                        if col.name == "_seq" {
+                        if col.name == SystemColumnNames::SEQ {
                             if let Expr::Literal(ScalarValue::Int64(Some(val)), _) = &*binary.right
                             {
                                 let seq_val = if binary.op == Operator::Gt {
@@ -52,7 +53,7 @@ pub fn extract_seq_bounds_from_filter(expr: &Expr) -> (Option<SeqId>, Option<Seq
                 Operator::Lt | Operator::LtEq => {
                     // Handle _seq < X or _seq <= X
                     if let Expr::Column(col) = &*binary.left {
-                        if col.name == "_seq" {
+                        if col.name == SystemColumnNames::SEQ {
                             if let Expr::Literal(ScalarValue::Int64(Some(val)), _) = &*binary.right
                             {
                                 let seq_val = if binary.op == Operator::Lt {

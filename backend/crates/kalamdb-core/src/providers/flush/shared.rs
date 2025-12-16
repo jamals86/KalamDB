@@ -5,28 +5,33 @@
 
 use super::base::{FlushJobResult, FlushMetadata, TableFlush};
 use crate::error::KalamDbError;
+use crate::error_extensions::KalamDbResultExt;
 use crate::live_query::{ChangeNotification, LiveQueryManager};
 use crate::manifest::{FlushManifestHelper, ManifestCacheService, ManifestService};
 use crate::providers::arrow_json_conversion::json_rows_to_arrow_batch;
+use crate::app_context::AppContext;
 use crate::schema_registry::SchemaRegistry;
-use crate::storage::ParquetWriter;
+use crate::storage::write_parquet_to_storage_sync;
 use datafusion::arrow::datatypes::SchemaRef;
 use datafusion::arrow::record_batch::RecordBatch;
 use datafusion::scalar::ScalarValue;
-use kalamdb_commons::models::{Row, TableId, UserId};
+use kalamdb_commons::constants::SystemColumnNames;
+use kalamdb_commons::models::{Row, StorageId, TableId, UserId};
 use kalamdb_commons::{NamespaceId, TableName};
 use kalamdb_store::entity_store::EntityStore;
 use kalamdb_tables::{SharedTableIndexedStore, SharedTableRow};
-use std::path::PathBuf;
 use std::sync::Arc;
 
 /// Shared table flush job
+///
+/// Flushes shared table data to Parquet files. All rows are written to a single
+/// Parquet file per flush operation (no user partitioning like user tables).
 pub struct SharedTableFlushJob {
     store: Arc<SharedTableIndexedStore>,
     table_id: Arc<TableId>,
-    schema: SchemaRef,                                 //TODO: needed?
-    unified_cache: Arc<SchemaRegistry>,                //TODO: We have AppContext now
-    live_query_manager: Option<Arc<LiveQueryManager>>, //TODO: We can pass AppContext and has live_query_manager there
+    schema: SchemaRef,
+    unified_cache: Arc<SchemaRegistry>,
+    live_query_manager: Option<Arc<LiveQueryManager>>,
     manifest_helper: FlushManifestHelper,
 }
 
@@ -65,6 +70,16 @@ impl SharedTableFlushJob {
         self.table_id.table_name()
     }
 
+    /// Get current schema version for the table
+    fn get_schema_version(&self) -> u32 {
+        self.unified_cache
+            .get_table_definition(&self.table_id)
+            .ok()
+            .flatten()
+            .map(|def| def.schema_version)
+            .unwrap_or(1)
+    }
+
     /// Generate batch filename using manifest max_batch (T115)
     /// Returns (batch_number, filename)
     fn generate_batch_filename(&self) -> Result<(u64, String), KalamDbError> {
@@ -83,7 +98,7 @@ impl SharedTableFlushJob {
     fn rows_to_record_batch(&self, rows: &[(Vec<u8>, Row)]) -> Result<RecordBatch, KalamDbError> {
         let arrow_rows: Vec<Row> = rows.iter().map(|(_, row)| row.clone()).collect();
         json_rows_to_arrow_batch(&self.schema, arrow_rows)
-            .map_err(|e| KalamDbError::Other(format!("Failed to build RecordBatch: {}", e)))
+            .into_kalamdb_error("Failed to build RecordBatch")
     }
 
     /// Delete flushed rows from RocksDB after successful Parquet write
@@ -91,7 +106,7 @@ impl SharedTableFlushJob {
         let mut parsed_keys = Vec::new();
         for key_bytes in keys {
             let key = kalamdb_commons::ids::SharedTableRowId::from_bytes(key_bytes)
-                .map_err(|e| KalamDbError::InvalidOperation(format!("Invalid key bytes: {}", e)))?;
+                .into_invalid_operation("Invalid key bytes")?;
             parsed_keys.push(key);
         }
 
@@ -104,7 +119,7 @@ impl SharedTableFlushJob {
         // to ensure both the entity AND its index entries are removed atomically.
         for key in &parsed_keys {
             self.store.delete(key)
-                .map_err(|e| KalamDbError::Other(format!("Failed to delete flushed row: {}", e)))?;
+                .into_kalamdb_error("Failed to delete flushed row")?;
         }
 
         log::debug!("Deleted {} flushed rows from storage", parsed_keys.len());
@@ -120,35 +135,25 @@ impl TableFlush for SharedTableFlushJob {
             self.table_name().as_str()
         );
 
-        // STEP 1: Scan rows in batches to avoid loading all into memory at once
-        const BATCH_SIZE: usize = 10000;
-
+        use super::base::{config, helpers, FlushDedupStats};
         use std::collections::HashMap;
 
         // Get primary key field name from schema
-        let pk_field = self
-            .schema
-            .fields()
-            .iter()
-            .find(|f| !f.name().starts_with('_'))
-            .map(|f| f.name().clone())
-            .unwrap_or_else(|| "id".to_string());
-
+        let pk_field = helpers::extract_pk_field_name(&self.schema);
         log::debug!("📊 [FLUSH DEDUP] Using primary key field: {}", pk_field);
 
         // Map: pk_value -> (key_bytes, row, _seq)
         let mut latest_versions: HashMap<String, (Vec<u8>, SharedTableRow, i64)> = HashMap::new();
         // Track ALL keys to delete (including old versions)
         let mut all_keys_to_delete: Vec<Vec<u8>> = Vec::new();
-        let mut deleted_count = 0;
-        let mut rows_before_dedup = 0;
+        let mut stats = FlushDedupStats::default();
 
         // Batched scan with cursor
         let mut cursor: Option<Vec<u8>> = None;
         loop {
             let batch = self
                 .store
-                .scan_limited_with_prefix_and_start(None, cursor.as_deref(), BATCH_SIZE)
+                .scan_limited_with_prefix_and_start(None, cursor.as_deref(), config::BATCH_SIZE)
                 .map_err(|e| {
                     log::error!(
                         "❌ Failed to scan rows for shared table={}.{}: {}",
@@ -169,15 +174,11 @@ impl TableFlush for SharedTableFlushJob {
                 cursor.as_ref().map(|c| c.len())
             );
 
-            // Update cursor for next batch (last key + 1 byte to skip it)
-            cursor = batch.last().map(|(key, _)| {
-                let mut next = key.clone();
-                next.push(0);
-                next
-            });
+            // Update cursor for next batch
+            cursor = batch.last().map(|(key, _)| helpers::advance_cursor(key));
 
             let batch_len = batch.len();
-            rows_before_dedup += batch_len;
+            stats.rows_before_dedup += batch_len;
 
             for (key_bytes, row) in batch {
                 // Track ALL keys for deletion (before dedup)
@@ -196,7 +197,7 @@ impl TableFlush for SharedTableFlushJob {
 
                 // Track deleted rows
                 if row._deleted {
-                    deleted_count += 1;
+                    stats.deleted_count += 1;
                 }
 
                 // Keep MAX(_seq) per pk_value
@@ -213,56 +214,37 @@ impl TableFlush for SharedTableFlushJob {
             }
 
             // Check if we got fewer rows than batch size (end of data)
-            if batch_len < BATCH_SIZE {
+            if batch_len < config::BATCH_SIZE {
                 break;
             }
         }
 
-        log::info!(
-            "📊 [FLUSH DEDUP] Scanned {} total rows from hot storage (table={}.{})",
-            rows_before_dedup,
-            self.namespace_id().as_str(),
-            self.table_name().as_str()
-        );
-
-        let rows_after_dedup = latest_versions.len();
-        let dedup_ratio = if rows_before_dedup > 0 {
-            (rows_before_dedup - rows_after_dedup) as f64 / rows_before_dedup as f64 * 100.0
-        } else {
-            0.0
-        };
-
-        log::info!("📊 [FLUSH DEDUP] Version resolution complete: {} rows → {} unique (dedup: {:.1}%, deleted: {})",
-                   rows_before_dedup, rows_after_dedup, dedup_ratio, deleted_count);
+        stats.rows_after_dedup = latest_versions.len();
 
         // STEP 2: Filter out deleted rows (tombstones) and convert to Rows
         let mut rows: Vec<(Vec<u8>, Row)> = Vec::new();
-        let mut tombstones_filtered = 0;
 
         for (_pk_value, (key_bytes, row, _seq)) in latest_versions {
             // Skip soft-deleted rows (tombstones)
             if row._deleted {
-                tombstones_filtered += 1;
+                stats.tombstones_filtered += 1;
                 continue;
             }
 
             let mut row_data = row.fields.clone();
             row_data.values.insert(
-                "_seq".to_string(),
+                SystemColumnNames::SEQ.to_string(),
                 ScalarValue::Int64(Some(row._seq.as_i64())),
             );
             row_data
                 .values
-                .insert("_deleted".to_string(), ScalarValue::Boolean(Some(false)));
+                .insert(SystemColumnNames::DELETED.to_string(), ScalarValue::Boolean(Some(false)));
 
             rows.push((key_bytes, row_data));
         }
 
-        log::info!(
-            "📊 [FLUSH DEDUP] Final: {} rows to flush ({} tombstones filtered)",
-            rows.len(),
-            tombstones_filtered
-        );
+        // Log dedup statistics
+        stats.log_summary(self.namespace_id().as_str(), self.table_name().as_str());
 
         // If no rows to flush, return early
         if rows.is_empty() {
@@ -291,17 +273,33 @@ impl TableFlush for SharedTableFlushJob {
 
         // T114-T115: Generate batch filename using manifest (sequential numbering)
         let (batch_number, batch_filename) = self.generate_batch_filename()?;
-        let full_path = self
+        let full_dir = self
             .unified_cache
             .get_storage_path(&self.table_id, None, None)?;
-        let table_dir = PathBuf::from(full_path);
-        let output_path = table_dir.join(&batch_filename);
+        let destination_path = if full_dir.ends_with('/') {
+            format!("{}{}", full_dir, batch_filename)
+        } else {
+            format!("{}/{}", full_dir, batch_filename)
+        };
 
-        // Ensure directory exists
-        if let Some(parent) = output_path.parent() {
-            std::fs::create_dir_all(parent)
-                .map_err(|e| KalamDbError::Other(format!("Failed to create directory: {}", e)))?;
-        }
+        let app_ctx = AppContext::get();
+        let cached = self
+            .unified_cache
+            .get(&self.table_id)
+            .ok_or_else(|| KalamDbError::TableNotFound(format!("Table not found: {}", self.table_id)))?;
+
+        let storage_id = cached.storage_id.clone().unwrap_or_else(StorageId::local);
+        let storage = app_ctx
+            .system_tables()
+            .storages()
+            .get_storage(&storage_id)
+            .into_kalamdb_error("Failed to load storage")?
+            .ok_or_else(|| {
+                KalamDbError::InvalidOperation(format!(
+                    "Storage '{}' not found",
+                    storage_id.as_str()
+                ))
+            })?;
 
         // Extract PRIMARY KEY columns from TableDefinition for Bloom filter optimization (FR-054, FR-055)
         // Fetch once per flush job instead of per-batch for efficiency
@@ -314,7 +312,7 @@ impl TableFlush for SharedTableFlushJob {
                     self.table_id,
                     e
                 );
-                vec!["_seq".to_string()]
+                vec![SystemColumnNames::SEQ.to_string()]
             });
 
         log::debug!(
@@ -325,30 +323,32 @@ impl TableFlush for SharedTableFlushJob {
         // Write to Parquet with Bloom filters on PRIMARY KEY + _seq
         log::debug!(
             "📝 Writing Parquet file: path={}, rows={}",
-            output_path.display(),
+            destination_path,
             rows_count
         );
-        let writer = ParquetWriter::new(output_path.to_str().unwrap());
-        writer.write_with_bloom_filter(
+        let result = write_parquet_to_storage_sync(
+            &storage,
+            &destination_path,
             self.schema.clone(),
             vec![batch.clone()],
             Some(bloom_filter_columns.clone()),
-        )?;
+        )
+        .into_kalamdb_error("Filestore error")?;
 
         log::info!(
             "✅ Flushed {} rows for shared table={}.{} to {}",
             rows_count,
             self.namespace_id().as_str(),
             self.table_name().as_str(),
-            output_path.display()
+            destination_path
         );
 
-        // Get file size
-        let size_bytes = std::fs::metadata(&output_path)
-            .map(|m| m.len())
-            .unwrap_or(0);
+        let size_bytes = result.size_bytes;
 
         // Update manifest and cache using helper (with row-group stats)
+        // Note: For remote storage, we don't have a local path; pass destination_path for stats
+        // Phase 16: Include schema version to link Parquet file to specific schema
+        let schema_version = self.get_schema_version();
         self.manifest_helper.update_manifest_after_flush(
             self.namespace_id(),
             self.table_name(),
@@ -356,10 +356,11 @@ impl TableFlush for SharedTableFlushJob {
             None,
             batch_number,
             batch_filename.clone(),
-            &output_path,
+            &std::path::PathBuf::from(&destination_path),
             &batch,
             size_bytes,
             &bloom_filter_columns,
+            schema_version,
         )?;
 
         // Delete ALL flushed rows from RocksDB (including old versions)
@@ -370,7 +371,7 @@ impl TableFlush for SharedTableFlushJob {
         );
         self.delete_flushed_rows(&all_keys_to_delete)?;
 
-        let parquet_path = output_path.to_string_lossy().to_string();
+        let parquet_path = destination_path;
 
         // Send flush notification if LiveQueryManager configured
         if let Some(manager) = &self.live_query_manager {

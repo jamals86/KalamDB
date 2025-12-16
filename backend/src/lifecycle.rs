@@ -59,7 +59,7 @@ pub async fn bootstrap(
     // sync_writes=false (default) gives 10-100x better write throughput
     // WAL is still enabled so data is safe from crashes (only ~1s of data could be lost)
     let backend = Arc::new(RocksDBBackend::with_options(
-        db.clone(),
+        db,
         config.storage.rocksdb.sync_writes,
         config.storage.rocksdb.disable_wal,
     ));
@@ -75,7 +75,7 @@ pub async fn bootstrap(
         backend.clone(),
         kalamdb_commons::NodeId::new(config.server.node_id.clone()),
         config.storage.default_storage_path.clone(),
-        config.clone(), // Pass ServerConfig to AppContext for centralized access
+        config.clone(), // ServerConfig needs to be cloned for Arc storage in AppContext
     );
     info!(
         "AppContext initialized with all stores, managers, registries, and providers ({:.2}ms)",
@@ -138,11 +138,12 @@ pub async fn bootstrap(
             storage_id: StorageId::from("local"),
             storage_name: "Local Filesystem".to_string(),
             description: Some("Default local filesystem storage".to_string()),
-            storage_type: "filesystem".to_string(),
-            base_directory: config.storage.default_storage_path.clone(),
+            storage_type: kalamdb_commons::models::StorageType::Filesystem,
+            base_directory: config.storage.default_storage_path.clone(), // Need clone for Storage struct
             credentials: None,
-            shared_tables_template: config.storage.shared_tables_template.clone(),
-            user_tables_template: config.storage.user_tables_template.clone(),
+            config_json: None,
+            shared_tables_template: config.storage.shared_tables_template.clone(), // Need clone for Storage struct
+            user_tables_template: config.storage.user_tables_template.clone(), // Need clone for Storage struct
             created_at: now,
             updated_at: now,
         };

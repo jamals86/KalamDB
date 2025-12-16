@@ -22,6 +22,66 @@ pub const TEST_TIMEOUT: Duration = Duration::from_secs(30);
 /// Default password for the root user
 pub const DEFAULT_ROOT_PASSWORD: &str = "";
 
+/// Extract a value from Arrow JSON format
+///
+/// Arrow JSON format wraps values in type objects like `{"Utf8": "value"}` or `{"Int64": 123}`.
+/// This helper extracts the actual value, supporting common types.
+pub fn extract_arrow_value(value: &serde_json::Value) -> Option<serde_json::Value> {
+    use serde_json::Value;
+    
+    // Check if it's already a simple value
+    if value.is_string() || value.is_number() || value.is_boolean() || value.is_null() {
+        return Some(value.clone());
+    }
+    
+    // Check for Arrow typed objects
+    if let Some(obj) = value.as_object() {
+        // String types
+        if let Some(v) = obj.get("Utf8") {
+            return Some(v.clone());
+        }
+        // Integer types
+        if let Some(v) = obj.get("Int64") {
+            return Some(v.clone());
+        }
+        if let Some(v) = obj.get("Int32") {
+            return Some(v.clone());
+        }
+        if let Some(v) = obj.get("Int16") {
+            return Some(v.clone());
+        }
+        // Float types
+        if let Some(v) = obj.get("Float64") {
+            return Some(v.clone());
+        }
+        if let Some(v) = obj.get("Float32") {
+            return Some(v.clone());
+        }
+        // Boolean
+        if let Some(v) = obj.get("Boolean") {
+            return Some(v.clone());
+        }
+        // Decimal
+        if let Some(v) = obj.get("Decimal128") {
+            return Some(v.clone());
+        }
+        // Date
+        if let Some(v) = obj.get("Date32") {
+            return Some(v.clone());
+        }
+        // Timestamp
+        if let Some(v) = obj.get("TimestampMicrosecond") {
+            return Some(v.clone());
+        }
+        // FixedSizeBinary (for UUID)
+        if let Some(v) = obj.get("FixedSizeBinary") {
+            return Some(v.clone());
+        }
+    }
+    
+    None
+}
+
 /// Check if the KalamDB server is running
 pub fn is_server_running() -> bool {
     // Simple TCP connection check
@@ -551,6 +611,66 @@ pub fn json_value_as_id(value: &serde_json::Value) -> Option<String> {
     }
 }
 
+/// Extract the actual value from a typed JSON response (ScalarValue format).
+///
+/// The server returns values in typed format like `{"Int64": "42"}` or `{"Utf8": "hello"}`.
+/// This function extracts the inner value, returning it as a simple JSON value.
+///
+/// # Examples
+/// ```ignore
+/// let typed = json!({"Int64": "123"});
+/// assert_eq!(extract_typed_value(&typed), json!("123"));
+///
+/// let simple = json!("hello");
+/// assert_eq!(extract_typed_value(&simple), json!("hello"));
+/// ```
+pub fn extract_typed_value(value: &serde_json::Value) -> serde_json::Value {
+    use serde_json::Value as JsonValue;
+    
+    match value {
+        JsonValue::Object(map) if map.len() == 1 => {
+            // Handle typed ScalarValue format: {"Int64": "42"}, {"Utf8": "hello"}, etc.
+            let (type_name, inner_value) = map.iter().next().unwrap();
+            match type_name.as_str() {
+                "Null" => JsonValue::Null,
+                "Boolean" => inner_value.clone(),
+                "Int8" | "Int16" | "Int32" | "Int64" | "UInt8" | "UInt16" | "UInt32" | "UInt64" => {
+                    // These are stored as strings to preserve precision
+                    inner_value.clone()
+                }
+                "Float32" | "Float64" => inner_value.clone(),
+                "Utf8" | "LargeUtf8" => inner_value.clone(),
+                "Binary" | "LargeBinary" | "FixedSizeBinary" => inner_value.clone(),
+                "Date32" | "Time64Microsecond" => inner_value.clone(),
+                "TimestampMillisecond" | "TimestampMicrosecond" | "TimestampNanosecond" => {
+                    // Timestamp objects have 'value' and optionally 'timezone'
+                    if let Some(obj) = inner_value.as_object() {
+                        if let Some(val) = obj.get("value") {
+                            return val.clone();
+                        }
+                    }
+                    JsonValue::Null
+                }
+                "Decimal128" => {
+                    // Decimal has 'value', 'precision', 'scale'
+                    if let Some(obj) = inner_value.as_object() {
+                        if let Some(val) = obj.get("value") {
+                            return val.clone();
+                        }
+                    }
+                    JsonValue::Null
+                }
+                _ => {
+                    // Fallback for unknown types - return the inner value
+                    inner_value.clone()
+                }
+            }
+        }
+        // Not a typed value, return as-is
+        _ => value.clone(),
+    }
+}
+
 /// Helper to generate unique namespace name
 pub fn generate_unique_namespace(base_name: &str) -> String {
     use std::sync::atomic::{AtomicU64, Ordering};
@@ -804,10 +924,22 @@ pub fn verify_job_completed(
                     .and_then(|arr| arr.first());
 
                 if let Some(row) = row {
-                    let status = row.get("status").and_then(|v| v.as_str()).unwrap_or("");
+                    // Extract status from Arrow JSON format (e.g., {"Utf8": "completed"})
+                    let status = row
+                        .get("status")
+                        .and_then(|v| {
+                            // Check if it's a nested object with Utf8 field
+                            v.get("Utf8").and_then(|s| s.as_str())
+                                .or_else(|| v.as_str()) // Fallback to direct string
+                        })
+                        .unwrap_or("");
+
                     let error_message = row
                         .get("error_message")
-                        .and_then(|v| v.as_str())
+                        .and_then(|v| {
+                            v.get("Utf8").and_then(|s| s.as_str())
+                                .or_else(|| v.as_str())
+                        })
                         .unwrap_or("");
 
                     if status.eq_ignore_ascii_case("completed") {
@@ -818,6 +950,11 @@ pub fn verify_job_completed(
                         return Err(
                             format!("Job {} failed. Error: {}", job_id, error_message).into()
                         );
+                    }
+                } else {
+                    // No row found - print debug info
+                    if start.elapsed().as_secs() % 5 == 0 && start.elapsed().as_millis() % 1000 < 250 {
+                        println!("[DEBUG] Job {} not found in system.jobs", job_id);
                     }
                 }
             }

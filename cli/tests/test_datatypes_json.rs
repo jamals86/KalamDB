@@ -84,20 +84,23 @@ fn test_datatypes_json_preservation() {
     assert!(!rows.is_empty(), "Should return at least one row");
     let row = rows.first().expect("Should have a first row");
 
-    // Verify values and types
+    // Verify values and types (using Arrow JSON format extraction)
 
     // String
     let col_string = row.get("col_string").expect("Missing col_string");
+    let col_string = extract_arrow_value(col_string).expect("Failed to extract col_string");
     assert!(col_string.is_string(), "col_string should be a string");
     assert_eq!(col_string.as_str().unwrap(), "test_string");
 
     // Int
     let col_int = row.get("col_int").expect("Missing col_int");
+    let col_int = extract_arrow_value(col_int).expect("Failed to extract col_int");
     assert!(col_int.is_number(), "col_int should be a number");
     assert_eq!(col_int.as_i64().unwrap(), 123);
 
     // Float
     let col_float = row.get("col_float").expect("Missing col_float");
+    let col_float = extract_arrow_value(col_float).expect("Failed to extract col_float");
     assert!(col_float.is_number(), "col_float should be a number");
     // FLOAT is typically stored as 32-bit and may not round-trip exactly through JSON.
     let actual_float = col_float.as_f64().unwrap();
@@ -111,30 +114,39 @@ fn test_datatypes_json_preservation() {
 
     // Boolean
     let col_bool = row.get("col_bool").expect("Missing col_bool");
+    let col_bool = extract_arrow_value(col_bool).expect("Failed to extract col_bool");
     assert!(col_bool.is_boolean(), "col_bool should be a boolean");
     assert_eq!(col_bool.as_bool().unwrap(), true);
 
     // Timestamp
-    // Timestamp might be returned as string or number depending on implementation
-    // Based on typical JSON serialization of timestamps, it's often an ISO string or epoch
+    // Timestamp is returned as Arrow JSON with TimestampMicrosecond type
     let col_timestamp = row.get("col_timestamp").expect("Missing col_timestamp");
-    // Adjust expectation based on actual behavior. Assuming string for now as it's common.
-    // If it fails, we'll see the output and adjust.
-    if col_timestamp.is_string() {
-        // It might be formatted differently, e.g., with 'T' or 'Z'
+    let col_timestamp = extract_arrow_value(col_timestamp).expect("Failed to extract col_timestamp");
+    
+    // Timestamp is returned as an object with timezone and value fields
+    if let Some(obj) = col_timestamp.as_object() {
+        let value = obj.get("value").expect("Timestamp should have value field");
+        let ts_micros = value.as_i64().expect("Timestamp value should be i64");
+        // Expected: 2023-01-01 12:00:00 UTC = 1672574400 seconds = 1672574400000000 microseconds
+        assert!(
+            ts_micros > 1672574000000000 && ts_micros < 1672575000000000,
+            "Timestamp should be around 2023-01-01 12:00:00 UTC, got: {}",
+            ts_micros
+        );
+    } else if col_timestamp.is_string() {
+        // Fallback: string representation
         let ts_val = col_timestamp.as_str().unwrap();
         assert!(
             ts_val.contains("2023-01-01"),
             "Timestamp should contain date part"
         );
-        assert!(
-            ts_val.contains("12:00:00"),
-            "Timestamp should contain time part"
-        );
     } else if col_timestamp.is_number() {
-        // If it's a number (epoch), we would check that range.
-        // But let's assume string first as SQL usually returns string representation in JSON unless typed otherwise.
-        println!("Timestamp returned as number: {}", col_timestamp);
+        // Fallback: numeric epoch
+        let ts_micros = col_timestamp.as_i64().expect("Timestamp should be i64");
+        assert!(
+            ts_micros > 1672574000000000 && ts_micros < 1672575000000000,
+            "Timestamp should be around 2023-01-01 12:00:00 UTC"
+        );
     } else {
         panic!("Unexpected type for col_timestamp: {:?}", col_timestamp);
     }

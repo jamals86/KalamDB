@@ -21,6 +21,7 @@
 //! ```
 
 use crate::error::KalamDbError;
+use crate::error_extensions::KalamDbResultExt;
 use crate::jobs::executors::{JobContext, JobDecision, JobExecutor, JobParams};
 use crate::providers::flush::{SharedTableFlushJob, TableFlush, UserTableFlushJob};
 use async_trait::async_trait;
@@ -88,26 +89,18 @@ impl JobExecutor for FlushExecutor {
         let schema_registry = app_ctx.schema_registry();
         let live_query_manager = app_ctx.live_query_manager();
 
-        // Get table definition and schema
-        let table_def = schema_registry
-            .get_table_definition(&table_id)?
-            .ok_or_else(|| KalamDbError::NotFound(format!("Table {} not found", table_id)))?;
-        // The authoritative Arrow schema should include system columns already
-        // because SystemColumnsService injected them into the TableDefinition.
-        // Use schema from schema_history if available to avoid stale cache.
-        let schema = if let Some(latest) = table_def.schema_history.last() {
-            crate::schema_registry::arrow_schema::ArrowSchemaWithOptions::from_json_string(
-                &latest.arrow_schema_json,
-            )
-            .map_err(|e| {
-                KalamDbError::Other(format!("Failed to parse Arrow schema from history: {}", e))
-            })?
-            .schema
-        } else {
-            schema_registry.get_arrow_schema(&table_id).map_err(|e| {
-                KalamDbError::NotFound(format!("Arrow schema not found for {}: {}", table_id, e))
-            })?
-        };
+        // // Get table definition and schema
+        // let table_def = schema_registry
+        //     .get_table_definition(&table_id)?
+        //     .ok_or_else(|| KalamDbError::NotFound(format!("Table {} not found", table_id)))?;
+        
+        // Get current Arrow schema from the registry (already includes system columns)
+        let schema = schema_registry.get_arrow_schema(&table_id)
+            .into_kalamdb_error(&format!("Arrow schema not found for {}", table_id))?;
+
+        // Get current schema version for manifest recording
+        // Phase 16: Will be used when writing SegmentMetadata.schema_version
+        // let _current_schema_version = table_def.schema_version;
 
         // Execute flush based on table type
         let result = match table_type {
@@ -152,7 +145,7 @@ impl JobExecutor for FlushExecutor {
 
                 flush_job
                     .execute()
-                    .map_err(|e| KalamDbError::Other(format!("User table flush failed: {}", e)))?
+                    .into_kalamdb_error("User table flush failed")?
             }
             TableType::Shared => {
                 ctx.log_info("Executing SharedTableFlushJob");
@@ -189,7 +182,7 @@ impl JobExecutor for FlushExecutor {
 
                 flush_job
                     .execute()
-                    .map_err(|e| KalamDbError::Other(format!("Shared table flush failed: {}", e)))?
+                    .into_kalamdb_error("Shared table flush failed")?
             }
             TableType::Stream => {
                 ctx.log_info("Stream table flush not yet implemented");

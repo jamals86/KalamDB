@@ -4,6 +4,7 @@
 //! Uses ManifestTableProvider from kalamdb-system for consistent schema.
 
 use crate::error::KalamDbError;
+use crate::error_extensions::KalamDbResultExt;
 use crate::sql::executor::handlers::TypedStatementHandler;
 use crate::sql::executor::models::{ExecutionContext, ExecutionResult, ScalarValue};
 use async_trait::async_trait;
@@ -39,7 +40,7 @@ impl TypedStatementHandler<ShowManifestStatement> for ShowManifestCacheHandler {
 
         let batch = provider
             .scan_to_record_batch()
-            .map_err(|e| KalamDbError::Other(format!("Failed to read manifest cache: {}", e)))?;
+            .into_kalamdb_error("Failed to read manifest cache")?;
 
         let row_count = batch.num_rows();
 

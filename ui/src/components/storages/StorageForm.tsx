@@ -10,8 +10,15 @@ import {
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Textarea } from '@/components/ui/textarea';
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from '@/components/ui/select';
 import { Storage, useStorages } from '@/hooks/useStorages';
-import { Loader2 } from 'lucide-react';
+import { Loader2, HardDrive, Cloud, Database } from 'lucide-react';
 
 interface StorageFormProps {
   open: boolean;
@@ -20,7 +27,118 @@ interface StorageFormProps {
   onSuccess: () => void;
 }
 
-const STORAGE_TYPES = ['filesystem', 's3'] as const;
+type StorageType = 'filesystem' | 's3' | 'gcs' | 'azure';
+
+interface StorageTypeConfig {
+  value: StorageType;
+  label: string;
+  description: string;
+  icon: React.ComponentType<{ className?: string }>;
+  fields: {
+    baseDirectoryLabel: string;
+    baseDirectoryPlaceholder: string;
+    baseDirectoryDescription: string;
+    additionalFields?: Array<{
+      key: string;
+      label: string;
+      placeholder: string;
+      description: string;
+      type?: 'text' | 'password';
+    }>;
+  };
+}
+
+const STORAGE_TYPES: StorageTypeConfig[] = [
+  {
+    value: 'filesystem',
+    label: 'Local Filesystem',
+    description: 'Store data on local or network-attached file systems',
+    icon: HardDrive,
+    fields: {
+      baseDirectoryLabel: 'Base Directory',
+      baseDirectoryPlaceholder: '/var/data/kalamdb/',
+      baseDirectoryDescription: 'Absolute path to the storage directory on the server',
+    },
+  },
+  {
+    value: 's3',
+    label: 'Amazon S3',
+    description: 'Store data in AWS S3 buckets with high durability',
+    icon: Cloud,
+    fields: {
+      baseDirectoryLabel: 'S3 Bucket URI',
+      baseDirectoryPlaceholder: 's3://my-bucket/kalamdb/',
+      baseDirectoryDescription: 'S3 bucket URI (e.g., s3://bucket-name/prefix/)',
+      additionalFields: [
+        {
+          key: 'region',
+          label: 'AWS Region',
+          placeholder: 'us-east-1',
+          description: 'AWS region where the bucket is located',
+        },
+        {
+          key: 'access_key_id',
+          label: 'Access Key ID',
+          placeholder: 'AKIAIOSFODNN7EXAMPLE',
+          description: 'AWS access key ID for authentication',
+        },
+        {
+          key: 'secret_access_key',
+          label: 'Secret Access Key',
+          placeholder: 'wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY',
+          description: 'AWS secret access key for authentication',
+          type: 'password',
+        },
+      ],
+    },
+  },
+  {
+    value: 'gcs',
+    label: 'Google Cloud Storage',
+    description: 'Store data in Google Cloud Storage buckets',
+    icon: Cloud,
+    fields: {
+      baseDirectoryLabel: 'GCS Bucket URI',
+      baseDirectoryPlaceholder: 'gs://my-bucket/kalamdb/',
+      baseDirectoryDescription: 'GCS bucket URI (e.g., gs://bucket-name/prefix/)',
+      additionalFields: [
+        {
+          key: 'service_account_key',
+          label: 'Service Account Key (JSON)',
+          placeholder: '{"type": "service_account", ...}',
+          description: 'Google Cloud service account key in JSON format',
+          type: 'password',
+        },
+      ],
+    },
+  },
+  {
+    value: 'azure',
+    label: 'Azure Blob Storage',
+    description: 'Store data in Microsoft Azure Blob Storage',
+    icon: Database,
+    fields: {
+      baseDirectoryLabel: 'Azure Container URI',
+      baseDirectoryPlaceholder: 'https://myaccount.blob.core.windows.net/container/',
+      baseDirectoryDescription: 'Azure Blob Storage container URI',
+      additionalFields: [
+        {
+          key: 'account_name',
+          label: 'Storage Account Name',
+          placeholder: 'mystorageaccount',
+          description: 'Azure storage account name',
+        },
+        {
+          key: 'account_key',
+          label: 'Account Key',
+          placeholder: 'your-account-key',
+          description: 'Azure storage account key',
+          type: 'password',
+        },
+      ],
+    },
+  },
+];
 
 export function StorageForm({ open, onOpenChange, storage, onSuccess }: StorageFormProps) {
   const { createStorage, updateStorage } = useStorages();
@@ -29,12 +147,13 @@ export function StorageForm({ open, onOpenChange, storage, onSuccess }: StorageF
   
   const [formData, setFormData] = useState({
     storage_id: '',
-    storage_type: 'filesystem' as 'filesystem' | 's3',
+    storage_type: 'filesystem' as StorageType,
     storage_name: '',
     description: '',
     base_directory: '',
     shared_tables_template: '{namespace}/{tableName}/',
     user_tables_template: '{namespace}/{tableName}/{userId}/',
+    config: {} as Record<string, string>, // Additional config fields based on storage type
   });
 
   const isEditing = !!storage;
@@ -45,12 +164,13 @@ export function StorageForm({ open, onOpenChange, storage, onSuccess }: StorageF
       if (storage) {
         setFormData({
           storage_id: storage.storage_id,
-          storage_type: (storage.storage_type as 'filesystem' | 's3') || 'filesystem',
+          storage_type: (storage.storage_type as StorageType) || 'filesystem',
           storage_name: storage.storage_name,
           description: storage.description || '',
           base_directory: storage.base_directory,
           shared_tables_template: storage.shared_tables_template || '{namespace}/{tableName}/',
           user_tables_template: storage.user_tables_template || '{namespace}/{tableName}/{userId}/',
+          config: {},
         });
       } else {
         setFormData({
@@ -61,11 +181,36 @@ export function StorageForm({ open, onOpenChange, storage, onSuccess }: StorageF
           base_directory: '',
           shared_tables_template: '{namespace}/{tableName}/',
           user_tables_template: '{namespace}/{tableName}/{userId}/',
+          config: {},
         });
       }
       setError(null);
     }
   }, [open, storage]);
+
+  // Get current storage type configuration
+  const currentStorageConfig = STORAGE_TYPES.find(t => t.value === formData.storage_type)!;
+
+  // Handle storage type change
+  const handleStorageTypeChange = (value: StorageType) => {
+    setFormData({
+      ...formData,
+      storage_type: value,
+      base_directory: '', // Reset when type changes
+      config: {}, // Reset additional config
+    });
+  };
+
+  // Handle config field change
+  const handleConfigChange = (key: string, value: string) => {
+    setFormData({
+      ...formData,
+      config: {
+        ...formData.config,
+        [key]: value,
+      },
+    });
+  };
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -142,22 +287,36 @@ export function StorageForm({ open, onOpenChange, storage, onSuccess }: StorageF
 
           <div className="space-y-2">
             <label className="text-sm font-medium">Storage Type</label>
-            <select
+            <Select
               value={formData.storage_type}
-              onChange={(e) => setFormData({ 
-                ...formData, 
-                storage_type: e.target.value as 'filesystem' | 's3',
-                base_directory: '' // Reset when type changes
-              })}
+              onValueChange={handleStorageTypeChange}
               disabled={isEditing}
-              className="w-full px-3 py-2 border rounded-md text-sm bg-background"
             >
-              {STORAGE_TYPES.map((type) => (
-                <option key={type} value={type}>
-                  {type === 'filesystem' ? 'Filesystem (Local)' : 'S3 (Cloud)'}
-                </option>
-              ))}
-            </select>
+              <SelectTrigger>
+                <SelectValue placeholder="Select storage type" />
+              </SelectTrigger>
+              <SelectContent>
+                {STORAGE_TYPES.map((storageType) => {
+                  const Icon = storageType.icon;
+                  return (
+                    <SelectItem key={storageType.value} value={storageType.value}>
+                      <div className="flex items-start gap-3 py-1">
+                        <Icon className="h-5 w-5 mt-0.5 text-muted-foreground" />
+                        <div className="flex-1">
+                          <div className="font-medium">{storageType.label}</div>
+                          <div className="text-xs text-muted-foreground">
+                            {storageType.description}
+                          </div>
+                        </div>
+                      </div>
+                    </SelectItem>
+                  );
+                })}
+              </SelectContent>
+            </Select>
+            <p className="text-xs text-muted-foreground">
+              Choose the backend storage system (cannot be changed after creation)
+            </p>
           </div>
 
           <div className="space-y-2">
@@ -181,22 +340,44 @@ export function StorageForm({ open, onOpenChange, storage, onSuccess }: StorageF
 
           <div className="space-y-2">
             <label className="text-sm font-medium">
-              {formData.storage_type === 'filesystem' ? 'Base Directory' : 'S3 Bucket'}
+              {currentStorageConfig.fields.baseDirectoryLabel}
             </label>
             <Input
               value={formData.base_directory}
               onChange={(e) => setFormData({ ...formData, base_directory: e.target.value })}
               disabled={isEditing}
-              placeholder={formData.storage_type === 'filesystem' 
-                ? '/var/data/kalamdb/' 
-                : 's3://my-bucket/kalamdb/'}
+              placeholder={currentStorageConfig.fields.baseDirectoryPlaceholder}
             />
             <p className="text-xs text-muted-foreground">
-              {formData.storage_type === 'filesystem' 
-                ? 'Absolute path to the storage directory'
-                : 'S3 bucket URI (e.g., s3://bucket-name/prefix/)'}
+              {currentStorageConfig.fields.baseDirectoryDescription}
             </p>
           </div>
+
+          {/* Dynamic additional fields based on storage type */}
+          {currentStorageConfig.fields.additionalFields?.map((field) => (
+            <div key={field.key} className="space-y-2">
+              <label className="text-sm font-medium">{field.label}</label>
+              {field.type === 'password' || field.key.includes('key') || field.key.includes('secret') ? (
+                <Textarea
+                  value={formData.config[field.key] || ''}
+                  onChange={(e) => handleConfigChange(field.key, e.target.value)}
+                  placeholder={field.placeholder}
+                  rows={3}
+                  className="font-mono text-xs"
+                />
+              ) : (
+                <Input
+                  value={formData.config[field.key] || ''}
+                  onChange={(e) => handleConfigChange(field.key, e.target.value)}
+                  placeholder={field.placeholder}
+                  type={field.type || 'text'}
+                />
+              )}
+              <p className="text-xs text-muted-foreground">
+                {field.description}
+              </p>
+            </div>
+          ))}
 
           <div className="space-y-2">
             <label className="text-sm font-medium">Shared Tables Template</label>

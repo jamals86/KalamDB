@@ -2,6 +2,7 @@
 
 use crate::app_context::AppContext;
 use crate::error::KalamDbError;
+use crate::error_extensions::KalamDbResultExt;
 use crate::sql::executor::handlers::typed::TypedStatementHandler;
 use crate::sql::executor::models::{ExecutionContext, ExecutionResult, ScalarValue};
 use datafusion::arrow::array::{ArrayRef, RecordBatch, StringArray, UInt64Array};
@@ -78,7 +79,7 @@ impl TypedStatementHandler<ShowTableStatsStatement> for ShowStatsHandler {
                 Arc::new(UInt64Array::from(vec![memory_bytes])) as ArrayRef,
             ],
         )
-        .map_err(|e| KalamDbError::Other(format!("Arrow error: {}", e)))?;
+        .into_arrow_error()?;
 
         // Log query operation
         let duration = start_time.elapsed().as_secs_f64() * 1000.0;

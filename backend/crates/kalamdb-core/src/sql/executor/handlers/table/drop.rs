@@ -5,6 +5,7 @@
 
 use crate::app_context::AppContext;
 use crate::error::KalamDbError;
+use crate::error_extensions::KalamDbResultExt;
 use crate::jobs::executors::cleanup::{CleanupOperation, CleanupParams, StorageCleanupDetails};
 use crate::schema_registry::SchemaRegistry;
 use crate::sql::executor::handlers::typed::TypedStatementHandler;
@@ -209,7 +210,7 @@ pub async fn cleanup_parquet_files_internal(
         &storage.relative_path_template,
         table_type,
     )
-    .map_err(|e| KalamDbError::Other(format!("Filestore delete failed: {}", e)))?;
+    .into_kalamdb_error("Filestore delete failed")?;
 
     log::info!(
         "[CleanupHelper] Freed {} bytes from Parquet files",

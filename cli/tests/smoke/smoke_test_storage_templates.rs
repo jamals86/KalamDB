@@ -373,17 +373,27 @@ fn fetch_user_id(username: &str) -> String {
     if rows.is_empty() {
         panic!("User '{}' not found in system.users", username);
     }
-    rows[0]
-        .get("user_id")
-        .and_then(JsonValue::as_str)
-        .map(|s| s.to_string())
-        .unwrap_or_else(|| {
-            panic!(
-                "Row for user '{}' missing user_id field: {}",
-                username,
-                rows[0].to_string()
-            )
-        })
+    {
+        let value = rows[0]
+            .get("user_id")
+            .map(extract_typed_value)
+            .unwrap_or_else(|| {
+                panic!(
+                    "Row for user '{}' missing user_id field: {}",
+                    username,
+                    rows[0].to_string()
+                )
+            });
+        value.as_str()
+            .map(|s| s.to_string())
+            .unwrap_or_else(|| {
+                panic!(
+                    "Row for user '{}' user_id is not a string: {:?}",
+                    username,
+                    value
+                )
+            })
+    }
 }
 
 fn wait_for_parquet_files(dir: &Path, timeout: Duration) -> Option<Vec<PathBuf>> {
@@ -450,10 +460,11 @@ fn assert_storage_registered(storage_id: &str, expected_base_dir: &str) {
         rows_as_debug_string(&rows)
     );
     let storage = &rows[0];
-    let base_dir = storage
+    let base_dir_value = storage
         .get("base_directory")
-        .and_then(JsonValue::as_str)
-        .unwrap_or("");
+        .map(extract_typed_value)
+        .unwrap_or(JsonValue::Null);
+    let base_dir = base_dir_value.as_str().unwrap_or("");
     assert_eq!(
         base_dir, expected_base_dir,
         "Storage '{}' base_directory mismatch (expected {}, got {})",
@@ -475,10 +486,11 @@ fn assert_table_storage(namespace: &str, table_name: &str, expected_storage_id: 
         table_name,
         rows_as_debug_string(&rows)
     );
-    let options_raw = rows[0]
+    let options_value = rows[0]
         .get("options")
-        .and_then(JsonValue::as_str)
-        .unwrap_or("");
+        .map(extract_typed_value)
+        .unwrap_or(JsonValue::Null);
+    let options_raw = options_value.as_str().unwrap_or("");
     let options_json: JsonValue = serde_json::from_str(options_raw).unwrap_or_else(|err| {
         panic!(
             "Failed to parse options JSON for table {}.{}: {}\n{}",

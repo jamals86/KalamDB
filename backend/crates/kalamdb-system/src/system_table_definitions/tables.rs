@@ -78,9 +78,20 @@ pub fn tables_table_definition() -> TableDefinition {
             ColumnDefault::None,
             Some("Current schema version number".to_string()),
         ),
+        // New: expose column definitions as JSON
+        ColumnDefinition::new(
+            "columns",
+            7,
+            KalamDataType::Text, // Stored as JSON array
+            false,
+            false,
+            false,
+            ColumnDefault::None,
+            Some("Column definitions as JSON array".to_string()),
+        ),
         ColumnDefinition::new(
             "table_comment",
-            7,
+            8,
             KalamDataType::Text,
             true, // NULLABLE
             false,
@@ -90,7 +101,7 @@ pub fn tables_table_definition() -> TableDefinition {
         ),
         ColumnDefinition::new(
             "updated_at",
-            8,
+            9,
             KalamDataType::Timestamp,
             false,
             false,
@@ -101,7 +112,7 @@ pub fn tables_table_definition() -> TableDefinition {
         // New in Phase 11: expose serialized TableOptions for visibility via SELECT * FROM system.tables
         ColumnDefinition::new(
             "options",
-            9,
+            10,
             KalamDataType::Text, // Stored as JSON string (variant-aware)
             true,                // NULLABLE for forward compatibility (older rows may not have it)
             false,
@@ -112,13 +123,24 @@ pub fn tables_table_definition() -> TableDefinition {
         // New in Phase 16: expose access_level for Shared tables
         ColumnDefinition::new(
             "access_level",
-            10,
+            11,
             KalamDataType::Text,
             true, // NULLABLE (only for Shared tables)
             false,
             false,
             ColumnDefault::None,
             Some("Access level for Shared tables: public, private, protected".to_string()),
+        ),
+        // Phase 16: is_latest flag for schema versioning
+        ColumnDefinition::new(
+            "is_latest",
+            12,
+            KalamDataType::Boolean,
+            false,
+            false,
+            false,
+            ColumnDefault::None,
+            Some("Whether this is the latest version of the table schema".to_string()),
         ),
     ];
 
@@ -133,75 +155,3 @@ pub fn tables_table_definition() -> TableDefinition {
     .expect("Failed to create system.tables table definition")
 }
 
-/// Create TableDefinition for system.table_schemas table (new in Phase 15)
-///
-/// Schema:
-/// - table_id TEXT PRIMARY KEY (composite: namespace_id:table_name)
-/// - schema_version INT NOT NULL
-/// - table_definition JSON NOT NULL
-/// - created_at TIMESTAMP NOT NULL
-/// - updated_at TIMESTAMP NOT NULL
-pub fn table_schemas_table_definition() -> TableDefinition {
-    let columns = vec![
-        ColumnDefinition::new(
-            "table_id",
-            1,
-            KalamDataType::Text,
-            false,
-            true,
-            false,
-            ColumnDefault::None,
-            Some("Table identifier: namespace_id:table_name".to_string()),
-        ),
-        ColumnDefinition::new(
-            "schema_version",
-            2,
-            KalamDataType::Int,
-            false,
-            false,
-            false,
-            ColumnDefault::None,
-            Some("Current schema version number".to_string()),
-        ),
-        ColumnDefinition::new(
-            "table_definition",
-            3,
-            KalamDataType::Json,
-            false,
-            false,
-            false,
-            ColumnDefault::None,
-            Some("Complete TableDefinition JSON including columns and options".to_string()),
-        ),
-        ColumnDefinition::new(
-            "created_at",
-            4,
-            KalamDataType::Timestamp,
-            false,
-            false,
-            false,
-            ColumnDefault::None,
-            Some("Schema creation timestamp".to_string()),
-        ),
-        ColumnDefinition::new(
-            "updated_at",
-            5,
-            KalamDataType::Timestamp,
-            false,
-            false,
-            false,
-            ColumnDefault::None,
-            Some("Last schema update timestamp".to_string()),
-        ),
-    ];
-
-    TableDefinition::new(
-        NamespaceId::system(),
-        TableName::new("table_schemas"),
-        TableType::System,
-        columns,
-        TableOptions::system(),
-        Some("Table schema definitions with versioning".to_string()),
-    )
-    .expect("Failed to create system.table_schemas table definition")
-}

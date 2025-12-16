@@ -101,6 +101,7 @@ pub mod compression;
 mod normalize;
 pub mod seq_id;
 pub mod timeouts;
+pub mod timestamp;
 
 // Credential storage (available in both native and WASM)
 pub mod credentials;
@@ -130,10 +131,13 @@ pub use error::{KalamLinkError, Result};
 pub use live::LiveConnection;
 pub use models::{
     ChangeEvent, ConnectionOptions, ErrorDetail, HealthCheckResponse, HttpVersion, QueryRequest,
-    QueryResponse, SubscriptionConfig, SubscriptionOptions,
+    QueryResponse, SerializationMode, SubscriptionConfig, SubscriptionOptions,
 };
 pub use seq_id::SeqId;
 pub use timeouts::{KalamLinkTimeouts, KalamLinkTimeoutsBuilder};
+pub use timestamp::{
+    TimestampFormat, TimestampFormatter, TimestampFormatterConfig, now, parse_iso8601,
+};
 
 #[cfg(feature = "tokio-runtime")]
 pub use query::QueryExecutor;

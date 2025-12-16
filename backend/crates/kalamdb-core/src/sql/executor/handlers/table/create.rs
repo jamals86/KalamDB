@@ -138,9 +138,10 @@ mod tests {
                 storage_id: storage_id.clone(),
                 storage_name: "Local Storage".to_string(),
                 description: Some("Default local storage".to_string()),
-                storage_type: "local".to_string(),
+                storage_type: kalamdb_commons::models::StorageType::Filesystem,
                 base_directory: "/tmp/kalamdb_test".to_string(),
                 credentials: None,
+                config_json: None,
                 shared_tables_template: "shared/{namespace}/{table}".to_string(),
                 user_tables_template: "user/{namespace}/{table}/{userId}".to_string(),
                 created_at: chrono::Utc::now().timestamp_millis(),
@@ -264,9 +265,6 @@ mod tests {
 
         let result = handler.execute(stmt, vec![], &ctx).await;
 
-        if let Err(e) = &result {
-            eprintln!("CREATE TABLE ERROR: {:?}", e);
-        }
         assert!(result.is_ok(), "CREATE TABLE failed: {:?}", result);
         if let Ok(ExecutionResult::Success { message }) = result {
             assert!(message.contains("created successfully"));

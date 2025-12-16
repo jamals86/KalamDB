@@ -647,6 +647,58 @@ where
         Ok(iter.into_iter().next().is_some())
     }
 
+    /// Batch check for existence of multiple prefixes in an index.
+    ///
+    /// **Performance**: More efficient than N individual `exists_by_index` calls
+    /// when checking multiple PKs for uniqueness validation. Uses a single scan
+    /// with the common prefix and builds a HashSet of existing values.
+    ///
+    /// # Arguments
+    ///
+    /// * `index_idx` - Index number (0-based, typically 0 for PK index)
+    /// * `common_prefix` - Common prefix for all values (e.g., user_id prefix)
+    /// * `prefixes` - List of full prefixes to check for existence
+    ///
+    /// # Returns
+    ///
+    /// HashSet of prefixes that exist in the index
+    pub fn exists_batch_by_index(
+        &self,
+        index_idx: usize,
+        common_prefix: &[u8],
+        prefixes: &[Vec<u8>],
+    ) -> Result<std::collections::HashSet<Vec<u8>>> {
+        use std::collections::HashSet;
+
+        if prefixes.is_empty() {
+            return Ok(HashSet::new());
+        }
+
+        let index = self
+            .indexes
+            .get(index_idx)
+            .ok_or_else(|| StorageError::Other(format!("Index {} not found", index_idx)))?;
+
+        let index_partition = Partition::new(index.partition());
+
+        // Scan all entries with the common prefix (e.g., all PKs for this user)
+        let iter = self.backend.scan(&index_partition, Some(common_prefix), None, None)?;
+
+        // Build set of all existing index keys
+        let existing_keys: HashSet<Vec<u8>> = iter.map(|(k, _v)| k).collect();
+
+        // Check which of the requested prefixes exist
+        // Note: We check if any existing key starts with each prefix
+        let mut found = HashSet::new();
+        for prefix in prefixes {
+            if existing_keys.iter().any(|k| k.starts_with(prefix)) {
+                found.insert(prefix.clone());
+            }
+        }
+
+        Ok(found)
+    }
+
     /// Scans an index returning raw (index_key, primary_key) pairs.
     ///
     /// Useful when you need access to the index key itself.

@@ -2,6 +2,7 @@
 
 use crate::app_context::AppContext;
 use crate::error::KalamDbError;
+use crate::error_extensions::KalamDbResultExt;
 use crate::sql::executor::handlers::typed::TypedStatementHandler;
 use crate::sql::executor::models::{ExecutionContext, ExecutionResult, ScalarValue};
 use kalamdb_sql::ddl::AlterStorageStatement;
@@ -33,7 +34,7 @@ impl TypedStatementHandler<AlterStorageStatement> for AlterStorageHandler {
         let storage_id = statement.storage_id.clone();
         let mut storage = storages_provider
             .get_storage_by_id(&storage_id)
-            .map_err(|e| KalamDbError::Other(format!("Failed to get storage: {}", e)))?
+            .into_kalamdb_error("Failed to get storage")?
             .ok_or_else(|| {
                 KalamDbError::InvalidOperation(format!(
                     "Storage '{}' not found",
@@ -66,13 +67,27 @@ impl TypedStatementHandler<AlterStorageStatement> for AlterStorageHandler {
             storage.user_tables_template = user_template;
         }
 
+        if let Some(raw_config) = statement.config_json {
+            let value: serde_json::Value = serde_json::from_str(&raw_config)
+                .into_invalid_operation("Invalid config_json")?;
+
+            if !value.is_object() {
+                return Err(KalamDbError::InvalidOperation(
+                    "CONFIG must be a JSON object".to_string(),
+                ));
+            }
+
+            storage.config_json = Some(serde_json::to_string(&value)
+                .into_invalid_operation("Failed to normalize CONFIG JSON")?);
+        }
+
         // Update timestamp
         storage.updated_at = chrono::Utc::now().timestamp();
 
         // Save updated storage
         storages_provider
             .update_storage(storage)
-            .map_err(|e| KalamDbError::Other(format!("Failed to update storage: {}", e)))?;
+            .into_kalamdb_error("Failed to update storage")?;
 
         Ok(ExecutionResult::Success {
             message: format!("Storage '{}' altered successfully", statement.storage_id),
@@ -116,6 +131,7 @@ mod tests {
             description: None,
             shared_tables_template: None,
             user_tables_template: None,
+            config_json: None,
         };
 
         // User role should be denied
@@ -140,9 +156,10 @@ mod tests {
             storage_id: StorageId::from(storage_id.as_str()),
             storage_name: "Original Name".to_string(),
             description: None,
-            storage_type: "local".to_string(),
+            storage_type: kalamdb_commons::models::StorageType::Filesystem,
             base_directory: "/tmp/test".to_string(),
             credentials: None,
+            config_json: None,
             shared_tables_template: String::new(),
             user_tables_template: String::new(),
             created_at: chrono::Utc::now().timestamp(),
@@ -158,6 +175,7 @@ mod tests {
             description: Some("New description".to_string()),
             shared_tables_template: None,
             user_tables_template: None,
+            config_json: None,
         };
         let ctx = create_test_context(Role::System);
 

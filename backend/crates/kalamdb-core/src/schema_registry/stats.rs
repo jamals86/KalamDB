@@ -4,6 +4,7 @@
 //! Uses a callback pattern to fetch metrics from AppContext to avoid circular dependencies.
 
 use crate::error::KalamDbError;
+use crate::error_extensions::KalamDbResultExt;
 use async_trait::async_trait;
 use datafusion::arrow::array::{ArrayRef, StringBuilder};
 use datafusion::arrow::datatypes::{DataType, Field, Schema, SchemaRef};
@@ -104,7 +105,7 @@ impl StatsTableProvider {
                 Arc::new(names.finish()) as ArrayRef,
                 Arc::new(values.finish()) as ArrayRef,
             ],
-        ).map_err(|e| KalamDbError::Other(format!("Failed to build stats batch: {}", e)))
+        ).into_kalamdb_error("Failed to build stats batch")
     }
 }
 

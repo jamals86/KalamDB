@@ -377,6 +377,7 @@ fn parse_subscribe_options(options_str: &str) -> DdlResult<SubscriptionOptions> 
         batch_size,
         last_rows,
         from_seq_id,
+        serialization_mode: kalamdb_commons::websocket::SerializationMode::Typed, // Default to Typed for SQL subscriptions
     })
 }
 

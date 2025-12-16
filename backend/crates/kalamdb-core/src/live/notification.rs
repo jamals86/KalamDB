@@ -7,6 +7,8 @@ use super::filter_eval::matches as filter_matches;
 use super::connections_manager::ConnectionsManager;
 use super::types::{ChangeNotification, ChangeType};
 use crate::error::KalamDbError;
+use crate::error_extensions::KalamDbResultExt;
+use crate::providers::arrow_json_conversion::row_to_json_map;
 use datafusion::scalar::ScalarValue;
 use kalamdb_commons::models::{LiveQueryId, Row, TableId, UserId};
 use kalamdb_system::LiveQueriesTableProvider;
@@ -70,7 +72,7 @@ impl NotificationService {
         self.live_queries_provider
             .increment_changes_async(&live_id_string, timestamp)
             .await
-            .map_err(|e| KalamDbError::Other(format!("Failed to increment changes: {}", e)))?;
+            .into_kalamdb_error("Failed to increment changes")?;
 
         Ok(())
     }
@@ -117,8 +119,8 @@ impl NotificationService {
             table_id.table_name().as_str()
         );
 
-        log::info!(
-            "📢 notify_table_change called for table: '{}', user: '{}', change_type: {:?}",
+        log::debug!(
+            "notify_table_change called for table: '{}', user: '{}', change_type: {:?}",
             table_name,
             user_id.as_str(),
             change_notification.change_type
@@ -126,8 +128,8 @@ impl NotificationService {
 
         // Gather subscriptions for the specific user AND admin/system observers
         // DashMap provides lock-free access
-        // Collect (live_id, projections, notification_tx) tuples in a single pass
-        let live_ids_to_notify: Vec<(LiveQueryId, Option<Arc<Vec<String>>>, _)> = {
+        // Collect (live_id, projections, serialization_mode, notification_tx) tuples in a single pass
+        let live_ids_to_notify: Vec<(LiveQueryId, Option<Arc<Vec<String>>>, kalamdb_commons::websocket::SerializationMode, _)> = {
             let all_handles = self.registry.get_subscriptions_for_table(user_id, table_id);
 
             let mut results = Vec::new();
@@ -146,7 +148,7 @@ impl NotificationService {
                 // FLUSH notifications are metadata events (not row-level changes)
                 // Skip filter evaluation for FLUSH - notify all subscribers
                 if matches!(change_notification.change_type, ChangeType::Flush) {
-                    results.push((handle.live_id, handle.projections, handle.notification_tx));
+                    results.push((handle.live_id, handle.projections, handle.serialization_mode, handle.notification_tx));
                     continue;
                 }
 
@@ -156,7 +158,7 @@ impl NotificationService {
                     // Apply filter to row data
                     match filter_matches(filter_expr, filtering_row) {
                         Ok(true) => {
-                            results.push((handle.live_id, handle.projections, handle.notification_tx));
+                            results.push((handle.live_id, handle.projections, handle.serialization_mode, handle.notification_tx));
                         }
                         Ok(false) => {
                             log::trace!(
@@ -174,7 +176,7 @@ impl NotificationService {
                     }
                 } else {
                     // No filter, notify all subscribers
-                    results.push((handle.live_id, handle.projections, handle.notification_tx));
+                    results.push((handle.live_id, handle.projections, handle.serialization_mode, handle.notification_tx));
                 }
             }
 
@@ -184,7 +186,7 @@ impl NotificationService {
         let notification_count = live_ids_to_notify.len();
 
         // Send notifications and increment changes
-        for (live_id, projections, tx) in live_ids_to_notify {
+        for (live_id, projections, serialization_mode, tx) in live_ids_to_notify {
             // Apply projections to row data (filters columns based on subscription)
             // Uses Cow to avoid cloning when no projections (SELECT *)
             let projected_row_data = apply_projections(&change_notification.row_data, &projections);
@@ -193,25 +195,54 @@ impl NotificationService {
                 .as_ref()
                 .map(|old| apply_projections(old, &projections));
 
-            // Build the typed notification with projected data
-            // into_owned() only clones when we had Cow::Borrowed, which is cheap
+            // Convert Row to HashMap<String, JsonValue> using the subscription's serialization mode
+            // This ensures consistency between SQL API and WebSocket subscriptions
+            let row_json = match row_to_json_map(&projected_row_data, serialization_mode) {
+                Ok(json) => json,
+                Err(e) => {
+                    log::error!(
+                        "Failed to convert row to JSON for live_id={}: {}",
+                        live_id,
+                        e
+                    );
+                    continue;
+                }
+            };
+
+            let old_json = if let Some(old) = projected_old_data {
+                match row_to_json_map(&old, serialization_mode) {
+                    Ok(json) => Some(json),
+                    Err(e) => {
+                        log::error!(
+                            "Failed to convert old row to JSON for live_id={}: {}",
+                            live_id,
+                            e
+                        );
+                        continue;
+                    }
+                }
+            } else {
+                None
+            };
+
+            // Build the notification with JSON data
             let notification = match change_notification.change_type {
                 ChangeType::Insert => kalamdb_commons::Notification::insert(
                     live_id.to_string(),
-                    vec![projected_row_data.into_owned()],
+                    vec![row_json],
                 ),
                 ChangeType::Update => kalamdb_commons::Notification::update(
                     live_id.to_string(),
-                    vec![projected_row_data.into_owned()],
-                    vec![projected_old_data.map(Cow::into_owned).unwrap_or_else(|| Row::new(BTreeMap::new()))],
+                    vec![row_json],
+                    vec![old_json.unwrap_or_else(|| std::collections::HashMap::new())],
                 ),
                 ChangeType::Delete => kalamdb_commons::Notification::delete(
                     live_id.to_string(),
-                    vec![projected_row_data.into_owned()],
+                    vec![row_json],
                 ),
                 ChangeType::Flush => kalamdb_commons::Notification::insert(
                     live_id.to_string(),
-                    vec![projected_row_data.into_owned()],
+                    vec![row_json],
                 ),
             };
 

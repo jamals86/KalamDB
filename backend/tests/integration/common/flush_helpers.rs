@@ -48,22 +48,18 @@ pub async fn execute_flush_synchronously(
         .map_err(|e| format!("Failed to get table definition: {}", e))?
         .ok_or_else(|| format!("Table {}.{} not found", namespace, table_name))?;
 
-    // Get the latest schema from schema_history
-    if table_def.schema_history.is_empty() {
+    // Check if table has columns
+    if table_def.columns.is_empty() {
         return Err(format!(
-            "No schema history found for table '{}.{}'",
+            "No columns defined for table '{}.{}'",
             namespace, table_name
         ));
     }
 
-    let latest_schema_version = &table_def.schema_history[table_def.schema_history.len() - 1];
-
     // Convert to Arrow schema
-    let arrow_schema =
-        kalamdb_core::schema_registry::arrow_schema::ArrowSchemaWithOptions::from_json_string(
-            &latest_schema_version.arrow_schema_json,
-        )
-        .map_err(|e| format!("Failed to parse Arrow schema: {}", e))?;
+    let arrow_schema = table_def
+        .to_arrow_schema()
+        .map_err(|e| format!("Failed to convert to Arrow schema: {}", e))?;
 
     // Table metadata scan not needed for flush execution
 
@@ -73,7 +69,6 @@ pub async fn execute_flush_synchronously(
 
     // Determine PK field name from schema
     let pk_field = arrow_schema
-        .schema
         .fields()
         .iter()
         .find(|f| !f.name().starts_with('_'))
@@ -90,7 +85,7 @@ pub async fn execute_flush_synchronously(
     let flush_job = UserTableFlushJob::new(
         table_id_arc,
         user_table_store,
-        arrow_schema.schema.clone(),
+        arrow_schema.clone(),
         unified_cache,
         server.app_context.manifest_service(),
         server.app_context.manifest_cache_service(),
@@ -118,29 +113,24 @@ pub async fn execute_shared_flush_synchronously(
         .map_err(|e| format!("Failed to get table definition: {}", e))?
         .ok_or_else(|| format!("Table {}.{} not found", namespace, table_name))?;
 
-    if table_def.schema_history.is_empty() {
+    if table_def.columns.is_empty() {
         return Err(format!(
-            "No schema history found for table '{}.{}'",
+            "No columns defined for table '{}.{}'",
             namespace, table_name
         ));
     }
 
-    let latest_schema_version = &table_def.schema_history[table_def.schema_history.len() - 1];
-
     // Table metadata scan not needed for flush execution
 
-    let arrow_schema =
-        kalamdb_core::schema_registry::arrow_schema::ArrowSchemaWithOptions::from_json_string(
-            &latest_schema_version.arrow_schema_json,
-        )
-        .map_err(|e| format!("Failed to parse Arrow schema: {}", e))?;
+    let arrow_schema = table_def
+        .to_arrow_schema()
+        .map_err(|e| format!("Failed to convert to Arrow schema: {}", e))?;
 
     // Get per-table SharedTableIndexedStore and registry from AppContext
     let unified_cache = server.app_context.schema_registry();
 
     // Determine PK field name
     let pk_field = arrow_schema
-        .schema
         .fields()
         .iter()
         .find(|f| !f.name().starts_with('_'))
@@ -156,7 +146,7 @@ pub async fn execute_shared_flush_synchronously(
     let flush_job = SharedTableFlushJob::new(
         Arc::new(table_id.clone()),
         shared_table_store,
-        arrow_schema.schema.clone(),
+        arrow_schema.clone(),
         unified_cache,
         server.app_context.manifest_service(),
         server.app_context.manifest_cache_service(),

@@ -1,5 +1,6 @@
 use super::types::JobsManager;
 use crate::error::KalamDbError;
+use crate::error_extensions::KalamDbResultExt;
 use kalamdb_commons::system::JobFilter;
 use kalamdb_commons::{JobId, JobStatus, JobType};
 
@@ -78,7 +79,7 @@ impl JobsManager {
             self.jobs_provider
                 .update_job_async(job)
                 .await
-                .map_err(|e| KalamDbError::io_message(format!("Failed to recover job: {}", e)))?;
+                .into_kalamdb_error("Failed to recover job")?;
 
             self.log_job_event(&job_id, "error", "Job marked as failed (server restart)");
         }

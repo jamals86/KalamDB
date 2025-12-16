@@ -6,18 +6,53 @@
 //!
 //! These utilities are used by user_table_provider, shared_table_provider,
 //! and stream_table_provider to avoid code duplication.
+//!
+//! # Conversion Architecture (Single Source of Truth)
+//!
+//! All ScalarValue → JSON conversions flow through ONE central function:
+//! ```text
+//! scalar_value_to_json_with_mode()  ← SINGLE SOURCE OF TRUTH
+//!          ↓
+//!     ┌────┴────┐
+//!     ↓         ↓
+//! row_to_json_map()   record_batch_to_json_rows()
+//!     ↓                ↓
+//! WebSocket:           REST API:
+//! - notifications      - /v1/api/sql
+//! - subscriptions
+//! - batch data
+//! ```
+//!
+//! # Serialization Modes
+//!
+//! Two serialization modes are available for converting Arrow data to JSON:
+//!
+//! - **Simple**: Plain JSON values (e.g., `{"id": 123, "name": "Alice"}`)
+//!   - Best for REST APIs and CLI clients
+//!   - Int64/UInt64 always serialized as strings to preserve precision
+//!   - Timestamps serialized as raw microsecond values
+//!
+//! - **Typed**: Values with type information (e.g., `{"id": {"Int64": "123"}, "name": {"Utf8": "Alice"}}`)
+//!   - Best for type-safe SDKs (kalam-link) and debugging
+//!   - Uses DataFusion's native serialization for consistency with WebSocket subscriptions
+//!   - Preserves full type information for client-side parsing
 
 use crate::error::KalamDbError;
-use chrono::Utc;
+use crate::error_extensions::KalamDbResultExt;
+// Chrono no longer needed - DataFusion handles timestamp serialization natively
 use datafusion::arrow::array::*;
 use datafusion::arrow::datatypes::{DataType, Field, SchemaRef, TimeUnit};
 use datafusion::arrow::record_batch::RecordBatch;
 use datafusion::scalar::ScalarValue;
+use kalamdb_commons::models::row::StoredScalarValue;
 use kalamdb_commons::models::Row;
 use serde_json::Value as JsonValue;
 use std::collections::BTreeMap;
 use std::convert::TryFrom;
 use std::sync::Arc;
+
+/// Re-export SerializationMode from kalamdb_commons for convenience
+pub use kalamdb_commons::websocket::SerializationMode;
 
 /// Type alias for Arc<dyn Array> to improve readability
 type ArrayRef = Arc<dyn datafusion::arrow::array::Array>;
@@ -133,16 +168,14 @@ fn get_column_defaults(schema: &SchemaRef) -> Vec<Option<ScalarValue>> {
                 DataType::Utf8 => Some(ScalarValue::Utf8(Some("".to_string()))),
                 DataType::LargeUtf8 => Some(ScalarValue::LargeUtf8(Some("".to_string()))),
                 DataType::Timestamp(TimeUnit::Microsecond, tz_opt) => {
-                    let micros = Utc::now().timestamp_micros();
                     Some(ScalarValue::TimestampMicrosecond(
-                        Some(micros),
+                        Some(0),
                         tz_opt.clone(),
                     ))
                 }
                 DataType::Timestamp(TimeUnit::Millisecond, tz_opt) => {
-                    let millis = Utc::now().timestamp_millis();
                     Some(ScalarValue::TimestampMillisecond(
-                        Some(millis),
+                        Some(0),
                         tz_opt.clone(),
                     ))
                 }
@@ -276,7 +309,7 @@ mod tests {
         let ts_col = batch
             .column(0)
             .as_any()
-            .downcast_ref::<TimestampMicrosecondArray>()
+            .downcast_ref::<TimestampMillisecondArray>()
             .unwrap();
         assert_eq!(ts_col.value(0), 1609459200000i64);
 
@@ -289,7 +322,7 @@ mod tests {
         let ts_col = batch
             .column(0)
             .as_any()
-            .downcast_ref::<TimestampMicrosecondArray>()
+            .downcast_ref::<TimestampMillisecondArray>()
             .unwrap();
         assert_eq!(ts_col.value(0), 1609459200000i64);
     }
@@ -515,64 +548,102 @@ pub fn json_value_to_scalar_strict(v: &JsonValue) -> Result<ScalarValue, String>
     }
 }
 
-/// Convert DataFusion ScalarValue to serde_json::Value
+/// Convert DataFusion ScalarValue to serde_json::Value (Simple mode)
 /// 
-/// Note: Int64 and UInt64 values are serialized as strings to avoid JavaScript
-/// precision loss for values > Number.MAX_SAFE_INTEGER (2^53 - 1 = 9007199254740991)
+/// **NOTE:** This is a convenience wrapper for backward compatibility.
+/// All conversions flow through `scalar_value_to_json_with_mode()`.
+/// 
+/// Uses Simple mode by default: plain JSON values with Int64/UInt64 as strings for precision.
 pub fn scalar_value_to_json(value: &ScalarValue) -> Result<JsonValue, KalamDbError> {
-    // JavaScript's Number.MAX_SAFE_INTEGER = 2^53 - 1
-    const JS_MAX_SAFE_INTEGER: i64 = 9007199254740991;
-    const JS_MIN_SAFE_INTEGER: i64 = -9007199254740991;
-    
+    scalar_value_to_json_with_mode(value, SerializationMode::Simple)
+}
+
+/// **SINGLE SOURCE OF TRUTH** for converting ScalarValue to JSON
+///
+/// All ScalarValue → JSON conversions in the codebase MUST flow through this function.
+/// This ensures consistency across REST API, WebSocket subscriptions, and notifications.
+///
+/// # Modes
+///
+/// - **Simple**: Plain JSON values (Int64/UInt64 always as strings for precision)
+///   - Example: `"123"` for Int64(123), `"Alice"` for Utf8("Alice")
+///   - Used by: REST API `/v1/api/sql` (default mode)
+///
+/// - **Typed**: Type-wrapped JSON using StoredScalarValue format
+///   - Example: `{"Int64": "123"}`, `{"Utf8": "Alice"}`, `{"TimestampMicrosecond": {"value": 123, "timezone": null}}`
+///   - Used by: WebSocket subscriptions, kalam-link SDK (default mode)
+///   - Preserves full type information for client-side parsing
+///   - Int64/UInt64 serialized as strings for precision (matches DataFusion native format)
+///
+/// # Architecture Note
+/// Higher-level functions build on top of this:
+/// - `row_to_json_map()` converts Row by calling this for each column
+/// - `record_batch_to_json_rows()` converts RecordBatch by calling this for each cell
+pub fn scalar_value_to_json_with_mode(
+    value: &ScalarValue,
+    mode: SerializationMode,
+) -> Result<JsonValue, KalamDbError> {
+    match mode {
+        SerializationMode::Simple => scalar_value_to_json_simple(value),
+        SerializationMode::Typed => {
+            // Use StoredScalarValue for consistency with WebSocket subscriptions
+            // This ensures Int64/UInt64 are serialized as strings for precision
+            let stored: StoredScalarValue = value.into();
+            serde_json::to_value(&stored)
+                .into_invalid_operation("Failed to serialize ScalarValue")
+        }
+    }
+}
+
+/// Simple mode: Plain JSON values
+/// Int64/UInt64 always serialized as strings to preserve precision
+fn scalar_value_to_json_simple(value: &ScalarValue) -> Result<JsonValue, KalamDbError> {
     match value {
         ScalarValue::Null => Ok(JsonValue::Null),
         ScalarValue::Boolean(Some(b)) => Ok(JsonValue::Bool(*b)),
+        ScalarValue::Boolean(None) => Ok(JsonValue::Null),
         ScalarValue::Int8(Some(i)) => Ok(JsonValue::Number((*i).into())),
+        ScalarValue::Int8(None) => Ok(JsonValue::Null),
         ScalarValue::Int16(Some(i)) => Ok(JsonValue::Number((*i).into())),
+        ScalarValue::Int16(None) => Ok(JsonValue::Null),
         ScalarValue::Int32(Some(i)) => Ok(JsonValue::Number((*i).into())),
-        ScalarValue::Int64(Some(i)) => {
-            // Serialize as string if outside JavaScript safe integer range
-            if *i > JS_MAX_SAFE_INTEGER || *i < JS_MIN_SAFE_INTEGER {
-                Ok(JsonValue::String(i.to_string()))
-            } else {
-                Ok(JsonValue::Number((*i).into()))
-            }
-        }
+        ScalarValue::Int32(None) => Ok(JsonValue::Null),
+        // Int64 always as string for precision (no MAX_SAFE_INTEGER check)
+        ScalarValue::Int64(Some(i)) => Ok(JsonValue::String(i.to_string())),
+        ScalarValue::Int64(None) => Ok(JsonValue::Null),
         ScalarValue::UInt8(Some(i)) => Ok(JsonValue::Number((*i).into())),
+        ScalarValue::UInt8(None) => Ok(JsonValue::Null),
         ScalarValue::UInt16(Some(i)) => Ok(JsonValue::Number((*i).into())),
+        ScalarValue::UInt16(None) => Ok(JsonValue::Null),
         ScalarValue::UInt32(Some(i)) => Ok(JsonValue::Number((*i).into())),
-        ScalarValue::UInt64(Some(i)) => {
-            // Serialize as string if outside JavaScript safe integer range
-            if *i > JS_MAX_SAFE_INTEGER as u64 {
-                Ok(JsonValue::String(i.to_string()))
-            } else {
-                Ok(JsonValue::Number((*i).into()))
-            }
-        }
+        ScalarValue::UInt32(None) => Ok(JsonValue::Null),
+        // UInt64 always as string for precision
+        ScalarValue::UInt64(Some(i)) => Ok(JsonValue::String(i.to_string())),
+        ScalarValue::UInt64(None) => Ok(JsonValue::Null),
         ScalarValue::Float32(Some(f)) => serde_json::Number::from_f64(*f as f64)
             .map(JsonValue::Number)
             .ok_or_else(|| KalamDbError::InvalidOperation("Invalid float value".into())),
+        ScalarValue::Float32(None) => Ok(JsonValue::Null),
         ScalarValue::Float64(Some(f)) => serde_json::Number::from_f64(*f)
             .map(JsonValue::Number)
             .ok_or_else(|| KalamDbError::InvalidOperation("Invalid float value".into())),
+        ScalarValue::Float64(None) => Ok(JsonValue::Null),
         ScalarValue::Utf8(Some(s)) | ScalarValue::LargeUtf8(Some(s)) => {
             Ok(JsonValue::String(s.clone()))
         }
+        ScalarValue::Utf8(None) | ScalarValue::LargeUtf8(None) => Ok(JsonValue::Null),
         ScalarValue::Date32(Some(d)) => Ok(JsonValue::Number((*d).into())),
+        ScalarValue::Date32(None) => Ok(JsonValue::Null),
         ScalarValue::Date64(Some(d)) => Ok(JsonValue::Number((*d).into())),
+        ScalarValue::Date64(None) => Ok(JsonValue::Null),
         ScalarValue::TimestampMillisecond(Some(ts), _) => Ok(JsonValue::Number((*ts).into())),
+        ScalarValue::TimestampMillisecond(None, _) => Ok(JsonValue::Null),
         ScalarValue::TimestampMicrosecond(Some(ts), _) => Ok(JsonValue::Number((*ts).into())),
+        ScalarValue::TimestampMicrosecond(None, _) => Ok(JsonValue::Null),
         ScalarValue::TimestampNanosecond(Some(ts), _) => Ok(JsonValue::Number((*ts).into())),
-        ScalarValue::Decimal128(Some(_v), _, _scale) => {
-            // Convert to string to preserve precision, or float?
-            // For now, let's use string representation of the decimal
-            // We can construct it from the i128 value and scale
-            // But simpler might be to just cast to f64 for JSON if precision allows,
-            // or string.
-            // Let's use string to be safe.
-            // Actually, let's just use the string representation provided by ScalarValue display
-            Ok(JsonValue::String(value.to_string()))
-        }
+        ScalarValue::TimestampNanosecond(None, _) => Ok(JsonValue::Null),
+        ScalarValue::Decimal128(Some(_), _, _) => Ok(JsonValue::String(value.to_string())),
+        ScalarValue::Decimal128(None, _, _) => Ok(JsonValue::Null),
         ScalarValue::FixedSizeBinary(_, Some(bytes)) => {
             // If it looks like a UUID (16 bytes), try to format as UUID string
             if bytes.len() == 16 {
@@ -580,17 +651,100 @@ pub fn scalar_value_to_json(value: &ScalarValue) -> Result<JsonValue, KalamDbErr
                     return Ok(JsonValue::String(uuid.to_string()));
                 }
             }
-            // Otherwise, maybe base64? Or just array of bytes?
-            // Let's use array of numbers for generic binary
+            // Otherwise, use array of numbers for generic binary
             Ok(JsonValue::Array(
                 bytes.iter().map(|&b| JsonValue::Number(b.into())).collect(),
             ))
         }
+        ScalarValue::FixedSizeBinary(_, None) => Ok(JsonValue::Null),
+        ScalarValue::Binary(Some(bytes)) | ScalarValue::LargeBinary(Some(bytes)) => {
+            Ok(JsonValue::Array(
+                bytes.iter().map(|&b| JsonValue::Number(b.into())).collect(),
+            ))
+        }
+        ScalarValue::Binary(None) | ScalarValue::LargeBinary(None) => Ok(JsonValue::Null),
         _ => Err(KalamDbError::InvalidOperation(format!(
             "Unsupported ScalarValue conversion to JSON: {:?}",
             value
         ))),
     }
+}
+
+/// Convert Arrow RecordBatch to JSON rows with configurable serialization mode
+///
+/// **Used by:** REST API `/v1/api/sql` endpoint for query results
+///
+/// This is one of two high-level conversion functions (the other being `row_to_json_map()`).
+/// For each cell in the batch, extracts ScalarValue and calls `scalar_value_to_json_with_mode()`
+/// (the single source of truth for all conversions).
+///
+/// # Arguments
+/// * `batch` - Arrow RecordBatch from DataFusion query execution
+/// * `mode` - SerializationMode::Simple (REST) or SerializationMode::Typed (SDKs)
+///
+/// # Architecture Note
+/// ✅ NO direct conversions - all cells go through scalar_value_to_json_with_mode()
+pub fn record_batch_to_json_rows(
+    batch: &RecordBatch,
+    mode: SerializationMode,
+) -> Result<Vec<std::collections::HashMap<String, JsonValue>>, KalamDbError> {
+    let schema = batch.schema();
+    let column_names: Vec<String> = schema.fields().iter().map(|f| f.name().clone()).collect();
+    let num_rows = batch.num_rows();
+    let num_cols = batch.num_columns();
+
+    let mut rows = Vec::with_capacity(num_rows);
+
+    for row_idx in 0..num_rows {
+        let mut json_row = std::collections::HashMap::with_capacity(num_cols);
+
+        for col_idx in 0..num_cols {
+            let col_name = column_names[col_idx].clone();
+            let column = batch.column(col_idx);
+
+            let scalar = ScalarValue::try_from_array(column.as_ref(), row_idx)
+                .into_invalid_operation("Failed to extract scalar")?;
+
+            // ✅ SINGLE SOURCE: All conversions flow through this function
+            let json_value = scalar_value_to_json_with_mode(&scalar, mode)?;
+            json_row.insert(col_name, json_value);
+        }
+
+        rows.push(json_row);
+    }
+
+    Ok(rows)
+}
+
+/// Convert Row to HashMap<String, JsonValue> with configurable serialization mode
+///
+/// **Used by:** WebSocket subscriptions, change notifications, and batch data
+///
+/// This is one of two high-level conversion functions (the other being `record_batch_to_json_rows()`).
+/// For each column in the row, calls `scalar_value_to_json_with_mode()` (the single source of truth).
+///
+/// # Arguments
+/// * `row` - Row from live query system (ScalarValue map)
+/// * `mode` - SerializationMode::Simple (REST) or SerializationMode::Typed (SDKs)
+///
+/// # Returns
+/// HashMap mapping column names to JSON values in the specified format
+///
+/// # Architecture Note
+/// ✅ NO direct conversions - all columns go through scalar_value_to_json_with_mode()
+pub fn row_to_json_map(
+    row: &Row,
+    mode: SerializationMode,
+) -> Result<std::collections::HashMap<String, JsonValue>, KalamDbError> {
+    let mut json_row = std::collections::HashMap::with_capacity(row.values.len());
+    
+    for (col_name, scalar_value) in &row.values {
+        // ✅ SINGLE SOURCE: All conversions flow through this function
+        let json_value = scalar_value_to_json_with_mode(scalar_value, mode)?;
+        json_row.insert(col_name.clone(), json_value);
+    }
+    
+    Ok(json_row)
 }
 
 /// Coerce a single row of updates to match the schema types.
@@ -611,4 +765,106 @@ pub fn coerce_updates(row: Row, schema: &SchemaRef) -> Result<Row, String> {
     }
 
     Ok(Row::new(new_values))
+}
+
+#[cfg(test)]
+mod serialization_tests {
+    use super::*;
+
+    #[test]
+    fn test_simple_mode_int64_always_string() {
+        // Int64 should always be serialized as string in simple mode
+        let value = ScalarValue::Int64(Some(123));
+        let json = scalar_value_to_json_with_mode(&value, SerializationMode::Simple).unwrap();
+        assert_eq!(json, serde_json::json!("123"));
+
+        // Even small values should be strings
+        let value = ScalarValue::Int64(Some(42));
+        let json = scalar_value_to_json_with_mode(&value, SerializationMode::Simple).unwrap();
+        assert_eq!(json, serde_json::json!("42"));
+    }
+
+    #[test]
+    fn test_simple_mode_uint64_always_string() {
+        let value = ScalarValue::UInt64(Some(123));
+        let json = scalar_value_to_json_with_mode(&value, SerializationMode::Simple).unwrap();
+        assert_eq!(json, serde_json::json!("123"));
+    }
+
+    #[test]
+    fn test_typed_mode_int64_with_wrapper() {
+        let value = ScalarValue::Int64(Some(123));
+        let json = scalar_value_to_json_with_mode(&value, SerializationMode::Typed).unwrap();
+        // StoredScalarValue serializes Int64 as {"Int64": "123"} (string for precision)
+        assert_eq!(json, serde_json::json!({"Int64": "123"}));
+    }
+
+    #[test]
+    fn test_typed_mode_utf8() {
+        let value = ScalarValue::Utf8(Some("hello".to_string()));
+        let json = scalar_value_to_json_with_mode(&value, SerializationMode::Typed).unwrap();
+        assert_eq!(json, serde_json::json!({"Utf8": "hello"}));
+    }
+
+    #[test]
+    fn test_typed_mode_boolean() {
+        let value = ScalarValue::Boolean(Some(true));
+        let json = scalar_value_to_json_with_mode(&value, SerializationMode::Typed).unwrap();
+        assert_eq!(json, serde_json::json!({"Boolean": true}));
+    }
+
+    #[test]
+    fn test_typed_mode_timestamp() {
+        let value = ScalarValue::TimestampMicrosecond(Some(1765741510326539), None);
+        let json = scalar_value_to_json_with_mode(&value, SerializationMode::Typed).unwrap();
+        
+        // Check structure matches DataFusion's native serialization
+        assert!(json.get("TimestampMicrosecond").is_some());
+        let ts = json.get("TimestampMicrosecond").unwrap();
+        assert!(ts.is_array() || ts.is_object()); // DataFusion format: [value, timezone] or object
+    }
+
+    #[test]
+    fn test_null_values() {
+        let null = ScalarValue::Null;
+        
+        // Simple mode
+        let json = scalar_value_to_json_with_mode(&null, SerializationMode::Simple).unwrap();
+        assert_eq!(json, serde_json::json!(null));
+        
+        // Typed mode - StoredScalarValue::Null serializes as string "Null" (enum variant name)
+        let json = scalar_value_to_json_with_mode(&null, SerializationMode::Typed).unwrap();
+        assert_eq!(json, serde_json::json!("Null"));
+    }
+
+    #[test]
+    fn test_simple_mode_backwards_compatible() {
+        // Default scalar_value_to_json should use Simple mode
+        let value = ScalarValue::Int64(Some(42));
+        let json = scalar_value_to_json(&value).unwrap();
+        assert_eq!(json, serde_json::json!("42"));
+    }
+
+    #[test]
+    fn test_serialization_mode_default() {
+        // SerializationMode defaults to Typed (for backward compatibility with WebSocket/SDKs)
+        let mode: SerializationMode = Default::default();
+        assert_eq!(mode, SerializationMode::Typed);
+    }
+
+    #[test]
+    fn test_serialization_mode_serde() {
+        // Test serialization/deserialization of SerializationMode
+        let simple = SerializationMode::Simple;
+        let json = serde_json::to_string(&simple).unwrap();
+        assert_eq!(json, r#""simple""#);
+
+        let typed = SerializationMode::Typed;
+        let json = serde_json::to_string(&typed).unwrap();
+        assert_eq!(json, r#""typed""#);
+
+        // Deserialization
+        let mode: SerializationMode = serde_json::from_str(r#""typed""#).unwrap();
+        assert_eq!(mode, SerializationMode::Typed);
+    }
 }

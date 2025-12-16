@@ -47,8 +47,10 @@ pub enum RowConversionError {
 /// Uses derive for bincode compatibility (storage)
 /// Note: Int64 and UInt64 are stored as strings to preserve precision in JSON
 /// (JavaScript's Number.MAX_SAFE_INTEGER = 2^53-1 causes precision loss for large i64/u64)
+///
+/// This type is also used for typed JSON serialization to match WebSocket subscription format.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-enum StoredScalarValue {
+pub enum StoredScalarValue {
     Null,
     Boolean(Option<bool>),
     Float32(Option<f32>),

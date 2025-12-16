@@ -15,7 +15,7 @@ export interface Storage {
 
 export interface CreateStorageInput {
   storage_id: string;
-  storage_type: 'filesystem' | 's3';
+  storage_type: 'filesystem' | 's3' | 'gcs' | 'azure';
   storage_name: string;
   description?: string;
   base_directory: string;

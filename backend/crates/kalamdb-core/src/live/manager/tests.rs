@@ -30,6 +30,7 @@ fn create_test_subscription_request(
             batch_size: None,
             last_rows,
             from_seq_id: None,
+            serialization_mode: kalamdb_commons::websocket::SerializationMode::Typed,
         },
     }
 }

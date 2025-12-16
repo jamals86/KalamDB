@@ -289,6 +289,53 @@ instead of: 1 failed: Invalid operation: No handler registered for statement typ
 197) why do we have things like this? shouldnt we prevent entering if no rows?
 [2025-12-13 01:51:58.957] [INFO ] - main - kalamdb_core::jobs::jobs_manager::utils:38 - [CL-a258332a4315] Job completed: Cleaned up table insert_bench_mj3iu8zz_0:single_mj3iu900_0 successfully - 0 rows deleted, 0 bytes freed
 
+198) fix the slashes here: Flushed 24 rows for user root to ./data/storage\chat/messages/root/batch-2.parquet (batch=2)
+and make sure we use the right slashes everywhere in paths
+
+199) change the cli history to storing the history of queries as regular queries and not base64 but keeping in mind adding quotes to preserve adding the multi-lines queries, and also replacing password on alter user to remove the password
+
+200) in manifest we have duplicated values id and path use only the path:
+  "segments": [
+    {
+      "id": "batch-0.parquet",
+      "path": "batch-0.parquet",
+
+
+201) optimize the manifest by doing:
+{
+  "table_id": {
+    "namespace_id": "chat",
+    "table_name": "messages"
+  },
+  "user_id": "root",
+  "version": 5,
+  "created_at": 1765787805,
+  "updated_at": 1765790837,
+  "segments": [
+    {
+      "id": "batch-0.parquet", //TODO: Not needed we are using the path now
+      "path": "batch-0.parquet",
+      "column_stats": {  //TODO: Change to stats
+        "id": {
+          "min": 258874983317667840,
+          "max": 258874997628633089,
+          "null_count": 0
+        }
+      },
+      "min_seq": 258874983321862144,
+      "max_seq": 258874997628633091,
+      "row_count": 24,  //TODO: Change to rows
+      "size_bytes": 2701,  //TODO: Change to bytes
+      "created_at": 1765787814, 
+      "tombstone": false
+    },
+  ],
+  "last_sequence_number": 3 //TODO: Change to last
+}
+
+202) instead of consucting: table_def.to_arrow_schema() add it with the cache
+
+
 
 Make sure there is tests which insert/updte data and then check if the actual data we inserted/updated is there and exists in select then flush the data and check again if insert/update works with the flushed data in cold storage, check that insert fails when inserting a row id primary key which already exists and update do works
 
@@ -384,6 +431,16 @@ Tasks To Repo:
 │  Single-row inserts     │    200  │    0.09s │    2260.2/s │
 │  Batched (100/batch)    │   2000  │    0.03s │   73093.1/s │
 │  Parallel (10 threads)  │    980  │    0.09s │   10943.2/s │
+└────────────────────────────────────────────────────────────┘
+
+┌────────────────────────────────────────────────────────────┐
+│                    BENCHMARK RESULTS                       │
+├────────────────────────────────────────────────────────────┤
+│  Test Type              │  Rows   │  Time    │  Rate       │
+├────────────────────────────────────────────────────────────┤
+│  Single-row inserts     │    200  │    0.09s │    2288.5/s  │
+│  Batched (100/batch)    │   2000  │    0.04s │   51687.4/s  │
+│  Parallel (10 threads)  │   1000  │    0.09s │   11409.2/s  │
 └────────────────────────────────────────────────────────────┘
 
 UI Changes:

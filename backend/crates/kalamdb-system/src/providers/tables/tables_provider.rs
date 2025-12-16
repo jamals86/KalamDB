@@ -1,28 +1,26 @@
 //! System.tables table provider
 //!
-//! This module provides a DataFusion TableProvider implementation for the system.tables table.
-//! Uses the new EntityStore architecture with TableId keys and TableDefinition values.
+//! Phase 16: Consolidated provider using single store with TableVersionId keys.
+//! Exposes all table versions with is_latest flag for schema history queries.
 
 use super::{new_tables_store, TablesStore, TablesTableSchema};
-use crate::error::SystemError;
+use crate::error::{SystemError, SystemResultExt};
 use crate::system_table_trait::SystemTableProviderExt;
 use async_trait::async_trait;
-use datafusion::arrow::array::{
-    ArrayRef, Int32Array, RecordBatch, StringBuilder, TimestampMicrosecondArray,
-};
+use datafusion::arrow::array::RecordBatch;
 use datafusion::arrow::datatypes::SchemaRef;
+use kalamdb_commons::RecordBatchBuilder;
 use datafusion::datasource::{TableProvider, TableType};
 use datafusion::error::{DataFusionError, Result as DataFusionResult};
 use datafusion::logical_expr::Expr;
 use datafusion::physical_plan::ExecutionPlan;
 use kalamdb_commons::models::TableId;
 use kalamdb_commons::schemas::TableDefinition;
-use kalamdb_store::entity_store::{EntityStore, EntityStoreAsync};
 use kalamdb_store::StorageBackend;
 use std::any::Any;
 use std::sync::Arc;
 
-/// System.tables table provider using EntityStore architecture
+/// System.tables table provider using consolidated store with versioning
 pub struct TablesTableProvider {
     store: TablesStore,
     schema: SchemaRef,
@@ -49,145 +47,153 @@ impl TablesTableProvider {
         }
     }
 
+    /// Create a new table entry (stores version 1)
     pub fn create_table(
         &self,
         table_id: &TableId,
         table_def: &TableDefinition,
     ) -> Result<(), SystemError> {
-        self.store.put(table_id, table_def)?;
-        Ok(())
+        Ok(self.store.put_version(table_id, table_def)?)
     }
 
-    /// Async version of `create_table()` - offloads to blocking thread pool.
-    ///
-    /// Use this in async contexts to avoid blocking the Tokio runtime.
+    /// Async version of `create_table()`
     pub async fn create_table_async(
         &self,
         table_id: &TableId,
         table_def: &TableDefinition,
     ) -> Result<(), SystemError> {
-        self.store
-            .put_async(table_id, table_def)
+        let table_id = table_id.clone();
+        let table_def = table_def.clone();
+        let store = self.store.clone();
+        tokio::task::spawn_blocking(move || store.put_version(&table_id, &table_def))
             .await
-            .map_err(|e| SystemError::Other(format!("put_async error: {}", e)))?;
-        Ok(())
+            .into_system_error("spawn_blocking error")?
+            .map_err(SystemError::from)
     }
 
+    /// Update a table (stores new version and updates latest pointer)
     pub fn update_table(
         &self,
         table_id: &TableId,
         table_def: &TableDefinition,
     ) -> Result<(), SystemError> {
         // Check if table exists
-        if self.store.get(table_id)?.is_none() {
+        if self.store.get_latest(table_id)?.is_none() {
             return Err(SystemError::NotFound(format!(
                 "Table not found: {}",
                 table_id
             )));
         }
 
-        self.store.put(table_id, table_def)?;
-        Ok(())
+        Ok(self.store.put_version(table_id, table_def)?)
     }
 
-    /// Async version of `update_table()` - offloads to blocking thread pool.
-    ///
-    /// Use this in async contexts to avoid blocking the Tokio runtime.
+    /// Async version of `update_table()`
     pub async fn update_table_async(
         &self,
         table_id: &TableId,
         table_def: &TableDefinition,
     ) -> Result<(), SystemError> {
-        // Check if table exists
-        if self.store.get_async(table_id).await?.is_none() {
-            return Err(SystemError::NotFound(format!(
-                "Table not found: {}",
-                table_id
-            )));
-        }
-
-        self.store
-            .put_async(table_id, table_def)
-            .await
-            .map_err(|e| SystemError::Other(format!("put_async error: {}", e)))?;
-        Ok(())
+        let table_id = table_id.clone();
+        let table_def = table_def.clone();
+        let store = self.store.clone();
+        tokio::task::spawn_blocking(move || {
+            // Check if table exists
+            if store.get_latest(&table_id)?.is_none() {
+                return Err(SystemError::NotFound(format!(
+                    "Table not found: {}",
+                    table_id
+                )));
+            }
+            store.put_version(&table_id, &table_def)?;
+            Ok(())
+        })
+        .await
+        .into_system_error("spawn_blocking error")?
     }
 
-    /// Delete a table entry
+    /// Delete a table entry (removes all versions)
     pub fn delete_table(&self, table_id: &TableId) -> Result<(), SystemError> {
-        self.store.delete(table_id)?;
+        self.store.delete_all_versions(table_id)?;
         Ok(())
     }
 
-    /// Async version of `delete_table()` - offloads to blocking thread pool.
-    ///
-    /// Use this in async contexts to avoid blocking the Tokio runtime.
+    /// Async version of `delete_table()`
     pub async fn delete_table_async(&self, table_id: &TableId) -> Result<(), SystemError> {
-        self.store
-            .delete_async(table_id)
+        let table_id = table_id.clone();
+        let store = self.store.clone();
+        tokio::task::spawn_blocking(move || store.delete_all_versions(&table_id))
             .await
-            .map_err(|e| SystemError::Other(format!("delete_async error: {}", e)))?;
+            .into_system_error("spawn_blocking error")?
+            .map_err(SystemError::from)?;
         Ok(())
     }
 
-    /// Get a table by ID
+    /// Store a versioned schema entry (alias for put_version)
+    pub fn put_versioned_schema(
+        &self,
+        table_id: &TableId,
+        table_def: &TableDefinition,
+    ) -> Result<(), SystemError> {
+        Ok(self.store.put_version(table_id, table_def)?)
+    }
+
+    /// Get the latest version of a table by ID
     pub fn get_table_by_id(
         &self,
         table_id: &TableId,
     ) -> Result<Option<TableDefinition>, SystemError> {
-        Ok(self.store.get(table_id)?)
+        Ok(self.store.get_latest(table_id)?)
     }
 
-    /// Async version of `get_table_by_id()` - offloads to blocking thread pool.
+    /// Get a specific version of a table definition
     ///
-    /// Use this in async contexts to avoid blocking the Tokio runtime.
+    /// Used for schema evolution when reading flushed Parquet files.
+    pub fn get_version(
+        &self,
+        table_id: &TableId,
+        version: u32,
+    ) -> Result<Option<TableDefinition>, SystemError> {
+        Ok(self.store.get_version(table_id, version)?)
+    }
+
+    /// Async version of `get_table_by_id()`
     pub async fn get_table_by_id_async(
         &self,
         table_id: &TableId,
     ) -> Result<Option<TableDefinition>, SystemError> {
-        self.store
-            .get_async(table_id)
+        let table_id = table_id.clone();
+        let store = self.store.clone();
+        tokio::task::spawn_blocking(move || store.get_latest(&table_id))
             .await
-            .map_err(|e| SystemError::Other(format!("get_async error: {}", e)))
+            .into_system_error("spawn_blocking error")?
+            .map_err(SystemError::from)
     }
 
-    /// List all table definitions
+    /// List all latest table definitions
     pub fn list_tables(&self) -> Result<Vec<TableDefinition>, SystemError> {
-        let iter = self.store.scan_iterator(None, None)?;
-        let mut tables = Vec::new();
-        for item in iter {
-            let (_, table_def) = item?;
-            tables.push(table_def);
-        }
-        Ok(tables)
+        let tables = self.store.scan_all_latest()?;
+        Ok(tables.into_iter().map(|(_, def)| def).collect())
     }
 
-    /// List all tables in a specific namespace
+    /// List all tables in a specific namespace (latest versions only)
     pub fn list_tables_in_namespace(
         &self,
         namespace_id: &kalamdb_commons::models::NamespaceId,
     ) -> Result<Vec<TableDefinition>, SystemError> {
-        let iter = self.store.scan_iterator(None, None)?;
-        let mut tables = Vec::new();
-        for item in iter {
-            let (_, table_def) = item?;
-            if &table_def.namespace_id == namespace_id {
-                tables.push(table_def);
-            }
-        }
-        Ok(tables)
+        let tables = self.store.scan_namespace(namespace_id)?;
+        Ok(tables.into_iter().map(|(_, def)| def).collect())
     }
 
-    /// Async version of `list_tables()` - offloads to blocking thread pool.
-    ///
-    /// Use this in async contexts to avoid blocking the Tokio runtime.
+    /// Async version of `list_tables()`
     pub async fn list_tables_async(&self) -> Result<Vec<TableDefinition>, SystemError> {
-        let results: Vec<(Vec<u8>, TableDefinition)> = self
-            .store
-            .scan_all_async(None, None, None)
-            .await
-            .map_err(|e| SystemError::Other(format!("scan_all_async error: {}", e)))?;
-        Ok(results.into_iter().map(|(_, td)| td).collect())
+        let store = self.store.clone();
+        tokio::task::spawn_blocking(move || {
+            let tables = store.scan_all_latest()?;
+            Ok(tables.into_iter().map(|(_, def)| def).collect())
+        })
+        .await
+        .into_system_error("spawn_blocking error")?
     }
 
     /// Alias for list_tables (backward compatibility)
@@ -195,91 +201,91 @@ impl TablesTableProvider {
         self.list_tables()
     }
 
-    /// Scan all tables and return as RecordBatch
+    /// Scan all tables and return as RecordBatch (includes all versions with is_latest flag)
     pub fn scan_all_tables(&self) -> Result<RecordBatch, SystemError> {
-        use kalamdb_store::entity_store::EntityStore;
+        let entries = self.store.scan_all_with_versions()?;
 
-        let iter = self.store.scan_iterator(None, None)?;
-        let mut tables = Vec::new();
-        for item in iter {
-            tables.push(item?);
-        }
-        let row_count = tables.len();
+        // Extract data into vectors
+        let mut table_ids = Vec::with_capacity(entries.len());
+        let mut table_names = Vec::with_capacity(entries.len());
+        let mut namespaces = Vec::with_capacity(entries.len());
+        let mut table_types = Vec::with_capacity(entries.len());
+        let mut created_ats = Vec::with_capacity(entries.len());
+        let mut schema_versions = Vec::with_capacity(entries.len());
+        let mut columns_json = Vec::with_capacity(entries.len());
+        let mut table_comments = Vec::with_capacity(entries.len());
+        let mut updated_ats = Vec::with_capacity(entries.len());
+        let mut options_json = Vec::with_capacity(entries.len());
+        let mut access_levels = Vec::with_capacity(entries.len());
+        let mut is_latest_flags = Vec::with_capacity(entries.len());
 
-        // Pre-allocate builders for optimal performance
-        let mut table_ids = StringBuilder::with_capacity(row_count, row_count * 32);
-        let mut table_names = StringBuilder::with_capacity(row_count, row_count * 16);
-        let mut namespaces = StringBuilder::with_capacity(row_count, row_count * 16); // corresponds to column name 'namespace_id'
-        let mut table_types = StringBuilder::with_capacity(row_count, row_count * 16);
-        let mut created_ats = Vec::with_capacity(row_count);
-        let mut schema_versions = Vec::with_capacity(row_count);
-        let mut table_comments = StringBuilder::with_capacity(row_count, row_count * 64);
-        let mut updated_ats = Vec::with_capacity(row_count);
-        let mut options_json = StringBuilder::with_capacity(row_count, row_count * 128);
-        let mut access_levels = StringBuilder::with_capacity(row_count, row_count * 16);
-
-        for (_table_id, table_def) in tables {
-            // Convert TableId to string format: "namespace:table_name"
+        for (_version_key, table_def, is_latest) in entries {
+            // Convert TableId to string format
             let table_id_str = format!(
                 "{}:{}",
                 table_def.namespace_id.as_str(),
                 table_def.table_name.as_str()
             );
-            table_ids.append_value(&table_id_str);
-            table_names.append_value(table_def.table_name.as_str());
-            namespaces.append_value(table_def.namespace_id.as_str());
-            table_types.append_value(table_def.table_type.as_str());
+            table_ids.push(Some(table_id_str));
+            table_names.push(Some(table_def.table_name.as_str().to_string()));
+            namespaces.push(Some(table_def.namespace_id.as_str().to_string()));
+            table_types.push(Some(table_def.table_type.as_str().to_string()));
             created_ats.push(Some(table_def.created_at.timestamp_millis()));
             schema_versions.push(Some(table_def.schema_version as i32));
-            table_comments.append_option(table_def.table_comment.as_deref());
+            
+            // Serialize columns as JSON array
+            let col_json = match serde_json::to_string(&table_def.columns) {
+                Ok(json) => json,
+                Err(e) => format!(
+                    "{{\"error\":\"failed to serialize columns: {}\"}}",
+                    e
+                ),
+            };
+            columns_json.push(Some(col_json));
+            
+            table_comments.push(table_def.table_comment);
             updated_ats.push(Some(table_def.updated_at.timestamp_millis()));
-            // Serialize TableOptions enum to JSON
-            match serde_json::to_string(&table_def.table_options) {
-                Ok(json) => options_json.append_value(&json),
-                Err(e) => options_json.append_value(format!(
+            
+            // Serialize TableOptions
+            let opt_json = match serde_json::to_string(&table_def.table_options) {
+                Ok(json) => json,
+                Err(e) => format!(
                     "{{\"error\":\"failed to serialize options: {}\"}}",
                     e
-                )),
-            }
-            // Access Level (only for Shared tables, null otherwise)
+                ),
+            };
+            options_json.push(Some(opt_json));
+            
+            // Access Level (only for Shared tables)
             use kalamdb_commons::schemas::TableOptions;
-            if let TableOptions::Shared(opts) = &table_def.table_options {
-                if let Some(access) = &opts.access_level {
-                    access_levels.append_value(access.as_str());
-                } else {
-                    access_levels.append_null();
-                }
+            let access_level = if let TableOptions::Shared(opts) = &table_def.table_options {
+                opts.access_level.as_ref().map(|a| a.as_str().to_string())
             } else {
-                access_levels.append_null();
-            }
+                None
+            };
+            access_levels.push(access_level);
+            
+            // is_latest flag
+            is_latest_flags.push(Some(is_latest));
         }
 
-        let batch = RecordBatch::try_new(
-            self.schema.clone(),
-            vec![
-                Arc::new(table_ids.finish()) as ArrayRef,   // 1 table_id
-                Arc::new(table_names.finish()) as ArrayRef, // 2 table_name
-                Arc::new(namespaces.finish()) as ArrayRef,  // 3 namespace_id
-                Arc::new(table_types.finish()) as ArrayRef, // 4 table_type
-                Arc::new(TimestampMicrosecondArray::from(
-                    created_ats
-                        .into_iter()
-                        .map(|ts| ts.map(|ms| ms * 1000))
-                        .collect::<Vec<_>>(),
-                )) as ArrayRef,
-                Arc::new(Int32Array::from(schema_versions)) as ArrayRef, // 6 schema_version
-                Arc::new(table_comments.finish()) as ArrayRef, // 7 table_comment
-                Arc::new(TimestampMicrosecondArray::from(
-                    updated_ats
-                        .into_iter()
-                        .map(|ts| ts.map(|ms| ms * 1000))
-                        .collect::<Vec<_>>(),
-                )) as ArrayRef,
-                Arc::new(options_json.finish()) as ArrayRef, // 9 options
-                Arc::new(access_levels.finish()) as ArrayRef, // 10 access_level
-            ],
-        )
-        .map_err(|e| SystemError::Other(format!("Arrow error: {}", e)))?;
+        // Build batch using RecordBatchBuilder
+        let mut builder = RecordBatchBuilder::new(self.schema.clone());
+        builder
+            .add_string_column_owned(table_ids)
+            .add_string_column_owned(table_names)
+            .add_string_column_owned(namespaces)
+            .add_string_column_owned(table_types)
+            .add_timestamp_micros_column(created_ats)
+            .add_int32_column(schema_versions)
+            .add_string_column_owned(columns_json)
+            .add_string_column_owned(table_comments)
+            .add_timestamp_micros_column(updated_ats)
+            .add_string_column_owned(options_json)
+            .add_string_column_owned(access_levels)
+            .add_boolean_column(is_latest_flags);
+
+        let batch = builder.build().into_arrow_error("Failed to create RecordBatch")?;
 
         Ok(batch)
     }
@@ -412,7 +418,7 @@ mod tests {
         table_def.schema_version = 2;
         provider.update_table(&table_id, &table_def).unwrap();
 
-        // Verify
+        // Verify latest version
         let retrieved = provider.get_table_by_id(&table_id).unwrap().unwrap();
         assert_eq!(retrieved.schema_version, 2);
     }
@@ -439,10 +445,26 @@ mod tests {
             provider.create_table(&table_id, &table_def).unwrap();
         }
 
-        // Scan
+        // Scan - should have 6 rows (3 latest + 3 versioned)
+        let batch = provider.scan_all_tables().unwrap();
+        assert_eq!(batch.num_rows(), 6);
+        assert_eq!(batch.num_columns(), 12); // All 12 columns from system.tables definition
+    }
+
+    #[test]
+    fn test_scan_all_tables_with_versions() {
+        let provider = create_test_provider();
+
+        // Create table with multiple versions
+        let (table_id, mut table_def) = create_test_table("default", "users");
+        provider.create_table(&table_id, &table_def).unwrap();
+        
+        table_def.schema_version = 2;
+        provider.update_table(&table_id, &table_def).unwrap();
+
+        // Scan - should have 3 rows (1 latest + 2 versioned)
         let batch = provider.scan_all_tables().unwrap();
         assert_eq!(batch.num_rows(), 3);
-        assert_eq!(batch.num_columns(), 10); // Schema exposes 10 fields including access_level metadata
     }
 
     #[tokio::test]

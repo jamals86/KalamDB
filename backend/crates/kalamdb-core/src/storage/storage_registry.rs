@@ -3,6 +3,7 @@
 //! Provides centralized access to storage configurations and path template validation.
 
 use crate::error::KalamDbError;
+use crate::error_extensions::KalamDbResultExt;
 use kalamdb_commons::models::StorageId;
 use kalamdb_commons::system::Storage;
 use kalamdb_system::StoragesTableProvider;
@@ -59,7 +60,7 @@ impl StorageRegistry {
     ) -> Result<Option<Storage>, KalamDbError> {
         self.storages_provider
             .get_storage(storage_id)
-            .map_err(|e| KalamDbError::Other(format!("Failed to get storage: {}", e)))
+            .into_kalamdb_error("Failed to get storage")
     }
 
     /// Backward compatible helper that accepts a raw storage ID string.
@@ -91,7 +92,7 @@ impl StorageRegistry {
         let mut storages = self
             .storages_provider
             .list_storages()
-            .map_err(|e| KalamDbError::Other(format!("Failed to list storages: {}", e)))?;
+            .into_kalamdb_error("Failed to list storages")?;
 
         // Sort: 'local' first, then alphabetically
         storages.sort_by(|a, b| {

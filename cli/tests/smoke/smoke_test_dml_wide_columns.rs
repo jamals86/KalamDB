@@ -20,8 +20,10 @@ fn extract_first_id_from_json(json_output: &str) -> Option<String> {
         .and_then(|res| res.get("rows"))
         .and_then(|v| v.as_array())
         .and_then(|rows| rows.first())
-        .and_then(|row| row.get("id"))
-        .and_then(json_value_as_id)
+        .and_then(|row| {
+            let id_value = extract_typed_value(row.get("id")?);
+            json_value_as_id(&id_value)
+        })
 }
 
 // reserved: count extractor kept for potential future stricter checks

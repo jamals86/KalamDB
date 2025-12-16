@@ -14,5 +14,10 @@ pub use kalamdb_store::StorageBackend;
 
 // Re-export from kalamdb-filestore (Phase 13.8)
 pub use kalamdb_filestore::ParquetWriter;
+pub use kalamdb_filestore::{
+    build_object_store, is_remote_url, materialize_remote_parquet_dir,
+    materialize_remote_parquet_dir_sync, object_key_for_path, write_parquet_to_storage,
+    write_parquet_to_storage_sync, ParquetWriteResult,
+};
 
 pub use storage_registry::StorageRegistry;

@@ -258,9 +258,10 @@ impl TestServer {
                     storage_id: storage_id.clone(),
                     storage_name: "Local Filesystem".to_string(),
                     description: Some("Default local filesystem storage".to_string()),
-                    storage_type: "filesystem".to_string(),
+                    storage_type: kalamdb_commons::models::StorageType::Filesystem,
                     base_directory: storage_base_path.clone(),
                     credentials: None,
+                    config_json: None,
                     shared_tables_template: "shared/{namespace}/{tableName}".to_string(),
                     user_tables_template: "users/{userId}/tables/{namespace}/{tableName}"
                         .to_string(),

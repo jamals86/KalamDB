@@ -4,6 +4,7 @@
 
 use super::arrow_json_conversion::arrow_value_to_scalar;
 use crate::error::KalamDbError;
+use crate::error_extensions::KalamDbResultExt;
 use datafusion::arrow::array::{
     Array, ArrayRef, BooleanArray, Int32Array, Int64Array, RecordBatch, StringArray, UInt64Array,
 };
@@ -41,7 +42,7 @@ pub async fn resolve_latest_version(
     let combined_schema = fast_with_priority.schema();
     let combined =
         compute::concat_batches(&combined_schema, &[fast_with_priority, long_with_priority])
-            .map_err(|e| KalamDbError::Other(format!("concat: {}", e)))?;
+            .into_kalamdb_error("concat")?;
 
     let row_id_idx = combined_schema
         .fields()
@@ -113,11 +114,11 @@ pub async fn resolve_latest_version(
         .iter()
         .map(|col| {
             compute::take(col.as_ref(), indices_array.as_ref(), None)
-                .map_err(|e| KalamDbError::Other(format!("take: {}", e)))
+                .into_kalamdb_error("take")
         })
         .collect();
     let result_batch = RecordBatch::try_new(combined_schema.clone(), result_columns?)
-        .map_err(|e| KalamDbError::Other(format!("create batch: {}", e)))?;
+        .into_kalamdb_error("create batch")?;
 
     // Project to target schema with type conversions
     project_to_target_schema(result_batch, schema)
@@ -160,7 +161,7 @@ fn project_to_target_schema(
     }
 
     RecordBatch::try_new(schema, final_columns)
-        .map_err(|e| KalamDbError::Other(format!("project_to_target_schema: {}", e)))
+        .into_kalamdb_error("project_to_target_schema")
 }
 
 fn add_source_priority(batch: RecordBatch, priority: u8) -> Result<RecordBatch, KalamDbError> {
@@ -176,7 +177,7 @@ fn add_source_priority(batch: RecordBatch, priority: u8) -> Result<RecordBatch, 
     let mut columns: Vec<ArrayRef> = batch.columns().to_vec();
     columns.push(priority_array);
     RecordBatch::try_new(new_schema, columns)
-        .map_err(|e| KalamDbError::Other(format!("add_source_priority: {}", e)))
+        .into_kalamdb_error("add_source_priority")
 }
 
 fn create_empty_batch(schema: &Arc<Schema>) -> Result<RecordBatch, KalamDbError> {
@@ -193,7 +194,7 @@ fn create_empty_batch(schema: &Arc<Schema>) -> Result<RecordBatch, KalamDbError>
         })
         .collect();
     RecordBatch::try_new(schema.clone(), empty_columns)
-        .map_err(|e| KalamDbError::Other(format!("empty_batch: {}", e)))
+        .into_kalamdb_error("empty_batch")
 }
 
 #[cfg(test)]
@@ -369,7 +370,7 @@ where
 
     // Step 4: Filter out deleted records (_deleted = true)
     let filtered_batch = {
-        let deleted_col = resolved_batch.column_by_name("_deleted").ok_or_else(|| {
+        let deleted_col = resolved_batch.column_by_name(SystemColumnNames::DELETED).ok_or_else(|| {
             datafusion::error::DataFusionError::Execution("Missing _deleted column".to_string())
         })?;
         let deleted_array = deleted_col.as_boolean();
@@ -422,9 +423,9 @@ pub fn parquet_batch_to_rows(batch: &RecordBatch) -> Result<Vec<ParquetRowData>,
     let seq_idx = schema
         .fields()
         .iter()
-        .position(|f| f.name() == "_seq")
+        .position(|f| f.name() == SystemColumnNames::SEQ)
         .ok_or_else(|| KalamDbError::Other("Missing _seq column in Parquet batch".to_string()))?;
-    let deleted_idx = schema.fields().iter().position(|f| f.name() == "_deleted");
+    let deleted_idx = schema.fields().iter().position(|f| f.name() == SystemColumnNames::DELETED);
 
     let seq_array = batch
         .column(seq_idx)
@@ -451,7 +452,7 @@ pub fn parquet_batch_to_rows(batch: &RecordBatch) -> Result<Vec<ParquetRowData>,
         let mut values = BTreeMap::new();
         for (col_idx, field) in schema.fields().iter().enumerate() {
             let col_name = field.name();
-            if col_name == "_seq" || col_name == "_deleted" {
+            if col_name == SystemColumnNames::SEQ || col_name == SystemColumnNames::DELETED {
                 continue;
             }
 

@@ -55,6 +55,8 @@ pub struct SubscriptionHandle {
     pub filter_expr: Option<Arc<Expr>>,
     /// Column projections for filtering notification payload (None = all columns)
     pub projections: Option<Arc<Vec<String>>>,
+    /// Serialization mode for row data (Simple or Typed)
+    pub serialization_mode: kalamdb_commons::websocket::SerializationMode,
     /// Shared notification channel
     pub notification_tx: Arc<NotificationSender>,
 }
@@ -85,6 +87,9 @@ pub struct SubscriptionState {
     pub batch_size: usize,
     /// Snapshot boundary SeqId for consistent batch loading
     pub snapshot_end_seq: Option<SeqId>,
+    /// Serialization mode for row data (Simple or Typed)
+    /// Defaults to Typed for backward compatibility with existing clients
+    pub serialization_mode: kalamdb_commons::websocket::SerializationMode,
     /// Shared notification channel (Arc for zero-copy)
     pub notification_tx: Arc<NotificationSender>,
 }
@@ -197,7 +202,6 @@ impl ConnectionState {
 }
 
 /// Registration result returned when a connection registers
-/// TODO: We dont need this anymore we can use ConnectionState directly
 pub struct ConnectionRegistration {
     /// Shared connection state - hold this for direct access
     pub state: SharedConnectionState,
@@ -223,9 +227,6 @@ pub struct ConnectionsManager {
     connections: DashMap<ConnectionId, SharedConnectionState>,
 
     // === Secondary Indices (for efficient lookups) ===
-    /// User → Connections index: UserId → Vec<ConnectionId>
-    /// TODO: Is this needed?
-    user_connections: DashMap<UserId, Vec<ConnectionId>>,
     /// (UserId, TableId) → Vec<SubscriptionHandle> for O(1) notification delivery
     /// Uses lightweight handles (~48 bytes) instead of full state (~800+ bytes)
     user_table_subscriptions: DashMap<(UserId, TableId), Vec<SubscriptionHandle>>,
@@ -263,7 +264,6 @@ impl ConnectionsManager {
 
         let registry = Arc::new(Self {
             connections: DashMap::with_capacity(1024),
-            user_connections: DashMap::new(),
             user_table_subscriptions: DashMap::new(),
             live_id_to_connection: DashMap::new(),
             node_id,
@@ -331,9 +331,7 @@ impl ConnectionsManager {
 
         let shared_state = Arc::new(RwLock::new(state));
         self.connections.insert(connection_id.clone(), Arc::clone(&shared_state));
-        let count = self.total_connections.fetch_add(1, Ordering::AcqRel) + 1;
-
-        debug!("Connection registered: {} (total: {})", connection_id, count);
+        let _count = self.total_connections.fetch_add(1, Ordering::AcqRel) + 1;
 
         Some(ConnectionRegistration {
             state: shared_state,
@@ -345,11 +343,8 @@ impl ConnectionsManager {
     /// Called after successful authentication to update user index
     ///
     /// Must be called after `state.write().mark_authenticated(user_id)`.
-    pub fn on_authenticated(&self, connection_id: &ConnectionId, user_id: UserId) {
-        self.user_connections
-            .entry(user_id)
-            .or_default()
-            .push(connection_id.clone());
+    pub fn on_authenticated(&self, _connection_id: &ConnectionId, _user_id: UserId) {
+        // User index no longer needed - subscriptions are tracked via user_table_subscriptions
     }
 
     /// Unregister a connection and all its subscriptions
@@ -361,16 +356,8 @@ impl ConnectionsManager {
 
             let state = shared_state.read();
 
-            // Remove from user index
+            // Remove from user_table_subscriptions index
             if let Some(user_id) = &state.user_id {
-                if let Some(mut conns) = self.user_connections.get_mut(user_id) {
-                    conns.retain(|c| c != connection_id);
-                    if conns.is_empty() {
-                        drop(conns);
-                        self.user_connections.remove(user_id);
-                    }
-                }
-
                 // Remove from user_table_subscriptions index
                 for entry in state.subscriptions.iter() {
                     let sub = entry.value();
@@ -551,7 +538,6 @@ impl ConnectionsManager {
         if remaining > 0 {
             warn!("Force closing {} connections after timeout", remaining);
             self.connections.clear();
-            self.user_connections.clear();
             self.user_table_subscriptions.clear();
             self.live_id_to_connection.clear();
             self.total_connections.store(0, Ordering::Release);

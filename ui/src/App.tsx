@@ -7,6 +7,7 @@ import Users from "./pages/Users";
 import Storages from "./pages/Storages";
 import Namespaces from "./pages/Namespaces";
 import Jobs from "./pages/Jobs";
+import LiveQueries from "./pages/LiveQueries";
 import AuditLogs from "./pages/AuditLogs";
 import ServerLogs from "./pages/ServerLogs";
 import Settings from "./pages/Settings";
@@ -34,6 +35,7 @@ function App() {
             <Route path="storages" element={<Storages />} />
             <Route path="namespaces" element={<Namespaces />} />
             <Route path="jobs" element={<Jobs />} />
+            <Route path="live-queries" element={<LiveQueries />} />
             <Route path="audit-logs" element={<AuditLogs />} />
             <Route path="server-logs" element={<ServerLogs />} />
             <Route path="settings" element={<Settings />} />

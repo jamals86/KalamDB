@@ -27,6 +27,9 @@ serde_json = { workspace = true }
 # HTTP Basic Auth encoding
 base64 = { workspace = true }
 
+# Date/time handling for timestamp formatting
+chrono = { workspace = true }
+
 # Random number generation for WASM
 getrandom = { version = "0.2", optional = true, features = ["js"] }
 

@@ -37,6 +37,7 @@
 
 pub mod app_context;
 pub mod error;
+pub mod error_extensions;
 pub mod jobs;
 pub mod live;
 pub mod manifest;
@@ -46,6 +47,9 @@ pub mod slow_query_logger;
 pub mod sql;
 pub mod storage;
 pub mod test_helpers;
+
+// Re-export commonly used items
+pub use error_extensions::KalamDbResultExt;
 
 // Re-export modules that were moved to other crates
 pub mod auth {

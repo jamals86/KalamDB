@@ -16,6 +16,7 @@
 //! ```
 
 use crate::error::KalamDbError;
+use crate::error_extensions::KalamDbResultExt;
 use crate::jobs::executors::{JobContext, JobDecision, JobExecutor, JobParams};
 use async_trait::async_trait;
 use kalamdb_commons::JobType;
@@ -79,7 +80,7 @@ impl JobExecutor for JobCleanupExecutor {
         // Execute cleanup
         let deleted_count = jobs_provider
             .cleanup_old_jobs(retention_days)
-            .map_err(|e| KalamDbError::Other(format!("Failed to cleanup old jobs: {}", e)))?;
+            .into_kalamdb_error("Failed to cleanup old jobs")?;
 
         let message = format!(
             "Job history cleanup completed - {} jobs deleted (retention: {} days)",

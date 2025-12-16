@@ -7,8 +7,9 @@ use crate::schema_registry::persistence::SchemaPersistence;
 use crate::schema_registry::provider_registry::ProviderRegistry;
 use crate::schema_registry::table_cache::TableCache;
 use datafusion::datasource::TableProvider;
+use kalamdb_commons::constants::SystemColumnNames;
 use kalamdb_commons::models::schemas::TableDefinition;
-use kalamdb_commons::models::{StorageId, TableId, UserId};
+use kalamdb_commons::models::{StorageId, TableId, TableVersionId, UserId};
 use kalamdb_commons::schemas::TableType;
 use std::sync::Arc;
 
@@ -59,6 +60,26 @@ impl SchemaRegistry {
     pub fn invalidate(&self, table_id: &TableId) {
         self.table_cache.invalidate(table_id);
         let _ = self.provider_registry.remove_provider(table_id);
+    }
+
+    /// Invalidate all versions of a table (for DROP TABLE)
+    pub fn invalidate_all_versions(&self, table_id: &TableId) {
+        self.table_cache.invalidate_all_versions(table_id);
+        let _ = self.provider_registry.remove_provider(table_id);
+    }
+
+    // ===== Versioned Cache Methods (Phase 16) =====
+
+    /// Get cached table data for a specific version
+    ///
+    /// Used when reading Parquet files written with older schemas.
+    pub fn get_version(&self, version_id: &TableVersionId) -> Option<Arc<CachedTableData>> {
+        self.table_cache.get_version(version_id)
+    }
+
+    /// Insert a specific version into the cache
+    pub fn insert_version(&self, version_id: TableVersionId, data: Arc<CachedTableData>) {
+        self.table_cache.insert_version(version_id, data);
     }
 
     /// Resolve storage path with dynamic placeholders substituted
@@ -164,6 +185,35 @@ impl SchemaRegistry {
         SchemaPersistence::table_exists(&self.table_cache, table_id)
     }
 
+    /// Get table definition if it exists (optimized single-call pattern)
+    ///
+    /// Combines table existence check + definition fetch in one operation.
+    /// Use this instead of calling `table_exists()` followed by `get_table_definition()`.
+    ///
+    /// # Performance
+    /// - Cache hit: Returns immediately (no duplicate lookups)
+    /// - Cache miss: Single persistence query + cache population
+    /// - Prevents double fetch: table_exists() then get_table_definition()
+    ///
+    /// # Example
+    /// ```no_run
+    /// // ❌ OLD: Two lookups (inefficient)
+    /// if schema_registry.table_exists(&table_id)? {
+    ///     let def = schema_registry.get_table_definition(&table_id)?;
+    /// }
+    ///
+    /// // ✅ NEW: Single lookup (efficient)
+    /// if let Some(def) = schema_registry.get_table_if_exists(&table_id)? {
+    ///     // use def
+    /// }
+    /// ```
+    pub fn get_table_if_exists(
+        &self,
+        table_id: &TableId,
+    ) -> Result<Option<Arc<TableDefinition>>, KalamDbError> {
+        SchemaPersistence::get_table_if_exists(&self.table_cache, table_id)
+    }
+
     /// Get Arrow schema for a table (Phase 10: Arrow Schema Memoization)
     pub fn get_arrow_schema(
         &self,
@@ -195,7 +245,7 @@ impl SchemaRegistry {
         }
 
         // Add _seq system column (FR-054: default Bloom filter columns)
-        columns.push("_seq".to_string());
+        columns.push(SystemColumnNames::SEQ.to_string());
 
         Ok(columns)
     }

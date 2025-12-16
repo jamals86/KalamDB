@@ -3,6 +3,7 @@
 //! Provides global access to all core resources with simplified 3-parameter initialization.
 //! Uses constants from kalamdb_commons for table prefixes.
 
+use crate::error_extensions::KalamDbResultExt;
 use crate::jobs::executors::{
     BackupExecutor, CleanupExecutor, CompactExecutor, FlushExecutor, JobCleanupExecutor,
     JobRegistry, RestoreExecutor, RetentionExecutor, StreamEvictionExecutor, UserCleanupExecutor,
@@ -831,7 +832,7 @@ impl AppContext {
         self.system_tables
             .jobs()
             .create_job(job.clone())
-            .map_err(|e| crate::error::KalamDbError::Other(format!("Failed to insert job: {}", e)))
+            .into_kalamdb_error("Failed to insert job")
     }
 
     /// Scan all jobs from the jobs table
@@ -843,7 +844,7 @@ impl AppContext {
         self.system_tables
             .jobs()
             .list_jobs()
-            .map_err(|e| crate::error::KalamDbError::Other(format!("Failed to scan jobs: {}", e)))
+            .into_kalamdb_error("Failed to scan jobs")
     }
 
     /// Get server uptime in seconds

@@ -81,6 +81,21 @@ impl SharedTablePkIndex {
         prefix.push(b':');
         prefix
     }
+
+    /// Build a prefix for a PK string value (for batch existence checks).
+    ///
+    /// Returns: `{pk_value}:` as bytes
+    ///
+    /// This is a simpler version of `build_prefix_for_pk` that takes a string
+    /// directly, avoiding ScalarValue parsing overhead for batch operations.
+    #[inline]
+    pub fn build_pk_prefix(&self, pk_value: &str) -> Vec<u8> {
+        let pk_bytes = pk_value.as_bytes();
+        let mut prefix = Vec::with_capacity(pk_bytes.len() + 1);
+        prefix.extend_from_slice(pk_bytes);
+        prefix.push(b':');
+        prefix
+    }
 }
 
 impl IndexDefinition<SharedTableRowId, SharedTableRow> for SharedTablePkIndex {

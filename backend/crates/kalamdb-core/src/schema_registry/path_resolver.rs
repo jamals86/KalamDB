@@ -57,8 +57,25 @@ impl PathResolver {
             rel = rel.trim_start_matches('/').to_string();
         }
 
-        let full_path = std::path::PathBuf::from(base_dir).join(rel);
-        Ok(full_path.to_string_lossy().to_string())
+        let full_path = if base_dir.starts_with("s3://")
+            || base_dir.starts_with("gs://")
+            || base_dir.starts_with("gcs://")
+            || base_dir.starts_with("az://")
+            || base_dir.starts_with("azure://")
+        {
+            format!(
+                "{}/{}",
+                base_dir.trim_end_matches('/'),
+                rel.trim_start_matches('/')
+            )
+        } else {
+            std::path::PathBuf::from(base_dir)
+                .join(rel)
+                .to_string_lossy()
+                .to_string()
+        };
+
+        Ok(full_path)
     }
 
     /// Resolve partial storage path template for a table

@@ -148,6 +148,19 @@ pub struct SegmentMetadata {
 
     /// If true, this segment is marked for deletion (compaction/cleanup)
     pub tombstone: bool,
+
+    /// Schema version when this segment was written (Phase 16)
+    ///
+    /// Links this Parquet file to a specific table schema version.
+    /// Use `TablesStore::get_version(table_id, schema_version)` to
+    /// retrieve the exact TableDefinition for reading this segment.
+    #[serde(default = "default_schema_version")]
+    pub schema_version: u32,
+}
+
+/// Default schema version for backward compatibility with existing manifests
+fn default_schema_version() -> u32 {
+    1
 }
 
 impl SegmentMetadata {
@@ -170,6 +183,32 @@ impl SegmentMetadata {
             size_bytes,
             created_at: chrono::Utc::now().timestamp(),
             tombstone: false,
+            schema_version: 1, // Default to version 1
+        }
+    }
+
+    /// Create a new segment with a specific schema version
+    pub fn with_schema_version(
+        id: String,
+        path: String,
+        column_stats: HashMap<String, ColumnStats>,
+        min_seq: i64,
+        max_seq: i64,
+        row_count: u64,
+        size_bytes: u64,
+        schema_version: u32,
+    ) -> Self {
+        Self {
+            id,
+            path,
+            column_stats,
+            min_seq,
+            max_seq,
+            row_count,
+            size_bytes,
+            created_at: chrono::Utc::now().timestamp(),
+            tombstone: false,
+            schema_version,
         }
     }
 }

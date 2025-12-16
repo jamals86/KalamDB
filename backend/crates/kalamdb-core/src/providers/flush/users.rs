@@ -5,27 +5,33 @@
 
 use super::base::{FlushJobResult, FlushMetadata, TableFlush};
 use crate::error::KalamDbError;
+use crate::error_extensions::KalamDbResultExt;
 use crate::live_query::{ChangeNotification, LiveQueryManager};
 use crate::manifest::{FlushManifestHelper, ManifestCacheService, ManifestService};
 use crate::providers::arrow_json_conversion::json_rows_to_arrow_batch;
 use crate::schema_registry::SchemaRegistry;
-use crate::storage::ParquetWriter;
+use crate::app_context::AppContext;
+use crate::storage::write_parquet_to_storage_sync;
 use datafusion::arrow::datatypes::SchemaRef;
 use datafusion::arrow::record_batch::RecordBatch;
 use datafusion::scalar::ScalarValue;
-use kalamdb_commons::models::{Row, TableId, UserId};
+use kalamdb_commons::constants::SystemColumnNames;
+use kalamdb_commons::models::{Row, StorageId, TableId, UserId};
 use kalamdb_store::entity_store::EntityStore;
 use kalamdb_tables::UserTableIndexedStore;
-use std::path::PathBuf;
 use std::sync::Arc;
 
 /// User table flush job
+///
+/// Flushes user table data to Parquet files. Each user's data is written to a
+/// separate Parquet file for RLS isolation. Uses Bloom filters on PRIMARY KEY + _seq
+/// columns for efficient query pruning.
 pub struct UserTableFlushJob {
     store: Arc<UserTableIndexedStore>,
     table_id: Arc<TableId>,
-    schema: SchemaRef,                                 //TODO: needed?
-    unified_cache: Arc<SchemaRegistry>,                //TODO: wE HAVE APPCONTEXT NOW
-    live_query_manager: Option<Arc<LiveQueryManager>>, //TODO: We can pass AppContext and has live_query_manager there
+    schema: SchemaRef,
+    unified_cache: Arc<SchemaRegistry>,
+    live_query_manager: Option<Arc<LiveQueryManager>>,
     manifest_helper: FlushManifestHelper,
     /// Bloom filter columns (PRIMARY KEY + _seq) - fetched once per job for efficiency
     bloom_filter_columns: Vec<String>,
@@ -53,7 +59,7 @@ impl UserTableFlushJob {
                     table_id,
                     e
                 );
-                vec!["_seq".to_string()]
+                vec![SystemColumnNames::SEQ.to_string()]
             });
 
         log::debug!(
@@ -86,6 +92,16 @@ impl UserTableFlushJob {
         self.table_id.table_name()
     }
 
+    /// Get current schema version for the table
+    fn get_schema_version(&self) -> u32 {
+        self.unified_cache
+            .get_table_definition(&self.table_id)
+            .ok()
+            .flatten()
+            .map(|def| def.schema_version)
+            .unwrap_or(1)
+    }
+
     /// Resolve storage path for a specific user
     fn resolve_storage_path_for_user(&self, user_id: &UserId) -> Result<String, KalamDbError> {
         self.unified_cache
@@ -96,7 +112,7 @@ impl UserTableFlushJob {
     fn rows_to_record_batch(&self, rows: &[(Vec<u8>, Row)]) -> Result<RecordBatch, KalamDbError> {
         let arrow_rows: Vec<Row> = rows.iter().map(|(_, row)| row.clone()).collect();
         json_rows_to_arrow_batch(&self.schema, arrow_rows)
-            .map_err(|e| KalamDbError::Other(format!("Failed to build RecordBatch: {}", e)))
+            .into_kalamdb_error("Failed to build RecordBatch")
     }
 
     /// Flush accumulated rows for a single user to Parquet
@@ -145,33 +161,52 @@ impl UserTableFlushJob {
         let batch_number = self.manifest_helper
             .get_next_batch_number(&self.table_id, Some(&user_id_typed))?;
         let batch_filename = FlushManifestHelper::generate_batch_filename(batch_number);
-        let output_path = PathBuf::from(&storage_path).join(&batch_filename);
+        let destination_path = if storage_path.ends_with('/') {
+            format!("{}{}", storage_path, batch_filename)
+        } else {
+            format!("{}/{}", storage_path, batch_filename)
+        };
 
-        // Ensure directory exists
-        if let Some(parent) = output_path.parent() {
-            std::fs::create_dir_all(parent)
-                .map_err(|e| KalamDbError::Other(format!("Failed to create directory: {}", e)))?;
-        }
+        let app_ctx = AppContext::get();
+        let cached = self
+            .unified_cache
+            .get(&self.table_id)
+            .ok_or_else(|| KalamDbError::TableNotFound(format!("Table not found: {}", self.table_id)))?;
+
+        let storage_id = cached.storage_id.clone().unwrap_or_else(StorageId::local);
+        let storage = app_ctx
+            .system_tables()
+            .storages()
+            .get_storage(&storage_id)
+            .into_kalamdb_error("Failed to load storage")?
+            .ok_or_else(|| {
+                KalamDbError::InvalidOperation(format!(
+                    "Storage '{}' not found",
+                    storage_id.as_str()
+                ))
+            })?;
 
         // Write to Parquet with Bloom filters on PRIMARY KEY + _seq (FR-054, FR-055)
         log::debug!(
             "📝 Writing Parquet file: path={}, rows={}",
-            output_path.display(),
+            destination_path,
             rows_count
         );
-        let writer = ParquetWriter::new(output_path.to_str().unwrap());
-        writer.write_with_bloom_filter(
+        let result = write_parquet_to_storage_sync(
+            &storage,
+            &destination_path,
             self.schema.clone(),
             vec![batch.clone()],
             Some(bloom_filter_columns.to_vec()),
-        )?;
+        )
+        .into_kalamdb_error("Filestore error")?;
 
-        // Calculate file size
-        let size_bytes = std::fs::metadata(&output_path)
-            .map(|m| m.len())
-            .unwrap_or(0);
+        let size_bytes = result.size_bytes;
 
         // Update manifest and cache using helper (with row-group stats)
+        // Note: For remote storage, we don't have a local path; pass destination_path for stats
+        // Phase 16: Include schema version to link Parquet file to specific schema
+        let schema_version = self.get_schema_version();
         self.manifest_helper.update_manifest_after_flush(
             self.namespace_id(),
             self.table_name(),
@@ -179,21 +214,22 @@ impl UserTableFlushJob {
             Some(&user_id_typed),
             batch_number,
             batch_filename.clone(),
-            &output_path,
+            &std::path::PathBuf::from(&destination_path),
             &batch,
             size_bytes,
             bloom_filter_columns,
+            schema_version,
         )?;
 
         log::info!(
             "✅ Flushed {} rows for user {} to {} (batch={})",
             rows_count,
             user_id,
-            output_path.display(),
+            destination_path,
             batch_number
         );
 
-        parquet_files.push(output_path.to_string_lossy().to_string());
+        parquet_files.push(destination_path);
         Ok(rows_count)
     }
 
@@ -206,7 +242,7 @@ impl UserTableFlushJob {
         let mut parsed_keys = Vec::new();
         for key_bytes in keys {
             let key = kalamdb_commons::ids::UserTableRowId::from_bytes(key_bytes)
-                .map_err(|e| KalamDbError::InvalidOperation(format!("Invalid key bytes: {}", e)))?;
+                .into_invalid_operation("Invalid key bytes")?;
             parsed_keys.push(key);
         }
 
@@ -215,7 +251,7 @@ impl UserTableFlushJob {
         // to ensure both the entity AND its index entries are removed atomically.
         for key in &parsed_keys {
             self.store.delete(key)
-                .map_err(|e| KalamDbError::Other(format!("Failed to delete flushed row: {}", e)))?;
+                .into_kalamdb_error("Failed to delete flushed row")?;
         }
 
         log::debug!("Deleted {} flushed rows from storage", keys.len());
@@ -232,21 +268,11 @@ impl TableFlush for UserTableFlushJob {
             self.store.partition()
         );
 
-        // STEP 1: Scan rows in batches to avoid loading all into memory at once
-        // Use batched iteration with a cursor to process incrementally
-        const BATCH_SIZE: usize = 10000;
-
+        use super::base::{config, helpers, FlushDedupStats};
         use std::collections::HashMap;
 
         // Get primary key field name from schema
-        let pk_field = self
-            .schema
-            .fields()
-            .iter()
-            .find(|f| !f.name().starts_with('_'))
-            .map(|f| f.name().clone())
-            .unwrap_or_else(|| "id".to_string());
-
+        let pk_field = helpers::extract_pk_field_name(&self.schema);
         log::debug!("📊 [FLUSH DEDUP] Using primary key field: {}", pk_field);
 
         // Map: (user_id, pk_value) -> (key_bytes, row, _seq)
@@ -256,15 +282,14 @@ impl TableFlush for UserTableFlushJob {
         > = HashMap::new();
         // Track ALL keys to delete (including old versions)
         let mut all_keys_to_delete: Vec<Vec<u8>> = Vec::new();
-        let mut deleted_count = 0;
-        let mut rows_before_dedup = 0;
+        let mut stats = FlushDedupStats::default();
 
         // Batched scan with cursor
         let mut cursor: Option<Vec<u8>> = None;
         loop {
             let batch = self
                 .store
-                .scan_limited_with_prefix_and_start(None, cursor.as_deref(), BATCH_SIZE)
+                .scan_limited_with_prefix_and_start(None, cursor.as_deref(), config::BATCH_SIZE)
                 .map_err(|e| {
                     log::error!(
                         "❌ Failed to scan table={}.{}: {}",
@@ -285,15 +310,11 @@ impl TableFlush for UserTableFlushJob {
                 cursor.as_ref().map(|c| c.len())
             );
 
-            // Update cursor for next batch (last key + 1 byte to skip it)
-            cursor = batch.last().map(|(key, _)| {
-                let mut next = key.clone();
-                next.push(0);
-                next
-            });
+            // Update cursor for next batch
+            cursor = batch.last().map(|(key, _)| helpers::advance_cursor(key));
 
             let batch_len = batch.len();
-            rows_before_dedup += batch_len;
+            stats.rows_before_dedup += batch_len;
 
             for (key_bytes, row) in batch {
                 // Track ALL keys for deletion (before dedup)
@@ -323,7 +344,7 @@ impl TableFlush for UserTableFlushJob {
 
                 // Track deleted rows
                 if row._deleted {
-                    deleted_count += 1;
+                    stats.deleted_count += 1;
                 }
 
                 // Keep MAX(_seq) per (user_id, pk_value)
@@ -342,48 +363,32 @@ impl TableFlush for UserTableFlushJob {
             }
 
             // Check if we got fewer rows than batch size (end of data)
-            if batch_len < BATCH_SIZE {
+            if batch_len < config::BATCH_SIZE {
                 break;
             }
         }
 
-        log::info!(
-            "📊 [FLUSH DEDUP] Scanned {} total rows from hot storage (table={}.{})",
-            rows_before_dedup,
-            self.namespace_id().as_str(),
-            self.table_name().as_str()
-        );
-
-        let rows_after_dedup = latest_versions.len();
-        let dedup_ratio = if rows_before_dedup > 0 {
-            (rows_before_dedup - rows_after_dedup) as f64 / rows_before_dedup as f64 * 100.0
-        } else {
-            0.0
-        };
-
-        log::info!("📊 [FLUSH DEDUP] Version resolution complete: {} rows → {} unique (dedup: {:.1}%, deleted: {})",
-                   rows_before_dedup, rows_after_dedup, dedup_ratio, deleted_count);
+        stats.rows_after_dedup = latest_versions.len();
 
         // STEP 2: Filter out deleted rows (tombstones)
         let mut rows_by_user: HashMap<String, Vec<(Vec<u8>, Row)>> = HashMap::new();
-        let mut tombstones_filtered = 0;
 
         for ((user_id, _pk_value), (key_bytes, row, _seq)) in latest_versions {
             // Skip soft-deleted rows (tombstones)
             if row._deleted {
-                tombstones_filtered += 1;
+                stats.tombstones_filtered += 1;
                 continue;
             }
 
             // Convert to JSON and inject system columns
             let mut row_data = row.fields.clone();
             row_data.values.insert(
-                "_seq".to_string(),
+                SystemColumnNames::SEQ.to_string(),
                 ScalarValue::Int64(Some(row._seq.as_i64())),
             );
             row_data
                 .values
-                .insert("_deleted".to_string(), ScalarValue::Boolean(Some(false)));
+                .insert(SystemColumnNames::DELETED.to_string(), ScalarValue::Boolean(Some(false)));
 
             rows_by_user
                 .entry(user_id)
@@ -391,12 +396,13 @@ impl TableFlush for UserTableFlushJob {
                 .push((key_bytes, row_data));
         }
 
+        // Log dedup statistics
+        stats.log_summary(self.namespace_id().as_str(), self.table_name().as_str());
         let rows_to_flush = rows_by_user.values().map(|v| v.len()).sum::<usize>();
         log::info!(
-            "📊 [FLUSH DEDUP] Final: {} rows to flush ({} users, {} tombstones filtered)",
-            rows_to_flush,
+            "📊 [FLUSH USER] Partitioned into {} users, {} rows to flush",
             rows_by_user.len(),
-            tombstones_filtered
+            rows_to_flush
         );
 
         // If no rows to flush, return early

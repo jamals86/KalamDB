@@ -1,5 +1,6 @@
 use super::types::JobsManager;
 use crate::error::KalamDbError;
+use crate::error_extensions::KalamDbResultExt;
 use crate::jobs::executors::JobParams;
 use kalamdb_commons::system::{Job, JobOptions};
 use kalamdb_commons::{JobId, JobStatus, JobType};
@@ -12,7 +13,7 @@ impl JobsManager {
         self.jobs_provider
             .insert_job_async(job)
             .await
-            .map_err(|e| KalamDbError::io_message(format!("Failed to insert job: {}", e)))
+            .into_kalamdb_error("Failed to insert job")
     }
 
     /// Create a new job
@@ -123,9 +124,8 @@ impl JobsManager {
         params.validate()?;
 
         // Serialize to JSON for storage and pre-validation
-        let params_json = serde_json::to_string(&params).map_err(|e| {
-            KalamDbError::Other(format!("Failed to serialize job parameters: {}", e))
-        })?;
+        let params_json = serde_json::to_string(&params)
+            .into_kalamdb_error("Failed to serialize job parameters")?;
 
         // Call executor's pre_validate to check if job should be created
         let app_ctx = self.get_attached_app_context();
@@ -146,9 +146,8 @@ impl JobsManager {
             )));
         }
 
-        let parameters = serde_json::from_str(&params_json).map_err(|e| {
-            KalamDbError::Other(format!("Failed to parse job parameters: {}", e))
-        })?;
+        let parameters = serde_json::from_str(&params_json)
+            .into_kalamdb_error("Failed to parse job parameters")?;
 
         // Delegate to existing create_job method
         self.create_job(job_type, parameters, idempotency_key, options)
@@ -186,7 +185,7 @@ impl JobsManager {
         self.jobs_provider
             .update_job_async(cancelled_job)
             .await
-            .map_err(|e| KalamDbError::io_message(format!("Failed to cancel job: {}", e)))?;
+            .into_kalamdb_error("Failed to cancel job")?;
 
         // Log cancellation
         self.log_job_event(job_id, "warn", "Job cancelled by user");
@@ -224,7 +223,7 @@ impl JobsManager {
         self.jobs_provider
             .update_job_async(job)
             .await
-            .map_err(|e| KalamDbError::Other(format!("Failed to complete job: {}", e)))?;
+            .into_kalamdb_error("Failed to complete job")?;
 
         self.log_job_event(job_id, "info", &success_message);
         Ok(())
@@ -260,7 +259,7 @@ impl JobsManager {
         self.jobs_provider
             .update_job_async(job)
             .await
-            .map_err(|e| KalamDbError::Other(format!("Failed to mark job as failed: {}", e)))?;
+            .into_kalamdb_error("Failed to mark job as failed")?;
 
         self.log_job_event(job_id, "error", &format!("Job failed: {}", error_message));
         Ok(())

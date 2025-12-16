@@ -29,9 +29,12 @@ impl TablesTableSchema {
     /// - table_type: Utf8
     /// - created_at: Timestamp(Millisecond, None)
     /// - schema_version: Int32
+    /// - columns: Utf8 (JSON array of column definitions)
     /// - table_comment: Utf8 (nullable)
     /// - updated_at: Timestamp(Millisecond, None)
     /// - options: Utf8 (nullable, JSON serialized TableOptions)
+    /// - access_level: Utf8 (nullable, for Shared tables)
+    /// - is_latest: Boolean (schema versioning flag)
     pub fn schema() -> SchemaRef {
         TABLES_SCHEMA
             .get_or_init(|| {
@@ -67,8 +70,8 @@ mod tests {
     fn test_tables_table_schema() {
         let schema = TablesTableSchema::schema();
         // Schema built from TableDefinition, verify field count matches definition
-        // Expecting 10 fields: table_id, table_name, namespace_id, table_type, created_at, schema_version, table_comment, updated_at, options, access_level
-        assert_eq!(schema.fields().len(), 10);
+        // Expecting 12 fields: table_id, table_name, namespace_id, table_type, created_at, schema_version, columns, table_comment, updated_at, options, access_level, is_latest
+        assert_eq!(schema.fields().len(), 12);
 
         // Verify fields exist (order guaranteed by TableDefinition's ordinal_position)
         let field_names: Vec<&str> = schema.fields().iter().map(|f| f.name().as_str()).collect();
@@ -77,8 +80,10 @@ mod tests {
         assert!(field_names.contains(&"namespace_id"));
         assert!(field_names.contains(&"table_type"));
         assert!(field_names.contains(&"created_at"));
+        assert!(field_names.contains(&"columns"));
         assert!(field_names.contains(&"options"));
         assert!(field_names.contains(&"access_level"));
+        assert!(field_names.contains(&"is_latest"));
     }
 
     #[test]

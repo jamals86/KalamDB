@@ -23,7 +23,22 @@ fn assert_decimal_column_eq(row: &Value, column: &str, expected: f64, raw_output
         .get(column)
         .unwrap_or_else(|| panic!("Missing column '{column}' in row: {row}. Raw: {raw_output}"));
 
-    let actual = match value {
+    // Extract from Arrow JSON format first if needed
+    let value = extract_arrow_value(value).unwrap_or_else(|| value.clone());
+
+    let actual = match &value {
+        Value::Object(obj) if obj.contains_key("value") && obj.contains_key("scale") => {
+            // Arrow Decimal128 format: {"precision": 10, "scale": 2, "value": 20075}
+            let unscaled = obj.get("value")
+                .and_then(|v| v.as_i64())
+                .unwrap_or_else(|| panic!("Decimal128 'value' field should be i64. Got: {value}. Raw: {raw_output}")) as i128;
+            let scale = obj.get("scale")
+                .and_then(|v| v.as_u64())
+                .unwrap_or_else(|| panic!("Decimal128 'scale' field should be u64. Got: {value}. Raw: {raw_output}")) as u32;
+            
+            let denom = 10_f64.powi(scale as i32);
+            (unscaled as f64) / denom
+        }
         Value::Number(n) => n
             .as_f64()
             .unwrap_or_else(|| panic!("Decimal column '{column}' was non-f64 number: {value}. Raw: {raw_output}")),
@@ -31,7 +46,7 @@ fn assert_decimal_column_eq(row: &Value, column: &str, expected: f64, raw_output
             if let Ok(parsed) = s.parse::<f64>() {
                 parsed
             } else if let Some(rest) = s.strip_prefix("Some(") {
-                // Current server JSON format for DECIMAL appears to be: "Some(<unscaled>),<precision>,<scale>"
+                // Old server JSON format for DECIMAL: "Some(<unscaled>),<precision>,<scale>"
                 // Example: "Some(20075),10,2" => 200.75
                 let (unscaled_part, rest) = rest.split_once(')')
                     .unwrap_or_else(|| panic!("Unexpected DECIMAL string format '{s}'. Raw: {raw_output}"));

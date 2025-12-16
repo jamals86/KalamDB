@@ -1,6 +1,7 @@
 use crate::error::KalamDbError;
+use crate::error_extensions::KalamDbResultExt;
 use kalamdb_commons::models::schemas::TableDefinition;
-use kalamdb_commons::models::StorageId;
+use kalamdb_commons::models::{StorageId, TableId};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, RwLock};
 
@@ -78,6 +79,126 @@ impl CachedTableData {
         }
     }
 
+    /// Create a fully initialized CachedTableData with storage configuration
+    ///
+    /// This is the preferred way to create CachedTableData as it ensures all
+    /// storage-related fields are properly set. Use this method in:
+    /// - CREATE TABLE
+    /// - ALTER TABLE  
+    /// - Startup/persistence loading
+    ///
+    /// # Arguments
+    /// * `table_def` - The table definition
+    /// * `storage_id` - Storage ID (from table options)
+    /// * `storage_path_template` - Pre-resolved storage path template
+    pub fn with_storage_config(
+        table_def: Arc<TableDefinition>,
+        storage_id: Option<StorageId>,
+        storage_path_template: String,
+    ) -> Self {
+        let schema_version = table_def.schema_version;
+        Self {
+            table: table_def,
+            storage_id,
+            storage_path_template,
+            schema_version,
+            arrow_schema: Arc::new(RwLock::new(None)),
+            last_accessed_ms: AtomicU64::new(Self::now_millis()),
+        }
+    }
+
+    /// Extract storage ID from table definition options
+    ///
+    /// Returns the storage_id from the table's options, or None for system tables.
+    pub fn extract_storage_id(table_def: &TableDefinition) -> Option<StorageId> {
+        use kalamdb_commons::schemas::TableOptions;
+        match &table_def.table_options {
+            TableOptions::User(opts) => Some(opts.storage_id.clone()),
+            TableOptions::Shared(opts) => Some(opts.storage_id.clone()),
+            TableOptions::Stream(_) => Some(StorageId::from("local")), // Default for streams
+            TableOptions::System(_) => None,
+        }
+    }
+
+    /// Create CachedTableData from TableDefinition by resolving storage configuration
+    ///
+    /// This factory method handles the complete initialization including:
+    /// 1. Extracting storage_id from table options
+    /// 2. Resolving the storage path template via PathResolver
+    ///
+    /// Use this for loading tables from persistence (startup, cache miss).
+    ///
+    /// # Arguments
+    /// * `table_id` - The table identifier
+    /// * `table_def` - The table definition
+    ///
+    /// # Returns
+    /// A fully initialized CachedTableData with storage fields populated
+    pub fn from_table_definition(
+        table_id: &TableId,
+        table_def: Arc<TableDefinition>,
+    ) -> Result<Self, KalamDbError> {
+        use crate::schema_registry::PathResolver;
+
+        let storage_id = Self::extract_storage_id(&table_def);
+        let table_type = table_def.table_type;
+
+        let storage_path_template = if let Some(ref sid) = storage_id {
+            PathResolver::resolve_storage_path_template(table_id, table_type, sid).unwrap_or_else(
+                |e| {
+                    log::warn!(
+                        "Failed to resolve storage path template for {}: {}. Using empty template.",
+                        table_id,
+                        e
+                    );
+                    String::new()
+                },
+            )
+        } else {
+            String::new()
+        };
+
+        Ok(Self::with_storage_config(
+            table_def,
+            storage_id,
+            storage_path_template,
+        ))
+    }
+
+    /// Create CachedTableData for an altered table, preserving storage config from old entry
+    ///
+    /// Use this when updating a table after ALTER TABLE. It preserves the storage
+    /// configuration from the existing cache entry to avoid recalculation.
+    ///
+    /// # Arguments
+    /// * `table_id` - The table identifier
+    /// * `new_table_def` - The updated table definition
+    /// * `old_entry` - Optional previous cache entry to copy storage config from
+    ///
+    /// # Returns
+    /// A CachedTableData with updated schema but preserved storage config
+    pub fn from_altered_table(
+        table_id: &TableId,
+        new_table_def: Arc<TableDefinition>,
+        old_entry: Option<&CachedTableData>,
+    ) -> Result<Self, KalamDbError> {
+        if let Some(old) = old_entry {
+            // Preserve storage config from old entry
+            Ok(Self::with_storage_config(
+                new_table_def,
+                old.storage_id.clone(),
+                old.storage_path_template.clone(),
+            ))
+        } else {
+            // No old entry - fully resolve storage config
+            log::warn!(
+                "⚠️  No existing cache entry for {} during ALTER. Resolving storage config...",
+                table_id
+            );
+            Self::from_table_definition(table_id, new_table_def)
+        }
+    }
+
     pub fn touch_at(&self, timestamp_ms: u64) {
         self.last_accessed_ms
             .store(timestamp_ms, Ordering::Relaxed);
@@ -126,9 +247,8 @@ impl CachedTableData {
             }
 
             // Compute Arrow schema from TableDefinition (~75μs first time)
-            let arrow_schema = self.table.to_arrow_schema().map_err(|e| {
-                KalamDbError::SchemaError(format!("Failed to convert to Arrow schema: {}", e))
-            })?;
+            let arrow_schema = self.table.to_arrow_schema()
+                .into_schema_error("Failed to convert to Arrow schema")?;
 
             // Cache for future access
             *write_guard = Some(Arc::clone(&arrow_schema));

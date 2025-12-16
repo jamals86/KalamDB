@@ -4,12 +4,17 @@
 //! concrete file/row-group selections for efficient reads.
 
 use crate::error::KalamDbError;
+use crate::error_extensions::KalamDbResultExt;
+use crate::app_context::AppContext;
+use datafusion::arrow::compute::cast;
 use datafusion::arrow::datatypes::SchemaRef;
 use datafusion::arrow::record_batch::RecordBatch;
 use datafusion::parquet::arrow::arrow_reader::ParquetRecordBatchReaderBuilder;
 use kalamdb_commons::types::Manifest;
+use kalamdb_commons::TableId;
 use std::fs;
 use std::path::PathBuf;
+use std::sync::Arc;
 
 /// Planned selection for a single Parquet file
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -47,14 +52,16 @@ impl ManifestAccessPlanner {
 
     /// Unified scan method: returns combined RecordBatch from Parquet files
     ///
-    /// Handles manifest-based pruning, file loading, and batch concatenation.
+    /// Handles manifest-based pruning, file loading, schema evolution, and batch concatenation.
     ///
     /// # Arguments
     /// * `manifest_opt` - Optional manifest for metadata-driven selection
     /// * `storage_dir` - Base directory containing Parquet files
     /// * `seq_range` - Optional (min, max) seq range for pruning
     /// * `use_degraded_mode` - If true, skip manifest and list directory
-    /// * `schema` - Arrow schema for empty batch if no files found
+    /// * `schema` - Current Arrow schema (target schema for projection)
+    /// * `table_id` - Table identifier for retrieving historical schemas
+    /// * `app_context` - AppContext for accessing system tables
     ///
     /// # Returns
     /// (batch: RecordBatch, stats: (total_batches, skipped, scanned))
@@ -65,8 +72,11 @@ impl ManifestAccessPlanner {
         seq_range: Option<(i64, i64)>,
         use_degraded_mode: bool,
         schema: SchemaRef,
+        table_id: &TableId,
+        app_context: &Arc<AppContext>,
     ) -> Result<(RecordBatch, (usize, usize, usize)), KalamDbError> {
         let mut parquet_files: Vec<PathBuf> = Vec::new();
+        let mut file_schema_versions: std::collections::HashMap<PathBuf, u32> = std::collections::HashMap::new();
         let (mut total_batches, mut skipped, mut scanned) = (0usize, 0usize, 0usize);
 
         if !use_degraded_mode {
@@ -86,7 +96,12 @@ impl ManifestAccessPlanner {
                 skipped = total_batches.saturating_sub(scanned);
 
                 for file_path in selected_files {
-                    parquet_files.push(storage_dir.join(&file_path));
+                    let full_path = storage_dir.join(&file_path);
+                    // Find the schema_version for this file from manifest
+                    if let Some(segment) = manifest.segments.iter().find(|s| s.path == file_path) {
+                        file_schema_versions.insert(full_path.clone(), segment.schema_version);
+                    }
+                    parquet_files.push(full_path);
                 }
             }
         }
@@ -119,20 +134,41 @@ impl ManifestAccessPlanner {
         for parquet_file in &parquet_files {
             let file = fs::File::open(parquet_file).map_err(KalamDbError::Io)?;
 
-            let builder = ParquetRecordBatchReaderBuilder::try_new(file).map_err(|e| {
-                KalamDbError::Other(format!("Failed to create Parquet reader: {}", e))
-            })?;
+            let builder = ParquetRecordBatchReaderBuilder::try_new(file)
+                .into_arrow_error_ctx("Failed to create Parquet reader")?;
 
-            let reader = builder.build().map_err(|e| {
-                KalamDbError::Other(format!("Failed to build Parquet reader: {}", e))
-            })?;
+            let reader = builder.build()
+                .into_arrow_error_ctx("Failed to build Parquet reader")?;
+
+            // Get the schema version for this file (default to 1 if not found)
+            let file_schema_version = file_schema_versions.get(parquet_file).copied().unwrap_or(1);
+            
+            // Check if schema version matches current version
+            let current_version = app_context
+                .schema_registry()
+                .get(table_id)
+                .map(|cached| cached.table.schema_version)
+                .unwrap_or(1);
 
             // Read all batches from this file
             for batch_result in reader {
-                let batch = batch_result.map_err(|e| {
-                    KalamDbError::Other(format!("Failed to read Parquet batch: {}", e))
-                })?;
-                all_batches.push(batch);
+                let batch = batch_result
+                    .into_arrow_error_ctx("Failed to read Parquet batch")?;
+                
+                // If schema versions differ, project the batch to current schema
+                let projected_batch = if file_schema_version != current_version {
+                    self.project_batch_to_current_schema(
+                        batch,
+                        file_schema_version,
+                        &schema,
+                        table_id,
+                        app_context,
+                    )?
+                } else {
+                    batch
+                };
+                
+                all_batches.push(projected_batch);
             }
         }
 
@@ -146,9 +182,8 @@ impl ManifestAccessPlanner {
 
         // Concatenate all batches
         let combined =
-            datafusion::arrow::compute::concat_batches(&schema, &all_batches).map_err(|e| {
-                KalamDbError::Other(format!("Failed to concatenate Parquet batches: {}", e))
-            })?;
+            datafusion::arrow::compute::concat_batches(&schema, &all_batches)
+                .into_arrow_error_ctx("Failed to concatenate Parquet batches")?;
 
         Ok((combined, (total_batches, skipped, scanned)))
     }
@@ -179,6 +214,100 @@ impl ManifestAccessPlanner {
         }
 
         selections
+    }
+
+    /// Project a RecordBatch from an old schema version to the current schema
+    ///
+    /// Handles:
+    /// - New columns added after flush (filled with NULLs)
+    /// - Dropped columns (removed from projection)
+    /// - Column reordering
+    ///
+    /// # Arguments
+    /// * `batch` - RecordBatch with old schema
+    /// * `old_schema_version` - Schema version used when data was flushed
+    /// * `current_schema` - Target Arrow schema (current version)
+    /// * `table_id` - Table identifier
+    /// * `app_context` - AppContext for accessing historical schemas
+    fn project_batch_to_current_schema(
+        &self,
+        batch: RecordBatch,
+        old_schema_version: u32,
+        current_schema: &SchemaRef,
+        table_id: &TableId,
+        app_context: &Arc<AppContext>,
+    ) -> Result<RecordBatch, KalamDbError> {
+        // Get the historical schema definition
+        let old_table_def = app_context
+            .system_tables()
+            .tables()
+            .get_version(table_id, old_schema_version)
+            .into_kalamdb_error(&format!("Failed to retrieve schema version {}", old_schema_version))?
+            .ok_or_else(|| {
+                KalamDbError::Other(format!(
+                    "Schema version {} not found for table {}",
+                    old_schema_version, table_id
+                ))
+            })?;
+
+        let old_schema = old_table_def.to_arrow_schema()
+            .into_arrow_error_ctx("Failed to convert old schema to Arrow")?;
+
+        // If schemas are identical, no projection needed
+        if old_schema.fields() == current_schema.fields() {
+            return Ok(batch);
+        }
+
+        log::debug!(
+            "[Schema Evolution] Projecting batch from schema v{} to current schema for table {}",
+            old_schema_version,
+            table_id
+        );
+
+        // Build projection: for each field in current_schema, find it in old_schema or create NULL array
+        let mut projected_columns: Vec<Arc<dyn datafusion::arrow::array::Array>> = Vec::new();
+
+        for current_field in current_schema.fields() {
+            // Check if field exists in old schema
+            if let Ok(old_col_index) = old_schema.index_of(current_field.name()) {
+                // Column existed in old schema - extract it
+                let old_column = batch.column(old_col_index).clone();
+                
+                // Check if data types match
+                let old_field = old_schema.field(old_col_index);
+                if old_field.data_type() == current_field.data_type() {
+                    // Types match - use as-is
+                    projected_columns.push(old_column);
+                } else {
+                    // Type changed - attempt cast
+                    let casted = cast(&old_column, current_field.data_type())
+                        .into_arrow_error_ctx(&format!(
+                            "Failed to cast column '{}' from {:?} to {:?}",
+                            current_field.name(),
+                            old_field.data_type(),
+                            current_field.data_type()
+                        ))?;
+                    projected_columns.push(casted);
+                }
+            } else {
+                // Column didn't exist in old schema - create NULL array
+                use datafusion::arrow::array::{new_null_array, ArrayRef};
+                let null_array: ArrayRef = new_null_array(current_field.data_type(), batch.num_rows());
+                projected_columns.push(null_array);
+                
+                log::trace!(
+                    "[Schema Evolution] Column '{}' not in old schema v{}, filled with NULLs",
+                    current_field.name(),
+                    old_schema_version
+                );
+            }
+        }
+
+        // Create new RecordBatch with projected columns
+        let projected_batch = RecordBatch::try_new(current_schema.clone(), projected_columns)
+            .into_arrow_error_ctx("Failed to create projected RecordBatch")?;
+
+        Ok(projected_batch)
     }
 
     /// Prune segments that definitely cannot contain a PK value based on column_stats min/max
@@ -280,17 +409,19 @@ impl ManifestAccessPlanner {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::app_context::AppContext;
     use datafusion::arrow::array::{Int32Array, Int64Array};
     use datafusion::arrow::datatypes::Schema;
     use datafusion::arrow::record_batch::RecordBatch as ArrowRecordBatch;
+    use kalamdb_commons::constants::SystemColumnNames;
     use kalamdb_commons::types::{Manifest, SegmentMetadata};
+    use kalamdb_commons::{NamespaceId, TableId, TableName};
     use parquet::arrow::arrow_writer::ArrowWriter;
     use std::fs as stdfs;
     use std::sync::Arc;
     use std::time::{SystemTime, UNIX_EPOCH};
 
     fn make_manifest_with_segments() -> Manifest {
-        use kalamdb_commons::{NamespaceId, TableId, TableName};
         use std::collections::HashMap;
 
         let table_id = TableId::new(NamespaceId::new("ns"), TableName::new("tbl"));
@@ -319,6 +450,21 @@ mod tests {
         mf.add_segment(s1);
 
         mf
+    }
+
+    fn make_test_app_context() -> Arc<AppContext> {
+        let base = std::env::temp_dir();
+        let unique = format!(
+            "kalamdb_test_ctx_{}",
+            SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        );
+        let dir = base.join(unique);
+        stdfs::create_dir_all(&dir).unwrap();
+        
+        Arc::new(AppContext::new_test())
     }
 
     #[test]
@@ -351,8 +497,8 @@ mod tests {
         assert!(plan.is_empty());
     }
 
-    #[test]
-    fn test_scan_parquet_files_empty_dir_returns_empty_batch() {
+    #[tokio::test]
+    async fn test_scan_parquet_files_empty_dir_returns_empty_batch() {
         // Create a unique temp directory without any parquet files
         let base = std::env::temp_dir();
         let unique = format!(
@@ -370,9 +516,12 @@ mod tests {
             vec![] as Vec<datafusion::arrow::datatypes::Field>
         ));
 
+        let app_context = make_test_app_context();
+        let table_id = TableId::new(NamespaceId::new("ns"), TableName::new("tbl"));
+        
         let planner = ManifestAccessPlanner::new();
         let (batch, (_total, _skipped, _scanned)) = planner
-            .scan_parquet_files(None, &dir, None, false, schema.clone())
+            .scan_parquet_files(None, &dir, None, false, schema.clone(), &table_id, &app_context)
             .expect("planner should handle empty directory");
 
         assert_eq!(batch.num_rows(), 0, "Expected empty batch for empty dir");
@@ -397,8 +546,8 @@ mod tests {
         writer.close().unwrap();
     }
 
-    #[test]
-    fn test_pruning_stats_with_manifest_and_seq_ranges() {
+    #[tokio::test]
+    async fn test_pruning_stats_with_manifest_and_seq_ranges() {
         // Temp dir
         let base = std::env::temp_dir();
         let unique = format!(
@@ -414,7 +563,7 @@ mod tests {
         // Schema: _seq: Int64, val: Int32
         use datafusion::arrow::datatypes::{DataType, Field};
         let schema: SchemaRef = Arc::new(Schema::new(vec![
-            Field::new("_seq", DataType::Int64, false),
+            Field::new(SystemColumnNames::SEQ, DataType::Int64, false),
             Field::new("val", DataType::Int32, false),
         ]));
 
@@ -425,10 +574,9 @@ mod tests {
         write_parquet_with_rows(&f1, &schema, 10);
 
         // Manifest with two segments
-        use kalamdb_commons::{NamespaceId, TableId, TableName};
         use std::collections::HashMap;
         let table_id = TableId::new(NamespaceId::new("ns"), TableName::new("tbl"));
-        let mut mf = Manifest::new(table_id, None);
+        let mut mf = Manifest::new(table_id.clone(), None);
 
         let s0 = SegmentMetadata::new(
             "uuid-0".to_string(),
@@ -451,11 +599,12 @@ mod tests {
         );
         mf.add_segment(s1);
 
+        let app_context = make_test_app_context();
         let planner = ManifestAccessPlanner::new();
 
         // Range overlaps only first file
         let (batch, (total, skipped, scanned)) = planner
-            .scan_parquet_files(Some(&mf), &dir, Some((0, 90)), false, schema.clone())
+            .scan_parquet_files(Some(&mf), &dir, Some((0, 90)), false, schema.clone(), &table_id, &app_context)
             .expect("planner should read files");
         assert_eq!(total, 2);
         assert_eq!(scanned, 1);
@@ -465,7 +614,7 @@ mod tests {
 
         // Range overlaps only second file
         let (batch2, (total2, skipped2, scanned2)) = planner
-            .scan_parquet_files(Some(&mf), &dir, Some((150, 160)), false, schema.clone())
+            .scan_parquet_files(Some(&mf), &dir, Some((150, 160)), false, schema.clone(), &table_id, &app_context)
             .expect("planner should read files");
         assert_eq!(total2, 2);
         assert_eq!(scanned2, 1);
@@ -474,7 +623,7 @@ mod tests {
 
         // Range overlaps none -> scanned 0, empty batch, no fallback because manifest exists
         let (batch3, (total3, skipped3, scanned3)) = planner
-            .scan_parquet_files(Some(&mf), &dir, Some((300, 400)), false, schema.clone())
+            .scan_parquet_files(Some(&mf), &dir, Some((300, 400)), false, schema.clone(), &table_id, &app_context)
             .expect("planner should handle no-overlap");
         assert_eq!(total3, 2);
         assert_eq!(scanned3, 0);

@@ -1,5 +1,6 @@
 use super::types::JobsManager;
 use crate::error::KalamDbError;
+use crate::error_extensions::KalamDbResultExt;
 use kalamdb_commons::system::{Job, JobFilter};
 use kalamdb_commons::{JobId, JobStatus};
 
@@ -17,7 +18,7 @@ impl JobsManager {
         self.jobs_provider
             .get_job_async(job_id)
             .await
-            .map_err(|e| KalamDbError::io_message(format!("Failed to get job: {}", e)))
+            .into_kalamdb_error("Failed to get job")
     }
 
     /// List jobs matching filter criteria
@@ -33,7 +34,7 @@ impl JobsManager {
         self.jobs_provider
             .list_jobs_filtered_async(filter)
             .await
-            .map_err(|e| KalamDbError::io_message(format!("Failed to list jobs: {}", e)))
+            .into_kalamdb_error("Failed to list jobs")
     }
 
     /// Check if active job with idempotency key exists

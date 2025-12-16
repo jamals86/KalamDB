@@ -274,12 +274,12 @@ mod tests {
 
     #[test]
     fn test_timestamp_variants() {
-        // Timestamp without timezone (millisecond precision)
+        // Timestamp without timezone (microsecond precision)
         let ts = KalamDataType::Timestamp;
         let arrow = ts.to_arrow_type().unwrap();
         assert!(matches!(
             arrow,
-            ArrowDataType::Timestamp(TimeUnit::Millisecond, None)
+            ArrowDataType::Timestamp(TimeUnit::Microsecond, None)
         ));
 
         // DateTime with timezone (microsecond precision UTC)

@@ -31,6 +31,9 @@ anyhow = { workspace = true }
 # Async runtime
 tokio = { workspace = true }
 
+# Futures helpers (for object_store listing streams)
+futures-util = { workspace = true }
+
 # Logging
 log = { workspace = true }
 
@@ -40,8 +43,14 @@ chrono = { workspace = true }
 # UUID generation
 uuid = { workspace = true }
 
-# Object store (for S3/filesystem abstraction)
-# object_store = { version = "0.11", features = ["aws", "gcp", "azure"] }
+# Object store (S3/GCS/Azure/local abstraction)
+object_store = { workspace = true }
+
+# Parquet file format
+parquet = { workspace = true }
+
+# Bytes type for in-memory buffers
+bytes = { workspace = true }
 
 [lib]
 name = "kalamdb_filestore"

@@ -13,6 +13,7 @@
 
 use crate::app_context::AppContext;
 use crate::error::KalamDbError;
+use crate::error_extensions::KalamDbResultExt;
 use crate::providers::base::{self, BaseTableProvider, TableProviderCore};
 use crate::providers::manifest_helpers::{ensure_manifest_ready, load_row_from_parquet_by_seq};
 use crate::schema_registry::TableType;
@@ -142,7 +143,7 @@ impl SharedTableProvider {
         let results = self
             .store
             .scan_by_index(0, Some(&prefix), None)
-            .map_err(|e| KalamDbError::Other(format!("PK index scan failed: {}", e)))?;
+            .into_kalamdb_error("PK index scan failed")?;
 
         if results.is_empty() {
             return Ok(None);
@@ -209,7 +210,7 @@ impl BaseTableProvider<SharedTableRowId, SharedTableRow> for SharedTableProvider
         let hot_has_versions = self
             .store
             .exists_by_index(0, &prefix)
-            .map_err(|e| KalamDbError::Other(format!("PK index scan failed: {}", e)))?;
+            .into_kalamdb_error("PK index scan failed")?;
         if hot_has_versions {
             return Ok(None);
         }
@@ -282,7 +283,7 @@ impl BaseTableProvider<SharedTableRowId, SharedTableRow> for SharedTableProvider
     /// **Performance**: This method is significantly faster than calling insert() N times:
     /// - Single mutex acquisition for all SeqId generation
     /// - Single RocksDB WriteBatch for all rows (one disk write vs N)
-    /// - Batch PK validation (single scan for all rows)
+    /// - Batch PK validation (single scan for large batches, O(1) lookups for small batches)
     ///
     /// # Arguments
     /// * `_user_id` - Ignored for shared tables (no RLS)
@@ -295,6 +296,7 @@ impl BaseTableProvider<SharedTableRowId, SharedTableRow> for SharedTableProvider
         _user_id: &UserId,
         rows: Vec<Row>,
     ) -> Result<Vec<SharedTableRowId>, KalamDbError> {
+        use crate::error_extensions::KalamDbResultExt;
         use crate::providers::arrow_json_conversion::coerce_rows;
 
         if rows.is_empty() {
@@ -318,7 +320,7 @@ impl BaseTableProvider<SharedTableRowId, SharedTableRow> for SharedTableProvider
 
         // Batch PK validation: collect all user-provided PK values
         let pk_name = self.primary_key_field_name();
-        let mut pk_values_to_check = Vec::new();
+        let mut pk_values_to_check: Vec<String> = Vec::new();
         for row_data in &coerced_rows {
             if let Some(pk_value) = row_data.get(pk_name) {
                 if !matches!(pk_value, ScalarValue::Null) {
@@ -328,13 +330,68 @@ impl BaseTableProvider<SharedTableRowId, SharedTableRow> for SharedTableProvider
             }
         }
 
-        // Check all PKs in one pass (uses PK index for O(1) lookups each)
-        for pk_str in &pk_values_to_check {
-            if self.find_row_key_by_id_field(&UserId::root(), pk_str)?.is_some() {
-                return Err(KalamDbError::AlreadyExists(format!(
-                    "Primary key violation: value '{}' already exists in column '{}'",
-                    pk_str, pk_name
-                )));
+        // OPTIMIZED: Check PK existence in hot storage only (cold storage handled below)
+        // For small batches (≤2 rows), use direct lookups. For larger batches, use batch scan.
+        if !pk_values_to_check.is_empty() {
+            if pk_values_to_check.len() <= 2 {
+                // Small batch: individual O(1) lookups are efficient
+                for pk_str in &pk_values_to_check {
+                    let prefix = self.pk_index.build_pk_prefix(pk_str);
+                    if self.store.exists_by_index(0, &prefix)
+                        .into_kalamdb_error("PK index check failed")? 
+                    {
+                        return Err(KalamDbError::AlreadyExists(format!(
+                            "Primary key violation: value '{}' already exists in column '{}'",
+                            pk_str, pk_name
+                        )));
+                    }
+                }
+            } else {
+                // Larger batch: build all prefixes and use batch scan
+                let prefixes: Vec<Vec<u8>> = pk_values_to_check
+                    .iter()
+                    .map(|pk_str| self.pk_index.build_pk_prefix(pk_str))
+                    .collect();
+
+                // Use empty common prefix for shared tables (no user scoping)
+                let existing = self.store.exists_batch_by_index(0, &[], &prefixes)
+                    .into_kalamdb_error("Batch PK index check failed")?;
+
+                if !existing.is_empty() {
+                    // Find which PK matched
+                    for pk_str in &pk_values_to_check {
+                        let prefix = self.pk_index.build_pk_prefix(pk_str);
+                        if existing.contains(&prefix) {
+                            return Err(KalamDbError::AlreadyExists(format!(
+                                "Primary key violation: value '{}' already exists in column '{}'",
+                                pk_str, pk_name
+                            )));
+                        }
+                    }
+                    // Fallback if we couldn't match the prefix back (shouldn't happen)
+                    return Err(KalamDbError::AlreadyExists(format!(
+                        "Primary key violation: a value already exists in column '{}'",
+                        pk_name
+                    )));
+                }
+            }
+
+            // Cold storage check: Only if we have PK values and they weren't found in hot storage
+            // This is still sequential but cold storage is typically the minority of data
+            for pk_str in &pk_values_to_check {
+                if base::pk_exists_in_cold(
+                    &self.core,
+                    self.core.table_id(),
+                    self.core.table_type(),
+                    None, // No user scoping for shared tables
+                    pk_name,
+                    pk_str,
+                )? {
+                    return Err(KalamDbError::AlreadyExists(format!(
+                        "Primary key violation: value '{}' already exists in column '{}'",
+                        pk_str, pk_name
+                    )));
+                }
             }
         }
 
@@ -385,7 +442,7 @@ impl BaseTableProvider<SharedTableRowId, SharedTableRow> for SharedTableProvider
         // Load referenced prior version to derive PK value if not present in updates
         // Try RocksDB first, then Parquet
         let prior_opt = EntityStore::get(&*self.store, key)
-            .map_err(|e| KalamDbError::Other(format!("Failed to load prior version: {}", e)))?;
+            .into_kalamdb_error("Failed to load prior version")?;
 
         let prior = if let Some(p) = prior_opt {
             p
@@ -492,7 +549,7 @@ impl BaseTableProvider<SharedTableRowId, SharedTableRow> for SharedTableProvider
         // Load referenced version to extract PK so tombstone groups with same logical row
         // Try RocksDB first, then Parquet
         let prior_opt = EntityStore::get(&*self.store, key)
-            .map_err(|e| KalamDbError::Other(format!("Failed to load prior version: {}", e)))?;
+            .into_kalamdb_error("Failed to load prior version")?;
 
         let prior = if let Some(p) = prior_opt {
             p

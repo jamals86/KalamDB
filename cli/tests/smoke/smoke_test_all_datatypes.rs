@@ -116,8 +116,10 @@ fn smoke_all_datatypes_user_shared_stream() {
     let mut first_id: Option<String> = None;
     let mut second_id: Option<String> = None;
     for row in rows {
-        let text_col = row.get("text_col").and_then(|v| v.as_str()).unwrap_or("");
-        let id = row.get("id").and_then(json_value_as_id);
+        let text_col_value = row.get("text_col").map(extract_typed_value).unwrap_or(serde_json::Value::Null);
+        let text_col = text_col_value.as_str().unwrap_or("");
+        let id_value = row.get("id").map(extract_typed_value).unwrap_or(serde_json::Value::Null);
+        let id = json_value_as_id(&id_value);
         if let Some(id_val) = id {
             if text_col == "hello" {
                 first_id = Some(id_val.clone());
@@ -175,8 +177,10 @@ fn smoke_all_datatypes_user_shared_stream() {
     let mut s_first: Option<String> = None;
     let mut s_second: Option<String> = None;
     for row in shared_rows {
-        let text_col = row.get("text_col").and_then(|v| v.as_str()).unwrap_or("");
-        let id = row.get("id").and_then(json_value_as_id);
+        let text_col_value = row.get("text_col").map(extract_typed_value).unwrap_or(serde_json::Value::Null);
+        let text_col = text_col_value.as_str().unwrap_or("");
+        let id_value = row.get("id").map(extract_typed_value).unwrap_or(serde_json::Value::Null);
+        let id = json_value_as_id(&id_value);
         if let Some(id_val) = id {
             if text_col == "hello" {
                 s_first = Some(id_val.clone());

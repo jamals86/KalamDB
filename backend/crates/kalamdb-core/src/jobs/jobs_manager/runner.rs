@@ -1,5 +1,6 @@
 use super::types::JobsManager;
 use crate::error::KalamDbError;
+use crate::error_extensions::KalamDbResultExt;
 use crate::jobs::executors::JobDecision;
 use crate::jobs::{HealthMonitor, StreamEvictionScheduler};
 use kalamdb_commons::system::{Job, JobFilter, JobSortField, SortOrder};
@@ -14,7 +15,7 @@ impl JobsManager {
         self.jobs_provider
             .update_job_async(job)
             .await
-            .map_err(|e| KalamDbError::io_message(format!("Failed to update job: {}", e)))
+            .into_kalamdb_error("Failed to update job")
     }
 
     /// Run job processing loop
@@ -173,8 +174,10 @@ impl JobsManager {
         };
 
         // Handle execution result
+        log::debug!("[{}] Handling execution result", job_id);
         match decision {
             JobDecision::Completed { message } => {
+                log::info!("[{}] Matched JobDecision::Completed", job_id);
                 // Manually update job to completed state
                 let now_ms = chrono::Utc::now().timestamp_millis();
                 job.status = JobStatus::Completed;
@@ -182,8 +185,15 @@ impl JobsManager {
                 job.updated_at = now_ms;
                 job.finished_at = Some(now_ms);
 
-                self.update_job_async(job.clone()).await
-                    .map_err(|e| KalamDbError::io_message(format!("Failed to complete job: {}", e)))?;
+                log::info!("[{}] About to call update_job_async with status={:?}", job_id, job.status);
+                if let Err(e) = self.update_job_async(job.clone()).await {
+                    log::error!("[{}] Failed to update job status to Completed: {}", job_id, e);
+                    return Err(KalamDbError::Other(format!(
+                        "Failed to update job status to Completed: {}",
+                        e
+                    )));
+                }
+                log::info!("[{}] update_job_async returned Ok", job_id);
 
                 self.log_job_event(
                     &job_id,
@@ -203,9 +213,8 @@ impl JobsManager {
                     job.exception_trace = exception_trace.clone();
                     job.updated_at = chrono::Utc::now().timestamp_millis();
 
-                    self.update_job_async(job.clone()).await.map_err(|e| {
-                        KalamDbError::io_message(format!("Failed to retry job: {}", e))
-                    })?;
+                    self.update_job_async(job.clone()).await
+                        .into_kalamdb_error("Failed to retry job")?;
 
                     self.log_job_event(
                         &job_id,
@@ -228,7 +237,7 @@ impl JobsManager {
                     job.finished_at = Some(now_ms);
 
                     self.update_job_async(job.clone()).await
-                        .map_err(|e| KalamDbError::io_message(format!("Failed to fail job: {}", e)))?;
+                        .into_kalamdb_error("Failed to fail job")?;
 
                     self.log_job_event(&job_id, "error", "Job failed: max retries exceeded");
                 }
@@ -246,7 +255,7 @@ impl JobsManager {
                 job.finished_at = Some(now_ms);
 
                 self.update_job_async(job.clone()).await
-                    .map_err(|e| KalamDbError::io_message(format!("Failed to fail job: {}", e)))?;
+                    .into_kalamdb_error("Failed to fail job")?;
 
                 self.log_job_event(&job_id, "error", &format!("Job failed: {}", message));
             }

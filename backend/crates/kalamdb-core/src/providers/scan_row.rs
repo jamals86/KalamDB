@@ -1,4 +1,5 @@
 use crate::error::KalamDbError;
+use crate::error_extensions::KalamDbResultExt;
 use crate::providers::arrow_json_conversion::json_rows_to_arrow_batch;
 use datafusion::arrow::datatypes::SchemaRef;
 use datafusion::arrow::record_batch::{RecordBatch, RecordBatchOptions};
@@ -137,5 +138,5 @@ where
     };
 
     json_rows_to_arrow_batch(&target_schema, rows)
-        .map_err(|e| KalamDbError::InvalidOperation(format!("Failed to build Arrow batch: {}", e)))
+        .into_invalid_operation("Failed to build Arrow batch")
 }

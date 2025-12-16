@@ -13,6 +13,7 @@ use kalamdb_commons::{NamespaceId, TableName};
 /// - storage_type TEXT NOT NULL
 /// - base_directory TEXT NOT NULL
 /// - credentials TEXT (nullable)
+/// - config_json TEXT (nullable)
 /// - shared_tables_template TEXT NOT NULL
 /// - user_tables_template TEXT NOT NULL
 /// - created_at TIMESTAMP NOT NULL
@@ -80,8 +81,18 @@ pub fn storages_table_definition() -> TableDefinition {
             Some("Encrypted credentials JSON".to_string()),
         ),
         ColumnDefinition::new(
-            "shared_tables_template",
+            "config_json",
             7,
+            KalamDataType::Text,
+            true, // NULLABLE
+            false,
+            false,
+            ColumnDefault::None,
+            Some("Backend-specific storage configuration JSON".to_string()),
+        ),
+        ColumnDefinition::new(
+            "shared_tables_template",
+            8,
             KalamDataType::Text,
             false,
             false,
@@ -91,7 +102,7 @@ pub fn storages_table_definition() -> TableDefinition {
         ),
         ColumnDefinition::new(
             "user_tables_template",
-            8,
+            9,
             KalamDataType::Text,
             false,
             false,
@@ -101,7 +112,7 @@ pub fn storages_table_definition() -> TableDefinition {
         ),
         ColumnDefinition::new(
             "created_at",
-            9,
+            10,
             KalamDataType::Timestamp,
             false,
             false,
@@ -111,7 +122,7 @@ pub fn storages_table_definition() -> TableDefinition {
         ),
         ColumnDefinition::new(
             "updated_at",
-            10,
+            11,
             KalamDataType::Timestamp,
             false,
             false,

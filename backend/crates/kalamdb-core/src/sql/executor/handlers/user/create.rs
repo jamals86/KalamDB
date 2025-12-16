@@ -2,6 +2,7 @@
 
 use crate::app_context::AppContext;
 use crate::error::KalamDbError;
+use crate::error_extensions::KalamDbResultExt;
 use crate::sql::executor::handlers::typed::TypedStatementHandler;
 use crate::sql::executor::models::{ExecutionContext, ExecutionResult, ScalarValue};
 use kalamdb_commons::types::User;
@@ -57,7 +58,7 @@ impl TypedStatementHandler<CreateUserStatement> for CreateUserHandler {
                     validate_password_complexity(&raw)?;
                 }
                 let hash = bcrypt::hash(raw, bcrypt::DEFAULT_COST)
-                    .map_err(|e| KalamDbError::Other(format!("Password hash error: {}", e)))?;
+                    .into_kalamdb_error("Password hash error")?;
                 (hash, None)
             }
             AuthType::OAuth => {
@@ -66,9 +67,8 @@ impl TypedStatementHandler<CreateUserStatement> for CreateUserHandler {
 
                 // Validate payload
                 if let Some(json_str) = &payload {
-                    let json: serde_json::Value = serde_json::from_str(json_str).map_err(|e| {
-                        KalamDbError::InvalidOperation(format!("Invalid OAuth JSON: {}", e))
-                    })?;
+                    let json: serde_json::Value = serde_json::from_str(json_str)
+                        .into_invalid_operation("Invalid OAuth JSON")?;
 
                     if json.get("provider").is_none() {
                         return Err(KalamDbError::InvalidOperation(

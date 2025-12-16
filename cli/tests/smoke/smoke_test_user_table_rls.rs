@@ -92,8 +92,10 @@ fn smoke_user_table_rls_isolation() {
     let mut row_b_id: Option<String> = None;
     let mut row_c_id: Option<String> = None;
     for row in rows {
-        let content = row.get("content").and_then(|v| v.as_str()).unwrap_or("");
-        let id = row.get("id").and_then(json_value_as_id);
+        let content_value = row.get("content").map(extract_typed_value).unwrap_or(serde_json::Value::Null);
+        let content = content_value.as_str().unwrap_or("");
+        let id_value = row.get("id").map(extract_typed_value).unwrap_or(serde_json::Value::Null);
+        let id = json_value_as_id(&id_value);
         if let Some(id_val) = id {
             if content == "user_row_b" {
                 row_b_id = Some(id_val.clone());

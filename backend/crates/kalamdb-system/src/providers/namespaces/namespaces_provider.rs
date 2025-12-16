@@ -4,13 +4,12 @@
 //! Uses the new EntityStore architecture with NamespaceId keys.
 
 use super::{new_namespaces_store, NamespacesStore, NamespacesTableSchema};
-use crate::error::SystemError;
+use crate::error::{SystemError, SystemResultExt};
 use crate::system_table_trait::SystemTableProviderExt;
 use async_trait::async_trait;
-use datafusion::arrow::array::{
-    ArrayRef, Int32Array, RecordBatch, StringBuilder, TimestampMicrosecondArray,
-};
+use datafusion::arrow::array::RecordBatch;
 use datafusion::arrow::datatypes::SchemaRef;
+use kalamdb_commons::RecordBatchBuilder;
 use datafusion::datasource::{TableProvider, TableType};
 use datafusion::error::{DataFusionError, Result as DataFusionResult};
 use datafusion::logical_expr::Expr;
@@ -67,7 +66,7 @@ impl NamespacesTableProvider {
         self.store
             .put_async(&namespace.namespace_id, &namespace)
             .await
-            .map_err(|e| SystemError::Other(format!("put_async error: {}", e)))?;
+            .into_system_error("put_async error")?;
         Ok(())
     }
 
@@ -97,7 +96,7 @@ impl NamespacesTableProvider {
         self.store
             .get_async(namespace_id)
             .await
-            .map_err(|e| SystemError::Other(format!("get_async error: {}", e)))
+            .into_system_error("get_async error")
     }
 
     /// Update an existing namespace entry
@@ -129,7 +128,7 @@ impl NamespacesTableProvider {
         self.store
             .put_async(&namespace.namespace_id, &namespace)
             .await
-            .map_err(|e| SystemError::Other(format!("put_async error: {}", e)))?;
+            .into_system_error("put_async error")?;
         Ok(())
     }
 
@@ -149,7 +148,7 @@ impl NamespacesTableProvider {
         self.store
             .delete_async(namespace_id)
             .await
-            .map_err(|e| SystemError::Other(format!("delete_async error: {}", e)))?;
+            .into_system_error("delete_async error")?;
         Ok(())
     }
 
@@ -172,7 +171,7 @@ impl NamespacesTableProvider {
             .store
             .scan_all_async(None, None, None)
             .await
-            .map_err(|e| SystemError::Other(format!("scan_all_async error: {}", e)))?;
+            .into_system_error("scan_all_async error")?;
         Ok(results.into_iter().map(|(_, ns)| ns).collect())
     }
 
@@ -189,7 +188,7 @@ impl NamespacesTableProvider {
             .store
             .scan_all_async(None, None, None)
             .await
-            .map_err(|e| SystemError::Other(format!("scan_all_async error: {}", e)))?;
+            .into_system_error("scan_all_async error")?;
         Ok(results.into_iter().map(|(_, ns)| ns).collect())
     }
 
@@ -200,39 +199,31 @@ impl NamespacesTableProvider {
         for item in iter {
             namespaces.push(item?);
         }
-        let row_count = namespaces.len();
-
-        // Pre-allocate builders for optimal performance
-        let mut namespace_ids = StringBuilder::with_capacity(row_count, row_count * 16);
-        let mut names = StringBuilder::with_capacity(row_count, row_count * 32);
-        let mut created_ats = Vec::with_capacity(row_count);
-        let mut options = StringBuilder::with_capacity(row_count, row_count * 64);
-        let mut table_counts = Vec::with_capacity(row_count);
+        // Extract data into vectors
+        let mut namespace_ids = Vec::with_capacity(namespaces.len());
+        let mut names = Vec::with_capacity(namespaces.len());
+        let mut created_ats = Vec::with_capacity(namespaces.len());
+        let mut options = Vec::with_capacity(namespaces.len());
+        let mut table_counts = Vec::with_capacity(namespaces.len());
 
         for (_key, ns) in namespaces {
-            namespace_ids.append_value(ns.namespace_id.as_str());
-            names.append_value(&ns.name);
+            namespace_ids.push(Some(ns.namespace_id.as_str().to_string()));
+            names.push(Some(ns.name));
             created_ats.push(Some(ns.created_at));
-            options.append_option(ns.options.as_deref());
-            table_counts.push(ns.table_count);
+            options.push(ns.options);
+            table_counts.push(Some(ns.table_count));
         }
 
-        let batch = RecordBatch::try_new(
-            self.schema.clone(),
-            vec![
-                Arc::new(namespace_ids.finish()) as ArrayRef,
-                Arc::new(names.finish()) as ArrayRef,
-                Arc::new(TimestampMicrosecondArray::from(
-                    created_ats
-                        .into_iter()
-                        .map(|ts| ts.map(|ms| ms * 1000))
-                        .collect::<Vec<_>>(),
-                )) as ArrayRef,
-                Arc::new(options.finish()) as ArrayRef,
-                Arc::new(Int32Array::from(table_counts)) as ArrayRef,
-            ],
-        )
-        .map_err(|e| SystemError::Other(format!("Arrow error: {}", e)))?;
+        // Build batch using RecordBatchBuilder
+        let mut builder = RecordBatchBuilder::new(self.schema.clone());
+        builder
+            .add_string_column_owned(namespace_ids)
+            .add_string_column_owned(names)
+            .add_timestamp_micros_column(created_ats)
+            .add_string_column_owned(options)
+            .add_int32_column(table_counts);
+
+        let batch = builder.build().into_arrow_error("Failed to create RecordBatch")?;
 
         Ok(batch)
     }

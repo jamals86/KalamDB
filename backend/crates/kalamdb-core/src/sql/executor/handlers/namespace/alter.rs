@@ -2,6 +2,7 @@
 
 use crate::app_context::AppContext;
 use crate::error::KalamDbError;
+use crate::error_extensions::KalamDbResultExt;
 use crate::sql::executor::handlers::typed::TypedStatementHandler;
 use crate::sql::executor::models::{ExecutionContext, ExecutionResult, ScalarValue};
 use kalamdb_commons::models::NamespaceId;
@@ -51,9 +52,8 @@ impl TypedStatementHandler<AlterNamespaceStatement> for AlterNamespaceHandler {
         }
 
         // Serialize back to string
-        namespace.options = Some(serde_json::to_string(&current_options).map_err(|e| {
-            KalamDbError::InvalidOperation(format!("Failed to serialize options: {}", e))
-        })?);
+        namespace.options = Some(serde_json::to_string(&current_options)
+            .into_invalid_operation("Failed to serialize options")?);
 
         // Save updated namespace
         namespaces_provider.update_namespace(namespace)?;

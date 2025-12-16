@@ -95,10 +95,14 @@ impl QueryExecutor {
         params: Option<Vec<serde_json::Value>>,
         namespace_id: Option<String>,
     ) -> Result<QueryResponse> {
+        use crate::models::SerializationMode;
+        
         let request = QueryRequest {
             sql: sql.to_string(),
             params,
             namespace_id,
+            // kalam-link always uses typed mode for type-safe responses
+            serialization_mode: SerializationMode::Typed,
         };
 
         // Send request with retry logic

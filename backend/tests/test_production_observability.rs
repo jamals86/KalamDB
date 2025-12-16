@@ -30,9 +30,9 @@ async fn system_tables_shows_created_tables() {
     let resp = server.execute_sql(create_table).await;
     assert_eq!(resp.status, ResponseStatus::Success);
 
-    // Query system.tables
+    // Query system.tables (filter for latest version only)
     let resp = server
-        .execute_sql("SELECT namespace_id, table_name, table_type FROM system.tables WHERE namespace_id = 'app_systab' AND table_name = 'messages'")
+        .execute_sql("SELECT namespace_id, table_name, table_type FROM system.tables WHERE namespace_id = 'app_systab' AND table_name = 'messages' AND is_latest = true")
         .await;
 
     assert_eq!(resp.status, ResponseStatus::Success);
@@ -393,9 +393,9 @@ async fn system_tables_includes_column_metadata() {
     let resp = server.execute_sql(create_table).await;
     assert_eq!(resp.status, ResponseStatus::Success);
 
-    // Query for table with schema details (if available)
+    // Query for table with schema details (filter for latest version)
     let resp = server
-        .execute_sql("SELECT * FROM system.tables WHERE table_name = 'products'")
+        .execute_sql("SELECT * FROM system.tables WHERE table_name = 'products' AND is_latest = true")
         .await;
 
     assert_eq!(resp.status, ResponseStatus::Success);

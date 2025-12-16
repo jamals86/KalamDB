@@ -70,8 +70,11 @@ fn smoke_int64_precision_preserved_as_string() {
 
     let first_row = &rows[0];
 
-    // Verify _seq is a string (since it's a Snowflake ID exceeding JS_MAX_SAFE_INTEGER)
+    // Extract typed values from the response (server returns {"Int64": "value"} format)
     let seq_value = first_row.get("_seq").expect("Expected _seq column");
+    let seq_value = extract_typed_value(seq_value);
+    
+    // Verify _seq is a string (since it's a Snowflake ID exceeding JS_MAX_SAFE_INTEGER)
     assert!(
         seq_value.is_string(),
         "_seq should be serialized as a string for JS safety, got: {:?}",
@@ -89,8 +92,11 @@ fn smoke_int64_precision_preserved_as_string() {
         seq_parsed
     );
 
-    // Verify big_value is also a string (since we inserted a value > JS_MAX_SAFE_INTEGER)
+    // Extract and verify big_value
     let big_value = first_row.get("big_value").expect("Expected big_value column");
+    let big_value = extract_typed_value(big_value);
+    
+    // Verify big_value is also a string (since we inserted a value > JS_MAX_SAFE_INTEGER)
     assert!(
         big_value.is_string(),
         "big_value should be serialized as a string for JS safety, got: {:?}",
@@ -107,8 +113,9 @@ fn smoke_int64_precision_preserved_as_string() {
         "big_value should preserve full precision"
     );
 
-    // Verify content is still a regular string (not affected)
+    // Verify content is still a regular string (after extracting from typed format)
     let content = first_row.get("content").expect("Expected content column");
+    let content = extract_typed_value(content);
     assert_eq!(
         content.as_str(),
         Some("test_precision"),
@@ -185,25 +192,27 @@ fn smoke_int64_small_values_remain_numbers() {
 
     let first_row = &rows[0];
 
-    // Verify small_value is still a number (not converted to string)
+    // With typed JSON format, ALL Int64 values are strings (for consistency)
     let small_val = first_row
         .get("small_value")
         .expect("Expected small_value column");
+    let small_val = extract_typed_value(small_val);
     assert!(
-        small_val.is_number(),
-        "small_value should remain as number when < JS_MAX_SAFE_INTEGER, got: {:?}",
+        small_val.is_string(),
+        "small_value should be string in typed JSON format, got: {:?}",
         small_val
     );
 
-    let parsed_value = small_val.as_i64().expect("small_value should be an i64");
+    let small_str = small_val.as_str().expect("small_value should be a string");
+    let parsed_value: i64 = small_str.parse().expect("small_value string should parse as i64");
     assert_eq!(
         parsed_value, small_value,
         "small_value should preserve value correctly"
     );
 
     println!(
-        "✓ Small Int64 test passed: small_value={} (as number)",
-        parsed_value
+        "✓ Small Int64 test passed: small_value={} (as string for consistency)",
+        small_str
     );
 
     // Cleanup
@@ -273,16 +282,19 @@ fn smoke_int64_edge_case_exactly_max_safe() {
 
     let first_row = &rows[0];
 
-    // Verify at_limit is a number (exactly at MAX_SAFE_INTEGER, still safe)
+    // With typed JSON format, ALL Int64 values are strings (for consistency)
     let at_limit = first_row.get("at_limit").expect("Expected at_limit column");
+    let at_limit = extract_typed_value(at_limit);
     assert!(
-        at_limit.is_number(),
-        "at_limit should remain as number when == JS_MAX_SAFE_INTEGER, got: {:?}",
+        at_limit.is_string(),
+        "at_limit should be string in typed JSON format, got: {:?}",
         at_limit
     );
+    let at_limit_str = at_limit.as_str().expect("at_limit should be a string");
+    let at_limit_parsed: i64 = at_limit_str.parse().expect("at_limit should parse");
     assert_eq!(
-        at_limit.as_i64(),
-        Some(JS_MAX_SAFE_INTEGER),
+        at_limit_parsed,
+        JS_MAX_SAFE_INTEGER,
         "at_limit value mismatch"
     );
 
@@ -290,6 +302,7 @@ fn smoke_int64_edge_case_exactly_max_safe() {
     let over_limit = first_row
         .get("over_limit")
         .expect("Expected over_limit column");
+    let over_limit = extract_typed_value(over_limit);
     assert!(
         over_limit.is_string(),
         "over_limit should be a string when > JS_MAX_SAFE_INTEGER, got: {:?}",
@@ -304,8 +317,8 @@ fn smoke_int64_edge_case_exactly_max_safe() {
     );
 
     println!(
-        "✓ Edge case test passed: at_limit={} (number), over_limit={} (string)",
-        JS_MAX_SAFE_INTEGER, over_limit_str
+        "✓ Edge case test passed: at_limit={} (string), over_limit={} (string)",
+        at_limit_str, over_limit_str
     );
 
     // Cleanup
@@ -377,16 +390,19 @@ fn smoke_int64_negative_large_values() {
 
     let first_row = &rows[0];
 
-    // Verify neg_safe is a number
+    // With typed JSON format, ALL Int64 values are strings (for consistency)
     let neg_safe = first_row.get("neg_safe").expect("Expected neg_safe column");
+    let neg_safe = extract_typed_value(neg_safe);
     assert!(
-        neg_safe.is_number(),
-        "neg_safe should remain as number when >= -JS_MAX_SAFE_INTEGER, got: {:?}",
+        neg_safe.is_string(),
+        "neg_safe should be string in typed JSON format, got: {:?}",
         neg_safe
     );
+    let neg_safe_str = neg_safe.as_str().expect("neg_safe should be a string");
+    let neg_safe_parsed: i64 = neg_safe_str.parse().expect("neg_safe should parse");
     assert_eq!(
-        neg_safe.as_i64(),
-        Some(min_safe),
+        neg_safe_parsed,
+        min_safe,
         "neg_safe value mismatch"
     );
 
@@ -394,6 +410,7 @@ fn smoke_int64_negative_large_values() {
     let neg_unsafe = first_row
         .get("neg_unsafe")
         .expect("Expected neg_unsafe column");
+    let neg_unsafe = extract_typed_value(neg_unsafe);
     assert!(
         neg_unsafe.is_string(),
         "neg_unsafe should be a string when < -JS_MAX_SAFE_INTEGER, got: {:?}",
@@ -408,8 +425,8 @@ fn smoke_int64_negative_large_values() {
     );
 
     println!(
-        "✓ Negative large value test passed: neg_safe={} (number), neg_unsafe={} (string)",
-        min_safe, neg_unsafe_str
+        "✓ Negative large value test passed: neg_safe={} (string), neg_unsafe={} (string)",
+        neg_safe_str, neg_unsafe_str
     );
 
     // Cleanup

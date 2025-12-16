@@ -4,6 +4,7 @@
 //! Initial implementation focuses on schema cache metrics.
 
 // SchemaRegistry type passed as generic parameter to avoid circular dependency
+use crate::error::SystemResultExt;
 use crate::{SystemError, SystemTableProviderExt};
 use async_trait::async_trait;
 use datafusion::arrow::array::{ArrayRef, StringBuilder};
@@ -102,7 +103,7 @@ impl StatsTableProvider {
                 Arc::new(values.finish()) as ArrayRef,
             ],
         )
-        .map_err(|e| SystemError::Other(format!("Failed to build stats batch: {}", e)))?;
+        .into_arrow_error("Failed to build stats batch")?;
 
         Ok(batch)
     }

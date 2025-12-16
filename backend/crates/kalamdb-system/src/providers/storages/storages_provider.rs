@@ -4,17 +4,17 @@
 //! Uses the new EntityStore architecture with StorageId keys.
 
 use super::{new_storages_store, StoragesStore, StoragesTableSchema};
-use crate::error::SystemError;
+use crate::error::{SystemError, SystemResultExt};
 use crate::system_table_trait::SystemTableProviderExt;
 use async_trait::async_trait;
-use datafusion::arrow::array::{ArrayRef, RecordBatch, StringBuilder, TimestampMicrosecondArray};
+use datafusion::arrow::array::RecordBatch;
 use datafusion::arrow::datatypes::SchemaRef;
 use datafusion::datasource::{TableProvider, TableType};
 use datafusion::error::{DataFusionError, Result as DataFusionResult};
 use datafusion::logical_expr::Expr;
 use datafusion::physical_plan::ExecutionPlan;
 use kalamdb_commons::system::Storage;
-use kalamdb_commons::StorageId;
+use kalamdb_commons::{RecordBatchBuilder, StorageId};
 use kalamdb_store::entity_store::{EntityStore, EntityStoreAsync};
 use kalamdb_store::StorageBackend;
 use std::any::Any;
@@ -60,7 +60,7 @@ impl StoragesTableProvider {
         self.store
             .put_async(&storage.storage_id, &storage)
             .await
-            .map_err(|e| SystemError::Other(format!("put_async error: {}", e)))?;
+            .into_system_error("put_async error")?;
         Ok(())
     }
 
@@ -87,7 +87,7 @@ impl StoragesTableProvider {
         self.store
             .get_async(storage_id)
             .await
-            .map_err(|e| SystemError::Other(format!("get_async error: {}", e)))
+            .into_system_error("get_async error")
     }
 
     /// Alias for get_storage_by_id (for backward compatibility)
@@ -134,7 +134,7 @@ impl StoragesTableProvider {
         self.store
             .put_async(&storage.storage_id, &storage)
             .await
-            .map_err(|e| SystemError::Other(format!("put_async error: {}", e)))?;
+            .into_system_error("put_async error")?;
         Ok(())
     }
 
@@ -151,7 +151,7 @@ impl StoragesTableProvider {
         self.store
             .delete_async(storage_id)
             .await
-            .map_err(|e| SystemError::Other(format!("delete_async error: {}", e)))?;
+            .into_system_error("delete_async error")?;
         Ok(())
     }
 
@@ -174,7 +174,7 @@ impl StoragesTableProvider {
             .store
             .scan_all_async(None, None, None)
             .await
-            .map_err(|e| SystemError::Other(format!("scan_all_async error: {}", e)))?;
+            .into_system_error("scan_all_async error")?;
         Ok(results.into_iter().map(|(_, s)| s).collect())
     }
 
@@ -199,59 +199,50 @@ impl StoragesTableProvider {
                     .cmp(storage_b.storage_id.as_str())
             }
         });
-        let row_count = storages.len();
 
-        // Pre-allocate builders for optimal performance
-        let mut storage_ids = StringBuilder::with_capacity(row_count, row_count * 16);
-        let mut storage_names = StringBuilder::with_capacity(row_count, row_count * 32);
-        let mut descriptions = StringBuilder::with_capacity(row_count, row_count * 64);
-        let mut storage_types = StringBuilder::with_capacity(row_count, row_count * 16);
-        let mut base_directories = StringBuilder::with_capacity(row_count, row_count * 64);
-        let mut credentials = StringBuilder::with_capacity(row_count, row_count * 128);
-        let mut shared_tables_templates = StringBuilder::with_capacity(row_count, row_count * 64);
-        let mut user_tables_templates = StringBuilder::with_capacity(row_count, row_count * 64);
-        let mut created_ats = Vec::with_capacity(row_count);
-        let mut updated_ats = Vec::with_capacity(row_count);
+        // Extract data into column vectors (owned strings to avoid lifetime issues)
+        let mut storage_ids = Vec::with_capacity(storages.len());
+        let mut storage_names = Vec::with_capacity(storages.len());
+        let mut descriptions = Vec::with_capacity(storages.len());
+        let mut storage_types = Vec::with_capacity(storages.len());
+        let mut base_directories = Vec::with_capacity(storages.len());
+        let mut credentials = Vec::with_capacity(storages.len());
+        let mut config_jsons = Vec::with_capacity(storages.len());
+        let mut shared_templates = Vec::with_capacity(storages.len());
+        let mut user_templates = Vec::with_capacity(storages.len());
+        let mut created_ats = Vec::with_capacity(storages.len());
+        let mut updated_ats = Vec::with_capacity(storages.len());
 
         for (_key, storage) in storages {
-            storage_ids.append_value(storage.storage_id.as_str());
-            storage_names.append_value(&storage.storage_name);
-            descriptions.append_option(storage.description.as_deref());
-            storage_types.append_value(&storage.storage_type);
-            base_directories.append_value(&storage.base_directory);
-            credentials.append_option(storage.credentials.as_deref());
-            shared_tables_templates.append_value(&storage.shared_tables_template);
-            user_tables_templates.append_value(&storage.user_tables_template);
+            storage_ids.push(Some(storage.storage_id.to_string()));
+            storage_names.push(Some(storage.storage_name));
+            descriptions.push(storage.description);
+            storage_types.push(Some(storage.storage_type.to_string()));
+            base_directories.push(Some(storage.base_directory));
+            credentials.push(storage.credentials);
+            config_jsons.push(storage.config_json);
+            shared_templates.push(Some(storage.shared_tables_template));
+            user_templates.push(Some(storage.user_tables_template));
             created_ats.push(Some(storage.created_at));
             updated_ats.push(Some(storage.updated_at));
         }
 
-        let batch = RecordBatch::try_new(
-            self.schema.clone(),
-            vec![
-                Arc::new(storage_ids.finish()) as ArrayRef,
-                Arc::new(storage_names.finish()) as ArrayRef,
-                Arc::new(descriptions.finish()) as ArrayRef,
-                Arc::new(storage_types.finish()) as ArrayRef,
-                Arc::new(base_directories.finish()) as ArrayRef,
-                Arc::new(credentials.finish()) as ArrayRef,
-                Arc::new(shared_tables_templates.finish()) as ArrayRef,
-                Arc::new(user_tables_templates.finish()) as ArrayRef,
-                Arc::new(TimestampMicrosecondArray::from(
-                    created_ats
-                        .into_iter()
-                        .map(|ts| ts.map(|ms| ms * 1000))
-                        .collect::<Vec<_>>(),
-                )) as ArrayRef,
-                Arc::new(TimestampMicrosecondArray::from(
-                    updated_ats
-                        .into_iter()
-                        .map(|ts| ts.map(|ms| ms * 1000))
-                        .collect::<Vec<_>>(),
-                )) as ArrayRef,
-            ],
-        )
-        .map_err(|e| SystemError::Other(format!("Arrow error: {}", e)))?;
+        // Use RecordBatchBuilder for cleaner batch construction
+        let mut builder = RecordBatchBuilder::new(self.schema.clone());
+        builder
+            .add_string_column_owned(storage_ids)
+            .add_string_column_owned(storage_names)
+            .add_string_column_owned(descriptions)
+            .add_string_column_owned(storage_types)
+            .add_string_column_owned(base_directories)
+            .add_string_column_owned(credentials)
+            .add_string_column_owned(config_jsons)
+            .add_string_column_owned(shared_templates)
+            .add_string_column_owned(user_templates)
+            .add_timestamp_micros_column(created_ats)
+            .add_timestamp_micros_column(updated_ats);
+        
+        let batch = builder.build().into_arrow_error("Failed to create RecordBatch")?;
 
         Ok(batch)
     }
@@ -315,13 +306,15 @@ mod tests {
     }
 
     fn create_test_storage(storage_id: &str, name: &str) -> Storage {
+        use kalamdb_commons::models::StorageType;
         Storage {
             storage_id: StorageId::new(storage_id),
             storage_name: name.to_string(),
             description: Some("Test storage".to_string()),
-            storage_type: "filesystem".to_string(),
+            storage_type: StorageType::Filesystem,
             base_directory: "/data".to_string(),
             credentials: None,
+            config_json: None,
             shared_tables_template: "{base}/shared/{namespace}/{table}".to_string(),
             user_tables_template: "{base}/user/{namespace}/{table}/{user_id}".to_string(),
             created_at: 1000,
@@ -403,7 +396,7 @@ mod tests {
         // Scan
         let batch = provider.scan_all_storages().unwrap();
         assert_eq!(batch.num_rows(), 1);
-        assert_eq!(batch.num_columns(), 10);
+        assert_eq!(batch.num_columns(), 11); // storage_id, storage_name, description, storage_type, base_directory, credentials, config_json, shared_tables_template, user_tables_template, created_at, updated_at
     }
 
     #[tokio::test]

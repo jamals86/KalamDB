@@ -2,6 +2,7 @@
 
 use crate::app_context::AppContext;
 use crate::error::KalamDbError;
+use crate::error_extensions::KalamDbResultExt;
 use crate::sql::executor::handlers::typed::TypedStatementHandler;
 use crate::sql::executor::models::{ExecutionContext, ExecutionResult, ScalarValue};
 use datafusion::arrow::array::{ArrayRef, BooleanArray, RecordBatch, StringArray, UInt32Array};
@@ -125,7 +126,7 @@ fn build_describe_batch(def: &TableDefinition) -> Result<RecordBatch, KalamDbErr
             Arc::new(StringArray::from(comments)) as ArrayRef,
         ],
     )
-    .map_err(|e| KalamDbError::Other(format!("Arrow error: {}", e)))?;
+    .into_arrow_error()?;
 
     Ok(batch)
 }
