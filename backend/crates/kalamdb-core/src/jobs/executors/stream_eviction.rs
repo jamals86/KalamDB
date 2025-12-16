@@ -23,6 +23,7 @@
 
 use crate::app_context::AppContext;
 use crate::error::KalamDbError;
+use crate::error_extensions::KalamDbResultExt;
 use crate::jobs::executors::{JobContext, JobDecision, JobExecutor, JobParams};
 use crate::providers::StreamTableProvider;
 use async_trait::async_trait;
@@ -90,7 +91,7 @@ impl StreamEvictionExecutor {
 fn compute_cutoff_window(ttl_seconds: u64) -> Result<(u64, SeqId), KalamDbError> {
     let now = SystemTime::now()
         .duration_since(UNIX_EPOCH)
-        .map_err(|e| KalamDbError::InvalidOperation(format!("System time error: {}", e)))?
+        .into_invalid_operation("System time error")?
         .as_millis() as u64;
     let ttl_ms = ttl_seconds.saturating_mul(1000);
     let cutoff_ms = now.saturating_sub(ttl_ms);
@@ -261,7 +262,7 @@ impl JobExecutor for StreamEvictionExecutor {
             let mut last_processed_key: Option<StreamTableRowId> = None;
 
             for item in iterator {
-                let (row_key, _) = item.map_err(|e| KalamDbError::InvalidOperation(e.to_string()))?;
+                let (row_key, _) = item.into_invalid_operation("Failed to iterate stream rows")?;
                 batch_count += 1;
                 last_processed_key = Some(row_key.clone());
 

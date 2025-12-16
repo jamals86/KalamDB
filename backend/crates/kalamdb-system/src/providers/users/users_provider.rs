@@ -17,11 +17,12 @@
 
 use super::users_indexes::create_users_indexes;
 use super::UsersTableSchema;
-use crate::error::SystemError;
+use crate::error::{SystemError, SystemResultExt};
 use crate::system_table_trait::SystemTableProviderExt;
 use async_trait::async_trait;
-use datafusion::arrow::array::{ArrayRef, RecordBatch, StringBuilder, TimestampMicrosecondArray};
+use datafusion::arrow::array::RecordBatch;
 use datafusion::arrow::datatypes::SchemaRef;
+use kalamdb_commons::RecordBatchBuilder;
 use datafusion::datasource::{TableProvider, TableType};
 use datafusion::error::{DataFusionError, Result as DataFusionResult};
 use datafusion::logical_expr::Expr;
@@ -83,7 +84,7 @@ impl UsersTableProvider {
         let existing = self
             .store
             .scan_by_index(0, Some(username_key.as_bytes()), Some(1))
-            .map_err(|e| SystemError::Other(format!("scan_by_index error: {}", e)))?;
+            .into_system_error("scan_by_index error")?;
 
         if !existing.is_empty() {
             return Err(SystemError::AlreadyExists(format!(
@@ -95,7 +96,7 @@ impl UsersTableProvider {
         // Insert user - indexes are managed automatically
         self.store
             .insert(&user.id, &user)
-            .map_err(|e| SystemError::Other(format!("insert user error: {}", e)))
+            .into_system_error("insert user error")
     }
 
     /// Update an existing user.
@@ -126,7 +127,7 @@ impl UsersTableProvider {
             let conflicts = self
                 .store
                 .scan_by_index(0, Some(username_key.as_bytes()), Some(1))
-                .map_err(|e| SystemError::Other(format!("scan_by_index error: {}", e)))?;
+                .into_system_error("scan_by_index error")?;
 
             if !conflicts.is_empty() && conflicts[0].0 != user.id {
                 return Err(SystemError::AlreadyExists(format!(
@@ -139,7 +140,7 @@ impl UsersTableProvider {
         // Use update_with_old for efficiency (we already have old entity)
         self.store
             .update_with_old(&user.id, Some(&existing_user), &user)
-            .map_err(|e| SystemError::Other(format!("update user error: {}", e)))
+            .into_system_error("update user error")
     }
 
     /// Soft delete a user (sets deleted_at timestamp).
@@ -162,7 +163,7 @@ impl UsersTableProvider {
         // Update user with deleted_at
         self.store
             .update(user_id, &user)
-            .map_err(|e| SystemError::Other(format!("update user error: {}", e)))
+            .into_system_error("update user error")
     }
 
     /// Get a user by ID.
@@ -191,85 +192,62 @@ impl UsersTableProvider {
         let results = self
             .store
             .scan_by_index(0, Some(username_key.as_bytes()), Some(1))
-            .map_err(|e| SystemError::Other(format!("scan_by_index error: {}", e)))?;
+            .into_system_error("scan_by_index error")?;
 
         Ok(results.into_iter().next().map(|(_, user)| user))
     }
 
     /// Helper to create RecordBatch from users
     fn create_batch(&self, users: Vec<(Vec<u8>, User)>) -> Result<RecordBatch, SystemError> {
-        let row_count = users.len();
-
-        // Pre-allocate builders for optimal performance
-        let mut user_ids = StringBuilder::with_capacity(row_count, row_count * 16);
-        let mut usernames = StringBuilder::with_capacity(row_count, row_count * 32);
-        let mut password_hashes = StringBuilder::with_capacity(row_count, row_count * 64);
-        let mut roles = StringBuilder::with_capacity(row_count, row_count * 16);
-        let mut emails = StringBuilder::with_capacity(row_count, row_count * 32);
-        let mut auth_types = StringBuilder::with_capacity(row_count, row_count * 16);
-        let mut auth_datas = StringBuilder::with_capacity(row_count, row_count * 64);
-        let mut storage_modes = StringBuilder::with_capacity(row_count, row_count * 16);
-        let mut storage_ids = StringBuilder::with_capacity(row_count, row_count * 16);
-        let mut created_ats = Vec::with_capacity(row_count);
-        let mut updated_ats = Vec::with_capacity(row_count);
-        let mut last_seens = Vec::with_capacity(row_count);
-        let mut deleted_ats = Vec::with_capacity(row_count);
+        // Extract data into vectors
+        let mut user_ids = Vec::with_capacity(users.len());
+        let mut usernames = Vec::with_capacity(users.len());
+        let mut password_hashes = Vec::with_capacity(users.len());
+        let mut roles = Vec::with_capacity(users.len());
+        let mut emails = Vec::with_capacity(users.len());
+        let mut auth_types = Vec::with_capacity(users.len());
+        let mut auth_datas = Vec::with_capacity(users.len());
+        let mut storage_modes = Vec::with_capacity(users.len());
+        let mut storage_ids = Vec::with_capacity(users.len());
+        let mut created_ats = Vec::with_capacity(users.len());
+        let mut updated_ats = Vec::with_capacity(users.len());
+        let mut last_seens = Vec::with_capacity(users.len());
+        let mut deleted_ats = Vec::with_capacity(users.len());
 
         for (_key, user) in users {
-            user_ids.append_value(user.id.as_str());
-            usernames.append_value(&user.username);
-            password_hashes.append_value(&user.password_hash);
-            roles.append_value(user.role.as_str());
-            emails.append_option(user.email.as_deref());
-            auth_types.append_value(user.auth_type.as_str());
-            auth_datas.append_option(user.auth_data.as_deref());
-            storage_modes.append_value(user.storage_mode.as_str());
-            storage_ids.append_option(user.storage_id.as_ref().map(|s| s.as_str()));
+            user_ids.push(Some(user.id.as_str().to_string()));
+            usernames.push(Some(user.username.as_str().to_string()));
+            password_hashes.push(Some(user.password_hash));
+            roles.push(Some(user.role.as_str().to_string()));
+            emails.push(user.email);
+            auth_types.push(Some(user.auth_type.as_str().to_string()));
+            auth_datas.push(user.auth_data);
+            storage_modes.push(Some(user.storage_mode.as_str().to_string()));
+            storage_ids.push(user.storage_id.map(|s| s.as_str().to_string()));
             created_ats.push(Some(user.created_at));
             updated_ats.push(Some(user.updated_at));
             last_seens.push(user.last_seen);
             deleted_ats.push(user.deleted_at);
         }
 
-        let batch = RecordBatch::try_new(
-            self.schema.clone(),
-            vec![
-                Arc::new(user_ids.finish()) as ArrayRef,
-                Arc::new(usernames.finish()) as ArrayRef,
-                Arc::new(password_hashes.finish()) as ArrayRef,
-                Arc::new(roles.finish()) as ArrayRef,
-                Arc::new(emails.finish()) as ArrayRef,
-                Arc::new(auth_types.finish()) as ArrayRef,
-                Arc::new(auth_datas.finish()) as ArrayRef,
-                Arc::new(storage_modes.finish()) as ArrayRef,
-                Arc::new(storage_ids.finish()) as ArrayRef,
-                Arc::new(TimestampMicrosecondArray::from(
-                    created_ats
-                        .into_iter()
-                        .map(|ts| ts.map(|ms| ms * 1000))
-                        .collect::<Vec<_>>(),
-                )) as ArrayRef,
-                Arc::new(TimestampMicrosecondArray::from(
-                    updated_ats
-                        .into_iter()
-                        .map(|ts| ts.map(|ms| ms * 1000))
-                        .collect::<Vec<_>>(),
-                )) as ArrayRef,
-                Arc::new(TimestampMicrosecondArray::from(
-                    last_seens
-                        .into_iter()
-                        .map(|ts| ts.map(|ms| ms * 1000))
-                        .collect::<Vec<_>>(),
-                )) as ArrayRef,
-                Arc::new(TimestampMicrosecondArray::from(
-                    deleted_ats
-                        .into_iter()
-                        .map(|ts| ts.map(|ms| ms * 1000))
-                        .collect::<Vec<_>>(),
-                )) as ArrayRef,
-            ],
-        )
-        .map_err(|e| SystemError::Other(format!("Failed to create RecordBatch: {}", e)))?;
+        // Build batch using RecordBatchBuilder
+        let mut builder = RecordBatchBuilder::new(self.schema.clone());
+        builder
+            .add_string_column_owned(user_ids)
+            .add_string_column_owned(usernames)
+            .add_string_column_owned(password_hashes)
+            .add_string_column_owned(roles)
+            .add_string_column_owned(emails)
+            .add_string_column_owned(auth_types)
+            .add_string_column_owned(auth_datas)
+            .add_string_column_owned(storage_modes)
+            .add_string_column_owned(storage_ids)
+            .add_timestamp_micros_column(created_ats)
+            .add_timestamp_micros_column(updated_ats)
+            .add_timestamp_micros_column(last_seens)
+            .add_timestamp_micros_column(deleted_ats);
+
+        let batch = builder.build().into_arrow_error("Failed to create RecordBatch")?;
 
         Ok(batch)
     }

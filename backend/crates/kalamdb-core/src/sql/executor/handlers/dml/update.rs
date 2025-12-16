@@ -4,6 +4,7 @@
 
 use crate::app_context::AppContext;
 use crate::error::KalamDbError;
+use crate::error_extensions::KalamDbResultExt;
 use crate::providers::base::BaseTableProvider; // Phase 13.6: Bring trait methods into scope
 use crate::sql::executor::handlers::StatementHandler;
 use crate::sql::executor::models::{ExecutionContext, ExecutionResult, ScalarValue};
@@ -127,20 +128,15 @@ impl StatementHandler for UpdateHandler {
                         self.extract_row_id_for_column(&where_pair, pk_column, &params)?;
 
                     if let Some(id_value) = id_value_opt {
-                        println!("[DEBUG UpdateHandler] Calling provider.update_by_id_field for user={}, pk_column={}, pk_value={}", 
-                            effective_user_id.as_str(), pk_column, id_value);
-
                         match provider.update_by_id_field(
                             effective_user_id,
                             &id_value,
                             updates.clone(),
                         ) {
                             Ok(_) => {
-                                println!("[DEBUG UpdateHandler] update_by_id_field succeeded");
                                 Ok(ExecutionResult::Updated { rows_affected: 1 })
                             }
                             Err(e) => {
-                                println!("[DEBUG UpdateHandler] update_by_id_field failed: {}", e);
                                 // Common case: PK is not a string (e.g. INT). Our update_by_id_field
                                 // fast-path delegates to update_by_pk_value(&str), which may not be able
                                 // to locate the row for non-string PK encodings.
@@ -163,11 +159,6 @@ impl StatementHandler for UpdateHandler {
                         }
                     } else {
                         // Multi-row update path (scan -> update)
-                        println!(
-                            "[DEBUG UpdateHandler] Multi-row update fallback for user={}",
-                            effective_user_id.as_str()
-                        );
-
                         // Build filter expression
                         let (filter, filter_col_val) =
                             if let Some((col_name, val_str)) = &where_pair {
@@ -355,7 +346,7 @@ impl UpdateHandler {
     > {
         let dialect = GenericDialect {};
         let mut stmts = Parser::parse_sql(&dialect, sql)
-            .map_err(|e| KalamDbError::InvalidOperation(format!("Invalid UPDATE syntax: {}", e)))?;
+            .into_invalid_operation("Invalid UPDATE syntax")?;
         let stmt = stmts
             .pop()
             .ok_or_else(|| KalamDbError::InvalidOperation("Empty UPDATE statement".into()))?;

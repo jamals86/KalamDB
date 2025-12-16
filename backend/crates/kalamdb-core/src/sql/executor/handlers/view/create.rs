@@ -6,6 +6,7 @@
 
 use crate::app_context::AppContext;
 use crate::error::KalamDbError;
+use crate::error_extensions::KalamDbResultExt;
 use crate::sql::executor::handlers::typed::TypedStatementHandler;
 use crate::sql::executor::models::{ExecutionContext, ExecutionResult, ScalarValue};
 use kalamdb_commons::models::NamespaceId;
@@ -99,7 +100,7 @@ impl TypedStatementHandler<CreateViewStatement> for CreateViewHandler {
         // DataFusion returns a DataFrame for DDL; collecting executes the command
         df.collect()
             .await
-            .map_err(|e| KalamDbError::ExecutionError(format!("Failed to create view: {}", e)))?;
+            .into_execution_error("Failed to create view")?;
 
         Ok(ExecutionResult::Success {
             message: format!(

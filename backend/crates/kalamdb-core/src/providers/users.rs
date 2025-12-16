@@ -14,6 +14,7 @@
 use super::base::{self, BaseTableProvider, TableProviderCore};
 use crate::app_context::AppContext;
 use crate::error::KalamDbError;
+use crate::error_extensions::KalamDbResultExt;
 use crate::providers::helpers::extract_user_context;
 use crate::providers::manifest_helpers::{ensure_manifest_ready, load_row_from_parquet_by_seq};
 use crate::schema_registry::TableType;
@@ -146,7 +147,7 @@ impl UserTableProvider {
         let index_results = self
             .store
             .scan_by_index(0, Some(&prefix), None)
-            .map_err(|e| KalamDbError::Other(format!("PK index scan failed: {}", e)))?;
+            .into_kalamdb_error("PK index scan failed")?;
 
         if index_results.is_empty() {
             return Ok(None);
@@ -255,7 +256,7 @@ impl BaseTableProvider<UserTableRowId, UserTableRow> for UserTableProvider {
         let hot_has_versions = self
             .store
             .exists_by_index(0, &hot_prefix)
-            .map_err(|e| KalamDbError::Other(format!("PK index scan failed: {}", e)))?;
+            .into_kalamdb_error("PK index scan failed")?;
         if hot_has_versions {
             log::trace!(
                 "[UserTableProvider] PK {} has only deleted versions in hot storage",
@@ -355,7 +356,7 @@ impl BaseTableProvider<UserTableRowId, UserTableRow> for UserTableProvider {
     /// **Performance**: This method is significantly faster than calling insert() N times:
     /// - Single mutex acquisition for all SeqId generation
     /// - Single RocksDB WriteBatch for all rows (one disk write vs N)
-    /// - Batch PK validation (single scan for all rows)
+    /// - Batch PK validation (single scan + HashSet lookup instead of N individual checks)
     ///
     /// # Arguments
     /// * `user_id` - Subject user ID for RLS
@@ -389,25 +390,51 @@ impl BaseTableProvider<UserTableRowId, UserTableRow> for UserTableProvider {
 
         let row_count = coerced_rows.len();
 
-        // Batch PK validation: collect all user-provided PK values
+        // Batch PK validation: collect all user-provided PK values and their prefixes
         let pk_name = self.primary_key_field_name();
-        let mut pk_values_to_check = Vec::new();
+        let mut pk_values_to_check: Vec<(String, Vec<u8>)> = Vec::new();
+
         for row_data in &coerced_rows {
             if let Some(pk_value) = row_data.get(pk_name) {
                 if !matches!(pk_value, ScalarValue::Null) {
                     let pk_str = crate::providers::unified_dml::extract_user_pk_value(row_data, pk_name)?;
-                    pk_values_to_check.push(pk_str);
+                    let prefix = self.pk_index.build_prefix_for_pk(user_id.as_str(), pk_value);
+                    pk_values_to_check.push((pk_str, prefix));
                 }
             }
         }
 
-        // Check all PKs in one pass (uses PK index for O(1) lookups each)
-        for pk_str in &pk_values_to_check {
-            if self.find_row_key_by_id_field(user_id, pk_str)?.is_some() {
-                return Err(KalamDbError::AlreadyExists(format!(
-                    "Primary key violation: value '{}' already exists in column '{}'",
-                    pk_str, pk_name
-                )));
+        // OPTIMIZED: Check all PKs in single index scan + HashSet lookup
+        // For small batches (1-2 PKs), use individual lookups to avoid scan overhead
+        if !pk_values_to_check.is_empty() {
+            if pk_values_to_check.len() <= 2 {
+                // Small batch: individual lookups are faster
+                for (pk_str, _prefix) in &pk_values_to_check {
+                    if self.find_row_key_by_id_field(user_id, pk_str)?.is_some() {
+                        return Err(KalamDbError::AlreadyExists(format!(
+                            "Primary key violation: value '{}' already exists in column '{}'",
+                            pk_str, pk_name
+                        )));
+                    }
+                }
+            } else {
+                // Larger batch: use batch index scan for efficiency
+                // Build common prefix for this user's PKs
+                let user_prefix = self.pk_index.build_user_prefix(user_id.as_str());
+                let prefixes: Vec<Vec<u8>> = pk_values_to_check.iter().map(|(_, p)| p.clone()).collect();
+
+                let existing = self.store.exists_batch_by_index(0, &user_prefix, &prefixes)
+                    .into_kalamdb_error("Batch PK index scan failed")?;
+
+                // Check if any of the requested PKs already exist
+                for (pk_str, prefix) in &pk_values_to_check {
+                    if existing.contains(prefix) {
+                        return Err(KalamDbError::AlreadyExists(format!(
+                            "Primary key violation: value '{}' already exists in column '{}'",
+                            pk_str, pk_name
+                        )));
+                    }
+                }
             }
         }
 
@@ -469,7 +496,7 @@ impl BaseTableProvider<UserTableRowId, UserTableRow> for UserTableProvider {
         // Load referenced version to extract PK
         // Try RocksDB first, then Parquet
         let prior_opt = EntityStore::get(&*self.store, key)
-            .map_err(|e| KalamDbError::Other(format!("Failed to load prior version: {}", e)))?;
+            .into_kalamdb_error("Failed to load prior version")?;
 
         let prior = if let Some(p) = prior_opt {
             p
@@ -624,7 +651,7 @@ impl BaseTableProvider<UserTableRowId, UserTableRow> for UserTableProvider {
         // Load referenced version to extract PK (for validation; we append tombstone regardless)
         // Try RocksDB first, then Parquet
         let prior_opt = EntityStore::get(&*self.store, key)
-            .map_err(|e| KalamDbError::Other(format!("Failed to load prior version: {}", e)))?;
+            .into_kalamdb_error("Failed to load prior version")?;
 
         let prior = if let Some(p) = prior_opt {
             p

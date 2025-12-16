@@ -98,10 +98,6 @@
 
 use crate::ids::SeqId;
 
-// Full Row type for server (with datafusion support)
-#[cfg(feature = "full")]
-use crate::models::Row;
-
 // Simple Row type for WASM (JSON only)
 #[cfg(feature = "wasm")]
 pub type Row = serde_json::Map<String, serde_json::Value>;
@@ -636,6 +632,7 @@ impl Notification {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::models::Row;
     use datafusion::scalar::ScalarValue;
     use std::collections::BTreeMap;
 

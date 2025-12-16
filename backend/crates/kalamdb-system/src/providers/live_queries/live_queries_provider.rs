@@ -4,13 +4,12 @@
 //! Uses the new EntityStore architecture with LiveQueryId keys.
 
 use super::{new_live_queries_store, LiveQueriesStore, LiveQueriesTableSchema};
-use crate::error::SystemError;
+use crate::error::{SystemError, SystemResultExt};
 use crate::system_table_trait::SystemTableProviderExt;
 use async_trait::async_trait;
-use datafusion::arrow::array::{
-    ArrayRef, Int64Array, RecordBatch, StringBuilder, TimestampMicrosecondArray,
-};
+use datafusion::arrow::array::RecordBatch;
 use datafusion::arrow::datatypes::SchemaRef;
+use kalamdb_commons::RecordBatchBuilder;
 use datafusion::datasource::{TableProvider, TableType};
 use datafusion::error::{DataFusionError, Result as DataFusionResult};
 use datafusion::logical_expr::Expr;
@@ -63,7 +62,7 @@ impl LiveQueriesTableProvider {
         self.store
             .put_async(&live_query.live_id, &live_query)
             .await
-            .map_err(|e| SystemError::Other(format!("put_async error: {}", e)))?;
+            .into_system_error("put_async error")?;
         Ok(())
     }
 
@@ -106,7 +105,7 @@ impl LiveQueriesTableProvider {
         self.store
             .get_async(&live_query_id)
             .await
-            .map_err(|e| SystemError::Other(format!("get_async error: {}", e)))
+            .into_system_error("get_async error")
     }
 
     /// Update an existing live query entry
@@ -138,7 +137,7 @@ impl LiveQueriesTableProvider {
         self.store
             .put_async(&live_query.live_id, &live_query)
             .await
-            .map_err(|e| SystemError::Other(format!("put_async error: {}", e)))?;
+            .into_system_error("put_async error")?;
         Ok(())
     }
 
@@ -155,7 +154,7 @@ impl LiveQueriesTableProvider {
         self.store
             .delete_async(live_id)
             .await
-            .map_err(|e| SystemError::Other(format!("delete_async error: {}", e)))?;
+            .into_system_error("delete_async error")?;
         Ok(())
     }
 
@@ -180,7 +179,7 @@ impl LiveQueriesTableProvider {
             .store
             .scan_all_async(None, None, None)
             .await
-            .map_err(|e| SystemError::Other(format!("scan_all_async error: {}", e)))?;
+            .into_system_error("scan_all_async error")?;
         Ok(results.into_iter().map(|(_, lq)| lq).collect())
     }
 
@@ -205,7 +204,7 @@ impl LiveQueriesTableProvider {
             .store
             .scan_all_async(None, None, None)
             .await
-            .map_err(|e| SystemError::Other(format!("scan_all_async error: {}", e)))?;
+            .into_system_error("scan_all_async error")?;
         Ok(all_queries
             .into_iter()
             .map(|(_, lq)| lq)
@@ -282,7 +281,7 @@ impl LiveQueriesTableProvider {
                 store.scan_limited_with_prefix_and_start(Some(&prefix_bytes), None, 10000)
             })
             .await
-            .map_err(|e| SystemError::Other(format!("Join error: {}", e)))??
+            .into_system_error("Join error")??
         };
 
         // Delete each matching key asynchronously
@@ -330,68 +329,56 @@ impl LiveQueriesTableProvider {
     /// Scan all live queries and return as RecordBatch
     pub fn scan_all_live_queries(&self) -> Result<RecordBatch, SystemError> {
         let live_queries = self.store.scan_all(None, None, None)?;
-        let row_count = live_queries.len();
 
-        // Pre-allocate builders for optimal performance
-        let mut live_ids = StringBuilder::with_capacity(row_count, row_count * 48);
-        let mut connection_ids = StringBuilder::with_capacity(row_count, row_count * 16);
-        let mut subscription_ids = StringBuilder::with_capacity(row_count, row_count * 16);
-        let mut namespace_ids = StringBuilder::with_capacity(row_count, row_count * 16);
-        let mut table_names = StringBuilder::with_capacity(row_count, row_count * 16);
-        let mut user_ids = StringBuilder::with_capacity(row_count, row_count * 16);
-        let mut queries = StringBuilder::with_capacity(row_count, row_count * 128);
-        let mut options = StringBuilder::with_capacity(row_count, row_count * 64);
-        let mut statuses = StringBuilder::with_capacity(row_count, row_count * 16);
-        let mut created_ats = Vec::with_capacity(row_count);
-        let mut last_updates = Vec::with_capacity(row_count);
-        let mut changes = Vec::with_capacity(row_count);
-        let mut nodes = StringBuilder::with_capacity(row_count, row_count * 16);
+        // Extract data into vectors
+        let mut live_ids = Vec::with_capacity(live_queries.len());
+        let mut connection_ids = Vec::with_capacity(live_queries.len());
+        let mut subscription_ids = Vec::with_capacity(live_queries.len());
+        let mut namespace_ids = Vec::with_capacity(live_queries.len());
+        let mut table_names = Vec::with_capacity(live_queries.len());
+        let mut user_ids = Vec::with_capacity(live_queries.len());
+        let mut queries = Vec::with_capacity(live_queries.len());
+        let mut options = Vec::with_capacity(live_queries.len());
+        let mut statuses = Vec::with_capacity(live_queries.len());
+        let mut created_ats = Vec::with_capacity(live_queries.len());
+        let mut last_updates = Vec::with_capacity(live_queries.len());
+        let mut changes = Vec::with_capacity(live_queries.len());
+        let mut nodes = Vec::with_capacity(live_queries.len());
 
         for (_key, lq) in live_queries {
-            live_ids.append_value(lq.live_id.as_str());
-            connection_ids.append_value(&lq.connection_id);
-            subscription_ids.append_value(&lq.subscription_id);
-            namespace_ids.append_value(lq.namespace_id.as_str());
-            table_names.append_value(lq.table_name.as_str());
-            user_ids.append_value(lq.user_id.as_str());
-            queries.append_value(&lq.query);
-            options.append_option(lq.options.as_deref());
-            statuses.append_value(lq.status.as_str());
+            live_ids.push(Some(lq.live_id.as_str().to_string()));
+            connection_ids.push(Some(lq.connection_id));
+            subscription_ids.push(Some(lq.subscription_id));
+            namespace_ids.push(Some(lq.namespace_id.as_str().to_string()));
+            table_names.push(Some(lq.table_name.as_str().to_string()));
+            user_ids.push(Some(lq.user_id.as_str().to_string()));
+            queries.push(Some(lq.query));
+            options.push(lq.options);
+            statuses.push(Some(lq.status.as_str().to_string()));
             created_ats.push(Some(lq.created_at));
             last_updates.push(Some(lq.last_update));
             changes.push(Some(lq.changes));
-            nodes.append_value(&lq.node);
+            nodes.push(Some(lq.node));
         }
 
-        let batch = RecordBatch::try_new(
-            self.schema.clone(),
-            vec![
-                Arc::new(live_ids.finish()) as ArrayRef,
-                Arc::new(connection_ids.finish()) as ArrayRef,
-                Arc::new(subscription_ids.finish()) as ArrayRef,
-                Arc::new(namespace_ids.finish()) as ArrayRef,
-                Arc::new(table_names.finish()) as ArrayRef,
-                Arc::new(user_ids.finish()) as ArrayRef,
-                Arc::new(queries.finish()) as ArrayRef,
-                Arc::new(options.finish()) as ArrayRef,
-                Arc::new(statuses.finish()) as ArrayRef,
-                Arc::new(TimestampMicrosecondArray::from(
-                    created_ats
-                        .into_iter()
-                        .map(|ts| ts.map(|ms| ms * 1000))
-                        .collect::<Vec<_>>(),
-                )) as ArrayRef,
-                Arc::new(TimestampMicrosecondArray::from(
-                    last_updates
-                        .into_iter()
-                        .map(|ts| ts.map(|ms| ms * 1000))
-                        .collect::<Vec<_>>(),
-                )) as ArrayRef,
-                Arc::new(Int64Array::from(changes)) as ArrayRef,
-                Arc::new(nodes.finish()) as ArrayRef,
-            ],
-        )
-        .map_err(|e| SystemError::Other(format!("Arrow error: {}", e)))?;
+        // Build batch using RecordBatchBuilder
+        let mut builder = RecordBatchBuilder::new(self.schema.clone());
+        builder
+            .add_string_column_owned(live_ids)
+            .add_string_column_owned(connection_ids)
+            .add_string_column_owned(subscription_ids)
+            .add_string_column_owned(namespace_ids)
+            .add_string_column_owned(table_names)
+            .add_string_column_owned(user_ids)
+            .add_string_column_owned(queries)
+            .add_string_column_owned(options)
+            .add_string_column_owned(statuses)
+            .add_timestamp_micros_column(created_ats)
+            .add_timestamp_micros_column(last_updates)
+            .add_int64_column(changes)
+            .add_string_column_owned(nodes);
+
+        let batch = builder.build().into_arrow_error("Failed to create RecordBatch")?;
 
         Ok(batch)
     }

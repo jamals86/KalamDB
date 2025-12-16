@@ -7,6 +7,8 @@
 
 use super::connections_manager::{ConnectionsManager, SharedConnectionState, SubscriptionHandle, SubscriptionState};
 use crate::error::KalamDbError;
+use crate::error_extensions::KalamDbResultExt;
+use log::debug;
 use datafusion::sql::sqlparser::ast::Expr;
 use kalamdb_commons::ids::SeqId;
 use kalamdb_commons::models::{ConnectionId, LiveQueryId, TableId, UserId};
@@ -14,7 +16,6 @@ use kalamdb_commons::system::LiveQuery as SystemLiveQuery;
 use kalamdb_commons::websocket::SubscriptionRequest;
 use kalamdb_commons::NodeId;
 use kalamdb_system::LiveQueriesTableProvider;
-use log::info;
 use std::sync::Arc;
 use std::time::{SystemTime, UNIX_EPOCH};
 
@@ -93,9 +94,8 @@ impl SubscriptionService {
         let options = request.options.clone();
 
         // Serialize options to JSON
-        let options_json = serde_json::to_string(&options).map_err(|e| {
-            KalamDbError::SerializationError(format!("Failed to serialize options: {}", e))
-        })?;
+        let options_json = serde_json::to_string(&options)
+            .into_serialization_error("Failed to serialize options")?;
 
         // Create record for system.live_queries
         let live_query_record = SystemLiveQuery {
@@ -118,7 +118,7 @@ impl SubscriptionService {
         self.live_queries_provider
             .insert_live_query_async(live_query_record)
             .await
-            .map_err(|e| KalamDbError::Other(format!("Failed to insert live query: {}", e)))?;
+            .into_kalamdb_error("Failed to insert live query")?;
 
         // Wrap filter_expr and projections in Arc for zero-copy sharing between state and handle
         let filter_expr_arc = filter_expr.map(Arc::new);
@@ -161,7 +161,7 @@ impl SubscriptionService {
             subscription_handle,
         );
 
-        info!(
+        debug!(
             "Registered subscription {} for connection {} on {}",
             request.id, connection_id, table_id
         );
@@ -212,9 +212,9 @@ impl SubscriptionService {
         self.live_queries_provider
             .delete_live_query_async(live_id)
             .await
-            .map_err(|e| KalamDbError::Other(format!("Failed to delete live query: {}", e)))?;
+            .into_kalamdb_error("Failed to delete live query")?;
 
-        info!(
+        debug!(
             "Unregistered subscription {} for connection {}",
             subscription_id, connection_id
         );

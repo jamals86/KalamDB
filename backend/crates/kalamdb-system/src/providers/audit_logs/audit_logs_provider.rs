@@ -4,11 +4,12 @@
 //! Uses the EntityStore architecture with type-safe keys (AuditLogId).
 
 use super::{new_audit_logs_store, AuditLogsStore, AuditLogsTableSchema};
-use crate::error::SystemError;
+use crate::error::{SystemError, SystemResultExt};
 use crate::system_table_trait::SystemTableProviderExt;
 use async_trait::async_trait;
-use datafusion::arrow::array::{ArrayRef, RecordBatch, StringBuilder, TimestampMicrosecondArray, TimestampMillisecondArray};
+use datafusion::arrow::array::RecordBatch;
 use datafusion::arrow::datatypes::SchemaRef;
+use kalamdb_commons::RecordBatchBuilder;
 use datafusion::datasource::{TableProvider, TableType};
 use datafusion::error::{DataFusionError, Result as DataFusionResult};
 use datafusion::logical_expr::Expr;
@@ -67,7 +68,7 @@ impl AuditLogsTableProvider {
         self.store
             .put_async(&entry.audit_id, &entry)
             .await
-            .map_err(|e| SystemError::Other(format!("put_async error: {}", e)))?;
+            .into_system_error("put_async error")?;
         Ok(())
     }
 
@@ -92,7 +93,7 @@ impl AuditLogsTableProvider {
         self.store
             .get_async(audit_id)
             .await
-            .map_err(|e| SystemError::Other(format!("get_async error: {}", e)))
+            .into_system_error("get_async error")
     }
 
     /// Helper to create RecordBatch from entries
@@ -100,43 +101,40 @@ impl AuditLogsTableProvider {
         &self,
         entries: Vec<(Vec<u8>, AuditLogEntry)>,
     ) -> Result<RecordBatch, SystemError> {
-        let row_count = entries.len();
-
-        // Pre-allocate builders for optimal performance
-        let mut audit_ids = StringBuilder::with_capacity(row_count, row_count * 16);
-        let mut timestamps = Vec::with_capacity(row_count);
-        let mut actor_user_ids = StringBuilder::with_capacity(row_count, row_count * 16);
-        let mut actor_usernames = StringBuilder::with_capacity(row_count, row_count * 32);
-        let mut actions = StringBuilder::with_capacity(row_count, row_count * 32);
-        let mut targets = StringBuilder::with_capacity(row_count, row_count * 64);
-        let mut details_list = StringBuilder::with_capacity(row_count, row_count * 128);
-        let mut ip_addresses = StringBuilder::with_capacity(row_count, row_count * 16);
+        // Extract data into vectors
+        let mut audit_ids = Vec::with_capacity(entries.len());
+        let mut timestamps = Vec::with_capacity(entries.len());
+        let mut actor_user_ids = Vec::with_capacity(entries.len());
+        let mut actor_usernames = Vec::with_capacity(entries.len());
+        let mut actions = Vec::with_capacity(entries.len());
+        let mut targets = Vec::with_capacity(entries.len());
+        let mut details_list = Vec::with_capacity(entries.len());
+        let mut ip_addresses = Vec::with_capacity(entries.len());
 
         for (_key, entry) in entries {
-            audit_ids.append_value(entry.audit_id.as_str());
+            audit_ids.push(Some(entry.audit_id.as_str().to_string()));
             timestamps.push(Some(entry.timestamp));
-            actor_user_ids.append_value(entry.actor_user_id.as_str());
-            actor_usernames.append_value(entry.actor_username.as_str());
-            actions.append_value(&entry.action);
-            targets.append_value(&entry.target);
-            details_list.append_option(entry.details.as_deref());
-            ip_addresses.append_option(entry.ip_address.as_deref());
+            actor_user_ids.push(Some(entry.actor_user_id.as_str().to_string()));
+            actor_usernames.push(Some(entry.actor_username.as_str().to_string()));
+            actions.push(Some(entry.action));
+            targets.push(Some(entry.target));
+            details_list.push(entry.details);
+            ip_addresses.push(entry.ip_address);
         }
 
-        let batch = RecordBatch::try_new(
-            self.schema.clone(),
-            vec![
-                Arc::new(audit_ids.finish()) as ArrayRef,
-                Arc::new(TimestampMillisecondArray::from(timestamps)) as ArrayRef,
-                Arc::new(actor_user_ids.finish()) as ArrayRef,
-                Arc::new(actor_usernames.finish()) as ArrayRef,
-                Arc::new(actions.finish()) as ArrayRef,
-                Arc::new(targets.finish()) as ArrayRef,
-                Arc::new(details_list.finish()) as ArrayRef,
-                Arc::new(ip_addresses.finish()) as ArrayRef,
-            ],
-        )
-        .map_err(|e| SystemError::Other(format!("Failed to create RecordBatch: {}", e)))?;
+        // Build batch using RecordBatchBuilder
+        let mut builder = RecordBatchBuilder::new(self.schema.clone());
+        builder
+            .add_string_column_owned(audit_ids)
+            .add_timestamp_millis_column(timestamps)
+            .add_string_column_owned(actor_user_ids)
+            .add_string_column_owned(actor_usernames)
+            .add_string_column_owned(actions)
+            .add_string_column_owned(targets)
+            .add_string_column_owned(details_list)
+            .add_string_column_owned(ip_addresses);
+
+        let batch = builder.build().into_arrow_error("Failed to create RecordBatch")?;
 
         Ok(batch)
     }
@@ -185,7 +183,7 @@ impl AuditLogsTableProvider {
             .store
             .scan_all_async(None, None, None)
             .await
-            .map_err(|e| SystemError::Other(format!("scan_all_async error: {}", e)))?;
+            .into_system_error("scan_all_async error")?;
         Ok(results.into_iter().map(|(_, entry)| entry).collect())
     }
 }

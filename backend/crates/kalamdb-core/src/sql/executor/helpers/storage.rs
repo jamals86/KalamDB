@@ -4,6 +4,7 @@
 
 use crate::app_context::AppContext;
 use crate::error::KalamDbError;
+use crate::error_extensions::KalamDbResultExt;
 use crate::sql::executor::models::{ExecutionContext, ExecutionResult};
 use datafusion::execution::context::SessionContext;
 use kalamdb_commons::models::{StorageId, StorageType};
@@ -59,7 +60,7 @@ pub async fn execute_create_storage(
     let storage_id = StorageId::from(stmt.storage_id.as_str());
     if storages_provider
         .get_storage_by_id(&storage_id)
-        .map_err(|e| KalamDbError::Other(format!("Failed to check storage: {}", e)))?
+        .into_kalamdb_error("Failed to check storage")?
         .is_some()
     {
         return Err(KalamDbError::InvalidOperation(format!(
@@ -83,9 +84,8 @@ pub async fn execute_create_storage(
 
     // Validate credentials JSON (if provided)
     let normalized_credentials = if let Some(raw) = stmt.credentials.as_ref() {
-        let value: serde_json::Value = serde_json::from_str(raw).map_err(|e| {
-            KalamDbError::InvalidOperation(format!("Invalid credentials JSON: {}", e))
-        })?;
+        let value: serde_json::Value = serde_json::from_str(raw)
+            .into_invalid_operation("Invalid credentials JSON")?;
 
         if !value.is_object() {
             return Err(KalamDbError::InvalidOperation(
@@ -93,9 +93,8 @@ pub async fn execute_create_storage(
             ));
         }
 
-        Some(serde_json::to_string(&value).map_err(|e| {
-            KalamDbError::InvalidOperation(format!("Failed to normalize credentials JSON: {}", e))
-        })?)
+        Some(serde_json::to_string(&value)
+            .into_invalid_operation("Failed to normalize credentials JSON")?)
     } else {
         None
     };
@@ -118,7 +117,7 @@ pub async fn execute_create_storage(
     // Insert into system.storages
     storages_provider
         .insert_storage(storage)
-        .map_err(|e| KalamDbError::Other(format!("Failed to create storage: {}", e)))?;
+        .into_kalamdb_error("Failed to create storage")?;
 
     Ok(ExecutionResult::Success {
         message: format!("Storage '{}' created successfully", stmt.storage_id),
@@ -135,13 +134,11 @@ pub fn ensure_filesystem_directory(path: &str) -> Result<(), KalamDbError> {
     }
 
     let dir = std::path::Path::new(trimmed);
-    std::fs::create_dir_all(dir).map_err(|e| {
-        KalamDbError::io_message(format!(
-            "Failed to create storage directory '{}': {}",
-            dir.display(),
-            e
-        ))
-    })
+    std::fs::create_dir_all(dir).into_kalamdb_error(&format!(
+        "Failed to create storage directory '{}'",
+        dir.display()
+    ))?;
+    Ok(())
 }
 
 #[cfg(test)]

@@ -4,13 +4,12 @@
 //! Exposes manifest cache entries as a queryable system table.
 
 use super::{new_manifest_store, ManifestStore, ManifestTableSchema};
-use crate::error::SystemError;
+use crate::error::{SystemError, SystemResultExt};
 use crate::system_table_trait::SystemTableProviderExt;
 use async_trait::async_trait;
-use datafusion::arrow::array::{
-    ArrayRef, Int64Array, RecordBatch, StringBuilder, TimestampMicrosecondArray,
-};
+use datafusion::arrow::array::RecordBatch;
 use datafusion::arrow::datatypes::SchemaRef;
+use kalamdb_commons::RecordBatchBuilder;
 use datafusion::datasource::{TableProvider, TableType};
 use datafusion::error::{DataFusionError, Result as DataFusionResult};
 use datafusion::logical_expr::Expr;
@@ -54,19 +53,18 @@ impl ManifestTableProvider {
     /// Uses schema-driven array building for optimal performance and correctness.
     pub fn scan_to_record_batch(&self) -> Result<RecordBatch, SystemError> {
         let entries = self.store.scan_all(None, None, None)?;
-        let row_count = entries.len();
 
-        // Pre-allocate builders based on schema field order
-        let mut cache_keys = StringBuilder::with_capacity(row_count, row_count * 32);
-        let mut namespace_ids = StringBuilder::with_capacity(row_count, row_count * 16);
-        let mut table_names = StringBuilder::with_capacity(row_count, row_count * 16);
-        let mut scopes = StringBuilder::with_capacity(row_count, row_count * 16);
-        let mut etags = StringBuilder::with_capacity(row_count, row_count * 16);
-        let mut last_refreshed_vals = Vec::with_capacity(row_count);
-        let mut last_accessed_vals = Vec::with_capacity(row_count);
-        let mut ttl_vals = Vec::with_capacity(row_count);
-        let mut source_paths = StringBuilder::with_capacity(row_count, row_count * 64);
-        let mut sync_states = StringBuilder::with_capacity(row_count, row_count * 8);
+        // Extract data into vectors
+        let mut cache_keys = Vec::with_capacity(entries.len());
+        let mut namespace_ids = Vec::with_capacity(entries.len());
+        let mut table_names = Vec::with_capacity(entries.len());
+        let mut scopes = Vec::with_capacity(entries.len());
+        let mut etags = Vec::with_capacity(entries.len());
+        let mut last_refreshed_vals = Vec::with_capacity(entries.len());
+        let mut last_accessed_vals = Vec::with_capacity(entries.len());
+        let mut ttl_vals = Vec::with_capacity(entries.len());
+        let mut source_paths = Vec::with_capacity(entries.len());
+        let mut sync_states = Vec::with_capacity(entries.len());
 
         // Build arrays by iterating entries once
         for (key_bytes, entry) in entries {
@@ -79,45 +77,33 @@ impl ManifestTableProvider {
                 continue;
             }
 
-            cache_keys.append_value(&cache_key);
-            namespace_ids.append_value(parts[0]);
-            table_names.append_value(parts[1]);
-            scopes.append_value(parts[2]);
-            etags.append_option(entry.etag.as_deref());
+            cache_keys.push(Some(cache_key.to_string()));
+            namespace_ids.push(Some(parts[0].to_string()));
+            table_names.push(Some(parts[1].to_string()));
+            scopes.push(Some(parts[2].to_string()));
+            etags.push(entry.etag);
             last_refreshed_vals.push(Some(entry.last_refreshed * 1000)); // Convert to milliseconds
             last_accessed_vals.push(Some(entry.last_refreshed * 1000)); // Fallback to last_refreshed
             ttl_vals.push(Some(0i64)); // Use 0 to indicate "see config"
-            source_paths.append_value(&entry.source_path);
-            sync_states.append_value(entry.sync_state.to_string());
+            source_paths.push(Some(entry.source_path));
+            sync_states.push(Some(entry.sync_state.to_string()));
         }
 
-        // Build RecordBatch with schema-ordered columns (order matches ManifestTableSchema)
-        RecordBatch::try_new(
-            self.schema.clone(),
-            vec![
-                Arc::new(cache_keys.finish()) as ArrayRef,
-                Arc::new(namespace_ids.finish()) as ArrayRef,
-                Arc::new(table_names.finish()) as ArrayRef,
-                Arc::new(scopes.finish()) as ArrayRef,
-                Arc::new(etags.finish()) as ArrayRef,
-                Arc::new(TimestampMicrosecondArray::from(
-                    last_refreshed_vals
-                        .into_iter()
-                        .map(|ts| ts.map(|ms| ms * 1000))
-                        .collect::<Vec<_>>(),
-                )) as ArrayRef,
-                Arc::new(TimestampMicrosecondArray::from(
-                    last_accessed_vals
-                        .into_iter()
-                        .map(|ts| ts.map(|ms| ms * 1000))
-                        .collect::<Vec<_>>(),
-                )) as ArrayRef,
-                Arc::new(Int64Array::from(ttl_vals)) as ArrayRef,
-                Arc::new(source_paths.finish()) as ArrayRef,
-                Arc::new(sync_states.finish()) as ArrayRef,
-            ],
-        )
-        .map_err(|e| SystemError::Other(format!("Arrow error: {}", e)))
+        // Build batch using RecordBatchBuilder
+        let mut builder = RecordBatchBuilder::new(self.schema.clone());
+        builder
+            .add_string_column_owned(cache_keys)
+            .add_string_column_owned(namespace_ids)
+            .add_string_column_owned(table_names)
+            .add_string_column_owned(scopes)
+            .add_string_column_owned(etags)
+            .add_timestamp_micros_column(last_refreshed_vals)
+            .add_timestamp_micros_column(last_accessed_vals)
+            .add_int64_column(ttl_vals)
+            .add_string_column_owned(source_paths)
+            .add_string_column_owned(sync_states);
+
+        builder.build().into_arrow_error("Failed to create RecordBatch")
     }
 }
 

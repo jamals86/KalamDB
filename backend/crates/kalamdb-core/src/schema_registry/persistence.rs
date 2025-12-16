@@ -1,4 +1,5 @@
 use crate::error::KalamDbError;
+use crate::error_extensions::KalamDbResultExt;
 use crate::schema_registry::cached_table_data::CachedTableData;
 use crate::schema_registry::table_cache::TableCache;
 use kalamdb_commons::models::schemas::TableDefinition;
@@ -92,7 +93,7 @@ impl SchemaPersistence {
         // Scan all tables from storage
         tables_provider
             .scan_all()
-            .map_err(|e| KalamDbError::Other(format!("Failed to scan tables: {}", e)))
+            .into_kalamdb_error("Failed to scan tables")
     }
 
     /// Check if table exists in persistence layer

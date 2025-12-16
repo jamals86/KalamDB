@@ -42,6 +42,7 @@
 //! let id_str: &str = user_id.as_str();
 //! ```
 
+pub mod arrow_utils;
 pub mod config;
 pub mod constants;
 pub mod errors;
@@ -55,6 +56,7 @@ pub mod validation; // Naming validation for namespaces, tables, and columns
 pub mod websocket;
 
 // Re-export commonly used types at crate root
+pub use arrow_utils::{empty_batch, RecordBatchBuilder};
 pub use config::ServerConfig;
 pub use constants::{COLUMN_FAMILIES, SYSTEM_TABLES};
 pub use errors::{CommonError, Result};

@@ -11,6 +11,7 @@
 
 use crate::app_context::AppContext;
 use crate::error::KalamDbError;
+use crate::error_extensions::KalamDbResultExt;
 use crate::providers::arrow_json_conversion::scalar_value_to_json;
 use crate::providers::base::BaseTableProvider; // bring trait into scope for insert_batch
 use crate::sql::executor::default_evaluator::evaluate_default;
@@ -247,7 +248,7 @@ impl InsertHandler {
     ) -> Result<(NamespaceId, TableName, Vec<String>, Vec<Vec<Expr>>), KalamDbError> {
         let dialect = GenericDialect {};
         let stmts = Parser::parse_sql(&dialect, sql)
-            .map_err(|e| KalamDbError::InvalidOperation(format!("SQL parse error: {}", e)))?;
+            .into_invalid_operation("SQL parse error")?;
 
         if stmts.is_empty() {
             return Err(KalamDbError::InvalidOperation(
@@ -546,6 +547,10 @@ impl InsertHandler {
     }
 
     /// Execute native INSERT using UserTableInsertHandler
+    ///
+    /// **Performance Optimization**: For small batches (≤3 rows), executes inline
+    /// to avoid spawn_blocking overhead. Larger batches use spawn_blocking to
+    /// prevent blocking the async runtime with RocksDB I/O.
     async fn execute_native_insert(
         &self,
         namespace: &NamespaceId,
@@ -563,6 +568,25 @@ impl InsertHandler {
         let table_type = table_def.table_type;
         let table_options = table_def.table_options.clone();
 
+        // OPTIMIZATION: For small batches, execute inline to avoid spawn_blocking overhead
+        // spawn_blocking has ~10-20µs overhead which is significant for single-row inserts
+        const INLINE_THRESHOLD: usize = 3;
+
+        if rows.len() <= INLINE_THRESHOLD {
+            // Inline execution for small batches
+            return self.execute_insert_sync(
+                &table_id,
+                table_type,
+                &table_options,
+                user_id,
+                role,
+                rows,
+                namespace,
+                table_name,
+            );
+        }
+
+        // For larger batches, use spawn_blocking to avoid blocking async runtime
         let app_ctx = self.app_context.clone();
         let table_id_clone = table_id.clone();
         let rows_for_insert = rows;
@@ -571,102 +595,152 @@ impl InsertHandler {
         let table_name_owned = table_name.clone();
 
         let rows_affected = task::spawn_blocking(move || {
-            match (table_type, rows_for_insert) {
-                (TableType::User, rows) => {
-                    let provider_arc = app_ctx.schema_registry().get_provider(&table_id_clone).ok_or_else(|| {
-                        KalamDbError::InvalidOperation(format!(
-                            "User table provider not found for: {}.{}",
-                            namespace_owned.as_str(),
-                            table_name_owned.as_str()
-                        ))
-                    })?;
-
-                    if let Some(provider) = provider_arc
-                        .as_any()
-                        .downcast_ref::<crate::providers::UserTableProvider>()
-                    {
-                        let row_ids = provider.insert_batch(&user_id_clone, rows)?;
-                        Ok(row_ids.len())
-                    } else {
-                        Err(KalamDbError::InvalidOperation(
-                            "Cached provider type mismatch for user table".into(),
-                        ))
-                    }
-                }
-                (TableType::Shared, rows) => {
-                    use kalamdb_auth::rbac::can_write_shared_table;
-                    use kalamdb_commons::schemas::TableOptions;
-                    use kalamdb_commons::TableAccess;
-
-                    let access_level = if let TableOptions::Shared(opts) = &table_options {
-                        opts.access_level.unwrap_or(TableAccess::Private)
-                    } else {
-                        TableAccess::Private
-                    };
-
-                    if !can_write_shared_table(access_level, false, role) {
-                        return Err(KalamDbError::Unauthorized(format!(
-                            "Insufficient privileges to write to shared table '{}.{}' (Access Level: {:?})",
-                            namespace_owned.as_str(),
-                            table_name_owned.as_str(),
-                            access_level
-                        )));
-                    }
-
-                    let provider_arc = app_ctx.schema_registry().get_provider(&table_id_clone).ok_or_else(|| {
-                        KalamDbError::InvalidOperation(format!(
-                            "Shared table provider not found for: {}.{}",
-                            namespace_owned.as_str(),
-                            table_name_owned.as_str()
-                        ))
-                    })?;
-
-                    if let Some(shared_provider) = provider_arc
-                        .as_any()
-                        .downcast_ref::<crate::providers::SharedTableProvider>(
-                    ) {
-                        let row_ids = shared_provider.insert_batch(&user_id_clone, rows)?;
-                        Ok(row_ids.len())
-                    } else {
-                        Err(KalamDbError::InvalidOperation(format!(
-                            "Cached provider type mismatch for shared table {}.{}",
-                            namespace_owned.as_str(),
-                            table_name_owned.as_str()
-                        )))
-                    }
-                }
-                (TableType::Stream, rows) => {
-                    let provider_arc = app_ctx.schema_registry().get_provider(&table_id_clone).ok_or_else(|| {
-                        KalamDbError::InvalidOperation(format!(
-                            "Stream table provider not found for: {}.{}",
-                            namespace_owned.as_str(),
-                            table_name_owned.as_str()
-                        ))
-                    })?;
-
-                    if let Some(stream_provider) = provider_arc
-                        .as_any()
-                        .downcast_ref::<crate::providers::StreamTableProvider>(
-                    ) {
-                        let row_ids = stream_provider.insert_batch(&user_id_clone, rows)?;
-                        Ok(row_ids.len())
-                    } else {
-                        Err(KalamDbError::InvalidOperation(format!(
-                            "Cached provider type mismatch for stream table {}.{}",
-                            namespace_owned.as_str(),
-                            table_name_owned.as_str()
-                        )))
-                    }
-                }
-                (TableType::System, _) => Err(KalamDbError::InvalidOperation(
-                    "Cannot INSERT into SYSTEM tables".to_string(),
-                )),
-            }
+            Self::execute_insert_blocking(
+                &app_ctx,
+                &table_id_clone,
+                table_type,
+                &table_options,
+                &user_id_clone,
+                role,
+                rows_for_insert,
+                &namespace_owned,
+                &table_name_owned,
+            )
         })
         .await
-        .map_err(|e| KalamDbError::Other(format!("spawn_blocking join error: {}", e)))??;
+        .into_kalamdb_error("spawn_blocking join error")??;
 
         Ok(rows_affected)
+    }
+
+    /// Execute insert synchronously (used for inline small batches)
+    fn execute_insert_sync(
+        &self,
+        table_id: &kalamdb_commons::models::TableId,
+        table_type: TableType,
+        table_options: &kalamdb_commons::schemas::TableOptions,
+        user_id: &kalamdb_commons::models::UserId,
+        role: kalamdb_commons::Role,
+        rows: Vec<Row>,
+        namespace: &NamespaceId,
+        table_name: &TableName,
+    ) -> Result<usize, KalamDbError> {
+        Self::execute_insert_blocking(
+            &self.app_context,
+            table_id,
+            table_type,
+            table_options,
+            user_id,
+            role,
+            rows,
+            namespace,
+            table_name,
+        )
+    }
+
+    /// Shared blocking insert logic (called from both sync and spawn_blocking paths)
+    fn execute_insert_blocking(
+        app_ctx: &std::sync::Arc<AppContext>,
+        table_id: &kalamdb_commons::models::TableId,
+        table_type: TableType,
+        table_options: &kalamdb_commons::schemas::TableOptions,
+        user_id: &kalamdb_commons::models::UserId,
+        role: kalamdb_commons::Role,
+        rows: Vec<Row>,
+        namespace: &NamespaceId,
+        table_name: &TableName,
+    ) -> Result<usize, KalamDbError> {
+        match (table_type, rows) {
+            (TableType::User, rows) => {
+                let provider_arc = app_ctx.schema_registry().get_provider(table_id).ok_or_else(|| {
+                    KalamDbError::InvalidOperation(format!(
+                        "User table provider not found for: {}.{}",
+                        namespace.as_str(),
+                        table_name.as_str()
+                    ))
+                })?;
+
+                if let Some(provider) = provider_arc
+                    .as_any()
+                    .downcast_ref::<crate::providers::UserTableProvider>()
+                {
+                    let row_ids = provider.insert_batch(user_id, rows)?;
+                    Ok(row_ids.len())
+                } else {
+                    Err(KalamDbError::InvalidOperation(
+                        "Cached provider type mismatch for user table".into(),
+                    ))
+                }
+            }
+            (TableType::Shared, rows) => {
+                use kalamdb_auth::rbac::can_write_shared_table;
+                use kalamdb_commons::schemas::TableOptions;
+                use kalamdb_commons::TableAccess;
+
+                let access_level = if let TableOptions::Shared(opts) = table_options {
+                    opts.access_level.unwrap_or(TableAccess::Private)
+                } else {
+                    TableAccess::Private
+                };
+
+                if !can_write_shared_table(access_level, false, role) {
+                    return Err(KalamDbError::Unauthorized(format!(
+                        "Insufficient privileges to write to shared table '{}.{}' (Access Level: {:?})",
+                        namespace.as_str(),
+                        table_name.as_str(),
+                        access_level
+                    )));
+                }
+
+                let provider_arc = app_ctx.schema_registry().get_provider(table_id).ok_or_else(|| {
+                    KalamDbError::InvalidOperation(format!(
+                        "Shared table provider not found for: {}.{}",
+                        namespace.as_str(),
+                        table_name.as_str()
+                    ))
+                })?;
+
+                if let Some(shared_provider) = provider_arc
+                    .as_any()
+                    .downcast_ref::<crate::providers::SharedTableProvider>(
+                ) {
+                    let row_ids = shared_provider.insert_batch(user_id, rows)?;
+                    Ok(row_ids.len())
+                } else {
+                    Err(KalamDbError::InvalidOperation(format!(
+                        "Cached provider type mismatch for shared table {}.{}",
+                        namespace.as_str(),
+                        table_name.as_str()
+                    )))
+                }
+            }
+            (TableType::Stream, rows) => {
+                let provider_arc = app_ctx.schema_registry().get_provider(table_id).ok_or_else(|| {
+                    KalamDbError::InvalidOperation(format!(
+                        "Stream table provider not found for: {}.{}",
+                        namespace.as_str(),
+                        table_name.as_str()
+                    ))
+                })?;
+
+                if let Some(stream_provider) = provider_arc
+                    .as_any()
+                    .downcast_ref::<crate::providers::StreamTableProvider>(
+                ) {
+                    let row_ids = stream_provider.insert_batch(user_id, rows)?;
+                    Ok(row_ids.len())
+                } else {
+                    Err(KalamDbError::InvalidOperation(format!(
+                        "Cached provider type mismatch for stream table {}.{}",
+                        namespace.as_str(),
+                        table_name.as_str()
+                    )))
+                }
+            }
+            (TableType::System, _) => Err(KalamDbError::InvalidOperation(
+                "Cannot INSERT into SYSTEM tables".to_string(),
+            )),
+        }
     }
 }
 

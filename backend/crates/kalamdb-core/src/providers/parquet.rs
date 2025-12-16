@@ -1,4 +1,5 @@
 use crate::error::KalamDbError;
+use crate::error_extensions::KalamDbResultExt;
 use crate::manifest::ManifestAccessPlanner;
 use crate::providers::core::TableProviderCore;
 use crate::schema_registry::TableType;
@@ -49,7 +50,7 @@ pub(crate) fn scan_parquet_files_as_batch(
             .system_tables()
             .storages()
             .get_storage(&storage_id)
-            .map_err(|e| KalamDbError::Other(format!("Failed to load storage: {}", e)))?
+            .into_kalamdb_error("Failed to load storage")?
             .ok_or_else(|| {
                 KalamDbError::InvalidOperation(format!(
                     "Storage '{}' not found",
@@ -58,7 +59,7 @@ pub(crate) fn scan_parquet_files_as_batch(
             })?;
 
         materialize_remote_parquet_dir_sync(&storage, &storage_path)
-            .map_err(|e| KalamDbError::Other(format!("Filestore error: {}", e)))?
+            .into_kalamdb_error("Filestore error")?
     } else {
         PathBuf::from(&storage_path)
     };

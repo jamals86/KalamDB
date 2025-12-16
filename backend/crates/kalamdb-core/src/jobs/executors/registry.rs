@@ -14,6 +14,7 @@
 use super::executor_trait::{JobContext, JobDecision, JobExecutor, JobParams};
 use crate::app_context::AppContext;
 use crate::error::KalamDbError;
+use crate::error_extensions::SerdeJsonResultExt;
 use async_trait::async_trait;
 use dashmap::DashMap;
 use kalamdb_commons::models::{system::Job, JobType};
@@ -73,12 +74,8 @@ where
         params_json: &str,
     ) -> Result<bool, KalamDbError> {
         // Deserialize parameters from JSON string
-        let params: T = serde_json::from_str(params_json).map_err(|e| {
-            KalamDbError::InvalidOperation(format!(
-                "Failed to deserialize job parameters for pre-validation: {}",
-                e
-            ))
-        })?;
+        let params: T = serde_json::from_str(params_json)
+            .into_serde_error("Failed to deserialize job parameters for pre-validation")?;
 
         // Validate parameters
         params.validate()?;
@@ -98,9 +95,8 @@ where
             .as_ref()
             .ok_or_else(|| KalamDbError::InvalidOperation("Missing job parameters".to_string()))?;
 
-        let params: T = serde_json::from_str(params_json).map_err(|e| {
-            KalamDbError::InvalidOperation(format!("Failed to deserialize job parameters: {}", e))
-        })?;
+        let params: T = serde_json::from_str(params_json)
+            .into_serde_error("Failed to deserialize job parameters")?;
 
         // Validate parameters
         params.validate()?;
@@ -119,9 +115,8 @@ where
             .as_ref()
             .ok_or_else(|| KalamDbError::InvalidOperation("Missing job parameters".to_string()))?;
 
-        let params: T = serde_json::from_str(params_json).map_err(|e| {
-            KalamDbError::InvalidOperation(format!("Failed to deserialize job parameters: {}", e))
-        })?;
+        let params: T = serde_json::from_str(params_json)
+            .into_serde_error("Failed to deserialize job parameters")?;
 
         // No validation needed for cancellation
         let ctx = JobContext::new(app_ctx, job.job_id.as_str().to_string(), params);

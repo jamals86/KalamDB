@@ -38,6 +38,7 @@
 //!   - Preserves full type information for client-side parsing
 
 use crate::error::KalamDbError;
+use crate::error_extensions::KalamDbResultExt;
 // Chrono no longer needed - DataFusion handles timestamp serialization natively
 use datafusion::arrow::array::*;
 use datafusion::arrow::datatypes::{DataType, Field, SchemaRef, TimeUnit};
@@ -589,7 +590,7 @@ pub fn scalar_value_to_json_with_mode(
             // This ensures Int64/UInt64 are serialized as strings for precision
             let stored: StoredScalarValue = value.into();
             serde_json::to_value(&stored)
-                .map_err(|e| KalamDbError::InvalidOperation(format!("Failed to serialize ScalarValue: {}", e)))
+                .into_invalid_operation("Failed to serialize ScalarValue")
         }
     }
 }
@@ -702,7 +703,7 @@ pub fn record_batch_to_json_rows(
             let column = batch.column(col_idx);
 
             let scalar = ScalarValue::try_from_array(column.as_ref(), row_idx)
-                .map_err(|e| KalamDbError::InvalidOperation(format!("Failed to extract scalar: {}", e)))?;
+                .into_invalid_operation("Failed to extract scalar")?;
 
             // ✅ SINGLE SOURCE: All conversions flow through this function
             let json_value = scalar_value_to_json_with_mode(&scalar, mode)?;

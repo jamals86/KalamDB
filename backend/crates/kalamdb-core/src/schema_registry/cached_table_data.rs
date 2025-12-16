@@ -1,4 +1,5 @@
 use crate::error::KalamDbError;
+use crate::error_extensions::KalamDbResultExt;
 use kalamdb_commons::models::schemas::TableDefinition;
 use kalamdb_commons::models::{StorageId, TableId};
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -246,9 +247,8 @@ impl CachedTableData {
             }
 
             // Compute Arrow schema from TableDefinition (~75μs first time)
-            let arrow_schema = self.table.to_arrow_schema().map_err(|e| {
-                KalamDbError::SchemaError(format!("Failed to convert to Arrow schema: {}", e))
-            })?;
+            let arrow_schema = self.table.to_arrow_schema()
+                .into_schema_error("Failed to convert to Arrow schema")?;
 
             // Cache for future access
             *write_guard = Some(Arc::clone(&arrow_schema));

@@ -37,3 +37,37 @@ impl From<kalamdb_store::StorageError> for SystemError {
         SystemError::Storage(err.to_string())
     }
 }
+
+/// Extension trait for Result types to simplify SystemError conversions.
+///
+/// Reduces boilerplate by providing convenient methods to convert errors
+/// from external crates into SystemError variants.
+pub trait SystemResultExt<T> {
+    /// Convert any error into SystemError::Other with context message.
+    fn into_system_error(self, context: &str) -> Result<T>;
+    
+    /// Convert errors into SystemError::Storage with context.
+    fn into_storage_error(self, context: &str) -> Result<T>;
+    
+    /// Convert Arrow errors into SystemError::Arrow.
+    fn into_arrow_error(self, context: &str) -> Result<T>;
+}
+
+impl<T, E: std::fmt::Display> SystemResultExt<T> for std::result::Result<T, E> {
+    #[inline]
+    fn into_system_error(self, context: &str) -> Result<T> {
+        self.map_err(|e| SystemError::Other(format!("{}: {}", context, e)))
+    }
+    
+    #[inline]
+    fn into_storage_error(self, context: &str) -> Result<T> {
+        self.map_err(|e| SystemError::Storage(format!("{}: {}", context, e)))
+    }
+    
+    #[inline]
+    fn into_arrow_error(self, context: &str) -> Result<T> {
+        self.map_err(|e| SystemError::Arrow(arrow::error::ArrowError::ExternalError(Box::new(
+            std::io::Error::new(std::io::ErrorKind::Other, format!("{}: {}", context, e))
+        ))))
+    }
+}

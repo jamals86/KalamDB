@@ -86,6 +86,19 @@ impl UserTablePkIndex {
         prefix.push(b':');
         prefix
     }
+
+    /// Build a prefix for scanning all PKs for a specific user.
+    ///
+    /// Returns: `{user_id}:`
+    ///
+    /// This is useful for batch PK validation where we want to scan all
+    /// PK index entries for a user in a single pass.
+    pub fn build_user_prefix(&self, user_id: &str) -> Vec<u8> {
+        let mut prefix = Vec::with_capacity(user_id.len() + 1);
+        prefix.extend_from_slice(user_id.as_bytes());
+        prefix.push(b':');
+        prefix
+    }
 }
 
 impl IndexDefinition<UserTableRowId, UserTableRow> for UserTablePkIndex {

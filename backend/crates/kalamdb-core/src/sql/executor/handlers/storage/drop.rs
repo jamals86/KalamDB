@@ -2,6 +2,7 @@
 
 use crate::app_context::AppContext;
 use crate::error::KalamDbError;
+use crate::error_extensions::KalamDbResultExt;
 use crate::sql::executor::handlers::typed::TypedStatementHandler;
 use crate::sql::executor::models::{ExecutionContext, ExecutionResult, ScalarValue};
 use kalamdb_sql::ddl::DropStorageStatement;
@@ -34,7 +35,7 @@ impl TypedStatementHandler<DropStorageStatement> for DropStorageHandler {
         // Check if storage exists
         let storage = storages_provider
             .get_storage_by_id(&storage_id)
-            .map_err(|e| KalamDbError::Other(format!("Failed to get storage: {}", e)))?;
+            .into_kalamdb_error("Failed to get storage")?;
 
         if storage.is_none() {
             return Err(KalamDbError::InvalidOperation(format!(
@@ -46,7 +47,7 @@ impl TypedStatementHandler<DropStorageStatement> for DropStorageHandler {
         // Check if any tables are using this storage
         let all_tables = tables_provider
             .list_tables()
-            .map_err(|e| KalamDbError::Other(format!("Failed to check tables: {}", e)))?;
+            .into_kalamdb_error("Failed to check tables")?;
 
         let tables_using_storage: Vec<_> = all_tables
             .iter()
@@ -75,7 +76,7 @@ impl TypedStatementHandler<DropStorageStatement> for DropStorageHandler {
         // Delete the storage
         storages_provider
             .delete_storage(&storage_id)
-            .map_err(|e| KalamDbError::Other(format!("Failed to drop storage: {}", e)))?;
+            .into_kalamdb_error("Failed to drop storage")?;
 
         Ok(ExecutionResult::Success {
             message: format!("Storage '{}' dropped successfully", statement.storage_id),

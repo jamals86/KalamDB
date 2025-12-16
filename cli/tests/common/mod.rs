@@ -22,6 +22,66 @@ pub const TEST_TIMEOUT: Duration = Duration::from_secs(30);
 /// Default password for the root user
 pub const DEFAULT_ROOT_PASSWORD: &str = "";
 
+/// Extract a value from Arrow JSON format
+///
+/// Arrow JSON format wraps values in type objects like `{"Utf8": "value"}` or `{"Int64": 123}`.
+/// This helper extracts the actual value, supporting common types.
+pub fn extract_arrow_value(value: &serde_json::Value) -> Option<serde_json::Value> {
+    use serde_json::Value;
+    
+    // Check if it's already a simple value
+    if value.is_string() || value.is_number() || value.is_boolean() || value.is_null() {
+        return Some(value.clone());
+    }
+    
+    // Check for Arrow typed objects
+    if let Some(obj) = value.as_object() {
+        // String types
+        if let Some(v) = obj.get("Utf8") {
+            return Some(v.clone());
+        }
+        // Integer types
+        if let Some(v) = obj.get("Int64") {
+            return Some(v.clone());
+        }
+        if let Some(v) = obj.get("Int32") {
+            return Some(v.clone());
+        }
+        if let Some(v) = obj.get("Int16") {
+            return Some(v.clone());
+        }
+        // Float types
+        if let Some(v) = obj.get("Float64") {
+            return Some(v.clone());
+        }
+        if let Some(v) = obj.get("Float32") {
+            return Some(v.clone());
+        }
+        // Boolean
+        if let Some(v) = obj.get("Boolean") {
+            return Some(v.clone());
+        }
+        // Decimal
+        if let Some(v) = obj.get("Decimal128") {
+            return Some(v.clone());
+        }
+        // Date
+        if let Some(v) = obj.get("Date32") {
+            return Some(v.clone());
+        }
+        // Timestamp
+        if let Some(v) = obj.get("TimestampMicrosecond") {
+            return Some(v.clone());
+        }
+        // FixedSizeBinary (for UUID)
+        if let Some(v) = obj.get("FixedSizeBinary") {
+            return Some(v.clone());
+        }
+    }
+    
+    None
+}
+
 /// Check if the KalamDB server is running
 pub fn is_server_running() -> bool {
     // Simple TCP connection check
@@ -864,10 +924,22 @@ pub fn verify_job_completed(
                     .and_then(|arr| arr.first());
 
                 if let Some(row) = row {
-                    let status = row.get("status").and_then(|v| v.as_str()).unwrap_or("");
+                    // Extract status from Arrow JSON format (e.g., {"Utf8": "completed"})
+                    let status = row
+                        .get("status")
+                        .and_then(|v| {
+                            // Check if it's a nested object with Utf8 field
+                            v.get("Utf8").and_then(|s| s.as_str())
+                                .or_else(|| v.as_str()) // Fallback to direct string
+                        })
+                        .unwrap_or("");
+
                     let error_message = row
                         .get("error_message")
-                        .and_then(|v| v.as_str())
+                        .and_then(|v| {
+                            v.get("Utf8").and_then(|s| s.as_str())
+                                .or_else(|| v.as_str())
+                        })
                         .unwrap_or("");
 
                     if status.eq_ignore_ascii_case("completed") {
@@ -878,6 +950,11 @@ pub fn verify_job_completed(
                         return Err(
                             format!("Job {} failed. Error: {}", job_id, error_message).into()
                         );
+                    }
+                } else {
+                    // No row found - print debug info
+                    if start.elapsed().as_secs() % 5 == 0 && start.elapsed().as_millis() % 1000 < 250 {
+                        println!("[DEBUG] Job {} not found in system.jobs", job_id);
                     }
                 }
             }

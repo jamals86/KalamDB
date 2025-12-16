@@ -4,13 +4,12 @@
 //! Exposes all table versions with is_latest flag for schema history queries.
 
 use super::{new_tables_store, TablesStore, TablesTableSchema};
-use crate::error::SystemError;
+use crate::error::{SystemError, SystemResultExt};
 use crate::system_table_trait::SystemTableProviderExt;
 use async_trait::async_trait;
-use datafusion::arrow::array::{
-    ArrayRef, BooleanArray, Int32Array, RecordBatch, StringBuilder, TimestampMicrosecondArray,
-};
+use datafusion::arrow::array::RecordBatch;
 use datafusion::arrow::datatypes::SchemaRef;
+use kalamdb_commons::RecordBatchBuilder;
 use datafusion::datasource::{TableProvider, TableType};
 use datafusion::error::{DataFusionError, Result as DataFusionResult};
 use datafusion::logical_expr::Expr;
@@ -68,7 +67,7 @@ impl TablesTableProvider {
         let store = self.store.clone();
         tokio::task::spawn_blocking(move || store.put_version(&table_id, &table_def))
             .await
-            .map_err(|e| SystemError::Other(format!("spawn_blocking error: {}", e)))?
+            .into_system_error("spawn_blocking error")?
             .map_err(SystemError::from)
     }
 
@@ -110,7 +109,7 @@ impl TablesTableProvider {
             Ok(())
         })
         .await
-        .map_err(|e| SystemError::Other(format!("spawn_blocking error: {}", e)))?
+        .into_system_error("spawn_blocking error")?
     }
 
     /// Delete a table entry (removes all versions)
@@ -125,7 +124,7 @@ impl TablesTableProvider {
         let store = self.store.clone();
         tokio::task::spawn_blocking(move || store.delete_all_versions(&table_id))
             .await
-            .map_err(|e| SystemError::Other(format!("spawn_blocking error: {}", e)))?
+            .into_system_error("spawn_blocking error")?
             .map_err(SystemError::from)?;
         Ok(())
     }
@@ -167,7 +166,7 @@ impl TablesTableProvider {
         let store = self.store.clone();
         tokio::task::spawn_blocking(move || store.get_latest(&table_id))
             .await
-            .map_err(|e| SystemError::Other(format!("spawn_blocking error: {}", e)))?
+            .into_system_error("spawn_blocking error")?
             .map_err(SystemError::from)
     }
 
@@ -194,7 +193,7 @@ impl TablesTableProvider {
             Ok(tables.into_iter().map(|(_, def)| def).collect())
         })
         .await
-        .map_err(|e| SystemError::Other(format!("spawn_blocking error: {}", e)))?
+        .into_system_error("spawn_blocking error")?
     }
 
     /// Alias for list_tables (backward compatibility)
@@ -205,21 +204,20 @@ impl TablesTableProvider {
     /// Scan all tables and return as RecordBatch (includes all versions with is_latest flag)
     pub fn scan_all_tables(&self) -> Result<RecordBatch, SystemError> {
         let entries = self.store.scan_all_with_versions()?;
-        let row_count = entries.len();
 
-        // Pre-allocate builders
-        let mut table_ids = StringBuilder::with_capacity(row_count, row_count * 32);
-        let mut table_names = StringBuilder::with_capacity(row_count, row_count * 16);
-        let mut namespaces = StringBuilder::with_capacity(row_count, row_count * 16);
-        let mut table_types = StringBuilder::with_capacity(row_count, row_count * 16);
-        let mut created_ats = Vec::with_capacity(row_count);
-        let mut schema_versions = Vec::with_capacity(row_count);
-        let mut columns_json = StringBuilder::with_capacity(row_count, row_count * 512);
-        let mut table_comments = StringBuilder::with_capacity(row_count, row_count * 64);
-        let mut updated_ats = Vec::with_capacity(row_count);
-        let mut options_json = StringBuilder::with_capacity(row_count, row_count * 128);
-        let mut access_levels = StringBuilder::with_capacity(row_count, row_count * 16);
-        let mut is_latest_flags = Vec::with_capacity(row_count);
+        // Extract data into vectors
+        let mut table_ids = Vec::with_capacity(entries.len());
+        let mut table_names = Vec::with_capacity(entries.len());
+        let mut namespaces = Vec::with_capacity(entries.len());
+        let mut table_types = Vec::with_capacity(entries.len());
+        let mut created_ats = Vec::with_capacity(entries.len());
+        let mut schema_versions = Vec::with_capacity(entries.len());
+        let mut columns_json = Vec::with_capacity(entries.len());
+        let mut table_comments = Vec::with_capacity(entries.len());
+        let mut updated_ats = Vec::with_capacity(entries.len());
+        let mut options_json = Vec::with_capacity(entries.len());
+        let mut access_levels = Vec::with_capacity(entries.len());
+        let mut is_latest_flags = Vec::with_capacity(entries.len());
 
         for (_version_key, table_def, is_latest) in entries {
             // Convert TableId to string format
@@ -228,78 +226,66 @@ impl TablesTableProvider {
                 table_def.namespace_id.as_str(),
                 table_def.table_name.as_str()
             );
-            table_ids.append_value(&table_id_str);
-            table_names.append_value(table_def.table_name.as_str());
-            namespaces.append_value(table_def.namespace_id.as_str());
-            table_types.append_value(table_def.table_type.as_str());
+            table_ids.push(Some(table_id_str));
+            table_names.push(Some(table_def.table_name.as_str().to_string()));
+            namespaces.push(Some(table_def.namespace_id.as_str().to_string()));
+            table_types.push(Some(table_def.table_type.as_str().to_string()));
             created_ats.push(Some(table_def.created_at.timestamp_millis()));
             schema_versions.push(Some(table_def.schema_version as i32));
             
             // Serialize columns as JSON array
-            match serde_json::to_string(&table_def.columns) {
-                Ok(json) => columns_json.append_value(&json),
-                Err(e) => columns_json.append_value(format!(
+            let col_json = match serde_json::to_string(&table_def.columns) {
+                Ok(json) => json,
+                Err(e) => format!(
                     "{{\"error\":\"failed to serialize columns: {}\"}}",
                     e
-                )),
-            }
+                ),
+            };
+            columns_json.push(Some(col_json));
             
-            table_comments.append_option(table_def.table_comment.as_deref());
+            table_comments.push(table_def.table_comment);
             updated_ats.push(Some(table_def.updated_at.timestamp_millis()));
             
             // Serialize TableOptions
-            match serde_json::to_string(&table_def.table_options) {
-                Ok(json) => options_json.append_value(&json),
-                Err(e) => options_json.append_value(format!(
+            let opt_json = match serde_json::to_string(&table_def.table_options) {
+                Ok(json) => json,
+                Err(e) => format!(
                     "{{\"error\":\"failed to serialize options: {}\"}}",
                     e
-                )),
-            }
+                ),
+            };
+            options_json.push(Some(opt_json));
             
             // Access Level (only for Shared tables)
             use kalamdb_commons::schemas::TableOptions;
-            if let TableOptions::Shared(opts) = &table_def.table_options {
-                if let Some(access) = &opts.access_level {
-                    access_levels.append_value(access.as_str());
-                } else {
-                    access_levels.append_null();
-                }
+            let access_level = if let TableOptions::Shared(opts) = &table_def.table_options {
+                opts.access_level.as_ref().map(|a| a.as_str().to_string())
             } else {
-                access_levels.append_null();
-            }
+                None
+            };
+            access_levels.push(access_level);
             
             // is_latest flag
             is_latest_flags.push(Some(is_latest));
         }
 
-        let batch = RecordBatch::try_new(
-            self.schema.clone(),
-            vec![
-                Arc::new(table_ids.finish()) as ArrayRef,
-                Arc::new(table_names.finish()) as ArrayRef,
-                Arc::new(namespaces.finish()) as ArrayRef,
-                Arc::new(table_types.finish()) as ArrayRef,
-                Arc::new(TimestampMicrosecondArray::from(
-                    created_ats
-                        .into_iter()
-                        .map(|ts| ts.map(|ms| ms * 1000))
-                        .collect::<Vec<_>>(),
-                )) as ArrayRef,
-                Arc::new(Int32Array::from(schema_versions)) as ArrayRef,
-                Arc::new(columns_json.finish()) as ArrayRef,
-                Arc::new(table_comments.finish()) as ArrayRef,
-                Arc::new(TimestampMicrosecondArray::from(
-                    updated_ats
-                        .into_iter()
-                        .map(|ts| ts.map(|ms| ms * 1000))
-                        .collect::<Vec<_>>(),
-                )) as ArrayRef,
-                Arc::new(options_json.finish()) as ArrayRef,
-                Arc::new(access_levels.finish()) as ArrayRef,
-                Arc::new(BooleanArray::from(is_latest_flags)) as ArrayRef,
-            ],
-        )
-        .map_err(|e| SystemError::Other(format!("Arrow error: {}", e)))?;
+        // Build batch using RecordBatchBuilder
+        let mut builder = RecordBatchBuilder::new(self.schema.clone());
+        builder
+            .add_string_column_owned(table_ids)
+            .add_string_column_owned(table_names)
+            .add_string_column_owned(namespaces)
+            .add_string_column_owned(table_types)
+            .add_timestamp_micros_column(created_ats)
+            .add_int32_column(schema_versions)
+            .add_string_column_owned(columns_json)
+            .add_string_column_owned(table_comments)
+            .add_timestamp_micros_column(updated_ats)
+            .add_string_column_owned(options_json)
+            .add_string_column_owned(access_levels)
+            .add_boolean_column(is_latest_flags);
+
+        let batch = builder.build().into_arrow_error("Failed to create RecordBatch")?;
 
         Ok(batch)
     }
@@ -462,7 +448,7 @@ mod tests {
         // Scan - should have 6 rows (3 latest + 3 versioned)
         let batch = provider.scan_all_tables().unwrap();
         assert_eq!(batch.num_rows(), 6);
-        assert_eq!(batch.num_columns(), 11); // 10 original + is_latest
+        assert_eq!(batch.num_columns(), 12); // All 12 columns from system.tables definition
     }
 
     #[test]

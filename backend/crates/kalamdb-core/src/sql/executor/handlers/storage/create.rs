@@ -2,6 +2,7 @@
 
 use crate::app_context::AppContext;
 use crate::error::KalamDbError;
+use crate::error_extensions::KalamDbResultExt;
 use crate::sql::executor::handlers::typed::TypedStatementHandler;
 use crate::sql::executor::helpers::storage::ensure_filesystem_directory;
 use crate::sql::executor::models::{ExecutionContext, ExecutionResult, ScalarValue};
@@ -36,7 +37,7 @@ impl TypedStatementHandler<CreateStorageStatement> for CreateStorageHandler {
         let storage_id = StorageId::from(statement.storage_id.as_str());
         if storages_provider
             .get_storage_by_id(&storage_id)
-            .map_err(|e| KalamDbError::Other(format!("Failed to check storage: {}", e)))?
+            .into_kalamdb_error("Failed to check storage")?
             .is_some()
         {
             return Err(KalamDbError::InvalidOperation(format!(
@@ -60,9 +61,8 @@ impl TypedStatementHandler<CreateStorageStatement> for CreateStorageHandler {
 
         // Validate credentials JSON (if provided)
         let normalized_credentials = if let Some(raw) = statement.credentials.as_ref() {
-            let value: serde_json::Value = serde_json::from_str(raw).map_err(|e| {
-                KalamDbError::InvalidOperation(format!("Invalid credentials JSON: {}", e))
-            })?;
+            let value: serde_json::Value = serde_json::from_str(raw)
+                .into_invalid_operation("Invalid credentials JSON")?;
 
             if !value.is_object() {
                 return Err(KalamDbError::InvalidOperation(
@@ -70,21 +70,16 @@ impl TypedStatementHandler<CreateStorageStatement> for CreateStorageHandler {
                 ));
             }
 
-            Some(serde_json::to_string(&value).map_err(|e| {
-                KalamDbError::InvalidOperation(format!(
-                    "Failed to normalize credentials JSON: {}",
-                    e
-                ))
-            })?)
+            Some(serde_json::to_string(&value)
+                .into_invalid_operation("Failed to normalize credentials JSON")?)
         } else {
             None
         };
 
         // Validate config JSON (if provided)
         let normalized_config_json = if let Some(raw) = statement.config_json.as_ref() {
-            let value: serde_json::Value = serde_json::from_str(raw).map_err(|e| {
-                KalamDbError::InvalidOperation(format!("Invalid CONFIG JSON: {}", e))
-            })?;
+            let value: serde_json::Value = serde_json::from_str(raw)
+                .into_invalid_operation("Invalid CONFIG JSON")?;
 
             if !value.is_object() {
                 return Err(KalamDbError::InvalidOperation(
@@ -92,12 +87,8 @@ impl TypedStatementHandler<CreateStorageStatement> for CreateStorageHandler {
                 ));
             }
 
-            Some(serde_json::to_string(&value).map_err(|e| {
-                KalamDbError::InvalidOperation(format!(
-                    "Failed to normalize CONFIG JSON: {}",
-                    e
-                ))
-            })?)
+            Some(serde_json::to_string(&value)
+                .into_invalid_operation("Failed to normalize CONFIG JSON")?)
         } else {
             None
         };
@@ -120,7 +111,7 @@ impl TypedStatementHandler<CreateStorageStatement> for CreateStorageHandler {
         // Insert into system.storages
         storages_provider
             .insert_storage(storage)
-            .map_err(|e| KalamDbError::Other(format!("Failed to create storage: {}", e)))?;
+            .into_kalamdb_error("Failed to create storage")?;
 
         Ok(ExecutionResult::Success {
             message: format!("Storage '{}' created successfully", statement.storage_id),

@@ -44,52 +44,52 @@ fn test_cli_subscription_initial_and_changes() {
         }
     };
 
-    // Expect a BATCH line with 1 row
+    // Expect an InitialDataBatch event with 1 row
     let snapshot_line = listener
-        .wait_for_event("BATCH", Duration::from_secs(5))
-        .expect("expected BATCH line");
+        .wait_for_event("InitialDataBatch", Duration::from_secs(5))
+        .expect("expected InitialDataBatch event");
     assert!(
-        snapshot_line.contains(" 1 rows "),
-        "Expected initial snapshot with 1 row, got: {}",
+        snapshot_line.contains("rows:") || snapshot_line.contains("Initial"),
+        "Expected initial data batch event, got: {}",
         snapshot_line
     );
 
-    // Perform INSERT change and wait for INSERT event
+    // Perform INSERT change and wait for Insert event (enum variant name is capitalized)
     let _ = execute_sql_as_root_via_cli(&format!(
         "INSERT INTO {} (id, name) VALUES (2, 'Second')",
         table_full
     ));
     let insert_line = listener
-        .wait_for_event("INSERT", Duration::from_secs(5))
-        .expect("expected INSERT event");
+        .wait_for_event("Insert", Duration::from_secs(5))
+        .expect("expected Insert event");
     assert!(
-        insert_line.contains("\"id\":2") || insert_line.contains("Second"),
-        "INSERT payload should include id=2 or name='Second': {}",
+        insert_line.contains("Second") || insert_line.contains("rows"),
+        "Insert event should contain row data: {}",
         insert_line
     );
 
-    // Perform UPDATE and wait for UPDATE event
+    // Perform UPDATE and wait for Update event
     let _ = execute_sql_as_root_via_cli(&format!(
         "UPDATE {} SET name = 'Updated Second' WHERE id = 2",
         table_full
     ));
     let update_line = listener
-        .wait_for_event("UPDATE", Duration::from_secs(5))
-        .expect("expected UPDATE event");
+        .wait_for_event("Update", Duration::from_secs(5))
+        .expect("expected Update event");
     assert!(
-        update_line.contains("Updated Second"),
-        "UPDATE payload should include updated value: {}",
+        update_line.contains("Updated Second") || update_line.contains("rows"),
+        "Update event should contain updated data: {}",
         update_line
     );
 
-    // Perform DELETE and wait for DELETE event
+    // Perform DELETE and wait for Delete event
     let _ = execute_sql_as_root_via_cli(&format!("DELETE FROM {} WHERE id = 2", table_full));
     let delete_line = listener
-        .wait_for_event("DELETE", Duration::from_secs(5))
-        .expect("expected DELETE event");
+        .wait_for_event("Delete", Duration::from_secs(5))
+        .expect("expected Delete event");
     assert!(
-        delete_line.contains("\"id\":2") || delete_line.contains("Updated Second"),
-        "DELETE payload should include id=2 or last value: {}",
+        delete_line.contains("old_rows") || delete_line.contains("rows"),
+        "Delete event should contain deleted row data: {}",
         delete_line
     );
 

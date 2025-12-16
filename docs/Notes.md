@@ -313,7 +313,7 @@ and make sure we use the right slashes everywhere in paths
   "updated_at": 1765790837,
   "segments": [
     {
-      "id": "batch-0.parquet",
+      "id": "batch-0.parquet", //TODO: Not needed we are using the path now
       "path": "batch-0.parquet",
       "column_stats": {  //TODO: Change to stats
         "id": {
@@ -431,6 +431,16 @@ Tasks To Repo:
 │  Single-row inserts     │    200  │    0.09s │    2260.2/s │
 │  Batched (100/batch)    │   2000  │    0.03s │   73093.1/s │
 │  Parallel (10 threads)  │    980  │    0.09s │   10943.2/s │
+└────────────────────────────────────────────────────────────┘
+
+┌────────────────────────────────────────────────────────────┐
+│                    BENCHMARK RESULTS                       │
+├────────────────────────────────────────────────────────────┤
+│  Test Type              │  Rows   │  Time    │  Rate       │
+├────────────────────────────────────────────────────────────┤
+│  Single-row inserts     │    200  │    0.09s │    2288.5/s  │
+│  Batched (100/batch)    │   2000  │    0.04s │   51687.4/s  │
+│  Parallel (10 threads)  │   1000  │    0.09s │   11409.2/s  │
 └────────────────────────────────────────────────────────────┘
 
 UI Changes:

@@ -15,6 +15,7 @@ use super::base::{extract_seq_bounds_from_filter, BaseTableProvider, TableProvid
 use super::helpers::extract_user_context;
 use crate::app_context::AppContext;
 use crate::error::KalamDbError;
+use crate::error_extensions::KalamDbResultExt;
 use crate::schema_registry::TableType;
 use async_trait::async_trait;
 use datafusion::arrow::datatypes::SchemaRef;
@@ -366,7 +367,7 @@ impl BaseTableProvider<StreamTableRowId, StreamTableRow> for StreamTableProvider
         let ttl_ms = self.ttl_seconds.map(|s| s * 1000);
         let now_ms = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
-            .map_err(|e| KalamDbError::InvalidOperation(format!("System time error: {}", e)))?
+            .into_invalid_operation("System time error")?
             .as_millis() as u64;
         log::debug!(
             "[StreamProvider] prefix scan: table={}.{} user={} prefix_len={} ttl_ms={:?} now_ms={}",

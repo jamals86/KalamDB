@@ -7,6 +7,7 @@ use super::filter_eval::matches as filter_matches;
 use super::connections_manager::ConnectionsManager;
 use super::types::{ChangeNotification, ChangeType};
 use crate::error::KalamDbError;
+use crate::error_extensions::KalamDbResultExt;
 use crate::providers::arrow_json_conversion::row_to_json_map;
 use datafusion::scalar::ScalarValue;
 use kalamdb_commons::models::{LiveQueryId, Row, TableId, UserId};
@@ -71,7 +72,7 @@ impl NotificationService {
         self.live_queries_provider
             .increment_changes_async(&live_id_string, timestamp)
             .await
-            .map_err(|e| KalamDbError::Other(format!("Failed to increment changes: {}", e)))?;
+            .into_kalamdb_error("Failed to increment changes")?;
 
         Ok(())
     }

@@ -265,9 +265,6 @@ mod tests {
 
         let result = handler.execute(stmt, vec![], &ctx).await;
 
-        if let Err(e) = &result {
-            eprintln!("CREATE TABLE ERROR: {:?}", e);
-        }
         assert!(result.is_ok(), "CREATE TABLE failed: {:?}", result);
         if let Ok(ExecutionResult::Success { message }) = result {
             assert!(message.contains("created successfully"));

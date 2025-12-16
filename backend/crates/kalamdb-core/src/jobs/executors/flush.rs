@@ -21,6 +21,7 @@
 //! ```
 
 use crate::error::KalamDbError;
+use crate::error_extensions::KalamDbResultExt;
 use crate::jobs::executors::{JobContext, JobDecision, JobExecutor, JobParams};
 use crate::providers::flush::{SharedTableFlushJob, TableFlush, UserTableFlushJob};
 use async_trait::async_trait;
@@ -94,9 +95,8 @@ impl JobExecutor for FlushExecutor {
         //     .ok_or_else(|| KalamDbError::NotFound(format!("Table {} not found", table_id)))?;
         
         // Get current Arrow schema from the registry (already includes system columns)
-        let schema = schema_registry.get_arrow_schema(&table_id).map_err(|e| {
-            KalamDbError::NotFound(format!("Arrow schema not found for {}: {}", table_id, e))
-        })?;
+        let schema = schema_registry.get_arrow_schema(&table_id)
+            .into_kalamdb_error(&format!("Arrow schema not found for {}", table_id))?;
 
         // Get current schema version for manifest recording
         // Phase 16: Will be used when writing SegmentMetadata.schema_version
@@ -145,7 +145,7 @@ impl JobExecutor for FlushExecutor {
 
                 flush_job
                     .execute()
-                    .map_err(|e| KalamDbError::Other(format!("User table flush failed: {}", e)))?
+                    .into_kalamdb_error("User table flush failed")?
             }
             TableType::Shared => {
                 ctx.log_info("Executing SharedTableFlushJob");
@@ -182,7 +182,7 @@ impl JobExecutor for FlushExecutor {
 
                 flush_job
                     .execute()
-                    .map_err(|e| KalamDbError::Other(format!("Shared table flush failed: {}", e)))?
+                    .into_kalamdb_error("Shared table flush failed")?
             }
             TableType::Stream => {
                 ctx.log_info("Stream table flush not yet implemented");

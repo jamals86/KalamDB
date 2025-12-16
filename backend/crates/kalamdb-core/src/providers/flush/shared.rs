@@ -5,6 +5,7 @@
 
 use super::base::{FlushJobResult, FlushMetadata, TableFlush};
 use crate::error::KalamDbError;
+use crate::error_extensions::KalamDbResultExt;
 use crate::live_query::{ChangeNotification, LiveQueryManager};
 use crate::manifest::{FlushManifestHelper, ManifestCacheService, ManifestService};
 use crate::providers::arrow_json_conversion::json_rows_to_arrow_batch;
@@ -93,7 +94,7 @@ impl SharedTableFlushJob {
     fn rows_to_record_batch(&self, rows: &[(Vec<u8>, Row)]) -> Result<RecordBatch, KalamDbError> {
         let arrow_rows: Vec<Row> = rows.iter().map(|(_, row)| row.clone()).collect();
         json_rows_to_arrow_batch(&self.schema, arrow_rows)
-            .map_err(|e| KalamDbError::Other(format!("Failed to build RecordBatch: {}", e)))
+            .into_kalamdb_error("Failed to build RecordBatch")
     }
 
     /// Delete flushed rows from RocksDB after successful Parquet write
@@ -101,7 +102,7 @@ impl SharedTableFlushJob {
         let mut parsed_keys = Vec::new();
         for key_bytes in keys {
             let key = kalamdb_commons::ids::SharedTableRowId::from_bytes(key_bytes)
-                .map_err(|e| KalamDbError::InvalidOperation(format!("Invalid key bytes: {}", e)))?;
+                .into_invalid_operation("Invalid key bytes")?;
             parsed_keys.push(key);
         }
 
@@ -114,7 +115,7 @@ impl SharedTableFlushJob {
         // to ensure both the entity AND its index entries are removed atomically.
         for key in &parsed_keys {
             self.store.delete(key)
-                .map_err(|e| KalamDbError::Other(format!("Failed to delete flushed row: {}", e)))?;
+                .into_kalamdb_error("Failed to delete flushed row")?;
         }
 
         log::debug!("Deleted {} flushed rows from storage", parsed_keys.len());
@@ -321,7 +322,7 @@ impl TableFlush for SharedTableFlushJob {
             .system_tables()
             .storages()
             .get_storage(&storage_id)
-            .map_err(|e| KalamDbError::Other(format!("Failed to load storage: {}", e)))?
+            .into_kalamdb_error("Failed to load storage")?
             .ok_or_else(|| {
                 KalamDbError::InvalidOperation(format!(
                     "Storage '{}' not found",
@@ -361,7 +362,7 @@ impl TableFlush for SharedTableFlushJob {
             vec![batch.clone()],
             Some(bloom_filter_columns.clone()),
         )
-        .map_err(|e| KalamDbError::Other(format!("Filestore error: {}", e)))?;
+        .into_kalamdb_error("Filestore error")?;
 
         log::info!(
             "✅ Flushed {} rows for shared table={}.{} to {}",

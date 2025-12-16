@@ -12,6 +12,7 @@
 
 use crate::app_context::AppContext;
 use crate::error::KalamDbError;
+use crate::error_extensions::KalamDbResultExt;
 use crate::providers::unified_dml;
 use crate::schema_registry::TableType;
 use async_trait::async_trait;
@@ -667,17 +668,17 @@ fn pk_exists_in_parquet_file(
 
     let file = std::fs::File::open(parquet_file).map_err(KalamDbError::Io)?;
     let builder = ParquetRecordBatchReaderBuilder::try_new(file)
-        .map_err(|e| KalamDbError::Other(format!("Failed to create Parquet reader: {}", e)))?;
+        .into_kalamdb_error("Failed to create Parquet reader")?;
     let reader = builder
         .build()
-        .map_err(|e| KalamDbError::Other(format!("Failed to build Parquet reader: {}", e)))?;
+        .into_kalamdb_error("Failed to build Parquet reader")?;
 
     // Track latest version per PK value: pk_value -> (max_seq, is_deleted)
     let mut versions: HashMap<String, (i64, bool)> = HashMap::new();
 
     for batch_result in reader {
         let batch = batch_result
-            .map_err(|e| KalamDbError::Other(format!("Failed to read Parquet batch: {}", e)))?;
+            .into_kalamdb_error("Failed to read Parquet batch")?;
 
         // Find column indices
         let pk_idx = batch.schema().index_of(pk_column).ok();

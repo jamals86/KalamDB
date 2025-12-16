@@ -2,6 +2,7 @@
 
 use crate::app_context::AppContext;
 use crate::error::KalamDbError;
+use crate::error_extensions::KalamDbResultExt;
 use crate::schema_registry::arrow_schema::ArrowSchemaWithOptions;
 use crate::sql::executor::handlers::typed::TypedStatementHandler;
 use crate::sql::executor::helpers::table_registration::{
@@ -291,12 +292,10 @@ impl TypedStatementHandler<AlterTableStatement> for AlterTableHandler {
         // Serialize new Arrow schema & bump version
         let arrow_schema = table_def
             .to_arrow_schema()
-            .map_err(|e| KalamDbError::SchemaError(format!("Arrow conversion failed: {}", e)))?;
+            .into_schema_error("Arrow conversion failed")?;
         let _schema_json = ArrowSchemaWithOptions::new(arrow_schema.clone())
             .to_json_string()
-            .map_err(|e| {
-                KalamDbError::SchemaError(format!("Failed to serialize Arrow schema: {}", e))
-            })?;
+            .into_schema_error("Failed to serialize Arrow schema")?;
         let change_desc =
             change_desc_opt.expect("ALTER TABLE operation must set change description");
         

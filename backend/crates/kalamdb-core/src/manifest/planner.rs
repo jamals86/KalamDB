@@ -4,6 +4,7 @@
 //! concrete file/row-group selections for efficient reads.
 
 use crate::error::KalamDbError;
+use crate::error_extensions::KalamDbResultExt;
 use crate::app_context::AppContext;
 use datafusion::arrow::compute::cast;
 use datafusion::arrow::datatypes::SchemaRef;
@@ -133,13 +134,11 @@ impl ManifestAccessPlanner {
         for parquet_file in &parquet_files {
             let file = fs::File::open(parquet_file).map_err(KalamDbError::Io)?;
 
-            let builder = ParquetRecordBatchReaderBuilder::try_new(file).map_err(|e| {
-                KalamDbError::Other(format!("Failed to create Parquet reader: {}", e))
-            })?;
+            let builder = ParquetRecordBatchReaderBuilder::try_new(file)
+                .into_arrow_error_ctx("Failed to create Parquet reader")?;
 
-            let reader = builder.build().map_err(|e| {
-                KalamDbError::Other(format!("Failed to build Parquet reader: {}", e))
-            })?;
+            let reader = builder.build()
+                .into_arrow_error_ctx("Failed to build Parquet reader")?;
 
             // Get the schema version for this file (default to 1 if not found)
             let file_schema_version = file_schema_versions.get(parquet_file).copied().unwrap_or(1);
@@ -153,9 +152,8 @@ impl ManifestAccessPlanner {
 
             // Read all batches from this file
             for batch_result in reader {
-                let batch = batch_result.map_err(|e| {
-                    KalamDbError::Other(format!("Failed to read Parquet batch: {}", e))
-                })?;
+                let batch = batch_result
+                    .into_arrow_error_ctx("Failed to read Parquet batch")?;
                 
                 // If schema versions differ, project the batch to current schema
                 let projected_batch = if file_schema_version != current_version {
@@ -184,9 +182,8 @@ impl ManifestAccessPlanner {
 
         // Concatenate all batches
         let combined =
-            datafusion::arrow::compute::concat_batches(&schema, &all_batches).map_err(|e| {
-                KalamDbError::Other(format!("Failed to concatenate Parquet batches: {}", e))
-            })?;
+            datafusion::arrow::compute::concat_batches(&schema, &all_batches)
+                .into_arrow_error_ctx("Failed to concatenate Parquet batches")?;
 
         Ok((combined, (total_batches, skipped, scanned)))
     }
@@ -245,12 +242,7 @@ impl ManifestAccessPlanner {
             .system_tables()
             .tables()
             .get_version(table_id, old_schema_version)
-            .map_err(|e| {
-                KalamDbError::Other(format!(
-                    "Failed to retrieve schema version {}: {}",
-                    old_schema_version, e
-                ))
-            })?
+            .into_kalamdb_error(&format!("Failed to retrieve schema version {}", old_schema_version))?
             .ok_or_else(|| {
                 KalamDbError::Other(format!(
                     "Schema version {} not found for table {}",
@@ -258,9 +250,8 @@ impl ManifestAccessPlanner {
                 ))
             })?;
 
-        let old_schema = old_table_def.to_arrow_schema().map_err(|e| {
-            KalamDbError::Other(format!("Failed to convert old schema to Arrow: {}", e))
-        })?;
+        let old_schema = old_table_def.to_arrow_schema()
+            .into_arrow_error_ctx("Failed to convert old schema to Arrow")?;
 
         // If schemas are identical, no projection needed
         if old_schema.fields() == current_schema.fields() {
@@ -289,15 +280,13 @@ impl ManifestAccessPlanner {
                     projected_columns.push(old_column);
                 } else {
                     // Type changed - attempt cast
-                    let casted = cast(&old_column, current_field.data_type()).map_err(|e| {
-                        KalamDbError::Other(format!(
-                            "Failed to cast column '{}' from {:?} to {:?}: {}",
+                    let casted = cast(&old_column, current_field.data_type())
+                        .into_arrow_error_ctx(&format!(
+                            "Failed to cast column '{}' from {:?} to {:?}",
                             current_field.name(),
                             old_field.data_type(),
-                            current_field.data_type(),
-                            e
-                        ))
-                    })?;
+                            current_field.data_type()
+                        ))?;
                     projected_columns.push(casted);
                 }
             } else {
@@ -316,9 +305,7 @@ impl ManifestAccessPlanner {
 
         // Create new RecordBatch with projected columns
         let projected_batch = RecordBatch::try_new(current_schema.clone(), projected_columns)
-            .map_err(|e| {
-                KalamDbError::Other(format!("Failed to create projected RecordBatch: {}", e))
-            })?;
+            .into_arrow_error_ctx("Failed to create projected RecordBatch")?;
 
         Ok(projected_batch)
     }
@@ -476,7 +463,7 @@ mod tests {
         let dir = base.join(unique);
         stdfs::create_dir_all(&dir).unwrap();
         
-        Arc::new(AppContext::new(dir.to_str().unwrap()).expect("Failed to create AppContext"))
+        Arc::new(AppContext::new_test())
     }
 
     #[test]
@@ -509,8 +496,8 @@ mod tests {
         assert!(plan.is_empty());
     }
 
-    #[test]
-    fn test_scan_parquet_files_empty_dir_returns_empty_batch() {
+    #[tokio::test]
+    async fn test_scan_parquet_files_empty_dir_returns_empty_batch() {
         // Create a unique temp directory without any parquet files
         let base = std::env::temp_dir();
         let unique = format!(
@@ -558,8 +545,8 @@ mod tests {
         writer.close().unwrap();
     }
 
-    #[test]
-    fn test_pruning_stats_with_manifest_and_seq_ranges() {
+    #[tokio::test]
+    async fn test_pruning_stats_with_manifest_and_seq_ranges() {
         // Temp dir
         let base = std::env::temp_dir();
         let unique = format!(

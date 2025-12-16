@@ -2,6 +2,7 @@
 
 use crate::app_context::AppContext;
 use crate::error::KalamDbError;
+use crate::error_extensions::KalamDbResultExt;
 use crate::sql::executor::handlers::typed::TypedStatementHandler;
 use crate::sql::executor::models::{ExecutionContext, ExecutionResult, ScalarValue};
 use kalamdb_sql::ddl::AlterStorageStatement;
@@ -33,7 +34,7 @@ impl TypedStatementHandler<AlterStorageStatement> for AlterStorageHandler {
         let storage_id = statement.storage_id.clone();
         let mut storage = storages_provider
             .get_storage_by_id(&storage_id)
-            .map_err(|e| KalamDbError::Other(format!("Failed to get storage: {}", e)))?
+            .into_kalamdb_error("Failed to get storage")?
             .ok_or_else(|| {
                 KalamDbError::InvalidOperation(format!(
                     "Storage '{}' not found",
@@ -67,9 +68,8 @@ impl TypedStatementHandler<AlterStorageStatement> for AlterStorageHandler {
         }
 
         if let Some(raw_config) = statement.config_json {
-            let value: serde_json::Value = serde_json::from_str(&raw_config).map_err(|e| {
-                KalamDbError::InvalidOperation(format!("Invalid CONFIG JSON: {}", e))
-            })?;
+            let value: serde_json::Value = serde_json::from_str(&raw_config)
+                .into_invalid_operation("Invalid config_json")?;
 
             if !value.is_object() {
                 return Err(KalamDbError::InvalidOperation(
@@ -77,12 +77,8 @@ impl TypedStatementHandler<AlterStorageStatement> for AlterStorageHandler {
                 ));
             }
 
-            storage.config_json = Some(serde_json::to_string(&value).map_err(|e| {
-                KalamDbError::InvalidOperation(format!(
-                    "Failed to normalize CONFIG JSON: {}",
-                    e
-                ))
-            })?);
+            storage.config_json = Some(serde_json::to_string(&value)
+                .into_invalid_operation("Failed to normalize CONFIG JSON")?);
         }
 
         // Update timestamp
@@ -91,7 +87,7 @@ impl TypedStatementHandler<AlterStorageStatement> for AlterStorageHandler {
         // Save updated storage
         storages_provider
             .update_storage(storage)
-            .map_err(|e| KalamDbError::Other(format!("Failed to update storage: {}", e)))?;
+            .into_kalamdb_error("Failed to update storage")?;
 
         Ok(ExecutionResult::Success {
             message: format!("Storage '{}' altered successfully", statement.storage_id),

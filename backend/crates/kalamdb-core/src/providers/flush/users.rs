@@ -5,6 +5,7 @@
 
 use super::base::{FlushJobResult, FlushMetadata, TableFlush};
 use crate::error::KalamDbError;
+use crate::error_extensions::KalamDbResultExt;
 use crate::live_query::{ChangeNotification, LiveQueryManager};
 use crate::manifest::{FlushManifestHelper, ManifestCacheService, ManifestService};
 use crate::providers::arrow_json_conversion::json_rows_to_arrow_batch;
@@ -106,7 +107,7 @@ impl UserTableFlushJob {
     fn rows_to_record_batch(&self, rows: &[(Vec<u8>, Row)]) -> Result<RecordBatch, KalamDbError> {
         let arrow_rows: Vec<Row> = rows.iter().map(|(_, row)| row.clone()).collect();
         json_rows_to_arrow_batch(&self.schema, arrow_rows)
-            .map_err(|e| KalamDbError::Other(format!("Failed to build RecordBatch: {}", e)))
+            .into_kalamdb_error("Failed to build RecordBatch")
     }
 
     /// Flush accumulated rows for a single user to Parquet
@@ -172,7 +173,7 @@ impl UserTableFlushJob {
             .system_tables()
             .storages()
             .get_storage(&storage_id)
-            .map_err(|e| KalamDbError::Other(format!("Failed to load storage: {}", e)))?
+            .into_kalamdb_error("Failed to load storage")?
             .ok_or_else(|| {
                 KalamDbError::InvalidOperation(format!(
                     "Storage '{}' not found",
@@ -193,7 +194,7 @@ impl UserTableFlushJob {
             vec![batch.clone()],
             Some(bloom_filter_columns.to_vec()),
         )
-        .map_err(|e| KalamDbError::Other(format!("Filestore error: {}", e)))?;
+        .into_kalamdb_error("Filestore error")?;
 
         let size_bytes = result.size_bytes;
 
@@ -236,7 +237,7 @@ impl UserTableFlushJob {
         let mut parsed_keys = Vec::new();
         for key_bytes in keys {
             let key = kalamdb_commons::ids::UserTableRowId::from_bytes(key_bytes)
-                .map_err(|e| KalamDbError::InvalidOperation(format!("Invalid key bytes: {}", e)))?;
+                .into_invalid_operation("Invalid key bytes")?;
             parsed_keys.push(key);
         }
 
@@ -245,7 +246,7 @@ impl UserTableFlushJob {
         // to ensure both the entity AND its index entries are removed atomically.
         for key in &parsed_keys {
             self.store.delete(key)
-                .map_err(|e| KalamDbError::Other(format!("Failed to delete flushed row: {}", e)))?;
+                .into_kalamdb_error("Failed to delete flushed row")?;
         }
 
         log::debug!("Deleted {} flushed rows from storage", keys.len());

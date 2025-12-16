@@ -4,6 +4,7 @@
 //! table validation, and metadata storage.
 
 use crate::error::KalamDbError;
+use crate::error_extensions::KalamDbResultExt;
 use arrow::datatypes::Schema;
 use kalamdb_commons::schemas::{ColumnDefault, TableType};
 use kalamdb_commons::StorageId;
@@ -159,17 +160,12 @@ pub fn save_table_definition(
     let tables_provider = ctx.system_tables().tables();
     tables_provider
         .create_table(&table_id, &table_def)
-        .map_err(|e| {
-            KalamDbError::Other(format!(
-                "Failed to save table definition to system.tables: {}",
-                e
-            ))
-        })?;
+        .into_kalamdb_error("Failed to save table definition to system.tables")?;
 
     // Call stub method for API consistency (actual persistence handled above)
     schema_registry
         .put_table_definition(&table_id, &table_def)
-        .map_err(|e| KalamDbError::Other(format!("Failed to update schema registry: {}", e)))?;
+        .into_kalamdb_error("Failed to update schema registry")?;
 
     // Prime unified schema cache with freshly saved definition (includes system columns)
     {

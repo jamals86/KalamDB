@@ -4,6 +4,7 @@
 //! Uses SharedConnectionState pattern for efficient state access.
 
 use crate::error::KalamDbError;
+use crate::error_extensions::KalamDbResultExt;
 use crate::live::filter_eval::parse_where_clause;
 use crate::live::initial_data::{InitialDataFetcher, InitialDataOptions, InitialDataResult};
 use crate::live::notification::NotificationService;
@@ -355,7 +356,7 @@ impl LiveQueryManager {
         self.live_queries_provider
             .get_by_user_id_async(user_id)
             .await
-            .map_err(|e| KalamDbError::Other(format!("Failed to get user subscriptions: {}", e)))
+            .into_kalamdb_error("Failed to get user subscriptions")
     }
 
     /// Get a specific live query
@@ -366,7 +367,7 @@ impl LiveQueryManager {
         self.live_queries_provider
             .get_live_query_async(live_id)
             .await
-            .map_err(|e| KalamDbError::Other(format!("Failed to get live query: {}", e)))
+            .into_kalamdb_error("Failed to get live query")
     }
 
     /// Get registry statistics

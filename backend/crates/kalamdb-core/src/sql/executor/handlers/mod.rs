@@ -80,7 +80,6 @@ pub use typed::TypedStatementHandler;
 ///     }
 /// }
 /// ```
-/// TODO: Do we still need this? we have the newer  impl TypedStatementHandler<CreateNamespaceStatement> for CreateNamespaceHandler {
 #[async_trait::async_trait]
 pub trait StatementHandler: Send + Sync {
     /// Execute a SQL statement with full context

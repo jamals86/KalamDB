@@ -19,13 +19,12 @@
 
 use super::jobs_indexes::{create_jobs_indexes, status_to_u8};
 use super::JobsTableSchema;
-use crate::error::SystemError;
+use crate::error::{SystemError, SystemResultExt};
 use crate::system_table_trait::SystemTableProviderExt;
 use async_trait::async_trait;
-use datafusion::arrow::array::{
-    ArrayRef, Int64Array, RecordBatch, StringBuilder, TimestampMicrosecondArray,
-};
+use datafusion::arrow::array::RecordBatch;
 use datafusion::arrow::datatypes::SchemaRef;
+use kalamdb_commons::RecordBatchBuilder;
 use datafusion::datasource::{TableProvider, TableType};
 use datafusion::error::{DataFusionError, Result as DataFusionResult};
 use datafusion::logical_expr::Expr;
@@ -79,7 +78,7 @@ impl JobsTableProvider {
     pub fn create_job(&self, job: Job) -> Result<(), SystemError> {
         self.store
             .insert(&job.job_id, &job)
-            .map_err(|e| SystemError::Other(format!("insert job error: {}", e)))
+            .into_system_error("insert job error")
     }
 
     /// Alias for create_job (for backward compatibility)
@@ -95,7 +94,7 @@ impl JobsTableProvider {
         self.store
             .insert_async(job_id, job)
             .await
-            .map_err(|e| SystemError::Other(format!("insert_async job error: {}", e)))
+            .into_system_error("insert_async job error")
     }
 
     /// Get a job by ID
@@ -113,7 +112,7 @@ impl JobsTableProvider {
         self.store
             .get_async(job_id.clone())
             .await
-            .map_err(|e| SystemError::Other(format!("get_async error: {}", e)))
+            .into_system_error("get_async error")
     }
 
     /// Update an existing job entry.
@@ -136,17 +135,19 @@ impl JobsTableProvider {
         // Use update_with_old for efficiency (we already have old entity)
         self.store
             .update_with_old(&job.job_id, Some(&old_job), &job)
-            .map_err(|e| SystemError::Other(format!("update job error: {}", e)))
+            .into_system_error("update job error")
     }
 
     /// Async version of `update_job()`.
     pub async fn update_job_async(&self, job: Job) -> Result<(), SystemError> {
+        log::debug!("[{}] update_job_async called: status={:?}", job.job_id, job.status);
+        
         // Check if job exists
         let old_job = self
             .store
             .get_async(job.job_id.clone())
             .await
-            .map_err(|e| SystemError::Other(format!("get_async error: {}", e)))?;
+            .into_system_error("get_async error")?;
 
         let old_job = match old_job {
             Some(j) => j,
@@ -162,13 +163,17 @@ impl JobsTableProvider {
 
         // We need to do update in blocking context since update_with_old is sync
         let store = self.store.clone();
+        let job_id_clone = job.job_id.clone();
         let job_id = job.job_id.clone();
-        tokio::task::spawn_blocking(move || {
-            store.update_with_old(&job_id, Some(&old_job), &job)
+        let result = tokio::task::spawn_blocking(move || {
+            store.update_with_old(&job_id_clone, Some(&old_job), &job)
         })
         .await
-        .map_err(|e| SystemError::Other(format!("spawn_blocking error: {}", e)))?
-        .map_err(|e| SystemError::Other(format!("update job error: {}", e)))
+        .into_system_error("spawn_blocking error")?
+        .into_system_error("update job error")?;
+        
+        log::debug!("[{}] update_job_async completed successfully", job_id);
+        Ok(result)
     }
 
     /// Delete a job entry.
@@ -177,7 +182,7 @@ impl JobsTableProvider {
     pub fn delete_job(&self, job_id: &JobId) -> Result<(), SystemError> {
         self.store
             .delete(job_id)
-            .map_err(|e| SystemError::Other(format!("delete job error: {}", e)))
+            .into_system_error("delete job error")
     }
 
     /// List all jobs
@@ -226,7 +231,7 @@ impl JobsTableProvider {
                 let job_entries = self
                     .store
                     .scan_by_index(STATUS_INDEX, Some(&prefix), Some(limit - jobs.len()))
-                    .map_err(|e| SystemError::Other(format!("scan_by_index error: {}", e)))?;
+                    .into_system_error("scan_by_index error")?;
 
                 for (_job_id, job) in job_entries {
                     // Apply other filters that index doesn't cover
@@ -310,7 +315,7 @@ impl JobsTableProvider {
                     .store
                     .scan_by_index_async(STATUS_INDEX, Some(prefix), Some(limit - jobs.len()))
                     .await
-                    .map_err(|e| SystemError::Other(format!("scan_by_index_async error: {}", e)))?;
+                    .into_system_error("scan_by_index_async error")?;
 
                 for (_job_id, job) in job_entries {
                     if matches_filter_sync(&job, &filter) {
@@ -330,7 +335,7 @@ impl JobsTableProvider {
             .store
             .scan_all_async(None, None, None)
             .await
-            .map_err(|e| SystemError::Other(format!("scan_all_async error: {}", e)))?;
+            .into_system_error("scan_all_async error")?;
         let mut jobs: Vec<Job> = all_jobs.into_iter().map(|(_, job)| job).collect();
 
         jobs.retain(|job| matches_filter_sync(job, &filter));
@@ -466,7 +471,7 @@ impl JobsTableProvider {
             let iter = self
                 .store
                 .scan_index_raw(STATUS_INDEX, Some(&prefix), None, None)
-                .map_err(|e| SystemError::Other(format!("scan_index_raw error: {}", e)))?;
+                .into_system_error("scan_index_raw error")?;
 
             for (key_bytes, job_id_bytes) in iter {
                 // Extract created_at (bytes 1..9)
@@ -485,7 +490,7 @@ impl JobsTableProvider {
                 }
 
                 let job_id_str = String::from_utf8(job_id_bytes)
-                    .map_err(|e| SystemError::Other(format!("Invalid JobId in index: {}", e)))?;
+                    .into_system_error("Invalid JobId in index")?;
                 let job_id = JobId::new(job_id_str);
 
                 // Load job to check actual finished_at
@@ -506,74 +511,56 @@ impl JobsTableProvider {
 
     /// Helper to create RecordBatch from jobs
     fn create_batch(&self, jobs: Vec<(Vec<u8>, Job)>) -> Result<RecordBatch, SystemError> {
-        let row_count = jobs.len();
-
-        // Pre-allocate builders for optimal performance
-        let mut job_ids = StringBuilder::with_capacity(row_count, row_count * 16);
-        let mut job_types = StringBuilder::with_capacity(row_count, row_count * 16);
-        let mut statuses = StringBuilder::with_capacity(row_count, row_count * 16);
-        let mut parameters = StringBuilder::with_capacity(row_count, row_count * 64);
-        let mut results = StringBuilder::with_capacity(row_count, row_count * 64);
-        let mut traces = StringBuilder::with_capacity(row_count, row_count * 128);
-        let mut memory_useds = Vec::with_capacity(row_count);
-        let mut cpu_useds = Vec::with_capacity(row_count);
-        let mut created_ats = Vec::with_capacity(row_count);
-        let mut started_ats = Vec::with_capacity(row_count);
-        let mut finished_ats = Vec::with_capacity(row_count);
-        let mut node_ids = StringBuilder::with_capacity(row_count, row_count * 16);
-        let mut error_messages = StringBuilder::with_capacity(row_count, row_count * 64);
+        // Extract data into vectors
+        let mut job_ids = Vec::with_capacity(jobs.len());
+        let mut job_types = Vec::with_capacity(jobs.len());
+        let mut statuses = Vec::with_capacity(jobs.len());
+        let mut parameters = Vec::with_capacity(jobs.len());
+        let mut results = Vec::with_capacity(jobs.len());
+        let mut traces = Vec::with_capacity(jobs.len());
+        let mut memory_useds = Vec::with_capacity(jobs.len());
+        let mut cpu_useds = Vec::with_capacity(jobs.len());
+        let mut created_ats = Vec::with_capacity(jobs.len());
+        let mut started_ats = Vec::with_capacity(jobs.len());
+        let mut finished_ats = Vec::with_capacity(jobs.len());
+        let mut node_ids = Vec::with_capacity(jobs.len());
+        let mut error_messages = Vec::with_capacity(jobs.len());
 
         for (_key, job) in jobs {
-            job_ids.append_value(job.job_id.as_str());
-            job_types.append_value(job.job_type.as_str());
-            statuses.append_value(job.status.as_str());
-            parameters.append_option(job.parameters.as_deref());
+            job_ids.push(Some(job.job_id.as_str().to_string()));
+            job_types.push(Some(job.job_type.as_str().to_string()));
+            statuses.push(Some(job.status.as_str().to_string()));
+            parameters.push(job.parameters);
             // Note: Job struct uses 'message' and 'exception_trace' instead of 'result'/'trace'/'error_message'
-            results.append_option(job.message.as_deref());
-            traces.append_option(job.exception_trace.as_deref());
+            results.push(job.message.clone());
+            traces.push(job.exception_trace);
             memory_useds.push(job.memory_used);
             cpu_useds.push(job.cpu_used);
             created_ats.push(Some(job.created_at));
             started_ats.push(job.started_at);
             finished_ats.push(job.finished_at);
-            node_ids.append_value(&job.node_id);
-            error_messages.append_option(job.message.as_deref()); // message field contains error messages for failed jobs
+            node_ids.push(Some(job.node_id.as_str().to_string()));
+            error_messages.push(job.message); // message field contains error messages for failed jobs
         }
 
-        let batch = RecordBatch::try_new(
-            self.schema.clone(),
-            vec![
-                Arc::new(job_ids.finish()) as ArrayRef,
-                Arc::new(job_types.finish()) as ArrayRef,
-                Arc::new(statuses.finish()) as ArrayRef,
-                Arc::new(parameters.finish()) as ArrayRef,
-                Arc::new(results.finish()) as ArrayRef,
-                Arc::new(traces.finish()) as ArrayRef,
-                Arc::new(Int64Array::from(memory_useds)) as ArrayRef,
-                Arc::new(Int64Array::from(cpu_useds)) as ArrayRef,
-                Arc::new(TimestampMicrosecondArray::from(
-                    created_ats
-                        .into_iter()
-                        .map(|ts| ts.map(|ms| ms * 1000))
-                        .collect::<Vec<_>>(),
-                )) as ArrayRef,
-                Arc::new(TimestampMicrosecondArray::from(
-                    started_ats
-                        .into_iter()
-                        .map(|ts| ts.map(|ms| ms * 1000))
-                        .collect::<Vec<_>>(),
-                )) as ArrayRef,
-                Arc::new(TimestampMicrosecondArray::from(
-                    finished_ats
-                        .into_iter()
-                        .map(|ts| ts.map(|ms| ms * 1000))
-                        .collect::<Vec<_>>(),
-                )) as ArrayRef,
-                Arc::new(node_ids.finish()) as ArrayRef,
-                Arc::new(error_messages.finish()) as ArrayRef,
-            ],
-        )
-        .map_err(|e| SystemError::Other(format!("Arrow error: {}", e)))?;
+        // Build batch using RecordBatchBuilder
+        let mut builder = RecordBatchBuilder::new(self.schema.clone());
+        builder
+            .add_string_column_owned(job_ids)
+            .add_string_column_owned(job_types)
+            .add_string_column_owned(statuses)
+            .add_string_column_owned(parameters)
+            .add_string_column_owned(results)
+            .add_string_column_owned(traces)
+            .add_int64_column(memory_useds)
+            .add_int64_column(cpu_useds)
+            .add_timestamp_micros_column(created_ats)
+            .add_timestamp_micros_column(started_ats)
+            .add_timestamp_micros_column(finished_ats)
+            .add_string_column_owned(node_ids)
+            .add_string_column_owned(error_messages);
+
+        let batch = builder.build().into_arrow_error("Failed to create RecordBatch")?;
 
         Ok(batch)
     }
