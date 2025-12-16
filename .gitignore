@@ -1,7 +1,7 @@
 # Rust build artifacts
 /target/
 **/target/
-Cargo.lock
+# Cargo.lock - Committed for reproducible builds (this is an application, not a library)
 
 # WASM build outputs
 **/pkg/
