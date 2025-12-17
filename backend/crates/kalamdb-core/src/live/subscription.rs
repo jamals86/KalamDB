@@ -133,7 +133,6 @@ impl SubscriptionService {
             projections: projections_arc.clone(),
             batch_size,
             snapshot_end_seq: None,
-            serialization_mode: request.options.serialization_mode,
             notification_tx: notification_tx.clone(),
         };
 
@@ -142,7 +141,6 @@ impl SubscriptionService {
             live_id: live_id.clone(),
             filter_expr: filter_expr_arc,
             projections: projections_arc,
-            serialization_mode: request.options.serialization_mode,
             notification_tx,
         };
 

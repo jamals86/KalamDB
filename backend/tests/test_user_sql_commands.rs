@@ -9,7 +9,7 @@
 #[path = "integration/common/mod.rs"]
 mod common;
 
-use common::TestServer;
+use common::{QueryResultTestExt, TestServer};
 use kalamdb_api::models::ResponseStatus;
 
 #[tokio::test]
@@ -33,7 +33,7 @@ async fn test_create_user_with_password_success() {
     let result = server.execute_sql_as_user(query, admin_id).await;
 
     assert!(!result.results.is_empty());
-    let rows = result.results[0].rows.as_ref().unwrap();
+    let rows = result.results[0].rows_as_maps();
     assert_eq!(rows.len(), 1);
 
     let row = &rows[0];
@@ -65,7 +65,7 @@ async fn test_create_user_with_oauth_success() {
     let query = "SELECT * FROM system.users WHERE username = 'bob'";
     let result = server.execute_sql_as_user(query, admin_id).await;
 
-    let rows = result.results[0].rows.as_ref().unwrap();
+    let rows = result.results[0].rows_as_maps();
     let row = &rows[0];
 
     assert_eq!(row.get("username").unwrap().as_str().unwrap(), "bob");
@@ -106,7 +106,8 @@ async fn test_alter_user_set_password() {
     // Get old hash
     let query = "SELECT password_hash FROM system.users WHERE username = 'dave'";
     let result = server.execute_sql_as_user(query, admin_id).await;
-    let old_hash = result.results[0].rows.as_ref().unwrap()[0]
+    let rows = result.results[0].rows_as_maps();
+    let old_hash = rows[0]
         .get("password_hash")
         .unwrap()
         .as_str()
@@ -120,7 +121,8 @@ async fn test_alter_user_set_password() {
 
     // Verify hash changed
     let result = server.execute_sql_as_user(query, admin_id).await;
-    let new_hash = result.results[0].rows.as_ref().unwrap()[0]
+    let rows = result.results[0].rows_as_maps();
+    let new_hash = rows[0]
         .get("password_hash")
         .unwrap()
         .as_str()
@@ -147,7 +149,8 @@ async fn test_alter_user_set_role() {
     // Verify role
     let query = "SELECT role FROM system.users WHERE username = 'eve'";
     let result = server.execute_sql_as_user(query, admin_id).await;
-    let role = result.results[0].rows.as_ref().unwrap()[0]
+    let rows = result.results[0].rows_as_maps();
+    let role = rows[0]
         .get("role")
         .unwrap()
         .as_str()
@@ -175,12 +178,9 @@ async fn test_drop_user_soft_delete() {
     let result = server.execute_sql_as_user(query_deleted, admin_id).await;
 
     assert!(!result.results.is_empty());
-    if let Some(rows) = &result.results[0].rows {
-        assert_eq!(rows.len(), 1);
-        assert!(!rows[0].get("deleted_at").unwrap().is_null());
-    } else {
-        panic!("Expected rows");
-    }
+    let rows = result.results[0].rows_as_maps();
+    assert_eq!(rows.len(), 1);
+    assert!(!rows[0].get("deleted_at").unwrap().is_null());
 }
 
 #[tokio::test]

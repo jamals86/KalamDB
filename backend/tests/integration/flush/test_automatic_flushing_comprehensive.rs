@@ -6,7 +6,7 @@
 #[path = "../common/mod.rs"]
 mod common;
 
-use common::{fixtures, flush_helpers, TestServer};
+use common::{fixtures, flush_helpers, QueryResultTestExt, TestServer};
 use kalamdb_api::models::ResponseStatus;
 use kalamdb_commons::models::JobStatus;
 
@@ -158,8 +158,8 @@ async fn test_flush_table_sql_job_and_files() {
         ResponseStatus::Success,
         "Failed to query system.jobs"
     );
-    if let Some(rows) = job_response.results.first().and_then(|r| r.rows.as_ref()) {
-        let status = rows[0].get("status").and_then(|v| v.as_str()).unwrap_or("");
+    if let Some(row) = job_response.results.first().and_then(|r| r.row_as_map(0)) {
+        let status = row.get("status").and_then(|v| v.as_str()).unwrap_or("");
         assert_eq!(status, JobStatus::Completed.as_str());
     }
 

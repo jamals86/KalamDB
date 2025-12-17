@@ -17,7 +17,7 @@
 #[path = "integration/common/mod.rs"]
 mod common;
 
-use common::{fixtures, flush_helpers, TestServer};
+use common::{fixtures, flush_helpers, QueryResultTestExt, TestServer};
 use kalamdb_api::models::ResponseStatus;
 
 /// Test: User table cold storage query uses manifest cache
@@ -125,11 +125,10 @@ async fn test_user_table_cold_storage_uses_manifest() {
     );
 
     // Verify data is correct
-    if let Some(rows) = &select_response.results[0].rows {
-        assert_eq!(rows.len(), 1, "Expected 1 row from cold storage query");
-        assert_eq!(rows[0].get("id").unwrap().as_i64().unwrap(), 15);
-        assert_eq!(rows[0].get("value").unwrap().as_i64().unwrap(), 150);
-    }
+    let rows = select_response.results[0].rows_as_maps();
+    assert_eq!(rows.len(), 1, "Expected 1 row from cold storage query");
+    assert_eq!(rows[0].get("id").unwrap().as_i64().unwrap(), 15);
+    assert_eq!(rows[0].get("value").unwrap().as_i64().unwrap(), 150);
 
     // Query all rows - verifies manifest is used for full table scan
     let select_all_response = server
@@ -142,11 +141,10 @@ async fn test_user_table_cold_storage_uses_manifest() {
         select_all_response.error
     );
 
-    if let Some(rows) = &select_all_response.results[0].rows {
-        assert_eq!(rows.len(), 1);
-        let count = rows[0].get("cnt").unwrap().as_i64().unwrap();
-        assert_eq!(count, 30, "Expected 30 rows total");
-    }
+    let rows = select_all_response.results[0].rows_as_maps();
+    assert_eq!(rows.len(), 1);
+    let count = rows[0].get("cnt").unwrap().as_i64().unwrap();
+    assert_eq!(count, 30, "Expected 30 rows total");
 
     println!("✅ User table cold storage query uses manifest cache successfully");
 }
@@ -246,11 +244,10 @@ async fn test_shared_table_cold_storage_uses_manifest() {
     );
 
     // Verify data is correct
-    if let Some(rows) = &select_response.results[0].rows {
-        assert_eq!(rows.len(), 1, "Expected 1 row from cold storage query");
-        assert_eq!(rows[0].get("id").unwrap().as_i64().unwrap(), 20);
-        assert_eq!(rows[0].get("price").unwrap().as_i64().unwrap(), 2000);
-    }
+    let rows = select_response.results[0].rows_as_maps();
+    assert_eq!(rows.len(), 1, "Expected 1 row from cold storage query");
+    assert_eq!(rows[0].get("id").unwrap().as_i64().unwrap(), 20);
+    assert_eq!(rows[0].get("price").unwrap().as_i64().unwrap(), 2000);
 
     println!("✅ Shared table cold storage query uses manifest cache successfully");
 }
@@ -335,10 +332,9 @@ async fn test_manifest_tracks_multiple_flush_segments() {
         )
         .await;
     assert_eq!(select_batch1.status, ResponseStatus::Success);
-    if let Some(rows) = &select_batch1.results[0].rows {
-        assert_eq!(rows.len(), 1);
-        assert_eq!(rows[0].get("event_type").unwrap().as_str().unwrap(), "batch1");
-    }
+    let rows = select_batch1.results[0].rows_as_maps();
+    assert_eq!(rows.len(), 1);
+    assert_eq!(rows[0].get("event_type").unwrap().as_str().unwrap(), "batch1");
 
     let select_batch2 = server
         .execute_sql_as_user(
@@ -347,10 +343,9 @@ async fn test_manifest_tracks_multiple_flush_segments() {
         )
         .await;
     assert_eq!(select_batch2.status, ResponseStatus::Success);
-    if let Some(rows) = &select_batch2.results[0].rows {
-        assert_eq!(rows.len(), 1);
-        assert_eq!(rows[0].get("event_type").unwrap().as_str().unwrap(), "batch2");
-    }
+    let rows = select_batch2.results[0].rows_as_maps();
+    assert_eq!(rows.len(), 1);
+    assert_eq!(rows[0].get("event_type").unwrap().as_str().unwrap(), "batch2");
 
     // Count all rows from both segments
     let count_all = server
@@ -360,10 +355,9 @@ async fn test_manifest_tracks_multiple_flush_segments() {
         )
         .await;
     assert_eq!(count_all.status, ResponseStatus::Success);
-    if let Some(rows) = &count_all.results[0].rows {
-        let count = rows[0].get("cnt").unwrap().as_i64().unwrap();
-        assert_eq!(count, 40, "Expected 40 rows from both segments");
-    }
+    let rows = count_all.results[0].rows_as_maps();
+    let count = rows[0].get("cnt").unwrap().as_i64().unwrap();
+    assert_eq!(count, 40, "Expected 40 rows from both segments");
 
     println!("✅ Manifest correctly tracks multiple flush segments");
 }
@@ -440,19 +434,18 @@ async fn test_cold_storage_version_resolution_after_update() {
         )
         .await;
     assert_eq!(select_updated.status, ResponseStatus::Success);
-    if let Some(rows) = &select_updated.results[0].rows {
-        assert_eq!(rows.len(), 1);
-        assert_eq!(
-            rows[0].get("status").unwrap().as_str().unwrap(),
-            "updated",
-            "Expected updated status"
-        );
-        assert_eq!(
-            rows[0].get("count").unwrap().as_i64().unwrap(),
-            999,
-            "Expected updated count"
-        );
-    }
+    let rows = select_updated.results[0].rows_as_maps();
+    assert_eq!(rows.len(), 1);
+    assert_eq!(
+        rows[0].get("status").unwrap().as_str().unwrap(),
+        "updated",
+        "Expected updated status"
+    );
+    assert_eq!(
+        rows[0].get("count").unwrap().as_i64().unwrap(),
+        999,
+        "Expected updated count"
+    );
 
     // Other rows should still be from cold storage with original values
     let select_other = server
@@ -462,19 +455,18 @@ async fn test_cold_storage_version_resolution_after_update() {
         )
         .await;
     assert_eq!(select_other.status, ResponseStatus::Success);
-    if let Some(rows) = &select_other.results[0].rows {
-        assert_eq!(rows.len(), 1);
-        assert_eq!(
-            rows[0].get("status").unwrap().as_str().unwrap(),
-            "initial",
-            "Expected original status for non-updated row"
-        );
-        assert_eq!(
-            rows[0].get("count").unwrap().as_i64().unwrap(),
-            15,
-            "Expected original count (3 * 5 = 15)"
-        );
-    }
+    let rows = select_other.results[0].rows_as_maps();
+    assert_eq!(rows.len(), 1);
+    assert_eq!(
+        rows[0].get("status").unwrap().as_str().unwrap(),
+        "initial",
+        "Expected original status for non-updated row"
+    );
+    assert_eq!(
+        rows[0].get("count").unwrap().as_i64().unwrap(),
+        15,
+        "Expected original count (3 * 5 = 15)"
+    );
 
     // Count should still be 10 (no duplicates from version resolution)
     let count_all = server
@@ -484,10 +476,9 @@ async fn test_cold_storage_version_resolution_after_update() {
         )
         .await;
     assert_eq!(count_all.status, ResponseStatus::Success);
-    if let Some(rows) = &count_all.results[0].rows {
-        let count = rows[0].get("cnt").unwrap().as_i64().unwrap();
-        assert_eq!(count, 10, "Expected 10 rows (no duplicates)");
-    }
+    let rows = count_all.results[0].rows_as_maps();
+    let count = rows[0].get("cnt").unwrap().as_i64().unwrap();
+    assert_eq!(count, 10, "Expected 10 rows (no duplicates)");
 
     println!("✅ Version resolution correctly handles hot+cold storage after UPDATE");
 }
@@ -549,9 +540,7 @@ async fn test_cold_storage_delete_creates_tombstone() {
         )
         .await;
     assert_eq!(select_before.status, ResponseStatus::Success);
-    if let Some(rows) = &select_before.results[0].rows {
-        assert_eq!(rows.len(), 1, "Expected row to exist before delete");
-    }
+    assert_eq!(select_before.results[0].rows.as_ref().map(|r| r.len()).unwrap_or(0), 1, "Expected row to exist before delete");
 
     // Delete a row from cold storage
     let delete_response = server
@@ -575,9 +564,7 @@ async fn test_cold_storage_delete_creates_tombstone() {
         )
         .await;
     assert_eq!(select_after.status, ResponseStatus::Success);
-    if let Some(rows) = &select_after.results[0].rows {
-        assert_eq!(rows.len(), 0, "Expected deleted row to not be returned");
-    }
+    assert_eq!(select_after.results[0].rows.as_ref().map(|r| r.len()).unwrap_or(0), 0, "Expected deleted row to not be returned");
 
     // Count should be 14 (one deleted)
     let count_all = server
@@ -587,10 +574,9 @@ async fn test_cold_storage_delete_creates_tombstone() {
         )
         .await;
     assert_eq!(count_all.status, ResponseStatus::Success);
-    if let Some(rows) = &count_all.results[0].rows {
-        let count = rows[0].get("cnt").unwrap().as_i64().unwrap();
-        assert_eq!(count, 14, "Expected 14 rows after delete");
-    }
+    let rows = count_all.results[0].rows_as_maps();
+    let count = rows[0].get("cnt").unwrap().as_i64().unwrap();
+    assert_eq!(count, 14, "Expected 14 rows after delete");
 
     println!("✅ DELETE on cold storage row creates tombstone correctly");
 }
@@ -666,19 +652,17 @@ async fn test_shared_table_manifest_isolation() {
         .execute_sql("SELECT id, name FROM manifest_iso_ns.products WHERE id = 5")
         .await;
     assert_eq!(select_products.status, ResponseStatus::Success);
-    if let Some(rows) = &select_products.results[0].rows {
-        assert_eq!(rows.len(), 1);
-        assert_eq!(rows[0].get("name").unwrap().as_str().unwrap(), "product_5");
-    }
+    let rows = select_products.results[0].rows_as_maps();
+    assert_eq!(rows.len(), 1);
+    assert_eq!(rows[0].get("name").unwrap().as_str().unwrap(), "product_5");
 
     let select_categories = server
         .execute_sql("SELECT id, name FROM manifest_iso_ns.categories WHERE id = 5")
         .await;
     assert_eq!(select_categories.status, ResponseStatus::Success);
-    if let Some(rows) = &select_categories.results[0].rows {
-        assert_eq!(rows.len(), 1);
-        assert_eq!(rows[0].get("name").unwrap().as_str().unwrap(), "category_5");
-    }
+    let rows = select_categories.results[0].rows_as_maps();
+    assert_eq!(rows.len(), 1);
+    assert_eq!(rows[0].get("name").unwrap().as_str().unwrap(), "category_5");
 
     println!("✅ Manifest correctly isolates multiple shared tables");
 }

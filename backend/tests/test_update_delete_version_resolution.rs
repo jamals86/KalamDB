@@ -14,7 +14,7 @@
 #[path = "integration/common/mod.rs"]
 mod common;
 
-use common::{fixtures, flush_helpers, TestServer};
+use common::{fixtures, flush_helpers, QueryResultTestExt, TestServer};
 use kalamdb_api::models::ResponseStatus;
 use std::sync::Arc;
 use tokio::task::JoinSet;
@@ -91,13 +91,12 @@ async fn test_update_in_fast_storage() {
         "Query failed: {:?}",
         response.error
     );
-    if let Some(rows) = &response.results[0].rows {
-        assert_eq!(rows.len(), 1);
-        let row = &rows[0];
-        assert_eq!(row.get("price").unwrap().as_i64().unwrap(), 120);
-        assert_eq!(row.get("stock").unwrap().as_i64().unwrap(), 45);
-        assert_eq!(row.get("name").unwrap().as_str().unwrap(), "Widget"); // Unchanged
-    }
+    let rows = response.results[0].rows_as_maps();
+    assert_eq!(rows.len(), 1);
+    let row = &rows[0];
+    assert_eq!(row.get("price").unwrap().as_i64().unwrap(), 120);
+    assert_eq!(row.get("stock").unwrap().as_i64().unwrap(), 45);
+    assert_eq!(row.get("name").unwrap().as_str().unwrap(), "Widget"); // Unchanged
 
     println!("✅ T060: UPDATE in fast storage works correctly");
 }
@@ -169,19 +168,18 @@ async fn test_update_in_parquet() {
         response.status, response.error
     );
     assert_eq!(response.status, ResponseStatus::Success);
-    if let Some(rows) = &response.results[0].rows {
-        assert_eq!(
-            rows.len(),
-            1,
-            "Should return exactly 1 row (latest version)"
-        );
-        let row = &rows[0];
-        assert_eq!(
-            row.get("quantity").unwrap().as_i64().unwrap(),
-            8,
-            "Should return latest quantity"
-        );
-    }
+    let rows = response.results[0].rows_as_maps();
+    assert_eq!(
+        rows.len(),
+        1,
+        "Should return exactly 1 row (latest version)"
+    );
+    let row = &rows[0];
+    assert_eq!(
+        row.get("quantity").unwrap().as_i64().unwrap(),
+        8,
+        "Should return latest quantity"
+    );
 
     println!("✅ T061: UPDATE in Parquet creates new version correctly");
 }
@@ -255,12 +253,11 @@ async fn test_full_workflow_insert_flush_update() {
         .await;
 
     assert_eq!(response.status, ResponseStatus::Success);
-    if let Some(rows) = &response.results[0].rows {
-        assert_eq!(rows.len(), 1);
-        let row = &rows[0];
-        assert_eq!(row.get("status").unwrap().as_str().unwrap(), "shipped");
-        assert_eq!(row.get("total").unwrap().as_i64().unwrap(), 550);
-    }
+    let rows = response.results[0].rows_as_maps();
+    assert_eq!(rows.len(), 1);
+    let row = &rows[0];
+    assert_eq!(row.get("status").unwrap().as_str().unwrap(), "shipped");
+    assert_eq!(row.get("total").unwrap().as_i64().unwrap(), 550);
 
     println!("✅ T062: INSERT → FLUSH → UPDATE workflow works correctly");
 }
@@ -333,19 +330,18 @@ async fn test_multi_version_query() {
         .await;
 
     assert_eq!(response.status, ResponseStatus::Success);
-    if let Some(rows) = &response.results[0].rows {
-        assert_eq!(
-            rows.len(),
-            1,
-            "Should return exactly 1 row (latest version)"
-        );
-        let row = &rows[0];
-        assert_eq!(
-            row.get("value").unwrap().as_i64().unwrap(),
-            20,
-            "Should return latest value (version 3)"
-        );
-    }
+    let rows = response.results[0].rows_as_maps();
+    assert_eq!(
+        rows.len(),
+        1,
+        "Should return exactly 1 row (latest version)"
+    );
+    let row = &rows[0];
+    assert_eq!(
+        row.get("value").unwrap().as_i64().unwrap(),
+        20,
+        "Should return latest value (version 3)"
+    );
 
     println!("✅ T063: Multi-version query returns MAX(_seq) correctly");
 }
@@ -391,10 +387,9 @@ async fn test_delete_excludes_record() {
         .await;
 
     assert_eq!(response.status, ResponseStatus::Success);
-    if let Some(rows) = &response.results[0].rows {
-        assert_eq!(rows.len(), 1, "Should only return non-deleted record");
-        assert_eq!(rows[0].get("id").unwrap().as_str().unwrap(), "user2");
-    }
+    let rows = response.results[0].rows_as_maps();
+    assert_eq!(rows.len(), 1, "Should only return non-deleted record");
+    assert_eq!(rows[0].get("id").unwrap().as_str().unwrap(), "user2");
 
     println!("✅ T064: DELETE sets _deleted=true and query excludes record");
 }
@@ -452,13 +447,12 @@ async fn test_delete_in_parquet() {
         .await;
 
     assert_eq!(response.status, ResponseStatus::Success);
-    if let Some(rows) = &response.results[0].rows {
-        assert_eq!(
-            rows.len(),
-            0,
-            "Deleted record should be excluded from query"
-        );
-    }
+    let rows = response.results[0].rows_as_maps();
+    assert_eq!(
+        rows.len(),
+        0,
+        "Deleted record should be excluded from query"
+    );
 
     println!("✅ T065: DELETE in Parquet creates new deleted version correctly");
 }
@@ -533,15 +527,14 @@ async fn test_concurrent_updates() {
         .await;
 
     assert_eq!(response.status, ResponseStatus::Success);
-    if let Some(rows) = &response.results[0].rows {
-        assert_eq!(rows.len(), 1);
-        let final_count = rows[0].get("count").unwrap().as_i64().unwrap();
-        assert!(
-            (1..=10).contains(&final_count),
-            "Final count should be between 1 and 10, got {}",
-            final_count
-        );
-    }
+    let rows = response.results[0].rows_as_maps();
+    assert_eq!(rows.len(), 1);
+    let final_count = rows[0].get("count").unwrap().as_i64().unwrap();
+    assert!(
+        (1..=10).contains(&final_count),
+        "Final count should be between 1 and 10, got {}",
+        final_count
+    );
 
     println!("✅ T066: Concurrent updates all succeed");
 }
@@ -596,14 +589,13 @@ async fn test_nanosecond_collision_handling() {
         .await;
 
     assert_eq!(response.status, ResponseStatus::Success);
-    if let Some(rows) = &response.results[0].rows {
-        assert_eq!(rows.len(), 1);
-        let final_iteration = rows[0].get("iteration").unwrap().as_i64().unwrap();
-        assert_eq!(
-            final_iteration, 20,
-            "Should return latest iteration despite rapid updates"
-        );
-    }
+    let rows = response.results[0].rows_as_maps();
+    assert_eq!(rows.len(), 1);
+    let final_iteration = rows[0].get("iteration").unwrap().as_i64().unwrap();
+    assert_eq!(
+        final_iteration, 20,
+        "Should return latest iteration despite rapid updates"
+    );
 
     println!("✅ T067: Nanosecond collision handling works correctly");
 }

@@ -15,7 +15,7 @@
 #[path = "integration/common/mod.rs"]
 mod common;
 
-use common::{fixtures, TestServer};
+use common::{fixtures, QueryResultTestExt, TestServer};
 use kalamdb_api::models::ResponseStatus;
 
 /// T051: CREATE TABLE without PK should be rejected
@@ -117,39 +117,36 @@ async fn test_create_table_auto_adds_system_columns() {
         .await;
 
     assert_eq!(response.status, ResponseStatus::Success);
-    if let Some(rows) = &response.results[0].rows {
-        assert_eq!(rows.len(), 1, "Should return exactly 1 row");
-        let row = &rows[0];
+    let rows = response.results[0].rows_as_maps();
+    assert_eq!(rows.len(), 1, "Should return exactly 1 row");
+    let row = &rows[0];
 
-        // Verify user columns
-        assert_eq!(row.get("id").unwrap().as_str().unwrap(), "prod1");
-        assert_eq!(row.get("name").unwrap().as_str().unwrap(), "Widget");
-        assert_eq!(row.get("price").unwrap().as_i64().unwrap(), 100);
+    // Verify user columns
+    assert_eq!(row.get("id").unwrap().as_str().unwrap(), "prod1");
+    assert_eq!(row.get("name").unwrap().as_str().unwrap(), "Widget");
+    assert_eq!(row.get("price").unwrap().as_i64().unwrap(), 100);
 
-        // Verify system columns exist
-        assert!(row.contains_key("_seq"), "_seq column should be auto-added");
-        assert!(
-            row.contains_key("_deleted"),
-            "_deleted column should be auto-added"
-        );
+    // Verify system columns exist
+    assert!(row.contains_key("_seq"), "_seq column should be auto-added");
+    assert!(
+        row.contains_key("_deleted"),
+        "_deleted column should be auto-added"
+    );
 
-        // Verify _seq is a valid i64 (SeqId)
-        let seq = row.get("_seq").unwrap();
-        assert!(
-            seq.is_i64() || seq.is_u64(),
-            "_seq should be numeric (SeqId), got: {:?}",
-            seq
-        );
+    // Verify _seq is a valid i64 (SeqId)
+    let seq = row.get("_seq").unwrap();
+    assert!(
+        seq.is_i64() || seq.is_u64(),
+        "_seq should be numeric (SeqId), got: {:?}",
+        seq
+    );
 
-        // Verify _deleted defaults to false
-        assert_eq!(
-            row.get("_deleted").unwrap().as_bool(),
-            Some(false),
-            "_deleted should default to false"
-        );
-    } else {
-        panic!("Expected results with rows");
-    }
+    // Verify _deleted defaults to false
+    assert_eq!(
+        row.get("_deleted").unwrap().as_bool(),
+        Some(false),
+        "_deleted should default to false"
+    );
 
     println!("✅ T052: CREATE TABLE auto-adds _seq and _deleted system columns");
 }
@@ -246,18 +243,16 @@ async fn test_insert_storage_key_format() {
         .await;
 
     assert_eq!(response.status, ResponseStatus::Success);
-    if let Some(rows) = &response.results[0].rows {
-        assert_eq!(rows.len(), 1, "Should retrieve user table record");
-    }
+    let rows = response.results[0].rows_as_maps();
+    assert_eq!(rows.len(), 1, "Should retrieve user table record");
 
     let response = server
         .execute_sql_as_user("SELECT id, content FROM test_ns_t053.shared_data", "system")
         .await;
 
     assert_eq!(response.status, ResponseStatus::Success);
-    if let Some(rows) = &response.results[0].rows {
-        assert_eq!(rows.len(), 1, "Should retrieve shared table record");
-    }
+    let rows = response.results[0].rows_as_maps();
+    assert_eq!(rows.len(), 1, "Should retrieve shared table record");
 
     println!("✅ T053: INSERT storage key format works for user and shared tables");
 }
@@ -320,37 +315,36 @@ async fn test_user_table_row_structure() {
         .await;
 
     assert_eq!(response.status, ResponseStatus::Success);
-    if let Some(rows) = &response.results[0].rows {
-        assert_eq!(rows.len(), 1);
-        let row = &rows[0];
+    let rows = response.results[0].rows_as_maps();
+    assert_eq!(rows.len(), 1);
+    let row = &rows[0];
 
-        // Verify fields (user-defined columns in fields JSON)
-        assert!(row.contains_key("record_id"), "record_id (PK) should exist");
-        assert!(row.contains_key("title"), "title should exist");
-        assert!(row.contains_key("priority"), "priority should exist");
+    // Verify fields (user-defined columns in fields JSON)
+    assert!(row.contains_key("record_id"), "record_id (PK) should exist");
+    assert!(row.contains_key("title"), "title should exist");
+    assert!(row.contains_key("priority"), "priority should exist");
 
-        // Verify system columns
-        assert!(row.contains_key("_seq"), "_seq should exist");
-        assert!(row.contains_key("_deleted"), "_deleted should exist");
+    // Verify system columns
+    assert!(row.contains_key("_seq"), "_seq should exist");
+    assert!(row.contains_key("_deleted"), "_deleted should exist");
 
-        // Verify _seq is numeric (SeqId wrapper)
-        let seq = row.get("_seq").unwrap();
-        assert!(
-            seq.is_i64() || seq.is_u64(),
-            "_seq should be numeric, got: {:?}",
-            seq
-        );
+    // Verify _seq is numeric (SeqId wrapper)
+    let seq = row.get("_seq").unwrap();
+    assert!(
+        seq.is_i64() || seq.is_u64(),
+        "_seq should be numeric, got: {:?}",
+        seq
+    );
 
-        // Verify _deleted is boolean
-        assert_eq!(
-            row.get("_deleted").unwrap().as_bool(),
-            Some(false),
-            "_deleted should be false"
-        );
+    // Verify _deleted is boolean
+    assert_eq!(
+        row.get("_deleted").unwrap().as_bool(),
+        Some(false),
+        "_deleted should be false"
+    );
 
-        // Note: user_id is NOT exposed in query results (internal to storage key)
-        // UserTableRow structure: { user_id: UserId, _seq: SeqId, _deleted: bool, fields: JsonValue }
-    }
+    // Note: user_id is NOT exposed in query results (internal to storage key)
+    // UserTableRow structure: { user_id: UserId, _seq: SeqId, _deleted: bool, fields: JsonValue }
 
     println!("✅ T054: UserTableRow structure verified (user_id internal, _seq, _deleted, fields)");
 }
@@ -413,40 +407,39 @@ async fn test_shared_table_row_structure() {
         .await;
 
     assert_eq!(response.status, ResponseStatus::Success);
-    if let Some(rows) = &response.results[0].rows {
-        assert_eq!(rows.len(), 1);
-        let row = &rows[0];
+    let rows = response.results[0].rows_as_maps();
+    assert_eq!(rows.len(), 1);
+    let row = &rows[0];
 
-        // Verify fields (user-defined columns)
-        assert_eq!(
-            row.get("config_key").unwrap().as_str().unwrap(),
-            "feature_flag"
-        );
-        assert_eq!(row.get("value").unwrap().as_str().unwrap(), "on");
-        assert_eq!(row.get("enabled").unwrap().as_bool().unwrap(), true);
+    // Verify fields (user-defined columns)
+    assert_eq!(
+        row.get("config_key").unwrap().as_str().unwrap(),
+        "feature_flag"
+    );
+    assert_eq!(row.get("value").unwrap().as_str().unwrap(), "on");
+    assert_eq!(row.get("enabled").unwrap().as_bool().unwrap(), true);
 
-        // Verify system columns
-        assert!(row.contains_key("_seq"), "_seq should exist");
-        assert!(row.contains_key("_deleted"), "_deleted should exist");
+    // Verify system columns
+    assert!(row.contains_key("_seq"), "_seq should exist");
+    assert!(row.contains_key("_deleted"), "_deleted should exist");
 
-        // Verify NO access_level column (removed from SharedTableRow in Phase 2)
-        // access_level is now cached in schema definition, not per-row
-        assert!(
-            !row.contains_key("access_level"),
-            "access_level should NOT be in SharedTableRow (cached in schema)"
-        );
+    // Verify NO access_level column (removed from SharedTableRow in Phase 2)
+    // access_level is now cached in schema definition, not per-row
+    assert!(
+        !row.contains_key("access_level"),
+        "access_level should NOT be in SharedTableRow (cached in schema)"
+    );
 
-        // Verify _seq is numeric
-        let seq = row.get("_seq").unwrap();
-        assert!(
-            seq.is_i64() || seq.is_u64(),
-            "_seq should be numeric, got: {:?}",
-            seq
-        );
+    // Verify _seq is numeric
+    let seq = row.get("_seq").unwrap();
+    assert!(
+        seq.is_i64() || seq.is_u64(),
+        "_seq should be numeric, got: {:?}",
+        seq
+    );
 
-        // SharedTableRow structure: { _seq: SeqId, _deleted: bool, fields: JsonValue }
-        // NO user_id (not user-scoped), NO access_level (in schema cache)
-    }
+    // SharedTableRow structure: { _seq: SeqId, _deleted: bool, fields: JsonValue }
+    // NO user_id (not user-scoped), NO access_level (in schema cache)
 
     println!("✅ T055: SharedTableRow structure verified (_seq, _deleted, fields only)");
 }
@@ -532,18 +525,17 @@ async fn test_insert_duplicate_pk_rejected() {
         .await;
 
     assert_eq!(response.status, ResponseStatus::Success);
-    if let Some(rows) = &response.results[0].rows {
-        assert_eq!(
-            rows.len(),
-            1,
-            "Should only have 1 record (duplicate rejected)"
-        );
-        assert_eq!(
-            rows[0].get("name").unwrap().as_str().unwrap(),
-            "First",
-            "Original record should remain"
-        );
-    }
+    let rows = response.results[0].rows_as_maps();
+    assert_eq!(
+        rows.len(),
+        1,
+        "Should only have 1 record (duplicate rejected)"
+    );
+    assert_eq!(
+        rows[0].get("name").unwrap().as_str().unwrap(),
+        "First",
+        "Original record should remain"
+    );
 
     // Verify different PK values still work
     let response = server
@@ -627,7 +619,7 @@ async fn test_incremental_sync_seq_threshold() {
         .await;
 
     assert_eq!(response.status, ResponseStatus::Success);
-    let all_rows = response.results[0].rows.as_ref().unwrap();
+    let all_rows = response.results[0].rows_as_maps();
     assert_eq!(all_rows.len(), 3);
 
     // Get the _seq of the second record
@@ -645,20 +637,19 @@ async fn test_incremental_sync_seq_threshold() {
         .await;
 
     assert_eq!(response.status, ResponseStatus::Success);
-    if let Some(rows) = &response.results[0].rows {
-        assert_eq!(rows.len(), 1, "Should return only records after threshold");
-        assert_eq!(
-            rows[0].get("id").unwrap().as_str().unwrap(),
-            "rec3",
-            "Should return rec3 (latest)"
-        );
+    let rows = response.results[0].rows_as_maps();
+    assert_eq!(rows.len(), 1, "Should return only records after threshold");
+    assert_eq!(
+        rows[0].get("id").unwrap().as_str().unwrap(),
+        "rec3",
+        "Should return rec3 (latest)"
+    );
 
-        let returned_seq = rows[0].get("_seq").unwrap().as_i64().unwrap();
-        assert!(
-            returned_seq > threshold_seq,
-            "Returned _seq should be greater than threshold"
-        );
-    }
+    let returned_seq = rows[0].get("_seq").unwrap().as_i64().unwrap();
+    assert!(
+        returned_seq > threshold_seq,
+        "Returned _seq should be greater than threshold"
+    );
 
     println!("✅ T062: Incremental sync with WHERE _seq > X works correctly");
 }
@@ -718,17 +709,16 @@ async fn test_rocksdb_prefix_scan_user_isolation() {
         .await;
 
     assert_eq!(response.status, ResponseStatus::Success);
-    if let Some(rows) = &response.results[0].rows {
-        assert_eq!(rows.len(), 2, "User1 should only see their own 2 notes");
-        assert_eq!(
-            rows[0].get("content").unwrap().as_str().unwrap(),
-            "User1 Note 1"
-        );
-        assert_eq!(
-            rows[1].get("content").unwrap().as_str().unwrap(),
-            "User1 Note 2"
-        );
-    }
+    let rows = response.results[0].rows_as_maps();
+    assert_eq!(rows.len(), 2, "User1 should only see their own 2 notes");
+    assert_eq!(
+        rows[0].get("content").unwrap().as_str().unwrap(),
+        "User1 Note 1"
+    );
+    assert_eq!(
+        rows[1].get("content").unwrap().as_str().unwrap(),
+        "User1 Note 2"
+    );
 
     // Query as user2 (should only see user2's note)
     let response = server
@@ -739,13 +729,12 @@ async fn test_rocksdb_prefix_scan_user_isolation() {
         .await;
 
     assert_eq!(response.status, ResponseStatus::Success);
-    if let Some(rows) = &response.results[0].rows {
-        assert_eq!(rows.len(), 1, "User2 should only see their own 1 note");
-        assert_eq!(
-            rows[0].get("content").unwrap().as_str().unwrap(),
-            "User2 Note 1"
-        );
-    }
+    let rows = response.results[0].rows_as_maps();
+    assert_eq!(rows.len(), 1, "User2 should only see their own 1 note");
+    assert_eq!(
+        rows[0].get("content").unwrap().as_str().unwrap(),
+        "User2 Note 1"
+    );
 
     println!("✅ T063: RocksDB prefix scan ensures user isolation");
 }
@@ -788,7 +777,7 @@ async fn test_rocksdb_range_scan_efficiency() {
         )
         .await;
 
-    let initial_seq = response.results[0].rows.as_ref().unwrap()[0]
+    let initial_seq = response.results[0].rows_as_maps()[0]
         .get("_seq")
         .unwrap()
         .as_i64()
@@ -822,22 +811,21 @@ async fn test_rocksdb_range_scan_efficiency() {
         .await;
 
     assert_eq!(response.status, ResponseStatus::Success);
-    if let Some(rows) = &response.results[0].rows {
-        // Should return the latest version (value=3) since version resolution
-        // applies MAX(_seq) AFTER the range filter
-        assert_eq!(rows.len(), 1, "Should return 1 row (latest version)");
-        assert_eq!(
-            rows[0].get("value").unwrap().as_i64().unwrap(),
-            3,
-            "Should return latest value"
-        );
+    let rows = response.results[0].rows_as_maps();
+    // Should return the latest version (value=3) since version resolution
+    // applies MAX(_seq) AFTER the range filter
+    assert_eq!(rows.len(), 1, "Should return 1 row (latest version)");
+    assert_eq!(
+        rows[0].get("value").unwrap().as_i64().unwrap(),
+        3,
+        "Should return latest value"
+    );
 
-        let returned_seq = rows[0].get("_seq").unwrap().as_i64().unwrap();
-        assert!(
-            returned_seq > initial_seq,
-            "Returned _seq should be > initial_seq"
-        );
-    }
+    let returned_seq = rows[0].get("_seq").unwrap().as_i64().unwrap();
+    assert!(
+        returned_seq > initial_seq,
+        "Returned _seq should be > initial_seq"
+    );
 
     println!("✅ T064: RocksDB range scan with _seq > threshold works efficiently");
 }

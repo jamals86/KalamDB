@@ -71,14 +71,8 @@ fn test_datatypes_json_preservation() {
     // Parse JSON output
     let json: Value = serde_json::from_str(&output).expect("Failed to parse JSON output");
 
-    // Navigate to results[0].rows[0]
-    // Structure is typically: { "results": [ { "rows": [ { "col_name": value, ... } ] } ] }
-    let rows = json
-        .get("results")
-        .and_then(|v| v.as_array())
-        .and_then(|arr| arr.first())
-        .and_then(|res| res.get("rows"))
-        .and_then(|v| v.as_array())
+    // Navigate to results[0].rows[0] using the new schema-based format
+    let rows = get_rows_as_hashmaps(&json)
         .expect("Failed to get rows from JSON response");
 
     assert!(!rows.is_empty(), "Should return at least one row");

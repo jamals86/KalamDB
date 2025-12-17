@@ -11,7 +11,7 @@
 #[path = "integration/common/mod.rs"]
 mod common;
 
-use common::{fixtures, flush_helpers, TestServer};
+use common::{fixtures, flush_helpers, QueryResultTestExt, TestServer};
 use kalamdb_api::models::ResponseStatus;
 
 /// Test ALTER TABLE ADD COLUMN after flushing data to cold storage
@@ -110,24 +110,21 @@ async fn test_alter_table_add_column_after_flush() {
     );
     
     // Verify we can read flushed data with new schema
-    if let Some(rows) = &resp.results[0].rows {
-        assert_eq!(rows.len(), 3, "Should read all 3 flushed rows");
-        
-        // Check first row (old data from cold storage)
-        assert_eq!(rows[0].get("id").unwrap().as_str().unwrap(), "msg1");
-        assert_eq!(rows[0].get("content").unwrap().as_str().unwrap(), "Hello World");
-        assert_eq!(rows[0].get("timestamp").unwrap().as_i64().unwrap(), 1000);
-        
-        // New column should be NULL for old data
-        assert!(
-            rows[0].get("priority").unwrap().is_null(),
-            "Priority should be NULL for flushed data"
-        );
-        
-        println!("✅ Successfully queried flushed data with new schema");
-    } else {
-        panic!("Expected rows in query result");
-    }
+    let rows = resp.results[0].rows_as_maps();
+    assert_eq!(rows.len(), 3, "Should read all 3 flushed rows");
+    
+    // Check first row (old data from cold storage)
+    assert_eq!(rows[0].get("id").unwrap().as_str().unwrap(), "msg1");
+    assert_eq!(rows[0].get("content").unwrap().as_str().unwrap(), "Hello World");
+    assert_eq!(rows[0].get("timestamp").unwrap().as_i64().unwrap(), 1000);
+    
+    // New column should be NULL for old data
+    assert!(
+        rows[0].get("priority").unwrap().is_null(),
+        "Priority should be NULL for flushed data"
+    );
+    
+    println!("✅ Successfully queried flushed data with new schema");
     
     // Step 6: Insert new rows with new column
     let insert_new_sql = format!(
@@ -156,45 +153,42 @@ async fn test_alter_table_add_column_after_flush() {
         resp.error
     );
     
-    if let Some(rows) = &resp.results[0].rows {
-        assert_eq!(rows.len(), 5, "Should have 5 total rows (3 old + 2 new)");
-        
-        // Verify old rows still have NULL priority
-        for i in 0..3 {
-            assert!(
-                rows[i].get("priority").unwrap().is_null(),
-                "Old row {} should have NULL priority",
-                i
-            );
-        }
-        
-        // Verify new rows have priority values
-        assert_eq!(
-            rows[3].get("id").unwrap().as_str().unwrap(),
-            "msg4",
-            "Row 4 should be msg4"
+    let rows = resp.results[0].rows_as_maps();
+    assert_eq!(rows.len(), 5, "Should have 5 total rows (3 old + 2 new)");
+    
+    // Verify old rows still have NULL priority
+    for i in 0..3 {
+        assert!(
+            rows[i].get("priority").unwrap().is_null(),
+            "Old row {} should have NULL priority",
+            i
         );
-        assert_eq!(
-            rows[3].get("priority").unwrap().as_i64().unwrap(),
-            1,
-            "msg4 should have priority 1"
-        );
-        
-        assert_eq!(
-            rows[4].get("id").unwrap().as_str().unwrap(),
-            "msg5",
-            "Row 5 should be msg5"
-        );
-        assert_eq!(
-            rows[4].get("priority").unwrap().as_i64().unwrap(),
-            3,
-            "msg5 should have priority 3"
-        );
-        
-        println!("✅ All rows returned with correct schema including new column");
-    } else {
-        panic!("Expected rows in final query result");
     }
+    
+    // Verify new rows have priority values
+    assert_eq!(
+        rows[3].get("id").unwrap().as_str().unwrap(),
+        "msg4",
+        "Row 4 should be msg4"
+    );
+    assert_eq!(
+        rows[3].get("priority").unwrap().as_i64().unwrap(),
+        1,
+        "msg4 should have priority 1"
+    );
+    
+    assert_eq!(
+        rows[4].get("id").unwrap().as_str().unwrap(),
+        "msg5",
+        "Row 5 should be msg5"
+    );
+    assert_eq!(
+        rows[4].get("priority").unwrap().as_i64().unwrap(),
+        3,
+        "msg5 should have priority 3"
+    );
+    
+    println!("✅ All rows returned with correct schema including new column");
     
     // Bonus: Verify explicit column selection works
     let explicit_select = format!(
@@ -205,13 +199,12 @@ async fn test_alter_table_add_column_after_flush() {
     let resp = server.execute_sql_as_user(&explicit_select, "user1").await;
     assert_eq!(resp.status, ResponseStatus::Success);
     
-    if let Some(rows) = &resp.results[0].rows {
-        assert_eq!(
-            rows.len(),
-            2,
-            "Should find 2 rows with non-NULL priority"
-        );
-    }
+    let rows = resp.results[0].rows_as_maps();
+    assert_eq!(
+        rows.len(),
+        2,
+        "Should find 2 rows with non-NULL priority"
+    );
     
     println!("✅ Test passed: ALTER TABLE after flush with mixed schema data");
 }
@@ -318,25 +311,22 @@ async fn test_multiple_alter_operations_with_flushes() {
     
     assert_eq!(resp.status, ResponseStatus::Success);
     
-    if let Some(rows) = &resp.results[0].rows {
-        assert_eq!(rows.len(), 3, "Should have 3 events across schema versions");
-        
-        // e1: Original schema (both new columns NULL)
-        assert!(rows[0].get("user_id").unwrap().is_null());
-        assert!(rows[0].get("timestamp").unwrap().is_null());
-        
-        // e2: First ALTER (user_id present, timestamp NULL)
-        assert_eq!(rows[1].get("user_id").unwrap().as_str().unwrap(), "user123");
-        assert!(rows[1].get("timestamp").unwrap().is_null());
-        
-        // e3: Second ALTER (both columns present)
-        assert_eq!(rows[2].get("user_id").unwrap().as_str().unwrap(), "user456");
-        assert_eq!(rows[2].get("timestamp").unwrap().as_i64().unwrap(), 9999);
-        
-        println!("✅ Successfully queried data across 3 schema versions");
-    } else {
-        panic!("Expected rows in result");
-    }
+    let rows = resp.results[0].rows_as_maps();
+    assert_eq!(rows.len(), 3, "Should have 3 events across schema versions");
+    
+    // e1: Original schema (both new columns NULL)
+    assert!(rows[0].get("user_id").unwrap().is_null());
+    assert!(rows[0].get("timestamp").unwrap().is_null());
+    
+    // e2: First ALTER (user_id present, timestamp NULL)
+    assert_eq!(rows[1].get("user_id").unwrap().as_str().unwrap(), "user123");
+    assert!(rows[1].get("timestamp").unwrap().is_null());
+    
+    // e3: Second ALTER (both columns present)
+    assert_eq!(rows[2].get("user_id").unwrap().as_str().unwrap(), "user456");
+    assert_eq!(rows[2].get("timestamp").unwrap().as_i64().unwrap(), 9999);
+    
+    println!("✅ Successfully queried data across 3 schema versions");
     
     println!("✅ Test passed: Multiple ALTER operations with flushes");
 }

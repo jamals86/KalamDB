@@ -5,7 +5,7 @@
 #![cfg(feature = "wasm")]
 
 use crate::models::{
-    ClientMessage, ConnectionOptions, QueryRequest, SerializationMode, ServerMessage, SubscriptionOptions,
+    ClientMessage, ConnectionOptions, QueryRequest, ServerMessage, SubscriptionOptions,
     SubscriptionRequest, WsAuthCredentials,
 };
 use crate::seq_id::SeqId;
@@ -1074,12 +1074,11 @@ impl KalamClient {
         }
         opts.set_headers(&headers);
 
-        // Set body - always use typed mode for kalam-link SDK
+        // Set body
         let body = QueryRequest {
             sql: sql.to_string(),
             params,
             namespace_id: None,
-            serialization_mode: SerializationMode::Typed,
         };
         let body_str = serde_json::to_string(&body)
             .map_err(|e| JsValue::from_str(&format!("Serialization error: {}", e)))?;

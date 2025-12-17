@@ -13,37 +13,23 @@ fn extract_first_id_from_json(json_output: &str) -> Option<String> {
     // Parse JSON response and extract the first id value
     // Handles both number and string IDs (large integers are serialized as strings for JS safety)
     let value: serde_json::Value = serde_json::from_str(json_output).ok()?;
-    value
-        .get("results")
-        .and_then(|v| v.as_array())
-        .and_then(|arr| arr.first())
-        .and_then(|res| res.get("rows"))
-        .and_then(|v| v.as_array())
-        .and_then(|rows| rows.first())
-        .and_then(|row| {
-            let id_value = extract_typed_value(row.get("id")?);
-            json_value_as_id(&id_value)
-        })
+    let rows = get_rows_as_hashmaps(&value)?;
+    let first_row = rows.first()?;
+    let id_value = extract_typed_value(first_row.get("id")?);
+    json_value_as_id(&id_value)
 }
 
 // reserved: count extractor kept for potential future stricter checks
 #[allow(dead_code)]
 fn extract_single_count_from_json(json_output: &str) -> Option<i64> {
     let value: serde_json::Value = serde_json::from_str(json_output).ok()?;
-    value
-        .get("results")
-        .and_then(|v| v.as_array())
-        .and_then(|arr| arr.first())
-        .and_then(|res| res.get("rows"))
-        .and_then(|v| v.as_array())
-        .and_then(|rows| rows.first())
-        .and_then(|row| {
-            // Try to find a count-like field
-            row.get("count")
-                .or_else(|| row.get("total"))
-                .or_else(|| row.get("total_count"))
-                .and_then(|v| v.as_i64())
-        })
+    let rows = get_rows_as_hashmaps(&value)?;
+    let first_row = rows.first()?;
+    // Try to find a count-like field
+    first_row.get("count")
+        .or_else(|| first_row.get("total"))
+        .or_else(|| first_row.get("total_count"))
+        .and_then(|v| v.as_i64())
 }
 
 fn run_dml_sequence(full: &str, _is_shared: bool) {

@@ -5,7 +5,7 @@
 #[path = "integration/common/mod.rs"]
 mod common;
 
-use common::{fixtures, TestServer};
+use common::{fixtures, QueryResultTestExt, TestServer};
 use kalamdb_api::models::ResponseStatus;
 use kalamdb_commons::models::{AuthType, Role, StorageMode, UserId, UserName};
 
@@ -134,10 +134,7 @@ async fn test_service_role_cross_user_access() {
         "service select should succeed"
     );
 
-    let rows = resp.results[0]
-        .rows
-        .as_ref()
-        .expect("select should return rows");
+    let rows = resp.results[0].rows_as_maps();
     let contents: std::collections::HashSet<_> = rows
         .iter()
         .filter_map(|row| row.get("content").and_then(|v| v.as_str()))

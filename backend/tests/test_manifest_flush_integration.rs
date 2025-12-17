@@ -25,6 +25,42 @@ fn create_test_service() -> (ManifestService, TempDir) {
     let service = ManifestService::new(backend, temp_dir.path().to_string_lossy().to_string());
     // Initialize a test AppContext for SchemaRegistry and providers (used by ManifestService)
     kalamdb_core::test_helpers::init_test_app_context();
+    
+    // Register "local" storage required by flush operations
+    {
+        use kalamdb_commons::models::StorageType;
+        use kalamdb_commons::types::Storage;
+        use kalamdb_commons::StorageId;
+        
+        let app_ctx = kalamdb_core::app_context::AppContext::get();
+        let storages_provider = app_ctx.system_tables().storages();
+        let storage_id = StorageId::new("local");
+        
+        if storages_provider
+            .get_storage_by_id(&storage_id)
+            .ok()
+            .flatten()
+            .is_none()
+        {
+            let now = chrono::Utc::now().timestamp_millis();
+            let base_path = temp_dir.path().to_string_lossy().to_string();
+            let default_storage = Storage {
+                storage_id: storage_id.clone(),
+                storage_name: "Local Filesystem".to_string(),
+                description: Some("Default local filesystem storage".to_string()),
+                storage_type: StorageType::Filesystem,
+                base_directory: base_path,
+                credentials: None,
+                config_json: None,
+                shared_tables_template: "shared/{namespace}/{tableName}".to_string(),
+                user_tables_template: "users/{userId}/tables/{namespace}/{tableName}".to_string(),
+                created_at: now,
+                updated_at: now,
+            };
+            let _ = storages_provider.insert_storage(default_storage);
+        }
+    }
+    
     // Register minimal table definitions required for these tests
     {
         use kalamdb_commons::models::schemas::TableType;
@@ -70,6 +106,7 @@ fn create_test_service() -> (ManifestService, TempDir) {
             let mut cached = CachedTableData::new(StdArc::new(table_def.clone()));
             let storage_template = format!("{}/{}/{}", base_dir, ns, name);
             cached.storage_path_template = storage_template.clone();
+            cached.storage_id = Some(kalamdb_commons::StorageId::new("local"));
             // Ensure directories exist
             let _ = std::fs::create_dir_all(&storage_template);
             schema_registry.insert(table_id, StdArc::new(cached));

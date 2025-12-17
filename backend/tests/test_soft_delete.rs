@@ -9,7 +9,7 @@
 #[path = "integration/common/mod.rs"]
 mod common;
 
-use common::{fixtures, TestServer};
+use common::{fixtures, QueryResultTestExt, TestServer};
 use kalamdb_api::models::ResponseStatus;
 
 #[actix_web::test]
@@ -55,9 +55,7 @@ async fn test_soft_delete_hides_rows() {
         .await;
 
     assert_eq!(response.status, ResponseStatus::Success);
-    if let Some(rows) = &response.results[0].rows {
-        assert_eq!(rows.len(), 2, "Should have 2 tasks");
-    }
+    assert_eq!(response.results[0].rows.as_ref().map(|r| r.len()).unwrap_or(0), 2, "Should have 2 tasks");
 
     // Delete task1 (soft delete)
     let response = server
@@ -77,14 +75,13 @@ async fn test_soft_delete_hides_rows() {
         .await;
 
     assert_eq!(response.status, ResponseStatus::Success);
-    if let Some(rows) = &response.results[0].rows {
-        assert_eq!(rows.len(), 1, "Should only see 1 task after soft delete");
-        assert_eq!(
-            rows[0].get("id").unwrap().as_str().unwrap(),
-            "task2",
-            "Only task2 should be visible"
-        );
-    }
+    let rows = response.results[0].rows_as_maps();
+    assert_eq!(rows.len(), 1, "Should only see 1 task after soft delete");
+    assert_eq!(
+        rows[0].get("id").unwrap().as_str().unwrap(),
+        "task2",
+        "Only task2 should be visible"
+    );
 
     println!("✅ Soft delete hides rows from SELECT");
 }
@@ -134,13 +131,11 @@ async fn test_soft_delete_preserves_data() {
 
     // Note: The soft delete filter is applied before projection, so deleted rows won't appear
     // This is the expected behavior - soft deleted rows are hidden even when selecting _deleted
-    if let Some(rows) = &response.results[0].rows {
-        assert_eq!(
-            rows.len(),
-            0,
-            "Soft deleted rows should be filtered out automatically"
-        );
-    }
+    assert_eq!(
+        response.results[0].rows.as_ref().map(|r| r.len()).unwrap_or(0),
+        0,
+        "Soft deleted rows should be filtered out automatically"
+    );
 
     println!("✅ Soft delete preserves data (hidden from queries)");
 }
@@ -179,16 +174,15 @@ async fn test_deleted_field_default_false() {
         .await;
 
     assert_eq!(response.status, ResponseStatus::Success);
-    if let Some(rows) = &response.results[0].rows {
-        assert_eq!(rows.len(), 1);
+    let rows = response.results[0].rows_as_maps();
+    assert_eq!(rows.len(), 1);
 
-        let deleted_value = rows[0].get("_deleted").unwrap().as_bool();
-        assert_eq!(
-            deleted_value,
-            Some(false),
-            "_deleted should default to false for new rows"
-        );
-    }
+    let deleted_value = rows[0].get("_deleted").unwrap().as_bool();
+    assert_eq!(
+        deleted_value,
+        Some(false),
+        "_deleted should default to false for new rows"
+    );
 
     println!("✅ _deleted field defaults to false");
 }
@@ -240,16 +234,15 @@ async fn test_multiple_deletes() {
         .await;
 
     assert_eq!(response.status, ResponseStatus::Success);
-    if let Some(rows) = &response.results[0].rows {
-        assert_eq!(rows.len(), 3, "Should have 3 tasks after deleting 2");
+    let rows = response.results[0].rows_as_maps();
+    assert_eq!(rows.len(), 3, "Should have 3 tasks after deleting 2");
 
-        let ids: Vec<&str> = rows
-            .iter()
-            .map(|r| r.get("id").unwrap().as_str().unwrap())
-            .collect();
+    let ids: Vec<&str> = rows
+        .iter()
+        .map(|r| r.get("id").unwrap().as_str().unwrap())
+        .collect();
 
-        assert_eq!(ids, vec!["task1", "task3", "task5"]);
-    }
+    assert_eq!(ids, vec!["task1", "task3", "task5"]);
 
     println!("✅ Multiple soft deletes work correctly");
 }
@@ -312,10 +305,9 @@ async fn test_delete_with_where_clause() {
         .await;
 
     assert_eq!(response.status, ResponseStatus::Success);
-    if let Some(rows) = &response.results[0].rows {
-        assert_eq!(rows.len(), 1, "Should have 1 task after conditional delete");
-        assert_eq!(rows[0].get("id").unwrap().as_str().unwrap(), "task2");
-    }
+    let rows = response.results[0].rows_as_maps();
+    assert_eq!(rows.len(), 1, "Should have 1 task after conditional delete");
+    assert_eq!(rows[0].get("id").unwrap().as_str().unwrap(), "task2");
 
     println!("✅ DELETE with WHERE clause works correctly");
 }
@@ -358,10 +350,9 @@ async fn test_count_excludes_deleted_rows() {
         .await;
 
     assert_eq!(response.status, ResponseStatus::Success);
-    if let Some(rows) = &response.results[0].rows {
-        let count = rows[0].get("count").unwrap().as_i64().unwrap();
-        assert_eq!(count, 5, "Should count 5 tasks before delete");
-    }
+    let rows = response.results[0].rows_as_maps();
+    let count = rows[0].get("count").unwrap().as_i64().unwrap();
+    assert_eq!(count, 5, "Should count 5 tasks before delete");
 
     // Delete 2 tasks
     server
@@ -377,10 +368,9 @@ async fn test_count_excludes_deleted_rows() {
         .await;
 
     assert_eq!(response.status, ResponseStatus::Success);
-    if let Some(rows) = &response.results[0].rows {
-        let count = rows[0].get("count").unwrap().as_i64().unwrap();
-        assert_eq!(count, 3, "Should count 3 tasks after soft delete");
-    }
+    let rows = response.results[0].rows_as_maps();
+    let count = rows[0].get("count").unwrap().as_i64().unwrap();
+    assert_eq!(count, 3, "Should count 3 tasks after soft delete");
 
     println!("✅ COUNT excludes soft deleted rows");
 }

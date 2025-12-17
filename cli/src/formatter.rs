@@ -86,28 +86,20 @@ impl OutputFormatter {
 
         // Handle data results
         if let Some(ref rows) = result.rows {
-            // Always respect server-provided column order (from kalam-link)
-            // Fall back to deterministic alphabetical order if missing.
-            let columns: Vec<String> = if !result.columns.is_empty() {
-                result.columns.clone()
-            } else if rows.is_empty() {
-                vec![]
-            } else {
-                let mut cols: Vec<String> = rows[0].keys().cloned().collect();
-                cols.sort();
-                cols
-            };
+            // Get column names from schema
+            let columns: Vec<String> = result.column_names();
 
             let terminal_width = Self::get_terminal_width();
 
             // Precompute string values once to avoid double formatting
+            // Rows are now arrays of values ordered by schema index
             let mut string_rows: Vec<Vec<String>> = Vec::with_capacity(rows.len());
             let mut col_widths: Vec<usize> = columns.iter().map(|c| c.len()).collect();
             for row in rows {
                 let mut srow: Vec<String> = Vec::with_capacity(columns.len());
-                for (i, col) in columns.iter().enumerate() {
+                for (i, _col) in columns.iter().enumerate() {
                     let value = row
-                        .get(col)
+                        .get(i)
                         .map(|v| self.format_json_value(v))
                         .unwrap_or_else(|| "NULL".to_string());
                     col_widths[i] = col_widths[i].max(value.len());
@@ -268,14 +260,8 @@ impl OutputFormatter {
             return Ok("".to_string());
         }
 
-        // Extract columns (prefer server-provided order)
-        let columns: Vec<String> = if !result.columns.is_empty() {
-            result.columns.clone()
-        } else {
-            let mut cols: Vec<String> = rows[0].keys().cloned().collect();
-            cols.sort();
-            cols
-        };
+        // Extract columns from schema
+        let columns: Vec<String> = result.column_names();
 
         // Build CSV
         let mut output = columns.join(",") + "\n";
@@ -283,8 +269,9 @@ impl OutputFormatter {
         for row in rows {
             let values: Vec<String> = columns
                 .iter()
-                .map(|col| {
-                    row.get(col)
+                .enumerate()
+                .map(|(i, _col)| {
+                    row.get(i)
                         .map(|v| self.format_csv_value(v))
                         .unwrap_or_else(|| "".to_string())
                 })

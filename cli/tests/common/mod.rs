@@ -82,6 +82,58 @@ pub fn extract_arrow_value(value: &serde_json::Value) -> Option<serde_json::Valu
     None
 }
 
+/// Convert array-based rows to HashMap-based rows using the schema.
+///
+/// The new API format returns `schema: [{name, data_type, index}, ...]` and `rows: [[val1, val2], ...]`.
+/// This helper converts to the old format where each row is a `{col_name: value}` HashMap.
+///
+/// # Arguments
+/// * `result` - A single query result from the API (one element from the `results` array)
+///
+/// # Returns
+/// A vector of HashMap rows, or None if the result doesn't have the expected structure.
+pub fn rows_as_hashmaps(result: &serde_json::Value) -> Option<Vec<std::collections::HashMap<String, serde_json::Value>>> {
+    use serde_json::Value;
+    use std::collections::HashMap;
+    
+    // Extract schema - array of {name, data_type, index}
+    let schema = result.get("schema")?.as_array()?;
+    
+    // Build column name list from schema
+    let column_names: Vec<&str> = schema
+        .iter()
+        .filter_map(|col| col.get("name")?.as_str())
+        .collect();
+    
+    // Extract rows - array of arrays
+    let rows = result.get("rows")?.as_array()?;
+    
+    // Convert each row array to a HashMap
+    let result: Vec<HashMap<String, Value>> = rows
+        .iter()
+        .filter_map(|row| {
+            let row_arr = row.as_array()?;
+            let mut map = HashMap::new();
+            for (i, col_name) in column_names.iter().enumerate() {
+                if let Some(val) = row_arr.get(i) {
+                    map.insert(col_name.to_string(), val.clone());
+                }
+            }
+            Some(map)
+        })
+        .collect();
+    
+    Some(result)
+}
+
+/// Get rows from API response as HashMaps.
+///
+/// Convenience function that extracts `results[0]` and converts its rows to HashMaps.
+pub fn get_rows_as_hashmaps(json: &serde_json::Value) -> Option<Vec<std::collections::HashMap<String, serde_json::Value>>> {
+    let first_result = json.get("results")?.as_array()?.first()?;
+    rows_as_hashmaps(first_result)
+}
+
 /// Check if the KalamDB server is running
 pub fn is_server_running() -> bool {
     // Simple TCP connection check
@@ -507,18 +559,22 @@ pub fn execute_sql_via_client_as_with_args(
                         // DML statements: show "N rows affected"
                         output.push_str(&format!("{} rows affected\n", result.row_count));
                     } else {
+                        // Get column names from schema
+                        let columns: Vec<String> = result.column_names();
+                        
                         // Add column headers
-                        if !result.columns.is_empty() {
-                            output.push_str(&result.columns.join(" | "));
+                        if !columns.is_empty() {
+                            output.push_str(&columns.join(" | "));
                             output.push('\n');
                         }
                         
                         // Add rows (rows is Option<Vec<...>>)
                         if let Some(ref rows) = result.rows {
                             for row in rows {
-                                let row_str: Vec<String> = result.columns.iter()
-                                    .map(|col| {
-                                        row.get(col)
+                                let row_str: Vec<String> = columns.iter()
+                                    .enumerate()
+                                    .map(|(i, _col)| {
+                                        row.get(i)
                                             .map(|v| match v {
                                                 serde_json::Value::String(s) => s.clone(),
                                                 serde_json::Value::Null => "NULL".to_string(),
@@ -924,22 +980,17 @@ pub fn verify_job_completed(
                     .and_then(|arr| arr.first());
 
                 if let Some(row) = row {
-                    // Extract status from Arrow JSON format (e.g., {"Utf8": "completed"})
-                    let status = row
-                        .get("status")
-                        .and_then(|v| {
-                            // Check if it's a nested object with Utf8 field
-                            v.get("Utf8").and_then(|s| s.as_str())
-                                .or_else(|| v.as_str()) // Fallback to direct string
-                        })
+                    // Rows are arrays: [job_id, status, error_message] (indices 0, 1, 2)
+                    let row_arr = row.as_array();
+                    
+                    let status = row_arr
+                        .and_then(|arr| arr.get(1))
+                        .map(|v| v.as_str().unwrap_or(""))
                         .unwrap_or("");
 
-                    let error_message = row
-                        .get("error_message")
-                        .and_then(|v| {
-                            v.get("Utf8").and_then(|s| s.as_str())
-                                .or_else(|| v.as_str())
-                        })
+                    let error_message = row_arr
+                        .and_then(|arr| arr.get(2))
+                        .map(|v| v.as_str().unwrap_or(""))
                         .unwrap_or("");
 
                     if status.eq_ignore_ascii_case("completed") {

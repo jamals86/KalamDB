@@ -2,6 +2,10 @@
 //!
 //! This module centralizes column ordering rules so that both the CLI and SDKs
 //! (which consume kalam-link) get consistent column orders for known result sets.
+//!
+//! Note: With the new schema-based format, column ordering is determined by the
+//! server and reflected in the schema's index field. This normalization is now
+//! primarily for display purposes and doesn't reorder actual row data.
 
 use crate::models::QueryResponse;
 
@@ -51,19 +55,29 @@ fn sort_columns(columns: &[String], preferred: &[&str]) -> Vec<String> {
 }
 
 /// Normalize a QueryResponse's column orders based on the SQL and known schemas.
+///
+/// Note: With the new array-based row format, rows are already ordered by schema index.
+/// This function provides backward compatibility but may be deprecated in favor of
+/// server-side ordering via schema.
 pub fn normalize_query_response(sql: &str, resp: &mut QueryResponse) {
     for result in &mut resp.results {
-        let cols = &result.columns;
+        // Get column names from schema
+        let cols: Vec<String> = result.column_names();
         if cols.is_empty() {
             continue;
         }
 
         // Prefer SQL hint, but fall back to column shape heuristic
         let is_system_tables =
-            sql.to_lowercase().contains("from system.tables") || looks_like_system_tables(cols);
+            sql.to_lowercase().contains("from system.tables") || looks_like_system_tables(&cols);
 
         if is_system_tables {
-            result.columns = sort_columns(cols, SYSTEM_TABLES_ORDER);
+            // Note: With the new format, schema ordering is controlled by the server.
+            // Reordering here would require reordering both schema and row arrays.
+            // For now, we just log that normalization would be applied.
+            // In the future, the server should return properly ordered results.
+            let _preferred_order = sort_columns(&cols, SYSTEM_TABLES_ORDER);
+            // TODO: If needed, reorder schema and row data to match preferred order
         }
     }
 }

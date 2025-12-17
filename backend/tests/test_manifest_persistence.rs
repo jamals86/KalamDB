@@ -10,7 +10,7 @@
 #[path = "integration/common/mod.rs"]
 mod common;
 
-use common::{fixtures, flush_helpers, TestServer};
+use common::{fixtures, flush_helpers, QueryResultTestExt, TestServer};
 use kalamdb_api::models::ResponseStatus;
 use std::path::PathBuf;
 
@@ -186,11 +186,10 @@ async fn test_manifest_persistence_lifecycle() {
         query_response.error
     );
 
-    if let Some(rows) = &query_response.results[0].rows {
-        assert_eq!(rows.len(), 2, "Should return 2 rows after flush");
-        assert_eq!(rows[0].get("id").unwrap().as_str().unwrap(), "evt1");
-        assert_eq!(rows[1].get("id").unwrap().as_str().unwrap(), "evt2");
-    }
+    let rows = query_response.results[0].rows_as_maps();
+    assert_eq!(rows.len(), 2, "Should return 2 rows after flush");
+    assert_eq!(rows[0].get("id").unwrap().as_str().unwrap(), "evt1");
+    assert_eq!(rows[1].get("id").unwrap().as_str().unwrap(), "evt2");
 
     println!("✅ T014: Manifest persistence lifecycle test passed");
 }
@@ -253,11 +252,10 @@ async fn test_manifest_reload_from_disk() {
         query_response.error
     );
 
-    if let Some(rows) = &query_response.results[0].rows {
-        assert_eq!(rows.len(), 1);
-        assert_eq!(rows[0].get("metric_name").unwrap().as_str().unwrap(), "cpu_usage");
-        assert!((rows[0].get("value").unwrap().as_f64().unwrap() - 45.5).abs() < 0.01);
-    }
+    let rows = query_response.results[0].rows_as_maps();
+    assert_eq!(rows.len(), 1);
+    assert_eq!(rows[0].get("metric_name").unwrap().as_str().unwrap(), "cpu_usage");
+    assert!((rows[0].get("value").unwrap().as_f64().unwrap() - 45.5).abs() < 0.01);
 
     println!("✅ T014b: Manifest reload from disk test passed");
 }

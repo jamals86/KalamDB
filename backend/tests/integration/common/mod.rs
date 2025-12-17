@@ -46,12 +46,43 @@ use kalamdb_commons::UserId;
 use kalamdb_core::app_context::AppContext;
 use kalamdb_core::sql::executor::SqlExecutor;
 use kalamdb_store::{RocksDBBackend, StorageBackend};
+use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::Arc;
 use tempfile::TempDir;
 
 pub mod fixtures;
 pub mod websocket;
+
+/// Extension trait for QueryResult to provide test-friendly row access
+pub trait QueryResultTestExt {
+    /// Get a row as a HashMap by row index (converts array format to map)
+    fn row_as_map(&self, row_idx: usize) -> Option<HashMap<String, serde_json::Value>>;
+    
+    /// Get all rows as HashMaps (converts array format to maps)
+    fn rows_as_maps(&self) -> Vec<HashMap<String, serde_json::Value>>;
+}
+
+impl QueryResultTestExt for QueryResult {
+    fn row_as_map(&self, row_idx: usize) -> Option<HashMap<String, serde_json::Value>> {
+        let row = self.rows.as_ref()?.get(row_idx)?;
+        let mut map = HashMap::new();
+        for (i, field) in self.schema.iter().enumerate() {
+            if let Some(value) = row.get(i) {
+                map.insert(field.name.clone(), value.clone());
+            }
+        }
+        Some(map)
+    }
+    
+    fn rows_as_maps(&self) -> Vec<HashMap<String, serde_json::Value>> {
+        let Some(rows) = &self.rows else { return vec![] };
+        rows.iter()
+            .enumerate()
+            .filter_map(|(i, _)| self.row_as_map(i))
+            .collect()
+    }
+}
 
 /// Test server instance with full KalamDB stack.
 ///
@@ -445,9 +476,9 @@ impl TestServer {
                     ExecutionResult::Success { message } => SqlResponse {
                         status: ResponseStatus::Success,
                         results: vec![QueryResult {
+                            schema: vec![],
                             rows: None,
                             row_count: 0,
-                            columns: vec![],
                             message: Some(message),
                         }],
                         took: 0.0,
@@ -458,9 +489,9 @@ impl TestServer {
                             SqlResponse {
                                 status: ResponseStatus::Success,
                                 results: vec![QueryResult {
+                                    schema: vec![],
                                     rows: Some(vec![]),
                                     row_count: 0,
-                                    columns: vec![],
                                     message: None,
                                 }],
                                 took: 0.0,
@@ -484,16 +515,19 @@ impl TestServer {
                         channel,
                         select_query: _,
                     } => {
-                        let mut row = std::collections::HashMap::new();
-                        row.insert(
-                            "subscription_id".to_string(),
+                        use kalamdb_commons::models::datatypes::KalamDataType;
+                        use kalamdb_commons::schemas::SchemaField;
+                        let row = vec![
                             serde_json::Value::String(subscription_id),
-                        );
-                        row.insert("channel".to_string(), serde_json::Value::String(channel));
+                            serde_json::Value::String(channel),
+                        ];
                         let query_result = QueryResult {
+                            schema: vec![
+                                SchemaField::new("subscription_id", KalamDataType::Text, 0),
+                                SchemaField::new("channel", KalamDataType::Text, 1),
+                            ],
                             rows: Some(vec![row]),
                             row_count: 1,
-                            columns: vec!["subscription_id".to_string(), "channel".to_string()],
                             message: None,
                         };
                         SqlResponse {
@@ -513,9 +547,9 @@ impl TestServer {
                         SqlResponse {
                             status: ResponseStatus::Success,
                             results: vec![QueryResult {
+                                schema: vec![],
                                 rows: None,
                                 row_count: rows_affected,
-                                columns: vec![],
                                 message: Some(format!("{} row(s) affected", rows_affected)),
                             }],
                             took: 0.0,
@@ -525,44 +559,48 @@ impl TestServer {
                     ExecutionResult::Flushed {
                         tables,
                         bytes_written,
-                    } => SqlResponse {
-                        status: ResponseStatus::Success,
-                        results: vec![QueryResult {
-                            rows: Some(vec![{
-                                let mut m = std::collections::HashMap::new();
-                                m.insert(
-                                    "tables".to_string(),
+                    } => {
+                        use kalamdb_commons::models::datatypes::KalamDataType;
+                        use kalamdb_commons::schemas::SchemaField;
+                        SqlResponse {
+                            status: ResponseStatus::Success,
+                            results: vec![QueryResult {
+                                schema: vec![
+                                    SchemaField::new("tables", KalamDataType::Text, 0),
+                                    SchemaField::new("bytes_written", KalamDataType::BigInt, 1),
+                                ],
+                                rows: Some(vec![vec![
                                     serde_json::Value::String(tables.join(",")),
-                                );
-                                m.insert(
-                                    "bytes_written".to_string(),
                                     serde_json::Value::Number(bytes_written.into()),
-                                );
-                                m
-                            }]),
-                            row_count: tables.len(),
-                            columns: vec!["tables".to_string(), "bytes_written".to_string()],
-                            message: None,
-                        }],
-                        took: 0.0,
-                        error: None,
-                    },
-                    ExecutionResult::JobKilled { job_id, status } => SqlResponse {
-                        status: ResponseStatus::Success,
-                        results: vec![QueryResult {
-                            rows: Some(vec![{
-                                let mut m = std::collections::HashMap::new();
-                                m.insert("job_id".to_string(), serde_json::Value::String(job_id));
-                                m.insert("status".to_string(), serde_json::Value::String(status));
-                                m
-                            }]),
-                            row_count: 1,
-                            columns: vec!["job_id".to_string(), "status".to_string()],
-                            message: None,
-                        }],
-                        took: 0.0,
-                        error: None,
-                    },
+                                ]]),
+                                row_count: tables.len(),
+                                message: None,
+                            }],
+                            took: 0.0,
+                            error: None,
+                        }
+                    }
+                    ExecutionResult::JobKilled { job_id, status } => {
+                        use kalamdb_commons::models::datatypes::KalamDataType;
+                        use kalamdb_commons::schemas::SchemaField;
+                        SqlResponse {
+                            status: ResponseStatus::Success,
+                            results: vec![QueryResult {
+                                schema: vec![
+                                    SchemaField::new("job_id", KalamDataType::Text, 0),
+                                    SchemaField::new("status", KalamDataType::Text, 1),
+                                ],
+                                rows: Some(vec![vec![
+                                    serde_json::Value::String(job_id),
+                                    serde_json::Value::String(status),
+                                ]]),
+                                row_count: 1,
+                                message: None,
+                            }],
+                            took: 0.0,
+                            error: None,
+                        }
+                    }
                 }
             }
             Err(kalamdb_core::error::KalamDbError::InvalidSql(_)) => {
@@ -576,9 +614,9 @@ impl TestServer {
                                 SqlResponse {
                                     status: ResponseStatus::Success,
                                     results: vec![QueryResult {
+                                        schema: vec![],
                                         rows: Some(vec![]),
                                         row_count: 0,
-                                        columns: vec![],
                                         message: None,
                                     }],
                                     took: 0.0,
@@ -646,21 +684,37 @@ fn record_batch_to_query_result(
 ) -> kalamdb_api::models::QueryResult {
     use datafusion::arrow::array::*;
     use datafusion::arrow::datatypes::DataType;
-    use std::collections::HashMap;
+    use kalamdb_commons::models::datatypes::arrow_conversion::FromArrowType;
+    use kalamdb_commons::models::datatypes::KalamDataType;
+    use kalamdb_commons::schemas::SchemaField;
 
-    let schema = batch.schema();
+    let arrow_schema = batch.schema();
     let num_rows = batch.num_rows();
-    let mut rows: Vec<HashMap<String, serde_json::Value>> = Vec::with_capacity(num_rows);
+    
+    // Build schema with KalamDataType
+    let schema: Vec<SchemaField> = arrow_schema
+        .fields()
+        .iter()
+        .enumerate()
+        .map(|(index, field)| {
+            let kalam_type = field
+                .metadata()
+                .get("kalam_data_type")
+                .and_then(|s| serde_json::from_str::<KalamDataType>(s).ok())
+                .or_else(|| KalamDataType::from_arrow_type(field.data_type()).ok())
+                .unwrap_or(KalamDataType::Text);
+            SchemaField::new(field.name().clone(), kalam_type, index)
+        })
+        .collect();
 
-    // Extract column names
-    let columns: Vec<String> = schema.fields().iter().map(|f| f.name().clone()).collect();
+    let mut rows: Vec<Vec<serde_json::Value>> = Vec::with_capacity(num_rows);
 
     for row_idx in 0..num_rows {
-        let mut row_map = HashMap::new();
+        let mut row_values: Vec<serde_json::Value> = Vec::with_capacity(arrow_schema.fields().len());
 
-        for (col_idx, field) in schema.fields().iter().enumerate() {
+        for (col_idx, field) in arrow_schema.fields().iter().enumerate() {
             let column = batch.column(col_idx);
-            let value = match field.data_type() {
+            let mut value = match field.data_type() {
                 DataType::Utf8 => {
                     let array = column.as_any().downcast_ref::<StringArray>().unwrap();
                     if array.is_null(row_idx) {
@@ -745,24 +799,21 @@ fn record_batch_to_query_result(
                 _ => serde_json::Value::String(format!("{:?}", column)),
             };
 
-            row_map.insert(field.name().clone(), value);
-        }
-
-        if mask_credentials {
-            if let Some(value) = row_map.get_mut("credentials") {
-                if !value.is_null() {
-                    *value = serde_json::Value::String("***".to_string());
-                }
+            // Mask credentials column if requested
+            if mask_credentials && field.name() == "credentials" && !value.is_null() {
+                value = serde_json::Value::String("***".to_string());
             }
+
+            row_values.push(value);
         }
 
-        rows.push(row_map);
+        rows.push(row_values);
     }
 
     kalamdb_api::models::QueryResult {
+        schema,
         rows: Some(rows),
         row_count: num_rows,
-        columns,
         message: None,
     }
 }

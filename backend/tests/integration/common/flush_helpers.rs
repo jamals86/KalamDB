@@ -207,7 +207,19 @@ pub async fn wait_for_flush_job_completion(
             }
 
             if let Some(job) = rows.first() {
-                let status = job
+                // Use row_as_map to convert array-based row to HashMap for easier access
+                let job_map = match response.results.first() {
+                    Some(result) => super::QueryResultTestExt::row_as_map(result, 0),
+                    None => None,
+                };
+                let job_map = match job_map {
+                    Some(m) => m,
+                    None => {
+                        sleep(check_interval).await;
+                        continue;
+                    }
+                };
+                let status = job_map
                     .get("status")
                     .and_then(|v| v.as_str())
                     .unwrap_or("unknown");
@@ -221,12 +233,12 @@ pub async fn wait_for_flush_job_completion(
                     }
                     "completed" => {
                         // Verify duration_ms is calculated (not 0)
-                        let started_at = job.get("started_at").and_then(|v| v.as_i64());
+                        let started_at = job_map.get("started_at").and_then(|v| v.as_i64());
                         // Some providers use finished_at; fall back if completed_at is missing
-                        let completed_at = job
+                        let completed_at = job_map
                             .get("completed_at")
                             .and_then(|v| v.as_i64())
-                            .or_else(|| job.get("finished_at").and_then(|v| v.as_i64()));
+                            .or_else(|| job_map.get("finished_at").and_then(|v| v.as_i64()));
 
                         if let (Some(start), Some(end)) = (started_at, completed_at) {
                             let duration_ms = end - start;
@@ -242,7 +254,7 @@ pub async fn wait_for_flush_job_completion(
                             );
                         }
 
-                        let result = job
+                        let result = job_map
                             .get("result")
                             .and_then(|v| v.as_str())
                             .unwrap_or("")
@@ -251,7 +263,7 @@ pub async fn wait_for_flush_job_completion(
                         return Ok(result);
                     }
                     "failed" => {
-                        let error = job
+                        let error = job_map
                             .get("error_message")
                             .and_then(|v| v.as_str())
                             .unwrap_or("Unknown error");

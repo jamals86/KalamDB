@@ -2,8 +2,9 @@
 //!
 //! This module defines the structure for SQL execution responses from the `/v1/api/sql` endpoint.
 
+use kalamdb_commons::models::datatypes::KalamDataType;
+use kalamdb_commons::schemas::SchemaField;
 use serde::{Deserialize, Serialize};
-use std::collections::HashMap;
 
 /// Execution status enum
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -32,12 +33,15 @@ impl std::fmt::Display for ResponseStatus {
 ///   "status": "success",
 ///   "results": [
 ///     {
-///       "rows": [
-///         {"id": 1, "name": "Alice"},
-///         {"id": 2, "name": "Bob"}
+///       "schema": [
+///         {"name": "id", "data_type": "BigInt", "index": 0},
+///         {"name": "name", "data_type": "Text", "index": 1}
 ///       ],
-///       "row_count": 2,
-///       "columns": ["id", "name"]
+///       "rows": [
+///         ["1", "Alice"],
+///         ["2", "Bob"]
+///       ],
+///       "row_count": 2
 ///     }
 ///   ],
 ///   "took": 15.0,
@@ -78,15 +82,18 @@ pub struct SqlResponse {
 /// Each executed SQL statement produces one QueryResult.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct QueryResult {
-    /// The result rows as JSON objects (each row is a key-value map)
+    /// Schema describing the columns in the result set
+    /// Each field contains: name, data_type (KalamDataType), and index
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub schema: Vec<SchemaField>,
+
+    /// The result rows as arrays of values (ordered by schema index)
+    /// Example: [["123", "Alice", 1699000000000000], ["456", "Bob", 1699000001000000]]
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub rows: Option<Vec<HashMap<String, serde_json::Value>>>,
+    pub rows: Option<Vec<Vec<serde_json::Value>>>,
 
     /// Number of rows affected (for INSERT/UPDATE/DELETE) or returned (for SELECT)
     pub row_count: usize,
-
-    /// Column names in the result set
-    pub columns: Vec<String>,
 
     /// Optional message for non-query statements (e.g., "Table created successfully")
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -148,13 +155,16 @@ impl SqlResponse {
 }
 
 impl QueryResult {
-    /// Create a result for a SELECT query with rows
-    pub fn with_rows(rows: Vec<HashMap<String, serde_json::Value>>, columns: Vec<String>) -> Self {
+    /// Create a result for a SELECT query with rows and schema
+    pub fn with_rows_and_schema(
+        rows: Vec<Vec<serde_json::Value>>,
+        schema: Vec<SchemaField>,
+    ) -> Self {
         let row_count = rows.len();
         Self {
+            schema,
             rows: Some(rows),
             row_count,
-            columns,
             message: None,
         }
     }
@@ -162,9 +172,9 @@ impl QueryResult {
     /// Create a result for a DML statement (INSERT/UPDATE/DELETE)
     pub fn with_affected_rows(row_count: usize, message: Option<String>) -> Self {
         Self {
+            schema: Vec::new(),
             rows: None,
             row_count,
-            columns: Vec::new(),
             message,
         }
     }
@@ -172,9 +182,9 @@ impl QueryResult {
     /// Create a result for a DDL statement (CREATE/ALTER/DROP)
     pub fn with_message(message: String) -> Self {
         Self {
+            schema: Vec::new(),
             rows: None,
             row_count: 0,
-            columns: Vec::new(),
             message: Some(message),
         }
     }
@@ -183,25 +193,36 @@ impl QueryResult {
     ///
     /// Returns subscription metadata as a single row result
     pub fn subscription(subscription_data: serde_json::Value) -> Self {
-        // Convert subscription JSON to a single row
-        let mut row = HashMap::new();
-        if let serde_json::Value::Object(map) = subscription_data {
-            for (key, value) in map {
-                row.insert(key, value);
-            }
-        }
+        let schema = vec![
+            SchemaField::new("status", KalamDataType::Text, 0),
+            SchemaField::new("ws_url", KalamDataType::Text, 1),
+            SchemaField::new("subscription", KalamDataType::Json, 2),
+            SchemaField::new("message", KalamDataType::Text, 3),
+        ];
+
+        // Extract values in schema order
+        let row = if let serde_json::Value::Object(map) = subscription_data {
+            vec![
+                map.get("status").cloned().unwrap_or(serde_json::Value::Null),
+                map.get("ws_url").cloned().unwrap_or(serde_json::Value::Null),
+                map.get("subscription").cloned().unwrap_or(serde_json::Value::Null),
+                map.get("message").cloned().unwrap_or(serde_json::Value::Null),
+            ]
+        } else {
+            vec![serde_json::Value::Null; 4]
+        };
 
         Self {
+            schema,
             rows: Some(vec![row]),
             row_count: 1,
-            columns: vec![
-                "status".to_string(),
-                "ws_url".to_string(),
-                "subscription".to_string(),
-                "message".to_string(),
-            ],
             message: None,
         }
+    }
+
+    /// Get column names from the schema
+    pub fn column_names(&self) -> Vec<String> {
+        self.schema.iter().map(|f| f.name.clone()).collect()
     }
 }
 
@@ -211,11 +232,13 @@ mod tests {
 
     #[test]
     fn test_success_response_serialization() {
-        let mut row1 = HashMap::new();
-        row1.insert("id".to_string(), serde_json::json!(1));
-        row1.insert("name".to_string(), serde_json::json!("Alice"));
+        let row1 = vec![serde_json::json!("1"), serde_json::json!("Alice")];
 
-        let result = QueryResult::with_rows(vec![row1], vec!["id".to_string(), "name".to_string()]);
+        let schema = vec![
+            SchemaField::new("id", KalamDataType::BigInt, 0),
+            SchemaField::new("name", KalamDataType::Text, 1),
+        ];
+        let result = QueryResult::with_rows_and_schema(vec![row1], schema);
 
         let response = SqlResponse::success(vec![result], 15.0);
 
@@ -223,6 +246,57 @@ mod tests {
         assert!(json.contains("success"));
         assert!(json.contains("Alice"));
         assert!(json.contains("15"));
+        // Verify schema is present
+        assert!(json.contains("\"schema\""));
+        assert!(json.contains("\"data_type\":\"BigInt\""));
+        assert!(json.contains("\"data_type\":\"Text\""));
+    }
+
+    #[test]
+    fn test_schema_field_serialization() {
+        let schema = vec![
+            SchemaField::new("id", KalamDataType::BigInt, 0),
+            SchemaField::new("name", KalamDataType::Text, 1),
+            SchemaField::new("created_at", KalamDataType::Timestamp, 2),
+        ];
+        let result = QueryResult::with_rows_and_schema(vec![], schema);
+
+        let json = serde_json::to_string(&result).unwrap();
+        assert!(json.contains("\"name\":\"id\""));
+        assert!(json.contains("\"index\":0"));
+        assert!(json.contains("\"data_type\":\"BigInt\""));
+        assert!(json.contains("\"data_type\":\"Timestamp\""));
+    }
+
+    #[test]
+    fn test_column_names() {
+        let schema = vec![
+            SchemaField::new("id", KalamDataType::BigInt, 0),
+            SchemaField::new("name", KalamDataType::Text, 1),
+        ];
+        let result = QueryResult::with_rows_and_schema(vec![], schema);
+
+        let names = result.column_names();
+        assert_eq!(names, vec!["id", "name"]);
+    }
+
+    #[test]
+    fn test_array_rows_format() {
+        let rows = vec![
+            vec![serde_json::json!("123"), serde_json::json!("Alice"), serde_json::json!(1699000000000000i64)],
+            vec![serde_json::json!("456"), serde_json::json!("Bob"), serde_json::json!(1699000001000000i64)],
+        ];
+        let schema = vec![
+            SchemaField::new("id", KalamDataType::BigInt, 0),
+            SchemaField::new("name", KalamDataType::Text, 1),
+            SchemaField::new("created_at", KalamDataType::Timestamp, 2),
+        ];
+        let result = QueryResult::with_rows_and_schema(rows, schema);
+
+        assert_eq!(result.row_count, 2);
+        let json = serde_json::to_string(&result).unwrap();
+        // Rows should be arrays, not objects
+        assert!(json.contains("[[\"123\",\"Alice\""));
     }
 
     #[test]
@@ -241,6 +315,7 @@ mod tests {
 
         assert_eq!(result.row_count, 0);
         assert!(result.rows.is_none());
+        assert!(result.schema.is_empty());
         assert_eq!(
             result.message,
             Some("Table created successfully".to_string())
@@ -253,6 +328,7 @@ mod tests {
 
         assert_eq!(result.row_count, 5);
         assert!(result.rows.is_none());
+        assert!(result.schema.is_empty());
         assert_eq!(result.message, Some("5 rows inserted".to_string()));
     }
 }

@@ -130,8 +130,9 @@ pub use credentials::{CredentialStore, Credentials, MemoryCredentialStore};
 pub use error::{KalamLinkError, Result};
 pub use live::LiveConnection;
 pub use models::{
-    ChangeEvent, ConnectionOptions, ErrorDetail, HealthCheckResponse, HttpVersion, QueryRequest,
-    QueryResponse, SerializationMode, SubscriptionConfig, SubscriptionOptions,
+    ChangeEvent, ConnectionOptions, ErrorDetail, HealthCheckResponse, HttpVersion, KalamDataType,
+    QueryRequest, QueryResponse, QueryResult, SchemaField, SubscriptionConfig,
+    SubscriptionOptions,
 };
 pub use seq_id::SeqId;
 pub use timeouts::{KalamLinkTimeouts, KalamLinkTimeoutsBuilder};
