@@ -561,7 +561,8 @@ mod tests {
             .expect("insert evt2");
 
         // Wait for TTL to make them eligible for eviction
-        sleep(Duration::from_millis(1200)).await;
+        // Need to wait longer than TTL to ensure Snowflake timestamp is old enough
+        sleep(Duration::from_millis(1500)).await;
 
         let mut job = make_job(
             "SE-evict",

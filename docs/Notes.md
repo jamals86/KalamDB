@@ -284,13 +284,8 @@ instead of: 1 failed: Invalid operation: No handler registered for statement typ
 
 195) we should always have a default order by column so we always have the same vlues returned in the same order, this is important for pagination as well
 
-196) Make sure after flush to compact th rocksdb column family to free space and optimize reads as well
-
 197) why do we have things like this? shouldnt we prevent entering if no rows?
 [2025-12-13 01:51:58.957] [INFO ] - main - kalamdb_core::jobs::jobs_manager::utils:38 - [CL-a258332a4315] Job completed: Cleaned up table insert_bench_mj3iu8zz_0:single_mj3iu900_0 successfully - 0 rows deleted, 0 bytes freed
-
-198) fix the slashes here: Flushed 24 rows for user root to ./data/storage\chat/messages/root/batch-2.parquet (batch=2)
-and make sure we use the right slashes everywhere in paths
 
 199) change the cli history to storing the history of queries as regular queries and not base64 but keeping in mind adding quotes to preserve adding the multi-lines queries, and also replacing password on alter user to remove the password
 
@@ -333,7 +328,6 @@ and make sure we use the right slashes everywhere in paths
   "last_sequence_number": 3 //TODO: Change to last
 }
 
-202) instead of consucting: table_def.to_arrow_schema() add it with the cache
 
 
 

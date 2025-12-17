@@ -6,14 +6,15 @@
 use crate::error::KalamDbError;
 use crate::error_extensions::KalamDbResultExt;
 use crate::app_context::AppContext;
+use kalamdb_filestore::object_store_factory::{object_key_for_path, build_object_store};
+use kalamdb_filestore::object_store_ops::{list_files_sync, read_file_sync};
+use kalamdb_commons::system::Storage;
 use datafusion::arrow::compute::cast;
 use datafusion::arrow::datatypes::SchemaRef;
 use datafusion::arrow::record_batch::RecordBatch;
 use datafusion::parquet::arrow::arrow_reader::ParquetRecordBatchReaderBuilder;
 use kalamdb_commons::types::Manifest;
 use kalamdb_commons::TableId;
-use std::fs;
-use std::path::PathBuf;
 use std::sync::Arc;
 
 /// Planned selection for a single Parquet file
@@ -33,6 +34,8 @@ impl RowGroupSelection {
         }
     }
 }
+
+use object_store::ObjectStore;
 
 /// Planner that produces pruning-aware selections from the manifest
 #[derive(Debug, Default)]
@@ -56,7 +59,9 @@ impl ManifestAccessPlanner {
     ///
     /// # Arguments
     /// * `manifest_opt` - Optional manifest for metadata-driven selection
-    /// * `storage_dir` - Base directory containing Parquet files
+    /// * `store` - ObjectStore instance for file operations
+    /// * `storage` - Storage configuration
+    /// * `storage_path` - Relative path to the table directory
     /// * `seq_range` - Optional (min, max) seq range for pruning
     /// * `use_degraded_mode` - If true, skip manifest and list directory
     /// * `schema` - Current Arrow schema (target schema for projection)
@@ -68,15 +73,17 @@ impl ManifestAccessPlanner {
     pub fn scan_parquet_files(
         &self,
         manifest_opt: Option<&Manifest>,
-        storage_dir: &PathBuf,
+        store: Arc<dyn ObjectStore>,
+        storage: &Storage,
+        storage_path: &str,
         seq_range: Option<(i64, i64)>,
         use_degraded_mode: bool,
         schema: SchemaRef,
         table_id: &TableId,
         app_context: &Arc<AppContext>,
     ) -> Result<(RecordBatch, (usize, usize, usize)), KalamDbError> {
-        let mut parquet_files: Vec<PathBuf> = Vec::new();
-        let mut file_schema_versions: std::collections::HashMap<PathBuf, u32> = std::collections::HashMap::new();
+        let mut parquet_files: Vec<String> = Vec::new();
+        let mut file_schema_versions: std::collections::HashMap<String, u32> = std::collections::HashMap::new();
         let (mut total_batches, mut skipped, mut scanned) = (0usize, 0usize, 0usize);
 
         if !use_degraded_mode {
@@ -96,12 +103,15 @@ impl ManifestAccessPlanner {
                 skipped = total_batches.saturating_sub(scanned);
 
                 for file_path in selected_files {
-                    let full_path = storage_dir.join(&file_path);
-                    // Find the schema_version for this file from manifest
+                    let full_path = format!("{}/{}", storage_path.trim_end_matches('/'), file_path);
+                    let key = object_key_for_path(storage, &full_path)
+                        .into_kalamdb_error("Failed to compute object key")?;
+                    let key_str = key.to_string();
+
                     if let Some(segment) = manifest.segments.iter().find(|s| s.path == file_path) {
-                        file_schema_versions.insert(full_path.clone(), segment.schema_version);
+                        file_schema_versions.insert(key_str.clone(), segment.schema_version);
                     }
-                    parquet_files.push(full_path);
+                    parquet_files.push(key_str);
                 }
             }
         }
@@ -110,14 +120,17 @@ impl ManifestAccessPlanner {
         if parquet_files.is_empty()
             && (manifest_opt.is_none() || use_degraded_mode)
         {
-            let entries = fs::read_dir(storage_dir).map_err(KalamDbError::Io)?;
-            for entry in entries {
-                let entry = entry.map_err(KalamDbError::Io)?;
-                let path = entry.path();
-                if path.extension().and_then(|s| s.to_str()) == Some("parquet") {
+            let files = list_files_sync(Arc::clone(&store), storage, storage_path)
+                .into_kalamdb_error("Failed to list files")?;
+            for path in files {
+                if path.ends_with(".parquet") {
                     parquet_files.push(path);
                 }
             }
+            
+            total_batches = parquet_files.len();
+            scanned = total_batches;
+            skipped = 0;
         }
 
         // Return empty batch if no files found
@@ -132,9 +145,10 @@ impl ManifestAccessPlanner {
         let mut all_batches = Vec::new();
 
         for parquet_file in &parquet_files {
-            let file = fs::File::open(parquet_file).map_err(KalamDbError::Io)?;
+            let bytes = read_file_sync(Arc::clone(&store), storage, parquet_file)
+                .into_kalamdb_error("Failed to read Parquet file")?;
 
-            let builder = ParquetRecordBatchReaderBuilder::try_new(file)
+            let builder = ParquetRecordBatchReaderBuilder::try_new(bytes)
                 .into_arrow_error_ctx("Failed to create Parquet reader")?;
 
             let reader = builder.build()
@@ -486,6 +500,25 @@ mod tests {
         assert!(plan.is_empty());
     }
 
+    fn create_test_storage(temp_dir: &std::path::Path) -> Storage {
+        use kalamdb_commons::models::ids::StorageId;
+        use kalamdb_commons::models::storage::StorageType;
+        let now = chrono::Utc::now().timestamp_millis();
+        Storage {
+            storage_id: StorageId::from("test_storage"),
+            storage_name: "test_storage".to_string(),
+            description: None,
+            storage_type: StorageType::Filesystem,
+            base_directory: temp_dir.to_string_lossy().to_string(),
+            credentials: None,
+            config_json: None,
+            shared_tables_template: "{namespace}/{table}".to_string(),
+            user_tables_template: "{namespace}/{user}/{table}".to_string(),
+            created_at: now,
+            updated_at: now,
+        }
+    }
+
     #[tokio::test]
     async fn test_scan_parquet_files_empty_dir_returns_empty_batch() {
         // Create a unique temp directory without any parquet files
@@ -508,9 +541,11 @@ mod tests {
         let app_context = make_test_app_context();
         let table_id = TableId::new(NamespaceId::new("ns"), TableName::new("tbl"));
         
+        let storage = create_test_storage(&dir);
+        let store = build_object_store(&storage).unwrap();
         let planner = ManifestAccessPlanner::new();
         let (batch, (_total, _skipped, _scanned)) = planner
-            .scan_parquet_files(None, &dir, None, false, schema.clone(), &table_id, &app_context)
+            .scan_parquet_files(None, store, &storage, "", None, false, schema.clone(), &table_id, &app_context)
             .expect("planner should handle empty directory");
 
         assert_eq!(batch.num_rows(), 0, "Expected empty batch for empty dir");
@@ -589,11 +624,13 @@ mod tests {
         mf.add_segment(s1);
 
         let app_context = make_test_app_context();
+        let storage = create_test_storage(&dir);
+        let store = build_object_store(&storage).unwrap();
         let planner = ManifestAccessPlanner::new();
 
         // Range overlaps only first file
         let (batch, (total, skipped, scanned)) = planner
-            .scan_parquet_files(Some(&mf), &dir, Some((0, 90)), false, schema.clone(), &table_id, &app_context)
+            .scan_parquet_files(Some(&mf), Arc::clone(&store), &storage, "", Some((0, 90)), false, schema.clone(), &table_id, &app_context)
             .expect("planner should read files");
         assert_eq!(total, 2);
         assert_eq!(scanned, 1);
@@ -603,7 +640,7 @@ mod tests {
 
         // Range overlaps only second file
         let (batch2, (total2, skipped2, scanned2)) = planner
-            .scan_parquet_files(Some(&mf), &dir, Some((150, 160)), false, schema.clone(), &table_id, &app_context)
+            .scan_parquet_files(Some(&mf), Arc::clone(&store), &storage, "", Some((150, 160)), false, schema.clone(), &table_id, &app_context)
             .expect("planner should read files");
         assert_eq!(total2, 2);
         assert_eq!(scanned2, 1);
@@ -612,7 +649,7 @@ mod tests {
 
         // Range overlaps none -> scanned 0, empty batch, no fallback because manifest exists
         let (batch3, (total3, skipped3, scanned3)) = planner
-            .scan_parquet_files(Some(&mf), &dir, Some((300, 400)), false, schema.clone(), &table_id, &app_context)
+            .scan_parquet_files(Some(&mf), Arc::clone(&store), &storage, "", Some((300, 400)), false, schema.clone(), &table_id, &app_context)
             .expect("planner should handle no-overlap");
         assert_eq!(total3, 2);
         assert_eq!(scanned3, 0);

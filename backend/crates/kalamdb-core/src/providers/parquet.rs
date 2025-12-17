@@ -1,16 +1,13 @@
 use crate::error::KalamDbError;
-use crate::error_extensions::KalamDbResultExt;
 use crate::manifest::ManifestAccessPlanner;
 use crate::providers::core::TableProviderCore;
-use crate::schema_registry::TableType;
-use crate::storage::{is_remote_url, materialize_remote_parquet_dir_sync};
+use crate::schema_registry::{PathResolver, TableType};
 use datafusion::arrow::datatypes::SchemaRef;
 use datafusion::arrow::record_batch::RecordBatch;
 use datafusion::logical_expr::Expr;
 use kalamdb_commons::models::UserId;
 use kalamdb_commons::types::Manifest;
 use kalamdb_commons::TableId;
-use std::path::PathBuf;
 
 /// Shared helper for loading Parquet batches via ManifestAccessPlanner.
 pub(crate) fn scan_parquet_files_as_batch(
@@ -27,52 +24,35 @@ pub(crate) fn scan_parquet_files_as_batch(
         .map(|uid| format!("user={}", uid.as_str()))
         .unwrap_or_else(|| format!("scope={}", table_type.as_str()));
 
-    let storage_path = core
+    // 1. Get CachedTableData
+    let cached = core
         .app_context
         .schema_registry()
-        .get_storage_path(table_id, user_id, None)?;
+        .get(table_id)
+        .ok_or_else(|| KalamDbError::TableNotFound(format!("Table not found: {}", table_id)))?;
 
-    let storage_dir = if is_remote_url(&storage_path) {
-        // Remote object store: materialize to local temp dir.
-        let cached = core
-            .app_context
-            .schema_registry()
-            .get(table_id)
-            .ok_or_else(|| KalamDbError::TableNotFound(format!("Table not found: {}", table_id)))?;
+    // 2. Get Storage from registry (cached lookup)
+    let storage_id = cached
+        .storage_id
+        .clone()
+        .unwrap_or_else(kalamdb_commons::models::StorageId::local);
 
-        let storage_id = cached
-            .storage_id
-            .clone()
-            .unwrap_or_else(kalamdb_commons::models::StorageId::local);
+    let storage = core
+        .app_context
+        .storage_registry()
+        .get_storage(&storage_id)?
+        .ok_or_else(|| {
+            KalamDbError::InvalidOperation(format!(
+                "Storage '{}' not found",
+                storage_id.as_str()
+            ))
+        })?;
 
-        let storage = core
-            .app_context
-            .system_tables()
-            .storages()
-            .get_storage(&storage_id)
-            .into_kalamdb_error("Failed to load storage")?
-            .ok_or_else(|| {
-                KalamDbError::InvalidOperation(format!(
-                    "Storage '{}' not found",
-                    storage_id.as_str()
-                ))
-            })?;
+    // 3. Get ObjectStore (cached)
+    let object_store = cached.object_store()?;
 
-        materialize_remote_parquet_dir_sync(&storage, &storage_path)
-            .into_kalamdb_error("Filestore error")?
-    } else {
-        PathBuf::from(&storage_path)
-    };
-
-    if !storage_dir.exists() {
-        log::trace!(
-            "No Parquet directory exists ({}) for table {}.{} - returning empty batch",
-            scope_label,
-            namespace.as_str(),
-            table.as_str()
-        );
-        return Ok(RecordBatch::new_empty(schema.clone()));
-    }
+    // 4. Resolve storage path
+    let storage_path = PathResolver::get_storage_path(&cached, user_id, None)?;
 
     let manifest_cache_service = core.app_context.manifest_cache_service();
     let cache_result = manifest_cache_service.get_or_load(table_id, user_id);
@@ -188,7 +168,9 @@ pub(crate) fn scan_parquet_files_as_batch(
 
     let (combined, (total_batches, skipped, scanned)) = planner.scan_parquet_files(
         manifest_opt.as_ref(),
-        &storage_dir,
+        object_store,
+        &storage,
+        &storage_path,
         seq_range,
         use_degraded_mode,
         schema.clone(),

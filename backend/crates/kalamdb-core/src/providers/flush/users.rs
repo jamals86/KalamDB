@@ -11,7 +11,7 @@ use crate::manifest::{FlushManifestHelper, ManifestCacheService, ManifestService
 use crate::providers::arrow_json_conversion::json_rows_to_arrow_batch;
 use crate::schema_registry::SchemaRegistry;
 use crate::app_context::AppContext;
-use crate::storage::write_parquet_to_storage_sync;
+use crate::storage::write_parquet_with_store_sync;
 use datafusion::arrow::datatypes::SchemaRef;
 use datafusion::arrow::record_batch::RecordBatch;
 use datafusion::scalar::ScalarValue;
@@ -161,11 +161,11 @@ impl UserTableFlushJob {
         let batch_number = self.manifest_helper
             .get_next_batch_number(&self.table_id, Some(&user_id_typed))?;
         let batch_filename = FlushManifestHelper::generate_batch_filename(batch_number);
-        let destination_path = if storage_path.ends_with('/') {
-            format!("{}{}", storage_path, batch_filename)
-        } else {
-            format!("{}/{}", storage_path, batch_filename)
-        };
+        // Use PathBuf for proper cross-platform path handling (avoids mixed slashes)
+        let destination_path = std::path::Path::new(&storage_path)
+            .join(&batch_filename)
+            .to_string_lossy()
+            .to_string();
 
         let app_ctx = AppContext::get();
         let cached = self
@@ -173,12 +173,11 @@ impl UserTableFlushJob {
             .get(&self.table_id)
             .ok_or_else(|| KalamDbError::TableNotFound(format!("Table not found: {}", self.table_id)))?;
 
+        // Get storage from registry (cached lookup)
         let storage_id = cached.storage_id.clone().unwrap_or_else(StorageId::local);
         let storage = app_ctx
-            .system_tables()
-            .storages()
-            .get_storage(&storage_id)
-            .into_kalamdb_error("Failed to load storage")?
+            .storage_registry()
+            .get_storage(&storage_id)?
             .ok_or_else(|| {
                 KalamDbError::InvalidOperation(format!(
                     "Storage '{}' not found",
@@ -186,13 +185,17 @@ impl UserTableFlushJob {
                 ))
             })?;
 
+        // Get cached ObjectStore instance (avoids rebuild overhead on each flush)
+        let object_store = cached.object_store()?;
+
         // Write to Parquet with Bloom filters on PRIMARY KEY + _seq (FR-054, FR-055)
         log::debug!(
             "📝 Writing Parquet file: path={}, rows={}",
             destination_path,
             rows_count
         );
-        let result = write_parquet_to_storage_sync(
+        let result = write_parquet_with_store_sync(
+            object_store,
             &storage,
             &destination_path,
             self.schema.clone(),
@@ -459,6 +462,16 @@ impl TableFlush for UserTableFlushJob {
             if let Err(e) = self.delete_flushed_keys(&all_keys_to_delete) {
                 log::error!("Failed to delete flushed rows: {}", e);
                 error_messages.push(format!("Failed to delete flushed rows: {}", e));
+            } else {
+                // Compact RocksDB column family after flush to free space and optimize reads
+                use kalamdb_store::entity_store::EntityStore;
+                use kalamdb_store::Partition;
+                let partition = Partition::new(self.store.partition());
+                log::debug!("🔧 Compacting RocksDB column family after flush: {}", partition.name());
+                if let Err(e) = self.store.backend().compact_partition(&partition) {
+                    log::warn!("⚠️  Failed to compact partition after flush: {}", e);
+                    // Non-fatal: flush succeeded, compaction is optimization
+                }
             }
         }
 

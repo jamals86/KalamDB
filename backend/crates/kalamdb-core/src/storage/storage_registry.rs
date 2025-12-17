@@ -1,25 +1,36 @@
 //! Storage Registry for managing storage backends
 //!
 //! Provides centralized access to storage configurations and path template validation.
+//! Includes an in-memory cache to avoid repeated RocksDB lookups when multiple tables
+//! share the same storage.
 
 use crate::error::KalamDbError;
 use crate::error_extensions::KalamDbResultExt;
+use crate::storage::storage_cache::StorageCached;
+use dashmap::DashMap;
 use kalamdb_commons::models::StorageId;
 use kalamdb_commons::system::Storage;
 use kalamdb_system::StoragesTableProvider;
+use object_store::ObjectStore;
 use std::sync::Arc;
 
 /// Registry for managing storage backends
 ///
 /// Provides methods to:
-/// - Retrieve storage configurations by ID
+/// - Retrieve storage configurations by ID (with caching)
 /// - List all available storages
 /// - Validate path templates for correctness
+/// - Invalidate cache entries on storage updates
+/// - Get ObjectStore instances (cached per storage, not per table)
 pub struct StorageRegistry {
     storages_provider: Arc<StoragesTableProvider>,
     /// Default base path for local filesystem storage when base_directory is empty
     /// Comes from server config: storage.default_storage_path (e.g., "/data/storage")
     _default_storage_path: String,
+    /// In-memory cache for StorageCached objects keyed by StorageId
+    /// Avoids repeated RocksDB lookups and ensures one ObjectStore per storage
+    /// (not one per table - 100 tables using same storage = 1 ObjectStore)
+    cache: DashMap<StorageId, Arc<StorageCached>>,
 }
 
 impl StorageRegistry {
@@ -42,10 +53,81 @@ impl StorageRegistry {
         Self {
             storages_provider,
             _default_storage_path: normalized,
+            cache: DashMap::new(),
         }
     }
 
-    /// Get a storage configuration by ID
+    /// Get a cached storage entry by ID
+    ///
+    /// First checks the in-memory cache, then falls back to RocksDB on cache miss.
+    /// Results are cached for subsequent lookups, including lazy ObjectStore.
+    ///
+    /// # Arguments
+    /// * `storage_id` - The unique storage identifier
+    ///
+    /// # Returns
+    /// * `Ok(Some(Arc<StorageCached>))` - Storage found (cached or freshly loaded)
+    /// * `Ok(None)` - Storage not found
+    /// * `Err` - Database error
+    pub fn get_cached(&self, storage_id: &StorageId) -> Result<Option<Arc<StorageCached>>, KalamDbError> {
+        // Fast path: check cache
+        if let Some(cached) = self.cache.get(storage_id) {
+            return Ok(Some(Arc::clone(&cached)));
+        }
+
+        // Slow path: fetch from RocksDB
+        let storage = self
+            .storages_provider
+            .get_storage(storage_id)
+            .into_kalamdb_error("Failed to get storage")?;
+
+        if let Some(s) = storage {
+            let cached = Arc::new(StorageCached::new(s));
+            self.cache.insert(storage_id.clone(), Arc::clone(&cached));
+            Ok(Some(cached))
+        } else {
+            Ok(None)
+        }
+    }
+
+    /// Get a storage configuration by ID (cached)
+    ///
+    /// Convenience method that returns just the Storage, not the full StorageCached.
+    /// Use `get_cached()` if you also need the ObjectStore.
+    ///
+    /// # Arguments
+    /// * `storage_id` - The unique storage identifier
+    ///
+    /// # Returns
+    /// * `Ok(Some(Arc<Storage>))` - Storage found
+    /// * `Ok(None)` - Storage not found
+    /// * `Err` - Database error
+    pub fn get_storage(&self, storage_id: &StorageId) -> Result<Option<Arc<Storage>>, KalamDbError> {
+        Ok(self.get_cached(storage_id)?.map(|c| Arc::clone(&c.storage)))
+    }
+
+    /// Get ObjectStore for a storage by ID (cached)
+    ///
+    /// This is the primary method for getting an ObjectStore. The ObjectStore is
+    /// lazily initialized on first access and shared across all tables using this storage.
+    ///
+    /// # Arguments
+    /// * `storage_id` - The unique storage identifier
+    ///
+    /// # Returns
+    /// * `Ok(Arc<dyn ObjectStore>)` - ObjectStore instance
+    /// * `Err` - Storage not found or ObjectStore build failed
+    pub fn get_object_store(&self, storage_id: &StorageId) -> Result<Arc<dyn ObjectStore>, KalamDbError> {
+        let cached = self.get_cached(storage_id)?.ok_or_else(|| {
+            KalamDbError::InvalidOperation(format!(
+                "Storage '{}' not found in registry",
+                storage_id.as_str()
+            ))
+        })?;
+        cached.object_store()
+    }
+
+    /// Get a storage configuration by ID (bypasses cache - for backward compat)
     ///
     /// # Arguments
     /// * `storage_id` - The unique storage identifier
@@ -54,6 +136,7 @@ impl StorageRegistry {
     /// * `Ok(Some(Storage))` - Storage found
     /// * `Ok(None)` - Storage not found
     /// * `Err` - Database error
+    #[deprecated(note = "Use get_storage() for cached access")]
     pub fn get_storage_by_id(
         &self,
         storage_id: &StorageId,
@@ -64,9 +147,52 @@ impl StorageRegistry {
     }
 
     /// Backward compatible helper that accepts a raw storage ID string.
-    pub fn get_storage_config(&self, storage_id: &str) -> Result<Option<Storage>, KalamDbError> {
+    pub fn get_storage_config(&self, storage_id: &str) -> Result<Option<Arc<Storage>>, KalamDbError> {
         let storage_id = StorageId::from(storage_id);
-        self.get_storage_by_id(&storage_id)
+        self.get_storage(&storage_id)
+    }
+
+    /// Get ObjectStore by raw storage ID string (convenience method)
+    pub fn get_object_store_by_id(&self, storage_id: &str) -> Result<Arc<dyn ObjectStore>, KalamDbError> {
+        let storage_id = StorageId::from(storage_id);
+        self.get_object_store(&storage_id)
+    }
+
+    /// Invalidate a storage entry from the cache
+    ///
+    /// Call this when a storage is updated or deleted to ensure
+    /// subsequent reads fetch fresh data from RocksDB.
+    /// This also invalidates the cached ObjectStore for that storage.
+    ///
+    /// # Arguments
+    /// * `storage_id` - The storage ID to invalidate
+    pub fn invalidate(&self, storage_id: &StorageId) {
+        self.cache.remove(storage_id);
+    }
+
+    /// Invalidate just the ObjectStore for a storage (keep Storage config cached)
+    ///
+    /// Use this when storage credentials change but the config structure is the same.
+    /// Less disruptive than full invalidate() as it doesn't require re-fetching from RocksDB.
+    ///
+    /// # Arguments
+    /// * `storage_id` - The storage ID whose ObjectStore to invalidate
+    pub fn invalidate_object_store(&self, storage_id: &StorageId) {
+        if let Some(cached) = self.cache.get(storage_id) {
+            cached.invalidate_object_store();
+        }
+    }
+
+    /// Invalidate all storage entries from the cache
+    ///
+    /// Call this on server restart or when bulk storage changes occur.
+    pub fn invalidate_all(&self) {
+        self.cache.clear();
+    }
+
+    /// Get the number of cached storage entries (for metrics/debugging)
+    pub fn cache_size(&self) -> usize {
+        self.cache.len()
     }
 
     /// List all storage configurations

@@ -78,6 +78,9 @@ impl TypedStatementHandler<DropStorageStatement> for DropStorageHandler {
             .delete_storage(&storage_id)
             .into_kalamdb_error("Failed to drop storage")?;
 
+        // Invalidate storage cache
+        self.app_context.storage_registry().invalidate(&storage_id);
+
         Ok(ExecutionResult::Success {
             message: format!("Storage '{}' dropped successfully", statement.storage_id),
         })

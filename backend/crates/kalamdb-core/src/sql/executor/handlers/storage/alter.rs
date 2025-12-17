@@ -89,6 +89,9 @@ impl TypedStatementHandler<AlterStorageStatement> for AlterStorageHandler {
             .update_storage(storage)
             .into_kalamdb_error("Failed to update storage")?;
 
+        // Invalidate storage cache to ensure fresh data on next access
+        storage_registry.invalidate(&storage_id);
+
         Ok(ExecutionResult::Success {
             message: format!("Storage '{}' altered successfully", statement.storage_id),
         })

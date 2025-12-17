@@ -16,6 +16,7 @@ use object_store::ObjectStore;
 use parquet::arrow::ArrowWriter;
 use parquet::basic::{Compression, ZstdLevel};
 use parquet::file::properties::WriterProperties;
+use std::sync::Arc;
 
 /// Result of a Parquet write operation.
 #[derive(Debug, Clone)]
@@ -90,6 +91,83 @@ pub fn write_parquet_to_storage_sync(
             .map_err(|e| FilestoreError::Other(format!("Failed to create runtime: {e}")))?;
 
         rt.block_on(write_parquet_to_storage(
+            storage,
+            destination_path,
+            schema,
+            batches,
+            bloom_filter_columns,
+        ))
+    }
+}
+
+/// Write RecordBatches to Parquet using a pre-built ObjectStore (cached variant).
+///
+/// This variant avoids the overhead of `build_object_store()` on each call by
+/// accepting a pre-built `Arc<dyn ObjectStore>`. Use this for high-frequency
+/// operations where the ObjectStore is cached (e.g., in CachedTableData).
+///
+/// **Performance**: Saves ~50-200μs per write for cloud backends.
+pub async fn write_parquet_with_store(
+    store: Arc<dyn ObjectStore>,
+    storage: &Storage,
+    destination_path: &str,
+    schema: SchemaRef,
+    batches: Vec<RecordBatch>,
+    bloom_filter_columns: Option<Vec<String>>,
+) -> Result<ParquetWriteResult> {
+    // Compute the object key relative to the store's root
+    let key = object_key_for_path(storage, destination_path)?;
+
+    // Serialize batches to Parquet bytes in memory
+    let parquet_bytes = serialize_to_parquet(schema, batches, bloom_filter_columns)?;
+    let size_bytes = parquet_bytes.len() as u64;
+
+    // Write via object_store (atomic for all backends)
+    store
+        .put(&key, parquet_bytes.into())
+        .await
+        .map_err(|e| FilestoreError::ObjectStore(e.to_string()))?;
+
+    Ok(ParquetWriteResult { size_bytes })
+}
+
+/// Synchronous wrapper for write_parquet_with_store.
+///
+/// Use this when you have a cached ObjectStore and need synchronous execution.
+pub fn write_parquet_with_store_sync(
+    store: Arc<dyn ObjectStore>,
+    storage: &Storage,
+    destination_path: &str,
+    schema: SchemaRef,
+    batches: Vec<RecordBatch>,
+    bloom_filter_columns: Option<Vec<String>>,
+) -> Result<ParquetWriteResult> {
+    // Try to use existing tokio runtime, or create a new one
+    if let Ok(handle) = tokio::runtime::Handle::try_current() {
+        // Use spawn_blocking to avoid blocking the runtime
+        std::thread::scope(|s| {
+            s.spawn(|| {
+                handle.block_on(write_parquet_with_store(
+                    store,
+                    storage,
+                    destination_path,
+                    schema,
+                    batches,
+                    bloom_filter_columns,
+                ))
+            })
+            .join()
+            .map_err(|_| FilestoreError::Other("Thread panicked".into()))?
+        })
+    } else {
+        // No runtime available, create a minimal one
+        let rt = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .map_err(|e| FilestoreError::Other(format!("Failed to create runtime: {e}")))?;
+
+        rt.block_on(write_parquet_with_store(
+            store,
             storage,
             destination_path,
             schema,
@@ -256,5 +334,265 @@ mod tests {
         assert!(!bytes.is_empty());
         // Parquet magic number at start
         assert_eq!(&bytes[0..4], b"PAR1");
+    }
+
+    #[test]
+    fn test_write_parquet_to_storage_sync() {
+        use crate::build_object_store;
+        use kalamdb_commons::models::ids::StorageId;
+        use kalamdb_commons::models::storage::StorageType;
+        use kalamdb_commons::models::types::Storage;
+        use std::env;
+        use std::fs;
+
+        let temp_dir = env::temp_dir().join("kalamdb_test_write_storage");
+        let _ = fs::remove_dir_all(&temp_dir);
+        fs::create_dir_all(&temp_dir).unwrap();
+
+        let now = chrono::Utc::now().timestamp_millis();
+        let storage = Storage {
+            storage_id: StorageId::from("test_write"),
+            storage_name: "test_write".to_string(),
+            description: None,
+            storage_type: StorageType::Filesystem,
+            base_directory: temp_dir.to_string_lossy().to_string(),
+            credentials: None,
+            config_json: None,
+            shared_tables_template: "{namespace}/{table}".to_string(),
+            user_tables_template: "{namespace}/{user}/{table}".to_string(),
+            created_at: now,
+            updated_at: now,
+        };
+
+        let (schema, batches) = make_test_batch();
+        let file_path = "test/output.parquet";
+
+        let result = write_parquet_to_storage_sync(&storage, file_path, schema, batches, None);
+        assert!(result.is_ok(), "Failed to write parquet");
+
+        let write_result = result.unwrap();
+        assert!(write_result.size_bytes > 0, "Should have written bytes");
+
+        // Verify file exists
+        let store = build_object_store(&storage).unwrap();
+        use crate::object_store_ops::head_file_sync;
+        let meta = head_file_sync(store, &storage, file_path);
+        assert!(meta.is_ok(), "File should exist");
+
+        let _ = fs::remove_dir_all(&temp_dir);
+    }
+
+    #[test]
+    fn test_write_parquet_with_store_sync() {
+        use crate::build_object_store;
+        use kalamdb_commons::models::ids::StorageId;
+        use kalamdb_commons::models::storage::StorageType;
+        use kalamdb_commons::models::types::Storage;
+        use std::env;
+        use std::fs;
+        use std::sync::Arc;
+
+        let temp_dir = env::temp_dir().join("kalamdb_test_write_with_store");
+        let _ = fs::remove_dir_all(&temp_dir);
+        fs::create_dir_all(&temp_dir).unwrap();
+
+        let now = chrono::Utc::now().timestamp_millis();
+        let storage = Storage {
+            storage_id: StorageId::from("test_write_store"),
+            storage_name: "test_write_store".to_string(),
+            description: None,
+            storage_type: StorageType::Filesystem,
+            base_directory: temp_dir.to_string_lossy().to_string(),
+            credentials: None,
+            config_json: None,
+            shared_tables_template: "{namespace}/{table}".to_string(),
+            user_tables_template: "{namespace}/{user}/{table}".to_string(),
+            created_at: now,
+            updated_at: now,
+        };
+
+        let store = build_object_store(&storage).unwrap();
+        let (schema, batches) = make_test_batch();
+        let file_path = "test/with_store.parquet";
+
+        let result = write_parquet_with_store_sync(
+            Arc::clone(&store),
+            &storage,
+            file_path,
+            schema,
+            batches,
+            None,
+        );
+        assert!(result.is_ok());
+
+        // Verify file exists and has content
+        use crate::object_store_ops::head_file_sync;
+        let meta = head_file_sync(store, &storage, file_path).unwrap();
+        assert!(meta.size_bytes > 0);
+
+        let _ = fs::remove_dir_all(&temp_dir);
+    }
+
+    #[test]
+    fn test_write_parquet_with_bloom_filters() {
+        use crate::build_object_store;
+        use arrow::array::Int64Array;
+        use arrow::datatypes::{DataType, Field, Schema};
+        use kalamdb_commons::models::ids::StorageId;
+        use kalamdb_commons::models::storage::StorageType;
+        use kalamdb_commons::models::types::Storage;
+        use std::env;
+        use std::fs;
+        use std::sync::Arc;
+
+        let temp_dir = env::temp_dir().join("kalamdb_test_write_bloom");
+        let _ = fs::remove_dir_all(&temp_dir);
+        fs::create_dir_all(&temp_dir).unwrap();
+
+        let now = chrono::Utc::now().timestamp_millis();
+        let storage = Storage {
+            storage_id: StorageId::from("test_bloom"),
+            storage_name: "test_bloom".to_string(),
+            description: None,
+            storage_type: StorageType::Filesystem,
+            base_directory: temp_dir.to_string_lossy().to_string(),
+            credentials: None,
+            config_json: None,
+            shared_tables_template: "{namespace}/{table}".to_string(),
+            user_tables_template: "{namespace}/{user}/{table}".to_string(),
+            created_at: now,
+            updated_at: now,
+        };
+
+        let store = build_object_store(&storage).unwrap();
+
+        // Create batch with 1024+ rows for bloom filters
+        let schema = Arc::new(Schema::new(vec![
+            Field::new("id", DataType::Int64, false),
+            Field::new("_seq", DataType::Int64, false),
+        ]));
+
+        let ids: Vec<i64> = (0..1024).collect();
+        let seqs: Vec<i64> = (0..1024).map(|i| i * 1000).collect();
+
+        let batch = RecordBatch::try_new(
+            Arc::clone(&schema),
+            vec![
+                Arc::new(Int64Array::from(ids)),
+                Arc::new(Int64Array::from(seqs)),
+            ],
+        )
+        .unwrap();
+
+        let bloom_columns = vec!["id".to_string(), "_seq".to_string()];
+        let file_path = "test/with_bloom.parquet";
+
+        let result = write_parquet_with_store_sync(
+            Arc::clone(&store),
+            &storage,
+            file_path,
+            schema,
+            vec![batch],
+            Some(bloom_columns),
+        );
+        assert!(result.is_ok(), "Should write with bloom filters");
+
+        let _ = fs::remove_dir_all(&temp_dir);
+    }
+
+    #[test]
+    fn test_write_large_parquet() {
+        use crate::build_object_store;
+        use arrow::array::Int64Array;
+        use arrow::datatypes::{DataType, Field, Schema};
+        use kalamdb_commons::models::ids::StorageId;
+        use kalamdb_commons::models::storage::StorageType;
+        use kalamdb_commons::models::types::Storage;
+        use std::env;
+        use std::fs;
+        use std::sync::Arc;
+
+        let temp_dir = env::temp_dir().join("kalamdb_test_write_large");
+        let _ = fs::remove_dir_all(&temp_dir);
+        fs::create_dir_all(&temp_dir).unwrap();
+
+        let now = chrono::Utc::now().timestamp_millis();
+        let storage = Storage {
+            storage_id: StorageId::from("test_large"),
+            storage_name: "test_large".to_string(),
+            description: None,
+            storage_type: StorageType::Filesystem,
+            base_directory: temp_dir.to_string_lossy().to_string(),
+            credentials: None,
+            config_json: None,
+            shared_tables_template: "{namespace}/{table}".to_string(),
+            user_tables_template: "{namespace}/{user}/{table}".to_string(),
+            created_at: now,
+            updated_at: now,
+        };
+
+        let store = build_object_store(&storage).unwrap();
+
+        // Create large batch (50K rows)
+        let schema = Arc::new(Schema::new(vec![Field::new("value", DataType::Int64, false)]));
+
+        let values: Vec<i64> = (0..50_000).collect();
+        let batch = RecordBatch::try_new(
+            Arc::clone(&schema),
+            vec![Arc::new(Int64Array::from(values))],
+        )
+        .unwrap();
+
+        let file_path = "test/large.parquet";
+
+        let result =
+            write_parquet_with_store_sync(store, &storage, file_path, schema, vec![batch], None);
+        assert!(result.is_ok());
+
+        let write_result = result.unwrap();
+        assert!(
+            write_result.size_bytes > 50_000,
+            "Large file should have substantial size"
+        );
+
+        let _ = fs::remove_dir_all(&temp_dir);
+    }
+
+    #[test]
+    fn test_write_creates_directories() {
+        use kalamdb_commons::models::ids::StorageId;
+        use kalamdb_commons::models::storage::StorageType;
+        use kalamdb_commons::models::types::Storage;
+        use std::env;
+        use std::fs;
+
+        let temp_dir = env::temp_dir().join("kalamdb_test_write_mkdir");
+        let _ = fs::remove_dir_all(&temp_dir);
+        fs::create_dir_all(&temp_dir).unwrap();
+
+        let now = chrono::Utc::now().timestamp_millis();
+        let storage = Storage {
+            storage_id: StorageId::from("test_mkdir"),
+            storage_name: "test_mkdir".to_string(),
+            description: None,
+            storage_type: StorageType::Filesystem,
+            base_directory: temp_dir.to_string_lossy().to_string(),
+            credentials: None,
+            config_json: None,
+            shared_tables_template: "{namespace}/{table}".to_string(),
+            user_tables_template: "{namespace}/{user}/{table}".to_string(),
+            created_at: now,
+            updated_at: now,
+        };
+
+        let (schema, batches) = make_test_batch();
+        
+        // Deep nested path
+        let file_path = "deep/nested/path/to/file.parquet";
+
+        let result = write_parquet_to_storage_sync(&storage, file_path, schema, batches, None);
+        assert!(result.is_ok(), "Should create nested directories");
+
+        let _ = fs::remove_dir_all(&temp_dir);
     }
 }

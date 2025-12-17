@@ -35,8 +35,8 @@ impl PathResolver {
             .to_string();
 
         let base_dir = if let Some(storage_id) = data.storage_id.clone() {
-            let storages = app_ctx.system_tables().storages();
-            match storages.get_storage(&storage_id) {
+            // Use storage registry (cached lookup)
+            match app_ctx.storage_registry().get_storage(&storage_id) {
                 Ok(Some(storage)) => {
                     let trimmed = storage.base_directory.trim();
                     if trimmed.is_empty() {
@@ -84,18 +84,11 @@ impl PathResolver {
         table_type: TableType,
         storage_id: &StorageId,
     ) -> Result<String, KalamDbError> {
-        // Fetch storage configuration from system.storages
+        // Fetch storage configuration from registry (cached)
         let app_ctx = crate::app_context::AppContext::get();
-        let storages_provider = app_ctx.system_tables().storages();
-        let storage = storages_provider
-            .get_storage(storage_id)
-            .map_err(|e| {
-                KalamDbError::Other(format!(
-                    "Failed to load storage configuration '{}': {}",
-                    storage_id.as_str(),
-                    e
-                ))
-            })?
+        let storage = app_ctx
+            .storage_registry()
+            .get_storage(storage_id)?
             .ok_or_else(|| {
                 KalamDbError::InvalidOperation(format!(
                     "Storage '{}' not found while resolving path template",
@@ -104,8 +97,8 @@ impl PathResolver {
             })?;
 
         let raw_template = match table_type {
-            TableType::User => storage.user_tables_template,
-            TableType::Shared | TableType::Stream => storage.shared_tables_template,
+            TableType::User => storage.user_tables_template.clone(),
+            TableType::Shared | TableType::Stream => storage.shared_tables_template.clone(),
             TableType::System => "system/{namespace}/{tableName}".to_string(),
         };
 

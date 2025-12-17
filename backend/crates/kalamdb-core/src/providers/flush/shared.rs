@@ -11,14 +11,13 @@ use crate::manifest::{FlushManifestHelper, ManifestCacheService, ManifestService
 use crate::providers::arrow_json_conversion::json_rows_to_arrow_batch;
 use crate::app_context::AppContext;
 use crate::schema_registry::SchemaRegistry;
-use crate::storage::write_parquet_to_storage_sync;
+use crate::storage::write_parquet_with_store_sync;
 use datafusion::arrow::datatypes::SchemaRef;
 use datafusion::arrow::record_batch::RecordBatch;
 use datafusion::scalar::ScalarValue;
 use kalamdb_commons::constants::SystemColumnNames;
 use kalamdb_commons::models::{Row, StorageId, TableId, UserId};
 use kalamdb_commons::{NamespaceId, TableName};
-use kalamdb_store::entity_store::EntityStore;
 use kalamdb_tables::{SharedTableIndexedStore, SharedTableRow};
 use std::sync::Arc;
 
@@ -276,11 +275,11 @@ impl TableFlush for SharedTableFlushJob {
         let full_dir = self
             .unified_cache
             .get_storage_path(&self.table_id, None, None)?;
-        let destination_path = if full_dir.ends_with('/') {
-            format!("{}{}", full_dir, batch_filename)
-        } else {
-            format!("{}/{}", full_dir, batch_filename)
-        };
+        // Use PathBuf for proper cross-platform path handling (avoids mixed slashes)
+        let destination_path = std::path::Path::new(&full_dir)
+            .join(&batch_filename)
+            .to_string_lossy()
+            .to_string();
 
         let app_ctx = AppContext::get();
         let cached = self
@@ -288,18 +287,20 @@ impl TableFlush for SharedTableFlushJob {
             .get(&self.table_id)
             .ok_or_else(|| KalamDbError::TableNotFound(format!("Table not found: {}", self.table_id)))?;
 
+        // Get storage from registry (cached lookup)
         let storage_id = cached.storage_id.clone().unwrap_or_else(StorageId::local);
         let storage = app_ctx
-            .system_tables()
-            .storages()
-            .get_storage(&storage_id)
-            .into_kalamdb_error("Failed to load storage")?
+            .storage_registry()
+            .get_storage(&storage_id)?
             .ok_or_else(|| {
                 KalamDbError::InvalidOperation(format!(
                     "Storage '{}' not found",
                     storage_id.as_str()
                 ))
             })?;
+
+        // Get cached ObjectStore instance (avoids rebuild overhead on each flush)
+        let object_store = cached.object_store()?;
 
         // Extract PRIMARY KEY columns from TableDefinition for Bloom filter optimization (FR-054, FR-055)
         // Fetch once per flush job instead of per-batch for efficiency
@@ -326,7 +327,8 @@ impl TableFlush for SharedTableFlushJob {
             destination_path,
             rows_count
         );
-        let result = write_parquet_to_storage_sync(
+        let result = write_parquet_with_store_sync(
+            object_store,
             &storage,
             &destination_path,
             self.schema.clone(),
@@ -370,6 +372,16 @@ impl TableFlush for SharedTableFlushJob {
             all_keys_to_delete.len() - rows_count
         );
         self.delete_flushed_rows(&all_keys_to_delete)?;
+
+        // Compact RocksDB column family after flush to free space and optimize reads
+        use kalamdb_store::entity_store::EntityStore;
+        use kalamdb_store::Partition;
+        let partition = Partition::new(self.store.partition());
+        log::debug!("🔧 Compacting RocksDB column family after flush: {}", partition.name());
+        if let Err(e) = self.store.backend().compact_partition(&partition) {
+            log::warn!("⚠️  Failed to compact partition after flush: {}", e);
+            // Non-fatal: flush succeeded, compaction is optimization
+        }
 
         let parquet_path = destination_path;
 

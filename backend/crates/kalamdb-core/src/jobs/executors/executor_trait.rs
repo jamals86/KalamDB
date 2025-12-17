@@ -341,8 +341,8 @@ mod tests {
         }
     }
 
-    #[test]
-    fn test_job_context_logging() {
+    #[tokio::test]
+    async fn test_job_context_logging() {
         init_test_app_context();
         let app_ctx = AppContext::get();
 

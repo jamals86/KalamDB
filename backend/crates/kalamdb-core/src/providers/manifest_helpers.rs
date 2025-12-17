@@ -42,10 +42,7 @@ pub fn ensure_manifest_ready(
     let manifest_service = core.app_context.manifest_service();
     let manifest = manifest_service.ensure_manifest_initialized(table_id, table_type, user_id)?;
 
-    let manifest_path = manifest_service
-        .manifest_path(table_id, user_id)?
-        .to_string_lossy()
-        .to_string();
+    let manifest_path = manifest_service.manifest_path(table_id, user_id)?;
 
     manifest_cache.stage_before_flush(table_id, user_id, &manifest, manifest_path)?;
 
