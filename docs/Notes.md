@@ -321,7 +321,6 @@ instead of: 1 failed: Invalid operation: No handler registered for statement typ
 but doesnt include all the data from the manifest.json itself
 
 
-
 Make sure there is tests which insert/updte data and then check if the actual data we inserted/updated is there and exists in select then flush the data and check again if insert/update works with the flushed data in cold storage, check that insert fails when inserting a row id primary key which already exists and update do works
 
 
