@@ -337,6 +337,13 @@ impl AppContext {
                     app_ctx_for_stats.compute_metrics()
                 }));
 
+                // Wire up ManifestTableProvider in_memory_checker callback
+                // This allows system.manifest to show if a cache entry is in hot memory
+                let manifest_cache_for_checker = Arc::clone(&app_ctx.manifest_cache_service);
+                app_ctx.system_tables().manifest().set_in_memory_checker(
+                    Arc::new(move |cache_key: &str| manifest_cache_for_checker.is_in_hot_cache(cache_key))
+                );
+
                 app_ctx
             })
             .clone()

@@ -77,7 +77,8 @@ pub fn new_manifest_store(backend: Arc<dyn StorageBackend>) -> ManifestStore {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use kalamdb_commons::types::SyncState;
+    use kalamdb_commons::types::{Manifest, SyncState};
+    use kalamdb_commons::{NamespaceId, TableId, TableName};
     use kalamdb_store::entity_store::EntityStore;
     use kalamdb_store::test_utils::InMemoryBackend;
 
@@ -87,8 +88,10 @@ mod tests {
     }
 
     fn create_test_entry() -> ManifestCacheEntry {
+        let table_id = TableId::new(NamespaceId::new("test"), TableName::new("table"));
+        let manifest = Manifest::new(table_id, None);
         ManifestCacheEntry::new(
-            r#"{"table_id":"test","scope":"shared","version":1}"#.to_string(),
+            manifest,
             Some("etag123".to_string()),
             1000,
             "s3://bucket/ns1/tbl1/manifest.json".to_string(),

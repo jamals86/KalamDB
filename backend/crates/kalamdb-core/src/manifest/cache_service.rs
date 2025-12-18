@@ -275,13 +275,8 @@ impl ManifestCacheService {
         let cache_key = ManifestCacheKey::from(cache_key_str.clone());
         let now = chrono::Utc::now().timestamp();
 
-        // TODO: Maybe its better to have it as parsed one instead of string
-        // For now we serialize it to string as ManifestCacheEntry expects string
-        let manifest_json = serde_json::to_string(manifest).map_err(|e| {
-            StorageError::SerializationError(format!("Failed to serialize Manifest: {}", e))
-        })?;
-
-        let entry = ManifestCacheEntry::new(manifest_json, etag, now, source_path, sync_state);
+        // Store the Manifest object directly (no longer serializing to JSON string)
+        let entry = ManifestCacheEntry::new(manifest.clone(), etag, now, source_path, sync_state);
 
         EntityStore::put(&self.store, &cache_key, &entry)?;
 
@@ -320,6 +315,13 @@ impl ManifestCacheService {
         self.hot_cache
             .get(cache_key)
             .map(|v| v.value().last_accessed_ts())
+    }
+
+    /// Check if a cache key is currently in the hot cache (RAM).
+    ///
+    /// This is used by system.manifest table to populate the `in_memory` column.
+    pub fn is_in_hot_cache(&self, cache_key: &str) -> bool {
+        self.hot_cache.contains_key(cache_key)
     }
 
     /// Get cache configuration.
@@ -603,10 +605,13 @@ mod tests {
         let table2 = TableId::new(NamespaceId::new("ns1"), TableName::new("stale"));
         let now = chrono::Utc::now().timestamp();
 
+        let fresh_manifest = Manifest::new(table1.clone(), None);
+        let stale_manifest = Manifest::new(table2.clone(), None);
+
         let fresh_entry =
-            ManifestCacheEntry::new("{}".to_string(), None, now, "p1".to_string(), SyncState::InSync);
+            ManifestCacheEntry::new(fresh_manifest, None, now, "p1".to_string(), SyncState::InSync);
         let stale_entry = ManifestCacheEntry::new(
-            "{}".to_string(),
+            stale_manifest,
             None,
             now - 10,
             "p2".to_string(),

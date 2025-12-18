@@ -40,15 +40,15 @@ impl std::fmt::Display for SyncState {
 /// Manifest cache entry stored in RocksDB (Phase 4 - US6).
 ///
 /// Fields:
-/// - `manifest_json`: Serialized ManifestFile content
+/// - `manifest`: The parsed Manifest object (stored directly, serialized on-the-fly for display)
 /// - `etag`: Storage ETag or version identifier for freshness validation
 /// - `last_refreshed`: Unix timestamp (seconds) of last successful refresh
 /// - `source_path`: Full path to manifest.json in storage backend
 /// - `sync_state`: Current synchronization state (InSync | Stale | Error)
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ManifestCacheEntry {
-    /// Serialized ManifestFile JSON
-    pub manifest_json: String, //TODO: Maybe its better to have it as parsed one instead of string
+    /// The Manifest object (no longer stored as JSON string - serialized on-the-fly when needed)
+    pub manifest: Manifest,
 
     /// ETag or version identifier from storage backend
     pub etag: Option<String>,
@@ -66,19 +66,24 @@ pub struct ManifestCacheEntry {
 impl ManifestCacheEntry {
     /// Create a new cache entry
     pub fn new(
-        manifest_json: String,
+        manifest: Manifest,
         etag: Option<String>,
         last_refreshed: i64,
         source_path: String,
         sync_state: SyncState,
     ) -> Self {
         Self {
-            manifest_json,
+            manifest,
             etag,
             last_refreshed,
             source_path,
             sync_state,
         }
+    }
+
+    /// Serialize manifest to JSON string (for display in system.manifest table)
+    pub fn manifest_json(&self) -> String {
+        serde_json::to_string(&self.manifest).unwrap_or_else(|_| "{}".to_string())
     }
 
     /// Check if entry is stale based on TTL
@@ -299,8 +304,10 @@ mod tests {
 
     #[test]
     fn test_manifest_cache_entry_is_stale() {
+        let table_id = TableId::new(NamespaceId::new("test"), TableName::new("table"));
+        let manifest = Manifest::new(table_id, None);
         let entry = ManifestCacheEntry::new(
-            "{}".to_string(),
+            manifest,
             Some("etag123".to_string()),
             1000,
             "path/to/manifest.json".to_string(),
@@ -316,8 +323,10 @@ mod tests {
 
     #[test]
     fn test_manifest_cache_entry_state_transitions() {
+        let table_id = TableId::new(NamespaceId::new("test"), TableName::new("table"));
+        let manifest = Manifest::new(table_id, None);
         let mut entry = ManifestCacheEntry::new(
-            "{}".to_string(),
+            manifest,
             None,
             1000,
             "path".to_string(),

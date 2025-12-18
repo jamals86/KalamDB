@@ -608,19 +608,7 @@ pub fn pk_exists_in_cold(
     let cache_result = manifest_cache_service.get_or_load(table_id, user_id);
 
     let manifest: Option<Manifest> = match &cache_result {
-        Ok(Some(entry)) => match serde_json::from_str::<Manifest>(&entry.manifest_json) {
-            Ok(m) => Some(m),
-            Err(e) => {
-                log::warn!(
-                    "[pk_exists_in_cold] Failed to parse manifest for {}.{} {}: {}",
-                    namespace.as_str(),
-                    table.as_str(),
-                    scope_label,
-                    e
-                );
-                None
-            }
-        },
+        Ok(Some(entry)) => Some(entry.manifest.clone()),
         Ok(None) => {
             log::trace!(
                 "[pk_exists_in_cold] No manifest for {}.{} {} - checking all files",

@@ -60,72 +60,61 @@ pub(crate) fn scan_parquet_files_as_batch(
     let mut use_degraded_mode = false;
 
     match &cache_result {
-        Ok(Some(entry)) => match serde_json::from_str::<Manifest>(&entry.manifest_json) {
-            Ok(manifest) => {
-                // Validate manifest using service
-                let manifest_service = core.app_context.manifest_service();
-                if let Err(e) = manifest_service.validate_manifest(&manifest) {
-                    log::warn!(
-                        "⚠️  [MANIFEST CORRUPTION] table={}.{} {} error={} | Triggering rebuild",
-                        namespace.as_str(),
-                        table.as_str(),
-                        scope_label,
-                        e
-                    );
-                    use_degraded_mode = true;
-                    let ns = namespace.clone();
-                    let tbl = table.clone();
-                    let uid = user_id.cloned();
-                    let scope_for_spawn = scope_label.clone();
-                    let manifest_table_type = table_type;
-                    let table_id_for_spawn = table_id.clone();
-                    let manifest_service_clone = core.app_context.manifest_service();
-                    tokio::spawn(async move {
-                        log::info!(
-                            "🔧 [MANIFEST REBUILD STARTED] table={}.{} {}",
-                            ns.as_str(),
-                            tbl.as_str(),
-                            scope_for_spawn
-                        );
-                        match manifest_service_clone.rebuild_manifest(
-                            &table_id_for_spawn,
-                            manifest_table_type,
-                            uid.as_ref(),
-                        ) {
-                            Ok(_) => {
-                                log::info!(
-                                    "✅ [MANIFEST REBUILD COMPLETED] table={}.{} {}",
-                                    ns.as_str(),
-                                    tbl.as_str(),
-                                    scope_for_spawn
-                                );
-                            }
-                            Err(e) => {
-                                log::error!(
-                                    "❌ [MANIFEST REBUILD FAILED] table={}.{} {} error={}",
-                                    ns.as_str(),
-                                    tbl.as_str(),
-                                    scope_for_spawn,
-                                    e
-                                );
-                            }
-                        }
-                    });
-                } else {
-                    manifest_opt = Some(manifest);
-                }
-            }
-            Err(e) => {
+        Ok(Some(entry)) => {
+            let manifest = entry.manifest.clone();
+            // Validate manifest using service
+            let manifest_service = core.app_context.manifest_service();
+            if let Err(e) = manifest_service.validate_manifest(&manifest) {
                 log::warn!(
-                    "⚠️  Failed to parse manifest JSON for table={}.{} {}: {} | Using degraded mode",
+                    "⚠️  [MANIFEST CORRUPTION] table={}.{} {} error={} | Triggering rebuild",
                     namespace.as_str(),
                     table.as_str(),
                     scope_label,
                     e
                 );
                 use_degraded_mode = true;
+                let ns = namespace.clone();
+                let tbl = table.clone();
+                let uid = user_id.cloned();
+                let scope_for_spawn = scope_label.clone();
+                let manifest_table_type = table_type;
+                let table_id_for_spawn = table_id.clone();
+                let manifest_service_clone = core.app_context.manifest_service();
+                tokio::spawn(async move {
+                    log::info!(
+                        "🔧 [MANIFEST REBUILD STARTED] table={}.{} {}",
+                        ns.as_str(),
+                        tbl.as_str(),
+                        scope_for_spawn
+                    );
+                    match manifest_service_clone.rebuild_manifest(
+                        &table_id_for_spawn,
+                        manifest_table_type,
+                        uid.as_ref(),
+                    ) {
+                        Ok(_) => {
+                            log::info!(
+                                "✅ [MANIFEST REBUILD COMPLETED] table={}.{} {}",
+                                ns.as_str(),
+                                tbl.as_str(),
+                                scope_for_spawn
+                            );
+                        }
+                        Err(e) => {
+                            log::error!(
+                                "❌ [MANIFEST REBUILD FAILED] table={}.{} {} error={}",
+                                ns.as_str(),
+                                tbl.as_str(),
+                                scope_for_spawn,
+                                e
+                            );
+                        }
+                    }
+                });
+            } else {
+                manifest_opt = Some(manifest);
             }
-        },
+        }
         Ok(None) => {
             log::debug!(
                 "⚠️  Manifest cache MISS | table={}.{} | {} | fallback=directory_scan",
