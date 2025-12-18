@@ -118,7 +118,7 @@ impl Job {
         self.parameters.as_ref().and_then(|p| {
             serde_json::from_str::<serde_json::Value>(p)
                 .ok()
-                .and_then(|v| v.get("namespace_id")?.as_str().map(|s| NamespaceId::new(s)))
+                .and_then(|v| v.get("namespace_id")?.as_str().map(NamespaceId::new))
         })
     }
 
@@ -127,7 +127,7 @@ impl Job {
         self.parameters.as_ref().and_then(|p| {
             serde_json::from_str::<serde_json::Value>(p)
                 .ok()
-                .and_then(|v| v.get("table_name")?.as_str().map(|s| TableName::new(s)))
+                .and_then(|v| v.get("table_name")?.as_str().map(TableName::new))
         })
     }
 

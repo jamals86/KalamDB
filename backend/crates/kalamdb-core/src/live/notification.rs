@@ -234,7 +234,7 @@ impl NotificationService {
                 ChangeType::Update => kalamdb_commons::Notification::update(
                     live_id.to_string(),
                     vec![row_json],
-                    vec![old_json.unwrap_or_else(|| std::collections::HashMap::new())],
+                    vec![old_json.unwrap_or_else(std::collections::HashMap::new)],
                 ),
                 ChangeType::Delete => kalamdb_commons::Notification::delete(
                     live_id.to_string(),

@@ -74,7 +74,7 @@ async fn authenticate_with_request(
     );
 
     // Authenticate using unified auth module
-    let auth_result = match authenticate(auth_request, &connection_info, user_repo).await {
+    let auth_result = match authenticate(auth_request, connection_info, user_repo).await {
         Ok(result) => {
             // Log successful authentication
             let event_type = if connection_info.is_localhost() {

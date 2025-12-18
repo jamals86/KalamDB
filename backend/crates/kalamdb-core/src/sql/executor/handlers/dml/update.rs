@@ -267,7 +267,7 @@ impl StatementHandler for UpdateHandler {
                             updates.clone(),
                         ) {
                             Ok(_) => Ok(ExecutionResult::Updated { rows_affected: 1 }),
-                            Err(e) if matches!(e, crate::error::KalamDbError::NotFound(_)) => {
+                            Err(crate::error::KalamDbError::NotFound(_)) => {
                                 // Same fallback as USER tables: allow non-string PKs.
                                 if let Some(key) = provider
                                     .find_row_key_by_id_field(effective_user_id, &id_value)?
@@ -389,7 +389,7 @@ impl UpdateHandler {
                                 .iter()
                                 .filter_map(ObjectNamePart::as_ident)
                                 .map(|id| id.value.clone())
-                                .last()
+                                .next_back()
                                 .ok_or_else(|| {
                                     KalamDbError::InvalidOperation(
                                         "Invalid column name in assignment".into(),

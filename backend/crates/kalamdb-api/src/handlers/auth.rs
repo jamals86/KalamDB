@@ -152,7 +152,7 @@ pub async fn login_handler(
 
     // Generate JWT token
     let claims = JwtClaims::new(
-        &user.id.to_string(),
+        user.id.as_ref(),
         user.username.as_str(),
         user.role.as_str(),
         user.email.as_deref(),
@@ -253,7 +253,7 @@ pub async fn refresh_handler(
 
     // Generate new token
     let new_claims = JwtClaims::new(
-        &user.id.to_string(),
+        user.id.as_ref(),
         user.username.as_str(),
         user.role.as_str(),
         user.email.as_deref(),

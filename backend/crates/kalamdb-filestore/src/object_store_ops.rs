@@ -250,7 +250,7 @@ pub async fn delete_prefix(
 
     while let Some(result) = stream.next().await {
         let meta = result.map_err(|e| FilestoreError::ObjectStore(e.to_string()))?;
-        total_bytes += meta.size as u64;
+        total_bytes += meta.size;
         paths_to_delete.push(meta.location);
     }
 

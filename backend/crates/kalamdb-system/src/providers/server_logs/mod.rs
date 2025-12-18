@@ -168,7 +168,7 @@ impl ServerLogsTableProvider {
                 Arc::new(messages.finish()) as ArrayRef,
             ],
         )
-        .map_err(|e| SystemError::Arrow(e))?;
+        .map_err(SystemError::Arrow)?;
 
         Ok(batch)
     }

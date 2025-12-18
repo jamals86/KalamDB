@@ -31,7 +31,7 @@ impl UseNamespaceStatement {
     /// - SET NAMESPACE namespace_name
     pub fn parse(sql: &str) -> DdlResult<Self> {
         let sql_upper = sql.trim().to_uppercase();
-        let words: Vec<&str> = sql.trim().split_whitespace().collect();
+        let words: Vec<&str> = sql.split_whitespace().collect();
 
         // Match patterns: USE <name>, USE NAMESPACE <name>, SET NAMESPACE <name>
         let namespace_name = if sql_upper.starts_with("USE NAMESPACE") {

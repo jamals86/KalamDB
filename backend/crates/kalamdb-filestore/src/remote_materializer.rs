@@ -105,7 +105,7 @@ async fn download_file_streaming(
     if let Some(parent) = local_path.parent() {
         fs::create_dir_all(parent)
             .await
-            .map_err(|e| FilestoreError::Io(e))?;
+            .map_err(FilestoreError::Io)?;
     }
 
     // Get object as stream
@@ -117,17 +117,17 @@ async fn download_file_streaming(
     // Stream to local file
     let mut file = fs::File::create(local_path)
         .await
-        .map_err(|e| FilestoreError::Io(e))?;
+        .map_err(FilestoreError::Io)?;
 
     let mut stream = result.into_stream();
     while let Some(chunk) = stream.next().await {
         let bytes: Bytes = chunk.map_err(|e| FilestoreError::ObjectStore(e.to_string()))?;
         file.write_all(&bytes)
             .await
-            .map_err(|e| FilestoreError::Io(e))?;
+            .map_err(FilestoreError::Io)?;
     }
 
-    file.flush().await.map_err(|e| FilestoreError::Io(e))?;
+    file.flush().await.map_err(FilestoreError::Io)?;
 
     Ok(())
 }
@@ -151,7 +151,7 @@ async fn make_temp_dir(remote_prefix: &str) -> Result<PathBuf> {
 
     fs::create_dir_all(&dir)
         .await
-        .map_err(|e| FilestoreError::Io(e))?;
+        .map_err(FilestoreError::Io)?;
 
     Ok(dir)
 }
@@ -161,8 +161,7 @@ fn extract_key_prefix(url: &str) -> String {
     let trimmed = url.trim();
 
     for scheme in ["s3://", "gs://", "gcs://", "az://", "azure://"] {
-        if trimmed.starts_with(scheme) {
-            let rest = &trimmed[scheme.len()..];
+        if let Some(rest) = trimmed.strip_prefix(scheme) {
             return match rest.split_once('/') {
                 Some((_, prefix)) => prefix.trim_matches('/').to_string(),
                 None => String::new(),
@@ -180,8 +179,8 @@ fn compute_relative_path(prefix: &str, full_key: &str) -> String {
 
     if prefix.is_empty() {
         full_key.to_string()
-    } else if full_key.starts_with(prefix) {
-        full_key[prefix.len()..].trim_start_matches('/').to_string()
+    } else if let Some(rest) = full_key.strip_prefix(prefix) {
+        rest.trim_start_matches('/').to_string()
     } else {
         full_key.to_string()
     }

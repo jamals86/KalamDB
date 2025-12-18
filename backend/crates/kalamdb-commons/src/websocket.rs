@@ -154,7 +154,7 @@ pub enum WebSocketMessage {
     /// Initial data batch sent after subscription or on client request
     ///
     /// Sent automatically for the first batch after subscription acknowledgement,
-    /// then sent on-demand when client requests via NextBatchRequest.
+    /// then sent on-demand when client requests via ClientMessage::NextBatch.
     InitialDataBatch {
         /// The subscription ID this data is for
         subscription_id: String,
@@ -342,19 +342,6 @@ pub enum BatchStatus {
 
     /// All initial data has been loaded, live updates active (has_more == false)
     Ready,
-}
-
-/// Request from client to fetch the next batch of initial data
-///
-/// DEPRECATED: Use ClientMessage::NextBatch instead
-#[deprecated(note = "Use ClientMessage::NextBatch for type-safe requests")]
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct NextBatchRequest {
-    /// The subscription ID to fetch the next batch for
-    pub subscription_id: String,
-
-    /// The batch number to fetch (should be current_batch + 1)
-    pub batch_num: u32,
 }
 
 /// Notification message sent to clients for live query updates

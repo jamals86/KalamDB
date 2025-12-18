@@ -830,13 +830,6 @@ impl SubscriptionConfig {
             ws_url: None,
         }
     }
-
-    /// Set the number of initial rows to fetch (deprecated - batch streaming configured server-side)
-    #[deprecated(note = "Batch streaming is now configured server-side, this method is a no-op")]
-    pub fn with_last_rows(self, _count: usize) -> Self {
-        // No-op: batch streaming configured server-side
-        self
-    }
 }
 
 #[cfg(test)]

@@ -643,8 +643,7 @@ pub fn record_batch_to_json_rows(
     for row_idx in 0..num_rows {
         let mut json_row = std::collections::HashMap::with_capacity(num_cols);
 
-        for col_idx in 0..num_cols {
-            let col_name = column_names[col_idx].clone();
+        for (col_idx, col_name) in column_names.iter().enumerate() {
             let column = batch.column(col_idx);
 
             let scalar = ScalarValue::try_from_array(column.as_ref(), row_idx)
@@ -652,7 +651,7 @@ pub fn record_batch_to_json_rows(
 
             // ✅ SINGLE SOURCE: All conversions flow through this function
             let json_value = scalar_value_to_json(&scalar)?;
-            json_row.insert(col_name, json_value);
+            json_row.insert(col_name.clone(), json_value);
         }
 
         rows.push(json_row);

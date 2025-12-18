@@ -6,7 +6,7 @@
 use crate::error::KalamDbError;
 use crate::error_extensions::KalamDbResultExt;
 use crate::app_context::AppContext;
-use kalamdb_filestore::object_store_factory::{object_key_for_path, build_object_store};
+use kalamdb_filestore::object_store_factory::object_key_for_path;
 use kalamdb_filestore::object_store_ops::{list_files_sync, read_file_sync};
 use kalamdb_commons::system::Storage;
 use datafusion::arrow::compute::cast;

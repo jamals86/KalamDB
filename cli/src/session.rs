@@ -282,7 +282,7 @@ impl CLISession {
         }
 
         let result = &response.results[0];
-        if result.rows.as_ref().map_or(true, |r| r.is_empty()) {
+        if result.rows.as_ref().is_none_or(|r| r.is_empty()) {
             return Ok(None);
         }
 

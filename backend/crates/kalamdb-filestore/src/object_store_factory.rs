@@ -175,8 +175,7 @@ fn parse_remote_url(url: &str, schemes: &[&str]) -> Result<(String, String)> {
     let trimmed = url.trim();
 
     for scheme in schemes {
-        if trimmed.starts_with(scheme) {
-            let rest = &trimmed[scheme.len()..];
+        if let Some(rest) = trimmed.strip_prefix(scheme) {
             let (bucket, prefix) = match rest.split_once('/') {
                 Some((b, p)) => (b.to_string(), p.to_string()),
                 None => (rest.to_string(), String::new()),
@@ -212,8 +211,7 @@ pub fn object_key_for_path(storage: &Storage, full_path: &str) -> Result<ObjectS
 
     // Check if it's a remote URL
     for scheme in ["s3://", "gs://", "gcs://", "az://", "azure://"] {
-        if trimmed.starts_with(scheme) {
-            let rest = &trimmed[scheme.len()..];
+        if let Some(rest) = trimmed.strip_prefix(scheme) {
             // Skip bucket/container, extract key
             let key = match rest.split_once('/') {
                 Some((_, k)) => k.trim_matches('/'),
