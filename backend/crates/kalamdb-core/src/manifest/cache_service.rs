@@ -123,6 +123,8 @@ impl ManifestCacheService {
     }
 
     /// Stage manifest metadata in the cache before the first flush writes manifest.json to disk.
+    ///
+    /// Uses `PendingWrite` state since the manifest hasn't been written to storage yet.
     pub fn stage_before_flush(
         &self,
         table_id: &TableId,
@@ -136,8 +138,61 @@ impl ManifestCacheService {
             manifest,
             None,
             source_path,
-            SyncState::InSync,
+            SyncState::PendingWrite,
         )
+    }
+
+    /// Mark a cache entry as stale (e.g., after validation failure or corruption detection).
+    ///
+    /// Updates the sync_state to Stale in both hot cache and RocksDB.
+    pub fn mark_as_stale(
+        &self,
+        table_id: &TableId,
+        user_id: Option<&UserId>,
+    ) -> Result<(), StorageError> {
+        let cache_key_str = self.make_cache_key(table_id, user_id);
+        let cache_key = ManifestCacheKey::from(cache_key_str.clone());
+
+        // Update in RocksDB
+        if let Some(mut entry) = EntityStore::get(&self.store, &cache_key)? {
+            entry.mark_stale();
+            EntityStore::put(&self.store, &cache_key, &entry)?;
+
+            // Update hot cache if present
+            if let Some(mut hot_entry) = self.hot_cache.get_mut(&cache_key_str) {
+                // Replace with updated entry
+                let last_accessed = hot_entry.last_accessed_ts();
+                *hot_entry = HotManifestEntry::new(Arc::new(entry), last_accessed);
+            }
+        }
+
+        Ok(())
+    }
+
+    /// Mark a cache entry as having an error state.
+    ///
+    /// Updates the sync_state to Error in both hot cache and RocksDB.
+    pub fn mark_as_error(
+        &self,
+        table_id: &TableId,
+        user_id: Option<&UserId>,
+    ) -> Result<(), StorageError> {
+        let cache_key_str = self.make_cache_key(table_id, user_id);
+        let cache_key = ManifestCacheKey::from(cache_key_str.clone());
+
+        // Update in RocksDB
+        if let Some(mut entry) = EntityStore::get(&self.store, &cache_key)? {
+            entry.mark_error();
+            EntityStore::put(&self.store, &cache_key, &entry)?;
+
+            // Update hot cache if present
+            if let Some(mut hot_entry) = self.hot_cache.get_mut(&cache_key_str) {
+                let last_accessed = hot_entry.last_accessed_ts();
+                *hot_entry = HotManifestEntry::new(Arc::new(entry), last_accessed);
+            }
+        }
+
+        Ok(())
     }
 
     /// Validate freshness of cached entry based on TTL.

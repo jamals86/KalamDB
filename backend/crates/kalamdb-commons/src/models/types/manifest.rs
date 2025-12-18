@@ -13,9 +13,11 @@ use crate::UserId;
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum SyncState {
-    /// Cache is in sync with storage
+    /// Cache is in sync with storage (manifest.json on disk matches cache)
     InSync,
-    /// Cache may be stale and needs refresh
+    /// Cache has local changes that need to be written to storage (pending flush)
+    PendingWrite,
+    /// Cache may be stale and needs refresh from storage
     Stale,
     /// Error occurred during last sync attempt
     Error,
@@ -31,6 +33,7 @@ impl std::fmt::Display for SyncState {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             SyncState::InSync => write!(f, "in_sync"),
+            SyncState::PendingWrite => write!(f, "pending_write"),
             SyncState::Stale => write!(f, "stale"),
             SyncState::Error => write!(f, "error"),
         }
@@ -45,9 +48,12 @@ impl std::fmt::Display for SyncState {
 /// - `last_refreshed`: Unix timestamp (seconds) of last successful refresh
 /// - `source_path`: Full path to manifest.json in storage backend
 /// - `sync_state`: Current synchronization state (InSync | Stale | Error)
-#[derive(Debug, Clone, Serialize, Deserialize)]
+///
+/// Note: Uses custom serialization because bincode doesn't support serde_json::Value in ColumnStats.
+/// The Manifest is serialized as JSON string for storage, but kept as typed object in memory.
+#[derive(Debug, Clone)]
 pub struct ManifestCacheEntry {
-    /// The Manifest object (no longer stored as JSON string - serialized on-the-fly when needed)
+    /// The Manifest object (typed for in-memory access)
     pub manifest: Manifest,
 
     /// ETag or version identifier from storage backend
@@ -61,6 +67,50 @@ pub struct ManifestCacheEntry {
 
     /// Synchronization state
     pub sync_state: SyncState,
+}
+
+/// Intermediate struct for bincode-compatible serialization
+#[derive(Serialize, Deserialize)]
+struct ManifestCacheEntryRaw {
+    manifest_json: String,
+    etag: Option<String>,
+    last_refreshed: i64,
+    source_path: String,
+    sync_state: SyncState,
+}
+
+impl Serialize for ManifestCacheEntry {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: serde::Serializer,
+    {
+        let raw = ManifestCacheEntryRaw {
+            manifest_json: serde_json::to_string(&self.manifest).unwrap_or_else(|_| "{}".to_string()),
+            etag: self.etag.clone(),
+            last_refreshed: self.last_refreshed,
+            source_path: self.source_path.clone(),
+            sync_state: self.sync_state,
+        };
+        raw.serialize(serializer)
+    }
+}
+
+impl<'de> Deserialize<'de> for ManifestCacheEntry {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        let raw = ManifestCacheEntryRaw::deserialize(deserializer)?;
+        let manifest: Manifest = serde_json::from_str(&raw.manifest_json)
+            .map_err(|e| serde::de::Error::custom(format!("Failed to parse manifest JSON: {}", e)))?;
+        Ok(ManifestCacheEntry {
+            manifest,
+            etag: raw.etag,
+            last_refreshed: raw.last_refreshed,
+            source_path: raw.source_path,
+            sync_state: raw.sync_state,
+        })
+    }
 }
 
 impl ManifestCacheEntry {
@@ -94,6 +144,11 @@ impl ManifestCacheEntry {
     /// Mark entry as stale
     pub fn mark_stale(&mut self) {
         self.sync_state = SyncState::Stale;
+    }
+
+    /// Mark entry as pending write (local changes need to be synced to storage)
+    pub fn mark_pending_write(&mut self) {
+        self.sync_state = SyncState::PendingWrite;
     }
 
     /// Mark entry as in sync

@@ -72,6 +72,16 @@ pub(crate) fn scan_parquet_files_as_batch(
                     scope_label,
                     e
                 );
+                // Mark cache entry as stale so sync_state reflects corruption
+                if let Err(mark_err) = manifest_cache_service.mark_as_stale(table_id, user_id) {
+                    log::warn!(
+                        "⚠️  Failed to mark manifest as stale: table={}.{} {} error={}",
+                        namespace.as_str(),
+                        table.as_str(),
+                        scope_label,
+                        mark_err
+                    );
+                }
                 use_degraded_mode = true;
                 let ns = namespace.clone();
                 let tbl = table.clone();
