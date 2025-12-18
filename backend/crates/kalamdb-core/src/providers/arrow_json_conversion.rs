@@ -590,7 +590,23 @@ pub fn scalar_value_to_json(value: &ScalarValue) -> Result<JsonValue, KalamDbErr
         ScalarValue::TimestampMicrosecond(None, _) => Ok(JsonValue::Null),
         ScalarValue::TimestampNanosecond(Some(ts), _) => Ok(JsonValue::Number((*ts).into())),
         ScalarValue::TimestampNanosecond(None, _) => Ok(JsonValue::Null),
-        ScalarValue::Decimal128(Some(_), _, _) => Ok(JsonValue::String(value.to_string())),
+        ScalarValue::Decimal128(Some(v), _precision, scale) => {
+            // Format decimal with proper scale
+            // e.g., 20075 with scale=2 -> "200.75"
+            let divisor = 10i128.pow(*scale as u32);
+            let integer_part = v / divisor;
+            let fractional_part = (v % divisor).abs();
+            if *scale == 0 {
+                Ok(JsonValue::String(integer_part.to_string()))
+            } else {
+                Ok(JsonValue::String(format!(
+                    "{}.{:0>width$}",
+                    integer_part,
+                    fractional_part,
+                    width = *scale as usize
+                )))
+            }
+        }
         ScalarValue::Decimal128(None, _, _) => Ok(JsonValue::Null),
         ScalarValue::FixedSizeBinary(_, Some(bytes)) => {
             // If it looks like a UUID (16 bytes), try to format as UUID string
@@ -611,6 +627,15 @@ pub fn scalar_value_to_json(value: &ScalarValue) -> Result<JsonValue, KalamDbErr
             ))
         }
         ScalarValue::Binary(None) | ScalarValue::LargeBinary(None) => Ok(JsonValue::Null),
+        // Time types - output as raw microseconds/nanoseconds value (integer)
+        ScalarValue::Time64Microsecond(Some(t)) => Ok(JsonValue::Number((*t).into())),
+        ScalarValue::Time64Microsecond(None) => Ok(JsonValue::Null),
+        ScalarValue::Time64Nanosecond(Some(t)) => Ok(JsonValue::Number((*t).into())),
+        ScalarValue::Time64Nanosecond(None) => Ok(JsonValue::Null),
+        ScalarValue::Time32Millisecond(Some(t)) => Ok(JsonValue::Number((*t).into())),
+        ScalarValue::Time32Millisecond(None) => Ok(JsonValue::Null),
+        ScalarValue::Time32Second(Some(t)) => Ok(JsonValue::Number((*t).into())),
+        ScalarValue::Time32Second(None) => Ok(JsonValue::Null),
         _ => Err(KalamDbError::InvalidOperation(format!(
             "Unsupported ScalarValue conversion to JSON: {:?}",
             value

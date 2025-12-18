@@ -132,10 +132,6 @@ pub fn default_flush_batch_size() -> usize {
 }
 
 // Manifest cache defaults (Phase 4 - US6)
-pub fn default_manifest_cache_ttl() -> i64 {
-    3600 // 1 hour
-}
-
 pub fn default_manifest_cache_eviction_interval() -> i64 {
     300 // 5 minutes
 }
@@ -144,8 +140,10 @@ pub fn default_manifest_cache_max_entries() -> usize {
     1000 // Reduced from 50000 for lower memory footprint
 }
 
-pub fn default_manifest_cache_memory_window() -> i64 {
-    3600 // 1 hour
+/// Default TTL in days for manifest eviction (default: 7 days)
+/// Manifests not accessed for this many days will be removed from cache
+pub fn default_manifest_cache_eviction_ttl_days() -> u64 {
+    7 // 7 days
 }
 
 // Retention defaults

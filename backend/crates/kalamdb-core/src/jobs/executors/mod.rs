@@ -7,7 +7,7 @@
 //! - `JobDecision`: Result type for job execution (Completed, Retry, Failed)
 //! - `JobContext`: Execution context with app access and auto-prefixed logging
 //! - `JobRegistry`: Thread-safe registry mapping JobType to executors
-//! - Concrete executors: Flush, Cleanup, Retention, StreamEviction, UserCleanup, Compact, Backup, Restore
+//! - Concrete executors: Flush, Cleanup, Retention, StreamEviction, UserCleanup, Compact, Backup, Restore, ManifestEviction
 
 pub mod executor_trait;
 pub mod registry;
@@ -18,6 +18,7 @@ pub mod cleanup;
 pub mod compact;
 pub mod flush;
 pub mod job_cleanup;
+pub mod manifest_eviction;
 pub mod restore;
 pub mod retention;
 pub mod stream_eviction;
@@ -34,6 +35,7 @@ pub use cleanup::CleanupExecutor;
 pub use compact::CompactExecutor;
 pub use flush::FlushExecutor;
 pub use job_cleanup::JobCleanupExecutor;
+pub use manifest_eviction::ManifestEvictionExecutor;
 pub use restore::RestoreExecutor;
 pub use retention::RetentionExecutor;
 pub use stream_eviction::StreamEvictionExecutor;

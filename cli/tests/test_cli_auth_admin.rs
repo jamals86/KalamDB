@@ -108,12 +108,23 @@ async fn test_root_can_create_namespace() {
     }
 
     assert_eq!(select_result["status"], "success");
+    // Rows are arrays, not objects. Check if any row contains the namespace name.
+    // Format: {"rows": [["namespace_name"], ...], "schema": [{"name": "name", "index": 0}, ...]}
     assert!(
         select_result["results"]
             .as_array()
             .and_then(|results| results.get(0))
             .and_then(|result| result["rows"].as_array())
-            .map(|rows| rows.iter().any(|row| row["name"] == namespace_name))
+            .map(|rows| {
+                rows.iter().any(|row| {
+                    // Row is an array like ["namespace_name"]
+                    row.as_array()
+                        .and_then(|arr| arr.get(0))
+                        .and_then(|v| v.as_str())
+                        .map(|name| name == namespace_name)
+                        .unwrap_or(false)
+                })
+            })
             .unwrap_or(false),
         "Namespace should exist in system.namespaces"
     );
@@ -130,14 +141,22 @@ async fn test_root_can_create_drop_tables() {
         return;
     }
 
+    // Use unique namespace name to avoid conflicts
+    let namespace_name = generate_unique_namespace("test_tables_ns");
+
     // Ensure namespace exists
-    let _ = execute_sql_as_root("CREATE NAMESPACE IF NOT EXISTS test_tables_ns").await;
+    let _ = execute_sql_as_root(&format!(
+        "CREATE NAMESPACE IF NOT EXISTS {}",
+        namespace_name
+    ))
+    .await;
     tokio::time::sleep(Duration::from_millis(100)).await;
 
     // Create table as root
-    let result = execute_sql_as_root(
-        "CREATE TABLE test_tables_ns.test_table (id INT PRIMARY KEY, name VARCHAR) WITH (TYPE='USER', FLUSH_POLICY='rows:10')",
-    )
+    let result = execute_sql_as_root(&format!(
+        "CREATE TABLE {}.test_table (id INT PRIMARY KEY, name VARCHAR) WITH (TYPE='USER', FLUSH_POLICY='rows:10')",
+        namespace_name
+    ))
     .await
     .unwrap();
 
@@ -148,7 +167,7 @@ async fn test_root_can_create_drop_tables() {
     );
 
     // Drop table
-    let result = execute_sql_as_root("DROP TABLE test_tables_ns.test_table")
+    let result = execute_sql_as_root(&format!("DROP TABLE {}.test_table", namespace_name))
         .await
         .unwrap();
 
@@ -158,7 +177,7 @@ async fn test_root_can_create_drop_tables() {
     );
 
     // Cleanup
-    let _ = execute_sql_as_root("DROP NAMESPACE test_tables_ns CASCADE").await;
+    let _ = execute_sql_as_root(&format!("DROP NAMESPACE {} CASCADE", namespace_name)).await;
 }
 
 /// Test CREATE NAMESPACE via CLI with root authentication
@@ -530,16 +549,23 @@ async fn test_cli_flush_table() {
     println!("DEBUG jobs_result raw: {}", jobs_result); // diagnostics
     println!("DEBUG first job raw row: {}", jobs_data[0]);
     let job = if jobs_data[0].is_array() {
-        // Build an object map {column_name: value} using returned columns metadata
+        // Build an object map {column_name: value} using returned schema metadata
         let mut obj = serde_json::Map::new();
-        let columns_vec = jobs_result["results"][0]["columns"]
+        // Schema format: [{"data_type":"Text","index":0,"name":"job_id"}, ...]
+        let schema_vec = jobs_result["results"][0]["schema"]
             .as_array()
             .cloned()
             .unwrap_or_default();
         let values = jobs_data[0].as_array().unwrap();
-        for (idx, col) in columns_vec.iter().enumerate() {
-            if let Some(col_name) = col.as_str() {
-                let val = values.get(idx).cloned().unwrap_or(serde_json::Value::Null);
+        for schema_entry in schema_vec.iter() {
+            if let (Some(col_name), Some(idx)) = (
+                schema_entry["name"].as_str(),
+                schema_entry["index"].as_u64(),
+            ) {
+                let val = values
+                    .get(idx as usize)
+                    .cloned()
+                    .unwrap_or(serde_json::Value::Null);
                 obj.insert(col_name.to_string(), val);
             }
         }
@@ -603,17 +629,23 @@ async fn test_cli_flush_table() {
             .cloned()
             .unwrap_or_default();
         if let Some(updated) = rows.get(0) {
-            // DataFusion may return rows as arrays; normalize using columns metadata if needed.
+            // DataFusion may return rows as arrays; normalize using schema metadata if needed.
             let status = if updated.is_array() {
                 let mut obj = serde_json::Map::new();
-                let columns_vec = refetch["results"][0]["columns"]
+                let schema_vec = refetch["results"][0]["schema"]
                     .as_array()
                     .cloned()
                     .unwrap_or_default();
                 let values = updated.as_array().unwrap();
-                for (idx, col) in columns_vec.iter().enumerate() {
-                    if let Some(col_name) = col.as_str() {
-                        let val = values.get(idx).cloned().unwrap_or(serde_json::Value::Null);
+                for schema_entry in schema_vec.iter() {
+                    if let (Some(col_name), Some(idx)) = (
+                        schema_entry["name"].as_str(),
+                        schema_entry["index"].as_u64(),
+                    ) {
+                        let val = values
+                            .get(idx as usize)
+                            .cloned()
+                            .unwrap_or(serde_json::Value::Null);
                         obj.insert(col_name.to_string(), val);
                     }
                 }
@@ -813,7 +845,7 @@ async fn test_cli_flush_all_tables() {
     };
 
     // Normalize rows to objects if DataFusion returns arrays.
-    let columns_vec = jobs_result["results"][0]["columns"]
+    let schema_vec = jobs_result["results"][0]["schema"]
         .as_array()
         .cloned()
         .unwrap_or_default();
@@ -823,9 +855,15 @@ async fn test_cli_flush_all_tables() {
             if row.is_array() {
                 let mut obj = serde_json::Map::new();
                 let values = row.as_array().unwrap();
-                for (idx, col) in columns_vec.iter().enumerate() {
-                    if let Some(col_name) = col.as_str() {
-                        let val = values.get(idx).cloned().unwrap_or(serde_json::Value::Null);
+                for schema_entry in schema_vec.iter() {
+                    if let (Some(col_name), Some(idx)) = (
+                        schema_entry["name"].as_str(),
+                        schema_entry["index"].as_u64(),
+                    ) {
+                        let val = values
+                            .get(idx as usize)
+                            .cloned()
+                            .unwrap_or(serde_json::Value::Null);
                         obj.insert(col_name.to_string(), val);
                     }
                 }

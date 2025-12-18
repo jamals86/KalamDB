@@ -203,12 +203,12 @@ impl ManifestCacheService {
     pub fn validate_freshness(&self, cache_key: &str) -> Result<bool, StorageError> {
         if let Some(entry) = self.hot_cache.get(cache_key) {
             let now = chrono::Utc::now().timestamp();
-            Ok(!entry.value().entry.is_stale(self.config.ttl_seconds, now))
+            Ok(!entry.value().entry.is_stale(self.config.ttl_seconds(), now))
         } else if let Some(entry) =
             EntityStore::get(&self.store, &ManifestCacheKey::from(cache_key))?
         {
             let now = chrono::Utc::now().timestamp();
-            Ok(!entry.is_stale(self.config.ttl_seconds, now))
+            Ok(!entry.is_stale(self.config.ttl_seconds(), now))
         } else {
             Ok(false) // Not cached = not fresh
         }
@@ -290,7 +290,7 @@ impl ManifestCacheService {
         for (key_bytes, entry) in entries {
             if let Ok(key_str) = String::from_utf8(key_bytes) {
                 // Skip stale entries to avoid loading expired manifests into RAM
-                if entry.is_stale(self.config.ttl_seconds, now) {
+                if entry.is_stale(self.config.ttl_seconds(), now) {
                     continue;
                 }
 
@@ -379,6 +379,53 @@ impl ManifestCacheService {
         self.hot_cache.contains_key(cache_key)
     }
 
+    /// Evict stale manifest entries based on last_accessed + TTL threshold.
+    ///
+    /// Removes entries from both hot_cache and RocksDB that haven't been accessed
+    /// within the specified TTL period.
+    ///
+    /// Returns the number of entries evicted.
+    pub fn evict_stale_entries(&self, ttl_seconds: i64) -> Result<usize, StorageError> {
+        let now = chrono::Utc::now().timestamp();
+        let cutoff = now - ttl_seconds;
+        let mut evicted_count = 0;
+
+        // Get all entries from RocksDB to check staleness
+        let all_entries = EntityStore::scan_all(&self.store, None, None, None)?;
+
+        for (key_bytes, entry) in all_entries {
+            let key_str = match String::from_utf8(key_bytes.clone()) {
+                Ok(s) => s,
+                Err(_) => continue, // Skip invalid UTF-8 keys
+            };
+
+            // Check last_accessed from hot cache (in-memory) or use last_refreshed from entry
+            let last_accessed = self
+                .get_last_accessed(&key_str)
+                .unwrap_or(entry.last_refreshed);
+
+            if last_accessed < cutoff {
+                // Remove from hot cache
+                self.hot_cache.remove(&key_str);
+
+                // Remove from RocksDB
+                let cache_key = ManifestCacheKey::from(key_str);
+                EntityStore::delete(&self.store, &cache_key)?;
+
+                evicted_count += 1;
+            }
+        }
+
+        log::info!(
+            "Manifest eviction: removed {} stale entries (ttl_seconds={}, cutoff={})",
+            evicted_count,
+            ttl_seconds,
+            cutoff
+        );
+
+        Ok(evicted_count)
+    }
+
     /// Get cache configuration.
     pub fn config(&self) -> &ManifestCacheSettings {
         &self.config
@@ -396,10 +443,9 @@ mod tests {
     fn create_test_service() -> ManifestCacheService {
         let backend: Arc<dyn StorageBackend> = Arc::new(InMemoryBackend::new());
         let config = ManifestCacheSettings {
-            ttl_seconds: 3600,
             eviction_interval_seconds: 300,
             max_entries: 1000,
-            last_accessed_memory_window: 3600,
+            eviction_ttl_days: 7,
         };
         ManifestCacheService::new(backend, config)
     }
@@ -652,7 +698,9 @@ mod tests {
     fn test_restore_from_rocksdb_skips_stale_and_limits_capacity() {
         let backend: Arc<dyn StorageBackend> = Arc::new(InMemoryBackend::new());
         let mut config = ManifestCacheSettings::default();
-        config.ttl_seconds = 5;
+        // Set a very short TTL (1 day = 86400 seconds) for testing
+        // Note: We use 1 day minimum since eviction_ttl_days is in days
+        config.eviction_ttl_days = 0; // 0 means entries are immediately stale
         config.max_entries = 1;
 
         let service = ManifestCacheService::new(Arc::clone(&backend), config.clone());

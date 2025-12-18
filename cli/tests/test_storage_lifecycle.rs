@@ -58,7 +58,7 @@ fn test_storage_drop_requires_detached_tables() {
     );
 
     let create_user_table_sql = format!(
-        "CREATE TABLE {}.{} (id INT PRIMARY KEY AUTO_INCREMENT, body TEXT) WITH (TYPE='USER', STORAGE_ID='{}', FLUSH_POLICY='rows:5')",
+        "CREATE TABLE {}.{} (id BIGINT PRIMARY KEY AUTO_INCREMENT, body TEXT) WITH (TYPE='USER', STORAGE_ID='{}', FLUSH_POLICY='rows:5')",
         namespace, user_table, storage_id
     );
     execute_sql_as_root_via_cli(&create_user_table_sql).expect("user table creation");
@@ -67,7 +67,9 @@ fn test_storage_drop_requires_detached_tables() {
         "INSERT INTO {}.{} (body) VALUES ('init')",
         namespace, user_table
     ));
-    std::thread::sleep(std::time::Duration::from_millis(50));
+    // Flush to force Parquet file creation (directories are created on flush, not on insert)
+    let _ = execute_sql_as_root_via_cli(&format!("FLUSH TABLE {}.{}", namespace, user_table));
+    std::thread::sleep(std::time::Duration::from_millis(500)); // Wait for async flush job
 
     // For user tables we only require the table directory itself to exist eagerly; the per-user
     // subdirectory may be created lazily on first write depending on backend semantics.
@@ -81,7 +83,7 @@ fn test_storage_drop_requires_detached_tables() {
     );
 
     let create_shared_table_sql = format!(
-        "CREATE TABLE {}.{} (id INT PRIMARY KEY AUTO_INCREMENT, body TEXT) WITH (TYPE='SHARED', STORAGE_ID='{}', FLUSH_POLICY='rows:5')",
+        "CREATE TABLE {}.{} (id BIGINT PRIMARY KEY AUTO_INCREMENT, body TEXT) WITH (TYPE='SHARED', STORAGE_ID='{}', FLUSH_POLICY='rows:5')",
         namespace, shared_table, storage_id
     );
     execute_sql_as_root_via_cli(&create_shared_table_sql).expect("shared table creation");
@@ -90,7 +92,9 @@ fn test_storage_drop_requires_detached_tables() {
         "INSERT INTO {}.{} (body) VALUES ('init_shared')",
         namespace, shared_table
     ));
-    std::thread::sleep(std::time::Duration::from_millis(50));
+    // Flush to force Parquet file creation (directories are created on flush, not on insert)
+    let _ = execute_sql_as_root_via_cli(&format!("FLUSH TABLE {}.{}", namespace, shared_table));
+    std::thread::sleep(std::time::Duration::from_millis(500)); // Wait for async flush job
 
     let shared_table_path = base_dir
         .join(format!("ns_{}", namespace))

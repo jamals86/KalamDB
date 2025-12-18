@@ -18,6 +18,7 @@ pub enum JobType {
     Retention,
     StreamEviction,
     UserCleanup,
+    ManifestEviction,
     Unknown,
 }
 
@@ -33,6 +34,7 @@ impl JobType {
             JobType::Retention => "retention",
             JobType::StreamEviction => "stream_eviction",
             JobType::UserCleanup => "user_cleanup",
+            JobType::ManifestEviction => "manifest_eviction",
             JobType::Unknown => "unknown",
         }
     }
@@ -48,6 +50,7 @@ impl JobType {
     /// - RT: Retention
     /// - SE: StreamEviction
     /// - UC: UserCleanup
+    /// - ME: ManifestEviction
     /// - UN: Unknown
     pub fn short_prefix(&self) -> &'static str {
         match self {
@@ -60,6 +63,7 @@ impl JobType {
             JobType::Retention => "RT",
             JobType::StreamEviction => "SE",
             JobType::UserCleanup => "UC",
+            JobType::ManifestEviction => "ME",
             JobType::Unknown => "UN",
         }
     }
@@ -75,6 +79,7 @@ impl JobType {
             "retention" => Some(JobType::Retention),
             "stream_eviction" => Some(JobType::StreamEviction),
             "user_cleanup" => Some(JobType::UserCleanup),
+            "manifest_eviction" => Some(JobType::ManifestEviction),
             "unknown" => Some(JobType::Unknown),
             _ => None,
         }
@@ -106,6 +111,7 @@ impl From<&str> for JobType {
             "retention" => JobType::Retention,
             "stream_eviction" => JobType::StreamEviction,
             "user_cleanup" => JobType::UserCleanup,
+            "manifest_eviction" => JobType::ManifestEviction,
             "unknown" => JobType::Unknown,
             _ => JobType::Unknown,
         }

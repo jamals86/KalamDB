@@ -413,6 +413,7 @@ impl ManifestAccessPlanner {
 mod tests {
     use super::*;
     use crate::app_context::AppContext;
+    use crate::storage::build_object_store;
     use datafusion::arrow::array::{Int32Array, Int64Array};
     use datafusion::arrow::datatypes::Schema;
     use datafusion::arrow::record_batch::RecordBatch as ArrowRecordBatch;

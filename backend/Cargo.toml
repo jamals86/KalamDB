@@ -135,6 +135,10 @@ name = "test_automatic_flushing_comprehensive"
 path = "tests/integration/flush/test_automatic_flushing_comprehensive.rs"
 
 [[test]]
+name = "test_pk_uniqueness_hot_cold"
+path = "tests/integration/flush/test_pk_uniqueness_hot_cold.rs"
+
+[[test]]
 name = "test_manifest_flush"
 path = "tests/test_manifest_flush_integration.rs"
 harness = true

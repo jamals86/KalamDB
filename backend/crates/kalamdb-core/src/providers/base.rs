@@ -809,6 +809,9 @@ fn extract_pk_as_string(col: &dyn datafusion::arrow::array::Array, idx: usize) -
 ///
 /// This uses find_row_key_by_id_field which providers can override to use PK indexes
 /// for O(1) lookup instead of scanning all rows.
+///
+/// **Optimization**: If the PK column is AUTO_INCREMENT or SNOWFLAKE_ID, this check
+/// is skipped since the system guarantees unique values.
 pub fn ensure_unique_pk_value<P, K, V>(
     provider: &P,
     scope: Option<&UserId>,
@@ -818,6 +821,21 @@ where
     P: BaseTableProvider<K, V>,
     K: StorageKey,
 {
+    let table_id = provider.table_id();
+    
+    // Get table definition to check if PK is auto-increment
+    if let Some(table_def) = provider.app_context().schema_registry().get_table_definition(table_id)? {
+        // Fast path: Skip uniqueness check if PK is auto-increment
+        if crate::pk::PkExistenceChecker::is_auto_increment_pk(&table_def) {
+            log::trace!(
+                "[ensure_unique_pk_value] Skipping PK check for {}.{} - PK is auto-increment",
+                table_id.namespace_id().as_str(),
+                table_id.table_name().as_str()
+            );
+            return Ok(());
+        }
+    }
+
     let pk_name = provider.primary_key_field_name();
     if let Some(pk_value) = row_data.get(pk_name) {
         if !matches!(pk_value, ScalarValue::Null) {
@@ -863,6 +881,87 @@ pub fn warn_if_unfiltered_scan(
             table_type.as_str()
         );
     }
+}
+
+/// Validate that an UPDATE operation doesn't change the PK to an existing value
+///
+/// This is called when an UPDATE includes the PK column in the SET clause.
+/// If the new PK value already exists (for a different row), returns an error.
+///
+/// **Skip conditions**:
+/// - PK value is not being changed (new value == old value)
+/// - PK column is not in the updates
+/// - PK column has AUTO_INCREMENT (not allowed to be updated)
+///
+/// # Arguments
+/// * `provider` - The table provider to check against
+/// * `scope` - Optional user ID for scoping (User tables)
+/// * `updates` - The Row containing update values
+/// * `current_pk_value` - The current PK value of the row being updated
+///
+/// # Returns
+/// * `Ok(())` if the update is valid
+/// * `Err(AlreadyExists)` if the new PK value already exists
+/// * `Err(InvalidOperation)` if trying to change an auto-increment PK
+pub fn validate_pk_update<P, K, V>(
+    provider: &P,
+    scope: Option<&UserId>,
+    updates: &Row,
+    current_pk_value: &ScalarValue,
+) -> Result<(), KalamDbError>
+where
+    P: BaseTableProvider<K, V>,
+    K: StorageKey,
+{
+    let table_id = provider.table_id();
+    let pk_name = provider.primary_key_field_name();
+
+    // Check if PK is in the update values
+    let new_pk_value = match updates.get(pk_name) {
+        Some(v) if !matches!(v, ScalarValue::Null) => v,
+        _ => return Ok(()), // PK not being updated, nothing to validate
+    };
+
+    // Check if the value is actually changing
+    if new_pk_value == current_pk_value {
+        return Ok(()); // Same value, no change
+    }
+
+    // Get table definition to check if PK is auto-increment
+    if let Some(table_def) = provider.app_context().schema_registry().get_table_definition(table_id)? {
+        if crate::pk::PkExistenceChecker::is_auto_increment_pk(&table_def) {
+            return Err(KalamDbError::InvalidOperation(format!(
+                "Cannot modify auto-increment primary key column '{}' in table {}.{}",
+                pk_name,
+                table_id.namespace_id().as_str(),
+                table_id.table_name().as_str()
+            )));
+        }
+    }
+
+    // Check if the new PK value already exists
+    let new_pk_str = unified_dml::extract_user_pk_value(updates, pk_name)?;
+    let user_scope = resolve_user_scope(scope);
+
+    if provider
+        .find_row_key_by_id_field(user_scope, &new_pk_str)?
+        .is_some()
+    {
+        return Err(KalamDbError::AlreadyExists(format!(
+            "Primary key violation: value '{}' already exists in column '{}' (UPDATE would create duplicate)",
+            new_pk_str, pk_name
+        )));
+    }
+
+    log::trace!(
+        "[validate_pk_update] PK change validated: {} -> {} for {}.{}",
+        current_pk_value,
+        new_pk_str,
+        table_id.namespace_id().as_str(),
+        table_id.table_name().as_str()
+    );
+
+    Ok(())
 }
 
 /// Apply limit to a vector of results after version resolution.

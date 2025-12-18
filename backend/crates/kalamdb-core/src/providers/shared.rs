@@ -466,6 +466,9 @@ impl BaseTableProvider<SharedTableRowId, SharedTableRow> for SharedTableProvider
             KalamDbError::InvalidOperation(format!("Prior row missing PK {}", pk_name))
         })?;
 
+        // Validate PK update (check if new PK value already exists)
+        base::validate_pk_update(self, None, &updates, &pk_value_scalar)?;
+
         // Resolve latest per PK - first try hot storage (O(1) via PK index), 
         // then fall back to cold storage (Parquet scan)
         let (_latest_key, latest_row) = if let Some(result) = self.find_by_pk(&pk_value_scalar)? {
