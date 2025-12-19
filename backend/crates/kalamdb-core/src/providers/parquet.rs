@@ -54,8 +54,8 @@ pub(crate) fn scan_parquet_files_as_batch(
     // 4. Resolve storage path
     let storage_path = PathResolver::get_storage_path(&cached, user_id, None)?;
 
-    let manifest_cache_service = core.app_context.manifest_cache_service();
-    let cache_result = manifest_cache_service.get_or_load(table_id, user_id);
+    let manifest_service = core.app_context.manifest_service();
+    let cache_result = manifest_service.get_or_load(table_id, user_id);
     let mut manifest_opt: Option<Manifest> = None;
     let mut use_degraded_mode = false;
 
@@ -63,7 +63,6 @@ pub(crate) fn scan_parquet_files_as_batch(
         Ok(Some(entry)) => {
             let manifest = entry.manifest.clone();
             // Validate manifest using service
-            let manifest_service = core.app_context.manifest_service();
             if let Err(e) = manifest_service.validate_manifest(&manifest) {
                 log::warn!(
                     "⚠️  [MANIFEST CORRUPTION] table={}.{} {} error={} | Triggering rebuild",
@@ -73,7 +72,7 @@ pub(crate) fn scan_parquet_files_as_batch(
                     e
                 );
                 // Mark cache entry as stale so sync_state reflects corruption
-                if let Err(mark_err) = manifest_cache_service.mark_as_stale(table_id, user_id) {
+                if let Err(mark_err) = manifest_service.mark_as_stale(table_id, user_id) {
                     log::warn!(
                         "⚠️  Failed to mark manifest as stale: table={}.{} {} error={}",
                         namespace.as_str(),

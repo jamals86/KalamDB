@@ -513,13 +513,42 @@ fn query_rows(sql: &str) -> Vec<JsonValue> {
         .unwrap_or_else(|err| panic!("Failed to execute '{}': {}", sql, err));
     let json: JsonValue = serde_json::from_str(&output)
         .unwrap_or_else(|err| panic!("Failed to parse CLI JSON output: {}\n{}", err, output));
-    json.get("results")
+    
+    // Extract schema for column names
+    let schema = json.get("results")
+        .and_then(JsonValue::as_array)
+        .and_then(|results| results.first())
+        .and_then(|result| result.get("schema"))
+        .and_then(JsonValue::as_array)
+        .cloned()
+        .unwrap_or_default();
+    
+    let column_names: Vec<String> = schema.iter()
+        .filter_map(|col| col.get("name").and_then(JsonValue::as_str).map(String::from))
+        .collect();
+    
+    // Get rows as arrays
+    let rows_arrays = json.get("results")
         .and_then(JsonValue::as_array)
         .and_then(|results| results.first())
         .and_then(|result| result.get("rows"))
         .and_then(JsonValue::as_array)
         .cloned()
-        .unwrap_or_default()
+        .unwrap_or_default();
+    
+    // Convert each row array to an object with column names as keys
+    rows_arrays.iter()
+        .filter_map(|row| {
+            let arr = row.as_array()?;
+            let mut obj = serde_json::Map::new();
+            for (i, col_name) in column_names.iter().enumerate() {
+                if let Some(value) = arr.get(i) {
+                    obj.insert(col_name.clone(), value.clone());
+                }
+            }
+            Some(JsonValue::Object(obj))
+        })
+        .collect()
 }
 
 fn rows_as_debug_string(rows: &[JsonValue]) -> String {

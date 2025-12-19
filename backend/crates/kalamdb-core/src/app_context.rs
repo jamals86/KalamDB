@@ -79,10 +79,7 @@ pub struct AppContext {
     // ===== Slow Query Logger =====
     slow_query_logger: Arc<crate::slow_query_logger::SlowQueryLogger>,
 
-    // ===== Manifest Cache Service (Phase 4, US6) =====
-    manifest_cache_service: Arc<crate::manifest::ManifestCacheService>,
-
-    // ===== Manifest Service (Phase 5, US2, T107-T113) =====
+    // ===== Manifest Service (unified: hot cache + RocksDB + cold storage) =====
     manifest_service: Arc<crate::manifest::ManifestService>,
 
     // ===== Shared SqlExecutor =====
@@ -109,7 +106,6 @@ impl std::fmt::Debug for AppContext {
             .field("system_tables", &"Arc<SystemTablesRegistry>")
             .field("system_columns_service", &"Arc<SystemColumnsService>")
             .field("slow_query_logger", &"Arc<SlowQueryLogger>")
-            .field("manifest_cache_service", &"Arc<ManifestCacheService>")
             .field("manifest_service", &"Arc<ManifestService>")
             .field("sql_executor", &"OnceCell<Arc<SqlExecutor>>")
             .finish()
@@ -292,17 +288,12 @@ impl AppContext {
                 let system_columns_service =
                     Arc::new(crate::system_columns::SystemColumnsService::new(worker_id));
 
-                // Create manifest cache service (Phase 4, US6, T074-T080)
-                let manifest_cache_service = Arc::new(crate::manifest::ManifestCacheService::new(
-                    storage_backend.clone(),
-                    config.manifest_cache.clone(),
-                ));
-
-                // Create manifest service (Phase 5, US2, T107-T113)
+                // Create unified manifest service (hot cache + RocksDB + cold storage)
                 let base_storage_path = config.storage.default_storage_path.clone();
                 let manifest_service = Arc::new(crate::manifest::ManifestService::new(
                     storage_backend.clone(),
                     base_storage_path,
+                    config.manifest_cache.clone(),
                 ));
 
                 let app_ctx = Arc::new(AppContext {
@@ -322,7 +313,6 @@ impl AppContext {
                     base_session_context,
                     system_columns_service,
                     slow_query_logger,
-                    manifest_cache_service,
                     manifest_service,
                     sql_executor: OnceCell::new(),
                     server_start_time: Instant::now(),
@@ -339,9 +329,9 @@ impl AppContext {
 
                 // Wire up ManifestTableProvider in_memory_checker callback
                 // This allows system.manifest to show if a cache entry is in hot memory
-                let manifest_cache_for_checker = Arc::clone(&app_ctx.manifest_cache_service);
+                let manifest_for_checker = Arc::clone(&app_ctx.manifest_service);
                 app_ctx.system_tables().manifest().set_in_memory_checker(
-                    Arc::new(move |cache_key: &str| manifest_cache_for_checker.is_in_hot_cache(cache_key))
+                    Arc::new(move |cache_key: &str| manifest_for_checker.is_in_hot_cache_by_string(cache_key))
                 );
 
                 app_ctx
@@ -468,16 +458,11 @@ impl AppContext {
         // Create system columns service with worker_id=0 for tests
         let system_columns_service = Arc::new(crate::system_columns::SystemColumnsService::new(0));
 
-        // Create manifest cache service for tests
-        let manifest_cache_service = Arc::new(crate::manifest::ManifestCacheService::new(
-            storage_backend.clone(),
-            config.manifest_cache.clone(),
-        ));
-
-        // Create manifest service for tests
+        // Create unified manifest service for tests
         let manifest_service = Arc::new(crate::manifest::ManifestService::new(
             storage_backend.clone(),
             "./data/storage".to_string(),
+            config.manifest_cache.clone(),
         ));
 
         AppContext {
@@ -497,7 +482,6 @@ impl AppContext {
             base_session_context,
             system_columns_service,
             slow_query_logger,
-            manifest_cache_service,
             manifest_service,
             sql_executor: OnceCell::new(),
             server_start_time: Instant::now(),
@@ -603,18 +587,12 @@ impl AppContext {
         self.slow_query_logger.clone()
     }
 
-    /// Get the manifest cache service (Phase 4, US6, T074-T080)
+    /// Get the manifest service (unified: hot cache + RocksDB + cold storage)
     ///
-    /// Returns an Arc reference to the ManifestCacheService that provides
-    /// fast manifest access with two-tier caching (hot cache + RocksDB).
-    pub fn manifest_cache_service(&self) -> Arc<crate::manifest::ManifestCacheService> {
-        self.manifest_cache_service.clone()
-    }
-
-    /// Get the manifest service (Phase 5, US2, T107-T113)
-    ///
-    /// Returns an Arc reference to the ManifestService that provides
-    /// read/write access to manifest.json files in storage backends.
+    /// Returns an Arc reference to the ManifestService that provides:
+    /// - Hot cache (moka) for sub-millisecond lookups
+    /// - RocksDB persistence for crash recovery
+    /// - Cold storage access for manifest.json files
     pub fn manifest_service(&self) -> Arc<crate::manifest::ManifestService> {
         self.manifest_service.clone()
     }

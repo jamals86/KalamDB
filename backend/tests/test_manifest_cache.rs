@@ -1,4 +1,4 @@
-//! Integration tests for ManifestCacheService (Phase 4, US6, T095-T101)
+//! Integration tests for ManifestService (Phase 4, US6, T095-T101)
 //!
 //! Tests:
 //! - T095: get_or_load() cache miss
@@ -14,18 +14,18 @@ use kalamdb_commons::{
     types::{Manifest, SyncState},
     NamespaceId, TableName, UserId,
 };
-use kalamdb_core::manifest::ManifestCacheService;
+use kalamdb_core::manifest::ManifestService;
 use kalamdb_store::{test_utils::InMemoryBackend, StorageBackend};
 use std::sync::Arc;
 
-fn create_test_service() -> ManifestCacheService {
+fn create_test_service() -> ManifestService {
     let backend: Arc<dyn StorageBackend> = Arc::new(InMemoryBackend::new());
     let config = ManifestCacheSettings {
         eviction_interval_seconds: 300,
         max_entries: 1000,
         eviction_ttl_days: 7,
     };
-    ManifestCacheService::new(backend, config)
+    ManifestService::new(backend, "/tmp/test_manifest".to_string(), config)
 }
 
 fn create_test_manifest(namespace: &str, table_name: &str, user_id: Option<&str>) -> Manifest {
@@ -84,9 +84,8 @@ fn test_get_or_load_cache_hit() {
     assert!(result2.is_some(), "Expected cache hit on second read");
 
     // Verify entry is in hot cache
-    let cache_key = format!("{}:{}:u_123", namespace.as_str(), table.as_str());
     assert!(
-        service.is_in_hot_cache(&cache_key),
+        service.is_in_hot_cache(&table_id, Some(&UserId::from("u_123"))),
         "entry should be in hot cache"
     );
 }
@@ -101,7 +100,7 @@ fn test_validate_freshness_stale() {
         max_entries: 1000,
         eviction_ttl_days: 0, // 0 days = entries are immediately stale
     };
-    let service = ManifestCacheService::new(backend, config);
+    let service = ManifestService::new(backend, "/tmp/test".to_string(), config);
 
     let namespace = NamespaceId::new("ns1");
     let table = TableName::new("products");
@@ -119,11 +118,9 @@ fn test_validate_freshness_stale() {
         )
         .unwrap();
 
-    let cache_key = format!("{}:{}:shared", namespace.as_str(), table.as_str());
-
     // Entry should be fresh initially
     assert!(
-        service.validate_freshness(&cache_key).unwrap(),
+        service.validate_freshness(&table_id, None).unwrap(),
         "Entry should be fresh"
     );
 
@@ -181,7 +178,7 @@ fn test_restore_from_rocksdb() {
     let config = ManifestCacheSettings::default();
 
     // Service 1: Add entries
-    let service1 = ManifestCacheService::new(Arc::clone(&backend), config.clone());
+    let service1 = ManifestService::new(Arc::clone(&backend), "/tmp/test".to_string(), config.clone());
     let namespace1 = NamespaceId::new("ns1");
     let table1 = TableName::new("products");
     let table_id1 = TableId::new(namespace1.clone(), table1.clone());
@@ -208,7 +205,7 @@ fn test_restore_from_rocksdb() {
     assert_eq!(service1.count().unwrap(), 2, "Should have 2 entries");
 
     // Service 2: Simulate server restart
-    let service2 = ManifestCacheService::new(backend, config);
+    let service2 = ManifestService::new(backend, "/tmp/test".to_string(), config);
 
     // Before restore, hot cache should be empty
     let result_before = service2
@@ -438,4 +435,202 @@ fn test_multiple_updates_same_key() {
         1,
         "Should have 1 entry (updated, not duplicated)"
     );
+}
+
+// Test invalidate_table removes all entries for a table across all users
+#[test]
+fn test_invalidate_table_removes_all_user_entries() {
+    let service = create_test_service();
+    let namespace = NamespaceId::new("ns1");
+    let table = TableName::new("products");
+    let table_id = TableId::new(namespace.clone(), table.clone());
+
+    // Add entries for multiple users on the same table
+    let manifest1 = create_test_manifest("ns1", "products", Some("user1"));
+    let manifest2 = create_test_manifest("ns1", "products", Some("user2"));
+    let manifest3 = create_test_manifest("ns1", "products", Some("user3"));
+
+    service
+        .update_after_flush(
+            &table_id,
+            Some(&UserId::from("user1")),
+            &manifest1,
+            Some("etag-u1".to_string()),
+            "path/user1/manifest.json".to_string(),
+        )
+        .unwrap();
+
+    service
+        .update_after_flush(
+            &table_id,
+            Some(&UserId::from("user2")),
+            &manifest2,
+            Some("etag-u2".to_string()),
+            "path/user2/manifest.json".to_string(),
+        )
+        .unwrap();
+
+    service
+        .update_after_flush(
+            &table_id,
+            Some(&UserId::from("user3")),
+            &manifest3,
+            Some("etag-u3".to_string()),
+            "path/user3/manifest.json".to_string(),
+        )
+        .unwrap();
+
+    // Verify 3 entries exist
+    assert_eq!(
+        service.count().unwrap(),
+        3,
+        "Should have 3 entries before invalidate_table"
+    );
+
+    // Verify hot cache has entries
+    assert!(service.is_in_hot_cache(&table_id, Some(&UserId::from("user1"))));
+    assert!(service.is_in_hot_cache(&table_id, Some(&UserId::from("user2"))));
+    assert!(service.is_in_hot_cache(&table_id, Some(&UserId::from("user3"))));
+
+    // Invalidate all entries for the table
+    let invalidated = service.invalidate_table(&table_id).unwrap();
+    assert_eq!(invalidated, 3, "Should have invalidated 3 entries");
+
+    // Verify all entries are removed from hot cache
+    assert!(
+        !service.is_in_hot_cache(&table_id, Some(&UserId::from("user1"))),
+        "user1 should be removed from hot cache"
+    );
+    assert!(
+        !service.is_in_hot_cache(&table_id, Some(&UserId::from("user2"))),
+        "user2 should be removed from hot cache"
+    );
+    assert!(
+        !service.is_in_hot_cache(&table_id, Some(&UserId::from("user3"))),
+        "user3 should be removed from hot cache"
+    );
+
+    // Verify entries are removed from RocksDB
+    assert_eq!(
+        service.count().unwrap(),
+        0,
+        "Should have 0 entries after invalidate_table"
+    );
+
+    // get_or_load should return None for all users
+    assert!(service
+        .get_or_load(&table_id, Some(&UserId::from("user1")))
+        .unwrap()
+        .is_none());
+    assert!(service
+        .get_or_load(&table_id, Some(&UserId::from("user2")))
+        .unwrap()
+        .is_none());
+    assert!(service
+        .get_or_load(&table_id, Some(&UserId::from("user3")))
+        .unwrap()
+        .is_none());
+}
+
+// Test invalidate_table only removes entries for the target table
+#[test]
+fn test_invalidate_table_preserves_other_tables() {
+    let service = create_test_service();
+    let namespace = NamespaceId::new("ns1");
+
+    let table1 = TableName::new("products");
+    let table2 = TableName::new("orders");
+    let table_id1 = TableId::new(namespace.clone(), table1.clone());
+    let table_id2 = TableId::new(namespace.clone(), table2.clone());
+
+    // Add entries for two different tables
+    let manifest1 = create_test_manifest("ns1", "products", Some("user1"));
+    let manifest2 = create_test_manifest("ns1", "orders", Some("user1"));
+
+    service
+        .update_after_flush(
+            &table_id1,
+            Some(&UserId::from("user1")),
+            &manifest1,
+            Some("etag-products".to_string()),
+            "path/products/manifest.json".to_string(),
+        )
+        .unwrap();
+
+    service
+        .update_after_flush(
+            &table_id2,
+            Some(&UserId::from("user1")),
+            &manifest2,
+            Some("etag-orders".to_string()),
+            "path/orders/manifest.json".to_string(),
+        )
+        .unwrap();
+
+    // Verify 2 entries exist
+    assert_eq!(
+        service.count().unwrap(),
+        2,
+        "Should have 2 entries before invalidate"
+    );
+
+    // Invalidate only products table
+    let invalidated = service.invalidate_table(&table_id1).unwrap();
+    assert_eq!(invalidated, 1, "Should have invalidated 1 entry");
+
+    // products table should be gone
+    assert!(service
+        .get_or_load(&table_id1, Some(&UserId::from("user1")))
+        .unwrap()
+        .is_none());
+
+    // orders table should still exist
+    let orders_entry = service
+        .get_or_load(&table_id2, Some(&UserId::from("user1")))
+        .unwrap();
+    assert!(
+        orders_entry.is_some(),
+        "orders table entry should still exist"
+    );
+    assert_eq!(orders_entry.unwrap().etag, Some("etag-orders".to_string()));
+
+    // Verify 1 entry remains
+    assert_eq!(
+        service.count().unwrap(),
+        1,
+        "Should have 1 entry after invalidate"
+    );
+}
+
+// Test invalidate_table with shared table (no user_id)
+#[test]
+fn test_invalidate_table_shared() {
+    let service = create_test_service();
+    let namespace = NamespaceId::new("ns1");
+    let table = TableName::new("shared_data");
+    let table_id = TableId::new(namespace.clone(), table.clone());
+
+    // Add shared table entry (no user_id)
+    let manifest = create_test_manifest("ns1", "shared_data", None);
+    service
+        .update_after_flush(
+            &table_id,
+            None, // shared table
+            &manifest,
+            Some("etag-shared".to_string()),
+            "path/shared/manifest.json".to_string(),
+        )
+        .unwrap();
+
+    // Verify entry exists
+    assert_eq!(service.count().unwrap(), 1);
+    assert!(service.is_in_hot_cache(&table_id, None));
+
+    // Invalidate the table
+    let invalidated = service.invalidate_table(&table_id).unwrap();
+    assert_eq!(invalidated, 1);
+
+    // Verify entry is removed
+    assert!(!service.is_in_hot_cache(&table_id, None));
+    assert_eq!(service.count().unwrap(), 0);
 }

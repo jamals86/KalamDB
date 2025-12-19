@@ -604,8 +604,8 @@ pub fn pk_exists_in_cold(
     }
 
     // 4. Load manifest from cache
-    let manifest_cache_service = core.app_context.manifest_cache_service();
-    let cache_result = manifest_cache_service.get_or_load(table_id, user_id);
+    let manifest_service = core.app_context.manifest_service();
+    let cache_result = manifest_service.get_or_load(table_id, user_id);
 
     let manifest: Option<Manifest> = match &cache_result {
         Ok(Some(entry)) => Some(entry.manifest.clone()),
@@ -798,8 +798,8 @@ pub fn pk_exists_batch_in_cold(
     }
 
     // 4. Load manifest from cache
-    let manifest_cache_service = core.app_context.manifest_cache_service();
-    let cache_result = manifest_cache_service.get_or_load(table_id, user_id);
+    let manifest_service = core.app_context.manifest_service();
+    let cache_result = manifest_service.get_or_load(table_id, user_id);
 
     let manifest: Option<Manifest> = match &cache_result {
         Ok(Some(entry)) => Some(entry.manifest.clone()),

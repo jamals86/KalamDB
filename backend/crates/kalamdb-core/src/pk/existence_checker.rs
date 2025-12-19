@@ -253,8 +253,8 @@ impl PkExistenceChecker {
         }
 
         // 4. Load manifest from cache (L1 → L2 → storage)
-        let manifest_cache_service = self.app_context.manifest_cache_service();
-        let manifest: Option<Manifest> = match manifest_cache_service.get_or_load(table_id, user_id)
+        let manifest_service = self.app_context.manifest_service();
+        let manifest: Option<Manifest> = match manifest_service.get_or_load(table_id, user_id)
         {
             Ok(Some(entry)) => {
                 log::trace!(

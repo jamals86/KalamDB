@@ -108,11 +108,11 @@ impl JobExecutor for ManifestEvictionExecutor {
             ttl_days, ttl_seconds
         ));
 
-        // Get manifest cache service from app context
-        let manifest_cache = ctx.app_ctx.manifest_cache_service();
+        // Get manifest service from app context
+        let manifest_service = ctx.app_ctx.manifest_service();
 
         // Evict stale entries
-        let evicted_count = manifest_cache
+        let evicted_count = manifest_service
             .evict_stale_entries(ttl_seconds)
             .map_err(|e| {
                 KalamDbError::InvalidOperation(format!("Failed to evict manifests: {}", e))

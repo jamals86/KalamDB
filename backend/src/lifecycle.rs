@@ -84,10 +84,10 @@ pub async fn bootstrap(
 
     // Restore manifest cache from RocksDB (Phase 4, US6, T092-T094)
     let phase_start = std::time::Instant::now();
-    let manifest_cache = app_context.manifest_cache_service();
-    match manifest_cache.restore_from_rocksdb() {
+    let manifest_service = app_context.manifest_service();
+    match manifest_service.restore_from_rocksdb() {
         Ok(()) => {
-            let count = manifest_cache.count().unwrap_or(0);
+            let count = manifest_service.count().unwrap_or(0);
             info!(
                 "Manifest cache restored from RocksDB: {} entries ({:.2}ms)",
                 count,

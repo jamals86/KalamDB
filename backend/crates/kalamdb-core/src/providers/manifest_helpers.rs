@@ -20,9 +20,9 @@ pub fn ensure_manifest_ready(
     let table_id = core.table_id();
     let namespace = table_id.namespace_id().clone();
     let table = table_id.table_name().clone();
-    let manifest_cache = core.app_context.manifest_cache_service();
+    let manifest_service = core.app_context.manifest_service();
 
-    match manifest_cache.get_or_load(table_id, user_id) {
+    match manifest_service.get_or_load(table_id, user_id) {
         Ok(Some(_)) => return Ok(()),
         Ok(None) => {}
         Err(e) => {
@@ -39,7 +39,6 @@ pub fn ensure_manifest_ready(
         }
     }
 
-    let manifest_service = core.app_context.manifest_service();
     let manifest = manifest_service.ensure_manifest_initialized(table_id, table_type, user_id)?;
 
     // Get cached table data for path resolution using storage templates
@@ -58,7 +57,7 @@ pub fn ensure_manifest_ready(
     // Use PathResolver to get relative manifest path from storage template
     let manifest_path = PathResolver::get_manifest_relative_path(&cached, user_id, None)?;
 
-    manifest_cache.stage_before_flush(table_id, user_id, &manifest, manifest_path)?;
+    manifest_service.stage_before_flush(table_id, user_id, &manifest, manifest_path)?;
 
     Ok(())
 }

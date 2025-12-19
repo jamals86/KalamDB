@@ -325,8 +325,9 @@ instead of: 1 failed: Invalid operation: No handler registered for statement typ
 204) we should use TableId instead of passing both:        namespace: &NamespaceId,table: &TableName, like in update_manifest_after_flush
 
 
-205) Instead of having our own caching using dashmap use Moka instead
+205) Add test which check having like 100 parquet batches per shared table and having manifest file has 100 segments and test the performance
 
+206) the last_accessed in manifest is not needed anymore since now we rely on Moka cache for knowing the last accessed time
 
 Make sure there is tests which insert/updte data and then check if the actual data we inserted/updated is there and exists in select then flush the data and check again if insert/update works with the flushed data in cold storage, check that insert fails when inserting a row id primary key which already exists and update do works
 

@@ -107,7 +107,7 @@ impl SharedTableProvider {
     /// **Difference from user tables**: Shared tables have NO user_id partitioning,
     /// so all Parquet files are in the same directory (no subdirectories per user).
     ///
-    /// **Phase 4 (US6, T082-T084)**: Integrated with ManifestCacheService for manifest caching.
+    /// **Phase 4 (US6, T082-T084)**: Integrated with ManifestService for manifest caching.
     /// Logs cache hits/misses and updates last_accessed timestamp. Full query optimization
     /// (batch file pruning based on manifest metadata) implemented in Phase 5 (US2, T119-T123).
     ///

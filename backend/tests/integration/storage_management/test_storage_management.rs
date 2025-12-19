@@ -692,7 +692,7 @@ async fn test_15_storage_lookup_table_level() {
 
     // Verify table has correct storage
     let query =
-        "SELECT * FROM system.tables WHERE namespace = 'lookup_ns' AND table_name = 'lookup_table'";
+        "SELECT * FROM system.tables WHERE namespace_id = 'lookup_ns' AND table_name = 'lookup_table'";
     let response = server.execute_sql(query).await;
 
     let rows = response.results.first().map(|r| r.rows_as_maps()).unwrap_or_default();
@@ -956,7 +956,7 @@ async fn test_20_storage_with_namespace() {
 
     // Verify table exists
     let query =
-        "SELECT * FROM system.tables WHERE namespace = 'storage_ns' AND table_name = 'shared_data'";
+        "SELECT * FROM system.tables WHERE namespace_id = 'storage_ns' AND table_name = 'shared_data'";
     let response = server.execute_sql(query).await;
 
     let rows = response.results.first().map(|r| r.rows_as_maps()).unwrap_or_default();
@@ -1142,7 +1142,7 @@ async fn test_25_create_table_with_storage() {
     );
 
     // Verify table.storage_id = 'custom_s3'
-    let query = "SELECT storage_id FROM system.tables WHERE namespace = 'test_ns' AND table_name = 'products'";
+    let query = "SELECT storage_id FROM system.tables WHERE namespace_id = 'test_ns' AND table_name = 'products'";
     let response = server.execute_sql(query).await;
 
     let rows = response.results.first().map(|r| r.rows_as_maps()).unwrap_or_default();
@@ -1183,7 +1183,7 @@ async fn test_26_create_table_default_storage() {
     );
 
     // Verify table.storage_id defaults to 'local'
-    let query = "SELECT storage_id FROM system.tables WHERE namespace = 'default_ns' AND table_name = 'items'";
+    let query = "SELECT storage_id FROM system.tables WHERE namespace_id = 'default_ns' AND table_name = 'items'";
     let response = server.execute_sql(query).await;
 
     let rows = response.results.first().map(|r| r.rows_as_maps()).unwrap_or_default();
@@ -1277,7 +1277,7 @@ async fn test_28_table_storage_assignment() {
     );
 
     // Verify default storage is assigned
-    let query = "SELECT storage_id FROM system.tables WHERE namespace = 'storage_ns' AND table_name = 'data_table'";
+    let query = "SELECT storage_id FROM system.tables WHERE namespace_id = 'storage_ns' AND table_name = 'data_table'";
     let check = server.execute_sql(query).await;
 
     let rows = check.results.first().map(|r| r.rows_as_maps()).unwrap_or_default();
@@ -1667,7 +1667,7 @@ async fn test_37_flush_with_use_user_storage() {
     );
 
     // Verify table uses custom storage
-    let query = "SELECT storage_id FROM system.tables WHERE namespace = 'storage_test' AND table_name = 'user_data'";
+    let query = "SELECT storage_id FROM system.tables WHERE namespace_id = 'storage_test' AND table_name = 'user_data'";
     let check = server.execute_sql(query).await;
 
     let rows = check.results.first().map(|r| r.rows_as_maps()).unwrap_or_default();
@@ -1745,7 +1745,7 @@ async fn test_39_user_storage_mode_table() {
     );
 
     // Verify table uses table-level storage (default 'local')
-    let query = "SELECT storage_id FROM system.tables WHERE namespace = 'table_mode_test' AND table_name = 'data'";
+    let query = "SELECT storage_id FROM system.tables WHERE namespace_id = 'table_mode_test' AND table_name = 'data'";
     let check = server.execute_sql(query).await;
 
     let rows = check.results.first().map(|r| r.rows_as_maps()).unwrap_or_default();
@@ -1798,7 +1798,7 @@ async fn test_40_flush_resolves_s3_storage() {
     );
 
     // Verify table references S3 storage
-    let query = "SELECT storage_id FROM system.tables WHERE namespace = 's3_flush_test' AND table_name = 'data'";
+    let query = "SELECT storage_id FROM system.tables WHERE namespace_id = 's3_flush_test' AND table_name = 'data'";
     let check = server.execute_sql(query).await;
 
     let rows = check.results.first().map(|r| r.rows_as_maps()).unwrap_or_default();
@@ -1905,7 +1905,7 @@ async fn test_41_multi_storage_flush() {
         .await;
 
     // Verify all tables created with correct storage assignments
-    let query = "SELECT table_name, storage_id FROM system.tables WHERE namespace = 'multi_storage' ORDER BY table_name";
+    let query = "SELECT table_name, storage_id FROM system.tables WHERE namespace_id = 'multi_storage' ORDER BY table_name";
     let response = server.execute_sql(query).await;
 
     let rows = response.results.first().map(|r| r.rows_as_maps()).unwrap_or_default();

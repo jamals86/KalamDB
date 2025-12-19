@@ -232,6 +232,7 @@ pub struct FileMetadata {
 /// Delete all files under a prefix (recursive delete).
 ///
 /// Returns the total number of bytes deleted (best-effort).
+/// For local filesystem storage, also removes empty directories.
 pub async fn delete_prefix(
     store: Arc<dyn ObjectStore>,
     storage: &Storage,
@@ -255,12 +256,64 @@ pub async fn delete_prefix(
     }
 
     // Delete all files found
-    for path in paths_to_delete {
+    for path in &paths_to_delete {
         // Ignore errors on individual deletes (best-effort)
-        let _ = store.delete(&path).await;
+        let _ = store.delete(path).await;
+    }
+
+    // For local filesystem, also remove the empty directory tree
+    if storage.storage_type == kalamdb_commons::models::storage::StorageType::Filesystem {
+        let base_dir = storage.base_directory.trim();
+        if !base_dir.is_empty() {
+            let target_dir = if prefix.is_empty() {
+                std::path::PathBuf::from(base_dir)
+            } else {
+                std::path::PathBuf::from(base_dir).join(prefix)
+            };
+
+            // Try to remove the directory and any empty parent directories
+            // up to (but not including) the base directory
+            let _ = remove_empty_dir_tree(&target_dir, base_dir);
+        }
     }
 
     Ok(total_bytes)
+}
+
+/// Recursively remove empty directories from target up to (but not including) stop_at.
+fn remove_empty_dir_tree(target: &std::path::Path, stop_at: &str) -> std::io::Result<()> {
+    let stop_path = std::path::Path::new(stop_at);
+
+    // Start from target and walk up
+    let mut current = target.to_path_buf();
+
+    while current.starts_with(stop_path) && current != stop_path {
+        // Try to remove the directory (only works if empty)
+        match std::fs::remove_dir(&current) {
+            Ok(_) => {
+                log::debug!("Removed empty directory: {:?}", current);
+            }
+            Err(e) if e.kind() == std::io::ErrorKind::DirectoryNotEmpty => {
+                // Directory not empty, stop walking up
+                break;
+            }
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
+                // Already removed, continue walking up
+            }
+            Err(_) => {
+                // Other error (permissions, etc.), stop
+                break;
+            }
+        }
+
+        // Move to parent
+        match current.parent() {
+            Some(parent) => current = parent.to_path_buf(),
+            None => break,
+        }
+    }
+
+    Ok(())
 }
 
 /// Synchronous wrapper for delete_prefix.

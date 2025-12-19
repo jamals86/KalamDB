@@ -1,13 +1,16 @@
 //! Manifest Management Module
 //!
 //! Provides manifest.json tracking and caching for Parquet batch files.
+//!
+//! Architecture:
+//! - ManifestService: Unified service with hot cache (moka) + RocksDB persistence + cold storage
+//! - FlushManifestHelper: Helper for manifest operations during flush
+//! - ManifestAccessPlanner: Query planner for manifest-based segment selection
 
-mod cache_service;
 mod flush_helper;
 mod planner;
 mod service;
 
-pub use cache_service::ManifestCacheService;
 pub use flush_helper::FlushManifestHelper;
 pub use planner::{ManifestAccessPlanner, RowGroupSelection};
 pub use service::ManifestService;

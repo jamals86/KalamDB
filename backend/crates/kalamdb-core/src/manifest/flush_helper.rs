@@ -3,7 +3,7 @@
 //! Centralizes manifest-related logic used during flush operations to eliminate
 //! code duplication between user and shared table flush implementations.
 
-use super::{ManifestCacheService, ManifestService};
+use super::ManifestService;
 use crate::error::KalamDbError;
 use crate::schema_registry::PathResolver;
 use datafusion::arrow::array::*;
@@ -21,19 +21,12 @@ use std::sync::Arc;
 /// Helper for manifest operations during flush
 pub struct FlushManifestHelper {
     manifest_service: Arc<ManifestService>,
-    manifest_cache: Arc<ManifestCacheService>,
 }
 
 impl FlushManifestHelper {
     /// Create a new FlushManifestHelper
-    pub fn new(
-        manifest_service: Arc<ManifestService>,
-        manifest_cache: Arc<ManifestCacheService>,
-    ) -> Self {
-        Self {
-            manifest_service,
-            manifest_cache,
-        }
+    pub fn new(manifest_service: Arc<ManifestService>) -> Self {
+        Self { manifest_service }
     }
 
     /// Generate temp filename for atomic writes
@@ -55,7 +48,7 @@ impl FlushManifestHelper {
         table_id: &TableId,
         user_id: Option<&UserId>,
     ) -> Result<(), KalamDbError> {
-        self.manifest_cache
+        self.manifest_service
             .mark_syncing(table_id, user_id)
             .map_err(|e| {
                 KalamDbError::Other(format!(
@@ -322,8 +315,6 @@ impl FlushManifestHelper {
             })?;
 
         // Flush manifest to disk (Cold Store persistence)
-        // In the new architecture, we might want to flush periodically or immediately depending on policy.
-        // For now, let's flush immediately to maintain durability guarantees similar to before.
         self.manifest_service
             .flush_manifest(table_id, user_id)
             .map_err(|e| {
@@ -336,15 +327,7 @@ impl FlushManifestHelper {
                 ))
             })?;
 
-        // Update cache service (if it's separate from ManifestService's internal cache)
-        // ManifestService now has its own cache, but ManifestCacheService might be a higher level or legacy service?
-        // The prompt says "Modify ManifestService... to implement Hot/Cold split".
-        // ManifestCacheService seems to be doing similar things (Hot cache + RocksDB).
-        // If ManifestService now handles caching, maybe ManifestCacheService is redundant or needs to be integrated.
-        // For now, I'll keep updating ManifestCacheService to avoid breaking other things,
-        // but I should probably rely on ManifestService.
-
-        // Use PathResolver to get relative manifest path from storage template
+        // Update cache with manifest path using PathResolver
         let app_ctx = crate::app_context::AppContext::get();
         let manifest_path = match app_ctx.schema_registry().get(table_id) {
             Some(cached) => PathResolver::get_manifest_relative_path(&cached, user_id, None)?,
@@ -362,7 +345,8 @@ impl FlushManifestHelper {
             }
         };
 
-        self.manifest_cache
+        // ManifestService now handles all caching internally
+        self.manifest_service
             .update_after_flush(table_id, user_id, &updated_manifest, None, manifest_path)
             .map_err(|e| {
                 KalamDbError::Other(format!(
