@@ -1,5 +1,4 @@
 #![allow(dead_code, unused_imports)]
-use assert_cmd;
 use rand::{distr::Alphanumeric, Rng};
 use std::io::{BufRead, BufReader};
 use std::process::Command;

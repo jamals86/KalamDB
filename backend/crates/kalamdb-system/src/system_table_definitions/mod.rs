@@ -41,7 +41,6 @@ pub fn all_system_table_definitions() -> Vec<(TableId, TableDefinition)> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use kalamdb_commons::datatypes::KalamDataType;
     use kalamdb_commons::schemas::TableType;
 
     #[test]

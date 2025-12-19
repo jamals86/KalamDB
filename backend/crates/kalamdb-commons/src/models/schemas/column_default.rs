@@ -216,7 +216,7 @@ mod tests {
             (json!(true), "TRUE"),
             (json!(false), "FALSE"),
             (json!(42), "42"),
-            (json!(3.14), "3.14"),
+            (json!(3.15), "3.15"),
             (json!("hello"), "'hello'"),
             (json!([1.0, 2.0, 3.0]), "'[1.0,2.0,3.0]'"),
         ];

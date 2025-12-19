@@ -709,7 +709,7 @@ mod tests {
             decode_from_slice(&options_bytes, config).expect("decode table options");
         assert_eq!(decoded_options, table.table_options);
 
-        let timestamp_bytes = encode_to_vec(&table.created_at, config).expect("encode timestamp");
+        let timestamp_bytes = encode_to_vec(table.created_at, config).expect("encode timestamp");
         let (decoded_ts, _): (chrono::DateTime<chrono::Utc>, usize) =
             decode_from_slice(&timestamp_bytes, config).expect("decode timestamp");
         assert_eq!(decoded_ts, table.created_at);

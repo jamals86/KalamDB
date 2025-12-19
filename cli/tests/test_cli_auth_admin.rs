@@ -16,7 +16,6 @@
 mod common;
 use assert_cmd::Command;
 use common::*;
-use reqwest;
 use serde_json::json;
 use std::time::Duration;
 
