@@ -317,9 +317,6 @@ instead of: 1 failed: Invalid operation: No handler registered for statement typ
   "last_sequence_number": 3 //TODO: Change to last
 }
 
-202) Add a command which will display all segments manifest and their stats for a specific table from cli, we already have select * from system.manifest where namespace_id = 'chat'
-but doesnt include all the data from the manifest.json itself
-
 
 Make sure there is tests which insert/updte data and then check if the actual data we inserted/updated is there and exists in select then flush the data and check again if insert/update works with the flushed data in cold storage, check that insert fails when inserting a row id primary key which already exists and update do works
 
