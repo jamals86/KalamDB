@@ -83,7 +83,7 @@ fn test_concurrent_users_isolation() {
                 "⚠️  Failed to create user {}: {}. Skipping test.",
                 username, e
             );
-            cleanup(&namespace, &user_credentials);
+            cleanup(namespace, &user_credentials);
             return;
         }
 
@@ -228,7 +228,7 @@ fn test_concurrent_users_isolation() {
             Ok(t) => t,
             Err(e) => {
                 eprintln!("⚠️  SELECT failed for {}: {}", username, e);
-                cleanup(&namespace, &user_credentials);
+                cleanup(namespace, &user_credentials);
                 return;
             }
         };
@@ -242,7 +242,7 @@ fn test_concurrent_users_isolation() {
         let row_count = timing
             .output
             .lines()
-            .filter(|l| l.contains("│") && l.contains(|c: char| c.is_digit(10)) && !l.contains("─"))
+            .filter(|l| l.contains("│") && l.contains(|c: char| c.is_ascii_digit()) && !l.contains("─"))
             .count();
 
         // Verify count
@@ -252,7 +252,7 @@ fn test_concurrent_users_isolation() {
                 username, row_count, ROWS_PER_USER
             );
             eprintln!("Output:\n{}", timing.output);
-            cleanup(&namespace, &user_credentials);
+            cleanup(namespace, &user_credentials);
             panic!("Row count mismatch for {}", username);
         }
     }
@@ -277,7 +277,7 @@ fn test_concurrent_users_isolation() {
     );
 
     // Cleanup
-    cleanup(&namespace, &user_credentials);
+    cleanup(namespace, &user_credentials);
 
     let total_time = test_start.elapsed();
     println!(

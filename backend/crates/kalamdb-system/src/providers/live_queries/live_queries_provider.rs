@@ -468,7 +468,7 @@ mod tests {
         provider.create_live_query(live_query.clone()).unwrap();
 
         let retrieved = provider
-            .get_live_query(&live_query.live_id.to_string())
+            .get_live_query(live_query.live_id.as_ref())
             .unwrap();
         assert!(retrieved.is_some());
         let retrieved = retrieved.unwrap();
@@ -488,7 +488,7 @@ mod tests {
 
         // Verify
         let retrieved = provider
-            .get_live_query(&live_query.live_id.to_string())
+            .get_live_query(live_query.live_id.as_ref())
             .unwrap()
             .unwrap();
         assert_eq!(retrieved.changes, 5);
@@ -501,11 +501,11 @@ mod tests {
 
         provider.create_live_query(live_query.clone()).unwrap();
         provider
-            .delete_live_query_str(&live_query.live_id.to_string())
+            .delete_live_query_str(live_query.live_id.as_ref())
             .unwrap();
 
         let retrieved = provider
-            .get_live_query(&live_query.live_id.to_string())
+            .get_live_query(live_query.live_id.as_ref())
             .unwrap();
         assert!(retrieved.is_none());
     }
@@ -554,6 +554,6 @@ mod tests {
 
         // Scan via DataFusion
         let plan = provider.scan(&state, None, &[], None).await.unwrap();
-        assert!(plan.schema().fields().len() > 0);
+        assert!(!plan.schema().fields().is_empty());
     }
 }

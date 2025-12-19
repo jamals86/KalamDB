@@ -167,7 +167,7 @@ mod tests {
             5
         );
         assert_eq!(
-            estimate_scalar_value_size(&ScalarValue::Float64(Some(3.14))),
+            estimate_scalar_value_size(&ScalarValue::Float64(Some(3.25))),
             8
         );
     }

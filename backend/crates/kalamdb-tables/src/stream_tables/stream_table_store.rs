@@ -171,7 +171,7 @@ mod tests {
         for user_i in 1..=2 {
             for seq_i in 1..=3 {
                 let key = StreamTableRowId::new(
-                    UserId::new(&format!("user{}", user_i)),
+                    UserId::new(format!("user{}", user_i)),
                     SeqId::new((user_i * 1000 + seq_i) as i64),
                 );
                 let row =

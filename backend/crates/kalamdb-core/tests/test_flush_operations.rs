@@ -210,7 +210,7 @@ fn test_flush_metadata_shared() {
 
     // Verify it serializes correctly
     let json = serde_json::to_string(&metadata).expect("Failed to serialize");
-    assert!(json.contains("shared_table") || json.len() > 0);
+    assert!(json.contains("shared_table") || !json.is_empty());
 }
 
 #[test]
@@ -218,7 +218,7 @@ fn test_flush_metadata_user_no_errors() {
     let metadata = FlushMetadata::user_table(5, vec![]);
 
     let json = serde_json::to_string(&metadata).expect("Failed to serialize");
-    assert!(json.len() > 0);
+    assert!(!json.is_empty());
 }
 
 #[test]
@@ -230,7 +230,7 @@ fn test_flush_metadata_user_with_errors() {
     let metadata = FlushMetadata::user_table(3, errors);
 
     let json = serde_json::to_string(&metadata).expect("Failed to serialize");
-    assert!(json.contains("user_123") || json.len() > 0);
+    assert!(json.contains("user_123") || !json.is_empty());
 }
 
 #[test]

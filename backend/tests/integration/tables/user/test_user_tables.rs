@@ -351,7 +351,7 @@ async fn test_user_table_system_columns() {
     assert!(row.contains_key("_deleted"), "_deleted column should exist");
 
     // _deleted should be false for new rows
-    assert_eq!(row.get("_deleted").unwrap().as_bool().unwrap(), false);
+    assert!(!row.get("_deleted").unwrap().as_bool().unwrap());
 }
 
 #[actix_web::test]

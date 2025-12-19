@@ -147,13 +147,7 @@ pub(crate) fn scan_parquet_files_as_batch(
     }
 
     if let Some(ref _manifest) = manifest_opt {
-        // log::debug!(
-        //     "✅ Manifest cache HIT | table={}.{} | {} | segments={}",
-        //     namespace.as_str(),
-        //     table.as_str(),
-        //     scope_label,
-        //     manifest.segments.len()
-        // );
+        // Manifest was found in cache
     }
 
     let planner = ManifestAccessPlanner::new();

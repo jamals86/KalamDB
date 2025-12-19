@@ -375,7 +375,7 @@ fn bench_provider_caching() {
                 arc_clone_count += 1;
 
                 // Simulate cache lookup with Arc<TableId>
-                cache.get(&**arc_table_id);
+                cache.get(arc_table_id);
             }
         }
     }

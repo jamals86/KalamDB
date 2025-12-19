@@ -423,8 +423,8 @@ mod tests {
             let result = matches(&expr, &row);
             // Either succeeds (within limit) or fails with depth error
             // The protection is that we don't stack overflow
-            if result.is_err() {
-                let err_msg = result.unwrap_err().to_string();
+            if let Err(err) = result {
+                let err_msg = err.to_string();
                 assert!(
                     err_msg.contains("too deeply nested") || err_msg.contains("recursion"),
                     "Expected depth error, got: {}",

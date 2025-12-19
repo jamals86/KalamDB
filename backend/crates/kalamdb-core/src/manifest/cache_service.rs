@@ -618,8 +618,10 @@ mod tests {
     #[test]
     fn test_get_or_load_respects_capacity_on_rocksdb_load() {
         let backend: Arc<dyn StorageBackend> = Arc::new(InMemoryBackend::new());
-        let mut config = ManifestCacheSettings::default();
-        config.max_entries = 1;
+        let config = ManifestCacheSettings {
+            max_entries: 1,
+            ..Default::default()
+        };
 
         let service = ManifestCacheService::new(Arc::clone(&backend), config.clone());
         let table1 = TableId::new(NamespaceId::new("ns1"), TableName::new("t1"));

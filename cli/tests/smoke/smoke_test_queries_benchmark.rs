@@ -92,7 +92,7 @@ fn smoke_queries_benchmark() {
             let qty = ((inserted + i) % 50) as i64;
             let price = 9.99 + (((inserted + i) % 500) as f64) / 10.0;
             let now_ms = chrono::Utc::now().timestamp_millis();
-            let paid = ((inserted + i) % 2) == 0;
+            let paid = (inserted + i).is_multiple_of(2);
             let notes = "benchmark";
 
             if !values.is_empty() {
@@ -143,7 +143,7 @@ fn smoke_queries_benchmark() {
     let start_select = Instant::now();
 
     // Iterate expected number of pages; we avoid parsing output for speed
-    let expected_pages = (inserted + page_size - 1) / page_size;
+    let expected_pages = inserted.div_ceil(page_size);
     for _ in 0..expected_pages {
         let select_sql = format!(
             "SELECT order_id, customer_id, sku, status, quantity, price, created_at, updated_at, paid, notes FROM {} WHERE order_id > {} ORDER BY order_id LIMIT {}",

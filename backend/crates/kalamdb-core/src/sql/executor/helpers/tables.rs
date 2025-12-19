@@ -138,15 +138,6 @@ pub fn save_table_definition(
     let sys_cols = app_ctx.system_columns_service();
     sys_cols.add_system_columns(&mut table_def)?;
 
-    // Build Arrow schema FROM the mutated TableDefinition (includes system columns)
-    // Phase 16: Arrow schema is built for caching and provider registration
-    // let _full_arrow_schema = table_def.to_arrow_schema().map_err(|e| {
-    //     KalamDbError::SchemaError(format!(
-    //         "Failed to build Arrow schema after system columns injection: {}",
-    //         e
-    //     ))
-    // })?;
-
     // Phase 16: Schema history is now stored externally using TableVersionId keys.
     // The TableDefinition starts with schema_version = 1 (set in new()).
     // No need to push to schema_history anymore - TablesStore handles this.

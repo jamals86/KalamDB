@@ -375,7 +375,7 @@ async fn test_increment_changes() {
     manager.increment_changes(&live_id).await.unwrap();
 
     let live_query_record = manager
-        .get_live_query(&live_id.to_string())
+        .get_live_query(live_id.as_ref())
         .await
         .unwrap()
         .unwrap();

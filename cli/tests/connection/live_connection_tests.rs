@@ -191,7 +191,7 @@ fn test_live_subscription_with_last_rows() {
                 // Try to extract seq_num from the line
                 for word in line.split_whitespace() {
                     if let Ok(num) = word.trim_matches(|c: char| !c.is_ascii_digit()).parse::<i32>() {
-                        if num >= 1 && num <= 10 {
+                        if (1..=10).contains(&num) {
                             seq_nums_received.push(num);
                         }
                     }
@@ -439,7 +439,7 @@ fn test_live_subscription_change_event_order() {
                 // Try to extract order_num
                 for word in line.split(|c: char| !c.is_ascii_digit()) {
                     if let Ok(num) = word.parse::<i32>() {
-                        if num >= 1 && num <= 5 && !received_orders.contains(&num) {
+                        if (1..=5).contains(&num) && !received_orders.contains(&num) {
                             received_orders.push(num);
                         }
                     }

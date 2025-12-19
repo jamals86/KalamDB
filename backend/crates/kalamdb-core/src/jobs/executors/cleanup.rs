@@ -179,7 +179,7 @@ mod tests {
 
     #[test]
     fn test_default_constructor() {
-        let executor = CleanupExecutor::default();
+        let executor = CleanupExecutor;
         assert_eq!(executor.job_type(), JobType::Cleanup);
     }
 

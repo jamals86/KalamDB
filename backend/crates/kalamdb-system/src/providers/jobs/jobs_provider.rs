@@ -875,6 +875,6 @@ mod tests {
 
         // Scan via DataFusion
         let plan = provider.scan(&state, None, &[], None).await.unwrap();
-        assert!(plan.schema().fields().len() > 0);
+        assert!(!plan.schema().fields().is_empty());
     }
 }

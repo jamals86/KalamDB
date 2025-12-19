@@ -169,8 +169,7 @@ pub async fn create_messages_table(
         // Treat already-exists as success for idempotent tests
         let already_exists = resp
             .error
-            .as_ref()
-            .and_then(|e| Some(e.message.to_lowercase().contains("already exists")))
+            .as_ref().map(|e| e.message.to_lowercase().contains("already exists"))
             .unwrap_or(false);
         if already_exists {
             return SqlResponse {
@@ -289,8 +288,7 @@ pub async fn create_stream_table(
     if resp.status != kalamdb_api::models::ResponseStatus::Success {
         let already_exists = resp
             .error
-            .as_ref()
-            .and_then(|e| Some(e.message.to_lowercase().contains("already exists")))
+            .as_ref().map(|e| e.message.to_lowercase().contains("already exists"))
             .unwrap_or(false);
         if already_exists {
             return SqlResponse {
@@ -325,8 +323,7 @@ pub async fn drop_table(server: &TestServer, namespace: &str, table_name: &str) 
 
     let table_type = if lookup_response.status == kalamdb_api::models::ResponseStatus::Success {
         lookup_response
-            .results
-            .get(0)
+            .results.first()
             .and_then(|result| super::QueryResultTestExt::row_as_map(result, 0))
             .and_then(|row| row.get("table_type").cloned())
             .and_then(|value| value.as_str().map(|s| s.to_string()))

@@ -221,7 +221,7 @@ mod tests {
         for user_i in 1..=2 {
             for row_i in 1..=3 {
                 let key = UserTableRowId::new(
-                    UserId::new(&format!("user{}", user_i)),
+                    UserId::new(format!("user{}", user_i)),
                     SeqId::new((user_i * 1000 + row_i) as i64),
                 );
                 let row =

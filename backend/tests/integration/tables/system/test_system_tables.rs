@@ -48,7 +48,7 @@ async fn test_01_list_system_tables() {
     // Verify we have at least one table
     if let Some(result) = response.results.first() {
         let rows = result.rows_as_maps();
-        assert!(rows.len() >= 1, "Expected at least 1 user table");
+        assert!(!rows.is_empty(), "Expected at least 1 user table");
 
         // Verify the messages table exists
         let messages_found = rows.iter().any(|row| {
