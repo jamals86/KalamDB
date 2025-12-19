@@ -5,7 +5,7 @@ use std::time::Duration;
 
 pub async fn handle_subscriptions(
     cli: &Cli,
-    credential_store: &FileCredentialStore,
+    credential_store: &mut FileCredentialStore,
 ) -> Result<bool> {
     if cli.list_subscriptions || cli.subscribe.is_some() || cli.unsubscribe.is_some() {
         // Load configuration

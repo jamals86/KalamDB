@@ -692,6 +692,291 @@ pub fn pk_exists_in_cold(
     Ok(false)
 }
 
+/// Batch check if any PK values exist in cold storage (Parquet files).
+///
+/// **OPTIMIZED for batch INSERT**: Checks multiple PK values in a single pass through cold storage.
+/// This is O(files) instead of O(files × N) where N is the number of PK values.
+///
+/// # Arguments
+/// * `core` - TableProviderCore for app_context access
+/// * `table_id` - Table identifier
+/// * `table_type` - TableType (User, Shared, Stream)
+/// * `user_id` - Optional user ID for scoping (User tables)
+/// * `pk_column` - Name of the primary key column
+/// * `pk_values` - The PK values to check for
+///
+/// # Returns
+/// * `Ok(Some(pk))` - First PK that exists in cold storage (non-deleted)
+/// * `Ok(None)` - None of the PKs exist in cold storage
+pub fn pk_exists_batch_in_cold(
+    core: &TableProviderCore,
+    table_id: &TableId,
+    table_type: TableType,
+    user_id: Option<&UserId>,
+    pk_column: &str,
+    pk_values: &[String],
+) -> Result<Option<String>, KalamDbError> {
+    use crate::manifest::ManifestAccessPlanner;
+    use kalamdb_commons::types::Manifest;
+    use std::collections::HashSet;
+
+    if pk_values.is_empty() {
+        return Ok(None);
+    }
+
+    let namespace = table_id.namespace_id();
+    let table = table_id.table_name();
+    let scope_label = user_id
+        .map(|uid| format!("user={}", uid.as_str()))
+        .unwrap_or_else(|| format!("scope={}", table_type.as_str()));
+
+    // 1. Get CachedTableData for storage access
+    let cached = match core.app_context.schema_registry().get(table_id) {
+        Some(c) => c,
+        None => {
+            log::trace!(
+                "[pk_exists_batch_in_cold] No cached table data for {}.{} {} - PK not in cold",
+                namespace.as_str(),
+                table.as_str(),
+                scope_label
+            );
+            return Ok(None);
+        }
+    };
+
+    // 2. Get Storage from registry (cached lookup) and ObjectStore
+    let storage_id = cached.storage_id.clone().unwrap_or_else(kalamdb_commons::models::StorageId::local);
+    let storage = match core.app_context.storage_registry().get_storage(&storage_id) {
+        Ok(Some(s)) => s,
+        Ok(None) | Err(_) => {
+            log::trace!(
+                "[pk_exists_batch_in_cold] Storage {} not found for {}.{} {} - PK not in cold",
+                storage_id.as_str(),
+                namespace.as_str(),
+                table.as_str(),
+                scope_label
+            );
+            return Ok(None);
+        }
+    };
+
+    let object_store = cached
+        .object_store()
+        .into_kalamdb_error("Failed to get object store")?;
+
+    // 3. Get storage path (relative to storage base)
+    let storage_path = crate::schema_registry::PathResolver::get_storage_path(&cached, user_id, None)?;
+
+    // Check if any files exist at this path using object_store
+    let files = kalamdb_filestore::list_files_sync(
+        std::sync::Arc::clone(&object_store),
+        &storage,
+        &storage_path,
+    );
+
+    let all_files = match files {
+        Ok(f) => f,
+        Err(_) => {
+            log::trace!(
+                "[pk_exists_batch_in_cold] No storage dir for {}.{} {} - PK not in cold",
+                namespace.as_str(),
+                table.as_str(),
+                scope_label
+            );
+            return Ok(None);
+        }
+    };
+
+    if all_files.is_empty() {
+        log::trace!(
+            "[pk_exists_batch_in_cold] No files in storage for {}.{} {} - PK not in cold",
+            namespace.as_str(),
+            table.as_str(),
+            scope_label
+        );
+        return Ok(None);
+    }
+
+    // 4. Load manifest from cache
+    let manifest_cache_service = core.app_context.manifest_cache_service();
+    let cache_result = manifest_cache_service.get_or_load(table_id, user_id);
+
+    let manifest: Option<Manifest> = match &cache_result {
+        Ok(Some(entry)) => Some(entry.manifest.clone()),
+        Ok(None) => {
+            log::trace!(
+                "[pk_exists_batch_in_cold] No manifest for {}.{} {} - checking all files",
+                namespace.as_str(),
+                table.as_str(),
+                scope_label
+            );
+            None
+        }
+        Err(e) => {
+            log::warn!(
+                "[pk_exists_batch_in_cold] Manifest cache error for {}.{} {}: {}",
+                namespace.as_str(),
+                table.as_str(),
+                scope_label,
+                e
+            );
+            None
+        }
+    };
+
+    // 5. Determine files to scan - union of files that may contain any of the PK values
+    let planner = ManifestAccessPlanner::new();
+    let files_to_scan: Vec<String> = if let Some(ref m) = manifest {
+        // Collect all potentially relevant files for any PK value
+        let mut relevant_files: HashSet<String> = HashSet::new();
+        for pk_value in pk_values {
+            let pruned_paths = planner.plan_by_pk_value(m, pk_column, pk_value);
+            relevant_files.extend(pruned_paths);
+        }
+        if relevant_files.is_empty() {
+            log::trace!(
+                "[pk_exists_batch_in_cold] Manifest pruning: no segments may contain any PK for {}.{} {}",
+                namespace.as_str(),
+                table.as_str(),
+                scope_label
+            );
+            return Ok(None);
+        }
+        log::trace!(
+            "[pk_exists_batch_in_cold] Manifest pruning: {} of {} segments may contain {} PKs for {}.{} {}",
+            relevant_files.len(),
+            m.segments.len(),
+            pk_values.len(),
+            namespace.as_str(),
+            table.as_str(),
+            scope_label
+        );
+        relevant_files.into_iter().collect()
+    } else {
+        // No manifest - use all Parquet files from listing
+        all_files
+            .into_iter()
+            .filter(|p| p.ends_with(".parquet"))
+            .collect()
+    };
+
+    if files_to_scan.is_empty() {
+        return Ok(None);
+    }
+
+    // 6. Create a HashSet for O(1) PK lookups
+    let pk_set: HashSet<&str> = pk_values.iter().map(|s| s.as_str()).collect();
+
+    // 7. Scan Parquet files and check for PKs (batch version)
+    for file_name in files_to_scan {
+        let parquet_path = format!("{}/{}", storage_path.trim_end_matches('/'), file_name);
+        if let Some(found_pk) = pk_exists_batch_in_parquet_via_store(
+            std::sync::Arc::clone(&object_store),
+            &storage,
+            &parquet_path,
+            pk_column,
+            &pk_set,
+        )? {
+            log::trace!(
+                "[pk_exists_batch_in_cold] Found PK {} in {} for {}.{} {}",
+                found_pk,
+                parquet_path,
+                namespace.as_str(),
+                table.as_str(),
+                scope_label
+            );
+            return Ok(Some(found_pk));
+        }
+    }
+
+    Ok(None)
+}
+
+/// Batch check if any PK values exist in a single Parquet file via object_store.
+///
+/// Returns the first matching PK found (with non-deleted latest version).
+fn pk_exists_batch_in_parquet_via_store(
+    store: std::sync::Arc<dyn object_store::ObjectStore>,
+    storage: &kalamdb_commons::system::Storage,
+    parquet_path: &str,
+    pk_column: &str,
+    pk_values: &std::collections::HashSet<&str>,
+) -> Result<Option<String>, KalamDbError> {
+    use datafusion::arrow::array::{Array, BooleanArray, Int64Array, UInt64Array};
+    use std::collections::HashMap;
+
+    // Read Parquet file via object_store
+    let batches = kalamdb_filestore::read_parquet_batches_sync(store, storage, parquet_path)
+        .into_kalamdb_error("Failed to read Parquet file")?;
+
+    // Track latest version per PK value: pk_value -> (max_seq, is_deleted)
+    let mut versions: HashMap<String, (i64, bool)> = HashMap::new();
+
+    for batch in batches {
+        // Find column indices
+        let pk_idx = batch.schema().index_of(pk_column).ok();
+        let seq_idx = batch.schema().index_of(SystemColumnNames::SEQ).ok();
+        let deleted_idx = batch.schema().index_of(SystemColumnNames::DELETED).ok();
+
+        let (Some(pk_i), Some(seq_i)) = (pk_idx, seq_idx) else {
+            continue; // Missing required columns
+        };
+
+        let pk_col = batch.column(pk_i);
+        let seq_col = batch.column(seq_i);
+        let deleted_col = deleted_idx.map(|i| batch.column(i));
+
+        for row_idx in 0..batch.num_rows() {
+            // Extract PK value as string
+            let row_pk = extract_pk_as_string(pk_col.as_ref(), row_idx);
+            let Some(row_pk_str) = row_pk else { continue };
+
+            // Only check rows matching target PKs (O(1) lookup in HashSet)
+            if !pk_values.contains(row_pk_str.as_str()) {
+                continue;
+            }
+
+            // Extract _seq
+            let seq = if let Some(arr) = seq_col.as_any().downcast_ref::<Int64Array>() {
+                arr.value(row_idx)
+            } else if let Some(arr) = seq_col.as_any().downcast_ref::<UInt64Array>() {
+                arr.value(row_idx) as i64
+            } else {
+                continue;
+            };
+
+            // Extract _deleted
+            let deleted = if let Some(del_col) = &deleted_col {
+                if let Some(arr) = del_col.as_any().downcast_ref::<BooleanArray>() {
+                    arr.value(row_idx)
+                } else {
+                    false
+                }
+            } else {
+                false
+            };
+
+            // Update version tracking
+            if let Some((max_seq, _)) = versions.get(&row_pk_str) {
+                if seq > *max_seq {
+                    versions.insert(row_pk_str, (seq, deleted));
+                }
+            } else {
+                versions.insert(row_pk_str, (seq, deleted));
+            }
+        }
+    }
+
+    // Check if any target PK has a non-deleted latest version
+    for (pk, (_, is_deleted)) in versions {
+        if !is_deleted && pk_values.contains(pk.as_str()) {
+            return Ok(Some(pk));
+        }
+    }
+
+    Ok(None)
+}
+
 /// Check if a PK value exists in a single Parquet file via object_store (with MVCC version resolution).
 ///
 /// Reads the file using object_store and checks if any non-deleted row has the matching PK value.

@@ -77,17 +77,21 @@
 //! # fn example() -> Result<(), Box<dyn std::error::Error>> {
 //! let mut store = MemoryCredentialStore::new();
 //!
-//! // Store credentials
-//! let creds = Credentials::new(
+//! // Store JWT token credentials (obtained from login)
+//! let creds = Credentials::with_details(
 //!     "production".to_string(),
+//!     "eyJhbGciOiJIUzI1NiJ9.jwt_token_here".to_string(),
 //!     "alice".to_string(),
-//!     "secret123".to_string(),
+//!     "2025-12-31T23:59:59Z".to_string(),
+//!     Some("https://db.example.com".to_string()),
 //! );
 //! store.set_credentials(&creds)?;
 //!
 //! // Retrieve credentials
 //! if let Some(stored) = store.get_credentials("production")? {
-//!     println!("Found credentials for user: {}", stored.username);
+//!     if !stored.is_expired() {
+//!         println!("Found valid token for user: {:?}", stored.username);
+//!     }
 //! }
 //! # Ok(())
 //! # }
@@ -131,8 +135,8 @@ pub use error::{KalamLinkError, Result};
 pub use live::LiveConnection;
 pub use models::{
     ChangeEvent, ConnectionOptions, ErrorDetail, HealthCheckResponse, HttpVersion, KalamDataType,
-    QueryRequest, QueryResponse, QueryResult, SchemaField, SubscriptionConfig,
-    SubscriptionOptions,
+    LoginRequest, LoginResponse, LoginUserInfo, QueryRequest, QueryResponse, QueryResult,
+    SchemaField, SubscriptionConfig, SubscriptionOptions,
 };
 pub use seq_id::SeqId;
 pub use timeouts::{KalamLinkTimeouts, KalamLinkTimeoutsBuilder};

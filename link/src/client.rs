@@ -139,6 +139,72 @@ impl KalamLinkClient {
 
         Ok(health_response)
     }
+
+    /// Login with username and password to obtain a JWT token
+    ///
+    /// This method authenticates with the server and returns a JWT access token
+    /// that can be used for subsequent API calls via `AuthProvider::jwt_token()`.
+    ///
+    /// # Arguments
+    /// * `username` - The username for authentication
+    /// * `password` - The password for authentication
+    ///
+    /// # Returns
+    /// A `LoginResponse` containing the JWT access token and user information
+    ///
+    /// # Example
+    /// ```rust,no_run
+    /// # async fn example() -> Result<(), Box<dyn std::error::Error>> {
+    /// use kalam_link::{KalamLinkClient, AuthProvider};
+    ///
+    /// // Create a client without authentication to perform login
+    /// let client = KalamLinkClient::builder()
+    ///     .base_url("http://localhost:3000")
+    ///     .build()?;
+    ///
+    /// // Login to get JWT token
+    /// let login_response = client.login("alice", "secret123").await?;
+    ///
+    /// // Create a new client with the JWT token for subsequent calls
+    /// let authenticated_client = KalamLinkClient::builder()
+    ///     .base_url("http://localhost:3000")
+    ///     .auth(AuthProvider::jwt_token(login_response.access_token))
+    ///     .build()?;
+    /// # Ok(())
+    /// # }
+    /// ```
+    pub async fn login(&self, username: &str, password: &str) -> Result<crate::models::LoginResponse> {
+        let url = format!("{}/v1/api/auth/login", self.base_url);
+        log::debug!("[LOGIN] Authenticating user '{}' at url={}", username, url);
+        
+        let login_request = crate::models::LoginRequest {
+            username: username.to_string(),
+            password: password.to_string(),
+        };
+        
+        let start = std::time::Instant::now();
+        let response = self.http_client
+            .post(&url)
+            .json(&login_request)
+            .send()
+            .await?;
+        
+        let status = response.status();
+        log::debug!("[LOGIN] HTTP response received in {:?}, status={}", start.elapsed(), status);
+        
+        if !status.is_success() {
+            let error_text = response.text().await.unwrap_or_else(|_| "Unknown error".to_string());
+            log::debug!("[LOGIN] Login failed: {}", error_text);
+            return Err(KalamLinkError::AuthenticationError(
+                format!("Login failed ({}): {}", status, error_text)
+            ));
+        }
+        
+        let login_response = response.json::<crate::models::LoginResponse>().await?;
+        log::debug!("[LOGIN] Successfully authenticated user '{}' in {:?}", username, start.elapsed());
+        
+        Ok(login_response)
+    }
 }
 
 /// Builder for configuring [`KalamLinkClient`] instances.

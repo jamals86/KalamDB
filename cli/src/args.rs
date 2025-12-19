@@ -123,6 +123,11 @@ pub struct Cli {
     #[arg(long = "delete-credentials")]
     pub delete_credentials: bool,
 
+    /// Save credentials (JWT token) after successful login
+    /// When used with --username/--password, stores the JWT token for future sessions
+    #[arg(long = "save-credentials")]
+    pub save_credentials: bool,
+
     /// List all stored credential instances
     #[arg(long = "list-instances")]
     pub list_instances: bool,

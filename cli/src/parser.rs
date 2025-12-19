@@ -15,7 +15,6 @@ pub enum Command {
     /// Meta-commands (backslash commands)
     Quit,
     Help,
-    Connect(String),
     Config,
     Flush,
     Health,
@@ -79,15 +78,6 @@ impl CommandParser {
             "\\quit" | "\\q" => Ok(Command::Quit),
             "\\help" | "\\?" => Ok(Command::Help),
             "\\stats" | "\\metrics" => Ok(Command::Stats),
-            "\\connect" | "\\c" => {
-                if args.is_empty() {
-                    Err(CLIError::ParseError(
-                        "\\connect requires a URL argument".into(),
-                    ))
-                } else {
-                    Ok(Command::Connect(args.join(" ")))
-                }
-            }
             "\\config" => Ok(Command::Config),
             "\\flush" => Ok(Command::Flush),
             "\\health" => Ok(Command::Health),
@@ -165,13 +155,6 @@ mod tests {
         let parser = CommandParser::new();
         assert_eq!(parser.parse("\\quit").unwrap(), Command::Quit);
         assert_eq!(parser.parse("\\q").unwrap(), Command::Quit);
-    }
-
-    #[test]
-    fn test_parse_connect() {
-        let parser = CommandParser::new();
-        let cmd = parser.parse("\\connect http://localhost:3000").unwrap();
-        assert_eq!(cmd, Command::Connect("http://localhost:3000".to_string()));
     }
 
     #[test]
