@@ -18,7 +18,7 @@ pub mod parameter_validation;
 use crate::error::KalamDbError;
 use crate::sql::executor::handler_registry::HandlerRegistry;
 use crate::sql::executor::models::{ExecutionContext, ExecutionMetadata, ExecutionResult};
-use crate::sql::plan_cache::PlanCache;
+use crate::sql::plan_cache::{PlanCache, PlanCacheKey};
 pub use datafusion::scalar::ScalarValue;
 use kalamdb_sql::statement_classifier::SqlStatement;
 use std::sync::Arc;
@@ -163,12 +163,11 @@ impl SqlExecutor {
 
         // Try to get cached plan first (only if no params - parameterized queries can't use cached plans)
         // Note: Cached plans already have default ORDER BY applied
-        let cache_key = format!(
-            "{}|{}|{:?}|{}",
-            exec_ctx.default_namespace().as_str(),
-            exec_ctx.user_id.as_str(),
+        // Key excludes user_id because LogicalPlan is user-agnostic - filtering happens at scan time
+        let cache_key = PlanCacheKey::new(
+            exec_ctx.default_namespace().clone(),
             exec_ctx.user_role,
-            sql
+            sql,
         );
 
         let df = if params.is_empty() {
@@ -176,7 +175,8 @@ impl SqlExecutor {
                 // Cache hit: Create DataFrame directly from plan
                 // This skips parsing, logical planning, and optimization (~1-5ms)
                 // The cached plan already has default ORDER BY applied
-                match session.execute_logical_plan(plan).await {
+                // Clone the Arc'd plan for execution (cheap reference count bump)
+                match session.execute_logical_plan((*plan).clone()).await {
                     Ok(df) => df,
                     Err(e) => {
                         log::warn!("Failed to create DataFrame from cached plan: {}", e);
@@ -203,8 +203,8 @@ impl SqlExecutor {
                         let plan = df.logical_plan().clone();
                         let ordered_plan = apply_default_order_by(plan, &self.app_context)?;
 
-                        // Cache the ordered plan for future use (scoped by namespace+user+role)
-                        self.plan_cache.insert(cache_key.clone(), ordered_plan.clone());
+                        // Cache the ordered plan for future use (scoped by namespace+role)
+                        self.plan_cache.insert(cache_key, ordered_plan.clone());
 
                         // Execute the ordered plan
                         session.execute_logical_plan(ordered_plan).await.map_err(|e| {

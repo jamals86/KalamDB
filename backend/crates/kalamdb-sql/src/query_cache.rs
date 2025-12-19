@@ -258,9 +258,9 @@ impl QueryCache {
         self.cache.invalidate_all();
     }
 
-    /// Remove expired entries (garbage collection)
-    /// With moka, this triggers pending cleanup tasks
-    pub fn evict_expired(&self) {
+    /// Trigger pending moka maintenance tasks (eviction, expiration).
+    /// Call this before reading stats for accurate counts.
+    pub fn sync(&self) {
         self.cache.run_pending_tasks();
     }
 
@@ -268,14 +268,8 @@ impl QueryCache {
     pub fn stats(&self) -> CacheStats {
         // Sync pending tasks for accurate count
         self.cache.run_pending_tasks();
-        let total = self.cache.entry_count() as usize;
-
-        // With moka, expired entries are automatically evicted
-        // so all entries in cache are active
         CacheStats {
-            total_entries: total,
-            expired_entries: 0,
-            active_entries: total,
+            entry_count: self.cache.entry_count() as usize,
         }
     }
 }
@@ -287,11 +281,10 @@ impl Default for QueryCache {
 }
 
 /// Cache statistics
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Copy)]
 pub struct CacheStats {
-    pub total_entries: usize,
-    pub expired_entries: usize,
-    pub active_entries: usize,
+    /// Number of entries currently in cache (moka auto-evicts expired)
+    pub entry_count: usize,
 }
 
 #[cfg(test)]
@@ -443,9 +436,7 @@ mod tests {
         cache.put(QueryCacheKey::AllNamespaces, data.clone());
 
         let stats = cache.stats();
-        assert_eq!(stats.total_entries, 2);
-        assert_eq!(stats.active_entries, 2);
-        assert_eq!(stats.expired_entries, 0);
+        assert_eq!(stats.entry_count, 2);
     }
 
     #[test]
@@ -471,7 +462,7 @@ mod tests {
         // Wait for tables to expire (50ms TTL + buffer)
         std::thread::sleep(Duration::from_millis(100));
 
-        cache.evict_expired();
+        cache.sync();
 
         // Verify tables entry expired (can't be retrieved)
         let tables: Option<Vec<TestData>> = cache.get(&QueryCacheKey::AllTables);
@@ -567,7 +558,7 @@ mod tests {
 
         // Verify cache has entries
         let stats = cache.stats();
-        assert!(stats.total_entries > 0);
+        assert!(stats.entry_count > 0);
     }
 
     #[test]
@@ -587,14 +578,14 @@ mod tests {
         }
 
         // Force pending tasks to process evictions
-        cache.evict_expired();
+        cache.sync();
 
         let stats = cache.stats();
         // Should have at most 5 entries due to capacity limit
         assert!(
-            stats.total_entries <= 5,
+            stats.entry_count <= 5,
             "Expected at most 5 entries, got {}",
-            stats.total_entries
+            stats.entry_count
         );
     }
 }

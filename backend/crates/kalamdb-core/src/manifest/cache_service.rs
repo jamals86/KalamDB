@@ -327,16 +327,6 @@ impl ManifestCacheService {
         self.hot_cache.contains_key(cache_key)
     }
 
-    /// Get last accessed timestamp for a key.
-    ///
-    /// With moka, TTI is managed internally so we return `None`.
-    /// The caller should fall back to using `last_refreshed` from the entry.
-    pub fn get_last_accessed(&self, _cache_key: &str) -> Option<i64> {
-        // Moka manages TTI internally; we can't retrieve the exact last_accessed time.
-        // The caller (manifest_provider) will fall back to entry.last_refreshed.
-        None
-    }
-
     /// Get the number of entries in the hot cache.
     /// Note: Call run_pending_tasks() first for accurate count due to moka's async eviction.
     pub fn hot_cache_len(&self) -> usize {

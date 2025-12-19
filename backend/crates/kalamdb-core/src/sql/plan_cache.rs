@@ -1,10 +1,34 @@
 use datafusion::logical_expr::LogicalPlan;
+use kalamdb_commons::{NamespaceId, Role};
 use moka::sync::Cache;
-use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
 
 /// Default maximum cache entries (prevents unbounded memory growth)
 const DEFAULT_MAX_ENTRIES: u64 = 1000;
+
+/// Cache key for plan lookup.
+///
+/// Plans are scoped by namespace + role + SQL text.
+/// User ID is NOT included because:
+/// - LogicalPlan is user-agnostic (same plan structure for all users)
+/// - User filtering happens at scan time in UserTableProvider, not at planning
+/// - This allows plan reuse across users for significant cache efficiency
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub struct PlanCacheKey {
+    pub namespace: NamespaceId,
+    pub role: Role,
+    pub sql: String,
+}
+
+impl PlanCacheKey {
+    pub fn new(namespace: NamespaceId, role: Role, sql: impl Into<String>) -> Self {
+        Self {
+            namespace,
+            role,
+            sql: sql.into(),
+        }
+    }
+}
 
 /// Caches optimized LogicalPlans to skip parsing and planning overhead.
 ///
@@ -14,14 +38,8 @@ const DEFAULT_MAX_ENTRIES: u64 = 1000;
 ///
 /// **Memory Management**: Uses moka cache with TinyLFU eviction (LRU + LFU admission)
 /// for optimal hit rate. Automatically evicts entries when max capacity is reached.
-#[derive(Debug, Clone)]
 pub struct PlanCache {
-    /// Moka cache with automatic eviction
-    cache: Arc<Cache<String, LogicalPlan>>,
-    /// Hit counter for metrics
-    hits: Arc<AtomicU64>,
-    /// Miss counter for metrics
-    misses: Arc<AtomicU64>,
+    cache: Cache<PlanCacheKey, Arc<LogicalPlan>>,
 }
 
 impl PlanCache {
@@ -32,31 +50,19 @@ impl PlanCache {
 
     /// Create a new PlanCache with specified max entries
     pub fn with_max_entries(max_entries: u64) -> Self {
-        let cache = Cache::builder()
-            .max_capacity(max_entries)
-            .build();
+        let cache = Cache::builder().max_capacity(max_entries).build();
 
-        Self {
-            cache: Arc::new(cache),
-            hits: Arc::new(AtomicU64::new(0)),
-            misses: Arc::new(AtomicU64::new(0)),
-        }
+        Self { cache }
     }
 
     /// Retrieve a cached plan for the given key
-    pub fn get(&self, cache_key: &str) -> Option<LogicalPlan> {
-        if let Some(plan) = self.cache.get(cache_key) {
-            self.hits.fetch_add(1, Ordering::Relaxed);
-            Some(plan)
-        } else {
-            self.misses.fetch_add(1, Ordering::Relaxed);
-            None
-        }
+    pub fn get(&self, cache_key: &PlanCacheKey) -> Option<Arc<LogicalPlan>> {
+        self.cache.get(cache_key)
     }
 
     /// Store an optimized plan (moka handles eviction automatically)
-    pub fn insert(&self, cache_key: String, plan: LogicalPlan) {
-        self.cache.insert(cache_key, plan);
+    pub fn insert(&self, cache_key: PlanCacheKey, plan: LogicalPlan) {
+        self.cache.insert(cache_key, Arc::new(plan));
     }
 
     /// Clear cache (MUST be called on any DDL operation like CREATE/DROP/ALTER)
@@ -72,16 +78,6 @@ impl PlanCache {
     /// Check if cache is empty
     pub fn is_empty(&self) -> bool {
         self.cache.entry_count() == 0
-    }
-
-    /// Get cache hit count
-    pub fn hits(&self) -> u64 {
-        self.hits.load(Ordering::Relaxed)
-    }
-
-    /// Get cache miss count
-    pub fn misses(&self) -> u64 {
-        self.misses.load(Ordering::Relaxed)
     }
 }
 
