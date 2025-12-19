@@ -417,7 +417,7 @@ async fn test_shared_table_row_structure() {
         "feature_flag"
     );
     assert_eq!(row.get("value").unwrap().as_str().unwrap(), "on");
-    assert_eq!(row.get("enabled").unwrap().as_bool().unwrap(), true);
+    assert!(row.get("enabled").unwrap().as_bool().unwrap());
 
     // Verify system columns
     assert!(row.contains_key("_seq"), "_seq should exist");

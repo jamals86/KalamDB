@@ -693,8 +693,10 @@ mod tests {
     #[test]
     fn test_get_or_load_respects_capacity_on_rocksdb_load() {
         let backend: Arc<dyn StorageBackend> = Arc::new(InMemoryBackend::new());
-        let mut config = ManifestCacheSettings::default();
-        config.max_entries = 1;
+        let config = ManifestCacheSettings {
+            max_entries: 1,
+            ..Default::default()
+        };
 
         let service = ManifestCacheService::new(Arc::clone(&backend), config.clone());
         let table1 = TableId::new(NamespaceId::new("ns1"), TableName::new("t1"));
@@ -733,11 +735,13 @@ mod tests {
     #[test]
     fn test_restore_from_rocksdb_skips_stale_and_limits_capacity() {
         let backend: Arc<dyn StorageBackend> = Arc::new(InMemoryBackend::new());
-        let mut config = ManifestCacheSettings::default();
         // Set a very short TTL (1 day = 86400 seconds) for testing
         // Note: We use 1 day minimum since eviction_ttl_days is in days
-        config.eviction_ttl_days = 0; // 0 means entries are immediately stale
-        config.max_entries = 1;
+        let config = ManifestCacheSettings {
+            eviction_ttl_days: 0, // 0 means entries are immediately stale
+            max_entries: 1,
+            ..Default::default()
+        };
 
         let service = ManifestCacheService::new(Arc::clone(&backend), config.clone());
         let table1 = TableId::new(NamespaceId::new("ns1"), TableName::new("fresh"));

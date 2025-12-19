@@ -160,7 +160,7 @@ async fn test_multiple_filtered_subscriptions() {
     // Subscription 1: type = 'thinking'
     let thinking_config = SubscriptionConfig::new(
         "sub-thinking",
-        &format!("SELECT * FROM {} WHERE type = 'thinking'", table),
+        format!("SELECT * FROM {} WHERE type = 'thinking'", table),
     );
     
     let mut thinking_sub = match timeout(
@@ -185,7 +185,7 @@ async fn test_multiple_filtered_subscriptions() {
     // Subscription 2: type = 'typing'
     let typing_config = SubscriptionConfig::new(
         "sub-typing",
-        &format!("SELECT * FROM {} WHERE type = 'typing'", table),
+        format!("SELECT * FROM {} WHERE type = 'typing'", table),
     );
     
     let mut typing_sub = match timeout(
@@ -588,7 +588,7 @@ async fn test_unsubscribe_stops_changes() {
     // Create a subscription
     let config = SubscriptionConfig::new(
         "sub-unsubscribe-test",
-        &format!("SELECT * FROM {} WHERE type = 'test'", table),
+        format!("SELECT * FROM {} WHERE type = 'test'", table),
     );
     
     let mut subscription = match timeout(

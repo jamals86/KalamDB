@@ -110,7 +110,7 @@ fn test_datatypes_json_preservation() {
     let col_bool = row.get("col_bool").expect("Missing col_bool");
     let col_bool = extract_arrow_value(col_bool).expect("Failed to extract col_bool");
     assert!(col_bool.is_boolean(), "col_bool should be a boolean");
-    assert_eq!(col_bool.as_bool().unwrap(), true);
+    assert!(col_bool.as_bool().unwrap());
 
     // Timestamp
     // Timestamp is returned as Arrow JSON with TimestampMicrosecond type

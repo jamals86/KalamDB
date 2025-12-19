@@ -84,7 +84,7 @@ impl StatementHandler for InsertHandler {
         let namespace_owned = namespace.clone();
         let table_name_owned = table_name.clone();
         let table_id = TableId::new(namespace_owned.clone(), table_name_owned.clone());
-        let schema_registry = AppContext::get().schema_registry();
+        let schema_registry = self.app_context.schema_registry();
         
         // Single lookup: get_table_definition returns None if table doesn't exist
         // This is more efficient than calling table_exists + get_table_definition

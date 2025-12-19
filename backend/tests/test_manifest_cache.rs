@@ -366,7 +366,7 @@ fn test_clear_all_entries() {
 
     // Add entries
     for i in 0..5 {
-        let namespace = NamespaceId::new(&format!("ns{}", i));
+        let namespace = NamespaceId::new(format!("ns{}", i));
         let table = TableName::new("test_table");
         let manifest = create_test_manifest(&format!("ns{}", i), "test_table", None);
         let table_id = TableId::new(namespace.clone(), table.clone());

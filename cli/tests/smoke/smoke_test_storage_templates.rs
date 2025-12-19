@@ -167,7 +167,7 @@ fn smoke_storage_custom_templates() {
     assert_table_storage(&namespace_user, &user_table, &storage_id);
 
     // Reduced row count for faster smoke execution (was 50)
-    insert_rows_as_user(&test_user, &test_password, &table_user_full, 20);
+    insert_rows_as_user(&test_user, test_password, &table_user_full, 20);
     // Explicit flush after inserts for determinism
     trigger_flush_and_wait(&table_user_full);
 
@@ -381,7 +381,7 @@ fn fetch_user_id(username: &str) -> String {
                 panic!(
                     "Row for user '{}' missing user_id field: {}",
                     username,
-                    rows[0].to_string()
+                    rows[0]
                 )
             });
         value.as_str()

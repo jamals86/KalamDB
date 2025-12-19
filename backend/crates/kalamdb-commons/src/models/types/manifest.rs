@@ -10,10 +10,11 @@ use crate::models::TableId;
 use crate::UserId;
 
 /// Synchronization state of a cached manifest entry.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum SyncState {
     /// Cache is in sync with storage (manifest.json on disk matches cache)
+    #[default]
     InSync,
     /// Cache has local changes that need to be written to storage (pending flush)
     PendingWrite,
@@ -24,12 +25,6 @@ pub enum SyncState {
     Stale,
     /// Error occurred during last sync attempt
     Error,
-}
-
-impl Default for SyncState {
-    fn default() -> Self {
-        Self::InSync
-    }
 }
 
 impl std::fmt::Display for SyncState {

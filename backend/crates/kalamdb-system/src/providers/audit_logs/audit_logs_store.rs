@@ -81,7 +81,7 @@ mod tests {
 
         // Append multiple entries with different timestamps
         for i in 1..=3 {
-            let audit_id = AuditLogId::new(&format!("audit_{:03}", i));
+            let audit_id = AuditLogId::new(format!("audit_{:03}", i));
             let entry = create_test_audit_entry(
                 &format!("audit_{:03}", i),
                 "user.update",
@@ -101,7 +101,7 @@ mod tests {
 
         // Insert multiple entries
         for i in 1..=5 {
-            let audit_id = AuditLogId::new(&format!("audit_{:03}", i));
+            let audit_id = AuditLogId::new(format!("audit_{:03}", i));
             let entry = create_test_audit_entry(
                 &format!("audit_{:03}", i),
                 "user.delete",
@@ -126,9 +126,9 @@ mod tests {
         let store = create_test_store();
 
         // Insert entries with explicit timestamps (out of order)
-        let timestamps = vec![1730000003000, 1730000001000, 1730000002000];
+        let timestamps = [1730000003000, 1730000001000, 1730000002000];
         for (i, &ts) in timestamps.iter().enumerate() {
-            let audit_id = AuditLogId::new(&format!("audit_{:03}", i + 1));
+            let audit_id = AuditLogId::new(format!("audit_{:03}", i + 1));
             let entry = create_test_audit_entry(&format!("audit_{:03}", i + 1), "test.action", ts);
             EntityStore::put(&store, &audit_id, &entry).unwrap();
         }
@@ -157,7 +157,7 @@ mod tests {
                 let store_clone = Arc::clone(&store);
                 thread::spawn(move || {
                     for i in 0..10 {
-                        let audit_id = AuditLogId::new(&format!("audit_t{}_i{}", thread_id, i));
+                        let audit_id = AuditLogId::new(format!("audit_t{}_i{}", thread_id, i));
                         let entry = create_test_audit_entry(
                             &format!("audit_t{}_i{}", thread_id, i),
                             "concurrent.write",

@@ -29,7 +29,7 @@ fn test_datetime_with_timezone_offset_parsing() {
         println!("UTC timestamp millis: {}", utc.timestamp_millis());
 
         // Convert back to original timezone
-        let original_offset = parsed.offset().clone();
+        let original_offset = *parsed.offset();
         let roundtrip: DateTime<FixedOffset> = utc.with_timezone(&original_offset);
         println!("Round-trip to original tz: {}", roundtrip);
 

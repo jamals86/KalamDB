@@ -237,8 +237,7 @@ impl UserTableFlushJob {
         // Phase 16: Include schema version to link Parquet file to specific schema
         let schema_version = self.get_schema_version();
         self.manifest_helper.update_manifest_after_flush(
-            self.namespace_id(),
-            self.table_name(),
+            &self.table_id,
             kalamdb_commons::models::schemas::TableType::User,
             Some(&user_id_typed),
             batch_number,

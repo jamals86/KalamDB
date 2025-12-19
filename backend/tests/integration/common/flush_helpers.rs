@@ -206,7 +206,7 @@ pub async fn wait_for_flush_job_completion(
                 continue;
             }
 
-            if let Some(job) = rows.first() {
+            if let Some(_job) = rows.first() {
                 // Use row_as_map to convert array-based row to HashMap for easier access
                 let job_map = match response.results.first() {
                     Some(result) => super::QueryResultTestExt::row_as_map(result, 0),

@@ -89,7 +89,7 @@ mod tests {
 
         // Insert multiple namespaces
         for i in 1..=3 {
-            let namespace_id = NamespaceId::new(&format!("ns{}", i));
+            let namespace_id = NamespaceId::new(format!("ns{}", i));
             let namespace = create_test_namespace(&format!("ns{}", i), &format!("namespace{}", i));
             EntityStore::put(&store, &namespace_id, &namespace).unwrap();
         }

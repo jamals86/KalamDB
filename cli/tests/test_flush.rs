@@ -49,7 +49,7 @@ fn test_cli_explicit_flush() {
         .arg("--password")
         .arg("")
         .arg("--command")
-        .arg(&format!("FLUSH TABLE {}", full_table_name));
+        .arg(format!("FLUSH TABLE {}", full_table_name));
 
     let output = cmd.output().unwrap();
     let stdout = String::from_utf8_lossy(&output.stdout);

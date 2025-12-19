@@ -299,7 +299,7 @@ async fn concurrent_updates_same_row() {
         let rows = result.rows_as_maps();
         let value = rows[0].get("value").unwrap().as_i64().unwrap();
         assert!(
-            vec![10, 20, 30, 40, 50].contains(&value),
+            [10, 20, 30, 40, 50].contains(&value),
             "Final value should be one of the concurrent updates, got: {}",
             value
         );
@@ -402,7 +402,7 @@ async fn concurrent_deletes() {
         // We just verify the count is non-negative and the operations completed
         // The exact count depends on deletion order and timing
         assert!(
-            count >= 0 && count <= 10,
+            (0..=10).contains(&count),
             "Row count should be between 0 and 10"
         );
     }

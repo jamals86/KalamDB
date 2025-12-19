@@ -119,7 +119,7 @@ fn smoke_chat_ai_example_from_readme() {
             typing_events_table, conversation_id, user_id, event_type
         );
         execute_sql_as_root_via_client(&insert_event_sql)
-            .expect(&format!("failed to insert typing event: {}", event_type));
+            .unwrap_or_else(|_| panic!("failed to insert typing event: {}", event_type));
     }
 
     // 7. Wait for subscription to receive at least one event (increased timeout for subscription initialization)

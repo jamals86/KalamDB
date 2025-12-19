@@ -14,10 +14,12 @@ use std::fmt;
 /// Default format is ISO 8601 with milliseconds (`2024-12-14T15:30:45.123Z`).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
+#[derive(Default)]
 pub enum TimestampFormat {
     /// ISO 8601 with milliseconds: `2024-12-14T15:30:45.123Z`
     /// This is the default and most widely compatible format.
     #[serde(rename = "iso8601")]
+    #[default]
     Iso8601,
 
     /// ISO 8601 date only: `2024-12-14`
@@ -49,11 +51,6 @@ pub enum TimestampFormat {
     Rfc3339,
 }
 
-impl Default for TimestampFormat {
-    fn default() -> Self {
-        Self::Iso8601
-    }
-}
 
 impl fmt::Display for TimestampFormat {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {

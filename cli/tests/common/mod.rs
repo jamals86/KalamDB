@@ -1,5 +1,4 @@
 #![allow(dead_code, unused_imports)]
-use assert_cmd;
 use rand::{distr::Alphanumeric, Rng};
 use std::io::{BufRead, BufReader};
 use std::process::Command;
@@ -649,11 +648,7 @@ pub fn json_value_as_id(value: &serde_json::Value) -> Option<String> {
         serde_json::Value::Number(n) => {
             if let Some(i) = n.as_i64() {
                 Some(i.to_string())
-            } else if let Some(u) = n.as_u64() {
-                Some(u.to_string())
-            } else {
-                None
-            }
+            } else { n.as_u64().map(|u| u.to_string()) }
         }
         serde_json::Value::String(s) => {
             // Verify it's a valid numeric string
@@ -1004,7 +999,7 @@ pub fn verify_job_completed(
                     }
                 } else {
                     // No row found - print debug info
-                    if start.elapsed().as_secs() % 5 == 0 && start.elapsed().as_millis() % 1000 < 250 {
+                    if start.elapsed().as_secs().is_multiple_of(5) && start.elapsed().as_millis() % 1000 < 250 {
                         println!("[DEBUG] Job {} not found in system.jobs", job_id);
                     }
                 }

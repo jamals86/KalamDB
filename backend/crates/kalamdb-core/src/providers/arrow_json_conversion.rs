@@ -828,10 +828,10 @@ mod serialization_tests {
 
     #[test]
     fn test_float64_plain_number() {
-        let value = ScalarValue::Float64(Some(3.14159));
+        let value = ScalarValue::Float64(Some(3.25));
         let json = scalar_value_to_json(&value).unwrap();
-        // Check it's a number approximately equal to pi
-        assert!(json.as_f64().unwrap() > 3.14 && json.as_f64().unwrap() < 3.15);
+        // Check it's a number approximately equal to 3.25
+        assert!(json.as_f64().unwrap() > 3.24 && json.as_f64().unwrap() < 3.26);
     }
 
     #[test]

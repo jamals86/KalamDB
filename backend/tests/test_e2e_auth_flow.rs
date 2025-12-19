@@ -129,7 +129,7 @@ async fn test_e2e_auth_flow() {
     println!("✅ User '{}' soft deleted", user.id.as_str());
 
     // Verify authentication fails for deleted user
-    let post_delete_sql = format!("SELECT 1");
+    let post_delete_sql = "SELECT 1".to_string();
     let response = server
         .execute_sql_as_user(&post_delete_sql, user.id.as_str())
         .await;

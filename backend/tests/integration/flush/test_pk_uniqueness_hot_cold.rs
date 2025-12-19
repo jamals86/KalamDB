@@ -110,7 +110,7 @@ async fn test_insert_duplicate_pk_in_hot_storage_user_table() {
         "Duplicate PK insert should fail in hot storage"
     );
     assert!(
-        resp2.error.as_ref().map_or(false, |e| e.message.contains("Primary key") || e.message.contains("already exists")),
+        resp2.error.as_ref().is_some_and(|e| e.message.contains("Primary key") || e.message.contains("already exists")),
         "Error should mention primary key violation: {:?}",
         resp2.error
     );
@@ -142,7 +142,7 @@ async fn test_insert_duplicate_pk_in_hot_storage_shared_table() {
         "Duplicate PK insert should fail in hot storage"
     );
     assert!(
-        resp2.error.as_ref().map_or(false, |e| e.message.contains("Primary key") || e.message.contains("already exists")),
+        resp2.error.as_ref().is_some_and(|e| e.message.contains("Primary key") || e.message.contains("already exists")),
         "Error should mention primary key violation: {:?}",
         resp2.error
     );
@@ -177,7 +177,7 @@ async fn test_insert_duplicate_pk_in_cold_storage_user_table() {
         "Duplicate PK insert should fail even when original is in cold storage"
     );
     assert!(
-        resp2.error.as_ref().map_or(false, |e| e.message.contains("Primary key") || e.message.contains("already exists")),
+        resp2.error.as_ref().is_some_and(|e| e.message.contains("Primary key") || e.message.contains("already exists")),
         "Error should mention primary key violation: {:?}",
         resp2.error
     );
@@ -389,7 +389,7 @@ async fn test_update_pk_to_duplicate_in_cold_storage() {
     // This should fail due to PK collision with cold storage
     if resp.status == ResponseStatus::Error {
         assert!(
-            resp.error.as_ref().map_or(false, |e| 
+            resp.error.as_ref().is_some_and(|e| 
                 e.message.contains("Primary key") || 
                 e.message.contains("already exists") ||
                 e.message.contains("duplicate") ||

@@ -59,7 +59,7 @@ impl StatementHandler for DeleteHandler {
         let effective_user_id = statement.as_user_id().unwrap_or(&context.user_id);
 
         // Execute native delete
-        let schema_registry = AppContext::get().schema_registry();
+        let schema_registry = app_context.schema_registry();
         use kalamdb_commons::models::TableId;
         let table_id = TableId::new(namespace.clone(), table_name.clone());
         let def = schema_registry

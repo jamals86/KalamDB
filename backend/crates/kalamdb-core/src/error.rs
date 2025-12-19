@@ -668,6 +668,26 @@ impl From<anyhow::Error> for KalamDbError {
     }
 }
 
+// Conversion from TableError (kalamdb-tables) to KalamDbError
+impl From<kalamdb_tables::TableError> for KalamDbError {
+    fn from(err: kalamdb_tables::TableError) -> Self {
+        use kalamdb_tables::TableError;
+        match err {
+            TableError::Storage(msg) => KalamDbError::Storage(StorageError::Other(msg)),
+            TableError::NotFound(msg) => KalamDbError::NotFound(msg),
+            TableError::InvalidOperation(msg) => KalamDbError::InvalidOperation(msg),
+            TableError::Serialization(msg) => KalamDbError::SerializationError(msg),
+            TableError::DataFusion(msg) => {
+                KalamDbError::Other(format!("DataFusion error: {}", msg))
+            }
+            TableError::Arrow(e) => KalamDbError::Other(format!("Arrow error: {}", e)),
+            TableError::Filestore(msg) => KalamDbError::Other(format!("Filestore error: {}", msg)),
+            TableError::SchemaError(msg) => KalamDbError::SchemaError(msg),
+            TableError::Other(msg) => KalamDbError::Other(msg),
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -763,25 +783,5 @@ mod tests {
             err.to_string(),
             "Checksum mismatch: expected=abc123, actual=def456"
         );
-    }
-}
-
-// Conversion from TableError (kalamdb-tables) to KalamDbError
-impl From<kalamdb_tables::TableError> for KalamDbError {
-    fn from(err: kalamdb_tables::TableError) -> Self {
-        use kalamdb_tables::TableError;
-        match err {
-            TableError::Storage(msg) => KalamDbError::Storage(StorageError::Other(msg)),
-            TableError::NotFound(msg) => KalamDbError::NotFound(msg),
-            TableError::InvalidOperation(msg) => KalamDbError::InvalidOperation(msg),
-            TableError::Serialization(msg) => KalamDbError::SerializationError(msg),
-            TableError::DataFusion(msg) => {
-                KalamDbError::Other(format!("DataFusion error: {}", msg))
-            }
-            TableError::Arrow(e) => KalamDbError::Other(format!("Arrow error: {}", e)),
-            TableError::Filestore(msg) => KalamDbError::Other(format!("Filestore error: {}", msg)),
-            TableError::SchemaError(msg) => KalamDbError::SchemaError(msg),
-            TableError::Other(msg) => KalamDbError::Other(msg),
-        }
     }
 }
