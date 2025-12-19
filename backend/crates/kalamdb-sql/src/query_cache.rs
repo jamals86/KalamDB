@@ -3,10 +3,11 @@
 //! Caches results of frequently-accessed system table queries to reduce RocksDB reads.
 //! Invalidated automatically on mutations to system tables.
 //!
-//! **Performance**: Uses DashMap for lock-free reads (100× less contention than RwLock),
-//! Arc<[u8]> for zero-copy results, and LRU eviction to prevent unbounded growth.
+//! **Performance**: Uses moka cache with TinyLFU eviction for optimal hit rate,
+//! Arc<[u8]> for zero-copy results, and automatic per-entry TTL expiration.
 
-use dashmap::DashMap;
+use moka::sync::Cache;
+use moka::Expiry;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
@@ -29,42 +30,18 @@ pub enum QueryCacheKey {
     Namespace(String),
 }
 
-/// Cached query result with TTL
+/// Cached query result (value only, TTL managed by moka)
 #[derive(Debug, Clone)]
 struct CachedResult {
     value: Arc<[u8]>, // Zero-copy shared result
-    cached_at: Instant,
 }
 
 impl CachedResult {
     fn new(value: Vec<u8>) -> Self {
         Self {
             value: value.into(), // Vec<u8> → Arc<[u8]>
-            cached_at: Instant::now(),
         }
     }
-
-    fn is_expired(&self, ttl: Duration) -> bool {
-        self.cached_at.elapsed() > ttl
-    }
-}
-
-/// Query result cache for system tables
-///
-/// Thread-safe cache with TTL expiration, LRU eviction, and invalidation support.
-/// Uses DashMap for lock-free reads (100× less contention than RwLock).
-///
-/// **Performance**:
-/// - Lock-free reads: Multiple threads can read simultaneously without contention
-/// - Zero-copy results: Arc<[u8]> allows sharing without cloning
-/// - LRU eviction: Automatically evicts least recently used entries when full
-pub struct QueryCache {
-    // Lock-free concurrent hash map
-    cache: Arc<DashMap<QueryCacheKey, CachedResult>>,
-    // TTL configuration per query type
-    ttl_config: QueryCacheTtlConfig,
-    // Maximum number of cached entries before LRU eviction
-    max_entries: usize,
 }
 
 /// TTL configuration for different query types
@@ -91,9 +68,78 @@ impl Default for QueryCacheTtlConfig {
     }
 }
 
+/// Custom expiry policy for per-key TTL based on query type
+struct QueryCacheExpiry {
+    ttl_config: QueryCacheTtlConfig,
+}
+
+impl Expiry<QueryCacheKey, CachedResult> for QueryCacheExpiry {
+    fn expire_after_create(
+        &self,
+        key: &QueryCacheKey,
+        _value: &CachedResult,
+        _current_time: Instant,
+    ) -> Option<Duration> {
+        Some(self.get_ttl(key))
+    }
+
+    fn expire_after_read(
+        &self,
+        _key: &QueryCacheKey,
+        _value: &CachedResult,
+        _current_time: Instant,
+        _current_duration: Option<Duration>,
+        _last_modified_at: Instant,
+    ) -> Option<Duration> {
+        // Don't extend TTL on read (TTL is fixed from creation)
+        None
+    }
+
+    fn expire_after_update(
+        &self,
+        key: &QueryCacheKey,
+        _value: &CachedResult,
+        _current_time: Instant,
+        _current_duration: Option<Duration>,
+    ) -> Option<Duration> {
+        // Reset TTL on update
+        Some(self.get_ttl(key))
+    }
+}
+
+impl QueryCacheExpiry {
+    fn get_ttl(&self, key: &QueryCacheKey) -> Duration {
+        match key {
+            QueryCacheKey::AllTables => self.ttl_config.tables,
+            QueryCacheKey::AllNamespaces => self.ttl_config.namespaces,
+            QueryCacheKey::AllLiveQueries => self.ttl_config.live_queries,
+            QueryCacheKey::AllStorages => self.ttl_config.storages,
+            QueryCacheKey::AllJobs => self.ttl_config.jobs,
+            QueryCacheKey::Table(_) | QueryCacheKey::Namespace(_) => self.ttl_config.single_entity,
+        }
+    }
+}
+
+/// Query result cache for system tables
+///
+/// Thread-safe cache with per-entry TTL expiration, TinyLFU eviction, and invalidation support.
+/// Uses moka cache for high-performance concurrent access.
+///
+/// **Performance**:
+/// - Lock-free reads: Multiple threads can read simultaneously without contention
+/// - Zero-copy results: Arc<[u8]> allows sharing without cloning
+/// - TinyLFU eviction: Automatically evicts entries using optimal LRU+LFU admission
+/// - Per-entry TTL: Different TTLs for different query types
+pub struct QueryCache {
+    // Moka cache with per-entry expiration
+    cache: Cache<QueryCacheKey, CachedResult>,
+    // TTL configuration for get_ttl method
+    ttl_config: QueryCacheTtlConfig,
+}
+
 impl QueryCache {
     /// Default maximum number of cached entries
-    pub const DEFAULT_MAX_ENTRIES: usize = 10_000;
+    pub const DEFAULT_MAX_ENTRIES: u64 = 10_000;
 
     /// Create a new query cache with default TTL configuration and max entries
     pub fn new() -> Self {
@@ -108,17 +154,25 @@ impl QueryCache {
     /// Create a new query cache with custom TTL and max entries
     pub fn with_config_and_max_entries(
         ttl_config: QueryCacheTtlConfig,
-        max_entries: usize,
+        max_entries: u64,
     ) -> Self {
+        let expiry = QueryCacheExpiry {
+            ttl_config: ttl_config.clone(),
+        };
+
+        let cache = Cache::builder()
+            .max_capacity(max_entries)
+            .expire_after(expiry)
+            .build();
+
         Self {
-            cache: Arc::new(DashMap::new()),
+            cache,
             ttl_config,
-            max_entries,
         }
     }
 
-    /// Get TTL for a specific query key
-    fn get_ttl(&self, key: &QueryCacheKey) -> Duration {
+    /// Get TTL for a specific query key (useful for debugging/stats)
+    pub fn get_ttl(&self, key: &QueryCacheKey) -> Duration {
         match key {
             QueryCacheKey::AllTables => self.ttl_config.tables,
             QueryCacheKey::AllNamespaces => self.ttl_config.namespaces,
@@ -131,124 +185,97 @@ impl QueryCache {
 
     /// Get cached result
     ///
-    /// Returns None if not in cache or expired.
+    /// Returns None if not in cache (moka handles expiration automatically).
     pub fn get<T: bincode::Decode<()>>(&self, key: &QueryCacheKey) -> Option<T> {
         if let Some(entry) = self.cache.get(key) {
-            let ttl = self.get_ttl(key);
-            if !entry.is_expired(ttl) {
-                // Deserialize from bytes using bincode v2
-                let config = bincode::config::standard();
-                if let Ok((value, _)) = bincode::decode_from_slice(&entry.value, config) {
-                    return Some(value);
-                }
+            // Deserialize from bytes using bincode v2
+            let config = bincode::config::standard();
+            if let Ok((value, _)) = bincode::decode_from_slice(&entry.value, config) {
+                return Some(value);
             }
         }
         None
     }
 
-    /// Put result into cache
+    /// Put result into cache (moka handles eviction automatically)
     pub fn put<T: bincode::Encode>(&self, key: QueryCacheKey, value: T) {
         // Serialize to bytes using bincode v2
         let config = bincode::config::standard();
         if let Ok(bytes) = bincode::encode_to_vec(&value, config) {
-            // LRU eviction: if cache is full, remove oldest entry
-            if self.cache.len() >= self.max_entries {
-                // Find and remove the oldest entry
-                if let Some(oldest_key) = self
-                    .cache
-                    .iter()
-                    .min_by_key(|entry| entry.value().cached_at)
-                    .map(|entry| entry.key().clone())
-                {
-                    self.cache.remove(&oldest_key);
-                }
-            }
-
             self.cache.insert(key, CachedResult::new(bytes));
         }
     }
 
     /// Invalidate all tables-related queries
     pub fn invalidate_tables(&self) {
-        self.cache.remove(&QueryCacheKey::AllTables);
-        // Also remove individual table entries
-        self.cache
-            .retain(|k, _| !matches!(k, QueryCacheKey::Table(_)));
+        self.cache.invalidate(&QueryCacheKey::AllTables);
+        // Also remove individual table entries by iterating
+        // Note: moka iterator returns Arc-wrapped keys
+        let keys_to_remove: Vec<_> = self.cache.iter()
+            .filter(|(k, _)| matches!(&**k, QueryCacheKey::Table(_)))
+            .map(|(k, _)| (*k).clone())
+            .collect();
+        for key in keys_to_remove {
+            self.cache.invalidate(&key);
+        }
     }
 
     /// Invalidate all namespaces-related queries
     pub fn invalidate_namespaces(&self) {
-        self.cache.remove(&QueryCacheKey::AllNamespaces);
+        self.cache.invalidate(&QueryCacheKey::AllNamespaces);
         // Also remove individual namespace entries
-        self.cache
-            .retain(|k, _| !matches!(k, QueryCacheKey::Namespace(_)));
+        let keys_to_remove: Vec<_> = self.cache.iter()
+            .filter(|(k, _)| matches!(&**k, QueryCacheKey::Namespace(_)))
+            .map(|(k, _)| (*k).clone())
+            .collect();
+        for key in keys_to_remove {
+            self.cache.invalidate(&key);
+        }
     }
 
     /// Invalidate all live queries-related queries
     pub fn invalidate_live_queries(&self) {
-        self.cache.remove(&QueryCacheKey::AllLiveQueries);
+        self.cache.invalidate(&QueryCacheKey::AllLiveQueries);
     }
 
     /// Invalidate all storages-related queries
     pub fn invalidate_storages(&self) {
-        self.cache.remove(&QueryCacheKey::AllStorages);
+        self.cache.invalidate(&QueryCacheKey::AllStorages);
     }
 
     /// Invalidate all jobs-related queries
     pub fn invalidate_jobs(&self) {
-        self.cache.remove(&QueryCacheKey::AllJobs);
+        self.cache.invalidate(&QueryCacheKey::AllJobs);
     }
 
     /// Invalidate a specific cached result
     pub fn invalidate(&self, key: &QueryCacheKey) {
-        self.cache.remove(key);
+        self.cache.invalidate(key);
     }
 
     /// Clear all cached results
     pub fn clear(&self) {
-        self.cache.clear();
+        self.cache.invalidate_all();
     }
 
     /// Remove expired entries (garbage collection)
+    /// With moka, this triggers pending cleanup tasks
     pub fn evict_expired(&self) {
-        let ttl_config = &self.ttl_config;
-        self.cache.retain(|key, entry| {
-            let ttl = match key {
-                QueryCacheKey::AllTables => ttl_config.tables,
-                QueryCacheKey::AllNamespaces => ttl_config.namespaces,
-                QueryCacheKey::AllLiveQueries => ttl_config.live_queries,
-                QueryCacheKey::AllStorages => ttl_config.storages,
-                QueryCacheKey::AllJobs => ttl_config.jobs,
-                QueryCacheKey::Table(_) | QueryCacheKey::Namespace(_) => ttl_config.single_entity,
-            };
-            !entry.is_expired(ttl)
-        });
+        self.cache.run_pending_tasks();
     }
 
     /// Get cache statistics
     pub fn stats(&self) -> CacheStats {
-        let total = self.cache.len();
+        // Sync pending tasks for accurate count
+        self.cache.run_pending_tasks();
+        let total = self.cache.entry_count() as usize;
 
-        let mut expired = 0;
-        let ttl_config = &self.ttl_config;
-        for entry in self.cache.iter() {
-            let ttl = match entry.key() {
-                QueryCacheKey::AllTables => ttl_config.tables,
-                QueryCacheKey::AllNamespaces => ttl_config.namespaces,
-                QueryCacheKey::AllLiveQueries => ttl_config.live_queries,
-                QueryCacheKey::AllStorages => ttl_config.storages,
-                QueryCacheKey::AllJobs => ttl_config.jobs,
-                QueryCacheKey::Table(_) | QueryCacheKey::Namespace(_) => ttl_config.single_entity,
-            };
-            if entry.value().is_expired(ttl) {
-                expired += 1;
-            }
-        }
-
+        // With moka, expired entries are automatically evicted
+        // so all entries in cache are active
         CacheStats {
             total_entries: total,
-            expired_entries: expired,
-            active_entries: total - expired,
+            expired_entries: 0,
+            active_entries: total,
         }
     }
 }
@@ -441,13 +468,18 @@ mod tests {
         cache.put(QueryCacheKey::AllTables, data.clone());
         cache.put(QueryCacheKey::AllNamespaces, data);
 
-        // Wait for tables to expire
+        // Wait for tables to expire (50ms TTL + buffer)
         std::thread::sleep(Duration::from_millis(100));
 
         cache.evict_expired();
 
-        let stats = cache.stats();
-        assert_eq!(stats.total_entries, 1); // Only namespaces should remain
+        // Verify tables entry expired (can't be retrieved)
+        let tables: Option<Vec<TestData>> = cache.get(&QueryCacheKey::AllTables);
+        assert!(tables.is_none(), "Tables should have expired");
+
+        // Namespaces should still be accessible
+        let namespaces: Option<Vec<TestData>> = cache.get(&QueryCacheKey::AllNamespaces);
+        assert!(namespaces.is_some(), "Namespaces should still be valid");
     }
 
     #[test]
@@ -552,15 +584,17 @@ mod tests {
         for i in 0..10 {
             let key = QueryCacheKey::Table(format!("table_{}", i));
             cache.put(key, data.clone());
-            std::thread::sleep(Duration::from_millis(10)); // Ensure different timestamps
         }
 
-        let stats = cache.stats();
-        // Should have at most 5 entries due to LRU eviction
-        assert!(stats.total_entries <= 5);
+        // Force pending tasks to process evictions
+        cache.evict_expired();
 
-        // Newest entries should still be present
-        let newest: Option<Vec<TestData>> = cache.get(&QueryCacheKey::Table("table_9".to_string()));
-        assert!(newest.is_some());
+        let stats = cache.stats();
+        // Should have at most 5 entries due to capacity limit
+        assert!(
+            stats.total_entries <= 5,
+            "Expected at most 5 entries, got {}",
+            stats.total_entries
+        );
     }
 }

@@ -83,11 +83,11 @@ fn test_get_or_load_cache_hit() {
         .unwrap();
     assert!(result2.is_some(), "Expected cache hit on second read");
 
-    // Verify last_accessed was updated
+    // Verify entry is in hot cache
     let cache_key = format!("{}:{}:u_123", namespace.as_str(), table.as_str());
     assert!(
-        service.get_last_accessed(&cache_key).is_some(),
-        "last_accessed should be set"
+        service.is_in_hot_cache(&cache_key),
+        "entry should be in hot cache"
     );
 }
 

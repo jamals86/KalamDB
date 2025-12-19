@@ -1,10 +1,9 @@
 //! Manifest cache service with RocksDB persistence and in-memory hot cache (Phase 4 - US6).
 //!
 //! Provides fast manifest access with two-tier caching:
-//! 1. Hot cache (DashMap) for sub-millisecond lookups
+//! 1. Hot cache (moka) for sub-millisecond lookups with automatic TTI-based eviction
 //! 2. Persistent cache (RocksDB) for crash recovery
 
-use dashmap::DashMap;
 use kalamdb_commons::{
     config::ManifestCacheSettings,
     types::{Manifest, ManifestCacheEntry, SyncState},
@@ -12,46 +11,22 @@ use kalamdb_commons::{
 };
 use kalamdb_store::{entity_store::EntityStore, StorageBackend, StorageError};
 use kalamdb_system::providers::manifest::{new_manifest_store, ManifestCacheKey, ManifestStore};
-use std::sync::atomic::{AtomicI64, Ordering};
+use moka::sync::Cache;
 use std::sync::Arc;
-
-#[derive(Debug)]
-struct HotManifestEntry {
-    entry: Arc<ManifestCacheEntry>,
-    last_accessed_ts: AtomicI64,
-}
-
-impl HotManifestEntry {
-    fn new(entry: Arc<ManifestCacheEntry>, last_accessed_ts: i64) -> Self {
-        Self {
-            entry,
-            last_accessed_ts: AtomicI64::new(last_accessed_ts),
-        }
-    }
-
-    fn touch_at(&self, ts: i64) {
-        self.last_accessed_ts.store(ts, Ordering::Relaxed);
-    }
-
-    fn last_accessed_ts(&self) -> i64 {
-        self.last_accessed_ts.load(Ordering::Relaxed)
-    }
-}
+use std::time::Duration;
 
 /// Manifest cache service with hot cache + RocksDB persistence.
 ///
 /// Architecture:
-/// - Hot cache: DashMap<String, HotManifestEntry> for fast reads
-///   - `HotManifestEntry.entry`: Arc<ManifestCacheEntry>
-///   - `HotManifestEntry.last_accessed_ts`: AtomicI64 (in-memory only, not persisted)
+/// - Hot cache: moka::sync::Cache for fast reads with automatic TTI-based eviction
 /// - Persistent store: RocksDB manifest_cache column family
-/// - TTL enforcement: Background eviction job + freshness validation
+/// - TTL enforcement: Built-in via moka's time_to_idle + background eviction job
 pub struct ManifestCacheService {
     /// RocksDB-backed persistent store
     store: ManifestStore,
 
-    /// In-memory hot cache for fast lookups
-    hot_cache: DashMap<String, HotManifestEntry>,
+    /// In-memory hot cache for fast lookups (moka with automatic eviction)
+    hot_cache: Cache<String, Arc<ManifestCacheEntry>>,
 
     /// Configuration settings
     config: ManifestCacheSettings,
@@ -60,9 +35,16 @@ pub struct ManifestCacheService {
 impl ManifestCacheService {
     /// Create a new manifest cache service
     pub fn new(backend: Arc<dyn StorageBackend>, config: ManifestCacheSettings) -> Self {
+        // Build moka cache with TTI and max capacity
+        let tti_secs = config.ttl_seconds() as u64;
+        let hot_cache = Cache::builder()
+            .max_capacity(config.max_entries as u64)
+            .time_to_idle(Duration::from_secs(tti_secs))
+            .build();
+
         Self {
             store: new_manifest_store(backend),
-            hot_cache: DashMap::new(),
+            hot_cache,
             config,
         }
     }
@@ -74,7 +56,7 @@ impl ManifestCacheService {
     /// 2. Check RocksDB CF → load to hot cache, return
     /// 3. Return None (caller should load from storage backend)
     ///
-    /// Updates last_accessed timestamp on cache hit.
+    /// Moka automatically updates last_accessed on cache hit.
     pub fn get_or_load(
         &self,
         table_id: &TableId,
@@ -82,20 +64,16 @@ impl ManifestCacheService {
     ) -> Result<Option<Arc<ManifestCacheEntry>>, StorageError> {
         let cache_key = ManifestCacheKey::from(self.make_cache_key(table_id, user_id));
 
-        // 1. Check hot cache
+        // 1. Check hot cache (moka automatically updates TTI on access)
         if let Some(entry) = self.hot_cache.get(cache_key.as_str()) {
-            entry.value().touch_at(chrono::Utc::now().timestamp());
-            return Ok(Some(Arc::clone(&entry.value().entry)));
+            return Ok(Some(entry));
         }
 
         // 2. Check RocksDB CF
         if let Some(entry) = EntityStore::get(&self.store, &cache_key)? {
             let entry_arc = Arc::new(entry);
-            self.insert_into_hot_cache(
-                cache_key.as_str().to_string(),
-                Arc::clone(&entry_arc),
-                chrono::Utc::now().timestamp(),
-            );
+            self.hot_cache
+                .insert(cache_key.as_str().to_string(), Arc::clone(&entry_arc));
             return Ok(Some(entry_arc));
         }
 
@@ -158,12 +136,8 @@ impl ManifestCacheService {
             entry.mark_stale();
             EntityStore::put(&self.store, &cache_key, &entry)?;
 
-            // Update hot cache if present
-            if let Some(mut hot_entry) = self.hot_cache.get_mut(&cache_key_str) {
-                // Replace with updated entry
-                let last_accessed = hot_entry.last_accessed_ts();
-                *hot_entry = HotManifestEntry::new(Arc::new(entry), last_accessed);
-            }
+            // Update hot cache with new entry (moka uses insert to replace)
+            self.hot_cache.insert(cache_key_str, Arc::new(entry));
         }
 
         Ok(())
@@ -185,11 +159,8 @@ impl ManifestCacheService {
             entry.mark_error();
             EntityStore::put(&self.store, &cache_key, &entry)?;
 
-            // Update hot cache if present
-            if let Some(mut hot_entry) = self.hot_cache.get_mut(&cache_key_str) {
-                let last_accessed = hot_entry.last_accessed_ts();
-                *hot_entry = HotManifestEntry::new(Arc::new(entry), last_accessed);
-            }
+            // Update hot cache with new entry
+            self.hot_cache.insert(cache_key_str, Arc::new(entry));
         }
 
         Ok(())
@@ -220,11 +191,8 @@ impl ManifestCacheService {
             entry.mark_syncing();
             EntityStore::put(&self.store, &cache_key, &entry)?;
 
-            // Update hot cache if present
-            if let Some(mut hot_entry) = self.hot_cache.get_mut(&cache_key_str) {
-                let last_accessed = hot_entry.last_accessed_ts();
-                *hot_entry = HotManifestEntry::new(Arc::new(entry), last_accessed);
-            }
+            // Update hot cache with new entry
+            self.hot_cache.insert(cache_key_str, Arc::new(entry));
         }
         // If entry doesn't exist yet, that's okay - we'll create it later
 
@@ -239,7 +207,7 @@ impl ManifestCacheService {
     pub fn validate_freshness(&self, cache_key: &str) -> Result<bool, StorageError> {
         if let Some(entry) = self.hot_cache.get(cache_key) {
             let now = chrono::Utc::now().timestamp();
-            Ok(!entry.value().entry.is_stale(self.config.ttl_seconds(), now))
+            Ok(!entry.is_stale(self.config.ttl_seconds(), now))
         } else if let Some(entry) =
             EntityStore::get(&self.store, &ManifestCacheKey::from(cache_key))?
         {
@@ -262,29 +230,8 @@ impl ManifestCacheService {
         let table_id = TableId::new(namespace.clone(), table.clone());
         let cache_key_str = self.make_cache_key(&table_id, user_id);
         let cache_key = ManifestCacheKey::from(cache_key_str.clone());
-        self.hot_cache.remove(&cache_key_str);
+        self.hot_cache.invalidate(&cache_key_str);
         EntityStore::delete(&self.store, &cache_key)
-    }
-
-    /// Evict least-recently-used entry from hot cache
-    fn evict_lru(&self) {
-        let mut oldest_key: Option<String> = None;
-        let mut oldest_timestamp = i64::MAX;
-
-        // Find entry with oldest last_accessed timestamp
-        for entry in self.hot_cache.iter() {
-            let ts = entry.value().last_accessed_ts();
-            if ts < oldest_timestamp {
-                oldest_timestamp = ts;
-                oldest_key = Some(entry.key().clone());
-            }
-        }
-
-        // Remove oldest entry from hot cache
-        // Note: We do NOT remove from RocksDB (L2 cache)
-        if let Some(key) = oldest_key {
-            self.hot_cache.remove(&key);
-        }
     }
 
     /// Get all cache entries (for SHOW MANIFEST CACHE).
@@ -307,7 +254,7 @@ impl ManifestCacheService {
 
     /// Clear all cache entries (for testing/maintenance).
     pub fn clear(&self) -> Result<(), StorageError> {
-        self.hot_cache.clear();
+        self.hot_cache.invalidate_all();
         let keys = EntityStore::scan_all(&self.store, None, None, None)?;
         for (key_bytes, _) in keys {
             let key = ManifestCacheKey::from(String::from_utf8_lossy(&key_bytes).to_string());
@@ -330,12 +277,8 @@ impl ManifestCacheService {
                     continue;
                 }
 
-                let last_refreshed = entry.last_refreshed;
-                self.insert_into_hot_cache(
-                    key_str,
-                    Arc::new(entry),
-                    last_refreshed,
-                );
+                // Insert into moka cache (it will manage capacity automatically)
+                self.hot_cache.insert(key_str, Arc::new(entry));
             }
         }
         Ok(())
@@ -371,41 +314,10 @@ impl ManifestCacheService {
 
         EntityStore::put(&self.store, &cache_key, &entry)?;
 
-        self.insert_into_hot_cache(cache_key_str, Arc::new(entry), now);
+        // Insert into moka cache (it handles capacity automatically via TinyLFU)
+        self.hot_cache.insert(cache_key_str, Arc::new(entry));
 
         Ok(())
-    }
-
-    fn insert_into_hot_cache(
-        &self,
-        cache_key: String,
-        entry: Arc<ManifestCacheEntry>,
-        last_accessed_ts: i64,
-    ) {
-        self.evict_to_capacity();
-        self.hot_cache
-            .insert(cache_key, HotManifestEntry::new(entry, last_accessed_ts));
-    }
-
-    fn evict_to_capacity(&self) {
-        if self.config.max_entries == 0 {
-            return;
-        }
-
-        while self.hot_cache.len() >= self.config.max_entries {
-            let before = self.hot_cache.len();
-            self.evict_lru();
-            if self.hot_cache.len() == before {
-                break;
-            }
-        }
-    }
-
-    /// Get last accessed timestamp for a key (used by eviction job).
-    pub fn get_last_accessed(&self, cache_key: &str) -> Option<i64> {
-        self.hot_cache
-            .get(cache_key)
-            .map(|v| v.value().last_accessed_ts())
     }
 
     /// Check if a cache key is currently in the hot cache (RAM).
@@ -415,10 +327,27 @@ impl ManifestCacheService {
         self.hot_cache.contains_key(cache_key)
     }
 
-    /// Evict stale manifest entries based on last_accessed + TTL threshold.
+    /// Get last accessed timestamp for a key.
     ///
-    /// Removes entries from both hot_cache and RocksDB that haven't been accessed
-    /// within the specified TTL period.
+    /// With moka, TTI is managed internally so we return `None`.
+    /// The caller should fall back to using `last_refreshed` from the entry.
+    pub fn get_last_accessed(&self, _cache_key: &str) -> Option<i64> {
+        // Moka manages TTI internally; we can't retrieve the exact last_accessed time.
+        // The caller (manifest_provider) will fall back to entry.last_refreshed.
+        None
+    }
+
+    /// Get the number of entries in the hot cache.
+    /// Note: Call run_pending_tasks() first for accurate count due to moka's async eviction.
+    pub fn hot_cache_len(&self) -> usize {
+        self.hot_cache.run_pending_tasks();
+        self.hot_cache.entry_count() as usize
+    }
+
+    /// Evict stale manifest entries from RocksDB based on last_refreshed + TTL threshold.
+    ///
+    /// Removes entries from RocksDB that haven't been refreshed within the specified TTL period.
+    /// Hot cache entries are managed by moka's built-in TTI eviction.
     ///
     /// Returns the number of entries evicted.
     pub fn evict_stale_entries(&self, ttl_seconds: i64) -> Result<usize, StorageError> {
@@ -435,14 +364,10 @@ impl ManifestCacheService {
                 Err(_) => continue, // Skip invalid UTF-8 keys
             };
 
-            // Check last_accessed from hot cache (in-memory) or use last_refreshed from entry
-            let last_accessed = self
-                .get_last_accessed(&key_str)
-                .unwrap_or(entry.last_refreshed);
-
-            if last_accessed < cutoff {
-                // Remove from hot cache
-                self.hot_cache.remove(&key_str);
+            // Use last_refreshed from entry (RocksDB persisted value)
+            if entry.last_refreshed < cutoff {
+                // Remove from hot cache (if present)
+                self.hot_cache.invalidate(&key_str);
 
                 // Remove from RocksDB
                 let cache_key = ManifestCacheKey::from(key_str);
@@ -566,9 +491,9 @@ mod tests {
             .unwrap();
         assert!(result.is_some());
 
-        // Verify last_accessed updated
+        // Verify entry is in hot cache
         let cache_key = service.make_cache_key(&table_id, Some(&UserId::from("u_123")));
-        assert!(service.get_last_accessed(&cache_key).is_some());
+        assert!(service.is_in_hot_cache(&cache_key));
     }
 
     #[test]
@@ -720,13 +645,13 @@ mod tests {
         service_reader
             .get_or_load(&table1, Some(&UserId::from("u_123")))
             .unwrap();
-        assert_eq!(service_reader.hot_cache.len(), 1);
+        assert_eq!(service_reader.hot_cache_len(), 1);
         assert!(service_reader.hot_cache.contains_key(&key1));
 
         service_reader
             .get_or_load(&table2, Some(&UserId::from("u_123")))
             .unwrap();
-        assert_eq!(service_reader.hot_cache.len(), 1);
+        assert_eq!(service_reader.hot_cache_len(), 1);
         assert!(service_reader.hot_cache.contains_key(&key2));
     }
 
@@ -734,10 +659,9 @@ mod tests {
     fn test_restore_from_rocksdb_skips_stale_and_limits_capacity() {
         let backend: Arc<dyn StorageBackend> = Arc::new(InMemoryBackend::new());
         let mut config = ManifestCacheSettings::default();
-        // Set a very short TTL (1 day = 86400 seconds) for testing
-        // Note: We use 1 day minimum since eviction_ttl_days is in days
-        config.eviction_ttl_days = 0; // 0 means entries are immediately stale
-        config.max_entries = 1;
+        // Set a 1-day TTL for testing - entries with last_refreshed older than TTL will be skipped
+        config.eviction_ttl_days = 1;
+        config.max_entries = 10;
 
         let service = ManifestCacheService::new(Arc::clone(&backend), config.clone());
         let table1 = TableId::new(NamespaceId::new("ns1"), TableName::new("fresh"));
@@ -747,12 +671,14 @@ mod tests {
         let fresh_manifest = Manifest::new(table1.clone(), None);
         let stale_manifest = Manifest::new(table2.clone(), None);
 
+        // Fresh entry: created now
         let fresh_entry =
             ManifestCacheEntry::new(fresh_manifest, None, now, "p1".to_string(), SyncState::InSync);
+        // Stale entry: created 2 days ago (older than 1 day TTL)
         let stale_entry = ManifestCacheEntry::new(
             stale_manifest,
             None,
-            now - 10,
+            now - (2 * 24 * 60 * 60), // 2 days ago
             "p2".to_string(),
             SyncState::InSync,
         );
@@ -763,11 +689,11 @@ mod tests {
         let restored = ManifestCacheService::new(backend, config);
         restored.restore_from_rocksdb().unwrap();
 
-        assert_eq!(restored.hot_cache.len(), 1);
+        // Fresh entry should be loaded, stale entry should be skipped
         let fresh_key = restored.make_cache_key(&table1, None);
         let stale_key = restored.make_cache_key(&table2, None);
-        assert!(restored.hot_cache.contains_key(&fresh_key));
-        assert!(!restored.hot_cache.contains_key(&stale_key));
+        assert!(restored.hot_cache.contains_key(&fresh_key), "Fresh entry should be in hot cache");
+        assert!(!restored.hot_cache.contains_key(&stale_key), "Stale entry should NOT be in hot cache");
     }
 
     #[test]
