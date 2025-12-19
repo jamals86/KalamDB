@@ -13,7 +13,7 @@ use kalamdb_commons::models::types::{Manifest, SegmentMetadata};
 use kalamdb_commons::models::StorageId;
 use kalamdb_commons::{TableId, UserId};
 use kalamdb_store::{StorageBackend, StorageError};
-use log::{info, warn};
+use log::{debug, warn};
 use std::collections::HashMap;
 use std::sync::Arc;
 
@@ -125,7 +125,7 @@ impl ManifestService {
         if let Some(manifest) = self.cache.get(&key) {
             let (store, storage, _) = self.get_storage_context(table_id, user_id)?;
             self.write_manifest_via_store(store, &storage, table_id, user_id, &manifest)?;
-            info!(
+            debug!(
                 "Flushed manifest for {}.{} (ver: {})",
                 table_id.namespace_id().as_str(),
                 table_id.table_name().as_str(),

@@ -326,6 +326,56 @@ pub fn prefix_exists_sync(
     }
 }
 
+/// Rename (move) a file from source to destination.
+///
+/// For object stores, this performs a copy followed by delete (atomic at object level).
+/// For local filesystem, object_store uses rename which is atomic on POSIX.
+///
+/// # Arguments
+/// * `store` - ObjectStore instance
+/// * `storage` - Storage configuration
+/// * `from_path` - Source path (relative to storage base)
+/// * `to_path` - Destination path (relative to storage base)
+pub async fn rename_file(
+    store: Arc<dyn ObjectStore>,
+    storage: &Storage,
+    from_path: &str,
+    to_path: &str,
+) -> Result<()> {
+    let from_key = object_key_for_path(storage, from_path)?;
+    let to_key = object_key_for_path(storage, to_path)?;
+    
+    store
+        .rename(&from_key, &to_key)
+        .await
+        .map_err(|e| FilestoreError::ObjectStore(e.to_string()))?;
+    
+    Ok(())
+}
+
+/// Synchronous wrapper for rename_file.
+pub fn rename_file_sync(
+    store: Arc<dyn ObjectStore>,
+    storage: &Storage,
+    from_path: &str,
+    to_path: &str,
+) -> Result<()> {
+    if let Ok(handle) = tokio::runtime::Handle::try_current() {
+        std::thread::scope(|s| {
+            s.spawn(|| handle.block_on(rename_file(store, storage, from_path, to_path)))
+                .join()
+                .map_err(|_| FilestoreError::Other("Thread panicked".into()))?
+        })
+    } else {
+        let rt = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .map_err(|e| FilestoreError::Other(format!("Failed to create runtime: {e}")))?;
+
+        rt.block_on(rename_file(store, storage, from_path, to_path))
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -727,6 +777,185 @@ mod tests {
         let read_content = read_file_sync(store, &storage, file_path).unwrap();
         assert_eq!(read_content, content);
         assert_eq!(read_content.len(), 256);
+
+        let _ = fs::remove_dir_all(&temp_dir);
+    }
+
+    #[test]
+    fn test_rename_file_sync() {
+        let temp_dir = env::temp_dir().join("kalamdb_test_rename");
+        let _ = fs::remove_dir_all(&temp_dir);
+        fs::create_dir_all(&temp_dir).unwrap();
+
+        let storage = create_test_storage(&temp_dir);
+        let store = build_object_store(&storage).expect("Failed to build store");
+
+        let src_path = "test/original.txt";
+        let dst_path = "test/renamed.txt";
+        let content = Bytes::from("rename test content");
+
+        // Write source file
+        write_file_sync(Arc::clone(&store), &storage, src_path, content.clone()).unwrap();
+
+        // Verify source exists
+        assert!(head_file_sync(Arc::clone(&store), &storage, src_path).is_ok());
+
+        // Rename file
+        rename_file_sync(Arc::clone(&store), &storage, src_path, dst_path).unwrap();
+
+        // Verify destination exists with correct content
+        let read_content = read_file_sync(Arc::clone(&store), &storage, dst_path).unwrap();
+        assert_eq!(read_content, content);
+
+        // Verify source no longer exists
+        assert!(head_file_sync(Arc::clone(&store), &storage, src_path).is_err());
+
+        let _ = fs::remove_dir_all(&temp_dir);
+    }
+
+    #[test]
+    fn test_rename_file_to_different_directory() {
+        let temp_dir = env::temp_dir().join("kalamdb_test_rename_dir");
+        let _ = fs::remove_dir_all(&temp_dir);
+        fs::create_dir_all(&temp_dir).unwrap();
+
+        let storage = create_test_storage(&temp_dir);
+        let store = build_object_store(&storage).expect("Failed to build store");
+
+        let src_path = "dir1/file.txt";
+        let dst_path = "dir2/subdir/file.txt";
+        let content = Bytes::from("cross-directory rename");
+
+        // Write source file
+        write_file_sync(Arc::clone(&store), &storage, src_path, content.clone()).unwrap();
+
+        // Rename to different directory
+        rename_file_sync(Arc::clone(&store), &storage, src_path, dst_path).unwrap();
+
+        // Verify destination exists
+        let read_content = read_file_sync(Arc::clone(&store), &storage, dst_path).unwrap();
+        assert_eq!(read_content, content);
+
+        // Verify source no longer exists
+        assert!(head_file_sync(Arc::clone(&store), &storage, src_path).is_err());
+
+        let _ = fs::remove_dir_all(&temp_dir);
+    }
+
+    #[test]
+    fn test_rename_temp_parquet_to_final() {
+        // Simulates the atomic flush pattern: write to .tmp, rename to .parquet
+        let temp_dir = env::temp_dir().join("kalamdb_test_rename_parquet");
+        let _ = fs::remove_dir_all(&temp_dir);
+        fs::create_dir_all(&temp_dir).unwrap();
+
+        let storage = create_test_storage(&temp_dir);
+        let store = build_object_store(&storage).expect("Failed to build store");
+
+        let temp_path = "ns/table/batch-0.parquet.tmp";
+        let final_path = "ns/table/batch-0.parquet";
+        
+        // Simulate Parquet content (just bytes for this test)
+        let parquet_content = Bytes::from(vec![0x50, 0x41, 0x52, 0x31]); // "PAR1" magic
+
+        // Step 1: Write to temp location
+        write_file_sync(Arc::clone(&store), &storage, temp_path, parquet_content.clone()).unwrap();
+
+        // Step 2: Atomic rename to final location
+        rename_file_sync(Arc::clone(&store), &storage, temp_path, final_path).unwrap();
+
+        // Step 3: Verify final file exists with correct content
+        let read_content = read_file_sync(Arc::clone(&store), &storage, final_path).unwrap();
+        assert_eq!(read_content, parquet_content);
+
+        // Step 4: Verify temp file is gone
+        assert!(head_file_sync(Arc::clone(&store), &storage, temp_path).is_err());
+
+        // List files - should only see the final file
+        let files = list_files_sync(Arc::clone(&store), &storage, "ns/table").unwrap();
+        assert_eq!(files.len(), 1);
+        assert!(files[0].contains("batch-0.parquet"));
+        assert!(!files[0].contains(".tmp"));
+
+        let _ = fs::remove_dir_all(&temp_dir);
+    }
+
+    #[test]
+    fn test_rename_preserves_large_file() {
+        let temp_dir = env::temp_dir().join("kalamdb_test_rename_large");
+        let _ = fs::remove_dir_all(&temp_dir);
+        fs::create_dir_all(&temp_dir).unwrap();
+
+        let storage = create_test_storage(&temp_dir);
+        let store = build_object_store(&storage).expect("Failed to build store");
+
+        let src_path = "large/file.tmp";
+        let dst_path = "large/file.dat";
+        
+        // Create a larger file (1MB)
+        let large_content: Vec<u8> = (0..1024 * 1024).map(|i| (i % 256) as u8).collect();
+        let content = Bytes::from(large_content.clone());
+
+        // Write large file
+        write_file_sync(Arc::clone(&store), &storage, src_path, content.clone()).unwrap();
+
+        // Rename
+        rename_file_sync(Arc::clone(&store), &storage, src_path, dst_path).unwrap();
+
+        // Verify content is preserved
+        let read_content = read_file_sync(Arc::clone(&store), &storage, dst_path).unwrap();
+        assert_eq!(read_content.len(), 1024 * 1024);
+        assert_eq!(read_content, content);
+
+        let _ = fs::remove_dir_all(&temp_dir);
+    }
+
+    #[test]
+    fn test_atomic_flush_pattern_simulation() {
+        // Full simulation of the atomic flush pattern with manifest update
+        let temp_dir = env::temp_dir().join("kalamdb_test_atomic_flush");
+        let _ = fs::remove_dir_all(&temp_dir);
+        fs::create_dir_all(&temp_dir).unwrap();
+
+        let storage = create_test_storage(&temp_dir);
+        let store = build_object_store(&storage).expect("Failed to build store");
+
+        // Initial state: manifest exists (from previous flush)
+        let manifest_path = "myns/mytable/manifest.json";
+        let initial_manifest = r#"{"version":1,"segments":[]}"#;
+        write_file_sync(
+            Arc::clone(&store),
+            &storage,
+            manifest_path,
+            Bytes::from(initial_manifest),
+        ).unwrap();
+
+        // Step 1: Write Parquet to temp location
+        let temp_parquet = "myns/mytable/batch-0.parquet.tmp";
+        let final_parquet = "myns/mytable/batch-0.parquet";
+        let parquet_data = Bytes::from(vec![0x50, 0x41, 0x52, 0x31, 0x00, 0x01, 0x02, 0x03]);
+        
+        write_file_sync(Arc::clone(&store), &storage, temp_parquet, parquet_data.clone()).unwrap();
+
+        // Step 2: Atomic rename temp -> final
+        rename_file_sync(Arc::clone(&store), &storage, temp_parquet, final_parquet).unwrap();
+
+        // Step 3: Update manifest with new segment
+        let updated_manifest = r#"{"version":2,"segments":[{"path":"batch-0.parquet"}]}"#;
+        write_file_sync(
+            Arc::clone(&store),
+            &storage,
+            manifest_path,
+            Bytes::from(updated_manifest),
+        ).unwrap();
+
+        // Verify final state
+        let files = list_files_sync(Arc::clone(&store), &storage, "myns/mytable").unwrap();
+        assert_eq!(files.len(), 2); // manifest.json + batch-0.parquet
+        
+        // No temp files should exist
+        let temp_files: Vec<_> = files.iter().filter(|f| f.contains(".tmp")).collect();
+        assert!(temp_files.is_empty(), "No temp files should remain after atomic flush");
 
         let _ = fs::remove_dir_all(&temp_dir);
     }

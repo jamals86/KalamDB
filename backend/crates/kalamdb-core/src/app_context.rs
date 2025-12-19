@@ -344,6 +344,13 @@ impl AppContext {
                     Arc::new(move |cache_key: &str| manifest_cache_for_checker.is_in_hot_cache(cache_key))
                 );
 
+                // Wire up ManifestTableProvider last_accessed_getter callback
+                // This allows system.manifest to show the real last_accessed timestamp from hot cache
+                let manifest_cache_for_last_accessed = Arc::clone(&app_ctx.manifest_cache_service);
+                app_ctx.system_tables().manifest().set_last_accessed_getter(
+                    Arc::new(move |cache_key: &str| manifest_cache_for_last_accessed.get_last_accessed(cache_key))
+                );
+
                 app_ctx
             })
             .clone()

@@ -318,6 +318,13 @@ instead of: 1 failed: Invalid operation: No handler registered for statement typ
 }
 
 
+202) manifest last_accessed is not getting updated if we select the table it should be updated since we did check it, also the value is like this: 1766148834000000 it should be smaller i guess
+
+203) Can you check if we can use the manifest as an indication of having rows which needs flushing or you think its better to keep it this way which is now? if we flush and we didnt find any manifest does it fails? can you make sure this scenario is well written?
+
+204) we should use TableId instead of passing both:        namespace: &NamespaceId,table: &TableName,
+
+
 Make sure there is tests which insert/updte data and then check if the actual data we inserted/updated is there and exists in select then flush the data and check again if insert/update works with the flushed data in cold storage, check that insert fails when inserting a row id primary key which already exists and update do works
 
 

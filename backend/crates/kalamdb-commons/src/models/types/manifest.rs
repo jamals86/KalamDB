@@ -17,6 +17,9 @@ pub enum SyncState {
     InSync,
     /// Cache has local changes that need to be written to storage (pending flush)
     PendingWrite,
+    /// Flush in progress: Parquet being written to temp location (atomic write pattern)
+    /// If server crashes in this state, temp files can be cleaned up on restart.
+    Syncing,
     /// Cache may be stale and needs refresh from storage
     Stale,
     /// Error occurred during last sync attempt
@@ -34,6 +37,7 @@ impl std::fmt::Display for SyncState {
         match self {
             SyncState::InSync => write!(f, "in_sync"),
             SyncState::PendingWrite => write!(f, "pending_write"),
+            SyncState::Syncing => write!(f, "syncing"),
             SyncState::Stale => write!(f, "stale"),
             SyncState::Error => write!(f, "error"),
         }
@@ -149,6 +153,16 @@ impl ManifestCacheEntry {
     /// Mark entry as pending write (local changes need to be synced to storage)
     pub fn mark_pending_write(&mut self) {
         self.sync_state = SyncState::PendingWrite;
+    }
+
+    /// Mark entry as syncing (Parquet write in progress to temp location)
+    /// 
+    /// This state indicates the flush is in progress:
+    /// - Parquet file is being written to a temp location
+    /// - If crash occurs, temp files can be cleaned up on restart
+    /// - Transitions to InSync after successful rename to final location
+    pub fn mark_syncing(&mut self) {
+        self.sync_state = SyncState::Syncing;
     }
 
     /// Mark entry as in sync
@@ -396,6 +410,109 @@ mod tests {
         assert_eq!(entry.etag, Some("new_etag".to_string()));
         assert_eq!(entry.last_refreshed, 2000);
 
+        entry.mark_error();
+        assert_eq!(entry.sync_state, SyncState::Error);
+    }
+
+    #[test]
+    fn test_sync_state_syncing_transition() {
+        let table_id = TableId::new(NamespaceId::new("test"), TableName::new("table"));
+        let manifest = Manifest::new(table_id, None);
+        let mut entry = ManifestCacheEntry::new(
+            manifest,
+            None,
+            1000,
+            "path".to_string(),
+            SyncState::PendingWrite,
+        );
+
+        // Transition: PendingWrite -> Syncing (flush started)
+        entry.mark_syncing();
+        assert_eq!(entry.sync_state, SyncState::Syncing);
+
+        // Transition: Syncing -> InSync (flush completed successfully)
+        entry.mark_in_sync(Some("etag-after-flush".to_string()), 2000);
+        assert_eq!(entry.sync_state, SyncState::InSync);
+        assert_eq!(entry.etag, Some("etag-after-flush".to_string()));
+    }
+
+    #[test]
+    fn test_sync_state_syncing_to_error() {
+        let table_id = TableId::new(NamespaceId::new("test"), TableName::new("table"));
+        let manifest = Manifest::new(table_id, None);
+        let mut entry = ManifestCacheEntry::new(
+            manifest,
+            None,
+            1000,
+            "path".to_string(),
+            SyncState::InSync,
+        );
+
+        // Transition: InSync -> Syncing (new flush started)
+        entry.mark_syncing();
+        assert_eq!(entry.sync_state, SyncState::Syncing);
+
+        // Transition: Syncing -> Error (flush failed)
+        entry.mark_error();
+        assert_eq!(entry.sync_state, SyncState::Error);
+    }
+
+    #[test]
+    fn test_sync_state_display() {
+        assert_eq!(format!("{}", SyncState::InSync), "in_sync");
+        assert_eq!(format!("{}", SyncState::PendingWrite), "pending_write");
+        assert_eq!(format!("{}", SyncState::Syncing), "syncing");
+        assert_eq!(format!("{}", SyncState::Stale), "stale");
+        assert_eq!(format!("{}", SyncState::Error), "error");
+    }
+
+    #[test]
+    fn test_sync_state_serialization() {
+        // Test that SyncState serializes/deserializes correctly with snake_case
+        let states = vec![
+            (SyncState::InSync, "\"in_sync\""),
+            (SyncState::PendingWrite, "\"pending_write\""),
+            (SyncState::Syncing, "\"syncing\""),
+            (SyncState::Stale, "\"stale\""),
+            (SyncState::Error, "\"error\""),
+        ];
+
+        for (state, expected_json) in states {
+            let json = serde_json::to_string(&state).unwrap();
+            assert_eq!(json, expected_json, "SyncState {:?} should serialize to {}", state, expected_json);
+
+            let deserialized: SyncState = serde_json::from_str(&json).unwrap();
+            assert_eq!(deserialized, state, "SyncState should round-trip through JSON");
+        }
+    }
+
+    #[test]
+    fn test_sync_state_full_flush_lifecycle() {
+        // Simulate the complete flush lifecycle with the new Syncing state
+        let table_id = TableId::new(NamespaceId::new("myns"), TableName::new("mytable"));
+        let manifest = Manifest::new(table_id, None);
+        let mut entry = ManifestCacheEntry::new(
+            manifest,
+            None,
+            1000,
+            "myns/mytable/manifest.json".to_string(),
+            SyncState::InSync,
+        );
+
+        // 1. Data is written to hot storage (RocksDB), manifest goes PendingWrite
+        entry.mark_pending_write();
+        assert_eq!(entry.sync_state, SyncState::PendingWrite);
+
+        // 2. Flush job starts, write Parquet to temp location
+        entry.mark_syncing();
+        assert_eq!(entry.sync_state, SyncState::Syncing);
+
+        // 3a. Success path: rename temp -> final, update manifest
+        entry.mark_in_sync(Some("etag-v2".to_string()), 2000);
+        assert_eq!(entry.sync_state, SyncState::InSync);
+
+        // OR 3b. Failure path: mark as error
+        entry.mark_syncing();
         entry.mark_error();
         assert_eq!(entry.sync_state, SyncState::Error);
     }

@@ -5,6 +5,7 @@
 
 use super::{ManifestCacheService, ManifestService};
 use crate::error::KalamDbError;
+use crate::schema_registry::PathResolver;
 use datafusion::arrow::array::*;
 use datafusion::arrow::compute;
 use datafusion::arrow::compute::kernels::aggregate::{max_string, min_string};
@@ -33,6 +34,35 @@ impl FlushManifestHelper {
             manifest_service,
             manifest_cache,
         }
+    }
+
+    /// Generate temp filename for atomic writes
+    ///
+    /// Returns the temp filename (e.g., "batch-5.parquet.tmp")
+    pub fn generate_temp_filename(batch_number: u64) -> String {
+        format!("batch-{}.parquet.tmp", batch_number)
+    }
+
+    /// Mark manifest cache entry as syncing (flush in progress)
+    ///
+    /// This is called BEFORE writing Parquet to temp location.
+    /// If the server crashes during the write, on restart:
+    /// - Manifest with Syncing state indicates incomplete flush
+    /// - Temp files (.parquet.tmp) can be cleaned up
+    /// - Data remains safely in RocksDB
+    pub fn mark_syncing(
+        &self,
+        table_id: &TableId,
+        user_id: Option<&UserId>,
+    ) -> Result<(), KalamDbError> {
+        self.manifest_cache
+            .mark_syncing(table_id, user_id)
+            .map_err(|e| {
+                KalamDbError::Other(format!(
+                    "Failed to mark manifest as syncing for {}: {}",
+                    table_id, e
+                ))
+            })
     }
 
     /// Get next batch number for a table/scope by reading manifest
@@ -317,15 +347,23 @@ impl FlushManifestHelper {
         // For now, I'll keep updating ManifestCacheService to avoid breaking other things,
         // but I should probably rely on ManifestService.
 
-        let scope_str = user_id
-            .map(|u| u.as_str().to_string())
-            .unwrap_or_else(|| "shared".to_string());
-        let manifest_path = format!(
-            "{}/{}/{}/manifest.json",
-            namespace.as_str(),
-            table.as_str(),
-            scope_str
-        );
+        // Use PathResolver to get relative manifest path from storage template
+        let app_ctx = crate::app_context::AppContext::get();
+        let manifest_path = match app_ctx.schema_registry().get(&table_id) {
+            Some(cached) => PathResolver::get_manifest_relative_path(&cached, user_id, None)?,
+            None => {
+                // Fallback to legacy format if table not in registry (shouldn't happen in normal flow)
+                let scope_str = user_id
+                    .map(|u| u.as_str().to_string())
+                    .unwrap_or_else(|| "shared".to_string());
+                format!(
+                    "{}/{}/{}/manifest.json",
+                    namespace.as_str(),
+                    table.as_str(),
+                    scope_str
+                )
+            }
+        };
 
         self.manifest_cache
             .update_after_flush(&table_id, user_id, &updated_manifest, None, manifest_path)
@@ -339,7 +377,7 @@ impl FlushManifestHelper {
                 ))
             })?;
 
-        log::info!(
+        log::debug!(
             "[MANIFEST] ✅ Updated manifest and cache: {}.{} (user_id={:?}, file={}, rows={}, size={} bytes)",
             namespace.as_str(),
             table.as_str(),
@@ -604,5 +642,83 @@ mod tests {
         assert!(stats.get("f32_col").unwrap().max.is_some());
         assert!(stats.get("f64_col").unwrap().min.is_some());
         assert!(stats.get("f64_col").unwrap().max.is_some());
+    }
+
+    #[test]
+    fn test_generate_temp_filename() {
+        // Test temp filename generation for atomic flush pattern
+        assert_eq!(
+            FlushManifestHelper::generate_temp_filename(0),
+            "batch-0.parquet.tmp"
+        );
+        assert_eq!(
+            FlushManifestHelper::generate_temp_filename(1),
+            "batch-1.parquet.tmp"
+        );
+        assert_eq!(
+            FlushManifestHelper::generate_temp_filename(42),
+            "batch-42.parquet.tmp"
+        );
+        assert_eq!(
+            FlushManifestHelper::generate_temp_filename(999),
+            "batch-999.parquet.tmp"
+        );
+    }
+
+    #[test]
+    fn test_temp_and_final_filename_consistency() {
+        // Ensure temp and final filenames are consistent (same batch number)
+        for batch_num in [0, 1, 5, 10, 100, 999] {
+            let temp = FlushManifestHelper::generate_temp_filename(batch_num);
+            let final_name = FlushManifestHelper::generate_batch_filename(batch_num);
+
+            // Temp should be final + ".tmp"
+            assert!(
+                temp.ends_with(".tmp"),
+                "Temp filename should end with .tmp"
+            );
+            assert_eq!(
+                temp,
+                format!("{}.tmp", final_name),
+                "Temp filename should be final filename + .tmp"
+            );
+
+            // Both should contain the same batch number
+            let temp_num: u64 = temp
+                .strip_prefix("batch-")
+                .and_then(|s| s.strip_suffix(".parquet.tmp"))
+                .and_then(|s| s.parse().ok())
+                .expect("Should parse batch number from temp");
+            let final_num: u64 = final_name
+                .strip_prefix("batch-")
+                .and_then(|s| s.strip_suffix(".parquet"))
+                .and_then(|s| s.parse().ok())
+                .expect("Should parse batch number from final");
+            
+            assert_eq!(temp_num, final_num);
+            assert_eq!(temp_num, batch_num);
+        }
+    }
+
+    #[test]
+    fn test_atomic_flush_filename_pattern() {
+        // Test the complete filename pattern for atomic flush
+        let batch_number = 5u64;
+        
+        let temp_filename = FlushManifestHelper::generate_temp_filename(batch_number);
+        let final_filename = FlushManifestHelper::generate_batch_filename(batch_number);
+
+        // Verify temp filename pattern
+        assert_eq!(temp_filename, "batch-5.parquet.tmp");
+        
+        // Verify final filename pattern  
+        assert_eq!(final_filename, "batch-5.parquet");
+
+        // Verify the rename path: temp -> final
+        let temp_path = format!("myns/mytable/{}", temp_filename);
+        let final_path = format!("myns/mytable/{}", final_filename);
+        
+        assert_eq!(temp_path, "myns/mytable/batch-5.parquet.tmp");
+        assert_eq!(final_path, "myns/mytable/batch-5.parquet");
     }
 }

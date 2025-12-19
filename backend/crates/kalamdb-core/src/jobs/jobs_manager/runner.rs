@@ -177,7 +177,7 @@ impl JobsManager {
         log::debug!("[{}] Handling execution result", job_id);
         match decision {
             JobDecision::Completed { message } => {
-                log::info!("[{}] Matched JobDecision::Completed", job_id);
+                log::debug!("[{}] Matched JobDecision::Completed", job_id);
                 // Manually update job to completed state
                 let now_ms = chrono::Utc::now().timestamp_millis();
                 job.status = JobStatus::Completed;
@@ -185,7 +185,7 @@ impl JobsManager {
                 job.updated_at = now_ms;
                 job.finished_at = Some(now_ms);
 
-                log::info!("[{}] About to call update_job_async with status={:?}", job_id, job.status);
+                log::debug!("[{}] About to call update_job_async with status={:?}", job_id, job.status);
                 if let Err(e) = self.update_job_async(job.clone()).await {
                     log::error!("[{}] Failed to update job status to Completed: {}", job_id, e);
                     return Err(KalamDbError::Other(format!(
@@ -193,7 +193,7 @@ impl JobsManager {
                         e
                     )));
                 }
-                log::info!("[{}] update_job_async returned Ok", job_id);
+                log::debug!("[{}] update_job_async returned Ok", job_id);
 
                 self.log_job_event(
                     &job_id,

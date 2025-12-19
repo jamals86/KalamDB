@@ -195,6 +195,42 @@ impl ManifestCacheService {
         Ok(())
     }
 
+    /// Mark a cache entry as syncing (flush in progress).
+    ///
+    /// This is the first step in the atomic flush pattern:
+    /// 1. Mark entry as Syncing (Parquet being written to temp location)
+    /// 2. Write Parquet to temp file
+    /// 3. Rename temp file to final location (atomic)
+    /// 4. Update manifest segment and mark InSync
+    ///
+    /// If server crashes during flush:
+    /// - Entry with Syncing state indicates incomplete flush
+    /// - Temp files (.parquet.tmp) can be cleaned up on restart
+    /// - Data remains safely in RocksDB
+    pub fn mark_syncing(
+        &self,
+        table_id: &TableId,
+        user_id: Option<&UserId>,
+    ) -> Result<(), StorageError> {
+        let cache_key_str = self.make_cache_key(table_id, user_id);
+        let cache_key = ManifestCacheKey::from(cache_key_str.clone());
+
+        // Update in RocksDB
+        if let Some(mut entry) = EntityStore::get(&self.store, &cache_key)? {
+            entry.mark_syncing();
+            EntityStore::put(&self.store, &cache_key, &entry)?;
+
+            // Update hot cache if present
+            if let Some(mut hot_entry) = self.hot_cache.get_mut(&cache_key_str) {
+                let last_accessed = hot_entry.last_accessed_ts();
+                *hot_entry = HotManifestEntry::new(Arc::new(entry), last_accessed);
+            }
+        }
+        // If entry doesn't exist yet, that's okay - we'll create it later
+
+        Ok(())
+    }
+
     /// Validate freshness of cached entry based on TTL.
     ///
     /// Returns:
@@ -732,5 +768,152 @@ mod tests {
         let stale_key = restored.make_cache_key(&table2, None);
         assert!(restored.hot_cache.contains_key(&fresh_key));
         assert!(!restored.hot_cache.contains_key(&stale_key));
+    }
+
+    #[test]
+    fn test_mark_syncing_updates_state() {
+        let service = create_test_service();
+        let namespace = NamespaceId::new("ns1");
+        let table = TableName::new("tbl1");
+        let table_id = TableId::new(namespace.clone(), table.clone());
+        let manifest = create_test_manifest();
+
+        // Add entry first
+        service
+            .update_after_flush(
+                &table_id,
+                Some(&UserId::from("u_123")),
+                &manifest,
+                None,
+                "path".to_string(),
+            )
+            .unwrap();
+
+        // Verify initial state is InSync
+        let cached = service
+            .get_or_load(&table_id, Some(&UserId::from("u_123")))
+            .unwrap()
+            .unwrap();
+        assert_eq!(cached.sync_state, SyncState::InSync);
+
+        // Mark as syncing
+        service
+            .mark_syncing(&table_id, Some(&UserId::from("u_123")))
+            .unwrap();
+
+        // Verify state changed to Syncing
+        let cached_after = service
+            .get_or_load(&table_id, Some(&UserId::from("u_123")))
+            .unwrap()
+            .unwrap();
+        assert_eq!(cached_after.sync_state, SyncState::Syncing);
+    }
+
+    #[test]
+    fn test_mark_syncing_nonexistent_entry_ok() {
+        let service = create_test_service();
+        let namespace = NamespaceId::new("ns1");
+        let table = TableName::new("nonexistent");
+        let table_id = TableId::new(namespace, table);
+
+        // Marking syncing on non-existent entry should not error
+        let result = service.mark_syncing(&table_id, None);
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn test_mark_syncing_then_in_sync() {
+        // Test the full atomic flush lifecycle: InSync -> Syncing -> InSync
+        let service = create_test_service();
+        let namespace = NamespaceId::new("ns1");
+        let table = TableName::new("tbl1");
+        let table_id = TableId::new(namespace.clone(), table.clone());
+        let manifest = create_test_manifest();
+
+        // Initial state
+        service
+            .update_after_flush(&table_id, None, &manifest, None, "path".to_string())
+            .unwrap();
+
+        // Mark syncing (flush in progress)
+        service.mark_syncing(&table_id, None).unwrap();
+        let state1 = service
+            .get_or_load(&table_id, None)
+            .unwrap()
+            .unwrap();
+        assert_eq!(state1.sync_state, SyncState::Syncing);
+
+        // Mark in sync (flush completed)
+        service
+            .update_after_flush(&table_id, None, &manifest, Some("new-etag".to_string()), "path".to_string())
+            .unwrap();
+        let state2 = service
+            .get_or_load(&table_id, None)
+            .unwrap()
+            .unwrap();
+        assert_eq!(state2.sync_state, SyncState::InSync);
+        assert_eq!(state2.etag, Some("new-etag".to_string()));
+    }
+
+    #[test]
+    fn test_mark_syncing_then_error() {
+        // Test failure path: InSync -> Syncing -> Error
+        let service = create_test_service();
+        let namespace = NamespaceId::new("ns1");
+        let table = TableName::new("tbl1");
+        let table_id = TableId::new(namespace.clone(), table.clone());
+        let manifest = create_test_manifest();
+
+        // Initial state
+        service
+            .update_after_flush(&table_id, None, &manifest, None, "path".to_string())
+            .unwrap();
+
+        // Mark syncing (flush in progress)
+        service.mark_syncing(&table_id, None).unwrap();
+        let state1 = service
+            .get_or_load(&table_id, None)
+            .unwrap()
+            .unwrap();
+        assert_eq!(state1.sync_state, SyncState::Syncing);
+
+        // Mark error (flush failed)
+        service.mark_as_error(&table_id, None).unwrap();
+        let state2 = service
+            .get_or_load(&table_id, None)
+            .unwrap()
+            .unwrap();
+        assert_eq!(state2.sync_state, SyncState::Error);
+    }
+
+    #[test]
+    fn test_mark_syncing_updates_hot_cache_and_rocksdb() {
+        let backend: Arc<dyn StorageBackend> = Arc::new(InMemoryBackend::new());
+        let config = ManifestCacheSettings::default();
+
+        let service1 = ManifestCacheService::new(Arc::clone(&backend), config.clone());
+        let namespace = NamespaceId::new("ns1");
+        let table = TableName::new("tbl1");
+        let table_id = TableId::new(namespace.clone(), table.clone());
+        let manifest = create_test_manifest();
+
+        // Add entry
+        service1
+            .update_after_flush(&table_id, None, &manifest, None, "path".to_string())
+            .unwrap();
+
+        // Mark as syncing
+        service1.mark_syncing(&table_id, None).unwrap();
+
+        // Verify hot cache is updated
+        let cached = service1.get_or_load(&table_id, None).unwrap().unwrap();
+        assert_eq!(cached.sync_state, SyncState::Syncing);
+
+        // Create new service (simulating restart) to verify RocksDB was updated
+        let service2 = ManifestCacheService::new(backend, config);
+        service2.restore_from_rocksdb().unwrap();
+
+        let restored = service2.get_or_load(&table_id, None).unwrap().unwrap();
+        assert_eq!(restored.sync_state, SyncState::Syncing);
     }
 }

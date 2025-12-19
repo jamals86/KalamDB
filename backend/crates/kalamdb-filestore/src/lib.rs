@@ -54,6 +54,7 @@ pub use object_store_ops::{
     list_files, list_files_sync,
     prefix_exists, prefix_exists_sync,
     read_file, read_file_sync,
+    rename_file, rename_file_sync,
     write_file, write_file_sync,
     FileMetadata,
 };

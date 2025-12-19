@@ -127,15 +127,15 @@ impl FlushDedupStats {
 
     /// Log summary statistics
     pub fn log_summary(&self, namespace: &str, table: &str) {
-        log::info!(
+        log::debug!(
             "📊 [FLUSH DEDUP] Scanned {} total rows from hot storage (table={}.{})",
             self.rows_before_dedup, namespace, table
         );
-        log::info!(
+        log::debug!(
             "📊 [FLUSH DEDUP] Version resolution complete: {} rows → {} unique (dedup: {:.1}%, deleted: {})",
             self.rows_before_dedup, self.rows_after_dedup, self.dedup_ratio(), self.deleted_count
         );
-        log::info!(
+        log::debug!(
             "📊 [FLUSH DEDUP] Final: {} rows to flush ({} tombstones filtered)",
             self.rows_after_dedup - self.tombstones_filtered, self.tombstones_filtered
         );

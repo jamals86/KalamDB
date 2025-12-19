@@ -272,10 +272,16 @@ impl TableFlush for SharedTableFlushJob {
 
         // T114-T115: Generate batch filename using manifest (sequential numbering)
         let (batch_number, batch_filename) = self.generate_batch_filename()?;
+        let temp_filename = FlushManifestHelper::generate_temp_filename(batch_number);
         let full_dir = self
             .unified_cache
             .get_storage_path(&self.table_id, None, None)?;
+        
         // Use PathBuf for proper cross-platform path handling (avoids mixed slashes)
+        let temp_path = std::path::Path::new(&full_dir)
+            .join(&temp_filename)
+            .to_string_lossy()
+            .to_string();
         let destination_path = std::path::Path::new(&full_dir)
             .join(&batch_filename)
             .to_string_lossy()
@@ -321,21 +327,42 @@ impl TableFlush for SharedTableFlushJob {
             bloom_filter_columns
         );
 
-        // Write to Parquet with Bloom filters on PRIMARY KEY + _seq
+        // ===== ATOMIC FLUSH PATTERN =====
+        // Step 1: Mark manifest as syncing (flush in progress)
+        //         If crash occurs after this, we know a flush was in progress
+        if let Err(e) = self.manifest_helper.mark_syncing(&self.table_id, None) {
+            log::warn!("⚠️  Failed to mark manifest as syncing (continuing anyway): {}", e);
+        }
+
+        // Step 2: Write Parquet to TEMP location first
         log::debug!(
-            "📝 Writing Parquet file: path={}, rows={}",
-            destination_path,
+            "📝 [ATOMIC] Writing Parquet to temp path: {}, rows={}",
+            temp_path,
             rows_count
         );
         let result = write_parquet_with_store_sync(
-            object_store,
+            object_store.clone(),
             &storage,
-            &destination_path,
+            &temp_path,
             self.schema.clone(),
             vec![batch.clone()],
             Some(bloom_filter_columns.clone()),
         )
         .into_kalamdb_error("Filestore error")?;
+
+        // Step 3: Rename temp file to final location (atomic operation)
+        log::debug!(
+            "📝 [ATOMIC] Renaming {} -> {}",
+            temp_path,
+            destination_path
+        );
+        kalamdb_filestore::rename_file_sync(
+            object_store,
+            &storage,
+            &temp_path,
+            &destination_path,
+        )
+        .into_kalamdb_error("Failed to rename Parquet file to final location")?;
 
         log::info!(
             "✅ Flushed {} rows for shared table={}.{} to {}",
