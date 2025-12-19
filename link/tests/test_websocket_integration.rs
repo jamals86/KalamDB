@@ -253,7 +253,7 @@ async fn test_websocket_subscription_with_config() {
     let client = create_test_client().expect("Failed to create client");
 
     // Create subscription with custom config
-    let config = SubscriptionConfig::new("sub-config-test", &format!("SELECT * FROM {}", table));
+    let config = SubscriptionConfig::new("sub-config-test", format!("SELECT * FROM {}", table));
 
     let subscription_result = timeout(TEST_TIMEOUT, client.subscribe_with_config(config)).await;
 

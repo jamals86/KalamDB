@@ -51,7 +51,7 @@ fn test_cli_basic_query_execution() {
         .arg("--password")
         .arg("")
         .arg("--command")
-        .arg(&format!("SELECT * FROM {}", full_table_name));
+        .arg(format!("SELECT * FROM {}", full_table_name));
 
     let output = cmd.output().unwrap();
     let stdout = String::from_utf8_lossy(&output.stdout);
@@ -105,7 +105,7 @@ fn test_cli_table_output_formatting() {
         .arg("--password")
         .arg("")
         .arg("--command")
-        .arg(&format!("SELECT * FROM {}", full_table_name));
+        .arg(format!("SELECT * FROM {}", full_table_name));
 
     let output = cmd.output().unwrap();
     let stdout = String::from_utf8_lossy(&output.stdout);
@@ -160,7 +160,7 @@ fn test_cli_json_output_format() {
         .arg("")
         .arg("--json")
         .arg("--command")
-        .arg(&format!(
+        .arg(format!(
             "SELECT * FROM {} WHERE content = 'JSON Test'",
             full_table_name
         ));
@@ -217,7 +217,7 @@ fn test_cli_csv_output_format() {
         .arg("")
         .arg("--csv")
         .arg("--command")
-        .arg(&format!(
+        .arg(format!(
             "SELECT content FROM {} WHERE content LIKE 'CSV%'",
             full_table_name
         ));
@@ -377,7 +377,7 @@ fn test_cli_result_pagination() {
         .arg("--password")
         .arg("")
         .arg("--command")
-        .arg(&format!("SELECT * FROM {}", full_table_name));
+        .arg(format!("SELECT * FROM {}", full_table_name));
 
     let output = cmd.output().unwrap();
     let stdout = String::from_utf8_lossy(&output.stdout);

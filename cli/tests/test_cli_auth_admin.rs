@@ -112,13 +112,13 @@ async fn test_root_can_create_namespace() {
     assert!(
         select_result["results"]
             .as_array()
-            .and_then(|results| results.get(0))
+            .and_then(|results| results.first())
             .and_then(|result| result["rows"].as_array())
             .map(|rows| {
                 rows.iter().any(|row| {
                     // Row is an array like ["namespace_name"]
                     row.as_array()
-                        .and_then(|arr| arr.get(0))
+                        .and_then(|arr| arr.first())
                         .and_then(|v| v.as_str())
                         .map(|name| name == namespace_name)
                         .unwrap_or(false)
@@ -208,7 +208,7 @@ async fn test_cli_create_namespace_as_root() {
     cmd.arg("-u")
         .arg(SERVER_URL)
         .arg("--command")
-        .arg(&format!("CREATE NAMESPACE {}", namespace_name))
+        .arg(format!("CREATE NAMESPACE {}", namespace_name))
         .timeout(TEST_TIMEOUT);
 
     let output = cmd.output().unwrap();
@@ -451,7 +451,7 @@ async fn test_cli_flush_table() {
     cmd.arg("-u")
         .arg(SERVER_URL)
         .arg("--command")
-        .arg(&format!("FLUSH TABLE {}.metrics", namespace_name))
+        .arg(format!("FLUSH TABLE {}.metrics", namespace_name))
         .timeout(TEST_TIMEOUT);
 
     let output = cmd.output().unwrap();
@@ -518,7 +518,7 @@ async fn test_cli_flush_table() {
         data.clone()
     } else if let Some(results) = jobs_result["results"].as_array() {
         // Results format - extract from first result if available
-        if let Some(first_result) = results.get(0) {
+        if let Some(first_result) = results.first() {
             if let Some(rows) = first_result["rows"].as_array() {
                 rows.clone()
             } else if let Some(data) = first_result["data"].as_array() {
@@ -627,7 +627,7 @@ async fn test_cli_flush_table() {
             .as_array()
             .cloned()
             .unwrap_or_default();
-        if let Some(updated) = rows.get(0) {
+        if let Some(updated) = rows.first() {
             // DataFusion may return rows as arrays; normalize using schema metadata if needed.
             let status = if updated.is_array() {
                 let mut obj = serde_json::Map::new();
@@ -742,7 +742,7 @@ async fn test_cli_flush_all_tables() {
     cmd.arg("-u")
         .arg(SERVER_URL)
         .arg("--command")
-        .arg(&format!("FLUSH ALL TABLES IN {}", namespace_name))
+        .arg(format!("FLUSH ALL TABLES IN {}", namespace_name))
         .timeout(TEST_TIMEOUT);
 
     let output = cmd.output().unwrap();
@@ -828,7 +828,7 @@ async fn test_cli_flush_all_tables() {
         data
     } else if let Some(results) = jobs_result["results"].as_array() {
         // Results format - extract from first result if available
-        if let Some(first_result) = results.get(0) {
+        if let Some(first_result) = results.first() {
             if let Some(rows) = first_result["rows"].as_array() {
                 rows
             } else if let Some(data) = first_result["data"].as_array() {

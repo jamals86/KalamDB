@@ -66,12 +66,12 @@ pub async fn create_test_user(
     let drop_user_sql = format!("DROP USER IF EXISTS '{}'", username);
     let _ = server
         .sql_executor
-        .execute(&drop_user_sql.as_str(), &exec_ctx, Vec::new())
+        .execute(drop_user_sql.as_str(), &exec_ctx, Vec::new())
         .await;
 
     let result = server
         .sql_executor
-        .execute(&create_user_sql.as_str(), &exec_ctx, Vec::new())
+        .execute(create_user_sql.as_str(), &exec_ctx, Vec::new())
         .await;
 
     if let Err(e) = &result {

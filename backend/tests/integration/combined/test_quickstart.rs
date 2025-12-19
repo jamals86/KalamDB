@@ -135,8 +135,7 @@ async fn test_05_update_data() {
         select_resp.error
     );
     let id = select_resp
-        .results
-        .get(0)
+        .results.first()
         .and_then(|r| r.row_as_map(0))
         .and_then(|row| row.get("id").cloned())
         .and_then(|v| v.as_i64())
@@ -177,8 +176,7 @@ async fn test_05_update_data() {
         verify_resp.error
     );
     let cnt = verify_resp
-        .results
-        .get(0)
+        .results.first()
         .and_then(|r| r.row_as_map(0))
         .and_then(|row| row.get("cnt").cloned())
         .and_then(|v| v.as_u64())
@@ -207,8 +205,7 @@ async fn test_06_delete_data() {
         select_resp.error
     );
     let id = select_resp
-        .results
-        .get(0)
+        .results.first()
         .and_then(|r| r.row_as_map(0))
         .and_then(|row| row.get("id").cloned())
         .and_then(|v| v.as_i64())
@@ -391,8 +388,7 @@ async fn test_14_drop_table() {
 
     // Verify response includes cleanup job ID
     let result_message = response
-        .results
-        .get(0)
+        .results.first()
         .and_then(|r| r.message.as_ref())
         .expect("DROP TABLE should return result message");
 

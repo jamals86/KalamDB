@@ -667,7 +667,7 @@ async fn test_user_table_pk_index_update_after_flush() {
             "flush_user",
         )
         .await;
-    println!("📊 ALL rows (deleted filter): {:?}", all_with_deleted.results.get(0).and_then(|r| r.rows.as_ref()).map(|r| r.len()));
+    println!("📊 ALL rows (deleted filter): {:?}", all_with_deleted.results.first().and_then(|r| r.rows.as_ref()).map(|r| r.len()));
 
     // Check the highest _seq value to see if UPDATE created a new version
     let max_seq = server

@@ -96,7 +96,7 @@ mod tests {
 
         // Insert multiple storages
         for i in 1..=3 {
-            let storage_id = StorageId::new(&format!("storage{}", i));
+            let storage_id = StorageId::new(format!("storage{}", i));
             let storage = create_test_storage(&format!("storage{}", i), &format!("Storage {}", i));
             EntityStore::put(&store, &storage_id, &storage).unwrap();
         }

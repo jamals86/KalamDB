@@ -13,7 +13,7 @@ use datafusion::arrow::datatypes::DataType;
 use datafusion::arrow::record_batch::RecordBatch;
 use kalamdb_commons::constants::SystemColumnNames;
 use kalamdb_commons::types::{ColumnStats, Manifest, SegmentMetadata};
-use kalamdb_commons::{NamespaceId, TableId, TableName, UserId};
+use kalamdb_commons::{TableId, UserId};
 use std::collections::HashMap;
 use std::path::Path;
 use std::sync::Arc;
@@ -253,8 +253,7 @@ impl FlushManifestHelper {
     /// 3. Update cache with new manifest
     ///
     /// # Arguments
-    /// * `namespace` - Namespace ID
-    /// * `table` - Table name
+    /// * `table_id` - TableId (namespace + table name)
     /// * `table_type` - Table type (Shared or User)
     /// * `user_id` - User ID for user tables, None for shared tables
     /// * `batch_number` - Batch number
@@ -269,8 +268,7 @@ impl FlushManifestHelper {
     /// Updated Manifest
     pub fn update_manifest_after_flush(
         &self,
-        namespace: &NamespaceId,
-        table: &TableName,
+        table_id: &TableId,
         table_type: kalamdb_commons::models::schemas::TableType,
         user_id: Option<&UserId>,
         _batch_number: u64,
@@ -281,7 +279,6 @@ impl FlushManifestHelper {
         indexed_columns: &[String],
         schema_version: u32,
     ) -> Result<Manifest, KalamDbError> {
-        let table_id = TableId::new(namespace.clone(), table.clone());
         // Extract metadata from batch (batch-level)
         let (min_seq, max_seq) = Self::extract_seq_range(batch);
         let column_stats = Self::extract_column_stats(batch, indexed_columns);
@@ -313,12 +310,12 @@ impl FlushManifestHelper {
         // Update manifest (Hot Store update)
         let updated_manifest = self
             .manifest_service
-            .update_manifest(&table_id, table_type, user_id, segment)
+            .update_manifest(table_id, table_type, user_id, segment)
             .map_err(|e| {
                 KalamDbError::Other(format!(
                     "Failed to update manifest for {}.{} (user_id={:?}): {}",
-                    namespace.as_str(),
-                    table.as_str(),
+                    table_id.namespace_id().as_str(),
+                    table_id.table_name().as_str(),
                     user_id.map(|u| u.as_str()),
                     e
                 ))
@@ -328,12 +325,12 @@ impl FlushManifestHelper {
         // In the new architecture, we might want to flush periodically or immediately depending on policy.
         // For now, let's flush immediately to maintain durability guarantees similar to before.
         self.manifest_service
-            .flush_manifest(&table_id, user_id)
+            .flush_manifest(table_id, user_id)
             .map_err(|e| {
                 KalamDbError::Other(format!(
                     "Failed to flush manifest for {}.{} (user_id={:?}): {}",
-                    namespace.as_str(),
-                    table.as_str(),
+                    table_id.namespace_id().as_str(),
+                    table_id.table_name().as_str(),
                     user_id.map(|u| u.as_str()),
                     e
                 ))
@@ -349,7 +346,7 @@ impl FlushManifestHelper {
 
         // Use PathResolver to get relative manifest path from storage template
         let app_ctx = crate::app_context::AppContext::get();
-        let manifest_path = match app_ctx.schema_registry().get(&table_id) {
+        let manifest_path = match app_ctx.schema_registry().get(table_id) {
             Some(cached) => PathResolver::get_manifest_relative_path(&cached, user_id, None)?,
             None => {
                 // Fallback to legacy format if table not in registry (shouldn't happen in normal flow)
@@ -358,20 +355,20 @@ impl FlushManifestHelper {
                     .unwrap_or_else(|| "shared".to_string());
                 format!(
                     "{}/{}/{}/manifest.json",
-                    namespace.as_str(),
-                    table.as_str(),
+                    table_id.namespace_id().as_str(),
+                    table_id.table_name().as_str(),
                     scope_str
                 )
             }
         };
 
         self.manifest_cache
-            .update_after_flush(&table_id, user_id, &updated_manifest, None, manifest_path)
+            .update_after_flush(table_id, user_id, &updated_manifest, None, manifest_path)
             .map_err(|e| {
                 KalamDbError::Other(format!(
                     "Failed to update manifest cache for {}.{} (user_id={:?}): {}",
-                    namespace.as_str(),
-                    table.as_str(),
+                    table_id.namespace_id().as_str(),
+                    table_id.table_name().as_str(),
                     user_id.map(|u| u.as_str()),
                     e
                 ))
@@ -379,8 +376,8 @@ impl FlushManifestHelper {
 
         log::debug!(
             "[MANIFEST] ✅ Updated manifest and cache: {}.{} (user_id={:?}, file={}, rows={}, size={} bytes)",
-            namespace.as_str(),
-            table.as_str(),
+            table_id.namespace_id().as_str(),
+            table_id.table_name().as_str(),
             user_id.map(|u| u.as_str()),
             file_path.display(),
             row_count,

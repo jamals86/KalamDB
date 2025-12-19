@@ -229,7 +229,7 @@ fn test_cli_subscription_with_initial_data() {
         .arg("--password")
         .arg("")
         .arg("--command")
-        .arg(&format!("SUBSCRIBE TO SELECT * FROM {}", table_name))
+        .arg(format!("SUBSCRIBE TO SELECT * FROM {}", table_name))
         .timeout(std::time::Duration::from_secs(2)); // Short timeout
 
     let output = cmd.output().unwrap();
@@ -285,7 +285,7 @@ fn test_cli_subscription_comprehensive_crud() {
         .arg("--password")
         .arg("")
         .arg("--command")
-        .arg(&format!(
+        .arg(format!(
             "SUBSCRIBE TO SELECT * FROM {} LIMIT 1",
             table_name
         ))
@@ -311,7 +311,7 @@ fn test_cli_subscription_comprehensive_crud() {
         .arg("--password")
         .arg("")
         .arg("--command")
-        .arg(&format!("SELECT * FROM {}", table_name));
+        .arg(format!("SELECT * FROM {}", table_name));
 
     let output = cmd.output().unwrap();
     let stdout = String::from_utf8_lossy(&output.stdout);
@@ -336,7 +336,7 @@ fn test_cli_subscription_comprehensive_crud() {
         .arg("--password")
         .arg("")
         .arg("--command")
-        .arg(&format!("SELECT * FROM {} ORDER BY id", table_name));
+        .arg(format!("SELECT * FROM {} ORDER BY id", table_name));
 
     let output = cmd.output().unwrap();
     let stdout = String::from_utf8_lossy(&output.stdout);
@@ -361,7 +361,7 @@ fn test_cli_subscription_comprehensive_crud() {
         .arg("--password")
         .arg("")
         .arg("--command")
-        .arg(&format!("SELECT * FROM {} WHERE id = 1", table_name));
+        .arg(format!("SELECT * FROM {} WHERE id = 1", table_name));
 
     let output = cmd.output().unwrap();
     let stdout = String::from_utf8_lossy(&output.stdout);
@@ -383,7 +383,7 @@ fn test_cli_subscription_comprehensive_crud() {
         .arg("--password")
         .arg("")
         .arg("--command")
-        .arg(&format!("SELECT * FROM {} ORDER BY id", table_name));
+        .arg(format!("SELECT * FROM {} ORDER BY id", table_name));
 
     let output = cmd.output().unwrap();
     let stdout = String::from_utf8_lossy(&output.stdout);
@@ -401,7 +401,7 @@ fn test_cli_subscription_comprehensive_crud() {
         .arg("--password")
         .arg("")
         .arg("--command")
-        .arg(&format!(
+        .arg(format!(
             "SUBSCRIBE TO SELECT * FROM {} ORDER BY id",
             table_name
         ))

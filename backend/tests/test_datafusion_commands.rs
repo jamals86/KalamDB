@@ -63,7 +63,7 @@ async fn test_explain_command_admin_allowed() {
     
     // Should return query plan
     assert!(
-        resp.results.len() > 0,
+        !resp.results.is_empty(),
         "EXPLAIN should return query plan"
     );
 }
@@ -160,7 +160,7 @@ async fn test_show_all_admin_allowed() {
     
     // Should return configuration options
     assert!(
-        resp.results.len() > 0,
+        !resp.results.is_empty(),
         "SHOW ALL should return configuration"
     );
 }

@@ -67,7 +67,7 @@ async fn test_01_default_storage_exists() {
 
     // Verify 'local' storage exists
     let rows = response.results.first().map(|r| r.rows_as_maps()).unwrap_or_default();
-    assert!(rows.len() >= 1, "Expected at least 1 storage");
+    assert!(!rows.is_empty(), "Expected at least 1 storage");
 
     let local_storage = &rows[0];
     assert_eq!(
@@ -107,7 +107,7 @@ async fn test_02_show_storages_basic() {
 
     // Verify at least 'local' storage exists
     let rows = response.results.first().map(|r| r.rows_as_maps()).unwrap_or_default();
-    assert!(rows.len() >= 1, "Expected at least 1 storage (local)");
+    assert!(!rows.is_empty(), "Expected at least 1 storage (local)");
 
     // First storage should be 'local' (ordered by storage_id)
     let first_storage = &rows[0];

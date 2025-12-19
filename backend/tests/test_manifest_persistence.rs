@@ -88,10 +88,8 @@ async fn test_manifest_persistence_lifecycle() {
             println!("📁 Parent directory exists: {}", parent.display());
             if let Ok(entries) = std::fs::read_dir(parent) {
                 println!("📂 Contents:");
-                for entry in entries {
-                    if let Ok(entry) = entry {
-                        println!("  - {}", entry.path().display());
-                    }
+                for entry in entries.flatten() {
+                    println!("  - {}", entry.path().display());
                 }
             }
         } else {
@@ -136,10 +134,8 @@ async fn test_manifest_persistence_lifecycle() {
             println!("📁 Parent directory exists: {}", parent.display());
             if let Ok(entries) = std::fs::read_dir(parent) {
                 println!("📂 Contents after flush:");
-                for entry in entries {
-                    if let Ok(entry) = entry {
-                        println!("  - {}", entry.path().display());
-                    }
+                for entry in entries.flatten() {
+                    println!("  - {}", entry.path().display());
                 }
             }
         } else {
@@ -168,7 +164,7 @@ async fn test_manifest_persistence_lifecycle() {
         manifest["table_id"]["table_name"].as_str().unwrap(),
         "events"
     );
-    assert!(manifest["segments"].as_array().unwrap().len() > 0, "Should have at least one segment");
+    assert!(!manifest["segments"].as_array().unwrap().is_empty(), "Should have at least one segment");
     println!("✅ Manifest content validated: {} segments", manifest["segments"].as_array().unwrap().len());
 
     // 7. Query data to verify it's still accessible
