@@ -10,7 +10,7 @@
 #[path = "integration/common/mod.rs"]
 mod common;
 
-use common::TestServer;
+use common::{QueryResultTestExt, TestServer};
 use kalamdb_api::models::ResponseStatus;
 use kalamdb_commons::Role;
 
@@ -296,22 +296,19 @@ async fn test_shared_table_defaults_to_private() {
     assert!(!query_result.results.is_empty(), "Expected query results");
     let result = &query_result.results[0];
 
-    if let Some(ref rows) = result.rows {
-        assert!(!rows.is_empty(), "Table should exist in system.tables");
+    let rows = result.rows_as_maps();
+    assert!(!rows.is_empty(), "Table should exist in system.tables");
 
-        let row = &rows[0];
-        let access_level = row
-            .get("access_level")
-            .and_then(|v| v.as_str())
-            .expect("access_level should be present");
+    let row = &rows[0];
+    let access_level = row
+        .get("access_level")
+        .and_then(|v| v.as_str())
+        .expect("access_level should be present");
 
-        assert_eq!(
-            access_level, "private",
-            "Default access level should be Private"
-        );
-    } else {
-        panic!("Expected rows in system.tables query result");
-    }
+    assert_eq!(
+        access_level, "private",
+        "Default access level should be Private"
+    );
 
     // Create a regular user and verify they cannot access it
     let regular_username = "regular_user";

@@ -10,7 +10,7 @@
 #[path = "integration/common/mod.rs"]
 mod common;
 
-use common::TestServer;
+use common::{QueryResultTestExt, TestServer};
 use kalamdb_api::models::ResponseStatus;
 use kalamdb_commons::models::{AuthType, Role, StorageMode, UserId, UserName};
 
@@ -295,7 +295,7 @@ async fn test_update_as_user() {
         .await;
 
     assert_eq!(resp.status, ResponseStatus::Success);
-    let rows = resp.results[0].rows.as_ref().unwrap();
+    let rows = resp.results[0].rows_as_maps();
     assert_eq!(rows.len(), 1);
     // Verify the status was updated to 'inactive'
     let status = rows[0].get("status").and_then(|v| v.as_str());

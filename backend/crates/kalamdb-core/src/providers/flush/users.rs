@@ -11,7 +11,7 @@ use crate::manifest::{FlushManifestHelper, ManifestCacheService, ManifestService
 use crate::providers::arrow_json_conversion::json_rows_to_arrow_batch;
 use crate::schema_registry::SchemaRegistry;
 use crate::app_context::AppContext;
-use crate::storage::write_parquet_to_storage_sync;
+use crate::storage::write_parquet_with_store_sync;
 use datafusion::arrow::datatypes::SchemaRef;
 use datafusion::arrow::record_batch::RecordBatch;
 use datafusion::scalar::ScalarValue;
@@ -161,11 +161,17 @@ impl UserTableFlushJob {
         let batch_number = self.manifest_helper
             .get_next_batch_number(&self.table_id, Some(&user_id_typed))?;
         let batch_filename = FlushManifestHelper::generate_batch_filename(batch_number);
-        let destination_path = if storage_path.ends_with('/') {
-            format!("{}{}", storage_path, batch_filename)
-        } else {
-            format!("{}/{}", storage_path, batch_filename)
-        };
+        let temp_filename = FlushManifestHelper::generate_temp_filename(batch_number);
+        
+        // Use PathBuf for proper cross-platform path handling (avoids mixed slashes)
+        let temp_path = std::path::Path::new(&storage_path)
+            .join(&temp_filename)
+            .to_string_lossy()
+            .to_string();
+        let destination_path = std::path::Path::new(&storage_path)
+            .join(&batch_filename)
+            .to_string_lossy()
+            .to_string();
 
         let app_ctx = AppContext::get();
         let cached = self
@@ -173,12 +179,11 @@ impl UserTableFlushJob {
             .get(&self.table_id)
             .ok_or_else(|| KalamDbError::TableNotFound(format!("Table not found: {}", self.table_id)))?;
 
+        // Get storage from registry (cached lookup)
         let storage_id = cached.storage_id.clone().unwrap_or_else(StorageId::local);
         let storage = app_ctx
-            .system_tables()
-            .storages()
-            .get_storage(&storage_id)
-            .into_kalamdb_error("Failed to load storage")?
+            .storage_registry()
+            .get_storage(&storage_id)?
             .ok_or_else(|| {
                 KalamDbError::InvalidOperation(format!(
                     "Storage '{}' not found",
@@ -186,20 +191,44 @@ impl UserTableFlushJob {
                 ))
             })?;
 
-        // Write to Parquet with Bloom filters on PRIMARY KEY + _seq (FR-054, FR-055)
+        // Get cached ObjectStore instance (avoids rebuild overhead on each flush)
+        let object_store = cached.object_store()?;
+
+        // ===== ATOMIC FLUSH PATTERN =====
+        // Step 1: Mark manifest as syncing (flush in progress)
+        if let Err(e) = self.manifest_helper.mark_syncing(&self.table_id, Some(&user_id_typed)) {
+            log::warn!("⚠️  Failed to mark manifest as syncing for user {}: {} (continuing)", user_id, e);
+        }
+
+        // Step 2: Write Parquet to TEMP location first
         log::debug!(
-            "📝 Writing Parquet file: path={}, rows={}",
-            destination_path,
+            "📝 [ATOMIC] Writing Parquet to temp path: {}, rows={}",
+            temp_path,
             rows_count
         );
-        let result = write_parquet_to_storage_sync(
+        let result = write_parquet_with_store_sync(
+            object_store.clone(),
             &storage,
-            &destination_path,
+            &temp_path,
             self.schema.clone(),
             vec![batch.clone()],
             Some(bloom_filter_columns.to_vec()),
         )
         .into_kalamdb_error("Filestore error")?;
+
+        // Step 3: Rename temp file to final location (atomic operation)
+        log::debug!(
+            "📝 [ATOMIC] Renaming {} -> {}",
+            temp_path,
+            destination_path
+        );
+        kalamdb_filestore::rename_file_sync(
+            object_store,
+            &storage,
+            &temp_path,
+            &destination_path,
+        )
+        .into_kalamdb_error("Failed to rename Parquet file to final location")?;
 
         let size_bytes = result.size_bytes;
 
@@ -221,7 +250,7 @@ impl UserTableFlushJob {
             schema_version,
         )?;
 
-        log::info!(
+        log::debug!(
             "✅ Flushed {} rows for user {} to {} (batch={})",
             rows_count,
             user_id,
@@ -399,7 +428,7 @@ impl TableFlush for UserTableFlushJob {
         // Log dedup statistics
         stats.log_summary(self.namespace_id().as_str(), self.table_name().as_str());
         let rows_to_flush = rows_by_user.values().map(|v| v.len()).sum::<usize>();
-        log::info!(
+        log::debug!(
             "📊 [FLUSH USER] Partitioned into {} users, {} rows to flush",
             rows_by_user.len(),
             rows_to_flush
@@ -407,7 +436,7 @@ impl TableFlush for UserTableFlushJob {
 
         // If no rows to flush, return early
         if rows_by_user.is_empty() {
-            log::info!(
+            log::debug!(
                 "⚠️  No rows to flush for user table={}.{} (empty table or all deleted)",
                 self.namespace_id().as_str(),
                 self.table_name().as_str()
@@ -451,7 +480,7 @@ impl TableFlush for UserTableFlushJob {
 
         // Only delete ALL rows (including old versions) if ALL users flushed successfully
         if flush_succeeded {
-            log::info!(
+            log::debug!(
                 "📊 [FLUSH CLEANUP] Deleting {} rows from hot storage (including {} old versions)",
                 all_keys_to_delete.len(),
                 all_keys_to_delete.len() - rows_by_user.values().map(|v| v.len()).sum::<usize>()
@@ -459,6 +488,16 @@ impl TableFlush for UserTableFlushJob {
             if let Err(e) = self.delete_flushed_keys(&all_keys_to_delete) {
                 log::error!("Failed to delete flushed rows: {}", e);
                 error_messages.push(format!("Failed to delete flushed rows: {}", e));
+            } else {
+                // Compact RocksDB column family after flush to free space and optimize reads
+                use kalamdb_store::entity_store::EntityStore;
+                use kalamdb_store::Partition;
+                let partition = Partition::new(self.store.partition());
+                log::debug!("🔧 Compacting RocksDB column family after flush: {}", partition.name());
+                if let Err(e) = self.store.backend().compact_partition(&partition) {
+                    log::warn!("⚠️  Failed to compact partition after flush: {}", e);
+                    // Non-fatal: flush succeeded, compaction is optimization
+                }
             }
         }
 

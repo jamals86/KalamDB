@@ -11,7 +11,7 @@
 #[path = "integration/common/mod.rs"]
 mod common;
 
-use common::{fixtures, TestServer};
+use common::{fixtures, QueryResultTestExt, TestServer};
 use kalamdb_api::models::ResponseStatus;
 
 /// T022a: ALTER TABLE ADD COLUMN
@@ -88,13 +88,12 @@ async fn test_alter_table_add_column() {
     );
 
     // Verify old data still accessible
-    if let Some(rows) = &query_response.results[0].rows {
-        assert_eq!(rows.len(), 1);
-        assert_eq!(rows[0].get("name").unwrap().as_str().unwrap(), "Widget");
-        assert_eq!(rows[0].get("price").unwrap().as_i64().unwrap(), 100);
-        // New column should be NULL for existing rows
-        assert!(rows[0].get("stock").unwrap().is_null());
-    }
+    let rows = query_response.results[0].rows_as_maps();
+    assert_eq!(rows.len(), 1);
+    assert_eq!(rows[0].get("name").unwrap().as_str().unwrap(), "Widget");
+    assert_eq!(rows[0].get("price").unwrap().as_i64().unwrap(), 100);
+    // New column should be NULL for existing rows
+    assert!(rows[0].get("stock").unwrap().is_null());
 
     println!("✅ T022a: ALTER TABLE ADD COLUMN passed");
 }
@@ -186,13 +185,12 @@ async fn test_alter_table_drop_column() {
 
     assert_eq!(query_response.status, ResponseStatus::Success);
 
-    if let Some(rows) = &query_response.results[0].rows {
-        assert_eq!(rows.len(), 1);
-        assert_eq!(rows[0].get("item").unwrap().as_str().unwrap(), "Laptop");
-        assert_eq!(rows[0].get("quantity").unwrap().as_i64().unwrap(), 10);
-        // Dropped column should not be present
-        assert!(rows[0].get("warehouse").is_none());
-    }
+    let rows = query_response.results[0].rows_as_maps();
+    assert_eq!(rows.len(), 1);
+    assert_eq!(rows[0].get("item").unwrap().as_str().unwrap(), "Laptop");
+    assert_eq!(rows[0].get("quantity").unwrap().as_i64().unwrap(), 10);
+    // Dropped column should not be present
+    assert!(rows[0].get("warehouse").is_none());
 
     println!("✅ T022b: ALTER TABLE DROP COLUMN passed");
 }
@@ -270,23 +268,22 @@ async fn test_alter_table_rename_column() {
     );
 
     // Verify schema shows new column name
-    if let Some(rows) = &describe_response.results[0].rows {
-        let column_names: Vec<String> = rows
-            .iter()
-            .map(|row| row.get("column_name").unwrap().as_str().unwrap().to_string())
-            .collect();
+    let rows = describe_response.results[0].rows_as_maps();
+    let column_names: Vec<String> = rows
+        .iter()
+        .map(|row| row.get("column_name").unwrap().as_str().unwrap().to_string())
+        .collect();
 
-        assert!(
-            column_names.contains(&"name".to_string()),
-            "Schema should contain 'name' column after RENAME, got: {:?}",
-            column_names
-        );
-        assert!(
-            !column_names.contains(&"customer_name".to_string()),
-            "Schema should not contain 'customer_name' after RENAME, got: {:?}",
-            column_names
-        );
-    }
+    assert!(
+        column_names.contains(&"name".to_string()),
+        "Schema should contain 'name' column after RENAME, got: {:?}",
+        column_names
+    );
+    assert!(
+        !column_names.contains(&"customer_name".to_string()),
+        "Schema should not contain 'customer_name' after RENAME, got: {:?}",
+        column_names
+    );
 
     println!("✅ T022c: ALTER TABLE RENAME COLUMN passed");
 }

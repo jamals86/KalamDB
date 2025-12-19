@@ -128,8 +128,8 @@ impl NotificationService {
 
         // Gather subscriptions for the specific user AND admin/system observers
         // DashMap provides lock-free access
-        // Collect (live_id, projections, serialization_mode, notification_tx) tuples in a single pass
-        let live_ids_to_notify: Vec<(LiveQueryId, Option<Arc<Vec<String>>>, kalamdb_commons::websocket::SerializationMode, _)> = {
+        // Collect (live_id, projections, notification_tx) tuples in a single pass
+        let live_ids_to_notify: Vec<(LiveQueryId, Option<Arc<Vec<String>>>, _)> = {
             let all_handles = self.registry.get_subscriptions_for_table(user_id, table_id);
 
             let mut results = Vec::new();
@@ -148,7 +148,7 @@ impl NotificationService {
                 // FLUSH notifications are metadata events (not row-level changes)
                 // Skip filter evaluation for FLUSH - notify all subscribers
                 if matches!(change_notification.change_type, ChangeType::Flush) {
-                    results.push((handle.live_id, handle.projections, handle.serialization_mode, handle.notification_tx));
+                    results.push((handle.live_id, handle.projections, handle.notification_tx));
                     continue;
                 }
 
@@ -158,7 +158,7 @@ impl NotificationService {
                     // Apply filter to row data
                     match filter_matches(filter_expr, filtering_row) {
                         Ok(true) => {
-                            results.push((handle.live_id, handle.projections, handle.serialization_mode, handle.notification_tx));
+                            results.push((handle.live_id, handle.projections, handle.notification_tx));
                         }
                         Ok(false) => {
                             log::trace!(
@@ -176,7 +176,7 @@ impl NotificationService {
                     }
                 } else {
                     // No filter, notify all subscribers
-                    results.push((handle.live_id, handle.projections, handle.serialization_mode, handle.notification_tx));
+                    results.push((handle.live_id, handle.projections, handle.notification_tx));
                 }
             }
 
@@ -186,7 +186,7 @@ impl NotificationService {
         let notification_count = live_ids_to_notify.len();
 
         // Send notifications and increment changes
-        for (live_id, projections, serialization_mode, tx) in live_ids_to_notify {
+        for (live_id, projections, tx) in live_ids_to_notify {
             // Apply projections to row data (filters columns based on subscription)
             // Uses Cow to avoid cloning when no projections (SELECT *)
             let projected_row_data = apply_projections(&change_notification.row_data, &projections);
@@ -195,9 +195,9 @@ impl NotificationService {
                 .as_ref()
                 .map(|old| apply_projections(old, &projections));
 
-            // Convert Row to HashMap<String, JsonValue> using the subscription's serialization mode
-            // This ensures consistency between SQL API and WebSocket subscriptions
-            let row_json = match row_to_json_map(&projected_row_data, serialization_mode) {
+            // Convert Row to HashMap<String, JsonValue>
+            // All values are serialized as plain JSON values
+            let row_json = match row_to_json_map(&projected_row_data) {
                 Ok(json) => json,
                 Err(e) => {
                     log::error!(
@@ -210,7 +210,7 @@ impl NotificationService {
             };
 
             let old_json = if let Some(old) = projected_old_data {
-                match row_to_json_map(&old, serialization_mode) {
+                match row_to_json_map(&old) {
                     Ok(json) => Some(json),
                     Err(e) => {
                         log::error!(
@@ -234,7 +234,7 @@ impl NotificationService {
                 ChangeType::Update => kalamdb_commons::Notification::update(
                     live_id.to_string(),
                     vec![row_json],
-                    vec![old_json.unwrap_or_else(|| std::collections::HashMap::new())],
+                    vec![old_json.unwrap_or_else(std::collections::HashMap::new)],
                 ),
                 ChangeType::Delete => kalamdb_commons::Notification::delete(
                     live_id.to_string(),

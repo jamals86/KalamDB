@@ -123,6 +123,8 @@ impl ManifestCacheService {
     }
 
     /// Stage manifest metadata in the cache before the first flush writes manifest.json to disk.
+    ///
+    /// Uses `PendingWrite` state since the manifest hasn't been written to storage yet.
     pub fn stage_before_flush(
         &self,
         table_id: &TableId,
@@ -136,8 +138,97 @@ impl ManifestCacheService {
             manifest,
             None,
             source_path,
-            SyncState::InSync,
+            SyncState::PendingWrite,
         )
+    }
+
+    /// Mark a cache entry as stale (e.g., after validation failure or corruption detection).
+    ///
+    /// Updates the sync_state to Stale in both hot cache and RocksDB.
+    pub fn mark_as_stale(
+        &self,
+        table_id: &TableId,
+        user_id: Option<&UserId>,
+    ) -> Result<(), StorageError> {
+        let cache_key_str = self.make_cache_key(table_id, user_id);
+        let cache_key = ManifestCacheKey::from(cache_key_str.clone());
+
+        // Update in RocksDB
+        if let Some(mut entry) = EntityStore::get(&self.store, &cache_key)? {
+            entry.mark_stale();
+            EntityStore::put(&self.store, &cache_key, &entry)?;
+
+            // Update hot cache if present
+            if let Some(mut hot_entry) = self.hot_cache.get_mut(&cache_key_str) {
+                // Replace with updated entry
+                let last_accessed = hot_entry.last_accessed_ts();
+                *hot_entry = HotManifestEntry::new(Arc::new(entry), last_accessed);
+            }
+        }
+
+        Ok(())
+    }
+
+    /// Mark a cache entry as having an error state.
+    ///
+    /// Updates the sync_state to Error in both hot cache and RocksDB.
+    pub fn mark_as_error(
+        &self,
+        table_id: &TableId,
+        user_id: Option<&UserId>,
+    ) -> Result<(), StorageError> {
+        let cache_key_str = self.make_cache_key(table_id, user_id);
+        let cache_key = ManifestCacheKey::from(cache_key_str.clone());
+
+        // Update in RocksDB
+        if let Some(mut entry) = EntityStore::get(&self.store, &cache_key)? {
+            entry.mark_error();
+            EntityStore::put(&self.store, &cache_key, &entry)?;
+
+            // Update hot cache if present
+            if let Some(mut hot_entry) = self.hot_cache.get_mut(&cache_key_str) {
+                let last_accessed = hot_entry.last_accessed_ts();
+                *hot_entry = HotManifestEntry::new(Arc::new(entry), last_accessed);
+            }
+        }
+
+        Ok(())
+    }
+
+    /// Mark a cache entry as syncing (flush in progress).
+    ///
+    /// This is the first step in the atomic flush pattern:
+    /// 1. Mark entry as Syncing (Parquet being written to temp location)
+    /// 2. Write Parquet to temp file
+    /// 3. Rename temp file to final location (atomic)
+    /// 4. Update manifest segment and mark InSync
+    ///
+    /// If server crashes during flush:
+    /// - Entry with Syncing state indicates incomplete flush
+    /// - Temp files (.parquet.tmp) can be cleaned up on restart
+    /// - Data remains safely in RocksDB
+    pub fn mark_syncing(
+        &self,
+        table_id: &TableId,
+        user_id: Option<&UserId>,
+    ) -> Result<(), StorageError> {
+        let cache_key_str = self.make_cache_key(table_id, user_id);
+        let cache_key = ManifestCacheKey::from(cache_key_str.clone());
+
+        // Update in RocksDB
+        if let Some(mut entry) = EntityStore::get(&self.store, &cache_key)? {
+            entry.mark_syncing();
+            EntityStore::put(&self.store, &cache_key, &entry)?;
+
+            // Update hot cache if present
+            if let Some(mut hot_entry) = self.hot_cache.get_mut(&cache_key_str) {
+                let last_accessed = hot_entry.last_accessed_ts();
+                *hot_entry = HotManifestEntry::new(Arc::new(entry), last_accessed);
+            }
+        }
+        // If entry doesn't exist yet, that's okay - we'll create it later
+
+        Ok(())
     }
 
     /// Validate freshness of cached entry based on TTL.
@@ -148,12 +239,12 @@ impl ManifestCacheService {
     pub fn validate_freshness(&self, cache_key: &str) -> Result<bool, StorageError> {
         if let Some(entry) = self.hot_cache.get(cache_key) {
             let now = chrono::Utc::now().timestamp();
-            Ok(!entry.value().entry.is_stale(self.config.ttl_seconds, now))
+            Ok(!entry.value().entry.is_stale(self.config.ttl_seconds(), now))
         } else if let Some(entry) =
             EntityStore::get(&self.store, &ManifestCacheKey::from(cache_key))?
         {
             let now = chrono::Utc::now().timestamp();
-            Ok(!entry.is_stale(self.config.ttl_seconds, now))
+            Ok(!entry.is_stale(self.config.ttl_seconds(), now))
         } else {
             Ok(false) // Not cached = not fresh
         }
@@ -235,7 +326,7 @@ impl ManifestCacheService {
         for (key_bytes, entry) in entries {
             if let Ok(key_str) = String::from_utf8(key_bytes) {
                 // Skip stale entries to avoid loading expired manifests into RAM
-                if entry.is_stale(self.config.ttl_seconds, now) {
+                if entry.is_stale(self.config.ttl_seconds(), now) {
                     continue;
                 }
 
@@ -275,13 +366,8 @@ impl ManifestCacheService {
         let cache_key = ManifestCacheKey::from(cache_key_str.clone());
         let now = chrono::Utc::now().timestamp();
 
-        // TODO: Maybe its better to have it as parsed one instead of string
-        // For now we serialize it to string as ManifestCacheEntry expects string
-        let manifest_json = serde_json::to_string(manifest).map_err(|e| {
-            StorageError::SerializationError(format!("Failed to serialize Manifest: {}", e))
-        })?;
-
-        let entry = ManifestCacheEntry::new(manifest_json, etag, now, source_path, sync_state);
+        // Store the Manifest object directly (no longer serializing to JSON string)
+        let entry = ManifestCacheEntry::new(manifest.clone(), etag, now, source_path, sync_state);
 
         EntityStore::put(&self.store, &cache_key, &entry)?;
 
@@ -322,6 +408,60 @@ impl ManifestCacheService {
             .map(|v| v.value().last_accessed_ts())
     }
 
+    /// Check if a cache key is currently in the hot cache (RAM).
+    ///
+    /// This is used by system.manifest table to populate the `in_memory` column.
+    pub fn is_in_hot_cache(&self, cache_key: &str) -> bool {
+        self.hot_cache.contains_key(cache_key)
+    }
+
+    /// Evict stale manifest entries based on last_accessed + TTL threshold.
+    ///
+    /// Removes entries from both hot_cache and RocksDB that haven't been accessed
+    /// within the specified TTL period.
+    ///
+    /// Returns the number of entries evicted.
+    pub fn evict_stale_entries(&self, ttl_seconds: i64) -> Result<usize, StorageError> {
+        let now = chrono::Utc::now().timestamp();
+        let cutoff = now - ttl_seconds;
+        let mut evicted_count = 0;
+
+        // Get all entries from RocksDB to check staleness
+        let all_entries = EntityStore::scan_all(&self.store, None, None, None)?;
+
+        for (key_bytes, entry) in all_entries {
+            let key_str = match String::from_utf8(key_bytes.clone()) {
+                Ok(s) => s,
+                Err(_) => continue, // Skip invalid UTF-8 keys
+            };
+
+            // Check last_accessed from hot cache (in-memory) or use last_refreshed from entry
+            let last_accessed = self
+                .get_last_accessed(&key_str)
+                .unwrap_or(entry.last_refreshed);
+
+            if last_accessed < cutoff {
+                // Remove from hot cache
+                self.hot_cache.remove(&key_str);
+
+                // Remove from RocksDB
+                let cache_key = ManifestCacheKey::from(key_str);
+                EntityStore::delete(&self.store, &cache_key)?;
+
+                evicted_count += 1;
+            }
+        }
+
+        log::info!(
+            "Manifest eviction: removed {} stale entries (ttl_seconds={}, cutoff={})",
+            evicted_count,
+            ttl_seconds,
+            cutoff
+        );
+
+        Ok(evicted_count)
+    }
+
     /// Get cache configuration.
     pub fn config(&self) -> &ManifestCacheSettings {
         &self.config
@@ -339,10 +479,9 @@ mod tests {
     fn create_test_service() -> ManifestCacheService {
         let backend: Arc<dyn StorageBackend> = Arc::new(InMemoryBackend::new());
         let config = ManifestCacheSettings {
-            ttl_seconds: 3600,
             eviction_interval_seconds: 300,
             max_entries: 1000,
-            last_accessed_memory_window: 3600,
+            eviction_ttl_days: 7,
         };
         ManifestCacheService::new(backend, config)
     }
@@ -595,7 +734,9 @@ mod tests {
     fn test_restore_from_rocksdb_skips_stale_and_limits_capacity() {
         let backend: Arc<dyn StorageBackend> = Arc::new(InMemoryBackend::new());
         let mut config = ManifestCacheSettings::default();
-        config.ttl_seconds = 5;
+        // Set a very short TTL (1 day = 86400 seconds) for testing
+        // Note: We use 1 day minimum since eviction_ttl_days is in days
+        config.eviction_ttl_days = 0; // 0 means entries are immediately stale
         config.max_entries = 1;
 
         let service = ManifestCacheService::new(Arc::clone(&backend), config.clone());
@@ -603,10 +744,13 @@ mod tests {
         let table2 = TableId::new(NamespaceId::new("ns1"), TableName::new("stale"));
         let now = chrono::Utc::now().timestamp();
 
+        let fresh_manifest = Manifest::new(table1.clone(), None);
+        let stale_manifest = Manifest::new(table2.clone(), None);
+
         let fresh_entry =
-            ManifestCacheEntry::new("{}".to_string(), None, now, "p1".to_string(), SyncState::InSync);
+            ManifestCacheEntry::new(fresh_manifest, None, now, "p1".to_string(), SyncState::InSync);
         let stale_entry = ManifestCacheEntry::new(
-            "{}".to_string(),
+            stale_manifest,
             None,
             now - 10,
             "p2".to_string(),
@@ -624,5 +768,152 @@ mod tests {
         let stale_key = restored.make_cache_key(&table2, None);
         assert!(restored.hot_cache.contains_key(&fresh_key));
         assert!(!restored.hot_cache.contains_key(&stale_key));
+    }
+
+    #[test]
+    fn test_mark_syncing_updates_state() {
+        let service = create_test_service();
+        let namespace = NamespaceId::new("ns1");
+        let table = TableName::new("tbl1");
+        let table_id = TableId::new(namespace.clone(), table.clone());
+        let manifest = create_test_manifest();
+
+        // Add entry first
+        service
+            .update_after_flush(
+                &table_id,
+                Some(&UserId::from("u_123")),
+                &manifest,
+                None,
+                "path".to_string(),
+            )
+            .unwrap();
+
+        // Verify initial state is InSync
+        let cached = service
+            .get_or_load(&table_id, Some(&UserId::from("u_123")))
+            .unwrap()
+            .unwrap();
+        assert_eq!(cached.sync_state, SyncState::InSync);
+
+        // Mark as syncing
+        service
+            .mark_syncing(&table_id, Some(&UserId::from("u_123")))
+            .unwrap();
+
+        // Verify state changed to Syncing
+        let cached_after = service
+            .get_or_load(&table_id, Some(&UserId::from("u_123")))
+            .unwrap()
+            .unwrap();
+        assert_eq!(cached_after.sync_state, SyncState::Syncing);
+    }
+
+    #[test]
+    fn test_mark_syncing_nonexistent_entry_ok() {
+        let service = create_test_service();
+        let namespace = NamespaceId::new("ns1");
+        let table = TableName::new("nonexistent");
+        let table_id = TableId::new(namespace, table);
+
+        // Marking syncing on non-existent entry should not error
+        let result = service.mark_syncing(&table_id, None);
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn test_mark_syncing_then_in_sync() {
+        // Test the full atomic flush lifecycle: InSync -> Syncing -> InSync
+        let service = create_test_service();
+        let namespace = NamespaceId::new("ns1");
+        let table = TableName::new("tbl1");
+        let table_id = TableId::new(namespace.clone(), table.clone());
+        let manifest = create_test_manifest();
+
+        // Initial state
+        service
+            .update_after_flush(&table_id, None, &manifest, None, "path".to_string())
+            .unwrap();
+
+        // Mark syncing (flush in progress)
+        service.mark_syncing(&table_id, None).unwrap();
+        let state1 = service
+            .get_or_load(&table_id, None)
+            .unwrap()
+            .unwrap();
+        assert_eq!(state1.sync_state, SyncState::Syncing);
+
+        // Mark in sync (flush completed)
+        service
+            .update_after_flush(&table_id, None, &manifest, Some("new-etag".to_string()), "path".to_string())
+            .unwrap();
+        let state2 = service
+            .get_or_load(&table_id, None)
+            .unwrap()
+            .unwrap();
+        assert_eq!(state2.sync_state, SyncState::InSync);
+        assert_eq!(state2.etag, Some("new-etag".to_string()));
+    }
+
+    #[test]
+    fn test_mark_syncing_then_error() {
+        // Test failure path: InSync -> Syncing -> Error
+        let service = create_test_service();
+        let namespace = NamespaceId::new("ns1");
+        let table = TableName::new("tbl1");
+        let table_id = TableId::new(namespace.clone(), table.clone());
+        let manifest = create_test_manifest();
+
+        // Initial state
+        service
+            .update_after_flush(&table_id, None, &manifest, None, "path".to_string())
+            .unwrap();
+
+        // Mark syncing (flush in progress)
+        service.mark_syncing(&table_id, None).unwrap();
+        let state1 = service
+            .get_or_load(&table_id, None)
+            .unwrap()
+            .unwrap();
+        assert_eq!(state1.sync_state, SyncState::Syncing);
+
+        // Mark error (flush failed)
+        service.mark_as_error(&table_id, None).unwrap();
+        let state2 = service
+            .get_or_load(&table_id, None)
+            .unwrap()
+            .unwrap();
+        assert_eq!(state2.sync_state, SyncState::Error);
+    }
+
+    #[test]
+    fn test_mark_syncing_updates_hot_cache_and_rocksdb() {
+        let backend: Arc<dyn StorageBackend> = Arc::new(InMemoryBackend::new());
+        let config = ManifestCacheSettings::default();
+
+        let service1 = ManifestCacheService::new(Arc::clone(&backend), config.clone());
+        let namespace = NamespaceId::new("ns1");
+        let table = TableName::new("tbl1");
+        let table_id = TableId::new(namespace.clone(), table.clone());
+        let manifest = create_test_manifest();
+
+        // Add entry
+        service1
+            .update_after_flush(&table_id, None, &manifest, None, "path".to_string())
+            .unwrap();
+
+        // Mark as syncing
+        service1.mark_syncing(&table_id, None).unwrap();
+
+        // Verify hot cache is updated
+        let cached = service1.get_or_load(&table_id, None).unwrap().unwrap();
+        assert_eq!(cached.sync_state, SyncState::Syncing);
+
+        // Create new service (simulating restart) to verify RocksDB was updated
+        let service2 = ManifestCacheService::new(backend, config);
+        service2.restore_from_rocksdb().unwrap();
+
+        let restored = service2.get_or_load(&table_id, None).unwrap().unwrap();
+        assert_eq!(restored.sync_state, SyncState::Syncing);
     }
 }

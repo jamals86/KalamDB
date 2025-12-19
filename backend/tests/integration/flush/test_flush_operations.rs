@@ -3,7 +3,7 @@
 #[path = "../common/mod.rs"]
 mod common;
 
-use common::{fixtures, flush_helpers, TestServer};
+use common::{fixtures, flush_helpers, QueryResultTestExt, TestServer};
 use kalamdb_api::models::ResponseStatus;
 
 /// Manual flush on a user table should create Parquet files under the configured storage path.
@@ -66,9 +66,8 @@ async fn test_user_table_manual_flush_creates_parquet() {
     let row_count = count_response
         .results
         .first()
-        .and_then(|r| r.rows.as_ref())
-        .and_then(|rows| rows.first())
-        .and_then(|row| row.get("cnt"))
+        .and_then(|r| r.row_as_map(0))
+        .and_then(|row| row.get("cnt").cloned())
         .and_then(|value| value.as_u64())
         .unwrap_or(0);
     assert_eq!(row_count, 5, "Expected 5 rows after inserts");

@@ -330,25 +330,17 @@ async fn count_live_query_subscriptions(prefix: String) -> usize {
     .map(|json_str| {
         let value: serde_json::Value = serde_json::from_str(&json_str)
             .unwrap_or_else(|e| panic!("Failed to parse system.live_queries JSON: {}", e));
-        value
-            .get("results")
-            .and_then(|v| v.as_array())
-            .and_then(|arr| arr.first())
-            .and_then(|res| res.get("rows"))
-            .and_then(|rows| rows.as_array())
-            .map(|rows| {
-                rows.iter()
-                    .filter(|row| {
-                        let id_value = row.get("subscription_id")
-                            .map(extract_typed_value)
-                            .unwrap_or(serde_json::Value::Null);
-                        id_value.as_str()
-                            .map(|id| id.starts_with(&prefix))
-                            .unwrap_or(false)
-                    })
-                    .count()
+        let rows = get_rows_as_hashmaps(&value).unwrap_or_default();
+        rows.iter()
+            .filter(|row| {
+                let id_value = row.get("subscription_id")
+                    .map(extract_typed_value)
+                    .unwrap_or(serde_json::Value::Null);
+                id_value.as_str()
+                    .map(|id| id.starts_with(&prefix))
+                    .unwrap_or(false)
             })
-            .unwrap_or(0)
+            .count()
     })
     .expect("system.live_queries JSON query should succeed")
 }

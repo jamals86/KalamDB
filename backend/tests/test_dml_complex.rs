@@ -9,7 +9,7 @@
 #[path = "integration/common/mod.rs"]
 mod common;
 
-use common::{fixtures, flush_helpers, TestServer};
+use common::{fixtures, flush_helpers, QueryResultTestExt, TestServer};
 use kalamdb_api::models::ResponseStatus;
 
 /// T017a: UPDATE with simple multi-column predicate (single equality)
@@ -83,10 +83,9 @@ async fn test_update_complex_predicate_and() {
         )
         .await;
 
-    if let Some(rows) = &query_response.results[0].rows {
-        assert_eq!(rows.len(), 1);
-        assert_eq!(rows[0].get("stock").unwrap().as_i64().unwrap(), 100);
-    }
+    let rows = query_response.results[0].rows_as_maps();
+    assert_eq!(rows.len(), 1);
+    assert_eq!(rows[0].get("stock").unwrap().as_i64().unwrap(), 100);
 
     println!("✅ T017a: UPDATE with simple predicate passed");
 }
@@ -153,9 +152,8 @@ async fn test_update_complex_predicate_or() {
         )
         .await;
 
-    if let Some(rows) = &query_response.results[0].rows {
-        assert_eq!(rows.len(), 1);
-    }
+    let rows = query_response.results[0].rows_as_maps();
+    assert_eq!(rows.len(), 1);
 
     println!("✅ T017b: UPDATE with simple predicate passed");
 }
@@ -218,12 +216,11 @@ async fn test_delete_complex_predicate() {
         .execute_sql_as_user("SELECT id FROM test_dml_del.users ORDER BY id", "user1")
         .await;
 
-    if let Some(rows) = &query_response.results[0].rows {
-        assert_eq!(rows.len(), 3, "Should have 3 rows remaining");
-        assert_eq!(rows[0].get("id").unwrap().as_str().unwrap(), "u1");
-        assert_eq!(rows[1].get("id").unwrap().as_str().unwrap(), "u3");
-        assert_eq!(rows[2].get("id").unwrap().as_str().unwrap(), "u4");
-    }
+    let rows = query_response.results[0].rows_as_maps();
+    assert_eq!(rows.len(), 3, "Should have 3 rows remaining");
+    assert_eq!(rows[0].get("id").unwrap().as_str().unwrap(), "u1");
+    assert_eq!(rows[1].get("id").unwrap().as_str().unwrap(), "u3");
+    assert_eq!(rows[2].get("id").unwrap().as_str().unwrap(), "u4");
 
     println!("✅ T017c: DELETE with simple predicate passed");
 }
@@ -290,10 +287,9 @@ async fn test_update_across_flush_boundary() {
         )
         .await;
 
-    if let Some(rows) = &query_response.results[0].rows {
-        assert_eq!(rows.len(), 1);
-        assert_eq!(rows[0].get("status").unwrap().as_str().unwrap(), "completed");
-    }
+    let rows = query_response.results[0].rows_as_maps();
+    assert_eq!(rows.len(), 1);
+    assert_eq!(rows[0].get("status").unwrap().as_str().unwrap(), "completed");
 
     println!("✅ T017d: UPDATE across flush boundary passed");
 }
@@ -366,11 +362,10 @@ async fn test_delete_across_flush_boundary() {
         .execute_sql_as_user("SELECT id FROM test_dml_delflush.logs ORDER BY id", "user1")
         .await;
 
-    if let Some(rows) = &query_response.results[0].rows {
-        assert_eq!(rows.len(), 2, "Should have 2 INFO logs remaining");
-        assert_eq!(rows[0].get("id").unwrap().as_str().unwrap(), "l1");
-        assert_eq!(rows[1].get("id").unwrap().as_str().unwrap(), "l3");
-    }
+    let rows = query_response.results[0].rows_as_maps();
+    assert_eq!(rows.len(), 2, "Should have 2 INFO logs remaining");
+    assert_eq!(rows[0].get("id").unwrap().as_str().unwrap(), "l1");
+    assert_eq!(rows[1].get("id").unwrap().as_str().unwrap(), "l3");
 
     println!("✅ T017e: DELETE across flush boundary passed");
 }

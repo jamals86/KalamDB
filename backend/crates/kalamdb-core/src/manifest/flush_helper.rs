@@ -5,6 +5,7 @@
 
 use super::{ManifestCacheService, ManifestService};
 use crate::error::KalamDbError;
+use crate::schema_registry::PathResolver;
 use datafusion::arrow::array::*;
 use datafusion::arrow::compute;
 use datafusion::arrow::compute::kernels::aggregate::{max_string, min_string};
@@ -33,6 +34,35 @@ impl FlushManifestHelper {
             manifest_service,
             manifest_cache,
         }
+    }
+
+    /// Generate temp filename for atomic writes
+    ///
+    /// Returns the temp filename (e.g., "batch-5.parquet.tmp")
+    pub fn generate_temp_filename(batch_number: u64) -> String {
+        format!("batch-{}.parquet.tmp", batch_number)
+    }
+
+    /// Mark manifest cache entry as syncing (flush in progress)
+    ///
+    /// This is called BEFORE writing Parquet to temp location.
+    /// If the server crashes during the write, on restart:
+    /// - Manifest with Syncing state indicates incomplete flush
+    /// - Temp files (.parquet.tmp) can be cleaned up
+    /// - Data remains safely in RocksDB
+    pub fn mark_syncing(
+        &self,
+        table_id: &TableId,
+        user_id: Option<&UserId>,
+    ) -> Result<(), KalamDbError> {
+        self.manifest_cache
+            .mark_syncing(table_id, user_id)
+            .map_err(|e| {
+                KalamDbError::Other(format!(
+                    "Failed to mark manifest as syncing for {}: {}",
+                    table_id, e
+                ))
+            })
     }
 
     /// Get next batch number for a table/scope by reading manifest
@@ -262,10 +292,16 @@ impl FlushManifestHelper {
         // Use filename as ID for now, or generate UUID
         let segment_id = batch_filename.clone();
 
+        // Store just the filename in manifest - path resolution happens at read time
+        // The storage_path_template + user_id substitution is used during reads,
+        // so we only need to store the batch filename here
+        let relative_path = batch_filename.clone();
+
         // Phase 16: Use with_schema_version to record schema version in manifest
+        // IMPORTANT: Use relative_path instead of batch_filename for the path field
         let segment = SegmentMetadata::with_schema_version(
             segment_id,
-            batch_filename,
+            relative_path,
             column_stats,
             min_seq,
             max_seq,
@@ -311,15 +347,23 @@ impl FlushManifestHelper {
         // For now, I'll keep updating ManifestCacheService to avoid breaking other things,
         // but I should probably rely on ManifestService.
 
-        let scope_str = user_id
-            .map(|u| u.as_str().to_string())
-            .unwrap_or_else(|| "shared".to_string());
-        let manifest_path = format!(
-            "{}/{}/{}/manifest.json",
-            namespace.as_str(),
-            table.as_str(),
-            scope_str
-        );
+        // Use PathResolver to get relative manifest path from storage template
+        let app_ctx = crate::app_context::AppContext::get();
+        let manifest_path = match app_ctx.schema_registry().get(&table_id) {
+            Some(cached) => PathResolver::get_manifest_relative_path(&cached, user_id, None)?,
+            None => {
+                // Fallback to legacy format if table not in registry (shouldn't happen in normal flow)
+                let scope_str = user_id
+                    .map(|u| u.as_str().to_string())
+                    .unwrap_or_else(|| "shared".to_string());
+                format!(
+                    "{}/{}/{}/manifest.json",
+                    namespace.as_str(),
+                    table.as_str(),
+                    scope_str
+                )
+            }
+        };
 
         self.manifest_cache
             .update_after_flush(&table_id, user_id, &updated_manifest, None, manifest_path)
@@ -333,7 +377,7 @@ impl FlushManifestHelper {
                 ))
             })?;
 
-        log::info!(
+        log::debug!(
             "[MANIFEST] ✅ Updated manifest and cache: {}.{} (user_id={:?}, file={}, rows={}, size={} bytes)",
             namespace.as_str(),
             table.as_str(),
@@ -389,5 +433,292 @@ mod tests {
         let (min, max) = FlushManifestHelper::extract_seq_range(&batch);
         assert_eq!(min, 100);
         assert_eq!(max, 200);
+    }
+
+    #[test]
+    fn test_extract_seq_range_empty() {
+        let schema = StdArc::new(Schema::new(vec![Field::new(
+            SystemColumnNames::SEQ,
+            DataType::Int64,
+            false,
+        )]));
+        let seq_array = Int64Array::from(vec![] as Vec<i64>);
+        let batch = RecordBatch::try_new(schema, vec![StdArc::new(seq_array)]).unwrap();
+
+        let (min_seq, max_seq) = FlushManifestHelper::extract_seq_range(&batch);
+        assert_eq!(min_seq, 0);
+        assert_eq!(max_seq, 0);
+    }
+
+    #[test]
+    fn test_extract_seq_range_missing_column() {
+        let schema = StdArc::new(Schema::new(vec![Field::new(
+            "other_column",
+            DataType::Int64,
+            false,
+        )]));
+        let col_array = Int64Array::from(vec![1, 2, 3]);
+        let batch = RecordBatch::try_new(schema, vec![StdArc::new(col_array)]).unwrap();
+
+        let (min_seq, max_seq) = FlushManifestHelper::extract_seq_range(&batch);
+        assert_eq!(min_seq, 0);
+        assert_eq!(max_seq, 0);
+    }
+
+    #[test]
+    fn test_extract_column_stats_int_types() {
+        use datafusion::arrow::array::{Int32Array, Int64Array};
+
+        let schema = StdArc::new(Schema::new(vec![
+            Field::new("id", DataType::Int32, true),
+            Field::new("timestamp", DataType::Int64, false),
+            Field::new(SystemColumnNames::SEQ, DataType::Int64, false),
+        ]));
+        let id_array = Int32Array::from(vec![Some(5), Some(10), None, Some(1), Some(8)]);
+        let ts_array = Int64Array::from(vec![1000000, 2000000, 1500000, 1800000, 1200000]);
+        let seq_array = Int64Array::from(vec![1, 2, 3, 4, 5]);
+        let batch = RecordBatch::try_new(
+            schema,
+            vec![
+                StdArc::new(id_array),
+                StdArc::new(ts_array),
+                StdArc::new(seq_array),
+            ],
+        )
+        .unwrap();
+
+        let indexed_columns = vec!["id".to_string(), "timestamp".to_string()];
+        let stats = FlushManifestHelper::extract_column_stats(&batch, &indexed_columns);
+
+        assert_eq!(stats.len(), 2);
+        let id_stats = stats.get("id").unwrap();
+        assert_eq!(id_stats.min, Some(serde_json::json!(1)));
+        assert_eq!(id_stats.max, Some(serde_json::json!(10)));
+        assert_eq!(id_stats.null_count, Some(1));
+
+        let ts_stats = stats.get("timestamp").unwrap();
+        assert_eq!(ts_stats.min, Some(serde_json::json!(1000000)));
+        assert_eq!(ts_stats.max, Some(serde_json::json!(2000000)));
+        assert_eq!(ts_stats.null_count, Some(0));
+    }
+
+    #[test]
+    fn test_extract_column_stats_string() {
+        let schema = StdArc::new(Schema::new(vec![Field::new("name", DataType::Utf8, true)]));
+        let array = StringArray::from(vec![Some("alice"), Some("bob"), None, Some("charlie")]);
+        let batch = RecordBatch::try_new(schema, vec![StdArc::new(array)]).unwrap();
+
+        let indexed_columns = vec!["name".to_string()];
+        let stats = FlushManifestHelper::extract_column_stats(&batch, &indexed_columns);
+
+        let name_stats = stats.get("name").unwrap();
+        assert_eq!(name_stats.min, Some(serde_json::json!("alice")));
+        assert_eq!(name_stats.max, Some(serde_json::json!("charlie")));
+        assert_eq!(name_stats.null_count, Some(1));
+    }
+
+    #[test]
+    fn test_extract_column_stats_skips_seq_column() {
+        use datafusion::arrow::array::Int32Array;
+
+        let schema = StdArc::new(Schema::new(vec![
+            Field::new("id", DataType::Int32, false),
+            Field::new(SystemColumnNames::SEQ, DataType::Int64, false),
+        ]));
+        let id_array = Int32Array::from(vec![1, 2, 3]);
+        let seq_array = Int64Array::from(vec![10, 20, 30]);
+        let batch = RecordBatch::try_new(
+            schema,
+            vec![StdArc::new(id_array), StdArc::new(seq_array)],
+        )
+        .unwrap();
+
+        let indexed_columns = vec!["id".to_string(), SystemColumnNames::SEQ.to_string()];
+        let stats = FlushManifestHelper::extract_column_stats(&batch, &indexed_columns);
+
+        // Should only have stats for "id", not "_seq"
+        assert_eq!(stats.len(), 1);
+        assert!(stats.contains_key("id"));
+        assert!(!stats.contains_key(SystemColumnNames::SEQ));
+    }
+
+    #[test]
+    fn test_extract_column_stats_only_indexed_columns() {
+        use datafusion::arrow::array::Int32Array;
+
+        let schema = StdArc::new(Schema::new(vec![
+            Field::new("id", DataType::Int32, false),
+            Field::new("name", DataType::Utf8, true),
+            Field::new("age", DataType::Int32, true),
+        ]));
+        let id_array = Int32Array::from(vec![1, 2, 3]);
+        let name_array = StringArray::from(vec![Some("alice"), Some("bob"), Some("charlie")]);
+        let age_array = Int32Array::from(vec![Some(30), Some(25), Some(35)]);
+        let batch = RecordBatch::try_new(
+            schema,
+            vec![
+                StdArc::new(id_array),
+                StdArc::new(name_array),
+                StdArc::new(age_array),
+            ],
+        )
+        .unwrap();
+
+        // Only index "id" and "age", not "name"
+        let indexed_columns = vec!["id".to_string(), "age".to_string()];
+        let stats = FlushManifestHelper::extract_column_stats(&batch, &indexed_columns);
+
+        assert_eq!(stats.len(), 2);
+        assert!(stats.contains_key("id"));
+        assert!(stats.contains_key("age"));
+        assert!(!stats.contains_key("name"));
+    }
+
+    #[test]
+    fn test_extract_column_stats_empty_batch() {
+        use datafusion::arrow::array::Int32Array;
+
+        let schema = StdArc::new(Schema::new(vec![Field::new(
+            "id",
+            DataType::Int32,
+            false,
+        )]));
+        let id_array = Int32Array::from(vec![] as Vec<i32>);
+        let batch = RecordBatch::try_new(schema, vec![StdArc::new(id_array)]).unwrap();
+
+        let indexed_columns = vec!["id".to_string()];
+        let stats = FlushManifestHelper::extract_column_stats(&batch, &indexed_columns);
+
+        // Empty batch should still produce stats entry but with None min/max
+        assert_eq!(stats.len(), 1);
+        let id_stats = stats.get("id").unwrap();
+        assert_eq!(id_stats.min, None);
+        assert_eq!(id_stats.max, None);
+        assert_eq!(id_stats.null_count, Some(0));
+    }
+
+    #[test]
+    fn test_extract_column_stats_all_nulls() {
+        use datafusion::arrow::array::Int32Array;
+
+        let schema = StdArc::new(Schema::new(vec![Field::new(
+            "value",
+            DataType::Int32,
+            true,
+        )]));
+        let array = Int32Array::from(vec![None, None, None]);
+        let batch = RecordBatch::try_new(schema, vec![StdArc::new(array)]).unwrap();
+
+        let indexed_columns = vec!["value".to_string()];
+        let stats = FlushManifestHelper::extract_column_stats(&batch, &indexed_columns);
+
+        let value_stats = stats.get("value").unwrap();
+        assert_eq!(value_stats.min, None);
+        assert_eq!(value_stats.max, None);
+        assert_eq!(value_stats.null_count, Some(3));
+    }
+
+    #[test]
+    fn test_extract_column_stats_float_types() {
+        use datafusion::arrow::array::{Float32Array, Float64Array};
+
+        let schema = StdArc::new(Schema::new(vec![
+            Field::new("f32_col", DataType::Float32, true),
+            Field::new("f64_col", DataType::Float64, true),
+        ]));
+        let f32_array = Float32Array::from(vec![Some(1.5), Some(2.5), Some(0.5)]);
+        let f64_array = Float64Array::from(vec![Some(10.5), Some(20.5), Some(5.5)]);
+        let batch = RecordBatch::try_new(
+            schema,
+            vec![StdArc::new(f32_array), StdArc::new(f64_array)],
+        )
+        .unwrap();
+
+        let indexed_columns = vec!["f32_col".to_string(), "f64_col".to_string()];
+        let stats = FlushManifestHelper::extract_column_stats(&batch, &indexed_columns);
+
+        assert_eq!(stats.len(), 2);
+        assert!(stats.get("f32_col").unwrap().min.is_some());
+        assert!(stats.get("f32_col").unwrap().max.is_some());
+        assert!(stats.get("f64_col").unwrap().min.is_some());
+        assert!(stats.get("f64_col").unwrap().max.is_some());
+    }
+
+    #[test]
+    fn test_generate_temp_filename() {
+        // Test temp filename generation for atomic flush pattern
+        assert_eq!(
+            FlushManifestHelper::generate_temp_filename(0),
+            "batch-0.parquet.tmp"
+        );
+        assert_eq!(
+            FlushManifestHelper::generate_temp_filename(1),
+            "batch-1.parquet.tmp"
+        );
+        assert_eq!(
+            FlushManifestHelper::generate_temp_filename(42),
+            "batch-42.parquet.tmp"
+        );
+        assert_eq!(
+            FlushManifestHelper::generate_temp_filename(999),
+            "batch-999.parquet.tmp"
+        );
+    }
+
+    #[test]
+    fn test_temp_and_final_filename_consistency() {
+        // Ensure temp and final filenames are consistent (same batch number)
+        for batch_num in [0, 1, 5, 10, 100, 999] {
+            let temp = FlushManifestHelper::generate_temp_filename(batch_num);
+            let final_name = FlushManifestHelper::generate_batch_filename(batch_num);
+
+            // Temp should be final + ".tmp"
+            assert!(
+                temp.ends_with(".tmp"),
+                "Temp filename should end with .tmp"
+            );
+            assert_eq!(
+                temp,
+                format!("{}.tmp", final_name),
+                "Temp filename should be final filename + .tmp"
+            );
+
+            // Both should contain the same batch number
+            let temp_num: u64 = temp
+                .strip_prefix("batch-")
+                .and_then(|s| s.strip_suffix(".parquet.tmp"))
+                .and_then(|s| s.parse().ok())
+                .expect("Should parse batch number from temp");
+            let final_num: u64 = final_name
+                .strip_prefix("batch-")
+                .and_then(|s| s.strip_suffix(".parquet"))
+                .and_then(|s| s.parse().ok())
+                .expect("Should parse batch number from final");
+            
+            assert_eq!(temp_num, final_num);
+            assert_eq!(temp_num, batch_num);
+        }
+    }
+
+    #[test]
+    fn test_atomic_flush_filename_pattern() {
+        // Test the complete filename pattern for atomic flush
+        let batch_number = 5u64;
+        
+        let temp_filename = FlushManifestHelper::generate_temp_filename(batch_number);
+        let final_filename = FlushManifestHelper::generate_batch_filename(batch_number);
+
+        // Verify temp filename pattern
+        assert_eq!(temp_filename, "batch-5.parquet.tmp");
+        
+        // Verify final filename pattern  
+        assert_eq!(final_filename, "batch-5.parquet");
+
+        // Verify the rename path: temp -> final
+        let temp_path = format!("myns/mytable/{}", temp_filename);
+        let final_path = format!("myns/mytable/{}", final_filename);
+        
+        assert_eq!(temp_path, "myns/mytable/batch-5.parquet.tmp");
+        assert_eq!(final_path, "myns/mytable/batch-5.parquet");
     }
 }

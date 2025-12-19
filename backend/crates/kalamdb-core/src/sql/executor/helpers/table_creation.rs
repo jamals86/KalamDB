@@ -143,7 +143,7 @@ pub fn create_user_table(
         .get_table_if_exists(&table_id)
         .into_kalamdb_error("Failed to check table existence")?;
 
-    if let Some(def) = existing_def {
+    if existing_def.is_some() {
         if stmt.if_not_exists {
             // Ensure provider is registered even if table exists
             // This handles cases where table exists in storage but provider is missing from cache
@@ -155,8 +155,8 @@ pub fn create_user_table(
                     stmt.table_name.as_str()
                 );
 
-                let arrow_schema = def.to_arrow_schema()
-                    .into_arrow_error_ctx("Failed to build Arrow schema")?;
+                // Use cached Arrow schema (memoized in CachedTableData) instead of to_arrow_schema()
+                let arrow_schema = schema_registry.get_arrow_schema(&table_id)?;
                 register_user_table_provider(&app_context, &table_id, arrow_schema)?;
             }
 
@@ -199,7 +199,7 @@ pub fn create_user_table(
     }
 
     // Resolve storage and ensure it exists
-    let (storage_id, storage_type) = resolve_storage_info(&app_context, stmt.storage_id.as_ref())?;
+    let (storage_id, _storage_type) = resolve_storage_info(&app_context, stmt.storage_id.as_ref())?;
 
     log::debug!(
         "✓ Validation passed for USER TABLE {}.{} (storage: {})",
@@ -248,6 +248,7 @@ pub fn create_user_table(
             TableType::User,
             &storage_id,
         )?;
+        
         let data = CachedTableData::with_storage_config(
             Arc::clone(&table_def),
             Some(storage_id.clone()),
@@ -263,15 +264,9 @@ pub fn create_user_table(
     }
 
     // Register UserTableProvider for INSERT/UPDATE/DELETE/SELECT operations
-    // Use authoritative Arrow schema rebuilt from TableDefinition (includes system columns)
-    let provider_arrow_schema = table_def.to_arrow_schema()
-        .into_arrow_error_ctx("Failed to build provider Arrow schema")?;
+    // Use cached Arrow schema from SchemaRegistry (memoized in CachedTableData)
+    let provider_arrow_schema = schema_registry.get_arrow_schema(&table_id)?;
     register_user_table_provider(&app_context, &table_id, provider_arrow_schema)?;
-
-    // Ensure filesystem table directories exist for the creator
-    if storage_type == StorageType::Filesystem {
-        ensure_table_directory_exists(&schema_registry, &table_id, Some(user_id))?;
-    }
 
     // Log detailed success with table options
     log::info!(
@@ -365,7 +360,7 @@ pub fn create_shared_table(
         .get_table_if_exists(&table_id)
         .into_kalamdb_error("Failed to check table existence")?;
 
-    if let Some(def) = existing_def {
+    if existing_def.is_some() {
         if stmt.if_not_exists {
             // Ensure provider is registered even if table exists
             if schema_registry.get_provider(&table_id).is_none() {
@@ -375,8 +370,8 @@ pub fn create_shared_table(
                     stmt.table_name.as_str()
                 );
 
-                let arrow_schema = def.to_arrow_schema()
-                    .into_arrow_error_ctx("Failed to build Arrow schema")?;
+                // Use cached Arrow schema (memoized in CachedTableData) instead of to_arrow_schema()
+                let arrow_schema = schema_registry.get_arrow_schema(&table_id)?;
                 register_shared_table_provider(&app_context, &table_id, arrow_schema)?;
             }
 
@@ -407,7 +402,7 @@ pub fn create_shared_table(
     // (namespace existence validated above)
 
     // Resolve storage and ensure it exists
-    let (storage_id, storage_type) = resolve_storage_info(&app_context, stmt.storage_id.as_ref())?;
+    let (storage_id, _storage_type) = resolve_storage_info(&app_context, stmt.storage_id.as_ref())?;
 
     log::debug!(
         "✓ Validation passed for SHARED TABLE {}.{} (storage: {})",
@@ -458,6 +453,7 @@ pub fn create_shared_table(
             TableType::Shared,
             &storage_id,
         )?;
+        
         let data = CachedTableData::with_storage_config(
             Arc::clone(&table_def),
             Some(storage_id.clone()),
@@ -482,10 +478,6 @@ pub fn create_shared_table(
         stmt.primary_key_column.as_ref().unwrap(),
         stmt.access_level
     );
-
-    if storage_type == StorageType::Filesystem {
-        ensure_table_directory_exists(&schema_registry, &table_id, None)?;
-    }
 
     Ok(format!(
         "Shared table {}.{} created successfully",
@@ -518,25 +510,6 @@ fn resolve_storage_info(
 
     let storage_type = storage.storage_type;
     Ok((storage_id, storage_type))
-}
-
-fn ensure_table_directory_exists(
-    schema_registry: &Arc<crate::schema_registry::SchemaRegistry>,
-    table_id: &TableId,
-    user_id: Option<&UserId>,
-) -> Result<(), KalamDbError> {
-    let path = schema_registry.get_storage_path(table_id, user_id, None)?;
-    if path.trim().is_empty() {
-        return Ok(());
-    }
-
-    let dir = std::path::Path::new(&path);
-    std::fs::create_dir_all(dir)
-        .map_err(|e| KalamDbError::io_message(format!(
-            "Failed to create table directory '{}': {}",
-            dir.display(),
-            e
-        )))
 }
 
 /// Create STREAM table (TTL-based ephemeral table)
@@ -590,8 +563,8 @@ pub fn create_stream_table(
                     stmt.table_name.as_str()
                 );
 
-                let arrow_schema = def.to_arrow_schema()
-                    .into_arrow_error_ctx("Failed to build Arrow schema")?;
+                // Use cached Arrow schema (memoized in CachedTableData) instead of to_arrow_schema()
+                let arrow_schema = schema_registry.get_arrow_schema(&table_id)?;
 
                 // Extract TTL from table options if available, otherwise use default
                 let ttl_seconds = if let kalamdb_commons::schemas::TableOptions::Stream(opts) =
@@ -707,6 +680,7 @@ pub fn create_stream_table(
             TableType::Stream,
             &storage_id,
         )?;
+        
         let data = CachedTableData::with_storage_config(
             Arc::clone(&table_def),
             Some(storage_id.clone()),

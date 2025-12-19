@@ -188,13 +188,13 @@ pub async fn cleanup_table_data_internal(
 /// **Phase 8.5 (T146a)**: Public helper for CleanupExecutor
 ///
 /// # Arguments
-/// * `_app_context` - Application context for accessing storage backend (reserved for future use)
+/// * `app_context` - Application context for accessing storage backend
 /// * `table_id` - Table identifier (namespace:table_name)
 ///
 /// # Returns
 /// Number of bytes freed (sum of deleted file sizes)
 pub async fn cleanup_parquet_files_internal(
-    _app_context: &Arc<AppContext>,
+    app_context: &Arc<AppContext>,
     table_id: &TableId,
     table_type: TableType,
     storage: &StorageCleanupDetails,
@@ -205,8 +205,24 @@ pub async fn cleanup_parquet_files_internal(
         storage.storage_id.as_str()
     );
 
+    // Get the Storage object from the registry (cached lookup)
+    let storage_obj = app_context
+        .storage_registry()
+        .get_storage(&storage.storage_id)?
+        .ok_or_else(|| {
+            KalamDbError::InvalidOperation(format!(
+                "Storage '{}' not found during cleanup",
+                storage.storage_id.as_str()
+            ))
+        })?;
+
+    // Build ObjectStore for this storage
+    let object_store = kalamdb_filestore::build_object_store(&storage_obj)
+        .into_kalamdb_error("Failed to build object store")?;
+
     let bytes_freed = kalamdb_filestore::delete_parquet_tree_for_table(
-        &storage.base_directory,
+        object_store,
+        &storage_obj,
         &storage.relative_path_template,
         table_type,
     )
@@ -285,8 +301,8 @@ impl DropTableHandler {
             cached.storage_path_template.clone()
         };
 
-        let storages_provider = self.app_context.system_tables().storages();
-        let base_dir = match storages_provider.get_storage(&storage_id) {
+        // Get storage from registry (cached lookup)
+        let base_dir = match self.app_context.storage_registry().get_storage(&storage_id) {
             Ok(Some(storage)) => {
                 let trimmed = storage.base_directory.trim();
                 if trimmed.is_empty() {

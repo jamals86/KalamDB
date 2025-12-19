@@ -4,7 +4,7 @@
 
 use actix_ws::Session;
 use kalamdb_commons::ids::SeqId;
-use kalamdb_commons::websocket::{BatchControl, BatchStatus, SerializationMode};
+use kalamdb_commons::websocket::{BatchControl, BatchStatus};
 use kalamdb_commons::WebSocketMessage;
 use kalamdb_core::live::{LiveQueryManager, SharedConnectionState};
 use kalamdb_core::providers::arrow_json_conversion::row_to_json_map;
@@ -41,20 +41,10 @@ pub async fn handle_next_batch(
                 snapshot_end_seq: result.snapshot_end_seq,
             };
 
-            // Get serialization mode from subscription state
-            let serialization_mode = {
-                let state = connection_state.read();
-                state
-                    .subscriptions
-                    .get(subscription_id)
-                    .map(|sub| sub.serialization_mode)
-                    .unwrap_or(SerializationMode::Typed)
-            };
-            
-            // Convert Row objects to HashMap using the subscription's serialization mode
+            // Convert Row objects to HashMap
             let mut rows_json = Vec::with_capacity(result.rows.len());
             for row in result.rows {
-                match row_to_json_map(&row, serialization_mode) {
+                match row_to_json_map(&row) {
                     Ok(json) => rows_json.push(json),
                     Err(e) => {
                         error!("Failed to convert row to JSON: {}", e);

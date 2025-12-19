@@ -105,17 +105,12 @@ fn smoke_all_datatypes_user_shared_stream() {
     // Parse JSON to extract IDs
     let json_value: serde_json::Value = serde_json::from_str(&user_out_json)
         .expect("Failed to parse JSON response");
-    let rows = json_value
-        .get("results")
-        .and_then(|v| v.as_array())
-        .and_then(|arr| arr.first())
-        .and_then(|res| res.get("rows"))
-        .and_then(|v| v.as_array())
+    let rows = get_rows_as_hashmaps(&json_value)
         .expect("Expected rows in JSON response");
 
     let mut first_id: Option<String> = None;
     let mut second_id: Option<String> = None;
-    for row in rows {
+    for row in &rows {
         let text_col_value = row.get("text_col").map(extract_typed_value).unwrap_or(serde_json::Value::Null);
         let text_col = text_col_value.as_str().unwrap_or("");
         let id_value = row.get("id").map(extract_typed_value).unwrap_or(serde_json::Value::Null);
@@ -166,17 +161,12 @@ fn smoke_all_datatypes_user_shared_stream() {
     // Parse JSON to extract IDs
     let shared_json: serde_json::Value = serde_json::from_str(&shared_out_json)
         .expect("Failed to parse shared JSON response");
-    let shared_rows = shared_json
-        .get("results")
-        .and_then(|v| v.as_array())
-        .and_then(|arr| arr.first())
-        .and_then(|res| res.get("rows"))
-        .and_then(|v| v.as_array())
+    let shared_rows = get_rows_as_hashmaps(&shared_json)
         .expect("Expected rows in shared JSON response");
 
     let mut s_first: Option<String> = None;
     let mut s_second: Option<String> = None;
-    for row in shared_rows {
+    for row in &shared_rows {
         let text_col_value = row.get("text_col").map(extract_typed_value).unwrap_or(serde_json::Value::Null);
         let text_col = text_col_value.as_str().unwrap_or("");
         let id_value = row.get("id").map(extract_typed_value).unwrap_or(serde_json::Value::Null);

@@ -240,7 +240,7 @@ impl CLIConfiguration {
             options = options.with_http_version(match server.http_version.to_lowercase().as_str() {
                 "http1" | "http/1" | "http/1.1" => HttpVersion::Http1,
                 "http2" | "http/2" => HttpVersion::Http2,
-                "auto" | _ => HttpVersion::Auto,
+                _ => HttpVersion::Auto,
             });
         }
 
@@ -272,7 +272,7 @@ impl CLIConfiguration {
             .map(|s| match s.http_version.to_lowercase().as_str() {
                 "http1" | "http/1" | "http/1.1" => HttpVersion::Http1,
                 "http2" | "http/2" => HttpVersion::Http2,
-                "auto" | _ => HttpVersion::Auto,
+                _ => HttpVersion::Auto,
             })
             .unwrap_or(HttpVersion::Http2) // Default to HTTP/2
     }

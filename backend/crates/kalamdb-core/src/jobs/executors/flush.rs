@@ -75,14 +75,12 @@ impl JobExecutor for FlushExecutor {
     }
 
     async fn execute(&self, ctx: &JobContext<Self::Params>) -> Result<JobDecision, KalamDbError> {
-        ctx.log_info("Starting flush operation");
-
         // Parameters already validated in JobContext - type-safe access
         let params = ctx.params();
         let table_id = Arc::new(params.table_id.clone());
         let table_type = params.table_type;
 
-        ctx.log_info(&format!("Flushing {} (type: {:?})", table_id, table_type));
+        ctx.log_debug(&format!("Flushing {} (type: {:?})", table_id, table_type));
 
         // Get dependencies from AppContext
         let app_ctx = &ctx.app_ctx;
@@ -105,7 +103,7 @@ impl JobExecutor for FlushExecutor {
         // Execute flush based on table type
         let result = match table_type {
             TableType::User => {
-                ctx.log_info("Executing UserTableFlushJob");
+                ctx.log_debug("Executing UserTableFlushJob");
 
                 // IMPORTANT: Use the per-table UserTableStore (created at table registration)
                 // instead of the generic prefix-only user_table_store() created in AppContext.
@@ -148,7 +146,7 @@ impl JobExecutor for FlushExecutor {
                     .into_kalamdb_error("User table flush failed")?
             }
             TableType::Shared => {
-                ctx.log_info("Executing SharedTableFlushJob");
+                ctx.log_debug("Executing SharedTableFlushJob");
 
                 // Get the SharedTableProvider from the schema registry to reuse the cached store
                 let provider_arc = schema_registry.get_provider(&table_id).ok_or_else(|| {
@@ -185,7 +183,7 @@ impl JobExecutor for FlushExecutor {
                     .into_kalamdb_error("Shared table flush failed")?
             }
             TableType::Stream => {
-                ctx.log_info("Stream table flush not yet implemented");
+                ctx.log_debug("Stream table flush not yet implemented");
                 // Streams: return Completed (no-op) for idempotency and clarity
                 return Ok(JobDecision::Completed {
                     message: Some(format!(
@@ -201,14 +199,14 @@ impl JobExecutor for FlushExecutor {
             }
         };
 
-        ctx.log_info(&format!(
+        ctx.log_debug(&format!(
             "Flush operation completed: {} rows flushed, {} files created",
             result.rows_flushed,
             result.parquet_files.len()
         ));
 
         // Compact RocksDB partition after flush to reclaim space from tombstones
-        ctx.log_info("Running RocksDB compaction to clean up tombstones...");
+        ctx.log_debug("Running RocksDB compaction to clean up tombstones...");
         let backend = app_ctx.storage_backend();
         let partition_name = match table_type {
             TableType::User => {
@@ -245,7 +243,7 @@ impl JobExecutor for FlushExecutor {
         
         match backend.compact_partition(&partition) {
             Ok(()) => {
-                ctx.log_info("RocksDB compaction completed successfully");
+                ctx.log_debug("RocksDB compaction completed successfully");
             }
             Err(e) => {
                 // Log compaction failure but don't fail the flush job

@@ -81,17 +81,12 @@ fn smoke_user_table_rls_isolation() {
     // Parse JSON response to extract IDs
     let json_value: serde_json::Value = serde_json::from_str(&id_out_json)
         .expect("Failed to parse JSON response");
-    let rows = json_value
-        .get("results")
-        .and_then(|v| v.as_array())
-        .and_then(|arr| arr.first())
-        .and_then(|res| res.get("rows"))
-        .and_then(|v| v.as_array())
+    let rows = get_rows_as_hashmaps(&json_value)
         .expect("Expected rows in JSON response");
 
     let mut row_b_id: Option<String> = None;
     let mut row_c_id: Option<String> = None;
-    for row in rows {
+    for row in &rows {
         let content_value = row.get("content").map(extract_typed_value).unwrap_or(serde_json::Value::Null);
         let content = content_value.as_str().unwrap_or("");
         let id_value = row.get("id").map(extract_typed_value).unwrap_or(serde_json::Value::Null);

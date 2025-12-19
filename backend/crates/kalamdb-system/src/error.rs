@@ -67,7 +67,7 @@ impl<T, E: std::fmt::Display> SystemResultExt<T> for std::result::Result<T, E> {
     #[inline]
     fn into_arrow_error(self, context: &str) -> Result<T> {
         self.map_err(|e| SystemError::Arrow(arrow::error::ArrowError::ExternalError(Box::new(
-            std::io::Error::new(std::io::ErrorKind::Other, format!("{}: {}", context, e))
+            std::io::Error::other(format!("{}: {}", context, e))
         ))))
     }
 }

@@ -120,6 +120,21 @@ default_max_buffer = 10000
 # How often the background task checks and evicts expired events
 eviction_interval_seconds = 60
 
+[manifest_cache]
+# Eviction job interval in seconds (default: 600s = 10 minutes)
+# How often the eviction job runs to clean up stale manifest entries
+eviction_interval_seconds = 600
+
+# Maximum number of manifest entries in hot cache (default: 50000)
+# Older entries are evicted when this limit is reached (LRU policy)
+max_entries = 50000
+
+# TTL in days for manifest eviction (default: 7 days)
+# Manifests not accessed for this many days will be removed from both
+# hot cache (RAM) and RocksDB persistent cache
+# Set to 0 to disable manifest eviction (not recommended for long-running servers)
+eviction_ttl_days = 7
+
 [limits]
 # Maximum message size for REST API requests in bytes (default: 1MB)
 max_message_size = 1048576

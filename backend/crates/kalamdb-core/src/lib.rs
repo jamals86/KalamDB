@@ -41,6 +41,7 @@ pub mod error_extensions;
 pub mod jobs;
 pub mod live;
 pub mod manifest;
+pub mod pk;
 pub mod providers;
 pub mod schema_registry;
 pub mod slow_query_logger;

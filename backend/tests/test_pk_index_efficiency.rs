@@ -11,7 +11,7 @@
 #[path = "integration/common/mod.rs"]
 mod common;
 
-use common::{fixtures, TestServer};
+use common::{fixtures, QueryResultTestExt, TestServer};
 use kalamdb_api::models::ResponseStatus;
 use std::time::Instant;
 
@@ -107,10 +107,9 @@ async fn test_user_table_pk_index_update() {
         )
         .await;
     assert_eq!(select_response.status, ResponseStatus::Success);
-    if let Some(rows) = &select_response.results[0].rows {
-        assert_eq!(rows.len(), 1);
-        assert_eq!(rows[0].get("value").unwrap().as_i64().unwrap(), 999);
-    }
+    let rows = select_response.results[0].rows_as_maps();
+    assert_eq!(rows.len(), 1);
+    assert_eq!(rows[0].get("value").unwrap().as_i64().unwrap(), 999);
 
     // Insert 900 more rows (total 1000)
     for i in 101..=1000 {
@@ -157,10 +156,9 @@ async fn test_user_table_pk_index_update() {
         )
         .await;
     assert_eq!(select_response.status, ResponseStatus::Success);
-    if let Some(rows) = &select_response.results[0].rows {
-        assert_eq!(rows.len(), 1);
-        assert_eq!(rows[0].get("value").unwrap().as_i64().unwrap(), 888);
-    }
+    let rows = select_response.results[0].rows_as_maps();
+    assert_eq!(rows.len(), 1);
+    assert_eq!(rows[0].get("value").unwrap().as_i64().unwrap(), 888);
 
     // Performance assertion: With O(1) index lookup, 1000 rows should not be
     // 10x slower than 100 rows (which would indicate O(n) scan).
@@ -251,10 +249,9 @@ async fn test_shared_table_pk_index_update() {
         .execute_sql("SELECT id, price FROM idx_shared_ns.products WHERE id = 50")
         .await;
     assert_eq!(select_response.status, ResponseStatus::Success);
-    if let Some(rows) = &select_response.results[0].rows {
-        assert_eq!(rows.len(), 1);
-        assert_eq!(rows[0].get("price").unwrap().as_i64().unwrap(), 9999);
-    }
+    let rows = select_response.results[0].rows_as_maps();
+    assert_eq!(rows.len(), 1);
+    assert_eq!(rows[0].get("price").unwrap().as_i64().unwrap(), 9999);
 
     // Insert 900 more rows (total 1000)
     for i in 101..=1000 {
@@ -292,10 +289,9 @@ async fn test_shared_table_pk_index_update() {
         .execute_sql("SELECT id, price FROM idx_shared_ns.products WHERE id = 50")
         .await;
     assert_eq!(select_response.status, ResponseStatus::Success);
-    if let Some(rows) = &select_response.results[0].rows {
-        assert_eq!(rows.len(), 1);
-        assert_eq!(rows[0].get("price").unwrap().as_i64().unwrap(), 8888);
-    }
+    let rows = select_response.results[0].rows_as_maps();
+    assert_eq!(rows.len(), 1);
+    assert_eq!(rows[0].get("price").unwrap().as_i64().unwrap(), 8888);
 
     // Performance assertion: With O(1) index lookup, 1000 rows should not be
     // 10x slower than 100 rows (which would indicate O(n) scan).
@@ -372,10 +368,9 @@ async fn test_user_table_pk_index_select() {
     let latency_500_rows = start_500.elapsed();
 
     assert_eq!(select_response.status, ResponseStatus::Success);
-    if let Some(rows) = &select_response.results[0].rows {
-        assert_eq!(rows.len(), 1);
-        assert_eq!(rows[0].get("data").unwrap().as_str().unwrap(), "data_for_250");
-    }
+    let rows = select_response.results[0].rows_as_maps();
+    assert_eq!(rows.len(), 1);
+    assert_eq!(rows[0].get("data").unwrap().as_str().unwrap(), "data_for_250");
 
     // Insert 2000 more rows (total 2500)
     for i in 501..=2500 {
@@ -401,9 +396,8 @@ async fn test_user_table_pk_index_select() {
     let latency_2500_rows = start_2500.elapsed();
 
     assert_eq!(select_response.status, ResponseStatus::Success);
-    if let Some(rows) = &select_response.results[0].rows {
-        assert_eq!(rows.len(), 1);
-    }
+    let rows = select_response.results[0].rows_as_maps();
+    assert_eq!(rows.len(), 1);
 
     // Performance assertion: 5x more rows should not cause 5x slowdown with O(1) lookup
     let max_allowed = latency_500_rows.mul_f32(5.0);
@@ -492,9 +486,8 @@ async fn test_user_table_pk_index_delete() {
         )
         .await;
     assert_eq!(select_response.status, ResponseStatus::Success);
-    if let Some(rows) = &select_response.results[0].rows {
-        assert_eq!(rows.len(), 0, "Deleted row should not be returned");
-    }
+    let rows = select_response.results[0].rows_as_maps();
+    assert_eq!(rows.len(), 0, "Deleted row should not be returned");
 
     // Insert 1200 more rows (total ~1500)
     for i in 301..=1500 {
@@ -612,10 +605,9 @@ async fn test_user_table_pk_index_update_after_flush() {
         )
         .await;
     assert_eq!(select_before.status, ResponseStatus::Success);
-    if let Some(rows) = &select_before.results[0].rows {
-        assert_eq!(rows.len(), 1, "Expected 1 row before flush");
-        assert_eq!(rows[0].get("value").unwrap().as_i64().unwrap(), 250);
-    }
+    let rows = select_before.results[0].rows_as_maps();
+    assert_eq!(rows.len(), 1, "Expected 1 row before flush");
+    assert_eq!(rows[0].get("value").unwrap().as_i64().unwrap(), 250);
 
     // Flush the table to Parquet (cold storage)
     let flush_result = execute_flush_synchronously(&server, "flush_update_ns", "user_items").await;
@@ -694,18 +686,17 @@ async fn test_user_table_pk_index_update_after_flush() {
         .await;
     assert_eq!(select_after.status, ResponseStatus::Success);
     println!("📊 SELECT after UPDATE results: {:?}", select_after.results);
-    if let Some(rows) = &select_after.results[0].rows {
-        println!("📊 Row count: {}, rows: {:?}", rows.len(), rows);
-        assert_eq!(rows.len(), 1, "Expected 1 row after update");
-        let value = rows[0].get("value").unwrap().as_i64().unwrap();
-        let seq = rows[0].get("_seq");
-        println!("📊 value={}, _seq={:?}", value, seq);
-        assert_eq!(
-            value,
-            9999,
-            "Expected updated value 9999"
-        );
-    }
+    let rows = select_after.results[0].rows_as_maps();
+    println!("📊 Row count: {}, rows: {:?}", rows.len(), rows);
+    assert_eq!(rows.len(), 1, "Expected 1 row after update");
+    let value = rows[0].get("value").unwrap().as_i64().unwrap();
+    let seq = rows[0].get("_seq");
+    println!("📊 value={}, _seq={:?}", value, seq);
+    assert_eq!(
+        value,
+        9999,
+        "Expected updated value 9999"
+    );
 
     // Also verify that other rows are still accessible
     let select_other = server
@@ -715,14 +706,13 @@ async fn test_user_table_pk_index_update_after_flush() {
         )
         .await;
     assert_eq!(select_other.status, ResponseStatus::Success);
-    if let Some(rows) = &select_other.results[0].rows {
-        assert_eq!(rows.len(), 1, "Expected row id=1 to still exist");
-        assert_eq!(
-            rows[0].get("value").unwrap().as_i64().unwrap(),
-            10,
-            "Expected original value 10 for id=1"
-        );
-    }
+    let rows = select_other.results[0].rows_as_maps();
+    assert_eq!(rows.len(), 1, "Expected row id=1 to still exist");
+    assert_eq!(
+        rows[0].get("value").unwrap().as_i64().unwrap(),
+        10,
+        "Expected original value 10 for id=1"
+    );
 
     println!("✅ User table UPDATE after flush works correctly using PK index");
 }
@@ -780,10 +770,9 @@ async fn test_shared_table_pk_index_update_after_flush() {
         .execute_sql("SELECT id, price FROM flush_shared_ns.products WHERE id = 25")
         .await;
     assert_eq!(select_before.status, ResponseStatus::Success);
-    if let Some(rows) = &select_before.results[0].rows {
-        assert_eq!(rows.len(), 1, "Expected 1 row before flush");
-        assert_eq!(rows[0].get("price").unwrap().as_i64().unwrap(), 2500);
-    }
+    let rows = select_before.results[0].rows_as_maps();
+    assert_eq!(rows.len(), 1, "Expected 1 row before flush");
+    assert_eq!(rows[0].get("price").unwrap().as_i64().unwrap(), 2500);
 
     // Flush the table to Parquet (cold storage)
     let flush_result =
@@ -819,28 +808,26 @@ async fn test_shared_table_pk_index_update_after_flush() {
         .execute_sql("SELECT id, price FROM flush_shared_ns.products WHERE id = 25")
         .await;
     assert_eq!(select_after.status, ResponseStatus::Success);
-    if let Some(rows) = &select_after.results[0].rows {
-        assert_eq!(rows.len(), 1, "Expected 1 row after update");
-        assert_eq!(
-            rows[0].get("price").unwrap().as_i64().unwrap(),
-            99999,
-            "Expected updated price 99999"
-        );
-    }
+    let rows = select_after.results[0].rows_as_maps();
+    assert_eq!(rows.len(), 1, "Expected 1 row after update");
+    assert_eq!(
+        rows[0].get("price").unwrap().as_i64().unwrap(),
+        99999,
+        "Expected updated price 99999"
+    );
 
     // Also verify that other rows are still accessible
     let select_other = server
         .execute_sql("SELECT id, price FROM flush_shared_ns.products WHERE id = 1")
         .await;
     assert_eq!(select_other.status, ResponseStatus::Success);
-    if let Some(rows) = &select_other.results[0].rows {
-        assert_eq!(rows.len(), 1, "Expected row id=1 to still exist");
-        assert_eq!(
-            rows[0].get("price").unwrap().as_i64().unwrap(),
-            100,
-            "Expected original price 100 for id=1"
-        );
-    }
+    let rows = select_other.results[0].rows_as_maps();
+    assert_eq!(rows.len(), 1, "Expected row id=1 to still exist");
+    assert_eq!(
+        rows[0].get("price").unwrap().as_i64().unwrap(),
+        100,
+        "Expected original price 100 for id=1"
+    );
 
     println!("✅ Shared table UPDATE after flush works correctly using PK index");
 }
@@ -922,13 +909,12 @@ async fn test_user_table_pk_index_isolation() {
         )
         .await;
     assert_eq!(alice_select.status, ResponseStatus::Success);
-    if let Some(rows) = &alice_select.results[0].rows {
-        assert_eq!(rows.len(), 1);
-        assert_eq!(
-            rows[0].get("secret").unwrap().as_str().unwrap(),
-            "alice_updated"
-        );
-    }
+    let rows = alice_select.results[0].rows_as_maps();
+    assert_eq!(rows.len(), 1);
+    assert_eq!(
+        rows[0].get("secret").unwrap().as_str().unwrap(),
+        "alice_updated"
+    );
 
     // Verify Bob's row id=5 is unchanged
     let bob_select = server
@@ -938,13 +924,12 @@ async fn test_user_table_pk_index_isolation() {
         )
         .await;
     assert_eq!(bob_select.status, ResponseStatus::Success);
-    if let Some(rows) = &bob_select.results[0].rows {
-        assert_eq!(rows.len(), 1);
-        assert_eq!(
-            rows[0].get("secret").unwrap().as_str().unwrap(),
-            "bob_secret_5"
-        );
-    }
+    let rows = bob_select.results[0].rows_as_maps();
+    assert_eq!(rows.len(), 1);
+    assert_eq!(
+        rows[0].get("secret").unwrap().as_str().unwrap(),
+        "bob_secret_5"
+    );
 
     // Bob updates his row id=5
     let update_response = server
@@ -968,12 +953,11 @@ async fn test_user_table_pk_index_isolation() {
         )
         .await;
     assert_eq!(alice_select.status, ResponseStatus::Success);
-    if let Some(rows) = &alice_select.results[0].rows {
-        assert_eq!(
-            rows[0].get("secret").unwrap().as_str().unwrap(),
-            "alice_updated"
-        );
-    }
+    let rows = alice_select.results[0].rows_as_maps();
+    assert_eq!(
+        rows[0].get("secret").unwrap().as_str().unwrap(),
+        "alice_updated"
+    );
 
     let bob_select = server
         .execute_sql_as_user(
@@ -982,12 +966,11 @@ async fn test_user_table_pk_index_isolation() {
         )
         .await;
     assert_eq!(bob_select.status, ResponseStatus::Success);
-    if let Some(rows) = &bob_select.results[0].rows {
-        assert_eq!(
-            rows[0].get("secret").unwrap().as_str().unwrap(),
-            "bob_updated"
-        );
-    }
+    let rows = bob_select.results[0].rows_as_maps();
+    assert_eq!(
+        rows[0].get("secret").unwrap().as_str().unwrap(),
+        "bob_updated"
+    );
 
     println!("✅ User table PK index provides correct user isolation");
 }

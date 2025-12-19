@@ -15,7 +15,7 @@
 #[path = "../../common/mod.rs"]
 mod common;
 
-use common::{fixtures, TestServer};
+use common::{fixtures, QueryResultTestExt, TestServer};
 use kalamdb_api::models::ResponseStatus;
 
 // ============================================================================
@@ -46,7 +46,8 @@ async fn test_01_list_system_tables() {
     );
 
     // Verify we have at least one table
-    if let Some(rows) = &response.results.first().and_then(|r| r.rows.as_ref()) {
+    if let Some(result) = response.results.first() {
+        let rows = result.rows_as_maps();
         assert!(rows.len() >= 1, "Expected at least 1 user table");
 
         // Verify the messages table exists
@@ -172,7 +173,8 @@ async fn test_04_query_system_namespaces() {
         response.error
     );
 
-    if let Some(rows) = &response.results.first().and_then(|r| r.rows.as_ref()) {
+    if let Some(result) = response.results.first() {
+        let rows = result.rows_as_maps();
         assert!(
             rows.len() <= 2,
             "LIMIT 2 returned more than 2 rows: {}",
@@ -206,7 +208,8 @@ async fn test_05_query_system_tables() {
         response.error
     );
 
-    if let Some(rows) = &response.results.first().and_then(|r| r.rows.as_ref()) {
+    if let Some(result) = response.results.first() {
+        let rows = result.rows_as_maps();
         assert!(rows.len() >= 2, "Expected at least 2 tables");
 
         // Verify table types
@@ -267,7 +270,8 @@ async fn test_06_query_system_users_with_filters() {
         response.error
     );
 
-    if let Some(rows) = &response.results.first().and_then(|r| r.rows.as_ref()) {
+    if let Some(result) = response.results.first() {
+        let rows = result.rows_as_maps();
         assert!(
             rows.len() <= 2,
             "LIMIT 2 returned more than 2 rows: {}",
@@ -323,7 +327,8 @@ async fn test_07_insert_users_into_system_table() {
         response.error
     );
 
-    if let Some(rows) = &response.results.first().and_then(|r| r.rows.as_ref()) {
+    if let Some(result) = response.results.first() {
+        let rows = result.rows_as_maps();
         assert_eq!(rows.len(), 1, "Expected 1 user row");
 
         let row = &rows[0];
@@ -383,7 +388,8 @@ async fn test_08_insert_storage_locations() {
         response.error
     );
 
-    if let Some(rows) = &response.results.first().and_then(|r| r.rows.as_ref()) {
+    if let Some(result) = response.results.first() {
+        let rows = result.rows_as_maps();
         println!(
             "system.storages rows returned: {} (write support pending)",
             rows.len()
@@ -415,7 +421,8 @@ async fn test_09_query_table_schemas() {
         response.error
     );
 
-    if let Some(rows) = &response.results.first().and_then(|r| r.rows.as_ref()) {
+    if let Some(result) = response.results.first() {
+        let rows = result.rows_as_maps();
         assert_eq!(rows.len(), 1, "Expected 1 table row");
 
         let schema_version = rows[0]
@@ -449,7 +456,8 @@ async fn test_10_query_table_metadata() {
         response.error
     );
 
-    if let Some(rows) = &response.results.first().and_then(|r| r.rows.as_ref()) {
+    if let Some(result) = response.results.first() {
+        let rows = result.rows_as_maps();
         assert_eq!(rows.len(), 1, "Expected 1 table");
 
         let row = &rows[0];
@@ -486,7 +494,8 @@ async fn test_11_drop_table_and_verify_cleanup() {
         .await;
 
     assert_eq!(response.status, ResponseStatus::Success);
-    if let Some(rows) = &response.results.first().and_then(|r| r.rows.as_ref()) {
+    if let Some(result) = response.results.first() {
+        let rows = result.rows_as_maps();
         assert_eq!(rows.len(), 1, "Table should exist before drop");
     }
 
@@ -505,7 +514,8 @@ async fn test_11_drop_table_and_verify_cleanup() {
         .await;
 
     assert_eq!(response.status, ResponseStatus::Success);
-    if let Some(rows) = &response.results.first().and_then(|r| r.rows.as_ref()) {
+    if let Some(result) = response.results.first() {
+        let rows = result.rows_as_maps();
         assert_eq!(rows.len(), 0, "Table should be removed from system.tables");
     }
 }
@@ -560,7 +570,8 @@ async fn test_12_view_table_types_from_system_tables() {
         response.error
     );
 
-    if let Some(rows) = &response.results.first().and_then(|r| r.rows.as_ref()) {
+    if let Some(result) = response.results.first() {
+        let rows = result.rows_as_maps();
         assert!(rows.len() >= 2, "Expected at least 2 tables");
 
         // Verify each table type
@@ -629,7 +640,8 @@ async fn test_13_filter_tables_by_type() {
         response.error
     );
 
-    if let Some(rows) = &response.results.first().and_then(|r| r.rows.as_ref()) {
+    if let Some(result) = response.results.first() {
+        let rows = result.rows_as_maps();
         assert_eq!(rows.len(), 2, "Expected 2 shared tables");
 
         let names: Vec<&str> = rows
@@ -656,7 +668,8 @@ async fn test_13_filter_tables_by_type() {
         response.error
     );
 
-    if let Some(rows) = &response.results.first().and_then(|r| r.rows.as_ref()) {
+    if let Some(result) = response.results.first() {
+        let rows = result.rows_as_maps();
         assert_eq!(rows.len(), 1, "Expected 1 user table");
     }
 }
@@ -709,7 +722,8 @@ async fn test_14_update_system_users() {
 
     assert_eq!(response.status, ResponseStatus::Success);
 
-    if let Some(rows) = &response.results.first().and_then(|r| r.rows.as_ref()) {
+    if let Some(result) = response.results.first() {
+        let rows = result.rows_as_maps();
         assert_eq!(rows.len(), 1, "Expected 1 user row");
 
         let username = rows[0].get("username").and_then(|v| v.as_str()).unwrap();
@@ -767,7 +781,8 @@ async fn test_15_update_multiple_users() {
         .execute_sql("SELECT user_id, email FROM system.users WHERE user_id LIKE 'batch_user%'")
         .await;
 
-    if let Some(rows) = &response.results.first().and_then(|r| r.rows.as_ref()) {
+    if let Some(result) = response.results.first() {
+        let rows = result.rows_as_maps();
         assert_eq!(rows.len(), 3, "Expected 3 updated users");
 
         for row in rows.iter() {
@@ -817,7 +832,8 @@ async fn test_20_complex_system_queries() {
         response.error
     );
 
-    if let Some(rows) = &response.results.first().and_then(|r| r.rows.as_ref()) {
+    if let Some(result) = response.results.first() {
+        let rows = result.rows_as_maps();
         assert!(rows.len() >= 3, "Expected at least 3 tables");
     }
 }

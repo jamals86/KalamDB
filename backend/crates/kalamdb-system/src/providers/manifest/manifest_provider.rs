@@ -17,12 +17,22 @@ use datafusion::physical_plan::ExecutionPlan;
 use kalamdb_store::entity_store::EntityStore;
 use kalamdb_store::StorageBackend;
 use std::any::Any;
-use std::sync::Arc;
+use std::sync::{Arc, RwLock};
+
+/// Callback type for checking if a cache key is in hot memory
+pub type InMemoryChecker = Arc<dyn Fn(&str) -> bool + Send + Sync>;
+
+/// Callback type for getting last_accessed timestamp for a cache key (returns milliseconds, or None if not in hot cache)
+pub type LastAccessedGetter = Arc<dyn Fn(&str) -> Option<i64> + Send + Sync>;
 
 /// System.manifest table provider using EntityStore architecture
 pub struct ManifestTableProvider {
     store: ManifestStore,
     schema: SchemaRef,
+    /// Optional callback to check if a cache key is in hot memory (injected from kalamdb-core)
+    in_memory_checker: RwLock<Option<InMemoryChecker>>,
+    /// Optional callback to get last_accessed timestamp for a cache key (injected from kalamdb-core)
+    last_accessed_getter: RwLock<Option<LastAccessedGetter>>,
 }
 
 impl std::fmt::Debug for ManifestTableProvider {
@@ -43,7 +53,49 @@ impl ManifestTableProvider {
         Self {
             store: new_manifest_store(backend),
             schema: ManifestTableSchema::schema(),
+            in_memory_checker: RwLock::new(None),
+            last_accessed_getter: RwLock::new(None),
         }
+    }
+
+    /// Set the in-memory checker callback
+    ///
+    /// This callback is injected from kalamdb-core to check if a cache key
+    /// is currently in the hot cache (RAM).
+    pub fn set_in_memory_checker(&self, checker: InMemoryChecker) {
+        if let Ok(mut guard) = self.in_memory_checker.write() {
+            *guard = Some(checker);
+        }
+    }
+
+    /// Set the last_accessed getter callback
+    ///
+    /// This callback is injected from kalamdb-core to get the last_accessed timestamp
+    /// for entries in the hot cache.
+    pub fn set_last_accessed_getter(&self, getter: LastAccessedGetter) {
+        if let Ok(mut guard) = self.last_accessed_getter.write() {
+            *guard = Some(getter);
+        }
+    }
+
+    /// Check if a cache key is in hot memory
+    fn is_in_memory(&self, cache_key: &str) -> bool {
+        if let Ok(guard) = self.in_memory_checker.read() {
+            if let Some(ref checker) = *guard {
+                return checker(cache_key);
+            }
+        }
+        false // Default to false if no checker is set
+    }
+
+    /// Get last_accessed timestamp for a cache key (returns seconds since epoch, or None)
+    fn get_last_accessed(&self, cache_key: &str) -> Option<i64> {
+        if let Ok(guard) = self.last_accessed_getter.read() {
+            if let Some(ref getter) = *guard {
+                return getter(cache_key);
+            }
+        }
+        None
     }
 
     /// Scan all manifest cache entries and return as RecordBatch
@@ -62,9 +114,10 @@ impl ManifestTableProvider {
         let mut etags = Vec::with_capacity(entries.len());
         let mut last_refreshed_vals = Vec::with_capacity(entries.len());
         let mut last_accessed_vals = Vec::with_capacity(entries.len());
-        let mut ttl_vals = Vec::with_capacity(entries.len());
+        let mut in_memory_vals = Vec::with_capacity(entries.len());
         let mut source_paths = Vec::with_capacity(entries.len());
         let mut sync_states = Vec::with_capacity(entries.len());
+        let mut manifest_jsons = Vec::with_capacity(entries.len());
 
         // Build arrays by iterating entries once
         for (key_bytes, entry) in entries {
@@ -77,16 +130,28 @@ impl ManifestTableProvider {
                 continue;
             }
 
-            cache_keys.push(Some(cache_key.to_string()));
+            let cache_key_str = cache_key.to_string();
+            let is_hot = self.is_in_memory(&cache_key_str);
+            
+            // Get last_accessed from hot cache if available, otherwise use last_refreshed as fallback
+            let last_accessed_ts = self.get_last_accessed(&cache_key_str)
+                .map(|ts| ts * 1000) // Convert seconds to milliseconds
+                .unwrap_or_else(|| entry.last_refreshed * 1000);
+            
+            // Serialize manifest_json before moving entry fields
+            let manifest_json_str = entry.manifest_json();
+
+            cache_keys.push(Some(cache_key_str));
             namespace_ids.push(Some(parts[0].to_string()));
             table_names.push(Some(parts[1].to_string()));
             scopes.push(Some(parts[2].to_string()));
             etags.push(entry.etag);
             last_refreshed_vals.push(Some(entry.last_refreshed * 1000)); // Convert to milliseconds
-            last_accessed_vals.push(Some(entry.last_refreshed * 1000)); // Fallback to last_refreshed
-            ttl_vals.push(Some(0i64)); // Use 0 to indicate "see config"
+            last_accessed_vals.push(Some(last_accessed_ts));
+            in_memory_vals.push(Some(is_hot));
             source_paths.push(Some(entry.source_path));
             sync_states.push(Some(entry.sync_state.to_string()));
+            manifest_jsons.push(Some(manifest_json_str));
         }
 
         // Build batch using RecordBatchBuilder
@@ -99,9 +164,10 @@ impl ManifestTableProvider {
             .add_string_column_owned(etags)
             .add_timestamp_micros_column(last_refreshed_vals)
             .add_timestamp_micros_column(last_accessed_vals)
-            .add_int64_column(ttl_vals)
+            .add_boolean_column(in_memory_vals)
             .add_string_column_owned(source_paths)
-            .add_string_column_owned(sync_states);
+            .add_string_column_owned(sync_states)
+            .add_string_column_owned(manifest_jsons);
 
         builder.build().into_arrow_error("Failed to create RecordBatch")
     }
@@ -157,7 +223,8 @@ impl SystemTableProviderExt for ManifestTableProvider {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use kalamdb_commons::types::{ManifestCacheEntry, SyncState};
+    use kalamdb_commons::types::{Manifest, ManifestCacheEntry, SyncState};
+    use kalamdb_commons::{NamespaceId, TableId, TableName};
     use kalamdb_store::test_utils::InMemoryBackend;
 
     #[tokio::test]
@@ -167,7 +234,7 @@ mod tests {
 
         let batch = provider.scan_to_record_batch().unwrap();
         assert_eq!(batch.num_rows(), 0);
-        assert_eq!(batch.num_columns(), 10);
+        assert_eq!(batch.num_columns(), 11); // Updated column count
     }
 
     #[tokio::test]
@@ -176,8 +243,10 @@ mod tests {
         let provider = ManifestTableProvider::new(backend.clone());
 
         // Insert test entries directly via store
+        let table_id = TableId::new(NamespaceId::new("ns1"), TableName::new("tbl1"));
+        let manifest = Manifest::new(table_id, None);
         let entry = ManifestCacheEntry::new(
-            r#"{"table_id":"test","scope":"shared"}"#.to_string(),
+            manifest,
             Some("etag123".to_string()),
             1000,
             "s3://bucket/ns1/tbl1/manifest.json".to_string(),
@@ -190,7 +259,7 @@ mod tests {
 
         let batch = provider.scan_to_record_batch().unwrap();
         assert_eq!(batch.num_rows(), 1);
-        assert_eq!(batch.num_columns(), 10);
+        assert_eq!(batch.num_columns(), 11); // Updated column count
 
         // Verify column names match schema
         let schema = batch.schema();
@@ -199,5 +268,7 @@ mod tests {
         assert_eq!(schema.field(2).name(), "table_name");
         assert_eq!(schema.field(3).name(), "scope");
         assert_eq!(schema.field(4).name(), "etag");
+        assert_eq!(schema.field(7).name(), "in_memory");
+        assert_eq!(schema.field(10).name(), "manifest_json");
     }
 }

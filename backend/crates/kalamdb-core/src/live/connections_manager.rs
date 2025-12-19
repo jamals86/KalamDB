@@ -55,8 +55,6 @@ pub struct SubscriptionHandle {
     pub filter_expr: Option<Arc<Expr>>,
     /// Column projections for filtering notification payload (None = all columns)
     pub projections: Option<Arc<Vec<String>>>,
-    /// Serialization mode for row data (Simple or Typed)
-    pub serialization_mode: kalamdb_commons::websocket::SerializationMode,
     /// Shared notification channel
     pub notification_tx: Arc<NotificationSender>,
 }
@@ -87,9 +85,6 @@ pub struct SubscriptionState {
     pub batch_size: usize,
     /// Snapshot boundary SeqId for consistent batch loading
     pub snapshot_end_seq: Option<SeqId>,
-    /// Serialization mode for row data (Simple or Typed)
-    /// Defaults to Typed for backward compatibility with existing clients
-    pub serialization_mode: kalamdb_commons::websocket::SerializationMode,
     /// Shared notification channel (Arc for zero-copy)
     pub notification_tx: Arc<NotificationSender>,
 }

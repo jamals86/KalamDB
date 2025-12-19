@@ -201,9 +201,11 @@ impl TablesTableProvider {
         self.list_tables()
     }
 
-    /// Scan all tables and return as RecordBatch (includes all versions with is_latest flag)
+    /// Scan all tables and return as RecordBatch (latest versions only)
     pub fn scan_all_tables(&self) -> Result<RecordBatch, SystemError> {
-        let entries = self.store.scan_all_with_versions()?;
+        // Only return latest versions to avoid duplicates
+        // (the store has both <lat> pointer AND <ver>N entries)
+        let entries = self.store.scan_all_latest()?;
 
         // Extract data into vectors
         let mut table_ids = Vec::with_capacity(entries.len());
@@ -219,7 +221,9 @@ impl TablesTableProvider {
         let mut access_levels = Vec::with_capacity(entries.len());
         let mut is_latest_flags = Vec::with_capacity(entries.len());
 
-        for (_version_key, table_def, is_latest) in entries {
+        for (_table_id, table_def) in entries {
+            // All entries from scan_all_latest are latest versions
+            let is_latest = true;
             // Convert TableId to string format
             let table_id_str = format!(
                 "{}:{}",

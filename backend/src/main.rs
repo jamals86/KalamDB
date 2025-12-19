@@ -12,13 +12,9 @@ use anyhow::Result;
 use config::ServerConfig;
 use lifecycle::{bootstrap, run};
 use log::info;
-use std::env;
 
 #[actix_web::main]
 async fn main() -> Result<()> {
-    // Parse command-line arguments
-    let _args: Vec<String> = env::args().collect();
-
     // Normal server startup
     // Load configuration from server.toml (fallback to config.toml for backward compatibility)
     let config_path = if std::path::Path::new("server.toml").exists() {

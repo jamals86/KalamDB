@@ -199,14 +199,11 @@ fn extract_scalar(json_output: &str, field: &str) -> i64 {
     let value: Value = serde_json::from_str(json_output)
         .unwrap_or_else(|e| panic!("Failed to parse JSON output: {} in: {}", e, json_output));
 
-    let field_value = value
-        .get("results")
-        .and_then(|v| v.as_array())
-        .and_then(|arr| arr.first())
-        .and_then(|res| res.get("rows"))
-        .and_then(|rows| rows.as_array())
-        .and_then(|rows| rows.first())
-        .and_then(|row| row.get(field))
+    let rows = get_rows_as_hashmaps(&value)
+        .unwrap_or_else(|| panic!("JSON response missing rows: {}", json_output));
+    let first_row = rows.first()
+        .unwrap_or_else(|| panic!("JSON response has no rows: {}", json_output));
+    let field_value = first_row.get(field)
         .unwrap_or_else(|| panic!("JSON response missing field '{}': {}", field, json_output));
     
     let field_value = extract_typed_value(field_value);

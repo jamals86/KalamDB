@@ -282,29 +282,32 @@ impl CLISession {
         }
 
         let result = &response.results[0];
-        let rows = match &result.rows {
-            Some(rows) if !rows.is_empty() => rows,
-            _ => return Ok(None),
-        };
+        if result.rows.as_ref().is_none_or(|r| r.is_empty()) {
+            return Ok(None);
+        }
 
-        let row = &rows[0];
-        let status = row.get("status").and_then(|v| v.as_str()).unwrap_or("");
+        // Use row_as_map helper to get key-value access
+        let row_map = match result.row_as_map(0) {
+            Some(m) => m,
+            None => return Ok(None),
+        };
+        let status = row_map.get("status").and_then(|v| v.as_str()).unwrap_or("");
 
         if status != "subscription_required" {
             return Ok(None);
         }
 
-        let message = row
+        let message = row_map
             .get("message")
             .and_then(|v| v.as_str())
             .map(|s| s.to_string());
 
-        let ws_url = row
+        let ws_url = row_map
             .get("ws_url")
             .and_then(|v| v.as_str())
             .map(|s| s.to_string());
 
-        let subscription_value = row.get("subscription").ok_or_else(|| {
+        let subscription_value = row_map.get("subscription").ok_or_else(|| {
             CLIError::ParseError("Missing subscription metadata in server response".into())
         })?;
 
@@ -759,9 +762,13 @@ impl CLISession {
             let mut namespaces = Vec::new();
             if let Some(result) = ns_resp.results.first() {
                 if let Some(rows) = &result.rows {
+                    // Find the index of "name" column in schema
+                    let name_idx = result.schema.iter().position(|f| f.name == "name");
                     for row in rows {
-                        if let Some(ns) = row.get("name").and_then(|v| v.as_str()) {
-                            namespaces.push(ns.to_string());
+                        if let Some(idx) = name_idx {
+                            if let Some(ns) = row.get(idx).and_then(|v| v.as_str()) {
+                                namespaces.push(ns.to_string());
+                            }
                         }
                     }
                 }
@@ -797,9 +804,17 @@ impl CLISession {
             std::collections::HashMap::new();
         if let Some(result) = response.results.first() {
             if let Some(rows) = &result.rows {
+                // Find column indices in schema
+                let table_name_idx = result.schema.iter().position(|f| f.name == "table_name");
+                let ns_idx = result.schema.iter().position(|f| f.name == "namespace_id");
+                
                 for row in rows {
-                    let name_opt = row.get("table_name").and_then(|v| v.as_str());
-                    let ns_opt = row.get("namespace_id").and_then(|v| v.as_str());
+                    let name_opt = table_name_idx
+                        .and_then(|idx| row.get(idx))
+                        .and_then(|v| v.as_str());
+                    let ns_opt = ns_idx
+                        .and_then(|idx| row.get(idx))
+                        .and_then(|v| v.as_str());
                     if let Some(name) = name_opt {
                         table_names.push(name.to_string());
                         if let Some(ns) = ns_opt {
@@ -851,11 +866,18 @@ impl CLISession {
                 if let Some(rows) = &result.rows {
                     let mut column_map: HashMap<String, Vec<String>> = HashMap::new();
 
+                    // Find column indices in schema
+                    let table_name_idx = result.schema.iter().position(|f| f.name == "table_name");
+                    let column_name_idx = result.schema.iter().position(|f| f.name == "column_name");
+
                     for row in rows {
-                        if let (Some(table), Some(column)) = (
-                            row.get("table_name").and_then(|v| v.as_str()),
-                            row.get("column_name").and_then(|v| v.as_str()),
-                        ) {
+                        let table_opt = table_name_idx
+                            .and_then(|idx| row.get(idx))
+                            .and_then(|v| v.as_str());
+                        let column_opt = column_name_idx
+                            .and_then(|idx| row.get(idx))
+                            .and_then(|v| v.as_str());
+                        if let (Some(table), Some(column)) = (table_opt, column_opt) {
                             column_map
                                 .entry(table.to_string())
                                 .or_default()

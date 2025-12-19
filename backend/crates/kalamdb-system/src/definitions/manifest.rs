@@ -14,9 +14,10 @@ use kalamdb_commons::{NamespaceId, TableName};
 /// - etag TEXT (nullable, storage version identifier)
 /// - last_refreshed TIMESTAMP NOT NULL
 /// - last_accessed TIMESTAMP NOT NULL
-/// - ttl_seconds BIGINT NOT NULL
+/// - in_memory BOOLEAN NOT NULL (true if manifest is in hot cache)
 /// - source_path TEXT NOT NULL
 /// - sync_state TEXT NOT NULL (in_sync, stale, error)
+/// - manifest_json TEXT NOT NULL (serialized Manifest object)
 pub fn manifest_table_definition() -> TableDefinition {
     let columns = vec![
         ColumnDefinition::new(
@@ -90,14 +91,14 @@ pub fn manifest_table_definition() -> TableDefinition {
             Some("Last access timestamp (in-memory tracking)".to_string()),
         ),
         ColumnDefinition::new(
-            "ttl_seconds",
+            "in_memory",
             8,
-            KalamDataType::BigInt,
+            KalamDataType::Boolean,
             false,
             false,
             false,
             ColumnDefault::None,
-            Some("Cache TTL in seconds".to_string()),
+            Some("True if manifest is currently in hot cache (RAM)".to_string()),
         ),
         ColumnDefinition::new(
             "source_path",
@@ -118,6 +119,16 @@ pub fn manifest_table_definition() -> TableDefinition {
             false,
             ColumnDefault::None,
             Some("Synchronization state: in_sync, stale, error".to_string()),
+        ),
+        ColumnDefinition::new(
+            "manifest_json",
+            11,
+            KalamDataType::Text,
+            false,
+            false,
+            false,
+            ColumnDefault::None,
+            Some("Serialized Manifest object as JSON".to_string()),
         ),
     ];
 

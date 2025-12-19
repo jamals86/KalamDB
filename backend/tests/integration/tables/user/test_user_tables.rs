@@ -13,7 +13,7 @@
 #[path = "../../common/mod.rs"]
 mod common;
 
-use common::{fixtures, TestServer};
+use common::{fixtures, QueryResultTestExt, TestServer};
 use kalamdb_api::models::{ResponseStatus, SqlResponse};
 
 /// Helper to create a user table for testing
@@ -132,16 +132,13 @@ async fn test_user_table_data_isolation() {
         response.error
     );
 
-    if let Some(rows) = &response.results[0].rows {
-        // User1 should only see their own note
-        assert_eq!(rows.len(), 1, "User1 should only see 1 row");
+    let rows = response.results[0].rows_as_maps();
+    // User1 should only see their own note
+    assert_eq!(rows.len(), 1, "User1 should only see 1 row");
 
-        let row = &rows[0];
-        assert_eq!(row.get("id").unwrap().as_str().unwrap(), "note1");
-        assert_eq!(row.get("content").unwrap().as_str().unwrap(), "User1 note");
-    } else {
-        panic!("Expected rows in response");
-    }
+    let row = &rows[0];
+    assert_eq!(row.get("id").unwrap().as_str().unwrap(), "note1");
+    assert_eq!(row.get("content").unwrap().as_str().unwrap(), "User1 note");
 
     // User2 selects - should only see their own data
     let response = server
@@ -155,16 +152,13 @@ async fn test_user_table_data_isolation() {
         response.error
     );
 
-    if let Some(rows) = &response.results[0].rows {
-        // User2 should only see their own note
-        assert_eq!(rows.len(), 1, "User2 should only see 1 row");
+    let rows = response.results[0].rows_as_maps();
+    // User2 should only see their own note
+    assert_eq!(rows.len(), 1, "User2 should only see 1 row");
 
-        let row = &rows[0];
-        assert_eq!(row.get("id").unwrap().as_str().unwrap(), "note2");
-        assert_eq!(row.get("content").unwrap().as_str().unwrap(), "User2 note");
-    } else {
-        panic!("Expected rows in response");
-    }
+    let row = &rows[0];
+    assert_eq!(row.get("id").unwrap().as_str().unwrap(), "note2");
+    assert_eq!(row.get("content").unwrap().as_str().unwrap(), "User2 note");
 }
 
 #[actix_web::test]
@@ -216,13 +210,12 @@ async fn test_user_table_update_with_isolation() {
         )
         .await;
 
-    if let Some(rows) = &response.results[0].rows {
-        assert_eq!(rows.len(), 1);
-        assert_eq!(
-            rows[0].get("content").unwrap().as_str().unwrap(),
-            "Updated by user1"
-        );
-    }
+    let rows = response.results[0].rows_as_maps();
+    assert_eq!(rows.len(), 1);
+    assert_eq!(
+        rows[0].get("content").unwrap().as_str().unwrap(),
+        "Updated by user1"
+    );
 
     // Verify user2's data unchanged
     let response = server
@@ -232,13 +225,12 @@ async fn test_user_table_update_with_isolation() {
         )
         .await;
 
-    if let Some(rows) = &response.results[0].rows {
-        assert_eq!(rows.len(), 1);
-        assert_eq!(
-            rows[0].get("content").unwrap().as_str().unwrap(),
-            "User2 note"
-        );
-    }
+    let rows = response.results[0].rows_as_maps();
+    assert_eq!(rows.len(), 1);
+    assert_eq!(
+        rows[0].get("content").unwrap().as_str().unwrap(),
+        "User2 note"
+    );
 }
 
 #[actix_web::test]
@@ -294,10 +286,9 @@ async fn test_user_table_delete_with_isolation() {
     );
 
     if !response.results.is_empty() {
-        if let Some(rows) = &response.results[0].rows {
-            // Soft delete should filter out deleted rows
-            assert_eq!(rows.len(), 0, "Deleted row should not be visible");
-        }
+        let rows = response.results[0].rows_as_maps();
+        // Soft delete should filter out deleted rows
+        assert_eq!(rows.len(), 0, "Deleted row should not be visible");
     }
 
     // Verify user2's data still exists
@@ -313,10 +304,9 @@ async fn test_user_table_delete_with_isolation() {
     );
 
     if !response.results.is_empty() {
-        if let Some(rows) = &response.results[0].rows {
-            assert_eq!(rows.len(), 1, "User2's data should still exist");
-            assert_eq!(rows[0].get("id").unwrap().as_str().unwrap(), "note2");
-        }
+        let rows = response.results[0].rows_as_maps();
+        assert_eq!(rows.len(), 1, "User2's data should still exist");
+        assert_eq!(rows[0].get("id").unwrap().as_str().unwrap(), "note2");
     }
 }
 
@@ -352,19 +342,16 @@ async fn test_user_table_system_columns() {
         response.error
     );
 
-    if let Some(rows) = &response.results[0].rows {
-        assert_eq!(rows.len(), 1);
+    let rows = response.results[0].rows_as_maps();
+    assert_eq!(rows.len(), 1);
 
-        let row = &rows[0];
-        // Verify system columns exist
-        assert!(row.contains_key("_seq"), "_seq column should exist");
-        assert!(row.contains_key("_deleted"), "_deleted column should exist");
+    let row = &rows[0];
+    // Verify system columns exist
+    assert!(row.contains_key("_seq"), "_seq column should exist");
+    assert!(row.contains_key("_deleted"), "_deleted column should exist");
 
-        // _deleted should be false for new rows
-        assert_eq!(row.get("_deleted").unwrap().as_bool().unwrap(), false);
-    } else {
-        panic!("Expected rows in response");
-    }
+    // _deleted should be false for new rows
+    assert_eq!(row.get("_deleted").unwrap().as_bool().unwrap(), false);
 }
 
 #[actix_web::test]
@@ -396,9 +383,8 @@ async fn test_user_table_multiple_inserts() {
 
     assert_eq!(response.status, ResponseStatus::Success);
 
-    if let Some(rows) = &response.results[0].rows {
-        assert_eq!(rows.len(), 5, "Should have 5 rows");
-    }
+    let rows = response.results[0].rows_as_maps();
+    assert_eq!(rows.len(), 5, "Should have 5 rows");
 }
 
 #[actix_web::test]
@@ -425,13 +411,12 @@ async fn test_user_table_user_cannot_access_other_users_data() {
 
     assert_eq!(response.status, ResponseStatus::Success);
 
-    if let Some(rows) = &response.results[0].rows {
-        assert_eq!(
-            rows.len(),
-            0,
-            "User2 should not see any data (user1's data is isolated)"
-        );
-    }
+    let rows = response.results[0].rows_as_maps();
+    assert_eq!(
+        rows.len(),
+        0,
+        "User2 should not see any data (user1's data is isolated)"
+    );
 
     // Try to update user1's data as user2 - should have no effect
     let response = server
@@ -452,12 +437,11 @@ async fn test_user_table_user_cannot_access_other_users_data() {
         )
         .await;
 
-    if let Some(rows) = &response.results[0].rows {
-        assert_eq!(rows.len(), 1);
-        assert_eq!(
-            rows[0].get("content").unwrap().as_str().unwrap(),
-            "Secret user1 data",
-            "User1's data should not be modified by user2"
-        );
-    }
+    let rows = response.results[0].rows_as_maps();
+    assert_eq!(rows.len(), 1);
+    assert_eq!(
+        rows[0].get("content").unwrap().as_str().unwrap(),
+        "Secret user1 data",
+        "User1's data should not be modified by user2"
+    );
 }

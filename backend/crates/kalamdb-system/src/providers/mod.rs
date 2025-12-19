@@ -18,7 +18,7 @@ pub mod users;
 pub use audit_logs::AuditLogsTableProvider;
 pub use jobs::JobsTableProvider;
 pub use live_queries::LiveQueriesTableProvider;
-pub use manifest::ManifestTableProvider;
+pub use manifest::{InMemoryChecker, LastAccessedGetter, ManifestTableProvider};
 pub use namespaces::NamespacesTableProvider;
 pub use server_logs::ServerLogsTableProvider;
 pub use stats::StatsTableProvider;

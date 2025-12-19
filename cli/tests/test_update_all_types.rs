@@ -1,6 +1,7 @@
 mod common;
 use common::*;
 use serde_json::Value;
+use std::collections::HashMap;
 use std::thread;
 use std::time::Duration;
 
@@ -8,14 +9,33 @@ fn extract_first_row_from_cli_json(output: &str) -> Value {
     let json: Value = serde_json::from_str(output)
         .unwrap_or_else(|e| panic!("Failed to parse CLI JSON output: {e}. Raw: {output}"));
 
-    json.get("results")
+    let result = json.get("results")
         .and_then(|v| v.as_array())
         .and_then(|arr| arr.first())
-        .and_then(|res| res.get("rows"))
+        .unwrap_or_else(|| panic!("No results found in CLI JSON output. Raw: {output}"));
+    
+    // Get the schema to map column names to indices
+    let schema = result.get("schema")
+        .and_then(|v| v.as_array())
+        .unwrap_or_else(|| panic!("No schema found in CLI JSON output. Raw: {output}"));
+    
+    let row = result.get("rows")
         .and_then(|v| v.as_array())
         .and_then(|rows| rows.first())
-        .cloned()
-        .unwrap_or_else(|| panic!("No rows found in CLI JSON output. Raw: {output}"))
+        .and_then(|row| row.as_array())
+        .unwrap_or_else(|| panic!("No rows found in CLI JSON output. Raw: {output}"));
+    
+    // Build a map from column name to value
+    let mut row_map: HashMap<String, Value> = HashMap::new();
+    for (i, col) in schema.iter().enumerate() {
+        if let Some(name) = col.get("name").and_then(|n| n.as_str()) {
+            if let Some(value) = row.get(i) {
+                row_map.insert(name.to_string(), value.clone());
+            }
+        }
+    }
+    
+    Value::Object(row_map.into_iter().collect())
 }
 
 fn assert_decimal_column_eq(row: &Value, column: &str, expected: f64, raw_output: &str) {

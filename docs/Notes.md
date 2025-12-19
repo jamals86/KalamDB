@@ -2,26 +2,18 @@ Future:
 1) LOW PRIORITY - Alter a table and move it's storage from storage_id to different one
 2) LOW PRIORITY - Support changing stream table TTL via ALTER TABLE
 3) Combine all the subscription logic for stream/user tables into one code base
-6) Make sure _updated timestamp include also nanosecond precision
 7) when reading --file todo-app.sql from the cli ignore the lines with -- since they are comments, and create a test to cover this case
-8) Inside kalam-link instead of having 2 different websockets implementations to use only one which also supports the wasm target, by doing so we can reduce code duplication and have less maintenance burden
 
-10) in query inside where clause support comparison operators for null values, like IS NULL and IS NOT NULL
 12) In cli if a query took took_ms = 0 then it's a failure
 13) In the cli add a command to show all live queries
 14) In the cli add a command to kill a live query by its live id
 15) for better tracking the integration tests should the names print also the folder path as well with the test name
-16) for jobs add a new statuses: new, queued, running, completed, failed, retrying, cancelled
 17) why we have 2 implementations for flushing: user_table_flush.rs and shared_table_flush.rs can we merge them into one? i believe they share a lot of code, we can reduce maintenance burden by having only one implementation, or can have a parent class with common code and have 2 child classes for each type of flush
 18) Move all code which deals with live subscriptions into kalamdb-live module, like these codes in here: backend/crates/kalamdb-core/src/live_query
-19) investigate the timestamp datatype how its being stored in rocksdb does it a string representation or binary representation? and how about the precision? is it milliseconds or nanoseconds?
 20) For flushing tests first create a storage and direct all the storage into a temporary directory so we can remove it after each flush test to not leave with un-needed temporary data
 22) For storing inside rocksdb as bytearray we should use protobuf instead of json
-23) Add https://docs.rs/object_store/latest/object_store/ to support any object storage out there easily
 24) Check if we can replace rocksdb with this one: https://github.com/foyer-rs/foyer, it already support objectstore so we can also store the non-flushed tables into s3 directly, and not forcing flushing when server goes down, even whenever we use the filesystem we can rely on the same logic inside foyer as well
 
-31) SHOW STATS FOR TABLE app.messages; maybe this is better be implemented with information_Schemas tasks
-32) Do we have counter per userId per buffered rows? this will help us tune the select from user table to check if we even need to query the buffer in first place
 33) Add option for a specific user to download all his data this is done with an endpoint in rest api which will create a zip file with all his tables data in parquet format and then provide a link to download it
 34) Add to the roadmap adding join which can join tables: shared<->shared, shared<->user, user<->user, user<->stream
 35) Add to cli/server a version which will print the commit and build date as well which is auto-increment: add prompt instead of this one: Starting KalamDB Server v0.1.0
@@ -39,8 +31,6 @@ Future:
 48) make sure we use TableAccess
 49) execute_create_table need to take namespaceId currently it creates inside default namespace only, no need to have default namespaceid any place
 50) anonymous user shouldnt be allowed to create tables or do anything except select from public tables
-51) Combine all providers into one commong code: backend/crates/kalamdb-core/src/tables/shared_table_provider.rs, backend/crates/kalamdb-core/src/tables/user_table_provider.rs, backend/crates/kalamdb-core/src/tables/stream_table_provider.rs,system_table_provider.rs
-52)         namespace_id: &str, table_name: &str, to NamespaceId, TableName
 53) IMPORTANT: Add a story about the need for giving ability to subscribe for: * which means all users tables at once, this is done by the ai agent which listen to all the user messages at once, add also ability to listen per storageId, for this we need to add to the user message key a userId:rowId:storageId
 54) Mention in the README.md that instead of using redis/messaging system/database you can use one for all of these, and subscribing directly to where your messages are stored in an easy way
 55) Check the queries coming and scan for vulnerability limit the string content length
@@ -51,7 +41,6 @@ Future:
 
 
 63) check for each system table if the results returned cover all the columns defined in the TableSchema
-65) Add tests to cover the droping table and cleanup inside jobs table as well
 66) Make sure actions like: drop/export/import/flush is having jobs rows when they finishes (TODO: Also check what kind of jobs we have)
 67) test each role the actions he can do and cannot do, to cover the rbac system well, this should be done from the cli
 68) A service user can also create other regular users
@@ -284,13 +273,8 @@ instead of: 1 failed: Invalid operation: No handler registered for statement typ
 
 195) we should always have a default order by column so we always have the same vlues returned in the same order, this is important for pagination as well
 
-196) Make sure after flush to compact th rocksdb column family to free space and optimize reads as well
-
 197) why do we have things like this? shouldnt we prevent entering if no rows?
 [2025-12-13 01:51:58.957] [INFO ] - main - kalamdb_core::jobs::jobs_manager::utils:38 - [CL-a258332a4315] Job completed: Cleaned up table insert_bench_mj3iu8zz_0:single_mj3iu900_0 successfully - 0 rows deleted, 0 bytes freed
-
-198) fix the slashes here: Flushed 24 rows for user root to ./data/storage\chat/messages/root/batch-2.parquet (batch=2)
-and make sure we use the right slashes everywhere in paths
 
 199) change the cli history to storing the history of queries as regular queries and not base64 but keeping in mind adding quotes to preserve adding the multi-lines queries, and also replacing password on alter user to remove the password
 
@@ -333,8 +317,12 @@ and make sure we use the right slashes everywhere in paths
   "last_sequence_number": 3 //TODO: Change to last
 }
 
-202) instead of consucting: table_def.to_arrow_schema() add it with the cache
 
+202) manifest last_accessed is not getting updated if we select the table it should be updated since we did check it, also the value is like this: 1766148834000000 it should be smaller i guess
+
+203) Can you check if we can use the manifest as an indication of having rows which needs flushing or you think its better to keep it this way which is now? if we flush and we didnt find any manifest does it fails? can you make sure this scenario is well written?
+
+204) we should use TableId instead of passing both:        namespace: &NamespaceId,table: &TableName,
 
 
 Make sure there is tests which insert/updte data and then check if the actual data we inserted/updated is there and exists in select then flush the data and check again if insert/update works with the flushed data in cold storage, check that insert fails when inserting a row id primary key which already exists and update do works
@@ -353,7 +341,7 @@ IMPORTANT:
 1) Done - Schema information_schema
 2) Done - Datatypes for columns
 3) Parametrized Queries needs to work with ScalarValue and be added to the api endpoint
-4) Add manifest file for each user table, that will help us locate which parquet files we need to read in each query, and if in fact we need to read parquet files at all, since sometimes the data will be only inside rocksdb and no need for file io
+4) Done - Add manifest file for each user table, that will help us locate which parquet files we need to read in each query, and if in fact we need to read parquet files at all, since sometimes the data will be only inside rocksdb and no need for file io
 4) Done - Support update/deleted as a separate join table per user by MAX(_updated)
 5) Storage files compaction
 6) Done - AS USER support for DML statements - to be able to insert/update/delete as a specific user_id (Only service/admin roles can do that)
@@ -367,7 +355,7 @@ IMPORTANT:
 10) use hashbrown instead of hashmap for better performance where possible
 11) Investigate using vortex instead of parquet or as an option for the user to choose which format to use for storing flushed data
 12) aDD objectstore for storing files in s3/azure/gcs compatible storages
-13) add BEGIN TRANSACTION / COMMIT TRANSACTION support for multiple statements in one transaction, This will make the insert batch faster
+13) Add BEGIN TRANSACTION / COMMIT TRANSACTION support for multiple statements in one transaction, This will make the insert batch faster
 14) Add upsert support
 15) Support postgress protocol
 16) Add file DataType for storing files/blobs next to the storage parquet files

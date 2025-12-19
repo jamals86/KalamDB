@@ -4,14 +4,52 @@
 //! This enables efficient point query filtering (WHERE id = X) by skipping batch files
 //! where the Bloom filter indicates "definitely not present".
 
-use crate::parquet_writer::ParquetWriter;
+use crate::build_object_store;
+use crate::parquet_storage_writer::write_parquet_with_store_sync;
 use arrow::array::{Int64Array, StringArray};
 use arrow::datatypes::{DataType, Field, Schema};
 use arrow::record_batch::RecordBatch;
 use datafusion::parquet::file::reader::{FileReader, SerializedFileReader};
+use kalamdb_commons::models::ids::StorageId;
+use kalamdb_commons::models::storage::StorageType;
+use kalamdb_commons::models::types::Storage;
 use std::env;
 use std::fs;
 use std::sync::Arc;
+
+fn create_test_storage(temp_dir: &std::path::Path) -> Storage {
+    let now = chrono::Utc::now().timestamp_millis();
+    Storage {
+        storage_id: StorageId::from("test"),
+        storage_name: "test".to_string(),
+        description: None,
+        storage_type: StorageType::Filesystem,
+        base_directory: temp_dir.to_string_lossy().to_string(),
+        credentials: None,
+        config_json: None,
+        shared_tables_template: "{namespace}/{table}".to_string(),
+        user_tables_template: "{namespace}/{user}/{table}".to_string(),
+        created_at: now,
+        updated_at: now,
+    }
+}
+
+/// Creates a batch with 1024 rows (minimum required for bloom filters).
+fn create_test_batch_with_bloom_size(schema: Arc<Schema>, num_rows: usize) -> RecordBatch {
+    let ids: Vec<i64> = (0..num_rows as i64).collect();
+    let names: Vec<String> = (0..num_rows).map(|i| format!("name_{}", i)).collect();
+    let seqs: Vec<i64> = (0..num_rows as i64).map(|i| i * 1000000).collect();
+
+    RecordBatch::try_new(
+        schema.clone(),
+        vec![
+            Arc::new(Int64Array::from(ids)),
+            Arc::new(StringArray::from(names)),
+            Arc::new(Int64Array::from(seqs)),
+        ],
+    )
+    .unwrap()
+}
 
 /// Test that Bloom filters are generated for PRIMARY KEY column + _seq
 #[test]
@@ -20,6 +58,9 @@ fn test_bloom_filter_for_primary_key_column() {
     let _ = fs::remove_dir_all(&temp_dir);
     fs::create_dir_all(&temp_dir).unwrap();
 
+    let storage = create_test_storage(&temp_dir);
+    let store = build_object_store(&storage).expect("Failed to create object store");
+
     // Schema with PRIMARY KEY column "id" + _seq system column
     let schema = Arc::new(Schema::new(vec![
         Field::new("id", DataType::Int64, false),   // PRIMARY KEY
@@ -27,33 +68,25 @@ fn test_bloom_filter_for_primary_key_column() {
         Field::new("_seq", DataType::Int64, false), // System column
     ]));
 
-    // Create a batch with sample data
-    let batch = RecordBatch::try_new(
-        schema.clone(),
-        vec![
-            Arc::new(Int64Array::from(vec![1001, 1002, 1003, 1004, 1005])),
-            Arc::new(StringArray::from(vec![
-                "Alice", "Bob", "Charlie", "Diana", "Eve",
-            ])),
-            Arc::new(Int64Array::from(vec![
-                1000000, 2000000, 3000000, 4000000, 5000000,
-            ])),
-        ],
-    )
-    .unwrap();
+    // Create a batch with 1024 rows (minimum for bloom filters)
+    let batch = create_test_batch_with_bloom_size(schema.clone(), 1024);
 
     // Write Parquet file with Bloom filters on PRIMARY KEY ("id") and _seq
-    let file_path = temp_dir.join("with_pk_bloom.parquet");
-    let writer = ParquetWriter::new(file_path.to_str().unwrap());
-
-    // Specify Bloom filter columns: PRIMARY KEY ("id") + _seq
+    let file_path = "with_pk_bloom.parquet";
     let bloom_filter_columns = vec!["id".to_string(), "_seq".to_string()];
-    let result = writer.write_with_bloom_filter(schema, vec![batch], Some(bloom_filter_columns));
+    let result = write_parquet_with_store_sync(
+        store,
+        &storage,
+        file_path,
+        schema,
+        vec![batch],
+        Some(bloom_filter_columns),
+    );
     assert!(result.is_ok());
-    assert!(file_path.exists());
 
     // Verify Bloom filters exist in Parquet metadata
-    let file = std::fs::File::open(&file_path).unwrap();
+    let full_path = temp_dir.join(file_path);
+    let file = fs::File::open(&full_path).unwrap();
     let reader = SerializedFileReader::new(file).unwrap();
     let metadata = reader.metadata();
 
@@ -113,6 +146,9 @@ fn test_bloom_filter_for_composite_primary_key() {
     let _ = fs::remove_dir_all(&temp_dir);
     fs::create_dir_all(&temp_dir).unwrap();
 
+    let storage = create_test_storage(&temp_dir);
+    let store = build_object_store(&storage).expect("Failed to create object store");
+
     // Schema with composite PRIMARY KEY (user_id, order_id) + _seq
     let schema = Arc::new(Schema::new(vec![
         Field::new("user_id", DataType::Int64, false), // PRIMARY KEY part 1
@@ -121,36 +157,44 @@ fn test_bloom_filter_for_composite_primary_key() {
         Field::new("_seq", DataType::Int64, false),    // System column
     ]));
 
-    // Create batch with sample data
+    // Create batch with 1024 rows (minimum for bloom filters)
+    let num_rows = 1024;
+    let user_ids: Vec<i64> = (0..num_rows as i64).map(|i| i % 100).collect();
+    let order_ids: Vec<i64> = (0..num_rows as i64).collect();
+    let amounts: Vec<i64> = (0..num_rows as i64).map(|i| (i + 1) * 50).collect();
+    let seqs: Vec<i64> = (0..num_rows as i64).map(|i| i * 1000000).collect();
+
     let batch = RecordBatch::try_new(
         schema.clone(),
         vec![
-            Arc::new(Int64Array::from(vec![100, 100, 200, 200, 300])),
-            Arc::new(Int64Array::from(vec![1, 2, 1, 2, 1])),
-            Arc::new(Int64Array::from(vec![50, 75, 100, 125, 150])),
-            Arc::new(Int64Array::from(vec![
-                1000000, 2000000, 3000000, 4000000, 5000000,
-            ])),
+            Arc::new(Int64Array::from(user_ids)),
+            Arc::new(Int64Array::from(order_ids)),
+            Arc::new(Int64Array::from(amounts)),
+            Arc::new(Int64Array::from(seqs)),
         ],
     )
     .unwrap();
 
     // Write Parquet file with Bloom filters on both PK columns + _seq
-    let file_path = temp_dir.join("with_composite_pk_bloom.parquet");
-    let writer = ParquetWriter::new(file_path.to_str().unwrap());
-
-    // Specify Bloom filter columns: both PRIMARY KEY columns + _seq
+    let file_path = "with_composite_pk_bloom.parquet";
     let bloom_filter_columns = vec![
         "user_id".to_string(),
         "order_id".to_string(),
         "_seq".to_string(),
     ];
-    let result = writer.write_with_bloom_filter(schema, vec![batch], Some(bloom_filter_columns));
+    let result = write_parquet_with_store_sync(
+        store,
+        &storage,
+        file_path,
+        schema,
+        vec![batch],
+        Some(bloom_filter_columns),
+    );
     assert!(result.is_ok());
-    assert!(file_path.exists());
 
     // Verify Bloom filters exist for both PRIMARY KEY columns
-    let file = std::fs::File::open(&file_path).unwrap();
+    let full_path = temp_dir.join(file_path);
+    let file = fs::File::open(&full_path).unwrap();
     let reader = SerializedFileReader::new(file).unwrap();
     let metadata = reader.metadata();
     let row_group = metadata.row_group(0);
@@ -208,12 +252,15 @@ fn test_bloom_filter_for_composite_primary_key() {
     let _ = fs::remove_dir_all(&temp_dir);
 }
 
-/// Test that default behavior (None) only creates Bloom filter for _seq
+/// Test that default behavior (None) creates no Bloom filters
 #[test]
 fn test_bloom_filter_default_behavior() {
     let temp_dir = env::temp_dir().join("kalamdb_bloom_filter_default_test");
     let _ = fs::remove_dir_all(&temp_dir);
     fs::create_dir_all(&temp_dir).unwrap();
+
+    let storage = create_test_storage(&temp_dir);
+    let store = build_object_store(&storage).expect("Failed to create object store");
 
     // Schema with PRIMARY KEY + _seq
     let schema = Arc::new(Schema::new(vec![
@@ -221,39 +268,50 @@ fn test_bloom_filter_default_behavior() {
         Field::new("_seq", DataType::Int64, false),
     ]));
 
+    // Create batch with 1024 rows 
+    let num_rows = 1024;
+    let ids: Vec<i64> = (0..num_rows as i64).collect();
+    let seqs: Vec<i64> = (0..num_rows as i64).map(|i| i * 1000000).collect();
+
     let batch = RecordBatch::try_new(
         schema.clone(),
         vec![
-            Arc::new(Int64Array::from(vec![1, 2, 3])),
-            Arc::new(Int64Array::from(vec![1000000, 2000000, 3000000])),
+            Arc::new(Int64Array::from(ids)),
+            Arc::new(Int64Array::from(seqs)),
         ],
     )
     .unwrap();
 
-    // Write with None (default behavior: only _seq gets Bloom filter)
-    let file_path = temp_dir.join("default_bloom.parquet");
-    let writer = ParquetWriter::new(file_path.to_str().unwrap());
-    let result = writer.write_with_bloom_filter(schema, vec![batch], None);
+    // Write with None (no bloom filters requested)
+    let file_path = "default_bloom.parquet";
+    let result = write_parquet_with_store_sync(
+        store,
+        &storage,
+        file_path,
+        schema,
+        vec![batch],
+        None, // No bloom filters specified
+    );
     assert!(result.is_ok());
 
-    // Verify only _seq has Bloom filter
-    let file = std::fs::File::open(&file_path).unwrap();
+    // Verify no column has Bloom filter when None is passed
+    let full_path = temp_dir.join(file_path);
+    let file = fs::File::open(&full_path).unwrap();
     let reader = SerializedFileReader::new(file).unwrap();
     let metadata = reader.metadata();
     let row_group = metadata.row_group(0);
 
-    // _seq should have Bloom filter
+    // Neither column should have Bloom filter when None is passed
     let seq_idx = row_group
         .columns()
         .iter()
         .position(|col| col.column_path().string() == "_seq")
         .unwrap();
     assert!(
-        row_group.column(seq_idx).bloom_filter_offset().is_some(),
-        "_seq should have Bloom filter by default"
+        row_group.column(seq_idx).bloom_filter_offset().is_none(),
+        "_seq should NOT have Bloom filter when None is passed"
     );
 
-    // id should NOT have Bloom filter (default behavior doesn't include PRIMARY KEY)
     let id_idx = row_group
         .columns()
         .iter()
@@ -261,7 +319,7 @@ fn test_bloom_filter_default_behavior() {
         .unwrap();
     assert!(
         row_group.column(id_idx).bloom_filter_offset().is_none(),
-        "id should NOT have Bloom filter by default (must be explicitly specified)"
+        "id should NOT have Bloom filter when None is passed"
     );
 
     let _ = fs::remove_dir_all(&temp_dir);

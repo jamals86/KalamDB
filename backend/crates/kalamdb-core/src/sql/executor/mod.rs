@@ -431,12 +431,13 @@ impl SqlExecutor {
                 continue;
             }
 
-            // Convert to Arrow schema
-            let arrow_schema = match table_def.to_arrow_schema() {
+            // Get Arrow schema from cache (memoized in CachedTableData)
+            // This populates cache with table definition + computes arrow schema once
+            let arrow_schema = match schema_registry.get_arrow_schema(&table_id) {
                 Ok(schema) => schema,
                 Err(e) => {
                     log::error!(
-                        "Failed to convert table definition to Arrow schema for {}.{}: {}",
+                        "Failed to get Arrow schema for {}.{}: {}",
                         table_def.namespace_id.as_str(),
                         table_def.table_name.as_str(),
                         e

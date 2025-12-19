@@ -359,10 +359,6 @@ pub struct FlushSettings {
 /// Manifest cache settings (Phase 4 - US6)
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ManifestCacheSettings {
-    /// Time-to-live for cached manifests in seconds (default: 3600s = 1 hour)
-    #[serde(default = "default_manifest_cache_ttl")]
-    pub ttl_seconds: i64,
-
     /// Eviction job interval in seconds (default: 300s = 5 minutes)
     #[serde(default = "default_manifest_cache_eviction_interval")]
     pub eviction_interval_seconds: i64,
@@ -371,18 +367,25 @@ pub struct ManifestCacheSettings {
     #[serde(default = "default_manifest_cache_max_entries")]
     pub max_entries: usize,
 
-    /// Memory window for last_accessed tracking in seconds (default: 3600s = 1 hour)
-    #[serde(default = "default_manifest_cache_memory_window")]
-    pub last_accessed_memory_window: i64,
+    /// TTL in days for manifest eviction (default: 7 days)
+    /// Manifests not accessed for this many days will be removed from cache
+    #[serde(default = "default_manifest_cache_eviction_ttl_days")]
+    pub eviction_ttl_days: u64,
+}
+
+impl ManifestCacheSettings {
+    /// Get TTL in seconds (converts eviction_ttl_days to seconds)
+    pub fn ttl_seconds(&self) -> i64 {
+        (self.eviction_ttl_days * 24 * 60 * 60) as i64
+    }
 }
 
 impl Default for ManifestCacheSettings {
     fn default() -> Self {
         Self {
-            ttl_seconds: default_manifest_cache_ttl(),
             eviction_interval_seconds: default_manifest_cache_eviction_interval(),
             max_entries: default_manifest_cache_max_entries(),
-            last_accessed_memory_window: default_manifest_cache_memory_window(),
+            eviction_ttl_days: default_manifest_cache_eviction_ttl_days(),
         }
     }
 }

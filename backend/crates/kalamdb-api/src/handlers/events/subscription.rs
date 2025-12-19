@@ -151,10 +151,10 @@ pub async fn handle_subscribe(
                     initial.rows.len()
                 );
                 
-                // Convert Row objects to HashMap using the subscription's serialization mode
+                // Convert Row objects to HashMap (always using simple JSON format)
                 let mut rows_json = Vec::with_capacity(initial.rows.len());
                 for row in initial.rows {
-                    match row_to_json_map(&row, subscription.options.serialization_mode) {
+                    match row_to_json_map(&row) {
                         Ok(json) => rows_json.push(json),
                         Err(e) => {
                             error!("Failed to convert row to JSON: {}", e);

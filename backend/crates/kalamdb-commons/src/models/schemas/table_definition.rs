@@ -290,13 +290,26 @@ impl TableDefinition {
     }
 
     /// Convert to Arrow schema (current version)
+    ///
+    /// Each Arrow field includes a `kalam_data_type` metadata entry with the
+    /// serialized KalamDataType for lossless round-trip conversion.
     pub fn to_arrow_schema(&self) -> Result<Arc<ArrowSchema>, ArrowConversionError> {
         let fields: Result<Vec<Field>, _> = self
             .columns
             .iter()
             .map(|col| {
                 let arrow_type = col.data_type.to_arrow_type()?;
-                Ok(Field::new(&col.column_name, arrow_type, col.is_nullable))
+                let mut field = Field::new(&col.column_name, arrow_type, col.is_nullable);
+                
+                // Store KalamDataType in metadata for lossless round-trip conversion
+                let kalam_type_json = serde_json::to_string(&col.data_type)
+                    .unwrap_or_else(|_| "\"Text\"".to_string());
+                let metadata = std::collections::HashMap::from([
+                    ("kalam_data_type".to_string(), kalam_type_json),
+                ]);
+                field = field.with_metadata(metadata);
+                
+                Ok(field)
             })
             .collect();
 

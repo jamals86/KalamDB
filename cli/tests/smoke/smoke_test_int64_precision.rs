@@ -58,13 +58,8 @@ fn smoke_int64_precision_preserved_as_string() {
     let parsed: serde_json::Value =
         serde_json::from_str(&json_response).expect("Failed to parse JSON response");
 
-    let rows = parsed
-        .get("results")
-        .and_then(|v| v.as_array())
-        .and_then(|arr| arr.first())
-        .and_then(|res| res.get("rows"))
-        .and_then(|v| v.as_array())
-        .expect("Expected rows in JSON response");
+    // Convert array-based rows to HashMap-based rows
+    let rows = get_rows_as_hashmaps(&parsed).expect("Expected rows in JSON response");
 
     assert!(!rows.is_empty(), "Expected at least one row");
 
@@ -180,13 +175,8 @@ fn smoke_int64_small_values_remain_numbers() {
     let parsed: serde_json::Value =
         serde_json::from_str(&json_response).expect("Failed to parse JSON response");
 
-    let rows = parsed
-        .get("results")
-        .and_then(|v| v.as_array())
-        .and_then(|arr| arr.first())
-        .and_then(|res| res.get("rows"))
-        .and_then(|v| v.as_array())
-        .expect("Expected rows in JSON response");
+    // Convert array-based rows to HashMap-based rows
+    let rows = get_rows_as_hashmaps(&parsed).expect("Expected rows in JSON response");
 
     assert!(!rows.is_empty(), "Expected at least one row");
 
@@ -270,13 +260,8 @@ fn smoke_int64_edge_case_exactly_max_safe() {
     let parsed: serde_json::Value =
         serde_json::from_str(&json_response).expect("Failed to parse JSON response");
 
-    let rows = parsed
-        .get("results")
-        .and_then(|v| v.as_array())
-        .and_then(|arr| arr.first())
-        .and_then(|res| res.get("rows"))
-        .and_then(|v| v.as_array())
-        .expect("Expected rows in JSON response");
+    // Convert array-based rows to HashMap-based rows
+    let rows = get_rows_as_hashmaps(&parsed).expect("Expected rows in JSON response");
 
     assert!(!rows.is_empty(), "Expected at least one row");
 
@@ -378,13 +363,8 @@ fn smoke_int64_negative_large_values() {
     let parsed: serde_json::Value =
         serde_json::from_str(&json_response).expect("Failed to parse JSON response");
 
-    let rows = parsed
-        .get("results")
-        .and_then(|v| v.as_array())
-        .and_then(|arr| arr.first())
-        .and_then(|res| res.get("rows"))
-        .and_then(|v| v.as_array())
-        .expect("Expected rows in JSON response");
+    // Convert array-based rows to HashMap-based rows
+    let rows = get_rows_as_hashmaps(&parsed).expect("Expected rows in JSON response");
 
     assert!(!rows.is_empty(), "Expected at least one row");
 

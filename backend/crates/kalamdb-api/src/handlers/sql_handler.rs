@@ -5,9 +5,11 @@
 
 use actix_web::{post, web, HttpRequest, HttpResponse, Responder};
 use kalamdb_auth::AuthSession;
+use kalamdb_commons::models::datatypes::{FromArrowType, KalamDataType};
 use kalamdb_commons::models::UserId;
+use kalamdb_commons::schemas::SchemaField;
 use kalamdb_core::providers::arrow_json_conversion::{
-    json_value_to_scalar_strict, record_batch_to_json_rows, SerializationMode,
+    json_value_to_scalar_strict, record_batch_to_json_arrays,
 };
 use kalamdb_core::sql::executor::models::ExecutionContext;
 use kalamdb_core::sql::executor::{ExecutorMetadataAlias, ScalarValue, SqlExecutor};
@@ -148,9 +150,6 @@ pub async fn execute_sql_v1(
 
     // Get namespace_id from request (client-provided or None for default)
     let namespace_id = req.namespace_id.clone();
-    
-    // Get serialization mode from request (default: Simple)
-    let serialization_mode = req.serialization_mode;
 
     for (idx, sql) in statements.iter().enumerate() {
         let stmt_start = Instant::now();
@@ -163,7 +162,6 @@ pub async fn execute_sql_v1(
             None,
             params.clone(),
             namespace_id.clone(),
-            serialization_mode,
         )
         .await
         {
@@ -260,7 +258,6 @@ async fn execute_single_statement(
     metadata: Option<&ExecutorMetadataAlias>,
     params: Vec<ScalarValue>,
     namespace_id: Option<String>,
-    serialization_mode: SerializationMode,
 ) -> Result<QueryResult, Box<dyn std::error::Error>> {
     use kalamdb_commons::NamespaceId;
     
@@ -290,7 +287,7 @@ async fn execute_single_statement(
         Ok(exec_result) => match exec_result {
             ExecutionResult::Success { message } => Ok(QueryResult::with_message(message)),
             ExecutionResult::Rows { batches, schema, .. } => {
-                record_batch_to_query_result(batches, schema, Some(&session.user.user_id), serialization_mode)
+                record_batch_to_query_result(batches, schema, Some(&session.user.user_id))
             }
             ExecutionResult::Inserted { rows_affected } => Ok(QueryResult::with_affected_rows(
                 rows_affected,
@@ -341,17 +338,17 @@ async fn execute_single_statement(
 
 /// Convert Arrow RecordBatches to QueryResult
 /// 
-/// Uses the unified record_batch_to_json_rows function with configurable serialization mode.
-/// - Simple mode: Plain JSON values (Int64/UInt64 as strings for precision)
-/// - Typed mode: Values with type wrappers and formatted timestamps
+/// Uses the unified record_batch_to_json_arrays function.
+/// Builds schema with KalamDataType from Arrow schema using FromArrowType trait.
+/// Returns rows as arrays of values ordered by schema index.
+/// All values are plain JSON (Int64/UInt64 as strings for precision).
 fn record_batch_to_query_result(
     batches: Vec<arrow::record_batch::RecordBatch>,
     schema: Option<arrow::datatypes::SchemaRef>,
     user_id: Option<&UserId>,
-    mode: SerializationMode,
 ) -> Result<QueryResult, Box<dyn std::error::Error>> {
     // Get schema from first batch, or from explicitly provided schema for empty results
-    let schema = if !batches.is_empty() {
+    let arrow_schema = if !batches.is_empty() {
         batches[0].schema()
     } else if let Some(s) = schema {
         s
@@ -362,41 +359,59 @@ fn record_batch_to_query_result(
         ));
     };
 
-    let column_names: Vec<String> = schema.fields().iter().map(|f| f.name().clone()).collect();
+    // Build SchemaField with KalamDataType from Arrow schema
+    let schema_fields: Vec<SchemaField> = arrow_schema
+        .fields()
+        .iter()
+        .enumerate()
+        .map(|(index, field)| {
+            // Convert Arrow DataType to KalamDataType
+            // Use metadata if available for lossless round-trip, otherwise infer from Arrow type
+            let kalam_type = field
+                .metadata()
+                .get("kalam_data_type")
+                .and_then(|s| serde_json::from_str::<KalamDataType>(s).ok())
+                .or_else(|| KalamDataType::from_arrow_type(field.data_type()).ok())
+                .unwrap_or(KalamDataType::Text); // Fallback to Text for unsupported types
+            
+            SchemaField::new(field.name().clone(), kalam_type, index)
+        })
+        .collect();
+
+    // Build column name to index mapping for sensitive column masking
+    let column_indices: std::collections::HashMap<String, usize> = arrow_schema
+        .fields()
+        .iter()
+        .enumerate()
+        .map(|(i, f)| (f.name().to_lowercase(), i))
+        .collect();
 
     let mut rows = Vec::new();
     for batch in &batches {
-        let batch_rows = record_batch_to_json_rows(batch, mode)
+        let batch_rows = record_batch_to_json_arrays(batch)
             .map_err(|e| format!("Failed to convert batch to JSON: {}", e))?;
         rows.extend(batch_rows);
     }
 
-    let mut result = QueryResult::with_rows(rows, column_names.clone());
-
     // Mask sensitive columns for non-admin users
-    if let Some(rows) = result.rows.as_mut() {
-        if !is_admin(user_id) {
-            mask_sensitive_column(rows, &column_names, "credentials");
-            mask_sensitive_column(rows, &column_names, "password_hash");
-        }
+    if !is_admin(user_id) {
+        mask_sensitive_column_array(&mut rows, &column_indices, "credentials");
+        mask_sensitive_column_array(&mut rows, &column_indices, "password_hash");
     }
 
+    let result = QueryResult::with_rows_and_schema(rows, schema_fields);
     Ok(result)
 }
 
-/// Mask a sensitive column with "***"
-fn mask_sensitive_column(
-    rows: &mut [std::collections::HashMap<String, serde_json::Value>],
-    column_names: &[String],
+/// Mask a sensitive column with "***" (for array-based rows)
+fn mask_sensitive_column_array(
+    rows: &mut [Vec<serde_json::Value>],
+    column_indices: &std::collections::HashMap<String, usize>,
     target_column: &str,
 ) {
-    if let Some(col_idx) = column_names
-        .iter()
-        .position(|name| name.eq_ignore_ascii_case(target_column))
-    {
-        let key = column_names[col_idx].clone();
+    if let Some(&col_idx) = column_indices.get(&target_column.to_lowercase()) {
         for row in rows.iter_mut() {
-            if let Some(value) = row.get_mut(&key) {
+            if let Some(value) = row.get_mut(col_idx) {
                 if !value.is_null() {
                     *value = serde_json::Value::String("***".to_string());
                 }

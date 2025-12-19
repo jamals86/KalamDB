@@ -16,7 +16,7 @@
 #[path = "../common/mod.rs"]
 mod common;
 
-use common::{fixtures, TestServer};
+use common::{fixtures, QueryResultTestExt, TestServer};
 use kalamdb_api::models::ResponseStatus;
 use std::time::{Duration, Instant};
 use tokio::time::sleep;
@@ -34,10 +34,9 @@ async fn wait_for_storage_rows(
             ))
             .await;
         if response.status == ResponseStatus::Success {
-            if let Some(rows) = response.results.first().and_then(|r| r.rows.as_ref()) {
-                if !rows.is_empty() {
-                    return rows.clone();
-                }
+            let rows = response.results.first().map(|r| r.rows_as_maps()).unwrap_or_default();
+            if !rows.is_empty() {
+                return rows;
             }
         }
         if Instant::now() >= deadline {
@@ -67,28 +66,25 @@ async fn test_01_default_storage_exists() {
     );
 
     // Verify 'local' storage exists
-    if let Some(rows) = &response.results.first().and_then(|r| r.rows.as_ref()) {
-        assert!(rows.len() >= 1, "Expected at least 1 storage");
+    let rows = response.results.first().map(|r| r.rows_as_maps()).unwrap_or_default();
+    assert!(rows.len() >= 1, "Expected at least 1 storage");
 
-        let local_storage = &rows[0];
-        assert_eq!(
-            local_storage.get("storage_id").and_then(|v| v.as_str()),
-            Some("local"),
-            "First storage should be 'local'"
-        );
-        assert_eq!(
-            local_storage.get("storage_type").and_then(|v| v.as_str()),
-            Some("filesystem"),
-            "storage_type should be 'filesystem'"
-        );
-        assert_eq!(
-            local_storage.get("storage_name").and_then(|v| v.as_str()),
-            Some("Local Filesystem"),
-            "storage_name should be 'Local Filesystem'"
-        );
-    } else {
-        panic!("No rows returned for 'local' storage");
-    }
+    let local_storage = &rows[0];
+    assert_eq!(
+        local_storage.get("storage_id").and_then(|v| v.as_str()),
+        Some("local"),
+        "First storage should be 'local'"
+    );
+    assert_eq!(
+        local_storage.get("storage_type").and_then(|v| v.as_str()),
+        Some("filesystem"),
+        "storage_type should be 'filesystem'"
+    );
+    assert_eq!(
+        local_storage.get("storage_name").and_then(|v| v.as_str()),
+        Some("Local Filesystem"),
+        "storage_name should be 'Local Filesystem'"
+    );
 }
 
 // ============================================================================
@@ -110,19 +106,16 @@ async fn test_02_show_storages_basic() {
     );
 
     // Verify at least 'local' storage exists
-    if let Some(rows) = &response.results.first().and_then(|r| r.rows.as_ref()) {
-        assert!(rows.len() >= 1, "Expected at least 1 storage (local)");
+    let rows = response.results.first().map(|r| r.rows_as_maps()).unwrap_or_default();
+    assert!(rows.len() >= 1, "Expected at least 1 storage (local)");
 
-        // First storage should be 'local' (ordered by storage_id)
-        let first_storage = &rows[0];
-        assert_eq!(
-            first_storage.get("storage_id").and_then(|v| v.as_str()),
-            Some("local"),
-            "First storage should be 'local'"
-        );
-    } else {
-        panic!("No rows returned from SHOW STORAGES");
-    }
+    // First storage should be 'local' (ordered by storage_id)
+    let first_storage = &rows[0];
+    assert_eq!(
+        first_storage.get("storage_id").and_then(|v| v.as_str()),
+        Some("local"),
+        "First storage should be 'local'"
+    );
 }
 
 // ============================================================================
@@ -174,29 +167,26 @@ async fn test_03_create_storage_filesystem() {
         response.error
     );
 
-    if let Some(rows) = &response.results.first().and_then(|r| r.rows.as_ref()) {
-        assert_eq!(rows.len(), 1, "Expected exactly 1 'archive' storage");
+    let rows = response.results.first().map(|r| r.rows_as_maps()).unwrap_or_default();
+    assert_eq!(rows.len(), 1, "Expected exactly 1 'archive' storage");
 
-        let archive = &rows[0];
-        assert_eq!(
-            archive.get("storage_id").and_then(|v| v.as_str()),
-            Some("archive")
-        );
-        assert_eq!(
-            archive.get("storage_type").and_then(|v| v.as_str()),
-            Some("filesystem")
-        );
-        assert_eq!(
-            archive.get("storage_name").and_then(|v| v.as_str()),
-            Some("Archive Storage")
-        );
-        assert_eq!(
-            archive.get("description").and_then(|v| v.as_str()),
-            Some("Cold storage for archived data")
-        );
-    } else {
-        panic!("No rows returned for 'archive' storage");
-    }
+    let archive = &rows[0];
+    assert_eq!(
+        archive.get("storage_id").and_then(|v| v.as_str()),
+        Some("archive")
+    );
+    assert_eq!(
+        archive.get("storage_type").and_then(|v| v.as_str()),
+        Some("filesystem")
+    );
+    assert_eq!(
+        archive.get("storage_name").and_then(|v| v.as_str()),
+        Some("Archive Storage")
+    );
+    assert_eq!(
+        archive.get("description").and_then(|v| v.as_str()),
+        Some("Cold storage for archived data")
+    );
 }
 
 // ============================================================================
@@ -243,21 +233,18 @@ async fn test_04_create_storage_s3() {
         response.error
     );
 
-    if let Some(rows) = &response.results.first().and_then(|r| r.rows.as_ref()) {
-        assert_eq!(rows.len(), 1, "Expected exactly 1 's3_main' storage");
+    let rows = response.results.first().map(|r| r.rows_as_maps()).unwrap_or_default();
+    assert_eq!(rows.len(), 1, "Expected exactly 1 's3_main' storage");
 
-        let s3_storage = &rows[0];
-        assert_eq!(
-            s3_storage.get("storage_id").and_then(|v| v.as_str()),
-            Some("s3_main")
-        );
-        assert_eq!(
-            s3_storage.get("storage_type").and_then(|v| v.as_str()),
-            Some("s3")
-        );
-    } else {
-        panic!("No rows returned for 's3_main' storage");
-    }
+    let s3_storage = &rows[0];
+    assert_eq!(
+        s3_storage.get("storage_id").and_then(|v| v.as_str()),
+        Some("s3_main")
+    );
+    assert_eq!(
+        s3_storage.get("storage_type").and_then(|v| v.as_str()),
+        Some("s3")
+    );
 }
 
 // ============================================================================
@@ -388,25 +375,22 @@ async fn test_07_alter_storage_all_fields() {
         response.error
     );
 
-    if let Some(rows) = &response.results.first().and_then(|r| r.rows.as_ref()) {
-        assert_eq!(rows.len(), 1, "Expected exactly 1 storage");
+    let rows = response.results.first().map(|r| r.rows_as_maps()).unwrap_or_default();
+    assert_eq!(rows.len(), 1, "Expected exactly 1 storage");
 
-        let storage = &rows[0];
-        assert_eq!(
-            storage.get("storage_name").and_then(|v| v.as_str()),
-            Some("Updated Storage")
-        );
-        assert_eq!(
-            storage.get("description").and_then(|v| v.as_str()),
-            Some("Updated description")
-        );
-        assert_eq!(
-            storage.get("user_tables_template").and_then(|v| v.as_str()),
-            Some("/data/temp/users/{namespace}/{tableName}/{userId}")
-        );
-    } else {
-        panic!("No rows returned for temp_storage");
-    }
+    let storage = &rows[0];
+    assert_eq!(
+        storage.get("storage_name").and_then(|v| v.as_str()),
+        Some("Updated Storage")
+    );
+    assert_eq!(
+        storage.get("description").and_then(|v| v.as_str()),
+        Some("Updated description")
+    );
+    assert_eq!(
+        storage.get("user_tables_template").and_then(|v| v.as_str()),
+        Some("/data/temp/users/{namespace}/{tableName}/{userId}")
+    );
 }
 
 // ============================================================================
@@ -450,7 +434,8 @@ async fn test_08_alter_storage_partial() {
         .execute_sql("SELECT * FROM system.storages WHERE storage_id = 'partial_test'")
         .await;
 
-    if let Some(rows) = &response.results.first().and_then(|r| r.rows.as_ref()) {
+    let rows = response.results.first().map(|r| r.rows_as_maps()).unwrap_or_default();
+    if !rows.is_empty() {
         let storage = &rows[0];
         assert_eq!(
             storage.get("storage_name").and_then(|v| v.as_str()),
@@ -550,9 +535,8 @@ async fn test_10_drop_storage_basic() {
         .execute_sql("SELECT * FROM system.storages WHERE storage_id = 'drop_test'")
         .await;
 
-    if let Some(rows) = &response.results.first().and_then(|r| r.rows.as_ref()) {
-        assert_eq!(rows.len(), 0, "Storage should be deleted");
-    }
+    let rows = response.results.first().map(|r| r.rows_as_maps()).unwrap_or_default();
+    assert_eq!(rows.len(), 0, "Storage should be deleted");
 }
 
 // ============================================================================
@@ -711,7 +695,8 @@ async fn test_15_storage_lookup_table_level() {
         "SELECT * FROM system.tables WHERE namespace = 'lookup_ns' AND table_name = 'lookup_table'";
     let response = server.execute_sql(query).await;
 
-    if let Some(rows) = &response.results.first().and_then(|r| r.rows.as_ref()) {
+    let rows = response.results.first().map(|r| r.rows_as_maps()).unwrap_or_default();
+    if !rows.is_empty() {
         assert_eq!(rows.len(), 1, "Expected 1 table");
         let table = &rows[0];
         assert_eq!(
@@ -769,36 +754,35 @@ async fn test_16_show_storages_ordered() {
         response.error
     );
 
-    if let Some(rows) = &response.results.first().and_then(|r| r.rows.as_ref()) {
-        assert!(rows.len() >= 4, "Expected at least 4 storages");
+    let rows = response.results.first().map(|r| r.rows_as_maps()).unwrap_or_default();
+    assert!(rows.len() >= 4, "Expected at least 4 storages");
 
-        // First should be 'local'
-        assert_eq!(
-            rows[0].get("storage_id").and_then(|v| v.as_str()),
-            Some("local"),
-            "First storage should be 'local'"
-        );
+    // First should be 'local'
+    assert_eq!(
+        rows[0].get("storage_id").and_then(|v| v.as_str()),
+        Some("local"),
+        "First storage should be 'local'"
+    );
 
-        // Rest should be alphabetical
-        let storage_ids: Vec<&str> = rows[1..]
-            .iter()
-            .filter_map(|r| r.get("storage_id").and_then(|v| v.as_str()))
-            .collect();
+    // Rest should be alphabetical
+    let storage_ids: Vec<&str> = rows[1..]
+        .iter()
+        .filter_map(|r| r.get("storage_id").and_then(|v| v.as_str()))
+        .collect();
 
-        // Check that a_first comes before m_middle and m_middle before z_last
-        let a_pos = storage_ids.iter().position(|&id| id == "a_first");
-        let m_pos = storage_ids.iter().position(|&id| id == "m_middle");
-        let z_pos = storage_ids.iter().position(|&id| id == "z_last");
+    // Check that a_first comes before m_middle and m_middle before z_last
+    let a_pos = storage_ids.iter().position(|&id| id == "a_first");
+    let m_pos = storage_ids.iter().position(|&id| id == "m_middle");
+    let z_pos = storage_ids.iter().position(|&id| id == "z_last");
 
-        assert!(
-            a_pos.is_some() && m_pos.is_some() && z_pos.is_some(),
-            "All storages should be present"
-        );
-        assert!(
-            a_pos < m_pos && m_pos < z_pos,
-            "Storages should be in alphabetical order"
-        );
-    }
+    assert!(
+        a_pos.is_some() && m_pos.is_some() && z_pos.is_some(),
+        "All storages should be present"
+    );
+    assert!(
+        a_pos < m_pos && m_pos < z_pos,
+        "Storages should be in alphabetical order"
+    );
 }
 
 // ============================================================================
@@ -839,7 +823,8 @@ async fn test_17_concurrent_storage_operations() {
         .execute_sql("SELECT * FROM system.storages WHERE storage_id = 'concurrent'")
         .await;
 
-    if let Some(rows) = &response.results.first().and_then(|r| r.rows.as_ref()) {
+    let rows = response.results.first().map(|r| r.rows_as_maps()).unwrap_or_default();
+    if !rows.is_empty() {
         let storage = &rows[0];
         assert_eq!(
             storage.get("storage_name").and_then(|v| v.as_str()),
@@ -915,7 +900,8 @@ async fn test_19_minimal_storage_config() {
         .execute_sql("SELECT * FROM system.storages WHERE storage_id = 'minimal'")
         .await;
 
-    if let Some(rows) = &response.results.first().and_then(|r| r.rows.as_ref()) {
+    let rows = response.results.first().map(|r| r.rows_as_maps()).unwrap_or_default();
+    if !rows.is_empty() {
         let storage = &rows[0];
         assert_eq!(
             storage.get("storage_id").and_then(|v| v.as_str()),
@@ -973,7 +959,8 @@ async fn test_20_storage_with_namespace() {
         "SELECT * FROM system.tables WHERE namespace = 'storage_ns' AND table_name = 'shared_data'";
     let response = server.execute_sql(query).await;
 
-    if let Some(rows) = &response.results.first().and_then(|r| r.rows.as_ref()) {
+    let rows = response.results.first().map(|r| r.rows_as_maps()).unwrap_or_default();
+    if !rows.is_empty() {
         assert_eq!(rows.len(), 1, "Expected 1 shared table");
         let table = &rows[0];
         assert_eq!(
@@ -1006,7 +993,7 @@ async fn test_22_credentials_column_exists() {
 
     // Verify schema includes credentials column
     if let Some(result) = response.results.first() {
-        let has_credentials = result.columns.iter().any(|col| col == "credentials");
+        let has_credentials = result.schema.iter().any(|field| field.name == "credentials");
         assert!(
             has_credentials,
             "system.storages should have 'credentials' column"
@@ -1056,16 +1043,15 @@ async fn test_23_storage_with_credentials() {
         response.error
     );
 
-    if let Some(rows) = &response.results.first().and_then(|r| r.rows.as_ref()) {
-        assert_eq!(rows.len(), 1, "Expected 1 storage");
-        let storage = &rows[0];
+    let rows = response.results.first().map(|r| r.rows_as_maps()).unwrap_or_default();
+    assert_eq!(rows.len(), 1, "Expected 1 storage");
+    let storage = &rows[0];
 
-        // Verify credentials field exists (may be masked or shown)
-        assert!(
-            storage.contains_key("credentials"),
-            "credentials field should exist"
-        );
-    }
+    // Verify credentials field exists (may be masked or shown)
+    assert!(
+        storage.contains_key("credentials"),
+        "credentials field should exist"
+    );
 }
 
 // ============================================================================
@@ -1094,7 +1080,8 @@ async fn test_24_credentials_masked_in_query() {
         "SELECT storage_id, credentials FROM system.storages WHERE storage_id = 's3_masked'";
     let response = server.execute_sql(query).await;
 
-    if let Some(rows) = &response.results.first().and_then(|r| r.rows.as_ref()) {
+    let rows = response.results.first().map(|r| r.rows_as_maps()).unwrap_or_default();
+    if !rows.is_empty() {
         let storage = &rows[0];
         let credentials = storage.get("credentials");
 
@@ -1158,15 +1145,14 @@ async fn test_25_create_table_with_storage() {
     let query = "SELECT storage_id FROM system.tables WHERE namespace = 'test_ns' AND table_name = 'products'";
     let response = server.execute_sql(query).await;
 
-    if let Some(rows) = &response.results.first().and_then(|r| r.rows.as_ref()) {
-        assert_eq!(rows.len(), 1, "Expected 1 table");
-        let table = &rows[0];
-        assert_eq!(
-            table.get("storage_id").and_then(|v| v.as_str()),
-            Some("custom_s3"),
-            "Table should use custom_s3 storage"
-        );
-    }
+    let rows = response.results.first().map(|r| r.rows_as_maps()).unwrap_or_default();
+    assert_eq!(rows.len(), 1, "Expected 1 table");
+    let table = &rows[0];
+    assert_eq!(
+        table.get("storage_id").and_then(|v| v.as_str()),
+        Some("custom_s3"),
+        "Table should use custom_s3 storage"
+    );
 }
 
 // ============================================================================
@@ -1200,15 +1186,14 @@ async fn test_26_create_table_default_storage() {
     let query = "SELECT storage_id FROM system.tables WHERE namespace = 'default_ns' AND table_name = 'items'";
     let response = server.execute_sql(query).await;
 
-    if let Some(rows) = &response.results.first().and_then(|r| r.rows.as_ref()) {
-        assert_eq!(rows.len(), 1, "Expected 1 table");
-        let table = &rows[0];
-        assert_eq!(
-            table.get("storage_id").and_then(|v| v.as_str()),
-            Some("local"),
-            "Table should default to 'local' storage"
-        );
-    }
+    let rows = response.results.first().map(|r| r.rows_as_maps()).unwrap_or_default();
+    assert_eq!(rows.len(), 1, "Expected 1 table");
+    let table = &rows[0];
+    assert_eq!(
+        table.get("storage_id").and_then(|v| v.as_str()),
+        Some("local"),
+        "Table should default to 'local' storage"
+    );
 }
 
 // ============================================================================
@@ -1295,7 +1280,8 @@ async fn test_28_table_storage_assignment() {
     let query = "SELECT storage_id FROM system.tables WHERE namespace = 'storage_ns' AND table_name = 'data_table'";
     let check = server.execute_sql(query).await;
 
-    if let Some(rows) = &check.results.first().and_then(|r| r.rows.as_ref()) {
+    let rows = check.results.first().map(|r| r.rows_as_maps()).unwrap_or_default();
+    if !rows.is_empty() {
         let table = &rows[0];
         assert!(
             table.get("storage_id").is_some(),
@@ -1428,9 +1414,8 @@ async fn test_31_delete_storage_no_dependencies() {
     let query = "SELECT storage_id FROM system.storages WHERE storage_id = 'temp_storage'";
     let check = server.execute_sql(query).await;
 
-    if let Some(rows) = &check.results.first().and_then(|r| r.rows.as_ref()) {
-        assert_eq!(rows.len(), 0, "Storage should be deleted");
-    }
+    let rows = check.results.first().map(|r| r.rows_as_maps()).unwrap_or_default();
+    assert_eq!(rows.len(), 0, "Storage should be deleted");
 }
 
 // ============================================================================
@@ -1461,34 +1446,33 @@ async fn test_32_show_storages_ordering() {
         response.error
     );
 
-    if let Some(rows) = &response.results.first().and_then(|r| r.rows.as_ref()) {
-        assert!(rows.len() >= 4, "Expected at least 4 storages");
+    let rows = response.results.first().map(|r| r.rows_as_maps()).unwrap_or_default();
+    assert!(rows.len() >= 4, "Expected at least 4 storages");
 
-        // First should be 'local'
-        assert_eq!(
-            rows[0].get("storage_id").and_then(|v| v.as_str()),
-            Some("local"),
-            "First storage should be 'local'"
-        );
+    // First should be 'local'
+    assert_eq!(
+        rows[0].get("storage_id").and_then(|v| v.as_str()),
+        Some("local"),
+        "First storage should be 'local'"
+    );
 
-        // Rest should be alphabetical
-        let storage_ids: Vec<String> = rows[1..]
-            .iter()
-            .filter_map(|row| {
-                row.get("storage_id")
-                    .and_then(|v| v.as_str())
-                    .map(String::from)
-            })
-            .collect();
+    // Rest should be alphabetical
+    let storage_ids: Vec<String> = rows[1..]
+        .iter()
+        .filter_map(|row| {
+            row.get("storage_id")
+                .and_then(|v| v.as_str())
+                .map(String::from)
+        })
+        .collect();
 
-        let mut sorted_ids = storage_ids.clone();
-        sorted_ids.sort();
+    let mut sorted_ids = storage_ids.clone();
+    sorted_ids.sort();
 
-        assert_eq!(
-            storage_ids, sorted_ids,
-            "Storages after 'local' should be alphabetically ordered"
-        );
-    }
+    assert_eq!(
+        storage_ids, sorted_ids,
+        "Storages after 'local' should be alphabetically ordered"
+    );
 }
 
 // ============================================================================
@@ -1568,9 +1552,8 @@ async fn test_34_shared_table_template_ordering() {
     let query = "SELECT storage_id FROM system.storages WHERE storage_id = 'correct_shared'";
     let check = server.execute_sql(query).await;
 
-    if let Some(rows) = &check.results.first().and_then(|r| r.rows.as_ref()) {
-        assert_eq!(rows.len(), 1, "Storage should be created");
-    }
+    let rows = check.results.first().map(|r| r.rows_as_maps()).unwrap_or_default();
+    assert_eq!(rows.len(), 1, "Storage should be created");
 }
 
 // ============================================================================
@@ -1687,7 +1670,8 @@ async fn test_37_flush_with_use_user_storage() {
     let query = "SELECT storage_id FROM system.tables WHERE namespace = 'storage_test' AND table_name = 'user_data'";
     let check = server.execute_sql(query).await;
 
-    if let Some(rows) = &check.results.first().and_then(|r| r.rows.as_ref()) {
+    let rows = check.results.first().map(|r| r.rows_as_maps()).unwrap_or_default();
+    if !rows.is_empty() {
         assert_eq!(
             rows[0].get("storage_id").and_then(|v| v.as_str()),
             Some("user_storage"),
@@ -1764,7 +1748,8 @@ async fn test_39_user_storage_mode_table() {
     let query = "SELECT storage_id FROM system.tables WHERE namespace = 'table_mode_test' AND table_name = 'data'";
     let check = server.execute_sql(query).await;
 
-    if let Some(rows) = &check.results.first().and_then(|r| r.rows.as_ref()) {
+    let rows = check.results.first().map(|r| r.rows_as_maps()).unwrap_or_default();
+    if !rows.is_empty() {
         assert_eq!(
             rows[0].get("storage_id").and_then(|v| v.as_str()),
             Some("local"),
@@ -1816,7 +1801,8 @@ async fn test_40_flush_resolves_s3_storage() {
     let query = "SELECT storage_id FROM system.tables WHERE namespace = 's3_flush_test' AND table_name = 'data'";
     let check = server.execute_sql(query).await;
 
-    if let Some(rows) = &check.results.first().and_then(|r| r.rows.as_ref()) {
+    let rows = check.results.first().map(|r| r.rows_as_maps()).unwrap_or_default();
+    if !rows.is_empty() {
         assert_eq!(
             rows[0].get("storage_id").and_then(|v| v.as_str()),
             Some("s3_flush"),
@@ -1922,22 +1908,21 @@ async fn test_41_multi_storage_flush() {
     let query = "SELECT table_name, storage_id FROM system.tables WHERE namespace = 'multi_storage' ORDER BY table_name";
     let response = server.execute_sql(query).await;
 
-    if let Some(rows) = &response.results.first().and_then(|r| r.rows.as_ref()) {
-        assert_eq!(rows.len(), 3, "Expected 3 tables");
+    let rows = response.results.first().map(|r| r.rows_as_maps()).unwrap_or_default();
+    assert_eq!(rows.len(), 3, "Expected 3 tables");
 
-        assert_eq!(
-            rows[0].get("storage_id").and_then(|v| v.as_str()),
-            Some("fs_storage_1")
-        );
-        assert_eq!(
-            rows[1].get("storage_id").and_then(|v| v.as_str()),
-            Some("fs_storage_2")
-        );
-        assert_eq!(
-            rows[2].get("storage_id").and_then(|v| v.as_str()),
-            Some("s3_storage")
-        );
-    }
+    assert_eq!(
+        rows[0].get("storage_id").and_then(|v| v.as_str()),
+        Some("fs_storage_1")
+    );
+    assert_eq!(
+        rows[1].get("storage_id").and_then(|v| v.as_str()),
+        Some("fs_storage_2")
+    );
+    assert_eq!(
+        rows[2].get("storage_id").and_then(|v| v.as_str()),
+        Some("s3_storage")
+    );
 
     // NOTE: Actual flush coordination testing requires flush scheduler to be running
     // This test verifies storage assignment configuration only

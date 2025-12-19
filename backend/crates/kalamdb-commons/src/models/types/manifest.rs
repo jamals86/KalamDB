@@ -13,9 +13,14 @@ use crate::UserId;
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum SyncState {
-    /// Cache is in sync with storage
+    /// Cache is in sync with storage (manifest.json on disk matches cache)
     InSync,
-    /// Cache may be stale and needs refresh
+    /// Cache has local changes that need to be written to storage (pending flush)
+    PendingWrite,
+    /// Flush in progress: Parquet being written to temp location (atomic write pattern)
+    /// If server crashes in this state, temp files can be cleaned up on restart.
+    Syncing,
+    /// Cache may be stale and needs refresh from storage
     Stale,
     /// Error occurred during last sync attempt
     Error,
@@ -31,6 +36,8 @@ impl std::fmt::Display for SyncState {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             SyncState::InSync => write!(f, "in_sync"),
+            SyncState::PendingWrite => write!(f, "pending_write"),
+            SyncState::Syncing => write!(f, "syncing"),
             SyncState::Stale => write!(f, "stale"),
             SyncState::Error => write!(f, "error"),
         }
@@ -40,15 +47,18 @@ impl std::fmt::Display for SyncState {
 /// Manifest cache entry stored in RocksDB (Phase 4 - US6).
 ///
 /// Fields:
-/// - `manifest_json`: Serialized ManifestFile content
+/// - `manifest`: The parsed Manifest object (stored directly, serialized on-the-fly for display)
 /// - `etag`: Storage ETag or version identifier for freshness validation
 /// - `last_refreshed`: Unix timestamp (seconds) of last successful refresh
 /// - `source_path`: Full path to manifest.json in storage backend
 /// - `sync_state`: Current synchronization state (InSync | Stale | Error)
-#[derive(Debug, Clone, Serialize, Deserialize)]
+///
+/// Note: Uses custom serialization because bincode doesn't support serde_json::Value in ColumnStats.
+/// The Manifest is serialized as JSON string for storage, but kept as typed object in memory.
+#[derive(Debug, Clone)]
 pub struct ManifestCacheEntry {
-    /// Serialized ManifestFile JSON
-    pub manifest_json: String, //TODO: Maybe its better to have it as parsed one instead of string
+    /// The Manifest object (typed for in-memory access)
+    pub manifest: Manifest,
 
     /// ETag or version identifier from storage backend
     pub etag: Option<String>,
@@ -63,22 +73,71 @@ pub struct ManifestCacheEntry {
     pub sync_state: SyncState,
 }
 
+/// Intermediate struct for bincode-compatible serialization
+#[derive(Serialize, Deserialize)]
+struct ManifestCacheEntryRaw {
+    manifest_json: String,
+    etag: Option<String>,
+    last_refreshed: i64,
+    source_path: String,
+    sync_state: SyncState,
+}
+
+impl Serialize for ManifestCacheEntry {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: serde::Serializer,
+    {
+        let raw = ManifestCacheEntryRaw {
+            manifest_json: serde_json::to_string(&self.manifest).unwrap_or_else(|_| "{}".to_string()),
+            etag: self.etag.clone(),
+            last_refreshed: self.last_refreshed,
+            source_path: self.source_path.clone(),
+            sync_state: self.sync_state,
+        };
+        raw.serialize(serializer)
+    }
+}
+
+impl<'de> Deserialize<'de> for ManifestCacheEntry {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        let raw = ManifestCacheEntryRaw::deserialize(deserializer)?;
+        let manifest: Manifest = serde_json::from_str(&raw.manifest_json)
+            .map_err(|e| serde::de::Error::custom(format!("Failed to parse manifest JSON: {}", e)))?;
+        Ok(ManifestCacheEntry {
+            manifest,
+            etag: raw.etag,
+            last_refreshed: raw.last_refreshed,
+            source_path: raw.source_path,
+            sync_state: raw.sync_state,
+        })
+    }
+}
+
 impl ManifestCacheEntry {
     /// Create a new cache entry
     pub fn new(
-        manifest_json: String,
+        manifest: Manifest,
         etag: Option<String>,
         last_refreshed: i64,
         source_path: String,
         sync_state: SyncState,
     ) -> Self {
         Self {
-            manifest_json,
+            manifest,
             etag,
             last_refreshed,
             source_path,
             sync_state,
         }
+    }
+
+    /// Serialize manifest to JSON string (for display in system.manifest table)
+    pub fn manifest_json(&self) -> String {
+        serde_json::to_string(&self.manifest).unwrap_or_else(|_| "{}".to_string())
     }
 
     /// Check if entry is stale based on TTL
@@ -89,6 +148,21 @@ impl ManifestCacheEntry {
     /// Mark entry as stale
     pub fn mark_stale(&mut self) {
         self.sync_state = SyncState::Stale;
+    }
+
+    /// Mark entry as pending write (local changes need to be synced to storage)
+    pub fn mark_pending_write(&mut self) {
+        self.sync_state = SyncState::PendingWrite;
+    }
+
+    /// Mark entry as syncing (Parquet write in progress to temp location)
+    /// 
+    /// This state indicates the flush is in progress:
+    /// - Parquet file is being written to a temp location
+    /// - If crash occurs, temp files can be cleaned up on restart
+    /// - Transitions to InSync after successful rename to final location
+    pub fn mark_syncing(&mut self) {
+        self.sync_state = SyncState::Syncing;
     }
 
     /// Mark entry as in sync
@@ -299,8 +373,10 @@ mod tests {
 
     #[test]
     fn test_manifest_cache_entry_is_stale() {
+        let table_id = TableId::new(NamespaceId::new("test"), TableName::new("table"));
+        let manifest = Manifest::new(table_id, None);
         let entry = ManifestCacheEntry::new(
-            "{}".to_string(),
+            manifest,
             Some("etag123".to_string()),
             1000,
             "path/to/manifest.json".to_string(),
@@ -316,8 +392,10 @@ mod tests {
 
     #[test]
     fn test_manifest_cache_entry_state_transitions() {
+        let table_id = TableId::new(NamespaceId::new("test"), TableName::new("table"));
+        let manifest = Manifest::new(table_id, None);
         let mut entry = ManifestCacheEntry::new(
-            "{}".to_string(),
+            manifest,
             None,
             1000,
             "path".to_string(),
@@ -332,6 +410,109 @@ mod tests {
         assert_eq!(entry.etag, Some("new_etag".to_string()));
         assert_eq!(entry.last_refreshed, 2000);
 
+        entry.mark_error();
+        assert_eq!(entry.sync_state, SyncState::Error);
+    }
+
+    #[test]
+    fn test_sync_state_syncing_transition() {
+        let table_id = TableId::new(NamespaceId::new("test"), TableName::new("table"));
+        let manifest = Manifest::new(table_id, None);
+        let mut entry = ManifestCacheEntry::new(
+            manifest,
+            None,
+            1000,
+            "path".to_string(),
+            SyncState::PendingWrite,
+        );
+
+        // Transition: PendingWrite -> Syncing (flush started)
+        entry.mark_syncing();
+        assert_eq!(entry.sync_state, SyncState::Syncing);
+
+        // Transition: Syncing -> InSync (flush completed successfully)
+        entry.mark_in_sync(Some("etag-after-flush".to_string()), 2000);
+        assert_eq!(entry.sync_state, SyncState::InSync);
+        assert_eq!(entry.etag, Some("etag-after-flush".to_string()));
+    }
+
+    #[test]
+    fn test_sync_state_syncing_to_error() {
+        let table_id = TableId::new(NamespaceId::new("test"), TableName::new("table"));
+        let manifest = Manifest::new(table_id, None);
+        let mut entry = ManifestCacheEntry::new(
+            manifest,
+            None,
+            1000,
+            "path".to_string(),
+            SyncState::InSync,
+        );
+
+        // Transition: InSync -> Syncing (new flush started)
+        entry.mark_syncing();
+        assert_eq!(entry.sync_state, SyncState::Syncing);
+
+        // Transition: Syncing -> Error (flush failed)
+        entry.mark_error();
+        assert_eq!(entry.sync_state, SyncState::Error);
+    }
+
+    #[test]
+    fn test_sync_state_display() {
+        assert_eq!(format!("{}", SyncState::InSync), "in_sync");
+        assert_eq!(format!("{}", SyncState::PendingWrite), "pending_write");
+        assert_eq!(format!("{}", SyncState::Syncing), "syncing");
+        assert_eq!(format!("{}", SyncState::Stale), "stale");
+        assert_eq!(format!("{}", SyncState::Error), "error");
+    }
+
+    #[test]
+    fn test_sync_state_serialization() {
+        // Test that SyncState serializes/deserializes correctly with snake_case
+        let states = vec![
+            (SyncState::InSync, "\"in_sync\""),
+            (SyncState::PendingWrite, "\"pending_write\""),
+            (SyncState::Syncing, "\"syncing\""),
+            (SyncState::Stale, "\"stale\""),
+            (SyncState::Error, "\"error\""),
+        ];
+
+        for (state, expected_json) in states {
+            let json = serde_json::to_string(&state).unwrap();
+            assert_eq!(json, expected_json, "SyncState {:?} should serialize to {}", state, expected_json);
+
+            let deserialized: SyncState = serde_json::from_str(&json).unwrap();
+            assert_eq!(deserialized, state, "SyncState should round-trip through JSON");
+        }
+    }
+
+    #[test]
+    fn test_sync_state_full_flush_lifecycle() {
+        // Simulate the complete flush lifecycle with the new Syncing state
+        let table_id = TableId::new(NamespaceId::new("myns"), TableName::new("mytable"));
+        let manifest = Manifest::new(table_id, None);
+        let mut entry = ManifestCacheEntry::new(
+            manifest,
+            None,
+            1000,
+            "myns/mytable/manifest.json".to_string(),
+            SyncState::InSync,
+        );
+
+        // 1. Data is written to hot storage (RocksDB), manifest goes PendingWrite
+        entry.mark_pending_write();
+        assert_eq!(entry.sync_state, SyncState::PendingWrite);
+
+        // 2. Flush job starts, write Parquet to temp location
+        entry.mark_syncing();
+        assert_eq!(entry.sync_state, SyncState::Syncing);
+
+        // 3a. Success path: rename temp -> final, update manifest
+        entry.mark_in_sync(Some("etag-v2".to_string()), 2000);
+        assert_eq!(entry.sync_state, SyncState::InSync);
+
+        // OR 3b. Failure path: mark as error
+        entry.mark_syncing();
         entry.mark_error();
         assert_eq!(entry.sync_state, SyncState::Error);
     }

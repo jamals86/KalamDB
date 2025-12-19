@@ -529,7 +529,6 @@ pub fn pk_exists_in_cold(
 ) -> Result<bool, KalamDbError> {
     use crate::manifest::ManifestAccessPlanner;
     use kalamdb_commons::types::Manifest;
-    use std::path::PathBuf;
 
     let namespace = table_id.namespace_id();
     let table = table_id.table_name();
@@ -537,16 +536,66 @@ pub fn pk_exists_in_cold(
         .map(|uid| format!("user={}", uid.as_str()))
         .unwrap_or_else(|| format!("scope={}", table_type.as_str()));
 
-    // 1. Get storage path and check if it exists
-    let storage_path = core
-        .app_context
-        .schema_registry()
-        .get_storage_path(table_id, user_id, None)?;
-    let storage_dir = PathBuf::from(&storage_path);
+    // 1. Get CachedTableData for storage access
+    let cached = match core.app_context.schema_registry().get(table_id) {
+        Some(c) => c,
+        None => {
+            log::trace!(
+                "[pk_exists_in_cold] No cached table data for {}.{} {} - PK not in cold",
+                namespace.as_str(),
+                table.as_str(),
+                scope_label
+            );
+            return Ok(false);
+        }
+    };
 
-    if !storage_dir.exists() {
+    // 2. Get Storage from registry (cached lookup) and ObjectStore
+    let storage_id = cached.storage_id.clone().unwrap_or_else(kalamdb_commons::models::StorageId::local);
+    let storage = match core.app_context.storage_registry().get_storage(&storage_id) {
+        Ok(Some(s)) => s,
+        Ok(None) | Err(_) => {
+            log::trace!(
+                "[pk_exists_in_cold] Storage {} not found for {}.{} {} - PK not in cold",
+                storage_id.as_str(),
+                namespace.as_str(),
+                table.as_str(),
+                scope_label
+            );
+            return Ok(false);
+        }
+    };
+
+    let object_store = cached
+        .object_store()
+        .into_kalamdb_error("Failed to get object store")?;
+
+    // 3. Get storage path (relative to storage base)
+    let storage_path = crate::schema_registry::PathResolver::get_storage_path(&cached, user_id, None)?;
+
+    // Check if any files exist at this path using object_store
+    let files = kalamdb_filestore::list_files_sync(
+        std::sync::Arc::clone(&object_store),
+        &storage,
+        &storage_path,
+    );
+
+    let all_files = match files {
+        Ok(f) => f,
+        Err(_) => {
+            log::trace!(
+                "[pk_exists_in_cold] No storage dir for {}.{} {} - PK not in cold",
+                namespace.as_str(),
+                table.as_str(),
+                scope_label
+            );
+            return Ok(false);
+        }
+    };
+
+    if all_files.is_empty() {
         log::trace!(
-            "[pk_exists_in_cold] No storage dir for {}.{} {} - PK not in cold",
+            "[pk_exists_in_cold] No files in storage for {}.{} {} - PK not in cold",
             namespace.as_str(),
             table.as_str(),
             scope_label
@@ -554,24 +603,12 @@ pub fn pk_exists_in_cold(
         return Ok(false);
     }
 
-    // 2. Load manifest from cache
+    // 4. Load manifest from cache
     let manifest_cache_service = core.app_context.manifest_cache_service();
     let cache_result = manifest_cache_service.get_or_load(table_id, user_id);
 
     let manifest: Option<Manifest> = match &cache_result {
-        Ok(Some(entry)) => match serde_json::from_str::<Manifest>(&entry.manifest_json) {
-            Ok(m) => Some(m),
-            Err(e) => {
-                log::warn!(
-                    "[pk_exists_in_cold] Failed to parse manifest for {}.{} {}: {}",
-                    namespace.as_str(),
-                    table.as_str(),
-                    scope_label,
-                    e
-                );
-                None
-            }
-        },
+        Ok(Some(entry)) => Some(entry.manifest.clone()),
         Ok(None) => {
             log::trace!(
                 "[pk_exists_in_cold] No manifest for {}.{} {} - checking all files",
@@ -593,9 +630,9 @@ pub fn pk_exists_in_cold(
         }
     };
 
-    // 3. Use manifest to prune segments
+    // 5. Use manifest to prune segments or list all Parquet files
     let planner = ManifestAccessPlanner::new();
-    let files_to_scan: Vec<PathBuf> = if let Some(ref m) = manifest {
+    let files_to_scan: Vec<String> = if let Some(ref m) = manifest {
         let pruned_paths = planner.plan_by_pk_value(m, pk_column, pk_value);
         if pruned_paths.is_empty() {
             log::trace!(
@@ -617,16 +654,11 @@ pub fn pk_exists_in_cold(
             scope_label
         );
         pruned_paths
-            .into_iter()
-            .map(|p| storage_dir.join(p))
-            .collect()
     } else {
-        // No manifest - scan all Parquet files (fallback)
-        let entries = std::fs::read_dir(&storage_dir).map_err(KalamDbError::Io)?;
-        entries
-            .filter_map(|e| e.ok())
-            .map(|e| e.path())
-            .filter(|p| p.extension().and_then(|s| s.to_str()) == Some("parquet"))
+        // No manifest - use all Parquet files from listing
+        all_files
+            .into_iter()
+            .filter(|p| p.ends_with(".parquet"))
             .collect()
     };
 
@@ -634,14 +666,21 @@ pub fn pk_exists_in_cold(
         return Ok(false);
     }
 
-    // 4. Scan pruned Parquet files and check for PK
-    // We need to apply version resolution (latest _seq wins, _deleted=false)
-    for parquet_file in files_to_scan {
-        if pk_exists_in_parquet_file(&parquet_file, pk_column, pk_value)? {
+    // 6. Scan pruned Parquet files and check for PK using object_store
+    // Manifest paths are just filenames (e.g., "batch-0.parquet"), so prepend storage_path
+    for file_name in files_to_scan {
+        let parquet_path = format!("{}/{}", storage_path.trim_end_matches('/'), file_name);
+        if pk_exists_in_parquet_via_store(
+            std::sync::Arc::clone(&object_store),
+            &storage,
+            &parquet_path,
+            pk_column,
+            pk_value,
+        )? {
             log::trace!(
-                "[pk_exists_in_cold] Found PK {} in {:?} for {}.{} {}",
+                "[pk_exists_in_cold] Found PK {} in {} for {}.{} {}",
                 pk_value,
-                parquet_file,
+                parquet_path,
                 namespace.as_str(),
                 table.as_str(),
                 scope_label
@@ -653,34 +692,27 @@ pub fn pk_exists_in_cold(
     Ok(false)
 }
 
-/// Check if a PK value exists in a single Parquet file (with MVCC version resolution).
+/// Check if a PK value exists in a single Parquet file via object_store (with MVCC version resolution).
 ///
-/// Reads the file and checks if any non-deleted row has the matching PK value.
-fn pk_exists_in_parquet_file(
-    parquet_file: &std::path::Path,
+/// Reads the file using object_store and checks if any non-deleted row has the matching PK value.
+fn pk_exists_in_parquet_via_store(
+    store: std::sync::Arc<dyn object_store::ObjectStore>,
+    storage: &kalamdb_commons::system::Storage,
+    parquet_path: &str,
     pk_column: &str,
     pk_value: &str,
 ) -> Result<bool, KalamDbError> {
-    use datafusion::arrow::array::{
-        Array, BooleanArray, Int64Array, UInt64Array,
-    };
-    use datafusion::parquet::arrow::arrow_reader::ParquetRecordBatchReaderBuilder;
+    use datafusion::arrow::array::{Array, BooleanArray, Int64Array, UInt64Array};
     use std::collections::HashMap;
 
-    let file = std::fs::File::open(parquet_file).map_err(KalamDbError::Io)?;
-    let builder = ParquetRecordBatchReaderBuilder::try_new(file)
-        .into_kalamdb_error("Failed to create Parquet reader")?;
-    let reader = builder
-        .build()
-        .into_kalamdb_error("Failed to build Parquet reader")?;
+    // Read Parquet file via object_store
+    let batches = kalamdb_filestore::read_parquet_batches_sync(store, storage, parquet_path)
+        .into_kalamdb_error("Failed to read Parquet file")?;
 
     // Track latest version per PK value: pk_value -> (max_seq, is_deleted)
     let mut versions: HashMap<String, (i64, bool)> = HashMap::new();
 
-    for batch_result in reader {
-        let batch = batch_result
-            .into_kalamdb_error("Failed to read Parquet batch")?;
-
+    for batch in batches {
         // Find column indices
         let pk_idx = batch.schema().index_of(pk_column).ok();
         let seq_idx = batch.schema().index_of(SystemColumnNames::SEQ).ok();
@@ -777,6 +809,9 @@ fn extract_pk_as_string(col: &dyn datafusion::arrow::array::Array, idx: usize) -
 ///
 /// This uses find_row_key_by_id_field which providers can override to use PK indexes
 /// for O(1) lookup instead of scanning all rows.
+///
+/// **Optimization**: If the PK column is AUTO_INCREMENT or SNOWFLAKE_ID, this check
+/// is skipped since the system guarantees unique values.
 pub fn ensure_unique_pk_value<P, K, V>(
     provider: &P,
     scope: Option<&UserId>,
@@ -786,6 +821,21 @@ where
     P: BaseTableProvider<K, V>,
     K: StorageKey,
 {
+    let table_id = provider.table_id();
+    
+    // Get table definition to check if PK is auto-increment
+    if let Some(table_def) = provider.app_context().schema_registry().get_table_definition(table_id)? {
+        // Fast path: Skip uniqueness check if PK is auto-increment
+        if crate::pk::PkExistenceChecker::is_auto_increment_pk(&table_def) {
+            log::trace!(
+                "[ensure_unique_pk_value] Skipping PK check for {}.{} - PK is auto-increment",
+                table_id.namespace_id().as_str(),
+                table_id.table_name().as_str()
+            );
+            return Ok(());
+        }
+    }
+
     let pk_name = provider.primary_key_field_name();
     if let Some(pk_value) = row_data.get(pk_name) {
         if !matches!(pk_value, ScalarValue::Null) {
@@ -831,6 +881,87 @@ pub fn warn_if_unfiltered_scan(
             table_type.as_str()
         );
     }
+}
+
+/// Validate that an UPDATE operation doesn't change the PK to an existing value
+///
+/// This is called when an UPDATE includes the PK column in the SET clause.
+/// If the new PK value already exists (for a different row), returns an error.
+///
+/// **Skip conditions**:
+/// - PK value is not being changed (new value == old value)
+/// - PK column is not in the updates
+/// - PK column has AUTO_INCREMENT (not allowed to be updated)
+///
+/// # Arguments
+/// * `provider` - The table provider to check against
+/// * `scope` - Optional user ID for scoping (User tables)
+/// * `updates` - The Row containing update values
+/// * `current_pk_value` - The current PK value of the row being updated
+///
+/// # Returns
+/// * `Ok(())` if the update is valid
+/// * `Err(AlreadyExists)` if the new PK value already exists
+/// * `Err(InvalidOperation)` if trying to change an auto-increment PK
+pub fn validate_pk_update<P, K, V>(
+    provider: &P,
+    scope: Option<&UserId>,
+    updates: &Row,
+    current_pk_value: &ScalarValue,
+) -> Result<(), KalamDbError>
+where
+    P: BaseTableProvider<K, V>,
+    K: StorageKey,
+{
+    let table_id = provider.table_id();
+    let pk_name = provider.primary_key_field_name();
+
+    // Check if PK is in the update values
+    let new_pk_value = match updates.get(pk_name) {
+        Some(v) if !matches!(v, ScalarValue::Null) => v,
+        _ => return Ok(()), // PK not being updated, nothing to validate
+    };
+
+    // Check if the value is actually changing
+    if new_pk_value == current_pk_value {
+        return Ok(()); // Same value, no change
+    }
+
+    // Get table definition to check if PK is auto-increment
+    if let Some(table_def) = provider.app_context().schema_registry().get_table_definition(table_id)? {
+        if crate::pk::PkExistenceChecker::is_auto_increment_pk(&table_def) {
+            return Err(KalamDbError::InvalidOperation(format!(
+                "Cannot modify auto-increment primary key column '{}' in table {}.{}",
+                pk_name,
+                table_id.namespace_id().as_str(),
+                table_id.table_name().as_str()
+            )));
+        }
+    }
+
+    // Check if the new PK value already exists
+    let new_pk_str = unified_dml::extract_user_pk_value(updates, pk_name)?;
+    let user_scope = resolve_user_scope(scope);
+
+    if provider
+        .find_row_key_by_id_field(user_scope, &new_pk_str)?
+        .is_some()
+    {
+        return Err(KalamDbError::AlreadyExists(format!(
+            "Primary key violation: value '{}' already exists in column '{}' (UPDATE would create duplicate)",
+            new_pk_str, pk_name
+        )));
+    }
+
+    log::trace!(
+        "[validate_pk_update] PK change validated: {} -> {} for {}.{}",
+        current_pk_value,
+        new_pk_str,
+        table_id.namespace_id().as_str(),
+        table_id.table_name().as_str()
+    );
+
+    Ok(())
 }
 
 /// Apply limit to a vector of results after version resolution.

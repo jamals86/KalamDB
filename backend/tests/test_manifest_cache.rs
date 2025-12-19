@@ -21,10 +21,9 @@ use std::sync::Arc;
 fn create_test_service() -> ManifestCacheService {
     let backend: Arc<dyn StorageBackend> = Arc::new(InMemoryBackend::new());
     let config = ManifestCacheSettings {
-        ttl_seconds: 3600,
         eviction_interval_seconds: 300,
         max_entries: 1000,
-        last_accessed_memory_window: 3600,
+        eviction_ttl_days: 7,
     };
     ManifestCacheService::new(backend, config)
 }
@@ -96,11 +95,11 @@ fn test_get_or_load_cache_hit() {
 #[test]
 fn test_validate_freshness_stale() {
     let backend: Arc<dyn StorageBackend> = Arc::new(InMemoryBackend::new());
+    // Use 0 days TTL so entries are immediately stale
     let config = ManifestCacheSettings {
-        ttl_seconds: 10, // 10 seconds TTL for testing
         eviction_interval_seconds: 300,
         max_entries: 1000,
-        last_accessed_memory_window: 3600,
+        eviction_ttl_days: 0, // 0 days = entries are immediately stale
     };
     let service = ManifestCacheService::new(backend, config);
 
@@ -168,11 +167,11 @@ fn test_update_after_flush_atomic_write() {
         "s3://bucket/ns1/orders/u_456/manifest.json"
     );
 
-    // Verify manifest JSON is valid
-    let parsed_manifest: Manifest = serde_json::from_str(&entry.manifest_json).unwrap();
-    assert_eq!(parsed_manifest.table_id.namespace_id().as_str(), "ns1");
-    assert_eq!(parsed_manifest.table_id.table_name().as_str(), "orders");
-    assert_eq!(parsed_manifest.user_id, Some(UserId::from("u_456")));
+    // Verify manifest is valid
+    let manifest = &entry.manifest;
+    assert_eq!(manifest.table_id.namespace_id().as_str(), "ns1");
+    assert_eq!(manifest.table_id.table_name().as_str(), "orders");
+    assert_eq!(manifest.user_id, Some(UserId::from("u_456")));
 }
 
 // T099: restore_from_rocksdb() → cache restored from RocksDB CF after server restart

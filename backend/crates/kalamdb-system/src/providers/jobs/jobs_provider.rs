@@ -165,7 +165,7 @@ impl JobsTableProvider {
         let store = self.store.clone();
         let job_id_clone = job.job_id.clone();
         let job_id = job.job_id.clone();
-        let result = tokio::task::spawn_blocking(move || {
+        tokio::task::spawn_blocking(move || {
             store.update_with_old(&job_id_clone, Some(&old_job), &job)
         })
         .await
@@ -173,7 +173,7 @@ impl JobsTableProvider {
         .into_system_error("update job error")?;
         
         log::debug!("[{}] update_job_async completed successfully", job_id);
-        Ok(result)
+        Ok(())
     }
 
     /// Delete a job entry.

@@ -2,6 +2,7 @@ use crate::error::KalamDbError;
 use crate::error_extensions::KalamDbResultExt;
 use kalamdb_commons::models::schemas::TableDefinition;
 use kalamdb_commons::models::{StorageId, TableId};
+use object_store::ObjectStore;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, RwLock};
 
@@ -23,7 +24,7 @@ pub struct CachedTableData {
 
     /// Partially-resolved storage path template
     /// Static placeholders substituted ({namespace}, {tableName}), dynamic ones remain ({userId}, {shard})
-    pub storage_path_template: String, //TODO: Use PathBuf instead of String
+    pub storage_path_template: String,
 
     /// Current schema version number
     pub schema_version: u32,
@@ -255,5 +256,28 @@ impl CachedTableData {
 
             Ok(arrow_schema)
         }
+    }
+
+    /// Get ObjectStore instance from StorageRegistry (centralized caching)
+    ///
+    /// ObjectStore instances are now cached per-storage in StorageRegistry, not per-table.
+    /// This ensures that 100 tables using the same storage share 1 ObjectStore instance.
+    ///
+    /// **Performance**: First call builds store (~50-200μs for cloud), subsequent calls return cached Arc (~1μs)
+    ///
+    /// # Returns
+    /// Arc-wrapped ObjectStore for zero-copy sharing across operations
+    ///
+    /// # Errors
+    /// Returns error if no storage_id configured or storage not found
+    pub fn object_store(&self) -> Result<Arc<dyn ObjectStore>, KalamDbError> {
+        let storage_id = self.storage_id.as_ref().ok_or_else(|| {
+            KalamDbError::InvalidOperation(
+                "Cannot get ObjectStore: no storage_id configured".to_string(),
+            )
+        })?;
+
+        let app_ctx = crate::app_context::AppContext::get();
+        app_ctx.storage_registry().get_object_store(storage_id)
     }
 }

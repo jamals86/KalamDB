@@ -13,7 +13,7 @@
 #[path = "../../common/mod.rs"]
 mod common;
 
-use common::{fixtures, TestServer};
+use common::{fixtures, QueryResultTestExt, TestServer};
 use kalamdb_api::models::ResponseStatus;
 
 #[actix_web::test]
@@ -96,17 +96,16 @@ async fn test_shared_table_insert_and_select() {
     );
     assert!(!response.results.is_empty());
 
-    if let Some(rows) = &response.results[0].rows {
-        assert_eq!(rows.len(), 1, "Expected 1 row, got {}", rows.len());
+    let rows = response.results[0].rows_as_maps();
+    assert_eq!(rows.len(), 1, "Expected 1 row, got {}", rows.len());
 
-        let row = &rows[0];
-        assert_eq!(
-            row.get("conversation_id").unwrap().as_str().unwrap(),
-            "conv001"
-        );
-        assert_eq!(row.get("title").unwrap().as_str().unwrap(), "Team Standup");
-        assert_eq!(row.get("participant_count").unwrap().as_i64().unwrap(), 5);
-    }
+    let row = &rows[0];
+    assert_eq!(
+        row.get("conversation_id").unwrap().as_str().unwrap(),
+        "conv001"
+    );
+    assert_eq!(row.get("title").unwrap().as_str().unwrap(), "Team Standup");
+    assert_eq!(row.get("participant_count").unwrap().as_i64().unwrap(), 5);
 }
 
 #[actix_web::test]
@@ -143,21 +142,20 @@ async fn test_shared_table_multiple_inserts() {
         .await;
 
     assert_eq!(response.status, ResponseStatus::Success);
-    if let Some(rows) = &response.results[0].rows {
-        assert_eq!(rows.len(), 3, "Expected 3 rows");
-        assert_eq!(
-            rows[0].get("conversation_id").unwrap().as_str().unwrap(),
-            "conv001"
-        );
-        assert_eq!(
-            rows[1].get("conversation_id").unwrap().as_str().unwrap(),
-            "conv002"
-        );
-        assert_eq!(
-            rows[2].get("conversation_id").unwrap().as_str().unwrap(),
-            "conv003"
-        );
-    }
+    let rows = response.results[0].rows_as_maps();
+    assert_eq!(rows.len(), 3, "Expected 3 rows");
+    assert_eq!(
+        rows[0].get("conversation_id").unwrap().as_str().unwrap(),
+        "conv001"
+    );
+    assert_eq!(
+        rows[1].get("conversation_id").unwrap().as_str().unwrap(),
+        "conv002"
+    );
+    assert_eq!(
+        rows[2].get("conversation_id").unwrap().as_str().unwrap(),
+        "conv003"
+    );
 }
 
 #[actix_web::test]
@@ -204,14 +202,13 @@ async fn test_shared_table_update() {
         .await;
 
     assert_eq!(response.status, ResponseStatus::Success);
-    if let Some(rows) = &response.results[0].rows {
-        assert_eq!(rows.len(), 1);
-        assert_eq!(
-            rows[0].get("title").unwrap().as_str().unwrap(),
-            "Updated Planning Meeting"
-        );
-        assert_eq!(rows[0].get("status").unwrap().as_str().unwrap(), "archived");
-    }
+    let rows = response.results[0].rows_as_maps();
+    assert_eq!(rows.len(), 1);
+    assert_eq!(
+        rows[0].get("title").unwrap().as_str().unwrap(),
+        "Updated Planning Meeting"
+    );
+    assert_eq!(rows[0].get("status").unwrap().as_str().unwrap(), "archived");
 }
 
 #[actix_web::test]
@@ -248,9 +245,8 @@ async fn test_shared_table_select() {
 
     // Verify we got results
     assert!(!response.results.is_empty(), "Should have query results");
-    if let Some(rows) = &response.results[0].rows {
-        assert_eq!(rows.len(), 3, "Should have 3 data rows");
-    }
+    let rows = response.results[0].rows_as_maps();
+    assert_eq!(rows.len(), 3, "Should have 3 data rows");
 }
 
 #[actix_web::test]
@@ -321,7 +317,7 @@ async fn test_shared_table_system_columns() {
     // Verify system columns exist in results
     assert!(!response.results.is_empty(), "Should have results");
     assert!(
-        !response.results[0].columns.is_empty(),
+        !response.results[0].schema.is_empty(),
         "Should have columns"
     );
 }

@@ -2,7 +2,7 @@ use crate::error::KalamDbError;
 use crate::providers::core::TableProviderCore;
 use crate::providers::parquet::scan_parquet_files_as_batch;
 use crate::providers::version_resolution::{parquet_batch_to_rows, ParquetRowData};
-use crate::schema_registry::TableType;
+use crate::schema_registry::{PathResolver, TableType};
 use datafusion::arrow::datatypes::SchemaRef;
 use datafusion::logical_expr::Expr;
 use datafusion::prelude::{col, lit};
@@ -42,10 +42,21 @@ pub fn ensure_manifest_ready(
     let manifest_service = core.app_context.manifest_service();
     let manifest = manifest_service.ensure_manifest_initialized(table_id, table_type, user_id)?;
 
-    let manifest_path = manifest_service
-        .manifest_path(table_id, user_id)?
-        .to_string_lossy()
-        .to_string();
+    // Get cached table data for path resolution using storage templates
+    let cached = core
+        .app_context
+        .schema_registry()
+        .get(table_id)
+        .ok_or_else(|| {
+            KalamDbError::TableNotFound(format!(
+                "Table {}.{} not found in schema registry",
+                namespace.as_str(),
+                table.as_str()
+            ))
+        })?;
+
+    // Use PathResolver to get relative manifest path from storage template
+    let manifest_path = PathResolver::get_manifest_relative_path(&cached, user_id, None)?;
 
     manifest_cache.stage_before_flush(table_id, user_id, &manifest, manifest_path)?;
 

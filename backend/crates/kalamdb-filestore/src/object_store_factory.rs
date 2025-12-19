@@ -57,8 +57,31 @@ fn build_local(storage: &Storage) -> Result<Arc<dyn ObjectStore>> {
         ));
     }
 
+    let path = PathBuf::from(base);
+    
+    // Ensure the directory exists before canonicalizing
+    // LocalFileSystem::new_with_prefix requires an absolute path that exists
+    if !path.exists() {
+        std::fs::create_dir_all(&path).map_err(|e| {
+            FilestoreError::Config(format!(
+                "Failed to create storage directory '{}': {}",
+                path.display(),
+                e
+            ))
+        })?;
+    }
+
+    // Canonicalize to get absolute path (resolves ., .., symlinks)
+    let absolute_path = path.canonicalize().map_err(|e| {
+        FilestoreError::Config(format!(
+            "Failed to resolve absolute path for '{}': {}",
+            path.display(),
+            e
+        ))
+    })?;
+
     // LocalFileSystem with prefix handles path resolution automatically
-    LocalFileSystem::new_with_prefix(PathBuf::from(base))
+    LocalFileSystem::new_with_prefix(absolute_path)
         .map(|fs| Arc::new(fs) as Arc<dyn ObjectStore>)
         .map_err(|e| FilestoreError::Config(format!("LocalFileSystem: {e}")))
 }
@@ -152,8 +175,7 @@ fn parse_remote_url(url: &str, schemes: &[&str]) -> Result<(String, String)> {
     let trimmed = url.trim();
 
     for scheme in schemes {
-        if trimmed.starts_with(scheme) {
-            let rest = &trimmed[scheme.len()..];
+        if let Some(rest) = trimmed.strip_prefix(scheme) {
             let (bucket, prefix) = match rest.split_once('/') {
                 Some((b, p)) => (b.to_string(), p.to_string()),
                 None => (rest.to_string(), String::new()),
@@ -189,8 +211,7 @@ pub fn object_key_for_path(storage: &Storage, full_path: &str) -> Result<ObjectS
 
     // Check if it's a remote URL
     for scheme in ["s3://", "gs://", "gcs://", "az://", "azure://"] {
-        if trimmed.starts_with(scheme) {
-            let rest = &trimmed[scheme.len()..];
+        if let Some(rest) = trimmed.strip_prefix(scheme) {
             // Skip bucket/container, extract key
             let key = match rest.split_once('/') {
                 Some((_, k)) => k.trim_matches('/'),
@@ -248,5 +269,162 @@ mod tests {
         assert!(is_remote_url("az://container/key"));
         assert!(!is_remote_url("/var/data/storage"));
         assert!(!is_remote_url("./relative/path"));
+    }
+
+    #[test]
+    fn test_is_remote_url_gcs_variants() {
+        assert!(is_remote_url("gcs://bucket/key"));
+        assert!(is_remote_url("gs://bucket/key"));
+    }
+
+    #[test]
+    fn test_is_remote_url_azure_variants() {
+        assert!(is_remote_url("azure://container/key"));
+        assert!(is_remote_url("az://container/key"));
+    }
+
+    #[test]
+    fn test_build_object_store_filesystem() {
+        use kalamdb_commons::models::ids::StorageId;
+        use kalamdb_commons::models::storage::StorageType;
+        use kalamdb_commons::models::types::Storage;
+        use std::env;
+
+        let temp_dir = env::temp_dir().join("kalamdb_test_build_store");
+        let _ = std::fs::remove_dir_all(&temp_dir);
+        std::fs::create_dir_all(&temp_dir).unwrap();
+
+        let now = chrono::Utc::now().timestamp_millis();
+        let storage = Storage {
+            storage_id: StorageId::from("test_build"),
+            storage_name: "test_build".to_string(),
+            description: None,
+            storage_type: StorageType::Filesystem,
+            base_directory: temp_dir.to_string_lossy().to_string(),
+            credentials: None,
+            config_json: None,
+            shared_tables_template: "{namespace}/{table}".to_string(),
+            user_tables_template: "{namespace}/{user}/{table}".to_string(),
+            created_at: now,
+            updated_at: now,
+        };
+
+        let result = build_object_store(&storage);
+        assert!(result.is_ok(), "Should build filesystem store");
+
+        let _ = std::fs::remove_dir_all(&temp_dir);
+    }
+
+    #[test]
+    fn test_object_key_for_path_filesystem() {
+        use kalamdb_commons::models::ids::StorageId;
+        use kalamdb_commons::models::storage::StorageType;
+        use kalamdb_commons::models::types::Storage;
+
+        let now = chrono::Utc::now().timestamp_millis();
+        let storage = Storage {
+            storage_id: StorageId::from("test_key"),
+            storage_name: "test_key".to_string(),
+            description: None,
+            storage_type: StorageType::Filesystem,
+            base_directory: "/tmp/kalamdb".to_string(),
+            credentials: None,
+            config_json: None,
+            shared_tables_template: "{namespace}/{table}".to_string(),
+            user_tables_template: "{namespace}/{user}/{table}".to_string(),
+            created_at: now,
+            updated_at: now,
+        };
+
+        let result = object_key_for_path(&storage, "namespace1/table1/file.parquet");
+        assert!(result.is_ok());
+        
+        let key = result.unwrap();
+        assert_eq!(key.as_ref(), "namespace1/table1/file.parquet");
+    }
+
+    #[test]
+    fn test_object_key_for_path_strips_leading_slash() {
+        use kalamdb_commons::models::ids::StorageId;
+        use kalamdb_commons::models::storage::StorageType;
+        use kalamdb_commons::models::types::Storage;
+
+        let now = chrono::Utc::now().timestamp_millis();
+        let storage = Storage {
+            storage_id: StorageId::from("test_slash"),
+            storage_name: "test_slash".to_string(),
+            description: None,
+            storage_type: StorageType::Filesystem,
+            base_directory: "/tmp/kalamdb".to_string(),
+            credentials: None,
+            config_json: None,
+            shared_tables_template: "{namespace}/{table}".to_string(),
+            user_tables_template: "{namespace}/{user}/{table}".to_string(),
+            created_at: now,
+            updated_at: now,
+        };
+
+        let result = object_key_for_path(&storage, "/namespace1/table1/file.parquet");
+        assert!(result.is_ok());
+        
+        let key = result.unwrap();
+        // Should strip leading slash
+        assert_eq!(key.as_ref(), "namespace1/table1/file.parquet");
+    }
+
+    #[test]
+    fn test_object_key_for_path_empty() {
+        use kalamdb_commons::models::ids::StorageId;
+        use kalamdb_commons::models::storage::StorageType;
+        use kalamdb_commons::models::types::Storage;
+
+        let now = chrono::Utc::now().timestamp_millis();
+        let storage = Storage {
+            storage_id: StorageId::from("test_empty"),
+            storage_name: "test_empty".to_string(),
+            description: None,
+            storage_type: StorageType::Filesystem,
+            base_directory: "/tmp/kalamdb".to_string(),
+            credentials: None,
+            config_json: None,
+            shared_tables_template: "{namespace}/{table}".to_string(),
+            user_tables_template: "{namespace}/{user}/{table}".to_string(),
+            created_at: now,
+            updated_at: now,
+        };
+
+        let result = object_key_for_path(&storage, "");
+        assert!(result.is_ok());
+        
+        let key = result.unwrap();
+        assert_eq!(key.as_ref(), "");
+    }
+
+    #[test]
+    fn test_parse_remote_url_with_trailing_slash() {
+        let (bucket, prefix) = parse_remote_url("s3://my-bucket/prefix/", &["s3://"]).unwrap();
+        assert_eq!(bucket, "my-bucket");
+        assert_eq!(prefix, "prefix/");
+    }
+
+    #[test]
+    fn test_parse_remote_url_deep_prefix() {
+        let (bucket, prefix) =
+            parse_remote_url("s3://my-bucket/a/b/c/d/e", &["s3://"]).unwrap();
+        assert_eq!(bucket, "my-bucket");
+        assert_eq!(prefix, "a/b/c/d/e");
+    }
+
+    #[test]
+    fn test_parse_remote_url_invalid_scheme() {
+        let result = parse_remote_url("http://bucket/key", &["s3://", "gs://"]);
+        assert!(result.is_err(), "Should error on invalid scheme");
+    }
+
+    #[test]
+    fn test_is_remote_url_with_spaces() {
+        // is_remote_url trims internally
+        assert!(is_remote_url("  s3://bucket "), "Should handle spaces");
+        assert!(is_remote_url(" s3://bucket/key "));
     }
 }

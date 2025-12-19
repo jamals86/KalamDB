@@ -176,9 +176,9 @@ pub async fn create_messages_table(
             return SqlResponse {
                 status: ResponseStatus::Success,
                 results: vec![QueryResult {
+                    schema: vec![],
                     rows: None,
                     row_count: 0,
-                    columns: vec![],
                     message: Some("Table already existed".to_string()),
                 }],
                 took: 0.0,
@@ -296,9 +296,9 @@ pub async fn create_stream_table(
             return SqlResponse {
                 status: ResponseStatus::Success,
                 results: vec![QueryResult {
+                    schema: vec![],
                     rows: None,
                     row_count: 0,
-                    columns: vec![],
                     message: Some("Table already existed".to_string()),
                 }],
                 took: 0.0,
@@ -327,11 +327,9 @@ pub async fn drop_table(server: &TestServer, namespace: &str, table_name: &str) 
         lookup_response
             .results
             .get(0)
-            .and_then(|result| result.rows.as_ref())
-            .and_then(|rows| rows.first())
-            .and_then(|row| row.get("table_type"))
-            .and_then(|value| value.as_str())
-            .map(|s| s.to_string())
+            .and_then(|result| super::QueryResultTestExt::row_as_map(result, 0))
+            .and_then(|row| row.get("table_type").cloned())
+            .and_then(|value| value.as_str().map(|s| s.to_string()))
     } else {
         None
     };

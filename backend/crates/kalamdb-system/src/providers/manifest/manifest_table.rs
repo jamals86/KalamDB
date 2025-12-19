@@ -27,9 +27,10 @@ impl ManifestTableSchema {
     /// - etag: Utf8 (nullable)
     /// - last_refreshed: TimestampMillisecond
     /// - last_accessed: TimestampMillisecond
-    /// - ttl_seconds: Int64
+    /// - in_memory: Boolean (true if in hot cache)
     /// - source_path: Utf8
     /// - sync_state: Utf8
+    /// - manifest_json: Utf8 (serialized Manifest object)
     pub fn schema() -> SchemaRef {
         MANIFEST_SCHEMA
             .get_or_init(|| {

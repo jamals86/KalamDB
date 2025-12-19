@@ -154,7 +154,7 @@ pub enum WebSocketMessage {
     /// Initial data batch sent after subscription or on client request
     ///
     /// Sent automatically for the first batch after subscription acknowledgement,
-    /// then sent on-demand when client requests via NextBatchRequest.
+    /// then sent on-demand when client requests via ClientMessage::NextBatch.
     InitialDataBatch {
         /// The subscription ID this data is for
         subscription_id: String,
@@ -282,7 +282,6 @@ pub struct SubscriptionRequest {
 /// These options control individual subscription behavior including:
 /// - Initial data loading (batch_size, last_rows)
 /// - Data resumption after reconnection (from_seq_id)
-/// - Serialization format (simple vs typed)
 ///
 /// Used by both SQL SUBSCRIBE TO command and WebSocket subscribe messages.
 #[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq)]
@@ -296,13 +295,6 @@ pub struct SubscriptionOptions {
     /// Default: None (fetch all matching rows)
     #[serde(skip_serializing_if = "Option::is_none")]
     pub last_rows: Option<u32>,
-
-    /// Serialization mode for row data (Simple or Typed)
-    /// Default: Typed (preserves type information for type-safe clients)
-    /// - Simple: Plain JSON values like {"id": "123", "name": "Alice"}
-    /// - Typed: Type wrappers like {"id": {"Int64": "123"}, "name": {"Utf8": "Alice"}}
-    #[serde(default = "default_serialization_mode")]
-    pub serialization_mode: SerializationMode,
 
     /// Resume subscription from a specific sequence ID
     /// When set, the server will only send changes after this seq_id
@@ -350,19 +342,6 @@ pub enum BatchStatus {
 
     /// All initial data has been loaded, live updates active (has_more == false)
     Ready,
-}
-
-/// Request from client to fetch the next batch of initial data
-///
-/// DEPRECATED: Use ClientMessage::NextBatch instead
-#[deprecated(note = "Use ClientMessage::NextBatch for type-safe requests")]
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct NextBatchRequest {
-    /// The subscription ID to fetch the next batch for
-    pub subscription_id: String,
-
-    /// The batch number to fetch (should be current_batch + 1)
-    pub batch_num: u32,
 }
 
 /// Notification message sent to clients for live query updates
@@ -466,20 +445,6 @@ pub enum ChangeType {
     Delete,
 }
 
-/// Serialization mode for WebSocket messages (re-exported for convenience)
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
-#[serde(rename_all = "lowercase")]
-pub enum SerializationMode {
-    /// Simple JSON values without type information
-    Simple,
-    /// Values with type wrappers (default for backward compatibility)
-    #[default]
-    Typed,
-}
-
-fn default_serialization_mode() -> SerializationMode {
-    SerializationMode::Typed
-}
 
 impl WebSocketMessage {
     /// Create a subscription acknowledgement message with batch control
