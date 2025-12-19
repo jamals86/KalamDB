@@ -239,6 +239,7 @@ pub async fn delete_prefix(
     prefix: &str,
 ) -> Result<u64> {
     let key = object_key_for_path(storage, prefix)?;
+    
     let prefix_path = if key.as_ref().is_empty() {
         None
     } else {
@@ -257,8 +258,10 @@ pub async fn delete_prefix(
 
     // Delete all files found
     for path in &paths_to_delete {
-        // Ignore errors on individual deletes (best-effort)
-        let _ = store.delete(path).await;
+        store
+            .delete(path)
+            .await
+            .map_err(|e| FilestoreError::ObjectStore(e.to_string()))?;
     }
 
     // For local filesystem, also remove the empty directory tree
@@ -280,18 +283,61 @@ pub async fn delete_prefix(
     Ok(total_bytes)
 }
 
-/// Recursively remove empty directories from target up to (but not including) stop_at.
+/// Recursively remove empty directories under target, then work up to (but not including) stop_at.
+///
+/// This function first walks down to find all empty leaf directories, removes them,
+/// then works up the tree removing any directories that become empty.
 fn remove_empty_dir_tree(target: &std::path::Path, stop_at: &str) -> std::io::Result<()> {
     let stop_path = std::path::Path::new(stop_at);
 
-    // Start from target and walk up
+    // First, recursively collect all directories under target (bottom-up order)
+    fn collect_dirs_bottom_up(dir: &std::path::Path, dirs: &mut Vec<std::path::PathBuf>) {
+        if let Ok(entries) = std::fs::read_dir(dir) {
+            for entry in entries.flatten() {
+                if let Ok(ft) = entry.file_type() {
+                    if ft.is_dir() {
+                        // Recurse first (depth-first)
+                        collect_dirs_bottom_up(&entry.path(), dirs);
+                        // Then add this directory
+                        dirs.push(entry.path());
+                    }
+                }
+            }
+        }
+    }
+
+    // Collect all subdirectories in bottom-up order
+    let mut dirs_to_check = Vec::new();
+    collect_dirs_bottom_up(target, &mut dirs_to_check);
+    // Also add the target directory itself
+    dirs_to_check.push(target.to_path_buf());
+
+    // Try to remove each directory (will only succeed if empty)
+    for dir in &dirs_to_check {
+        match std::fs::remove_dir(dir) {
+            Ok(_) => {
+                // Successfully removed empty directory
+            }
+            Err(e) if e.kind() == std::io::ErrorKind::DirectoryNotEmpty => {
+                // Not empty, skip
+            }
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
+                // Already removed
+            }
+            Err(_) => {
+                // Other error (permissions, etc.), skip
+            }
+        }
+    }
+
+    // Now walk up from target to stop_at, removing empty directories
     let mut current = target.to_path_buf();
 
     while current.starts_with(stop_path) && current != stop_path {
         // Try to remove the directory (only works if empty)
         match std::fs::remove_dir(&current) {
             Ok(_) => {
-                log::debug!("Removed empty directory: {:?}", current);
+                // Successfully removed empty parent directory
             }
             Err(e) if e.kind() == std::io::ErrorKind::DirectoryNotEmpty => {
                 // Directory not empty, stop walking up

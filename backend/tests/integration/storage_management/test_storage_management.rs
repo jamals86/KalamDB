@@ -25,7 +25,7 @@ async fn wait_for_storage_rows(
     server: &TestServer,
     storage_id: &str,
 ) -> Vec<std::collections::HashMap<String, serde_json::Value>> {
-    let deadline = Instant::now() + Duration::from_secs(2);
+    let deadline = Instant::now() + Duration::from_secs(5);
     loop {
         let response = server
             .execute_sql(&format!(
@@ -42,7 +42,7 @@ async fn wait_for_storage_rows(
         if Instant::now() >= deadline {
             break;
         }
-        sleep(Duration::from_millis(50)).await;
+        sleep(Duration::from_millis(100)).await;
     }
     Vec::new()
 }
@@ -126,11 +126,20 @@ async fn test_02_show_storages_basic() {
 async fn test_03_create_storage_filesystem() {
     let server = TestServer::new().await;
 
+    // Generate unique storage_id for this test run
+    let unique_id = format!(
+        "archive_{}",
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos()
+    );
+
     // Create a filesystem storage using temp directory
-    let storage_path = server.storage_base_path.join("archive");
+    let storage_path = server.storage_base_path.join(&unique_id);
     let sql = format!(
         r#"
-        CREATE STORAGE archive
+        CREATE STORAGE {unique_id}
         TYPE filesystem
         NAME 'Archive Storage'
         DESCRIPTION 'Cold storage for archived data'
@@ -152,28 +161,14 @@ async fn test_03_create_storage_filesystem() {
         response.error
     );
 
-    // Delay to ensure storage creation propagates to system.storages
-    tokio::time::sleep(std::time::Duration::from_millis(1000)).await;
-
-    // Verify storage was created
-    let response = server
-        .execute_sql("SELECT * FROM system.storages WHERE storage_id = 'archive'")
-        .await;
-
-    assert_eq!(
-        response.status,
-        ResponseStatus::Success,
-        "Failed to query system.storages: {:?}",
-        response.error
-    );
-
-    let rows = response.results.first().map(|r| r.rows_as_maps()).unwrap_or_default();
-    assert_eq!(rows.len(), 1, "Expected exactly 1 'archive' storage");
+    // Wait for storage to be available in system.storages
+    let rows = wait_for_storage_rows(&server, &unique_id).await;
+    assert_eq!(rows.len(), 1, "Expected exactly 1 '{}' storage", unique_id);
 
     let archive = &rows[0];
     assert_eq!(
         archive.get("storage_id").and_then(|v| v.as_str()),
-        Some("archive")
+        Some(unique_id.as_str())
     );
     assert_eq!(
         archive.get("storage_type").and_then(|v| v.as_str()),
@@ -197,19 +192,30 @@ async fn test_03_create_storage_filesystem() {
 async fn test_04_create_storage_s3() {
     let server = TestServer::new().await;
 
+    // Generate unique storage_id for this test run
+    let unique_id = format!(
+        "s3_main_{}",
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos()
+    );
+
     // Create an S3 storage
-    let sql = r#"
-        CREATE STORAGE s3_main
+    let sql = format!(
+        r#"
+        CREATE STORAGE {unique_id}
         TYPE s3
         NAME 'S3 Main Storage'
         DESCRIPTION 'Primary S3 storage bucket'
         BUCKET 'kalamdb-main'
         REGION 'us-west-2'
-        SHARED_TABLES_TEMPLATE 's3://kalamdb-main/shared/{namespace}/{tableName}'
-        USER_TABLES_TEMPLATE 's3://kalamdb-main/users/{namespace}/{tableName}/{userId}'
-    "#;
+        SHARED_TABLES_TEMPLATE 's3://kalamdb-main/shared/{{namespace}}/{{tableName}}'
+        USER_TABLES_TEMPLATE 's3://kalamdb-main/users/{{namespace}}/{{tableName}}/{{userId}}'
+    "#
+    );
 
-    let response = server.execute_sql(sql).await;
+    let response = server.execute_sql(&sql).await;
 
     assert_eq!(
         response.status,
@@ -218,28 +224,14 @@ async fn test_04_create_storage_s3() {
         response.error
     );
 
-    // Delay to ensure storage creation propagates
-    tokio::time::sleep(std::time::Duration::from_millis(1000)).await;
-
-    // Verify storage was created
-    let response = server
-        .execute_sql("SELECT * FROM system.storages WHERE storage_id = 's3_main'")
-        .await;
-
-    assert_eq!(
-        response.status,
-        ResponseStatus::Success,
-        "Failed to query system.storages: {:?}",
-        response.error
-    );
-
-    let rows = response.results.first().map(|r| r.rows_as_maps()).unwrap_or_default();
-    assert_eq!(rows.len(), 1, "Expected exactly 1 's3_main' storage");
+    // Wait for storage to be available in system.storages
+    let rows = wait_for_storage_rows(&server, &unique_id).await;
+    assert_eq!(rows.len(), 1, "Expected exactly 1 '{}' storage", unique_id);
 
     let s3_storage = &rows[0];
     assert_eq!(
         s3_storage.get("storage_id").and_then(|v| v.as_str()),
-        Some("s3_main")
+        Some(unique_id.as_str())
     );
     assert_eq!(
         s3_storage.get("storage_type").and_then(|v| v.as_str()),
@@ -1528,16 +1520,27 @@ async fn test_33_storage_template_validation() {
 async fn test_34_shared_table_template_ordering() {
     let server = TestServer::new().await;
 
+    // Generate unique storage_id for this test run
+    let unique_id = format!(
+        "correct_shared_{}",
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos()
+    );
+
     // Create storage with correct shared table template order: {namespace} → {tableName}
-    let create_storage = r#"
-        CREATE STORAGE correct_shared
+    let create_storage = format!(
+        r#"
+        CREATE STORAGE {unique_id}
         TYPE filesystem
         NAME 'Correct Shared Template'
-        PATH '/tmp/kalamdb_test_shared'
-        SHARED_TABLES_TEMPLATE '/data/shared/{namespace}/{tableName}'
-    "#;
+        PATH '/tmp/kalamdb_test_shared_{unique_id}'
+        SHARED_TABLES_TEMPLATE '/data/shared/{{namespace}}/{{tableName}}'
+    "#
+    );
 
-    let response = server.execute_sql(create_storage).await;
+    let response = server.execute_sql(&create_storage).await;
     assert_eq!(
         response.status,
         ResponseStatus::Success,
@@ -1545,14 +1548,8 @@ async fn test_34_shared_table_template_ordering() {
         response.error
     );
 
-    // Delay to ensure storage creation propagates
-    tokio::time::sleep(std::time::Duration::from_millis(1000)).await;
-
-    // Verify storage created
-    let query = "SELECT storage_id FROM system.storages WHERE storage_id = 'correct_shared'";
-    let check = server.execute_sql(query).await;
-
-    let rows = check.results.first().map(|r| r.rows_as_maps()).unwrap_or_default();
+    // Wait for storage to be available in system.storages
+    let rows = wait_for_storage_rows(&server, &unique_id).await;
     assert_eq!(rows.len(), 1, "Storage should be created");
 }
 
@@ -1564,17 +1561,28 @@ async fn test_34_shared_table_template_ordering() {
 async fn test_35_user_table_template_ordering() {
     let server = TestServer::new().await;
 
+    // Generate unique storage_id for this test run
+    let unique_id = format!(
+        "correct_user_{}",
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos()
+    );
+
     // Create storage with correct user table template order
     // Correct: {namespace} → {tableName} → {shard} → {userId}
-    let create_storage = r#"
-        CREATE STORAGE correct_user
+    let create_storage = format!(
+        r#"
+        CREATE STORAGE {unique_id}
         TYPE filesystem
         NAME 'Correct User Template'
-        PATH '/tmp/kalamdb_test_users'
-        USER_TABLES_TEMPLATE '/data/users/{namespace}/{tableName}/{shard}/{userId}'
-    "#;
+        PATH '/tmp/kalamdb_test_users_{unique_id}'
+        USER_TABLES_TEMPLATE '/data/users/{{namespace}}/{{tableName}}/{{shard}}/{{userId}}'
+    "#
+    );
 
-    let response = server.execute_sql(create_storage).await;
+    let response = server.execute_sql(&create_storage).await;
     assert_eq!(
         response.status,
         ResponseStatus::Success,
@@ -1591,16 +1599,27 @@ async fn test_35_user_table_template_ordering() {
 async fn test_36_user_table_template_requires_userId() {
     let server = TestServer::new().await;
 
+    // Generate unique storage_id for this test run
+    let unique_id = format!(
+        "missing_userId_{}",
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos()
+    );
+
     // Attempt to create storage without {userId} in user table template
-    let create_storage = r#"
-        CREATE STORAGE missing_userId
+    let create_storage = format!(
+        r#"
+        CREATE STORAGE {unique_id}
         TYPE filesystem
         NAME 'Missing UserId Template'
-        PATH '/tmp/kalamdb_test_bad'
-        USER_TABLES_TEMPLATE '/data/bad/{namespace}/{tableName}'
-    "#;
+        PATH '/tmp/kalamdb_test_bad_{unique_id}'
+        USER_TABLES_TEMPLATE '/data/bad/{{namespace}}/{{tableName}}'
+    "#
+    );
 
-    let response = server.execute_sql(create_storage).await;
+    let response = server.execute_sql(&create_storage).await;
 
     // Current implementation may allow this - validation happens at flush time
     // This test documents expected behavior
@@ -1633,32 +1652,45 @@ async fn test_36_user_table_template_requires_userId() {
 #[actix_web::test]
 async fn test_37_flush_with_use_user_storage() {
     let server = TestServer::new().await;
-    fixtures::create_namespace(&server, "storage_test").await;
+    fixtures::create_namespace(&server, "storage_test37").await;
+
+    // Generate unique storage_id for this test run
+    let unique_id = format!(
+        "user_storage_{}",
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos()
+    );
 
     // Create custom user storage
-    let create_storage = r#"
-        CREATE STORAGE user_storage
+    let create_storage = format!(
+        r#"
+        CREATE STORAGE {unique_id}
         TYPE filesystem
         NAME 'User Storage'
-        PATH '/tmp/kalamdb_test_user_storage'
-        USER_TABLES_TEMPLATE '/data/user_storage/{namespace}/{tableName}/{userId}'
-    "#;
-    server.execute_sql(create_storage).await;
+        PATH '/tmp/kalamdb_test_user_storage_{unique_id}'
+        USER_TABLES_TEMPLATE '/data/user_storage/{{namespace}}/{{tableName}}/{{userId}}'
+    "#
+    );
+    server.execute_sql(&create_storage).await;
 
     // Create table with custom storage
     // NOTE: USE_USER_STORAGE flag is a planned feature for per-user storage override
     // Current implementation uses table.storage_id directly
-    let create_table = r#"
-        CREATE TABLE storage_test.user_data (
+    let create_table = format!(
+        r#"
+        CREATE TABLE storage_test37.user_data (
             id BIGINT PRIMARY KEY,
             value TEXT
         ) WITH (
             TYPE = 'SHARED',
-            STORAGE_ID = 'user_storage'
+            STORAGE_ID = '{unique_id}'
         )
-    "#;
+    "#
+    );
 
-    let response = server.execute_sql(create_table).await;
+    let response = server.execute_sql(&create_table).await;
     assert_eq!(
         response.status,
         ResponseStatus::Success,
@@ -1667,14 +1699,14 @@ async fn test_37_flush_with_use_user_storage() {
     );
 
     // Verify table uses custom storage
-    let query = "SELECT storage_id FROM system.tables WHERE namespace_id = 'storage_test' AND table_name = 'user_data'";
+    let query = "SELECT storage_id FROM system.tables WHERE namespace_id = 'storage_test37' AND table_name = 'user_data'";
     let check = server.execute_sql(query).await;
 
     let rows = check.results.first().map(|r| r.rows_as_maps()).unwrap_or_default();
     if !rows.is_empty() {
         assert_eq!(
             rows[0].get("storage_id").and_then(|v| v.as_str()),
-            Some("user_storage"),
+            Some(unique_id.as_str()),
             "Table should use custom storage"
         );
     }
