@@ -22,7 +22,6 @@ arrow = { workspace = true }
 # Web framework
 actix-web = { workspace = true }
 actix-ws = { workspace = true }
-actix = { workspace = true }
 actix-files = { workspace = true }
 
 # Serialization

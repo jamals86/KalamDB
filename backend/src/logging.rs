@@ -3,7 +3,6 @@ use colored::*;
 use log::{Level, LevelFilter};
 use std::collections::HashMap;
 use std::fs::{self, OpenOptions};
-use std::io::Write;
 use std::path::Path;
 
 /// Format log level with color for console
@@ -228,20 +227,18 @@ fn parse_log_level(level: &str) -> anyhow::Result<LevelFilter> {
 #[allow(dead_code)]
 /// Initialize simple logging for development (console only)
 pub fn init_simple_logging() -> anyhow::Result<()> {
-    use env_logger::Builder;
-
-    Builder::from_default_env()
-        .filter_level(LevelFilter::Info)
-        .format(|buf, record| {
-            writeln!(
-                buf,
+    fern::Dispatch::new()
+        .format(|out, message, record| {
+            out.finish(format_args!(
                 "{} [{}] {}",
                 chrono::Local::now().format("%Y-%m-%d %H:%M:%S"),
                 record.level(),
-                record.args()
-            )
+                message
+            ))
         })
-        .try_init()?;
+        .level(LevelFilter::Info)
+        .chain(std::io::stdout())
+        .apply()?;
 
     Ok(())
 }

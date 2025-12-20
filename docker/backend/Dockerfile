@@ -6,7 +6,7 @@
 # ============================================================================
 # Stage 1: Builder
 # ============================================================================
-FROM rust:1.90-bookworm AS builder
+FROM rust:1.92-bookworm AS builder
 
 # Install build dependencies including Node.js for UI build
 RUN apt-get update && \

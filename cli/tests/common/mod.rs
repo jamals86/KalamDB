@@ -804,18 +804,13 @@ pub fn setup_test_table(test_name: &str) -> Result<String, Box<dyn std::error::E
     let namespace = "test_cli";
     let full_table_name = format!("{}.{}", namespace, table_name);
 
-    // Small delay to avoid race conditions
-    std::thread::sleep(Duration::from_millis(100));
-
     // Try to drop table first if it exists
     let drop_sql = format!("DROP TABLE IF EXISTS {}", full_table_name);
     let _ = execute_sql_as_root_via_cli(&drop_sql);
-    std::thread::sleep(Duration::from_millis(50));
 
     // Create namespace if it doesn't exist
     let ns_sql = format!("CREATE NAMESPACE IF NOT EXISTS {}", namespace);
     let _ = execute_sql_as_root_via_cli(&ns_sql);
-    std::thread::sleep(Duration::from_millis(100));
 
     // Create test table
     let create_sql = format!(
@@ -831,7 +826,6 @@ pub fn setup_test_table(test_name: &str) -> Result<String, Box<dyn std::error::E
     );
 
     execute_sql_as_root_via_cli(&create_sql)?;
-    std::thread::sleep(Duration::from_millis(100));
 
     Ok(full_table_name)
 }
@@ -840,7 +834,6 @@ pub fn setup_test_table(test_name: &str) -> Result<String, Box<dyn std::error::E
 pub fn cleanup_test_table(table_full_name: &str) -> Result<(), Box<dyn std::error::Error>> {
     let drop_sql = format!("DROP TABLE IF EXISTS {}", table_full_name);
     let _ = execute_sql_as_root_via_cli(&drop_sql);
-    std::thread::sleep(Duration::from_millis(50));
     Ok(())
 }
 

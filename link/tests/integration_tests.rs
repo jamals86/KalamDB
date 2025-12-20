@@ -74,12 +74,12 @@ async fn setup_namespace(ns: &str) {
         .execute_query(&format!("DROP NAMESPACE IF EXISTS {} CASCADE", ns), None, None)
         .await;
     // Wait for drop to complete (cleanup is async)
-    sleep(Duration::from_millis(300)).await;
+    sleep(Duration::from_millis(50)).await;
     // Create the namespace
     let _ = client
         .execute_query(&format!("CREATE NAMESPACE {}", ns), None, None)
         .await;
-    sleep(Duration::from_millis(100)).await;
+    sleep(Duration::from_millis(20)).await;
 }
 
 async fn cleanup_namespace(ns: &str) {
@@ -280,7 +280,7 @@ async fn test_subscription_basic() {
         )
         .await
         .ok();
-    sleep(Duration::from_millis(100)).await;
+    sleep(Duration::from_millis(20)).await;
 
     // Try to create subscription
     let sub_result = timeout(
@@ -329,7 +329,7 @@ async fn test_subscription_with_custom_config() {
         )
         .await
         .ok();
-    sleep(Duration::from_millis(100)).await;
+    sleep(Duration::from_millis(20)).await;
 
     // Create subscription with custom config
     let config = SubscriptionConfig::new("sub-custom", format!("SELECT * FROM {}.data", ns));
@@ -444,7 +444,7 @@ async fn test_create_namespace() {
             None,
         )
         .await;
-    sleep(Duration::from_millis(100)).await;
+    sleep(Duration::from_millis(20)).await;
 
     // Create
     let result = client
@@ -606,7 +606,7 @@ async fn test_delete_operation() {
     assert!(create_result.is_ok(), "CREATE TABLE should succeed: {:?}", create_result.err());
 
     // Small delay to ensure table is ready
-    sleep(Duration::from_millis(100)).await;
+    sleep(Duration::from_millis(20)).await;
 
     let insert_result = client
         .execute_query(
@@ -896,7 +896,7 @@ async fn test_custom_timeout() {
 
     let client = KalamLinkClient::builder()
         .base_url(SERVER_URL)
-        .timeout(Duration::from_millis(100)) // Very short timeout
+        .timeout(Duration::from_millis(20)) // Very short timeout
         .build()
         .unwrap();
 

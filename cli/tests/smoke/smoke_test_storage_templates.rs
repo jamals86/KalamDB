@@ -406,7 +406,7 @@ fn wait_for_parquet_files(dir: &Path, timeout: Duration) -> Option<Vec<PathBuf>>
         if Instant::now() >= deadline {
             return None;
         }
-        thread::sleep(Duration::from_millis(250));
+        thread::sleep(Duration::from_millis(50));
     }
 }
 
@@ -437,7 +437,7 @@ fn wait_for_directory_absence(dir: &Path, timeout: Duration) -> bool {
         if !dir.exists() {
             return true;
         }
-        thread::sleep(Duration::from_millis(200));
+        thread::sleep(Duration::from_millis(50));
     }
     !dir.exists()
 }

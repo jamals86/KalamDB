@@ -43,7 +43,6 @@ toml = { workspace = true }
 
 # Logging
 log = { workspace = true }
-env_logger = { workspace = true }
 colored = { workspace = true }
 fern = { workspace = true }
 regex = { workspace = true }
@@ -193,3 +192,4 @@ libc = { workspace = true }
 arrow = { workspace = true }
 hex = { workspace = true }
 once_cell = { workspace = true }
+serial_test = { workspace = true }

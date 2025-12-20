@@ -31,10 +31,6 @@ pub type ManifestCacheKeyTuple = (TableId, Option<UserId>);
 /// - Persistent store: RocksDB manifest_cache column family for crash recovery
 /// - Cold store: manifest.json files in object_store (S3/local filesystem)
 pub struct ManifestService {
-    /// Storage backend (RocksDB - for entity store)
-    #[allow(dead_code)]
-    storage_backend: Arc<dyn StorageBackend>,
-
     /// Base storage path (fallback for building paths)
     _base_path: String,
 
@@ -49,22 +45,49 @@ pub struct ManifestService {
     config: ManifestCacheSettings,
 }
 
+/// Minimum weight for any cache entry (shared tables)
+const MIN_ENTRY_WEIGHT: u32 = 1;
+
 impl ManifestService {
-    /// Create a new ManifestService
+    /// Create a new ManifestService with tiered eviction strategy.
+    ///
+    /// The hot cache uses a weigher to prioritize shared tables over user tables:
+    /// - Shared tables (user_id = None): weight = 1
+    /// - User tables (user_id = Some): weight = config.user_table_weight_factor (default 10)
+    ///
+    /// This means when memory pressure occurs, user table manifests are evicted
+    /// approximately N times faster than shared table manifests (N = user_table_weight_factor).
     pub fn new(
         storage_backend: Arc<dyn StorageBackend>,
         base_path: String,
         config: ManifestCacheSettings,
     ) -> Self {
-        // Build moka cache with TTI and max capacity
+        // Build moka cache with TTI, max capacity, and tiered weigher
         let tti_secs = config.ttl_seconds() as u64;
+
+        // Capture the weight factor from config for use in closure
+        let user_weight = config.user_table_weight_factor.max(1); // At least 1
+
+        // Weigher for tiered eviction: shared tables stay longer than user tables
+        // Weight is based on entry type, not actual memory size
+        let weigher = move |key: &ManifestCacheKeyTuple, _entry: &Arc<ManifestCacheEntry>| -> u32 {
+            match &key.1 {
+                None => MIN_ENTRY_WEIGHT, // Shared table - low weight, stays longer
+                Some(_) => user_weight,   // User table - high weight, evicted sooner
+            }
+        };
+
+        // Calculate weighted capacity: if max_entries=1000 and user_weight=10, we want room for
+        // ~1000 shared tables OR ~100 user tables (or mix)
+        let weighted_capacity = (config.max_entries as u64) * (user_weight as u64);
+
         let hot_cache = Cache::builder()
-            .max_capacity(config.max_entries as u64)
+            .max_capacity(weighted_capacity)
+            .weigher(weigher)
             .time_to_idle(Duration::from_secs(tti_secs))
             .build();
 
         Self {
-            storage_backend: Arc::clone(&storage_backend),
             _base_path: base_path,
             store: new_manifest_store(storage_backend),
             hot_cache,
@@ -282,6 +305,36 @@ impl ManifestService {
         Ok(all_entries.len())
     }
 
+    /// Get cache statistics including weighted counts.
+    ///
+    /// Returns (shared_count, user_count, total_weight) where:
+    /// - shared_count: number of shared table manifests (weight=1 each)
+    /// - user_count: number of user table manifests (weight=user_table_weight_factor each)
+    /// - total_weight: sum of all weights (used for capacity calculation)
+    pub fn cache_stats(&self) -> (usize, usize, u64) {
+        let mut shared_count = 0usize;
+        let mut user_count = 0usize;
+
+        for (key, _) in &self.hot_cache {
+            match key.1 {
+                None => shared_count += 1,
+                Some(_) => user_count += 1,
+            }
+        }
+
+        let user_weight = self.config.user_table_weight_factor.max(1) as u64;
+        let total_weight =
+            (shared_count as u64 * MIN_ENTRY_WEIGHT as u64) + (user_count as u64 * user_weight);
+
+        (shared_count, user_count, total_weight)
+    }
+
+    /// Get the configured maximum weighted capacity.
+    pub fn max_weighted_capacity(&self) -> u64 {
+        let user_weight = self.config.user_table_weight_factor.max(1) as u64;
+        (self.config.max_entries as u64) * user_weight
+    }
+
     /// Clear all cache entries.
     pub fn clear(&self) -> Result<(), StorageError> {
         self.hot_cache.invalidate_all();
@@ -293,25 +346,30 @@ impl ManifestService {
         Ok(())
     }
 
-    /// Restore hot cache from RocksDB on server restart.
-    pub fn restore_from_rocksdb(&self) -> Result<(), StorageError> {
-        let now = chrono::Utc::now().timestamp();
-        let entries = EntityStore::scan_all(&self.store, None, None, None)?;
+    // /// Restore hot cache from RocksDB (for testing/debugging only).
+    // ///
+    // /// NOTE: Not used at startup - manifests are loaded lazily via get_or_load()
+    // /// which checks hot cache → RocksDB on-demand. This avoids loading manifests
+    // /// that may never be accessed.
+    // #[allow(dead_code)]
+    // pub fn restore_from_rocksdb(&self) -> Result<(), StorageError> {
+    //     let now = chrono::Utc::now().timestamp();
+    //     let entries = EntityStore::scan_all(&self.store, None, None, None)?;
 
-        for (key_bytes, entry) in entries {
-            if let Ok(key_str) = String::from_utf8(key_bytes) {
-                if entry.is_stale(self.config.ttl_seconds(), now) {
-                    continue;
-                }
+    //     for (key_bytes, entry) in entries {
+    //         if let Ok(key_str) = String::from_utf8(key_bytes) {
+    //             if entry.is_stale(self.config.ttl_seconds(), now) {
+    //                 continue;
+    //             }
 
-                // Parse the key to construct the tuple key
-                if let Some((table_id, user_id)) = self.parse_key_string(&key_str) {
-                    self.hot_cache.insert((table_id, user_id), Arc::new(entry));
-                }
-            }
-        }
-        Ok(())
-    }
+    //             // Parse the key to construct the tuple key
+    //             if let Some((table_id, user_id)) = self.parse_key_string(&key_str) {
+    //                 self.hot_cache.insert((table_id, user_id), Arc::new(entry));
+    //             }
+    //         }
+    //     }
+    //     Ok(())
+    // }
 
     /// Check if a cache key is currently in the hot cache (RAM).
     pub fn is_in_hot_cache(&self, table_id: &TableId, user_id: Option<&UserId>) -> bool {
@@ -726,6 +784,7 @@ mod tests {
             eviction_interval_seconds: 300,
             max_entries: 1000,
             eviction_ttl_days: 7,
+            user_table_weight_factor: 10,
         };
         ManifestService::new(backend, "/tmp/test".to_string(), config)
     }
@@ -898,34 +957,34 @@ mod tests {
         assert_eq!(service.count().unwrap(), 0);
     }
 
-    #[test]
-    fn test_restore_from_rocksdb() {
-        let backend: Arc<dyn StorageBackend> = Arc::new(InMemoryBackend::new());
-        let config = ManifestCacheSettings::default();
+    // #[test]
+    // fn test_restore_from_rocksdb() {
+    //     let backend: Arc<dyn StorageBackend> = Arc::new(InMemoryBackend::new());
+    //     let config = ManifestCacheSettings::default();
 
-        let service1 = ManifestService::new(Arc::clone(&backend), "/tmp".to_string(), config.clone());
-        let table_id = build_table_id("ns1", "tbl1");
-        let manifest = create_test_manifest(&table_id, Some(&UserId::from("u_123")));
+    //     let service1 = ManifestService::new(Arc::clone(&backend), "/tmp".to_string(), config.clone());
+    //     let table_id = build_table_id("ns1", "tbl1");
+    //     let manifest = create_test_manifest(&table_id, Some(&UserId::from("u_123")));
 
-        service1
-            .update_after_flush(
-                &table_id,
-                Some(&UserId::from("u_123")),
-                &manifest,
-                None,
-                "path".to_string(),
-            )
-            .unwrap();
+    //     service1
+    //         .update_after_flush(
+    //             &table_id,
+    //             Some(&UserId::from("u_123")),
+    //             &manifest,
+    //             None,
+    //             "path".to_string(),
+    //         )
+    //         .unwrap();
 
-        // Create new service (simulating restart)
-        let service2 = ManifestService::new(backend, "/tmp".to_string(), config);
-        service2.restore_from_rocksdb().unwrap();
+    //     // Create new service (simulating restart)
+    //     let service2 = ManifestService::new(backend, "/tmp".to_string(), config);
+    //     service2.restore_from_rocksdb().unwrap();
 
-        let cached = service2
-            .get_or_load(&table_id, Some(&UserId::from("u_123")))
-            .unwrap();
-        assert!(cached.is_some());
-    }
+    //     let cached = service2
+    //         .get_or_load(&table_id, Some(&UserId::from("u_123")))
+    //         .unwrap();
+    //     assert!(cached.is_some());
+    // }
 
     #[test]
     fn test_cache_key_parsing() {

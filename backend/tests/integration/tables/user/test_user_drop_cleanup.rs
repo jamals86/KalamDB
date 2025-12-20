@@ -10,101 +10,9 @@
 mod common;
 
 use common::flush_helpers::{check_user_parquet_files, execute_flush_synchronously};
-use common::{fixtures, TestServer};
+use common::{fixtures, TestServer, wait_for_cleanup_job_completion, extract_cleanup_job_id, wait_for_path_absent};
 use kalamdb_api::models::ResponseStatus;
-use std::path::Path;
-use tokio::time::{sleep, Duration, Instant};
-
-/// Wait for a cleanup job to complete
-async fn wait_for_cleanup_job_completion(
-    server: &TestServer,
-    job_id: &str,
-    max_wait: Duration,
-) -> Result<String, String> {
-    let start = std::time::Instant::now();
-    let check_interval = Duration::from_millis(200);
-
-    loop {
-        if start.elapsed() > max_wait {
-            return Err(format!(
-                "Timeout waiting for cleanup job {} to complete after {:?}",
-                job_id, max_wait
-            ));
-        }
-
-        let query = format!(
-            "SELECT status, result, error_message FROM system.jobs WHERE job_id = '{}'",
-            job_id
-        );
-
-        let response = server.execute_sql(&query).await;
-
-        if response.status != ResponseStatus::Success {
-            // system.jobs might not be accessible in some test setups
-            println!("  ℹ Cannot query system.jobs, waiting for job to execute...");
-            sleep(max_wait).await;
-            return Ok("Job executed (system.jobs not queryable in test)".to_string());
-        }
-
-        if let Some(rows) = response.results.first().and_then(|r| r.rows.as_ref()) {
-            if rows.is_empty() {
-                sleep(check_interval).await;
-                continue;
-            }
-
-            if let Some(row) = rows.first() {
-                // row is Vec<serde_json::Value> (each row is an array of column values)
-                let status = row.first()
-                    .and_then(|v| v.as_str())
-                    .unwrap_or("unknown");
-
-                match status {
-                    "new" | "queued" | "retrying" | "running" => {
-                        sleep(check_interval).await;
-                        continue;
-                    }
-                    "completed" => {
-                        let result = row.get(1)
-                            .and_then(|v| v.as_str())
-                            .unwrap_or("completed");
-                        println!("  Job result: {:?}", row);
-                        return Ok(result.to_string());
-                    }
-                    "failed" | "cancelled" => {
-                        let error = row.get(2)
-                            .and_then(|v| v.as_str())
-                            .unwrap_or("unknown error");
-                        return Err(format!("Cleanup job {}: {}", status, error));
-                    }
-                    _ => {
-                        return Err(format!("Unknown job status: {}", status));
-                    }
-                }
-            }
-        }
-
-        sleep(check_interval).await;
-    }
-}
-
-/// Extract cleanup job ID from DROP TABLE response message
-fn extract_cleanup_job_id(message: &str) -> Option<String> {
-    // Message format: "Table ns.table dropped successfully. Cleanup job: CL-xxxxxxxx"
-    message.split("Cleanup job: ")
-        .nth(1)
-        .map(|s| s.trim().to_string())
-}
-
-async fn wait_for_path_absent(path: &Path, timeout: Duration) -> bool {
-    let deadline = Instant::now() + timeout;
-    while path.exists() {
-        if Instant::now() >= deadline {
-            return false;
-        }
-        sleep(Duration::from_millis(50)).await;
-    }
-    true
-}
+use tokio::time::{sleep, Duration};
 
 #[actix_web::test]
 async fn test_drop_user_table_deletes_partitions_and_parquet() {
@@ -226,7 +134,7 @@ async fn test_drop_user_table_deletes_partitions_and_parquet() {
     } else {
         // Fallback: wait a bit for async cleanup if job ID not found
         println!("Could not extract cleanup job ID from: {}", result_message);
-        sleep(Duration::from_secs(2)).await;
+        sleep(Duration::from_millis(200)).await;
     }
 
     // Verify table metadata removed

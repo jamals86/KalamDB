@@ -240,7 +240,7 @@ See `tests/TEST_TEMPLATES.md` for implementation guide.
 
 ## Requirements
 
-- Rust 1.90+
+- Rust 1.92+
 - Running KalamDB server on `localhost:8080`
 - `kalam` CLI binary in PATH
 

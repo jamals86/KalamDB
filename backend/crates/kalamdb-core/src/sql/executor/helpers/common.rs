@@ -48,59 +48,11 @@ pub fn format_table_identifier_opt(
 }
 
 pub fn validate_table_name(table_name: &TableName) -> Result<(), KalamDbError> {
-    let name = table_name.as_str();
-    if name.is_empty() {
-        return Err(KalamDbError::InvalidOperation(
-            "Table name cannot be empty".to_string(),
-        ));
-    }
-    if name.len() > 64 {
-        return Err(KalamDbError::InvalidOperation(format!(
-            "Table name '{}' exceeds maximum length of 64 characters",
-            name
-        )));
-    }
-    let first_char = name.chars().next().unwrap();
-    if !first_char.is_ascii_alphabetic() && first_char != '_' {
-        return Err(KalamDbError::InvalidOperation(format!(
-            "Table name '{}' must start with a letter or underscore",
-            name
-        )));
-    }
-    if !name.chars().all(|c| c.is_ascii_alphanumeric() || c == '_') {
-        return Err(KalamDbError::InvalidOperation(format!(
-            "Table name '{}' contains invalid characters (only letters, numbers, and underscores allowed)",
-            name
-        )));
-    }
-    Ok(())
+    kalamdb_commons::validation::validate_table_name(table_name.as_str())
+        .map_err(|e| KalamDbError::InvalidOperation(e.to_string()))
 }
 
 pub fn validate_namespace_name(namespace: &NamespaceId) -> Result<(), KalamDbError> {
-    let name = namespace.as_str();
-    if name.is_empty() {
-        return Err(KalamDbError::InvalidOperation(
-            "Namespace name cannot be empty".to_string(),
-        ));
-    }
-    if name.len() > 64 {
-        return Err(KalamDbError::InvalidOperation(format!(
-            "Namespace name '{}' exceeds maximum length of 64 characters",
-            name
-        )));
-    }
-    let first_char = name.chars().next().unwrap();
-    if !first_char.is_ascii_alphabetic() && first_char != '_' {
-        return Err(KalamDbError::InvalidOperation(format!(
-            "Namespace name '{}' must start with a letter or underscore",
-            name
-        )));
-    }
-    if !name.chars().all(|c| c.is_ascii_alphanumeric() || c == '_') {
-        return Err(KalamDbError::InvalidOperation(format!(
-            "Namespace name '{}' contains invalid characters (only letters, numbers, and underscores allowed)",
-            name
-        )));
-    }
-    Ok(())
+    kalamdb_commons::validation::validate_namespace_name(namespace.as_str())
+        .map_err(|e| KalamDbError::InvalidOperation(e.to_string()))
 }

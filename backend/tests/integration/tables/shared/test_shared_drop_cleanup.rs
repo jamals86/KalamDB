@@ -7,21 +7,9 @@
 mod common;
 
 use common::flush_helpers::{check_shared_parquet_files, execute_shared_flush_synchronously};
-use common::{fixtures, TestServer};
+use common::{fixtures, TestServer, wait_for_path_absent};
 use kalamdb_api::models::ResponseStatus;
-use std::path::Path;
-use tokio::time::{sleep, Duration, Instant};
-
-async fn wait_for_path_absent(path: &Path, timeout: Duration) -> bool {
-    let deadline = Instant::now() + timeout;
-    while path.exists() {
-        if Instant::now() >= deadline {
-            return false;
-        }
-        sleep(Duration::from_millis(50)).await;
-    }
-    true
-}
+use tokio::time::Duration;
 
 #[actix_web::test]
 async fn test_drop_shared_table_deletes_partitions_and_parquet() {

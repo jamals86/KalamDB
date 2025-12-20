@@ -150,7 +150,7 @@ async function runTest() {
 
   // Wait for initial data
   console.log('\n⏳ Waiting for initial data (3 seconds)...');
-  await sleep(3000);
+  await sleep(500);
 
   // Insert new data (should trigger live change)
   console.log('\n📋 Test: Insert new row (live change)');
@@ -159,7 +159,7 @@ async function runTest() {
 
   // Wait for live change
   console.log('\n⏳ Waiting for live change (2 seconds)...');
-  await sleep(2000);
+  await sleep(300);
 
   // Summary
   console.log('\n════════════════════════════════════════════════════════════');

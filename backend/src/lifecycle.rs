@@ -82,25 +82,9 @@ pub async fn bootstrap(
         phase_start.elapsed().as_secs_f64() * 1000.0
     );
 
-    // Restore manifest cache from RocksDB (Phase 4, US6, T092-T094)
-    let phase_start = std::time::Instant::now();
-    let manifest_service = app_context.manifest_service();
-    match manifest_service.restore_from_rocksdb() {
-        Ok(()) => {
-            let count = manifest_service.count().unwrap_or(0);
-            info!(
-                "Manifest cache restored from RocksDB: {} entries ({:.2}ms)",
-                count,
-                phase_start.elapsed().as_secs_f64() * 1000.0
-            );
-        }
-        Err(e) => {
-            warn!(
-                "Failed to restore manifest cache from RocksDB: {}. Starting with empty cache.",
-                e
-            );
-        }
-    }
+    // Manifest cache uses lazy loading via get_or_load() - no pre-loading needed
+    // When a manifest is needed, get_or_load() checks hot cache → RocksDB → returns None
+    // This avoids loading manifests that may never be accessed
 
     // Initialize system tables and verify schema version (Phase 10 Phase 7, T075-T079)
     let phase_start = std::time::Instant::now();

@@ -24,18 +24,11 @@ clap = { workspace = true }
 # Readline interface
 rustyline = { workspace = true }
 
-# Table formatting
-tabled = { workspace = true }
-
-# Terminal control
-crossterm = { workspace = true }
-
 # Progress indicators
 indicatif = { workspace = true }
 
 # Terminal colors and styling
 colored = { workspace = true }
-console = { workspace = true }
 
 # Config file parsing
 toml = { workspace = true }
