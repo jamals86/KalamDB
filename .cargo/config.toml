@@ -30,6 +30,10 @@ rustflags = []
 incremental = true
 # Parallel compilation will use default (all available cores)
 
+# Use sparse registry protocol for faster dependency resolution
+[registries.crates-io]
+protocol = "sparse"
+
 # Speed up compile times for dev builds
 [profile.dev]
 debug = 0  # Minimal debug info
