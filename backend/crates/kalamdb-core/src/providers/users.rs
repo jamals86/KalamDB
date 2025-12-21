@@ -87,8 +87,7 @@ impl UserTableProvider {
             .expect("Failed to get Arrow schema from registry during provider creation");
 
         let pk_index = UserTablePkIndex::new(
-            core.table_id().namespace_id().as_str(),
-            core.table_id().table_name().as_str(),
+            core.table_id(),
             &primary_key_field_name,
         );
 

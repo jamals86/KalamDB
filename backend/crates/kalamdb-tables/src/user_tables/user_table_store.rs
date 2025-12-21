@@ -145,8 +145,7 @@ pub fn new_indexed_user_table_store(
     ensure_partition(&backend, &name);
 
     let pk_index = create_user_table_pk_index(
-        table_id.namespace_id().as_str(),
-        table_id.table_name().as_str(),
+        table_id,
         pk_field_name,
     );
     new_indexed_store_with_pk(backend, name, vec![pk_index])

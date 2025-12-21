@@ -85,8 +85,7 @@ impl SharedTableProvider {
 
         // Create PK index for efficient lookups
         let pk_index = SharedTablePkIndex::new(
-            core.table_id().namespace_id().as_str(),
-            core.table_id().table_name().as_str(),
+            core.table_id(),
             &primary_key_field_name,
         );
 

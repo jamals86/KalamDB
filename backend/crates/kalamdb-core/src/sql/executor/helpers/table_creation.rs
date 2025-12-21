@@ -49,6 +49,14 @@ pub fn create_table(
         user_role
     );
 
+    // Block CREATE on system namespaces - they are managed internally
+    super::guards::block_system_namespace_modification(
+        &stmt.namespace_id,
+        "CREATE",
+        "TABLE",
+        Some(stmt.table_name.as_str()),
+    )?;
+
     // Route to type-specific handler
     let result = match stmt.table_type {
         TableType::User => create_user_table(app_context, stmt, user_id, user_role),
@@ -73,6 +81,86 @@ pub fn create_table(
     result
 }
 
+/// Persist table to system catalog and prime the schema cache
+///
+/// Common logic extracted from create_user/shared/stream_table functions.
+/// Handles:
+/// 1. Saving table definition to information_schema.tables
+/// 2. Inserting into system.tables catalog
+/// 3. Storing initial versioned schema
+/// 4. Priming the schema cache with storage configuration
+///
+/// # Arguments
+/// * `app_context` - Application context
+/// * `stmt` - The CREATE TABLE statement
+/// * `schema` - Arrow schema for the table
+/// * `table_id` - Unique table identifier
+/// * `table_type` - Type of table (User/Shared/Stream)
+/// * `storage_id` - Storage location for the table
+///
+/// # Returns
+/// The persisted TableDefinition wrapped in Arc
+fn persist_table_and_prime_cache(
+    app_context: &Arc<AppContext>,
+    stmt: &CreateTableStatement,
+    schema: &arrow::datatypes::SchemaRef,
+    table_id: &TableId,
+    table_type: TableType,
+    storage_id: &StorageId,
+) -> Result<std::sync::Arc<kalamdb_commons::models::schemas::TableDefinition>, KalamDbError> {
+    use crate::schema_registry::CachedTableData;
+    use super::tables::save_table_definition;
+
+    let schema_registry = app_context.schema_registry();
+
+    // Save complete table definition to information_schema.tables
+    save_table_definition(stmt, schema)?;
+
+    // Retrieve the saved table definition
+    let table_def = schema_registry
+        .get_table_definition(table_id)?
+        .ok_or_else(|| {
+            KalamDbError::Other(format!(
+                "Failed to retrieve table definition for {} after save",
+                table_id
+            ))
+        })?;
+
+    // Insert into system.tables catalog
+    let tables_provider = app_context.system_tables().tables();
+    tables_provider
+        .create_table(table_id, &table_def)
+        .into_kalamdb_error("Failed to insert table into system catalog")?;
+
+    // Store initial version (version 1) in versioned schema store
+    tables_provider
+        .put_versioned_schema(table_id, &table_def)
+        .into_kalamdb_error("Failed to store initial schema version")?;
+
+    // Prime cache entry with storage path template + storage id
+    let template = schema_registry.resolve_storage_path_template(
+        table_id,
+        table_type,
+        storage_id,
+    )?;
+
+    let data = CachedTableData::with_storage_config(
+        std::sync::Arc::clone(&table_def),
+        Some(storage_id.clone()),
+        template.clone(),
+    );
+    schema_registry.insert(table_id.clone(), std::sync::Arc::new(data));
+    
+    log::debug!(
+        "Primed cache for {:?} table {} with template: {}",
+        table_type,
+        table_id,
+        template
+    );
+
+    Ok(table_def)
+}
+
 /// Create USER table (multi-tenant with automatic user_id filtering)
 pub fn create_user_table(
     app_context: Arc<AppContext>,
@@ -80,7 +168,7 @@ pub fn create_user_table(
     user_id: &UserId,
     user_role: Role,
 ) -> Result<String, KalamDbError> {
-    use super::tables::{save_table_definition, validate_table_name};
+    use super::tables::validate_table_name;
 
     // RBAC check
     if !crate::auth::rbac::can_create_table(user_role, TableType::User) {
@@ -184,20 +272,6 @@ pub fn create_user_table(
         }
     }
 
-    // Validate namespace exists
-    let namespaces_provider = app_context.system_tables().namespaces();
-    let namespace_id = NamespaceId::new(stmt.namespace_id.as_str());
-    if namespaces_provider.get_namespace(&namespace_id)?.is_none() {
-        log::error!(
-            "❌ CREATE TABLE (TYPE='USER') failed: Namespace '{}' does not exist",
-            stmt.namespace_id.as_str()
-        );
-        return Err(KalamDbError::InvalidOperation(format!(
-            "Namespace '{}' does not exist",
-            stmt.namespace_id.as_str()
-        )));
-    }
-
     // Resolve storage and ensure it exists
     let (storage_id, _storage_type) = resolve_storage_info(&app_context, stmt.storage_id.as_ref())?;
 
@@ -211,57 +285,15 @@ pub fn create_user_table(
     // Use schema as-is (PRIMARY KEY already validated)
     let schema = stmt.schema.clone();
 
-    // REMOVED: inject_system_columns() call
-    // System columns (_seq, _deleted) are now added by SystemColumnsService
-    // in save_table_definition() after TableDefinition creation (Phase 12, US5)
-
-    // Save complete table definition to information_schema.tables (produces full Arrow schema with system columns)
-    save_table_definition(&stmt, &schema)?;
-
-    // Insert into system.tables
-    let table_def = schema_registry
-        .get_table_definition(&table_id)?
-        .ok_or_else(|| {
-            KalamDbError::Other(format!(
-                "Failed to retrieve table definition for {}.{} after save",
-                stmt.namespace_id.as_str(),
-                stmt.table_name.as_str()
-            ))
-        })?;
-
-    let tables_provider = app_context.system_tables().tables();
-    tables_provider
-        .create_table(&table_id, &table_def)
-        .into_kalamdb_error("Failed to insert table into system catalog")?;
-
-    // Phase 16: Store initial version (version 1) in versioned schema store
-    tables_provider
-        .put_versioned_schema(&table_id, &table_def)
-        .into_kalamdb_error("Failed to store initial schema version")?;
-
-    // Prime cache entry with storage path template + storage id (needed for flush path resolution)
-    {
-        use crate::schema_registry::CachedTableData;
-        use kalamdb_commons::schemas::TableType;
-        let template = schema_registry.resolve_storage_path_template(
-            &table_id,
-            TableType::User,
-            &storage_id,
-        )?;
-        
-        let data = CachedTableData::with_storage_config(
-            Arc::clone(&table_def),
-            Some(storage_id.clone()),
-            template.clone(),
-        );
-        schema_registry.insert(table_id.clone(), Arc::new(data));
-        log::debug!(
-            "Primed cache for user table {}.{} with template: {}",
-            stmt.namespace_id.as_str(),
-            stmt.table_name.as_str(),
-            template
-        );
-    }
+    // Persist table definition, insert into system catalog, and prime cache
+    persist_table_and_prime_cache(
+        &app_context,
+        &stmt,
+        &schema,
+        &table_id,
+        TableType::User,
+        &storage_id,
+    )?;
 
     // Register UserTableProvider for INSERT/UPDATE/DELETE/SELECT operations
     // Use cached Arrow schema from SchemaRegistry (memoized in CachedTableData)
@@ -292,7 +324,7 @@ pub fn create_shared_table(
     user_id: &UserId,
     user_role: Role,
 ) -> Result<String, KalamDbError> {
-    use super::tables::{save_table_definition, validate_table_name};
+    use super::tables::validate_table_name;
 
     // Set default access level if not provided
     if stmt.access_level.is_none() {
@@ -414,59 +446,19 @@ pub fn create_shared_table(
     // Use schema as-is (PRIMARY KEY already validated)
     let schema = stmt.schema.clone();
 
-    // REMOVED: inject_system_columns() call
-    // System columns (_id, _updated, _deleted) are now added by SystemColumnsService
-    // in save_table_definition() after TableDefinition creation (Phase 12, US5)
-
-    // Save complete table definition to information_schema.tables
-    save_table_definition(&stmt, &schema)?;
-
-    // Insert into system.tables
-    let table_def = schema_registry
-        .get_table_definition(&table_id)?
-        .ok_or_else(|| {
-            KalamDbError::Other(format!(
-                "Failed to retrieve table definition for {}.{} after save",
-                stmt.namespace_id.as_str(),
-                stmt.table_name.as_str()
-            ))
-        })?;
-
-    let tables_provider = app_context.system_tables().tables();
-    tables_provider
-        .create_table(&table_id, &table_def)
-        .into_kalamdb_error("Failed to insert table into system catalog")?;
-
-    // Phase 16: Store initial version (version 1) in versioned schema store
-    tables_provider
-        .put_versioned_schema(&table_id, &table_def)
-        .into_kalamdb_error("Failed to store initial schema version")?;
+    // Persist table definition, insert into system catalog, and prime cache
+    persist_table_and_prime_cache(
+        &app_context,
+        &stmt,
+        &schema,
+        &table_id,
+        TableType::Shared,
+        &storage_id,
+    )?;
 
     // Register SharedTableProvider for CRUD/query access
-    register_shared_table_provider(&app_context, &table_id, schema.clone())?;
-
-    // Prime cache entry with storage path template + storage id (needed for flush path resolution)
-    {
-        use crate::schema_registry::CachedTableData;
-        let template = schema_registry.resolve_storage_path_template(
-            &table_id,
-            TableType::Shared,
-            &storage_id,
-        )?;
-        
-        let data = CachedTableData::with_storage_config(
-            Arc::clone(&table_def),
-            Some(storage_id.clone()),
-            template.clone(),
-        );
-        schema_registry.insert(table_id.clone(), Arc::new(data));
-        log::debug!(
-            "Primed cache for shared table {}.{} with template: {}",
-            stmt.namespace_id.as_str(),
-            stmt.table_name.as_str(),
-            template
-        );
-    }
+    let provider_arrow_schema = schema_registry.get_arrow_schema(&table_id)?;
+    register_shared_table_provider(&app_context, &table_id, provider_arrow_schema)?;
 
     // Log detailed success with table options
     log::info!(
@@ -519,7 +511,7 @@ pub fn create_stream_table(
     user_id: &UserId,
     user_role: Role,
 ) -> Result<String, KalamDbError> {
-    use super::tables::{save_table_definition, validate_table_name};
+    use super::tables::validate_table_name;
 
     // RBAC check
     if !crate::auth::rbac::can_create_table(user_role, TableType::Stream) {
@@ -646,54 +638,18 @@ pub fn create_stream_table(
         ttl_seconds
     );
 
-    // Save complete table definition to information_schema.tables
-    save_table_definition(&stmt, &schema)?;
+    // Stream tables use default storage
+    let storage_id = StorageId::from("local");
 
-    // Insert into system.tables
-    let table_def = schema_registry
-        .get_table_definition(&table_id)?
-        .ok_or_else(|| {
-            KalamDbError::Other(format!(
-                "Failed to retrieve table definition for {}.{} after save",
-                stmt.namespace_id.as_str(),
-                stmt.table_name.as_str()
-            ))
-        })?;
-
-    let tables_provider = app_context.system_tables().tables();
-    tables_provider
-        .create_table(&table_id, &table_def)
-        .into_kalamdb_error("Failed to insert table into system catalog")?;
-
-    // Phase 16: Store initial version (version 1) in versioned schema store
-    tables_provider
-        .put_versioned_schema(&table_id, &table_def)
-        .into_kalamdb_error("Failed to store initial schema version")?;
-
-    // Prime cache entry with storage path template + storage id (needed for flush path resolution)
-    {
-        use crate::schema_registry::CachedTableData;
-        // Stream tables use default storage
-        let storage_id = StorageId::from("local");
-        let template = schema_registry.resolve_storage_path_template(
-            &table_id,
-            TableType::Stream,
-            &storage_id,
-        )?;
-        
-        let data = CachedTableData::with_storage_config(
-            Arc::clone(&table_def),
-            Some(storage_id.clone()),
-            template.clone(),
-        );
-        schema_registry.insert(table_id.clone(), Arc::new(data));
-        log::debug!(
-            "Primed cache for stream table {}.{} with template: {}",
-            stmt.namespace_id.as_str(),
-            stmt.table_name.as_str(),
-            template
-        );
-    }
+    // Persist table definition, insert into system catalog, and prime cache
+    persist_table_and_prime_cache(
+        &app_context,
+        &stmt,
+        &schema,
+        &table_id,
+        TableType::Stream,
+        &storage_id,
+    )?;
 
     // Register StreamTableProvider for event operations (distinct from SHARED)
     register_stream_table_provider(&app_context, &table_id, schema.clone(), Some(ttl_seconds))?;

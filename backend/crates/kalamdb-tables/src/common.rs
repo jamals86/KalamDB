@@ -5,13 +5,10 @@ use kalamdb_store::{IndexDefinition, IndexedEntityStore, Partition, StorageBacke
 use std::sync::Arc;
 
 /// Build the canonical RocksDB partition name for a table scope.
+///
+/// Format: `{prefix}{namespace}:{table}` (e.g., "user_default:messages")
 pub fn partition_name(prefix: &str, table_id: &TableId) -> String {
-    format!(
-        "{}{}:{}",
-        prefix,
-        table_id.namespace_id().as_str(),
-        table_id.table_name().as_str()
-    )
+    format!("{}{}", prefix, table_id) // TableId Display impl gives "namespace:table"
 }
 
 /// Create the partition if it does not already exist. Best-effort: errors are ignored.

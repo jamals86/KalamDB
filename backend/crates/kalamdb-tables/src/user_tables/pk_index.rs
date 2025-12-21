@@ -49,11 +49,10 @@ impl UserTablePkIndex {
     /// Create a new PK index for a user table.
     ///
     /// # Arguments
-    /// * `namespace_id` - Namespace identifier
-    /// * `table_name` - Table name
+    /// * `table_id` - Table identifier (namespace + table name)
     /// * `pk_field_name` - Name of the primary key column
-    pub fn new(namespace_id: &str, table_name: &str, pk_field_name: &str) -> Self {
-        let partition = format!("user_{}:{}_pk_idx", namespace_id, table_name);
+    pub fn new(table_id: &kalamdb_commons::TableId, pk_field_name: &str) -> Self {
+        let partition = format!("user_{}_pk_idx", table_id); // TableId Display: "namespace:table"
         Self {
             partition,
             pk_field_name: pk_field_name.to_string(),
@@ -155,15 +154,13 @@ impl IndexDefinition<UserTableRowId, UserTableRow> for UserTablePkIndex {
 /// Create a PK index for a user table.
 ///
 /// # Arguments
-/// * `namespace_id` - Namespace identifier
-/// * `table_name` - Table name  
+/// * `table_id` - Table identifier (namespace + table name)
 /// * `pk_field_name` - Name of the primary key column
 pub fn create_user_table_pk_index(
-    namespace_id: &str,
-    table_name: &str,
+    table_id: &kalamdb_commons::TableId,
     pk_field_name: &str,
 ) -> std::sync::Arc<dyn IndexDefinition<UserTableRowId, UserTableRow>> {
-    std::sync::Arc::new(UserTablePkIndex::new(namespace_id, table_name, pk_field_name))
+    std::sync::Arc::new(UserTablePkIndex::new(table_id, pk_field_name))
 }
 
 #[cfg(test)]
@@ -195,7 +192,8 @@ mod tests {
 
     #[test]
     fn test_pk_index_extract_key() {
-        let index = UserTablePkIndex::new("default", "users", "id");
+        let table_id = kalamdb_commons::TableId::from_strings("default", "users");
+        let index = UserTablePkIndex::new(&table_id, "id");
         let (key, row) = create_test_row("user1", 100, 42);
 
         let index_key = index.extract_key(&key, &row);
@@ -214,7 +212,8 @@ mod tests {
 
     #[test]
     fn test_pk_index_same_pk_different_versions() {
-        let index = UserTablePkIndex::new("default", "users", "id");
+        let table_id = kalamdb_commons::TableId::from_strings("default", "users");
+        let index = UserTablePkIndex::new(&table_id, "id");
 
         // Two versions of the same row (same PK, different seq)
         let (key1, row1) = create_test_row("user1", 100, 42);
@@ -233,7 +232,8 @@ mod tests {
 
     #[test]
     fn test_pk_index_same_pk_different_users() {
-        let index = UserTablePkIndex::new("default", "users", "id");
+        let table_id = kalamdb_commons::TableId::from_strings("default", "users");
+        let index = UserTablePkIndex::new(&table_id, "id");
 
         // Same PK value for different users
         let (key1, row1) = create_test_row("alice", 100, 42);
@@ -254,7 +254,8 @@ mod tests {
 
     #[test]
     fn test_pk_index_different_pk_values() {
-        let index = UserTablePkIndex::new("default", "users", "id");
+        let table_id = kalamdb_commons::TableId::from_strings("default", "users");
+        let index = UserTablePkIndex::new(&table_id, "id");
 
         let (key1, row1) = create_test_row("user1", 100, 42);
         let (key2, row2) = create_test_row("user1", 100, 99);
@@ -270,7 +271,8 @@ mod tests {
 
     #[test]
     fn test_build_prefix_for_pk() {
-        let index = UserTablePkIndex::new("default", "users", "id");
+        let table_id = kalamdb_commons::TableId::from_strings("default", "users");
+        let index = UserTablePkIndex::new(&table_id, "id");
         let pk_value = ScalarValue::Int64(Some(42));
 
         let prefix = index.build_prefix_for_pk("user1", &pk_value);
@@ -283,7 +285,8 @@ mod tests {
 
     #[test]
     fn test_partition_name() {
-        let index = UserTablePkIndex::new("my_namespace", "my_table", "id");
+        let table_id = kalamdb_commons::TableId::from_strings("my_namespace", "my_table");
+        let index = UserTablePkIndex::new(&table_id, "id");
         assert_eq!(index.partition(), "user_my_namespace:my_table_pk_idx");
     }
 }

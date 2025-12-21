@@ -137,17 +137,12 @@ pub fn new_indexed_shared_table_store(
 
     // Create PK index
     let pk_index = create_shared_table_pk_index(
-        table_id.namespace_id().as_str(),
-        table_id.table_name().as_str(),
+        table_id,
         pk_field_name,
     );
 
     // Create index partition
-    let index_partition_name = format!(
-        "shared_{}:{}_pk_idx",
-        table_id.namespace_id().as_str(),
-        table_id.table_name().as_str()
-    );
+    let index_partition_name = format!("shared_{}_pk_idx", table_id);
     ensure_partition(&backend, &index_partition_name);
 
     new_indexed_store_with_pk(Arc::clone(&backend), name, vec![pk_index])

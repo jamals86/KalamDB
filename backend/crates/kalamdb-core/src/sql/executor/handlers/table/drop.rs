@@ -6,6 +6,7 @@
 use crate::app_context::AppContext;
 use crate::error::KalamDbError;
 use crate::error_extensions::KalamDbResultExt;
+use crate::sql::executor::helpers::guards::block_system_namespace_modification;
 use crate::jobs::executors::cleanup::{CleanupOperation, CleanupParams, StorageCleanupDetails};
 use crate::schema_registry::SchemaRegistry;
 use crate::sql::executor::handlers::typed::TypedStatementHandler;
@@ -350,6 +351,14 @@ impl TypedStatementHandler<DropTableStatement> for DropTableHandler {
             context.user_id.as_str(),
             context.user_role
         );
+
+        // Block DROP on system tables - they are managed internally
+        block_system_namespace_modification(
+            &statement.namespace_id,
+            "DROP",
+            "TABLE",
+            Some(statement.table_name.as_str()),
+        )?;
 
         // RBAC: authorize based on actual table type if exists
         let registry = self.app_context.schema_registry();

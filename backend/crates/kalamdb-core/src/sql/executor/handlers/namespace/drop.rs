@@ -6,6 +6,7 @@
 use crate::app_context::AppContext;
 use crate::error::KalamDbError;
 use crate::sql::executor::handlers::typed::TypedStatementHandler;
+use crate::sql::executor::helpers::guards::require_admin;
 use crate::sql::executor::models::{ExecutionContext, ExecutionResult, ScalarValue};
 use kalamdb_commons::models::{NamespaceId, TableId};
 use kalamdb_sql::ddl::DropNamespaceStatement;
@@ -131,14 +132,7 @@ impl TypedStatementHandler<DropNamespaceStatement> for DropNamespaceHandler {
         _statement: &DropNamespaceStatement,
         context: &ExecutionContext,
     ) -> Result<(), KalamDbError> {
-        // Only DBA/System roles can drop namespaces
-        if !context.is_admin() {
-            return Err(KalamDbError::Unauthorized(
-                "Insufficient privileges to drop namespaces. DBA or System role required."
-                    .to_string(),
-            ));
-        }
-        Ok(())
+        require_admin(context, "drop namespace")
     }
 }
 

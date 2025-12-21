@@ -1,7 +1,7 @@
 //! System.live_queries table provider
 //!
 //! This module provides a DataFusion TableProvider implementation for the system.live_queries table.
-//! Uses the new EntityStore architecture with LiveQueryId keys.
+//! Uses IndexedEntityStore with TableIdIndex for efficient table-based lookups.
 
 use super::{new_live_queries_store, LiveQueriesStore, LiveQueriesTableSchema};
 use crate::error::{SystemError, SystemResultExt};
@@ -17,7 +17,7 @@ use datafusion::physical_plan::ExecutionPlan;
 use kalamdb_commons::models::ConnectionId;
 use kalamdb_commons::system::LiveQuery;
 use kalamdb_commons::{LiveQueryId, StorageKey, TableId, UserId};
-use kalamdb_store::entity_store::{EntityStore, EntityStoreAsync};
+use kalamdb_store::entity_store::EntityStore;
 use kalamdb_store::StorageBackend;
 use std::any::Any;
 use std::sync::Arc;
@@ -51,7 +51,7 @@ impl LiveQueriesTableProvider {
 
     /// Create a new live query entry
     pub fn create_live_query(&self, live_query: LiveQuery) -> Result<(), SystemError> {
-        self.store.put(&live_query.live_id, &live_query)?;
+        self.store.insert(&live_query.live_id, &live_query)?;
         Ok(())
     }
 
@@ -60,9 +60,9 @@ impl LiveQueriesTableProvider {
     /// Use this in async contexts to avoid blocking the Tokio runtime.
     pub async fn create_live_query_async(&self, live_query: LiveQuery) -> Result<(), SystemError> {
         self.store
-            .put_async(&live_query.live_id, &live_query)
+            .insert_async(live_query.live_id.clone(), live_query)
             .await
-            .into_system_error("put_async error")?;
+            .into_system_error("insert_async error")?;
         Ok(())
     }
 
@@ -103,7 +103,7 @@ impl LiveQueriesTableProvider {
         let live_query_id = LiveQueryId::from_string(live_id)
             .map_err(|e| SystemError::InvalidOperation(format!("Invalid LiveQueryId: {}", e)))?;
         self.store
-            .get_async(&live_query_id)
+            .get_async(live_query_id)
             .await
             .into_system_error("get_async error")
     }
@@ -118,7 +118,7 @@ impl LiveQueriesTableProvider {
             )));
         }
 
-        self.store.put(&live_query.live_id, &live_query)?;
+        self.store.insert(&live_query.live_id, &live_query)?;
         Ok(())
     }
 
@@ -127,7 +127,7 @@ impl LiveQueriesTableProvider {
     /// Use this in async contexts to avoid blocking the Tokio runtime.
     pub async fn update_live_query_async(&self, live_query: LiveQuery) -> Result<(), SystemError> {
         // Check if live query exists
-        if self.store.get_async(&live_query.live_id).await?.is_none() {
+        if self.store.get_async(live_query.live_id.clone()).await?.is_none() {
             return Err(SystemError::NotFound(format!(
                 "Live query not found: {}",
                 live_query.live_id
@@ -135,9 +135,9 @@ impl LiveQueriesTableProvider {
         }
 
         self.store
-            .put_async(&live_query.live_id, &live_query)
+            .insert_async(live_query.live_id.clone(), live_query)
             .await
-            .into_system_error("put_async error")?;
+            .into_system_error("insert_async error")?;
         Ok(())
     }
 
@@ -152,7 +152,7 @@ impl LiveQueriesTableProvider {
     /// Use this in async contexts to avoid blocking the Tokio runtime.
     pub async fn delete_live_query_async(&self, live_id: &LiveQueryId) -> Result<(), SystemError> {
         self.store
-            .delete_async(live_id)
+            .delete_async(live_id.clone())
             .await
             .into_system_error("delete_async error")?;
         Ok(())
@@ -224,32 +224,26 @@ impl LiveQueriesTableProvider {
             .collect())
     }
 
-    /// Delete live queries by user ID and connection ID using efficient prefix scan.
+    /// Delete live queries by user ID and connection ID using efficient primary key prefix scan.
     ///
-    /// PERFORMANCE OPTIMIZATION: Uses prefix scan on the storage key format
-    /// `{user_id}-{connection_id}-{subscription_id}` to find all live queries
-    /// for a user+connection without scanning the entire table.
-    ///
-    /// This reduces RocksDB operations from O(n) to O(m) where n is total
-    /// queries and m is queries for this user+connection.
+    /// PERFORMANCE: Uses prefix scan on primary key format `{user_id}-{connection_id}-`.
+    /// With max ~10 live queries per user, this is effectively O(1).
+    /// No secondary index needed - saves write overhead on every insert/update/delete.
     pub fn delete_by_connection_id(
         &self,
         user_id: &UserId,
         connection_id: &ConnectionId,
     ) -> Result<(), SystemError> {
         // Create prefix key for scanning: "user_id-connection_id-"
-        let prefix = LiveQueryId::user_connection_prefix(
-            user_id,
-            &kalamdb_commons::models::ConnectionId::new(connection_id.to_string()),
-        );
-
-        // Scan all keys with this prefix
+        let prefix = LiveQueryId::user_connection_prefix(user_id, connection_id);
         let prefix_bytes = prefix.as_bytes();
+
+        // Scan all keys with this prefix (max ~10 per user)
         let results = self
             .store
-            .scan_limited_with_prefix_and_start(Some(prefix_bytes), None, 10000)?;
+            .scan_limited_with_prefix_and_start(Some(prefix_bytes), None, 100)?;
 
-        // Delete each matching key
+        // Delete each matching key (uses atomic WriteBatch internally)
         for (key_bytes, _) in results {
             let key = LiveQueryId::from_storage_key(&key_bytes)
                 .map_err(|e| SystemError::InvalidOperation(format!("Invalid key: {}", e)))?;
@@ -260,25 +254,21 @@ impl LiveQueriesTableProvider {
 
     /// Async version of `delete_by_connection_id()` - offloads to blocking thread pool.
     ///
-    /// Uses efficient prefix scan on the storage key format to find and delete
-    /// all live queries for a user+connection without scanning the entire table.
+    /// Uses efficient primary key prefix scan on `{user_id}-{connection_id}-`.
     pub async fn delete_by_connection_id_async(
         &self,
         user_id: &UserId,
         connection_id: &ConnectionId,
     ) -> Result<(), SystemError> {
         // Create prefix key for scanning: "user_id-connection_id-"
-        let prefix = LiveQueryId::user_connection_prefix(
-            user_id,
-            connection_id,
-        );
+        let prefix = LiveQueryId::user_connection_prefix(user_id, connection_id);
+        let prefix_bytes = prefix.as_bytes().to_vec();
 
         // Scan all keys with this prefix (async)
-        let prefix_bytes = prefix.as_bytes().to_vec();
         let results: Vec<(Vec<u8>, LiveQuery)> = {
             let store = self.store.clone();
             tokio::task::spawn_blocking(move || {
-                store.scan_limited_with_prefix_and_start(Some(&prefix_bytes), None, 10000)
+                store.scan_limited_with_prefix_and_start(Some(&prefix_bytes), None, 100)
             })
             .await
             .into_system_error("Join error")??
@@ -291,6 +281,40 @@ impl LiveQueriesTableProvider {
             self.delete_live_query_async(&key).await?;
         }
         Ok(())
+    }
+
+    /// Clear all live queries from storage.
+    ///
+    /// Used during server startup to clean up orphan entries from previous runs.
+    /// Live queries don't persist across server restarts since WebSocket connections
+    /// are lost on restart.
+    pub fn clear_all(&self) -> Result<usize, SystemError> {
+        let all = self.store.scan_all(None, None, None)?;
+        let count = all.len();
+        for (key_bytes, _) in all {
+            let key = LiveQueryId::from_storage_key(&key_bytes)
+                .map_err(|e| SystemError::InvalidOperation(format!("Invalid key: {}", e)))?;
+            self.store.delete(&key)?;
+        }
+        Ok(count)
+    }
+
+    /// Async version of `clear_all()`.
+    pub async fn clear_all_async(&self) -> Result<usize, SystemError> {
+        let store = self.store.clone();
+        let all: Vec<(Vec<u8>, LiveQuery)> = tokio::task::spawn_blocking(move || {
+            store.scan_all(None, None, None)
+        })
+        .await
+        .into_system_error("Join error")??;
+
+        let count = all.len();
+        for (key_bytes, _) in all {
+            let key = LiveQueryId::from_storage_key(&key_bytes)
+                .map_err(|e| SystemError::InvalidOperation(format!("Invalid key: {}", e)))?;
+            self.delete_live_query_async(&key).await?;
+        }
+        Ok(count)
     }
 
     /// Increment the changes counter for a live query

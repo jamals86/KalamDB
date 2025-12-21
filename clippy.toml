@@ -1,0 +1,32 @@
+# Clippy configuration for KalamDB
+# See: https://doc.rust-lang.org/clippy/lint_configuration.html
+
+# Cognitive complexity threshold (default: 25)
+cognitive-complexity-threshold = 30
+
+# Maximum number of single char bindings a scope may have
+single-char-binding-names-threshold = 4
+
+# Type complexity threshold
+type-complexity-threshold = 250
+
+# Maximum number of lines for a function
+too-many-lines-threshold = 150
+
+# Maximum number of arguments for a function
+too-many-arguments-threshold = 8
+
+# Maximum size of arrays to check for equality without calling `eq`
+array-size-threshold = 512000
+
+# Maximum size of vectors to check for equality without calling `eq`
+vec-box-size-threshold = 4096
+
+# Maximum size of structures to be stack allocated
+trivial-copy-size-limit = 128
+
+# Allowed identifiers below minimum length
+allowed-idents-below-min-chars = ["i", "j", "k", "id", "db", "tx", "io"]
+
+# Minimum identifier length (single letters are generally discouraged)
+min-ident-chars-threshold = 2

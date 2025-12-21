@@ -3,6 +3,7 @@
 use crate::app_context::AppContext;
 use crate::error::KalamDbError;
 use crate::sql::executor::handlers::typed::TypedStatementHandler;
+use crate::sql::executor::helpers::guards::block_system_namespace_modification;
 use crate::sql::executor::helpers::table_registration::{
     register_shared_table_provider, register_stream_table_provider, register_user_table_provider,
     unregister_table_provider,
@@ -46,6 +47,15 @@ impl TypedStatementHandler<AlterTableStatement> for AlterTableHandler {
             context.user_id.as_str(),
             context.user_role
         );
+
+        // Block ALTER on system tables - they are managed internally
+        // Future versions may use ALTER for schema migrations during upgrades
+        block_system_namespace_modification(
+            &namespace_id,
+            "ALTER",
+            "TABLE",
+            Some(statement.table_name.as_str()),
+        )?;
 
         let registry = self.app_context.schema_registry();
         let table_def_arc = registry.get_table_definition(&table_id)?.ok_or_else(|| {

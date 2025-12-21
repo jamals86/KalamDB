@@ -451,15 +451,40 @@ If cache hit rate is low, consider:
 2. **Increase cache size**: Modify `SchemaCache::new(2000)` in backend code
 3. **Batch schema changes**: Group ALTER TABLE operations together
 
-**Future Metrics** (Roadmap):
+**Available Metrics**:
 
-The `system.stats` table will expand to include:
-- `queries_per_second` - Query throughput
-- `avg_query_latency_ms` - Average query execution time
-- `memory_usage_bytes` - Total memory consumption
-- `cpu_usage_percent` - CPU utilization
-- `disk_space_used_bytes` - Storage usage
-- `active_connections` - Current WebSocket connections
+The `system.stats` table includes the following metrics:
+
+| Metric | Description |
+|--------|-------------|
+| `server_uptime_seconds` | Server uptime in seconds |
+| `server_uptime_human` | Human-readable uptime (e.g., "2h 15m") |
+| `memory_usage_bytes` | Process memory usage in bytes |
+| `memory_usage_mb` | Process memory usage in MB |
+| `cpu_usage_percent` | CPU utilization percentage |
+| `system_total_memory_mb` | Total system memory |
+| `system_used_memory_mb` | Used system memory |
+| `thread_count` | Number of active threads |
+| `total_users` | Total registered users |
+| `total_namespaces` | Total namespaces |
+| `total_tables` | Total tables |
+| `total_jobs` | Total background jobs |
+| `total_storages` | Total storage configurations |
+| `total_live_queries` | Total live query registrations |
+| `active_connections` | Current WebSocket connections |
+| `active_subscriptions` | Current active subscriptions |
+| `schema_cache_size` | Schema cache entries |
+| `schema_cache_hits` | Schema cache hit count |
+| `schema_cache_misses` | Schema cache miss count |
+| `schema_cache_hit_rate` | Schema cache hit rate percentage |
+| `manifests_in_memory` | Manifest entries in hot cache |
+| `manifests_in_rocksdb` | Manifest entries in RocksDB |
+| `manifests_shared_tables` | Shared table manifests |
+| `manifests_user_tables` | User table manifests |
+| `manifests_cache_weight` | Current cache weight |
+| `manifests_max_capacity` | Maximum cache capacity |
+| `node_id` | Server node identifier |
+| `server_version` | KalamDB server version |
 
 ---
 
