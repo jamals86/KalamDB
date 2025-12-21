@@ -5,9 +5,6 @@
 # Runtime image only (no build stage needed)
 FROM debian:bookworm-slim
 
-# Build argument for target architecture binary path
-ARG TARGETPLATFORM
-
 # Install runtime dependencies and create user in single layer
 # Note: curl is needed for healthcheck
 RUN apt-get update && \
@@ -20,10 +17,10 @@ RUN apt-get update && \
     mkdir -p /data/rocksdb /data/storage /data/logs /config && \
     chown -R kalamdb:kalamdb /data /config
 
-# Copy pre-built binaries (injected from GitHub Actions workflow)
+# Copy pre-built binaries from the "binaries" build context
 # These are already compiled for the target architecture
-COPY --chmod=755 binaries/kalamdb-server /usr/local/bin/kalamdb-server
-COPY --chmod=755 binaries/kalam /usr/local/bin/kalam-cli
+COPY --from=binaries --chmod=755 kalamdb-server /usr/local/bin/kalamdb-server
+COPY --from=binaries --chmod=755 kalam /usr/local/bin/kalam-cli
 
 # Create symlink so 'kalam' command works (docs reference this name)
 RUN ln -s /usr/local/bin/kalam-cli /usr/local/bin/kalam
