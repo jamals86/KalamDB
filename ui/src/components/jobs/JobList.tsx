@@ -26,6 +26,7 @@ import {
   SelectValue,
 } from '@/components/ui/select';
 import { Loader2, RefreshCw, Filter, X, Eye, Play, CheckCircle, XCircle, Clock, AlertCircle } from 'lucide-react';
+import { formatTimestamp } from '@/lib/formatters';
 
 const STATUS_COLORS: Record<string, string> = {
   'New': 'bg-gray-100 text-gray-800',
@@ -59,19 +60,6 @@ function parseJobParams(parameters: string | null): { namespace_id?: string; tab
 
 function getStatusColor(status: string): string {
   return STATUS_COLORS[status] || 'bg-gray-100 text-gray-800';
-}
-
-function formatTimestamp(timestamp: string | number | null): string {
-  if (!timestamp) return '-';
-  try {
-    // Handle both string and number (unix timestamp in ms)
-    const date = typeof timestamp === 'number' 
-      ? new Date(timestamp) 
-      : new Date(timestamp);
-    return date.toLocaleString();
-  } catch {
-    return String(timestamp);
-  }
 }
 
 function formatDuration(startedAt: string | null, completedAt: string | null): string {

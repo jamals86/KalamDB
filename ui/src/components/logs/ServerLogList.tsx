@@ -26,6 +26,7 @@ import {
   SelectValue,
 } from '@/components/ui/select';
 import { Loader2, RefreshCw, Filter, X, Eye, AlertCircle, AlertTriangle, Info, Bug } from 'lucide-react';
+import { formatTimestamp } from '@/lib/formatters';
 
 const LEVEL_CONFIG: Record<string, { color: string; icon: typeof AlertCircle }> = {
   'ERROR': { color: 'bg-red-100 text-red-800 dark:bg-red-900/30 dark:text-red-400', icon: AlertCircle },
@@ -37,15 +38,6 @@ const LEVEL_CONFIG: Record<string, { color: string; icon: typeof AlertCircle }> 
 
 function getLevelConfig(level: string) {
   return LEVEL_CONFIG[level.toUpperCase()] || { color: 'bg-gray-100 text-gray-800', icon: Info };
-}
-
-function formatTimestamp(timestamp: string): string {
-  try {
-    const date = new Date(timestamp);
-    return date.toLocaleString();
-  } catch {
-    return timestamp;
-  }
 }
 
 function truncateMessage(message: string, maxLength: number = 100): string {

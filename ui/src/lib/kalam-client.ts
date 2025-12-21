@@ -184,8 +184,31 @@ export async function executeQuery(sql: string): Promise<QueryResponse> {
 }
 
 /**
+ * Convert array-based rows to Record objects using schema
+ * New API format: { schema: [{name, data_type, index}], rows: [[val1, val2], ...] }
+ * Old/convenience format: [{col1: val1, col2: val2}, ...]
+ */
+function convertRowsToObjects(
+  schema: { name: string; data_type: string; index: number }[] | undefined,
+  rows: unknown[][] | undefined
+): Record<string, unknown>[] {
+  if (!rows || !schema || schema.length === 0) {
+    return [];
+  }
+  
+  return rows.map((row) => {
+    const obj: Record<string, unknown> = {};
+    schema.forEach((field) => {
+      obj[field.name] = row[field.index] ?? null;
+    });
+    return obj;
+  });
+}
+
+/**
  * Execute SQL and return rows from the first result set
  * Convenience function for hooks that just need rows
+ * Converts the new array-based row format to Record objects for backwards compatibility
  */
 export async function executeSql(sql: string): Promise<Record<string, unknown>[]> {
   try {
@@ -196,7 +219,17 @@ export async function executeSql(sql: string): Promise<Record<string, unknown>[]
       throw new Error(response.error.message);
     }
     
-    return (response.results?.[0]?.rows as Record<string, unknown>[]) ?? [];
+    const result = response.results?.[0];
+    if (!result) {
+      return [];
+    }
+    
+    // Convert array rows to Record objects using schema
+    // The schema contains: { name, data_type, index }
+    const schema = (result as unknown as { schema?: { name: string; data_type: string; index: number }[] }).schema;
+    const rows = result.rows as unknown[][] | undefined;
+    
+    return convertRowsToObjects(schema, rows);
   } catch (err) {
     console.error('[kalam-client] executeSql failed:', err);
     throw err;

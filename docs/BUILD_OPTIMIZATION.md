@@ -4,10 +4,23 @@ This document outlines the comprehensive build optimizations applied to KalamDB 
 
 ## 🚀 Performance Summary
 
-### Local Development
-- **Clean Build**: 8m 19s → 4m 03s (51% faster)
-- **Incremental Build**: 37s with sccache (84% faster than clean)
-- **Cache Size**: 145 MiB with 958 compilations cached
+### ⚠️ Important: Clean vs Incremental Builds
+**After `cargo clean`, the FIRST build is ALWAYS slow** because:
+- sccache cache is empty (no previous compilations to reuse)
+- All dependencies must be compiled from scratch
+- All workspace crates must be built completely
+
+**Expected times:**
+- **First build after `cargo clean`**: 4-6 minutes (cache is cold)
+- **Second build** (no changes): <1 second (everything cached)
+- **Incremental** (touch 1 file): 3-5 seconds (only recompile affected crates)
+- **After `git pull`**: 30-60 seconds (only changed crates + dependencies)
+
+### Local Development (sccache benefits)
+- **Clean Build** (first time): ~6 minutes (sccache building cache)
+- **Incremental Build** (touch 1 file): 3-5 seconds ⚡
+- **No-op Build** (no changes): <1 second ⚡
+- **Cache Size**: Grows to ~320 MiB, max 10 GiB
 
 ### CI/CD (GitHub Actions)
 - sccache enabled across all build jobs (Linux, macOS, Windows)

@@ -91,14 +91,14 @@ impl TypedStatementHandler<AlterUserStatement> for AlterUserHandler {
         updated.updated_at = chrono::Utc::now().timestamp_millis();
         users.update_user(updated)?;
 
-        // Log DDL operation
+        // Log DDL operation (with password redaction)
         use crate::sql::executor::helpers::audit;
         let audit_entry = audit::log_ddl_operation(
             context,
             "ALTER",
             "USER",
             &statement.username,
-            Some(format!("Modification: {:?}", statement.modification)),
+            Some(format!("Modification: {}", statement.modification.display_for_audit())),
             None,
         );
         audit::persist_audit_entry(&self.app_context, &audit_entry).await?;

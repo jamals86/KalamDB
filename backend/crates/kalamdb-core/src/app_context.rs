@@ -12,6 +12,7 @@ use crate::live::ConnectionsManager;
 use crate::live_query::LiveQueryManager;
 use crate::schema_registry::settings::{SettingsTableProvider, SettingsView};
 use crate::schema_registry::stats::StatsTableProvider;
+use crate::schema_registry::views::datatypes::{DatatypesTableProvider, DatatypesView};
 use crate::schema_registry::SchemaRegistry;
 use crate::sql::datafusion_session::DataFusionSessionFactory;
 use crate::sql::executor::SqlExecutor;
@@ -224,6 +225,13 @@ impl AppContext {
                         .register_table(table_name.to_string(), provider)
                         .expect("Failed to register system table");
                 }
+
+                // Register system.datatypes virtual view (Arrow → KalamDB type mappings)
+                let datatypes_view = Arc::new(DatatypesView::new());
+                let datatypes_provider = Arc::new(DatatypesTableProvider::new(datatypes_view));
+                system_schema
+                    .register_table("datatypes".to_string(), datatypes_provider)
+                    .expect("Failed to register system.datatypes");
 
                 // Register existing namespaces as DataFusion schemas
                 // This ensures all namespaces persisted in RocksDB are available for SQL queries

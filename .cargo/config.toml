@@ -33,9 +33,3 @@ incremental = true
 # Use sparse registry protocol for faster dependency resolution
 [registries.crates-io]
 protocol = "sparse"
-
-# Speed up compile times for dev builds
-[profile.dev]
-debug = 0  # Minimal debug info
-split-debuginfo = "unpacked"  # Faster on macOS
-opt-level = 0

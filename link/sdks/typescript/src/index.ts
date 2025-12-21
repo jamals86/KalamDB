@@ -71,15 +71,27 @@ import type { AuthCredentials } from './auth.js';
 export type { KalamClient as WasmKalamClient } from './wasm/kalam_link.js';
 
 /**
+ * Schema field describing a column in the result set
+ */
+export interface SchemaField {
+  /** Column name */
+  name: string;
+  /** Data type (e.g., 'BigInt', 'Text', 'Timestamp') */
+  data_type: string;
+  /** Column index in the row array */
+  index: number;
+}
+
+/**
  * Query result structure matching KalamDB server response
  */
 export interface QueryResult {
-  /** Result rows as JSON objects */
-  rows?: Record<string, any>[];
+  /** Schema describing the columns in the result set */
+  schema: SchemaField[];
+  /** Result rows as arrays of values (ordered by schema index) */
+  rows?: unknown[][];
   /** Number of rows affected or returned */
   row_count: number;
-  /** Column names in the result set */
-  columns: string[];
   /** Optional message for non-query statements */
   message?: string;
 }

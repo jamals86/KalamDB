@@ -11,46 +11,63 @@ import {
   ColumnFiltersState,
 } from '@tanstack/react-table';
 import { QueryResult } from '../../lib/api';
+import { formatTimestamp } from '../../lib/formatters';
+import { isTimestampType, getDataTypeColor, MAX_DISPLAY_ROWS } from '../../lib/config';
+import { useDataTypes } from '../../hooks/useDataTypes';
 
 interface ResultsProps {
   result: QueryResult | null;
   isLoading?: boolean;
 }
 
-const MAX_DISPLAY_ROWS = 10000;
-
 export function Results({ result, isLoading }: ResultsProps) {
   const [sorting, setSorting] = useState<SortingState>([]);
   const [columnFilters, setColumnFilters] = useState<ColumnFiltersState>([]);
   const [globalFilter, setGlobalFilter] = useState('');
+  const { toSqlType } = useDataTypes();
 
   const columns = useMemo<ColumnDef<unknown[]>[]>(() => {
-    if (!result?.columns) return [];
+    if (!result?.schema || result.schema.length === 0) return [];
     
-    return result.columns.map((col, index) => ({
-      id: `col_${index}`,
-      accessorFn: (row: unknown[]) => row[index],
-      header: () => (
-        <div className="flex flex-col">
-          <span className="font-semibold">{col.name}</span>
-          <span className="text-xs text-gray-400 font-normal">{col.data_type}</span>
-        </div>
-      ),
-      cell: ({ getValue }) => {
-        const value = getValue();
-        if (value === null) {
-          return <span className="text-gray-400 italic">NULL</span>;
-        }
-        if (typeof value === 'boolean') {
-          return <span className={value ? 'text-green-600' : 'text-red-600'}>{String(value)}</span>;
-        }
-        if (typeof value === 'object') {
-          return <span className="text-blue-600 font-mono text-xs">{JSON.stringify(value)}</span>;
-        }
-        return <span className="font-mono text-sm">{String(value)}</span>;
-      },
-    }));
-  }, [result?.columns]);
+    return result.schema.map((field) => {
+      const isTimestamp = isTimestampType(field.data_type);
+      const sqlType = toSqlType(field.data_type);
+      const typeColor = getDataTypeColor(field.data_type);
+      
+      return {
+        id: `col_${field.index}`,
+        accessorFn: (row: unknown[]) => row[field.index],
+        header: () => (
+          <div className="flex flex-col">
+            <span className="font-semibold">{field.name}</span>
+            <span className={`text-xs font-normal ${typeColor}`} title={field.data_type}>{sqlType}</span>
+          </div>
+        ),
+        cell: ({ getValue }) => {
+          const value = getValue();
+          if (value === null) {
+            return <span className="text-gray-400 italic">NULL</span>;
+          }
+          // Format timestamp values
+          if (isTimestamp && (typeof value === 'number' || typeof value === 'string')) {
+            const formatted = formatTimestamp(value, field.data_type);
+            return (
+              <span className="font-mono text-sm text-amber-700" title={String(value)}>
+                {formatted}
+              </span>
+            );
+          }
+          if (typeof value === 'boolean') {
+            return <span className={value ? 'text-green-600' : 'text-red-600'}>{String(value)}</span>;
+          }
+          if (typeof value === 'object') {
+            return <span className="text-blue-600 font-mono text-xs">{JSON.stringify(value)}</span>;
+          }
+          return <span className="font-mono text-sm">{String(value)}</span>;
+        },
+      };
+    });
+  }, [result?.schema, toSqlType]);
 
   const data = useMemo(() => {
     if (!result?.rows) return [];
