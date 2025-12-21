@@ -1,0 +1,50 @@
+# Lightweight Docker image for KalamDB using pre-built binaries
+# This Dockerfile is used in the release workflow with pre-compiled binaries
+# Supports multi-architecture via separate build artifacts
+
+# Runtime image only (no build stage needed)
+FROM debian:bookworm-slim
+
+# Build argument for target architecture binary path
+ARG TARGETPLATFORM
+
+# Install runtime dependencies and create user in single layer
+# Note: curl is needed for healthcheck
+RUN apt-get update && \
+    apt-get install -y --no-install-recommends \
+        ca-certificates \
+        libssl3 \
+        curl \
+    && rm -rf /var/lib/apt/lists/* /var/cache/apt/* && \
+    useradd -m -u 1000 kalamdb && \
+    mkdir -p /data/rocksdb /data/storage /data/logs /config && \
+    chown -R kalamdb:kalamdb /data /config
+
+# Copy pre-built binaries (injected from GitHub Actions workflow)
+# These are already compiled for the target architecture
+COPY --chmod=755 binaries/kalamdb-server /usr/local/bin/kalamdb-server
+COPY --chmod=755 binaries/kalam /usr/local/bin/kalam-cli
+
+# Create symlink so 'kalam' command works (docs reference this name)
+RUN ln -s /usr/local/bin/kalam-cli /usr/local/bin/kalam
+
+# Copy default server configuration (owned by kalamdb user)
+COPY docker/backend/server.toml /config/server.toml
+COPY docker/backend/server.toml /data/server.toml
+RUN chown kalamdb:kalamdb /config/server.toml /data/server.toml
+
+# Switch to non-root user
+USER kalamdb
+
+# Set working directory (server looks for server.toml here)
+WORKDIR /data
+
+# Expose default port
+EXPOSE 8080
+
+# Health check using curl (more reliable than CLI which needs auth)
+HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 \
+    CMD curl -sf http://localhost:8080/health || exit 1
+
+# Default command: run server (looks for server.toml in current directory)
+CMD ["/usr/local/bin/kalamdb-server"]
