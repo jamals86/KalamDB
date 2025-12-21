@@ -5,6 +5,7 @@ use crate::error::KalamDbError;
 use crate::error_extensions::KalamDbResultExt;
 use crate::sql::executor::handlers::typed::TypedStatementHandler;
 use crate::sql::executor::models::{ExecutionContext, ExecutionResult, ScalarValue};
+use kalamdb_auth::password::{validate_password_with_policy, PasswordPolicy};
 use kalamdb_commons::types::User;
 use kalamdb_commons::{AuthType, UserId};
 use kalamdb_sql::ddl::CreateUserStatement;
@@ -55,7 +56,9 @@ impl TypedStatementHandler<CreateUserStatement> for CreateUserHandler {
                 if self.enforce_complexity
                     || self.app_context.config().auth.enforce_password_complexity
                 {
-                    validate_password_complexity(&raw)?;
+                    let policy = PasswordPolicy::default().with_enforced_complexity(true);
+                    validate_password_with_policy(&raw, &policy)
+                        .map_err(|e| KalamDbError::InvalidOperation(e.to_string()))?;
                 }
                 let hash = bcrypt::hash(raw, bcrypt::DEFAULT_COST)
                     .into_kalamdb_error("Password hash error")?;
@@ -142,39 +145,4 @@ impl TypedStatementHandler<CreateUserStatement> for CreateUserHandler {
         }
         Ok(())
     }
-}
-
-/// Validate password complexity according to policy
-/// Requires at least one uppercase, one lowercase, one digit, and one special character
-fn validate_password_complexity(pw: &str) -> Result<(), KalamDbError> {
-    if pw.len() > 72 {
-        return Err(KalamDbError::InvalidOperation(
-            "Password exceeds maximum length of 72 characters".to_string(),
-        ));
-    }
-    let has_upper = pw.chars().any(|c| c.is_ascii_uppercase());
-    if !has_upper {
-        return Err(KalamDbError::InvalidOperation(
-            "Password must include at least one uppercase letter".to_string(),
-        ));
-    }
-    let has_lower = pw.chars().any(|c| c.is_ascii_lowercase());
-    if !has_lower {
-        return Err(KalamDbError::InvalidOperation(
-            "Password must include at least one lowercase letter".to_string(),
-        ));
-    }
-    let has_digit = pw.chars().any(|c| c.is_ascii_digit());
-    if !has_digit {
-        return Err(KalamDbError::InvalidOperation(
-            "Password must include at least one digit".to_string(),
-        ));
-    }
-    let has_special = pw.chars().any(|c| !c.is_ascii_alphanumeric());
-    if !has_special {
-        return Err(KalamDbError::InvalidOperation(
-            "Password must include at least one special character".to_string(),
-        ));
-    }
-    Ok(())
 }

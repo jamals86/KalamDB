@@ -220,6 +220,8 @@ impl TablesTableProvider {
         let mut options_json = Vec::with_capacity(entries.len());
         let mut access_levels = Vec::with_capacity(entries.len());
         let mut is_latest_flags = Vec::with_capacity(entries.len());
+        let mut storage_ids = Vec::with_capacity(entries.len());
+        let mut use_user_storage_flags = Vec::with_capacity(entries.len());
 
         for (_table_id, table_def) in entries {
             // All entries from scan_all_latest are latest versions
@@ -271,6 +273,22 @@ impl TablesTableProvider {
             
             // is_latest flag
             is_latest_flags.push(Some(is_latest));
+
+            // Extract storage_id from TableOptions
+            let storage_id = match &table_def.table_options {
+                TableOptions::User(opts) => Some(opts.storage_id.as_str().to_string()),
+                TableOptions::Shared(opts) => Some(opts.storage_id.as_str().to_string()),
+                TableOptions::Stream(_) => Some("local".to_string()),
+                TableOptions::System(_) => Some("local".to_string()),
+            };
+            storage_ids.push(storage_id);
+
+            // Extract use_user_storage from TableOptions (only for User tables)
+            let use_user_storage = match &table_def.table_options {
+                TableOptions::User(opts) => Some(opts.use_user_storage),
+                _ => None,
+            };
+            use_user_storage_flags.push(use_user_storage);
         }
 
         // Build batch using RecordBatchBuilder
@@ -287,7 +305,9 @@ impl TablesTableProvider {
             .add_timestamp_micros_column(updated_ats)
             .add_string_column_owned(options_json)
             .add_string_column_owned(access_levels)
-            .add_boolean_column(is_latest_flags);
+            .add_boolean_column(is_latest_flags)
+            .add_string_column_owned(storage_ids)
+            .add_boolean_column(use_user_storage_flags);
 
         let batch = builder.build().into_arrow_error("Failed to create RecordBatch")?;
 

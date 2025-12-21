@@ -56,7 +56,7 @@ use kalamdb_commons::models::UserId;
 - All crates will automatically use the new version
 
 ## Active Technologies
-- Rust 1.90+ (stable toolchain, edition 2021)
+- Rust 1.92+ (stable toolchain, edition 2021)
 - RocksDB 0.24, Apache Arrow 52.0, Apache Parquet 52.0, DataFusion 40.0, Actix-Web 4.4
 - RocksDB for write path (<1ms), Parquet for flushed storage (compressed columnar format)
 - TypeScript/JavaScript ES2020+ (frontend SDKs)

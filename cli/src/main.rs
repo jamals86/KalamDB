@@ -25,7 +25,7 @@ mod commands;
 mod connect;
 
 use args::Cli;
-use commands::credentials::handle_credentials;
+use commands::credentials::{handle_credentials, login_and_store_credentials};
 use commands::subscriptions::handle_subscriptions;
 use connect::create_session;
 
@@ -52,20 +52,25 @@ async fn main() -> Result<()> {
     let mut credential_store = FileCredentialStore::new()
         .map_err(|e| CLIError::ConfigurationError(format!("Failed to load credentials: {}", e)))?;
 
-    // Handle credential management commands
+    // Handle credential management commands (sync operations like list, show, delete)
     if handle_credentials(&cli, &mut credential_store)? {
         return Ok(());
     }
 
+    // Handle credential login/update (async - requires network)
+    if login_and_store_credentials(&cli, &mut credential_store).await? {
+        return Ok(());
+    }
+
     // Handle subscription management commands
-    if handle_subscriptions(&cli, &credential_store).await? {
+    if handle_subscriptions(&cli, &mut credential_store).await? {
         return Ok(());
     }
 
     // Load configuration
     let config = CLIConfiguration::load(&cli.config)?;
 
-    let mut session = create_session(&cli, &credential_store, &config).await?;
+    let mut session = create_session(&cli, &mut credential_store, &config).await?;
 
     // Execute based on mode
     match (cli.file, cli.command) {

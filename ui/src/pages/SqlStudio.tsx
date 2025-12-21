@@ -35,6 +35,8 @@ import { ScrollArea } from "@/components/ui/scroll-area";
 import { Input } from "@/components/ui/input";
 import { cn } from "@/lib/utils";
 import { executeSql, executeQuery as executeQueryApi, subscribe, type Unsubscribe } from "@/lib/kalam-client";
+import { getDataTypeColor } from '@/lib/config';
+import { useDataTypes } from '@/hooks/useDataTypes';
 import {
   flexRender,
   getCoreRowModel,
@@ -180,6 +182,9 @@ export default function SqlStudio() {
   const [showWsLogModal, setShowWsLogModal] = useState(false);
   const tabCounter = useRef(initialState.tabCounter);
   const monacoRef = useRef<Monaco | null>(null);
+  
+  // Data type mappings from system.datatypes
+  const { toSqlType } = useDataTypes();
 
   const activeTab = tabs.find((t) => t.id === activeTabId) || tabs[0];
 
@@ -298,22 +303,42 @@ export default function SqlStudio() {
       const response = await executeQueryApi(tab.query);
       const executionTime = Math.round(performance.now() - startTime);
       
-      // Get results and column names from response
-      const results = (response.results?.[0]?.rows as Record<string, unknown>[]) ?? [];
-      const columnNames = (response.results?.[0]?.columns as string[]) ?? [];
-      const rowCount = response.results?.[0]?.row_count ?? results.length;
-      const message = (response.results?.[0]?.message as string) ?? null;
+      // Get result from response - new format uses schema instead of columns
+      const result = response.results?.[0] as { 
+        schema?: { name: string; data_type: string; index: number }[];
+        rows?: unknown[][];
+        row_count?: number;
+        message?: string;
+      } | undefined;
+      
+      // Extract schema (new format) - array of {name, data_type, index}
+      const schema = result?.schema ?? [];
+      const columnNames = schema.map((s) => s.name);
+      
+      // Convert array-based rows to Record objects using schema
+      const rawRows = (result?.rows ?? []) as unknown[][];
+      const results: Record<string, unknown>[] = rawRows.map((row) => {
+        const obj: Record<string, unknown> = {};
+        schema.forEach((field) => {
+          obj[field.name] = row[field.index] ?? null;
+        });
+        return obj;
+      });
+      
+      const rowCount = result?.row_count ?? results.length;
+      const message = result?.message ?? null;
       
       // Debug: Log what we received from server
       console.log('[SqlStudio] Query response:', { 
         results: results.length, 
         columnNames, 
+        schema,
         rowCount, 
         message,
-        rawResponse: response.results?.[0]
+        rawResponse: result
       });
 
-      // Build columns from the columns array (preserves order from query)
+      // Build columns from the schema array (preserves order from query)
       const columns: ColumnDef<Record<string, unknown>>[] = columnNames.map((key) => ({
         accessorKey: key,
         header: ({ column }) => (
@@ -987,10 +1012,16 @@ export default function SqlStudio() {
             {node.isPrimaryKey && (
               <span className="text-yellow-500 text-xs" title="Primary Key">🔑</span>
             )}
-            <span className="truncate">{node.name}</span>
+            <span className="truncate flex-1 min-w-0">{node.name}</span>
             {node.dataType && (
-              <span className="text-xs text-muted-foreground ml-auto flex items-center gap-1">
-                {node.dataType}
+              <span 
+                className={cn(
+                  "text-xs ml-auto flex items-center gap-1 shrink-0",
+                  getDataTypeColor(node.dataType)
+                )}
+                title={`${toSqlType(node.dataType)} (${node.dataType})`}
+              >
+                {toSqlType(node.dataType)}
                 {node.isNullable === false && <span className="text-red-400" title="NOT NULL">*</span>}
               </span>
             )}
@@ -1035,15 +1066,17 @@ export default function SqlStudio() {
           </div>
         </div>
         <ScrollArea className="flex-1 p-2">
-          {schemaLoading ? (
-            <div className="text-sm text-muted-foreground p-2">Loading schema...</div>
-          ) : filteredSchema.length === 0 ? (
-            <div className="text-sm text-muted-foreground p-2">
-              {schemaFilter ? "No matches found" : "No schemas found"}
-            </div>
-          ) : (
-            renderSchemaTree(filteredSchema)
-          )}
+          <div className="min-w-max">
+            {schemaLoading ? (
+              <div className="text-sm text-muted-foreground p-2">Loading schema...</div>
+            ) : filteredSchema.length === 0 ? (
+              <div className="text-sm text-muted-foreground p-2">
+                {schemaFilter ? "No matches found" : "No schemas found"}
+              </div>
+            ) : (
+              renderSchemaTree(filteredSchema)
+            )}
+          </div>
         </ScrollArea>
       </div>
 

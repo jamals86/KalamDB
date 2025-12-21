@@ -43,7 +43,7 @@ fn test_cli_list_tables() {
         return;
     }
 
-    std::thread::sleep(Duration::from_millis(200));
+    std::thread::sleep(Duration::from_millis(50));
 
     // Query system tables
     let query_sql = "SELECT table_name FROM system.tables WHERE namespace_id = 'test_cli'";
@@ -130,9 +130,9 @@ fn test_cli_batch_file_execution() {
     // Cleanup first in case namespace/table exists from previous run
     // Note: DROP NAMESPACE CASCADE doesn't properly cascade to tables yet, so drop table first
     let _ = execute_sql_as_root_via_cli(&format!("DROP TABLE IF EXISTS {}", full_table_name));
-    std::thread::sleep(std::time::Duration::from_millis(200));
+    std::thread::sleep(std::time::Duration::from_millis(50));
     let _ = execute_sql_as_root_via_cli(&format!("DROP NAMESPACE IF EXISTS {}", namespace));
-    std::thread::sleep(std::time::Duration::from_millis(500));
+    std::thread::sleep(std::time::Duration::from_millis(50));
 
     // Use a unique ID based on timestamp to avoid conflicts
     let unique_id = rand::random::<i64>().abs();

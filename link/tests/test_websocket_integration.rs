@@ -89,7 +89,7 @@ async fn setup_test_data() -> Result<String, Box<dyn std::error::Error>> {
     execute_sql("CREATE NAMESPACE IF NOT EXISTS ws_test")
         .await
         .ok();
-    sleep(Duration::from_millis(200)).await;
+    sleep(Duration::from_millis(50)).await;
 
         // Create test table (STREAM table for WebSocket tests)
     execute_sql(&format!(
@@ -102,7 +102,7 @@ async fn setup_test_data() -> Result<String, Box<dyn std::error::Error>> {
         full_table
     ))
     .await?;
-    sleep(Duration::from_millis(200)).await;
+    sleep(Duration::from_millis(50)).await;
 
     Ok(full_table)
 }
@@ -296,7 +296,7 @@ async fn test_websocket_initial_data_snapshot() {
     ))
     .await
     .expect("initial insert 2 should succeed");
-    sleep(Duration::from_millis(200)).await;
+    sleep(Duration::from_millis(50)).await;
 
     let client = create_test_client().expect("Failed to create client");
 
@@ -377,7 +377,7 @@ async fn test_websocket_insert_notification() {
             // We consider the initial phase done once `batch_control.status == Ready`.
             let drain_deadline = std::time::Instant::now() + Duration::from_secs(3);
             while std::time::Instant::now() < drain_deadline {
-                match timeout(Duration::from_millis(500), subscription.next()).await {
+                match timeout(Duration::from_millis(100), subscription.next()).await {
                     Ok(Some(Ok(ChangeEvent::Ack { batch_control, .. }))) => {
                         if batch_control.status == kalam_link::models::BatchStatus::Ready {
                             break;
@@ -459,7 +459,7 @@ async fn test_websocket_filtered_subscription() {
         Ok(Ok(mut subscription)) => {
             // Skip initial messages
             for _ in 0..2 {
-                let _ = timeout(Duration::from_millis(500), subscription.next()).await;
+                let _ = timeout(Duration::from_millis(100), subscription.next()).await;
             }
 
             // Insert data that matches filter
@@ -541,7 +541,7 @@ async fn test_sql_create_namespace() {
     let _ = client
         .execute_query("DROP NAMESPACE IF EXISTS test_ns CASCADE", None, None)
         .await;
-    sleep(Duration::from_millis(100)).await;
+    sleep(Duration::from_millis(20)).await;
 
     let result = client.execute_query("CREATE NAMESPACE test_ns", None, None).await;
     assert!(result.is_ok(), "CREATE NAMESPACE should succeed");

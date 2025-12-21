@@ -2,6 +2,7 @@
 name = "kalamdb-core"
 version.workspace = true
 edition.workspace = true
+rust-version.workspace = true
 authors.workspace = true
 license.workspace = true
 repository.workspace = true
@@ -28,6 +29,7 @@ sqlparser = { workspace = true }
 # Concurrent data structures
 dashmap = { workspace = true }
 parking_lot = { workspace = true }
+moka = { workspace = true }
 
 # Async
 async-trait = { workspace = true }

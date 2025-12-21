@@ -122,10 +122,16 @@ interface QueryResponse {
   error?: ErrorDetail;
 }
 
+interface SchemaField {
+  name: string;        // Column name
+  data_type: string;   // e.g., 'BigInt', 'Text', 'Timestamp'
+  index: number;       // Column index in rows array
+}
+
 interface QueryResult {
-  rows?: Record<string, any>[];
+  schema: SchemaField[];  // Column definitions
+  rows?: unknown[][];     // Array of row arrays (values ordered by schema index)
   row_count: number;
-  columns: string[];
   message?: string;
 }
 ```

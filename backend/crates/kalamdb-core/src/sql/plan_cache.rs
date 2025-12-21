@@ -1,10 +1,34 @@
-use dashmap::DashMap;
 use datafusion::logical_expr::LogicalPlan;
-use std::sync::atomic::{AtomicU64, Ordering};
+use kalamdb_commons::{NamespaceId, Role};
+use moka::sync::Cache;
 use std::sync::Arc;
 
 /// Default maximum cache entries (prevents unbounded memory growth)
-const DEFAULT_MAX_ENTRIES: usize = 1000;
+const DEFAULT_MAX_ENTRIES: u64 = 1000;
+
+/// Cache key for plan lookup.
+///
+/// Plans are scoped by namespace + role + SQL text.
+/// User ID is NOT included because:
+/// - LogicalPlan is user-agnostic (same plan structure for all users)
+/// - User filtering happens at scan time in UserTableProvider, not at planning
+/// - This allows plan reuse across users for significant cache efficiency
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub struct PlanCacheKey {
+    pub namespace: NamespaceId,
+    pub role: Role,
+    pub sql: String,
+}
+
+impl PlanCacheKey {
+    pub fn new(namespace: NamespaceId, role: Role, sql: impl Into<String>) -> Self {
+        Self {
+            namespace,
+            role,
+            sql: sql.into(),
+        }
+    }
+}
 
 /// Caches optimized LogicalPlans to skip parsing and planning overhead.
 ///
@@ -12,18 +36,10 @@ const DEFAULT_MAX_ENTRIES: usize = 1000;
 /// can take 1-5ms. Caching the optimized plan allows skipping these steps
 /// for recurring queries.
 ///
-/// **Memory Management**: Limited to `max_entries` to prevent unbounded growth.
-/// Uses random eviction when full (simple and fast for concurrent access).
-#[derive(Debug, Clone)]
+/// **Memory Management**: Uses moka cache with TinyLFU eviction (LRU + LFU admission)
+/// for optimal hit rate. Automatically evicts entries when max capacity is reached.
 pub struct PlanCache {
-    /// Map of scoped cache key -> Optimized LogicalPlan
-    cache: Arc<DashMap<String, LogicalPlan>>,
-    /// Maximum number of entries before eviction
-    max_entries: usize,
-    /// Hit counter for metrics
-    hits: Arc<AtomicU64>,
-    /// Miss counter for metrics
-    misses: Arc<AtomicU64>,
+    cache: Cache<PlanCacheKey, Arc<LogicalPlan>>,
 }
 
 impl PlanCache {
@@ -33,63 +49,35 @@ impl PlanCache {
     }
 
     /// Create a new PlanCache with specified max entries
-    pub fn with_max_entries(max_entries: usize) -> Self {
-        Self {
-            cache: Arc::new(DashMap::new()),
-            max_entries,
-            hits: Arc::new(AtomicU64::new(0)),
-            misses: Arc::new(AtomicU64::new(0)),
-        }
+    pub fn with_max_entries(max_entries: u64) -> Self {
+        let cache = Cache::builder().max_capacity(max_entries).build();
+
+        Self { cache }
     }
 
     /// Retrieve a cached plan for the given key
-    pub fn get(&self, cache_key: &str) -> Option<LogicalPlan> {
-        if let Some(entry) = self.cache.get(cache_key) {
-            self.hits.fetch_add(1, Ordering::Relaxed);
-            Some(entry.value().clone())
-        } else {
-            self.misses.fetch_add(1, Ordering::Relaxed);
-            None
-        }
+    pub fn get(&self, cache_key: &PlanCacheKey) -> Option<Arc<LogicalPlan>> {
+        self.cache.get(cache_key)
     }
 
-    /// Store an optimized plan (evicts random entry if cache is full)
-    pub fn insert(&self, cache_key: String, plan: LogicalPlan) {
-        // Evict if at capacity (simple random eviction for performance)
-        if self.max_entries > 0 && self.cache.len() >= self.max_entries {
-            // Remove first entry we can find (fast, no ordering overhead)
-            if let Some(entry) = self.cache.iter().next() {
-                let key = entry.key().clone();
-                drop(entry); // Release lock before removing
-                self.cache.remove(&key);
-            }
-        }
-        self.cache.insert(cache_key, plan);
+    /// Store an optimized plan (moka handles eviction automatically)
+    pub fn insert(&self, cache_key: PlanCacheKey, plan: LogicalPlan) {
+        self.cache.insert(cache_key, Arc::new(plan));
     }
 
     /// Clear cache (MUST be called on any DDL operation like CREATE/DROP/ALTER)
     pub fn clear(&self) {
-        self.cache.clear();
+        self.cache.invalidate_all();
     }
 
     /// Get current cache size
     pub fn len(&self) -> usize {
-        self.cache.len()
+        self.cache.entry_count() as usize
     }
 
     /// Check if cache is empty
     pub fn is_empty(&self) -> bool {
-        self.cache.is_empty()
-    }
-
-    /// Get cache hit count
-    pub fn hits(&self) -> u64 {
-        self.hits.load(Ordering::Relaxed)
-    }
-
-    /// Get cache miss count
-    pub fn misses(&self) -> u64 {
-        self.misses.load(Ordering::Relaxed)
+        self.cache.entry_count() == 0
     }
 }
 

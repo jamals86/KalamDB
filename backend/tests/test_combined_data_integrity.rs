@@ -30,8 +30,6 @@ use std::path::PathBuf;
 
 #[actix_web::test]
 async fn test_01_combined_data_count_and_select() {
-    let _ = env_logger::Builder::from_env(env_logger::Env::default().default_filter_or("info"))
-        .try_init();
     println!("\n=== Test 01: Combined Data - Count and Simple Select ===");
 
     let server = TestServer::new().await;

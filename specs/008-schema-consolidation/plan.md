@@ -11,7 +11,7 @@ Consolidate scattered schema models (TableDefinition, ColumnDefinition, SchemaVe
 
 ## Technical Context
 
-**Language/Version**: Rust 1.90+ (stable toolchain, edition 2021)  
+**Language/Version**: Rust 1.92+ (stable toolchain, edition 2021)  
 **Primary Dependencies**: Apache Arrow 52.0, Apache Parquet 52.0, DataFusion 40.0, RocksDB 0.24, Actix-Web 4.4, serde 1.0, bincode, DashMap (lock-free concurrent HashMap)  
 **Storage**: RocksDB 0.24 for EntityStore backend, Parquet files for flushed segments via StorageBackend abstraction  
 **Testing**: cargo test (backend unit/integration tests), CLI integration tests (cli/tests/), TypeScript SDK tests (link/sdks/typescript/tests/)  

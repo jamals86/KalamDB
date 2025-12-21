@@ -5,6 +5,7 @@ use crate::error::KalamDbError;
 use crate::error_extensions::KalamDbResultExt;
 use crate::sql::executor::handlers::typed::TypedStatementHandler;
 use crate::sql::executor::models::{ExecutionContext, ExecutionResult, ScalarValue};
+use kalamdb_auth::password::{validate_password_with_policy, PasswordPolicy};
 use kalamdb_commons::AuthType;
 use kalamdb_sql::ddl::{AlterUserStatement, UserModification};
 use std::sync::Arc;
@@ -54,7 +55,9 @@ impl TypedStatementHandler<AlterUserStatement> for AlterUserHandler {
                 if self.enforce_complexity
                     || self.app_context.config().auth.enforce_password_complexity
                 {
-                    validate_password_complexity(new_pw)?;
+                    let policy = PasswordPolicy::default().with_enforced_complexity(true);
+                    validate_password_with_policy(new_pw, &policy)
+                        .map_err(|e| KalamDbError::InvalidOperation(e.to_string()))?;
                 }
                 updated.password_hash = bcrypt::hash(new_pw, bcrypt::DEFAULT_COST)
                     .into_kalamdb_error("Password hash error")?;
@@ -88,14 +91,14 @@ impl TypedStatementHandler<AlterUserStatement> for AlterUserHandler {
         updated.updated_at = chrono::Utc::now().timestamp_millis();
         users.update_user(updated)?;
 
-        // Log DDL operation
+        // Log DDL operation (with password redaction)
         use crate::sql::executor::helpers::audit;
         let audit_entry = audit::log_ddl_operation(
             context,
             "ALTER",
             "USER",
             &statement.username,
-            Some(format!("Modification: {:?}", statement.modification)),
+            Some(format!("Modification: {}", statement.modification.display_for_audit())),
             None,
         );
         audit::persist_audit_entry(&self.app_context, &audit_entry).await?;
@@ -117,34 +120,4 @@ impl TypedStatementHandler<AlterUserStatement> for AlterUserHandler {
         }
         Ok(())
     }
-}
-
-/// Validate password complexity according to policy
-/// Requires at least one uppercase, one lowercase, one digit, and one special character
-fn validate_password_complexity(pw: &str) -> Result<(), KalamDbError> {
-    let has_upper = pw.chars().any(|c| c.is_ascii_uppercase());
-    if !has_upper {
-        return Err(KalamDbError::InvalidOperation(
-            "Password must include at least one uppercase letter".to_string(),
-        ));
-    }
-    let has_lower = pw.chars().any(|c| c.is_ascii_lowercase());
-    if !has_lower {
-        return Err(KalamDbError::InvalidOperation(
-            "Password must include at least one lowercase letter".to_string(),
-        ));
-    }
-    let has_digit = pw.chars().any(|c| c.is_ascii_digit());
-    if !has_digit {
-        return Err(KalamDbError::InvalidOperation(
-            "Password must include at least one digit".to_string(),
-        ));
-    }
-    let has_special = pw.chars().any(|c| !c.is_ascii_alphanumeric());
-    if !has_special {
-        return Err(KalamDbError::InvalidOperation(
-            "Password must include at least one special character".to_string(),
-        ));
-    }
-    Ok(())
 }

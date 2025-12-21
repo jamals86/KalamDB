@@ -235,6 +235,18 @@ pub enum UserModification {
     SetEmail(String),
 }
 
+impl UserModification {
+    /// Returns a sanitized string representation suitable for audit logs.
+    /// Masks passwords to prevent credential leakage in audit logs.
+    pub fn display_for_audit(&self) -> String {
+        match self {
+            UserModification::SetPassword(_) => "SetPassword([REDACTED])".to_string(),
+            UserModification::SetRole(role) => format!("SetRole({:?})", role),
+            UserModification::SetEmail(email) => format!("SetEmail({})", email),
+        }
+    }
+}
+
 impl AlterUserStatement {
     pub fn parse(sql: &str) -> Result<Self, String> {
         Self::parse_tokens(sql).map_err(|e| e.to_string())
@@ -547,5 +559,34 @@ mod tests {
         let sql = "DROP USER";
         let result = DropUserStatement::parse(sql);
         assert!(result.is_err());
+    }
+
+    // UserModification display_for_audit tests
+    #[test]
+    fn test_user_modification_display_for_audit_password() {
+        let modification = UserModification::SetPassword("SuperSecret123!".to_string());
+        let display = modification.display_for_audit();
+        
+        // Should contain [REDACTED]
+        assert!(display.contains("[REDACTED]"), "Expected [REDACTED] in: {}", display);
+        
+        // Should NOT contain the actual password
+        assert!(!display.contains("SuperSecret123!"), "Password should be masked in: {}", display);
+    }
+
+    #[test]
+    fn test_user_modification_display_for_audit_role() {
+        let modification = UserModification::SetRole(Role::Dba);
+        let display = modification.display_for_audit();
+        
+        assert_eq!(display, "SetRole(Dba)");
+    }
+
+    #[test]
+    fn test_user_modification_display_for_audit_email() {
+        let modification = UserModification::SetEmail("alice@example.com".to_string());
+        let display = modification.display_for_audit();
+        
+        assert_eq!(display, "SetEmail(alice@example.com)");
     }
 }

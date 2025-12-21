@@ -6,7 +6,7 @@ We aim to store and process data with the smallest possible footprint, reducing 
 ## Our goal:
 Faster operations. Lower infrastructure expenses. Zero waste.
 
-[![Rust](https://img.shields.io/badge/rust-1.90%2B-orange.svg)](https://www.rust-lang.org/)
+[![Rust](https://img.shields.io/badge/rust-1.92%2B-orange.svg)](https://www.rust-lang.org/)
 [![License](https://img.shields.io/badge/license-Apache%202.0-blue.svg)](https://www.apache.org/licenses/LICENSE-2.0)
 [![Tests](https://img.shields.io/badge/tests-651%20passing-brightgreen.svg)](backend/tests/)
 [![Docker](https://img.shields.io/badge/docker-ready-blue.svg)](docker/README.md)
@@ -464,7 +464,7 @@ CREATE USER 'tenant_acme' WITH PASSWORD 'SecureKey123!' ROLE 'service';
 
 | Component | Technology | Version | Purpose |
 |-----------|-----------|---------|---------|
-| **Language** | Rust | 1.90+ | Performance, safety, concurrency |
+| **Language** | Rust | 1.92+ | Performance, safety, concurrency |
 | **Storage (Hot)** | RocksDB | 0.24 | Fast buffered writes (<1ms latency) |
 | **Storage (Cold)** | Apache Parquet | 52.0 | Compressed columnar format for analytics |
 | **Query Engine** | Apache DataFusion | 40.0 | SQL execution across hot+cold storage |

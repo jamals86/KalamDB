@@ -201,8 +201,12 @@ async fn test_create_user_weak_password_rejected() {
 
         let result = server.execute_sql_as_user(&sql, admin_id).await;
         assert_eq!(result.status, ResponseStatus::Error);
-        let error_msg = result.error.unwrap().message;
-        assert!(error_msg.contains("weak") || error_msg.contains("Password must include"));
+        let error_msg = result.error.unwrap().message.to_lowercase();
+        assert!(
+            error_msg.contains("weak") || error_msg.contains("password must include"),
+            "Expected weak password error, got: {}",
+            error_msg
+        );
     }
 }
 

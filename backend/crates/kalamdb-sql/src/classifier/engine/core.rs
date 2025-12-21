@@ -103,13 +103,20 @@ impl SqlStatement {
         // Use sqlparser's tokenizer to get the first keyword (skips comments automatically)
         let dialect = sqlparser::dialect::GenericDialect {};
         let mut tokenizer = sqlparser::tokenizer::Tokenizer::new(&dialect, sql);
+        
+        // Pre-compute fallback data only once (lazy via Option)
+        let fallback_data = || -> (String, Vec<String>) {
+            let sql_upper = sql.trim().to_uppercase();
+            let words: Vec<String> = sql_upper.split_whitespace().map(|s| s.to_string()).collect();
+            (sql_upper, words)
+        };
+        
         let tokens = match tokenizer.tokenize() {
             Ok(t) => t,
             Err(_) => {
                 // If tokenization fails, use simple whitespace split as fallback
-                let sql_upper = sql.trim().to_uppercase();
-                let words: Vec<&str> = sql_upper.split_whitespace().collect();
-                if words.is_empty() {
+                let (_, fallback_words) = fallback_data();
+                if fallback_words.is_empty() {
                     return Ok(Self::new(sql.to_string(), SqlStatementKind::Unknown));
                 }
                 // Continue with simple word-based matching
@@ -127,15 +134,13 @@ impl SqlStatement {
                 })
                 .unwrap_or_else(|| {
                     // Fallback to simple parsing
-                    let sql_upper = sql.trim().to_uppercase();
-                    let words: Vec<&str> = sql_upper.split_whitespace().collect();
-                    words.first().map(|s| s.to_string()).unwrap_or_default()
+                    let (_, fallback_words) = fallback_data();
+                    fallback_words.first().cloned().unwrap_or_default()
                 })
         } else {
             // Fallback to simple parsing
-            let sql_upper = sql.trim().to_uppercase();
-            let words: Vec<&str> = sql_upper.split_whitespace().collect();
-            words.first().map(|s| s.to_string()).unwrap_or_default()
+            let (_, fallback_words) = fallback_data();
+            fallback_words.first().cloned().unwrap_or_default()
         };
 
         // Build words list from non-comment tokens for pattern matching
@@ -148,11 +153,8 @@ impl SqlStatement {
                 })
                 .collect()
         } else {
-            let sql_upper = sql.trim().to_uppercase();
-            sql_upper
-                .split_whitespace()
-                .map(|s| s.to_string())
-                .collect()
+            let (_, fallback_words) = fallback_data();
+            fallback_words
         };
         let word_refs: Vec<&str> = words.iter().map(|s| s.as_str()).collect();
 

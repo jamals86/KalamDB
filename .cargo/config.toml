@@ -1,6 +1,8 @@
 # Hint bindgen towards Command Line Tools libclang on macOS hosts
 [target.aarch64-apple-darwin]
-rustflags = ["-C", "link-arg=-Wl,-rpath,/Library/Developer/CommandLineTools/usr/lib"]
+rustflags = [
+    "-C", "link-arg=-Wl,-rpath,/Library/Developer/CommandLineTools/usr/lib",
+]
 
 [target.aarch64-apple-darwin.env]
 LIBCLANG_PATH = "/Library/Developer/CommandLineTools/usr/lib"
@@ -26,6 +28,8 @@ rustflags = []
 
 [build]
 incremental = true
+# Parallel compilation will use default (all available cores)
 
-[profile.dev]
-debug = 0
+# Use sparse registry protocol for faster dependency resolution
+[registries.crates-io]
+protocol = "sparse"

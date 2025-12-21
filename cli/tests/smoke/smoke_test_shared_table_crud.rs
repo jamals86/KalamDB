@@ -79,9 +79,11 @@ fn smoke_shared_table_crud() {
     let mut alpha_id: Option<String> = None;
     let mut beta_id: Option<String> = None;
     for row in rows {
-        let name_value = row.get("name").map(extract_typed_value).unwrap_or(serde_json::Value::Null);
+        // Rows are arrays: [id, name] based on "SELECT id, name FROM ..."
+        let row_arr = row.as_array().expect("Expected row to be an array");
+        let id_value = row_arr.get(0).cloned().unwrap_or(serde_json::Value::Null);
+        let name_value = row_arr.get(1).cloned().unwrap_or(serde_json::Value::Null);
         let name = name_value.as_str().unwrap_or("");
-        let id_value = row.get("id").map(extract_typed_value).unwrap_or(serde_json::Value::Null);
         let id = json_value_as_id(&id_value);
         if let Some(id_val) = id {
             if name == "alpha" {

@@ -2,26 +2,29 @@
 //!
 //! **Implements T119**: FileCredentialStore for persistent credential storage
 //!
-//! Stores credentials in TOML format at `~/.config/kalamdb/credentials.toml`
+//! Stores JWT tokens in TOML format at `~/.config/kalamdb/credentials.toml`
 //! with secure file permissions (0600 on Unix).
 //!
 //! # Security
 //!
 //! - File permissions set to 0600 (owner read/write only) on Unix
-//! - Passwords stored in plain text (consider using OS keyring for production)
+//! - Only JWT tokens are stored, never plaintext passwords
+//! - Tokens can expire and be revoked
 //! - File location: `~/.config/kalamdb/credentials.toml`
 //!
 //! # File Format
 //!
 //! ```toml
 //! [instances.local]
+//! jwt_token = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9..."
 //! username = "alice"
-//! password = "secret123"
+//! expires_at = "2025-12-31T23:59:59Z"
 //! server_url = "http://localhost:3000"
 //!
 //! [instances.production]
+//! jwt_token = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9..."
 //! username = "admin"
-//! password = "prod_password"
+//! expires_at = "2025-12-31T23:59:59Z"
 //! server_url = "https://db.example.com"
 //! ```
 
@@ -34,7 +37,7 @@ use std::path::{Path, PathBuf};
 
 /// File-based credential storage
 ///
-/// Persists credentials to `~/.config/kalamdb/credentials.toml` with
+/// Persists JWT tokens to `~/.config/kalamdb/credentials.toml` with
 /// secure file permissions.
 #[derive(Debug, Clone)]
 pub struct FileCredentialStore {
@@ -48,8 +51,15 @@ pub struct FileCredentialStore {
 /// Stored credential format for TOML serialization
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 struct StoredCredential {
-    username: String,
-    password: String,
+    /// JWT access token
+    jwt_token: String,
+    /// Username associated with this token (for display)
+    #[serde(skip_serializing_if = "Option::is_none")]
+    username: Option<String>,
+    /// Token expiration time in RFC3339 format
+    #[serde(skip_serializing_if = "Option::is_none")]
+    expires_at: Option<String>,
+    /// Server URL
     #[serde(skip_serializing_if = "Option::is_none")]
     server_url: Option<String>,
 }
@@ -181,8 +191,9 @@ impl CredentialStore for FileCredentialStore {
         if let Some(stored) = self.cache.get(instance) {
             Ok(Some(Credentials {
                 instance: instance.to_string(),
+                jwt_token: stored.jwt_token.clone(),
                 username: stored.username.clone(),
-                password: stored.password.clone(),
+                expires_at: stored.expires_at.clone(),
                 server_url: stored.server_url.clone(),
             }))
         } else {
@@ -192,8 +203,9 @@ impl CredentialStore for FileCredentialStore {
 
     fn set_credentials(&mut self, credentials: &Credentials) -> Result<()> {
         let stored = StoredCredential {
+            jwt_token: credentials.jwt_token.clone(),
             username: credentials.username.clone(),
-            password: credentials.password.clone(),
+            expires_at: credentials.expires_at.clone(),
             server_url: credentials.server_url.clone(),
         };
 
@@ -234,17 +246,19 @@ mod tests {
         assert!(!store.has_credentials("local").unwrap());
 
         // Store credentials
-        let creds = Credentials::new(
+        let creds = Credentials::with_details(
             "local".to_string(),
+            "eyJhbGciOiJIUzI1NiJ9.test".to_string(),
             "alice".to_string(),
-            "secret".to_string(),
+            "2099-12-31T23:59:59Z".to_string(),
+            None,
         );
         store.set_credentials(&creds).unwrap();
 
         // Retrieve credentials
         let retrieved = store.get_credentials("local").unwrap();
-        assert_eq!(retrieved.as_ref().unwrap().username, "alice");
-        assert_eq!(retrieved.as_ref().unwrap().password, "secret");
+        assert_eq!(retrieved.as_ref().unwrap().username, Some("alice".to_string()));
+        assert_eq!(retrieved.as_ref().unwrap().jwt_token, "eyJhbGciOiJIUzI1NiJ9.test");
         assert!(store.has_credentials("local").unwrap());
 
         // Delete credentials
@@ -260,10 +274,12 @@ mod tests {
         // Create store and add credentials
         {
             let mut store = FileCredentialStore::with_path(file_path.clone()).unwrap();
-            let creds = Credentials::new(
+            let creds = Credentials::with_details(
                 "prod".to_string(),
+                "eyJhbGciOiJIUzI1NiJ9.prod_token".to_string(),
                 "bob".to_string(),
-                "password123".to_string(),
+                "2099-12-31T23:59:59Z".to_string(),
+                None,
             );
             store.set_credentials(&creds).unwrap();
         }
@@ -275,8 +291,8 @@ mod tests {
         {
             let store = FileCredentialStore::with_path(file_path).unwrap();
             let retrieved = store.get_credentials("prod").unwrap().unwrap();
-            assert_eq!(retrieved.username, "bob");
-            assert_eq!(retrieved.password, "password123");
+            assert_eq!(retrieved.username, Some("bob".to_string()));
+            assert_eq!(retrieved.jwt_token, "eyJhbGciOiJIUzI1NiJ9.prod_token");
         }
     }
 
@@ -284,16 +300,19 @@ mod tests {
     fn test_file_store_multiple_instances() {
         let (mut store, _temp_dir) = create_temp_store();
 
-        let creds1 = Credentials::new(
+        let creds1 = Credentials::with_details(
             "local".to_string(),
+            "token1".to_string(),
             "alice".to_string(),
-            "pass1".to_string(),
+            "2099-12-31T23:59:59Z".to_string(),
+            None,
         );
-        let creds2 = Credentials::with_server_url(
+        let creds2 = Credentials::with_details(
             "prod".to_string(),
+            "token2".to_string(),
             "bob".to_string(),
-            "pass2".to_string(),
-            "https://db.example.com".to_string(),
+            "2099-12-31T23:59:59Z".to_string(),
+            Some("https://db.example.com".to_string()),
         );
 
         store.set_credentials(&creds1).unwrap();
@@ -307,11 +326,11 @@ mod tests {
 
         // Retrieve specific instances
         let local = store.get_credentials("local").unwrap().unwrap();
-        assert_eq!(local.username, "alice");
+        assert_eq!(local.username, Some("alice".to_string()));
         assert_eq!(local.server_url, None);
 
         let prod = store.get_credentials("prod").unwrap().unwrap();
-        assert_eq!(prod.username, "bob");
+        assert_eq!(prod.username, Some("bob".to_string()));
         assert_eq!(prod.server_url, Some("https://db.example.com".to_string()));
     }
 
@@ -321,20 +340,18 @@ mod tests {
 
         let creds1 = Credentials::new(
             "local".to_string(),
-            "alice".to_string(),
-            "old_pass".to_string(),
+            "old_token".to_string(),
         );
         let creds2 = Credentials::new(
             "local".to_string(),
-            "alice".to_string(),
-            "new_pass".to_string(),
+            "new_token".to_string(),
         );
 
         store.set_credentials(&creds1).unwrap();
         store.set_credentials(&creds2).unwrap();
 
         let retrieved = store.get_credentials("local").unwrap().unwrap();
-        assert_eq!(retrieved.password, "new_pass");
+        assert_eq!(retrieved.jwt_token, "new_token");
     }
 
     #[test]
@@ -346,8 +363,7 @@ mod tests {
 
         let creds = Credentials::new(
             "local".to_string(),
-            "alice".to_string(),
-            "secret".to_string(),
+            "test_token".to_string(),
         );
         store.set_credentials(&creds).unwrap();
 
@@ -361,13 +377,14 @@ mod tests {
     fn test_toml_format() {
         let (mut store, _temp_dir) = create_temp_store();
 
-        let creds1 = Credentials::with_server_url(
+        let creds1 = Credentials::with_details(
             "local".to_string(),
+            "token_local".to_string(),
             "alice".to_string(),
-            "pass1".to_string(),
-            "http://localhost:3000".to_string(),
+            "2099-12-31T23:59:59Z".to_string(),
+            Some("http://localhost:3000".to_string()),
         );
-        let creds2 = Credentials::new("prod".to_string(), "bob".to_string(), "pass2".to_string());
+        let creds2 = Credentials::new("prod".to_string(), "token_prod".to_string());
 
         store.set_credentials(&creds1).unwrap();
         store.set_credentials(&creds2).unwrap();
@@ -376,10 +393,9 @@ mod tests {
         let contents = fs::read_to_string(store.path()).unwrap();
         assert!(contents.contains("[instances.local]"));
         assert!(contents.contains("[instances.prod]"));
+        assert!(contents.contains("jwt_token = \"token_local\""));
+        assert!(contents.contains("jwt_token = \"token_prod\""));
         assert!(contents.contains("username = \"alice\""));
-        assert!(contents.contains("username = \"bob\""));
-        assert!(contents.contains("password = \"pass1\""));
-        assert!(contents.contains("password = \"pass2\""));
         assert!(contents.contains("server_url = \"http://localhost:3000\""));
     }
 }

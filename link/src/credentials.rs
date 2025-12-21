@@ -6,59 +6,88 @@
 //!
 //! This abstraction allows CLI tools, WASM clients, and other applications
 //! to manage credentials in a platform-appropriate way.
+//!
+//! # Security Model
+//!
+//! Credentials stores **JWT tokens only**, never username/password pairs.
+//! This provides better security because:
+//! - JWT tokens can expire and be revoked
+//! - No plaintext passwords stored on disk
+//! - Tokens can have limited scopes
 
 use crate::error::Result;
 use serde::{Deserialize, Serialize};
 
 /// Stored credentials for a KalamDB instance.
 ///
-/// Contains authentication information that can be persisted and reused
-/// across sessions.
+/// Contains a JWT token that can be persisted and reused across sessions.
+/// The token is obtained by authenticating with username/password via the
+/// `/v1/api/auth/login` endpoint.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct Credentials {
     /// Database instance identifier (e.g., "local", "production", URL)
     pub instance: String,
 
-    /// Username for authentication
-    pub username: String,
+    /// JWT access token for authentication
+    /// Obtained from the login endpoint, expires after a configured period
+    pub jwt_token: String,
 
-    /// Password or token for authentication
-    /// Note: Stored credentials should be protected with appropriate file permissions
-    pub password: String,
+    /// Username associated with this token (for display purposes)
+    #[serde(default)]
+    pub username: Option<String>,
+
+    /// Token expiration time in RFC3339 format (optional, for cache invalidation)
+    #[serde(default)]
+    pub expires_at: Option<String>,
 
     /// Optional: Server URL if different from instance name
+    #[serde(default)]
     pub server_url: Option<String>,
 }
 
 impl Credentials {
-    /// Create new credentials
-    pub fn new(instance: String, username: String, password: String) -> Self {
+    /// Create new credentials with a JWT token
+    pub fn new(instance: String, jwt_token: String) -> Self {
         Self {
             instance,
-            username,
-            password,
+            jwt_token,
+            username: None,
+            expires_at: None,
             server_url: None,
         }
     }
 
-    /// Create new credentials with server URL
-    pub fn with_server_url(
+    /// Create new credentials with full details
+    pub fn with_details(
         instance: String,
+        jwt_token: String,
         username: String,
-        password: String,
-        server_url: String,
+        expires_at: String,
+        server_url: Option<String>,
     ) -> Self {
         Self {
             instance,
-            username,
-            password,
-            server_url: Some(server_url),
+            jwt_token,
+            username: Some(username),
+            expires_at: Some(expires_at),
+            server_url,
         }
     }
 
     /// Get the server URL, defaulting to instance name if not set
     pub fn get_server_url(&self) -> &str {
         self.server_url.as_deref().unwrap_or(&self.instance)
+    }
+
+    /// Check if the token has expired (if expiration is known)
+    /// Returns false if expiration is unknown (assume valid)
+    pub fn is_expired(&self) -> bool {
+        if let Some(expires_at) = &self.expires_at {
+            if let Ok(exp) = chrono::DateTime::parse_from_rfc3339(expires_at) {
+                return exp < chrono::Utc::now()
+            }
+        }
+        false
     }
 }
 
@@ -207,28 +236,59 @@ mod tests {
     fn test_credentials_creation() {
         let creds = Credentials::new(
             "local".to_string(),
-            "alice".to_string(),
-            "secret".to_string(),
+            "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.test".to_string(),
         );
 
         assert_eq!(creds.instance, "local");
-        assert_eq!(creds.username, "alice");
-        assert_eq!(creds.password, "secret");
+        assert_eq!(creds.jwt_token, "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.test");
+        assert_eq!(creds.username, None);
+        assert_eq!(creds.expires_at, None);
         assert_eq!(creds.server_url, None);
         assert_eq!(creds.get_server_url(), "local");
     }
 
     #[test]
-    fn test_credentials_with_server_url() {
-        let creds = Credentials::with_server_url(
+    fn test_credentials_with_details() {
+        let creds = Credentials::with_details(
             "prod".to_string(),
-            "bob".to_string(),
-            "pass123".to_string(),
-            "https://db.example.com".to_string(),
+            "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.test".to_string(),
+            "alice".to_string(),
+            "2025-12-31T23:59:59Z".to_string(),
+            Some("https://db.example.com".to_string()),
         );
 
+        assert_eq!(creds.instance, "prod");
+        assert_eq!(creds.username, Some("alice".to_string()));
+        assert_eq!(creds.expires_at, Some("2025-12-31T23:59:59Z".to_string()));
         assert_eq!(creds.server_url, Some("https://db.example.com".to_string()));
         assert_eq!(creds.get_server_url(), "https://db.example.com");
+    }
+
+    #[test]
+    fn test_credentials_expiry_check() {
+        // Expired token
+        let expired_creds = Credentials::with_details(
+            "test".to_string(),
+            "token".to_string(),
+            "user".to_string(),
+            "2020-01-01T00:00:00Z".to_string(),
+            None,
+        );
+        assert!(expired_creds.is_expired());
+
+        // Future token
+        let valid_creds = Credentials::with_details(
+            "test".to_string(),
+            "token".to_string(),
+            "user".to_string(),
+            "2099-12-31T23:59:59Z".to_string(),
+            None,
+        );
+        assert!(!valid_creds.is_expired());
+
+        // No expiry set (assume valid)
+        let no_expiry = Credentials::new("test".to_string(), "token".to_string());
+        assert!(!no_expiry.is_expired());
     }
 
     #[test]
@@ -242,8 +302,7 @@ mod tests {
         // Store credentials
         let creds = Credentials::new(
             "local".to_string(),
-            "alice".to_string(),
-            "secret".to_string(),
+            "jwt_token_here".to_string(),
         );
         store.set_credentials(&creds).unwrap();
 
@@ -261,13 +320,27 @@ mod tests {
     fn test_memory_store_multiple_instances() {
         let mut store = MemoryCredentialStore::new();
 
-        let creds1 = Credentials::new(
+        let creds1 = Credentials::with_details(
             "local".to_string(),
+            "token1".to_string(),
             "alice".to_string(),
-            "pass1".to_string(),
+            "2099-12-31T23:59:59Z".to_string(),
+            None,
         );
-        let creds2 = Credentials::new("prod".to_string(), "bob".to_string(), "pass2".to_string());
-        let creds3 = Credentials::new("dev".to_string(), "carol".to_string(), "pass3".to_string());
+        let creds2 = Credentials::with_details(
+            "prod".to_string(),
+            "token2".to_string(),
+            "bob".to_string(),
+            "2099-12-31T23:59:59Z".to_string(),
+            None,
+        );
+        let creds3 = Credentials::with_details(
+            "dev".to_string(),
+            "token3".to_string(),
+            "carol".to_string(),
+            "2099-12-31T23:59:59Z".to_string(),
+            None,
+        );
 
         store.set_credentials(&creds1).unwrap();
         store.set_credentials(&creds2).unwrap();
@@ -283,15 +356,15 @@ mod tests {
         // Retrieve specific instances
         assert_eq!(
             store.get_credentials("local").unwrap().unwrap().username,
-            "alice"
+            Some("alice".to_string())
         );
         assert_eq!(
             store.get_credentials("prod").unwrap().unwrap().username,
-            "bob"
+            Some("bob".to_string())
         );
         assert_eq!(
             store.get_credentials("dev").unwrap().unwrap().username,
-            "carol"
+            Some("carol".to_string())
         );
     }
 
@@ -301,29 +374,28 @@ mod tests {
 
         let creds1 = Credentials::new(
             "local".to_string(),
-            "alice".to_string(),
-            "old_pass".to_string(),
+            "old_token".to_string(),
         );
         let creds2 = Credentials::new(
             "local".to_string(),
-            "alice".to_string(),
-            "new_pass".to_string(),
+            "new_token".to_string(),
         );
 
         store.set_credentials(&creds1).unwrap();
         store.set_credentials(&creds2).unwrap();
 
         let retrieved = store.get_credentials("local").unwrap().unwrap();
-        assert_eq!(retrieved.password, "new_pass");
+        assert_eq!(retrieved.jwt_token, "new_token");
     }
 
     #[test]
     fn test_credentials_serialization() {
-        let creds = Credentials::with_server_url(
+        let creds = Credentials::with_details(
             "prod".to_string(),
+            "eyJhbGciOiJIUzI1NiJ9.test".to_string(),
             "alice".to_string(),
-            "secret123".to_string(),
-            "https://db.example.com".to_string(),
+            "2099-12-31T23:59:59Z".to_string(),
+            Some("https://db.example.com".to_string()),
         );
 
         // Serialize to JSON

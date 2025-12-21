@@ -16,7 +16,12 @@ use anyhow::{Context, Result};
 /// assert_eq!(key, "user123:msg001");
 /// ```
 pub fn user_key(user_id: &str, row_id: &str) -> String {
-    format!("{}:{}", user_id, row_id)
+    // Pre-allocate capacity to avoid reallocation
+    let mut s = String::with_capacity(user_id.len() + 1 + row_id.len());
+    s.push_str(user_id);
+    s.push(':');
+    s.push_str(row_id);
+    s
 }
 
 /// Parse a user table key into `(user_id, row_id)`
@@ -63,7 +68,11 @@ pub fn shared_key(row_id: &str) -> String {
 /// assert_eq!(key, "1697299200000:evt001");
 /// ```
 pub fn stream_key(timestamp_ms: i64, row_id: &str) -> String {
-    format!("{}:{}", timestamp_ms, row_id)
+    // Pre-allocate: i64 max is 20 digits + ':' + row_id
+    let mut s = String::with_capacity(21 + row_id.len());
+    use std::fmt::Write;
+    let _ = write!(s, "{}:{}", timestamp_ms, row_id);
+    s
 }
 
 /// Parse a stream table key into `(timestamp_ms, row_id)`

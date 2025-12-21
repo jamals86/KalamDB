@@ -142,6 +142,28 @@ pub fn tables_table_definition() -> TableDefinition {
             ColumnDefault::None,
             Some("Whether this is the latest version of the table schema".to_string()),
         ),
+        // Phase 17: expose storage_id for storage management queries
+        ColumnDefinition::new(
+            "storage_id",
+            13,
+            KalamDataType::Text,
+            true, // NULLABLE (defaults to 'local' if not specified)
+            false,
+            false,
+            ColumnDefault::None,
+            Some("Storage backend identifier for this table".to_string()),
+        ),
+        // Phase 17: expose use_user_storage flag for user tables
+        ColumnDefinition::new(
+            "use_user_storage",
+            14,
+            KalamDataType::Boolean,
+            true, // NULLABLE (only for User tables)
+            false,
+            false,
+            ColumnDefault::None,
+            Some("Whether this table uses user-specific storage assignment".to_string()),
+        ),
     ];
 
     TableDefinition::new(

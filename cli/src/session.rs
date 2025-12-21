@@ -98,6 +98,9 @@ pub struct CLISession {
     /// Credential store for managing saved credentials
     credential_store: Option<crate::credentials::FileCredentialStore>,
 
+    /// Whether credentials were loaded from storage (vs. provided on command line)
+    credentials_loaded: bool,
+
     /// Configured timeouts for operations
     #[allow(dead_code)] // Reserved for future use
     timeouts: KalamLinkTimeouts,
@@ -114,7 +117,7 @@ impl CLISession {
         color: bool,
     ) -> Result<Self> {
         Self::with_auth_and_instance(
-            server_url, auth, format, color, None, None, None, true, None, None, None,
+            server_url, auth, format, color, None, None, None, None, true, None, None, None, false,
         )
         .await
     }
@@ -122,6 +125,7 @@ impl CLISession {
     /// Create a new CLI session with AuthProvider, instance name, and credential store
     ///
     /// **Implements T121-T122**: CLI credential management commands
+    #[allow(clippy::too_many_arguments)]
     pub async fn with_auth_and_instance(
         server_url: String,
         auth: AuthProvider,
@@ -129,11 +133,13 @@ impl CLISession {
         color: bool,
         instance: Option<String>,
         credential_store: Option<crate::credentials::FileCredentialStore>,
+        authenticated_username: Option<String>,
         loading_threshold_ms: Option<u64>,
         animations: bool,
         client_timeout: Option<Duration>,
         timeouts: Option<KalamLinkTimeouts>,
         connection_options: Option<ConnectionOptions>,
+        credentials_loaded: bool,
     ) -> Result<Self> {
         // Build kalam-link client with authentication and timeouts
         let timeouts = timeouts.unwrap_or_default();
@@ -169,11 +175,15 @@ impl CLISession {
                 },
             };
 
-        // Extract username from auth provider
-        let username = match &auth {
-            AuthProvider::BasicAuth(username, _) => username.clone(),
-            AuthProvider::JwtToken(_) => "jwt-user".to_string(),
-            AuthProvider::None => "anonymous".to_string(),
+        // Use provided username or extract from auth provider
+        let username = if let Some(name) = authenticated_username {
+            name
+        } else {
+            match &auth {
+                AuthProvider::BasicAuth(username, _) => username.clone(),
+                AuthProvider::JwtToken(_) => "jwt-user".to_string(),
+                AuthProvider::None => "anonymous".to_string(),
+            }
         };
         let server_host = Self::extract_host(&server_url);
 
@@ -197,6 +207,7 @@ impl CLISession {
             server_build_date,
             instance,
             credential_store,
+            credentials_loaded,
             timeouts,
         })
     }
@@ -909,11 +920,6 @@ impl CLISession {
             Command::Help => {
                 self.show_help();
             }
-            Command::Connect(url) => {
-                println!("Reconnecting to: {}", url);
-                // TODO: Implement reconnection
-                println!("Note: Reconnection not yet implemented. Please restart the CLI.");
-            }
             Command::Config => {
                 println!("Configuration:");
                 println!("  Server: {}", self.server_url);
@@ -1000,7 +1006,7 @@ impl CLISession {
                 self.show_credentials();
             }
             Command::UpdateCredentials { username, password } => {
-                self.update_credentials(username, password)?;
+                self.update_credentials(username, password).await?;
             }
             Command::DeleteCredentials => {
                 self.delete_credentials()?;
@@ -1631,7 +1637,6 @@ impl CLISession {
             ("\\help, \\?", "Show this help"),
             ("\\quit, \\q", "Exit CLI"),
             ("\\info", "Session info"),
-            ("\\connect <url>", "Connect to server"),
             ("\\config", "Show config"),
             ("\\format <type>", "table|json|csv"),
         ];
@@ -1787,12 +1792,29 @@ impl CLISession {
         );
         println!();
 
-        // Instance info
+        // Credentials info
+        println!("{}", "Credentials:".yellow().bold());
         if let Some(ref instance) = self.instance {
-            println!("{}", "Credentials:".yellow().bold());
             println!("  Instance:       {}", instance.green());
-            println!();
         }
+        println!(
+            "  Loaded:         {}",
+            if self.credentials_loaded {
+                "Yes (from stored credentials)".green()
+            } else {
+                "No (provided via CLI args)".dimmed()
+            }
+        );
+        if self.credential_store.is_some() {
+            println!(
+                "  Storage:        {}",
+                crate::credentials::FileCredentialStore::default_path()
+                    .display()
+                    .to_string()
+                    .dimmed()
+            );
+        }
+        println!();
 
         println!(
             "{}",
@@ -1842,8 +1864,20 @@ impl CLISession {
                 Ok(Some(creds)) => {
                     println!("{}", "Stored Credentials".bold().cyan());
                     println!("  Instance: {}", creds.instance.green());
-                    println!("  Username: {}", creds.username.green());
-                    println!("  Password: {}", "****** (hidden)".dimmed());
+                    if let Some(ref username) = creds.username {
+                        println!("  Username: {}", username.green());
+                    }
+                    // Show truncated JWT token
+                    let token_preview = if creds.jwt_token.len() > 30 {
+                        format!("{}...", &creds.jwt_token[..30])
+                    } else {
+                        creds.jwt_token.clone()
+                    };
+                    println!("  JWT Token: {}", token_preview.dimmed());
+                    if let Some(ref expires) = creds.expires_at {
+                        let expired_marker = if creds.is_expired() { " (EXPIRED)".red().to_string() } else { "".to_string() };
+                        println!("  Expires: {}{}", expires.green(), expired_marker);
+                    }
                     if let Some(ref server_url) = creds.server_url {
                         println!("  Server URL: {}", server_url.green());
                     }
@@ -1864,7 +1898,7 @@ impl CLISession {
                 }
                 Ok(None) => {
                     println!("{}", "No credentials stored for this instance".yellow());
-                    println!("Use \\update-credentials <username> <password> to store credentials");
+                    println!("Use --username and --password to login and store credentials");
                 }
                 Err(e) => {
                     eprintln!("{} {}", "Error loading credentials:".red(), e);
@@ -1884,41 +1918,56 @@ impl CLISession {
     /// Update credentials for current instance
     ///
     /// **Implements T122**: Update credentials command
-    fn update_credentials(&mut self, username: String, password: String) -> Result<()> {
+    /// Performs login to get JWT token and stores it
+    async fn update_credentials(&mut self, username: String, password: String) -> Result<()> {
         use colored::Colorize;
         use kalam_link::credentials::{CredentialStore, Credentials};
 
         match (&self.instance, &mut self.credential_store) {
             (Some(instance), Some(store)) => {
-                let creds = Credentials::with_server_url(
-                    instance.clone(),
-                    username.clone(),
-                    password,
-                    self.server_url.clone(),
-                );
+                // Perform login to get JWT token
+                println!("{}", "Logging in...".dimmed());
+                
+                let login_result = self.client.login(&username, &password).await;
+                
+                match login_result {
+                    Ok(login_response) => {
+                        let creds = Credentials::with_details(
+                            instance.clone(),
+                            login_response.access_token,
+                            login_response.user.username.clone(),
+                            login_response.expires_at.clone(),
+                            Some(self.server_url.clone()),
+                        );
 
-                store.set_credentials(&creds)?;
+                        store.set_credentials(&creds)?;
 
-                println!("{}", "✓ Credentials updated successfully".green().bold());
-                println!("  Instance: {}", instance.cyan());
-                println!("  Username: {}", username.cyan());
-                println!("  Server URL: {}", self.server_url.cyan());
-                println!();
-                println!("{}", "Security Reminder:".yellow().bold());
-                println!(
-                    "  Credentials are stored at: {}",
-                    crate::credentials::FileCredentialStore::default_path()
-                        .display()
-                        .to_string()
-                        .dimmed()
-                );
-                #[cfg(unix)]
-                println!(
-                    "{}",
-                    "  File permissions: 0600 (owner read/write only)".dimmed()
-                );
+                        println!("{}", "✓ Credentials updated successfully".green().bold());
+                        println!("  Instance: {}", instance.cyan());
+                        println!("  Username: {}", login_response.user.username.cyan());
+                        println!("  Expires: {}", login_response.expires_at.cyan());
+                        println!("  Server URL: {}", self.server_url.cyan());
+                        println!();
+                        println!("{}", "Security Reminder:".yellow().bold());
+                        println!(
+                            "  Credentials are stored at: {}",
+                            crate::credentials::FileCredentialStore::default_path()
+                                .display()
+                                .to_string()
+                                .dimmed()
+                        );
+                        #[cfg(unix)]
+                        println!(
+                            "{}",
+                            "  File permissions: 0600 (owner read/write only)".dimmed()
+                        );
 
-                Ok(())
+                        Ok(())
+                    }
+                    Err(e) => {
+                        Err(CLIError::ConfigurationError(format!("Login failed: {}", e)))
+                    }
+                }
             }
             (None, _) => Err(CLIError::ConfigurationError(
                 "Instance name not set for this session".to_string(),

@@ -5,7 +5,7 @@ Fast path: build, run, and issue your first SQL query.
 ## 1. Prerequisites
 
 - Git
-- Rust 1.90+
+- Rust 1.92+
 - C++ toolchain (build-essential / Xcode CLT / MSVC)
 
 For full setup and troubleshooting, see `docs/DEVELOPMENT_SETUP.md`.

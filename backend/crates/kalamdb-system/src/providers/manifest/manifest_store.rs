@@ -1,7 +1,7 @@
 //! System.manifest table store
 //!
 //! Provides typed storage for manifest cache entries using SystemTableStore.
-//! This is a read-only view of the manifest cache managed by ManifestCacheService.
+//! This is a read-only view of the manifest cache managed by ManifestService.
 
 use crate::system_table_store::SystemTableStore;
 use kalamdb_commons::types::ManifestCacheEntry;
@@ -11,7 +11,7 @@ use std::sync::Arc;
 
 /// Cache key type (namespace:table:scope format)
 ///
-/// Uses the same key format as ManifestCacheService for consistency.
+/// Uses the same key format as ManifestService for consistency.
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct ManifestCacheKey(String);
 

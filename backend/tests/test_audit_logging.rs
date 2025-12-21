@@ -161,3 +161,63 @@ async fn test_audit_log_for_table_access_change() {
         .unwrap()
         .contains("SET ACCESS LEVEL Public"));
 }
+
+#[actix_web::test]
+async fn test_audit_log_password_masking() {
+    // **Test that passwords are NEVER stored in audit logs**
+    // Verifies that ALTER USER SET PASSWORD entries mask the actual password
+    
+    let server = TestServer::new().await;
+    let admin_id = create_system_user(&server, "audit_admin_3").await;
+
+    // Create a test user
+    let resp = server
+        .execute_sql_as_user(
+            "CREATE USER 'audit_user_2' WITH PASSWORD 'InitialPass123!' ROLE user",
+            admin_id.as_str(),
+        )
+        .await;
+    assert_eq!(resp.status, ResponseStatus::Success, "CREATE USER failed");
+
+    // Change the user's password
+    let resp = server
+        .execute_sql_as_user(
+            "ALTER USER 'audit_user_2' SET PASSWORD 'SuperSecret789!'",
+            admin_id.as_str(),
+        )
+        .await;
+    assert_eq!(resp.status, ResponseStatus::Success, "ALTER USER failed");
+
+    // Read audit logs
+    let logs = server
+        .app_context
+        .system_tables()
+        .audit_logs()
+        .scan_all()
+        .expect("Failed to read audit log");
+
+    // Find the ALTER USER entry
+    let alter_entry = find_audit_entry(&logs, "ALTER_USER", "audit_user_2");
+    
+    // Verify password is masked
+    let details = alter_entry.details.as_ref().expect("Details should exist");
+    assert!(
+        details.contains("[REDACTED]"),
+        "Password should be redacted in audit log, got: {}",
+        details
+    );
+    
+    // Verify actual password is NOT in the audit log
+    assert!(
+        !details.contains("SuperSecret789!"),
+        "Actual password should NOT appear in audit log, got: {}",
+        details
+    );
+    assert!(
+        !details.contains("InitialPass123!"),
+        "Initial password should NOT appear in audit log, got: {}",
+        details
+    );
+    
+    println!("✓ Password correctly masked in audit log: {}", details);
+}

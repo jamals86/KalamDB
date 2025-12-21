@@ -99,7 +99,7 @@ mod tests {
         use kalamdb_system::providers::manifest::ManifestTableSchema;
 
         let schema = ManifestTableSchema::schema();
-        assert_eq!(schema.fields().len(), 10);
+        assert_eq!(schema.fields().len(), 11);
         assert_eq!(schema.field(0).name(), "cache_key");
         assert_eq!(schema.field(1).name(), "namespace_id");
         assert_eq!(schema.field(2).name(), "table_name");
@@ -107,8 +107,9 @@ mod tests {
         assert_eq!(schema.field(4).name(), "etag");
         assert_eq!(schema.field(5).name(), "last_refreshed");
         assert_eq!(schema.field(6).name(), "last_accessed");
-        assert_eq!(schema.field(7).name(), "ttl_seconds");
+        assert_eq!(schema.field(7).name(), "in_memory");
         assert_eq!(schema.field(8).name(), "source_path");
         assert_eq!(schema.field(9).name(), "sync_state");
+        assert_eq!(schema.field(10).name(), "manifest_json");
     }
 }

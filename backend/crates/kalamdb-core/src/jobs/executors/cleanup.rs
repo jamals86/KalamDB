@@ -131,7 +131,18 @@ impl JobExecutor for CleanupExecutor {
 
         ctx.log_info(&format!("Freed {} bytes from Parquet files", bytes_freed));
 
-        // 3. Clean up metadata from SchemaRegistry
+        // 3. Invalidate manifest cache (L1 hot cache + L2 RocksDB)
+        let manifest_service = ctx.app_ctx.manifest_service();
+        let cache_entries_invalidated = manifest_service
+            .invalidate_table(&table_id)
+            .map_err(|e| KalamDbError::Other(format!("Failed to invalidate manifest cache: {}", e)))?;
+
+        ctx.log_info(&format!(
+            "Invalidated {} manifest cache entries",
+            cache_entries_invalidated
+        ));
+
+        // 4. Clean up metadata from SchemaRegistry
         let schema_registry = ctx.app_ctx.schema_registry();
         cleanup_metadata_internal(&schema_registry, &table_id).await?;
 
@@ -139,8 +150,8 @@ impl JobExecutor for CleanupExecutor {
 
         // Build success message with metrics
         let message = format!(
-            "Cleaned up table {} successfully - {} rows deleted, {} bytes freed",
-            table_id, rows_deleted, bytes_freed
+            "Cleaned up table {} successfully - {} rows deleted, {} bytes freed, {} cache entries invalidated",
+            table_id, rows_deleted, bytes_freed, cache_entries_invalidated
         );
 
         ctx.log_info(&message);

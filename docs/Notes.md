@@ -322,8 +322,12 @@ instead of: 1 failed: Invalid operation: No handler registered for statement typ
 
 203) Can you check if we can use the manifest as an indication of having rows which needs flushing or you think its better to keep it this way which is now? if we flush and we didnt find any manifest does it fails? can you make sure this scenario is well written?
 
-204) we should use TableId instead of passing both:        namespace: &NamespaceId,table: &TableName,
+204) we should use TableId instead of passing both:        namespace: &NamespaceId,table: &TableName, like in update_manifest_after_flush
 
+
+205) Add test which check having like 100 parquet batches per shared table and having manifest file has 100 segments and test the performance
+
+206) the last_accessed in manifest is not needed anymore since now we rely on Moka cache for knowing the last accessed time
 
 Make sure there is tests which insert/updte data and then check if the actual data we inserted/updated is there and exists in select then flush the data and check again if insert/update works with the flushed data in cold storage, check that insert fails when inserting a row id primary key which already exists and update do works
 
@@ -372,7 +376,7 @@ Parquet Querying Limitation: After flush, data is removed from RocksDB but queri
 
 
 Code Cleanup Operations:
-2) Replace all instances of String types for namespace/table names with their respective NamespaceId/TableName
+2) Replace all instances of String types for namespace/table names with their respective NamespaceId/TableName, we should use TableId instead of passing both:        namespace: &NamespaceId,table: &TableName, like in update_manifest_after_flush
 3) Instead of passing to a method both NamespaceId and TableName, pass only TableId
 4) Make sure all using UserId/NamespaceId/TableName/TableId/StorageId types instead of raw strings across the codebase
 6) Remove un-needed imports across the codebase

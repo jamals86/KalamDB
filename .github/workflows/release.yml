@@ -44,7 +44,7 @@ permissions:
 
 env:
   CARGO_TERM_COLOR: always
-  RUST_VERSION: "1.90.0"
+  RUST_VERSION: "1.92.0"
   DEFAULT_PLATFORMS: "linux-x86_64,macos-aarch64,windows-x86_64"
 
 jobs:
@@ -141,6 +141,9 @@ jobs:
           shared-key: cli-linux-x86_64
           cache-on-failure: true
 
+      - name: Setup sccache
+        uses: mozilla-actions/sccache-action@v0.0.6
+
       - name: Install system deps
         run: |
           sudo apt-get update
@@ -152,12 +155,16 @@ jobs:
 
       - name: Build CLI linux-x86_64
         shell: bash
+        env:
+          RUSTC_WRAPPER: sccache
+          SCCACHE_GHA_ENABLED: "true"
         run: |
           set -euo pipefail
           cargo build \
             --profile release-dist \
             --target x86_64-unknown-linux-gnu \
             --bin kalam
+          sccache --show-stats
 
       - name: Package CLI artifact
         shell: bash
@@ -214,6 +221,9 @@ jobs:
           shared-key: cli-windows-x86_64
           cache-on-failure: true
 
+      - name: Setup sccache
+        uses: mozilla-actions/sccache-action@v0.0.6
+
       - name: Install system deps
         run: |
           sudo apt-get update
@@ -221,6 +231,9 @@ jobs:
 
       - name: Install cross
         shell: bash
+        env:
+          RUSTC_WRAPPER: sccache
+          SCCACHE_GHA_ENABLED: "true"
         run: |
           set -euo pipefail
           cargo install cross --locked
@@ -229,12 +242,15 @@ jobs:
         shell: bash
         env:
           CROSS_CONTAINER_ENGINE_NO_BUILDKIT: "0"
+          RUSTC_WRAPPER: sccache
+          SCCACHE_GHA_ENABLED: "true"
         run: |
           set -euo pipefail
           cross build \
             --profile docker \
             --target x86_64-pc-windows-gnu \
             --bin kalam
+          sccache --show-stats
 
       - name: Package CLI artifact
         shell: bash
@@ -290,6 +306,9 @@ jobs:
           shared-key: cli-macos-aarch64
           cache-on-failure: true
 
+      - name: Setup sccache
+        uses: mozilla-actions/sccache-action@v0.0.6
+
       - name: Install LLVM (fix libclang.dylib)
         shell: bash
         run: |
@@ -300,12 +319,16 @@ jobs:
 
       - name: Build CLI macos-aarch64
         shell: bash
+        env:
+          RUSTC_WRAPPER: sccache
+          SCCACHE_GHA_ENABLED: "true"
         run: |
           set -euo pipefail
           cargo build \
             --profile release-dist \
             --target aarch64-apple-darwin \
             --bin kalam
+          sccache --show-stats
 
       - name: Package CLI artifact
         shell: bash
@@ -396,6 +419,10 @@ jobs:
           shared-key: server-linux-x86_64
           cache-on-failure: true
 
+      - name: Setup sccache
+        if: ${{ steps.vars.outputs.build_linux == 'true' }}
+        uses: mozilla-actions/sccache-action@v0.0.6
+
       - name: Install system deps
         if: ${{ steps.vars.outputs.build_linux == 'true' }}
         run: |
@@ -411,12 +438,15 @@ jobs:
         shell: bash
         env:
           SKIP_UI_BUILD: "1"
+          RUSTC_WRAPPER: sccache
+          SCCACHE_GHA_ENABLED: "true"
         run: |
           set -euo pipefail
           cargo build \
             --profile release-dist \
             --target x86_64-unknown-linux-gnu \
             --bin kalamdb-server
+          sccache --show-stats
 
       - name: Package linux artifacts
         if: ${{ steps.vars.outputs.build_linux == 'true' }}
@@ -511,6 +541,10 @@ jobs:
           shared-key: server-windows-x86_64
           cache-on-failure: true
 
+      - name: Setup sccache
+        if: ${{ steps.vars.outputs.build_windows == 'true' }}
+        uses: mozilla-actions/sccache-action@v0.0.6
+
       - name: Install system deps
         if: ${{ steps.vars.outputs.build_windows == 'true' }}
         run: |
@@ -520,6 +554,9 @@ jobs:
       - name: Install cross
         if: ${{ steps.vars.outputs.build_windows == 'true' }}
         shell: bash
+        env:
+          RUSTC_WRAPPER: sccache
+          SCCACHE_GHA_ENABLED: "true"
         run: |
           set -euo pipefail
           cargo install cross --locked
@@ -530,12 +567,15 @@ jobs:
         env:
           CROSS_CONTAINER_ENGINE_NO_BUILDKIT: "0"
           SKIP_UI_BUILD: "1"
+          RUSTC_WRAPPER: sccache
+          SCCACHE_GHA_ENABLED: "true"
         run: |
           set -euo pipefail
           cross build \
             --profile docker \
             --target x86_64-pc-windows-gnu \
             --bin kalamdb-server
+          sccache --show-stats
 
       - name: Package windows artifacts
         if: ${{ steps.vars.outputs.build_windows == 'true' }}
@@ -629,6 +669,10 @@ jobs:
           shared-key: server-macos-aarch64
           cache-on-failure: true
 
+      - name: Setup sccache
+        if: ${{ steps.vars.outputs.build_macos == 'true' }}
+        uses: mozilla-actions/sccache-action@v0.0.6
+
       - name: Install LLVM (fix libclang.dylib)
         if: ${{ steps.vars.outputs.build_macos == 'true' }}
         shell: bash
@@ -643,12 +687,15 @@ jobs:
         shell: bash
         env:
           SKIP_UI_BUILD: "1"
+          RUSTC_WRAPPER: sccache
+          SCCACHE_GHA_ENABLED: "true"
         run: |
           set -euo pipefail
           cargo build \
             --profile release-dist \
             --target aarch64-apple-darwin \
             --bin kalamdb-server
+          sccache --show-stats
 
       - name: Package macOS artifacts
         if: ${{ steps.vars.outputs.build_macos == 'true' }}

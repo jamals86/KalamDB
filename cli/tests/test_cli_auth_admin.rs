@@ -28,7 +28,7 @@ async fn is_server_running() -> bool {
         .post(format!("{}/v1/api/sql", SERVER_URL))
         .basic_auth("root", Some(""))
         .json(&json!({ "sql": "SELECT 1" }))
-        .timeout(Duration::from_secs(2))
+        .timeout(Duration::from_millis(500))
         .send()
         .await
         .map(|r| r.status().is_success())
@@ -76,7 +76,7 @@ async fn test_root_can_create_namespace() {
         namespace_name
     ))
     .await;
-    tokio::time::sleep(Duration::from_millis(300)).await;
+    tokio::time::sleep(Duration::from_millis(50)).await;
 
     // Create namespace as root
     let result = match execute_sql_as_root(&format!("CREATE NAMESPACE {}", namespace_name)).await {
@@ -149,7 +149,7 @@ async fn test_root_can_create_drop_tables() {
         namespace_name
     ))
     .await;
-    tokio::time::sleep(Duration::from_millis(100)).await;
+    tokio::time::sleep(Duration::from_millis(20)).await;
 
     // Create table as root
     let result = execute_sql_as_root(&format!(
@@ -201,7 +201,7 @@ async fn test_cli_create_namespace_as_root() {
             eprintln!("DROP NAMESPACE returned non-success: {:?}", result);
         }
     }
-    tokio::time::sleep(Duration::from_millis(300)).await;
+    tokio::time::sleep(Duration::from_millis(50)).await;
 
     // Execute CREATE NAMESPACE via CLI (auto-authenticates as root for localhost)
     let mut cmd = Command::new(env!("CARGO_BIN_EXE_kalam"));
@@ -246,7 +246,7 @@ async fn test_regular_user_cannot_create_namespace() {
 
     // First, create a regular user as root
     let _ = execute_sql_as_root("DROP USER IF EXISTS testuser").await;
-    tokio::time::sleep(Duration::from_millis(100)).await;
+    tokio::time::sleep(Duration::from_millis(20)).await;
 
     let result = execute_sql_as_root("CREATE USER testuser PASSWORD 'testpass' ROLE user").await;
 
@@ -255,7 +255,7 @@ async fn test_regular_user_cannot_create_namespace() {
         return;
     }
 
-    tokio::time::sleep(Duration::from_millis(200)).await;
+    tokio::time::sleep(Duration::from_millis(50)).await;
 
     // Try to create namespace as regular user
     let result = execute_sql_as("testuser", "testpass", "CREATE NAMESPACE user_test_ns").await;
@@ -328,7 +328,7 @@ async fn test_cli_admin_operations() {
         namespace_name
     ))
     .await;
-    tokio::time::sleep(Duration::from_millis(300)).await;
+    tokio::time::sleep(Duration::from_millis(50)).await;
 
     // Test batch SQL with multiple admin commands
     let sql_batch = format!(
@@ -417,10 +417,10 @@ async fn test_cli_flush_table() {
         namespace_name
     ))
     .await;
-    tokio::time::sleep(Duration::from_millis(300)).await;
+    tokio::time::sleep(Duration::from_millis(50)).await;
 
     let _ = execute_sql_as_root(&format!("CREATE NAMESPACE {}", namespace_name)).await;
-    tokio::time::sleep(Duration::from_millis(200)).await;
+    tokio::time::sleep(Duration::from_millis(50)).await;
 
     // Create a USER table with flush policy (SHARED tables cannot be flushed)
     let result = execute_sql_as_root(&format!(
@@ -487,7 +487,7 @@ async fn test_cli_flush_table() {
     };
 
     // Wait for job to complete
-    tokio::time::sleep(Duration::from_secs(2)).await;
+    tokio::time::sleep(Duration::from_millis(500)).await;
 
     // If we have a job ID, query for that specific job
     // Note: system.jobs stores namespace/table info inside the JSON `parameters` column.
@@ -619,7 +619,7 @@ async fn test_cli_flush_table() {
         if Instant::now() > deadline {
             panic!("Timed out waiting for flush job to complete; last status was 'running'");
         }
-        tokio::time::sleep(Duration::from_millis(250)).await;
+        tokio::time::sleep(Duration::from_millis(50)).await;
 
         // Requery current job status
         let refetch = execute_sql_as_root(&jobs_query).await.unwrap();
@@ -708,10 +708,10 @@ async fn test_cli_flush_all_tables() {
         namespace_name
     ))
     .await;
-    tokio::time::sleep(Duration::from_millis(300)).await;
+    tokio::time::sleep(Duration::from_millis(50)).await;
 
     let _ = execute_sql_as_root(&format!("CREATE NAMESPACE {}", namespace_name)).await;
-    tokio::time::sleep(Duration::from_millis(200)).await;
+    tokio::time::sleep(Duration::from_millis(50)).await;
 
     // Create multiple USER tables (SHARED tables cannot be flushed)
     let _ = execute_sql_as_root(
@@ -722,7 +722,7 @@ async fn test_cli_flush_all_tables() {
         &format!("CREATE TABLE {}.table2 (id INT PRIMARY KEY, value DOUBLE) WITH (TYPE='USER', FLUSH_POLICY='rows:10')", namespace_name),
     )
     .await;
-    tokio::time::sleep(Duration::from_millis(100)).await;
+    tokio::time::sleep(Duration::from_millis(20)).await;
 
     // Insert some data
     let _ = execute_sql_as_root(&format!(
@@ -735,7 +735,7 @@ async fn test_cli_flush_all_tables() {
         namespace_name
     ))
     .await;
-    tokio::time::sleep(Duration::from_millis(100)).await;
+    tokio::time::sleep(Duration::from_millis(20)).await;
 
     // Execute FLUSH ALL TABLES via CLI
     let mut cmd = Command::new(env!("CARGO_BIN_EXE_kalam"));
@@ -790,7 +790,7 @@ async fn test_cli_flush_all_tables() {
     println!("Extracted job IDs: {:?}", job_ids);
 
     // Wait for jobs to complete
-    tokio::time::sleep(Duration::from_secs(2)).await;
+    tokio::time::sleep(Duration::from_millis(500)).await;
 
     // If we have job IDs, query for those specific jobs
     let jobs_query = if !job_ids.is_empty() {

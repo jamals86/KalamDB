@@ -182,7 +182,7 @@ impl UserTableProvider {
     /// Lists all *.parquet files in the user's storage directory and merges them into a single RecordBatch.
     /// Returns an empty batch if no Parquet files exist.
     ///
-    /// **Phase 4 (US6, T082-T084)**: Integrated with ManifestCacheService for manifest caching.
+    /// **Phase 4 (US6, T082-T084)**: Integrated with ManifestService for manifest caching.
     /// Logs cache hits/misses and updates last_accessed timestamp. Full query optimization
     /// (batch file pruning based on manifest metadata) implemented in Phase 5 (US2, T119-T123).
     fn scan_parquet_files_as_batch(

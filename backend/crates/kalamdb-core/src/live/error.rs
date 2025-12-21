@@ -173,21 +173,12 @@ impl SubscriptionValidator {
 
     /// Validate table name format
     pub fn validate_table_name(table_name: &str) -> Result<()> {
-        if table_name.is_empty() {
-            return Err(LiveError::InvalidSubscription {
-                reason: "table_name cannot be empty".to_string(),
+        kalamdb_commons::validation::validate_table_name(table_name).map_err(|e| {
+            LiveError::InvalidSubscription {
+                reason: e.to_string(),
                 field: "table_name".to_string(),
-            });
-        }
-
-        if table_name.len() > 255 {
-            return Err(LiveError::InvalidSubscription {
-                reason: format!("table_name too long ({} chars, max 255)", table_name.len()),
-                field: "table_name".to_string(),
-            });
-        }
-
-        Ok(())
+            }
+        })
     }
 }
 

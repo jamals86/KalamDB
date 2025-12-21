@@ -35,6 +35,8 @@ impl TablesTableSchema {
     /// - options: Utf8 (nullable, JSON serialized TableOptions)
     /// - access_level: Utf8 (nullable, for Shared tables)
     /// - is_latest: Boolean (schema versioning flag)
+    /// - storage_id: Utf8 (nullable, storage backend identifier)
+    /// - use_user_storage: Boolean (nullable, for User tables)
     pub fn schema() -> SchemaRef {
         TABLES_SCHEMA
             .get_or_init(|| {

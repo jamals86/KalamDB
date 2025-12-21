@@ -2,6 +2,7 @@
 name = "kalamdb-api"
 version.workspace = true
 edition.workspace = true
+rust-version.workspace = true
 authors.workspace = true
 license.workspace = true
 repository.workspace = true
@@ -21,7 +22,6 @@ arrow = { workspace = true }
 # Web framework
 actix-web = { workspace = true }
 actix-ws = { workspace = true }
-actix = { workspace = true }
 actix-files = { workspace = true }
 
 # Serialization
@@ -59,6 +59,7 @@ mime_guess = { workspace = true }
 
 # Concurrency
 dashmap = { workspace = true }
+moka = { workspace = true }
 
 [build-dependencies]
 chrono = { workspace = true }

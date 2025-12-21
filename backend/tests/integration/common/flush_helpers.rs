@@ -88,7 +88,6 @@ pub async fn execute_flush_synchronously(
         arrow_schema.clone(),
         unified_cache,
         server.app_context.manifest_service(),
-        server.app_context.manifest_cache_service(),
     );
 
     flush_job
@@ -149,7 +148,6 @@ pub async fn execute_shared_flush_synchronously(
         arrow_schema.clone(),
         unified_cache,
         server.app_context.manifest_service(),
-        server.app_context.manifest_cache_service(),
     );
 
     flush_job

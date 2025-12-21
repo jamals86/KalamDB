@@ -7,7 +7,7 @@ use super::base::{FlushJobResult, FlushMetadata, TableFlush};
 use crate::error::KalamDbError;
 use crate::error_extensions::KalamDbResultExt;
 use crate::live_query::{ChangeNotification, LiveQueryManager};
-use crate::manifest::{FlushManifestHelper, ManifestCacheService, ManifestService};
+use crate::manifest::{FlushManifestHelper, ManifestService};
 use crate::providers::arrow_json_conversion::json_rows_to_arrow_batch;
 use crate::schema_registry::SchemaRegistry;
 use crate::app_context::AppContext;
@@ -45,9 +45,8 @@ impl UserTableFlushJob {
         schema: SchemaRef,
         unified_cache: Arc<SchemaRegistry>,
         manifest_service: Arc<ManifestService>,
-        manifest_cache: Arc<ManifestCacheService>,
     ) -> Self {
-        let manifest_helper = FlushManifestHelper::new(manifest_service, manifest_cache);
+        let manifest_helper = FlushManifestHelper::new(manifest_service);
 
         // Fetch Bloom filter columns once per job (PRIMARY KEY + _seq)
         // This avoids fetching TableDefinition for each user during flush

@@ -269,7 +269,7 @@ async function runTests() {
     
     // Wait for initial data batches
     log('  ⏳ Waiting for initial data (2 seconds)...');
-    await sleep(2000);
+    await sleep(300);
     
     // Check if we received initial data for todos
     const todosInitialData = todosMessages.find(m => 
@@ -331,7 +331,7 @@ async function runTests() {
     
     // Wait for live change notifications
     log('  ⏳ Waiting for live change notifications (2 seconds)...');
-    await sleep(2000);
+    await sleep(300);
     
     // Check for new todos messages
     const newTodosMessages = todosMessages.slice(todosCountBefore);
@@ -384,7 +384,7 @@ async function runTests() {
     // Events subscription should still work
     const eventsCountNow = eventsMessages.length;
     await executeSQL(`INSERT INTO ${EVENTS_TABLE} (event_type, payload) VALUES ('after_unsub', '{"test":true}')`);
-    await sleep(1000);
+    await sleep(200);
     
     if (eventsMessages.length > eventsCountNow) {
       pass('Events subscription still receiving changes');

@@ -22,17 +22,12 @@ use std::sync::{Arc, RwLock};
 /// Callback type for checking if a cache key is in hot memory
 pub type InMemoryChecker = Arc<dyn Fn(&str) -> bool + Send + Sync>;
 
-/// Callback type for getting last_accessed timestamp for a cache key (returns milliseconds, or None if not in hot cache)
-pub type LastAccessedGetter = Arc<dyn Fn(&str) -> Option<i64> + Send + Sync>;
-
 /// System.manifest table provider using EntityStore architecture
 pub struct ManifestTableProvider {
     store: ManifestStore,
     schema: SchemaRef,
     /// Optional callback to check if a cache key is in hot memory (injected from kalamdb-core)
     in_memory_checker: RwLock<Option<InMemoryChecker>>,
-    /// Optional callback to get last_accessed timestamp for a cache key (injected from kalamdb-core)
-    last_accessed_getter: RwLock<Option<LastAccessedGetter>>,
 }
 
 impl std::fmt::Debug for ManifestTableProvider {
@@ -54,7 +49,6 @@ impl ManifestTableProvider {
             store: new_manifest_store(backend),
             schema: ManifestTableSchema::schema(),
             in_memory_checker: RwLock::new(None),
-            last_accessed_getter: RwLock::new(None),
         }
     }
 
@@ -68,16 +62,6 @@ impl ManifestTableProvider {
         }
     }
 
-    /// Set the last_accessed getter callback
-    ///
-    /// This callback is injected from kalamdb-core to get the last_accessed timestamp
-    /// for entries in the hot cache.
-    pub fn set_last_accessed_getter(&self, getter: LastAccessedGetter) {
-        if let Ok(mut guard) = self.last_accessed_getter.write() {
-            *guard = Some(getter);
-        }
-    }
-
     /// Check if a cache key is in hot memory
     fn is_in_memory(&self, cache_key: &str) -> bool {
         if let Ok(guard) = self.in_memory_checker.read() {
@@ -86,16 +70,6 @@ impl ManifestTableProvider {
             }
         }
         false // Default to false if no checker is set
-    }
-
-    /// Get last_accessed timestamp for a cache key (returns seconds since epoch, or None)
-    fn get_last_accessed(&self, cache_key: &str) -> Option<i64> {
-        if let Ok(guard) = self.last_accessed_getter.read() {
-            if let Some(ref getter) = *guard {
-                return getter(cache_key);
-            }
-        }
-        None
     }
 
     /// Scan all manifest cache entries and return as RecordBatch
@@ -133,11 +107,6 @@ impl ManifestTableProvider {
             let cache_key_str = cache_key.to_string();
             let is_hot = self.is_in_memory(&cache_key_str);
             
-            // Get last_accessed from hot cache if available, otherwise use last_refreshed as fallback
-            let last_accessed_ts = self.get_last_accessed(&cache_key_str)
-                .map(|ts| ts * 1000) // Convert seconds to milliseconds
-                .unwrap_or_else(|| entry.last_refreshed * 1000);
-            
             // Serialize manifest_json before moving entry fields
             let manifest_json_str = entry.manifest_json();
 
@@ -147,7 +116,8 @@ impl ManifestTableProvider {
             scopes.push(Some(parts[2].to_string()));
             etags.push(entry.etag);
             last_refreshed_vals.push(Some(entry.last_refreshed * 1000)); // Convert to milliseconds
-            last_accessed_vals.push(Some(last_accessed_ts));
+            // last_accessed = last_refreshed (moka manages TTI internally, we can't get actual access time)
+            last_accessed_vals.push(Some(entry.last_refreshed * 1000));
             in_memory_vals.push(Some(is_hot));
             source_paths.push(Some(entry.source_path));
             sync_states.push(Some(entry.sync_state.to_string()));

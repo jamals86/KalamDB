@@ -10,21 +10,9 @@
 mod common;
 
 use common::flush_helpers::{check_user_parquet_files, execute_flush_synchronously};
-use common::{fixtures, TestServer};
+use common::{fixtures, TestServer, wait_for_cleanup_job_completion, extract_cleanup_job_id, wait_for_path_absent};
 use kalamdb_api::models::ResponseStatus;
-use std::path::Path;
-use tokio::time::{sleep, Duration, Instant};
-
-async fn wait_for_path_absent(path: &Path, timeout: Duration) -> bool {
-    let deadline = Instant::now() + timeout;
-    while path.exists() {
-        if Instant::now() >= deadline {
-            return false;
-        }
-        sleep(Duration::from_millis(50)).await;
-    }
-    true
-}
+use tokio::time::{sleep, Duration};
 
 #[actix_web::test]
 async fn test_drop_user_table_deletes_partitions_and_parquet() {
@@ -131,13 +119,31 @@ async fn test_drop_user_table_deletes_partitions_and_parquet() {
         drop_resp.error
     );
 
+    // Extract cleanup job ID from response and wait for it to complete
+    let result_message = drop_resp
+        .results.first()
+        .and_then(|r| r.message.as_ref())
+        .expect("DROP TABLE should return result message");
+
+    if let Some(job_id) = extract_cleanup_job_id(result_message) {
+        println!("Waiting for cleanup job {} to complete...", job_id);
+        wait_for_cleanup_job_completion(&server, &job_id, Duration::from_secs(10))
+            .await
+            .expect("Cleanup job should complete successfully");
+        println!("Cleanup job {} completed", job_id);
+    } else {
+        // Fallback: wait a bit for async cleanup if job ID not found
+        println!("Could not extract cleanup job ID from: {}", result_message);
+        sleep(Duration::from_millis(200)).await;
+    }
+
     // Verify table metadata removed
     assert!(
         !server.table_exists(namespace, table).await,
         "Table metadata should be removed after drop"
     );
 
-    // Verify per-user Parquet directories are removed
+    // Verify per-user Parquet directories are removed (allow a brief delay after job completion)
     assert!(
         wait_for_path_absent(&dir_user1, Duration::from_secs(2)).await,
         "User1 Parquet dir still exists after drop: {}",

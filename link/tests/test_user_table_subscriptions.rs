@@ -76,7 +76,7 @@ async fn setup_user_table() -> Result<String, Box<dyn std::error::Error + Send +
 
     // Create namespace if needed
     execute_sql("CREATE NAMESPACE IF NOT EXISTS sub_test").await.ok();
-    sleep(Duration::from_millis(200)).await;
+    sleep(Duration::from_millis(50)).await;
 
     // Create USER TABLE (not STREAM TABLE) - supports all DML operations
     // USER tables require a PRIMARY KEY column
@@ -85,7 +85,7 @@ async fn setup_user_table() -> Result<String, Box<dyn std::error::Error + Send +
         full_table
     ))
     .await?;
-    sleep(Duration::from_millis(200)).await;
+    sleep(Duration::from_millis(50)).await;
 
     Ok(full_table)
 }
@@ -101,7 +101,7 @@ async fn drain_initial_messages(
 ) {
     // Wait for ACK and any initial data
     for _ in 0..3 {
-        match timeout(Duration::from_millis(500), subscription.next()).await {
+        match timeout(Duration::from_millis(100), subscription.next()).await {
             Ok(Some(Ok(event))) => {
                 match event {
                     ChangeEvent::Ack { .. } | ChangeEvent::InitialDataBatch { .. } => {
@@ -218,7 +218,7 @@ async fn test_multiple_filtered_subscriptions() {
     // === Step 2: Insert rows from another task ===
     let table_clone = table.clone();
     let insert_handle = tokio::spawn(async move {
-        sleep(Duration::from_millis(300)).await;
+        sleep(Duration::from_millis(50)).await;
         
         // Insert a 'typing' row (id=1)
         let typing_result = execute_sql(&format!(
@@ -233,7 +233,7 @@ async fn test_multiple_filtered_subscriptions() {
         }
         println!("✅ Inserted row with type='typing'");
         
-        sleep(Duration::from_millis(100)).await;
+        sleep(Duration::from_millis(20)).await;
         
         // Insert a 'thinking' row (id=2)
         let thinking_result = execute_sql(&format!(
@@ -400,7 +400,7 @@ async fn test_multiple_filtered_subscriptions() {
     
     let table_clone_update = table.clone();
     let update_handle = tokio::spawn(async move {
-        sleep(Duration::from_millis(200)).await;
+        sleep(Duration::from_millis(50)).await;
         // Update the 'thinking' row (id=2) to change its content
         let result = execute_sql(&format!(
             "UPDATE {} SET content = 'AI finished thinking!' WHERE id = 2",
@@ -487,11 +487,11 @@ async fn test_multiple_filtered_subscriptions() {
 
     // === Step 7: Insert another 'typing' row and verify 'thinking' subscription does NOT receive it ===
     println!("\n🔄 Step 7: Verifying filtered subscriptions don't receive unmatched inserts...");
-    sleep(Duration::from_millis(500)).await;
+    sleep(Duration::from_millis(100)).await;
     
     let table_clone2 = table.clone();
     let insert_handle2 = tokio::spawn(async move {
-        sleep(Duration::from_millis(200)).await;
+        sleep(Duration::from_millis(50)).await;
         // id=3 since we already inserted id=1 (typing) and id=2 (thinking)
         let result = execute_sql(&format!(
             "INSERT INTO {} (id, type, content) VALUES (3, 'typing', 'more typing - should not reach thinking sub')",

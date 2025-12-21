@@ -1,6 +1,29 @@
 // Utilities to normalize KalamDB SQL query responses (ESM).
 
 /**
+ * Get column names from schema or columns array (backwards compatible)
+ * New format: schema = [{name, data_type, index}, ...]
+ * Old format: columns = ['name1', 'name2', ...]
+ * @param {object} resp - Query response
+ * @returns {string[]} Column names
+ */
+function getColumnNames(resp) {
+  // New format: schema array with name, data_type, index
+  if (Array.isArray(resp.schema) && resp.schema.length > 0) {
+    // Sort by index to ensure correct order
+    return resp.schema
+      .slice()
+      .sort((a, b) => (a.index ?? 0) - (b.index ?? 0))
+      .map(field => field.name);
+  }
+  // Old format: columns array of strings
+  if (Array.isArray(resp.columns)) {
+    return resp.columns;
+  }
+  return [];
+}
+
+/**
  * Compute a stable sorted columns array given a preferred order.
  * Columns in preferredOrder come first by that exact order;
  * others are appended keeping original relative order.
@@ -32,11 +55,12 @@ function objectRowToArray(row, newColumns) {
 
 /**
  * Normalize query response to the preferred column order.
- * @param {{columns: string[], rows: any[], [k:string]: any}} resp
+ * Supports both new format (schema) and old format (columns).
+ * @param {{schema?: {name: string, data_type: string, index: number}[], columns?: string[], rows: any[], [k:string]: any}} resp
  * @param {string[]} preferredOrder
  */
 export function normalizeQueryResponse(resp, preferredOrder) {
-  const currentColumns = Array.isArray(resp.columns) ? resp.columns : [];
+  const currentColumns = getColumnNames(resp);
   const newColumns = sortColumns(currentColumns, preferredOrder);
 
   let newRows = [];
@@ -52,7 +76,18 @@ export function normalizeQueryResponse(resp, preferredOrder) {
     }
   }
 
-  return { ...resp, columns: newColumns, rows: newRows };
+  // Build new schema with updated indices
+  const newSchema = newColumns.map((name, index) => {
+    // Find original field to preserve data_type
+    const original = resp.schema?.find(f => f.name === name);
+    return {
+      name,
+      data_type: original?.data_type ?? 'Text',
+      index
+    };
+  });
+
+  return { ...resp, schema: newSchema, rows: newRows };
 }
 
 // Canonical order for system.tables

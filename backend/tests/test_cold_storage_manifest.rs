@@ -4,7 +4,7 @@
 //! for efficient file selection rather than scanning all files.
 //!
 //! ## Architecture
-//! - ManifestCacheService: L1 (DashMap hot cache) + L2 (RocksDB) cache
+//! - ManifestService: L1 (moka hot cache) + L2 (RocksDB) cache
 //! - ManifestAccessPlanner: Uses manifest segments for file pruning
 //! - Cold storage queries: Should use manifest for file selection
 //!
@@ -84,7 +84,7 @@ async fn test_user_table_cold_storage_uses_manifest() {
     }
 
     // Check manifest cache count before flush
-    let manifest_count_before = server.app_context.manifest_cache_service().count().unwrap();
+    let manifest_count_before = server.app_context.manifest_service().count().unwrap();
     println!(
         "📊 Manifest cache entries before flush: {}",
         manifest_count_before
@@ -102,7 +102,7 @@ async fn test_user_table_cold_storage_uses_manifest() {
     assert!(flush_stats.rows_flushed > 0, "Expected rows to be flushed");
 
     // Check manifest cache count after flush - for a fresh namespace, count should increase
-    let manifest_count_after = server.app_context.manifest_cache_service().count().unwrap();
+    let manifest_count_after = server.app_context.manifest_service().count().unwrap();
     println!(
         "📊 Manifest cache entries after flush: {}",
         manifest_count_after
@@ -200,7 +200,7 @@ async fn test_shared_table_cold_storage_uses_manifest() {
     }
 
     // Check manifest cache count before flush
-    let manifest_count_before = server.app_context.manifest_cache_service().count().unwrap();
+    let manifest_count_before = server.app_context.manifest_service().count().unwrap();
     println!(
         "📊 Manifest cache entries before flush: {}",
         manifest_count_before
@@ -221,7 +221,7 @@ async fn test_shared_table_cold_storage_uses_manifest() {
     );
 
     // Check manifest cache count after flush
-    let manifest_count_after = server.app_context.manifest_cache_service().count().unwrap();
+    let manifest_count_after = server.app_context.manifest_service().count().unwrap();
     println!(
         "📊 Manifest cache entries after flush: {}",
         manifest_count_after

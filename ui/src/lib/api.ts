@@ -96,22 +96,24 @@ export interface SqlRequest {
   namespace?: string;
 }
 
+// Schema field describing a column in the result set
+export interface SchemaField {
+  name: string;
+  data_type: string;
+  index: number;
+}
+
 // Query result alias for hooks
 export interface QueryResult {
-  columns: SqlColumn[];
+  schema: SchemaField[];
   rows: unknown[][];
   row_count: number;
   truncated: boolean;
   execution_time_ms: number;
 }
 
-export interface SqlColumn {
-  name: string;
-  data_type: string;
-}
-
 export interface SqlResponse {
-  columns: SqlColumn[];
+  schema: SchemaField[];
   rows: unknown[][];
   row_count: number;
   truncated: boolean;

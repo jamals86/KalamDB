@@ -107,7 +107,7 @@ impl SharedTableProvider {
     /// **Difference from user tables**: Shared tables have NO user_id partitioning,
     /// so all Parquet files are in the same directory (no subdirectories per user).
     ///
-    /// **Phase 4 (US6, T082-T084)**: Integrated with ManifestCacheService for manifest caching.
+    /// **Phase 4 (US6, T082-T084)**: Integrated with ManifestService for manifest caching.
     /// Logs cache hits/misses and updates last_accessed timestamp. Full query optimization
     /// (batch file pruning based on manifest metadata) implemented in Phase 5 (US2, T119-T123).
     ///
@@ -376,22 +376,20 @@ impl BaseTableProvider<SharedTableRowId, SharedTableRow> for SharedTableProvider
                 }
             }
 
-            // Cold storage check: Only if we have PK values and they weren't found in hot storage
-            // This is still sequential but cold storage is typically the minority of data
-            for pk_str in &pk_values_to_check {
-                if base::pk_exists_in_cold(
-                    &self.core,
-                    self.core.table_id(),
-                    self.core.table_type(),
-                    None, // No user scoping for shared tables
-                    pk_name,
-                    pk_str,
-                )? {
-                    return Err(KalamDbError::AlreadyExists(format!(
-                        "Primary key violation: value '{}' already exists in column '{}'",
-                        pk_str, pk_name
-                    )));
-                }
+            // OPTIMIZED: Batch cold storage check - O(files) instead of O(files × N)
+            // This reads Parquet files ONCE for all PK values instead of N times
+            if let Some(found_pk) = base::pk_exists_batch_in_cold(
+                &self.core,
+                self.core.table_id(),
+                self.core.table_type(),
+                None, // No user scoping for shared tables
+                pk_name,
+                &pk_values_to_check,
+            )? {
+                return Err(KalamDbError::AlreadyExists(format!(
+                    "Primary key violation: value '{}' already exists in column '{}'",
+                    found_pk, pk_name
+                )));
             }
         }
 
