@@ -31,6 +31,7 @@
 pub mod batch_manager;
 pub mod cleanup;
 pub mod error;
+pub mod file_handle_diagnostics;
 pub mod manifest_ops;
 pub mod object_store_factory;
 pub mod object_store_ops;
@@ -68,3 +69,7 @@ pub use parquet_storage_writer::{
     ParquetWriteResult,
 };
 pub use remote_materializer::{materialize_remote_parquet_dir, materialize_remote_parquet_dir_sync};
+pub use file_handle_diagnostics::{
+    FileHandleTracker, FileHandleStats, 
+    record_open, record_close, check_for_leaks, log_stats_summary,
+};

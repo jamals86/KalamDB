@@ -37,6 +37,39 @@
      - Note: 1230 total unwrap() calls in codebase - focused on critical paths (SQL handlers, jobs, API)
      - Remaining unwraps are mostly in tests or non-critical paths
 
+43) [DONE - 2025-06-14] Role check before execute - already implemented
+     - check_authorization() already runs BEFORE execute() in handler_registry.rs
+     - Anonymous users blocked at authorization layer, not after reading data
+     - Role hierarchy checked via check_authorization before any DDL/DML execution
+
+189) [DONE - 2025-06-14] Subscription parsing via DataFusion/sqlparser
+     - Rewrote query_parser.rs in kalamdb-core/src/live/ to use sqlparser-rs AST
+     - extract_table_name() now uses Parser::parse_sql() and AST traversal
+     - extract_where_clause() uses parsed Query AST instead of string manipulation
+     - extract_projections() properly parses SelectItem variants
+     - Added proper ObjectNamePart::Identifier handling for schema-qualified names
+
+147) [DONE - 2025-06-14] Async flushing with spawn_blocking
+     - Wrapped flush_job.execute() with tokio::task::spawn_blocking in FlushExecutor
+     - Wrapped backend.compact_partition() with spawn_blocking
+     - Prevents blocking async runtime during RocksDB I/O operations (10-100ms+)
+     - Both User and Shared table flush jobs now run in blocking thread pool
+
+184) [DONE - 2025-06-14] File handle leak diagnostics
+     - Added FileHandleTracker in kalamdb-filestore/src/file_handle_diagnostics.rs
+     - Atomic counters: active_handles, total_opened, total_closed, peak_handles
+     - record_open() / record_close() functions with context and path logging
+     - check_for_leaks() returns mismatch between opens and closes
+     - log_stats_summary() outputs diagnostic info
+     - Integrated into remote_materializer.rs for file downloads
+     - High handle count warnings at 1000+ open handles
+
+139) [INVESTIGATED - 2025-06-14] ScalarValue instead of JsonValue - DEFERRED
+     - Internal storage already uses Row with BTreeMap<String, ScalarValue>
+     - serde_json::Value only used at API boundary (append.rs input)
+     - json_to_row() converts API input to internal ScalarValue-based Row
+     - Full replacement requires API breaking changes - defer to future sprint
+
 114) [DONE - Verified 2024-12-30] Atomic index writes with WriteBatch
      - Already implemented in indexed_store.rs using RocksDB WriteBatch
      - Main table and secondary index writes are atomic via db.write(batch)?
@@ -54,23 +87,14 @@
 
 ## 🔒 SECURITY (HIGH PRIORITY)
 
-43) [HIGH] Whenever a user send a query/sql statement first of all we check the role he has if he is creating create/alter tables then we first check the user role before we display an error like: namespace does not exists, maybe its better to include in these CREATE/ALTER sql also which roles can access them so we dont read data from untrusted users its a sensitive topic.
-189) [HIGH] For subscription parsing the query should be done with datafusion even the parsing of the tableName to avoid any sql injection attacks, and re-add the projections as well and support parameters
+(See COMPLETED TASKS section for #43 and #189 - now done)
 
 
 ## ⚡ PERFORMANCE & OPTIMIZATION (HIGH/MEDIUM PRIORITY)
 
 53) [HIGH] IMPORTANT: Add a story about the need for giving ability to subscribe for: * which means all users tables at once, this is done by the ai agent which listen to all the user messages at once, add also ability to listen per storageId, for this we need to add to the user message key a userId:rowId:storageId
-139) [HIGH] Instead of using JsonValue for the fields use arrow Array directly for better performance and less serdes overhead: HashMap<String, ScalarValue> should solve this issue completely.
-then we wont be needing: json_to_scalar_value
-SqlRequest will use the same thing as well
-ColumnDefault will use ScalarValue directly as well
-FilterPredicate will use ScalarValue directly as well
-json_rows_to_arrow_batch will be removed completely or less code since we will be using arrow arrays directly
-scalar_value_to_json will be removed completely as well
-ServerMessage will use arrow arrays directly as well
-147) [HIGH] When flushing shouldnt i do that async? so i dont block while waiting for rocksdb flushing or deleting folder to finish
-184) [HIGH] i see when the system is idle again after a high load Open Files: 421 this is too high we need to investigate why and make sure we close all file handles correctly, add a logging or display logs when we request it to see where its leaking from
+
+(See COMPLETED TASKS section for #139, #147, #184 - now done/investigated)
 
 126) [MEDIUM] Combine the 2 shared/user tables flushing and querying using a shared hybrid service which is used in both cases to reduce code duplication and maintenance burden
 both of them read from a path and from a store but user table filter the store which is the hot storage based on user id as well

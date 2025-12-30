@@ -10,6 +10,13 @@
 //! - Flush stream table data (StreamTableFlushJob)
 //! - Track flush metrics (rows flushed, files created, bytes written)
 //!
+//! ## Non-Blocking Execution
+//! All flush operations are executed via `tokio::task::spawn_blocking` to avoid
+//! blocking the async runtime. This is critical because:
+//! - RocksDB operations are synchronous and can take 10-100ms+
+//! - Parquet file writes involve I/O that can block
+//! - High flush concurrency could starve the async executor
+//!
 //! ## Parameters Format
 //! ```json
 //! {
@@ -101,9 +108,10 @@ impl JobExecutor for FlushExecutor {
         // let _current_schema_version = table_def.schema_version;
 
         // Execute flush based on table type
+        // Use spawn_blocking to avoid blocking the async runtime during RocksDB I/O
         let result = match table_type {
             TableType::User => {
-                ctx.log_debug("Executing UserTableFlushJob");
+                ctx.log_debug("Executing UserTableFlushJob (non-blocking)");
 
                 // IMPORTANT: Use the per-table UserTableStore (created at table registration)
                 // instead of the generic prefix-only user_table_store() created in AppContext.
@@ -140,12 +148,14 @@ impl JobExecutor for FlushExecutor {
                 )
                 .with_live_query_manager(live_query_manager);
 
-                flush_job
-                    .execute()
+                // Execute in blocking thread pool to avoid starving async runtime
+                tokio::task::spawn_blocking(move || flush_job.execute())
+                    .await
+                    .map_err(|e| KalamDbError::InvalidOperation(format!("Flush task panicked: {}", e)))?
                     .into_kalamdb_error("User table flush failed")?
             }
             TableType::Shared => {
-                ctx.log_debug("Executing SharedTableFlushJob");
+                ctx.log_debug("Executing SharedTableFlushJob (non-blocking)");
 
                 // Get the SharedTableProvider from the schema registry to reuse the cached store
                 let provider_arc = schema_registry.get_provider(&table_id).ok_or_else(|| {
@@ -176,8 +186,10 @@ impl JobExecutor for FlushExecutor {
                 )
                 .with_live_query_manager(live_query_manager);
 
-                flush_job
-                    .execute()
+                // Execute in blocking thread pool to avoid starving async runtime
+                tokio::task::spawn_blocking(move || flush_job.execute())
+                    .await
+                    .map_err(|e| KalamDbError::InvalidOperation(format!("Flush task panicked: {}", e)))?
                     .into_kalamdb_error("Shared table flush failed")?
             }
             TableType::Stream => {
@@ -239,7 +251,14 @@ impl JobExecutor for FlushExecutor {
         use kalamdb_store::storage_trait::Partition;
         let partition = Partition::new(partition_name);
         
-        match backend.compact_partition(&partition) {
+        // Run RocksDB compaction in blocking thread pool to avoid blocking async runtime
+        let compact_result = tokio::task::spawn_blocking(move || {
+            backend.compact_partition(&partition)
+        })
+        .await
+        .map_err(|e| KalamDbError::InvalidOperation(format!("Compaction task panicked: {}", e)))?;
+
+        match compact_result {
             Ok(()) => {
                 ctx.log_debug("RocksDB compaction completed successfully");
             }
