@@ -40,8 +40,14 @@ impl HealthMonitor {
         let mut sys = System::new_all();
         sys.refresh_all();
 
-        // Get process info
-        let pid = sysinfo::get_current_pid().unwrap();
+        // Get process info - use ok() to handle potential failures gracefully
+        let pid = match sysinfo::get_current_pid() {
+            Ok(pid) => pid,
+            Err(e) => {
+                log::warn!("Failed to get current process ID for health metrics: {}", e);
+                return Ok(()); // Continue without metrics rather than failing
+            }
+        };
         let process = sys.process(pid);
 
         // Get job statistics

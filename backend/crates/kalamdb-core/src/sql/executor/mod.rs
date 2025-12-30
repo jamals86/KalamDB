@@ -78,6 +78,21 @@ impl SqlExecutor {
         _metadata: Option<&ExecutionMetadata>,
         params: Vec<ScalarValue>,
     ) -> Result<ExecutionResult, KalamDbError> {
+        // Step 0: Check SQL query length to prevent DoS attacks
+        // Most legitimate queries are under 10KB, we allow up to 1MB
+        if sql.len() > kalamdb_commons::constants::MAX_SQL_QUERY_LENGTH {
+            log::warn!(
+                "❌ SQL query rejected: length {} bytes exceeds maximum {} bytes",
+                sql.len(),
+                kalamdb_commons::constants::MAX_SQL_QUERY_LENGTH
+            );
+            return Err(KalamDbError::InvalidSql(format!(
+                "SQL query too long: {} bytes (maximum {} bytes)",
+                sql.len(),
+                kalamdb_commons::constants::MAX_SQL_QUERY_LENGTH
+            )));
+        }
+
         // Step 1: Classify, authorize, and parse statement in one pass
         // Prioritize SELECT/DML checks as they represent 99% of queries
         // Authorization happens before parsing for fail-fast behavior

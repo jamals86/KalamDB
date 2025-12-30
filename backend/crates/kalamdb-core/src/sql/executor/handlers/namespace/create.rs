@@ -125,6 +125,11 @@ impl TypedStatementHandler<CreateNamespaceStatement> for CreateNamespaceHandler 
         _statement: &CreateNamespaceStatement,
         context: &ExecutionContext,
     ) -> Result<(), KalamDbError> {
+        use crate::sql::executor::helpers::guards::block_anonymous_write;
+        
+        // T050: Block anonymous users from DDL operations
+        block_anonymous_write(context, "CREATE NAMESPACE")?;
+        
         require_admin(context, "create namespace")
     }
 }

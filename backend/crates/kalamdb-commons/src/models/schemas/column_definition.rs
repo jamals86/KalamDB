@@ -4,18 +4,25 @@ use crate::models::datatypes::KalamDataType;
 use crate::models::schemas::column_default::ColumnDefault;
 use serde::{Deserialize, Serialize};
 
-/// Complete definition of a table column
+/// Complete definition of a table column.
+/// Fields ordered for optimal memory alignment (8-byte types first).
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct ColumnDefinition {
     /// Column name (case-sensitive)
     pub column_name: String,
 
-    /// Ordinal position in table (1-indexed, sequential)
-    /// Determines SELECT * column ordering
-    pub ordinal_position: u32,
+    /// Optional column comment/description
+    pub column_comment: Option<String>,
 
     /// Data type
     pub data_type: KalamDataType,
+
+    /// Default value specification
+    pub default_value: ColumnDefault,
+
+    /// Ordinal position in table (1-indexed, sequential)
+    /// Determines SELECT * column ordering
+    pub ordinal_position: u32,
 
     /// Whether column can contain NULL values
     pub is_nullable: bool,
@@ -25,12 +32,6 @@ pub struct ColumnDefinition {
 
     /// Whether this column is part of the partition key (for distributed tables)
     pub is_partition_key: bool,
-
-    /// Default value specification
-    pub default_value: ColumnDefault,
-
-    /// Optional column comment/description
-    pub column_comment: Option<String>,
 }
 
 impl ColumnDefinition {

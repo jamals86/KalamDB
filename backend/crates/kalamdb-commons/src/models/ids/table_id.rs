@@ -21,6 +21,7 @@ pub struct TableId {
 
 impl TableId {
     /// Create a new TableId from namespace ID and table name
+    #[inline]
     pub fn new(namespace_id: NamespaceId, table_name: TableName) -> Self {
         Self {
             namespace_id,
@@ -29,16 +30,19 @@ impl TableId {
     }
 
     /// Get the namespace ID component
+    #[inline]
     pub fn namespace_id(&self) -> &NamespaceId {
         &self.namespace_id
     }
 
     /// Get the table name component
+    #[inline]
     pub fn table_name(&self) -> &TableName {
         &self.table_name
     }
 
     /// Create from string components
+    #[inline]
     pub fn from_strings(namespace_id: &str, table_name: &str) -> Self {
         Self {
             namespace_id: NamespaceId::new(namespace_id),
@@ -47,11 +51,14 @@ impl TableId {
     }
 
     /// Format as bytes for storage: "{namespace_id}:{table_name}"
+    #[inline]
     pub fn as_storage_key(&self) -> Vec<u8> {
-        let mut key = Vec::new();
-        key.extend_from_slice(self.namespace_id.as_str().as_bytes());
+        let ns = self.namespace_id.as_str();
+        let tn = self.table_name.as_str();
+        let mut key = Vec::with_capacity(ns.len() + 1 + tn.len());
+        key.extend_from_slice(ns.as_bytes());
         key.push(b':');
-        key.extend_from_slice(self.table_name.as_str().as_bytes());
+        key.extend_from_slice(tn.as_bytes());
         key
     }
 

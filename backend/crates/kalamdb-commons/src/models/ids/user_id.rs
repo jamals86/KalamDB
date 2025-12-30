@@ -18,26 +18,31 @@ pub struct UserId(String);
 
 impl UserId {
     /// Creates a new UserId from a string.
+    #[inline]
     pub fn new(id: impl Into<String>) -> Self {
         Self(id.into())
     }
 
     /// Returns the user ID as a string slice.
+    #[inline]
     pub fn as_str(&self) -> &str {
         &self.0
     }
 
     /// Consumes the wrapper and returns the inner String.
+    #[inline]
     pub fn into_string(self) -> String {
         self.0
     }
 
     /// Creates a default 'root' user ID.
+    #[inline]
     pub fn root() -> Self {
         Self(AuthConstants::DEFAULT_ROOT_USER_ID.to_string())
     }
 
     /// Is admin user?
+    #[inline]
     pub fn is_admin(&self) -> bool {
         self.as_str() == AuthConstants::DEFAULT_ROOT_USER_ID || self.as_str() == "sys_root"
     }

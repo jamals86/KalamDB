@@ -59,31 +59,38 @@ use serde::{Deserialize, Serialize};
 ///     priority: None,
 /// };
 /// ```
+/// Job struct with fields ordered for optimal memory alignment.
+/// 8-byte aligned fields first (i64, pointers/String), then smaller types.
+/// This minimizes struct padding and improves cache efficiency.
 #[derive(Serialize, Deserialize, Encode, Decode, Clone, Debug, PartialEq)]
 pub struct Job {
+    // 8-byte aligned fields first (i64, Option<i64>, String/pointer types)
+    pub created_at: i64,            // Unix timestamp in milliseconds
+    pub updated_at: i64,            // Unix timestamp in milliseconds
+    pub started_at: Option<i64>,    // Unix timestamp in milliseconds
+    pub finished_at: Option<i64>,   // Unix timestamp in milliseconds
+    pub memory_used: Option<i64>,   // bytes
+    pub cpu_used: Option<i64>,      // microseconds
     pub job_id: JobId,
-    pub job_type: JobType,
-    pub status: JobStatus,
+    #[bincode(with_serde)]
+    pub node_id: NodeId,
     pub parameters: Option<String>, // JSON object containing namespace_id, table_name, and other params
     pub message: Option<String>,    // Unified field replacing result/error_message
     pub exception_trace: Option<String>, // Full stack trace on failures
     pub idempotency_key: Option<String>, // For preventing duplicate jobs
+    pub queue: Option<String>,      // Queue name (future use)
+    // 4-byte aligned fields (enums, i32)
+    pub priority: Option<i32>,      // Priority value (future use)
+    pub job_type: JobType,
+    pub status: JobStatus,
+    // 1-byte fields last
     pub retry_count: u8,            // Number of retries attempted (default 0)
     pub max_retries: u8,            // Maximum retries allowed (default 3)
-    pub memory_used: Option<i64>,   // bytes
-    pub cpu_used: Option<i64>,      // microseconds
-    pub created_at: i64,            // Unix timestamp in milliseconds
-    pub updated_at: i64,            // Unix timestamp in milliseconds
-    pub started_at: Option<i64>,    // Unix timestamp in milliseconds
-    pub finished_at: Option<i64>,   // Unix timestamp in milliseconds (renamed from completed_at)
-    #[bincode(with_serde)]
-    pub node_id: NodeId,
-    pub queue: Option<String>, // Queue name (future use)
-    pub priority: Option<i32>, // Priority value (future use)
 }
 
 impl Job {
     /// Mark job as cancelled
+    #[inline]
     pub fn cancel(mut self) -> Self {
         let now = chrono::Utc::now().timestamp_millis();
         self.status = JobStatus::Cancelled;
@@ -93,6 +100,7 @@ impl Job {
     }
 
     /// Queue the job (transition from New to Queued)
+    #[inline]
     pub fn queue(mut self) -> Self {
         self.status = JobStatus::Queued;
         self.updated_at = chrono::Utc::now().timestamp_millis();
@@ -100,6 +108,7 @@ impl Job {
     }
 
     /// Start the job (transition to Running)
+    #[inline]
     pub fn start(mut self) -> Self {
         let now = chrono::Utc::now().timestamp_millis();
         self.status = JobStatus::Running;
@@ -109,6 +118,7 @@ impl Job {
     }
 
     /// Check if job can be retried
+    #[inline]
     pub fn can_retry(&self) -> bool {
         self.retry_count < self.max_retries
     }

@@ -7,7 +7,7 @@
 //! (table aliases, column aliases, identifier restrictions, table factors), which
 //! cover the dialect-specific words that cannot safely be used as identifiers.
 
-use crate::constants::SystemColumnNames;
+use crate::constants::{SystemColumnNames, RESERVED_NAMESPACE_NAMES};
 use once_cell::sync::Lazy;
 use sqlparser::keywords::{
     Keyword, ALL_KEYWORDS, ALL_KEYWORDS_INDEX, RESERVED_FOR_COLUMN_ALIAS, RESERVED_FOR_IDENTIFIER,
@@ -15,30 +15,32 @@ use sqlparser::keywords::{
 };
 use std::collections::HashSet;
 
-/// Reserved namespace names that cannot be used by users
+/// Reserved namespace names that cannot be used by users.
+///
+/// This is built from `RESERVED_NAMESPACE_NAMES` constant in `constants.rs`.
+/// Use this for O(1) lookups instead of iterating over the array.
 pub static RESERVED_NAMESPACES: Lazy<HashSet<&'static str>> = Lazy::new(|| {
-    let mut set = HashSet::new();
-    set.insert("system");
-    set.insert("sys");
-    set.insert("root");
-    set.insert("kalamdb");
-    set.insert("kalam");
-    set.insert("main");
-    set.insert("default");
-    set.insert("sql");
-    set.insert("admin");
-    set.insert("internal");
-    set.insert("information_schema");
-    set
+    RESERVED_NAMESPACE_NAMES.iter().copied().collect()
 });
 
 /// Reserved column names that cannot be used by users
 /// These are system columns that are automatically managed
+/// Also includes common system-like column names that could conflict
 pub static RESERVED_COLUMN_NAMES: Lazy<HashSet<&'static str>> = Lazy::new(|| {
     let mut set = HashSet::new();
     // Current system columns
     set.insert(SystemColumnNames::SEQ);
     set.insert(SystemColumnNames::DELETED);
+    // Common system-like column names users might try to use
+    set.insert("_id");
+    set.insert("_row_id");
+    set.insert("_rowid");
+    set.insert("_key");
+    set.insert("_updated");
+    set.insert("_created");
+    set.insert("_timestamp");
+    set.insert("_version");
+    set.insert("_hash");
     set
 });
 
@@ -188,6 +190,12 @@ pub fn validate_table_name(name: &str) -> Result<(), ValidationError> {
 /// - Cannot be a reserved column name
 /// - Cannot be a reserved SQL keyword
 pub fn validate_column_name(name: &str) -> Result<(), ValidationError> {
+    // Check reserved column names first (more specific error)
+    let lowercase = name.to_lowercase();
+    if RESERVED_COLUMN_NAMES.contains(lowercase.as_str()) {
+        return Err(ValidationError::ReservedColumnName(name.to_string()));
+    }
+    
     validate_identifier_base(name)?;
     ensure_not_reserved_sql_keyword(name)?;
     Ok(())
@@ -277,6 +285,21 @@ mod tests {
         assert_eq!(
             validate_namespace_name("SYSTEM"),
             Err(ValidationError::ReservedNamespace("SYSTEM".to_string()))
+        );
+        // New reserved namespaces from constants
+        assert_eq!(
+            validate_namespace_name("pg_catalog"),
+            Err(ValidationError::ReservedNamespace("pg_catalog".to_string()))
+        );
+        assert_eq!(
+            validate_namespace_name("datafusion"),
+            Err(ValidationError::ReservedNamespace("datafusion".to_string()))
+        );
+        assert_eq!(
+            validate_namespace_name("information_schema"),
+            Err(ValidationError::ReservedNamespace(
+                "information_schema".to_string()
+            ))
         );
     }
 
@@ -376,6 +399,48 @@ mod tests {
     #[test]
     fn test_empty_name() {
         assert_eq!(validate_column_name(""), Err(ValidationError::Empty));
+    }
+
+    #[test]
+    fn test_reserved_column_names() {
+        // System columns should be rejected
+        assert_eq!(
+            validate_column_name("_seq"),
+            Err(ValidationError::ReservedColumnName("_seq".to_string()))
+        );
+        assert_eq!(
+            validate_column_name("_deleted"),
+            Err(ValidationError::ReservedColumnName("_deleted".to_string()))
+        );
+        
+        // Common system-like column names should be rejected
+        assert_eq!(
+            validate_column_name("_id"),
+            Err(ValidationError::ReservedColumnName("_id".to_string()))
+        );
+        assert_eq!(
+            validate_column_name("_row_id"),
+            Err(ValidationError::ReservedColumnName("_row_id".to_string()))
+        );
+        assert_eq!(
+            validate_column_name("_updated"),
+            Err(ValidationError::ReservedColumnName("_updated".to_string()))
+        );
+        
+        // Case-insensitive check
+        assert_eq!(
+            validate_column_name("_SEQ"),
+            Err(ValidationError::ReservedColumnName("_SEQ".to_string()))
+        );
+        assert_eq!(
+            validate_column_name("_ID"),
+            Err(ValidationError::ReservedColumnName("_ID".to_string()))
+        );
+        
+        // Valid user columns should pass
+        assert!(validate_column_name("id").is_ok());
+        assert!(validate_column_name("user_id").is_ok());
+        assert!(validate_column_name("created_at").is_ok());
     }
 
     #[test]

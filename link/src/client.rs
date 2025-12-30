@@ -90,10 +90,11 @@ impl KalamLinkClient {
     /// Subscribe to real-time changes
     pub async fn subscribe(&self, query: &str) -> Result<SubscriptionManager> {
         // Generate a unique subscription ID using timestamp + random component
-        let subscription_id = format!("sub_{}", std::time::SystemTime::now()
+        let nanos = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
-            .unwrap()
-            .as_nanos());
+            .unwrap_or_default()
+            .as_nanos();
+        let subscription_id = format!("sub_{}", nanos);
         self.subscribe_with_config(SubscriptionConfig::new(subscription_id, query))
             .await
     }

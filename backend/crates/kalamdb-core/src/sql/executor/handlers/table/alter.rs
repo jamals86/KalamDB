@@ -419,6 +419,11 @@ impl TypedStatementHandler<AlterTableStatement> for AlterTableHandler {
         statement: &AlterTableStatement,
         context: &ExecutionContext,
     ) -> Result<(), KalamDbError> {
+        use crate::sql::executor::helpers::guards::block_anonymous_write;
+        
+        // T050: Block anonymous users from DDL operations
+        block_anonymous_write(context, "ALTER TABLE")?;
+        
         // Resolve namespace
         let namespace_id = &statement.namespace_id;
         let table_id = TableId::from_strings(namespace_id.as_str(), statement.table_name.as_str());

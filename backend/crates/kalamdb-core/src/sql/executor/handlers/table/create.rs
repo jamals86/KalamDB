@@ -90,6 +90,11 @@ impl TypedStatementHandler<CreateTableStatement> for CreateTableHandler {
         statement: &CreateTableStatement,
         context: &ExecutionContext,
     ) -> Result<(), KalamDbError> {
+        use crate::sql::executor::helpers::guards::block_anonymous_write;
+        
+        // T050: Block anonymous users from DDL operations
+        block_anonymous_write(context, "CREATE TABLE")?;
+        
         // Authorization check is handled inside table_creation helpers
         // (they call can_create_table for each table type)
         // This allows unified error messages

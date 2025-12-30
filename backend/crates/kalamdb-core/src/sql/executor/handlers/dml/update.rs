@@ -306,11 +306,16 @@ impl StatementHandler for UpdateHandler {
         statement: &SqlStatement,
         context: &ExecutionContext,
     ) -> Result<(), KalamDbError> {
+        use crate::sql::executor::helpers::guards::block_anonymous_write;
+        
         if !matches!(statement.kind(), SqlStatementKind::Update(_)) {
             return Err(KalamDbError::InvalidOperation(
                 "UpdateHandler received wrong statement kind".into(),
             ));
         }
+
+        // T050: Block anonymous users from write operations
+        block_anonymous_write(context, "UPDATE")?;
 
         // T152: Validate AS USER authorization - only Service/Dba/System can use AS USER (Phase 7)
         if statement.as_user_id().is_some() {

@@ -569,6 +569,11 @@ impl TypedStatementHandler<DropTableStatement> for DropTableHandler {
         _statement: &DropTableStatement,
         context: &ExecutionContext,
     ) -> Result<(), KalamDbError> {
+        use crate::sql::executor::helpers::guards::block_anonymous_write;
+        
+        // T050: Block anonymous users from DDL operations
+        block_anonymous_write(context, "DROP TABLE")?;
+        
         // Coarse auth gate (fine-grained check performed in execute using actual table type)
         if context.is_system() || context.is_admin() {
             return Ok(());

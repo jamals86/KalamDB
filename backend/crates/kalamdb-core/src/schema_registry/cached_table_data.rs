@@ -200,11 +200,13 @@ impl CachedTableData {
         }
     }
 
+    #[inline]
     pub fn touch_at(&self, timestamp_ms: u64) {
         self.last_accessed_ms
             .store(timestamp_ms, Ordering::Relaxed);
     }
 
+    #[inline]
     pub fn last_accessed_ms(&self) -> u64 {
         self.last_accessed_ms.load(Ordering::Relaxed)
     }

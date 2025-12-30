@@ -16,16 +16,19 @@ pub struct TableName(String);
 
 impl TableName {
     /// Creates a new TableName from a string.
+    #[inline]
     pub fn new(name: impl Into<String>) -> Self {
         Self(name.into())
     }
 
     /// Returns the table name as a string slice.
+    #[inline]
     pub fn as_str(&self) -> &str {
         &self.0
     }
 
     /// Consumes the wrapper and returns the inner String.
+    #[inline]
     pub fn into_string(self) -> String {
         self.0
     }

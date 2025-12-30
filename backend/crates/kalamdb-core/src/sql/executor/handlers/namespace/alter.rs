@@ -80,6 +80,11 @@ impl TypedStatementHandler<AlterNamespaceStatement> for AlterNamespaceHandler {
         _statement: &AlterNamespaceStatement,
         context: &ExecutionContext,
     ) -> Result<(), KalamDbError> {
+        use crate::sql::executor::helpers::guards::block_anonymous_write;
+        
+        // T050: Block anonymous users from DDL operations
+        block_anonymous_write(context, "ALTER NAMESPACE")?;
+        
         require_admin(context, "alter namespace")
     }
 }

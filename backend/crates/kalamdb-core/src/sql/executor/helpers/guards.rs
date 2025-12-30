@@ -87,11 +87,42 @@ pub fn require_admin(context: &ExecutionContext, action: &str) -> Result<(), Kal
     Ok(())
 }
 
+/// Block write operations (CREATE, ALTER, DROP, INSERT, UPDATE, DELETE) for anonymous users.
+///
+/// Anonymous users can only SELECT from public tables.
+/// Any attempt to modify data will result in an Unauthorized error.
+///
+/// # Arguments
+/// * `context` - The execution context containing user information
+/// * `operation` - The operation being attempted (e.g., "CREATE TABLE", "INSERT")
+///
+/// # Returns
+/// * `Ok(())` if user is authenticated (not anonymous)
+/// * `Err(KalamDbError::Unauthorized)` if user is anonymous
+///
+/// # Example
+/// ```ignore
+/// block_anonymous_write(context, "CREATE TABLE")?;
+/// ```
+pub fn block_anonymous_write(context: &ExecutionContext, operation: &str) -> Result<(), KalamDbError> {
+    if context.is_anonymous() {
+        log::warn!(
+            "❌ {} blocked: Anonymous users cannot perform write operations",
+            operation
+        );
+        return Err(KalamDbError::Unauthorized(
+            "Anonymous users can only SELECT from public tables. Please authenticate to perform write operations.".to_string()
+        ));
+    }
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use kalamdb_commons::models::UserId;
     use kalamdb_commons::Role;
+    use std::sync::Arc;
 
     fn create_context(role: Role) -> ExecutionContext {
         ExecutionContext::new(
@@ -136,5 +167,34 @@ mod tests {
 
         let service_ctx = create_context(Role::Service);
         assert!(require_admin(&service_ctx, "drop namespace").is_err());
+    }
+
+    fn create_anonymous_context() -> ExecutionContext {
+        ExecutionContext::anonymous(Arc::new(datafusion::prelude::SessionContext::new()))
+    }
+
+    #[test]
+    fn test_block_anonymous_write() {
+        // Authenticated users should pass
+        let user_ctx = create_context(Role::User);
+        assert!(block_anonymous_write(&user_ctx, "CREATE TABLE").is_ok());
+
+        let service_ctx = create_context(Role::Service);
+        assert!(block_anonymous_write(&service_ctx, "INSERT").is_ok());
+
+        let dba_ctx = create_context(Role::Dba);
+        assert!(block_anonymous_write(&dba_ctx, "UPDATE").is_ok());
+
+        // Anonymous users should be blocked
+        let anon_ctx = create_anonymous_context();
+        let result = block_anonymous_write(&anon_ctx, "CREATE TABLE");
+        assert!(result.is_err());
+        assert!(result.unwrap_err().to_string().contains("Anonymous users"));
+
+        let result = block_anonymous_write(&anon_ctx, "INSERT");
+        assert!(result.is_err());
+
+        let result = block_anonymous_write(&anon_ctx, "DELETE");
+        assert!(result.is_err());
     }
 }

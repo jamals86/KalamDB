@@ -1,22 +1,60 @@
 # KalamDB Tasks & Notes
 
+## ✅ COMPLETED TASKS
+
+50) [DONE - 2024-12-30] Anonymous user restrictions - block write operations
+     - Added ANONYMOUS_USER_ID constant to constants.rs
+     - Added ExecutionContext::is_anonymous() method
+     - Added block_anonymous_write() guard function in guards.rs
+     - Integrated into all DDL handlers: CREATE/ALTER/DROP TABLE, CREATE/ALTER/DROP NAMESPACE
+     - Integrated into all DML handlers: INSERT, UPDATE, DELETE
+     - Anonymous users can only SELECT from public tables
+
+55) [DONE - 2024-12-30] SQL query length limit to prevent DoS attacks
+     - Added MAX_SQL_QUERY_LENGTH constant (1MB) to constants.rs
+     - Enforced at SQL executor entry point before parsing
+     - Returns clear error: "SQL query too long: X bytes (maximum Y bytes)"
+
+151) [DONE - 2024-12-30] Reserved column names and naming conventions
+     - Expanded RESERVED_COLUMN_NAMES to include: _seq, _deleted, _id, _row_id, _rowid, _key, _updated, _created, _timestamp, _version, _hash
+     - validate_column_name() now checks against reserved names (case-insensitive)
+     - Existing validation already blocks: underscore prefix, numbers prefix, spaces, special chars
+     - Added comprehensive unit tests for reserved column name validation
+
+108) [DONE - 2024-12-30] Prevent creating namespace with reserved names (system/sys/root/kalamdb/kalam/main/default/sql etc)
+     - Added RESERVED_NAMESPACE_NAMES constant to constants.rs
+     - Added NamespaceId::is_reserved() method for case-insensitive checking
+     - Validation already enforced in CREATE NAMESPACE handler via Namespace::validate_name()
+
+99) [DONE - 2024-12-30] Centralize NodeId usage - already implemented
+     - NodeId is loaded from config.server.node_id in lifecycle.rs
+     - Stored in AppContext and accessible via app_context.node_id()
+     - All production code uses centralized NodeId (test code uses hardcoded values which is acceptable)
+
+12) [PARTIALLY DONE - 2024-12-30] Replace unwrap()/expect() with proper error handling
+     - Fixed health_monitor.rs: get_current_pid().unwrap() -> proper error handling
+     - Fixed flush_table.rs: table_def.unwrap() pattern after is_none() check
+     - Note: 1230 total unwrap() calls in codebase - focused on critical paths (SQL handlers, jobs, API)
+     - Remaining unwraps are mostly in tests or non-critical paths
+
+114) [DONE - Verified 2024-12-30] Atomic index writes with WriteBatch
+     - Already implemented in indexed_store.rs using RocksDB WriteBatch
+     - Main table and secondary index writes are atomic via db.write(batch)?
+
+183) [DONE - Verified 2024-12-30] WebSocket payload size limits
+     - max_ws_message_size config (default 1MB) in SecuritySettings
+     - max_ws_messages_per_second rate limiting (default 50/sec)
+     - Configurable via server.toml [security] section
+
+187) [DONE - Verified 2024-12-30] Parameterized queries in SDK
+     - Rust client: execute_query(sql, params, namespace_id) with $1, $2 placeholders
+     - WASM client: queryWithParams() method
+     - TypeScript SDK: wraps WASM client properly
+     - Backend ParameterLimits validation (max 50 params, 512KB each)
+
 ## 🔒 SECURITY (HIGH PRIORITY)
 
 43) [HIGH] Whenever a user send a query/sql statement first of all we check the role he has if he is creating create/alter tables then we first check the user role before we display an error like: namespace does not exists, maybe its better to include in these CREATE/ALTER sql also which roles can access them so we dont read data from untrusted users its a sensitive topic.
-50) [HIGH] anonymous user shouldnt be allowed to create tables or do anything except select from public tables
-55) [HIGH] Check the queries coming and scan for vulnerability limit the string content length
-108) [HIGH] Prevent creating namespace with names like: sys/system/root/kalamdb/kalam/main/default/sql and name these as SYSTEM_RESERVED_NAMES, also add function to Namespaceid.isSystem() to check if the namespace is a system one
-114) [HIGH] Make sure when we are writing to a table with secondary index we do it in a transaction style like this:
-Transaction:
-  1️⃣ Insert actual value into main table (or CF)
-  2️⃣ Insert corresponding key/value into secondary index CF
-  3️⃣ Commit atomically
-151) [HIGH] Add field and tablename naming convention and system reserved words like you can't create namespace with name system/sys/root/kalamdb/main/default etc or field names with _row_id/_id/_updated etc or anything which starts with _ or spaces or special characters
-Create a validation function to be used in create/alter table for namespace/table/column names
-The reserved words should be in commons in one place for the whole codebase to refer to it from one place only
-Also make sure we dont add the "id" column as we used to do before, we rely solely on _seq system column for uniqueness and rely on the user's own fields adding
-183) [HIGH] in WebSocketSession limit the size of the request coming from the client to avoid dos attacks
-187) [HIGH] Add to the link libr and the sdk an ability to pass a query with parameters to avoid sql injection attacks and support caching of the sql in the backend
 189) [HIGH] For subscription parsing the query should be done with datafusion even the parsing of the tableName to avoid any sql injection attacks, and re-add the projections as well and support parameters
 
 
@@ -48,7 +86,6 @@ both of them read from a path and from a store but user table filter the store w
     5) All error logic will be checked in the compiler, it should be optomized as much as possible
     6) We can get tableid and also namespaceId/tablename so whenever we are calling it we can get whatever method we need instead of always combining or separating it to fit
     7) Make sure manifest.json file should be next to the other parquet files in the same folder
-186) [MEDIUM] delete_by_connection_id_async should use an index in live_queries table instead of scanning all the rows to find the matching connection_id
 195) [MEDIUM] we should always have a default order by column so we always have the same vlues returned in the same order, this is important for pagination as well
 205) [MEDIUM] Add test which check having like 100 parquet batches per shared table and having manifest file has 100 segments and test the performance
 
@@ -72,9 +109,7 @@ both of them read from a path and from a store but user table filter the store w
 8) [LOW] Check where we use AppContext::get() multiple times in the same struct and make it a member of the struct instead, or if the code already have AppContext as a member use it directly
 10) [LOW] Use todo!() instead of unimplemented!() where needed
 11) [LOW] Remove all commented code across the codebase
-13) [LOW] make sure "_seq" and "_deleted" we use the enums statics instead of strings
 48) [LOW] make sure we use TableAccess
-85) [LOW] Jobs model add NamespaceId type
 86) [LOW] Make node_id: String, into NodeId type
 97) [LOW] check if we have duplicates backend/crates/kalamdb-commons/src/constants.rs and backend/crates/kalamdb-commons/src/system_tables.rs both have system table names defined
 100) [LOW] JobId need to be shorter its now using timestamp and uuid which is too long, we can use namespace-table-timestamp or even a snowflake id
