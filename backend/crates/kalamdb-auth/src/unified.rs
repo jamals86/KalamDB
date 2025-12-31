@@ -405,8 +405,10 @@ struct JwtConfig {
 }
 
 static JWT_CONFIG: Lazy<JwtConfig> = Lazy::new(|| {
+    // Use centralized default from kalamdb-commons to ensure consistency
+    // The server startup validates that insecure defaults are not used in production
     let secret = std::env::var("KALAMDB_JWT_SECRET")
-        .unwrap_or_else(|_| "kalamdb-dev-secret-key-change-in-production".to_string());
+        .unwrap_or_else(|_| kalamdb_commons::config::defaults::default_auth_jwt_secret());
     // Default trusted issuer is "kalamdb" (matching KALAMDB_ISSUER in jwt_auth.rs)
     // Additional issuers can be added via KALAMDB_JWT_TRUSTED_ISSUERS env var
     let trusted = std::env::var("KALAMDB_JWT_TRUSTED_ISSUERS")

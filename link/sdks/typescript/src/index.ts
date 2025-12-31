@@ -1,5 +1,5 @@
 /**
- * @kalamdb/client - Official TypeScript/JavaScript client for KalamDB
+ * kalam-link - Official TypeScript/JavaScript client for KalamDB
  * 
  * This package provides a type-safe wrapper around the KalamDB WASM bindings
  * for use in Node.js and browser environments.
@@ -13,7 +13,7 @@
  * 
  * @example
  * ```typescript
- * import { createClient, Auth } from '@kalamdb/client';
+ * import { createClient, Auth } from 'kalam-link';
  * 
  * // Basic Auth (username/password)
  * const client = createClient({
@@ -335,7 +335,7 @@ function isAuthOptions(options: ClientOptions): options is ClientOptionsWithAuth
  * @example
  * ```typescript
  * // New API with type-safe auth (recommended)
- * import { createClient, Auth } from '@kalamdb/client';
+ * import { createClient, Auth } from 'kalam-link';
  * 
  * const client = createClient({
  *   url: 'http://localhost:8080',
@@ -393,7 +393,7 @@ export class KalamDBClient {
    * 
    * @example
    * ```typescript
-   * import { KalamDBClient, Auth } from '@kalamdb/client';
+  * import { KalamDBClient, Auth } from 'kalam-link';
    * 
    * const client = new KalamDBClient({
    *   url: 'http://localhost:8080',
@@ -957,7 +957,7 @@ export class KalamDBClient {
  * 
  * @example
  * ```typescript
- * import { createClient, Auth } from '@kalamdb/client';
+ * import { createClient, Auth } from 'kalam-link';
  * 
  * // New type-safe API (recommended)
  * const client = createClient({

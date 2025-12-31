@@ -72,12 +72,22 @@ impl SubscriptionService {
         projections: Option<Vec<String>>,
         batch_size: usize,
     ) -> Result<LiveQueryId, KalamDbError> {
-        // Read connection info from state
+        // Read connection info from state and check subscription limit
         let (connection_id, user_id, notification_tx) = {
             let state = connection_state.read();
             let user_id = state.user_id.clone().ok_or_else(|| {
                 KalamDbError::InvalidOperation("Connection not authenticated".to_string())
             })?;
+            
+            // Prevent DoS via excessive subscriptions per connection
+            const MAX_SUBSCRIPTIONS_PER_CONNECTION: usize = 100;
+            if state.subscriptions.len() >= MAX_SUBSCRIPTIONS_PER_CONNECTION {
+                return Err(KalamDbError::InvalidOperation(format!(
+                    "Maximum subscriptions ({}) per connection exceeded",
+                    MAX_SUBSCRIPTIONS_PER_CONNECTION
+                )));
+            }
+            
             (state.connection_id.clone(), user_id, state.notification_tx.clone())
         };
 

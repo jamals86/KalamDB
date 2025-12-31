@@ -83,14 +83,6 @@ impl UserTableFlushJob {
         self
     }
 
-    fn namespace_id(&self) -> &kalamdb_commons::NamespaceId {
-        self.table_id.namespace_id()
-    }
-
-    fn table_name(&self) -> &kalamdb_commons::TableName {
-        self.table_id.table_name()
-    }
-
     /// Get current schema version for the table
     fn get_schema_version(&self) -> u32 {
         self.unified_cache
@@ -128,11 +120,10 @@ impl UserTableFlushJob {
 
         let rows_count = rows.len();
         log::debug!(
-            "💾 Flushing {} rows for user {} (table={}.{})",
+            "💾 Flushing {} rows for user {} (table={})",
             rows_count,
             user_id,
-            self.namespace_id().as_str(),
-            self.table_name().as_str()
+            self.table_id
         );
 
         // Convert rows to RecordBatch
@@ -289,9 +280,8 @@ impl UserTableFlushJob {
 impl TableFlush for UserTableFlushJob {
     fn execute(&self) -> Result<FlushJobResult, KalamDbError> {
         log::debug!(
-            "🔄 Starting user table flush: table={}.{}, partition={}",
-            self.namespace_id().as_str(),
-            self.table_name().as_str(),
+            "🔄 Starting user table flush: table={}, partition={}",
+            self.table_id,
             self.store.partition()
         );
 
@@ -319,9 +309,8 @@ impl TableFlush for UserTableFlushJob {
                 .scan_limited_with_prefix_and_start(None, cursor.as_deref(), config::BATCH_SIZE)
                 .map_err(|e| {
                     log::error!(
-                        "❌ Failed to scan table={}.{}: {}",
-                        self.namespace_id().as_str(),
-                        self.table_name().as_str(),
+                        "❌ Failed to scan table={}: {}",
+                        self.table_id,
                         e
                     );
                     KalamDbError::Other(format!("Failed to scan table: {}", e))
@@ -424,7 +413,7 @@ impl TableFlush for UserTableFlushJob {
         }
 
         // Log dedup statistics
-        stats.log_summary(self.namespace_id().as_str(), self.table_name().as_str());
+        stats.log_summary(&self.table_id.to_string());
         let rows_to_flush = rows_by_user.values().map(|v| v.len()).sum::<usize>();
         log::debug!(
             "📊 [FLUSH USER] Partitioned into {} users, {} rows to flush",
@@ -435,9 +424,8 @@ impl TableFlush for UserTableFlushJob {
         // If no rows to flush, return early
         if rows_by_user.is_empty() {
             log::debug!(
-                "⚠️  No rows to flush for user table={}.{} (empty table or all deleted)",
-                self.namespace_id().as_str(),
-                self.table_name().as_str()
+                "⚠️  No rows to flush for user table={} (empty table or all deleted)",
+                self.table_id
             );
             return Ok(FlushJobResult {
                 rows_flushed: 0,
@@ -507,16 +495,15 @@ impl TableFlush for UserTableFlushJob {
                 error_messages.first().cloned().unwrap_or_else(|| "unknown error".to_string())
             );
             log::error!(
-                "❌ User table flush failed: table={}.{} — {}",
-                self.namespace_id().as_str(),
-                self.table_name().as_str(),
+                "❌ User table flush failed: table={} — {}",
+                self.table_id,
                 summary
             );
             return Err(KalamDbError::Other(summary));
         }
 
-        log::info!("✅ User table flush completed: table={}.{}, rows_flushed={}, users_count={}, parquet_files={}",
-                  self.namespace_id().as_str(), self.table_name().as_str(),
+        log::info!("✅ User table flush completed: table={}, rows_flushed={}, users_count={}, parquet_files={}",
+                  self.table_id,
                   total_rows_flushed, rows_by_user.len(), parquet_files.len());
 
         // Send flush notification if LiveQueryManager configured
@@ -539,11 +526,7 @@ impl TableFlush for UserTableFlushJob {
     }
 
     fn table_identifier(&self) -> String {
-        format!(
-            "{}.{}",
-            self.namespace_id().as_str(),
-            self.table_name().as_str()
-        )
+        self.table_id.full_name()
     }
 
     fn live_query_manager(&self) -> Option<&Arc<LiveQueryManager>> {

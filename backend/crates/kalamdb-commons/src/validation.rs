@@ -319,19 +319,6 @@ mod tests {
     }
 
     #[test]
-    fn test_reserved_column_names() {
-        // All reserved column names start with underscore, so they get caught by StartsWithUnderscore check
-        assert_eq!(
-            validate_column_name(SystemColumnNames::SEQ),
-            Err(ValidationError::StartsWithUnderscore)
-        );
-        assert_eq!(
-            validate_column_name(SystemColumnNames::DELETED),
-            Err(ValidationError::StartsWithUnderscore)
-        );
-    }
-
-    #[test]
     fn test_starts_with_underscore() {
         assert_eq!(
             validate_column_name("_custom"),
@@ -411,6 +398,16 @@ mod tests {
         assert_eq!(
             validate_column_name("_deleted"),
             Err(ValidationError::ReservedColumnName("_deleted".to_string()))
+        );
+        assert_eq!(
+            validate_column_name(SystemColumnNames::SEQ),
+            Err(ValidationError::ReservedColumnName(SystemColumnNames::SEQ.to_string()))
+        );
+        assert_eq!(
+            validate_column_name(SystemColumnNames::DELETED),
+            Err(ValidationError::ReservedColumnName(
+                SystemColumnNames::DELETED.to_string()
+            ))
         );
         
         // Common system-like column names should be rejected

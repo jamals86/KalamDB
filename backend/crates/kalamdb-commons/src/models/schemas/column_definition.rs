@@ -8,7 +8,7 @@ use serde::{Deserialize, Serialize};
 /// Fields ordered for optimal memory alignment (8-byte types first).
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct ColumnDefinition {
-    /// Column name (case-sensitive)
+    /// Column name (case-insensitive, stored as lowercase)
     pub column_name: String,
 
     /// Optional column comment/description
@@ -71,7 +71,7 @@ impl ColumnDefinition {
         column_comment: Option<String>,
     ) -> Self {
         Self {
-            column_name: column_name.into(),
+            column_name: column_name.into().to_lowercase(),
             ordinal_position,
             data_type,
             is_nullable,
@@ -103,7 +103,7 @@ impl ColumnDefinition {
         data_type: KalamDataType,
     ) -> Self {
         Self {
-            column_name: column_name.into(),
+            column_name: column_name.into().to_lowercase(),
             ordinal_position,
             data_type,
             is_nullable: true,
@@ -121,7 +121,7 @@ impl ColumnDefinition {
         data_type: KalamDataType,
     ) -> Self {
         Self {
-            column_name: column_name.into(),
+            column_name: column_name.into().to_lowercase(),
             ordinal_position,
             data_type,
             is_nullable: false, // Primary keys cannot be NULL
@@ -266,5 +266,36 @@ mod tests {
             decode_from_slice(&bytes, config).expect("decode column definition");
 
         assert_eq!(decoded, column);
+    }
+
+    #[test]
+    fn test_column_name_case_insensitive() {
+        // Column names should be normalized to lowercase
+        let col1 = ColumnDefinition::simple("FirstName", 1, KalamDataType::Text);
+        let col2 = ColumnDefinition::simple("firstname", 1, KalamDataType::Text);
+        let col3 = ColumnDefinition::simple("FIRSTNAME", 1, KalamDataType::Text);
+
+        assert_eq!(col1.column_name, "firstname");
+        assert_eq!(col2.column_name, "firstname");
+        assert_eq!(col3.column_name, "firstname");
+        assert_eq!(col1, col2);
+        assert_eq!(col2, col3);
+
+        // primary_key constructor also normalizes
+        let pk = ColumnDefinition::primary_key("UserId", 1, KalamDataType::BigInt);
+        assert_eq!(pk.column_name, "userid");
+
+        // new constructor also normalizes
+        let full = ColumnDefinition::new(
+            "CreatedAt",
+            2,
+            KalamDataType::Timestamp,
+            false,
+            false,
+            false,
+            ColumnDefault::None,
+            None,
+        );
+        assert_eq!(full.column_name, "createdat");
     }
 }

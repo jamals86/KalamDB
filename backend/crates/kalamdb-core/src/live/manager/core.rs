@@ -146,7 +146,7 @@ impl LiveQueryManager {
         let table_def = self
             .schema_registry
             .get_table_definition(&table_id)?
-            .ok_or_else(|| KalamDbError::NotFound(format!("Table not found: {}.{}", namespace, table)))?;
+            .ok_or_else(|| KalamDbError::NotFound(format!("Table not found: {}", table_id)))?;
 
         // Permission check
         let is_admin = user_id.is_admin();

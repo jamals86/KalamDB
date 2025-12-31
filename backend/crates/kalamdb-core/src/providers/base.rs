@@ -86,15 +86,14 @@ pub trait BaseTableProvider<K: StorageKey, V>: Send + Sync + TableProvider {
     /// Get RocksDB column family name (default implementation)
     fn column_family_name(&self) -> String {
         format!(
-            "{}:{}:{}",
+            "{}:{}",
             match <Self as BaseTableProvider<K, V>>::provider_table_type(self) {
                 TableType::User => "user_table",
                 TableType::Shared => "shared_table",
                 TableType::Stream => "stream_table",
                 _ => "table",
             },
-            self.namespace_id().as_str(),
-            self.table_name().as_str()
+            self.table_id() // TableId Display: "namespace:table"
         )
     }
 
@@ -1113,9 +1112,8 @@ where
         // Fast path: Skip uniqueness check if PK is auto-increment
         if crate::pk::PkExistenceChecker::is_auto_increment_pk(&table_def) {
             log::trace!(
-                "[ensure_unique_pk_value] Skipping PK check for {}.{} - PK is auto-increment",
-                table_id.namespace_id().as_str(),
-                table_id.table_name().as_str()
+                "[ensure_unique_pk_value] Skipping PK check for {} - PK is auto-increment",
+                table_id
             );
             return Ok(());
         }
@@ -1159,10 +1157,9 @@ pub fn warn_if_unfiltered_scan(
 ) {
     if filter.is_none() && limit.is_none() {
         log::warn!(
-            "⚠️  [UNFILTERED SCAN] table={}.{} type={} | No filter or limit provided - scanning ALL rows. \
+            "⚠️  [UNFILTERED SCAN] table={} type={} | No filter or limit provided - scanning ALL rows. \
              This may cause performance issues for large tables.",
-            table_id.namespace_id().as_str(),
-            table_id.table_name().as_str(),
+            table_id,
             table_type.as_str()
         );
     }
@@ -1216,10 +1213,9 @@ where
     if let Some(table_def) = provider.app_context().schema_registry().get_table_definition(table_id)? {
         if crate::pk::PkExistenceChecker::is_auto_increment_pk(&table_def) {
             return Err(KalamDbError::InvalidOperation(format!(
-                "Cannot modify auto-increment primary key column '{}' in table {}.{}",
+                "Cannot modify auto-increment primary key column '{}' in table {}",
                 pk_name,
-                table_id.namespace_id().as_str(),
-                table_id.table_name().as_str()
+                table_id
             )));
         }
     }
@@ -1239,11 +1235,10 @@ where
     }
 
     log::trace!(
-        "[validate_pk_update] PK change validated: {} -> {} for {}.{}",
+        "[validate_pk_update] PK change validated: {} -> {} for {}",
         current_pk_value,
         new_pk_str,
-        table_id.namespace_id().as_str(),
-        table_id.table_name().as_str()
+        table_id
     );
 
     Ok(())

@@ -131,9 +131,8 @@ impl PkExistenceChecker {
         // Step 1: Check if PK is auto-increment
         if Self::is_auto_increment_pk(table_def) {
             log::trace!(
-                "[PkExistenceChecker] PK is auto-increment for {}.{}, skipping check",
-                table_id.namespace_id().as_str(),
-                table_id.table_name().as_str()
+                "[PkExistenceChecker] PK is auto-increment for {}, skipping check",
+                table_id
             );
             return Ok(PkCheckResult::AutoIncrement);
         }
@@ -141,9 +140,8 @@ impl PkExistenceChecker {
         // Step 2: Get PK column name
         let pk_column = Self::get_pk_column_name(table_def).ok_or_else(|| {
             KalamDbError::InvalidOperation(format!(
-                "Table {}.{} has no primary key column",
-                table_id.namespace_id().as_str(),
-                table_id.table_name().as_str()
+                "Table {} has no primary key column",
+                table_id
             ))
         })?;
 

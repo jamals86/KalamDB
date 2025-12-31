@@ -126,10 +126,9 @@ impl TypedStatementHandler<AlterTableStatement> for AlterTableHandler {
                     .any(|c| c.column_name == column_name)
                 {
                     log::error!(
-                        "❌ ALTER TABLE failed: Column '{}' already exists in {}.{}",
+                        "❌ ALTER TABLE failed: Column '{}' already exists in {}",
                         column_name,
-                        namespace_id.as_str(),
-                        statement.table_name.as_str()
+                        table_id
                     );
                     return Err(KalamDbError::InvalidOperation(format!(
                         "Column '{}' already exists",
@@ -245,10 +244,9 @@ impl TypedStatementHandler<AlterTableStatement> for AlterTableHandler {
                     .any(|c| c.column_name == new_column_name)
                 {
                     log::error!(
-                        "❌ ALTER TABLE failed: Column '{}' already exists in {}.{}",
+                        "❌ ALTER TABLE failed: Column '{}' already exists in {}",
                         new_column_name,
-                        namespace_id.as_str(),
-                        statement.table_name.as_str()
+                        table_id
                     );
                     return Err(KalamDbError::InvalidOperation(format!(
                         "Column '{}' already exists",

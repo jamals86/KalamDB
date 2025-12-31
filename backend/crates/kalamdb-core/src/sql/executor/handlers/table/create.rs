@@ -4,6 +4,7 @@ use crate::app_context::AppContext;
 use crate::error::KalamDbError;
 use crate::sql::executor::handlers::typed::TypedStatementHandler;
 use crate::sql::executor::models::{ExecutionContext, ExecutionResult, ScalarValue};
+use kalamdb_commons::models::TableId;
 use kalamdb_commons::schemas::TableType;
 use kalamdb_commons::Role;
 use kalamdb_sql::ddl::CreateTableStatement;
@@ -71,12 +72,15 @@ impl TypedStatementHandler<CreateTableStatement> for CreateTableHandler {
             context.user_role,
         )?;
 
+        // Create TableId for audit logging
+        let table_id = TableId::new(namespace_id.clone(), table_name.clone());
+        
         // Log DDL operation
         let audit_entry = audit::log_ddl_operation(
             context,
             "CREATE",
             "TABLE",
-            &format!("{}.{}", namespace_id, table_name),
+            &table_id.full_name(),
             Some(format!("Type: {}", table_type)),
             None,
         );

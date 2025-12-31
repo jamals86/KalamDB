@@ -4,7 +4,7 @@
 //! including filtering based on WHERE clauses stored in SubscriptionState.
 
 use super::filter_eval::matches as filter_matches;
-use super::connections_manager::ConnectionsManager;
+use super::connections_manager::{ConnectionsManager, SubscriptionHandle};
 use super::types::{ChangeNotification, ChangeType};
 use crate::error::KalamDbError;
 use crate::error_extensions::KalamDbResultExt;
@@ -84,21 +84,20 @@ impl NotificationService {
         table_id: TableId,
         notification: ChangeNotification,
     ) {
-        // Check if there are any subscriptions for this user_id and table_id
+        // Get subscription handles directly - avoids double lookup (has_subscriptions + get_subscriptions)
         // DashMap provides lock-free access
-        let has_subscriptions = self.registry.has_subscriptions(&user_id, &table_id);
+        let handles = self.registry.get_subscriptions_for_table(&user_id, &table_id);
 
-        if has_subscriptions {
+        if !handles.is_empty() {
             let service = Arc::clone(self);
             tokio::spawn(async move {
                 if let Err(e) = service
-                    .notify_table_change(&user_id, &table_id, notification)
+                    .notify_table_change_with_handles(&user_id, &table_id, notification, handles)
                     .await
                 {
                     log::warn!(
-                        "Failed to notify subscribers for table {}.{}: {}",
-                        table_id.namespace_id().as_str(),
-                        table_id.table_name().as_str(),
+                        "Failed to notify subscribers for table {}: {}",
+                        table_id,
                         e
                     );
                 }
@@ -113,11 +112,22 @@ impl NotificationService {
         table_id: &TableId,
         change_notification: ChangeNotification,
     ) -> Result<usize, KalamDbError> {
-        let table_name = format!(
-            "{}.{}",
-            table_id.namespace_id().as_str(),
-            table_id.table_name().as_str()
-        );
+        // Fetch handles and delegate to common implementation
+        let handles = self.registry.get_subscriptions_for_table(user_id, table_id);
+        self.notify_table_change_with_handles(user_id, table_id, change_notification, handles)
+            .await
+    }
+
+    /// Notify live query subscribers with pre-fetched handles
+    /// Avoids double DashMap lookup when handles are already available
+    async fn notify_table_change_with_handles(
+        &self,
+        user_id: &UserId,
+        table_id: &TableId,
+        change_notification: ChangeNotification,
+        all_handles: Vec<SubscriptionHandle>,
+    ) -> Result<usize, KalamDbError> {
+        let table_name = table_id.full_name();
 
         log::debug!(
             "notify_table_change called for table: '{}', user: '{}', change_type: {:?}",
@@ -130,8 +140,6 @@ impl NotificationService {
         // DashMap provides lock-free access
         // Collect (live_id, projections, notification_tx) tuples in a single pass
         let live_ids_to_notify: Vec<(LiveQueryId, Option<Arc<Vec<String>>>, _)> = {
-            let all_handles = self.registry.get_subscriptions_for_table(user_id, table_id);
-
             let mut results = Vec::new();
             let mut seen = HashSet::new();
 
@@ -226,33 +234,45 @@ impl NotificationService {
             };
 
             // Build the notification with JSON data
+            // Compute live_id string once to avoid 4 allocations per notification
+            let live_id_str = live_id.to_string();
             let notification = match change_notification.change_type {
                 ChangeType::Insert => kalamdb_commons::Notification::insert(
-                    live_id.to_string(),
+                    live_id_str,
                     vec![row_json],
                 ),
                 ChangeType::Update => kalamdb_commons::Notification::update(
-                    live_id.to_string(),
+                    live_id_str,
                     vec![row_json],
                     vec![old_json.unwrap_or_else(std::collections::HashMap::new)],
                 ),
                 ChangeType::Delete => kalamdb_commons::Notification::delete(
-                    live_id.to_string(),
+                    live_id_str,
                     vec![row_json],
                 ),
                 ChangeType::Flush => kalamdb_commons::Notification::insert(
-                    live_id.to_string(),
+                    live_id_str,
                     vec![row_json],
                 ),
             };
 
-            // Send notification through channel (non-blocking)
-            if let Err(e) = tx.send((live_id.clone(), notification)) {
-                log::error!(
-                    "Failed to send notification to WebSocket client for live_id={}: {}",
-                    live_id,
-                    e
-                );
+            // Send notification through channel (non-blocking, bounded)
+            if let Err(e) = tx.try_send((live_id.clone(), notification)) {
+                use tokio::sync::mpsc::error::TrySendError;
+                match e {
+                    TrySendError::Full(_) => {
+                        log::warn!(
+                            "Notification channel full for live_id={}, dropping notification",
+                            live_id
+                        );
+                    }
+                    TrySendError::Closed(_) => {
+                        log::debug!(
+                            "Notification channel closed for live_id={}, connection likely disconnected",
+                            live_id
+                        );
+                    }
+                }
             }
 
             self.increment_changes(&live_id).await?;

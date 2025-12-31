@@ -18,7 +18,7 @@ use crate::app_context::AppContext;
 use crate::error::KalamDbError;
 use datafusion::logical_expr::{LogicalPlan, SortExpr};
 use kalamdb_commons::constants::SystemColumnNames;
-use kalamdb_commons::models::{NamespaceId, TableId, TableName};
+use kalamdb_commons::models::TableId;
 use std::sync::Arc;
 
 /// Check if a LogicalPlan already has an ORDER BY clause at the top level
@@ -33,24 +33,21 @@ pub fn has_order_by(plan: &LogicalPlan) -> bool {
 ///
 /// Returns the first TableScan found in the plan tree.
 /// For simple SELECT queries, this is typically the main table.
-fn extract_table_reference(plan: &LogicalPlan) -> Option<(NamespaceId, TableName)> {
+fn extract_table_reference(plan: &LogicalPlan) -> Option<TableId> {
     match plan {
         LogicalPlan::TableScan(scan) => {
-            let (ns, tbl) = match &scan.table_name {
-                datafusion::common::TableReference::Bare { table } => (
-                    NamespaceId::new("default"),
-                    TableName::new(table.to_string()),
-                ),
-                datafusion::common::TableReference::Partial { schema, table } => (
-                    NamespaceId::new(schema.to_string()),
-                    TableName::new(table.to_string()),
-                ),
-                datafusion::common::TableReference::Full { schema, table, .. } => (
-                    NamespaceId::new(schema.to_string()),
-                    TableName::new(table.to_string()),
-                ),
+            let table_id = match &scan.table_name {
+                datafusion::common::TableReference::Bare { table } => {
+                    TableId::from_strings("default", &table.to_string())
+                }
+                datafusion::common::TableReference::Partial { schema, table } => {
+                    TableId::from_strings(&schema.to_string(), &table.to_string())
+                }
+                datafusion::common::TableReference::Full { schema, table, .. } => {
+                    TableId::from_strings(&schema.to_string(), &table.to_string())
+                }
             };
-            Some((ns, tbl))
+            Some(table_id)
         }
         // For other plan nodes, check their inputs
         _ => {
@@ -158,8 +155,8 @@ pub fn apply_default_order_by(
     }
 
     // Extract table reference
-    let table_ref = match extract_table_reference(&plan) {
-        Some(ref_tuple) => ref_tuple,
+    let table_id = match extract_table_reference(&plan) {
+        Some(id) => id,
         None => {
             // No table found (might be a function call like SELECT NOW())
             log::trace!(target: "sql::ordering", "No table reference found, skipping default ORDER BY");
@@ -167,20 +164,15 @@ pub fn apply_default_order_by(
         }
     };
 
-    let (namespace_id, table_name) = table_ref;
-
     // Skip system namespace tables - they don't have _seq column
-    if namespace_id.is_system_namespace() {
+    if table_id.namespace_id().is_system_namespace() {
         log::trace!(
             target: "sql::ordering",
-            "Skipping default ORDER BY for system table {}.{}",
-            namespace_id.as_str(),
-            table_name.as_str()
+            "Skipping default ORDER BY for system table {}",
+            table_id
         );
         return Ok(plan);
     }
-
-    let table_id = TableId::new(namespace_id, table_name);
 
     // Get sort columns for this table (user/shared/stream tables only)
     let sort_exprs = match get_default_sort_columns(app_context, &table_id) {

@@ -115,7 +115,7 @@ export function buildAuthHeader(auth: AuthCredentials): string | undefined {
  * 
  * @example
  * ```typescript
- * import { createClient, Auth } from '@kalamdb/client';
+ * import { createClient, Auth } from 'kalam-link';
  * 
  * // Basic Auth
  * const client = createClient({

@@ -214,11 +214,7 @@ impl InitialDataFetcher {
         );
 
         // Construct SQL query with projections
-        let table_name = format!(
-            "{}.{}",
-            table_id.namespace_id().as_str(),
-            table_id.table_name().as_str()
-        );
+        let table_name = table_id.full_name(); // "namespace.table"
 
         // Build SELECT clause: either specific columns or *
         // Always include _seq column for pagination, even if not in projections
@@ -290,7 +286,8 @@ impl InitialDataFetcher {
         };
 
         // Convert batches to Rows
-        let mut rows_with_seq: Vec<(SeqId, Row)> = Vec::new();
+        // Pre-allocate with limit+1 since that's the max we'll fetch
+        let mut rows_with_seq: Vec<(SeqId, Row)> = Vec::with_capacity(limit + 1);
 
         for batch in batches {
             let schema = batch.schema();
@@ -529,7 +526,10 @@ mod tests {
             table_id.clone(),
             TableType::User,
         ));
-        let provider = Arc::new(UserTableProvider::new(core, store, "id".to_string()));
+        let provider = Arc::new(
+            UserTableProvider::try_new(core, store, "id".to_string())
+                .expect("create user table provider"),
+        );
 
         // Register the provider in schema_registry
         schema_registry
@@ -669,7 +669,10 @@ mod tests {
             table_id.clone(),
             TableType::User,
         ));
-        let provider = Arc::new(UserTableProvider::new(core, store, "id".to_string()));
+        let provider = Arc::new(
+            UserTableProvider::try_new(core, store, "id".to_string())
+                .expect("create user table provider"),
+        );
 
         schema_registry
             .insert_provider(table_id.clone(), provider)
@@ -846,7 +849,10 @@ mod tests {
             table_id.clone(),
             TableType::User,
         ));
-        let provider = Arc::new(UserTableProvider::new(core, store, "id".to_string()));
+        let provider = Arc::new(
+            UserTableProvider::try_new(core, store, "id".to_string())
+                .expect("create user table provider"),
+        );
 
         schema_registry
             .insert_provider(table_id.clone(), provider)

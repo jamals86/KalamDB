@@ -306,9 +306,8 @@ impl FlushManifestHelper {
             .update_manifest(table_id, table_type, user_id, segment)
             .map_err(|e| {
                 KalamDbError::Other(format!(
-                    "Failed to update manifest for {}.{} (user_id={:?}): {}",
-                    table_id.namespace_id().as_str(),
-                    table_id.table_name().as_str(),
+                    "Failed to update manifest for {} (user_id={:?}): {}",
+                    table_id,
                     user_id.map(|u| u.as_str()),
                     e
                 ))
@@ -319,9 +318,8 @@ impl FlushManifestHelper {
             .flush_manifest(table_id, user_id)
             .map_err(|e| {
                 KalamDbError::Other(format!(
-                    "Failed to flush manifest for {}.{} (user_id={:?}): {}",
-                    table_id.namespace_id().as_str(),
-                    table_id.table_name().as_str(),
+                    "Failed to flush manifest for {} (user_id={:?}): {}",
+                    table_id,
                     user_id.map(|u| u.as_str()),
                     e
                 ))
@@ -337,9 +335,8 @@ impl FlushManifestHelper {
                     .map(|u| u.as_str().to_string())
                     .unwrap_or_else(|| "shared".to_string());
                 format!(
-                    "{}/{}/{}/manifest.json",
-                    table_id.namespace_id().as_str(),
-                    table_id.table_name().as_str(),
+                    "{}/{}/manifest.json",
+                    table_id,  // TableId Display: "namespace:table"
                     scope_str
                 )
             }
@@ -350,18 +347,16 @@ impl FlushManifestHelper {
             .update_after_flush(table_id, user_id, &updated_manifest, None, manifest_path)
             .map_err(|e| {
                 KalamDbError::Other(format!(
-                    "Failed to update manifest cache for {}.{} (user_id={:?}): {}",
-                    table_id.namespace_id().as_str(),
-                    table_id.table_name().as_str(),
+                    "Failed to update manifest cache for {} (user_id={:?}): {}",
+                    table_id,
                     user_id.map(|u| u.as_str()),
                     e
                 ))
             })?;
 
         log::debug!(
-            "[MANIFEST] ✅ Updated manifest and cache: {}.{} (user_id={:?}, file={}, rows={}, size={} bytes)",
-            table_id.namespace_id().as_str(),
-            table_id.table_name().as_str(),
+            "[MANIFEST] ✅ Updated manifest and cache: {} (user_id={:?}, file={}, rows={}, size={} bytes)",
+            table_id,
             user_id.map(|u| u.as_str()),
             file_path.display(),
             row_count,

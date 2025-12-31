@@ -99,7 +99,7 @@ npm install
 ```json
 {
   "dependencies": {
-    "@kalamdb/client": "file:../../link/sdks/typescript"
+    "kalam-link": "file:../../link/sdks/typescript"
   }
 }
 ```
@@ -223,24 +223,17 @@ const {
 
 ### KalamDB Client Interface
 
-The example uses the official KalamDB TypeScript SDK (`@kalamdb/client`) which provides a type-safe WASM client. The client is wrapped in `src/services/kalamdb.ts` with TODO-specific helpers:
+The example uses the official KalamDB TypeScript SDK (`kalam-link`) which provides a type-safe WASM client. The client is wrapped in `src/services/kalamdb.ts` with TODO-specific helpers:
 
 ```typescript
-// Import from SDK
-import init, { KalamClient } from '@kalamdb/client';
+import { createClient, Auth } from 'kalam-link';
 
-// SDK provides:
-class KalamClient {
-  constructor(url: string, apiKey: string);
-  connect(): Promise<void>;
-  disconnect(): Promise<void>;
-  isConnected(): boolean;
-  insert(table: string, data: string): Promise<string>;
-  delete(table: string, rowId: string): Promise<void>;
-  query(sql: string): Promise<string>;
-  subscribe(table: string, callback: Function): Promise<string>;
-  unsubscribe(subscriptionId: string): Promise<void>;
-}
+const client = createClient({
+  url: 'http://localhost:8080',
+  auth: Auth.jwt('your-jwt-token')
+});
+
+await client.connect();
 
 // Example wrapper adds convenience methods:
 class KalamDBClient {

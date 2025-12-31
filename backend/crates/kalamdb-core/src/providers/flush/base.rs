@@ -126,10 +126,11 @@ impl FlushDedupStats {
     }
 
     /// Log summary statistics
-    pub fn log_summary(&self, namespace: &str, table: &str) {
+    /// `table_ref` should be in format "namespace:table" (from TableId Display)
+    pub fn log_summary(&self, table_ref: &str) {
         log::debug!(
-            "📊 [FLUSH DEDUP] Scanned {} total rows from hot storage (table={}.{})",
-            self.rows_before_dedup, namespace, table
+            "📊 [FLUSH DEDUP] Scanned {} total rows from hot storage (table={})",
+            self.rows_before_dedup, table_ref
         );
         log::debug!(
             "📊 [FLUSH DEDUP] Version resolution complete: {} rows → {} unique (dedup: {:.1}%, deleted: {})",

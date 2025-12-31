@@ -48,10 +48,9 @@ pub async fn cleanup_table_data_internal(
             use kalamdb_store::storage_trait::Partition as StorePartition;
 
             let partition_name = format!(
-                "{}{}:{}",
+                "{}{}",
                 ColumnFamilyNames::USER_TABLE_PREFIX,
-                table_id.namespace_id().as_str(),
-                table_id.table_name().as_str()
+                table_id // TableId Display: "namespace:table"
             );
 
             let backend = _app_context.storage_backend();
@@ -92,10 +91,9 @@ pub async fn cleanup_table_data_internal(
             use kalamdb_store::storage_trait::Partition as StorePartition;
 
             let partition_name = format!(
-                "{}{}:{}",
+                "{}{}",
                 ColumnFamilyNames::SHARED_TABLE_PREFIX,
-                table_id.namespace_id().as_str(),
-                table_id.table_name().as_str()
+                table_id // TableId Display: "namespace:table"
             );
 
             let backend = _app_context.storage_backend();
@@ -134,10 +132,9 @@ pub async fn cleanup_table_data_internal(
             use kalamdb_store::storage_trait::Partition as StorePartition;
 
             let partition_name = format!(
-                "{}{}:{}",
+                "{}{}",
                 ColumnFamilyNames::STREAM_TABLE_PREFIX,
-                table_id.namespace_id().as_str(),
-                table_id.table_name().as_str()
+                table_id // TableId Display: "namespace:table"
             );
 
             let backend = _app_context.storage_backend();

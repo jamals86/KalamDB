@@ -2,16 +2,16 @@
  * KalamDB Client Service
  * Feature: 006-docker-wasm-examples
  * 
- * This module provides a wrapper around the KalamDB WASM SDK (@kalamdb/client)
+ * This module provides a wrapper around the KalamDB WASM SDK (kalam-link)
  * with helper methods specific to the TODO application.
  * 
  * Architecture:
- * - Imports the real WASM client from '@kalamdb/client' (link/sdks/typescript/)
+ * - Imports the real WASM client from 'kalam-link' (link/sdks/typescript/)
  * - Extends SDK with application-specific helpers (insertTodo, deleteTodo)
  * - Provides type-safe interface for React components
  */
 
-import init, { KalamClient } from '@kalamdb/client';
+import { Auth, createClient, KalamDBClient as SdkClient } from 'kalam-link';
 import type { Todo, CreateTodoInput, SubscriptionEvent } from '../types/todo';
 
 /**
@@ -34,10 +34,10 @@ export type SubscriptionCallback = (event: SubscriptionEvent<Todo>) => void;
  * for working with TODOs.
  */
 export class KalamDBClient {
-  private client: KalamClient;
+  private client: SdkClient;
   private subscriptionId: string | null = null;
 
-  constructor(client: KalamClient) {
+  constructor(client: SdkClient) {
     this.client = client;
   }
 
@@ -184,17 +184,17 @@ export async function createKalamClient(config: KalamClientConfig): Promise<Kala
     throw new Error('API key is required');
   }
 
-  // Initialize WASM module
-  await init();
+  // Interpret apiKey as a JWT token for the SDK (Auth.jwt)
+  const sdkClient = createClient({
+    url: config.url,
+    auth: Auth.jwt(config.apiKey)
+  });
 
-  // Create WASM client
-  const wasmClient = new KalamClient(config.url, config.apiKey);
-  
   // Connect to server
-  await wasmClient.connect();
+  await sdkClient.connect();
 
   // Wrap in enhanced client
-  return new KalamDBClient(wasmClient);
+  return new KalamDBClient(sdkClient);
 }
 
 /**

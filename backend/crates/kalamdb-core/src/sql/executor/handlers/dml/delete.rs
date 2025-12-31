@@ -268,11 +268,7 @@ impl DeleteHandler {
 
         // Create per-user session and register table
         let df_ctx = context.create_session_with_user();
-        let table_name = format!(
-            "{}.{}",
-            table_id.namespace_id().as_str(),
-            table_id.table_name().as_str()
-        );
+        let table_name = table_id.full_name(); // "namespace.table"
 
         // Register table if not exists (ignore if already exists)
         match df_ctx.register_table(&table_name, provider.clone()) {

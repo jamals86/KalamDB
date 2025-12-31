@@ -222,19 +222,17 @@ impl JobExecutor for FlushExecutor {
             TableType::User => {
                 use kalamdb_commons::constants::ColumnFamilyNames;
                 format!(
-                    "{}{}:{}",
+                    "{}{}",
                     ColumnFamilyNames::USER_TABLE_PREFIX,
-                    table_id.namespace_id().as_str(),
-                    table_id.table_name().as_str()
+                    table_id // TableId Display: "namespace:table"
                 )
             }
             TableType::Shared => {
                 use kalamdb_commons::constants::ColumnFamilyNames;
                 format!(
-                    "{}{}:{}",
+                    "{}{}",
                     ColumnFamilyNames::SHARED_TABLE_PREFIX,
-                    table_id.namespace_id().as_str(),
-                    table_id.table_name().as_str()
+                    table_id // TableId Display: "namespace:table"
                 )
             }
             _ => {

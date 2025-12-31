@@ -35,7 +35,7 @@ pub fn new_live_queries_store(backend: Arc<dyn StorageBackend>) -> LiveQueriesSt
 mod tests {
     use super::*;
     use kalamdb_commons::models::ConnectionId;
-    use kalamdb_commons::{NamespaceId, TableName, UserId};
+    use kalamdb_commons::{NamespaceId, TableId, TableName, UserId};
     use kalamdb_store::entity_store::EntityStore;
     use kalamdb_store::test_utils::InMemoryBackend;
 
@@ -136,14 +136,16 @@ mod tests {
         store.insert(&lq3.live_id, &lq3).unwrap();
 
         // Scan by table_id index - should find 2 for default:messages
-        let prefix = table_id_index_prefix("default", "messages");
+        let table_id_messages = TableId::from_strings("default", "messages");
+        let prefix = table_id_index_prefix(&table_id_messages);
         let results = store
             .scan_by_index(TABLE_ID_INDEX, Some(&prefix), None)
             .unwrap();
         assert_eq!(results.len(), 2);
 
         // Scan by table_id index - should find 1 for default:users
-        let prefix = table_id_index_prefix("default", "users");
+        let table_id_users = TableId::from_strings("default", "users");
+        let prefix = table_id_index_prefix(&table_id_users);
         let results = store
             .scan_by_index(TABLE_ID_INDEX, Some(&prefix), None)
             .unwrap();

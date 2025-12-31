@@ -71,8 +71,7 @@ pub fn create_live_queries_indexes() -> Vec<Arc<dyn IndexDefinition<LiveQueryId,
 /// Build a table_id index prefix for scanning
 ///
 /// Returns a byte vector suitable for prefix scanning the TableIdIndex.
-pub fn table_id_index_prefix(namespace_id: &str, table_name: &str) -> Vec<u8> {
-    let table_id = TableId::from_strings(namespace_id, table_name);
+pub fn table_id_index_prefix(table_id: &TableId) -> Vec<u8> {
     let mut prefix = table_id.to_string().into_bytes();
     prefix.push(0x00);
     prefix
@@ -123,7 +122,8 @@ mod tests {
 
     #[test]
     fn test_table_id_index_prefix() {
-        let prefix = table_id_index_prefix("default", "messages");
+        let table_id = TableId::from_strings("default", "messages");
+        let prefix = table_id_index_prefix(&table_id);
         assert_eq!(prefix, b"default:messages\x00".to_vec());
     }
 }

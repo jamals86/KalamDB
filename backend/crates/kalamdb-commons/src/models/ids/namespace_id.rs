@@ -19,9 +19,12 @@ pub struct NamespaceId(String);
 
 impl NamespaceId {
     /// Creates a new NamespaceId from a string.
+    ///
+    /// Namespace IDs are case-insensitive - they are normalized to lowercase internally.
+    /// For example, `NamespaceId::new("MyApp")` and `NamespaceId::new("myapp")` are equal.
     #[inline]
     pub fn new(id: impl Into<String>) -> Self {
-        Self(id.into())
+        Self(id.into().to_lowercase())
     }
 
     /// Returns the namespace ID as a string slice.
@@ -88,13 +91,13 @@ impl fmt::Display for NamespaceId {
 
 impl From<String> for NamespaceId {
     fn from(s: String) -> Self {
-        Self(s)
+        Self(s.to_lowercase())
     }
 }
 
 impl From<&str> for NamespaceId {
     fn from(s: &str) -> Self {
-        Self(s.to_string())
+        Self(s.to_lowercase())
     }
 }
 
@@ -177,5 +180,24 @@ mod tests {
         assert_eq!(ns.as_str(), "system");
         assert!(ns.is_system_namespace());
         assert!(ns.is_reserved());
+    }
+
+    #[test]
+    fn test_namespace_id_case_insensitive() {
+        // All these should be equal because names are normalized to lowercase
+        let ns1 = NamespaceId::new("MyApp");
+        let ns2 = NamespaceId::new("myapp");
+        let ns3 = NamespaceId::new("MYAPP");
+        let ns4 = NamespaceId::from("MyApP".to_string());
+        let ns5: NamespaceId = "mYaPp".into();
+
+        assert_eq!(ns1, ns2);
+        assert_eq!(ns2, ns3);
+        assert_eq!(ns3, ns4);
+        assert_eq!(ns4, ns5);
+
+        // Stored value should always be lowercase
+        assert_eq!(ns1.as_str(), "myapp");
+        assert_eq!(ns3.as_str(), "myapp");
     }
 }

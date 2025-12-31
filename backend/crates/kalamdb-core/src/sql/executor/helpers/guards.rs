@@ -128,7 +128,7 @@ mod tests {
         ExecutionContext::new(
             UserId::from("test_user"),
             role,
-            datafusion::prelude::SessionContext::new(),
+            Arc::new(datafusion::prelude::SessionContext::new()),
         )
     }
 

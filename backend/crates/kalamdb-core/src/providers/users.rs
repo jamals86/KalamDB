@@ -78,26 +78,35 @@ impl UserTableProvider {
         store: Arc<UserTableIndexedStore>,
         primary_key_field_name: String,
     ) -> Self {
+        Self::try_new(core, store, primary_key_field_name)
+            .expect("Failed to get Arrow schema from registry during provider creation")
+    }
+
+    /// Create a new user table provider with fallible schema lookup.
+    pub fn try_new(
+        core: Arc<TableProviderCore>,
+        store: Arc<UserTableIndexedStore>,
+        primary_key_field_name: String,
+    ) -> Result<Self, KalamDbError> {
         // Cache schema at creation time to avoid "Table not found" panics if table is dropped
         // while provider is still in use by a query plan
         let schema = core
             .app_context
             .schema_registry()
-            .get_arrow_schema(core.table_id())
-            .expect("Failed to get Arrow schema from registry during provider creation");
+            .get_arrow_schema(core.table_id())?;
 
         let pk_index = UserTablePkIndex::new(
             core.table_id(),
             &primary_key_field_name,
         );
 
-        Self {
+        Ok(Self {
             core,
             store,
             pk_index,
             primary_key_field_name,
             schema,
-        }
+        })
     }
 
     /// Get the primary key field name
@@ -744,12 +753,11 @@ impl BaseTableProvider<UserTableRowId, UserTableRow> for UserTableProvider {
 
         let table_id = self.core.table_id();
         log::debug!(
-            "[UserTableProvider] scan_rows resolved {} row(s) for user={} role={:?} table={}.{}",
+            "[UserTableProvider] scan_rows resolved {} row(s) for user={} role={:?} table={}",
             kvs.len(),
             user_id.as_str(),
             role,
-            table_id.namespace_id().as_str(),
-            table_id.table_name().as_str()
+            table_id
         );
 
         // Convert rows to JSON values aligned with schema
@@ -818,11 +826,10 @@ impl BaseTableProvider<UserTableRowId, UserTableRow> for UserTableProvider {
             .collect();
 
         log::trace!(
-            "[UserProvider] Hot scan: {} rows for user={} (table={}.{})",
+            "[UserProvider] Hot scan: {} rows for user={} (table={})",
             hot_rows.len(),
             user_id.as_str(),
-            table_id.namespace_id().as_str(),
-            table_id.table_name().as_str()
+            table_id
         );
 
         // 2) Scan cold storage (Parquet files) - pass filter for pruning
@@ -844,10 +851,9 @@ impl BaseTableProvider<UserTableRowId, UserTableRow> for UserTableProvider {
 
         if log::log_enabled!(log::Level::Trace) {
             log::trace!(
-                "[UserProvider] Cold scan: {} Parquet rows (table={}.{}; user={})",
+                "[UserProvider] Cold scan: {} Parquet rows (table={}; user={})",
                 cold_rows.len(),
-                table_id.namespace_id().as_str(),
-                table_id.table_name().as_str(),
+                table_id,
                 user_id.as_str()
             );
         }
@@ -861,10 +867,9 @@ impl BaseTableProvider<UserTableRowId, UserTableRow> for UserTableProvider {
 
         if log::log_enabled!(log::Level::Trace) {
             log::trace!(
-                "[UserProvider] Final version-resolved (post-tombstone): {} rows (table={}.{}; user={})",
+                "[UserProvider] Final version-resolved (post-tombstone): {} rows (table={}; user={})",
                 result.len(),
-                table_id.namespace_id().as_str(),
-                table_id.table_name().as_str(),
+                table_id,
                 user_id.as_str()
             );
         }

@@ -285,7 +285,7 @@ pub async fn refresh_handler(
                 updated_at,
             },
             expires_at: expires_at.to_rfc3339(),
-            access_token: token,
+            access_token: new_token,
         })
 }
 

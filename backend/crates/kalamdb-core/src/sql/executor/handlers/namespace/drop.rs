@@ -85,12 +85,11 @@ impl TypedStatementHandler<DropNamespaceStatement> for DropNamespaceHandler {
                     
                     // Log table drop as part of cascade
                     use crate::sql::executor::helpers::audit;
-                    let table_ref = format!("{}.{}", namespace_id.as_str(), table.table_name.as_str());
                     let audit_entry = audit::log_ddl_operation(
                         context,
                         "DROP",
                         "TABLE",
-                        &table_ref,
+                        &table_id.full_name(),
                         Some("CASCADE from DROP NAMESPACE".to_string()),
                         None,
                     );

@@ -239,13 +239,11 @@ impl ManifestService {
     /// Invalidate (delete) a cache entry.
     pub fn invalidate(
         &self,
-        namespace: &NamespaceId,
-        table: &TableName,
+        table_id: &TableId,
         user_id: Option<&UserId>,
     ) -> Result<(), StorageError> {
-        let table_id = TableId::new(namespace.clone(), table.clone());
         let cache_key = (table_id.clone(), user_id.cloned());
-        let rocksdb_key = ManifestCacheKey::from(self.make_cache_key_string(&table_id, user_id));
+        let rocksdb_key = ManifestCacheKey::from(self.make_cache_key_string(table_id, user_id));
 
         self.hot_cache.invalidate(&cache_key);
         EntityStore::delete(&self.store, &rocksdb_key)
@@ -254,9 +252,8 @@ impl ManifestService {
     /// Invalidate all cache entries for a table (all users + shared).
     pub fn invalidate_table(&self, table_id: &TableId) -> Result<usize, StorageError> {
         let key_prefix = format!(
-            "{}:{}:",
-            table_id.namespace_id().as_str(),
-            table_id.table_name().as_str()
+            "{}:",
+            table_id // TableId Display: "namespace:table"
         );
 
         let mut invalidated = 0;
@@ -514,16 +511,14 @@ impl ManifestService {
             let (store, storage, _) = self.get_storage_context(table_id, user_id)?;
             self.write_manifest_via_store(store, &storage, table_id, user_id, &entry.manifest)?;
             debug!(
-                "Flushed manifest for {}.{} (ver: {})",
-                table_id.namespace_id().as_str(),
-                table_id.table_name().as_str(),
+                "Flushed manifest for {} (ver: {})",
+                table_id,
                 entry.manifest.version
             );
         } else {
             warn!(
-                "Attempted to flush manifest for {}.{} but it was not in cache",
-                table_id.namespace_id().as_str(),
-                table_id.table_name().as_str()
+                "Attempted to flush manifest for {} but it was not in cache",
+                table_id
             );
         }
         Ok(())
@@ -610,9 +605,8 @@ impl ManifestService {
     fn make_cache_key_string(&self, table_id: &TableId, user_id: Option<&UserId>) -> String {
         let scope = user_id.map(|u| u.as_str()).unwrap_or("shared");
         format!(
-            "{}:{}:{}",
-            table_id.namespace_id().as_str(),
-            table_id.table_name().as_str(),
+            "{}:{}",
+            table_id, // TableId Display: "namespace:table"
             scope
         )
     }
@@ -893,7 +887,7 @@ mod tests {
             .is_some());
 
         service
-            .invalidate(&namespace, &table, Some(&UserId::from("u_123")))
+            .invalidate(&table_id, Some(&UserId::from("u_123")))
             .unwrap();
 
         assert!(service

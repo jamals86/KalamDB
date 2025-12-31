@@ -262,4 +262,68 @@ mod tests {
         assert!(matches!(parse_log_level("INFO"), Ok(LevelFilter::Info)));
         assert!(matches!(parse_log_level("Debug"), Ok(LevelFilter::Debug)));
     }
+
+    #[test]
+    fn test_redact_sensitive_sql_passwords() {
+        // ALTER USER with SET PASSWORD
+        let sql = "ALTER USER 'alice' SET PASSWORD 'SuperSecret123!'";
+        let redacted = redact_sensitive_sql(sql);
+        assert!(!redacted.contains("SuperSecret123"));
+        assert!(redacted.contains("[REDACTED]"));
+
+        // CREATE USER with PASSWORD
+        let sql = "CREATE USER bob PASSWORD 'mypassword'";
+        let redacted = redact_sensitive_sql(sql);
+        assert!(!redacted.contains("mypassword"));
+        assert!(redacted.contains("[REDACTED]"));
+    }
+
+    #[test]
+    fn test_redact_sensitive_sql_preserves_safe_queries() {
+        let sql = "SELECT * FROM users WHERE name = 'alice'";
+        let redacted = redact_sensitive_sql(sql);
+        assert_eq!(sql, redacted);
+    }
+}
+
+/// Redacts sensitive information from SQL statements before logging.
+///
+/// # Security
+/// This function removes passwords and other sensitive data from SQL statements
+/// to prevent accidental exposure in log files.
+///
+/// Currently redacts:
+/// - `SET PASSWORD 'value'` → `SET PASSWORD '[REDACTED]'`
+/// - `PASSWORD 'value'` → `PASSWORD '[REDACTED]'`
+/// - `IDENTIFIED BY 'value'` → `IDENTIFIED BY '[REDACTED]'`
+///
+/// # Example
+/// ```ignore
+/// let sql = "ALTER USER 'alice' SET PASSWORD 'secret123'";
+/// let safe = redact_sensitive_sql(sql);
+/// // safe == "ALTER USER 'alice' SET PASSWORD '[REDACTED]'"
+/// ```
+pub fn redact_sensitive_sql(sql: &str) -> String {
+    use regex::Regex;
+    use std::sync::OnceLock;
+
+    // Compile regex patterns once and cache them
+    static PASSWORD_PATTERNS: OnceLock<Vec<Regex>> = OnceLock::new();
+
+    let patterns = PASSWORD_PATTERNS.get_or_init(|| {
+        vec![
+            // SET PASSWORD 'value' or SET PASSWORD "value"
+            Regex::new(r#"(?i)(SET\s+PASSWORD\s+)('[^']*'|"[^"]*")"#).unwrap(),
+            // PASSWORD 'value' (for CREATE USER)
+            Regex::new(r#"(?i)(PASSWORD\s+)('[^']*'|"[^"]*")"#).unwrap(),
+            // IDENTIFIED BY 'value' (MySQL-style)
+            Regex::new(r#"(?i)(IDENTIFIED\s+BY\s+)('[^']*'|"[^"]*")"#).unwrap(),
+        ]
+    });
+
+    let mut result = sql.to_string();
+    for pattern in patterns {
+        result = pattern.replace_all(&result, "${1}'[REDACTED]'").to_string();
+    }
+    result
 }
