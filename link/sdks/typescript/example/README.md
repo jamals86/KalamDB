@@ -51,7 +51,7 @@ npm run start
 
 This starts a static server and opens the page.
 
-- URL: `http://localhost:3000/index.html`
+- URL: `http://localhost:3000/example/index.html`
 
 ### 5) Use the UI
 
@@ -78,8 +78,11 @@ npm run build
 Run the server on a different port:
 
 ```bash
-npx http-server -p 3001 -c-1 -o /index.html
+cd example
+npx http-server .. -p 3001 -c-1
 ```
+
+Then open `http://localhost:3001/example/index.html`.
 
 ### Authentication errors (401)
 

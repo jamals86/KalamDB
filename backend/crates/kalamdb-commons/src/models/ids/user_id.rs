@@ -91,6 +91,7 @@ impl UserId {
     /// This bypasses security validation. Only use for IDs that are known to be safe
     /// (e.g., loaded from database, generated internally).
     #[inline]
+    #[allow(dead_code)] // Reserved for internal use when loading from trusted sources
     pub(crate) fn new_unchecked(id: impl Into<String>) -> Self {
         Self(id.into())
     }
@@ -146,22 +147,6 @@ impl From<&str> for UserId {
     }
 }
 
-impl TryFrom<String> for UserId {
-    type Error = UserIdValidationError;
-
-    fn try_from(s: String) -> Result<Self, Self::Error> {
-        Self::try_new(s)
-    }
-}
-
-impl TryFrom<&str> for UserId {
-    type Error = UserIdValidationError;
-
-    fn try_from(s: &str) -> Result<Self, Self::Error> {
-        Self::try_new(s.to_string())
-    }
-}
-
 impl AsRef<str> for UserId {
     fn as_ref(&self) -> &str {
         &self.0
@@ -183,5 +168,73 @@ impl StorageKey for UserId {
         String::from_utf8(bytes.to_vec())
             .map(UserId)
             .map_err(|e| e.to_string())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_valid_user_id() {
+        let user = UserId::try_new("alice123");
+        assert!(user.is_ok());
+        assert_eq!(user.unwrap().as_str(), "alice123");
+    }
+
+    #[test]
+    fn test_user_id_with_underscores_and_dashes() {
+        let user = UserId::try_new("user_123-test");
+        assert!(user.is_ok());
+    }
+
+    #[test]
+    fn test_path_traversal_double_dot_blocked() {
+        let user = UserId::try_new("../../../etc/passwd");
+        assert!(user.is_err());
+        assert!(user.unwrap_err().0.contains("path traversal"));
+    }
+
+    #[test]
+    fn test_path_traversal_forward_slash_blocked() {
+        let user = UserId::try_new("user/subdir");
+        assert!(user.is_err());
+        assert!(user.unwrap_err().0.contains("directory separator"));
+    }
+
+    #[test]
+    fn test_path_traversal_backslash_blocked() {
+        let user = UserId::try_new("user\\subdir");
+        assert!(user.is_err());
+        assert!(user.unwrap_err().0.contains("directory separator"));
+    }
+
+    #[test]
+    fn test_null_byte_blocked() {
+        let user = UserId::try_new("user\0hidden");
+        assert!(user.is_err());
+        assert!(user.unwrap_err().0.contains("null bytes"));
+    }
+
+    #[test]
+    fn test_empty_user_id_blocked() {
+        let user = UserId::try_new("");
+        assert!(user.is_err());
+        assert!(user.unwrap_err().0.contains("empty"));
+    }
+
+    #[test]
+    #[should_panic(expected = "invalid characters")]
+    fn test_new_panics_on_invalid() {
+        let _ = UserId::new("../evil");
+    }
+
+    #[test]
+    fn test_from_string_panics_on_invalid() {
+        // This should panic on path traversal
+        let result = std::panic::catch_unwind(|| {
+            let _: UserId = "../etc/passwd".into();
+        });
+        assert!(result.is_err());
     }
 }

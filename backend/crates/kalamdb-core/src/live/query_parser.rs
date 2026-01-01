@@ -118,8 +118,14 @@ impl QueryParser {
     }
 
     /// Resolve placeholders in WHERE clause (e.g., CURRENT_USER())
+    ///
+    /// # Security
+    /// Single quotes in the user ID are escaped to prevent SQL injection.
     pub fn resolve_where_clause_placeholders(clause: &str, user_id: &UserId) -> String {
-        let replacement = format!("'{}'", user_id.as_str());
+        // SECURITY: Escape single quotes to prevent SQL injection
+        // Example: O'Brien -> O''Brien (SQL standard escaping)
+        let safe_user_id = user_id.as_str().replace('\'', "''");
+        let replacement = format!("'{}'", safe_user_id);
         clause
             .replace("CURRENT_USER()", &replacement)
             .replace("current_user()", &replacement)

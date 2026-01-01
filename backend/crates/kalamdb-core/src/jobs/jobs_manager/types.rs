@@ -2,6 +2,7 @@ use crate::app_context::AppContext;
 use crate::jobs::executors::JobRegistry;
 use kalamdb_commons::NodeId;
 use kalamdb_system::JobsTableProvider;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Weak};
 use tokio::sync::RwLock;
 
@@ -18,8 +19,8 @@ pub struct JobsManager {
     /// Node ID for this instance
     pub(crate) node_id: NodeId,
 
-    /// Flag for graceful shutdown
-    pub(crate) shutdown: Arc<RwLock<bool>>,
+    /// Flag for graceful shutdown (AtomicBool for lock-free access in hot loop)
+    pub(crate) shutdown: AtomicBool,
     /// AppContext for global services - uses Weak to avoid Arc cycle
     /// (AppContext holds Arc<JobsManager>, so we use Weak here)
     pub(crate) app_context: Arc<RwLock<Option<Weak<AppContext>>>>,
@@ -36,7 +37,7 @@ impl JobsManager {
             jobs_provider,
             job_registry,
             node_id: NodeId::new("node_default".to_string()), // TODO: Get from config
-            shutdown: Arc::new(RwLock::new(false)),
+            shutdown: AtomicBool::new(false),
             app_context: Arc::new(RwLock::new(None)),
         }
     }
@@ -85,8 +86,8 @@ impl JobsManager {
     }
 
     /// Request graceful shutdown
-    pub async fn shutdown(&self) {
+    pub fn shutdown(&self) {
         log::info!("Initiating job manager shutdown");
-        *self.shutdown.write().await = true;
+        self.shutdown.store(true, Ordering::Release);
     }
 }

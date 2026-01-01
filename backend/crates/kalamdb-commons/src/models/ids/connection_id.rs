@@ -14,6 +14,7 @@ pub struct ConnectionId(String);
 
 impl ConnectionId {
     /// Create a new connection ID from a unique identifier
+    #[inline]
     pub fn new(unique_id: impl Into<String>) -> Self {
         Self(unique_id.into())
     }
@@ -27,11 +28,13 @@ impl ConnectionId {
     }
 
     /// Get the connection ID as a string slice
+    #[inline]
     pub fn as_str(&self) -> &str {
         &self.0
     }
 
     /// Get the connection ID as bytes
+    #[inline]
     pub fn as_bytes(&self) -> &[u8] {
         self.0.as_bytes()
     }

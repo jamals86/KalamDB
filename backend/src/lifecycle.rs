@@ -395,8 +395,8 @@ pub async fn run(
                 shutdown_timeout_secs
             );
 
-            // Signal shutdown to JobsManager
-            job_manager_shutdown.shutdown().await;
+            // Signal shutdown to JobsManager (non-async, uses AtomicBool)
+            job_manager_shutdown.shutdown();
 
             // Wait for active jobs with timeout
             let timeout = std::time::Duration::from_secs(shutdown_timeout_secs as u64);

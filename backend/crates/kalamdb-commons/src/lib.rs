@@ -48,6 +48,7 @@ pub mod constants;
 pub mod errors;
 pub mod ids;
 pub mod models;
+pub mod security; // Security utilities (SQL redaction, etc.)
 pub mod storage;
 pub mod storage_key; // StorageKey trait for type-safe key serialization
 pub mod string_interner;

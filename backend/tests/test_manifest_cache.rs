@@ -324,7 +324,7 @@ fn test_cache_eviction_and_repopulation() {
 
     // Evict (invalidate) the entry
     service
-        .invalidate(&namespace, &table, Some(&UserId::from("u_789")))
+        .invalidate(&table_id, Some(&UserId::from("u_789")))
         .unwrap();
 
     // Verify entry is gone

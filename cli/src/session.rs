@@ -1017,7 +1017,7 @@ impl CLISession {
             Command::Stats => {
                 // Show system statistics via system.stats virtual table
                 // Keep it simple and readable for users
-                self.execute("SELECT * FROM system.stats ORDER BY key")
+                self.execute("SELECT metric_name, metric_value FROM system.stats ORDER BY metric_name")
                     .await?;
             }
             Command::Unknown(cmd) => {

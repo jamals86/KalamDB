@@ -16,21 +16,25 @@ pub struct JobId(String);
 
 impl JobId {
     /// Creates a new JobId from a string.
+    #[inline]
     pub fn new(id: impl Into<String>) -> Self {
         Self(id.into())
     }
 
     /// Returns the job ID as a string slice.
+    #[inline]
     pub fn as_str(&self) -> &str {
         &self.0
     }
 
     /// Consumes the wrapper and returns the inner String.
+    #[inline]
     pub fn into_string(self) -> String {
         self.0
     }
 
     /// Get the job ID as bytes for storage
+    #[inline]
     pub fn as_bytes(&self) -> &[u8] {
         self.0.as_bytes()
     }

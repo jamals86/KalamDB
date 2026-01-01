@@ -13,21 +13,25 @@ pub struct AuditLogId(String);
 
 impl AuditLogId {
     /// Creates a new AuditLogId from any string-like input.
+    #[inline]
     pub fn new(id: impl Into<String>) -> Self {
         Self(id.into())
     }
 
     /// Returns the identifier as a string slice.
+    #[inline]
     pub fn as_str(&self) -> &str {
         &self.0
     }
 
     /// Consumes the identifier and returns the owned String.
+    #[inline]
     pub fn into_string(self) -> String {
         self.0
     }
 
     /// Returns the identifier as bytes for storage keys.
+    #[inline]
     pub fn as_bytes(&self) -> &[u8] {
         self.0.as_bytes()
     }

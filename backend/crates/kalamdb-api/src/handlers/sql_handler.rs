@@ -6,7 +6,6 @@
 use actix_web::{post, web, HttpRequest, HttpResponse, Responder};
 use kalamdb_auth::AuthSession;
 use kalamdb_commons::models::datatypes::{FromArrowType, KalamDataType};
-use kalamdb_commons::models::UserId;
 use kalamdb_commons::schemas::SchemaField;
 use kalamdb_core::providers::arrow_json_conversion::{
     json_value_to_scalar_strict, record_batch_to_json_arrays,
@@ -172,10 +171,12 @@ pub async fn execute_sql_v1(
                 let row_count = result.rows.as_ref().map(|r| r.len()).unwrap_or(0);
 
                 // Debug log for SQL execution (includes timing)
+                // SECURITY: Redact sensitive data (passwords) before logging
+                let safe_sql = kalamdb_commons::security::redact_sensitive_sql(sql);
                 log::debug!(
                     target: "sql::exec",
                     "✅ SQL executed | sql='{}' | user='{}' | role='{:?}' | rows={} | took={:.3}ms",
-                    sql,
+                    safe_sql,
                     session.user.user_id.as_str(),
                     session.user.role,
                     row_count,
@@ -183,8 +184,9 @@ pub async fn execute_sql_v1(
                 );
 
                 // Log slow query if threshold exceeded
+                // SECURITY: Use redacted SQL for slow query logging
                 app_context.slow_query_logger().log_if_slow(
-                    sql.to_string(),
+                    safe_sql,
                     stmt_duration_secs,
                     row_count,
                     session.user.user_id.clone(),
@@ -287,7 +289,7 @@ async fn execute_single_statement(
         Ok(exec_result) => match exec_result {
             ExecutionResult::Success { message } => Ok(QueryResult::with_message(message)),
             ExecutionResult::Rows { batches, schema, .. } => {
-                record_batch_to_query_result(batches, schema, Some(&session.user.user_id))
+                record_batch_to_query_result(batches, schema, Some(session.user.role))
             }
             ExecutionResult::Inserted { rows_affected } => Ok(QueryResult::with_affected_rows(
                 rows_affected,
@@ -345,7 +347,7 @@ async fn execute_single_statement(
 fn record_batch_to_query_result(
     batches: Vec<arrow::record_batch::RecordBatch>,
     schema: Option<arrow::datatypes::SchemaRef>,
-    user_id: Option<&UserId>,
+    user_role: Option<kalamdb_commons::models::Role>,
 ) -> Result<QueryResult, Box<dyn std::error::Error>> {
     // Get schema from first batch, or from explicitly provided schema for empty results
     let arrow_schema = if !batches.is_empty() {
@@ -394,7 +396,7 @@ fn record_batch_to_query_result(
     }
 
     // Mask sensitive columns for non-admin users
-    if !is_admin(user_id) {
+    if !is_admin_role(user_role) {
         mask_sensitive_column_array(&mut rows, &column_indices, "credentials");
         mask_sensitive_column_array(&mut rows, &column_indices, "password_hash");
     }
@@ -420,12 +422,10 @@ fn mask_sensitive_column_array(
     }
 }
 
-fn is_admin(user_id: Option<&UserId>) -> bool {
-    match user_id {
-        Some(id) => {
-            let lower = id.as_str().to_lowercase();
-            lower == "admin" || lower == "system"
-        }
-        None => false,
-    }
+/// Check if user has admin privileges for viewing sensitive data.
+///
+/// SECURITY: Uses role-based check, not user ID string matching.
+/// Only DBA and System roles are considered admins.
+fn is_admin_role(role: Option<kalamdb_commons::models::Role>) -> bool {
+    matches!(role, Some(kalamdb_commons::models::Role::Dba) | Some(kalamdb_commons::models::Role::System))
 }

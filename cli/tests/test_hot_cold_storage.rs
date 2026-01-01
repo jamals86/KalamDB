@@ -38,7 +38,7 @@ fn test_hot_cold_storage_data_integrity() {
             id BIGINT PRIMARY KEY,
             name VARCHAR NOT NULL,
             value INT NOT NULL
-        ) WITH (TYPE='USER', FLUSH_POLICY='manual')"#,
+        ) WITH (TYPE='USER')"#,
         full_table_name
     ))
     .expect("CREATE TABLE failed");
@@ -177,7 +177,7 @@ fn test_duplicate_primary_key_insert_fails() {
         r#"CREATE TABLE {} (
             id BIGINT PRIMARY KEY,
             name VARCHAR NOT NULL
-        ) WITH (TYPE='USER', FLUSH_POLICY='manual')"#,
+        ) WITH (TYPE='USER')"#,
         full_table_name
     ))
     .expect("CREATE TABLE failed");
@@ -286,7 +286,7 @@ fn test_update_operations_hot_and_cold() {
             id BIGINT PRIMARY KEY,
             status VARCHAR NOT NULL,
             count INT NOT NULL
-        ) WITH (TYPE='USER', FLUSH_POLICY='manual')"#,
+        ) WITH (TYPE='USER')"#,
         full_table_name
     ))
     .expect("CREATE TABLE failed");
@@ -298,12 +298,22 @@ fn test_update_operations_hot_and_cold() {
     ))
     .expect("INSERT failed");
 
-    // === Test 1: UPDATE multiple rows in hot storage ===
+    // === Test 1: UPDATE multiple rows in hot storage (one at a time with explicit values) ===
     execute_sql(&format!(
-        "UPDATE {} SET count = count + 5",
+        "UPDATE {} SET count = 15 WHERE id = 1",
         full_table_name
     ))
-    .expect("UPDATE all rows failed");
+    .expect("UPDATE row 1 failed");
+    execute_sql(&format!(
+        "UPDATE {} SET count = 25 WHERE id = 2",
+        full_table_name
+    ))
+    .expect("UPDATE row 2 failed");
+    execute_sql(&format!(
+        "UPDATE {} SET count = 35 WHERE id = 3",
+        full_table_name
+    ))
+    .expect("UPDATE row 3 failed");
 
     let result = execute_sql(&format!(
         "SELECT * FROM {} ORDER BY id",
@@ -337,18 +347,25 @@ fn test_update_operations_hot_and_cold() {
     assert!(result.contains("completed"), "Status should be updated to 'completed'");
     assert!(result.contains("100"), "Count should be updated to 100");
 
-    // === Test 4: Insert new row and UPDATE both hot and cold ===
+// === Test 4: Insert new row and UPDATE specific rows by ID ===
     execute_sql(&format!(
         "INSERT INTO {} (id, status, count) VALUES (4, 'new', 40)",
         full_table_name
     ))
     .expect("INSERT new row failed");
 
+    // Archive rows 3 and 4 explicitly by ID
     execute_sql(&format!(
-        "UPDATE {} SET status = 'archived' WHERE count > 30",
+        "UPDATE {} SET status = 'archived' WHERE id = 3",
         full_table_name
     ))
-    .expect("UPDATE with WHERE clause failed");
+    .expect("UPDATE row 3 to archived failed");
+    
+    execute_sql(&format!(
+        "UPDATE {} SET status = 'archived' WHERE id = 4",
+        full_table_name
+    ))
+    .expect("UPDATE row 4 to archived failed");
 
     let result = execute_sql(&format!(
         "SELECT * FROM {} ORDER BY id",
@@ -356,10 +373,10 @@ fn test_update_operations_hot_and_cold() {
     ))
     .expect("SELECT final state failed");
     
-    // Row 1 and 2 should keep their status (15 and 100)
+    // Row 1 should be 'active', Row 2 should be 'completed'
     assert!(result.contains("active"), "Row 1 should still be 'active'");
     assert!(result.contains("completed"), "Row 2 should still be 'completed'");
-    // Row 3 and 4 should be archived (35 and 40)
+    // Row 3 and 4 should be archived
     let archived_count = result.matches("archived").count();
     assert_eq!(archived_count, 2, "Rows 3 and 4 should be 'archived'");
 

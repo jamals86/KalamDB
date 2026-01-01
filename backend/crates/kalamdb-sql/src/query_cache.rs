@@ -5,11 +5,17 @@
 //!
 //! **Performance**: Uses moka cache with TinyLFU eviction for optimal hit rate,
 //! Arc<[u8]> for zero-copy results, and automatic per-entry TTL expiration.
+//!
+//! **Security**: Bincode decoding uses size limits to prevent memory exhaustion
+//! from corrupted cache entries.
 
 use moka::sync::Cache;
 use moka::Expiry;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
+
+/// Maximum size for bincode decoding (16MB) to prevent memory exhaustion
+const MAX_BINCODE_DECODE_SIZE: usize = 16 * 1024 * 1024;
 
 /// Cache key for query results
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
@@ -186,10 +192,12 @@ impl QueryCache {
     /// Get cached result
     ///
     /// Returns None if not in cache (moka handles expiration automatically).
+    /// Uses size-limited bincode decoding to prevent memory exhaustion.
     pub fn get<T: bincode::Decode<()>>(&self, key: &QueryCacheKey) -> Option<T> {
         if let Some(entry) = self.cache.get(key) {
-            // Deserialize from bytes using bincode v2
-            let config = bincode::config::standard();
+            // Deserialize from bytes using bincode v2 with size limit
+            let config = bincode::config::standard()
+                .with_limit::<MAX_BINCODE_DECODE_SIZE>();
             if let Ok((value, _)) = bincode::decode_from_slice(&entry.value, config) {
                 return Some(value);
             }

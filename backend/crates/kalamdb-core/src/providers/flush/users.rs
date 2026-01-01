@@ -298,7 +298,8 @@ impl TableFlush for UserTableFlushJob {
             (Vec<u8>, kalamdb_tables::UserTableRow, i64),
         > = HashMap::new();
         // Track ALL keys to delete (including old versions)
-        let mut all_keys_to_delete: Vec<Vec<u8>> = Vec::new();
+        // Pre-allocate with reasonable capacity to reduce reallocations during scan
+        let mut all_keys_to_delete: Vec<Vec<u8>> = Vec::with_capacity(1024);
         let mut stats = FlushDedupStats::default();
 
         // Batched scan with cursor

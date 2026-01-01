@@ -8,23 +8,103 @@ use serde::{Deserialize, Serialize};
 use crate::constants::RESERVED_NAMESPACE_NAMES;
 use crate::StorageKey;
 
+/// Error returned when a namespace ID fails validation.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct NamespaceIdValidationError {
+    pub name: String,
+    pub reason: String,
+}
+
+impl fmt::Display for NamespaceIdValidationError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "Invalid namespace ID '{}': {}", self.name, self.reason)
+    }
+}
+
+impl std::error::Error for NamespaceIdValidationError {}
+
 /// Type-safe wrapper for namespace identifiers.
 ///
 /// Ensures namespace IDs cannot be accidentally used where user IDs or table names
 /// are expected.
+///
+/// # Security
+///
+/// Namespace IDs are validated to prevent path traversal attacks. The following
+/// are rejected:
+/// - Empty strings
+/// - Names containing `..` (parent directory traversal)
+/// - Names containing `/` or `\` (path separators)
+/// - Names containing null bytes
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 #[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
 #[cfg_attr(feature = "serde", derive(bincode::Encode, bincode::Decode))]
 pub struct NamespaceId(String);
 
 impl NamespaceId {
+    /// Validates a namespace ID for security issues.
+    ///
+    /// Returns an error if the ID:
+    /// - Is empty
+    /// - Contains path traversal sequences (`..`)
+    /// - Contains path separators (`/` or `\`)
+    /// - Contains null bytes
+    fn validate(name: &str) -> Result<(), NamespaceIdValidationError> {
+        if name.is_empty() {
+            return Err(NamespaceIdValidationError {
+                name: name.to_string(),
+                reason: "Namespace ID cannot be empty".to_string(),
+            });
+        }
+
+        if name.contains("..") {
+            return Err(NamespaceIdValidationError {
+                name: name.to_string(),
+                reason: "Namespace ID cannot contain '..' (path traversal)".to_string(),
+            });
+        }
+
+        if name.contains('/') || name.contains('\\') {
+            return Err(NamespaceIdValidationError {
+                name: name.to_string(),
+                reason: "Namespace ID cannot contain path separators".to_string(),
+            });
+        }
+
+        if name.contains('\0') {
+            return Err(NamespaceIdValidationError {
+                name: name.to_string(),
+                reason: "Namespace ID cannot contain null bytes".to_string(),
+            });
+        }
+
+        Ok(())
+    }
+
+    /// Creates a new NamespaceId from a string, with validation.
+    ///
+    /// Returns an error if the ID fails security validation.
+    ///
+    /// Namespace IDs are case-insensitive - they are normalized to lowercase internally.
+    pub fn try_new(id: impl Into<String>) -> Result<Self, NamespaceIdValidationError> {
+        let id = id.into();
+        Self::validate(&id)?;
+        Ok(Self(id.to_lowercase()))
+    }
+
     /// Creates a new NamespaceId from a string.
     ///
     /// Namespace IDs are case-insensitive - they are normalized to lowercase internally.
     /// For example, `NamespaceId::new("MyApp")` and `NamespaceId::new("myapp")` are equal.
+    ///
+    /// # Panics
+    ///
+    /// Panics if the ID fails security validation. Use `try_new` for fallible creation.
     #[inline]
     pub fn new(id: impl Into<String>) -> Self {
-        Self(id.into().to_lowercase())
+        let id = id.into();
+        Self::validate(&id).expect("Invalid namespace ID");
+        Self(id.to_lowercase())
     }
 
     /// Returns the namespace ID as a string slice.
@@ -91,12 +171,14 @@ impl fmt::Display for NamespaceId {
 
 impl From<String> for NamespaceId {
     fn from(s: String) -> Self {
+        Self::validate(&s).expect("Invalid namespace ID");
         Self(s.to_lowercase())
     }
 }
 
 impl From<&str> for NamespaceId {
     fn from(s: &str) -> Self {
+        Self::validate(s).expect("Invalid namespace ID");
         Self(s.to_lowercase())
     }
 }
@@ -199,5 +281,67 @@ mod tests {
         // Stored value should always be lowercase
         assert_eq!(ns1.as_str(), "myapp");
         assert_eq!(ns3.as_str(), "myapp");
+    }
+
+    // Security tests for path traversal prevention
+    #[test]
+    fn test_try_new_valid_names() {
+        assert!(NamespaceId::try_new("myapp").is_ok());
+        assert!(NamespaceId::try_new("my_namespace").is_ok());
+        assert!(NamespaceId::try_new("namespace123").is_ok());
+        assert!(NamespaceId::try_new("a").is_ok());
+    }
+
+    #[test]
+    fn test_try_new_rejects_empty() {
+        let result = NamespaceId::try_new("");
+        assert!(result.is_err());
+        assert!(result.unwrap_err().reason.contains("empty"));
+    }
+
+    #[test]
+    fn test_try_new_rejects_path_traversal() {
+        let result = NamespaceId::try_new("../myapp");
+        assert!(result.is_err());
+        assert!(result.unwrap_err().reason.contains("path traversal"));
+
+        let result = NamespaceId::try_new("myapp/../admin");
+        assert!(result.is_err());
+
+        let result = NamespaceId::try_new("..%2fmyapp");
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_try_new_rejects_forward_slash() {
+        let result = NamespaceId::try_new("path/to/namespace");
+        assert!(result.is_err());
+        assert!(result.unwrap_err().reason.contains("path separators"));
+    }
+
+    #[test]
+    fn test_try_new_rejects_backslash() {
+        let result = NamespaceId::try_new("path\\to\\namespace");
+        assert!(result.is_err());
+        assert!(result.unwrap_err().reason.contains("path separators"));
+    }
+
+    #[test]
+    fn test_try_new_rejects_null_byte() {
+        let result = NamespaceId::try_new("namespace\0name");
+        assert!(result.is_err());
+        assert!(result.unwrap_err().reason.contains("null bytes"));
+    }
+
+    #[test]
+    #[should_panic(expected = "Invalid namespace ID")]
+    fn test_new_panics_on_path_traversal() {
+        let _ = NamespaceId::new("../etc/passwd");
+    }
+
+    #[test]
+    #[should_panic(expected = "Invalid namespace ID")]
+    fn test_from_panics_on_path_traversal() {
+        let _: NamespaceId = "../etc/passwd".into();
     }
 }

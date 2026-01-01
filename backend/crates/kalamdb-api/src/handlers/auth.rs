@@ -16,11 +16,46 @@ use kalamdb_commons::Role;
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 
+/// Maximum username length (prevent memory exhaustion)
+const MAX_USERNAME_LENGTH: usize = 128;
+/// Maximum password length (bcrypt limit is 72 bytes, but allow some headroom for encoding)
+const MAX_PASSWORD_LENGTH: usize = 256;
+
 /// Login request body
 #[derive(Debug, Deserialize)]
 pub struct LoginRequest {
+    #[serde(deserialize_with = "validate_username_length")]
     pub username: String,
+    #[serde(deserialize_with = "validate_password_length")]
     pub password: String,
+}
+
+fn validate_username_length<'de, D>(deserializer: D) -> Result<String, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    let s = String::deserialize(deserializer)?;
+    if s.len() > MAX_USERNAME_LENGTH {
+        return Err(serde::de::Error::custom(format!(
+            "username exceeds maximum length of {} characters",
+            MAX_USERNAME_LENGTH
+        )));
+    }
+    Ok(s)
+}
+
+fn validate_password_length<'de, D>(deserializer: D) -> Result<String, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    let s = String::deserialize(deserializer)?;
+    if s.len() > MAX_PASSWORD_LENGTH {
+        return Err(serde::de::Error::custom(format!(
+            "password exceeds maximum length of {} characters",
+            MAX_PASSWORD_LENGTH
+        )));
+    }
+    Ok(s)
 }
 
 /// Login response body
@@ -79,9 +114,11 @@ impl Default for AuthConfig {
                 .ok()
                 .and_then(|s| s.parse().ok())
                 .unwrap_or(DEFAULT_JWT_EXPIRY_HOURS),
+            // SECURITY: Default to true for HTTPS-only cookies.
+            // Set KALAMDB_COOKIE_SECURE=false only in development without TLS.
             cookie_secure: std::env::var("KALAMDB_COOKIE_SECURE")
-                .map(|s| s == "true" || s == "1")
-                .unwrap_or(false),
+                .map(|s| s != "false" && s != "0")
+                .unwrap_or(true),
         }
     }
 }

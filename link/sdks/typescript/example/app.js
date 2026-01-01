@@ -4,7 +4,7 @@
  * Uses the KalamDB WASM client from parent directory
  */
 
-import { KalamDBClient } from '/dist/index.js';
+import { KalamDBClient } from '../dist/index.js';
 
 /** @type {KalamDBClient | null} */
 let client = null;

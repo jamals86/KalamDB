@@ -48,3 +48,7 @@ mod smoke_test_insert_throughput;
 mod smoke_test_int64_precision;
 #[path = "smoke/smoke_test_subscription_advanced.rs"]
 mod smoke_test_subscription_advanced;
+#[path = "smoke/smoke_test_as_user_impersonation.rs"]
+mod smoke_test_as_user_impersonation;
+#[path = "smoke/smoke_test_cli_commands.rs"]
+mod smoke_test_cli_commands;
