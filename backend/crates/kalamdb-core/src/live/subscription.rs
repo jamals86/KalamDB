@@ -143,6 +143,7 @@ impl SubscriptionService {
             projections: projections_arc.clone(),
             batch_size,
             snapshot_end_seq: None,
+            current_batch_num: 0,  // Start at batch 0
             notification_tx: notification_tx.clone(),
         };
 

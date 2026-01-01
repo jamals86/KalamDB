@@ -403,7 +403,10 @@
 <body>
   <div class="header">
     <h1>🚀 KalamDB TypeScript SDK - Browser Test</h1>
-    <span id="status" class="status disconnected">Server Offline</span>
+    <div style="display: flex; align-items: center; gap: 12px;">
+      <span id="authStatus" style="font-size: 12px; color: #808080;">Not Connected</span>
+      <span id="status" class="status disconnected">Server Offline</span>
+    </div>
   </div>
 
   <div class="container">
@@ -411,7 +414,7 @@
     <div class="left-panel">
       <div class="section">
         <h2 onclick="toggleSection('config')">
-          ⚙️ Configuration
+          🔐 Authentication
           <span class="toggle-icon">▼</span>
         </h2>
         <div class="section-content" id="config-content">
@@ -426,8 +429,10 @@
             </label>
             <label>
               Password:
-              <input type="password" id="password" value="" />
+              <input type="password" id="password" value="" placeholder="Leave empty for root" />
             </label>
+            <button onclick="connectClient()" class="success">🔌 Connect</button>
+            <button onclick="disconnectClient()" class="danger">🔌 Disconnect</button>
           </div>
         </div>
       </div>
@@ -438,7 +443,6 @@
           <span class="toggle-icon">▼</span>
         </h2>
         <div class="section-content" id="basic-content">
-          <button onclick="testInit()" class="success">Initialize WASM</button>
           <button onclick="testQuery()">Test Query (SELECT 1)</button>
           <button onclick="testCreateNamespace()">Create Namespace</button>
           <button onclick="testCreateTable()">Create Table</button>

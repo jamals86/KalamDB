@@ -17,6 +17,7 @@ use datafusion::execution::context::SessionContext;
 use datafusion::sql::sqlparser::ast::Expr;
 use kalamdb_commons::ids::SeqId;
 use kalamdb_commons::models::{ConnectionId, LiveQueryId, TableId, UserId};
+use kalamdb_commons::schemas::SchemaField;
 use kalamdb_commons::system::LiveQuery as SystemLiveQuery;
 use kalamdb_commons::websocket::SubscriptionRequest;
 use kalamdb_commons::NodeId;
@@ -228,9 +229,32 @@ impl LiveQueryManager {
             None
         };
 
+        // Build schema from table definition, respecting projections if specified
+        let schema: Vec<SchemaField> = if let Some(ref proj_cols) = projections {
+            // When projections specified, only include those columns in order
+            proj_cols
+                .iter()
+                .enumerate()
+                .filter_map(|(idx, col_name)| {
+                    table_def.columns.iter().find(|c| c.column_name.eq_ignore_ascii_case(col_name)).map(|col| {
+                        SchemaField::new(col.column_name.clone(), col.data_type.clone(), idx)
+                    })
+                })
+                .collect()
+        } else {
+            // SELECT * - include all columns in ordinal order
+            let mut cols: Vec<_> = table_def.columns.iter().collect();
+            cols.sort_by_key(|c| c.ordinal_position);
+            cols.iter()
+                .enumerate()
+                .map(|(idx, col)| SchemaField::new(col.column_name.clone(), col.data_type.clone(), idx))
+                .collect()
+        };
+
         Ok(SubscriptionResult {
             live_id,
             initial_data,
+            schema,
         })
     }
 

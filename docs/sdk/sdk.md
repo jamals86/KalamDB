@@ -329,7 +329,6 @@ type ServerMessage =
 
 interface BatchControl {
   batch_num: number;
-  total_batches?: number;
   has_more: boolean;
   status: 'loading' | 'loading_batch' | 'ready';
   last_seq_id?: string;

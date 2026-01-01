@@ -250,10 +250,12 @@ fn parse_message(text: &str) -> Result<Option<ChangeEvent>> {
                     subscription_id,
                     total_rows,
                     batch_control,
+                    schema,
                 } => ChangeEvent::Ack {
                     subscription_id,
                     total_rows,
                     batch_control,
+                    schema,
                 },
                 ServerMessage::InitialDataBatch {
                     subscription_id,

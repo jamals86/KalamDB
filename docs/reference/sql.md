@@ -920,7 +920,6 @@ Note: WebSocket messages may arrive as JSON text frames or as gzip-compressed bi
   "total_rows": 0,
   "batch_control": {
     "batch_num": 0,
-    "total_batches": null,
     "has_more": true,
     "status": "loading",
     "last_seq_id": null,
@@ -940,7 +939,6 @@ Note: WebSocket messages may arrive as JSON text frames or as gzip-compressed bi
   ],
   "batch_control": {
     "batch_num": 0,
-    "total_batches": null,
     "has_more": true,
     "status": "loading",
     "last_seq_id": 2,

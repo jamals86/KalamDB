@@ -358,7 +358,6 @@ async fn test_subscription_with_custom_config() {
 fn sample_batch_control() -> BatchControl {
     BatchControl {
         batch_num: 0,
-        total_batches: Some(0),
         has_more: false,
         status: BatchStatus::Ready,
         last_seq_id: None,

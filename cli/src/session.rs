@@ -1352,38 +1352,35 @@ impl CLISession {
                 subscription_id,
                 total_rows,
                 batch_control,
+                schema,
             } => {
-                let total_batches_display = batch_control
-                    .total_batches
-                    .map(|v| v.to_string())
-                    .unwrap_or_else(|| "?".to_string());
                 if self.color {
                     println!(
-                        "\x1b[36m[{}] ✓ SUBSCRIBED\x1b[0m [{}] {} total rows, batch {}/{} {}",
+                        "\x1b[36m[{}] ✓ SUBSCRIBED\x1b[0m [{}] {} total rows, batch {} {}, {} columns",
                         timestamp,
                         subscription_id,
                         total_rows,
                         batch_control.batch_num + 1,
-                        total_batches_display,
                         if batch_control.has_more {
                             "(loading...)"
                         } else {
                             "(ready)"
-                        }
+                        },
+                        schema.len()
                     );
                 } else {
                     println!(
-                        "[{}] ✓ SUBSCRIBED [{}] {} total rows, batch {}/{} {}",
+                        "[{}] ✓ SUBSCRIBED [{}] {} total rows, batch {} {}, {} columns",
                         timestamp,
                         subscription_id,
                         total_rows,
                         batch_control.batch_num + 1,
-                        total_batches_display,
                         if batch_control.has_more {
                             "(loading...)"
                         } else {
                             "(ready)"
-                        }
+                        },
+                        schema.len()
                     );
                 }
             }
@@ -1393,16 +1390,11 @@ impl CLISession {
                 batch_control,
             } => {
                 let count = rows.len();
-                let total_batches_display = batch_control
-                    .total_batches
-                    .map(|v| v.to_string())
-                    .unwrap_or_else(|| "?".to_string());
                 if self.color {
                     println!(
-                        "\x1b[34m[{}] BATCH {}/{}\x1b[0m [{}] {} rows {}",
+                        "\x1b[34m[{}] BATCH {}\x1b[0m [{}] {} rows {}",
                         timestamp,
                         batch_control.batch_num + 1,
-                        total_batches_display,
                         subscription_id,
                         count,
                         if batch_control.has_more {
@@ -1413,10 +1405,9 @@ impl CLISession {
                     );
                 } else {
                     println!(
-                        "[{}] BATCH {}/{} [{}] {} rows {}",
+                        "[{}] BATCH {} [{}] {} rows {}",
                         timestamp,
                         batch_control.batch_num + 1,
-                        total_batches_display,
                         subscription_id,
                         count,
                         if batch_control.has_more {

@@ -82,9 +82,16 @@ Subscribe to a live query.
   "type": "subscription_ack",
   "subscription_id": "messages_recent",
   "total_rows": 0,
-  "batch_control": {"batch_num": 0, "total_batches": null, "has_more": true, "status": "loading", "last_seq_id": null, "snapshot_end_seq": null}
+  "batch_control": {"batch_num": 0, "has_more": true, "status": "loading", "last_seq_id": null, "snapshot_end_seq": null},
+  "schema": [
+    {"name": "id", "data_type": "BigInt", "index": 0},
+    {"name": "content", "data_type": "Text", "index": 1},
+    {"name": "_seq", "data_type": "BigInt", "index": 2}
+  ]
 }
 ```
+
+The `schema` field is only included in the `subscription_ack` message (not subsequent batches) and describes each column's name, data type, and position in the result.
 
 **Server Response (Initial Data Batch)**:
 ```json
@@ -92,7 +99,7 @@ Subscribe to a live query.
   "type": "initial_data_batch",
   "subscription_id": "messages_recent",
   "rows": [{"id": 100, "content": "Recent message"}],
-  "batch_control": {"batch_num": 0, "total_batches": null, "has_more": true, "status": "loading", "last_seq_id": 100, "snapshot_end_seq": 123456}
+  "batch_control": {"batch_num": 0, "has_more": true, "status": "loading", "last_seq_id": 100, "snapshot_end_seq": 123456}
 }
 ```
 
@@ -315,7 +322,8 @@ Use the `last_rows` option to fetch recent data before receiving real-time notif
      "type": "subscription_ack",
      "subscription_id": "messages_with_history",
      "total_rows": 0,
-     "batch_control": {"batch_num": 0, "total_batches": null, "has_more": true, "status": "loading", "last_seq_id": null, "snapshot_end_seq": null}
+     "batch_control": {"batch_num": 0, "has_more": true, "status": "loading", "last_seq_id": null, "snapshot_end_seq": null},
+     "schema": [{"name": "id", "data_type": "BigInt", "index": 0}, {"name": "content", "data_type": "Text", "index": 1}]
    }
    ```
 
@@ -325,7 +333,7 @@ Use the `last_rows` option to fetch recent data before receiving real-time notif
      "type": "initial_data_batch",
      "subscription_id": "messages_with_history",
      "rows": [{"id": 1, "content": "..."}],
-     "batch_control": {"batch_num": 0, "total_batches": null, "has_more": true, "status": "loading", "last_seq_id": 100, "snapshot_end_seq": 123456}
+     "batch_control": {"batch_num": 0, "has_more": true, "status": "loading", "last_seq_id": 100, "snapshot_end_seq": 123456}
    }
    ```
 

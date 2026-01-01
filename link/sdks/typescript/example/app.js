@@ -2,12 +2,19 @@
  * KalamDB Browser Example Application
  * 
  * Uses the KalamDB WASM client from parent directory
+ * with JWT token authentication (fetched via login endpoint)
  */
 
-import { KalamDBClient } from '../dist/index.js';
+import { KalamDBClient, Auth } from '../dist/index.js';
 
 /** @type {KalamDBClient | null} */
 let client = null;
+
+/** @type {string | null} */
+let currentToken = null;
+
+/** @type {string | null} */
+let currentUsername = null;
 
 /** @type {(() => Promise<void>) | null} */
 let unsubscribeTodos = null;
@@ -29,6 +36,34 @@ function updateSubscriptionBar() {
   const listEl = document.getElementById('subList');
   const wsIndicator = document.getElementById('wsIndicator');
   const wsStatus = document.getElementById('wsStatus');
+  const authStatus = document.getElementById('authStatus');
+  
+  // Update auth status in header
+  if (client && currentUsername) {
+    authStatus.textContent = `🔐 ${currentUsername}`;
+    authStatus.style.color = '#4CAF50';
+  } else {
+    authStatus.textContent = 'Not Connected';
+    authStatus.style.color = '#808080';
+  }
+  
+  // Enable/disable buttons based on connection state
+  const allButtons = document.querySelectorAll('.section button');
+  allButtons.forEach(btn => {
+    const isConnectBtn = btn.textContent.includes('Connect') && !btn.textContent.includes('Disconnect');
+    const isDisconnectBtn = btn.textContent.includes('Disconnect');
+    
+    if (isConnectBtn) {
+      // Connect button: enabled when NOT connected
+      btn.disabled = !!client;
+    } else if (isDisconnectBtn) {
+      // Disconnect button: enabled when connected
+      btn.disabled = !client;
+    } else {
+      // All other buttons: enabled when connected
+      btn.disabled = !client;
+    }
+  });
   
   // Update WebSocket status
   const isConnected = client?.isConnected() ?? false;
@@ -180,21 +215,139 @@ function getConfig() {
   };
 }
 
-window.testInit = async function() {
+/**
+ * Login to get JWT token from the server
+ */
+async function loginForToken(serverUrl, username, password) {
+  const response = await fetch(`${serverUrl}/v1/api/auth/login`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify({ username, password }),
+  });
+  
+  if (!response.ok) {
+    const error = await response.json().catch(() => ({ message: 'Login failed' }));
+    throw new Error(error.message || `Login failed with status ${response.status}`);
+  }
+  
+  const data = await response.json();
+  return {
+    token: data.access_token,
+    user: data.user,
+    expiresAt: data.expires_at,
+  };
+}
+
+/**
+ * Connect to KalamDB with current credentials using JWT token
+ */
+window.connectClient = async function() {
   try {
-    log('🔧 Initializing WASM and creating client...', 'info');
     const config = getConfig();
     
-    client = new KalamDBClient(config.url, config.username, config.password);
-    await client.initialize();
+    if (!config.username) {
+      log('⚠️ Username is required', 'warning');
+      return;
+    }
     
-    log('✅ WASM initialized successfully!', 'success');
+    // Disconnect existing client if any
+    if (client) {
+      log('🔌 Disconnecting existing client...', 'info');
+      try {
+        await client.disconnect();
+      } catch (e) {
+        // Ignore disconnect errors
+      }
+      client = null;
+      currentToken = null;
+      currentUsername = null;
+    }
+    
+    log('🔐 Authenticating...', 'info');
     log(`   Server: ${config.url}`, 'info');
     log(`   User: ${config.username}`, 'info');
+    
+    // Step 1: Get JWT token via login endpoint
+    const loginResult = await loginForToken(config.url, config.username, config.password);
+    currentToken = loginResult.token;
+    currentUsername = loginResult.user.username;
+    
+    log(`✅ Authenticated as: ${loginResult.user.username} (${loginResult.user.role})`, 'success');
+    log(`   Token expires: ${loginResult.expiresAt}`, 'info');
+    
+    // Step 2: Create client with JWT token
+    log('🔧 Initializing WASM client...', 'info');
+    client = new KalamDBClient({
+      url: config.url,
+      auth: Auth.jwt(currentToken),
+    });
+    await client.initialize();
+    
+    log('✅ Connected successfully!', 'success');
+    updateSubscriptionBar();
   } catch (error) {
-    log(`❌ Initialization failed: ${error.message}`, 'error');
+    log(`❌ Connection failed: ${error.message}`, 'error');
     console.error(error);
+    client = null;
+    currentToken = null;
+    currentUsername = null;
+    updateSubscriptionBar();
   }
+};
+
+/**
+ * Disconnect from KalamDB
+ */
+window.disconnectClient = async function() {
+  if (!client) {
+    log('⚠️ No active connection', 'warning');
+    return;
+  }
+  
+  try {
+    log('🔌 Disconnecting...', 'info');
+    
+    // Unsubscribe from all active subscriptions
+    if (unsubscribeTodos) {
+      try {
+        await unsubscribeTodos();
+      } catch (e) {
+        // Ignore unsubscribe errors
+      }
+      unsubscribeTodos = null;
+    }
+    if (unsubscribeEvents) {
+      try {
+        await unsubscribeEvents();
+      } catch (e) {
+        // Ignore unsubscribe errors
+      }
+      unsubscribeEvents = null;
+    }
+    
+    await client.disconnect();
+    client = null;
+    currentToken = null;
+    currentUsername = null;
+    
+    log('✅ Disconnected successfully', 'success');
+    updateSubscriptionBar();
+  } catch (error) {
+    log(`❌ Disconnect failed: ${error.message}`, 'error');
+    console.error(error);
+    // Still clear state on error
+    client = null;
+    currentToken = null;
+    currentUsername = null;
+    updateSubscriptionBar();
+  }
+};
+
+window.testInit = async function() {
+  log('⚠️ Deprecated: Use "Connect" button instead', 'warning');
+  await connectClient();
 };
 
 window.testQuery = async function() {
@@ -300,8 +453,15 @@ window.runAll = async function() {
   log('🚀 Running all tests...', 'info');
   log('═'.repeat(60), 'info');
   
-  await testInit();
-  await new Promise(r => setTimeout(r, 500));
+  // Connect first if not connected
+  if (!client) {
+    await connectClient();
+    await new Promise(r => setTimeout(r, 500));
+    if (!client) {
+      log('❌ Cannot run tests: connection failed', 'error');
+      return;
+    }
+  }
   
   await testQuery();
   await new Promise(r => setTimeout(r, 500));

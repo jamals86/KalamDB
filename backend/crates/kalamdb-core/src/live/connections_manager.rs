@@ -80,6 +80,7 @@ pub struct SubscriptionHandle {
 /// - Notification filtering (filter_expr)
 /// - Column projections (projections)
 /// - Initial data batch fetching (sql, batch_size, snapshot_end_seq)
+/// - Batch pagination tracking (current_batch_num)
 ///
 /// Memory optimization: Uses Arc<str> for SQL and Arc<Expr> for filter
 /// to share data with SubscriptionHandle indices.
@@ -100,6 +101,9 @@ pub struct SubscriptionState {
     pub batch_size: usize,
     /// Snapshot boundary SeqId for consistent batch loading
     pub snapshot_end_seq: Option<SeqId>,
+    /// Current batch number for pagination tracking (0-indexed)
+    /// Incremented after each batch is sent
+    pub current_batch_num: u32,
     /// Shared notification channel (Arc for zero-copy)
     pub notification_tx: Arc<NotificationSender>,
 }
@@ -193,6 +197,23 @@ impl ConnectionState {
         if let Some(mut sub) = self.subscriptions.get_mut(subscription_id) {
             sub.snapshot_end_seq = snapshot_end_seq;
         }
+    }
+
+    /// Increment current_batch_num for a subscription and return the new value
+    /// Returns None if subscription not found
+    pub fn increment_batch_num(&self, subscription_id: &str) -> Option<u32> {
+        if let Some(mut sub) = self.subscriptions.get_mut(subscription_id) {
+            sub.current_batch_num += 1;
+            Some(sub.current_batch_num)
+        } else {
+            None
+        }
+    }
+
+    /// Get current_batch_num for a subscription
+    /// Returns None if subscription not found
+    pub fn get_batch_num(&self, subscription_id: &str) -> Option<u32> {
+        self.subscriptions.get(subscription_id).map(|s| s.current_batch_num)
     }
 
     /// Get all subscription IDs

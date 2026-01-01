@@ -108,14 +108,32 @@ impl Default for AuthConfig {
     fn default() -> Self {
         Self {
             // IMPORTANT: This must match the default in kalamdb-auth/src/unified.rs JWT_CONFIG
+            // Use centralized default from kalamdb-commons to ensure consistency
             jwt_secret: std::env::var("KALAMDB_JWT_SECRET")
-                .unwrap_or_else(|_| "kalamdb-dev-secret-key-change-in-production".to_string()),
+                .unwrap_or_else(|_| kalamdb_commons::config::defaults::default_auth_jwt_secret()),
             jwt_expiry_hours: std::env::var("KALAMDB_JWT_EXPIRY_HOURS")
                 .ok()
                 .and_then(|s| s.parse().ok())
                 .unwrap_or(DEFAULT_JWT_EXPIRY_HOURS),
             // SECURITY: Default to true for HTTPS-only cookies.
             // Set KALAMDB_COOKIE_SECURE=false only in development without TLS.
+            cookie_secure: std::env::var("KALAMDB_COOKIE_SECURE")
+                .map(|s| s != "false" && s != "0")
+                .unwrap_or(true),
+        }
+    }
+}
+
+impl AuthConfig {
+    /// Create AuthConfig from ServerConfig (reads jwt_secret from config file)
+    pub fn from_server_config(config: &kalamdb_commons::ServerConfig) -> Self {
+        Self {
+            // Use jwt_secret from config file (which falls back to env var or default)
+            jwt_secret: config.auth.jwt_secret.clone(),
+            jwt_expiry_hours: std::env::var("KALAMDB_JWT_EXPIRY_HOURS")
+                .ok()
+                .and_then(|s| s.parse().ok())
+                .unwrap_or(DEFAULT_JWT_EXPIRY_HOURS),
             cookie_secure: std::env::var("KALAMDB_COOKIE_SECURE")
                 .map(|s| s != "false" && s != "0")
                 .unwrap_or(true),
