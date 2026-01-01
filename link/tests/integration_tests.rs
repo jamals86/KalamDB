@@ -15,7 +15,7 @@
 //! ```
 
 use base64::Engine;
-use kalam_link::models::{BatchControl, BatchStatus, ResponseStatus};
+use kalam_link::models::{BatchControl, BatchStatus, KalamDataType, ResponseStatus, SchemaField};
 use kalam_link::{AuthProvider, ChangeEvent, KalamLinkClient, KalamLinkError, SubscriptionConfig};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, OnceLock};
@@ -393,6 +393,13 @@ fn test_change_event_subscription_id() {
         subscription_id: "sub-ack".to_string(),
         total_rows: 0,
         batch_control: sample_batch_control(),
+        schema: vec![
+            SchemaField {
+                name: "id".to_string(),
+                data_type: KalamDataType::BigInt,
+                index: 0,
+            },
+        ],
     };
     assert_eq!(ack.subscription_id(), Some("sub-ack"));
 
