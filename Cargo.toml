@@ -118,7 +118,8 @@ bytes = "1.11.0"
 
 # Object storage abstraction (S3/GCS/Azure/local)
 # Kept as a workspace dependency so only kalamdb-filestore needs to opt-in.
-object_store = { version = "0.13.0", features = ["aws", "gcp", "azure"] }
+# Using 0.12.4 to match DataFusion 51.0.0 dependency
+object_store = { version = "0.12.4", features = ["aws", "gcp", "azure"] }
 parking_lot = "0.12"
 tokio-util = "0.7.17"
 hex = "0.4"

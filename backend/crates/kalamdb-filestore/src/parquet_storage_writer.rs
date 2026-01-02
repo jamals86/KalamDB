@@ -12,7 +12,7 @@ use bytes::Bytes;
 use datafusion::arrow::compute::{self, SortOptions};
 use kalamdb_commons::constants::SystemColumnNames;
 use kalamdb_commons::system::Storage;
-use object_store::{ObjectStore, ObjectStoreExt};
+use object_store::ObjectStore;
 use parquet::arrow::ArrowWriter;
 use parquet::basic::{Compression, ZstdLevel};
 use parquet::file::properties::WriterProperties;
