@@ -123,13 +123,41 @@ export interface ErrorDetail {
 }
 
 /**
+ * Message type enum for WebSocket subscription events
+ */
+export enum MessageType {
+  SubscriptionAck = 'subscription_ack',
+  InitialDataBatch = 'initial_data_batch',
+  Change = 'change',
+  Error = 'error',
+}
+
+/**
+ * Change type enum for live subscription change events
+ */
+export enum ChangeType {
+  Insert = 'insert',
+  Update = 'update',
+  Delete = 'delete',
+}
+
+/**
+ * Batch loading status enum
+ */
+export enum BatchStatus {
+  Loading = 'loading',
+  LoadingBatch = 'loading_batch',
+  Ready = 'ready',
+}
+
+/**
  * Server message types for WebSocket subscriptions
  */
 export type ServerMessage =
-  | { type: 'subscription_ack'; subscription_id: string; total_rows: number; batch_control: BatchControl; schema: SchemaField[] }
-  | { type: 'initial_data_batch'; subscription_id: string; rows: Record<string, any>[]; batch_control: BatchControl }
-  | { type: 'change'; subscription_id: string; change_type: 'insert' | 'update' | 'delete'; rows?: Record<string, any>[]; old_values?: Record<string, any>[] }
-  | { type: 'error'; subscription_id: string; code: string; message: string };
+  | { type: MessageType.SubscriptionAck | 'subscription_ack'; subscription_id: string; total_rows: number; batch_control: BatchControl; schema: SchemaField[] }
+  | { type: MessageType.InitialDataBatch | 'initial_data_batch'; subscription_id: string; rows: Record<string, any>[]; batch_control: BatchControl }
+  | { type: MessageType.Change | 'change'; subscription_id: string; change_type: ChangeType | 'insert' | 'update' | 'delete'; rows?: Record<string, any>[]; old_values?: Record<string, any>[] }
+  | { type: MessageType.Error | 'error'; subscription_id: string; code: string; message: string };
 
 /**
  * Batch control metadata for paginated data loading
@@ -144,7 +172,7 @@ export interface BatchControl {
   /** Whether more batches are available */
   has_more: boolean;
   /** Loading status */
-  status: 'loading' | 'loading_batch' | 'ready';
+  status: BatchStatus | 'loading' | 'loading_batch' | 'ready';
   /** Last sequence ID in this batch */
   last_seq_id?: string;
   /** Snapshot boundary sequence ID */

@@ -40,8 +40,9 @@ log = "0.4.29"
 # Async runtime
 tokio = { version = "1.42", features = ["rt-multi-thread", "macros", "sync", "time", "fs", "io-util", "net", "signal"] }
 
-# HTTP client (with HTTP/2 support) - using native-tls to avoid aws-lc build requirements
-reqwest = { version = "0.13.1", default-features = false, features = ["json", "native-tls", "http2"] }
+# HTTP client (with HTTP/2 support) - using rustls-tls for cross-compilation compatibility
+# Note: native-tls requires OpenSSL which is difficult to cross-compile for aarch64
+reqwest = { version = "0.12.25", default-features = false, features = ["json", "rustls-tls", "http2"] }
 
 # WebSocket
 tokio-tungstenite = { version = "0.28.0", features = ["rustls-tls-webpki-roots"] }

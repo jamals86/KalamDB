@@ -1,28 +1,412 @@
-#+#+#+#+
+# kalam-link
 
-# kalam-link (TypeScript SDK)
+Official TypeScript/JavaScript client for KalamDB.
 
-This folder (`link/sdks/typescript`) is the npm-publishable **TypeScript/JavaScript SDK** for KalamDB.
+- Execute SQL over HTTP
+- Subscribe to real-time changes over WebSocket
+- Works in modern browsers and Node.js (>= 18)
 
-It is built from the Rust crate at `link/` (crate name: `kalam-link`) using `wasm-pack`.
-
-## Build From Source (This Repo)
-
-### Prerequisites
-
-- Rust toolchain
-- Node.js `>=18`
-- `wasm-pack` (Rust → WASM build tool)
-
-Install wasm-pack:
+## Installation
 
 ```bash
-cargo install wasm-pack
+npm i kalam-link
 ```
 
-### Build
+## Quick Start
 
-From the repo root:
+```ts
+import { createClient, Auth, MessageType, ChangeType } from 'kalam-link';
+
+const client = createClient({
+  url: 'http://localhost:8080',
+  auth: Auth.basic('admin', 'admin'),
+});
+
+await client.connect();
+
+// Query
+const result = await client.query('SELECT 1 AS ok');
+console.log(result.results[0]);
+
+// Subscribe (returns an unsubscribe function)
+const unsubscribe = await client.subscribe('app.messages', (event) => {
+  switch (event.type) {
+    case MessageType.Change:
+      if (event.change_type === ChangeType.Insert) {
+        console.log('New row:', event.rows);
+      }
+      break;
+    case MessageType.InitialDataBatch:
+      console.log('Initial data:', event.rows);
+      break;
+    case MessageType.Error:
+      console.error('Subscription error:', event.message);
+      break;
+  }
+});
+
+// Later
+await unsubscribe();
+await client.disconnect();
+```
+
+## Authentication
+
+```ts
+import { createClient, Auth } from 'kalam-link';
+
+// Username/password
+createClient({ url: 'http://localhost:8080', auth: Auth.basic('user', 'pass') });
+
+// JWT token
+createClient({ url: 'http://localhost:8080', auth: Auth.jwt('eyJhbGciOiJIUzI1NiIs...') });
+
+// No auth (for local/dev setups that allow it)
+createClient({ url: 'http://localhost:8080', auth: Auth.none() });
+```
+
+## API Reference (Complete)
+
+Everything below is exported from `kalam-link` unless noted otherwise.
+
+### Imports
+
+```ts
+import KalamDBClient, {
+  createClient,
+  Auth,
+  // Enums
+  MessageType,
+  ChangeType,
+  BatchStatus,
+  // Types
+  type AuthCredentials,
+  type BasicAuthCredentials,
+  type JwtAuthCredentials,
+  type NoAuthCredentials,
+  type ClientOptions,
+  type ClientOptionsWithAuth,
+  type ClientOptionsLegacy,
+  type ConnectionOptions,
+  type SubscriptionOptions,
+  type SubscribeOptions,
+  type QueryResponse,
+  type QueryResult,
+  type SchemaField,
+  type ErrorDetail,
+  type ServerMessage,
+  type BatchControl,
+  type SubscriptionCallback,
+  type SubscriptionInfo,
+  type Unsubscribe,
+  type WasmKalamClient,
+  // Helpers
+  buildAuthHeader,
+  encodeBasicAuth,
+  isAuthenticated,
+  isBasicAuth,
+  isJwtAuth,
+  isNoAuth,
+} from 'kalam-link';
+```
+
+### Factory
+
+#### `createClient(options: ClientOptions): KalamDBClient`
+
+```ts
+type ClientOptions = ClientOptionsWithAuth | ClientOptionsLegacy;
+
+interface ClientOptionsWithAuth {
+  url: string;
+  auth: AuthCredentials;
+}
+
+interface ClientOptionsLegacy {
+  url: string;
+  username: string;
+  password: string;
+}
+```
+
+### Class: `KalamDBClient` (default export)
+
+#### Constructors
+
+```ts
+new KalamDBClient(options: ClientOptionsWithAuth)
+
+// Legacy (deprecated)
+new KalamDBClient(url: string, username: string, password: string)
+```
+
+#### Lifecycle
+
+```ts
+initialize(): Promise<void>
+connect(): Promise<void>
+disconnect(): Promise<void>
+isConnected(): boolean
+```
+
+#### Authentication
+
+```ts
+getAuthType(): 'basic' | 'jwt' | 'none'
+```
+
+#### Queries
+
+```ts
+query(sql: string, params?: any[]): Promise<QueryResponse>
+```
+
+#### Convenience DML
+
+```ts
+insert(tableName: string, data: Record<string, any>): Promise<QueryResponse>
+delete(tableName: string, rowId: string | number): Promise<void>
+```
+
+#### Subscriptions
+
+```ts
+subscribe(
+  tableName: string,
+  callback: SubscriptionCallback,
+  options?: SubscriptionOptions
+): Promise<Unsubscribe>
+
+subscribeWithSql(
+  sql: string,
+  callback: SubscriptionCallback,
+  options?: SubscriptionOptions
+): Promise<Unsubscribe>
+
+unsubscribe(subscriptionId: string): Promise<void>
+unsubscribeAll(): Promise<void>
+```
+
+Subscription helpers:
+
+```ts
+getSubscriptionCount(): number
+getSubscriptions(): SubscriptionInfo[]
+isSubscribedTo(tableNameOrSql: string): boolean
+getLastSeqId(subscriptionId: string): string | undefined
+```
+
+#### Reconnection controls
+
+```ts
+setAutoReconnect(enabled: boolean): void
+setReconnectDelay(initialDelayMs: number, maxDelayMs: number): void
+setMaxReconnectAttempts(maxAttempts: number): void
+getReconnectAttempts(): number
+isReconnecting(): boolean
+```
+
+### Auth API
+
+#### Types
+
+```ts
+interface BasicAuthCredentials { type: 'basic'; username: string; password: string }
+interface JwtAuthCredentials { type: 'jwt'; token: string }
+interface NoAuthCredentials { type: 'none' }
+
+type AuthCredentials =
+  | BasicAuthCredentials
+  | JwtAuthCredentials
+  | NoAuthCredentials;
+```
+
+#### Factories
+
+```ts
+Auth.basic(username: string, password: string): BasicAuthCredentials
+Auth.jwt(token: string): JwtAuthCredentials
+Auth.none(): NoAuthCredentials
+```
+
+#### Helpers
+
+```ts
+encodeBasicAuth(username: string, password: string): string
+buildAuthHeader(auth: AuthCredentials): string | undefined
+
+isBasicAuth(auth: AuthCredentials): auth is BasicAuthCredentials
+isJwtAuth(auth: AuthCredentials): auth is JwtAuthCredentials
+isNoAuth(auth: AuthCredentials): auth is NoAuthCredentials
+isAuthenticated(auth: AuthCredentials): auth is BasicAuthCredentials | JwtAuthCredentials
+```
+
+### Query result types
+
+```ts
+interface SchemaField {
+  name: string;
+  data_type: string;
+  index: number;
+}
+
+interface QueryResult {
+  schema: SchemaField[];
+  rows?: unknown[][];
+  row_count: number;
+  message?: string;
+}
+
+interface QueryResponse {
+  status: 'success' | 'error';
+  results: QueryResult[];
+  took?: number;
+  error?: ErrorDetail;
+}
+
+interface ErrorDetail {
+  code: string;
+  message: string;
+  details?: any;
+}
+```
+
+### Enums
+
+```ts
+// Message type for WebSocket subscription events
+enum MessageType {
+  SubscriptionAck = 'subscription_ack',
+  InitialDataBatch = 'initial_data_batch',
+  Change = 'change',
+  Error = 'error',
+}
+
+// Change type for live subscription change events
+enum ChangeType {
+  Insert = 'insert',
+  Update = 'update',
+  Delete = 'delete',
+}
+
+// Batch loading status
+enum BatchStatus {
+  Loading = 'loading',
+  LoadingBatch = 'loading_batch',
+  Ready = 'ready',
+}
+```
+
+### Live subscription event types
+
+```ts
+type ServerMessage =
+  | {
+      type: MessageType.SubscriptionAck;
+      subscription_id: string;
+      total_rows: number;
+      batch_control: BatchControl;
+      schema: SchemaField[];
+    }
+  | {
+      type: MessageType.InitialDataBatch;
+      subscription_id: string;
+      rows: Record<string, any>[];
+      batch_control: BatchControl;
+    }
+  | {
+      type: MessageType.Change;
+      subscription_id: string;
+      change_type: ChangeType;
+      rows?: Record<string, any>[];
+      old_values?: Record<string, any>[];
+    }
+  | {
+      type: MessageType.Error;
+      subscription_id: string;
+      code: string;
+      message: string;
+    };
+
+interface BatchControl {
+  batch_num: number;
+  has_more: boolean;
+  status: BatchStatus;
+  last_seq_id?: string;
+  snapshot_end_seq?: string;
+}
+
+type SubscriptionCallback = (event: ServerMessage) => void;
+type Unsubscribe = () => Promise<void>;
+
+interface SubscriptionInfo {
+  id: string;
+  tableName: string;
+  createdAt: Date;
+}
+```
+
+### Options
+
+```ts
+interface ConnectionOptions {
+  auto_reconnect?: boolean;
+  reconnect_delay_ms?: number;
+  max_reconnect_delay_ms?: number;
+  max_reconnect_attempts?: number;
+}
+
+interface SubscriptionOptions {
+  batch_size?: number;
+  last_rows?: number;
+  from_seq_id?: string;
+}
+
+type SubscribeOptions = SubscriptionOptions;
+```
+
+### Advanced: WASM entrypoint (`kalam-link/wasm`)
+
+```ts
+import init, {
+  KalamClient,
+  WasmTimestampFormatter,
+  parseIso8601,
+  timestampNow,
+  initSync,
+} from 'kalam-link/wasm';
+```
+
+Exports:
+
+- `default init(moduleOrPath?) => Promise<InitOutput>`
+- `initSync(moduleOrBytes) => InitOutput`
+- `class KalamClient` (low-level WASM client)
+- `class WasmTimestampFormatter`
+- `parseIso8601(isoString: string): number`
+- `timestampNow(): number`
+
+## Notes (Browser/Node)
+
+This package includes a small `.wasm` runtime under the hood.
+
+- In browsers with bundlers (Vite/Webpack/Rollup), it should “just work”.
+- If you see WASM loading errors, ensure your build serves/copies:
+  `node_modules/kalam-link/dist/wasm/kalam_link_bg.wasm`
+
+## Links
+
+- KalamDB repository: https://github.com/jamals86/KalamDB
+- Issues: https://github.com/jamals86/KalamDB/issues
+
+## Development (Build From This Repo)
+
+Only needed if you are contributing to the SDK.
+
+Prerequisites:
+
+- Node.js `>=18`
+- Rust toolchain + `wasm-pack`
 
 ```bash
 cd link/sdks/typescript
@@ -30,420 +414,10 @@ npm install
 npm run build
 ```
 
-This will:
-
-1. Compile the Rust crate (`link/`) to WASM via `wasm-pack`
-2. Copy generated WASM artifacts into `dist/wasm/`
-3. Compile TypeScript into `dist/`
-
-### Output
-
-After a successful build:
-
-- `dist/index.js` / `dist/index.d.ts`
-- `dist/wasm/kalam_link.js` / `dist/wasm/kalam_link.d.ts`
-- `dist/wasm/kalam_link_bg.wasm`
-
-## SDK Architecture Principles
-
-**SDKs as First-Class Packages**:
-- Each language SDK in `sdks/{language}/` is a complete, publishable package
-- SDKs include: build system, tests, docs, package config, .gitignore
-- Examples import SDKs as local dependencies (e.g., `"kalam-link": "file:../../link/sdks/typescript"`)
-- **Examples MUST NOT implement their own clients** - all functionality comes from SDKs
-- If examples need features, add them to the SDK for all users
-
-**Benefits**:
-- ✅ Examples validate real SDK usability
-- ✅ No code duplication between examples  
-- ✅ SDKs ready to publish without modification
-- ✅ Improvements benefit all users immediately
-
-See [SDK Integration Guide](../specs/006-docker-wasm-examples/SDK_INTEGRATION.md) for detailed architecture.
-
-## Features
-
-- 🦀 **Dual-mode library**: Use natively in Rust or compile to WebAssembly for JavaScript/TypeScript
-- 🔐 **HTTP Basic Auth & JWT**: Secure authentication for all API requests
-- 🔄 **Real-time subscriptions**: Subscribe to table changes with WebSocket support
-- 📊 **SQL queries**: Execute SQL queries and get results
-- 🌐 **Cross-platform**: Browser-first WASM SDK (Node.js usage depends on your WASM + fetch environment)
-- 🌍 **Multi-language SDKs**: Official SDKs for different languages
-
-## Installation
-
-## Running Locally (Quick Sanity Check)
-
-1. Start the server (separate terminal):
-
-```bash
-cd backend
-cargo run
-```
-
-2. Build the SDK:
-
-```bash
-cd link/sdks/typescript
-npm run build
-```
-
-3. Serve the folder and open the browser test page:
-
-```bash
-npx http-server -p 3000
-```
-
-Open `http://localhost:3000/tests/browser-test.html`.
-
-For a step-by-step guide to build and run the example app, see `example/README.md`.
-
-### Native Rust
-
-```rust
-use kalam_link::client::KalamClient;
-
-#[tokio::main]
-async fn main() -> Result<(), Box<dyn std::error::Error>> {
-    let client = KalamClient::new("http://localhost:8080", "your-api-key")?;
-    
-    // Insert data
-    client.insert("users", serde_json::json!({
-        "name": "Alice",
-        "email": "alice@example.com"
-    })).await?;
-    
-    // Query data
-    let results = client.query("SELECT * FROM users WHERE name = 'Alice'").await?;
-    println!("Results: {:?}", results);
-    
-    Ok(())
-}
-```
-
-### WebAssembly - Node.js
-
-```javascript
-import { readFile } from 'fs/promises';
-import init, { KalamClient } from './pkg/kalam_link.js';
-
-// Initialize WASM module
-const wasmBuffer = await readFile('./pkg/kalam_link_bg.wasm');
-await init(wasmBuffer);
-
-// Create client
-const client = new KalamClient('http://localhost:8080', 'username', 'password');
-
-// Connect to server
-await client.connect();
-
-// Insert data
-await client.insert('users', JSON.stringify({
-  name: 'Alice',
-  email: 'alice@example.com'
-}));
-
-// Query data
-const results = await client.query("SELECT * FROM users WHERE name = 'Alice'");
-console.log('Results:', results);
-
-// Disconnect
-await client.disconnect();
-```
-
-### WebAssembly - Browser
-
-```html
-<!DOCTYPE html>
-<html>
-<head>
-  <meta charset="utf-8">
-  <title>KalamDB Browser Example</title>
-</head>
-<body>
-  <script type="module">
-    import init, { KalamClient } from './pkg/kalam_link.js';
-
-    // Initialize WASM module
-    await init();
-
-    // Create client
-    const client = new KalamClient('http://localhost:8080', 'username', 'password');
-
-    // Connect to server
-    await client.connect();
-
-    // Insert data
-    await client.insert('users', JSON.stringify({
-      name: 'Alice',
-      email: 'alice@example.com'
-    }));
-
-    // Query data
-    const results = await client.query("SELECT * FROM users WHERE name = 'Alice'");
-    console.log('Results:', results);
-
-    // Subscribe to changes
-    const subscriptionId = await client.subscribe('users', (event) => {
-      console.log('Table changed:', event);
-    });
-
-    // Later: Unsubscribe
-    await client.unsubscribe(subscriptionId);
-
-    // Disconnect
-    await client.disconnect();
-  </script>
-</body>
-</html>
-```
-
-### TypeScript Support
-
-The WASM build includes TypeScript definitions (`kalam_link.d.ts`):
-
-```typescript
-import init, { KalamClient } from './pkg/kalam_link.js';
-
-// TypeScript knows the types!
-const client: KalamClient = new KalamClient(
-  'http://localhost:8080',
-  'username', 'password'
-);
-
-// Methods are fully typed
-const isConnected: boolean = client.isConnected();
-```
-
-## API Reference
-
-### `KalamClient`
-
-#### Constructor
-
-```rust
-new KalamClient(url: string, username, password: string)
-```
-
-Creates a new KalamDB client.
-
-**Parameters:**
-- `url` - Server URL (e.g., `http://localhost:8080`)
-- `username, password` - API key for authentication
-
-**Throws:**
-- Error if `url` or `username, password` is empty
-
-**Example:**
-```javascript
-const client = new KalamClient('http://localhost:8080', 'my-api-key');
-```
-
-#### Connection Methods
-
-##### `connect()`
-
-```rust
-async connect() -> Promise<void>
-```
-
-Establishes connection to the KalamDB server.
-
-##### `disconnect()`
-
-```rust
-async disconnect() -> Promise<void>
-```
-
-Closes the connection to the server.
-
-##### `isConnected()`
-
-```rust
-isConnected() -> boolean
-```
-
-Returns `true` if currently connected, `false` otherwise.
-
-#### Data Methods
-
-##### `insert()`
-
-```rust
-async insert(table_name: string, data: string) -> Promise<string>
-```
-
-Inserts a row into a table.
-
-**Parameters:**
-- `table_name` - Name of the table
-- `data` - JSON string containing the data to insert
-
-**Returns:** Response from the server
-
-##### `delete()`
-
-```rust
-async delete(table_name: string, row_id: string) -> Promise<string>
-```
-
-Deletes a row from a table.
-
-**Parameters:**
-- `table_name` - Name of the table
-- `row_id` - ID of the row to delete
-
-**Returns:** Response from the server
-
-##### `query()`
-
-```rust
-async query(sql: string) -> Promise<string>
-```
-
-Executes a SQL query.
-
-**Parameters:**
-- `sql` - SQL query string
-
-**Returns:** JSON string containing query results
-
-#### Subscription Methods
-
-##### `subscribe()`
-
-```rust
-async subscribe(table_name: string, callback: Function) -> Promise<string>
-```
-
-Subscribes to changes in a table.
-
-**Parameters:**
-- `table_name` - Name of the table to subscribe to
-- `callback` - Function called when the table changes
-
-**Returns:** Subscription ID
-
-##### `unsubscribe()`
-
-```rust
-async unsubscribe(subscription_id: string) -> Promise<void>
-```
-
-Unsubscribes from a table.
-
-**Parameters:**
-- `subscription_id` - ID returned from `subscribe()`
-
-## Feature Flags
-
-The library supports two mutually exclusive feature sets:
-
-### `tokio-runtime` (default)
-
-For native Rust applications. Includes:
-- `tokio` - Async runtime
-- `reqwest` - HTTP client
-- `tokio-tungstenite` - WebSocket client
-
-**Build:**
-```bash
-cargo build  # Uses default features
-```
-
-### `wasm`
-
-For WebAssembly (browser/Node.js). Includes:
-- `wasm-bindgen` - Rust/JS interop
-- `wasm-bindgen-futures` - Async support
-- `js-sys` - JavaScript global APIs
-- `web-sys` - Web APIs
-- `getrandom` with "js" feature - Random number generation
-
-**Build:**
-```bash
-wasm-pack build --target web --features wasm --no-default-features
-```
-
-## Testing
-
-### Native Tests
-
-```bash
-cargo test
-```
-
-### WASM Tests (Node.js)
-
-```bash
-# Build WASM first
-wasm-pack build --target web --out-dir pkg --features wasm --no-default-features
-
-# Run Node.js tests
-node test-wasm.mjs
-```
-
-Expected output:
-```
-🧪 Testing kalam-link WASM module...
-
-✅ WASM module initialized successfully
-✅ KalamClient created successfully
-✅ client.connect() succeeded
-✅ client.disconnect() succeeded
-✅ Correctly rejected empty URL
-✅ Correctly rejected empty API key
-
-🎉 All WASM tests passed!
-```
-
-## Development
-
-### Project Structure
-
-```
-kalam-link/
-├── Cargo.toml              # Package manifest with feature flags
-├── README.md               # This file
-├── src/
-│   ├── lib.rs              # Library root with conditional modules
-│   ├── client.rs           # Native Rust client (tokio-runtime)
-│   ├── auth.rs             # Authentication (tokio-runtime)
-│   ├── query.rs            # Query execution (tokio-runtime)
-│   ├── subscription.rs     # WebSocket subscriptions (tokio-runtime)
-│   ├── error.rs            # Error types (conditional conversions)
-│   └── wasm.rs             # WASM bindings (wasm feature)
-├── pkg/                    # WASM build output (generated)
-└── test-wasm.mjs           # Node.js WASM test script
-```
-
-### Building for Different Targets
-
-**Native (CLI usage):**
-```bash
-cargo build --release
-```
-
-**WASM (web target):**
-```bash
-wasm-pack build --target web --features wasm --no-default-features
-```
-
-**WASM (Node.js target):**
-```bash
-wasm-pack build --target nodejs --features wasm --no-default-features
-```
-
-**WASM (bundler target for Webpack/Rollup):**
-```bash
-wasm-pack build --target bundler --features wasm --no-default-features
-```
-
 ## License
 
-See the main KalamDB repository for license information.
+Apache-2.0 (see the repository root).
 
 ## Contributing
 
-See the main KalamDB repository for contribution guidelines.
-
+Issues/PRs are welcome: https://github.com/jamals86/KalamDB/issues
