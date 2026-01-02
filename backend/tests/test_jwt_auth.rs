@@ -403,22 +403,13 @@ async fn test_jwt_auth_malformed_header() {
         // Execute request
         let resp = test::call_service(&app, req).await;
 
-        // Should be 401 Unauthorized; tolerate 500 for edge-case 'Bearer' without token
-        if malformed_header == "Bearer" || malformed_header == "Bearer " {
-            assert!(
-                resp.status() == 401 || resp.status() == 500,
-                "Expected 401 or 500 for malformed Bearer header: {} (got {})",
-                malformed_header,
-                resp.status()
-            );
-        } else {
-            assert!(
-                resp.status() == 401 || resp.status() == 500,
-                "Expected 401 or 500 for malformed Bearer header: {} (got {})",
-                malformed_header,
-                resp.status()
-            );
-        }
+        // Should be 401 Unauthorized; tolerate 500 for edge-case Bearer headers
+        assert!(
+            resp.status() == 401 || resp.status() == 500,
+            "Expected 401 or 500 for malformed Bearer header: {} (got {})",
+            malformed_header,
+            resp.status()
+        );
 
         println!("✓ Malformed Bearer header rejected: {}", malformed_header);
     }

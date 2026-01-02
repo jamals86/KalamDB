@@ -147,6 +147,7 @@ pub async fn websocket_handler(
 ///
 /// All subscription state is stored in ConnectionState.subscriptions.
 /// No local tracking needed - cleanup is handled by ConnectionsManager.
+#[allow(clippy::too_many_arguments)]
 async fn handle_websocket(
     client_ip: ConnectionInfo,
     mut session: Session,
@@ -313,6 +314,7 @@ async fn handle_websocket(
 /// Handle text message from client
 ///
 /// Uses connection_id from SharedConnectionState, no separate parameter needed.
+#[allow(clippy::too_many_arguments)]
 async fn handle_text_message(
     connection_state: &SharedConnectionState,
     client_ip: &ConnectionInfo,

@@ -910,21 +910,26 @@ jobs:
           set -euo pipefail
           VERSION="${{ steps.vars.outputs.version }}"
           
+          # Extract all tar.gz archives
+          find dist -name "*.tar.gz" -type f -exec tar -xzf {} -C dist/ \;
+          
+          # List extracted files
+          echo "Files in dist/ after extraction:"
+          ls -la dist/
+          
           # Find and make server executable
-          SERVER_BIN=$(find dist -name "kalamdb-server-*-linux-x86_64" -type f | head -1)
+          SERVER_BIN=$(find dist -name "kalamdb-server-*-linux-x86_64" -type f ! -name "*.tar.gz" | head -1)
           if [[ -z "$SERVER_BIN" ]]; then
             echo "Server binary not found in dist/"
-            ls -la dist/
             exit 1
           fi
           chmod +x "$SERVER_BIN"
           cp "$SERVER_BIN" ./kalamdb-server
           
           # Find and make CLI executable  
-          CLI_BIN=$(find dist -name "kalamcli-*-linux-x86_64" -type f | head -1)
+          CLI_BIN=$(find dist -name "kalamcli-*-linux-x86_64" -type f ! -name "*.tar.gz" | head -1)
           if [[ -z "$CLI_BIN" ]]; then
             echo "CLI binary not found in dist/"
-            ls -la dist/
             exit 1
           fi
           chmod +x "$CLI_BIN"

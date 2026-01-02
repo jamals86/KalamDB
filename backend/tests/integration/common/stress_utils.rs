@@ -207,7 +207,6 @@ fn get_process_memory() -> usize {
     {
         // Windows implementation using GetProcessMemoryInfo
         use std::mem;
-        use std::ptr;
 
         // Define necessary Windows API structures and functions
         #[repr(C)]
@@ -408,6 +407,7 @@ fn get_process_cpu_times() -> Option<CpuTimes> {
         use std::mem;
 
         #[repr(C)]
+        #[allow(clippy::upper_case_acronyms)]
         struct FILETIME {
             dw_low_date_time: u32,
             dw_high_date_time: u32,

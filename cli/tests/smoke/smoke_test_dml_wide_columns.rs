@@ -19,19 +19,6 @@ fn extract_first_id_from_json(json_output: &str) -> Option<String> {
     json_value_as_id(&id_value)
 }
 
-// reserved: count extractor kept for potential future stricter checks
-#[allow(dead_code)]
-fn extract_single_count_from_json(json_output: &str) -> Option<i64> {
-    let value: serde_json::Value = serde_json::from_str(json_output).ok()?;
-    let rows = get_rows_as_hashmaps(&value)?;
-    let first_row = rows.first()?;
-    // Try to find a count-like field
-    first_row.get("count")
-        .or_else(|| first_row.get("total"))
-        .or_else(|| first_row.get("total_count"))
-        .and_then(|v| v.as_i64())
-}
-
 fn run_dml_sequence(full: &str, _is_shared: bool) {
     // insert row 1
     let ins1 = format!(

@@ -28,7 +28,7 @@ repository = "https://github.com/jamals86/KalamDB"
 [workspace.dependencies]
 # Serialization
 serde = { version = "1.0", features = ["derive"] }
-serde_json = "1.0"
+serde_json = "1.0.148"
 
 # Error handling
 thiserror = "2.0"
@@ -41,7 +41,7 @@ log = "0.4.29"
 tokio = { version = "1.42", features = ["rt-multi-thread", "macros", "sync", "time", "fs", "io-util", "net", "signal"] }
 
 # HTTP client (with HTTP/2 support)
-reqwest = { version = "0.12.25", default-features = false, features = ["json", "rustls-tls", "http2"] }
+reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls", "http2"] }
 
 # WebSocket
 tokio-tungstenite = { version = "0.28.0", features = ["rustls-tls-webpki-roots"] }
@@ -88,7 +88,7 @@ num_cpus = "1.16"
 sysinfo = "0.37.2"
 
 # Testing
-tempfile = "3.13"
+tempfile = "3.24.0"
 wait-timeout = "0.2"
 serial_test = "3.2"
 
@@ -122,7 +122,7 @@ object_store = { version = "0.12.4", features = ["aws", "gcp", "azure"] }
 parking_lot = "0.12"
 tokio-util = "0.7.17"
 hex = "0.4"
-moka = { version = "0.12", features = ["future", "sync"] }
+moka = { version = "0.12.12", features = ["future", "sync"] }
 ntest = "0.9.5"
 wasm-bindgen = { version = "0.2.105" }
 wasm-bindgen-futures = { version = "0.4" }

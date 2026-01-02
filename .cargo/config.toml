@@ -25,7 +25,13 @@ rustflags = []
 [target.x86_64-pc-windows-gnu]
 # Static linking for libstdc++ and libgcc to avoid DLL dependencies
 # This ensures the binary runs without needing MinGW runtime DLLs
-rustflags = ["-C", "link-arg=-static-libgcc", "-C", "link-arg=-static-libstdc++"]
+# -static: link all libraries statically
+# -static-libgcc: statically link libgcc
+# -static-libstdc++: statically link libstdc++
+rustflags = [
+    "-C", "target-feature=+crt-static",
+    "-C", "link-args=-static -static-libgcc -static-libstdc++",
+]
 
 # --- Windows (MSVC) ---
 [target.x86_64-pc-windows-msvc]

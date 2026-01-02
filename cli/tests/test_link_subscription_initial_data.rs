@@ -250,8 +250,8 @@ fn test_link_subscription_batch_status_transition() {
 
     eprintln!("Event summary: has_ack={}, has_batch={}, has_ready={}", has_ack, has_batch, has_ready_status);
     
-    // At minimum we should get the ACK
-    assert!(has_ack || !events.is_empty(), "Should receive at least some events: {:?}", events);
+    // At minimum we should get the ACK or some batch data
+    assert!(has_ack || has_batch, "Should receive either Ack or InitialDataBatch: {:?}", events);
 
     // Cleanup
     listener.stop().ok();
