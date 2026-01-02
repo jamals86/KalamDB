@@ -10,7 +10,7 @@ use bytes::Bytes;
 use futures_util::StreamExt;
 use kalamdb_commons::system::Storage;
 use object_store::path::Path as ObjectStorePath;
-use object_store::ObjectStore;
+use object_store::{ObjectStore, ObjectStoreExt};
 use std::path::PathBuf;
 use std::sync::Arc;
 use tokio::fs;

@@ -9,7 +9,7 @@ use crate::object_store_factory::object_key_for_path;
 use bytes::Bytes;
 use futures_util::StreamExt;
 use kalamdb_commons::system::Storage;
-use object_store::ObjectStore;
+use object_store::{ObjectStore, ObjectStoreExt};
 use std::sync::Arc;
 
 /// List all files in a directory (prefix).

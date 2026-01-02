@@ -40,8 +40,8 @@ log = "0.4.29"
 # Async runtime
 tokio = { version = "1.42", features = ["rt-multi-thread", "macros", "sync", "time", "fs", "io-util", "net", "signal"] }
 
-# HTTP client (with HTTP/2 support)
-reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls", "http2"] }
+# HTTP client (with HTTP/2 support) - using native-tls to avoid aws-lc build requirements
+reqwest = { version = "0.13.1", default-features = false, features = ["json", "native-tls", "http2"] }
 
 # WebSocket
 tokio-tungstenite = { version = "0.28.0", features = ["rustls-tls-webpki-roots"] }
@@ -118,7 +118,7 @@ bytes = "1.11.0"
 
 # Object storage abstraction (S3/GCS/Azure/local)
 # Kept as a workspace dependency so only kalamdb-filestore needs to opt-in.
-object_store = { version = "0.12.4", features = ["aws", "gcp", "azure"] }
+object_store = { version = "0.13.0", features = ["aws", "gcp", "azure"] }
 parking_lot = "0.12"
 tokio-util = "0.7.17"
 hex = "0.4"
