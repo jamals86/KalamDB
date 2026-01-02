@@ -38,4 +38,4 @@ ENV LIBCLANG_STATIC=0
 # This ensures the binary runs on any Windows machine without needing MinGW installed
 # -static-libgcc: statically link libgcc
 # -static-libstdc++: statically link libstdc++
-ENV RUSTFLAGS="-C link-args=-static-libgcc -C link-args=-static-libstdc++"
+ENV RUSTFLAGS="-C link-arg=-static-libgcc -C link-arg=-static-libstdc++"

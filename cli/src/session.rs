@@ -1215,8 +1215,8 @@ impl CLISession {
                 eprintln!("WebSocket endpoint: {}", ws_url);
             }
             eprintln!("Subscription ID: {}", requested_id);
-            if timeout.is_some() {
-                eprintln!("Timeout: {:?}", timeout.unwrap());
+            if let Some(timeout) = timeout {
+                eprintln!("Timeout: {:?}", timeout);
             } else {
                 eprintln!("Press Ctrl+C to unsubscribe and return to CLI");
             }
@@ -1563,8 +1563,10 @@ impl CLISession {
                 #[cfg(debug_assertions)]
                 eprintln!(
                     "  Payload: {}",
-                    serde_json::to_string(raw).unwrap_or_default()
+                    serde_json::to_string(&raw).unwrap_or_default()
                 );
+                #[cfg(not(debug_assertions))]
+                let _ = raw; // Suppress unused warning in release builds
             }
         }
     }

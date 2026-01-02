@@ -279,7 +279,7 @@ fn test_password_validation_edge_cases() {
 #[test]
 fn test_common_password_case_insensitive() {
     // Common passwords in different cases
-    let _variations = vec![
+    let _variations = [
         "password", // lowercase
         "PASSWORD", // uppercase (may or may not be in list)
         "Password", // mixed case (may or may not be in list)

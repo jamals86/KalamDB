@@ -536,8 +536,10 @@ impl BatchControl {
     ) -> Self {
         let status = if batch_num == 0 {
             if has_more { BatchStatus::Loading } else { BatchStatus::Ready }
+        } else if has_more {
+            BatchStatus::LoadingBatch
         } else {
-            if has_more { BatchStatus::LoadingBatch } else { BatchStatus::Ready }
+            BatchStatus::Ready
         };
 
         Self {

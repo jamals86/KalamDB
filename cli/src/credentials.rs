@@ -38,6 +38,8 @@ use std::collections::HashMap;
 use std::fs;
 use std::path::{Path, PathBuf};
 
+use crate::history::get_kalam_config_dir;
+
 /// File-based credential storage
 ///
 /// Persists JWT tokens to `~/.config/kalamdb/credentials.toml` with
@@ -81,11 +83,7 @@ impl FileCredentialStore {
     pub fn default_path() -> PathBuf {
         #[cfg(target_os = "windows")]
         {
-            if let Some(home_dir) = dirs::home_dir() {
-                home_dir.join(".kalam").join("credentials.toml")
-            } else {
-                PathBuf::from(".kalam").join("credentials.toml")
-            }
+            get_kalam_config_dir().join("credentials.toml")
         }
 
         #[cfg(not(target_os = "windows"))]

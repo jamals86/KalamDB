@@ -8,26 +8,8 @@
 //! - Restricted table access control
 //! - Cross-user table permissions
 //! - Table sharing functionality
-#![allow(unused_imports, dead_code)]
 
 mod common;
-use common::*;
-use std::time::Duration;
-
-/// Test configuration constants
-const TEST_TIMEOUT: Duration = Duration::from_secs(10);
-
-/// Placeholder test for shared table functionality
-/// TODO: Implement comprehensive shared table access control tests
-/// when shared table features are fully implemented
-#[test]
-fn test_shared_table_placeholder() {
-    // This is a placeholder test for shared table functionality
-    // Add actual shared table tests here when the feature is implemented
-
-    // For now, just verify the test framework works
-    assert!(true, "Shared table tests framework is ready");
-}
 
 /// Test basic table creation and access
 #[test]

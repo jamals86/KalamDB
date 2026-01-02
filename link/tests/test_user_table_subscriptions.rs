@@ -622,10 +622,10 @@ async fn test_unsubscribe_stops_changes() {
     .expect("Failed to insert first row");
 
     // Wait for the change
-    let received_first = match timeout(Duration::from_secs(3), subscription.next()).await {
-        Ok(Some(Ok(ChangeEvent::Insert { .. }))) => true,
-        _ => false,
-    };
+    let received_first = matches!(
+        timeout(Duration::from_secs(3), subscription.next()).await,
+        Ok(Some(Ok(ChangeEvent::Insert { .. })))
+    );
     
     assert!(received_first, "Should receive first insert before unsubscribe");
     println!("✅ Received first insert notification");

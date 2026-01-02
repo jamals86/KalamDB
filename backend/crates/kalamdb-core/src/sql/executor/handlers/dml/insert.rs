@@ -244,6 +244,7 @@ impl InsertHandler {
     /// # Arguments
     /// * `sql` - The SQL INSERT statement
     /// * `default_namespace` - The default namespace to use for unqualified table names
+    #[allow(clippy::type_complexity)]
     fn parse_insert_with_sqlparser(
         &self,
         sql: &str,
@@ -573,7 +574,7 @@ impl InsertHandler {
         if rows.len() <= INLINE_THRESHOLD {
             // Inline execution for small batches
             return self.execute_insert_sync(
-                &table_id,
+                table_id,
                 table_type,
                 &table_options,
                 user_id,

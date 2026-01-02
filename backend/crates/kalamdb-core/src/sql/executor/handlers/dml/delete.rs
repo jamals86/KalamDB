@@ -413,6 +413,7 @@ impl DeleteHandler {
     /// # Arguments
     /// * `sql` - The SQL DELETE statement
     /// * `default_namespace` - The default namespace to use for unqualified table names
+    #[allow(clippy::type_complexity)]
     fn simple_parse_delete(
         &self,
         sql: &str,

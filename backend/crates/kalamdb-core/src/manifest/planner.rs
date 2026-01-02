@@ -70,6 +70,7 @@ impl ManifestAccessPlanner {
     ///
     /// # Returns
     /// (batch: RecordBatch, stats: (total_batches, skipped, scanned))
+    #[allow(clippy::too_many_arguments)]
     pub fn scan_parquet_files(
         &self,
         manifest_opt: Option<&Manifest>,

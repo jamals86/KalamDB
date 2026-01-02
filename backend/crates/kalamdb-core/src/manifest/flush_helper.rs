@@ -259,6 +259,7 @@ impl FlushManifestHelper {
     ///
     /// # Returns
     /// Updated Manifest
+    #[allow(clippy::too_many_arguments)]
     pub fn update_manifest_after_flush(
         &self,
         table_id: &TableId,

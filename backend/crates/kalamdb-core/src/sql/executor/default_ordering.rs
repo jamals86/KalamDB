@@ -38,13 +38,13 @@ fn extract_table_reference(plan: &LogicalPlan) -> Option<TableId> {
         LogicalPlan::TableScan(scan) => {
             let table_id = match &scan.table_name {
                 datafusion::common::TableReference::Bare { table } => {
-                    TableId::from_strings("default", &table.to_string())
+                    TableId::from_strings("default", table.as_ref())
                 }
                 datafusion::common::TableReference::Partial { schema, table } => {
-                    TableId::from_strings(&schema.to_string(), &table.to_string())
+                    TableId::from_strings(schema.as_ref(), table.as_ref())
                 }
                 datafusion::common::TableReference::Full { schema, table, .. } => {
-                    TableId::from_strings(&schema.to_string(), &table.to_string())
+                    TableId::from_strings(schema.as_ref(), table.as_ref())
                 }
             };
             Some(table_id)
