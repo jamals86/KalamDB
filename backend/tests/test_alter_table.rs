@@ -190,7 +190,7 @@ async fn test_alter_table_drop_column() {
     assert_eq!(rows[0].get("item").unwrap().as_str().unwrap(), "Laptop");
     assert_eq!(rows[0].get("quantity").unwrap().as_i64().unwrap(), 10);
     // Dropped column should not be present
-    assert!(rows[0].get("warehouse").is_none());
+    assert!(!rows[0].contains_key("warehouse"));
 
     println!("✅ T022b: ALTER TABLE DROP COLUMN passed");
 }

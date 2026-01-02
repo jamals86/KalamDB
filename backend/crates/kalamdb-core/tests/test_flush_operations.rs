@@ -208,9 +208,10 @@ fn test_table_identifier() {
 fn test_flush_metadata_shared() {
     let metadata = FlushMetadata::shared_table();
 
-    // Verify it serializes correctly
+    // Verify it serializes correctly and contains expected content
     let json = serde_json::to_string(&metadata).expect("Failed to serialize");
-    assert!(json.contains("shared_table") || !json.is_empty());
+    assert!(!json.is_empty(), "JSON should not be empty");
+    assert!(json.contains("shared_table"), "JSON should contain 'shared_table': {}", json);
 }
 
 #[test]
@@ -230,7 +231,8 @@ fn test_flush_metadata_user_with_errors() {
     let metadata = FlushMetadata::user_table(3, errors);
 
     let json = serde_json::to_string(&metadata).expect("Failed to serialize");
-    assert!(json.contains("user_123") || !json.is_empty());
+    assert!(!json.is_empty(), "JSON should not be empty");
+    assert!(json.contains("user_123"), "JSON should contain error 'user_123': {}", json);
 }
 
 #[test]

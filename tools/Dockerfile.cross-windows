@@ -36,6 +36,9 @@ ENV LIBCLANG_STATIC=0
 
 # Static linking for libstdc++ and libgcc to avoid DLL dependencies on Windows
 # This ensures the binary runs on any Windows machine without needing MinGW installed
+# We use multiple linker arguments:
+# -static: link statically (no dynamic libraries)
 # -static-libgcc: statically link libgcc
 # -static-libstdc++: statically link libstdc++
-ENV RUSTFLAGS="-C link-arg=-static-libgcc -C link-arg=-static-libstdc++"
+# Using CARGO_TARGET env var ensures it's applied for cross-compilation
+ENV CARGO_TARGET_X86_64_PC_WINDOWS_GNU_RUSTFLAGS="-C target-feature=+crt-static -C link-args=-static -C link-args=-static-libgcc -C link-args=-static-libstdc++"

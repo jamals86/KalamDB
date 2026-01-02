@@ -72,9 +72,6 @@ fn test_subscription_listener_functionality() {
     cleanup_test_table(&table).unwrap();
 
     // Verify that we could start and stop the subscription without errors
-    // The subscription mechanism works if we reach this point
-    assert!(
-        received_lines.is_empty() || !received_lines.is_empty(),
-        "Subscription test completed - mechanism works regardless of data received"
-    );
+    // The subscription mechanism works if we reach this point without panicking
+    // If we got here, the test passes - subscription lifecycle worked correctly
 }

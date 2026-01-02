@@ -157,9 +157,9 @@ async fn test_alter_table_add_column_after_flush() {
     assert_eq!(rows.len(), 5, "Should have 5 total rows (3 old + 2 new)");
     
     // Verify old rows still have NULL priority
-    for i in 0..3 {
+    for (i, row) in rows.iter().enumerate().take(3) {
         assert!(
-            rows[i].get("priority").unwrap().is_null(),
+            row.get("priority").unwrap().is_null(),
             "Old row {} should have NULL priority",
             i
         );

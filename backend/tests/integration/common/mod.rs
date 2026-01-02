@@ -166,6 +166,7 @@ impl TestServer {
         use std::sync::Mutex;
 
         // Global shared test resources (initialized once for all tests)
+        #[allow(clippy::type_complexity)]
         static TEST_RESOURCES: Lazy<Mutex<Option<(Arc<TempDir>, Arc<rocksdb::DB>, String)>>> =
             Lazy::new(|| Mutex::new(None));
 
@@ -1052,64 +1053,6 @@ pub fn create_test_jwt(user_id: &str, secret: &str, exp_seconds: i64) -> String 
     .expect("Failed to create JWT token")
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[actix_web::test]
-    async fn test_server_creation() {
-        let server = TestServer::new().await;
-        assert!(!server.db_path().is_empty());
-    }
-
-    #[actix_web::test]
-    async fn test_execute_sql() {
-        let server = TestServer::new().await;
-        let response = server
-            .execute_sql("CREATE NAMESPACE IF NOT EXISTS test_ns")
-            .await;
-        assert_eq!(response.status, ResponseStatus::Success);
-    }
-
-    #[actix_web::test]
-    async fn test_cleanup() {
-        let server = TestServer::new().await;
-
-        // Use unique namespace to avoid test interference
-        let ns = format!("cleanup_ns_{}", std::process::id());
-
-        // Create namespace
-        server
-            .execute_sql(&format!("CREATE NAMESPACE IF NOT EXISTS {}", ns))
-            .await;
-        assert!(server.namespace_exists(&ns).await);
-
-        // Cleanup
-        server.cleanup().await.unwrap();
-        assert!(!server.namespace_exists(&ns).await);
-    }
-
-    #[actix_web::test]
-    async fn test_namespace_exists() {
-        let server = TestServer::new().await;
-
-        // Use unique namespace to avoid test interference
-        let ns = format!("test_ns_exists_{}", std::process::id());
-
-        assert!(!server.namespace_exists("nonexistent").await);
-
-        server
-            .execute_sql(&format!("CREATE NAMESPACE IF NOT EXISTS {}", ns))
-            .await;
-        assert!(server.namespace_exists(&ns).await);
-
-        // Cleanup
-        server
-            .execute_sql(&format!("DROP NAMESPACE {} CASCADE", ns))
-            .await;
-    }
-}
-
 // =============================================================================
 // Common Test Helpers - Shared utilities for cleanup job waiting and path checking
 // =============================================================================
@@ -1205,4 +1148,62 @@ pub async fn wait_for_path_absent(path: &std::path::Path, timeout: std::time::Du
         sleep(Duration::from_millis(50)).await;
     }
     true
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[actix_web::test]
+    async fn test_server_creation() {
+        let server = TestServer::new().await;
+        assert!(!server.db_path().is_empty());
+    }
+
+    #[actix_web::test]
+    async fn test_execute_sql() {
+        let server = TestServer::new().await;
+        let response = server
+            .execute_sql("CREATE NAMESPACE IF NOT EXISTS test_ns")
+            .await;
+        assert_eq!(response.status, ResponseStatus::Success);
+    }
+
+    #[actix_web::test]
+    async fn test_cleanup() {
+        let server = TestServer::new().await;
+
+        // Use unique namespace to avoid test interference
+        let ns = format!("cleanup_ns_{}", std::process::id());
+
+        // Create namespace
+        server
+            .execute_sql(&format!("CREATE NAMESPACE IF NOT EXISTS {}", ns))
+            .await;
+        assert!(server.namespace_exists(&ns).await);
+
+        // Cleanup
+        server.cleanup().await.unwrap();
+        assert!(!server.namespace_exists(&ns).await);
+    }
+
+    #[actix_web::test]
+    async fn test_namespace_exists() {
+        let server = TestServer::new().await;
+
+        // Use unique namespace to avoid test interference
+        let ns = format!("test_ns_exists_{}", std::process::id());
+
+        assert!(!server.namespace_exists("nonexistent").await);
+
+        server
+            .execute_sql(&format!("CREATE NAMESPACE IF NOT EXISTS {}", ns))
+            .await;
+        assert!(server.namespace_exists(&ns).await);
+
+        // Cleanup
+        server
+            .execute_sql(&format!("DROP NAMESPACE {} CASCADE", ns))
+            .await;
+    }
 }

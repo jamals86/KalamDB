@@ -168,7 +168,7 @@ async fn test_oauth_auto_provision_disabled_by_default() {
 
     // Auto-provisioning behavior is now controlled by configuration
     // and the user repository - not by the authenticate function directly
-    assert!(true, "OAuth auto-provisioning controlled via configuration");
+    // Test passes if server is created successfully
 }
 
 #[tokio::test]
