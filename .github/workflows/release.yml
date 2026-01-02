@@ -45,6 +45,12 @@ on:
         required: false
         default: true
 
+      force_npm_publish:
+        description: "Force republish (unpublish existing version first)"
+        type: boolean
+        required: false
+        default: false
+
 permissions:
   contents: write
 
@@ -1358,12 +1364,28 @@ jobs:
         run: |
           set -euo pipefail
           VERSION="${{ steps.vars.outputs.version }}"
+          FORCE_PUBLISH="${{ github.event.inputs.force_npm_publish }}"
           
           echo "🚀 Publishing kalam-link@$VERSION to npm..."
           
           # Check if this version already exists
           if npm view "kalam-link@$VERSION" version 2>/dev/null; then
-            echo "⚠️ Version $VERSION already exists on npm, skipping publish"
+            if [[ "$FORCE_PUBLISH" == "true" ]]; then
+              echo "⚠️  Version $VERSION exists. Force publish enabled - attempting to unpublish..."
+              if npm unpublish "kalam-link@$VERSION" --force 2>/dev/null; then
+                echo "✅ Successfully unpublished kalam-link@$VERSION"
+                npm publish --access public
+                echo "✅ Successfully republished kalam-link@$VERSION to npm!"
+              else
+                echo "❌ Failed to unpublish (version may be >72 hours old)"
+                echo "💡 Tip: npm doesn't allow unpublishing after 72 hours."
+                echo "    Use a different version number (e.g., ${VERSION}.1, ${VERSION}.2)"
+                exit 1
+              fi
+            else
+              echo "⚠️  Version $VERSION already exists on npm, skipping publish"
+              echo "💡 To force republish, enable 'force_npm_publish' workflow input"
+            fi
           else
             npm publish --access public
             echo "✅ Successfully published kalam-link@$VERSION to npm!"
