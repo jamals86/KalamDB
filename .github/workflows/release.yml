@@ -954,17 +954,24 @@ jobs:
           port = 8080
           
           [storage]
-          data_dir = "./test-data"
+          rocksdb_path = "./test-data/rocksdb"
+          default_storage_path = "./test-data/storage"
           
           [auth]
-          jwt_secret = "test-secret-for-smoke-tests-only"
+          jwt_secret = "test-secret-for-smoke-tests-only-minimum-32-characters-long"
+          
+          [logging]
+          level = "info"
+          logs_path = "./test-data/logs"
+          log_to_console = true
           EOF
 
       - name: Start server
         shell: bash
         run: |
           set -euo pipefail
-          mkdir -p test-data
+          # Create required directories
+          mkdir -p test-data/rocksdb test-data/storage test-data/logs
           
           # Start server in background
           ./kalamdb-server &
