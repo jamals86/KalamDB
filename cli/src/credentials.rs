@@ -2,15 +2,18 @@
 //!
 //! **Implements T119**: FileCredentialStore for persistent credential storage
 //!
-//! Stores JWT tokens in TOML format at `~/.config/kalamdb/credentials.toml`
-//! with secure file permissions (0600 on Unix).
+//! Stores JWT tokens in TOML format with secure file permissions (0600 on Unix).
+//!
+//! # File Location
+//!
+//! - Windows: `~/.kalam/credentials.toml`
+//! - Linux/macOS: `~/.config/kalamdb/credentials.toml`
 //!
 //! # Security
 //!
 //! - File permissions set to 0600 (owner read/write only) on Unix
 //! - Only JWT tokens are stored, never plaintext passwords
 //! - Tokens can expire and be revoked
-//! - File location: `~/.config/kalamdb/credentials.toml`
 //!
 //! # File Format
 //!
@@ -72,17 +75,31 @@ struct CredentialsFile {
 }
 
 impl FileCredentialStore {
-    /// Default credentials file path: `~/.config/kalamdb/credentials.toml`
+    /// Default credentials file path
+    /// - Windows: `~/.kalam/credentials.toml`
+    /// - Linux/macOS: `~/.config/kalamdb/credentials.toml`
     pub fn default_path() -> PathBuf {
-        if let Some(config_dir) = dirs::config_dir() {
-            config_dir.join("kalamdb").join("credentials.toml")
-        } else if let Some(home_dir) = dirs::home_dir() {
-            home_dir
-                .join(".config")
-                .join("kalamdb")
-                .join("credentials.toml")
-        } else {
-            PathBuf::from(".kalamdb").join("credentials.toml")
+        #[cfg(target_os = "windows")]
+        {
+            if let Some(home_dir) = dirs::home_dir() {
+                home_dir.join(".kalam").join("credentials.toml")
+            } else {
+                PathBuf::from(".kalam").join("credentials.toml")
+            }
+        }
+
+        #[cfg(not(target_os = "windows"))]
+        {
+            if let Some(config_dir) = dirs::config_dir() {
+                config_dir.join("kalamdb").join("credentials.toml")
+            } else if let Some(home_dir) = dirs::home_dir() {
+                home_dir
+                    .join(".config")
+                    .join("kalamdb")
+                    .join("credentials.toml")
+            } else {
+                PathBuf::from(".kalamdb").join("credentials.toml")
+            }
         }
     }
 
