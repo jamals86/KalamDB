@@ -290,8 +290,8 @@ impl BatchSubscriptionListener {
         while std::time::Instant::now() < deadline {
             match self.try_read_event(Duration::from_millis(500)) {
                 Ok(Some(event)) => {
+                    // Only check InitialDataBatch for ready status, not Ack
                     let is_ready = match &event {
-                        ParsedEvent::Ack { batch_control, .. } => !batch_control.has_more,
                         ParsedEvent::InitialDataBatch { batch_control, .. } => !batch_control.has_more,
                         _ => false,
                     };
