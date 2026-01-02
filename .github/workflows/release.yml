@@ -890,6 +890,7 @@ jobs:
         uses: actions/download-artifact@v4
         with:
           path: release-assets
+          pattern: 'dist-*'
 
       - name: Generate SHA256SUMS
         shell: bash
