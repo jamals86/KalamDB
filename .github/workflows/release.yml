@@ -948,23 +948,18 @@ jobs:
       - name: Create server config
         shell: bash
         run: |
-          cat > server.toml << 'EOF'
-          [server]
-          host = "0.0.0.0"
-          port = 8080
+          # Copy the example config as base
+          cp backend/server.example.toml server.toml
           
-          [storage]
-          rocksdb_path = "./test-data/rocksdb"
-          default_storage_path = "./test-data/storage"
+          # Update paths and jwt_secret for smoke tests
+          sed -i 's|rocksdb_path = "./data/rocksdb"|rocksdb_path = "./test-data/rocksdb"|g' server.toml
+          sed -i 's|default_storage_path = "./data/storage"|default_storage_path = "./test-data/storage"|g' server.toml
+          sed -i 's|logs_path = "./logs"|logs_path = "./test-data/logs"|g' server.toml
+          sed -i 's|jwt_secret = ".*"|jwt_secret = "smoke-test-secret-key-minimum-32-characters-long-for-ci"|g' server.toml
           
-          [auth]
-          jwt_secret = "test-secret-for-smoke-tests-only-minimum-32-characters-long"
-          
-          [logging]
-          level = "info"
-          logs_path = "./test-data/logs"
-          log_to_console = true
-          EOF
+          # Verify the config
+          echo "=== server.toml ==="
+          cat server.toml | head -100
 
       - name: Start server
         shell: bash

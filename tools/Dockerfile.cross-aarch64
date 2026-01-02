@@ -1,5 +1,5 @@
 # Custom cross-compilation image for aarch64-unknown-linux-gnu
-# Includes LLVM 16 for RocksDB bindgen compatibility and Node.js for UI build
+# Includes LLVM 16 for RocksDB bindgen compatibility
 FROM ghcr.io/cross-rs/aarch64-unknown-linux-gnu:main
 
 # Remove old LLVM and install newer version for bindgen (RocksDB requires clang_Type_getValueType)
@@ -12,7 +12,8 @@ RUN apt-get update && \
         software-properties-common \
         gnupg \
         curl \
-        ca-certificates && \
+        ca-certificates \
+        pkg-config && \
     wget https://apt.llvm.org/llvm.sh && \
     chmod +x llvm.sh && \
     ./llvm.sh 16 all && \
