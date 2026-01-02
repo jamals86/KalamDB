@@ -30,7 +30,15 @@ use commands::subscriptions::handle_subscriptions;
 use connect::create_session;
 
 #[tokio::main]
-async fn main() -> Result<()> {
+async fn main() {
+    if let Err(e) = run().await {
+        // Use Display formatting instead of Debug to show nice error messages
+        eprintln!("Error: {}", e);
+        std::process::exit(1);
+    }
+}
+
+async fn run() -> Result<()> {
     // Parse command-line arguments
     let mut cli = Cli::parse();
 
@@ -49,8 +57,7 @@ async fn main() -> Result<()> {
     }
 
     // Load credential store
-    let mut credential_store = FileCredentialStore::new()
-        .map_err(|e| CLIError::ConfigurationError(format!("Failed to load credentials: {}", e)))?;
+    let mut credential_store = FileCredentialStore::new()?;
 
     // Handle credential management commands (sync operations like list, show, delete)
     if handle_credentials(&cli, &mut credential_store)? {
