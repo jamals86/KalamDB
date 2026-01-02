@@ -8,6 +8,17 @@ use std::path::{Path, PathBuf};
 
 use crate::error::{CLIError, Result};
 
+/// Get the KalamDB CLI configuration directory path
+/// - Windows: `~/.kalam`
+/// - Linux/macOS: `~/.kalam`
+pub fn get_kalam_config_dir() -> PathBuf {
+    if let Some(home_dir) = dirs::home_dir() {
+        home_dir.join(".kalam")
+    } else {
+        PathBuf::from(".kalam")
+    }
+}
+
 /// Command history manager
 pub struct CommandHistory {
     /// History file path
@@ -20,9 +31,8 @@ pub struct CommandHistory {
 impl CommandHistory {
     /// Create a new history manager
     pub fn new(max_size: usize) -> Self {
-        // Default history path
-        let home = std::env::var("HOME").unwrap_or_else(|_| ".".to_string());
-        let path = PathBuf::from(home).join(".kalam").join("history");
+        // Default history path using shared config directory
+        let path = get_kalam_config_dir().join("history");
 
         Self { path, max_size }
     }

@@ -25,6 +25,7 @@ pub struct ParsedBatchControl {
 
 /// Parsed event from subscription
 #[derive(Debug)]
+#[allow(dead_code)]
 pub enum ParsedEvent {
     Ack {
         subscription_id: String,

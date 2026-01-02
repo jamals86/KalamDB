@@ -12,7 +12,6 @@
 
 mod common;
 use common::*;
-use kalam_link::CredentialStore;
 use std::time::Duration;
 
 /// Test configuration constants

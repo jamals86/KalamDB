@@ -313,26 +313,24 @@ async fn test_websocket_initial_data_snapshot() {
 
             // Try to get ACK and InitialData
             for _ in 0..3 {
-                if let Ok(Some(event_result)) =
+                if let Ok(Some(Ok(event))) =
                     timeout(Duration::from_secs(2), subscription.next()).await
                 {
-                    if let Ok(event) = event_result {
-                        match event {
-                            ChangeEvent::InitialDataBatch { rows, .. } => {
-                                assert!(!rows.is_empty(), "Initial snapshot should contain data");
-                                received_initial_data = true;
-                                break;
-                            }
-                            ChangeEvent::Ack { .. } => {
-                                // Received ACK, continue waiting for InitialData
-                                continue;
-                            }
-                            other => {
-                                panic!(
-                                    "Received unexpected event type during initial snapshot: {:?}",
-                                    other
-                                );
-                            }
+                    match event {
+                        ChangeEvent::InitialDataBatch { rows, .. } => {
+                            assert!(!rows.is_empty(), "Initial snapshot should contain data");
+                            received_initial_data = true;
+                            break;
+                        }
+                        ChangeEvent::Ack { .. } => {
+                            // Received ACK, continue waiting for InitialData
+                            continue;
+                        }
+                        other => {
+                            panic!(
+                                "Received unexpected event type during initial snapshot: {:?}",
+                                other
+                            );
                         }
                     }
                 }

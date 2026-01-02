@@ -21,6 +21,12 @@ DYLD_LIBRARY_PATH = "/Library/Developer/CommandLineTools/usr/lib"
 [target.wasm32-unknown-unknown]
 rustflags = []
 
+# --- Windows (GNU/MinGW) ---
+[target.x86_64-pc-windows-gnu]
+# Static linking for libstdc++ and libgcc to avoid DLL dependencies
+# This ensures the binary runs without needing MinGW runtime DLLs
+rustflags = ["-C", "link-arg=-static-libgcc", "-C", "link-arg=-static-libstdc++"]
+
 # --- Windows (MSVC) ---
 [target.x86_64-pc-windows-msvc]
 # Usually no special flags are needed, but you can add linker hints if needed

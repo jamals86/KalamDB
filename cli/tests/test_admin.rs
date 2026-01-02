@@ -91,10 +91,8 @@ fn test_cli_describe_table() {
     }
 
     // Query table info
-    let query_sql = format!(
-        "SELECT '{}' as table_info",
-        format!("{}.{}", namespace, table_name)
-    );
+    let table_full_name = format!("{}.{}", namespace, table_name);
+    let query_sql = format!("SELECT '{}' as table_info", table_full_name);
     let result = execute_sql_via_cli(&query_sql);
 
     // Should execute successfully and show table info

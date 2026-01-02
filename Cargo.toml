@@ -150,9 +150,9 @@ strip = true          # Automatically strip symbols from the binary
 # Use with: cargo build --profile docker
 [profile.docker]
 inherits = "release"
-opt-level = "s"       # Optimize for size (slightly less aggressive than "z")
+opt-level = "z"       # Optimize for size (most aggressive)
 lto = "thin"          # Thin LTO - uses less memory than full LTO during linking
-codegen-units = 16    # More parallelism, less memory pressure per unit
+codegen-units = 1     # Better optimization (single unit)
 panic = "abort"       # Removes stack unwinding code
 strip = true          # Automatically strip symbols from the binary
 

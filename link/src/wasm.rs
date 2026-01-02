@@ -2,8 +2,6 @@
 // Provides JavaScript/TypeScript interface for browser and Node.js usage
 // Supports automatic reconnection with seq_id resumption
 
-#![cfg(feature = "wasm")]
-
 use crate::models::{
     ClientMessage, ConnectionOptions, QueryRequest, ServerMessage, SubscriptionOptions,
     SubscriptionRequest, WsAuthCredentials,
@@ -234,7 +232,9 @@ pub struct KalamClient {
     /// Authentication provider (Basic, JWT, or None)
     auth: WasmAuthProvider,
     /// Legacy fields for Basic Auth (kept for backwards compatibility in reconnection)
+    #[allow(dead_code)]
     username: String,
+    #[allow(dead_code)]
     password: String,
     ws: Rc<RefCell<Option<WebSocket>>>,
     /// Subscription state including callbacks and last seq_id for resumption
@@ -786,7 +786,7 @@ impl KalamClient {
         self.ws
             .borrow()
             .as_ref()
-            .map_or(false, |ws| ws.ready_state() == WebSocket::OPEN)
+            .is_some_and(|ws| ws.ready_state() == WebSocket::OPEN)
     }
 
     /// Insert data into a table (T048, T063G)
@@ -1359,6 +1359,12 @@ async fn resubscribe_all(
 #[wasm_bindgen]
 pub struct WasmTimestampFormatter {
     inner: crate::timestamp::TimestampFormatter,
+}
+
+impl Default for WasmTimestampFormatter {
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 #[wasm_bindgen]

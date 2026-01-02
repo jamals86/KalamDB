@@ -336,6 +336,7 @@ impl StatementHandler for UpdateHandler {
 
 impl UpdateHandler {
     /// Parse UPDATE using sqlparser-rs to avoid string-splitting edge cases
+    #[allow(clippy::type_complexity)]
     fn parse_update_with_sqlparser(
         &self,
         sql: &str,

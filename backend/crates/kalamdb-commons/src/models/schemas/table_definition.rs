@@ -743,6 +743,7 @@ mod tests {
             table.updated_at,
         );
         let tuple_bytes = encode_to_vec(&tuple, config).expect("encode tuple");
+        #[allow(clippy::type_complexity)]
         let (decoded_tuple, _): (
             (
                 NamespaceId,

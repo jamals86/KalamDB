@@ -81,7 +81,7 @@ fn smoke_shared_table_crud() {
     for row in rows {
         // Rows are arrays: [id, name] based on "SELECT id, name FROM ..."
         let row_arr = row.as_array().expect("Expected row to be an array");
-        let id_value = row_arr.get(0).cloned().unwrap_or(serde_json::Value::Null);
+        let id_value = row_arr.first().cloned().unwrap_or(serde_json::Value::Null);
         let name_value = row_arr.get(1).cloned().unwrap_or(serde_json::Value::Null);
         let name = name_value.as_str().unwrap_or("");
         let id = json_value_as_id(&id_value);

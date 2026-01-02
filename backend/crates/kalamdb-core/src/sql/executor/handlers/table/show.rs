@@ -89,7 +89,7 @@ fn build_tables_batch(tables: Vec<TableDefinition>) -> Result<RecordBatch, Kalam
 
     for t in tables.iter() {
         let table_id = kalamdb_commons::TableId::new(t.namespace_id.clone(), t.table_name.clone());
-        table_ids.append_value(&table_id.to_string());
+        table_ids.append_value(&table_id);
         table_names.append_value(t.table_name.as_str());
         namespaces.append_value(t.namespace_id.as_str());
         table_types.append_value(t.table_type.as_str());
