@@ -8,8 +8,8 @@ Rust-based messaging server with RocksDB storage and REST API.
 
 **First time setting up?** See our comprehensive setup guides:
 
-- **[📘 Development Setup Guide](../docs/DEVELOPMENT_SETUP.md)** - Complete installation for Windows/macOS/Linux
-- **[🚀 Quick Start](../docs/QUICK_START.md)** - Get running in 10 minutes
+- **[📘 Development Setup Guide](../docs/development/development-setup.md)** - Complete installation for Windows/macOS/Linux
+- **[🚀 Quick Start](../docs/getting-started/quick-start.md)** - Get running in 10 minutes
 
 **Requirements:**
 - Rust 1.75 or later
@@ -122,7 +122,7 @@ cargo run
 KalamDB provides official SDKs for multiple languages in `link/sdks/`:
 
 **TypeScript/JavaScript SDK** (`link/sdks/typescript/`):
-- 📦 Published as `@kalamdb/client` on npm
+- 📦 Published as `kalam-link` on npm
 - 🔧 37 KB WASM module with full TypeScript types
 - ✅ 14 passing tests, comprehensive API documentation
 - 🌐 Works in browsers and Node.js
@@ -131,7 +131,7 @@ KalamDB provides official SDKs for multiple languages in `link/sdks/`:
 ```json
 {
   "dependencies": {
-    "@kalamdb/client": "file:../../link/sdks/typescript"
+    "kalam-link": "file:../../link/sdks/typescript"
   }
 }
 ```

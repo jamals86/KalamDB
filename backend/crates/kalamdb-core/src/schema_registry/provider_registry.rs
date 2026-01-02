@@ -45,9 +45,8 @@ impl ProviderRegistry {
         provider: Arc<dyn TableProvider + Send + Sync>,
     ) -> Result<(), KalamDbError> {
         log::info!(
-            "[SchemaRegistry] Inserting provider for table {}.{}",
-            table_id.namespace_id().as_str(),
-            table_id.table_name().as_str()
+            "[SchemaRegistry] Inserting provider for table {}",
+            table_id
         );
         // Store in our cache
         self.providers.insert(table_id.clone(), provider.clone());
@@ -83,9 +82,8 @@ impl ProviderRegistry {
                         || msg.to_lowercase().contains("exists")
                     {
                         log::warn!(
-                            "[SchemaRegistry] Table {}.{} already registered in DataFusion; continuing",
-                            table_id.namespace_id().as_str(),
-                            table_id.table_name().as_str()
+                            "[SchemaRegistry] Table {} already registered in DataFusion; continuing",
+                            table_id
                         );
                     } else {
                         return Err(KalamDbError::InvalidOperation(format!(
@@ -97,9 +95,8 @@ impl ProviderRegistry {
             }
 
             log::info!(
-                "[SchemaRegistry] Registered table {}.{} with DataFusion catalog",
-                table_id.namespace_id().as_str(),
-                table_id.table_name().as_str()
+                "[SchemaRegistry] Registered table {} with DataFusion catalog",
+                table_id
             );
         }
 
@@ -138,9 +135,8 @@ impl ProviderRegistry {
                     })?;
 
                 log::debug!(
-                    "Unregistered table {}.{} from DataFusion catalog",
-                    table_id.namespace_id().as_str(),
-                    table_id.table_name().as_str()
+                    "Unregistered table {} from DataFusion catalog",
+                    table_id
                 );
             }
         }
@@ -153,15 +149,13 @@ impl ProviderRegistry {
         let result = self.providers.get(table_id).map(|e| Arc::clone(e.value()));
         if result.is_some() {
             log::trace!(
-                "[SchemaRegistry] Retrieved provider for table {}.{}",
-                table_id.namespace_id().as_str(),
-                table_id.table_name().as_str()
+                "[SchemaRegistry] Retrieved provider for table {}",
+                table_id
             );
         } else {
             log::warn!(
-                "[SchemaRegistry] Provider NOT FOUND for table {}.{}",
-                table_id.namespace_id().as_str(),
-                table_id.table_name().as_str()
+                "[SchemaRegistry] Provider NOT FOUND for table {}",
+                table_id
             );
         }
         result

@@ -184,7 +184,7 @@ npm run example
 ```json
 {
   "dependencies": {
-    "@kalamdb/client": "file:../../link/sdks/typescript"
+  "kalam-link": "file:../../link/sdks/typescript"
   }
 }
 ```
@@ -217,7 +217,7 @@ The SDK correctly implements the KalamDB v1 API:
   - Client → Server: `Subscribe`, `NextBatch`, `Unsubscribe`
   - Server → Client: `SubscriptionAck`, `InitialDataBatch`, `Change`, `Error`
 
-All SQL syntax follows the documentation in `docs/SQL.md`.
+All SQL syntax follows the documentation in `docs/reference/sql.md`.
 
 ## Next Steps
 

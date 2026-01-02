@@ -87,7 +87,7 @@ impl TypedStatementHandler<ShowTableStatsStatement> for ShowStatsHandler {
         let audit_entry = audit::log_query_operation(
             context,
             "SHOW",
-            &format!("STATS {}.{}", ns.as_str(), statement.table_name.as_str()),
+            &format!("STATS {}", table_id.full_name()),
             duration,
             None,
         );

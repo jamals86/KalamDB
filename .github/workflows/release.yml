@@ -14,7 +14,7 @@ on:
       platforms:
         description: "Comma-separated platforms (like --platforms). Ignored if all_platforms=true"
         required: false
-        default: "linux-x86_64,macos-aarch64,windows-x86_64"
+        default: "linux-x86_64,macos-aarch64,windows-x86_64,linux-aarch64"
 
       all_platforms:
         description: "Build all platforms (like --all-platforms)"

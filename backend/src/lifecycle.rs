@@ -299,7 +299,9 @@ pub async fn run(
 
     let app_context_for_handler = app_context.clone();
     let connection_registry_for_handler = connection_registry.clone();
-    let auth_config = AuthConfig::default();
+    
+    // Create auth config from server config (reads jwt_secret from server.toml)
+    let auth_config = AuthConfig::from_server_config(config);
     let ui_path = config.server.ui_path.clone();
     
     // Log UI serving status
@@ -395,8 +397,8 @@ pub async fn run(
                 shutdown_timeout_secs
             );
 
-            // Signal shutdown to JobsManager
-            job_manager_shutdown.shutdown().await;
+            // Signal shutdown to JobsManager (non-async, uses AtomicBool)
+            job_manager_shutdown.shutdown();
 
             // Wait for active jobs with timeout
             let timeout = std::time::Duration::from_secs(shutdown_timeout_secs as u64);

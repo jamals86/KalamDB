@@ -41,14 +41,14 @@ pub enum HttpVersion {
 }
 
 /// Batch control metadata for paginated initial data loading
+///
+/// Note: We don't include total_batches because we can't know it upfront
+/// without counting all rows first (expensive). The `has_more` field is
+/// sufficient for clients to know whether to request more batches.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct BatchControl {
     /// Current batch number (0-indexed)
     pub batch_num: u32,
-
-    /// Total number of batches available (optional/estimated)
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub total_batches: Option<u32>,
 
     /// Whether more batches are available to fetch
     pub has_more: bool,
@@ -419,6 +419,8 @@ pub enum ServerMessage {
         total_rows: u32,
         /// Batch control information
         batch_control: BatchControl,
+        /// Schema describing the columns in the subscription result
+        schema: Vec<SchemaField>,
     },
 
     /// Initial data batch sent after subscription or on client request
@@ -690,6 +692,8 @@ pub enum ChangeEvent {
         total_rows: u32,
         /// Batch control information
         batch_control: BatchControl,
+        /// Schema describing the columns in the subscription result
+        schema: Vec<SchemaField>,
     },
 
     /// Initial data batch (paginated loading)
@@ -1214,7 +1218,6 @@ mod tests {
         let seq_id = SeqId::from(999i64);
         let batch_control = BatchControl {
             batch_num: 0,
-            total_batches: Some(5),
             has_more: true,
             status: BatchStatus::Loading,
             last_seq_id: Some(seq_id),
@@ -1233,7 +1236,6 @@ mod tests {
     fn test_batch_control_ready_status() {
         let batch_control = BatchControl {
             batch_num: 5,
-            total_batches: Some(5),
             has_more: false,
             status: BatchStatus::Ready,
             last_seq_id: Some(SeqId::from(1000i64)),
@@ -1410,12 +1412,18 @@ mod tests {
             total_rows: 0,
             batch_control: BatchControl {
                 batch_num: 0,
-                total_batches: Some(0),
                 has_more: false,
                 status: BatchStatus::Ready,
                 last_seq_id: None,
                 snapshot_end_seq: None,
             },
+            schema: vec![
+                SchemaField {
+                    name: "id".to_string(),
+                    data_type: KalamDataType::BigInt,
+                    index: 0,
+                },
+            ],
         };
         assert_eq!(ack.subscription_id(), Some("sub-1"));
         assert!(!ack.is_error());

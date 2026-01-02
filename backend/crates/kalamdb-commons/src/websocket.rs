@@ -25,7 +25,6 @@
 //!   "total_rows": 5000,
 //!   "batch_control": {
 //!     "batch_num": 0,
-//!     "total_batches": 5,
 //!     "has_more": true,
 //!     "status": "loading"
 //!   }
@@ -40,7 +39,6 @@
 //!   "rows": [{"id": 1, "message": "Hello"}, ...],
 //!   "batch_control": {
 //!     "batch_num": 0,
-//!     "total_batches": 5,
 //!     "has_more": true,
 //!     "status": "loading"
 //!   }
@@ -52,7 +50,7 @@
 //! {
 //!   "type": "next_batch",
 //!   "subscription_id": "sub-1",
-//!   "batch_num": 1
+//!   "last_seq_id": 1000
 //! }
 //! ```
 //!
@@ -64,7 +62,6 @@
 //!   "rows": [{"id": 1001, "message": "World"}, ...],
 //!   "batch_control": {
 //!     "batch_num": 1,
-//!     "total_batches": 5,
 //!     "has_more": true,
 //!     "status": "loading_batch"
 //!   }
@@ -79,7 +76,6 @@
 //!   "rows": [{"id": 4501, "message": "Done"}, ...],
 //!   "batch_control": {
 //!     "batch_num": 4,
-//!     "total_batches": 5,
 //!     "has_more": false,
 //!     "status": "ready"
 //!   }
@@ -97,6 +93,7 @@
 //! ```
 
 use crate::ids::SeqId;
+use crate::schemas::SchemaField;
 
 // Simple Row type for WASM (JSON only)
 #[cfg(feature = "wasm")]
@@ -149,6 +146,9 @@ pub enum WebSocketMessage {
         total_rows: u32,
         /// Batch control information for paginated loading
         batch_control: BatchControl,
+        /// Schema describing the columns in the subscription result
+        /// Contains column name, data type (KalamDataType), and index for each field
+        schema: Vec<SchemaField>,
     },
 
     /// Initial data batch sent after subscription or on client request
@@ -307,13 +307,14 @@ pub struct SubscriptionOptions {
 ///
 /// Tracks the progress of batched initial data loading to prevent
 /// overwhelming clients with large payloads (e.g., 1MB+).
+///
+/// Note: We don't include total_batches because we can't know it upfront
+/// without counting all rows first (expensive). The `has_more` field is
+/// sufficient for clients to know whether to request more batches.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct BatchControl {
     /// Current batch number (0-indexed)
     pub batch_num: u32,
-
-    /// Total number of batches available (optional/estimated)
-    pub total_batches: Option<u32>,
 
     /// Whether more batches are available to fetch
     pub has_more: bool,
@@ -447,16 +448,18 @@ pub enum ChangeType {
 
 
 impl WebSocketMessage {
-    /// Create a subscription acknowledgement message with batch control
+    /// Create a subscription acknowledgement message with batch control and schema
     pub fn subscription_ack(
         subscription_id: String,
         total_rows: u32,
         batch_control: BatchControl,
+        schema: Vec<SchemaField>,
     ) -> Self {
         Self::SubscriptionAck {
             subscription_id,
             total_rows,
             batch_control,
+            schema,
         }
     }
 
@@ -495,60 +498,54 @@ impl ClientMessage {
 }
 
 impl BatchControl {
-    /// Create a batch control for the first batch
-    pub fn first(total_batches: u32) -> Self {
+    /// Create a batch control for the first batch (batch_num=0)
+    ///
+    /// # Arguments
+    /// * `has_more` - Whether there are more batches to fetch after this one
+    pub fn first(has_more: bool) -> Self {
         Self {
             batch_num: 0,
-            total_batches: Some(total_batches),
-            has_more: total_batches > 1,
-            status: BatchStatus::Loading,
+            has_more,
+            status: if has_more { BatchStatus::Loading } else { BatchStatus::Ready },
             last_seq_id: None,
             snapshot_end_seq: None,
         }
     }
 
-    /// Create a batch control for a middle batch
-    pub fn middle(batch_num: u32, total_batches: u32) -> Self {
+    /// Create a batch control for a subsequent batch (batch_num > 0)
+    ///
+    /// # Arguments
+    /// * `batch_num` - The current batch number (0-indexed)
+    /// * `has_more` - Whether there are more batches to fetch after this one
+    pub fn subsequent(batch_num: u32, has_more: bool) -> Self {
         Self {
             batch_num,
-            total_batches: Some(total_batches),
-            has_more: batch_num + 1 < total_batches,
-            status: BatchStatus::LoadingBatch,
+            has_more,
+            status: if has_more { BatchStatus::LoadingBatch } else { BatchStatus::Ready },
             last_seq_id: None,
             snapshot_end_seq: None,
         }
     }
 
-    /// Create a batch control for the last batch
-    pub fn last(batch_num: u32, total_batches: u32) -> Self {
-        Self {
-            batch_num,
-            total_batches: Some(total_batches),
-            has_more: false,
-            status: BatchStatus::Ready,
-            last_seq_id: None,
-            snapshot_end_seq: None,
-        }
-    }
-
-    /// Create a batch control for a specific batch number
-    pub fn for_batch(batch_num: u32, total_batches: u32) -> Self {
-        let has_more = batch_num + 1 < total_batches;
+    /// Create batch control with all fields specified
+    pub fn new(
+        batch_num: u32,
+        has_more: bool,
+        last_seq_id: Option<SeqId>,
+        snapshot_end_seq: Option<SeqId>,
+    ) -> Self {
         let status = if batch_num == 0 {
-            BatchStatus::Loading
-        } else if has_more {
-            BatchStatus::LoadingBatch
+            if has_more { BatchStatus::Loading } else { BatchStatus::Ready }
         } else {
-            BatchStatus::Ready
+            if has_more { BatchStatus::LoadingBatch } else { BatchStatus::Ready }
         };
 
         Self {
             batch_num,
-            total_batches: Some(total_batches),
             has_more,
             status,
-            last_seq_id: None,
-            snapshot_end_seq: None,
+            last_seq_id,
+            snapshot_end_seq,
         }
     }
 }
@@ -652,16 +649,31 @@ mod tests {
 
     #[test]
     fn test_batch_control_helpers() {
-        use crate::websocket::BatchControl;
+        use crate::websocket::{BatchControl, BatchStatus};
 
-        let first = BatchControl::first(5);
+        // First batch with more to come
+        let first = BatchControl::first(true);
         assert_eq!(first.batch_num, 0);
-        assert_eq!(first.total_batches, Some(5));
         assert!(first.has_more);
+        assert_eq!(first.status, BatchStatus::Loading);
 
-        let last = BatchControl::last(4, 5);
+        // First batch with no more (single batch)
+        let single = BatchControl::first(false);
+        assert_eq!(single.batch_num, 0);
+        assert!(!single.has_more);
+        assert_eq!(single.status, BatchStatus::Ready);
+
+        // Subsequent batch with more to come
+        let middle = BatchControl::subsequent(2, true);
+        assert_eq!(middle.batch_num, 2);
+        assert!(middle.has_more);
+        assert_eq!(middle.status, BatchStatus::LoadingBatch);
+
+        // Final batch
+        let last = BatchControl::subsequent(4, false);
         assert_eq!(last.batch_num, 4);
         assert!(!last.has_more);
+        assert_eq!(last.status, BatchStatus::Ready);
     }
 
     #[test]

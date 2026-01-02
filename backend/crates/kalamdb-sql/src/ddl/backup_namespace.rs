@@ -83,11 +83,43 @@ impl BackupDatabaseStatement {
             return Err("Backup path cannot be empty".to_string());
         }
 
+        // SECURITY: Validate backup path to prevent path traversal attacks
+        Self::validate_backup_path(&backup_path)?;
+
         Ok(Self {
             namespace_id: NamespaceId::new(namespace_name),
             backup_path,
             if_exists,
         })
+    }
+
+    /// Validates backup path for security.
+    ///
+    /// # Security
+    /// Prevents path traversal attacks by blocking:
+    /// - `..` sequences that could escape intended directories
+    /// - Null bytes that could truncate paths
+    fn validate_backup_path(path: &str) -> Result<(), String> {
+        // Check for path traversal patterns
+        if path.contains("..") {
+            return Err("Backup path cannot contain '..' (path traversal not allowed)".to_string());
+        }
+
+        // Check for null bytes (could truncate paths in some systems)
+        if path.contains('\0') {
+            return Err("Backup path cannot contain null bytes".to_string());
+        }
+
+        // Block certain sensitive directories (defense in depth)
+        let normalized = path.to_lowercase();
+        let sensitive_paths = ["/etc/", "/root/", "/var/log/", "c:\\windows\\"];
+        for sensitive in sensitive_paths {
+            if normalized.starts_with(sensitive) || normalized.contains(&format!("/{}", sensitive.trim_start_matches('/'))) {
+                return Err(format!("Backup path cannot write to sensitive directory: {}", sensitive));
+            }
+        }
+
+        Ok(())
     }
 }
 
@@ -150,5 +182,24 @@ mod tests {
     fn test_parse_backup_database_empty_path() {
         let result = BackupDatabaseStatement::parse("BACKUP DATABASE app TO ''");
         assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_parse_backup_database_path_traversal_blocked() {
+        // Test that path traversal attempts are blocked
+        let result = BackupDatabaseStatement::parse("BACKUP DATABASE app TO '../../../etc/passwd'");
+        assert!(result.is_err());
+        assert!(result.unwrap_err().contains("path traversal"));
+
+        let result = BackupDatabaseStatement::parse("BACKUP DATABASE app TO '/backups/../../../tmp/evil'");
+        assert!(result.is_err());
+        assert!(result.unwrap_err().contains("path traversal"));
+    }
+
+    #[test]
+    fn test_parse_backup_database_sensitive_paths_blocked() {
+        let result = BackupDatabaseStatement::parse("BACKUP DATABASE app TO '/etc/shadow'");
+        assert!(result.is_err());
+        assert!(result.unwrap_err().contains("sensitive directory"));
     }
 }

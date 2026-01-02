@@ -1,26 +1,44 @@
 # Testing the TypeScript SDK
 
-The TypeScript SDK wraps WASM bindings and is **browser-only**. Here's how to test it:
+The TypeScript SDK wraps WASM bindings and is primarily tested in the browser.
 
-## Quick Test
+## Quick Test (Recommended)
+
+For a full step-by-step guide to build and run the example app, see:
+
+- `example/README.md`
 
 1. **Make sure KalamDB server is running:**
-   ```powershell
-   # In another terminal
-   cd C:\Jamal\git\KalamDB\backend
+   ```bash
+   cd backend
    cargo run
    ```
 
-2. **Start the HTTP server:**
-   ```powershell
-   cd C:\Jamal\git\KalamDB\link\sdks\typescript
+2. **Build the SDK:**
+
+   ```bash
+   cd link/sdks/typescript
+   npm install
+   npm run build
+   ```
+
+3. **Start a static server:**
+   ```bash
    npx http-server -p 3000
    ```
 
-3. **Open in browser:**
-   - Navigate to: http://localhost:3000/example.html
+4. **Open in browser:**
+   - Navigate to: `http://localhost:3000/tests/browser-test.html`
    - Click "Run All Tests" button
    - Watch the output console
+
+If you prefer a richer UI (and a self-contained static app), run the example:
+
+```bash
+cd link/sdks/typescript/example
+npm install
+npm run start
+```
 
 ## What the Example Tests
 
@@ -34,29 +52,13 @@ The `example.html` file tests:
 
 ## Current Status
 
-✅ **HTTP Queries Working** - The SDK can execute SQL via HTTP (fetch API)
-⚠️ **WebSocket Subscriptions** - Not working yet due to authentication headers limitation in browser WebSocket API
+✅ **HTTP Queries Working** - The SDK can execute SQL via HTTP.
 
-The browser WebSocket API doesn't allow setting custom headers (like `Authorization: Basic ...`), which means real-time subscriptions need backend changes to support query parameter authentication or protocol-based auth.
-
-## Unit Tests (Node.js)
-
-Basic constructor and validation tests work in Node.js:
-
-```powershell
-npm test
-```
-
-These test:
-- Constructor parameter validation
-- Error handling
-- Type safety
+Subscriptions are supported via the WebSocket protocol (auth happens via protocol messages after connect, not via headers).
 
 ## Summary
 
 - **Works**: SQL queries via HTTP in browser ✅
-- **Works**: Constructor validation tests ✅
-- **Not Working**: WebSocket subscriptions (auth limitation)
-- **Not Working**: Node.js examples (browser-only WASM)
+- **Works**: Browser-based test harness ✅
 
-For Node.js server-side usage, use the Rust client or REST API directly.
+For server-side usage, prefer the Rust client (`kalam-link`) or call the REST API directly.

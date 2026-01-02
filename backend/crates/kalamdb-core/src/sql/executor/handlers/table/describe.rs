@@ -58,7 +58,7 @@ impl TypedStatementHandler<DescribeTableStatement> for DescribeTableHandler {
         let audit_entry = audit::log_query_operation(
             context,
             "DESCRIBE",
-            &format!("{}.{}", ns.as_str(), statement.table_name.as_str()),
+            &table_id.full_name(),
             duration,
             None,
         );
@@ -92,13 +92,15 @@ fn build_describe_batch(def: &TableDefinition) -> Result<RecordBatch, KalamDbErr
         Field::new("column_comment", DataType::Utf8, true),
     ]));
 
-    let mut names: Vec<String> = Vec::new();
-    let mut ordinals: Vec<u32> = Vec::new();
-    let mut types: Vec<String> = Vec::new();
-    let mut nulls: Vec<bool> = Vec::new();
-    let mut pks: Vec<bool> = Vec::new();
-    let mut defaults: Vec<Option<String>> = Vec::new();
-    let mut comments: Vec<Option<String>> = Vec::new();
+    // Pre-allocate based on column count
+    let col_count = def.columns.len();
+    let mut names: Vec<String> = Vec::with_capacity(col_count);
+    let mut ordinals: Vec<u32> = Vec::with_capacity(col_count);
+    let mut types: Vec<String> = Vec::with_capacity(col_count);
+    let mut nulls: Vec<bool> = Vec::with_capacity(col_count);
+    let mut pks: Vec<bool> = Vec::with_capacity(col_count);
+    let mut defaults: Vec<Option<String>> = Vec::with_capacity(col_count);
+    let mut comments: Vec<Option<String>> = Vec::with_capacity(col_count);
 
     for c in &def.columns {
         names.push(c.column_name.clone());

@@ -28,7 +28,9 @@ pub struct CookieConfig {
 impl Default for CookieConfig {
     fn default() -> Self {
         Self {
-            secure: false, // Set to true in production
+            // SECURITY: Default to true for HTTPS-only cookie transmission.
+            // Set to false only in development environments without TLS.
+            secure: true,
             path: "/".to_string(),
             same_site: SameSite::Strict,
             domain: None,

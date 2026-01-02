@@ -46,11 +46,10 @@ impl SharedTablePkIndex {
     /// Create a new PK index for a shared table.
     ///
     /// # Arguments
-    /// * `namespace_id` - Namespace identifier
-    /// * `table_name` - Table name
+    /// * `table_id` - Table identifier (namespace + table name)
     /// * `pk_field_name` - Name of the primary key column
-    pub fn new(namespace_id: &str, table_name: &str, pk_field_name: &str) -> Self {
-        let partition = format!("shared_{}:{}_pk_idx", namespace_id, table_name);
+    pub fn new(table_id: &kalamdb_commons::TableId, pk_field_name: &str) -> Self {
+        let partition = format!("shared_{}_pk_idx", table_id); // TableId Display: "namespace:table"
         Self {
             partition,
             pk_field_name: pk_field_name.to_string(),
@@ -148,15 +147,13 @@ impl IndexDefinition<SharedTableRowId, SharedTableRow> for SharedTablePkIndex {
 /// Create a PK index for a shared table.
 ///
 /// # Arguments
-/// * `namespace_id` - Namespace identifier
-/// * `table_name` - Table name  
+/// * `table_id` - Table identifier (namespace + table name)
 /// * `pk_field_name` - Name of the primary key column
 pub fn create_shared_table_pk_index(
-    namespace_id: &str,
-    table_name: &str,
+    table_id: &kalamdb_commons::TableId,
     pk_field_name: &str,
 ) -> std::sync::Arc<dyn IndexDefinition<SharedTableRowId, SharedTableRow>> {
-    std::sync::Arc::new(SharedTablePkIndex::new(namespace_id, table_name, pk_field_name))
+    std::sync::Arc::new(SharedTablePkIndex::new(table_id, pk_field_name))
 }
 
 #[cfg(test)]
@@ -186,7 +183,8 @@ mod tests {
 
     #[test]
     fn test_pk_index_extract_key() {
-        let index = SharedTablePkIndex::new("default", "products", "id");
+        let table_id = kalamdb_commons::TableId::from_strings("default", "products");
+        let index = SharedTablePkIndex::new(&table_id, "id");
         let (key, row) = create_test_row(100, 42);
 
         let index_key = index.extract_key(&key, &row);
@@ -203,7 +201,8 @@ mod tests {
 
     #[test]
     fn test_pk_index_same_pk_different_versions() {
-        let index = SharedTablePkIndex::new("default", "products", "id");
+        let table_id = kalamdb_commons::TableId::from_strings("default", "products");
+        let index = SharedTablePkIndex::new(&table_id, "id");
 
         // Two versions of the same row (same PK, different seq)
         let (key1, row1) = create_test_row(100, 42);
@@ -222,7 +221,8 @@ mod tests {
 
     #[test]
     fn test_pk_index_different_pk_values() {
-        let index = SharedTablePkIndex::new("default", "products", "id");
+        let table_id = kalamdb_commons::TableId::from_strings("default", "products");
+        let index = SharedTablePkIndex::new(&table_id, "id");
 
         let (key1, row1) = create_test_row(100, 42);
         let (key2, row2) = create_test_row(100, 99);
@@ -236,7 +236,8 @@ mod tests {
 
     #[test]
     fn test_build_prefix_for_pk() {
-        let index = SharedTablePkIndex::new("default", "products", "id");
+        let table_id = kalamdb_commons::TableId::from_strings("default", "products");
+        let index = SharedTablePkIndex::new(&table_id, "id");
         let pk_value = ScalarValue::Int64(Some(42));
 
         let prefix = index.build_prefix_for_pk(&pk_value);
@@ -249,7 +250,8 @@ mod tests {
 
     #[test]
     fn test_partition_name() {
-        let index = SharedTablePkIndex::new("my_namespace", "my_table", "id");
+        let table_id = kalamdb_commons::TableId::from_strings("my_namespace", "my_table");
+        let index = SharedTablePkIndex::new(&table_id, "id");
         assert_eq!(index.partition(), "shared_my_namespace:my_table_pk_idx");
     }
 }

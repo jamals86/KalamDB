@@ -92,9 +92,8 @@ impl StatementHandler for InsertHandler {
             .get_table_definition(&table_id)?
             .ok_or_else(|| {
                 KalamDbError::InvalidOperation(format!(
-                    "Table '{}.{}' does not exist",
-                    namespace.as_str(),
-                    table_name.as_str()
+                    "Table '{}' does not exist",
+                    table_id
                 ))
             })?;
 
@@ -194,8 +193,7 @@ impl StatementHandler for InsertHandler {
         // Use as_user_id if present, otherwise use context.user_id
         let rows_affected = self
             .execute_native_insert(
-                &namespace_owned,
-                &table_name_owned,
+                &table_id,
                 effective_user_id,
                 context.user_role,
                 rows,
@@ -211,11 +209,16 @@ impl StatementHandler for InsertHandler {
         statement: &SqlStatement,
         context: &ExecutionContext,
     ) -> Result<(), KalamDbError> {
+        use crate::sql::executor::helpers::guards::block_anonymous_write;
+        
         if !matches!(statement.kind(), SqlStatementKind::Insert(_)) {
             return Err(KalamDbError::InvalidOperation(
                 "InsertHandler received wrong statement kind".into(),
             ));
         }
+
+        // T050: Block anonymous users from write operations
+        block_anonymous_write(context, "INSERT")?;
 
         // T152: Validate AS USER authorization - only Service/Dba/System can use AS USER (Phase 7)
         if statement.as_user_id().is_some() {
@@ -553,17 +556,12 @@ impl InsertHandler {
     /// prevent blocking the async runtime with RocksDB I/O.
     async fn execute_native_insert(
         &self,
-        namespace: &NamespaceId,
-        table_name: &TableName,
+        table_id: &kalamdb_commons::models::TableId,
         user_id: &kalamdb_commons::models::UserId,
         role: kalamdb_commons::Role,
         rows: Vec<Row>,
         table_def: std::sync::Arc<kalamdb_commons::models::schemas::TableDefinition>, // Reuse already-fetched definition
     ) -> Result<usize, KalamDbError> {
-        // Construct TableId from namespace and table_name
-        use kalamdb_commons::models::TableId;
-        let table_id = TableId::new(namespace.clone(), table_name.clone());
-
         // Use already-fetched table definition (no redundant lookup)
         let table_type = table_def.table_type;
         let table_options = table_def.table_options.clone();
@@ -581,8 +579,6 @@ impl InsertHandler {
                 user_id,
                 role,
                 rows,
-                namespace,
-                table_name,
             );
         }
 
@@ -591,8 +587,6 @@ impl InsertHandler {
         let table_id_clone = table_id.clone();
         let rows_for_insert = rows;
         let user_id_clone = user_id.clone();
-        let namespace_owned = namespace.clone();
-        let table_name_owned = table_name.clone();
 
         let rows_affected = task::spawn_blocking(move || {
             Self::execute_insert_blocking(
@@ -603,8 +597,6 @@ impl InsertHandler {
                 &user_id_clone,
                 role,
                 rows_for_insert,
-                &namespace_owned,
-                &table_name_owned,
             )
         })
         .await
@@ -622,8 +614,6 @@ impl InsertHandler {
         user_id: &kalamdb_commons::models::UserId,
         role: kalamdb_commons::Role,
         rows: Vec<Row>,
-        namespace: &NamespaceId,
-        table_name: &TableName,
     ) -> Result<usize, KalamDbError> {
         Self::execute_insert_blocking(
             &self.app_context,
@@ -633,8 +623,6 @@ impl InsertHandler {
             user_id,
             role,
             rows,
-            namespace,
-            table_name,
         )
     }
 
@@ -647,16 +635,13 @@ impl InsertHandler {
         user_id: &kalamdb_commons::models::UserId,
         role: kalamdb_commons::Role,
         rows: Vec<Row>,
-        namespace: &NamespaceId,
-        table_name: &TableName,
     ) -> Result<usize, KalamDbError> {
         match (table_type, rows) {
             (TableType::User, rows) => {
                 let provider_arc = app_ctx.schema_registry().get_provider(table_id).ok_or_else(|| {
                     KalamDbError::InvalidOperation(format!(
-                        "User table provider not found for: {}.{}",
-                        namespace.as_str(),
-                        table_name.as_str()
+                        "User table provider not found for: {}",
+                        table_id
                     ))
                 })?;
 
@@ -685,18 +670,16 @@ impl InsertHandler {
 
                 if !can_write_shared_table(access_level, false, role) {
                     return Err(KalamDbError::Unauthorized(format!(
-                        "Insufficient privileges to write to shared table '{}.{}' (Access Level: {:?})",
-                        namespace.as_str(),
-                        table_name.as_str(),
+                        "Insufficient privileges to write to shared table '{}' (Access Level: {:?})",
+                        table_id,
                         access_level
                     )));
                 }
 
                 let provider_arc = app_ctx.schema_registry().get_provider(table_id).ok_or_else(|| {
                     KalamDbError::InvalidOperation(format!(
-                        "Shared table provider not found for: {}.{}",
-                        namespace.as_str(),
-                        table_name.as_str()
+                        "Shared table provider not found for: {}",
+                        table_id
                     ))
                 })?;
 
@@ -708,18 +691,16 @@ impl InsertHandler {
                     Ok(row_ids.len())
                 } else {
                     Err(KalamDbError::InvalidOperation(format!(
-                        "Cached provider type mismatch for shared table {}.{}",
-                        namespace.as_str(),
-                        table_name.as_str()
+                        "Cached provider type mismatch for shared table {}",
+                        table_id
                     )))
                 }
             }
             (TableType::Stream, rows) => {
                 let provider_arc = app_ctx.schema_registry().get_provider(table_id).ok_or_else(|| {
                     KalamDbError::InvalidOperation(format!(
-                        "Stream table provider not found for: {}.{}",
-                        namespace.as_str(),
-                        table_name.as_str()
+                        "Stream table provider not found for: {}",
+                        table_id
                     ))
                 })?;
 
@@ -731,9 +712,8 @@ impl InsertHandler {
                     Ok(row_ids.len())
                 } else {
                     Err(KalamDbError::InvalidOperation(format!(
-                        "Cached provider type mismatch for stream table {}.{}",
-                        namespace.as_str(),
-                        table_name.as_str()
+                        "Cached provider type mismatch for stream table {}",
+                        table_id
                     )))
                 }
             }

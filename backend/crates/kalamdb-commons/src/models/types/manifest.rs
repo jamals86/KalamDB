@@ -187,19 +187,10 @@ pub struct ColumnStats {
 }
 
 /// Segment metadata tracking a data file (Parquet) or hot storage segment.
+/// Fields ordered for optimal memory alignment (8-byte types first).
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SegmentMetadata {
-    /// Unique segment identifier (UUID)
-    pub id: String,
-
-    /// Path to the segment file (relative to table root)
-    pub path: String,
-
-    /// Column statistics (min/max/nulls) keyed by column name
-    /// Replaces legacy min_key/max_key
-    #[serde(default)]
-    pub column_stats: HashMap<String, ColumnStats>,
-
+    // 8-byte aligned fields first
     /// Minimum sequence number in this segment (for MVCC pruning)
     pub min_seq: i64,
 
@@ -215,8 +206,16 @@ pub struct SegmentMetadata {
     /// Creation timestamp (Unix seconds)
     pub created_at: i64,
 
-    /// If true, this segment is marked for deletion (compaction/cleanup)
-    pub tombstone: bool,
+    /// Unique segment identifier (UUID)
+    pub id: String,
+
+    /// Path to the segment file (relative to table root)
+    pub path: String,
+
+    /// Column statistics (min/max/nulls) keyed by column name
+    /// Replaces legacy min_key/max_key
+    #[serde(default)]
+    pub column_stats: HashMap<String, ColumnStats>,
 
     /// Schema version when this segment was written (Phase 16)
     ///
@@ -225,6 +224,9 @@ pub struct SegmentMetadata {
     /// retrieve the exact TableDefinition for reading this segment.
     #[serde(default = "default_schema_version")]
     pub schema_version: u32,
+
+    /// If true, this segment is marked for deletion (compaction/cleanup)
+    pub tombstone: bool,
 }
 
 /// Default schema version for backward compatibility with existing manifests

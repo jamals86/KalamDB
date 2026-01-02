@@ -17,7 +17,6 @@ use datafusion::arrow::record_batch::RecordBatch;
 use datafusion::scalar::ScalarValue;
 use kalamdb_commons::constants::SystemColumnNames;
 use kalamdb_commons::models::{Row, StorageId, TableId, UserId};
-use kalamdb_commons::{NamespaceId, TableName};
 use kalamdb_tables::{SharedTableIndexedStore, SharedTableRow};
 use std::sync::Arc;
 
@@ -58,14 +57,6 @@ impl SharedTableFlushJob {
     pub fn with_live_query_manager(mut self, manager: Arc<LiveQueryManager>) -> Self {
         self.live_query_manager = Some(manager);
         self
-    }
-
-    fn namespace_id(&self) -> &NamespaceId {
-        self.table_id.namespace_id()
-    }
-
-    fn table_name(&self) -> &TableName {
-        self.table_id.table_name()
     }
 
     /// Get current schema version for the table
@@ -128,9 +119,8 @@ impl SharedTableFlushJob {
 impl TableFlush for SharedTableFlushJob {
     fn execute(&self) -> Result<FlushJobResult, KalamDbError> {
         log::debug!(
-            "🔄 Starting shared table flush: table={}.{}",
-            self.namespace_id().as_str(),
-            self.table_name().as_str()
+            "🔄 Starting shared table flush: table={}",
+            self.table_id
         );
 
         use super::base::{config, helpers, FlushDedupStats};
@@ -154,9 +144,8 @@ impl TableFlush for SharedTableFlushJob {
                 .scan_limited_with_prefix_and_start(None, cursor.as_deref(), config::BATCH_SIZE)
                 .map_err(|e| {
                     log::error!(
-                        "❌ Failed to scan rows for shared table={}.{}: {}",
-                        self.namespace_id().as_str(),
-                        self.table_name().as_str(),
+                        "❌ Failed to scan rows for shared table={}: {}",
+                        self.table_id,
                         e
                     );
                     KalamDbError::Other(format!("Failed to scan rows: {}", e))
@@ -242,14 +231,13 @@ impl TableFlush for SharedTableFlushJob {
         }
 
         // Log dedup statistics
-        stats.log_summary(self.namespace_id().as_str(), self.table_name().as_str());
+        stats.log_summary(&self.table_id.to_string());
 
         // If no rows to flush, return early
         if rows.is_empty() {
             log::info!(
-                "⚠️  No rows to flush for shared table={}.{} (empty table or all deleted)",
-                self.namespace_id().as_str(),
-                self.table_name().as_str()
+                "⚠️  No rows to flush for shared table={} (empty table or all deleted)",
+                self.table_id
             );
             return Ok(FlushJobResult {
                 rows_flushed: 0,
@@ -260,10 +248,9 @@ impl TableFlush for SharedTableFlushJob {
 
         let rows_count = rows.len();
         log::debug!(
-            "💾 Flushing {} rows to Parquet for shared table={}.{}",
+            "💾 Flushing {} rows to Parquet for shared table={}",
             rows_count,
-            self.namespace_id().as_str(),
-            self.table_name().as_str()
+            self.table_id
         );
 
         // Convert rows to RecordBatch
@@ -364,10 +351,9 @@ impl TableFlush for SharedTableFlushJob {
         .into_kalamdb_error("Failed to rename Parquet file to final location")?;
 
         log::info!(
-            "✅ Flushed {} rows for shared table={}.{} to {}",
+            "✅ Flushed {} rows for shared table={} to {}",
             rows_count,
-            self.namespace_id().as_str(),
-            self.table_name().as_str(),
+            self.table_id,
             destination_path
         );
 
@@ -428,11 +414,7 @@ impl TableFlush for SharedTableFlushJob {
     }
 
     fn table_identifier(&self) -> String {
-        format!(
-            "{}.{}",
-            self.namespace_id().as_str(),
-            self.table_name().as_str()
-        )
+        self.table_id.full_name()
     }
 
     fn live_query_manager(&self) -> Option<&Arc<LiveQueryManager>> {

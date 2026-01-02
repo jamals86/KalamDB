@@ -1,5 +1,5 @@
 /**
- * @kalamdb/client - Official TypeScript/JavaScript client for KalamDB
+ * kalam-link - Official TypeScript/JavaScript client for KalamDB
  * 
  * This package provides a type-safe wrapper around the KalamDB WASM bindings
  * for use in Node.js and browser environments.
@@ -13,7 +13,7 @@
  * 
  * @example
  * ```typescript
- * import { createClient, Auth } from '@kalamdb/client';
+ * import { createClient, Auth } from 'kalam-link';
  * 
  * // Basic Auth (username/password)
  * const client = createClient({
@@ -126,19 +126,21 @@ export interface ErrorDetail {
  * Server message types for WebSocket subscriptions
  */
 export type ServerMessage =
-  | { type: 'subscription_ack'; subscription_id: string; total_rows: number; batch_control: BatchControl }
+  | { type: 'subscription_ack'; subscription_id: string; total_rows: number; batch_control: BatchControl; schema: SchemaField[] }
   | { type: 'initial_data_batch'; subscription_id: string; rows: Record<string, any>[]; batch_control: BatchControl }
   | { type: 'change'; subscription_id: string; change_type: 'insert' | 'update' | 'delete'; rows?: Record<string, any>[]; old_values?: Record<string, any>[] }
   | { type: 'error'; subscription_id: string; code: string; message: string };
 
 /**
  * Batch control metadata for paginated data loading
+ *
+ * Note: We don't include total_batches because we can't know it upfront
+ * without counting all rows first (expensive). The `has_more` field is
+ * sufficient for clients to know whether to request more batches.
  */
 export interface BatchControl {
   /** Current batch number (0-indexed) */
   batch_num: number;
-  /** Total number of batches (optional/estimated) */
-  total_batches?: number;
   /** Whether more batches are available */
   has_more: boolean;
   /** Loading status */
@@ -335,7 +337,7 @@ function isAuthOptions(options: ClientOptions): options is ClientOptionsWithAuth
  * @example
  * ```typescript
  * // New API with type-safe auth (recommended)
- * import { createClient, Auth } from '@kalamdb/client';
+ * import { createClient, Auth } from 'kalam-link';
  * 
  * const client = createClient({
  *   url: 'http://localhost:8080',
@@ -393,7 +395,7 @@ export class KalamDBClient {
    * 
    * @example
    * ```typescript
-   * import { KalamDBClient, Auth } from '@kalamdb/client';
+  * import { KalamDBClient, Auth } from 'kalam-link';
    * 
    * const client = new KalamDBClient({
    *   url: 'http://localhost:8080',
@@ -957,7 +959,7 @@ export class KalamDBClient {
  * 
  * @example
  * ```typescript
- * import { createClient, Auth } from '@kalamdb/client';
+ * import { createClient, Auth } from 'kalam-link';
  * 
  * // New type-safe API (recommended)
  * const client = createClient({

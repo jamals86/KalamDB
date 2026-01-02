@@ -6,6 +6,7 @@
 use crate::app_context::AppContext;
 use crate::error::KalamDbError;
 use crate::error_extensions::KalamDbResultExt;
+use crate::sql::executor::helpers::guards::block_system_namespace_modification;
 use crate::jobs::executors::cleanup::{CleanupOperation, CleanupParams, StorageCleanupDetails};
 use crate::schema_registry::SchemaRegistry;
 use crate::sql::executor::handlers::typed::TypedStatementHandler;
@@ -47,10 +48,9 @@ pub async fn cleanup_table_data_internal(
             use kalamdb_store::storage_trait::Partition as StorePartition;
 
             let partition_name = format!(
-                "{}{}:{}",
+                "{}{}",
                 ColumnFamilyNames::USER_TABLE_PREFIX,
-                table_id.namespace_id().as_str(),
-                table_id.table_name().as_str()
+                table_id // TableId Display: "namespace:table"
             );
 
             let backend = _app_context.storage_backend();
@@ -91,10 +91,9 @@ pub async fn cleanup_table_data_internal(
             use kalamdb_store::storage_trait::Partition as StorePartition;
 
             let partition_name = format!(
-                "{}{}:{}",
+                "{}{}",
                 ColumnFamilyNames::SHARED_TABLE_PREFIX,
-                table_id.namespace_id().as_str(),
-                table_id.table_name().as_str()
+                table_id // TableId Display: "namespace:table"
             );
 
             let backend = _app_context.storage_backend();
@@ -133,10 +132,9 @@ pub async fn cleanup_table_data_internal(
             use kalamdb_store::storage_trait::Partition as StorePartition;
 
             let partition_name = format!(
-                "{}{}:{}",
+                "{}{}",
                 ColumnFamilyNames::STREAM_TABLE_PREFIX,
-                table_id.namespace_id().as_str(),
-                table_id.table_name().as_str()
+                table_id // TableId Display: "namespace:table"
             );
 
             let backend = _app_context.storage_backend();
@@ -351,6 +349,14 @@ impl TypedStatementHandler<DropTableStatement> for DropTableHandler {
             context.user_role
         );
 
+        // Block DROP on system tables - they are managed internally
+        block_system_namespace_modification(
+            &statement.namespace_id,
+            "DROP",
+            "TABLE",
+            Some(statement.table_name.as_str()),
+        )?;
+
         // RBAC: authorize based on actual table type if exists
         let registry = self.app_context.schema_registry();
         let actual_type = match registry.get_table_definition(&table_id)? {
@@ -560,6 +566,11 @@ impl TypedStatementHandler<DropTableStatement> for DropTableHandler {
         _statement: &DropTableStatement,
         context: &ExecutionContext,
     ) -> Result<(), KalamDbError> {
+        use crate::sql::executor::helpers::guards::block_anonymous_write;
+        
+        // T050: Block anonymous users from DDL operations
+        block_anonymous_write(context, "DROP TABLE")?;
+        
         // Coarse auth gate (fine-grained check performed in execute using actual table type)
         if context.is_system() || context.is_admin() {
             return Ok(());

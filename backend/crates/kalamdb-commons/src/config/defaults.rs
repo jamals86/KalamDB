@@ -244,8 +244,22 @@ pub fn default_auth_allow_remote_access() -> bool {
     false // System users localhost-only by default for security
 }
 
+/// Default JWT secret - MUST be overridden in production.
+///
+/// # Security
+/// This default value is intentionally insecure and will be rejected by the server
+/// when running on non-localhost addresses. The server startup in main.rs validates
+/// that the JWT secret is not in the list of known insecure defaults.
+///
+/// Insecure values that will be rejected:
+/// - "CHANGE_ME_IN_PRODUCTION"
+/// - "kalamdb-dev-secret-key-change-in-production"
+/// - "your-secret-key-at-least-32-chars-change-me-in-production"
+/// - Any secret shorter than 32 characters
 pub fn default_auth_jwt_secret() -> String {
-    "CHANGE_ME_IN_PRODUCTION".to_string() // Must be overridden in production
+    // Use environment variable if set, otherwise use placeholder
+    std::env::var("KALAMDB_JWT_SECRET")
+        .unwrap_or_else(|_| "CHANGE_ME_IN_PRODUCTION".to_string())
 }
 
 pub fn default_auth_jwt_trusted_issuers() -> String {

@@ -78,7 +78,7 @@ pub fn storages_table_definition() -> TableDefinition {
             false,
             false,
             ColumnDefault::None,
-            Some("Encrypted credentials JSON".to_string()),
+            Some("Storage credentials JSON (WARNING: stored as plaintext - use environment variables for sensitive credentials)".to_string()),
         ),
         ColumnDefinition::new(
             "config_json",

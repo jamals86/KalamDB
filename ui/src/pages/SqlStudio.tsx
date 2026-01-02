@@ -16,13 +16,15 @@ import {
   Clock,
   Trash2,
   Search,
-  MoreHorizontal,
   ArrowUpDown,
   RefreshCw,
   Radio,
   Users,
   User,
+  Info,
 } from "lucide-react";
+import { TableProperties } from "@/components/sql-studio/TableProperties";
+import { QueryResultsBar } from "@/components/sql-studio/QueryResultsBar";
 import { Button } from "@/components/ui/button";
 import { Switch } from "@/components/ui/switch";
 import {
@@ -180,6 +182,17 @@ export default function SqlStudio() {
   const [contextMenu, setContextMenu] = useState<{ x: number; y: number; value: unknown } | null>(null);
   // WebSocket log modal state
   const [showWsLogModal, setShowWsLogModal] = useState(false);
+  // Table properties panel state
+  const [showTableProperties, setShowTableProperties] = useState(false);
+  const [selectedTable, setSelectedTable] = useState<{ namespace: string; tableName: string; columns: SchemaNode[]; isNewTable?: boolean } | null>(null);
+  // Schema tree context menu state
+  const [schemaContextMenu, setSchemaContextMenu] = useState<{
+    x: number;
+    y: number;
+    namespace: string;
+    tableName: string;
+    columns: SchemaNode[];
+  } | null>(null);
   const tabCounter = useRef(initialState.tabCounter);
   const monacoRef = useRef<Monaco | null>(null);
   
@@ -823,6 +836,57 @@ export default function SqlStudio() {
 
   const filteredSchema = filterSchemaNodes(schema, schemaFilter);
 
+  // Export results to CSV
+  const exportToCSV = useCallback(() => {
+    const tab = tabs.find((t) => t.id === activeTabId);
+    if (!tab?.results || tab.results.length === 0) return;
+
+    // Get column names from the first row, excluding internal fields
+    const columnKeys = Object.keys(tab.results[0]).filter(
+      (key) => !key.startsWith("_")
+    );
+
+    // Build CSV content
+    const csvRows: string[] = [];
+    
+    // Header row
+    csvRows.push(columnKeys.map((key) => `"${key}"`).join(","));
+    
+    // Data rows
+    for (const row of tab.results) {
+      const values = columnKeys.map((key) => {
+        const value = row[key];
+        if (value === null || value === undefined) return "";
+        if (typeof value === "string") {
+          // Escape quotes and wrap in quotes
+          return `"${value.replace(/"/g, '""')}"`;
+        }
+        if (typeof value === "object") {
+          return `"${JSON.stringify(value).replace(/"/g, '""')}"`;
+        }
+        return String(value);
+      });
+      csvRows.push(values.join(","));
+    }
+
+    const csvContent = csvRows.join("\n");
+    const blob = new Blob([csvContent], { type: "text/csv;charset=utf-8;" });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement("a");
+    link.setAttribute("href", url);
+    link.setAttribute("download", `query_results_${Date.now()}.csv`);
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+    URL.revokeObjectURL(url);
+  }, [activeTabId, tabs]);
+
+  // Handle showing table properties
+  const handleShowTableProperties = useCallback((namespace: string, tableName: string, columns: SchemaNode[]) => {
+    setSelectedTable({ namespace, tableName, columns });
+    setShowTableProperties(true);
+  }, []);
+
   const handleEditorMount = useCallback((editorInstance: editor.IStandaloneCodeEditor, monaco: Monaco) => {
     monacoRef.current = monaco;
     
@@ -954,7 +1018,7 @@ export default function SqlStudio() {
         <div key={currentPath.join(".")} className="select-none">
           <div
             className={cn(
-              "flex items-center gap-1 px-2 py-1 hover:bg-muted/50 rounded cursor-pointer text-sm",
+              "flex items-center gap-1 px-2 py-1 hover:bg-muted/50 rounded cursor-pointer text-sm group",
               node.type === "column" && "pl-8"
             )}
             onClick={() => {
@@ -966,9 +1030,23 @@ export default function SqlStudio() {
               }
             }}
             onDoubleClick={() => {
-              // Double-click on table inserts the qualified name
+              // Double-click on table opens properties panel
               if (node.type === "table") {
-                insertIntoQuery(`${path[path.length - 1]}.${node.name}`);
+                handleShowTableProperties(path[path.length - 1] || "", node.name, node.children || []);
+              }
+            }}
+            onContextMenu={(e) => {
+              // Right-click on table shows context menu
+              if (node.type === "table") {
+                e.preventDefault();
+                e.stopPropagation();
+                setSchemaContextMenu({
+                  x: e.clientX,
+                  y: e.clientY,
+                  namespace: path[path.length - 1] || "",
+                  tableName: node.name,
+                  columns: node.children || [],
+                });
               }
             }}
           >
@@ -1013,6 +1091,18 @@ export default function SqlStudio() {
               <span className="text-yellow-500 text-xs" title="Primary Key">🔑</span>
             )}
             <span className="truncate flex-1 min-w-0">{node.name}</span>
+            {node.type === "table" && (
+              <button
+                className="p-0.5 hover:bg-muted rounded opacity-0 group-hover:opacity-100 transition-opacity shrink-0"
+                onClick={(e) => {
+                  e.stopPropagation();
+                  handleShowTableProperties(path[path.length - 1] || "", node.name, node.children || []);
+                }}
+                title="View table properties"
+              >
+                <Info className="h-3.5 w-3.5 text-muted-foreground hover:text-foreground" />
+              </button>
+            )}
             {node.dataType && (
               <span 
                 className={cn(
@@ -1043,16 +1133,36 @@ export default function SqlStudio() {
             <Database className="h-4 w-4" />
             Schema Browser
           </div>
-          <Button
-            size="sm"
-            variant="ghost"
-            onClick={loadSchema}
-            disabled={schemaLoading}
-            className="h-6 w-6 p-0"
-            title="Refresh schema"
-          >
-            <RefreshCw className={cn("h-3.5 w-3.5", schemaLoading && "animate-spin")} />
-          </Button>
+          <div className="flex items-center gap-1">
+            <Button
+              size="sm"
+              variant="ghost"
+              onClick={() => {
+                // Open create table dialog
+                setSelectedTable({
+                  namespace: "default",
+                  tableName: "new_table",
+                  columns: [],
+                  isNewTable: true,
+                });
+                setShowTableProperties(true);
+              }}
+              className="h-6 w-6 p-0"
+              title="Create new table"
+            >
+              <Plus className="h-3.5 w-3.5" />
+            </Button>
+            <Button
+              size="sm"
+              variant="ghost"
+              onClick={loadSchema}
+              disabled={schemaLoading}
+              className="h-6 w-6 p-0"
+              title="Refresh schema"
+            >
+              <RefreshCw className={cn("h-3.5 w-3.5", schemaLoading && "animate-spin")} />
+            </Button>
+          </div>
         </div>
         <div className="p-2 border-b">
           <div className="relative">
@@ -1082,123 +1192,126 @@ export default function SqlStudio() {
 
       {/* Main content */}
       <div className="flex-1 flex flex-col min-w-0">
-        {/* Header: Tabs + Run + Live Toggle + Actions */}
+        {/* Header: Tabs + Run Button | Live Query + Actions */}
         <div className="border-b flex items-center h-12 px-2 gap-2 shrink-0 bg-background">
-          {/* Query Tabs */}
-          <div className="flex items-center gap-1">
-            {tabs.map((tab) => (
-              <div
-                key={tab.id}
-                onClick={() => setActiveTabId(tab.id)}
-                className={cn(
-                  "flex items-center gap-1 px-3 py-1.5 rounded cursor-pointer text-sm",
-                  activeTabId === tab.id
-                    ? "bg-muted font-medium"
-                    : "hover:bg-muted/50"
-                )}
-              >
-                {/* Green dot for live subscribed tabs */}
-                {tab.subscriptionStatus === "connected" && (
-                  <span className="relative flex h-2 w-2 mr-1">
-                    <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-green-400 opacity-75"></span>
-                    <span className="relative inline-flex rounded-full h-2 w-2 bg-green-500"></span>
-                  </span>
-                )}
-                {tab.name}
-                {tabs.length > 1 && (
-                  <button
-                    onClick={(e) => closeTab(tab.id, e)}
-                    className="ml-1 hover:bg-muted-foreground/20 rounded p-0.5"
-                  >
-                    <X className="h-3 w-3" />
-                  </button>
-                )}
-              </div>
-            ))}
-            <Button size="sm" variant="ghost" onClick={addTab} className="h-7 w-7 p-0">
-              <Plus className="h-4 w-4" />
-            </Button>
-          </div>
-
-          <div className="w-px h-6 bg-border mx-1" />
-
-          {/* Run Button */}
-          <Button
-            size="sm"
-            onClick={activeTab?.isLive ? toggleLiveQuery : executeQuery}
-            disabled={activeTab?.isLoading || !activeTab?.query?.trim() || activeTab?.subscriptionStatus === "connecting"}
-            className={cn(
-              "gap-1.5 h-8",
-              activeTab?.isLive && activeTab?.subscriptionStatus === "connected"
-                ? "bg-red-600 hover:bg-red-700 text-white"
-                : "bg-blue-600 hover:bg-blue-700 text-white"
-            )}
-          >
-            {activeTab?.subscriptionStatus === "connecting" ? (
-              <>
-                <div className="animate-spin h-3.5 w-3.5 border-2 border-white border-t-transparent rounded-full" />
-                Connecting...
-              </>
-            ) : activeTab?.isLive && activeTab?.subscriptionStatus === "connected" ? (
-              <>
-                <X className="h-3.5 w-3.5" />
-                Stop
-              </>
-            ) : activeTab?.isLive ? (
-              <>
-                <Play className="h-3.5 w-3.5" />
-                Subscribe
-              </>
-            ) : (
-              <>
-                <Play className="h-3.5 w-3.5" />
-                Run
-              </>
-            )}
-          </Button>
-
-          {/* Live Query Toggle */}
-          <div className="flex items-center gap-2 ml-2">
-            <span className="text-sm font-medium">Live Query</span>
-            <div className="flex items-center gap-1.5">
-              <span className={cn("text-xs", !activeTab?.isLive && "text-muted-foreground")}>
-                {activeTab?.isLive ? "ON" : "OFF"}
-              </span>
-              <Switch
-                checked={activeTab?.isLive ?? false}
-                onCheckedChange={(checked) => {
-                  if (!checked && activeTab?.unsubscribeFn) {
-                    // When turning off and subscribed, call toggleLiveQuery to unsubscribe properly
-                    toggleLiveQuery();
-                  } else if (!checked) {
-                    // Just turning off the flag (not subscribed yet)
-                    updateTab(activeTabId, { 
-                      isLive: false, 
-                      subscriptionStatus: "idle",
-                    });
-                  } else {
-                    // Turning on - just set the flag, Run button will subscribe
-                    updateTab(activeTabId, { 
-                      isLive: true,
-                      subscriptionStatus: "idle",
-                      subscriptionLog: [],
-                    });
-                  }
-                }}
-                className="data-[state=checked]:bg-blue-600"
-              />
-              {activeTab?.isLive && activeTab?.subscriptionStatus === "connected" && (
-                <span className="text-xs text-green-600 flex items-center gap-1">
-                  (<span className="w-1.5 h-1.5 rounded-full bg-green-500 animate-pulse" />)
-                </span>
-              )}
+          {/* Left side: Query Tabs + Run Button */}
+          <div className="flex items-center gap-2">
+            {/* Query Tabs */}
+            <div className="flex items-center gap-1">
+              {tabs.map((tab) => (
+                <div
+                  key={tab.id}
+                  onClick={() => setActiveTabId(tab.id)}
+                  className={cn(
+                    "flex items-center gap-1 px-3 py-1.5 rounded cursor-pointer text-sm",
+                    activeTabId === tab.id
+                      ? "bg-muted font-medium"
+                      : "hover:bg-muted/50"
+                  )}
+                >
+                  {/* Green dot for live subscribed tabs */}
+                  {tab.subscriptionStatus === "connected" && (
+                    <span className="relative flex h-2 w-2 mr-1">
+                      <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-green-400 opacity-75"></span>
+                      <span className="relative inline-flex rounded-full h-2 w-2 bg-green-500"></span>
+                    </span>
+                  )}
+                  {tab.name}
+                  {tabs.length > 1 && (
+                    <button
+                      onClick={(e) => closeTab(tab.id, e)}
+                      className="ml-1 hover:bg-muted-foreground/20 rounded p-0.5"
+                    >
+                      <X className="h-3 w-3" />
+                    </button>
+                  )}
+                </div>
+              ))}
+              <Button size="sm" variant="ghost" onClick={addTab} className="h-7 w-7 p-0">
+                <Plus className="h-4 w-4" />
+              </Button>
             </div>
+
+            <div className="w-px h-6 bg-border" />
+
+            {/* Run Button */}
+            <Button
+              size="sm"
+              onClick={activeTab?.isLive ? toggleLiveQuery : executeQuery}
+              disabled={activeTab?.isLoading || !activeTab?.query?.trim() || activeTab?.subscriptionStatus === "connecting"}
+              className={cn(
+                "gap-1.5 h-8",
+                activeTab?.isLive && activeTab?.subscriptionStatus === "connected"
+                  ? "bg-red-600 hover:bg-red-700 text-white"
+                  : "bg-blue-600 hover:bg-blue-700 text-white"
+              )}
+            >
+              {activeTab?.subscriptionStatus === "connecting" ? (
+                <>
+                  <div className="animate-spin h-3.5 w-3.5 border-2 border-white border-t-transparent rounded-full" />
+                  Connecting...
+                </>
+              ) : activeTab?.isLive && activeTab?.subscriptionStatus === "connected" ? (
+                <>
+                  <X className="h-3.5 w-3.5" />
+                  Stop
+                </>
+              ) : activeTab?.isLive ? (
+                <>
+                  <Play className="h-3.5 w-3.5" />
+                  Subscribe
+                </>
+              ) : (
+                <>
+                  <Play className="h-3.5 w-3.5" />
+                  Run
+                </>
+              )}
+            </Button>
           </div>
 
           <div className="flex-1" />
 
-          {/* Right side actions */}
-          <div className="flex items-center gap-1">
+          {/* Right side: Live Query Toggle + Actions */}
+          <div className="flex items-center gap-3">
+            {/* Live Query Toggle */}
+            <div className="flex items-center gap-2">
+              <span className="text-sm font-medium">Live Query</span>
+              <div className="flex items-center gap-1.5">
+                <Switch
+                  checked={activeTab?.isLive ?? false}
+                  onCheckedChange={(checked) => {
+                    if (!checked && activeTab?.unsubscribeFn) {
+                      // When turning off and subscribed, call toggleLiveQuery to unsubscribe properly
+                      toggleLiveQuery();
+                    } else if (!checked) {
+                      // Just turning off the flag (not subscribed yet)
+                      updateTab(activeTabId, { 
+                        isLive: false, 
+                        subscriptionStatus: "idle",
+                      });
+                    } else {
+                      // Turning on - just set the flag, Run button will subscribe
+                      updateTab(activeTabId, { 
+                        isLive: true,
+                        subscriptionStatus: "idle",
+                        subscriptionLog: [],
+                      });
+                    }
+                  }}
+                  className="data-[state=checked]:bg-blue-600"
+                />
+                {activeTab?.isLive && activeTab?.subscriptionStatus === "connected" && (
+                  <span className="text-xs text-green-600 flex items-center gap-1">
+                    <span className="w-1.5 h-1.5 rounded-full bg-green-500 animate-pulse" />
+                  </span>
+                )}
+              </div>
+            </div>
+
+            <div className="w-px h-6 bg-border" />
+
+            {/* Actions */}
             <TooltipProvider>
               <Tooltip>
                 <TooltipTrigger asChild>
@@ -1209,9 +1322,6 @@ export default function SqlStudio() {
                 </TooltipTrigger>
                 <TooltipContent>Query History</TooltipContent>
               </Tooltip>
-              <Button size="sm" variant="ghost" className="h-8 w-8 p-0">
-                <MoreHorizontal className="h-4 w-4" />
-              </Button>
             </TooltipProvider>
           </div>
         </div>
@@ -1241,6 +1351,17 @@ export default function SqlStudio() {
 
         {/* Results area */}
         <div className="flex-1 flex flex-col min-h-0 overflow-hidden">
+          {/* Query Results Status Bar - show for non-live queries with results */}
+          {!activeTab?.isLive && (activeTab?.results !== null || activeTab?.error) && (
+            <QueryResultsBar
+              success={!activeTab?.error}
+              rowCount={activeTab?.rowCount ?? null}
+              executionTime={activeTab?.executionTime ?? null}
+              error={activeTab?.error ?? null}
+              onExport={exportToCSV}
+            />
+          )}
+
           {/* Live Query Status Bar */}
           {activeTab?.isLive && (
             <div className={cn(
@@ -1621,6 +1742,77 @@ export default function SqlStudio() {
         </div>
       )}
 
+      {/* Table Properties Panel */}
+      {showTableProperties && selectedTable && (
+        <TableProperties
+          tableName={selectedTable.tableName}
+          namespace={selectedTable.namespace}
+          columns={selectedTable.columns.map((col) => ({
+            name: col.name,
+            dataType: col.dataType || "unknown",
+            sqlType: toSqlType(col.dataType || "unknown"),
+            isNullable: col.isNullable,
+            isPrimaryKey: col.isPrimaryKey,
+          }))}
+          metadata={{
+            engine: "System",
+            rowCount: activeTab?.rowCount ?? undefined,
+            createdAt: new Date().toISOString().split("T")[0],
+          }}
+          isNewTable={selectedTable.isNewTable}
+          onClose={() => setShowTableProperties(false)}
+          onAlter={() => {
+            // Insert ALTER TABLE statement
+            updateTab(activeTabId, {
+              query: `ALTER TABLE ${selectedTable.namespace}.${selectedTable.tableName} `,
+            });
+            setShowTableProperties(false);
+          }}
+          onDrop={() => {
+            // Insert DROP TABLE statement
+            updateTab(activeTabId, {
+              query: `DROP TABLE ${selectedTable.namespace}.${selectedTable.tableName}`,
+            });
+            setShowTableProperties(false);
+          }}
+          onCopyDDL={() => {
+            // Generate and copy DDL
+            const columns = selectedTable.columns
+              .map((col) => `  ${col.name} ${toSqlType(col.dataType || "unknown")}${col.isNullable === false ? " NOT NULL" : ""}`)
+              .join(",\n");
+            const ddl = `CREATE TABLE ${selectedTable.namespace}.${selectedTable.tableName} (\n${columns}\n)`;
+            navigator.clipboard.writeText(ddl);
+          }}
+          onEditColumn={(columnName) => {
+            // Insert ALTER TABLE ... MODIFY COLUMN statement
+            const col = selectedTable.columns.find((c) => c.name === columnName);
+            if (col) {
+              updateTab(activeTabId, {
+                query: `ALTER TABLE ${selectedTable.namespace}.${selectedTable.tableName} MODIFY COLUMN ${columnName} ${toSqlType(col.dataType || "unknown")}`,
+              });
+            }
+          }}
+          onAddColumn={() => {
+            // Insert ALTER TABLE ... ADD COLUMN statement
+            updateTab(activeTabId, {
+              query: `ALTER TABLE ${selectedTable.namespace}.${selectedTable.tableName} ADD COLUMN new_column VARCHAR`,
+            });
+          }}
+          onCreateTable={() => {
+            // Insert CREATE TABLE statement
+            const columns = selectedTable.columns.length > 0
+              ? selectedTable.columns
+                  .map((col) => `  ${col.name} ${toSqlType(col.dataType || "unknown")}${col.isNullable === false ? " NOT NULL" : ""}`)
+                  .join(",\n")
+              : "  id BIGINT NOT NULL,\n  created_at TIMESTAMP";
+            const ddl = `CREATE TABLE ${selectedTable.namespace || "default"}.${selectedTable.tableName || "new_table"} (\n${columns}\n)`;
+            updateTab(activeTabId, { query: ddl });
+            setShowTableProperties(false);
+          }}
+          toSqlType={toSqlType}
+        />
+      )}
+
       {/* Context menu for viewing cell data */}
       {contextMenu && (
         <>
@@ -1779,6 +1971,81 @@ export default function SqlStudio() {
             </div>
           </div>
         </div>
+      )}
+
+      {/* Schema tree context menu for tables */}
+      {schemaContextMenu && (
+        <>
+          {/* Backdrop to close context menu on click outside */}
+          <div 
+            className="fixed inset-0 z-40" 
+            onClick={() => setSchemaContextMenu(null)}
+          />
+          <div
+            className="fixed z-50 bg-background border border-border rounded-md shadow-lg py-1 min-w-[180px]"
+            style={{ 
+              left: schemaContextMenu.x, 
+              top: schemaContextMenu.y,
+              maxHeight: 'calc(100vh - 100px)',
+            }}
+          >
+            <div className="px-3 py-1.5 text-xs text-muted-foreground border-b mb-1">
+              {schemaContextMenu.namespace}.{schemaContextMenu.tableName}
+            </div>
+            <button
+              className="w-full px-3 py-2 text-sm text-left hover:bg-muted flex items-center gap-2"
+              onClick={() => {
+                // Insert SELECT * FROM statement and execute
+                const query = `SELECT * FROM ${schemaContextMenu.namespace}.${schemaContextMenu.tableName} LIMIT 100`;
+                updateTab(activeTabId, { query });
+                setSchemaContextMenu(null);
+                // Execute after a brief delay to allow state to update
+                setTimeout(() => executeQuery(), 50);
+              }}
+            >
+              <Play className="h-4 w-4" />
+              Select * from table
+            </button>
+            <button
+              className="w-full px-3 py-2 text-sm text-left hover:bg-muted flex items-center gap-2"
+              onClick={() => {
+                // Just insert the query without executing
+                const query = `SELECT * FROM ${schemaContextMenu.namespace}.${schemaContextMenu.tableName}`;
+                updateTab(activeTabId, { query });
+                setSchemaContextMenu(null);
+              }}
+            >
+              <Table2 className="h-4 w-4" />
+              Insert SELECT query
+            </button>
+            <div className="border-t my-1" />
+            <button
+              className="w-full px-3 py-2 text-sm text-left hover:bg-muted flex items-center gap-2"
+              onClick={() => {
+                handleShowTableProperties(
+                  schemaContextMenu.namespace,
+                  schemaContextMenu.tableName,
+                  schemaContextMenu.columns
+                );
+                setSchemaContextMenu(null);
+              }}
+            >
+              <Info className="h-4 w-4" />
+              View Properties
+            </button>
+            <button
+              className="w-full px-3 py-2 text-sm text-left hover:bg-muted flex items-center gap-2"
+              onClick={() => {
+                // Copy qualified table name
+                navigator.clipboard.writeText(`${schemaContextMenu.namespace}.${schemaContextMenu.tableName}`);
+                setSchemaContextMenu(null);
+              }}
+            >
+              <span className="h-4 w-4 flex items-center justify-center">📋</span>
+              Copy table name
+            </button>
+          </div>
+        </>
       )}
     </div>
   );

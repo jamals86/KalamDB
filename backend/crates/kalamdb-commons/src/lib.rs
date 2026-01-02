@@ -48,6 +48,7 @@ pub mod constants;
 pub mod errors;
 pub mod ids;
 pub mod models;
+pub mod security; // Security utilities (SQL redaction, etc.)
 pub mod storage;
 pub mod storage_key; // StorageKey trait for type-safe key serialization
 pub mod string_interner;
@@ -58,7 +59,7 @@ pub mod websocket;
 // Re-export commonly used types at crate root
 pub use arrow_utils::{empty_batch, RecordBatchBuilder};
 pub use config::ServerConfig;
-pub use constants::{COLUMN_FAMILIES, SYSTEM_TABLES};
+pub use constants::{ANONYMOUS_USER_ID, COLUMN_FAMILIES, MAX_SQL_QUERY_LENGTH, RESERVED_NAMESPACE_NAMES, SYSTEM_TABLES};
 pub use errors::{CommonError, Result};
 pub use models::{
     // Phase 15 (008-schema-consolidation): Re-export schema types

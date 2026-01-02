@@ -219,11 +219,16 @@ impl StatementHandler for DeleteHandler {
         statement: &SqlStatement,
         context: &ExecutionContext,
     ) -> Result<(), KalamDbError> {
+        use crate::sql::executor::helpers::guards::block_anonymous_write;
+        
         if !matches!(statement.kind(), SqlStatementKind::Delete(_)) {
             return Err(KalamDbError::InvalidOperation(
                 "DeleteHandler received wrong statement kind".into(),
             ));
         }
+
+        // T050: Block anonymous users from write operations
+        block_anonymous_write(context, "DELETE")?;
 
         // T152: Validate AS USER authorization - only Service/Dba/System can use AS USER (Phase 7)
         if statement.as_user_id().is_some() {
@@ -263,11 +268,7 @@ impl DeleteHandler {
 
         // Create per-user session and register table
         let df_ctx = context.create_session_with_user();
-        let table_name = format!(
-            "{}.{}",
-            table_id.namespace_id().as_str(),
-            table_id.table_name().as_str()
-        );
+        let table_name = table_id.full_name(); // "namespace.table"
 
         // Register table if not exists (ignore if already exists)
         match df_ctx.register_table(&table_name, provider.clone()) {

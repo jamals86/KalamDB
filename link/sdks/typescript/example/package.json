@@ -5,11 +5,11 @@
   "type": "module",
   "private": true,
   "scripts": {
-    "start": "npx http-server -p 3000 -c-1 -o /index.html",
-    "serve": "npx http-server -p 3000 -c-1"
+    "start": "npx http-server .. -p 3000 -c-1 -o /example/index.html",
+    "serve": "npx http-server .. -p 3000 -c-1"
   },
   "dependencies": {
-    "@kalamdb/client": "file:.."
+    "kalam-link": "file:.."
   },
   "devDependencies": {
     "http-server": "^14.1.1"

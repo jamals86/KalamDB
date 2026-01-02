@@ -76,10 +76,13 @@ pub async fn resolve_latest_version(
         .downcast_ref::<Int32Array>()
         .ok_or_else(|| KalamDbError::Other("source_priority not Int32Array".into()))?;
 
-    let mut groups: HashMap<String, Vec<usize>> = HashMap::new();
-    for i in 0..combined.num_rows() {
+    // Pre-allocate HashMap with estimated capacity (num_rows is upper bound for unique row_ids)
+    // Use &str keys to avoid String allocation per row
+    let num_rows = combined.num_rows();
+    let mut groups: HashMap<&str, Vec<usize>> = HashMap::with_capacity(num_rows);
+    for i in 0..num_rows {
         groups
-            .entry(row_id_array.value(i).to_string())
+            .entry(row_id_array.value(i))
             .or_default()
             .push(i);
     }

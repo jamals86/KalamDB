@@ -31,9 +31,8 @@ pub fn register_user_table_provider(
     use kalamdb_tables::new_indexed_user_table_store;
 
     log::debug!(
-        "📋 Registering USER table provider: {}.{}",
-        table_id.namespace_id().as_str(),
-        table_id.table_name().as_str()
+        "📋 Registering USER table provider: {}",
+        table_id
     );
 
     // Determine primary key field name from TableDefinition first
@@ -64,9 +63,8 @@ pub fn register_user_table_provider(
     ));
 
     log::debug!(
-        "Created indexed user table store for {}.{} with pk_field='{}'",
-        table_id.namespace_id().as_str(),
-        table_id.table_name().as_str(),
+        "Created indexed user table store for {} with pk_field='{}'",
+        table_id,
         pk_field
     );
 
@@ -76,7 +74,7 @@ pub fn register_user_table_provider(
             .with_live_query_manager(app_context.live_query_manager()),
     );
 
-    let provider = UserTableProvider::new(core, user_table_store, pk_field);
+    let provider = UserTableProvider::try_new(core, user_table_store, pk_field)?;
     let provider_arc: Arc<dyn TableProvider> = Arc::new(provider);
 
     app_context
@@ -84,9 +82,8 @@ pub fn register_user_table_provider(
         .insert_provider(table_id.clone(), provider_arc)?;
 
     log::debug!(
-        "✅ USER table provider registered: {}.{}",
-        table_id.namespace_id().as_str(),
-        table_id.table_name().as_str()
+        "✅ USER table provider registered: {}",
+        table_id
     );
 
     Ok(())
@@ -113,9 +110,8 @@ pub fn register_shared_table_provider(
     use kalamdb_tables::new_indexed_shared_table_store;
 
     log::debug!(
-        "📋 Registering SHARED table provider: {}.{}",
-        table_id.namespace_id().as_str(),
-        table_id.table_name().as_str()
+        "📋 Registering SHARED table provider: {}",
+        table_id
     );
 
     // Determine primary key field name first (needed for indexed store)
@@ -124,9 +120,8 @@ pub fn register_shared_table_provider(
         .get_table_definition(table_id)?
         .ok_or_else(|| {
             KalamDbError::InvalidOperation(format!(
-                "Table definition not found for {}.{}",
-                table_id.namespace_id().as_str(),
-                table_id.table_name().as_str()
+                "Table definition not found for {}",
+                table_id
             ))
         })?;
     let pk_field = table_def
@@ -144,9 +139,8 @@ pub fn register_shared_table_provider(
     ));
 
     log::debug!(
-        "Created indexed shared table store for {}.{} with pk_field='{}'",
-        table_id.namespace_id().as_str(),
-        table_id.table_name().as_str(),
+        "Created indexed shared table store for {} with pk_field='{}'",
+        table_id,
         pk_field
     );
 
@@ -163,9 +157,8 @@ pub fn register_shared_table_provider(
         .insert_provider(table_id.clone(), Arc::new(provider))?;
 
     log::debug!(
-        "✅ SHARED table provider registered: {}.{}",
-        table_id.namespace_id().as_str(),
-        table_id.table_name().as_str()
+        "✅ SHARED table provider registered: {}",
+        table_id
     );
 
     Ok(())
@@ -194,9 +187,8 @@ pub fn register_stream_table_provider(
     use kalamdb_tables::new_stream_table_store;
 
     log::debug!(
-        "📋 Registering STREAM table provider: {}.{} (TTL: {:?}s)",
-        table_id.namespace_id().as_str(),
-        table_id.table_name().as_str(),
+        "📋 Registering STREAM table provider: {} (TTL: {:?}s)",
+        table_id,
         ttl_seconds
     );
 
@@ -206,9 +198,8 @@ pub fn register_stream_table_provider(
     ));
 
     log::debug!(
-        "Created stream table store for {}.{}",
-        table_id.namespace_id().as_str(),
-        table_id.table_name().as_str()
+        "Created stream table store for {}",
+        table_id
     );
 
     // Create and register provider (new providers::streams implementation)
@@ -242,9 +233,8 @@ pub fn register_stream_table_provider(
         .insert_provider(table_id.clone(), Arc::new(provider))?;
 
     log::debug!(
-        "✅ STREAM table provider registered: {}.{} (TTL: {:?}s)",
-        table_id.namespace_id().as_str(),
-        table_id.table_name().as_str(),
+        "✅ STREAM table provider registered: {} (TTL: {:?}s)",
+        table_id,
         ttl_seconds
     );
 
@@ -267,18 +257,16 @@ pub fn unregister_table_provider(
     table_id: &TableId,
 ) -> Result<(), KalamDbError> {
     log::debug!(
-        "📋 Unregistering table provider: {}.{}",
-        table_id.namespace_id().as_str(),
-        table_id.table_name().as_str()
+        "📋 Unregistering table provider: {}",
+        table_id
     );
 
     // Remove from SchemaRegistry (automatically unregisters from DataFusion)
     app_context.schema_registry().remove_provider(table_id)?;
 
     log::debug!(
-        "✅ Table provider unregistered: {}.{}",
-        table_id.namespace_id().as_str(),
-        table_id.table_name().as_str()
+        "✅ Table provider unregistered: {}",
+        table_id
     );
 
     Ok(())

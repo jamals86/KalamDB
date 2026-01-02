@@ -64,31 +64,37 @@ pub const DEFAULT_LOCKOUT_DURATION_MINUTES: i64 = 15;
 ///     deleted_at: None,
 /// };
 /// ```
+/// User struct with fields ordered for optimal memory alignment.
+/// 8-byte aligned fields first, then 4-byte, then 1-byte types.
+/// This minimizes struct padding and improves cache efficiency.
 #[derive(Serialize, Deserialize, Encode, Decode, Clone, Debug, PartialEq)]
 pub struct User {
-    pub id: UserId,
-    pub username: UserName,
-    pub password_hash: String,
-    pub role: Role,
-    pub email: Option<String>,
-    pub auth_type: AuthType,
-    pub auth_data: Option<String>,
-    pub storage_mode: StorageMode,
-    pub storage_id: Option<StorageId>,
-    /// Number of consecutive failed login attempts (reset on successful login)
-    pub failed_login_attempts: i32,
+    // 8-byte aligned fields first (i64, Option<i64>, String/pointer types)
+    pub created_at: i64,
+    pub updated_at: i64,
     /// Unix timestamp in milliseconds when account lockout expires (None = not locked)
     pub locked_until: Option<i64>,
     /// Unix timestamp in milliseconds of last successful login
     pub last_login_at: Option<i64>,
-    pub created_at: i64,
-    pub updated_at: i64,
     pub last_seen: Option<i64>,
     pub deleted_at: Option<i64>,
+    pub id: UserId,
+    pub username: UserName,
+    pub password_hash: String,
+    pub email: Option<String>,
+    pub auth_data: Option<String>,
+    pub storage_id: Option<StorageId>,
+    // 4-byte aligned fields (enums, i32)
+    /// Number of consecutive failed login attempts (reset on successful login)
+    pub failed_login_attempts: i32,
+    pub role: Role,
+    pub auth_type: AuthType,
+    pub storage_mode: StorageMode,
 }
 
 impl User {
     /// Check if the user account is currently locked
+    #[inline]
     pub fn is_locked(&self) -> bool {
         if let Some(locked_until) = self.locked_until {
             let now = chrono::Utc::now().timestamp_millis();
@@ -99,6 +105,7 @@ impl User {
     }
 
     /// Get remaining lockout time in seconds (0 if not locked)
+    #[inline]
     pub fn lockout_remaining_seconds(&self) -> i64 {
         if let Some(locked_until) = self.locked_until {
             let now = chrono::Utc::now().timestamp_millis();

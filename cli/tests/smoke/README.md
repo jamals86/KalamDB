@@ -2,7 +2,7 @@
 
 ## Overview
 
-This directory contains comprehensive smoke tests for KalamDB features documented in `docs/SQL.md` and `docs/CLI.md`. These tests verify end-to-end functionality using the CLI and cover all table types, custom functions, system tables, flush operations, and DDL/DML operations.
+This directory contains comprehensive smoke tests for KalamDB features documented in `docs/reference/sql.md` and `docs/getting-started/cli.md`. These tests verify end-to-end functionality using the CLI and cover all table types, custom functions, system tables, flush operations, and DDL/DML operations.
 
 ## New Test Files (November 2025)
 
@@ -138,8 +138,8 @@ Tests verify both success and error cases:
 
 - **Coverage Analysis**: `docs/testing/COVERAGE_ANALYSIS.md`
 - **Extension Summary**: `docs/testing/TEST_EXTENSION_SUMMARY.md`
-- **SQL Reference**: `docs/SQL.md`
-- **CLI Reference**: `docs/CLI.md`
+- **SQL Reference**: `docs/reference/sql.md`
+- **CLI Reference**: `docs/getting-started/cli.md`
 
 ## Troubleshooting
 

@@ -18,8 +18,6 @@ pub(crate) fn scan_parquet_files_as_batch(
     schema: SchemaRef,
     filter: Option<&Expr>,
 ) -> Result<RecordBatch, KalamDbError> {
-    let namespace = table_id.namespace_id();
-    let table = table_id.table_name();
     let scope_label = user_id
         .map(|uid| format!("user={}", uid.as_str()))
         .unwrap_or_else(|| format!("scope={}", table_type.as_str()));
@@ -65,25 +63,21 @@ pub(crate) fn scan_parquet_files_as_batch(
             // Validate manifest using service
             if let Err(e) = manifest_service.validate_manifest(&manifest) {
                 log::warn!(
-                    "⚠️  [MANIFEST CORRUPTION] table={}.{} {} error={} | Triggering rebuild",
-                    namespace.as_str(),
-                    table.as_str(),
+                    "⚠️  [MANIFEST CORRUPTION] table={} {} error={} | Triggering rebuild",
+                    table_id,
                     scope_label,
                     e
                 );
                 // Mark cache entry as stale so sync_state reflects corruption
                 if let Err(mark_err) = manifest_service.mark_as_stale(table_id, user_id) {
                     log::warn!(
-                        "⚠️  Failed to mark manifest as stale: table={}.{} {} error={}",
-                        namespace.as_str(),
-                        table.as_str(),
+                        "⚠️  Failed to mark manifest as stale: table={} {} error={}",
+                        table_id,
                         scope_label,
                         mark_err
                     );
                 }
                 use_degraded_mode = true;
-                let ns = namespace.clone();
-                let tbl = table.clone();
                 let uid = user_id.cloned();
                 let scope_for_spawn = scope_label.clone();
                 let manifest_table_type = table_type;
@@ -91,9 +85,8 @@ pub(crate) fn scan_parquet_files_as_batch(
                 let manifest_service_clone = core.app_context.manifest_service();
                 tokio::spawn(async move {
                     log::info!(
-                        "🔧 [MANIFEST REBUILD STARTED] table={}.{} {}",
-                        ns.as_str(),
-                        tbl.as_str(),
+                        "🔧 [MANIFEST REBUILD STARTED] table={} {}",
+                        table_id_for_spawn,
                         scope_for_spawn
                     );
                     match manifest_service_clone.rebuild_manifest(
@@ -103,17 +96,15 @@ pub(crate) fn scan_parquet_files_as_batch(
                     ) {
                         Ok(_) => {
                             log::info!(
-                                "✅ [MANIFEST REBUILD COMPLETED] table={}.{} {}",
-                                ns.as_str(),
-                                tbl.as_str(),
+                                "✅ [MANIFEST REBUILD COMPLETED] table={} {}",
+                                table_id_for_spawn,
                                 scope_for_spawn
                             );
                         }
                         Err(e) => {
                             log::error!(
-                                "❌ [MANIFEST REBUILD FAILED] table={}.{} {} error={}",
-                                ns.as_str(),
-                                tbl.as_str(),
+                                "❌ [MANIFEST REBUILD FAILED] table={} {} error={}",
+                                table_id_for_spawn,
                                 scope_for_spawn,
                                 e
                             );
@@ -126,18 +117,16 @@ pub(crate) fn scan_parquet_files_as_batch(
         }
         Ok(None) => {
             log::debug!(
-                "⚠️  Manifest cache MISS | table={}.{} | {} | fallback=directory_scan",
-                namespace.as_str(),
-                table.as_str(),
+                "⚠️  Manifest cache MISS | table={} | {} | fallback=directory_scan",
+                table_id,
                 scope_label
             );
             use_degraded_mode = true;
         }
         Err(e) => {
             log::warn!(
-                "⚠️  Manifest cache ERROR | table={}.{} | {} | error={} | fallback=directory_scan",
-                namespace.as_str(),
-                table.as_str(),
+                "⚠️  Manifest cache ERROR | table={} | {} | error={} | fallback=directory_scan",
+                table_id,
                 scope_label,
                 e
             );
@@ -172,9 +161,8 @@ pub(crate) fn scan_parquet_files_as_batch(
 
     if total_batches > 0 {
         log::debug!(
-            "[Manifest Pruning] table={}.{} {} batches_total={} skipped={} scanned={} rows={}",
-            namespace.as_str(),
-            table.as_str(),
+            "[Manifest Pruning] table={} {} batches_total={} skipped={} scanned={} rows={}",
+            table_id,
             scope_label,
             total_batches,
             skipped,

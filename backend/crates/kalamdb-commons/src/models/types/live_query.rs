@@ -56,23 +56,26 @@ use serde::{Deserialize, Serialize};
 ///     node: "server-01".to_string(),
 /// };
 /// ```
+/// LiveQuery struct with fields ordered for optimal memory alignment.
+/// 8-byte aligned fields first, then smaller types.
 #[derive(Serialize, Deserialize, Encode, Decode, Clone, Debug, PartialEq)]
 pub struct LiveQuery {
+    // 8-byte aligned fields first (i64, String/pointer types)
+    pub created_at: i64,         // Unix timestamp in milliseconds
+    pub last_update: i64,        // Unix timestamp in milliseconds
+    pub changes: i64,
     pub live_id: LiveQueryId, // Format: {user_id}-{unique_conn_id}-{table_name}-{subscription_id}
     pub connection_id: String,
     pub subscription_id: String,
-
     //TODO: Use TableId type INSTEAD OF BOTH table_name AND namespace_id
     pub namespace_id: NamespaceId,
     pub table_name: TableName,
     pub user_id: UserId,
     pub query: String,
     pub options: Option<String>, // JSON
-    pub status: LiveQueryStatus, // Active, Paused, Completed, Error
-    pub created_at: i64,         // Unix timestamp in milliseconds
-    pub last_update: i64,        // Unix timestamp in milliseconds
-    pub changes: i64,
     pub node: String,
+    // Enum (typically 1-4 bytes depending on variant count)
+    pub status: LiveQueryStatus, // Active, Paused, Completed, Error
 }
 
 #[cfg(test)]

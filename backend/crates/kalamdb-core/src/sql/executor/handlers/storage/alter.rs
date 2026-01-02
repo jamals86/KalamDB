@@ -4,6 +4,7 @@ use crate::app_context::AppContext;
 use crate::error::KalamDbError;
 use crate::error_extensions::KalamDbResultExt;
 use crate::sql::executor::handlers::typed::TypedStatementHandler;
+use crate::sql::executor::helpers::guards::require_admin;
 use crate::sql::executor::models::{ExecutionContext, ExecutionResult, ScalarValue};
 use kalamdb_sql::ddl::AlterStorageStatement;
 use std::sync::Arc;
@@ -102,13 +103,7 @@ impl TypedStatementHandler<AlterStorageStatement> for AlterStorageHandler {
         _statement: &AlterStorageStatement,
         context: &ExecutionContext,
     ) -> Result<(), KalamDbError> {
-        if !context.is_admin() {
-            return Err(KalamDbError::Unauthorized(
-                "Insufficient privileges to alter storage. DBA or System role required."
-                    .to_string(),
-            ));
-        }
-        Ok(())
+        require_admin(context, "alter storage")
     }
 }
 

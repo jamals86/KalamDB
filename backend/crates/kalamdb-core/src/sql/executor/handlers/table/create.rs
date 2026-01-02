@@ -4,6 +4,7 @@ use crate::app_context::AppContext;
 use crate::error::KalamDbError;
 use crate::sql::executor::handlers::typed::TypedStatementHandler;
 use crate::sql::executor::models::{ExecutionContext, ExecutionResult, ScalarValue};
+use kalamdb_commons::models::TableId;
 use kalamdb_commons::schemas::TableType;
 use kalamdb_commons::Role;
 use kalamdb_sql::ddl::CreateTableStatement;
@@ -71,12 +72,15 @@ impl TypedStatementHandler<CreateTableStatement> for CreateTableHandler {
             context.user_role,
         )?;
 
+        // Create TableId for audit logging
+        let table_id = TableId::new(namespace_id.clone(), table_name.clone());
+        
         // Log DDL operation
         let audit_entry = audit::log_ddl_operation(
             context,
             "CREATE",
             "TABLE",
-            &format!("{}.{}", namespace_id, table_name),
+            &table_id.full_name(),
             Some(format!("Type: {}", table_type)),
             None,
         );
@@ -90,6 +94,11 @@ impl TypedStatementHandler<CreateTableStatement> for CreateTableHandler {
         statement: &CreateTableStatement,
         context: &ExecutionContext,
     ) -> Result<(), KalamDbError> {
+        use crate::sql::executor::helpers::guards::block_anonymous_write;
+        
+        // T050: Block anonymous users from DDL operations
+        block_anonymous_write(context, "CREATE TABLE")?;
+        
         // Authorization check is handled inside table_creation helpers
         // (they call can_create_table for each table type)
         // This allows unified error messages

@@ -16,11 +16,46 @@ use kalamdb_commons::Role;
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 
+/// Maximum username length (prevent memory exhaustion)
+const MAX_USERNAME_LENGTH: usize = 128;
+/// Maximum password length (bcrypt limit is 72 bytes, but allow some headroom for encoding)
+const MAX_PASSWORD_LENGTH: usize = 256;
+
 /// Login request body
 #[derive(Debug, Deserialize)]
 pub struct LoginRequest {
+    #[serde(deserialize_with = "validate_username_length")]
     pub username: String,
+    #[serde(deserialize_with = "validate_password_length")]
     pub password: String,
+}
+
+fn validate_username_length<'de, D>(deserializer: D) -> Result<String, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    let s = String::deserialize(deserializer)?;
+    if s.len() > MAX_USERNAME_LENGTH {
+        return Err(serde::de::Error::custom(format!(
+            "username exceeds maximum length of {} characters",
+            MAX_USERNAME_LENGTH
+        )));
+    }
+    Ok(s)
+}
+
+fn validate_password_length<'de, D>(deserializer: D) -> Result<String, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    let s = String::deserialize(deserializer)?;
+    if s.len() > MAX_PASSWORD_LENGTH {
+        return Err(serde::de::Error::custom(format!(
+            "password exceeds maximum length of {} characters",
+            MAX_PASSWORD_LENGTH
+        )));
+    }
+    Ok(s)
 }
 
 /// Login response body
@@ -73,15 +108,35 @@ impl Default for AuthConfig {
     fn default() -> Self {
         Self {
             // IMPORTANT: This must match the default in kalamdb-auth/src/unified.rs JWT_CONFIG
+            // Use centralized default from kalamdb-commons to ensure consistency
             jwt_secret: std::env::var("KALAMDB_JWT_SECRET")
-                .unwrap_or_else(|_| "kalamdb-dev-secret-key-change-in-production".to_string()),
+                .unwrap_or_else(|_| kalamdb_commons::config::defaults::default_auth_jwt_secret()),
+            jwt_expiry_hours: std::env::var("KALAMDB_JWT_EXPIRY_HOURS")
+                .ok()
+                .and_then(|s| s.parse().ok())
+                .unwrap_or(DEFAULT_JWT_EXPIRY_HOURS),
+            // SECURITY: Default to true for HTTPS-only cookies.
+            // Set KALAMDB_COOKIE_SECURE=false only in development without TLS.
+            cookie_secure: std::env::var("KALAMDB_COOKIE_SECURE")
+                .map(|s| s != "false" && s != "0")
+                .unwrap_or(true),
+        }
+    }
+}
+
+impl AuthConfig {
+    /// Create AuthConfig from ServerConfig (reads jwt_secret from config file)
+    pub fn from_server_config(config: &kalamdb_commons::ServerConfig) -> Self {
+        Self {
+            // Use jwt_secret from config file (which falls back to env var or default)
+            jwt_secret: config.auth.jwt_secret.clone(),
             jwt_expiry_hours: std::env::var("KALAMDB_JWT_EXPIRY_HOURS")
                 .ok()
                 .and_then(|s| s.parse().ok())
                 .unwrap_or(DEFAULT_JWT_EXPIRY_HOURS),
             cookie_secure: std::env::var("KALAMDB_COOKIE_SECURE")
-                .map(|s| s == "true" || s == "1")
-                .unwrap_or(false),
+                .map(|s| s != "false" && s != "0")
+                .unwrap_or(true),
         }
     }
 }
@@ -285,7 +340,7 @@ pub async fn refresh_handler(
                 updated_at,
             },
             expires_at: expires_at.to_rfc3339(),
-            access_token: token,
+            access_token: new_token,
         })
 }
 

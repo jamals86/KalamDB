@@ -1,31 +1,41 @@
 //! System.live_queries table store
 //!
-//! Provides typed storage for LiveQuery entities using SystemTableStore.
+//! Provides typed storage for LiveQuery entities using IndexedEntityStore
+//! with secondary indexes for efficient connection_id and table_id lookups.
+//!
+//! ## Indexes
+//!
+//! 1. **ConnectionIdIndex** - Queries by connection_id
+//!    - Enables: Efficient cleanup when a connection disconnects
+//!
+//! 2. **TableIdIndex** - Queries by namespace_id + table_name
+//!    - Enables: Broadcasting changes to subscribers of a table
 
-use crate::system_table_store::SystemTableStore;
+use super::live_queries_indexes::create_live_queries_indexes;
 use kalamdb_commons::system::LiveQuery;
 use kalamdb_commons::LiveQueryId;
-use kalamdb_store::StorageBackend;
+use kalamdb_store::{IndexedEntityStore, StorageBackend};
 use std::sync::Arc;
 
-/// Type alias for the live queries store
-pub type LiveQueriesStore = SystemTableStore<LiveQueryId, LiveQuery>;
+/// Type alias for the indexed live queries store
+pub type LiveQueriesStore = IndexedEntityStore<LiveQueryId, LiveQuery>;
 
-/// Create a new live queries store
+/// Create a new live queries store with secondary indexes
 ///
 /// # Arguments
 /// * `backend` - Storage backend (RocksDB or mock)
 ///
 /// # Returns
-/// A new SystemTableStore for live queries
+/// A new IndexedEntityStore for live queries with automatic index management
 pub fn new_live_queries_store(backend: Arc<dyn StorageBackend>) -> LiveQueriesStore {
-    SystemTableStore::new(backend, "system_live_queries")
+    IndexedEntityStore::new(backend, "system_live_queries", create_live_queries_indexes())
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use kalamdb_commons::{NamespaceId, TableName, UserId};
+    use kalamdb_commons::models::ConnectionId;
+    use kalamdb_commons::{NamespaceId, TableId, TableName, UserId};
     use kalamdb_store::entity_store::EntityStore;
     use kalamdb_store::test_utils::InMemoryBackend;
 
@@ -34,10 +44,20 @@ mod tests {
         new_live_queries_store(backend)
     }
 
-    fn create_test_live_query(live_id: &str, user_id: &str, table_name: &str) -> LiveQuery {
+    fn create_test_live_query(
+        user_id: &str,
+        connection_id: &str,
+        subscription_id: &str,
+        table_name: &str,
+    ) -> LiveQuery {
+        let live_id = LiveQueryId::new(
+            UserId::new(user_id),
+            ConnectionId::new(connection_id),
+            subscription_id,
+        );
         LiveQuery {
-            live_id: LiveQueryId::from_string(live_id).expect("Invalid LiveQueryId format"),
-            connection_id: "conn123".to_string(),
+            live_id: live_id.clone(),
+            connection_id: connection_id.to_string(),
             namespace_id: NamespaceId::new("default"),
             table_name: TableName::new(table_name),
             user_id: UserId::new(user_id),
@@ -47,7 +67,7 @@ mod tests {
             last_update: 1000,
             changes: 0,
             node: "node1".to_string(),
-            subscription_id: "query123".to_string(),
+            subscription_id: subscription_id.to_string(),
             status: kalamdb_commons::types::LiveQueryStatus::Active,
         }
     }
@@ -55,19 +75,17 @@ mod tests {
     #[test]
     fn test_create_store() {
         let store = create_test_store();
-        assert!(EntityStore::scan_all(&store, None, None, None)
-            .unwrap()
-            .is_empty());
+        assert!(store.scan_all(None, None, None).unwrap().is_empty());
     }
 
     #[test]
     fn test_put_and_get_live_query() {
         let store = create_test_store();
-        let live_query = create_test_live_query("user1-conn1-test-q1", "user1", "test");
+        let live_query = create_test_live_query("user1", "conn1", "sub1", "test");
 
-        EntityStore::put(&store, &live_query.live_id, &live_query).unwrap();
+        store.insert(&live_query.live_id, &live_query).unwrap();
 
-        let retrieved = EntityStore::get(&store, &live_query.live_id).unwrap();
+        let retrieved = store.get(&live_query.live_id).unwrap();
         assert!(retrieved.is_some());
         let retrieved = retrieved.unwrap();
         assert_eq!(retrieved.live_id, live_query.live_id);
@@ -78,12 +96,12 @@ mod tests {
     #[test]
     fn test_delete_live_query() {
         let store = create_test_store();
-        let live_query = create_test_live_query("user1-conn1-test-q1", "user1", "test");
+        let live_query = create_test_live_query("user1", "conn1", "sub1", "test");
 
-        EntityStore::put(&store, &live_query.live_id, &live_query).unwrap();
-        EntityStore::delete(&store, &live_query.live_id).unwrap();
+        store.insert(&live_query.live_id, &live_query).unwrap();
+        store.delete(&live_query.live_id).unwrap();
 
-        let retrieved = EntityStore::get(&store, &live_query.live_id).unwrap();
+        let retrieved = store.get(&live_query.live_id).unwrap();
         assert!(retrieved.is_none());
     }
 
@@ -91,32 +109,46 @@ mod tests {
     fn test_scan_all_live_queries() {
         let store = create_test_store();
 
-        // Insert multiple live queries
+        // Insert multiple live queries with different connections
         for i in 1..=3 {
             let live_query =
-                create_test_live_query(&format!("user1-conn{}-test-q{}", i, i), "user1", "test");
-            EntityStore::put(&store, &live_query.live_id, &live_query).unwrap();
+                create_test_live_query("user1", &format!("conn{}", i), &format!("sub{}", i), "test");
+            store.insert(&live_query.live_id, &live_query).unwrap();
         }
 
-        let all = EntityStore::scan_all(&store, None, None, None).unwrap();
+        let all = store.scan_all(None, None, None).unwrap();
         assert_eq!(all.len(), 3);
     }
 
     #[test]
-    fn test_admin_only_access() {
+    fn test_index_scan_by_table_id() {
+        use super::super::live_queries_indexes::{table_id_index_prefix, TABLE_ID_INDEX};
+
         let store = create_test_store();
-        let live_query = create_test_live_query("user1-conn1-test-q1", "user1", "test");
 
-        // Admin can write
-        EntityStore::put(&store, &live_query.live_id, &live_query).unwrap();
+        // Insert live queries for different tables
+        let lq1 = create_test_live_query("user1", "conn1", "sub1", "messages");
+        let lq2 = create_test_live_query("user2", "conn2", "sub2", "messages");
+        let lq3 = create_test_live_query("user1", "conn3", "sub3", "users");
 
-        // Admin can read
-        let retrieved = EntityStore::get(&store, &live_query.live_id).unwrap();
-        assert!(retrieved.is_some());
+        store.insert(&lq1.live_id, &lq1).unwrap();
+        store.insert(&lq2.live_id, &lq2).unwrap();
+        store.insert(&lq3.live_id, &lq3).unwrap();
 
-        // Admin can delete
-        EntityStore::delete(&store, &live_query.live_id).unwrap();
-        let deleted = EntityStore::get(&store, &live_query.live_id).unwrap();
-        assert!(deleted.is_none());
+        // Scan by table_id index - should find 2 for default:messages
+        let table_id_messages = TableId::from_strings("default", "messages");
+        let prefix = table_id_index_prefix(&table_id_messages);
+        let results = store
+            .scan_by_index(TABLE_ID_INDEX, Some(&prefix), None)
+            .unwrap();
+        assert_eq!(results.len(), 2);
+
+        // Scan by table_id index - should find 1 for default:users
+        let table_id_users = TableId::from_strings("default", "users");
+        let prefix = table_id_index_prefix(&table_id_users);
+        let results = store
+            .scan_by_index(TABLE_ID_INDEX, Some(&prefix), None)
+            .unwrap();
+        assert_eq!(results.len(), 1);
     }
 }

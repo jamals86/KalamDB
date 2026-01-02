@@ -52,8 +52,8 @@ impl JobsManager {
         let mut last_stream_eviction = Instant::now();
 
         loop {
-            // Check for shutdown signal
-            if *self.shutdown.read().await {
+            // Check for shutdown signal (lock-free atomic check)
+            if self.shutdown.load(std::sync::atomic::Ordering::Acquire) {
                 log::info!("Shutdown signal received, stopping job loop");
                 break;
             }

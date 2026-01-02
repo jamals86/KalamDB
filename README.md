@@ -159,7 +159,7 @@ cd KalamDB/backend
 cargo run --release --bin kalamdb-server
 ```
 
-See [Quick Start Guide](docs/QUICK_START.md) for detailed setup instructions.
+See [Quick Start Guide](docs/getting-started/quick-start.md) for detailed setup instructions.
 
 ### Basic Usage – Real-World Chat + AI Example (with `kalam` CLI)
 
@@ -173,7 +173,7 @@ We assume:
 
 - The server is running at `http://localhost:8080`
 - You're running on localhost (automatically connects as `root` user)
-- You have the CLI built and available as `kalam` (see `docs/CLI.md`)
+- You have the CLI built and available as `kalam` (see `docs/getting-started/cli.md`)
 
 #### 1. Start Interactive CLI and Create Schema
 
@@ -258,13 +258,12 @@ VALUES (1, 'ai_model', 'cancelled');
 The recommended way to subscribe to real-time updates is using the official TypeScript SDK:
 
 ```typescript
-import { createClient } from '@kalamdb/client';
+import { createClient, Auth } from 'kalam-link';
 
 // Connect to KalamDB
 const client = createClient({
   url: 'http://localhost:8080',
-  username: 'admin',
-  password: 'admin'
+  auth: Auth.basic('admin', 'admin')
 });
 await client.connect();
 
@@ -295,9 +294,9 @@ await unsubTyping();
 await client.disconnect();
 ```
 
-> **Note**: You can also connect directly via WebSocket at `ws://localhost:8080/v1/ws` for custom implementations. See [SDK Documentation](docs/SDK.md) for the full API reference and [API Documentation](docs/API.md) for raw WebSocket protocol details.
+> **Note**: You can also connect directly via WebSocket at `ws://localhost:8080/v1/ws` for custom implementations. See [SDK Documentation](docs/sdk/sdk.md) for the full API reference and [API Documentation](docs/api/api.md) for raw WebSocket protocol details.
 
-**📖 Complete SQL Reference**: See [SQL Syntax Documentation](docs/SQL.md) for the full command reference with all options.
+**📖 Complete SQL Reference**: See [SQL Syntax Documentation](docs/reference/sql.md) for the full command reference with all options.
 
 ---
 
@@ -466,10 +465,10 @@ CREATE USER 'tenant_acme' WITH PASSWORD 'SecureKey123!' ROLE 'service';
 |-----------|-----------|---------|---------|
 | **Language** | Rust | 1.92+ | Performance, safety, concurrency |
 | **Storage (Hot)** | RocksDB | 0.24 | Fast buffered writes (<1ms latency) |
-| **Storage (Cold)** | Apache Parquet | 52.0 | Compressed columnar format for analytics |
-| **Query Engine** | Apache DataFusion | 40.0 | SQL execution across hot+cold storage |
-| **In-Memory** | Apache Arrow | 52.0 | Zero-copy data structures |
-| **API Server** | Actix-web | 4.4 | REST endpoints + WebSocket subscriptions |
+| **Storage (Cold)** | Apache Parquet | 57.0 | Compressed columnar format for analytics |
+| **Query Engine** | Apache DataFusion | 51.0 | SQL execution across hot+cold storage |
+| **In-Memory** | Apache Arrow | 57.0 | Zero-copy data structures |
+| **API Server** | Actix-web | 4.12 | REST endpoints + WebSocket subscriptions |
 | **Authentication** | bcrypt + JWT | - | Password hashing + token-based auth |
 | **Real-time** | WebSocket | - | Live message notifications |
 | **Deployment** | Docker | - | Production-ready containerization |
@@ -481,14 +480,14 @@ CREATE USER 'tenant_acme' WITH PASSWORD 'SecureKey123!' ROLE 'service';
 
 ### 🚀 Getting Started
 
-- **[Quick Start Guide](docs/quickstart/QUICK_START.md)** - Get up and running in 10 minutes
+- **[Quick Start Guide](docs/getting-started/quick-start.md)** - Get up and running in 10 minutes
 
 ### 📖 SQL, API & CLI
 
-- **[SQL Reference](docs/SQL.md)** – SQL syntax and examples
-- **[API Reference](docs/API.md)** – HTTP & WebSocket API overview
-- **[CLI Guide](docs/cli.md)** – using the `kalam` command-line client
- - **[SDK (TypeScript/WASM)](docs/SDK.md)** – browser/Node.js client (under development)
+- **[SQL Reference](docs/reference/sql.md)** – SQL syntax and examples
+- **[API Reference](docs/api/api.md)** – HTTP & WebSocket API overview
+- **[CLI Guide](docs/getting-started/cli.md)** – using the `kalam` command-line client
+ - **[SDK (TypeScript/WASM)](docs/sdk/sdk.md)** – browser/Node.js client (under development)
 
 ---
 
@@ -497,12 +496,11 @@ CREATE USER 'tenant_acme' WITH PASSWORD 'SecureKey123!' ROLE 'service';
 The official TypeScript SDK provides a type-safe wrapper around KalamDB with real-time subscriptions:
 
 ```typescript
-import { createClient } from '@kalamdb/client';
+import { createClient, Auth } from 'kalam-link';
 
 const client = createClient({
   url: 'http://localhost:8080',
-  username: 'admin',
-  password: 'admin'
+  auth: Auth.basic('admin', 'admin')
 });
 await client.connect();
 
@@ -527,7 +525,7 @@ Features:
 - ✅ Works in browsers and Node.js
 - ✅ Full TypeScript type definitions
 
-See [SDK Documentation](docs/SDK.md) for the complete API reference.
+See [SDK Documentation](docs/sdk/sdk.md) for the complete API reference.
 
 ---
 

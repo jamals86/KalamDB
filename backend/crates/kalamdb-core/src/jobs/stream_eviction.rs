@@ -46,9 +46,7 @@ impl StreamEvictionScheduler {
 
             stream_tables_found += 1;
 
-            let namespace_id = table.namespace_id.clone();
-            let table_name = table.table_name.clone();
-            let table_id = TableId::new(namespace_id.clone(), table_name.clone());
+            let table_id = TableId::new(table.namespace_id.clone(), table.table_name.clone());
 
             // Create eviction job with typed parameters
             let params = crate::jobs::executors::stream_eviction::StreamEvictionParams {
@@ -61,7 +59,7 @@ impl StreamEvictionScheduler {
             // Generate idempotency key (hourly granularity)
             let now = chrono::Utc::now();
             let date_key = now.format("%Y-%m-%d-%H").to_string();
-            let idempotency_key = format!("SE:{}:{}:{}", namespace_id, table_name, date_key);
+            let idempotency_key = format!("SE:{}:{}", table_id, date_key);
 
             // Create eviction job
             match jobs_manager
@@ -76,10 +74,9 @@ impl StreamEvictionScheduler {
                 Ok(job_id) => {
                     jobs_created += 1;
                     log::debug!(
-                        "Created stream eviction job {} for {}.{} (ttl: {}s)",
+                        "Created stream eviction job {} for {} (ttl: {}s)",
                         job_id.as_str(),
-                        namespace_id,
-                        table_name,
+                        table_id,
                         ttl_seconds
                     );
                 }
@@ -88,22 +85,19 @@ impl StreamEvictionScheduler {
                     // Idempotency errors are expected (job already exists for this hour)
                     if err_msg.contains("already running") || err_msg.contains("already exists") {
                         log::trace!(
-                            "Stream eviction job for {}.{} already exists (idempotent)",
-                            namespace_id,
-                            table_name
+                            "Stream eviction job for {} already exists (idempotent)",
+                            table_id
                         );
                     } else if err_msg.contains("pre-validation returned false") {
                         // Pre-validation skipped job creation (nothing to evict)
                         log::trace!(
-                            "Stream eviction job for {}.{} skipped (no expired rows)",
-                            namespace_id,
-                            table_name
+                            "Stream eviction job for {} skipped (no expired rows)",
+                            table_id
                         );
                     } else {
                         log::warn!(
-                            "Failed to create stream eviction job for {}.{}: {}",
-                            namespace_id,
-                            table_name,
+                            "Failed to create stream eviction job for {}: {}",
+                            table_id,
                             e
                         );
                     }

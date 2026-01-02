@@ -4,6 +4,7 @@
 //! Uses object_store async streaming APIs.
 
 use crate::error::{FilestoreError, Result};
+use crate::file_handle_diagnostics::{record_close, record_open};
 use crate::object_store_factory::{build_object_store, is_remote_url};
 use bytes::Bytes;
 use futures_util::StreamExt;
@@ -115,6 +116,9 @@ async fn download_file_streaming(
         .map_err(|e| FilestoreError::ObjectStore(e.to_string()))?;
 
     // Stream to local file
+    let path_str = local_path.to_string_lossy().to_string();
+    record_open("remote_materializer", &path_str);
+    
     let mut file = fs::File::create(local_path)
         .await
         .map_err(FilestoreError::Io)?;
@@ -128,6 +132,8 @@ async fn download_file_streaming(
     }
 
     file.flush().await.map_err(FilestoreError::Io)?;
+    drop(file); // Explicitly close file
+    record_close("remote_materializer", &path_str);
 
     Ok(())
 }

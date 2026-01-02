@@ -162,28 +162,46 @@ impl ExecutionContext {
         }
     }
 
+    #[inline]
     pub fn is_admin(&self) -> bool {
         matches!(self.user_role, Role::Dba | Role::System)
     }
+    #[inline]
     pub fn is_system(&self) -> bool {
         matches!(self.user_role, Role::System)
     }
+    
+    /// Check if this is an anonymous user (not authenticated)
+    ///
+    /// Anonymous users have limited permissions:
+    /// - Can only SELECT from public tables
+    /// - Cannot CREATE, ALTER, DROP, INSERT, UPDATE, or DELETE
+    #[inline]
+    pub fn is_anonymous(&self) -> bool {
+        self.user_id.as_str() == kalamdb_commons::constants::ANONYMOUS_USER_ID
+    }
 
+    #[inline]
     pub fn user_id(&self) -> &UserId {
         &self.user_id
     }
+    #[inline]
     pub fn user_role(&self) -> Role {
         self.user_role
     }
+    #[inline]
     pub fn namespace_id(&self) -> Option<&NamespaceId> {
         self.namespace_id.as_ref()
     }
+    #[inline]
     pub fn request_id(&self) -> Option<&str> {
         self.request_id.as_deref()
     }
+    #[inline]
     pub fn ip_address(&self) -> Option<&str> {
         self.ip_address.as_deref()
     }
+    #[inline]
     pub fn timestamp(&self) -> SystemTime {
         self.timestamp
     }

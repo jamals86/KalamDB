@@ -2,7 +2,8 @@ use crate::app_context::AppContext;
 use crate::jobs::executors::JobRegistry;
 use kalamdb_commons::NodeId;
 use kalamdb_system::JobsTableProvider;
-use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::{Arc, Weak};
 use tokio::sync::RwLock;
 
 /// Unified Job Manager
@@ -18,10 +19,11 @@ pub struct JobsManager {
     /// Node ID for this instance
     pub(crate) node_id: NodeId,
 
-    /// Flag for graceful shutdown
-    pub(crate) shutdown: Arc<RwLock<bool>>,
-    /// AppContext for global services (avoid calling AppContext::get() repeatedly)
-    pub(crate) app_context: Arc<RwLock<Option<Arc<AppContext>>>>,
+    /// Flag for graceful shutdown (AtomicBool for lock-free access in hot loop)
+    pub(crate) shutdown: AtomicBool,
+    /// AppContext for global services - uses Weak to avoid Arc cycle
+    /// (AppContext holds Arc<JobsManager>, so we use Weak here)
+    pub(crate) app_context: Arc<RwLock<Option<Weak<AppContext>>>>,
 }
 
 impl JobsManager {
@@ -35,7 +37,7 @@ impl JobsManager {
             jobs_provider,
             job_registry,
             node_id: NodeId::new("node_default".to_string()), // TODO: Get from config
-            shutdown: Arc::new(RwLock::new(false)),
+            shutdown: AtomicBool::new(false),
             app_context: Arc::new(RwLock::new(None)),
         }
     }
@@ -45,13 +47,14 @@ impl JobsManager {
     /// ordering where AppContext is created after JobsManager.
     pub fn set_app_context(&self, app_ctx: Arc<AppContext>) {
         // Use try_write() to avoid blocking in async context
+        // Store as Weak to avoid Arc cycle (AppContext holds Arc<JobsManager>)
         if let Ok(mut w) = self.app_context.try_write() {
-            *w = Some(app_ctx);
+            *w = Some(Arc::downgrade(&app_ctx));
         } else {
             // Fallback: spin until we can acquire the lock (should be rare)
             loop {
                 if let Ok(mut w) = self.app_context.try_write() {
-                    *w = Some(app_ctx);
+                    *w = Some(Arc::downgrade(&app_ctx));
                     break;
                 }
                 std::thread::yield_now();
@@ -59,16 +62,23 @@ impl JobsManager {
         }
     }
 
-    /// Get attached AppContext (panics if not attached)
+    /// Get attached AppContext (panics if not attached or if AppContext was dropped)
     pub(crate) fn get_attached_app_context(&self) -> Arc<AppContext> {
         // Use try_read() to avoid blocking in async context
         if let Ok(r) = self.app_context.try_read() {
-            r.clone().expect("AppContext not attached to JobsManager")
+            r.as_ref()
+                .expect("AppContext not attached to JobsManager")
+                .upgrade()
+                .expect("AppContext was dropped - JobsManager outlived AppContext")
         } else {
             // Fallback: spin until we can acquire the lock (should be rare)
             loop {
                 if let Ok(r) = self.app_context.try_read() {
-                    return r.clone().expect("AppContext not attached to JobsManager");
+                    return r
+                        .as_ref()
+                        .expect("AppContext not attached to JobsManager")
+                        .upgrade()
+                        .expect("AppContext was dropped - JobsManager outlived AppContext");
                 }
                 std::thread::yield_now();
             }
@@ -76,8 +86,8 @@ impl JobsManager {
     }
 
     /// Request graceful shutdown
-    pub async fn shutdown(&self) {
+    pub fn shutdown(&self) {
         log::info!("Initiating job manager shutdown");
-        *self.shutdown.write().await = true;
+        self.shutdown.store(true, Ordering::Release);
     }
 }

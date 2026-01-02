@@ -3,6 +3,7 @@
 use crate::app_context::AppContext;
 use crate::error::KalamDbError;
 use crate::sql::executor::handlers::typed::TypedStatementHandler;
+use crate::sql::executor::helpers::guards::block_system_namespace_modification;
 use crate::sql::executor::helpers::table_registration::{
     register_shared_table_provider, register_stream_table_provider, register_user_table_provider,
     unregister_table_provider,
@@ -46,6 +47,15 @@ impl TypedStatementHandler<AlterTableStatement> for AlterTableHandler {
             context.user_id.as_str(),
             context.user_role
         );
+
+        // Block ALTER on system tables - they are managed internally
+        // Future versions may use ALTER for schema migrations during upgrades
+        block_system_namespace_modification(
+            &namespace_id,
+            "ALTER",
+            "TABLE",
+            Some(statement.table_name.as_str()),
+        )?;
 
         let registry = self.app_context.schema_registry();
         let table_def_arc = registry.get_table_definition(&table_id)?.ok_or_else(|| {
@@ -116,10 +126,9 @@ impl TypedStatementHandler<AlterTableStatement> for AlterTableHandler {
                     .any(|c| c.column_name == column_name)
                 {
                     log::error!(
-                        "❌ ALTER TABLE failed: Column '{}' already exists in {}.{}",
+                        "❌ ALTER TABLE failed: Column '{}' already exists in {}",
                         column_name,
-                        namespace_id.as_str(),
-                        statement.table_name.as_str()
+                        table_id
                     );
                     return Err(KalamDbError::InvalidOperation(format!(
                         "Column '{}' already exists",
@@ -235,10 +244,9 @@ impl TypedStatementHandler<AlterTableStatement> for AlterTableHandler {
                     .any(|c| c.column_name == new_column_name)
                 {
                     log::error!(
-                        "❌ ALTER TABLE failed: Column '{}' already exists in {}.{}",
+                        "❌ ALTER TABLE failed: Column '{}' already exists in {}",
                         new_column_name,
-                        namespace_id.as_str(),
-                        statement.table_name.as_str()
+                        table_id
                     );
                     return Err(KalamDbError::InvalidOperation(format!(
                         "Column '{}' already exists",
@@ -409,6 +417,11 @@ impl TypedStatementHandler<AlterTableStatement> for AlterTableHandler {
         statement: &AlterTableStatement,
         context: &ExecutionContext,
     ) -> Result<(), KalamDbError> {
+        use crate::sql::executor::helpers::guards::block_anonymous_write;
+        
+        // T050: Block anonymous users from DDL operations
+        block_anonymous_write(context, "ALTER TABLE")?;
+        
         // Resolve namespace
         let namespace_id = &statement.namespace_id;
         let table_id = TableId::from_strings(namespace_id.as_str(), statement.table_name.as_str());

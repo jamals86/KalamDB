@@ -182,9 +182,8 @@ impl BaseTableProvider<StreamTableRowId, StreamTableRow> for StreamTableProvider
 
             if deleted_count > 0 {
                 log::debug!(
-                    "[StreamProvider] TTL cleanup: table={}.{} deleted={} expired rows",
-                    table_id.namespace_id().as_str(),
-                    table_id.table_name().as_str(),
+                    "[StreamProvider] TTL cleanup: table={} deleted={} expired rows",
+                    table_id,
                     deleted_count
                 );
             }
@@ -210,9 +209,8 @@ impl BaseTableProvider<StreamTableRowId, StreamTableRow> for StreamTableProvider
         })?;
 
         log::debug!(
-            "[StreamProvider] Inserted event: table={}.{} seq={} user={}",
-            table_id.namespace_id().as_str(),
-            table_id.table_name().as_str(),
+            "[StreamProvider] Inserted event: table={} seq={} user={}",
+            table_id,
             seq_id.as_i64(),
             user_id.as_str()
         );
@@ -220,11 +218,7 @@ impl BaseTableProvider<StreamTableRowId, StreamTableRow> for StreamTableProvider
         // Fire live query notification (INSERT)
         if let Some(manager) = &self.core.live_query_manager {
             let table_id = self.core.table_id().clone();
-            let table_name = format!(
-                "{}.{}",
-                table_id.namespace_id().as_str(),
-                table_id.table_name().as_str()
-            );
+            let table_name = table_id.full_name();
 
             // Build complete row including system column (_seq)
             let row = Self::build_notification_row(&entity);
@@ -318,9 +312,8 @@ impl BaseTableProvider<StreamTableRowId, StreamTableRow> for StreamTableProvider
         )?;
         let table_id = self.core.table_id();
         log::debug!(
-            "[StreamProvider] scan_rows: table={}.{} rows={} user={} ttl={:?}",
-            table_id.namespace_id().as_str(),
-            table_id.table_name().as_str(),
+            "[StreamProvider] scan_rows: table={} rows={} user={} ttl={:?}",
+            table_id,
             kvs.len(),
             user_id.as_str(),
             self.ttl_seconds
@@ -370,9 +363,8 @@ impl BaseTableProvider<StreamTableRowId, StreamTableRow> for StreamTableProvider
             .into_invalid_operation("System time error")?
             .as_millis() as u64;
         log::debug!(
-            "[StreamProvider] prefix scan: table={}.{} user={} prefix_len={} ttl_ms={:?} now_ms={}",
-            table_id.namespace_id().as_str(),
-            table_id.table_name().as_str(),
+            "[StreamProvider] prefix scan: table={} user={} prefix_len={} ttl_ms={:?} now_ms={}",
+            table_id,
             user_id.as_str(),
             prefix.len(),
             ttl_ms,
@@ -396,9 +388,8 @@ impl BaseTableProvider<StreamTableRowId, StreamTableRow> for StreamTableProvider
                 ))
             })?;
         log::debug!(
-            "[StreamProvider] raw scan results: table={}.{} user={} count={}",
-            table_id.namespace_id().as_str(),
-            table_id.table_name().as_str(),
+            "[StreamProvider] raw scan results: table={} user={} count={}",
+            table_id,
             user_id.as_str(),
             raw.len()
         );
@@ -439,9 +430,8 @@ impl BaseTableProvider<StreamTableRowId, StreamTableRow> for StreamTableProvider
         }
 
         log::debug!(
-            "[StreamProvider] ttl-filtered results: table={}.{} user={} kept={}",
-            table_id.namespace_id().as_str(),
-            table_id.table_name().as_str(),
+            "[StreamProvider] ttl-filtered results: table={} user={} kept={}",
+            table_id,
             user_id.as_str(),
             results.len()
         );

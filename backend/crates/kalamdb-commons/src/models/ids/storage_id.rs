@@ -18,26 +18,31 @@ pub struct StorageId(String);
 
 impl StorageId {
     /// Creates a new StorageId from a string.
+    #[inline]
     pub fn new(id: impl Into<String>) -> Self {
         Self(id.into())
     }
 
     /// Returns the storage ID as a string slice.
+    #[inline]
     pub fn as_str(&self) -> &str {
         &self.0
     }
 
     /// Consumes the wrapper and returns the inner String.
+    #[inline]
     pub fn into_string(self) -> String {
         self.0
     }
 
     /// Creates a default 'local' storage ID.
+    #[inline]
     pub fn local() -> Self {
         Self("local".to_string())
     }
 
     /// Is this storage ID the local storage?
+    #[inline]
     pub fn is_local(&self) -> bool {
         self.0 == "local"
     }

@@ -3,9 +3,7 @@
 //! Handles the Subscribe message for live query subscriptions.
 
 use actix_ws::Session;
-use kalamdb_commons::websocket::{
-    BatchControl, BatchStatus, SubscriptionRequest, MAX_ROWS_PER_BATCH,
-};
+use kalamdb_commons::websocket::{BatchControl, SubscriptionRequest, MAX_ROWS_PER_BATCH};
 use kalamdb_commons::WebSocketMessage;
 use kalamdb_core::live::{InitialDataOptions, LiveQueryManager, SharedConnectionState};
 use kalamdb_core::providers::arrow_json_conversion::row_to_json_map;
@@ -115,33 +113,22 @@ pub async fn handle_subscribe(
             rate_limiter.increment_subscription(&user_id);
 
             // Send response
+            // Use BatchControl::new() which handles status based on batch_num and has_more
             let batch_control = if let Some(ref initial) = result.initial_data {
-                BatchControl {
-                    batch_num: 0,
-                    total_batches: None,
-                    has_more: initial.has_more,
-                    status: if initial.has_more {
-                        BatchStatus::Loading
-                    } else {
-                        BatchStatus::Ready
-                    },
-                    last_seq_id: initial.last_seq,
-                    snapshot_end_seq: initial.snapshot_end_seq,
-                }
+                BatchControl::new(
+                    0,  // batch_num
+                    initial.has_more,
+                    initial.last_seq,
+                    initial.snapshot_end_seq,
+                )
             } else {
-                BatchControl {
-                    batch_num: 0,
-                    total_batches: Some(0),
-                    has_more: false,
-                    status: BatchStatus::Ready,
-                    last_seq_id: None,
-                    snapshot_end_seq: None,
-                }
+                // No initial data - empty result, ready immediately
+                BatchControl::new(0, false, None, None)
             };
 
             let ack =
-                WebSocketMessage::subscription_ack(subscription_id.clone(), 0, batch_control.clone());
-            info!("Sending subscription_ack for {}", subscription_id);
+                WebSocketMessage::subscription_ack(subscription_id.clone(), 0, batch_control.clone(), result.schema.clone());
+            info!("Sending subscription_ack for {} with {} schema fields", subscription_id, result.schema.len());
             let _ = send_json(session, &ack).await;
 
             if let Some(initial) = result.initial_data {

@@ -77,6 +77,9 @@ pub async fn execute_create_storage(
         storage_registry.validate_template(&stmt.user_tables_template, true)?;
     }
 
+    // SECURITY: Validate base directory for path traversal attacks
+    validate_storage_path(&stmt.base_directory)?;
+
     // Ensure filesystem storages eagerly create their base directory
     if stmt.storage_type == StorageType::Filesystem {
         ensure_filesystem_directory(&stmt.base_directory)?;
@@ -122,6 +125,46 @@ pub async fn execute_create_storage(
     Ok(ExecutionResult::Success {
         message: format!("Storage '{}' created successfully", stmt.storage_id),
     })
+}
+
+/// Validate storage path for security issues.
+///
+/// Rejects paths that could lead to path traversal or access to sensitive directories.
+fn validate_storage_path(path: &str) -> Result<(), KalamDbError> {
+    // Skip validation for S3/cloud paths
+    if path.starts_with("s3://") || path.starts_with("gs://") || path.starts_with("az://") {
+        return Ok(());
+    }
+
+    // Check for path traversal sequences
+    if path.contains("..") {
+        return Err(KalamDbError::InvalidOperation(
+            "Storage path cannot contain '..' (path traversal not allowed)".to_string(),
+        ));
+    }
+
+    // Check for null bytes
+    if path.contains('\0') {
+        return Err(KalamDbError::InvalidOperation(
+            "Storage path cannot contain null bytes".to_string(),
+        ));
+    }
+
+    // Block sensitive directories
+    let path_lower = path.to_lowercase();
+    let sensitive_prefixes = [
+        "/etc/", "/root/", "/var/log/", "/proc/", "/sys/",
+        "c:\\windows", "c:/windows",
+    ];
+    for prefix in &sensitive_prefixes {
+        if path_lower.starts_with(prefix) {
+            return Err(KalamDbError::InvalidOperation(
+                format!("Storage path cannot be in sensitive directory: {}", prefix),
+            ));
+        }
+    }
+
+    Ok(())
 }
 
 /// Ensure a filesystem directory exists (used by CREATE STORAGE handlers)

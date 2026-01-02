@@ -262,4 +262,30 @@ mod tests {
         assert!(matches!(parse_log_level("INFO"), Ok(LevelFilter::Info)));
         assert!(matches!(parse_log_level("Debug"), Ok(LevelFilter::Debug)));
     }
+
+    #[test]
+    fn test_redact_sensitive_sql_passwords() {
+        use kalamdb_commons::security::redact_sensitive_sql;
+        
+        // ALTER USER with SET PASSWORD
+        let sql = "ALTER USER 'alice' SET PASSWORD 'SuperSecret123!'";
+        let redacted = redact_sensitive_sql(sql);
+        assert!(!redacted.contains("SuperSecret123"));
+        assert!(redacted.contains("[REDACTED]"));
+
+        // CREATE USER with PASSWORD
+        let sql = "CREATE USER bob PASSWORD 'mypassword'";
+        let redacted = redact_sensitive_sql(sql);
+        assert!(!redacted.contains("mypassword"));
+        assert!(redacted.contains("[REDACTED]"));
+    }
+
+    #[test]
+    fn test_redact_sensitive_sql_preserves_safe_queries() {
+        use kalamdb_commons::security::redact_sensitive_sql;
+        
+        let sql = "SELECT * FROM users WHERE name = 'alice'";
+        let redacted = redact_sensitive_sql(sql);
+        assert_eq!(sql, redacted);
+    }
 }

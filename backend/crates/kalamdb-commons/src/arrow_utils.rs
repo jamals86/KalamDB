@@ -41,10 +41,34 @@ impl RecordBatchBuilder {
     ///
     /// The schema defines the structure of the RecordBatch to be built.
     pub fn new(schema: SchemaRef) -> Self {
+        let capacity = schema.fields().len();
         Self {
             schema,
-            columns: Vec::new(),
+            columns: Vec::with_capacity(capacity),
         }
+    }
+
+    fn push_array(&mut self, array: ArrayRef) -> &mut Self {
+        self.columns.push(array);
+        self
+    }
+
+    fn add_string_column_internal<I, S>(&mut self, data: I) -> &mut Self
+    where
+        I: IntoIterator<Item = Option<S>>,
+        S: AsRef<str>,
+    {
+        let iter = data.into_iter();
+        let (lower, upper) = iter.size_hint();
+        let len = upper.unwrap_or(lower);
+        let mut builder = StringBuilder::with_capacity(len, len * 32);
+        for value in iter {
+            match value {
+                Some(s) => builder.append_value(s.as_ref()),
+                None => builder.append_null(),
+            }
+        }
+        self.push_array(Arc::new(builder.finish()))
     }
 
     /// Add a string column (UTF-8) to the batch.
@@ -52,15 +76,7 @@ impl RecordBatchBuilder {
     /// # Arguments
     /// * `data` - Vector of optional string values
     pub fn add_string_column(&mut self, data: Vec<Option<&str>>) -> &mut Self {
-        let mut builder = StringBuilder::with_capacity(data.len(), data.len() * 32);
-        for value in data {
-            match value {
-                Some(s) => builder.append_value(s),
-                None => builder.append_null(),
-            }
-        }
-        self.columns.push(Arc::new(builder.finish()));
-        self
+        self.add_string_column_internal(data)
     }
 
     /// Add a string column from owned Strings.
@@ -68,15 +84,7 @@ impl RecordBatchBuilder {
     /// # Arguments
     /// * `data` - Vector of optional String values
     pub fn add_string_column_owned(&mut self, data: Vec<Option<String>>) -> &mut Self {
-        let mut builder = StringBuilder::with_capacity(data.len(), data.len() * 32);
-        for value in data {
-            match value {
-                Some(s) => builder.append_value(&s),
-                None => builder.append_null(),
-            }
-        }
-        self.columns.push(Arc::new(builder.finish()));
-        self
+        self.add_string_column_internal(data)
     }
 
     /// Add an Int64 column to the batch.
@@ -84,8 +92,7 @@ impl RecordBatchBuilder {
     /// # Arguments
     /// * `data` - Vector of optional i64 values
     pub fn add_int64_column(&mut self, data: Vec<Option<i64>>) -> &mut Self {
-        self.columns.push(Arc::new(Int64Array::from(data)));
-        self
+        self.push_array(Arc::new(Int64Array::from(data)))
     }
 
     /// Add a UInt64 column to the batch.
@@ -93,8 +100,7 @@ impl RecordBatchBuilder {
     /// # Arguments
     /// * `data` - Vector of optional u64 values
     pub fn add_uint64_column(&mut self, data: Vec<Option<u64>>) -> &mut Self {
-        self.columns.push(Arc::new(UInt64Array::from(data)));
-        self
+        self.push_array(Arc::new(UInt64Array::from(data)))
     }
 
     /// Add an Int32 column to the batch.
@@ -102,8 +108,7 @@ impl RecordBatchBuilder {
     /// # Arguments
     /// * `data` - Vector of optional i32 values
     pub fn add_int32_column(&mut self, data: Vec<Option<i32>>) -> &mut Self {
-        self.columns.push(Arc::new(Int32Array::from(data)));
-        self
+        self.push_array(Arc::new(Int32Array::from(data)))
     }
 
     /// Add a Float64 column to the batch.
@@ -111,8 +116,7 @@ impl RecordBatchBuilder {
     /// # Arguments
     /// * `data` - Vector of optional f64 values
     pub fn add_float64_column(&mut self, data: Vec<Option<f64>>) -> &mut Self {
-        self.columns.push(Arc::new(Float64Array::from(data)));
-        self
+        self.push_array(Arc::new(Float64Array::from(data)))
     }
 
     /// Add a Boolean column to the batch.
@@ -120,8 +124,7 @@ impl RecordBatchBuilder {
     /// # Arguments
     /// * `data` - Vector of optional bool values
     pub fn add_boolean_column(&mut self, data: Vec<Option<bool>>) -> &mut Self {
-        self.columns.push(Arc::new(BooleanArray::from(data)));
-        self
+        self.push_array(Arc::new(BooleanArray::from(data)))
     }
 
     /// Add a TimestampMicrosecond column to the batch.
@@ -136,9 +139,7 @@ impl RecordBatchBuilder {
             .into_iter()
             .map(|ts| ts.map(|ms| ms * 1000))
             .collect();
-        self.columns
-            .push(Arc::new(TimestampMicrosecondArray::from(micros)));
-        self
+        self.push_array(Arc::new(TimestampMicrosecondArray::from(micros)))
     }
 
     /// Add a TimestampMillisecond column to the batch.
@@ -148,9 +149,7 @@ impl RecordBatchBuilder {
     /// # Arguments
     /// * `data` - Vector of optional i64 values in **milliseconds**
     pub fn add_timestamp_millis_column(&mut self, data: Vec<Option<i64>>) -> &mut Self {
-        self.columns
-            .push(Arc::new(TimestampMillisecondArray::from(data)));
-        self
+        self.push_array(Arc::new(TimestampMillisecondArray::from(data)))
     }
 
     /// Add a pre-built array column directly.
@@ -160,8 +159,7 @@ impl RecordBatchBuilder {
     /// # Arguments
     /// * `array` - Arc-wrapped array implementing the Array trait
     pub fn add_array_column(&mut self, array: ArrayRef) -> &mut Self {
-        self.columns.push(array);
-        self
+        self.push_array(array)
     }
 
     /// Build the RecordBatch from accumulated columns.

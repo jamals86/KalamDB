@@ -1,15 +1,12 @@
-# TypeScript SDK - Browser Only
+# TypeScript SDK - Browser First
 
-⚠️ **IMPORTANT**: This TypeScript SDK wraps the WASM bindings and is **designed for browser environments only**.
+This TypeScript SDK wraps the WASM bindings and is designed and tested primarily for **browser environments**.
 
-## Why Browser Only?
+## Why Browser First?
 
-The WASM bindings use browser-specific APIs:
-- `window.fetch()` for HTTP requests  
-- `WebSocket` API for real-time subscriptions
-- Browser DOM APIs
+The WASM build is produced using `wasm-pack --target web`, which integrates naturally with browsers.
 
-These APIs **do not exist in Node.js**.
+Node.js support depends on your runtime setup for WebAssembly modules and networking APIs.
 
 ## Usage
 
@@ -26,13 +23,13 @@ These APIs **do not exist in Node.js**.
   <div id="output"></div>
 
   <script type="module">
-    import { KalamDBClient } from './node_modules/@kalamdb/client/dist/index.js';
+    import { KalamDBClient } from './node_modules/kalam-link/dist/index.js';
 
     async function main() {
       const client = new KalamDBClient(
         'http://localhost:8080',
         'root',
-        'root'
+        ''
       );
 
       // Initialize (WASM loads automatically in browser)
@@ -53,7 +50,7 @@ These APIs **do not exist in Node.js**.
 
 ### ❌ For Node.js
 
-**Do NOT use this SDK in Node.js**. Instead, use the native Rust client via the CLI:
+If you need a server-side client today, prefer the native Rust client or call the REST API directly.
 
 ```bash
 # Use the CLI
@@ -65,13 +62,7 @@ cargo run -- --help
 
 ## Testing
 
-The tests are designed to work without actually connecting (constructor validation, etc.):
-
-```bash
-npm test  # Basic tests (no server needed)
-```
-
-Integration tests that require a server are **skipped by default** because they would need browser environment.
+See [TESTING.md](TESTING.md) for the recommended browser-based test flow.
 
 ## Alternative for Node.js
 

@@ -17,7 +17,7 @@ link/
 ├── README.md                # This file
 └── sdks/                    # Multi-language SDK directory
     └── typescript/          # TypeScript/JavaScript SDK (npm-publishable)
-        ├── package.json     # npm package: @kalamdb/client
+      ├── package.json     # npm package: kalam-link
         ├── build.sh         # Compiles Rust → WASM
         ├── README.md        # Complete SDK documentation
         ├── tests/           # 14 passing tests
@@ -32,7 +32,7 @@ link/
 **SDKs as First-Class Packages**:
 - Each language SDK in `sdks/{language}/` is a complete, publishable package
 - SDKs include: build system, tests, docs, package config, .gitignore
-- Examples import SDKs as local dependencies (e.g., `"@kalamdb/client": "file:../../link/sdks/typescript"`)
+- Examples import SDKs as local dependencies (e.g., `"kalam-link": "file:../../link/sdks/typescript"`)
 - **Examples MUST NOT implement their own clients** - all functionality comes from SDKs
 - If examples need features, add them to the SDK for all users
 
@@ -72,7 +72,7 @@ The TypeScript SDK is a complete, npm-publishable package at `sdks/typescript/`:
 ```json
 {
   "dependencies": {
-    "@kalamdb/client": "file:../../link/sdks/typescript"
+    "kalam-link": "file:../../link/sdks/typescript"
   }
 }
 ```
@@ -80,33 +80,29 @@ The TypeScript SDK is a complete, npm-publishable package at `sdks/typescript/`:
 **Building the SDK**:
 ```bash
 cd link/sdks/typescript
-./build.sh  # Compiles Rust → WASM using wasm-pack
+npm install
+npm run build  # Compiles Rust → WASM (wasm-pack) and builds TypeScript into dist/
 ```
 
 **Testing**:
 ```bash
-npm test      # Run basic tests
-npm run test:all  # Run full test suite (14 tests)
+npx http-server -p 3000
+# Open http://localhost:3000/tests/browser-test.html
 ```
 
 **Usage**:
 ```typescript
-import init, { KalamClient } from '@kalamdb/client';
+import { createClient, Auth } from 'kalam-link';
 
-// Initialize WASM
-await init();
-
-// Create client with username and password
-const client = new KalamClient(
-  'http://localhost:8080',
-  'username',
-  'password'
-);
+const client = createClient({
+  url: 'http://localhost:8080',
+  auth: Auth.basic('username', 'password')
+});
 
 // Connect and query
 await client.connect();
 const result = await client.query('SELECT * FROM todos');
-console.log(JSON.parse(result));
+console.log(result.results[0]?.rows);
 ```
 
 **Complete Documentation**: See [sdks/typescript/README.md](sdks/typescript/README.md) for full API reference, examples, and troubleshooting.

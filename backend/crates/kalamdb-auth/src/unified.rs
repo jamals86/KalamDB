@@ -405,8 +405,10 @@ struct JwtConfig {
 }
 
 static JWT_CONFIG: Lazy<JwtConfig> = Lazy::new(|| {
+    // Use centralized default from kalamdb-commons to ensure consistency
+    // The server startup validates that insecure defaults are not used in production
     let secret = std::env::var("KALAMDB_JWT_SECRET")
-        .unwrap_or_else(|_| "kalamdb-dev-secret-key-change-in-production".to_string());
+        .unwrap_or_else(|_| kalamdb_commons::config::defaults::default_auth_jwt_secret());
     // Default trusted issuer is "kalamdb" (matching KALAMDB_ISSUER in jwt_auth.rs)
     // Additional issuers can be added via KALAMDB_JWT_TRUSTED_ISSUERS env var
     let trusted = std::env::var("KALAMDB_JWT_TRUSTED_ISSUERS")
@@ -450,18 +452,38 @@ async fn authenticate_bearer(
         ));
     }
 
-    // Override role from claims if present
-    let role = claims
-        .role
-        .as_deref()
-        .and_then(|r| match r.to_lowercase().as_str() {
+    // SECURITY: Validate role from claims matches database
+    // If JWT contains a role claim, it must match the user's actual role in the database.
+    // This prevents privilege escalation attacks where an attacker modifies JWT claims.
+    let role = if let Some(claimed_role_str) = claims.role.as_deref() {
+        let claimed_role = match claimed_role_str.to_lowercase().as_str() {
             "system" => Some(Role::System),
             "dba" => Some(Role::Dba),
             "service" => Some(Role::Service),
             "user" => Some(Role::User),
             _ => None,
-        })
-        .unwrap_or(user.role);
+        };
+
+        if let Some(claimed) = claimed_role {
+            // Role claim present and valid - must match database
+            if claimed != user.role {
+                log::warn!(
+                    "JWT role mismatch for user '{}': claimed {:?}, actual {:?}",
+                    username, claimed, user.role
+                );
+                return Err(AuthError::InvalidCredentials(
+                    "Token role does not match user role".to_string(),
+                ));
+            }
+            claimed
+        } else {
+            // Invalid role string in claim - use database role
+            user.role
+        }
+    } else {
+        // No role claim - use database role
+        user.role
+    };
 
     Ok(AuthenticatedUser::new(
         user.id.clone(),

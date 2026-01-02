@@ -342,6 +342,18 @@ impl AppContext {
                     Arc::new(move |cache_key: &str| manifest_for_checker.is_in_hot_cache_by_string(cache_key))
                 );
 
+                // Cleanup orphan live queries from previous server run
+                // Live queries don't persist across restarts (WebSocket connections are lost)
+                match app_ctx.system_tables().live_queries().clear_all() {
+                    Ok(count) if count > 0 => {
+                        log::info!("Cleared {} orphan live queries from previous server run", count);
+                    }
+                    Ok(_) => {} // No orphans to clear
+                    Err(e) => {
+                        log::warn!("Failed to clear orphan live queries: {}", e);
+                    }
+                }
+
                 app_ctx
             })
             .clone()
@@ -662,6 +674,8 @@ impl AppContext {
     /// Returns a vector of (metric_name, metric_value) tuples for display
     /// in system.stats virtual view.
     pub fn compute_metrics(&self) -> Vec<(String, String)> {
+        use sysinfo::System;
+        
         let mut metrics = Vec::new();
 
         // Server uptime
@@ -680,6 +694,42 @@ impl AppContext {
             format!("{}m", minutes)
         };
         metrics.push(("server_uptime_human".to_string(), uptime_human));
+
+        // === Memory and System Metrics ===
+        let mut sys = System::new_all();
+        sys.refresh_all();
+        
+        if let Ok(pid) = sysinfo::get_current_pid() {
+            if let Some(proc) = sys.process(pid) {
+                // Memory usage
+                let memory_bytes = proc.memory();
+                let memory_mb = memory_bytes / 1024 / 1024;
+                metrics.push(("memory_usage_bytes".to_string(), memory_bytes.to_string()));
+                metrics.push(("memory_usage_mb".to_string(), memory_mb.to_string()));
+                
+                // CPU usage
+                let cpu_usage = proc.cpu_usage();
+                metrics.push(("cpu_usage_percent".to_string(), format!("{:.2}", cpu_usage)));
+            }
+        }
+        
+        // Total system memory
+        metrics.push(("system_total_memory_mb".to_string(), (sys.total_memory() / 1024 / 1024).to_string()));
+        metrics.push(("system_used_memory_mb".to_string(), (sys.used_memory() / 1024 / 1024).to_string()));
+        
+        // Thread count (via /proc on Linux, approximation elsewhere)
+        #[cfg(unix)]
+        {
+            if let Ok(entries) = std::fs::read_dir("/proc/self/task") {
+                let thread_count = entries.count();
+                metrics.push(("thread_count".to_string(), thread_count.to_string()));
+            }
+        }
+        #[cfg(not(unix))]
+        {
+            // On non-Unix, use sysinfo's thread count if available
+            metrics.push(("thread_count".to_string(), "N/A".to_string()));
+        }
 
         // Count entities from system tables
         // Users count
@@ -728,6 +778,10 @@ impl AppContext {
         let active_connections = self.connection_registry.connection_count();
         metrics.push(("active_connections".to_string(), active_connections.to_string()));
 
+        // === Active Subscriptions ===
+        let active_subscriptions = self.connection_registry.subscription_count();
+        metrics.push(("active_subscriptions".to_string(), active_subscriptions.to_string()));
+
         // Schema cache size and stats
         let cache_size = self.schema_registry.len();
         metrics.push(("schema_cache_size".to_string(), cache_size.to_string()));
@@ -737,6 +791,25 @@ impl AppContext {
         metrics.push(("schema_cache_hits".to_string(), hits.to_string()));
         metrics.push(("schema_cache_misses".to_string(), misses.to_string()));
         metrics.push(("schema_cache_hit_rate".to_string(), format!("{:.2}%", hit_rate * 100.0)));
+
+        // === Manifest Cache Metrics ===
+        // Manifests in hot cache (memory)
+        let manifests_in_memory = self.manifest_service.hot_cache_len();
+        metrics.push(("manifests_in_memory".to_string(), manifests_in_memory.to_string()));
+        
+        // Manifests in RocksDB (persistent cache)
+        if let Ok(manifests_in_rocksdb) = self.manifest_service.count() {
+            metrics.push(("manifests_in_rocksdb".to_string(), manifests_in_rocksdb.to_string()));
+        } else {
+            metrics.push(("manifests_in_rocksdb".to_string(), "0".to_string()));
+        }
+        
+        // Manifest cache breakdown (shared vs user tables)
+        let (shared_manifests, user_manifests, total_weight) = self.manifest_service.cache_stats();
+        metrics.push(("manifests_shared_tables".to_string(), shared_manifests.to_string()));
+        metrics.push(("manifests_user_tables".to_string(), user_manifests.to_string()));
+        metrics.push(("manifests_cache_weight".to_string(), total_weight.to_string()));
+        metrics.push(("manifests_max_capacity".to_string(), self.manifest_service.max_weighted_capacity().to_string()));
 
         // Node ID
         metrics.push(("node_id".to_string(), self.node_id.as_str().to_string()));

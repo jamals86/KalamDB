@@ -25,8 +25,23 @@ use std::time::{Duration, Instant};
 use tokio::sync::mpsc;
 use tokio_util::sync::CancellationToken;
 
+/// Maximum pending notifications per connection before dropping new ones
+pub const NOTIFICATION_CHANNEL_CAPACITY: usize = 1000;
+
+/// Maximum pending control events per connection
+pub const EVENT_CHANNEL_CAPACITY: usize = 16;
+
 /// Type alias for sending live query notifications to WebSocket clients
-pub type NotificationSender = mpsc::UnboundedSender<(LiveQueryId, Notification)>;
+pub type NotificationSender = mpsc::Sender<(LiveQueryId, Notification)>;
+
+/// Type alias for receiving live query notifications
+pub type NotificationReceiver = mpsc::Receiver<(LiveQueryId, Notification)>;
+
+/// Type alias for sending control events to connections
+pub type EventSender = mpsc::Sender<ConnectionEvent>;
+
+/// Type alias for receiving control events
+pub type EventReceiver = mpsc::Receiver<ConnectionEvent>;
 
 /// Shared connection state - can be held by handlers for direct access
 pub type SharedConnectionState = Arc<RwLock<ConnectionState>>;
@@ -65,6 +80,7 @@ pub struct SubscriptionHandle {
 /// - Notification filtering (filter_expr)
 /// - Column projections (projections)
 /// - Initial data batch fetching (sql, batch_size, snapshot_end_seq)
+/// - Batch pagination tracking (current_batch_num)
 ///
 /// Memory optimization: Uses Arc<str> for SQL and Arc<Expr> for filter
 /// to share data with SubscriptionHandle indices.
@@ -85,6 +101,9 @@ pub struct SubscriptionState {
     pub batch_size: usize,
     /// Snapshot boundary SeqId for consistent batch loading
     pub snapshot_end_seq: Option<SeqId>,
+    /// Current batch number for pagination tracking (0-indexed)
+    /// Incremented after each batch is sent
+    pub current_batch_num: u32,
     /// Shared notification channel (Arc for zero-copy)
     pub notification_tx: Arc<NotificationSender>,
 }
@@ -118,10 +137,10 @@ pub struct ConnectionState {
     pub subscriptions: DashMap<String, SubscriptionState>,
 
     // === Channels ===
-    /// Channel to send notifications to this connection's WebSocket task
+    /// Channel to send notifications to this connection's WebSocket task (bounded for backpressure)
     pub notification_tx: Arc<NotificationSender>,
-    /// Channel to send control events (ping, timeout, shutdown)
-    pub event_tx: mpsc::UnboundedSender<ConnectionEvent>,
+    /// Channel to send control events (ping, timeout, shutdown) (bounded)
+    pub event_tx: EventSender,
 }
 
 impl ConnectionState {
@@ -180,6 +199,23 @@ impl ConnectionState {
         }
     }
 
+    /// Increment current_batch_num for a subscription and return the new value
+    /// Returns None if subscription not found
+    pub fn increment_batch_num(&self, subscription_id: &str) -> Option<u32> {
+        if let Some(mut sub) = self.subscriptions.get_mut(subscription_id) {
+            sub.current_batch_num += 1;
+            Some(sub.current_batch_num)
+        } else {
+            None
+        }
+    }
+
+    /// Get current_batch_num for a subscription
+    /// Returns None if subscription not found
+    pub fn get_batch_num(&self, subscription_id: &str) -> Option<u32> {
+        self.subscriptions.get(subscription_id).map(|s| s.current_batch_num)
+    }
+
     /// Get all subscription IDs
     pub fn subscription_ids(&self) -> Vec<String> {
         self.subscriptions.iter().map(|e| e.key().clone()).collect()
@@ -200,10 +236,10 @@ impl ConnectionState {
 pub struct ConnectionRegistration {
     /// Shared connection state - hold this for direct access
     pub state: SharedConnectionState,
-    /// Receiver for control events (ping, timeout, shutdown)
-    pub event_rx: mpsc::UnboundedReceiver<ConnectionEvent>,
-    /// Receiver for notifications (live query updates)
-    pub notification_rx: mpsc::UnboundedReceiver<(LiveQueryId, Notification)>,
+    /// Receiver for control events (ping, timeout, shutdown) (bounded)
+    pub event_rx: EventReceiver,
+    /// Receiver for notifications (live query updates) (bounded for backpressure)
+    pub notification_rx: NotificationReceiver,
 }
 
 /// WebSocket Connections Manager
@@ -237,6 +273,8 @@ pub struct ConnectionsManager {
     auth_timeout: Duration,
     /// Heartbeat check interval
     heartbeat_interval: Duration,
+    /// Maximum concurrent connections allowed (DoS protection)
+    max_connections: usize,
 
     // === Shutdown Coordination ===
     shutdown_token: CancellationToken,
@@ -248,12 +286,32 @@ pub struct ConnectionsManager {
 }
 
 impl ConnectionsManager {
+    /// Default maximum connections (10,000 concurrent connections)
+    pub const DEFAULT_MAX_CONNECTIONS: usize = 10_000;
+
     /// Create a new connections manager and start the background heartbeat checker
     pub fn new(
         node_id: NodeId,
         client_timeout: Duration,
         auth_timeout: Duration,
         heartbeat_interval: Duration,
+    ) -> Arc<Self> {
+        Self::with_max_connections(
+            node_id,
+            client_timeout,
+            auth_timeout,
+            heartbeat_interval,
+            Self::DEFAULT_MAX_CONNECTIONS,
+        )
+    }
+
+    /// Create a new connections manager with a custom max connections limit
+    pub fn with_max_connections(
+        node_id: NodeId,
+        client_timeout: Duration,
+        auth_timeout: Duration,
+        heartbeat_interval: Duration,
+        max_connections: usize,
     ) -> Arc<Self> {
         let shutdown_token = CancellationToken::new();
 
@@ -265,6 +323,7 @@ impl ConnectionsManager {
             client_timeout,
             auth_timeout,
             heartbeat_interval,
+            max_connections,
             shutdown_token,
             is_shutting_down: AtomicBool::new(false),
             total_connections: AtomicUsize::new(0),
@@ -296,7 +355,7 @@ impl ConnectionsManager {
     /// - `event_rx` - control events (ping, timeout, shutdown)
     /// - `notification_rx` - live query notifications
     ///
-    /// Returns None if server is shutting down.
+    /// Returns None if server is shutting down or max connections reached.
     pub fn register_connection(
         &self,
         connection_id: ConnectionId,
@@ -306,9 +365,20 @@ impl ConnectionsManager {
             warn!("Rejecting new connection during shutdown: {}", connection_id);
             return None;
         }
+        
+        // DoS protection: reject if at max connections
+        let current = self.total_connections.load(Ordering::Acquire);
+        if current >= self.max_connections {
+            warn!(
+                "Rejecting connection {}: max connections ({}) reached",
+                connection_id, self.max_connections
+            );
+            return None;
+        }
 
-        let (event_tx, event_rx) = mpsc::unbounded_channel();
-        let (notification_tx, notification_rx) = mpsc::unbounded_channel();
+        // Use bounded channels for backpressure and memory control
+        let (event_tx, event_rx) = mpsc::channel(EVENT_CHANNEL_CAPACITY);
+        let (notification_tx, notification_rx) = mpsc::channel(NOTIFICATION_CHANNEL_CAPACITY);
         let now = Instant::now();
 
         let state = ConnectionState {
@@ -488,7 +558,11 @@ impl ConnectionsManager {
         if let Some(conn_id) = self.live_id_to_connection.get(live_id) {
             if let Some(shared_state) = self.connections.get(conn_id.value()) {
                 let state = shared_state.read();
-                let _ = state.notification_tx.send((live_id.clone(), notification));
+                if let Err(e) = state.notification_tx.try_send((live_id.clone(), notification)) {
+                    if matches!(e, mpsc::error::TrySendError::Full(_)) {
+                        warn!("Notification channel full for {}, dropping notification", live_id);
+                    }
+                }
             }
         }
     }
@@ -503,7 +577,11 @@ impl ConnectionsManager {
     ) {
         if let Some(handles) = self.user_table_subscriptions.get(&(user_id.clone(), table_id.clone())) {
             for handle in handles.iter() {
-                let _ = handle.notification_tx.send((handle.live_id.clone(), notification.clone()));
+                if let Err(e) = handle.notification_tx.try_send((handle.live_id.clone(), notification.clone())) {
+                    if matches!(e, mpsc::error::TrySendError::Full(_)) {
+                        warn!("Notification channel full for {}, dropping", handle.live_id);
+                    }
+                }
             }
         }
     }
@@ -520,7 +598,7 @@ impl ConnectionsManager {
         // Send shutdown event to all connections
         for entry in self.connections.iter() {
             let state = entry.value().read();
-            let _ = state.event_tx.send(ConnectionEvent::Shutdown);
+            let _ = state.event_tx.try_send(ConnectionEvent::Shutdown);
         }
 
         // Wait for connections to close with timeout
@@ -605,7 +683,7 @@ impl ConnectionsManager {
                 && now.duration_since(state.connected_at) > self.auth_timeout
             {
                 debug!("Auth timeout for connection: {}", conn_id);
-                let _ = state.event_tx.send(ConnectionEvent::AuthTimeout);
+                let _ = state.event_tx.try_send(ConnectionEvent::AuthTimeout);
                 to_timeout.push(conn_id.clone());
                 continue;
             }
@@ -613,13 +691,13 @@ impl ConnectionsManager {
             // Check heartbeat timeout
             if now.duration_since(state.last_heartbeat) > self.client_timeout {
                 debug!("Heartbeat timeout for connection: {}", conn_id);
-                let _ = state.event_tx.send(ConnectionEvent::HeartbeatTimeout);
+                let _ = state.event_tx.try_send(ConnectionEvent::HeartbeatTimeout);
                 to_timeout.push(conn_id.clone());
                 continue;
             }
 
             // Request ping
-            let _ = state.event_tx.send(ConnectionEvent::SendPing);
+            let _ = state.event_tx.try_send(ConnectionEvent::SendPing);
         }
 
         // Unregister timed-out connections

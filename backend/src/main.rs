@@ -46,6 +46,16 @@ async fn main() -> Result<()> {
     };
 
     // ========================================================================
+    // JWT SECRET ENVIRONMENT VARIABLE SETUP
+    // ========================================================================
+    // IMPORTANT: Set KALAMDB_JWT_SECRET env var from config BEFORE any auth code runs
+    // The JWT validation code (unified.rs) uses a lazy static that reads this env var
+    // We must set it early so both login and validation use the SAME secret
+    if std::env::var("KALAMDB_JWT_SECRET").is_err() {
+        std::env::set_var("KALAMDB_JWT_SECRET", &config.auth.jwt_secret);
+    }
+
+    // ========================================================================
     // Security: Validate critical configuration at startup
     // ========================================================================
     
@@ -79,6 +89,14 @@ async fn main() -> Result<()> {
         eprintln!("║    [auth]                                                         ║");
         eprintln!("║    jwt_secret = \"your-unique-32-char-minimum-secret-here\"         ║");
         eprintln!("║                                                                   ║");
+        eprintln!("║  Or set via environment variable:                                ║");
+        eprintln!("║    export KALAMDB_JWT_SECRET=\"$(openssl rand -base64 32)\"         ║");
+        eprintln!("║                                                                   ║");
+        eprintln!("║  Generate a secure random secret:                                ║");
+        eprintln!("║    openssl rand -base64 32                                        ║");
+        eprintln!("║    # or                                                           ║");
+        eprintln!("║    cat /dev/urandom | head -c 32 | base64                        ║");
+        eprintln!("║                                                                   ║");
         
         // In production mode (not localhost), refuse to start
         let host = &config.server.host;
@@ -87,10 +105,13 @@ async fn main() -> Result<()> {
         if !is_localhost {
             eprintln!("║  FATAL: Refusing to start with insecure JWT secret on non-local  ║");
             eprintln!("║         address. This prevents token forgery attacks.             ║");
+            eprintln!("║                                                                   ║");
+            eprintln!("║  KalamDB will not start on {} with the current JWT secret.       ║", host);
             eprintln!("╚═══════════════════════════════════════════════════════════════════╝");
             std::process::exit(1);
         } else {
             eprintln!("║  ⚠️ Allowing insecure secret for localhost development only.      ║");
+            eprintln!("║  This configuration would be REJECTED for production use.        ║");
             eprintln!("╚═══════════════════════════════════════════════════════════════════╝");
         }
     }

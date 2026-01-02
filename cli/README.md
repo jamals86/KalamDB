@@ -448,7 +448,7 @@ Contributions welcome! Please see the main KalamDB repository for contribution g
 
 ## Related Documentation
 
-- [KalamDB API Reference](../../docs/API.md)
-- [SQL Syntax Guide](../../docs/SQL.md)
-- [WebSocket Protocol](../../docs/architecture/WEBSOCKET_PROTOCOL.md)
-- [Quick Start Guide](../../docs/quickstart/QUICK_START.md)
+- [KalamDB API Reference](../../docs/api/api-reference.md)
+- [SQL Syntax Guide](../../docs/reference/sql.md)
+- [WebSocket Protocol](../../docs/api/websocket-protocol.md)
+- [Quick Start Guide](../../docs/getting-started/quick-start.md)

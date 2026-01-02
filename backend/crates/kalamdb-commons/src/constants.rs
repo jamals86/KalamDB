@@ -118,6 +118,13 @@ pub const SYSTEM_NAMESPACE: &str = "system";
 /// Default namespace name for user tables when not specified.
 pub const DEFAULT_NAMESPACE: &str = "default";
 
+/// Maximum SQL query length in bytes (1MB)
+///
+/// Prevents DoS attacks via extremely long SQL strings that could
+/// cause excessive memory usage or parsing time.
+/// Most legitimate queries are under 10KB.
+pub const MAX_SQL_QUERY_LENGTH: usize = 1024 * 1024; // 1MB
+
 /// Authentication-related constants.
 pub struct AuthConstants;
 
@@ -132,6 +139,40 @@ impl AuthConstants {
 
 /// Global instance of authentication constants.
 pub const AUTH: AuthConstants = AuthConstants;
+
+/// Anonymous user ID constant (matches ExecutionContext::anonymous())
+pub const ANONYMOUS_USER_ID: &str = "anonymous";
+
+/// Reserved namespace names that cannot be used by users.
+///
+/// These names are reserved for system use and will be rejected during
+/// namespace creation. The check is case-insensitive.
+///
+/// ## Reserved Names
+/// - `system`: System tables namespace
+/// - `sys`: Common system alias
+/// - `root`: Root/admin namespace
+/// - `kalamdb`/`kalam`: KalamDB internal namespaces
+/// - `main`/`default`: Default namespace aliases
+/// - `sql`/`admin`/`internal`: Reserved for system operations
+/// - `information_schema`: SQL standard metadata schema
+/// - `pg_catalog`: PostgreSQL compatibility
+/// - `datafusion`: DataFusion internal catalog
+pub const RESERVED_NAMESPACE_NAMES: &[&str] = &[
+    "system",
+    "sys",
+    "root",
+    "kalamdb",
+    "kalam",
+    "main",
+    "default",
+    "sql",
+    "admin",
+    "internal",
+    "information_schema",
+    "pg_catalog",
+    "datafusion",
+];
 
 /// System schema versioning constants.
 ///

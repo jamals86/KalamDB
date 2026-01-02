@@ -1,6 +1,7 @@
 use super::initial_data::InitialDataResult;
 use datafusion::scalar::ScalarValue;
 use kalamdb_commons::models::{LiveQueryId, Row};
+use kalamdb_commons::schemas::SchemaField;
 use std::collections::BTreeMap;
 
 /// Change notification for live query subscribers
@@ -110,6 +111,10 @@ pub struct SubscriptionResult {
 
     /// Initial data returned with the subscription (if requested)
     pub initial_data: Option<InitialDataResult>,
+
+    /// Schema describing the columns in the subscription result
+    /// Contains column name, data type, and index for each field
+    pub schema: Vec<SchemaField>,
 }
 
 /// Type of change that occurred

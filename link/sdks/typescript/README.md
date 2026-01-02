@@ -1,38 +1,55 @@
-# kalam-link
+#+#+#+#+
 
-Rust client library for KalamDB with WebAssembly support and multi-language SDKs.
+# kalam-link (TypeScript SDK)
 
-## Project Structure
+This folder (`link/sdks/typescript`) is the npm-publishable **TypeScript/JavaScript SDK** for KalamDB.
 
+It is built from the Rust crate at `link/` (crate name: `kalam-link`) using `wasm-pack`.
+
+## Build From Source (This Repo)
+
+### Prerequisites
+
+- Rust toolchain
+- Node.js `>=18`
+- `wasm-pack` (Rust → WASM build tool)
+
+Install wasm-pack:
+
+```bash
+cargo install wasm-pack
 ```
-link/
-├── src/                      # Rust source code
-│   ├── lib.rs               # Library entry point
-│   ├── wasm.rs              # WASM bindings
-│   ├── client.rs            # Native Rust client (used by CLI)
-│   ├── models.rs            # Data models
-│   └── ...
-├── tests/                    # Rust crate tests
-├── Cargo.toml               # Rust package configuration
-├── README.md                # This file
-└── sdks/                    # Multi-language SDK directory
-    └── typescript/          # TypeScript/JavaScript SDK (npm-publishable)
-        ├── package.json     # npm package: @kalamdb/client
-        ├── build.sh         # Compiles Rust → WASM
-        ├── README.md        # Complete SDK documentation
-        ├── tests/           # 14 passing tests
-        ├── .gitignore       # Excludes node_modules
-        ├── kalam_link.js    # WASM bindings (37 KB)
-        ├── kalam_link.d.ts  # TypeScript definitions
-        └── kalam_link_bg.wasm  # Compiled WASM module
+
+### Build
+
+From the repo root:
+
+```bash
+cd link/sdks/typescript
+npm install
+npm run build
 ```
+
+This will:
+
+1. Compile the Rust crate (`link/`) to WASM via `wasm-pack`
+2. Copy generated WASM artifacts into `dist/wasm/`
+3. Compile TypeScript into `dist/`
+
+### Output
+
+After a successful build:
+
+- `dist/index.js` / `dist/index.d.ts`
+- `dist/wasm/kalam_link.js` / `dist/wasm/kalam_link.d.ts`
+- `dist/wasm/kalam_link_bg.wasm`
 
 ## SDK Architecture Principles
 
 **SDKs as First-Class Packages**:
 - Each language SDK in `sdks/{language}/` is a complete, publishable package
 - SDKs include: build system, tests, docs, package config, .gitignore
-- Examples import SDKs as local dependencies (e.g., `"@kalamdb/client": "file:../../link/sdks/typescript"`)
+- Examples import SDKs as local dependencies (e.g., `"kalam-link": "file:../../link/sdks/typescript"`)
 - **Examples MUST NOT implement their own clients** - all functionality comes from SDKs
 - If examples need features, add them to the SDK for all users
 
@@ -50,68 +67,36 @@ See [SDK Integration Guide](../specs/006-docker-wasm-examples/SDK_INTEGRATION.md
 - 🔐 **HTTP Basic Auth & JWT**: Secure authentication for all API requests
 - 🔄 **Real-time subscriptions**: Subscribe to table changes with WebSocket support
 - 📊 **SQL queries**: Execute SQL queries and get results
-- 🌐 **Cross-platform**: Works in native Rust applications, browsers, and Node.js
+- 🌐 **Cross-platform**: Browser-first WASM SDK (Node.js usage depends on your WASM + fetch environment)
 - 🌍 **Multi-language SDKs**: Official SDKs for different languages
 
 ## Installation
 
-### Native Rust Usage
+## Running Locally (Quick Sanity Check)
 
-Add to your `Cargo.toml`:
+1. Start the server (separate terminal):
 
-```toml
-[dependencies]
-kalam-link = { path = "../link" }
+```bash
+cd backend
+cargo run
 ```
 
-### TypeScript/JavaScript SDK
+2. Build the SDK:
 
-The TypeScript SDK is a complete, npm-publishable package at `sdks/typescript/`:
-
-**Installation** (as local dependency in examples):
-```json
-{
-  "dependencies": {
-    "@kalamdb/client": "file:../../link/sdks/typescript"
-  }
-}
-```
-
-**Building the SDK**:
 ```bash
 cd link/sdks/typescript
-./build.sh  # Compiles Rust → WASM using wasm-pack
+npm run build
 ```
 
-**Testing**:
+3. Serve the folder and open the browser test page:
+
 ```bash
-npm test      # Run basic tests
-npm run test:all  # Run full test suite (14 tests)
+npx http-server -p 3000
 ```
 
-**Usage**:
-```typescript
-import init, { KalamClient } from '@kalamdb/client';
+Open `http://localhost:3000/tests/browser-test.html`.
 
-// Initialize WASM
-await init();
-
-// Create client with username and password
-const client = new KalamClient(
-  'http://localhost:8080',
-  'username',
-  'password'
-);
-
-// Connect and query
-await client.connect();
-const result = await client.query('SELECT * FROM todos');
-console.log(JSON.parse(result));
-```
-
-**Complete Documentation**: See [sdks/typescript/README.md](sdks/typescript/README.md) for full API reference, examples, and troubleshooting.
-
-## Usage
+For a step-by-step guide to build and run the example app, see `example/README.md`.
 
 ### Native Rust
 

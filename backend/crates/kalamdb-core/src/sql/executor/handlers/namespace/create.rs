@@ -9,6 +9,7 @@
 use crate::app_context::AppContext;
 use crate::error::KalamDbError;
 use crate::sql::executor::handlers::typed::TypedStatementHandler;
+use crate::sql::executor::helpers::guards::require_admin;
 use crate::sql::executor::models::{ExecutionContext, ExecutionResult, ScalarValue};
 use datafusion::catalog::MemorySchemaProvider;
 use kalamdb_commons::models::NamespaceId;
@@ -124,14 +125,12 @@ impl TypedStatementHandler<CreateNamespaceStatement> for CreateNamespaceHandler 
         _statement: &CreateNamespaceStatement,
         context: &ExecutionContext,
     ) -> Result<(), KalamDbError> {
-        // Only DBA and System roles can create namespaces
-        if !context.is_admin() {
-            return Err(KalamDbError::Unauthorized(
-                "Insufficient privileges to create namespaces. DBA or System role required."
-                    .to_string(),
-            ));
-        }
-        Ok(())
+        use crate::sql::executor::helpers::guards::block_anonymous_write;
+        
+        // T050: Block anonymous users from DDL operations
+        block_anonymous_write(context, "CREATE NAMESPACE")?;
+        
+        require_admin(context, "create namespace")
     }
 }
 

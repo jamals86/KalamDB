@@ -37,6 +37,7 @@ pub struct TableCache {
 
 impl TableCache {
     /// Create a new table cache with specified maximum size
+    #[inline]
     pub fn new(max_size: usize) -> Self {
         Self {
             cache: DashMap::new(),
@@ -48,6 +49,7 @@ impl TableCache {
     }
 
     /// Get current Unix timestamp in milliseconds
+    #[inline]
     fn current_timestamp() -> u64 {
         use std::time::{SystemTime, UNIX_EPOCH};
         SystemTime::now()
@@ -57,6 +59,7 @@ impl TableCache {
     }
 
     /// Get cached table data by TableId
+    #[inline]
     pub fn get(&self, table_id: &TableId) -> Option<Arc<CachedTableData>> {
         if let Some(entry) = self.cache.get(table_id) {
             self.hits.fetch_add(1, Ordering::Relaxed);

@@ -17,16 +17,19 @@ pub struct NodeId(String);
 
 impl NodeId {
     /// Create a new node ID
+    #[inline]
     pub fn new(id: String) -> Self {
         Self(id)
     }
 
     /// Get the node ID as a string slice
+    #[inline]
     pub fn as_str(&self) -> &str {
         &self.0
     }
 
     /// Create default node ID ("node1")
+    #[inline]
     pub fn default_node() -> Self {
         Self("node1".to_string())
     }

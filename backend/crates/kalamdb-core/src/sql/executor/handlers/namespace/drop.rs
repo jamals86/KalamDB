@@ -6,6 +6,7 @@
 use crate::app_context::AppContext;
 use crate::error::KalamDbError;
 use crate::sql::executor::handlers::typed::TypedStatementHandler;
+use crate::sql::executor::helpers::guards::require_admin;
 use crate::sql::executor::models::{ExecutionContext, ExecutionResult, ScalarValue};
 use kalamdb_commons::models::{NamespaceId, TableId};
 use kalamdb_sql::ddl::DropNamespaceStatement;
@@ -84,12 +85,11 @@ impl TypedStatementHandler<DropNamespaceStatement> for DropNamespaceHandler {
                     
                     // Log table drop as part of cascade
                     use crate::sql::executor::helpers::audit;
-                    let table_ref = format!("{}.{}", namespace_id.as_str(), table.table_name.as_str());
                     let audit_entry = audit::log_ddl_operation(
                         context,
                         "DROP",
                         "TABLE",
-                        &table_ref,
+                        &table_id.full_name(),
                         Some("CASCADE from DROP NAMESPACE".to_string()),
                         None,
                     );
@@ -131,14 +131,12 @@ impl TypedStatementHandler<DropNamespaceStatement> for DropNamespaceHandler {
         _statement: &DropNamespaceStatement,
         context: &ExecutionContext,
     ) -> Result<(), KalamDbError> {
-        // Only DBA/System roles can drop namespaces
-        if !context.is_admin() {
-            return Err(KalamDbError::Unauthorized(
-                "Insufficient privileges to drop namespaces. DBA or System role required."
-                    .to_string(),
-            ));
-        }
-        Ok(())
+        use crate::sql::executor::helpers::guards::block_anonymous_write;
+        
+        // T050: Block anonymous users from DDL operations
+        block_anonymous_write(context, "DROP NAMESPACE")?;
+        
+        require_admin(context, "drop namespace")
     }
 }
 
