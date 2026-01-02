@@ -33,3 +33,9 @@ ENV LIBCLANG_PATH=/usr/lib/llvm-16/lib
 ENV LLVM_CONFIG_PATH=/usr/bin/llvm-config-16
 ENV CLANG_PATH=/usr/bin/clang-16
 ENV LIBCLANG_STATIC=0
+
+# Static linking for libstdc++ and libgcc to avoid DLL dependencies on Windows
+# This ensures the binary runs on any Windows machine without needing MinGW installed
+# -static-libgcc: statically link libgcc
+# -static-libstdc++: statically link libstdc++
+ENV RUSTFLAGS="-C link-args=-static-libgcc -C link-args=-static-libstdc++"

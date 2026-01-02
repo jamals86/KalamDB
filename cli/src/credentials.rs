@@ -110,17 +110,58 @@ impl FileCredentialStore {
         }
 
         let contents = fs::read_to_string(&self.file_path).map_err(|e| {
-            kalam_link::KalamLinkError::ConfigurationError(format!(
-                "Failed to read credentials file: {}",
-                e
-            ))
+            let msg = format!(
+                "\n╭─ Cannot Read Credentials File\n\
+                 │\n\
+                 │  📁 Location: {}\n\
+                 │  ⚠️  Problem: {}\n\
+                 │\n\
+                 ╰─ How to Fix:\n\
+                 \n\
+                    Option 1: Check file permissions\n\
+                    Option 2: Delete and re-authenticate\n\
+                    ───────────────────────────────────\n\
+                    del \"{}\"\n\
+                    kalamcli connect\n",
+                self.file_path.display(),
+                e,
+                self.file_path.display()
+            );
+            kalam_link::KalamLinkError::ConfigurationError(msg)
         })?;
 
         let file: CredentialsFile = toml::from_str(&contents).map_err(|e| {
-            kalam_link::KalamLinkError::ConfigurationError(format!(
-                "Failed to parse credentials file: {}",
-                e
-            ))
+            // Extract just the core error message without all the TOML parser details
+            let error_msg = e.to_string();
+            let simple_error = if error_msg.contains("missing field") {
+                error_msg.lines()
+                    .find(|line| line.contains("missing field"))
+                    .unwrap_or("Invalid format")
+                    .trim()
+            } else {
+                "Invalid TOML format"
+            };
+            
+            let msg = format!(
+                "\n╭─ Corrupted Credentials File\n\
+                 │\n\
+                 │  📁 Location: {}\n\
+                 │  ⚠️  Problem: {}\n\
+                 │\n\
+                 ╰─ How to Fix:\n\
+                 \n\
+                    Step 1: Delete the corrupted file\n\
+                    ───────────────────────────────\n\
+                    del \"{}\"\n\
+                 \n\
+                    Step 2: Re-authenticate\n\
+                    ───────────────────────\n\
+                    kalamcli connect\n",
+                self.file_path.display(),
+                simple_error,
+                self.file_path.display()
+            );
+            kalam_link::KalamLinkError::ConfigurationError(msg)
         })?;
 
         self.cache = file.instances;
@@ -144,7 +185,8 @@ impl FileCredentialStore {
         if let Some(parent) = self.file_path.parent() {
             fs::create_dir_all(parent).map_err(|e| {
                 kalam_link::KalamLinkError::ConfigurationError(format!(
-                    "Failed to create credentials directory: {}",
+                    "Failed to create credentials directory '{}': {}",
+                    parent.display(),
                     e
                 ))
             })?;
@@ -153,7 +195,8 @@ impl FileCredentialStore {
         // Write file with secure permissions
         fs::write(&self.file_path, contents).map_err(|e| {
             kalam_link::KalamLinkError::ConfigurationError(format!(
-                "Failed to write credentials file: {}",
+                "Failed to write credentials file at '{}': {}",
+                self.file_path.display(),
                 e
             ))
         })?;
@@ -165,7 +208,8 @@ impl FileCredentialStore {
             let permissions = fs::Permissions::from_mode(0o600);
             fs::set_permissions(&self.file_path, permissions).map_err(|e| {
                 kalam_link::KalamLinkError::ConfigurationError(format!(
-                    "Failed to set file permissions: {}",
+                    "Failed to set file permissions for '{}': {}",
+                    self.file_path.display(),
                     e
                 ))
             })?;
