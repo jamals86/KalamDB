@@ -68,6 +68,7 @@ async fn create_test_manager() -> (Arc<ConnectionsManager>, LiveQueryManager, Te
         TableType::User,
         vec![
             ColumnDefinition::new(
+                1,
                 "id",
                 1,
                 KalamDataType::Int,
@@ -78,6 +79,7 @@ async fn create_test_manager() -> (Arc<ConnectionsManager>, LiveQueryManager, Te
                 None,
             ),
             ColumnDefinition::new(
+                2,
                 "user_id",
                 2,
                 KalamDataType::Text,
@@ -106,6 +108,7 @@ async fn create_test_manager() -> (Arc<ConnectionsManager>, LiveQueryManager, Te
         TableType::User,
         vec![
             ColumnDefinition::new(
+                1,
                 "id",
                 1,
                 KalamDataType::Int,
@@ -116,6 +119,7 @@ async fn create_test_manager() -> (Arc<ConnectionsManager>, LiveQueryManager, Te
                 None,
             ),
             ColumnDefinition::new(
+                2,
                 "user_id",
                 2,
                 KalamDataType::Text,

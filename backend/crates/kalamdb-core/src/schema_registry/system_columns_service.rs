@@ -144,7 +144,9 @@ impl SystemColumnsService {
         // Add _seq column (BIGINT, NOT NULL)
         // Note: _seq is NOT a primary key - user must define their own PK
         // _seq contains embedded timestamp (Snowflake ID format)
+        let seq_column_id = table_def.next_column_id;
         table_def.columns.push(ColumnDefinition {
+            column_id: seq_column_id,
             column_name: SystemColumnNames::SEQ.to_string(),
             ordinal_position: next_ordinal,
             data_type: kalamdb_commons::models::datatypes::KalamDataType::BigInt,
@@ -157,9 +159,12 @@ impl SystemColumnsService {
                     .to_string(),
             ),
         });
+        table_def.next_column_id += 1;
 
         // Add _deleted column (BOOLEAN, NOT NULL, DEFAULT FALSE)
+        let deleted_column_id = table_def.next_column_id;
         table_def.columns.push(ColumnDefinition {
+            column_id: deleted_column_id,
             column_name: SystemColumnNames::DELETED.to_string(),
             ordinal_position: next_ordinal + 1,
             data_type: kalamdb_commons::models::datatypes::KalamDataType::Boolean,
@@ -169,6 +174,7 @@ impl SystemColumnsService {
             default_value: ColumnDefault::Literal(serde_json::json!(false)),
             column_comment: Some("Soft delete flag (true = deleted, false = active)".to_string()),
         });
+        table_def.next_column_id += 1;
 
         Ok(())
     }

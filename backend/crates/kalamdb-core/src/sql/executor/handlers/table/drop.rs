@@ -294,7 +294,8 @@ impl DropTableHandler {
             .unwrap_or_else(StorageId::local);
 
         let relative_template = if cached.storage_path_template.is_empty() {
-            registry.resolve_storage_path_template(table_id, table_type, &storage_id)?
+            use crate::schema_registry::PathResolver;
+            PathResolver::resolve_storage_path_template(table_id, table_type, &storage_id)?
         } else {
             cached.storage_path_template.clone()
         };

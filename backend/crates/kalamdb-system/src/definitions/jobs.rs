@@ -17,6 +17,7 @@ use kalamdb_commons::{NamespaceId, TableName};
 pub fn jobs_table_definition() -> TableDefinition {
     let columns = vec![
         ColumnDefinition::new(
+            1,
             "job_id",
             1,
             KalamDataType::Text,
@@ -27,6 +28,7 @@ pub fn jobs_table_definition() -> TableDefinition {
             Some("Job identifier (UUID)".to_string()),
         ),
         ColumnDefinition::new(
+            2,
             "job_type",
             2,
             KalamDataType::Text,
@@ -37,6 +39,7 @@ pub fn jobs_table_definition() -> TableDefinition {
             Some("Job type: flush, retention, cleanup, etc.".to_string()),
         ),
         ColumnDefinition::new(
+            3,
             "namespace_id",
             3,
             KalamDataType::Text,
@@ -47,6 +50,7 @@ pub fn jobs_table_definition() -> TableDefinition {
             Some("Namespace ID".to_string()),
         ),
         ColumnDefinition::new(
+            4,
             "table_name",
             4,
             KalamDataType::Text,
@@ -57,6 +61,7 @@ pub fn jobs_table_definition() -> TableDefinition {
             Some("Table name (optional)".to_string()),
         ),
         ColumnDefinition::new(
+            5,
             "status",
             5,
             KalamDataType::Text,
@@ -67,6 +72,7 @@ pub fn jobs_table_definition() -> TableDefinition {
             Some("Job status: pending, running, completed, failed, cancelled".to_string()),
         ),
         ColumnDefinition::new(
+            6,
             "parameters",
             6,
             KalamDataType::Text,
@@ -77,6 +83,7 @@ pub fn jobs_table_definition() -> TableDefinition {
             Some("Job parameters (JSON)".to_string()),
         ),
         ColumnDefinition::new(
+            7,
             "result",
             7,
             KalamDataType::Text,
@@ -87,6 +94,7 @@ pub fn jobs_table_definition() -> TableDefinition {
             Some("Job result".to_string()),
         ),
         ColumnDefinition::new(
+            8,
             "trace",
             8,
             KalamDataType::Text,
@@ -97,6 +105,7 @@ pub fn jobs_table_definition() -> TableDefinition {
             Some("Job trace information".to_string()),
         ),
         ColumnDefinition::new(
+            9,
             "memory_used",
             9,
             KalamDataType::BigInt,
@@ -107,6 +116,7 @@ pub fn jobs_table_definition() -> TableDefinition {
             Some("Memory used in bytes".to_string()),
         ),
         ColumnDefinition::new(
+            10,
             "cpu_used",
             10,
             KalamDataType::BigInt,
@@ -117,6 +127,7 @@ pub fn jobs_table_definition() -> TableDefinition {
             Some("CPU time used in microseconds".to_string()),
         ),
         ColumnDefinition::new(
+            11,
             "created_at",
             11,
             KalamDataType::Timestamp,
@@ -127,6 +138,7 @@ pub fn jobs_table_definition() -> TableDefinition {
             Some("Job creation timestamp".to_string()),
         ),
         ColumnDefinition::new(
+            12,
             "started_at",
             12,
             KalamDataType::Timestamp,
@@ -137,6 +149,7 @@ pub fn jobs_table_definition() -> TableDefinition {
             Some("Job start timestamp".to_string()),
         ),
         ColumnDefinition::new(
+            13,
             "completed_at",
             13,
             KalamDataType::Timestamp,
@@ -147,6 +160,7 @@ pub fn jobs_table_definition() -> TableDefinition {
             Some("Job completion timestamp".to_string()),
         ),
         ColumnDefinition::new(
+            14,
             "node_id",
             14,
             KalamDataType::Text,
@@ -157,6 +171,7 @@ pub fn jobs_table_definition() -> TableDefinition {
             Some("Node ID executing the job".to_string()),
         ),
         ColumnDefinition::new(
+            15,
             "error_message",
             15,
             KalamDataType::Text,

@@ -79,6 +79,7 @@ pub fn save_table_definition(
                 .unwrap_or(ColumnDefault::None);
 
             Ok(ColumnDefinition::new(
+                (idx + 1) as u64,    // column_id is 1-indexed
                 field.name().clone(),
                 (idx + 1) as u32, // ordinal_position is 1-indexed
                 kalam_type,

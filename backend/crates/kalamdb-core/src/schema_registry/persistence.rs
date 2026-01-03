@@ -164,32 +164,4 @@ impl SchemaPersistence {
             None => Ok(None),
         }
     }
-
-    /// Get Arrow schema for a table (Phase 10: Arrow Schema Memoization)
-    pub fn get_arrow_schema(
-        cache: &TableCache,
-        table_id: &TableId,
-    ) -> Result<(Arc<arrow::datatypes::Schema>, Option<TableId>), KalamDbError> {
-        // Fast path: check cache
-        if let Some(cached) = cache.get(table_id) {
-            return Ok((cached.arrow_schema()?, None));
-        }
-
-        // Slow path: try to load from persistence (lazy loading)
-        // get_table_definition now properly initializes storage config in cache
-        if Self::get_table_definition(cache, table_id)?.is_some() {
-            log::debug!("Lazy loading table definition for {}", table_id);
-
-            // Cache is now populated with fully initialized entry - retrieve it
-            if let Some(cached) = cache.get(table_id) {
-                let evicted = None; // Already inserted in get_table_definition
-                return Ok((cached.arrow_schema()?, evicted));
-            }
-        }
-
-        Err(KalamDbError::TableNotFound(format!(
-            "Table not found: {}",
-            table_id
-        )))
-    }
 }

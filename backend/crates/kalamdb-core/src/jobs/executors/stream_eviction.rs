@@ -433,6 +433,7 @@ mod tests {
             TableType::Stream,
             vec![
                 ColumnDefinition::new(
+                    1,
                     "event_id".to_string(),
                     1,
                     KalamDataType::Text,
@@ -443,6 +444,7 @@ mod tests {
                     None,
                 ),
                 ColumnDefinition::new(
+                    2,
                     "payload".to_string(),
                     2,
                     KalamDataType::Text,

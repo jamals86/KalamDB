@@ -140,7 +140,9 @@ impl TypedStatementHandler<AlterTableStatement> for AlterTableHandler {
                     .map(|v| ColumnDefault::literal(serde_json::Value::String(v)))
                     .unwrap_or(ColumnDefault::None);
                 let ordinal = (table_def.columns.len() + 1) as u32;
+                let column_id = table_def.next_column_id;
                 table_def.columns.push(ColumnDefinition::new(
+                    column_id,
                     column_name.clone(),
                     ordinal,
                     kalam_type,
@@ -150,6 +152,7 @@ impl TypedStatementHandler<AlterTableStatement> for AlterTableHandler {
                     default,
                     None,
                 ));
+                table_def.next_column_id += 1;
                 change_desc_opt = Some(format!("ADD COLUMN {} {}", column_name, data_type));
                 log::debug!(
                     "✓ Added column {} (type: {}, nullable: {})",

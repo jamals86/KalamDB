@@ -21,6 +21,7 @@ use kalamdb_commons::{NamespaceId, TableName};
 pub fn manifest_table_definition() -> TableDefinition {
     let columns = vec![
         ColumnDefinition::new(
+            1,
             "cache_key",
             1,
             KalamDataType::Text,
@@ -31,6 +32,7 @@ pub fn manifest_table_definition() -> TableDefinition {
             Some("Cache key identifier (format: namespace:table:scope)".to_string()),
         ),
         ColumnDefinition::new(
+            2,
             "namespace_id",
             2,
             KalamDataType::Text,
@@ -41,6 +43,7 @@ pub fn manifest_table_definition() -> TableDefinition {
             Some("Namespace containing the table".to_string()),
         ),
         ColumnDefinition::new(
+            3,
             "table_name",
             3,
             KalamDataType::Text,
@@ -51,6 +54,7 @@ pub fn manifest_table_definition() -> TableDefinition {
             Some("Table name".to_string()),
         ),
         ColumnDefinition::new(
+            4,
             "scope",
             4,
             KalamDataType::Text,
@@ -61,6 +65,7 @@ pub fn manifest_table_definition() -> TableDefinition {
             Some("Scope: user_id for USER tables, 'shared' for SHARED tables".to_string()),
         ),
         ColumnDefinition::new(
+            5,
             "etag",
             5,
             KalamDataType::Text,
@@ -71,6 +76,7 @@ pub fn manifest_table_definition() -> TableDefinition {
             Some("Storage ETag or version identifier".to_string()),
         ),
         ColumnDefinition::new(
+            6,
             "last_refreshed",
             6,
             KalamDataType::Timestamp,
@@ -81,6 +87,7 @@ pub fn manifest_table_definition() -> TableDefinition {
             Some("Last successful cache refresh timestamp".to_string()),
         ),
         ColumnDefinition::new(
+            7,
             "last_accessed",
             7,
             KalamDataType::Timestamp,
@@ -91,6 +98,7 @@ pub fn manifest_table_definition() -> TableDefinition {
             Some("Last access timestamp (in-memory tracking)".to_string()),
         ),
         ColumnDefinition::new(
+            8,
             "in_memory",
             8,
             KalamDataType::Boolean,
@@ -101,6 +109,7 @@ pub fn manifest_table_definition() -> TableDefinition {
             Some("True if manifest is currently in hot cache (RAM)".to_string()),
         ),
         ColumnDefinition::new(
+            9,
             "source_path",
             9,
             KalamDataType::Text,
@@ -111,6 +120,7 @@ pub fn manifest_table_definition() -> TableDefinition {
             Some("Full path to manifest.json in storage".to_string()),
         ),
         ColumnDefinition::new(
+            10,
             "sync_state",
             10,
             KalamDataType::Text,
@@ -121,6 +131,7 @@ pub fn manifest_table_definition() -> TableDefinition {
             Some("Synchronization state: in_sync, stale, error".to_string()),
         ),
         ColumnDefinition::new(
+            11,
             "manifest_json",
             11,
             KalamDataType::Text,

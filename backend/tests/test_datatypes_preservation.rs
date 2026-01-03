@@ -43,23 +43,24 @@ async fn test_datatypes_preservation_values() {
     let table_id = TableId::new(ns.clone(), tbl_name.clone());
 
     let columns = vec![
-        ColumnDefinition::primary_key("id", 1, KalamDataType::BigInt),
-        ColumnDefinition::simple("b", 2, KalamDataType::Boolean),
-        ColumnDefinition::simple("i", 3, KalamDataType::Int),
-        ColumnDefinition::simple("bi", 4, KalamDataType::BigInt),
-        ColumnDefinition::simple("d", 5, KalamDataType::Double),
-        ColumnDefinition::simple("f", 6, KalamDataType::Float),
-        ColumnDefinition::simple("s", 7, KalamDataType::Text),
-        ColumnDefinition::simple("ts", 8, KalamDataType::Timestamp),
-        ColumnDefinition::simple("date", 9, KalamDataType::Date),
-        ColumnDefinition::simple("dt", 10, KalamDataType::DateTime), // DateTime with UTC timezone
-        ColumnDefinition::simple("time", 11, KalamDataType::Time),
-        ColumnDefinition::simple("json", 12, KalamDataType::Json),
-        ColumnDefinition::simple("bytes", 13, KalamDataType::Bytes),
-        ColumnDefinition::simple("emb", 14, KalamDataType::Embedding(4)),
+        ColumnDefinition::primary_key(1, "id", 1, KalamDataType::BigInt),
+        ColumnDefinition::simple(2, "b", 2, KalamDataType::Boolean),
+        ColumnDefinition::simple(3, "i", 3, KalamDataType::Int),
+        ColumnDefinition::simple(4, "bi", 4, KalamDataType::BigInt),
+        ColumnDefinition::simple(5, "d", 5, KalamDataType::Double),
+        ColumnDefinition::simple(6, "f", 6, KalamDataType::Float),
+        ColumnDefinition::simple(7, "s", 7, KalamDataType::Text),
+        ColumnDefinition::simple(8, "ts", 8, KalamDataType::Timestamp),
+        ColumnDefinition::simple(9, "date", 9, KalamDataType::Date),
+        ColumnDefinition::simple(10, "dt", 10, KalamDataType::DateTime), // DateTime with UTC timezone
+        ColumnDefinition::simple(11, "time", 11, KalamDataType::Time),
+        ColumnDefinition::simple(12, "json", 12, KalamDataType::Json),
+        ColumnDefinition::simple(13, "bytes", 13, KalamDataType::Bytes),
+        ColumnDefinition::simple(14, "emb", 14, KalamDataType::Embedding(4)),
         // P0 datatypes (UUID, DECIMAL, SMALLINT)
-        ColumnDefinition::simple("uuid_val", 15, KalamDataType::Uuid),
+        ColumnDefinition::simple(15, "uuid_val", 15, KalamDataType::Uuid),
         ColumnDefinition::simple(
+            16,
             "decimal_val",
             16,
             KalamDataType::Decimal {
@@ -67,10 +68,10 @@ async fn test_datatypes_preservation_values() {
                 scale: 2,
             },
         ),
-        ColumnDefinition::simple("smallint_val", 17, KalamDataType::SmallInt),
+        ColumnDefinition::simple(17, "smallint_val", 17, KalamDataType::SmallInt),
         // System columns typically exist; include them explicitly for the flush path
-        ColumnDefinition::simple("_seq", 18, KalamDataType::BigInt),
-        ColumnDefinition::simple("_deleted", 19, KalamDataType::Boolean),
+        ColumnDefinition::simple(18, "_seq", 18, KalamDataType::BigInt),
+        ColumnDefinition::simple(19, "_deleted", 19, KalamDataType::Boolean),
     ];
 
     let table_def = TableDefinition::new_with_defaults(

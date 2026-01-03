@@ -25,6 +25,7 @@ use kalamdb_commons::{NamespaceId, TableName};
 pub fn live_queries_table_definition() -> TableDefinition {
     let columns = vec![
         ColumnDefinition::new(
+            1,
             "live_id",
             1,
             KalamDataType::Text,
@@ -38,6 +39,7 @@ pub fn live_queries_table_definition() -> TableDefinition {
             ),
         ),
         ColumnDefinition::new(
+            2,
             "connection_id",
             2,
             KalamDataType::Text,
@@ -48,6 +50,7 @@ pub fn live_queries_table_definition() -> TableDefinition {
             Some("WebSocket connection identifier".to_string()),
         ),
         ColumnDefinition::new(
+            3,
             "subscription_id",
             3,
             KalamDataType::Text,
@@ -58,6 +61,7 @@ pub fn live_queries_table_definition() -> TableDefinition {
             Some("Client-provided subscription identifier".to_string()),
         ),
         ColumnDefinition::new(
+            4,
             "namespace_id",
             4,
             KalamDataType::Text,
@@ -68,6 +72,7 @@ pub fn live_queries_table_definition() -> TableDefinition {
             Some("Namespace containing the table".to_string()),
         ),
         ColumnDefinition::new(
+            5,
             "table_name",
             5,
             KalamDataType::Text,
@@ -78,6 +83,7 @@ pub fn live_queries_table_definition() -> TableDefinition {
             Some("Table being queried".to_string()),
         ),
         ColumnDefinition::new(
+            6,
             "user_id",
             6,
             KalamDataType::Text,
@@ -88,6 +94,7 @@ pub fn live_queries_table_definition() -> TableDefinition {
             Some("User who created the live query".to_string()),
         ),
         ColumnDefinition::new(
+            7,
             "query",
             7,
             KalamDataType::Text,
@@ -98,6 +105,7 @@ pub fn live_queries_table_definition() -> TableDefinition {
             Some("SQL query for real-time subscription".to_string()),
         ),
         ColumnDefinition::new(
+            8,
             "options",
             8,
             KalamDataType::Text,
@@ -108,6 +116,7 @@ pub fn live_queries_table_definition() -> TableDefinition {
             Some("Query options (JSON)".to_string()),
         ),
         ColumnDefinition::new(
+            9,
             "status",
             9,
             KalamDataType::Text,
@@ -118,6 +127,7 @@ pub fn live_queries_table_definition() -> TableDefinition {
             Some("Current status (active, paused, etc.)".to_string()),
         ),
         ColumnDefinition::new(
+            10,
             "created_at",
             10,
             KalamDataType::Timestamp,
@@ -128,6 +138,7 @@ pub fn live_queries_table_definition() -> TableDefinition {
             Some("Live query creation timestamp".to_string()),
         ),
         ColumnDefinition::new(
+            11,
             "last_update",
             11,
             KalamDataType::Timestamp,
@@ -138,6 +149,7 @@ pub fn live_queries_table_definition() -> TableDefinition {
             Some("Last update sent to client".to_string()),
         ),
         ColumnDefinition::new(
+            12,
             "changes",
             12,
             KalamDataType::BigInt,
@@ -148,6 +160,7 @@ pub fn live_queries_table_definition() -> TableDefinition {
             Some("Number of changes pushed to client".to_string()),
         ),
         ColumnDefinition::new(
+            13,
             "node",
             13,
             KalamDataType::Text,

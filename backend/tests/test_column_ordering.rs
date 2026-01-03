@@ -20,10 +20,10 @@ async fn test_select_star_returns_columns_in_ordinal_order() {
     let table_id = TableId::new(test_namespace.clone(), table_name.clone());
 
     let columns_out_of_order = vec![
-        ColumnDefinition::simple("email", 3, KalamDataType::Text),
-        ColumnDefinition::primary_key("id", 1, KalamDataType::BigInt),
-        ColumnDefinition::simple("name", 2, KalamDataType::Text),
-        ColumnDefinition::simple("created_at", 4, KalamDataType::Timestamp),
+        ColumnDefinition::simple(3, "email", 3, KalamDataType::Text),
+        ColumnDefinition::primary_key(1, "id", 1, KalamDataType::BigInt),
+        ColumnDefinition::simple(2, "name", 2, KalamDataType::Text),
+        ColumnDefinition::simple(4, "created_at", 4, KalamDataType::Timestamp),
     ];
 
     let table_def = TableDefinition::new_with_defaults(
@@ -92,8 +92,8 @@ async fn test_alter_table_add_column_assigns_next_ordinal() {
 
     // Create initial table with 2 columns
     let initial_columns = vec![
-        ColumnDefinition::primary_key("id", 1, KalamDataType::BigInt),
-        ColumnDefinition::simple("name", 2, KalamDataType::Text),
+        ColumnDefinition::primary_key(1, "id", 1, KalamDataType::BigInt),
+        ColumnDefinition::simple(2, "name", 2, KalamDataType::Text),
     ];
 
     let mut table_def = TableDefinition::new_with_defaults(
@@ -113,7 +113,7 @@ async fn test_alter_table_add_column_assigns_next_ordinal() {
         .expect("Failed to create table");
 
     // Simulate ALTER TABLE ADD COLUMN
-    let new_column = ColumnDefinition::simple("email", 3, KalamDataType::Text);
+    let new_column = ColumnDefinition::simple(3, "email", 3, KalamDataType::Text);
     table_def
         .add_column(new_column)
         .expect("Failed to add column");
@@ -154,10 +154,10 @@ async fn test_alter_table_drop_column_preserves_ordinals() {
 
     // Create table with 4 columns
     let initial_columns = vec![
-        ColumnDefinition::primary_key("id", 1, KalamDataType::BigInt),
-        ColumnDefinition::simple("name", 2, KalamDataType::Text),
-        ColumnDefinition::simple("email", 3, KalamDataType::Text),
-        ColumnDefinition::simple("created_at", 4, KalamDataType::Timestamp),
+        ColumnDefinition::primary_key(1, "id", 1, KalamDataType::BigInt),
+        ColumnDefinition::simple(2, "name", 2, KalamDataType::Text),
+        ColumnDefinition::simple(3, "email", 3, KalamDataType::Text),
+        ColumnDefinition::simple(4, "created_at", 4, KalamDataType::Timestamp),
     ];
 
     let mut table_def = TableDefinition::new_with_defaults(

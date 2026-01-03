@@ -98,6 +98,24 @@ impl SharedTableProvider {
         }
     }
 
+    /// Get the primary key column_id from the table definition
+    /// Returns 0 if the table definition cannot be found (shouldn't happen for existing providers)
+    fn get_pk_column_id(&self) -> u64 {
+        self.core
+            .app_context
+            .schema_registry()
+            .get_table_definition(self.core.table_id())
+            .ok()
+            .flatten()
+            .and_then(|def| {
+                def.columns
+                    .iter()
+                    .find(|c| c.is_primary_key)
+                    .map(|c| c.column_id)
+            })
+            .unwrap_or(0)
+    }
+
     /// Scan Parquet files from cold storage for shared table
     ///
     /// Lists all *.parquet files in the table's storage directory and merges them into a single RecordBatch.
@@ -217,12 +235,14 @@ impl BaseTableProvider<SharedTableRowId, SharedTableRow> for SharedTableProvider
         // Not found in hot storage - check cold storage using optimized manifest-based lookup
         // This uses column_stats to prune segments that can't contain the PK
         let pk_name = self.primary_key_field_name();
+        let pk_column_id = self.get_pk_column_id();
         let exists_in_cold = base::pk_exists_in_cold(
             &self.core,
             self.core.table_id(),
             self.core.table_type(),
             None, // No user scoping for shared tables
             pk_name,
+            pk_column_id,
             id_value,
         )?;
 
@@ -377,12 +397,14 @@ impl BaseTableProvider<SharedTableRowId, SharedTableRow> for SharedTableProvider
 
             // OPTIMIZED: Batch cold storage check - O(files) instead of O(files × N)
             // This reads Parquet files ONCE for all PK values instead of N times
+            let pk_column_id = self.get_pk_column_id();
             if let Some(found_pk) = base::pk_exists_batch_in_cold(
                 &self.core,
                 self.core.table_id(),
                 self.core.table_type(),
                 None, // No user scoping for shared tables
                 pk_name,
+                pk_column_id,
                 &pk_values_to_check,
             )? {
                 return Err(KalamDbError::AlreadyExists(format!(

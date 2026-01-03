@@ -384,6 +384,7 @@ mod tests {
 
         let columns = vec![
             ColumnDefinition::new(
+                1,
                 "id",
                 1,
                 KalamDataType::Uuid,
@@ -394,6 +395,7 @@ mod tests {
                 None,
             ),
             ColumnDefinition::new(
+                2,
                 "name",
                 2,
                 KalamDataType::Text,

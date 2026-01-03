@@ -31,6 +31,10 @@ pub struct SharedTableFlushJob {
     unified_cache: Arc<SchemaRegistry>,
     live_query_manager: Option<Arc<LiveQueryManager>>,
     manifest_helper: FlushManifestHelper,
+    /// Bloom filter columns (PRIMARY KEY + _seq) - fetched once per job for efficiency
+    bloom_filter_columns: Vec<String>,
+    /// Indexed columns with column_id for stats extraction (column_id, column_name)
+    indexed_columns: Vec<(u64, String)>,
 }
 
 impl SharedTableFlushJob {
@@ -43,6 +47,31 @@ impl SharedTableFlushJob {
         manifest_service: Arc<ManifestService>,
     ) -> Self {
         let manifest_helper = FlushManifestHelper::new(manifest_service);
+
+        // Get cached values from CachedTableData (computed once at cache entry creation)
+        // This avoids any recomputation - values are already cached in the schema registry
+        let (bloom_filter_columns, indexed_columns) = unified_cache
+            .get(&table_id)
+            .map(|cached| {
+                (
+                    cached.bloom_filter_columns().to_vec(),
+                    cached.indexed_columns().to_vec(),
+                )
+            })
+            .unwrap_or_else(|| {
+                log::warn!(
+                    "⚠️  Table {} not in cache. Using default Bloom filter columns (_seq only)",
+                    table_id
+                );
+                (vec![SystemColumnNames::SEQ.to_string()], vec![])
+            });
+
+        log::debug!(
+            "🌸 [SharedTableFlushJob] Bloom filter columns: {:?}, indexed columns: {} entries",
+            bloom_filter_columns,
+            indexed_columns.len()
+        );
+
         Self {
             store,
             table_id,
@@ -50,6 +79,8 @@ impl SharedTableFlushJob {
             unified_cache,
             live_query_manager: None,
             manifest_helper,
+            bloom_filter_columns,
+            indexed_columns,
         }
     }
 
@@ -294,19 +325,10 @@ impl TableFlush for SharedTableFlushJob {
         // Get cached ObjectStore instance (avoids rebuild overhead on each flush)
         let object_store = cached.object_store()?;
 
-        // Extract PRIMARY KEY columns from TableDefinition for Bloom filter optimization (FR-054, FR-055)
-        // Fetch once per flush job instead of per-batch for efficiency
-        let bloom_filter_columns = self
-            .unified_cache
-            .get_bloom_filter_columns(&self.table_id)
-            .unwrap_or_else(|e| {
-                log::warn!(
-                    "⚠️  Failed to get Bloom filter columns for {}: {}. Using default (_seq only)",
-                    self.table_id,
-                    e
-                );
-                vec![SystemColumnNames::SEQ.to_string()]
-            });
+        // Use cached bloom_filter_columns and indexed_columns (fetched once at job construction)
+        // This avoids per-flush lookups and matches UserTableFlushJob optimization pattern
+        let bloom_filter_columns = &self.bloom_filter_columns;
+        let indexed_columns = &self.indexed_columns;
 
         log::debug!(
             "🌸 Bloom filters enabled for columns: {:?}",
@@ -372,7 +394,7 @@ impl TableFlush for SharedTableFlushJob {
             &std::path::PathBuf::from(&destination_path),
             &batch,
             size_bytes,
-            &bloom_filter_columns,
+            &indexed_columns,
             schema_version,
         )?;
 

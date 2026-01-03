@@ -82,11 +82,13 @@ fn create_test_service() -> (ManifestService, TempDir) {
             let table_id = TableId::new(namespace.clone(), table_name.clone());
             let cols = vec![
                 ColumnDefinition::primary_key(
+                    1,
                     "id",
                     1,
                     kalamdb_commons::models::datatypes::KalamDataType::BigInt,
                 ),
                 ColumnDefinition::simple(
+                    2,
                     "value",
                     2,
                     kalamdb_commons::models::datatypes::KalamDataType::Text,

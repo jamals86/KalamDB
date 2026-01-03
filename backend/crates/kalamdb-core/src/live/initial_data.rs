@@ -479,9 +479,10 @@ mod tests {
         use kalamdb_commons::models::schemas::{ColumnDefinition, TableDefinition};
 
         let columns = vec![
-            ColumnDefinition::primary_key("id", 1, KalamDataType::Int),
-            ColumnDefinition::simple("name", 2, KalamDataType::Text),
+            ColumnDefinition::primary_key(1, "id", 1, KalamDataType::Int),
+            ColumnDefinition::simple(2, "name", 2, KalamDataType::Text),
             ColumnDefinition::new(
+                3,
                 SystemColumnNames::SEQ,
                 3,
                 KalamDataType::BigInt,
@@ -492,6 +493,7 @@ mod tests {
                 None,
             ),
             ColumnDefinition::new(
+                4,
                 SystemColumnNames::DELETED,
                 4,
                 KalamDataType::Boolean,
@@ -623,9 +625,10 @@ mod tests {
         use kalamdb_commons::models::schemas::{ColumnDefinition, TableDefinition};
 
         let columns = vec![
-            ColumnDefinition::primary_key("id", 1, KalamDataType::Int),
-            ColumnDefinition::simple("val", 2, KalamDataType::Text),
+            ColumnDefinition::primary_key(1, "id", 1, KalamDataType::Int),
+            ColumnDefinition::simple(2, "val", 2, KalamDataType::Text),
             ColumnDefinition::new(
+                3,
                 SystemColumnNames::SEQ,
                 3,
                 KalamDataType::BigInt,
@@ -636,6 +639,7 @@ mod tests {
                 None,
             ),
             ColumnDefinition::new(
+                4,
                 SystemColumnNames::DELETED,
                 4,
                 KalamDataType::Boolean,
@@ -803,9 +807,10 @@ mod tests {
         use kalamdb_commons::models::schemas::{ColumnDefinition, TableDefinition};
 
         let columns = vec![
-            ColumnDefinition::primary_key("id", 1, KalamDataType::Int),
-            ColumnDefinition::simple("val", 2, KalamDataType::Text),
+            ColumnDefinition::primary_key(1, "id", 1, KalamDataType::Int),
+            ColumnDefinition::simple(2, "val", 2, KalamDataType::Text),
             ColumnDefinition::new(
+                3,
                 SystemColumnNames::SEQ,
                 3,
                 KalamDataType::BigInt,
@@ -816,6 +821,7 @@ mod tests {
                 None,
             ),
             ColumnDefinition::new(
+                4,
                 SystemColumnNames::DELETED,
                 4,
                 KalamDataType::Boolean,
