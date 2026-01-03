@@ -101,6 +101,15 @@ impl PkExistenceChecker {
             .map(|col| col.column_name.as_str())
     }
 
+    /// Get the primary key column_id from a table definition
+    pub fn get_pk_column_id(table_def: &TableDefinition) -> Option<u64> {
+        table_def
+            .columns
+            .iter()
+            .find(|col| col.is_primary_key)
+            .map(|col| col.column_id)
+    }
+
     /// Check if a PK value exists, using optimized manifest-based pruning
     ///
     /// ## Flow:
@@ -137,8 +146,14 @@ impl PkExistenceChecker {
             return Ok(PkCheckResult::AutoIncrement);
         }
 
-        // Step 2: Get PK column name
+        // Step 2: Get PK column name and id
         let pk_column = Self::get_pk_column_name(table_def).ok_or_else(|| {
+            KalamDbError::InvalidOperation(format!(
+                "Table {} has no primary key column",
+                table_id
+            ))
+        })?;
+        let pk_column_id = Self::get_pk_column_id(table_def).ok_or_else(|| {
             KalamDbError::InvalidOperation(format!(
                 "Table {} has no primary key column",
                 table_id
@@ -152,6 +167,7 @@ impl PkExistenceChecker {
             table_type,
             user_id,
             pk_column,
+            pk_column_id,
             pk_value,
         )?;
 
@@ -171,6 +187,7 @@ impl PkExistenceChecker {
         table_type: TableType,
         user_id: Option<&UserId>,
         pk_column: &str,
+        pk_column_id: u64,
         pk_value: &str,
     ) -> Result<Option<String>, KalamDbError> {
         let namespace = table_id.namespace_id();
@@ -292,7 +309,7 @@ impl PkExistenceChecker {
         // 5. Use manifest to prune segments by min/max or check all Parquet files
         let planner = ManifestAccessPlanner::new();
         let files_to_scan: Vec<String> = if let Some(ref m) = manifest {
-            let pruned_paths = planner.plan_by_pk_value(m, pk_column, pk_value);
+            let pruned_paths = planner.plan_by_pk_value(m, pk_column_id, pk_value);
             if pruned_paths.is_empty() {
                 log::trace!(
                     "[PkExistenceChecker] Manifest pruning: PK {} not in any segment range for {}.{} {}",
@@ -518,6 +535,7 @@ mod tests {
             table_options: kalamdb_commons::schemas::TableOptions::User(Default::default()),
             columns: vec![
                 ColumnDefinition::new(
+                    1,
                     "id",
                     1,
                     KalamDataType::BigInt,
@@ -528,6 +546,7 @@ mod tests {
                     None,
                 ),
                 ColumnDefinition::new(
+                    2,
                     "name",
                     2,
                     KalamDataType::Text,
@@ -538,6 +557,7 @@ mod tests {
                     None,
                 ),
             ],
+            next_column_id: 3,
             schema_version: 1,
             table_comment: None,
             created_at: chrono::Utc::now(),

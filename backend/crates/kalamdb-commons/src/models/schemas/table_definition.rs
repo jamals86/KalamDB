@@ -38,6 +38,16 @@ pub struct TableDefinition {
     /// Use `TablesStore::get_version()` to fetch specific historical versions.
     pub schema_version: u32,
 
+    /// Next available column_id for new columns
+    ///
+    /// Monotonically increasing. When adding a column:
+    /// 1. Assign next_column_id to new column
+    /// 2. Increment next_column_id
+    ///
+    /// This ensures column_ids are never reused, even after DROP COLUMN.
+    /// Written to Parquet files as `field_id` for schema evolution support.
+    pub next_column_id: u64,
+
     /// Type-safe table options based on table_type
     pub table_options: TableOptions,
 
@@ -58,6 +68,7 @@ struct TableDefinitionRepr {
     table_type: TableType,
     columns: Vec<ColumnDefinition>,
     schema_version: u32,
+    next_column_id: u64,
     table_options: TableOptions,
     table_comment: Option<String>,
     created_at: DateTime<Utc>,
@@ -72,6 +83,7 @@ impl From<&TableDefinition> for TableDefinitionRepr {
             table_type: table.table_type,
             columns: table.columns.clone(),
             schema_version: table.schema_version,
+            next_column_id: table.next_column_id,
             table_options: table.table_options.clone(),
             table_comment: table.table_comment.clone(),
             created_at: table.created_at,
@@ -88,6 +100,7 @@ impl From<TableDefinitionRepr> for TableDefinition {
             table_type: value.table_type,
             columns: value.columns,
             schema_version: value.schema_version,
+            next_column_id: value.next_column_id,
             table_options: value.table_options,
             table_comment: value.table_comment,
             created_at: value.created_at,
@@ -110,6 +123,7 @@ impl Serialize for TableDefinition {
                 &self.table_type,
                 &self.columns,
                 self.schema_version,
+                self.next_column_id,
                 &self.table_options,
                 &self.table_comment,
                 &self.created_at,
@@ -135,6 +149,7 @@ impl<'de> Deserialize<'de> for TableDefinition {
                 TableType,
                 Vec<ColumnDefinition>,
                 u32,
+                u64,
                 TableOptions,
                 Option<String>,
                 DateTime<Utc>,
@@ -147,6 +162,7 @@ impl<'de> Deserialize<'de> for TableDefinition {
                 table_type,
                 columns,
                 schema_version,
+                next_column_id,
                 table_options,
                 table_comment,
                 created_at,
@@ -159,6 +175,7 @@ impl<'de> Deserialize<'de> for TableDefinition {
                 table_type,
                 columns,
                 schema_version,
+                next_column_id,
                 table_options,
                 table_comment,
                 created_at,
@@ -206,6 +223,14 @@ impl TableDefinition {
     ) -> Result<Self, String> {
         let columns_sorted = Self::validate_and_sort_columns(columns)?;
         let now = Utc::now();
+        
+        // Compute next_column_id as max(column_id) + 1
+        let next_column_id = columns_sorted
+            .iter()
+            .map(|c| c.column_id)
+            .max()
+            .unwrap_or(0)
+            + 1;
 
         Ok(Self {
             namespace_id,
@@ -213,6 +238,7 @@ impl TableDefinition {
             table_type,
             columns: columns_sorted,
             schema_version: 1,
+            next_column_id,
             table_options,
             table_comment,
             created_at: now,
@@ -348,6 +374,7 @@ impl TableDefinition {
     }
 
     /// Add a column (for ALTER TABLE ADD COLUMN)
+    /// The column must have column_id == self.next_column_id
     pub fn add_column(&mut self, column: ColumnDefinition) -> Result<(), String> {
         // Validate ordinal_position is next available
         let max_ordinal = self
@@ -364,7 +391,16 @@ impl TableDefinition {
             ));
         }
 
+        // Validate column_id matches next_column_id
+        if column.column_id != self.next_column_id {
+            return Err(format!(
+                "New column must have column_id {}, got {}",
+                self.next_column_id, column.column_id
+            ));
+        }
+
         self.columns.push(column);
+        self.next_column_id += 1;
         self.updated_at = Utc::now();
         Ok(())
     }
@@ -415,9 +451,9 @@ mod tests {
 
     fn sample_columns() -> Vec<ColumnDefinition> {
         vec![
-            ColumnDefinition::primary_key("id", 1, KalamDataType::BigInt),
-            ColumnDefinition::simple("name", 2, KalamDataType::Text),
-            ColumnDefinition::simple("age", 3, KalamDataType::Int),
+            ColumnDefinition::primary_key(1, "id", 1, KalamDataType::BigInt),
+            ColumnDefinition::simple(2, "name", 2, KalamDataType::Text),
+            ColumnDefinition::simple(3, "age", 3, KalamDataType::Int),
         ]
     }
 
@@ -464,9 +500,9 @@ mod tests {
     fn test_column_ordering() {
         // Create columns out of order
         let columns = vec![
-            ColumnDefinition::simple("name", 2, KalamDataType::Text),
-            ColumnDefinition::primary_key("id", 1, KalamDataType::BigInt),
-            ColumnDefinition::simple("age", 3, KalamDataType::Int),
+            ColumnDefinition::simple(2, "name", 2, KalamDataType::Text),
+            ColumnDefinition::primary_key(1, "id", 1, KalamDataType::BigInt),
+            ColumnDefinition::simple(3, "age", 3, KalamDataType::Int),
         ];
 
         let table = TableDefinition::new(
@@ -488,8 +524,8 @@ mod tests {
     #[test]
     fn test_duplicate_ordinal_position() {
         let columns = vec![
-            ColumnDefinition::simple("col1", 1, KalamDataType::Int),
-            ColumnDefinition::simple("col2", 1, KalamDataType::Int),
+            ColumnDefinition::simple(1, "col1", 1, KalamDataType::Int),
+            ColumnDefinition::simple(2, "col2", 1, KalamDataType::Int),
         ];
 
         let result = TableDefinition::new(
@@ -508,8 +544,8 @@ mod tests {
     #[test]
     fn test_non_sequential_ordinal_position() {
         let columns = vec![
-            ColumnDefinition::simple("col1", 1, KalamDataType::Int),
-            ColumnDefinition::simple("col2", 3, KalamDataType::Int), // Skips 2
+            ColumnDefinition::simple(1, "col1", 1, KalamDataType::Int),
+            ColumnDefinition::simple(2, "col2", 3, KalamDataType::Int), // Skips 2
         ];
 
         let result = TableDefinition::new(
@@ -575,7 +611,7 @@ mod tests {
         )
         .unwrap();
 
-        let new_col = ColumnDefinition::simple("email", 4, KalamDataType::Text);
+        let new_col = ColumnDefinition::simple(4, "email", 4, KalamDataType::Text);
         table.add_column(new_col).unwrap();
 
         assert_eq!(table.columns.len(), 4);
@@ -737,6 +773,7 @@ mod tests {
             table.table_type,
             table.columns.clone(),
             table.schema_version,
+            table.next_column_id,
             table.table_options.clone(),
             table.table_comment.clone(),
             table.created_at,
@@ -751,6 +788,7 @@ mod tests {
                 TableType,
                 Vec<ColumnDefinition>,
                 u32,
+                u64,
                 TableOptions,
                 Option<String>,
                 chrono::DateTime<chrono::Utc>,
@@ -779,9 +817,9 @@ mod tests {
     #[test]
     fn test_get_primary_key_columns_single() {
         let columns = vec![
-            ColumnDefinition::primary_key("id", 1, KalamDataType::BigInt),
-            ColumnDefinition::simple("name", 2, KalamDataType::Text),
-            ColumnDefinition::simple("age", 3, KalamDataType::Int),
+            ColumnDefinition::primary_key(1, "id", 1, KalamDataType::BigInt),
+            ColumnDefinition::simple(2, "name", 2, KalamDataType::Text),
+            ColumnDefinition::simple(3, "age", 3, KalamDataType::Int),
         ];
 
         let table = TableDefinition::new(
@@ -803,8 +841,8 @@ mod tests {
     fn test_get_primary_key_columns_empty() {
         // Table without any primary key column
         let columns = vec![
-            ColumnDefinition::simple("field1", 1, KalamDataType::Text),
-            ColumnDefinition::simple("field2", 2, KalamDataType::Int),
+            ColumnDefinition::simple(1, "field1", 1, KalamDataType::Text),
+            ColumnDefinition::simple(2, "field2", 2, KalamDataType::Int),
         ];
 
         let table = TableDefinition::new(

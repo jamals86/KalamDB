@@ -104,28 +104,25 @@ impl FlushManifestHelper {
     }
 
     /// Extract column statistics (min/max/nulls) from RecordBatch
+    /// Returns HashMap keyed by column_id for stable column identification
     pub fn extract_column_stats(
         batch: &RecordBatch,
-        indexed_columns: &[String],
-    ) -> HashMap<String, ColumnStats> {
+        indexed_columns: &[(u64, String)],
+    ) -> HashMap<u64, ColumnStats> {
         let mut stats = HashMap::new();
-        for field in batch.schema().fields() {
-            let name = field.name();
-            if name == SystemColumnNames::SEQ {
-                continue; // Handled separately
-            }
-
-            // Only compute stats for indexed columns
-            if !indexed_columns.contains(name) {
+        
+        for (column_id, column_name) in indexed_columns {
+            // Skip _seq system column (handled separately)
+            if column_name == SystemColumnNames::SEQ {
                 continue;
             }
 
-            if let Some(col) = batch.column_by_name(name) {
+            if let Some(col) = batch.column_by_name(column_name) {
                 let null_count = col.null_count() as i64;
                 let (min, max) = Self::compute_min_max(col);
 
                 stats.insert(
-                    name.clone(),
+                    *column_id,
                     ColumnStats {
                         min,
                         max,
@@ -270,7 +267,7 @@ impl FlushManifestHelper {
         file_path: &Path,
         batch: &RecordBatch,
         file_size_bytes: u64,
-        indexed_columns: &[String],
+        indexed_columns: &[(u64, String)],
         schema_version: u32,
     ) -> Result<Manifest, KalamDbError> {
         // Extract metadata from batch (batch-level)
@@ -464,16 +461,16 @@ mod tests {
         )
         .unwrap();
 
-        let indexed_columns = vec!["id".to_string(), "timestamp".to_string()];
+        let indexed_columns = vec![(1u64, "id".to_string()), (2u64, "timestamp".to_string())];
         let stats = FlushManifestHelper::extract_column_stats(&batch, &indexed_columns);
 
         assert_eq!(stats.len(), 2);
-        let id_stats = stats.get("id").unwrap();
+        let id_stats = stats.get(&1u64).unwrap();
         assert_eq!(id_stats.min, Some(serde_json::json!(1)));
         assert_eq!(id_stats.max, Some(serde_json::json!(10)));
         assert_eq!(id_stats.null_count, Some(1));
 
-        let ts_stats = stats.get("timestamp").unwrap();
+        let ts_stats = stats.get(&2u64).unwrap();
         assert_eq!(ts_stats.min, Some(serde_json::json!(1000000)));
         assert_eq!(ts_stats.max, Some(serde_json::json!(2000000)));
         assert_eq!(ts_stats.null_count, Some(0));
@@ -485,10 +482,10 @@ mod tests {
         let array = StringArray::from(vec![Some("alice"), Some("bob"), None, Some("charlie")]);
         let batch = RecordBatch::try_new(schema, vec![StdArc::new(array)]).unwrap();
 
-        let indexed_columns = vec!["name".to_string()];
+        let indexed_columns = vec![(1u64, "name".to_string())];
         let stats = FlushManifestHelper::extract_column_stats(&batch, &indexed_columns);
 
-        let name_stats = stats.get("name").unwrap();
+        let name_stats = stats.get(&1u64).unwrap();
         assert_eq!(name_stats.min, Some(serde_json::json!("alice")));
         assert_eq!(name_stats.max, Some(serde_json::json!("charlie")));
         assert_eq!(name_stats.null_count, Some(1));
@@ -510,13 +507,13 @@ mod tests {
         )
         .unwrap();
 
-        let indexed_columns = vec!["id".to_string(), SystemColumnNames::SEQ.to_string()];
+        let indexed_columns = vec![(1u64, "id".to_string()), (2u64, SystemColumnNames::SEQ.to_string())];
         let stats = FlushManifestHelper::extract_column_stats(&batch, &indexed_columns);
 
         // Should only have stats for "id", not "_seq"
         assert_eq!(stats.len(), 1);
-        assert!(stats.contains_key("id"));
-        assert!(!stats.contains_key(SystemColumnNames::SEQ));
+        assert!(stats.contains_key(&1u64));
+        assert!(!stats.contains_key(&2u64));
     }
 
     #[test]
@@ -542,13 +539,13 @@ mod tests {
         .unwrap();
 
         // Only index "id" and "age", not "name"
-        let indexed_columns = vec!["id".to_string(), "age".to_string()];
+        let indexed_columns = vec![(1u64, "id".to_string()), (3u64, "age".to_string())];
         let stats = FlushManifestHelper::extract_column_stats(&batch, &indexed_columns);
 
         assert_eq!(stats.len(), 2);
-        assert!(stats.contains_key("id"));
-        assert!(stats.contains_key("age"));
-        assert!(!stats.contains_key("name"));
+        assert!(stats.contains_key(&1u64));
+        assert!(stats.contains_key(&3u64));
+        assert!(!stats.contains_key(&2u64));
     }
 
     #[test]
@@ -563,12 +560,12 @@ mod tests {
         let id_array = Int32Array::from(vec![] as Vec<i32>);
         let batch = RecordBatch::try_new(schema, vec![StdArc::new(id_array)]).unwrap();
 
-        let indexed_columns = vec!["id".to_string()];
+        let indexed_columns = vec![(1u64, "id".to_string())];
         let stats = FlushManifestHelper::extract_column_stats(&batch, &indexed_columns);
 
         // Empty batch should still produce stats entry but with None min/max
         assert_eq!(stats.len(), 1);
-        let id_stats = stats.get("id").unwrap();
+        let id_stats = stats.get(&1u64).unwrap();
         assert_eq!(id_stats.min, None);
         assert_eq!(id_stats.max, None);
         assert_eq!(id_stats.null_count, Some(0));
@@ -586,10 +583,10 @@ mod tests {
         let array = Int32Array::from(vec![None, None, None]);
         let batch = RecordBatch::try_new(schema, vec![StdArc::new(array)]).unwrap();
 
-        let indexed_columns = vec!["value".to_string()];
+        let indexed_columns = vec![(1u64, "value".to_string())];
         let stats = FlushManifestHelper::extract_column_stats(&batch, &indexed_columns);
 
-        let value_stats = stats.get("value").unwrap();
+        let value_stats = stats.get(&1u64).unwrap();
         assert_eq!(value_stats.min, None);
         assert_eq!(value_stats.max, None);
         assert_eq!(value_stats.null_count, Some(3));
@@ -611,14 +608,14 @@ mod tests {
         )
         .unwrap();
 
-        let indexed_columns = vec!["f32_col".to_string(), "f64_col".to_string()];
+        let indexed_columns = vec![(1u64, "f32_col".to_string()), (2u64, "f64_col".to_string())];
         let stats = FlushManifestHelper::extract_column_stats(&batch, &indexed_columns);
 
         assert_eq!(stats.len(), 2);
-        assert!(stats.get("f32_col").unwrap().min.is_some());
-        assert!(stats.get("f32_col").unwrap().max.is_some());
-        assert!(stats.get("f64_col").unwrap().min.is_some());
-        assert!(stats.get("f64_col").unwrap().max.is_some());
+        assert!(stats.get(&1u64).unwrap().min.is_some());
+        assert!(stats.get(&1u64).unwrap().max.is_some());
+        assert!(stats.get(&2u64).unwrap().min.is_some());
+        assert!(stats.get(&2u64).unwrap().max.is_some());
     }
 
     #[test]

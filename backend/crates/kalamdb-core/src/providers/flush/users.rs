@@ -35,6 +35,8 @@ pub struct UserTableFlushJob {
     manifest_helper: FlushManifestHelper,
     /// Bloom filter columns (PRIMARY KEY + _seq) - fetched once per job for efficiency
     bloom_filter_columns: Vec<String>,
+    /// Indexed columns with column_id for stats extraction (column_id, column_name)
+    indexed_columns: Vec<(u64, String)>,
 }
 
 impl UserTableFlushJob {
@@ -61,6 +63,18 @@ impl UserTableFlushJob {
                 vec![SystemColumnNames::SEQ.to_string()]
             });
 
+        // Fetch indexed column info with column_ids for stats extraction
+        let indexed_columns = unified_cache
+            .get_indexed_column_info(&table_id)
+            .unwrap_or_else(|e| {
+                log::warn!(
+                    "⚠️  Failed to get indexed column info for {}: {}. Using empty",
+                    table_id,
+                    e
+                );
+                vec![]
+            });
+
         log::debug!(
             "🌸 Bloom filters enabled for columns: {:?}",
             bloom_filter_columns
@@ -74,6 +88,7 @@ impl UserTableFlushJob {
             live_query_manager: None,
             manifest_helper,
             bloom_filter_columns,
+            indexed_columns,
         }
     }
 
@@ -113,6 +128,7 @@ impl UserTableFlushJob {
         rows: &[(Vec<u8>, Row)],
         parquet_files: &mut Vec<String>,
         bloom_filter_columns: &[String],
+        indexed_columns: &[(u64, String)],
     ) -> Result<usize, KalamDbError> {
         if rows.is_empty() {
             return Ok(0);
@@ -235,7 +251,7 @@ impl UserTableFlushJob {
             &std::path::PathBuf::from(&destination_path),
             &batch,
             size_bytes,
-            bloom_filter_columns,
+            indexed_columns,
             schema_version,
         )?;
 
@@ -447,6 +463,7 @@ impl TableFlush for UserTableFlushJob {
                 rows,
                 &mut parquet_files,
                 &self.bloom_filter_columns,
+                &self.indexed_columns,
             ) {
                 Ok(rows_count) => {
                     total_rows_flushed += rows_count;

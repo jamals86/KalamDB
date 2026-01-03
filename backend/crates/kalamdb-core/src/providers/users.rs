@@ -114,6 +114,24 @@ impl UserTableProvider {
         &self.primary_key_field_name
     }
 
+    /// Get the primary key column_id from the table definition
+    /// Returns 0 if the table definition cannot be found (shouldn't happen for existing providers)
+    fn get_pk_column_id(&self) -> u64 {
+        self.core
+            .app_context
+            .schema_registry()
+            .get_table_definition(self.core.table_id())
+            .ok()
+            .flatten()
+            .and_then(|def| {
+                def.columns
+                    .iter()
+                    .find(|c| c.is_primary_key)
+                    .map(|c| c.column_id)
+            })
+            .unwrap_or(0)
+    }
+
     /// Build a complete Row from UserTableRow including system columns (_seq, _deleted)
     ///
     /// This ensures live query notifications include all columns, not just user-defined fields.
@@ -281,12 +299,14 @@ impl BaseTableProvider<UserTableRowId, UserTableRow> for UserTableProvider {
         // Not found in hot storage - check cold storage using optimized manifest-based lookup
         // This uses column_stats to prune segments that can't contain the PK
         let pk_name = self.primary_key_field_name();
+        let pk_column_id = self.get_pk_column_id();
         let exists_in_cold = base::pk_exists_in_cold(
             &self.core,
             self.core.table_id(),
             self.core.table_type(),
             Some(user_id),
             pk_name,
+            pk_column_id,
             id_value,
         )?;
 

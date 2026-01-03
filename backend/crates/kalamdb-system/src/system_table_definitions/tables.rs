@@ -19,6 +19,7 @@ use kalamdb_commons::{NamespaceId, TableName};
 pub fn tables_table_definition() -> TableDefinition {
     let columns = vec![
         ColumnDefinition::new(
+            1,
             "table_id",
             1,
             KalamDataType::Text,
@@ -29,6 +30,7 @@ pub fn tables_table_definition() -> TableDefinition {
             Some("Table identifier: namespace_id:table_name".to_string()),
         ),
         ColumnDefinition::new(
+            2,
             "table_name",
             2,
             KalamDataType::Text,
@@ -39,6 +41,7 @@ pub fn tables_table_definition() -> TableDefinition {
             Some("Table name within namespace".to_string()),
         ),
         ColumnDefinition::new(
+            3,
             "namespace_id",
             3,
             KalamDataType::Text,
@@ -49,6 +52,7 @@ pub fn tables_table_definition() -> TableDefinition {
             Some("Namespace containing this table".to_string()),
         ),
         ColumnDefinition::new(
+            4,
             "table_type",
             4,
             KalamDataType::Text,
@@ -59,6 +63,7 @@ pub fn tables_table_definition() -> TableDefinition {
             Some("Table type: USER, SHARED, STREAM, SYSTEM".to_string()),
         ),
         ColumnDefinition::new(
+            5,
             "created_at",
             5,
             KalamDataType::Timestamp,
@@ -69,6 +74,7 @@ pub fn tables_table_definition() -> TableDefinition {
             Some("Table creation timestamp".to_string()),
         ),
         ColumnDefinition::new(
+            6,
             "schema_version",
             6,
             KalamDataType::Int,
@@ -80,6 +86,7 @@ pub fn tables_table_definition() -> TableDefinition {
         ),
         // New: expose column definitions as JSON
         ColumnDefinition::new(
+            7,
             "columns",
             7,
             KalamDataType::Text, // Stored as JSON array
@@ -90,6 +97,7 @@ pub fn tables_table_definition() -> TableDefinition {
             Some("Column definitions as JSON array".to_string()),
         ),
         ColumnDefinition::new(
+            8,
             "table_comment",
             8,
             KalamDataType::Text,
@@ -100,6 +108,7 @@ pub fn tables_table_definition() -> TableDefinition {
             Some("Optional table description or comment".to_string()),
         ),
         ColumnDefinition::new(
+            9,
             "updated_at",
             9,
             KalamDataType::Timestamp,
@@ -111,6 +120,7 @@ pub fn tables_table_definition() -> TableDefinition {
         ),
         // New in Phase 11: expose serialized TableOptions for visibility via SELECT * FROM system.tables
         ColumnDefinition::new(
+            10,
             "options",
             10,
             KalamDataType::Text, // Stored as JSON string (variant-aware)
@@ -122,6 +132,7 @@ pub fn tables_table_definition() -> TableDefinition {
         ),
         // New in Phase 16: expose access_level for Shared tables
         ColumnDefinition::new(
+            11,
             "access_level",
             11,
             KalamDataType::Text,
@@ -133,6 +144,7 @@ pub fn tables_table_definition() -> TableDefinition {
         ),
         // Phase 16: is_latest flag for schema versioning
         ColumnDefinition::new(
+            12,
             "is_latest",
             12,
             KalamDataType::Boolean,
@@ -144,6 +156,7 @@ pub fn tables_table_definition() -> TableDefinition {
         ),
         // Phase 17: expose storage_id for storage management queries
         ColumnDefinition::new(
+            13,
             "storage_id",
             13,
             KalamDataType::Text,
@@ -155,6 +168,7 @@ pub fn tables_table_definition() -> TableDefinition {
         ),
         // Phase 17: expose use_user_storage flag for user tables
         ColumnDefinition::new(
+            14,
             "use_user_storage",
             14,
             KalamDataType::Boolean,

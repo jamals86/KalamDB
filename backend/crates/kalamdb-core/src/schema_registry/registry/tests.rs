@@ -19,6 +19,7 @@ fn create_test_schema() -> Arc<TableDefinition> {
             TableName::new("test_table"),
             TableType::User,
             vec![ColumnDefinition::new(
+                1,
                 "id".to_string(),
                 1, // ordinal_position
                 KalamDataType::Int,
@@ -524,6 +525,7 @@ fn test_cached_table_data_includes_system_columns() {
 
     // Create a table definition with user columns
     let user_col = ColumnDefinition::new(
+        1,
         "user_name".to_string(),
         1,
         KalamDataType::Text,
@@ -599,8 +601,8 @@ fn test_get_bloom_filter_columns() {
     let table_id = TableId::new(NamespaceId::new("test_ns"), TableName::new("users"));
 
     // Create table with PRIMARY KEY column
-    let pk_col = ColumnDefinition::primary_key("id", 1, KalamDataType::BigInt);
-    let name_col = ColumnDefinition::simple("name", 2, KalamDataType::Text);
+    let pk_col = ColumnDefinition::primary_key(1, "id", 1, KalamDataType::BigInt);
+    let name_col = ColumnDefinition::simple(2, "name", 2, KalamDataType::Text);
 
     let mut table_def = kalamdb_commons::models::schemas::TableDefinition::new(
         NamespaceId::new("test_ns"),
@@ -650,6 +652,7 @@ fn test_get_bloom_filter_columns_composite_pk() {
 
     // Create table with composite PRIMARY KEY (user_id, order_id)
     let user_id_col = ColumnDefinition::new(
+        1,
         "user_id",
         1,
         KalamDataType::BigInt,
@@ -660,6 +663,7 @@ fn test_get_bloom_filter_columns_composite_pk() {
         None,
     );
     let order_id_col = ColumnDefinition::new(
+        2,
         "order_id",
         2,
         KalamDataType::BigInt,
@@ -669,7 +673,7 @@ fn test_get_bloom_filter_columns_composite_pk() {
         kalamdb_commons::models::schemas::ColumnDefault::None,
         None,
     );
-    let amount_col = ColumnDefinition::simple("amount", 3, KalamDataType::Int);
+    let amount_col = ColumnDefinition::simple(3, "amount", 3, KalamDataType::Int);
 
     let mut table_def = kalamdb_commons::models::schemas::TableDefinition::new(
         NamespaceId::new("test_ns"),

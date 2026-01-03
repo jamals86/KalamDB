@@ -106,7 +106,7 @@ fn test_manifest_with_column_stats() {
     // Create column stats
     let mut column_stats = HashMap::new();
     column_stats.insert(
-        "id".to_string(),
+        1u64,
         kalamdb_commons::types::ColumnStats {
             min: Some(serde_json::json!(1)),
             max: Some(serde_json::json!(100)),
@@ -114,7 +114,7 @@ fn test_manifest_with_column_stats() {
         },
     );
     column_stats.insert(
-        "name".to_string(),
+        2u64,
         kalamdb_commons::types::ColumnStats {
             min: Some(serde_json::json!("alice")),
             max: Some(serde_json::json!("zoe")),
@@ -143,12 +143,12 @@ fn test_manifest_with_column_stats() {
     let segment = &deserialized.segments[0];
     assert_eq!(segment.column_stats.len(), 2);
 
-    let id_stats = segment.column_stats.get("id").unwrap();
+    let id_stats = segment.column_stats.get(&1u64).unwrap();
     assert_eq!(id_stats.min, Some(serde_json::json!(1)));
     assert_eq!(id_stats.max, Some(serde_json::json!(100)));
     assert_eq!(id_stats.null_count, Some(0));
 
-    let name_stats = segment.column_stats.get("name").unwrap();
+    let name_stats = segment.column_stats.get(&2u64).unwrap();
     assert_eq!(name_stats.min, Some(serde_json::json!("alice")));
     assert_eq!(name_stats.max, Some(serde_json::json!("zoe")));
     assert_eq!(name_stats.null_count, Some(5));

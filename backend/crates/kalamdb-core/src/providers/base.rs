@@ -513,6 +513,7 @@ where
 /// * `table_type` - TableType (User, Shared, Stream)
 /// * `user_id` - Optional user ID for scoping (User tables)
 /// * `pk_column` - Name of the primary key column
+/// * `pk_column_id` - Column ID of the primary key column (for manifest column_stats lookup)
 /// * `pk_value` - The PK value to check for
 ///
 /// # Returns
@@ -524,6 +525,7 @@ pub fn pk_exists_in_cold(
     table_type: TableType,
     user_id: Option<&UserId>,
     pk_column: &str,
+    pk_column_id: u64,
     pk_value: &str,
 ) -> Result<bool, KalamDbError> {
     use crate::manifest::ManifestAccessPlanner;
@@ -632,7 +634,7 @@ pub fn pk_exists_in_cold(
     // 5. Use manifest to prune segments or list all Parquet files
     let planner = ManifestAccessPlanner::new();
     let files_to_scan: Vec<String> = if let Some(ref m) = manifest {
-        let pruned_paths = planner.plan_by_pk_value(m, pk_column, pk_value);
+        let pruned_paths = planner.plan_by_pk_value(m, pk_column_id, pk_value);
         if pruned_paths.is_empty() {
             log::trace!(
                 "[pk_exists_in_cold] Manifest pruning: PK {} not in any segment range for {}.{} {}",
@@ -702,6 +704,7 @@ pub fn pk_exists_in_cold(
 /// * `table_type` - TableType (User, Shared, Stream)
 /// * `user_id` - Optional user ID for scoping (User tables)
 /// * `pk_column` - Name of the primary key column
+/// * `pk_column_id` - Column ID of the primary key column (for manifest column_stats lookup)
 /// * `pk_values` - The PK values to check for
 ///
 /// # Returns
@@ -713,6 +716,7 @@ pub fn pk_exists_batch_in_cold(
     table_type: TableType,
     user_id: Option<&UserId>,
     pk_column: &str,
+    pk_column_id: u64,
     pk_values: &[String],
 ) -> Result<Option<String>, KalamDbError> {
     use crate::manifest::ManifestAccessPlanner;
@@ -829,7 +833,7 @@ pub fn pk_exists_batch_in_cold(
         // Collect all potentially relevant files for any PK value
         let mut relevant_files: HashSet<String> = HashSet::new();
         for pk_value in pk_values {
-            let pruned_paths = planner.plan_by_pk_value(m, pk_column, pk_value);
+            let pruned_paths = planner.plan_by_pk_value(m, pk_column_id, pk_value);
             relevant_files.extend(pruned_paths);
         }
         if relevant_files.is_empty() {

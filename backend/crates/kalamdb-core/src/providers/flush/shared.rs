@@ -308,6 +308,19 @@ impl TableFlush for SharedTableFlushJob {
                 vec![SystemColumnNames::SEQ.to_string()]
             });
 
+        // Get indexed column info with column_ids for column stats extraction
+        let indexed_columns = self
+            .unified_cache
+            .get_indexed_column_info(&self.table_id)
+            .unwrap_or_else(|e| {
+                log::warn!(
+                    "⚠️  Failed to get indexed column info for {}: {}. Using empty",
+                    self.table_id,
+                    e
+                );
+                vec![]
+            });
+
         log::debug!(
             "🌸 Bloom filters enabled for columns: {:?}",
             bloom_filter_columns
@@ -372,7 +385,7 @@ impl TableFlush for SharedTableFlushJob {
             &std::path::PathBuf::from(&destination_path),
             &batch,
             size_bytes,
-            &bloom_filter_columns,
+            &indexed_columns,
             schema_version,
         )?;
 

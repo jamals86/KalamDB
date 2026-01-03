@@ -15,6 +15,7 @@ use kalamdb_commons::{NamespaceId, TableName};
 pub fn namespaces_table_definition() -> TableDefinition {
     let columns = vec![
         ColumnDefinition::new(
+            1,
             "namespace_id",
             1,
             KalamDataType::Text,
@@ -25,6 +26,7 @@ pub fn namespaces_table_definition() -> TableDefinition {
             Some("Namespace identifier".to_string()),
         ),
         ColumnDefinition::new(
+            2,
             "name",
             2,
             KalamDataType::Text,
@@ -35,6 +37,7 @@ pub fn namespaces_table_definition() -> TableDefinition {
             Some("Namespace name".to_string()),
         ),
         ColumnDefinition::new(
+            3,
             "created_at",
             3,
             KalamDataType::Timestamp,
@@ -45,6 +48,7 @@ pub fn namespaces_table_definition() -> TableDefinition {
             Some("Namespace creation timestamp".to_string()),
         ),
         ColumnDefinition::new(
+            4,
             "options",
             4,
             KalamDataType::Text,
@@ -55,6 +59,7 @@ pub fn namespaces_table_definition() -> TableDefinition {
             Some("Namespace configuration options (JSON)".to_string()),
         ),
         ColumnDefinition::new(
+            5,
             "table_count",
             5,
             KalamDataType::Int,

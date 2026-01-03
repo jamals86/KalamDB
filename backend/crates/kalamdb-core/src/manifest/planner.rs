@@ -321,7 +321,7 @@ impl ManifestAccessPlanner {
     ///
     /// # Arguments
     /// * `manifest` - The manifest containing segment metadata
-    /// * `pk_column` - Name of the primary key column
+    /// * `pk_column_id` - Column ID of the primary key column
     /// * `pk_value` - The PK value to search for (as string for comparison)
     ///
     /// # Returns
@@ -329,7 +329,7 @@ impl ManifestAccessPlanner {
     pub fn plan_by_pk_value(
         &self,
         manifest: &Manifest,
-        pk_column: &str,
+        pk_column_id: u64,
         pk_value: &str,
     ) -> Vec<String> {
         if manifest.segments.is_empty() {
@@ -345,7 +345,7 @@ impl ManifestAccessPlanner {
             }
 
             // Check if segment has column_stats for the PK column
-            if let Some(stats) = segment.column_stats.get(pk_column) {
+            if let Some(stats) = segment.column_stats.get(&pk_column_id) {
                 // Check if PK value could be in this segment's range
                 if !Self::pk_value_in_range(pk_value, stats) {
                     // Definitely not in this segment, skip

@@ -212,10 +212,10 @@ pub struct SegmentMetadata {
     /// Path to the segment file (relative to table root)
     pub path: String,
 
-    /// Column statistics (min/max/nulls) keyed by column name
-    /// Replaces legacy min_key/max_key
+    /// Column statistics (min/max/nulls) keyed by column_id
+    /// Uses stable column_id for correct mapping after column renames
     #[serde(default)]
-    pub column_stats: HashMap<String, ColumnStats>,
+    pub column_stats: HashMap<u64, ColumnStats>,
 
     /// Schema version when this segment was written (Phase 16)
     ///
@@ -238,7 +238,7 @@ impl SegmentMetadata {
     pub fn new(
         id: String,
         path: String,
-        column_stats: HashMap<String, ColumnStats>,
+        column_stats: HashMap<u64, ColumnStats>,
         min_seq: i64,
         max_seq: i64,
         row_count: u64,
@@ -262,7 +262,7 @@ impl SegmentMetadata {
     pub fn with_schema_version(
         id: String,
         path: String,
-        column_stats: HashMap<String, ColumnStats>,
+        column_stats: HashMap<u64, ColumnStats>,
         min_seq: i64,
         max_seq: i64,
         row_count: u64,

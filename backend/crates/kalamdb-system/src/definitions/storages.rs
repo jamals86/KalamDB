@@ -21,6 +21,7 @@ use kalamdb_commons::{NamespaceId, TableName};
 pub fn storages_table_definition() -> TableDefinition {
     let columns = vec![
         ColumnDefinition::new(
+            1,
             "storage_id",
             1,
             KalamDataType::Text,
@@ -31,6 +32,7 @@ pub fn storages_table_definition() -> TableDefinition {
             Some("Storage identifier".to_string()),
         ),
         ColumnDefinition::new(
+            2,
             "storage_name",
             2,
             KalamDataType::Text,
@@ -41,6 +43,7 @@ pub fn storages_table_definition() -> TableDefinition {
             Some("Human-readable storage name".to_string()),
         ),
         ColumnDefinition::new(
+            3,
             "description",
             3,
             KalamDataType::Text,
@@ -51,6 +54,7 @@ pub fn storages_table_definition() -> TableDefinition {
             Some("Storage description".to_string()),
         ),
         ColumnDefinition::new(
+            4,
             "storage_type",
             4,
             KalamDataType::Text,
@@ -61,6 +65,7 @@ pub fn storages_table_definition() -> TableDefinition {
             Some("Storage type: Local, S3, Azure, GCS".to_string()),
         ),
         ColumnDefinition::new(
+            5,
             "base_directory",
             5,
             KalamDataType::Text,
@@ -71,6 +76,7 @@ pub fn storages_table_definition() -> TableDefinition {
             Some("Base directory path for storage".to_string()),
         ),
         ColumnDefinition::new(
+            6,
             "credentials",
             6,
             KalamDataType::Text,
@@ -81,6 +87,7 @@ pub fn storages_table_definition() -> TableDefinition {
             Some("Storage credentials JSON (WARNING: stored as plaintext - use environment variables for sensitive credentials)".to_string()),
         ),
         ColumnDefinition::new(
+            7,
             "config_json",
             7,
             KalamDataType::Text,
@@ -91,6 +98,7 @@ pub fn storages_table_definition() -> TableDefinition {
             Some("Backend-specific storage configuration JSON".to_string()),
         ),
         ColumnDefinition::new(
+            8,
             "shared_tables_template",
             8,
             KalamDataType::Text,
@@ -101,6 +109,7 @@ pub fn storages_table_definition() -> TableDefinition {
             Some("Path template for shared tables".to_string()),
         ),
         ColumnDefinition::new(
+            9,
             "user_tables_template",
             9,
             KalamDataType::Text,
@@ -111,6 +120,7 @@ pub fn storages_table_definition() -> TableDefinition {
             Some("Path template for user tables".to_string()),
         ),
         ColumnDefinition::new(
+            10,
             "created_at",
             10,
             KalamDataType::Timestamp,
@@ -121,6 +131,7 @@ pub fn storages_table_definition() -> TableDefinition {
             Some("Storage creation timestamp".to_string()),
         ),
         ColumnDefinition::new(
+            11,
             "updated_at",
             11,
             KalamDataType::Timestamp,

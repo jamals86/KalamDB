@@ -66,6 +66,7 @@ async fn test_stream_table_ttl_eviction_with_select() {
         TableType::Stream,
         vec![
             ColumnDefinition::new(
+                1,
                 "event_id".to_string(),
                 1,
                 KalamDataType::Text,
@@ -76,6 +77,7 @@ async fn test_stream_table_ttl_eviction_with_select() {
                 None,
             ),
             ColumnDefinition::new(
+                2,
                 "event_type".to_string(),
                 2,
                 KalamDataType::Text,
@@ -86,6 +88,7 @@ async fn test_stream_table_ttl_eviction_with_select() {
                 None,
             ),
             ColumnDefinition::new(
+                3,
                 "value".to_string(),
                 3,
                 KalamDataType::Int,
@@ -220,6 +223,7 @@ async fn test_stream_table_select_with_projection() {
         TableType::Stream,
         vec![
             ColumnDefinition::new(
+                1,
                 "event_id".to_string(),
                 1,
                 KalamDataType::Text,
@@ -230,6 +234,7 @@ async fn test_stream_table_select_with_projection() {
                 None,
             ),
             ColumnDefinition::new(
+                2,
                 "event_type".to_string(),
                 2,
                 KalamDataType::Text,
@@ -240,6 +245,7 @@ async fn test_stream_table_select_with_projection() {
                 None,
             ),
             ColumnDefinition::new(
+                3,
                 "value".to_string(),
                 3,
                 KalamDataType::Int,
@@ -340,6 +346,7 @@ async fn test_stream_table_select_with_limit() {
         TableType::Stream,
         vec![
             ColumnDefinition::new(
+                1,
                 "event_id".to_string(),
                 1,
                 KalamDataType::Text,
@@ -350,6 +357,7 @@ async fn test_stream_table_select_with_limit() {
                 None,
             ),
             ColumnDefinition::new(
+                2,
                 "value".to_string(),
                 2,
                 KalamDataType::Int,

@@ -51,6 +51,7 @@ async fn test_cache_invalidation_removes_entry() {
 
     let columns = vec![
         ColumnDefinition::new(
+            1,
             "id",
             1,
             KalamDataType::Int,
@@ -61,6 +62,7 @@ async fn test_cache_invalidation_removes_entry() {
             None,
         ),
         ColumnDefinition::new(
+            2,
             "name",
             2,
             KalamDataType::Text,
@@ -122,6 +124,7 @@ async fn test_cache_invalidation_forces_cache_miss() {
     use kalamdb_commons::schemas::{ColumnDefinition, TableDefinition, TableOptions, TableType};
 
     let columns = vec![ColumnDefinition::new(
+        1,
         "id",
         1,
         KalamDataType::Int,
@@ -183,6 +186,7 @@ async fn test_selective_invalidation_preserves_other_entries() {
     for i in 1..=3 {
         let table_id = TableId::from_strings("default", &format!("test_table_{}", i));
         let columns = vec![ColumnDefinition::new(
+            1,
             "id",
             1,
             KalamDataType::Int,
@@ -254,6 +258,7 @@ async fn test_invalidation_idempotent() {
     use kalamdb_commons::schemas::{ColumnDefinition, TableDefinition, TableOptions, TableType};
 
     let columns = vec![ColumnDefinition::new(
+        1,
         "id",
         1,
         KalamDataType::Int,
@@ -302,6 +307,7 @@ async fn test_cache_stats_track_invalidation_behavior() {
     use kalamdb_commons::schemas::{ColumnDefinition, TableDefinition, TableOptions, TableType};
 
     let columns = vec![ColumnDefinition::new(
+        1,
         "id",
         1,
         KalamDataType::Int,

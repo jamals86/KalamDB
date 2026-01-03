@@ -18,6 +18,7 @@ use kalamdb_commons::{NamespaceId, TableName};
 pub fn users_table_definition() -> TableDefinition {
     let columns = vec![
         ColumnDefinition::new(
+            1,
             "user_id",
             1,
             KalamDataType::Text,
@@ -28,6 +29,7 @@ pub fn users_table_definition() -> TableDefinition {
             Some("User identifier (UUID)".to_string()),
         ),
         ColumnDefinition::new(
+            2,
             "username",
             2,
             KalamDataType::Text,
@@ -38,6 +40,7 @@ pub fn users_table_definition() -> TableDefinition {
             Some("Unique username for authentication".to_string()),
         ),
         ColumnDefinition::new(
+            3,
             "password_hash",
             3,
             KalamDataType::Text,
@@ -48,6 +51,7 @@ pub fn users_table_definition() -> TableDefinition {
             Some("bcrypt password hash".to_string()),
         ),
         ColumnDefinition::new(
+            4,
             "role",
             4,
             KalamDataType::Text,
@@ -58,6 +62,7 @@ pub fn users_table_definition() -> TableDefinition {
             Some("User role: user, service, dba, system".to_string()),
         ),
         ColumnDefinition::new(
+            5,
             "email",
             5,
             KalamDataType::Text,
@@ -68,6 +73,7 @@ pub fn users_table_definition() -> TableDefinition {
             Some("User email address".to_string()),
         ),
         ColumnDefinition::new(
+            6,
             "auth_type",
             6,
             KalamDataType::Text,
@@ -78,6 +84,7 @@ pub fn users_table_definition() -> TableDefinition {
             Some("Authentication type: Password, OAuth, ApiKey".to_string()),
         ),
         ColumnDefinition::new(
+            7,
             "auth_data",
             7,
             KalamDataType::Text,
@@ -88,6 +95,7 @@ pub fn users_table_definition() -> TableDefinition {
             Some("Authentication data (JSON for OAuth provider/subject)".to_string()),
         ),
         ColumnDefinition::new(
+            8,
             "storage_mode",
             8,
             KalamDataType::Text,
@@ -98,6 +106,7 @@ pub fn users_table_definition() -> TableDefinition {
             Some("Preferred storage partitioning mode".to_string()),
         ),
         ColumnDefinition::new(
+            9,
             "storage_id",
             9,
             KalamDataType::Text,
@@ -108,6 +117,7 @@ pub fn users_table_definition() -> TableDefinition {
             Some("Optional preferred storage configuration ID".to_string()),
         ),
         ColumnDefinition::new(
+            10,
             "created_at",
             10,
             KalamDataType::Timestamp,
@@ -118,6 +128,7 @@ pub fn users_table_definition() -> TableDefinition {
             Some("Account creation timestamp".to_string()),
         ),
         ColumnDefinition::new(
+            11,
             "updated_at",
             11,
             KalamDataType::Timestamp,
@@ -128,6 +139,7 @@ pub fn users_table_definition() -> TableDefinition {
             Some("Last account update timestamp".to_string()),
         ),
         ColumnDefinition::new(
+            12,
             "last_seen",
             12,
             KalamDataType::Timestamp,
@@ -138,6 +150,7 @@ pub fn users_table_definition() -> TableDefinition {
             Some("Last authentication timestamp".to_string()),
         ),
         ColumnDefinition::new(
+            13,
             "deleted_at",
             13,
             KalamDataType::Timestamp,

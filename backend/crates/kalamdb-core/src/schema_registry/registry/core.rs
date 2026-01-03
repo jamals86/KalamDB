@@ -288,6 +288,31 @@ impl SchemaRegistry {
 
         Ok(columns)
     }
+
+    /// Get indexed column info with column_id and column_name for a table
+    /// Returns (column_id, column_name) pairs for PRIMARY KEY columns + _seq
+    /// Used for extracting column statistics keyed by stable column_id
+    pub fn get_indexed_column_info(
+        &self,
+        table_id: &TableId,
+    ) -> Result<Vec<(u64, String)>, KalamDbError> {
+        let table_def = self
+            .get_table_definition(table_id)?
+            .ok_or_else(|| KalamDbError::TableNotFound(format!("Table not found: {}", table_id)))?;
+
+        let mut columns = vec![];
+
+        // Add PRIMARY KEY columns (FR-055: indexed columns)
+        for col in table_def.columns.iter().filter(|c| c.is_primary_key) {
+            columns.push((col.column_id, col.column_name.clone()));
+        }
+
+        // Add _seq system column with a reserved column_id (0)
+        // _seq is a system column and always uses column_id 0
+        columns.push((0, SystemColumnNames::SEQ.to_string()));
+
+        Ok(columns)
+    }
 }
 
 impl Default for SchemaRegistry {
