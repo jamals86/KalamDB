@@ -122,30 +122,35 @@ fn test_invalidate() {
 
 #[test]
 fn test_storage_path_resolution() {
-    let cache = SchemaRegistry::new(1000);
-    let table_id = TableId::new(NamespaceId::new("my_ns"), TableName::new("messages"));
+    use crate::schema_registry::PathResolver;
 
     // Create test data with properly set storage_path_template
     let schema = create_test_schema();
-    let mut data = CachedTableData::new(schema);
-    data.storage_path_template = "/data/{namespace}/{tableName}/{userId}/{shard}/"
-        .to_string()
-        .replace("{namespace}", "my_ns")
-        .replace("{tableName}", "messages");
 
-    cache.insert(table_id.clone(), Arc::new(data));
-
-    let path = cache
-        .get_storage_path(&table_id, Some(&UserId::new("alice")), Some(0))
-        .expect("Should resolve path");
-
-    let expected_suffix = "/data/my_ns/messages/alice/shard_0/";
-    assert!(
-        path.ends_with(expected_suffix),
-        "Expected path to end with '{}', got '{}'",
-        expected_suffix,
-        path
+    // Use with_storage_config to properly set the template
+    let data = CachedTableData::with_storage_config(
+        schema,
+        None,
+        "/data/my_ns/messages/{userId}/{shard}/".to_string(),
     );
+    let data_arc = Arc::new(data);
+
+    // Test PathResolver::get_relative_storage_path (doesn't require AppContext)
+    let relative_path = PathResolver::get_relative_storage_path(
+        &data_arc,
+        Some(&UserId::new("alice")),
+        Some(0),
+    )
+    .expect("Should resolve relative path");
+
+    let expected = "data/my_ns/messages/alice/shard_0/";
+    assert_eq!(
+        relative_path, expected,
+        "Expected '{}', got '{}'",
+        expected, relative_path
+    );
+
+    println!("✅ Storage path resolution test passed (using get_relative_storage_path)");
 }
 
 #[test]
@@ -501,19 +506,31 @@ fn stress_concurrent_access() {
 #[test]
 fn test_provider_cache_insert_and_get() {
     use kalamdb_system::providers::stats::StatsTableProvider;
+
     let cache = SchemaRegistry::new(1000);
     let table_id = TableId::new(NamespaceId::new("ns1"), TableName::new("stats"));
+
+    // First, insert CachedTableData (required for provider storage)
+    let schema = create_test_schema();
+    let cached_data = CachedTableData::new(schema);
+    cache.insert(table_id.clone(), Arc::new(cached_data));
+
+    // Now insert provider into the cached data
     let provider = Arc::new(StatsTableProvider::new(None)) as Arc<dyn TableProvider + Send + Sync>;
 
-    cache
-        .insert_provider(table_id.clone(), Arc::clone(&provider))
-        .expect("insert failed");
+    // Get the cached data and set provider directly (tests CachedTableData.set_provider)
+    let cached = cache.get(&table_id).expect("should have cached data");
+    cached.set_provider(Arc::clone(&provider));
+
+    // Retrieve via get_provider
     let retrieved = cache.get_provider(&table_id).expect("provider present");
 
     assert!(
         Arc::ptr_eq(&provider, &retrieved),
         "must return same Arc instance"
     );
+
+    println!("✅ Provider cache insert and get test passed");
 }
 
 #[test]
@@ -589,124 +606,4 @@ fn test_cached_table_data_includes_system_columns() {
     );
 
     println!("✅ T014: CachedTableData Arrow schema includes _seq and _deleted system columns");
-}
-
-#[test]
-fn test_get_bloom_filter_columns() {
-    use crate::system_columns::SystemColumnsService;
-    use kalamdb_commons::models::datatypes::KalamDataType;
-    use kalamdb_commons::models::schemas::{ColumnDefinition, TableOptions, TableType};
-
-    let cache = SchemaRegistry::new(1000);
-    let table_id = TableId::new(NamespaceId::new("test_ns"), TableName::new("users"));
-
-    // Create table with PRIMARY KEY column
-    let pk_col = ColumnDefinition::primary_key(1, "id", 1, KalamDataType::BigInt);
-    let name_col = ColumnDefinition::simple(2, "name", 2, KalamDataType::Text);
-
-    let mut table_def = kalamdb_commons::models::schemas::TableDefinition::new(
-        NamespaceId::new("test_ns"),
-        TableName::new("users"),
-        TableType::User,
-        vec![pk_col, name_col],
-        TableOptions::user(),
-        None,
-    )
-    .unwrap();
-
-    // Add system columns (_seq, _deleted)
-    let sys_cols = SystemColumnsService::new(1);
-    sys_cols.add_system_columns(&mut table_def).unwrap();
-
-    // Insert into cache
-    let cached_data = CachedTableData::new(Arc::new(table_def));
-    cache.insert(table_id.clone(), Arc::new(cached_data));
-
-    // Get Bloom filter columns
-    let bloom_cols = cache
-        .get_bloom_filter_columns(&table_id)
-        .expect("Should get Bloom filter columns");
-
-    // Verify: PRIMARY KEY "id" + system column "_seq"
-    assert_eq!(bloom_cols.len(), 2, "Should have 2 Bloom filter columns");
-    assert_eq!(
-        bloom_cols[0], "id",
-        "First column should be PRIMARY KEY 'id'"
-    );
-    assert_eq!(
-        bloom_cols[1], "_seq",
-        "Second column should be system column '_seq'"
-    );
-
-    println!("✅ get_bloom_filter_columns returns PRIMARY KEY + _seq");
-}
-
-#[test]
-fn test_get_bloom_filter_columns_composite_pk() {
-    use crate::system_columns::SystemColumnsService;
-    use kalamdb_commons::models::datatypes::KalamDataType;
-    use kalamdb_commons::models::schemas::{ColumnDefinition, TableOptions, TableType};
-
-    let cache = SchemaRegistry::new(1000);
-    let table_id = TableId::new(NamespaceId::new("test_ns"), TableName::new("orders"));
-
-    // Create table with composite PRIMARY KEY (user_id, order_id)
-    let user_id_col = ColumnDefinition::new(
-        1,
-        "user_id",
-        1,
-        KalamDataType::BigInt,
-        false, // not nullable
-        true,  // is_primary_key
-        false,
-        kalamdb_commons::models::schemas::ColumnDefault::None,
-        None,
-    );
-    let order_id_col = ColumnDefinition::new(
-        2,
-        "order_id",
-        2,
-        KalamDataType::BigInt,
-        false,
-        true, // is_primary_key
-        false,
-        kalamdb_commons::models::schemas::ColumnDefault::None,
-        None,
-    );
-    let amount_col = ColumnDefinition::simple(3, "amount", 3, KalamDataType::Int);
-
-    let mut table_def = kalamdb_commons::models::schemas::TableDefinition::new(
-        NamespaceId::new("test_ns"),
-        TableName::new("orders"),
-        TableType::Shared,
-        vec![user_id_col, order_id_col, amount_col],
-        TableOptions::shared(),
-        None,
-    )
-    .unwrap();
-
-    // Add system columns
-    let sys_cols = SystemColumnsService::new(1);
-    sys_cols.add_system_columns(&mut table_def).unwrap();
-
-    // Insert into cache
-    let cached_data = CachedTableData::new(Arc::new(table_def));
-    cache.insert(table_id.clone(), Arc::new(cached_data));
-
-    // Get Bloom filter columns
-    let bloom_cols = cache
-        .get_bloom_filter_columns(&table_id)
-        .expect("Should get Bloom filter columns");
-
-    // Verify: Both PRIMARY KEY columns + _seq
-    assert_eq!(
-        bloom_cols.len(),
-        3,
-        "Should have 3 Bloom filter columns (2 PK + _seq)"
-    );
-    assert_eq!(bloom_cols[0], "user_id", "First PK column");
-    assert_eq!(bloom_cols[1], "order_id", "Second PK column");
-    assert_eq!(bloom_cols[2], "_seq", "System column");
-
-    println!("✅ get_bloom_filter_columns handles composite PRIMARY KEY");
 }

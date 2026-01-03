@@ -1,5 +1,7 @@
 use crate::error::KalamDbError;
 use crate::error_extensions::KalamDbResultExt;
+use datafusion::datasource::TableProvider;
+use kalamdb_commons::constants::SystemColumnNames;
 use kalamdb_commons::models::schemas::TableDefinition;
 use kalamdb_commons::models::{StorageId, TableId};
 use object_store::ObjectStore;
@@ -42,6 +44,23 @@ pub struct CachedTableData {
     ///
     /// Used for LRU eviction in `TableCache` without maintaining a separate timestamp map.
     last_accessed_ms: AtomicU64,
+
+    /// Bloom filter columns (PRIMARY KEY + _seq) - computed once on cache entry creation
+    /// Static for each table schema version, changes only on ALTER TABLE
+    bloom_filter_columns: Vec<String>,
+
+    /// Indexed columns with column_id for stats extraction (column_id, column_name)
+    /// Used for Parquet row-group statistics keyed by stable column_id
+    indexed_columns: Vec<(u64, String)>,
+
+    /// Cached DataFusion TableProvider for this table
+    ///
+    /// Lazily initialized when first needed. Stores the provider so it can be
+    /// reused across queries without recreating. When the table is evicted from
+    /// cache, the provider is automatically cleaned up.
+    ///
+    /// **Thread Safety**: RwLock allows concurrent reads, exclusive writes for initialization
+    provider: Arc<RwLock<Option<Arc<dyn TableProvider + Send + Sync>>>>,
 }
 
 impl Clone for CachedTableData {
@@ -53,6 +72,9 @@ impl Clone for CachedTableData {
             schema_version: self.schema_version,
             arrow_schema: Arc::clone(&self.arrow_schema),
             last_accessed_ms: AtomicU64::new(self.last_accessed_ms.load(Ordering::Relaxed)),
+            bloom_filter_columns: self.bloom_filter_columns.clone(),
+            indexed_columns: self.indexed_columns.clone(),
+            provider: Arc::clone(&self.provider),
         }
     }
 }
@@ -66,17 +88,45 @@ impl CachedTableData {
             .as_millis() as u64
     }
 
+    /// Compute bloom filter columns and indexed columns from table definition
+    /// 
+    /// This is computed once when CachedTableData is created and reused for all
+    /// flush operations. Returns (bloom_filter_columns, indexed_columns).
+    ///
+    /// - bloom_filter_columns: PRIMARY KEY columns + _seq (for Parquet Bloom filters)
+    /// - indexed_columns: (column_id, column_name) pairs for row-group stats extraction
+    fn compute_indexed_columns(table_def: &TableDefinition) -> (Vec<String>, Vec<(u64, String)>) {
+        let mut bloom_filter_columns = Vec::new();
+        let mut indexed_columns = Vec::new();
+
+        // Add PRIMARY KEY columns
+        for col in table_def.columns.iter().filter(|c| c.is_primary_key) {
+            bloom_filter_columns.push(col.column_name.clone());
+            indexed_columns.push((col.column_id, col.column_name.clone()));
+        }
+
+        // Add _seq system column (always present for Bloom filters and stats)
+        bloom_filter_columns.push(SystemColumnNames::SEQ.to_string());
+        indexed_columns.push((0, SystemColumnNames::SEQ.to_string())); // _seq uses column_id 0
+
+        (bloom_filter_columns, indexed_columns)
+    }
+
     /// Create new cached table data
     #[allow(clippy::too_many_arguments)]
     pub fn new(schema: Arc<TableDefinition>) -> Self {
         let schema_version = schema.schema_version;
+        let (bloom_filter_columns, indexed_columns) = Self::compute_indexed_columns(&schema);
         Self {
             table: schema,
             storage_id: None,
             storage_path_template: String::new(),
             schema_version,
-            arrow_schema: Arc::new(RwLock::new(None)), // Phase 10, US1, FR-002: Lazy init on first access
+            arrow_schema: Arc::new(RwLock::new(None)),
             last_accessed_ms: AtomicU64::new(Self::now_millis()),
+            bloom_filter_columns,
+            indexed_columns,
+            provider: Arc::new(RwLock::new(None)),
         }
     }
 
@@ -98,6 +148,7 @@ impl CachedTableData {
         storage_path_template: String,
     ) -> Self {
         let schema_version = table_def.schema_version;
+        let (bloom_filter_columns, indexed_columns) = Self::compute_indexed_columns(&table_def);
         Self {
             table: table_def,
             storage_id,
@@ -105,6 +156,9 @@ impl CachedTableData {
             schema_version,
             arrow_schema: Arc::new(RwLock::new(None)),
             last_accessed_ms: AtomicU64::new(Self::now_millis()),
+            bloom_filter_columns,
+            indexed_columns,
+            provider: Arc::new(RwLock::new(None)),
         }
     }
 
@@ -281,5 +335,65 @@ impl CachedTableData {
 
         let app_ctx = crate::app_context::AppContext::get();
         app_ctx.storage_registry().get_object_store(storage_id)
+    }
+
+    /// Get cached Bloom filter columns (PRIMARY KEY + _seq)
+    ///
+    /// These columns are computed once when the cache entry is created and
+    /// remain constant for the lifetime of this schema version. Used for
+    /// Parquet Bloom filter generation during flush operations.
+    ///
+    /// **Performance**: O(1) access, no computation required
+    #[inline]
+    pub fn bloom_filter_columns(&self) -> &[String] {
+        &self.bloom_filter_columns
+    }
+
+    /// Get cached indexed columns with column_id (PRIMARY KEY + _seq)
+    ///
+    /// Returns (column_id, column_name) pairs for columns that need
+    /// row-group statistics in Parquet files. Column IDs are stable
+    /// across schema changes (ALTER TABLE).
+    ///
+    /// **Performance**: O(1) access, no computation required
+    #[inline]
+    pub fn indexed_columns(&self) -> &[(u64, String)] {
+        &self.indexed_columns
+    }
+
+    /// Get the cached DataFusion TableProvider for this table
+    ///
+    /// Returns None if no provider has been set yet.
+    ///
+    /// **Performance**: O(1) access with read lock
+    pub fn get_provider(&self) -> Option<Arc<dyn TableProvider + Send + Sync>> {
+        let guard = self
+            .provider
+            .read()
+            .expect("RwLock poisoned: provider read lock failed");
+        guard.as_ref().map(Arc::clone)
+    }
+
+    /// Set the DataFusion TableProvider for this table
+    ///
+    /// Overwrites any existing provider. The provider is automatically
+    /// cleaned up when the CachedTableData is dropped.
+    ///
+    /// **Performance**: O(1) with write lock
+    pub fn set_provider(&self, provider: Arc<dyn TableProvider + Send + Sync>) {
+        let mut guard = self
+            .provider
+            .write()
+            .expect("RwLock poisoned: provider write lock failed");
+        *guard = Some(provider);
+    }
+
+    /// Clear the cached provider (used during table invalidation)
+    pub fn clear_provider(&self) {
+        let mut guard = self
+            .provider
+            .write()
+            .expect("RwLock poisoned: provider write lock failed");
+        *guard = None;
     }
 }

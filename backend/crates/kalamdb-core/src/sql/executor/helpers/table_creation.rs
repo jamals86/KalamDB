@@ -138,7 +138,8 @@ fn persist_table_and_prime_cache(
         .into_kalamdb_error("Failed to store initial schema version")?;
 
     // Prime cache entry with storage path template + storage id
-    let template = schema_registry.resolve_storage_path_template(
+    use crate::schema_registry::PathResolver;
+    let template = PathResolver::resolve_storage_path_template(
         table_id,
         table_type,
         storage_id,

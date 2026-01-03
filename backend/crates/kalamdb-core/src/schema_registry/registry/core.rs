@@ -4,29 +4,37 @@ use crate::error::KalamDbError;
 use crate::schema_registry::cached_table_data::CachedTableData;
 use crate::schema_registry::path_resolver::PathResolver;
 use crate::schema_registry::persistence::SchemaPersistence;
-use crate::schema_registry::provider_registry::ProviderRegistry;
 use crate::schema_registry::table_cache::TableCache;
 use datafusion::datasource::TableProvider;
-use kalamdb_commons::constants::SystemColumnNames;
 use kalamdb_commons::models::schemas::TableDefinition;
-use kalamdb_commons::models::{StorageId, TableId, TableVersionId, UserId};
-use kalamdb_commons::schemas::TableType;
-use std::sync::Arc;
+use kalamdb_commons::models::{TableId, TableVersionId, UserId};
+use std::sync::{Arc, OnceLock};
 
-/// Unified schema cache for table metadata and schemas
+/// Unified schema cache for table metadata, schemas, and providers
 ///
-/// Replaces dual-cache architecture with single DashMap for all table data.
+/// Single DashMap architecture for all table data including:
+/// - Table definitions and metadata
+/// - Memoized Arrow schemas
+/// - DataFusion TableProvider instances
 ///
 /// **Performance Optimization**: Cache access updates `last_accessed_ms` via an
 /// atomic field stored inside `CachedTableData`. This avoids a separate
 /// timestamps map while keeping per-access work O(1) and avoiding any deep clones.
-#[derive(Debug)]
 pub struct SchemaRegistry {
-    /// Cache for table data
+    /// Cache for table data (includes provider storage)
     table_cache: TableCache,
 
-    /// Registry for DataFusion providers
-    provider_registry: ProviderRegistry,
+    /// DataFusion base session context for table registration (set once during init)
+    base_session_context: OnceLock<Arc<datafusion::prelude::SessionContext>>,
+}
+
+impl std::fmt::Debug for SchemaRegistry {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("SchemaRegistry")
+            .field("table_cache", &self.table_cache)
+            .field("base_session_context_set", &self.base_session_context.get().is_some())
+            .finish()
+    }
 }
 
 impl SchemaRegistry {
@@ -34,13 +42,13 @@ impl SchemaRegistry {
     pub fn new(max_size: usize) -> Self {
         Self {
             table_cache: TableCache::new(max_size),
-            provider_registry: ProviderRegistry::new(),
+            base_session_context: OnceLock::new(),
         }
     }
 
     /// Set the DataFusion base session context for table registration
     pub fn set_base_session_context(&self, session: Arc<datafusion::prelude::SessionContext>) {
-        self.provider_registry.set_base_session_context(session);
+        let _ = self.base_session_context.set(session);
     }
 
     /// Get cached table data by TableId
@@ -51,21 +59,21 @@ impl SchemaRegistry {
     /// Insert or update cached table data
     pub fn insert(&self, table_id: TableId, data: Arc<CachedTableData>) {
         if let Some(evicted) = self.table_cache.insert(table_id, data) {
-            // Also remove the provider for the evicted table
-            let _ = self.provider_registry.remove_provider(&evicted);
+            // Deregister evicted table from DataFusion catalog
+            let _ = self.deregister_from_datafusion(&evicted);
         }
     }
 
     /// Invalidate (remove) cached table data
     pub fn invalidate(&self, table_id: &TableId) {
         self.table_cache.invalidate(table_id);
-        let _ = self.provider_registry.remove_provider(table_id);
+        let _ = self.deregister_from_datafusion(table_id);
     }
 
     /// Invalidate all versions of a table (for DROP TABLE)
     pub fn invalidate_all_versions(&self, table_id: &TableId) {
         self.table_cache.invalidate_all_versions(table_id);
-        let _ = self.provider_registry.remove_provider(table_id);
+        let _ = self.deregister_from_datafusion(table_id);
     }
 
     // ===== Versioned Cache Methods (Phase 16) =====
@@ -109,7 +117,6 @@ impl SchemaRegistry {
     /// Clear all cached data
     pub fn clear(&self) {
         self.table_cache.clear();
-        self.provider_registry.clear();
     }
 
     /// Get number of cached entries
@@ -122,33 +129,163 @@ impl SchemaRegistry {
         self.table_cache.is_empty()
     }
 
+    // ===== Provider Methods (consolidated from ProviderRegistry) =====
+
     /// Insert a DataFusion provider into the cache for a table
+    ///
+    /// Stores the provider in CachedTableData and registers with DataFusion's catalog.
     pub fn insert_provider(
         &self,
         table_id: TableId,
         provider: Arc<dyn TableProvider + Send + Sync>,
     ) -> Result<(), KalamDbError> {
-        self.provider_registry.insert_provider(table_id, provider)
+        log::info!(
+            "[SchemaRegistry] Inserting provider for table {}",
+            table_id
+        );
+
+        // Store in CachedTableData
+        if let Some(cached) = self.get(&table_id) {
+            cached.set_provider(provider.clone());
+        } else {
+            // Table not in cache - try to load from persistence first
+            if let Some(cached) = SchemaPersistence::get_table_definition(&self.table_cache, &table_id)?
+                .and_then(|_| self.get(&table_id))
+            {
+                cached.set_provider(provider.clone());
+            } else {
+                return Err(KalamDbError::TableNotFound(format!(
+                    "Cannot insert provider: table {} not in cache",
+                    table_id
+                )));
+            }
+        }
+
+        // Register with DataFusion's catalog if available
+        self.register_with_datafusion(&table_id, provider)?;
+
+        Ok(())
     }
 
     /// Remove a cached DataFusion provider for a table and unregister from DataFusion
     pub fn remove_provider(&self, table_id: &TableId) -> Result<(), KalamDbError> {
-        self.provider_registry.remove_provider(table_id)
+        // Clear from CachedTableData
+        if let Some(cached) = self.get(table_id) {
+            cached.clear_provider();
+        }
+
+        // Deregister from DataFusion
+        self.deregister_from_datafusion(table_id)
     }
 
     /// Get a cached DataFusion provider for a table
     pub fn get_provider(&self, table_id: &TableId) -> Option<Arc<dyn TableProvider + Send + Sync>> {
-        self.provider_registry.get_provider(table_id)
+        let result = self.get(table_id).and_then(|cached| cached.get_provider());
+        if result.is_some() {
+            log::trace!(
+                "[SchemaRegistry] Retrieved provider for table {}",
+                table_id
+            );
+        } else {
+            log::warn!(
+                "[SchemaRegistry] Provider NOT FOUND for table {}",
+                table_id
+            );
+        }
+        result
     }
 
-    /// Resolve partial storage path template for a table
-    pub fn resolve_storage_path_template(
+    /// Register a provider with DataFusion's catalog
+    fn register_with_datafusion(
         &self,
         table_id: &TableId,
-        table_type: TableType,
-        storage_id: &StorageId,
-    ) -> Result<String, KalamDbError> {
-        PathResolver::resolve_storage_path_template(table_id, table_type, storage_id)
+        provider: Arc<dyn TableProvider + Send + Sync>,
+    ) -> Result<(), KalamDbError> {
+        if let Some(base_session) = self.base_session_context.get() {
+            // Use constant catalog name "kalam"
+            let catalog = base_session.catalog("kalam").ok_or_else(|| {
+                KalamDbError::InvalidOperation("Catalog 'kalam' not found".to_string())
+            })?;
+
+            // Get or create namespace schema
+            let schema = catalog
+                .schema(table_id.namespace_id().as_str())
+                .unwrap_or_else(|| {
+                    // Create namespace schema if it doesn't exist
+                    let new_schema =
+                        Arc::new(datafusion::catalog::memory::MemorySchemaProvider::new());
+                    catalog
+                        .register_schema(table_id.namespace_id().as_str(), new_schema.clone())
+                        .expect("Failed to register namespace schema");
+                    new_schema
+                });
+
+            // Register table with DataFusion, tolerate duplicates
+            match schema.register_table(table_id.table_name().as_str().to_string(), provider) {
+                Ok(_) => {}
+                Err(e) => {
+                    let msg = e.to_string();
+                    // If the table already exists, treat as idempotent success
+                    if msg.to_lowercase().contains("already exists")
+                        || msg.to_lowercase().contains("exists")
+                    {
+                        log::warn!(
+                            "[SchemaRegistry] Table {} already registered in DataFusion; continuing",
+                            table_id
+                        );
+                    } else {
+                        return Err(KalamDbError::InvalidOperation(format!(
+                            "Failed to register table with DataFusion: {}",
+                            e
+                        )));
+                    }
+                }
+            }
+
+            log::info!(
+                "[SchemaRegistry] Registered table {} with DataFusion catalog",
+                table_id
+            );
+        }
+
+        Ok(())
+    }
+
+    /// Deregister a table from DataFusion's catalog
+    fn deregister_from_datafusion(&self, table_id: &TableId) -> Result<(), KalamDbError> {
+        if let Some(base_session) = self.base_session_context.get() {
+            let catalog_name = base_session
+                .state()
+                .config()
+                .options()
+                .catalog
+                .default_catalog
+                .clone();
+
+            let catalog = base_session.catalog(&catalog_name).ok_or_else(|| {
+                KalamDbError::InvalidOperation(format!("Catalog '{}' not found", catalog_name))
+            })?;
+
+            // Get namespace schema
+            if let Some(schema) = catalog.schema(table_id.namespace_id().as_str()) {
+                // Deregister table from DataFusion
+                schema
+                    .deregister_table(table_id.table_name().as_str())
+                    .map_err(|e| {
+                        KalamDbError::InvalidOperation(format!(
+                            "Failed to deregister table from DataFusion: {}",
+                            e
+                        ))
+                    })?;
+
+                log::debug!(
+                    "Unregistered table {} from DataFusion catalog",
+                    table_id
+                );
+            }
+        }
+
+        Ok(())
     }
 
     // ===== Persistence Methods (Phase 5: SchemaRegistry Consolidation) =====
@@ -214,18 +351,33 @@ impl SchemaRegistry {
         SchemaPersistence::get_table_if_exists(&self.table_cache, table_id)
     }
 
-    /// Get Arrow schema for a table (Phase 10: Arrow Schema Memoization)
+    /// Get Arrow schema for a table
+    ///
+    /// Directly accesses the memoized Arrow schema from CachedTableData.
+    /// The schema is computed once on first access and cached thereafter.
+    ///
+    /// **Performance**: First call ~75μs (computation), subsequent calls ~1.5μs (cached)
     pub fn get_arrow_schema(
         &self,
         table_id: &TableId,
     ) -> Result<Arc<arrow::datatypes::Schema>, KalamDbError> {
-        let (schema, evicted) = SchemaPersistence::get_arrow_schema(&self.table_cache, table_id)?;
-
-        if let Some(evicted_id) = evicted {
-            let _ = self.provider_registry.remove_provider(&evicted_id);
+        // Fast path: check cache
+        if let Some(cached) = self.get(table_id) {
+            return cached.arrow_schema();
         }
 
-        Ok(schema)
+        // Slow path: try to load from persistence (lazy loading)
+        if SchemaPersistence::get_table_definition(&self.table_cache, table_id)?.is_some() {
+            // Cache is now populated - retrieve it
+            if let Some(cached) = self.get(table_id) {
+                return cached.arrow_schema();
+            }
+        }
+
+        Err(KalamDbError::TableNotFound(format!(
+            "Table not found: {}",
+            table_id
+        )))
     }
 
     /// Get Arrow schema for a specific table version (for reading old Parquet files)
@@ -265,53 +417,6 @@ impl SchemaRegistry {
         self.insert_version(version_id, Arc::new(cached_data));
 
         Ok(arrow_schema)
-    }
-
-    /// Get Bloom filter column names for a table (PRIMARY KEY columns + _seq)
-    pub fn get_bloom_filter_columns(
-        &self,
-        table_id: &TableId,
-    ) -> Result<Vec<String>, KalamDbError> {
-        let table_def = self
-            .get_table_definition(table_id)?
-            .ok_or_else(|| KalamDbError::TableNotFound(format!("Table not found: {}", table_id)))?;
-
-        let mut columns = vec![];
-
-        // Add PRIMARY KEY columns (FR-055: indexed columns)
-        for col in table_def.columns.iter().filter(|c| c.is_primary_key) {
-            columns.push(col.column_name.clone());
-        }
-
-        // Add _seq system column (FR-054: default Bloom filter columns)
-        columns.push(SystemColumnNames::SEQ.to_string());
-
-        Ok(columns)
-    }
-
-    /// Get indexed column info with column_id and column_name for a table
-    /// Returns (column_id, column_name) pairs for PRIMARY KEY columns + _seq
-    /// Used for extracting column statistics keyed by stable column_id
-    pub fn get_indexed_column_info(
-        &self,
-        table_id: &TableId,
-    ) -> Result<Vec<(u64, String)>, KalamDbError> {
-        let table_def = self
-            .get_table_definition(table_id)?
-            .ok_or_else(|| KalamDbError::TableNotFound(format!("Table not found: {}", table_id)))?;
-
-        let mut columns = vec![];
-
-        // Add PRIMARY KEY columns (FR-055: indexed columns)
-        for col in table_def.columns.iter().filter(|c| c.is_primary_key) {
-            columns.push((col.column_id, col.column_name.clone()));
-        }
-
-        // Add _seq system column with a reserved column_id (0)
-        // _seq is a system column and always uses column_id 0
-        columns.push((0, SystemColumnNames::SEQ.to_string()));
-
-        Ok(columns)
     }
 }
 

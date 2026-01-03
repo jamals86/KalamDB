@@ -50,29 +50,22 @@ impl UserTableFlushJob {
     ) -> Self {
         let manifest_helper = FlushManifestHelper::new(manifest_service);
 
-        // Fetch Bloom filter columns once per job (PRIMARY KEY + _seq)
-        // This avoids fetching TableDefinition for each user during flush
-        let bloom_filter_columns = unified_cache
-            .get_bloom_filter_columns(&table_id)
-            .unwrap_or_else(|e| {
+        // Get cached values from CachedTableData (computed once at cache entry creation)
+        // This avoids any recomputation - values are already cached in the schema registry
+        let (bloom_filter_columns, indexed_columns) = unified_cache
+            .get(&table_id)
+            .map(|cached| {
+                (
+                    cached.bloom_filter_columns().to_vec(),
+                    cached.indexed_columns().to_vec(),
+                )
+            })
+            .unwrap_or_else(|| {
                 log::warn!(
-                    "⚠️  Failed to get Bloom filter columns for {}: {}. Using default (_seq only)",
-                    table_id,
-                    e
+                    "⚠️  Table {} not in cache. Using default Bloom filter columns (_seq only)",
+                    table_id
                 );
-                vec![SystemColumnNames::SEQ.to_string()]
-            });
-
-        // Fetch indexed column info with column_ids for stats extraction
-        let indexed_columns = unified_cache
-            .get_indexed_column_info(&table_id)
-            .unwrap_or_else(|e| {
-                log::warn!(
-                    "⚠️  Failed to get indexed column info for {}: {}. Using empty",
-                    table_id,
-                    e
-                );
-                vec![]
+                (vec![SystemColumnNames::SEQ.to_string()], vec![])
             });
 
         log::debug!(
