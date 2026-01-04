@@ -369,3 +369,15 @@ With Phase 1 implemented, KalamDB gains:
 * Simple introspection via SQL and the existing CLI command style.  
 
 And most importantly, it stays aligned with KalamDB’s core principle: **simple, inspectable architecture with a SQL-first interface.**  
+---
+
+# 15. Detailed Implementation
+
+See [raft-implementation-details.md](raft-implementation-details.md) for the complete Multi-Raft implementation plan, including:
+
+- **3 Raft Groups**: `system` (DDL), `users` (auth), `jobs` (coordination)
+- **Generic over StorageBackend**: All Raft log/state persistence uses `kalamdb-store::StorageBackend`
+- **gRPC Networking**: Based on openraft's `raft-kv-memstore-grpc` example
+- **Multi-Raft Router**: Dispatches messages to correct Raft group
+- **Full Protobuf Schema**: AppendEntries, Vote, InstallSnapshot, ClusterService
+- **Implementation Phases**: ~90 hours over 3-4 weeks
