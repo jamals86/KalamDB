@@ -963,6 +963,11 @@ jobs:
           sed -i 's|logs_path = "./logs"|logs_path = "./test-data/logs"|g' server.toml
           sed -i 's|jwt_secret = ".*"|jwt_secret = "smoke-test-secret-key-minimum-32-characters-long-for-ci"|g' server.toml
           
+          # Set high rate limits for parallel smoke test execution
+          sed -i 's|max_queries_per_sec = [0-9]*|max_queries_per_sec = 100000|g' server.toml
+          sed -i 's|max_messages_per_sec = [0-9]*|max_messages_per_sec = 10000|g' server.toml
+          sed -i 's|max_subscriptions_per_user = [0-9]*|max_subscriptions_per_user = 100|g' server.toml
+          
           # Verify the config
           echo "=== server.toml ==="
           cat server.toml | head -100
