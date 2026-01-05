@@ -168,6 +168,11 @@ impl CommandExecutor for RaftExecutor {
     }
     
     async fn start(&self) -> Result<()> {
+        // First start the RPC server so we can receive incoming Raft RPCs
+        let rpc_addr = self.manager.config().rpc_addr.clone();
+        crate::network::start_rpc_server(self.manager.clone(), rpc_addr).await?;
+        
+        // Then start the Raft groups
         self.manager.start().await
     }
     
@@ -176,9 +181,8 @@ impl CommandExecutor for RaftExecutor {
     }
     
     async fn shutdown(&self) -> Result<()> {
-        // TODO: Implement graceful shutdown with leadership transfer
-        log::info!("RaftExecutor shutting down");
-        Ok(())
+        log::info!("RaftExecutor shutting down with graceful cluster leave...");
+        self.manager.shutdown().await
     }
 }
 

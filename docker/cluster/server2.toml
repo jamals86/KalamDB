@@ -107,6 +107,7 @@ max_parameter_size_bytes = 524288
 # Cluster Configuration - 3-Node Raft Cluster
 # ============================================================================
 # Uses flat structure matching ClusterSettings in kalamdb-commons
+# Node with node_id=1 automatically bootstraps the cluster
 [cluster]
 cluster_id = "kalamdb-docker-cluster"
 node_id = 2
@@ -117,6 +118,8 @@ shared_shards = 1
 heartbeat_interval_ms = 100
 election_timeout_ms = [300, 500]
 snapshot_threshold = 10000
+# Require all 3 nodes to acknowledge writes for strong consistency
+min_replication_nodes = 3
 
 # Peer nodes
 [[cluster.peers]]

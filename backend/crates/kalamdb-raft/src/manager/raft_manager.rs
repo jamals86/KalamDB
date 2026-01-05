@@ -52,6 +52,10 @@ pub struct ClusterConfig {
     
     /// Raft election timeout range (min, max) in milliseconds
     pub election_timeout_ms: (u64, u64),
+    
+    /// Minimum number of nodes that must acknowledge a write (default: 1)
+    /// Set to 2 or 3 for strong consistency in a 3-node cluster.
+    pub min_replication_nodes: u32,
 }
 
 impl Default for ClusterConfig {
@@ -65,6 +69,7 @@ impl Default for ClusterConfig {
             shared_shards: DEFAULT_SHARED_DATA_SHARDS,
             heartbeat_interval_ms: 50,
             election_timeout_ms: (150, 300),
+            min_replication_nodes: 1,
         }
     }
 }
@@ -305,6 +310,21 @@ impl RaftManager {
         log::info!("║         Cluster Initialized Successfully!                         ║");
         log::info!("║         This node is now the leader of all {} groups              ║", self.group_count());
         log::info!("╚═══════════════════════════════════════════════════════════════════╝");
+        
+        // After initialization, add peer nodes to the cluster
+        if !self.config.peers.is_empty() {
+            log::info!("Adding {} peer nodes to cluster...", self.config.peers.len());
+            for peer in &self.config.peers {
+                log::info!("  Adding peer node_id={} (rpc={}, api={})...", 
+                    peer.node_id, peer.rpc_addr, peer.api_addr);
+                match self.add_node(peer.node_id, peer.rpc_addr.clone(), peer.api_addr.clone()).await {
+                    Ok(_) => log::info!("    ✓ Peer {} added successfully", peer.node_id),
+                    Err(e) => log::error!("    ✗ Failed to add peer {}: {}", peer.node_id, e),
+                }
+            }
+            log::info!("Peer nodes added to cluster");
+        }
+        
         Ok(())
     }
     
@@ -380,35 +400,69 @@ impl RaftManager {
         }
     }
     
-    /// Propose a command to the MetaSystem group
+    /// Propose a command to the MetaSystem group (with leader forwarding)
+    ///
+    /// If this node is a follower, the request is automatically forwarded to the leader.
     pub async fn propose_system(&self, command: Vec<u8>) -> Result<Vec<u8>, RaftError> {
-        self.meta_system.propose(command).await
+        self.meta_system.propose_with_forward(command).await
     }
     
-    /// Propose a command to the MetaUsers group
+    /// Propose a command to the MetaUsers group (with leader forwarding)
+    ///
+    /// If this node is a follower, the request is automatically forwarded to the leader.
     pub async fn propose_users(&self, command: Vec<u8>) -> Result<Vec<u8>, RaftError> {
-        self.meta_users.propose(command).await
+        self.meta_users.propose_with_forward(command).await
     }
     
-    /// Propose a command to the MetaJobs group
+    /// Propose a command to the MetaJobs group (with leader forwarding)
+    ///
+    /// If this node is a follower, the request is automatically forwarded to the leader.
     pub async fn propose_jobs(&self, command: Vec<u8>) -> Result<Vec<u8>, RaftError> {
-        self.meta_jobs.propose(command).await
+        self.meta_jobs.propose_with_forward(command).await
     }
     
-    /// Propose a command to a user data shard
+    /// Propose a command to a user data shard (with leader forwarding)
+    ///
+    /// If this node is a follower, the request is automatically forwarded to the leader.
     pub async fn propose_user_data(&self, shard: u32, command: Vec<u8>) -> Result<Vec<u8>, RaftError> {
         if shard >= self.user_shards_count {
             return Err(RaftError::InvalidGroup(format!("DataUserShard({})", shard)));
         }
-        self.user_data_shards[shard as usize].propose(command).await
+        self.user_data_shards[shard as usize].propose_with_forward(command).await
     }
     
-    /// Propose a command to a shared data shard
+    /// Propose a command to a shared data shard (with leader forwarding)
+    ///
+    /// If this node is a follower, the request is automatically forwarded to the leader.
     pub async fn propose_shared_data(&self, shard: u32, command: Vec<u8>) -> Result<Vec<u8>, RaftError> {
         if shard >= self.shared_shards_count {
             return Err(RaftError::InvalidGroup(format!("DataSharedShard({})", shard)));
         }
-        self.shared_data_shards[shard as usize].propose(command).await
+        self.shared_data_shards[shard as usize].propose_with_forward(command).await
+    }
+    
+    /// Propose a command to any group by GroupId (for RPC server handling)
+    ///
+    /// Used by the RaftService when receiving a forwarded proposal.
+    /// Does NOT forward - should only be called when we are the leader.
+    pub async fn propose_for_group(&self, group_id: GroupId, command: Vec<u8>) -> Result<Vec<u8>, RaftError> {
+        match group_id {
+            GroupId::MetaSystem => self.meta_system.propose(command).await,
+            GroupId::MetaUsers => self.meta_users.propose(command).await,
+            GroupId::MetaJobs => self.meta_jobs.propose(command).await,
+            GroupId::DataUserShard(shard) => {
+                if shard >= self.user_shards_count {
+                    return Err(RaftError::InvalidGroup(format!("DataUserShard({})", shard)));
+                }
+                self.user_data_shards[shard as usize].propose(command).await
+            }
+            GroupId::DataSharedShard(shard) => {
+                if shard >= self.shared_shards_count {
+                    return Err(RaftError::InvalidGroup(format!("DataSharedShard({})", shard)));
+                }
+                self.shared_data_shards[shard as usize].propose(command).await
+            }
+        }
     }
     
     /// Compute the shard ID for a table
@@ -515,23 +569,175 @@ impl RaftManager {
     
     // === Raft RPC Handlers (for receiving RPCs from other nodes) ===
     
+    /// Get the Raft instance for a specific group
+    fn get_raft_instance(&self, group_id: GroupId) -> Result<crate::manager::raft_group::RaftInstance, RaftError> {
+        match group_id {
+            GroupId::MetaSystem => self.meta_system.raft()
+                .ok_or_else(|| RaftError::NotStarted(format!("Group {:?} not started", group_id))),
+            GroupId::MetaUsers => self.meta_users.raft()
+                .ok_or_else(|| RaftError::NotStarted(format!("Group {:?} not started", group_id))),
+            GroupId::MetaJobs => self.meta_jobs.raft()
+                .ok_or_else(|| RaftError::NotStarted(format!("Group {:?} not started", group_id))),
+            GroupId::DataUserShard(shard) => {
+                let group = self.user_data_shards.get(shard as usize)
+                    .ok_or_else(|| RaftError::Internal(format!("Invalid user shard: {}", shard)))?;
+                group.raft()
+                    .ok_or_else(|| RaftError::NotStarted(format!("Group {:?} not started", group_id)))
+            }
+            GroupId::DataSharedShard(shard) => {
+                let group = self.shared_data_shards.get(shard as usize)
+                    .ok_or_else(|| RaftError::Internal(format!("Invalid shared shard: {}", shard)))?;
+                group.raft()
+                    .ok_or_else(|| RaftError::NotStarted(format!("Group {:?} not started", group_id)))
+            }
+        }
+    }
+    
     /// Handle incoming vote request
-    pub async fn handle_vote(&self, group_id: GroupId, _payload: &[u8]) -> Result<Vec<u8>, RaftError> {
-        // For now, return an error - actual implementation requires Raft instance
-        // This will be implemented when we connect the Raft instances
-        Err(RaftError::NotStarted(format!("handle_vote for {:?} not yet implemented", group_id)))
+    pub async fn handle_vote(&self, group_id: GroupId, payload: &[u8]) -> Result<Vec<u8>, RaftError> {
+        use openraft::raft::VoteRequest;
+        use crate::state_machine::{encode, decode};
+        
+        let raft = self.get_raft_instance(group_id)?;
+        let request: VoteRequest<u64> = decode(payload)?;
+        
+        let response = raft.vote(request).await
+            .map_err(|e| RaftError::Internal(format!("Vote RPC failed: {:?}", e)))?;
+        
+        encode(&response)
     }
     
     /// Handle incoming append entries request
-    pub async fn handle_append_entries(&self, group_id: GroupId, _payload: &[u8]) -> Result<Vec<u8>, RaftError> {
-        // For now, return an error - actual implementation requires Raft instance
-        Err(RaftError::NotStarted(format!("handle_append_entries for {:?} not yet implemented", group_id)))
+    pub async fn handle_append_entries(&self, group_id: GroupId, payload: &[u8]) -> Result<Vec<u8>, RaftError> {
+        use openraft::raft::AppendEntriesRequest;
+        use crate::storage::KalamTypeConfig;
+        use crate::state_machine::{encode, decode};
+        
+        let raft = self.get_raft_instance(group_id)?;
+        let request: AppendEntriesRequest<KalamTypeConfig> = decode(payload)?;
+        
+        let response = raft.append_entries(request).await
+            .map_err(|e| RaftError::Internal(format!("AppendEntries RPC failed: {:?}", e)))?;
+        
+        encode(&response)
     }
     
     /// Handle incoming install snapshot request
-    pub async fn handle_install_snapshot(&self, group_id: GroupId, _payload: &[u8]) -> Result<Vec<u8>, RaftError> {
-        // For now, return an error - actual implementation requires Raft instance
-        Err(RaftError::NotStarted(format!("handle_install_snapshot for {:?} not yet implemented", group_id)))
+    pub async fn handle_install_snapshot(&self, group_id: GroupId, payload: &[u8]) -> Result<Vec<u8>, RaftError> {
+        use openraft::raft::InstallSnapshotRequest;
+        use crate::storage::KalamTypeConfig;
+        use crate::state_machine::{encode, decode};
+        
+        let raft = self.get_raft_instance(group_id)?;
+        let request: InstallSnapshotRequest<KalamTypeConfig> = decode(payload)?;
+        
+        let response = raft.install_snapshot(request).await
+            .map_err(|e| RaftError::Internal(format!("InstallSnapshot RPC failed: {:?}", e)))?;
+        
+        encode(&response)
+    }
+    
+    /// Gracefully shutdown the Raft manager
+    ///
+    /// This performs:
+    /// 1. Leadership transfer if this node is leader (to minimize downtime)
+    /// 2. Logs cluster leave event
+    /// 3. Marks the manager as stopped
+    pub async fn shutdown(&self) -> Result<(), RaftError> {
+        if !self.is_started() {
+            log::warn!("RaftManager not started, nothing to shutdown");
+            return Ok(());
+        }
+        
+        log::info!("╔═══════════════════════════════════════════════════════════════════╗");
+        log::info!("║           Graceful Cluster Shutdown Starting                      ║");
+        log::info!("╚═══════════════════════════════════════════════════════════════════╝");
+        log::info!("Node {} leaving cluster...", self.node_id);
+        
+        // Count how many groups we're leading
+        let mut groups_leading = 0;
+        for group_id in self.all_group_ids() {
+            if self.is_leader(group_id) {
+                groups_leading += 1;
+            }
+        }
+        
+        if groups_leading > 0 {
+            log::info!("This node is leader of {} groups, attempting leadership transfer...", groups_leading);
+            
+            // Attempt leadership transfer for each group where we're leader
+            // Find the first available peer to transfer leadership to
+            if let Some(target_node) = self.config.peers.first() {
+                log::info!("Transferring leadership to node {}...", target_node.node_id);
+                
+                // Transfer leadership for MetaSystem
+                if self.meta_system.is_leader() {
+                    match self.meta_system.transfer_leadership(target_node.node_id).await {
+                        Ok(_) => log::info!("  ✓ MetaSystem leadership transferred to node {}", target_node.node_id),
+                        Err(e) => log::warn!("  ⚠ Failed to transfer MetaSystem leadership: {}", e),
+                    }
+                }
+                
+                // Transfer leadership for MetaUsers
+                if self.meta_users.is_leader() {
+                    match self.meta_users.transfer_leadership(target_node.node_id).await {
+                        Ok(_) => log::info!("  ✓ MetaUsers leadership transferred to node {}", target_node.node_id),
+                        Err(e) => log::warn!("  ⚠ Failed to transfer MetaUsers leadership: {}", e),
+                    }
+                }
+                
+                // Transfer leadership for MetaJobs
+                if self.meta_jobs.is_leader() {
+                    match self.meta_jobs.transfer_leadership(target_node.node_id).await {
+                        Ok(_) => log::info!("  ✓ MetaJobs leadership transferred to node {}", target_node.node_id),
+                        Err(e) => log::warn!("  ⚠ Failed to transfer MetaJobs leadership: {}", e),
+                    }
+                }
+                
+                // Transfer leadership for user data shards
+                for (i, shard) in self.user_data_shards.iter().enumerate() {
+                    if shard.is_leader() {
+                        match shard.transfer_leadership(target_node.node_id).await {
+                            Ok(_) => log::debug!("  ✓ UserDataShard[{}] leadership transferred", i),
+                            Err(e) => log::warn!("  ⚠ Failed to transfer UserDataShard[{}] leadership: {}", i, e),
+                        }
+                    }
+                }
+                
+                // Transfer leadership for shared data shards
+                for (i, shard) in self.shared_data_shards.iter().enumerate() {
+                    if shard.is_leader() {
+                        match shard.transfer_leadership(target_node.node_id).await {
+                            Ok(_) => log::debug!("  ✓ SharedDataShard[{}] leadership transferred", i),
+                            Err(e) => log::warn!("  ⚠ Failed to transfer SharedDataShard[{}] leadership: {}", i, e),
+                        }
+                    }
+                }
+                
+                // Give time for leadership transfer to complete
+                tokio::time::sleep(tokio::time::Duration::from_millis(200)).await;
+                log::info!("Leadership transfer completed");
+            } else {
+                log::warn!("No peers available for leadership transfer - cluster may experience brief unavailability");
+            }
+        }
+        
+        // Mark as stopped
+        {
+            let mut started = self.started.write();
+            *started = false;
+        }
+        
+        log::info!("╔═══════════════════════════════════════════════════════════════════╗");
+        log::info!("║           Node {} Left Cluster Successfully                       ║", self.node_id);
+        log::info!("╚═══════════════════════════════════════════════════════════════════╝");
+        
+        Ok(())
+    }
+    
+    /// Get the minimum number of replication nodes required
+    pub fn min_replication_nodes(&self) -> u32 {
+        self.config.min_replication_nodes
     }
 }
 

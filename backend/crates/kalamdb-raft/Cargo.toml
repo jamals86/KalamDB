@@ -26,6 +26,7 @@ bincode = { workspace = true }
 # Async
 tokio = { workspace = true }
 async-trait = { workspace = true }
+tokio-stream = { workspace = true }
 
 # Error handling
 thiserror = { workspace = true }

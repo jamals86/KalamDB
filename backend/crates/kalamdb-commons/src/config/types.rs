@@ -869,12 +869,6 @@ pub struct ClusterSettings {
     #[serde(default)]
     pub peers: Vec<ClusterPeer>,
     
-    /// Whether this node should bootstrap the cluster on first startup.
-    /// Only ONE node in the cluster should have this set to true.
-    /// The bootstrap node initializes the Raft membership and becomes the initial leader.
-    #[serde(default)]
-    pub bootstrap: bool,
-    
     /// Number of user data shards (default: 32)
     /// Each shard is a separate Raft group for user table data.
     #[serde(default = "default_user_shards")]
@@ -897,6 +891,16 @@ pub struct ClusterSettings {
     /// Maximum entries per Raft snapshot (default: 10000)
     #[serde(default = "default_snapshot_threshold")]
     pub snapshot_threshold: u64,
+    
+    /// Minimum number of nodes that must acknowledge a write for it to succeed.
+    /// Set to 2 or 3 for strong consistency in a 3-node cluster.
+    /// Default is 1 (single-node or relaxed consistency).
+    #[serde(default = "default_min_replication_nodes")]
+    pub min_replication_nodes: u32,
+}
+
+fn default_min_replication_nodes() -> u32 {
+    1
 }
 
 /// Configuration for a peer node in the cluster

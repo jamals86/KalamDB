@@ -102,6 +102,7 @@ impl TestNode {
             shared_shards: 1,
             heartbeat_interval_ms: 50,
             election_timeout_ms: (150, 300),
+            min_replication_nodes: 1,
         };
         
         let manager = Arc::new(RaftManager::new(config));
@@ -117,7 +118,13 @@ impl TestNode {
     }
     
     async fn start(&self) -> Result<(), kalamdb_raft::RaftError> {
-        self.manager.start().await
+        self.manager.start().await?;
+        
+        // Start the RPC server for this node
+        let rpc_addr = format!("127.0.0.1:{}", self.rpc_port);
+        kalamdb_raft::network::start_rpc_server(self.manager.clone(), rpc_addr).await?;
+        
+        Ok(())
     }
     
     async fn initialize_cluster(&self) -> Result<(), kalamdb_raft::RaftError> {
@@ -418,7 +425,7 @@ async fn test_command_proposal_to_leader() {
 
 /// Test proposal forwarding from follower to leader
 #[tokio::test]
-async fn test_proposal_on_follower_fails() {
+async fn test_proposal_forwarding_to_leader() {
     let cluster = TestCluster::new(3, 10400, 11400, 4);
     
     cluster.start_all().await.expect("Failed to start");
@@ -430,9 +437,16 @@ async fn test_proposal_on_follower_fails() {
     let follower = cluster.get_follower_node(GroupId::MetaSystem)
         .expect("Should have MetaSystem follower");
     
-    // Propose a command to follower
+    let leader_id = cluster.get_leader_node(GroupId::MetaSystem)
+        .map(|n| n.manager.node_id())
+        .expect("Should have a leader");
+    
+    println!("Testing proposal on follower (node {}) with leader {}", 
+        follower.manager.node_id(), leader_id);
+    
+    // Propose a command to follower - should be automatically forwarded to leader
     let command = SystemCommand::CreateNamespace {
-        namespace_id: NamespaceId::from("test_ns"),
+        namespace_id: NamespaceId::from("forwarded_ns"),
         created_by: None,
     };
     
@@ -441,11 +455,10 @@ async fn test_proposal_on_follower_fails() {
     
     let result = follower.manager.propose_system(encoded).await;
     
-    // Proposal on follower should fail (needs forwarding or direct client write to leader)
-    // Note: In a real implementation, clients should be redirected to leader
-    assert!(result.is_err(), "Proposal on follower should fail without forwarding");
+    // Proposal on follower should succeed via leader forwarding
+    assert!(result.is_ok(), "Proposal on follower should succeed via leader forwarding: {:?}", result);
     
-    println!("✅ Follower correctly rejects direct proposals!");
+    println!("✅ Follower correctly forwards proposals to leader!");
 }
 
 /// Test that all shard groups can accept proposals

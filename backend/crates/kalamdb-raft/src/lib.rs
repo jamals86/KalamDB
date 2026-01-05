@@ -59,5 +59,5 @@ pub use state_machine::{
     UserDataStateMachine, SharedDataStateMachine,
 };
 pub use storage::{KalamRaftStorage, KalamTypeConfig, KalamNode};
-pub use network::{RaftNetwork, RaftNetworkFactory, RaftService};
+pub use network::{RaftNetwork, RaftNetworkFactory, RaftService, start_rpc_server};
 pub use manager::{RaftManager, RaftGroup, ClusterConfig, PeerConfig, DEFAULT_USER_DATA_SHARDS, DEFAULT_SHARED_DATA_SHARDS};

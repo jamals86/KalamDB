@@ -351,6 +351,7 @@ impl AppContext {
                         shared_shards: cluster_config.shared_shards,
                         heartbeat_interval_ms: cluster_config.heartbeat_interval_ms,
                         election_timeout_ms: cluster_config.election_timeout_ms,
+                        min_replication_nodes: cluster_config.min_replication_nodes,
                     };
                     
                     log::info!("Creating RaftManager...");
@@ -373,7 +374,13 @@ impl AppContext {
                 let cluster_nodes_provider = Arc::new(
                     kalamdb_system::ClusterNodesTableProvider::new(executor.clone())
                 );
-                system_tables.set_cluster_nodes_provider(cluster_nodes_provider);
+                system_tables.set_cluster_nodes_provider(cluster_nodes_provider.clone());
+                
+                // Register cluster_nodes with DataFusion system schema
+                // This must happen after executor is created since ClusterNodesTableProvider needs it
+                system_schema
+                    .register_table("cluster_nodes".to_string(), cluster_nodes_provider)
+                    .expect("Failed to register system.cluster_nodes");
 
                 let app_ctx = Arc::new(AppContext {
                     node_id,

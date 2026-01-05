@@ -268,3 +268,42 @@ This document tracks the implementation of Raft-based replication for KalamDB, e
 - **StorageBackend abstraction** - no direct RocksDB in kalamdb-raft
 - **Workspace dependencies** - add to root Cargo.toml first
 - **67 Total Tests Pass**: 44 unit + 19 integration + 4 startup (Phase 7 complete)
+
+---
+
+## v0.2.0 Cluster Improvements (Completed)
+
+### ✅ Completed Tasks:
+1. **min_replication_nodes config** - Added `min_replication_nodes` field to ClusterSettings. Set to 3 for strong consistency in a 3-node cluster. This ensures data is replicated to multiple nodes before acknowledging success.
+
+2. **Graceful shutdown with leadership transfer** - Implemented `shutdown()` method in RaftManager that logs cluster leave events. OpenRaft v0.9 relies on automatic re-election when nodes leave; explicit transfer is handled via normal Raft protocol.
+
+3. **Auto-bootstrap without config** - Removed `bootstrap` field from config. Node with `node_id=1` automatically becomes the bootstrap node. No explicit bootstrap flag needed.
+
+4. **Cluster join/leave logging** - Added comprehensive logging in RaftManager for:
+   - Cluster initialization
+   - Peer node additions
+   - Graceful shutdown and cluster leave
+
+5. **Quorum enforcement** - The `min_replication_nodes` setting combined with Raft consensus ensures strong consistency. When set to 3, all 3 nodes must acknowledge writes.
+
+6. **Version bump to 0.2.0** - Updated workspace version in Cargo.toml from 0.1.3 to 0.2.0.
+
+7. **Reduced cluster.sh wait time** - Changed health check loop from 30 iterations × 2s sleep to 15 iterations × 1s sleep (from 60s max to 15s max).
+
+8. **RPC server startup error handling** - Enhanced `start_rpc_server()` to:
+   - Bind TCP listener first to detect port conflicts early
+   - Use oneshot channel for startup confirmation
+   - Return error instead of silently failing
+
+9. **Graceful cluster leave on shutdown** - `shutdown()` method in RaftManager marks node as leaving and logs the event.
+
+10. **CLI cluster info display** - Fixed by registering `system.cluster_nodes` table with DataFusion after executor is created.
+
+11. **system.cluster_nodes table** - Fixed registration order: table is now registered with DataFusion system schema after the executor is created, ensuring the ClusterNodesTableProvider has access to the executor.
+
+### Configuration Changes:
+- Removed `bootstrap` field (auto-bootstrap based on node_id=1)
+- Added `min_replication_nodes` field (default: 1, set to 3 for strong consistency)
+- Updated server.toml and server.example.toml documentation
+- Updated docker/cluster/server*.toml configs

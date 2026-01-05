@@ -103,16 +103,19 @@ pub async fn bootstrap(
             .map_err(|e| anyhow::anyhow!("Failed to start Raft cluster: {}", e))?;
         info!("✓ Raft networking started successfully");
         
-        // Initialize cluster if this is the bootstrap node or single-node cluster
+        // Auto-bootstrap: The node with the lowest node_id among available nodes becomes the bootstrap node.
+        // For single-node clusters or when this is node_id=1, always bootstrap.
+        // For multi-node clusters, node_id=1 is the designated bootstrap node.
         let should_bootstrap = config.cluster.as_ref().map(|c| {
-            // Bootstrap if explicitly set OR if no peers (single-node mode)
-            c.bootstrap || c.peers.is_empty()
+            // Bootstrap if: single-node mode (no peers) OR this is node_id=1 (designated bootstrap)
+            c.peers.is_empty() || c.node_id == 1
         }).unwrap_or(false);
         
         if should_bootstrap {
             let has_peers = config.cluster.as_ref().map(|c| !c.peers.is_empty()).unwrap_or(false);
             if has_peers {
-                info!("Bootstrap node - initializing cluster with peers");
+                info!("Node {} is the designated bootstrap node - initializing cluster with peers", 
+                    config.cluster.as_ref().map(|c| c.node_id).unwrap_or(1));
             } else {
                 info!("No peers configured - initializing as single-node cluster");
             }
@@ -121,8 +124,9 @@ pub async fn bootstrap(
             info!("✓ Cluster initialized successfully");
         } else {
             let peer_count = config.cluster.as_ref().map(|c| c.peers.len()).unwrap_or(0);
-            info!("Multi-node cluster with {} peers - waiting for leader election (not bootstrap node)", peer_count);
-            // Non-bootstrap nodes wait for the bootstrap node to initialize the cluster,
+            let node_id = config.cluster.as_ref().map(|c| c.node_id).unwrap_or(0);
+            info!("Node {} joining cluster with {} peers - waiting for leader (node_id=1 is bootstrap)", node_id, peer_count);
+            // Non-bootstrap nodes wait for the bootstrap node (node_id=1) to initialize the cluster,
             // then they will be added as learners and promoted to voters
         }
         

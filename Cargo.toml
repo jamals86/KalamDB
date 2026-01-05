@@ -18,7 +18,7 @@ members = [
 ]
 
 [workspace.package]
-version = "0.1.3"
+version = "0.2.0"
 edition = "2021"
 rust-version = "1.92"
 authors = ["KalamDB Team"]
@@ -40,6 +40,7 @@ log = "0.4.29"
 
 # Async runtime
 tokio = { version = "1.42", features = ["rt-multi-thread", "macros", "sync", "time", "fs", "io-util", "net", "signal"] }
+tokio-stream = { version = "0.1", features = ["net"] }
 
 # HTTP client (with HTTP/2 support) - using rustls-tls for cross-compilation compatibility
 # Note: native-tls requires OpenSSL which is difficult to cross-compile for aarch64

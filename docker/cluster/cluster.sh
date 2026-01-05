@@ -93,8 +93,9 @@ start_cluster() {
     echo ""
     echo "Waiting for nodes to be healthy..."
     
-    # Wait for health checks
-    for i in {1..30}; do
+    # Wait for health checks (reduced from 30 iterations to 15, sleep from 2s to 1s)
+    # Cluster typically initializes in 5-10 seconds
+    for i in {1..15}; do
         node1_ok=$(curl -sf http://localhost:$NODE1_HTTP/v1/api/healthcheck 2>/dev/null && echo "1" || echo "0")
         node2_ok=$(curl -sf http://localhost:$NODE2_HTTP/v1/api/healthcheck 2>/dev/null && echo "1" || echo "0")
         node3_ok=$(curl -sf http://localhost:$NODE3_HTTP/v1/api/healthcheck 2>/dev/null && echo "1" || echo "0")
@@ -106,7 +107,7 @@ start_cluster() {
         fi
         
         echo -n "."
-        sleep 2
+        sleep 1
     done
     
     echo ""
