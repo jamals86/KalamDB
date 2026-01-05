@@ -20,6 +20,7 @@ use crate::storage::storage_registry::StorageRegistry;
 use datafusion::catalog::SchemaProvider;
 use datafusion::prelude::SessionContext;
 use kalamdb_commons::{constants::ColumnFamilyNames, NodeId, ServerConfig};
+use kalamdb_raft::CommandExecutor;
 use kalamdb_store::StorageBackend;
 use kalamdb_system::SystemTablesRegistry;
 use kalamdb_tables::{SharedTableStore, StreamTableStore, UserTableStore};
@@ -74,6 +75,12 @@ pub struct AppContext {
     // ===== System Tables Registry =====
     system_tables: Arc<SystemTablesRegistry>,
 
+    // ===== Command Executor (Standalone or Raft-based) =====
+    /// Command executor abstraction for standalone/cluster mode
+    /// In standalone mode: StandaloneExecutor (direct provider calls)
+    /// In cluster mode: RaftExecutor (commands go through Raft consensus)
+    executor: Arc<dyn CommandExecutor>,
+
     // ===== System Columns Service =====
     system_columns_service: Arc<crate::system_columns::SystemColumnsService>,
 
@@ -105,6 +112,7 @@ impl std::fmt::Debug for AppContext {
             .field("session_factory", &"Arc<DataFusionSessionFactory>")
             .field("base_session_context", &"Arc<SessionContext>")
             .field("system_tables", &"Arc<SystemTablesRegistry>")
+            .field("executor", &"Arc<dyn CommandExecutor>")
             .field("system_columns_service", &"Arc<SystemColumnsService>")
             .field("slow_query_logger", &"Arc<SlowQueryLogger>")
             .field("manifest_service", &"Arc<ManifestService>")
@@ -304,6 +312,19 @@ impl AppContext {
                     config.manifest_cache.clone(),
                 ));
 
+                // Create command executor (Phase 16 - Raft replication foundation)
+                // In standalone mode (no [cluster] config), use StandaloneExecutor
+                // In cluster mode, use RaftExecutor (stub for now, full implementation in Phase 3)
+                let executor: Arc<dyn CommandExecutor> = if config.cluster.is_some() {
+                    log::info!("Cluster mode enabled, using RaftExecutor (stub)");
+                    Arc::new(kalamdb_raft::RaftExecutor::new(
+                        Self::extract_worker_id(&node_id) as u64,
+                    ))
+                } else {
+                    log::info!("Standalone mode, using StandaloneExecutor");
+                    Arc::new(crate::executor::StandaloneExecutor::new(system_tables.clone()))
+                };
+
                 let app_ctx = Arc::new(AppContext {
                     node_id,
                     config,
@@ -317,6 +338,7 @@ impl AppContext {
                     connection_registry,
                     storage_registry,
                     system_tables,
+                    executor,
                     session_factory,
                     base_session_context,
                     system_columns_service,
@@ -589,6 +611,23 @@ impl AppContext {
 
     pub fn system_tables(&self) -> Arc<SystemTablesRegistry> {
         self.system_tables.clone()
+    }
+
+    /// Get the command executor (Phase 16 - Raft replication foundation)
+    ///
+    /// Returns the appropriate executor based on server mode:
+    /// - Standalone: StandaloneExecutor (direct provider calls, zero overhead)
+    /// - Cluster: RaftExecutor (commands go through Raft consensus)
+    ///
+    /// Handlers should use this instead of directly calling providers to enable
+    /// transparent clustering support.
+    pub fn executor(&self) -> Arc<dyn CommandExecutor> {
+        self.executor.clone()
+    }
+
+    /// Check if this node is running in cluster mode
+    pub fn is_cluster_mode(&self) -> bool {
+        self.executor.is_cluster_mode()
     }
 
     /// Get the system columns service (Phase 12, US5, T027)

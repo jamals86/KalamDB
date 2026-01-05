@@ -38,6 +38,8 @@ pub struct ServerConfig {
     pub execution: ExecutionSettings,
     #[serde(default)]
     pub security: SecuritySettings,
+    #[serde(default)]
+    pub cluster: Option<ClusterSettings>,
 }
 
 /// CORS configuration that maps directly to actix-cors options
@@ -831,6 +833,57 @@ impl Default for ServerConfig {
             jobs: JobsSettings::default(),
             execution: ExecutionSettings::default(),
             security: SecuritySettings::default(),
+            cluster: None, // Standalone mode by default
         }
     }
+}
+
+/// Cluster configuration for Raft-based replication (Phase 16)
+///
+/// When present, enables Multi-Raft clustering with the specified nodes.
+/// When absent (None), the server runs in standalone mode.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ClusterSettings {
+    /// Unique identifier for this cluster (used for Raft group prefixes)
+    pub cluster_id: String,
+    
+    /// This node's unique ID within the cluster (1-based)
+    pub node_id: u64,
+    
+    /// List of all cluster members with their addresses
+    /// Format: ["node1:9100", "node2:9100", "node3:9100"]
+    pub members: Vec<String>,
+    
+    /// Number of user data shards (default: 32)
+    #[serde(default = "default_user_shards")]
+    pub user_shards: u32,
+    
+    /// Raft heartbeat interval in milliseconds
+    #[serde(default = "default_heartbeat_interval_ms")]
+    pub heartbeat_interval_ms: u64,
+    
+    /// Raft election timeout range (min, max) in milliseconds
+    /// Election timeout is randomly chosen from this range
+    #[serde(default = "default_election_timeout_ms")]
+    pub election_timeout_ms: (u64, u64),
+    
+    /// Maximum entries per Raft snapshot
+    #[serde(default = "default_snapshot_threshold")]
+    pub snapshot_threshold: u64,
+}
+
+fn default_user_shards() -> u32 {
+    32
+}
+
+fn default_heartbeat_interval_ms() -> u64 {
+    100
+}
+
+fn default_election_timeout_ms() -> (u64, u64) {
+    (150, 300)
+}
+
+fn default_snapshot_threshold() -> u64 {
+    10000
 }

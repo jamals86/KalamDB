@@ -38,6 +38,7 @@
 pub mod app_context;
 pub mod error;
 pub mod error_extensions;
+pub mod executor;
 pub mod jobs;
 pub mod live;
 pub mod manifest;

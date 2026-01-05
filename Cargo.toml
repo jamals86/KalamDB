@@ -10,6 +10,7 @@ members = [
     "backend/crates/kalamdb-store",
     "backend/crates/kalamdb-api",
     "backend/crates/kalamdb-auth",
+    "backend/crates/kalamdb-raft",
     "backend",
     "link",
     "cli",
@@ -95,6 +96,14 @@ serial_test = "3.2"
 
 # Benchmarking
 criterion = { version = "0.8.1", features = ["html_reports"] }
+
+# Raft consensus
+openraft = { version = "0.9.21", features = ["serde"] }
+
+# gRPC for Raft network layer
+tonic = { version = "0.12", features = ["tls"] }
+prost = "0.13"
+prost-types = "0.13"
 
 # Additional dependencies
 bcrypt = "0.17.1"
