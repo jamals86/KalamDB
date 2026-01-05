@@ -307,3 +307,16 @@ This document tracks the implementation of Raft-based replication for KalamDB, e
 - Added `min_replication_nodes` field (default: 1, set to 3 for strong consistency)
 - Updated server.toml and server.example.toml documentation
 - Updated docker/cluster/server*.toml configs
+
+
+TODOS:
+1) If i looged into node2 which is not the master the cluster_nodes query return all followers, and the status some of them is unknown, i prefer fetching the exact status or data from the openraft check how they store them and can fetch them:
+● KalamDB[local] root@localhost:8080 ❯ select * from system.cluster_nodes
+┌─────────┬──────────┬─────────┬────────────────────┬───────────────────────────┬─────────┬───────────┬────────────────┬──────────────┐
+│ node_id │ role     │ status  │ rpc_addr           │ api_addr                  │ is_self │ is_leader │ groups_leading │ total_groups │
+├─────────┼──────────┼─────────┼────────────────────┼───────────────────────────┼─────────┼───────────┼────────────────┼──────────────┤
+│ 3       │ follower │ active  │ kalamdb-node3:9090 │ http://kalamdb-node3:8080 │ true    │ false     │ 0              │ 8            │
+│ 1       │ follower │ unknown │ kalamdb-node1:9090 │ http://kalamdb-node1:8080 │ false   │ false     │ 0              │ 8            │
+│ 2       │ follower │ unknown │ kalamdb-node2:9090 │ http://kalamdb-node2:8080 │ false   │ false     │ 0              │ 8            │
+└─────────┴──────────┴─────────┴────────────────────┴───────────────────────────┴─────────┴───────────┴────────────────┴──────────────┘
+(3 rows)

@@ -2,8 +2,10 @@
 .git
 .gitignore
 
-# Build artifacts
+# Build artifacts (exclude target except release binaries)
 target/
+!target/release/kalamdb-server
+!target/release/kalam
 **/target/
 
 # Release dist (not ui/dist which is built in Docker)

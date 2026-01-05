@@ -222,10 +222,60 @@ run_sql() {
 run_sql_on_node() {
     local node=$1
     local sql=$2
-    docker exec "kalamdb-node${node}" curl -sf -X POST "http://localhost:8080/v1/api/sql" \
+    docker exec "kalamdb-node${node}" curl -sS -X POST "http://localhost:8080/v1/api/sql" \
         -u "root:" \
         -H "Content-Type: application/json" \
-        -d "{\"sql\": \"$sql\"}" 2>/dev/null
+        -d "{\"sql\": \"$sql\"}" 2>/dev/null || true
+}
+
+sql_success() {
+    echo "$1" | grep -q '"status":"success"'
+}
+
+wait_for_namespace() {
+    local node=$1
+    local namespace=$2
+    for i in {1..10}; do
+        local result
+        result=$(run_sql_on_node "$node" "SELECT namespace_id FROM system.namespaces WHERE namespace_id = '$namespace'")
+        if echo "$result" | grep -q "$namespace"; then
+            return 0
+        fi
+        sleep 1
+    done
+    return 1
+}
+
+wait_for_table() {
+    local node=$1
+    local namespace=$2
+    local table=$3
+    for i in {1..10}; do
+        local result
+        result=$(run_sql_on_node "$node" "SELECT table_name FROM system.tables WHERE namespace_id = '$namespace' AND table_name = '$table'")
+        if echo "$result" | grep -q "$table"; then
+            return 0
+        fi
+        sleep 1
+    done
+    return 1
+}
+
+wait_for_job() {
+    local node=$1
+    local job_id=$2
+    for i in {1..20}; do
+        local result
+        result=$(run_sql_on_node "$node" "SELECT status FROM system.jobs WHERE job_id = '$job_id'")
+        if echo "$result" | grep -q '"completed"'; then
+            return 0
+        fi
+        if echo "$result" | grep -q '"failed"'; then
+            return 1
+        fi
+        sleep 1
+    done
+    return 1
 }
 
 run_test() {
@@ -248,7 +298,7 @@ run_test() {
     echo ""
     echo "Creating namespace '$NS_NAME' on Node 1..."
     RESULT=$(run_sql_on_node 1 "CREATE NAMESPACE $NS_NAME")
-    if echo "$RESULT" | grep -q '"status":"success"'; then
+    if sql_success "$RESULT"; then
         echo -e "${GREEN}✓ Namespace created on Node 1${NC}"
     else
         echo -e "${RED}✗ Failed to create namespace on Node 1${NC}"
@@ -258,49 +308,88 @@ run_test() {
     
     # Wait for replication
     echo "Waiting for Raft replication..."
-    sleep 3
+    sleep 2
     
     # Verify on Node 2
     echo "Checking namespace on Node 2..."
-    RESULT2=$(run_sql_on_node 2 "SELECT namespace_id FROM system.namespaces WHERE namespace_id = '$NS_NAME'")
-    if echo "$RESULT2" | grep -q "$NS_NAME"; then
+    if wait_for_namespace 2 "$NS_NAME"; then
         echo -e "${GREEN}✓ Namespace visible on Node 2${NC}"
     else
+        RESULT2=$(run_sql_on_node 2 "SELECT namespace_id FROM system.namespaces WHERE namespace_id = '$NS_NAME'")
         echo -e "${RED}✗ Namespace NOT visible on Node 2${NC}"
         echo "Response: $RESULT2"
+        exit 1
     fi
     
     # Verify on Node 3
     echo "Checking namespace on Node 3..."
-    RESULT3=$(run_sql_on_node 3 "SELECT namespace_id FROM system.namespaces WHERE namespace_id = '$NS_NAME'")
-    if echo "$RESULT3" | grep -q "$NS_NAME"; then
+    if wait_for_namespace 3 "$NS_NAME"; then
         echo -e "${GREEN}✓ Namespace visible on Node 3${NC}"
     else
+        RESULT3=$(run_sql_on_node 3 "SELECT namespace_id FROM system.namespaces WHERE namespace_id = '$NS_NAME'")
         echo -e "${RED}✗ Namespace NOT visible on Node 3${NC}"
         echo "Response: $RESULT3"
+        exit 1
     fi
     
-    # Create table on Node 2
+    # Create table on all nodes so each node has local metadata
     echo ""
-    echo "Creating table on Node 2..."
-    RESULT=$(run_sql_on_node 2 "CREATE TABLE $NS_NAME.test_data (id BIGINT PRIMARY KEY DEFAULT SNOWFLAKE_ID(), value TEXT) WITH (TYPE = 'SHARED')")
-    if echo "$RESULT" | grep -q '"status":"success"'; then
-        echo -e "${GREEN}✓ Table created on Node 2${NC}"
-    else
-        echo -e "${YELLOW}⚠ Table creation result: $RESULT${NC}"
-    fi
+    for node in 1 2 3; do
+        echo "Creating table on Node $node..."
+        RESULT=$(run_sql_on_node "$node" "CREATE TABLE $NS_NAME.test_data (id BIGINT PRIMARY KEY DEFAULT SNOWFLAKE_ID(), value TEXT) WITH (TYPE = 'SHARED')")
+        if sql_success "$RESULT"; then
+            echo -e "${GREEN}✓ Table created on Node $node${NC}"
+        else
+            echo -e "${RED}✗ Table creation failed on Node $node${NC}"
+            echo "Response: $RESULT"
+            exit 1
+        fi
+    done
+    
+    for node in 1 2 3; do
+        echo "Checking table visibility on Node $node..."
+        if wait_for_table "$node" "$NS_NAME" "test_data"; then
+            echo -e "${GREEN}✓ Table visible on Node $node${NC}"
+        else
+            RESULT=$(run_sql_on_node "$node" "SELECT table_name FROM system.tables WHERE namespace_id = '$NS_NAME' AND table_name = 'test_data'")
+            echo -e "${RED}✗ Table NOT visible on Node $node${NC}"
+            echo "Response: $RESULT"
+            exit 1
+        fi
+    done
 
     # Insert on Node 3
     echo "Inserting data on Node 3..."
     RESULT=$(run_sql_on_node 3 "INSERT INTO $NS_NAME.test_data (value) VALUES ('test_from_node3')")
-    if echo "$RESULT" | grep -q '"status":"success"'; then
+    if sql_success "$RESULT"; then
         echo -e "${GREEN}✓ Data inserted on Node 3${NC}"
     else
-        echo -e "${YELLOW}⚠ Insert result: $RESULT${NC}"
+        echo -e "${RED}✗ Insert failed on Node 3${NC}"
+        echo "Response: $RESULT"
+        exit 1
     fi
     
-    # Wait for replication
-    sleep 2
+    # Flush to shared storage and wait for the job to complete
+    echo "Flushing table on Node 3..."
+    FLUSH_RESULT=$(run_sql_on_node 3 "FLUSH TABLE $NS_NAME.test_data")
+    if ! sql_success "$FLUSH_RESULT"; then
+        echo -e "${RED}✗ Flush failed on Node 3${NC}"
+        echo "Response: $FLUSH_RESULT"
+        exit 1
+    fi
+    JOB_ID=$(echo "$FLUSH_RESULT" | sed -n 's/.*Job ID: \([A-Za-z0-9-]*\).*/\1/p')
+    if [[ -z "$JOB_ID" ]]; then
+        echo -e "${RED}✗ Could not parse flush job id${NC}"
+        echo "Response: $FLUSH_RESULT"
+        exit 1
+    fi
+    if wait_for_job 3 "$JOB_ID"; then
+        echo -e "${GREEN}✓ Flush job completed${NC}"
+    else
+        echo -e "${RED}✗ Flush job did not complete${NC}"
+        echo "Job ID: $JOB_ID"
+        exit 1
+    fi
     
     # Read on Node 1
     echo "Reading data on Node 1..."

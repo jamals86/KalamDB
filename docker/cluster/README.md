@@ -78,6 +78,7 @@ All nodes share:
 - Same `cluster_id`: `kalamdb-docker-cluster`
 - Same `jwt_secret` for authentication
 - Same member list
+- Shared storage volume for `shared` tables (`/data/storage`)
 
 ### Sharding Configuration
 
@@ -134,10 +135,11 @@ Shows health status and connection URLs for all nodes.
 This test:
 1. Creates a namespace on Node 1
 2. Verifies it's replicated to Nodes 2 and 3
-3. Creates a table on Node 2
+3. Creates the shared table on all nodes
 4. Inserts data on Node 3
-5. Reads data from Node 1
-6. Cleans up
+5. Flushes the table on Node 3
+6. Reads data from Node 1
+7. Cleans up
 
 ### Clean Up
 ```bash
