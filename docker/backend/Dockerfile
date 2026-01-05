@@ -6,6 +6,7 @@
 # ============================================================================
 # Stage 1: Builder
 # ============================================================================
+# Using bookworm for both build and runtime to ensure GLIBC compatibility
 FROM rust:1.92-bookworm AS builder
 
 # Install build dependencies including Node.js for UI build
@@ -88,6 +89,7 @@ RUN cargo build --profile docker --bin kalamdb-server --bin kalam
 # ============================================================================
 # Stage 2: Runtime (optimized for minimal size)
 # ============================================================================
+# Using bookworm (not bookworm-slim) to ensure GLIBC 2.38+ is available
 FROM debian:bookworm-slim
 
 # Install runtime dependencies and create user in single layer
