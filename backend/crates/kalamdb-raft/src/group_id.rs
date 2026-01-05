@@ -8,6 +8,7 @@
 use serde::{Deserialize, Serialize};
 use std::fmt;
 use std::hash::{Hash, Hasher};
+use std::str::FromStr;
 
 /// Default number of user data shards
 pub const DEFAULT_USER_SHARDS: u32 = 32;
@@ -117,6 +118,31 @@ impl fmt::Display for GroupId {
             GroupId::MetaJobs => write!(f, "meta:jobs"),
             GroupId::DataUserShard(id) => write!(f, "data:user:{:02}", id),
             GroupId::DataSharedShard(id) => write!(f, "data:shared:{:02}", id),
+        }
+    }
+}
+
+impl FromStr for GroupId {
+    type Err = String;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        match s {
+            "meta:system" => Ok(GroupId::MetaSystem),
+            "meta:users" => Ok(GroupId::MetaUsers),
+            "meta:jobs" => Ok(GroupId::MetaJobs),
+            _ if s.starts_with("data:user:") => {
+                let id_str = s.strip_prefix("data:user:").unwrap();
+                id_str.parse::<u32>()
+                    .map(GroupId::DataUserShard)
+                    .map_err(|e| format!("Invalid user shard ID: {}", e))
+            }
+            _ if s.starts_with("data:shared:") => {
+                let id_str = s.strip_prefix("data:shared:").unwrap();
+                id_str.parse::<u32>()
+                    .map(GroupId::DataSharedShard)
+                    .map_err(|e| format!("Invalid shared shard ID: {}", e))
+            }
+            _ => Err(format!("Unknown group ID format: {}", s)),
         }
     }
 }

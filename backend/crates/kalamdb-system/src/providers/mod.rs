@@ -4,6 +4,7 @@
 //! Each provider implements the DataFusion TableProvider trait.
 
 pub mod audit_logs;
+pub mod cluster_nodes;
 pub mod jobs;
 pub mod live_queries;
 pub mod manifest;
@@ -16,6 +17,7 @@ pub mod users;
 
 // Re-export all providers
 pub use audit_logs::AuditLogsTableProvider;
+pub use cluster_nodes::ClusterNodesTableProvider;
 pub use jobs::JobsTableProvider;
 pub use live_queries::LiveQueriesTableProvider;
 pub use manifest::{InMemoryChecker, ManifestTableProvider};

@@ -101,11 +101,18 @@ impl TypedStatementHandler<CreateNamespaceStatement> for CreateNamespaceHandler 
             }
         }
 
-        // Create namespace entity
-        let namespace = Namespace::new(name);
-
-        // Insert namespace via provider
-        namespaces_provider.create_namespace(namespace)?;
+        // In cluster mode, route through executor for Raft replication
+        // In standalone mode, the executor calls the provider directly
+        let executor = self.app_context.executor();
+        let created_by = Some(context.user_id.as_str().to_string());
+        let cmd = kalamdb_raft::SystemCommand::CreateNamespace {
+            namespace_id: namespace_id.clone(),
+            created_by,
+        };
+        
+        executor.execute_system(cmd).await.map_err(|e| {
+            KalamDbError::ExecutionError(format!("Failed to create namespace via executor: {}", e))
+        })?;
 
         // Register namespace as DataFusion schema for SQL queries
         self.register_namespace_schema(&namespace_id)?;

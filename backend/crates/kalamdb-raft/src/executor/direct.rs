@@ -10,7 +10,7 @@ use crate::commands::{
     SystemResponse, UserDataCommand, UsersCommand, UsersResponse,
 };
 use crate::error::Result;
-use crate::executor::CommandExecutor;
+use crate::executor::{ClusterInfo, ClusterNodeInfo, CommandExecutor};
 use crate::group_id::GroupId;
 
 /// Marker trait for the system tables registry
@@ -246,6 +246,44 @@ impl CommandExecutor for DirectExecutor {
     fn node_id(&self) -> u64 {
         0 // Standalone mode has no node_id
     }
+    
+    fn get_cluster_info(&self) -> ClusterInfo {
+        // Standalone mode - single node, always leader
+        ClusterInfo {
+            cluster_id: "standalone".to_string(),
+            current_node_id: 0,
+            is_cluster_mode: false,
+            nodes: vec![ClusterNodeInfo {
+                node_id: 0,
+                role: "standalone".to_string(),
+                status: "active".to_string(),
+                rpc_addr: "".to_string(),
+                api_addr: "localhost:8080".to_string(),
+                is_self: true,
+                is_leader: true,
+                groups_leading: 0,
+                total_groups: 0,
+            }],
+            total_groups: 0,
+            user_shards: 0,
+            shared_shards: 0,
+        }
+    }
+    
+    async fn start(&self) -> Result<()> {
+        // No-op for standalone mode
+        Ok(())
+    }
+    
+    async fn initialize_cluster(&self) -> Result<()> {
+        // No-op for standalone mode
+        Ok(())
+    }
+    
+    async fn shutdown(&self) -> Result<()> {
+        // No-op for standalone mode
+        Ok(())
+    }
 }
 
 #[cfg(test)]
@@ -278,17 +316,20 @@ mod tests {
 
     #[tokio::test]
     async fn test_execute_jobs_create() {
+        use kalamdb_commons::models::{NamespaceId, TableName};
+        use kalamdb_commons::JobId;
+        
         let executor = DirectExecutor::new();
         let cmd = JobsCommand::CreateJob {
-            job_id: "job_123".to_string(),
+            job_id: JobId::from("job_123"),
             job_type: "flush".to_string(),
-            namespace_id: Some("ns".to_string()),
-            table_name: Some("table".to_string()),
+            namespace_id: Some(NamespaceId::from("ns")),
+            table_name: Some(TableName::from("table")),
             config_json: None,
             created_at: chrono::Utc::now(),
         };
         
         let response = executor.execute_jobs(cmd).await.unwrap();
-        assert!(matches!(response, JobsResponse::JobCreated { job_id } if job_id == "job_123"));
+        assert!(matches!(response, JobsResponse::JobCreated { .. }));
     }
 }

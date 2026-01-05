@@ -315,3 +315,145 @@ max_parameters = 50
 # Prevents memory exhaustion from individual large parameters
 max_parameter_size_bytes = 524288
 
+# ============================================================================
+# Cluster Configuration (Multi-Node Raft Replication)
+# ============================================================================
+# Enable distributed clustering with Raft consensus for strong consistency.
+# When enabled, the server runs as part of a multi-node cluster.
+# When disabled (default), the server runs in standalone mode with no overhead.
+
+# IMPORTANT: All nodes in a cluster MUST have:
+# - Matching cluster_id values
+# - The same members list
+# - Matching sharding configuration
+# - Unique node_id values
+
+[cluster]
+# Enable clustering (default: false)
+# When false, server runs in fast standalone mode with no Raft overhead
+enabled = false
+
+# Unique cluster identifier (required when enabled)
+# All nodes in the cluster must share this ID
+cluster_id = "kalamdb-prod-cluster"
+
+# This node's unique ID within the cluster (required, must be 1, 2, 3, ...)
+# Must match one of the node_id values in the members list below
+node_id = 1
+
+# Raft Protocol Configuration
+[cluster.raft]
+# Address to bind Raft gRPC server (default: "0.0.0.0:9090")
+# Use 0.0.0.0 to listen on all interfaces
+bind_addr = "0.0.0.0:9090"
+
+# Address to advertise to other nodes (required)
+# This should be reachable by all other cluster members
+# Use actual IP/hostname, not 0.0.0.0 or localhost
+advertise_addr = "192.168.1.10:9090"
+
+# Heartbeat interval in milliseconds (default: 100)
+# Lower values = faster failure detection but more network traffic
+# Production recommendation: 100-500ms
+heartbeat_interval = 100
+
+# Minimum election timeout in milliseconds (default: 300)
+# Must be > heartbeat_interval (typically 3x heartbeat)
+# If a follower doesn't hear from leader within this time, it starts an election
+election_timeout_min = 300
+
+# Maximum election timeout in milliseconds (default: 500)
+# Randomized timeout prevents split-brain elections
+# Must be > election_timeout_min
+election_timeout_max = 500
+
+# Number of log entries before taking a snapshot (default: 10000)
+# Lower values = faster catchup for new nodes but more disk I/O
+# Higher values = less disk I/O but slower node recovery
+snapshot_threshold = 10000
+
+# Number of entries to compact in a batch (default: 1000)
+# Controls how many log entries are removed per compaction cycle
+log_compaction_batch = 1000
+
+# Sharding Configuration
+[cluster.sharding]
+# Number of user data shards (default: 32)
+# Each shard is an independent Raft group for parallel processing
+# More shards = better parallelism for user-partitioned data
+# Changing this requires cluster re-initialization
+num_user_shards = 32
+
+# Number of shared data shards (default: 1)
+# Shared tables (not user-partitioned) go to these shards
+# Usually 1 is sufficient unless you have heavy shared table workloads
+num_shared_shards = 1
+
+# Cluster Members
+# Define all nodes in the cluster. Every node must have this complete list.
+# Order doesn't matter, but the list must be identical on all nodes.
+
+[[cluster.members]]
+node_id = 1
+raft_addr = "192.168.1.10:9090"  # Raft gRPC address
+api_addr = "http://192.168.1.10:8080"  # HTTP API address
+
+[[cluster.members]]
+node_id = 2
+raft_addr = "192.168.1.11:9090"
+api_addr = "http://192.168.1.11:8080"
+
+[[cluster.members]]
+node_id = 3
+raft_addr = "192.168.1.12:9090"
+api_addr = "http://192.168.1.12:8080"
+
+# ============================================================================
+# Example: 5-Node Production Cluster Configuration
+# ============================================================================
+# For production, use an odd number of nodes (3 or 5) for optimal fault tolerance:
+# - 3 nodes: tolerates 1 failure
+# - 5 nodes: tolerates 2 failures
+#
+# Example 5-node setup across availability zones:
+#
+# [cluster]
+# enabled = true
+# cluster_id = "kalamdb-prod"
+# node_id = 1  # Change per node!
+#
+# [cluster.raft]
+# bind_addr = "0.0.0.0:9090"
+# advertise_addr = "10.0.1.10:9090"  # Node's actual IP
+# heartbeat_interval = 150           # Slightly higher for cross-AZ
+# election_timeout_min = 500         # Account for network latency
+# election_timeout_max = 1000
+#
+# [cluster.sharding]
+# num_user_shards = 64              # More shards for high throughput
+# num_shared_shards = 1
+#
+# [[cluster.members]]
+# node_id = 1
+# raft_addr = "10.0.1.10:9090"     # AZ-1
+# api_addr = "http://10.0.1.10:8080"
+#
+# [[cluster.members]]
+# node_id = 2
+# raft_addr = "10.0.2.10:9090"     # AZ-2
+# api_addr = "http://10.0.2.10:8080"
+#
+# [[cluster.members]]
+# node_id = 3
+# raft_addr = "10.0.3.10:9090"     # AZ-3
+# api_addr = "http://10.0.3.10:8080"
+#
+# [[cluster.members]]
+# node_id = 4
+# raft_addr = "10.0.1.11:9090"     # AZ-1 (second node)
+# api_addr = "http://10.0.1.11:8080"
+#
+# [[cluster.members]]
+# node_id = 5
+# raft_addr = "10.0.2.11:9090"     # AZ-2 (second node)
+# api_addr = "http://10.0.2.11:8080"

@@ -842,42 +842,96 @@ impl Default for ServerConfig {
 ///
 /// When present, enables Multi-Raft clustering with the specified nodes.
 /// When absent (None), the server runs in standalone mode.
+///
+/// The `node_id` field is the authoritative source for this server's identity,
+/// used by both the Raft consensus layer and general server identification.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ClusterSettings {
     /// Unique identifier for this cluster (used for Raft group prefixes)
+    #[serde(default = "default_cluster_id")]
     pub cluster_id: String,
     
-    /// This node's unique ID within the cluster (1-based)
+    /// This node's unique ID within the cluster (must be >= 1)
+    /// This is the authoritative node ID for the server.
     pub node_id: u64,
     
-    /// List of all cluster members with their addresses
-    /// Format: ["node1:9100", "node2:9100", "node3:9100"]
-    pub members: Vec<String>,
+    /// RPC address for Raft inter-node communication (e.g., "0.0.0.0:9100")
+    #[serde(default = "default_rpc_addr")]
+    pub rpc_addr: String,
+    
+    /// API address for client HTTP requests (e.g., "0.0.0.0:8080")
+    /// This should match the server.host:server.port
+    #[serde(default = "default_api_addr")]
+    pub api_addr: String,
+    
+    /// List of peer nodes in the cluster
+    /// Each peer should have node_id, rpc_addr, and api_addr
+    #[serde(default)]
+    pub peers: Vec<ClusterPeer>,
+    
+    /// Whether this node should bootstrap the cluster on first startup.
+    /// Only ONE node in the cluster should have this set to true.
+    /// The bootstrap node initializes the Raft membership and becomes the initial leader.
+    #[serde(default)]
+    pub bootstrap: bool,
     
     /// Number of user data shards (default: 32)
+    /// Each shard is a separate Raft group for user table data.
     #[serde(default = "default_user_shards")]
     pub user_shards: u32,
     
-    /// Raft heartbeat interval in milliseconds
+    /// Number of shared data shards (default: 1)
+    /// Each shard is a separate Raft group for shared table data.
+    #[serde(default = "default_shared_shards")]
+    pub shared_shards: u32,
+    
+    /// Raft heartbeat interval in milliseconds (default: 50)
     #[serde(default = "default_heartbeat_interval_ms")]
     pub heartbeat_interval_ms: u64,
     
-    /// Raft election timeout range (min, max) in milliseconds
-    /// Election timeout is randomly chosen from this range
+    /// Raft election timeout range (min, max) in milliseconds (default: 150-300)
+    /// Election timeout is randomly chosen from this range.
     #[serde(default = "default_election_timeout_ms")]
     pub election_timeout_ms: (u64, u64),
     
-    /// Maximum entries per Raft snapshot
+    /// Maximum entries per Raft snapshot (default: 10000)
     #[serde(default = "default_snapshot_threshold")]
     pub snapshot_threshold: u64,
+}
+
+/// Configuration for a peer node in the cluster
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ClusterPeer {
+    /// Peer's unique node ID (must be >= 1)
+    pub node_id: u64,
+    /// Peer's RPC address for Raft communication (e.g., "10.0.0.2:9100")
+    pub rpc_addr: String,
+    /// Peer's API address for client requests (e.g., "10.0.0.2:8080")
+    pub api_addr: String,
+}
+
+fn default_cluster_id() -> String {
+    "kalamdb-cluster".to_string()
+}
+
+fn default_rpc_addr() -> String {
+    "0.0.0.0:9100".to_string()
+}
+
+fn default_api_addr() -> String {
+    "0.0.0.0:8080".to_string()
 }
 
 fn default_user_shards() -> u32 {
     32
 }
 
+fn default_shared_shards() -> u32 {
+    1
+}
+
 fn default_heartbeat_interval_ms() -> u64 {
-    100
+    50
 }
 
 fn default_election_timeout_ms() -> (u64, u64) {

@@ -39,6 +39,25 @@ pub enum OutputFormat {
     Csv,
 }
 
+/// Cluster node information for CLI display
+#[derive(Debug, Clone)]
+struct ClusterNodeDisplay {
+    node_id: u64,
+    role: String,
+    status: String,
+    api_addr: String,
+    is_self: bool,
+    is_leader: bool,
+}
+
+/// Cluster information for CLI display
+#[derive(Debug, Clone)]
+struct ClusterInfoDisplay {
+    is_cluster_mode: bool,
+    current_node: Option<ClusterNodeDisplay>,
+    nodes: Vec<ClusterNodeDisplay>,
+}
+
 /// CLI session state
 pub struct CLISession {
     /// KalamDB client
@@ -1012,7 +1031,7 @@ impl CLISession {
                 self.delete_credentials()?;
             }
             Command::Info => {
-                self.show_session_info();
+                self.show_session_info().await;
             }
             Command::Stats => {
                 // Show system statistics via system.stats virtual table
@@ -1695,11 +1714,83 @@ impl CLISession {
         println!();
     }
 
+    /// Fetch cluster information from system.cluster_nodes
+    async fn fetch_cluster_info(&self) -> Option<ClusterInfoDisplay> {
+        // Query the system.cluster_nodes table
+        let result = self
+            .client
+            .execute_query(
+                "SELECT node_id, role, status, api_addr, is_self, is_leader FROM system.cluster_nodes",
+                None,
+                None,
+            )
+            .await;
+
+        match result {
+            Ok(response) => {
+                let mut nodes = Vec::new();
+                let mut current_node = None;
+                let mut is_cluster_mode = false;
+
+                // Get the first result set
+                if let Some(query_result) = response.results.first() {
+                    if let Some(rows) = &query_result.rows {
+                        for row in rows {
+                            // row is a Vec<JsonValue> with fields in order: node_id, role, status, api_addr, is_self, is_leader
+                            if row.len() >= 6 {
+                                let node_id = row[0].as_u64().unwrap_or(0);
+                                let role = row[1].as_str().unwrap_or("unknown").to_string();
+                                let status = row[2].as_str().unwrap_or("unknown").to_string();
+                                let api_addr = row[3].as_str().unwrap_or("").to_string();
+                                let is_self = row[4].as_bool().unwrap_or(false);
+                                let is_leader = row[5].as_bool().unwrap_or(false);
+
+                                // Check if this looks like cluster mode (role is leader/follower)
+                                if role == "leader" || role == "follower" {
+                                    is_cluster_mode = true;
+                                }
+
+                                let node = ClusterNodeDisplay {
+                                    node_id,
+                                    role,
+                                    status,
+                                    api_addr,
+                                    is_self,
+                                    is_leader,
+                                };
+
+                                if is_self {
+                                    current_node = Some(node.clone());
+                                }
+                                nodes.push(node);
+                            }
+                        }
+                    }
+                }
+
+                // If we only have one node and it's standalone, we're not in cluster mode
+                if nodes.len() <= 1 && nodes.iter().any(|n| n.role == "standalone") {
+                    is_cluster_mode = false;
+                }
+
+                Some(ClusterInfoDisplay {
+                    is_cluster_mode,
+                    current_node,
+                    nodes,
+                })
+            }
+            Err(_) => None,
+        }
+    }
+
     /// Show current session information
     ///
     /// Displays detailed information about the current CLI session
-    fn show_session_info(&self) {
+    async fn show_session_info(&mut self) {
         use colored::Colorize;
+
+        // Fetch cluster info from system.cluster_nodes
+        let cluster_info = self.fetch_cluster_info().await;
 
         println!();
         println!(
@@ -1758,6 +1849,58 @@ impl CLISession {
         } else {
             println!("  Build Date:     {}", "Unknown".dimmed());
         }
+        println!();
+
+        // Cluster info (if server provided it)
+        println!("{}", "Cluster:".yellow().bold());
+        if let Some(ref info) = cluster_info {
+            println!(
+                "  Mode:           {}",
+                if info.is_cluster_mode {
+                    "Cluster".green()
+                } else {
+                    "Standalone".dimmed()
+                }
+            );
+            if info.is_cluster_mode {
+                // Show current node (the one we're connected to)
+                if let Some(ref current_node) = info.current_node {
+                    println!("  Connected Node: {}", format!("Node {}", current_node.node_id).green());
+                    println!("  Node Role:      {}", current_node.role.green());
+                    println!("  Node API:       {}", current_node.api_addr.green());
+                }
+                // Show all cluster nodes
+                println!();
+                println!("  {}", "Cluster Nodes:".yellow());
+                for node in &info.nodes {
+                    let self_marker = if node.is_self { " (connected)" } else { "" };
+                    let leader_marker = if node.is_leader { " [LEADER]" } else { "" };
+                    println!(
+                        "    Node {}: {} | {} | {}{}{}",
+                        node.node_id,
+                        node.role,
+                        node.status,
+                        node.api_addr,
+                        leader_marker.yellow(),
+                        self_marker.cyan()
+                    );
+                }
+            }
+        } else {
+            println!(
+                "  Mode:           {}",
+                "Standalone".dimmed()
+            );
+            println!(
+                "  {}",
+                "(Could not fetch cluster info)".dimmed()
+            );
+        }
+        println!(
+            "  {}",
+            "Use 'SELECT * FROM system.cluster_nodes' for full details"
+                .dimmed()
+        );
         println!();
 
         // Client info

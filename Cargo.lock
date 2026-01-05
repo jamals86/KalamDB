@@ -3694,6 +3694,7 @@ dependencies = [
  "datafusion",
  "datafusion-common",
  "kalamdb-commons",
+ "kalamdb-raft",
  "kalamdb-store",
  "log",
  "serde",

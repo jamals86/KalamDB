@@ -76,7 +76,9 @@ pub fn init_logging(
             .level_for("datafusion_datasource", LevelFilter::Warn)
             .level_for("arrow", LevelFilter::Warn)
             .level_for("parquet", LevelFilter::Warn)
-            .level_for("object_store", LevelFilter::Info);
+            .level_for("object_store", LevelFilter::Info)
+            .level_for("openraft", LevelFilter::Warn)
+            .level_for("tracing", LevelFilter::Warn);
 
         // Apply per-target overrides from configuration (if any)
         if let Some(map) = target_levels {

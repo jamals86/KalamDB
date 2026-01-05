@@ -11,7 +11,9 @@ use async_trait::async_trait;
 use parking_lot::RwLock;
 use serde::{Deserialize, Serialize};
 use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::Arc;
 
+use crate::applier::SystemApplier;
 use crate::{GroupId, RaftError, SystemCommand, SystemResponse};
 use super::{ApplyResult, KalamStateMachine, StateMachineSnapshot, encode, decode};
 
@@ -32,7 +34,6 @@ struct SystemSnapshot {
 /// - CreateNamespace, DeleteNamespace
 /// - CreateTable, AlterTable, DropTable
 /// - RegisterStorage, UnregisterStorage
-#[derive(Debug)]
 pub struct SystemStateMachine {
     /// Last applied log index (for idempotency)
     last_applied_index: AtomicU64,
@@ -42,24 +43,62 @@ pub struct SystemStateMachine {
     approximate_size: AtomicU64,
     /// Cached snapshot data (refreshed on apply)
     snapshot_cache: RwLock<Option<SystemSnapshot>>,
+    /// Optional applier for persisting to providers
+    applier: RwLock<Option<Arc<dyn SystemApplier>>>,
+}
+
+impl std::fmt::Debug for SystemStateMachine {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("SystemStateMachine")
+            .field("last_applied_index", &self.last_applied_index.load(Ordering::Relaxed))
+            .field("last_applied_term", &self.last_applied_term.load(Ordering::Relaxed))
+            .field("approximate_size", &self.approximate_size.load(Ordering::Relaxed))
+            .field("has_applier", &self.applier.read().is_some())
+            .finish()
+    }
 }
 
 impl SystemStateMachine {
-    /// Create a new SystemStateMachine
+    /// Create a new SystemStateMachine without an applier
+    ///
+    /// Use `set_applier` to inject persistence after construction.
     pub fn new() -> Self {
         Self {
             last_applied_index: AtomicU64::new(0),
             last_applied_term: AtomicU64::new(0),
             approximate_size: AtomicU64::new(0),
             snapshot_cache: RwLock::new(None),
+            applier: RwLock::new(None),
         }
+    }
+    
+    /// Create a new SystemStateMachine with an applier
+    pub fn with_applier(applier: Arc<dyn SystemApplier>) -> Self {
+        Self {
+            last_applied_index: AtomicU64::new(0),
+            last_applied_term: AtomicU64::new(0),
+            approximate_size: AtomicU64::new(0),
+            snapshot_cache: RwLock::new(None),
+            applier: RwLock::new(Some(applier)),
+        }
+    }
+    
+    /// Set the applier for persisting to providers
+    ///
+    /// This is called after RaftManager creation once providers are available.
+    pub fn set_applier(&self, applier: Arc<dyn SystemApplier>) {
+        let mut guard = self.applier.write();
+        *guard = Some(applier);
+        log::info!("SystemStateMachine: Applier registered for persistence");
     }
     
     /// Apply a system command
     async fn apply_command(&self, cmd: SystemCommand) -> Result<SystemResponse, RaftError> {
-        // In Phase 2, we define the structure but delegate to providers
-        // The actual provider calls happen in the executor layer
-        // This state machine just tracks what was applied for snapshots
+        // Get applier reference
+        let applier = {
+            let guard = self.applier.read();
+            guard.clone()
+        };
         
         match cmd {
             SystemCommand::CreateNamespace { namespace_id, created_by } => {
@@ -67,12 +106,24 @@ impl SystemStateMachine {
                     "SystemStateMachine: CreateNamespace {:?} by {:?}",
                     namespace_id, created_by
                 );
+                
+                // Persist to provider if applier is set
+                if let Some(ref a) = applier {
+                    a.create_namespace(
+                        namespace_id.as_str(),
+                        created_by.as_deref(),
+                    ).await?;
+                }
+                
                 // Track in snapshot cache
                 {
                     let mut cache = self.snapshot_cache.write();
-                    if let Some(ref mut snapshot) = *cache {
-                        snapshot.namespaces.push(namespace_id.as_str().to_string());
-                    }
+                    let cache_ref = cache.get_or_insert_with(|| SystemSnapshot {
+                        namespaces: Vec::new(),
+                        tables: Vec::new(),
+                        storages: Vec::new(),
+                    });
+                    cache_ref.namespaces.push(namespace_id.as_str().to_string());
                 }
                 self.approximate_size.fetch_add(100, Ordering::Relaxed);
                 Ok(SystemResponse::NamespaceCreated { namespace_id })
@@ -80,6 +131,11 @@ impl SystemStateMachine {
             
             SystemCommand::DeleteNamespace { namespace_id } => {
                 log::debug!("SystemStateMachine: DeleteNamespace {:?}", namespace_id);
+                
+                if let Some(ref a) = applier {
+                    a.delete_namespace(namespace_id.as_str()).await?;
+                }
+                
                 {
                     let mut cache = self.snapshot_cache.write();
                     if let Some(ref mut snapshot) = *cache {
@@ -94,15 +150,28 @@ impl SystemStateMachine {
                     "SystemStateMachine: CreateTable {:?} (type: {})",
                     table_id, table_type
                 );
+                
+                if let Some(ref a) = applier {
+                    a.create_table(
+                        table_id.namespace_id().as_str(),
+                        table_id.table_name().as_str(),
+                        &table_type,
+                        &schema_json,
+                    ).await?;
+                }
+                
                 {
                     let mut cache = self.snapshot_cache.write();
-                    if let Some(ref mut snapshot) = *cache {
-                        snapshot.tables.push((
-                            table_id.namespace_id().as_str().to_string(),
-                            table_id.table_name().as_str().to_string(),
-                            schema_json.clone(),
-                        ));
-                    }
+                    let cache_ref = cache.get_or_insert_with(|| SystemSnapshot {
+                        namespaces: Vec::new(),
+                        tables: Vec::new(),
+                        storages: Vec::new(),
+                    });
+                    cache_ref.tables.push((
+                        table_id.namespace_id().as_str().to_string(),
+                        table_id.table_name().as_str().to_string(),
+                        schema_json.clone(),
+                    ));
                 }
                 self.approximate_size.fetch_add(schema_json.len() as u64 + 200, Ordering::Relaxed);
                 Ok(SystemResponse::TableCreated { table_id })
@@ -110,6 +179,15 @@ impl SystemStateMachine {
             
             SystemCommand::AlterTable { table_id, schema_json } => {
                 log::debug!("SystemStateMachine: AlterTable {:?}", table_id);
+                
+                if let Some(ref a) = applier {
+                    a.alter_table(
+                        table_id.namespace_id().as_str(),
+                        table_id.table_name().as_str(),
+                        &schema_json,
+                    ).await?;
+                }
+                
                 {
                     let mut cache = self.snapshot_cache.write();
                     if let Some(ref mut snapshot) = *cache {
@@ -127,6 +205,14 @@ impl SystemStateMachine {
             
             SystemCommand::DropTable { table_id } => {
                 log::debug!("SystemStateMachine: DropTable {:?}", table_id);
+                
+                if let Some(ref a) = applier {
+                    a.drop_table(
+                        table_id.namespace_id().as_str(),
+                        table_id.table_name().as_str(),
+                    ).await?;
+                }
+                
                 {
                     let mut cache = self.snapshot_cache.write();
                     if let Some(ref mut snapshot) = *cache {
@@ -140,11 +226,19 @@ impl SystemStateMachine {
             
             SystemCommand::RegisterStorage { storage_id, config_json } => {
                 log::debug!("SystemStateMachine: RegisterStorage {}", storage_id);
+                
+                if let Some(ref a) = applier {
+                    a.register_storage(&storage_id, &config_json).await?;
+                }
+                
                 {
                     let mut cache = self.snapshot_cache.write();
-                    if let Some(ref mut snapshot) = *cache {
-                        snapshot.storages.push((storage_id.clone(), config_json.clone()));
-                    }
+                    let cache_ref = cache.get_or_insert_with(|| SystemSnapshot {
+                        namespaces: Vec::new(),
+                        tables: Vec::new(),
+                        storages: Vec::new(),
+                    });
+                    cache_ref.storages.push((storage_id.clone(), config_json.clone()));
                 }
                 self.approximate_size.fetch_add(config_json.len() as u64 + 100, Ordering::Relaxed);
                 Ok(SystemResponse::Ok)
@@ -152,6 +246,11 @@ impl SystemStateMachine {
             
             SystemCommand::UnregisterStorage { storage_id } => {
                 log::debug!("SystemStateMachine: UnregisterStorage {}", storage_id);
+                
+                if let Some(ref a) = applier {
+                    a.unregister_storage(&storage_id).await?;
+                }
+                
                 {
                     let mut cache = self.snapshot_cache.write();
                     if let Some(ref mut snapshot) = *cache {

@@ -71,9 +71,17 @@ pub async fn bootstrap(
     // Phase 5: AppContext now creates all dependencies internally!
     // Uses constants from kalamdb_commons for table prefixes
     let phase_start = std::time::Instant::now();
+    
+    // Node ID: use cluster.node_id if cluster mode, otherwise server.node_id (string form)
+    let node_id_str = if let Some(cluster) = &config.cluster {
+        format!("node-{}", cluster.node_id)
+    } else {
+        config.server.node_id.clone()
+    };
+    
     let app_context = kalamdb_core::app_context::AppContext::init(
         backend.clone(),
-        kalamdb_commons::NodeId::new(config.server.node_id.clone()),
+        kalamdb_commons::NodeId::new(node_id_str),
         config.storage.default_storage_path.clone(),
         config.clone(), // ServerConfig needs to be cloned for Arc storage in AppContext
     );
@@ -81,6 +89,51 @@ pub async fn bootstrap(
         "AppContext initialized with all stores, managers, registries, and providers ({:.2}ms)",
         phase_start.elapsed().as_secs_f64() * 1000.0
     );
+
+    // Start the executor (Raft cluster in cluster mode, no-op in standalone)
+    let phase_start = std::time::Instant::now();
+    if app_context.executor().is_cluster_mode() {
+        info!("╔═══════════════════════════════════════════════════════════════════╗");
+        info!("║               Starting Raft Cluster                               ║");
+        info!("╚═══════════════════════════════════════════════════════════════════╝");
+        info!("Node ID: {}", app_context.executor().node_id());
+        info!("Starting Raft networking and group initialization...");
+        
+        app_context.executor().start().await
+            .map_err(|e| anyhow::anyhow!("Failed to start Raft cluster: {}", e))?;
+        info!("✓ Raft networking started successfully");
+        
+        // Initialize cluster if this is the bootstrap node or single-node cluster
+        let should_bootstrap = config.cluster.as_ref().map(|c| {
+            // Bootstrap if explicitly set OR if no peers (single-node mode)
+            c.bootstrap || c.peers.is_empty()
+        }).unwrap_or(false);
+        
+        if should_bootstrap {
+            let has_peers = config.cluster.as_ref().map(|c| !c.peers.is_empty()).unwrap_or(false);
+            if has_peers {
+                info!("Bootstrap node - initializing cluster with peers");
+            } else {
+                info!("No peers configured - initializing as single-node cluster");
+            }
+            app_context.executor().initialize_cluster().await
+                .map_err(|e| anyhow::anyhow!("Failed to initialize cluster: {}", e))?;
+            info!("✓ Cluster initialized successfully");
+        } else {
+            let peer_count = config.cluster.as_ref().map(|c| c.peers.len()).unwrap_or(0);
+            info!("Multi-node cluster with {} peers - waiting for leader election (not bootstrap node)", peer_count);
+            // Non-bootstrap nodes wait for the bootstrap node to initialize the cluster,
+            // then they will be added as learners and promoted to voters
+        }
+        
+        info!(
+            "✓ Raft cluster started ({:.2}ms)",
+            phase_start.elapsed().as_secs_f64() * 1000.0
+        );
+        info!("───────────────────────────────────────────────────────────────────");
+    } else {
+        info!("Standalone mode - no Raft cluster to start");
+    }
 
     // Manifest cache uses lazy loading via get_or_load() - no pre-loading needed
     // When a manifest is needed, get_or_load() checks hot cache → RocksDB → returns None
@@ -432,6 +485,15 @@ pub async fn run(
             
             // Ensure all file descriptors are released
             info!("Performing cleanup to release file descriptors...");
+            
+            // Shutdown the executor (Raft cluster shutdown in cluster mode)
+            if app_context.executor().is_cluster_mode() {
+                info!("Shutting down Raft cluster...");
+                if let Err(e) = app_context.executor().shutdown().await {
+                    log::error!("Error shutting down Raft cluster: {}", e);
+                }
+            }
+            
             drop(components);
             drop(app_context);
             

@@ -1,0 +1,130 @@
+# KalamDB Server Configuration - Node 2
+# Part of 3-node cluster configuration
+# This node runs on container kalamdb-node2
+
+[server]
+host = "0.0.0.0"
+port = 8080
+workers = 0
+enable_http2 = true
+api_version = "v1"
+node_id = "node2"
+
+[storage]
+rocksdb_path = "/data/rocksdb"
+default_storage_path = "/data/storage"
+shared_tables_template = "{namespace}/{tableName}"
+user_tables_template = "{namespace}/{tableName}/{userId}"
+
+[storage.rocksdb]
+write_buffer_size = 67108864
+max_write_buffers = 3
+block_cache_size = 268435456
+max_background_jobs = 4
+
+[datafusion]
+memory_limit = 536870912
+query_parallelism = 0
+max_partitions = 8
+batch_size = 8192
+
+[flush]
+default_row_limit = 10000
+default_time_interval = 300
+
+[retention]
+default_deleted_retention_hours = 168
+
+[stream]
+default_ttl_seconds = 10
+default_max_buffer = 10000
+eviction_interval_seconds = 60
+
+[manifest_cache]
+eviction_interval_seconds = 600
+max_entries = 50000
+eviction_ttl_days = 7
+
+[limits]
+max_message_size = 1048576
+max_query_limit = 1000
+default_query_limit = 50
+
+[logging]
+level = "info"
+logs_path = "/data/logs"
+log_to_console = true
+format = "compact"
+slow_query_threshold_ms = 1000
+
+[performance]
+request_timeout = 30
+keepalive_timeout = 75
+max_connections = 10000
+
+[rate_limit]
+max_queries_per_sec = 100
+max_messages_per_sec = 50
+max_subscriptions_per_user = 10
+
+[security]
+max_request_body_size = 10485760
+max_ws_message_size = 1048576
+allowed_ws_origins = []
+strict_ws_origin_check = false
+
+[security.cors]
+allowed_origins = []
+allowed_methods = ["GET", "POST", "PUT", "DELETE", "PATCH", "OPTIONS"]
+allowed_headers = ["Authorization", "Content-Type", "Accept", "Origin", "X-Requested-With"]
+expose_headers = []
+allow_credentials = true
+max_age = 3600
+allow_private_network = false
+
+[authentication]
+bcrypt_cost = 12
+min_password_length = 8
+max_password_length = 72
+disable_common_password_check = false
+jwt_secret = "cluster-dev-secret-change-in-production-minimum-32-chars"
+jwt_trusted_issuers = ""
+allow_remote_access = true
+
+[shutdown]
+[shutdown.flush]
+timeout = 300
+max_concurrent = 10
+max_retries = 3
+retry_backoff_ms = 100
+
+[execution]
+handler_timeout_seconds = 30
+max_parameters = 50
+max_parameter_size_bytes = 524288
+
+# ============================================================================
+# Cluster Configuration - 3-Node Raft Cluster
+# ============================================================================
+# Uses flat structure matching ClusterSettings in kalamdb-commons
+[cluster]
+cluster_id = "kalamdb-docker-cluster"
+node_id = 2
+rpc_addr = "kalamdb-node2:9090"
+api_addr = "http://kalamdb-node2:8080"
+user_shards = 4
+shared_shards = 1
+heartbeat_interval_ms = 100
+election_timeout_ms = [300, 500]
+snapshot_threshold = 10000
+
+# Peer nodes
+[[cluster.peers]]
+node_id = 1
+rpc_addr = "kalamdb-node1:9090"
+api_addr = "http://kalamdb-node1:8080"
+
+[[cluster.peers]]
+node_id = 3
+rpc_addr = "kalamdb-node3:9090"
+api_addr = "http://kalamdb-node3:8080"

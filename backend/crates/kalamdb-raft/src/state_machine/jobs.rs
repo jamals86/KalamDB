@@ -317,7 +317,7 @@ impl KalamStateMachine for JobsStateMachine {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use kalamdb_commons::models::{NamespaceId, table_name::TableName};
+    use kalamdb_commons::models::{NamespaceId, TableName};
 
     #[tokio::test]
     async fn test_jobs_state_machine_create_and_claim() {

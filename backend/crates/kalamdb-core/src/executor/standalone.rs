@@ -8,7 +8,7 @@ use std::sync::Arc;
 
 use kalamdb_commons::system::Namespace;
 use kalamdb_raft::{
-    CommandExecutor, DataResponse, GroupId, JobsCommand, JobsResponse,
+    ClusterInfo, ClusterNodeInfo, CommandExecutor, DataResponse, GroupId, JobsCommand, JobsResponse,
     SharedDataCommand, SystemCommand, SystemResponse, UserDataCommand,
     UsersCommand, UsersResponse,
 };
@@ -297,5 +297,43 @@ impl CommandExecutor for StandaloneExecutor {
 
     fn node_id(&self) -> u64 {
         0 // Standalone mode has no node_id
+    }
+    
+    fn get_cluster_info(&self) -> ClusterInfo {
+        // Standalone mode - single node, always leader
+        ClusterInfo {
+            cluster_id: "standalone".to_string(),
+            current_node_id: 0,
+            is_cluster_mode: false,
+            nodes: vec![ClusterNodeInfo {
+                node_id: 0,
+                role: "standalone".to_string(),
+                status: "active".to_string(),
+                rpc_addr: "".to_string(),
+                api_addr: "localhost:8080".to_string(),
+                is_self: true,
+                is_leader: true,
+                groups_leading: 0,
+                total_groups: 0,
+            }],
+            total_groups: 0,
+            user_shards: 0,
+            shared_shards: 0,
+        }
+    }
+    
+    async fn start(&self) -> Result<()> {
+        // No-op for standalone mode
+        Ok(())
+    }
+    
+    async fn initialize_cluster(&self) -> Result<()> {
+        // No-op for standalone mode
+        Ok(())
+    }
+    
+    async fn shutdown(&self) -> Result<()> {
+        // No-op for standalone mode
+        Ok(())
     }
 }

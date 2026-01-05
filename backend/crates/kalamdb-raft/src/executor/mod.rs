@@ -14,4 +14,4 @@ mod trait_def;
 
 pub use direct::DirectExecutor;
 pub use raft::RaftExecutor;
-pub use trait_def::CommandExecutor;
+pub use trait_def::{ClusterInfo, ClusterNodeInfo, CommandExecutor};

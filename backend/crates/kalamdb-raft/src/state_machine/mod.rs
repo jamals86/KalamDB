@@ -22,7 +22,7 @@ mod user_data;
 mod shared_data;
 
 pub use trait_def::{KalamStateMachine, StateMachineSnapshot, ApplyResult};
-pub(crate) use serde_helpers::{encode, decode};
+pub use serde_helpers::{encode, decode};
 pub use system::SystemStateMachine;
 pub use users::UsersStateMachine;
 pub use jobs::JobsStateMachine;

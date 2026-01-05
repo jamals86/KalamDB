@@ -30,17 +30,22 @@
 //! ctx.executor().execute_system(SystemCommand::CreateTable { ... }).await?;
 //! ```
 
+pub mod applier;
 pub mod config;
 pub mod error;
 pub mod executor;
 pub mod group_id;
 pub mod commands;
 pub mod state_machine;
+pub mod storage;
+pub mod network;
+pub mod manager;
 
 // Re-exports
-pub use config::{ClusterConfig, RaftConfig, ShardingConfig};
+pub use applier::{SystemApplier, NoOpSystemApplier};
+pub use config::{ClusterConfig as RaftClusterConfig, RaftConfig, ShardingConfig};
 pub use error::{RaftError, Result};
-pub use executor::{CommandExecutor, DirectExecutor, RaftExecutor};
+pub use executor::{ClusterInfo, ClusterNodeInfo, CommandExecutor, DirectExecutor, RaftExecutor};
 pub use group_id::{GroupId, ShardRouter};
 pub use commands::{
     SystemCommand, SystemResponse,
@@ -53,3 +58,6 @@ pub use state_machine::{
     SystemStateMachine, UsersStateMachine, JobsStateMachine,
     UserDataStateMachine, SharedDataStateMachine,
 };
+pub use storage::{KalamRaftStorage, KalamTypeConfig, KalamNode};
+pub use network::{RaftNetwork, RaftNetworkFactory, RaftService};
+pub use manager::{RaftManager, RaftGroup, ClusterConfig, PeerConfig, DEFAULT_USER_DATA_SHARDS, DEFAULT_SHARED_DATA_SHARDS};

@@ -19,6 +19,14 @@ pub enum RaftError {
     #[error("Raft group not found: {0}")]
     GroupNotFound(String),
 
+    /// Invalid Raft group (e.g., invalid shard number)
+    #[error("Invalid Raft group: {0}")]
+    InvalidGroup(String),
+
+    /// Raft group not started
+    #[error("Raft group not started: {0}")]
+    NotStarted(String),
+
     /// Failed to apply command to state machine
     #[error("Failed to apply command: {0}")]
     ApplyFailed(String),
@@ -26,6 +34,10 @@ pub enum RaftError {
     /// Failed to serialize/deserialize
     #[error("Serialization error: {0}")]
     Serialization(String),
+
+    /// Proposal rejected (e.g., not leader, timeout)
+    #[error("Proposal rejected: {0}")]
+    Proposal(String),
 
     /// Network error during Raft communication
     #[error("Network error: {0}")]

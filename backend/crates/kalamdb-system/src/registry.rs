@@ -7,7 +7,7 @@
 //! a single struct for cleaner AppContext API.
 
 use super::providers::{
-    AuditLogsTableProvider, JobsTableProvider, LiveQueriesTableProvider, ManifestTableProvider,
+    AuditLogsTableProvider, ClusterNodesTableProvider, JobsTableProvider, LiveQueriesTableProvider, ManifestTableProvider,
     NamespacesTableProvider, ServerLogsTableProvider, StatsTableProvider, StoragesTableProvider,
     TablesTableProvider, UsersTableProvider,
 };
@@ -40,6 +40,7 @@ pub struct SystemTablesRegistry {
     stats: RwLock<Arc<dyn TableProvider + Send + Sync>>,
     settings: RwLock<Arc<dyn TableProvider + Send + Sync>>,
     server_logs: RwLock<Option<Arc<ServerLogsTableProvider>>>,
+    cluster_nodes: RwLock<Option<Arc<ClusterNodesTableProvider>>>,
 }
 
 impl SystemTablesRegistry {
@@ -79,6 +80,7 @@ impl SystemTablesRegistry {
             stats: RwLock::new(Arc::new(StatsTableProvider::new(None))), // Will be wired with cache later
             settings: RwLock::new(Arc::new(StatsTableProvider::new(None))), // Placeholder, will be replaced from kalamdb-core
             server_logs: RwLock::new(None), // Initialized via set_server_logs_provider()
+            cluster_nodes: RwLock::new(None), // Initialized via set_cluster_nodes_provider()
         }
     }
 
@@ -157,6 +159,17 @@ impl SystemTablesRegistry {
         self.manifest.clone()
     }
 
+    /// Get the system.cluster_nodes provider (virtual table showing cluster status)
+    pub fn cluster_nodes(&self) -> Option<Arc<ClusterNodesTableProvider>> {
+        self.cluster_nodes.read().unwrap().clone()
+    }
+
+    /// Set the system.cluster_nodes provider (called from kalamdb-core with executor)
+    pub fn set_cluster_nodes_provider(&self, provider: Arc<ClusterNodesTableProvider>) {
+        log::info!("SystemTablesRegistry: Setting cluster_nodes provider");
+        *self.cluster_nodes.write().unwrap() = Some(provider);
+    }
+
     // ===== Convenience Methods =====
 
     /// Get all system.* providers as a vector for bulk registration
@@ -215,6 +228,14 @@ impl SystemTablesRegistry {
             providers.push((
                 "server_logs",
                 server_logs as Arc<dyn datafusion::datasource::TableProvider>,
+            ));
+        }
+
+        // Add cluster_nodes if initialized
+        if let Some(cluster_nodes) = self.cluster_nodes.read().unwrap().clone() {
+            providers.push((
+                "cluster_nodes",
+                cluster_nodes as Arc<dyn datafusion::datasource::TableProvider>,
             ));
         }
 

@@ -10,6 +10,48 @@ use crate::commands::{
 use crate::error::Result;
 use crate::group_id::GroupId;
 
+/// Information about a cluster node
+#[derive(Debug, Clone)]
+pub struct ClusterNodeInfo {
+    /// Node ID (1, 2, 3, ...)
+    pub node_id: u64,
+    /// Node role: "leader", "follower", "learner", "candidate"
+    pub role: String,
+    /// Node status: "active", "offline", "joining"
+    pub status: String,
+    /// RPC address for Raft communication
+    pub rpc_addr: String,
+    /// HTTP API address
+    pub api_addr: String,
+    /// Whether this is the current node
+    pub is_self: bool,
+    /// Whether this node is leader for MetaSystem group
+    pub is_leader: bool,
+    /// Number of groups this node leads (for multi-group Raft)
+    pub groups_leading: u32,
+    /// Total number of Raft groups
+    pub total_groups: u32,
+}
+
+/// Cluster status information
+#[derive(Debug, Clone)]
+pub struct ClusterInfo {
+    /// Cluster ID
+    pub cluster_id: String,
+    /// Current node ID
+    pub current_node_id: u64,
+    /// Whether in cluster mode
+    pub is_cluster_mode: bool,
+    /// All nodes in the cluster
+    pub nodes: Vec<ClusterNodeInfo>,
+    /// Total number of Raft groups
+    pub total_groups: u32,
+    /// Number of user data shards
+    pub user_shards: u32,
+    /// Number of shared data shards  
+    pub shared_shards: u32,
+}
+
 /// Unified interface for executing commands in both standalone and cluster modes.
 ///
 /// This trait eliminates the need for if/else checks throughout the codebase.
@@ -69,4 +111,29 @@ pub trait CommandExecutor: Send + Sync + Debug {
 
     /// Get the current node's ID (0 for standalone)
     fn node_id(&self) -> u64;
+    
+    /// Get cluster information including all nodes, their roles, and status
+    ///
+    /// In standalone mode, returns a single-node cluster info.
+    /// In cluster mode, returns info about all configured nodes.
+    fn get_cluster_info(&self) -> ClusterInfo;
+    
+    /// Start the executor (initialize Raft groups, begin consensus participation)
+    ///
+    /// In standalone mode, this is a no-op.
+    /// In cluster mode, this starts all Raft groups.
+    async fn start(&self) -> Result<()>;
+    
+    /// Initialize the cluster (bootstrap first node only)
+    ///
+    /// In standalone mode, this is a no-op.
+    /// In cluster mode, this bootstraps all Raft groups with initial membership.
+    /// Only call this on the first node when creating a new cluster.
+    async fn initialize_cluster(&self) -> Result<()>;
+    
+    /// Gracefully shutdown the executor
+    ///
+    /// In standalone mode, this is a no-op.
+    /// In cluster mode, this stops all Raft groups and optionally transfers leadership.
+    async fn shutdown(&self) -> Result<()>;
 }

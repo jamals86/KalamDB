@@ -314,16 +314,66 @@ impl AppContext {
 
                 // Create command executor (Phase 16 - Raft replication foundation)
                 // In standalone mode (no [cluster] config), use StandaloneExecutor
-                // In cluster mode, use RaftExecutor (stub for now, full implementation in Phase 3)
-                let executor: Arc<dyn CommandExecutor> = if config.cluster.is_some() {
-                    log::info!("Cluster mode enabled, using RaftExecutor (stub)");
-                    Arc::new(kalamdb_raft::RaftExecutor::new(
-                        Self::extract_worker_id(&node_id) as u64,
-                    ))
+                // In cluster mode, use RaftExecutor with RaftManager
+                let executor: Arc<dyn CommandExecutor> = if let Some(cluster_config) = &config.cluster {
+                    log::info!("╔═══════════════════════════════════════════════════════════════════╗");
+                    log::info!("║               Cluster Mode Detected                               ║");
+                    log::info!("╚═══════════════════════════════════════════════════════════════════╝");
+                    log::info!("Cluster ID: {}", cluster_config.cluster_id);
+                    log::info!("This Node: node_id={}", cluster_config.node_id);
+                    log::info!("RPC Address: {}", cluster_config.rpc_addr);
+                    log::info!("API Address: {}", cluster_config.api_addr);
+                    log::info!("Shards: {} user, {} shared", cluster_config.user_shards, cluster_config.shared_shards);
+                    log::info!("Heartbeat: {}ms, Election Timeout: {:?}ms", 
+                        cluster_config.heartbeat_interval_ms, cluster_config.election_timeout_ms);
+                    log::info!("Peers: {} configured", cluster_config.peers.len());
+                    for peer in &cluster_config.peers {
+                        log::info!("  - Peer node_id={}: rpc={}, api={}", 
+                            peer.node_id, peer.rpc_addr, peer.api_addr);
+                    }
+                    
+                    // Convert ClusterPeer to PeerConfig
+                    let peers: Vec<kalamdb_raft::manager::PeerConfig> = cluster_config.peers
+                        .iter()
+                        .map(|p| kalamdb_raft::manager::PeerConfig {
+                            node_id: p.node_id,
+                            rpc_addr: p.rpc_addr.clone(),
+                            api_addr: p.api_addr.clone(),
+                        })
+                        .collect();
+                    
+                    let raft_config = kalamdb_raft::manager::ClusterConfig {
+                        node_id: cluster_config.node_id,
+                        rpc_addr: cluster_config.rpc_addr.clone(),
+                        api_addr: cluster_config.api_addr.clone(),
+                        peers,
+                        user_shards: cluster_config.user_shards,
+                        shared_shards: cluster_config.shared_shards,
+                        heartbeat_interval_ms: cluster_config.heartbeat_interval_ms,
+                        election_timeout_ms: cluster_config.election_timeout_ms,
+                    };
+                    
+                    log::info!("Creating RaftManager...");
+                    let manager = Arc::new(kalamdb_raft::manager::RaftManager::new(raft_config));
+                    
+                    // Wire up the system applier for metadata replication
+                    // This ensures namespaces/tables/storages are persisted on all nodes
+                    log::info!("Wiring SystemApplier for metadata replication...");
+                    let system_applier = Arc::new(crate::applier::ProviderSystemApplier::new(system_tables.clone()));
+                    manager.set_system_applier(system_applier);
+                    
+                    log::info!("Creating RaftExecutor...");
+                    Arc::new(kalamdb_raft::RaftExecutor::new(manager))
                 } else {
-                    log::info!("Standalone mode, using StandaloneExecutor");
+                    log::info!("Standalone mode (no [cluster] config), using StandaloneExecutor");
                     Arc::new(crate::executor::StandaloneExecutor::new(system_tables.clone()))
                 };
+
+                // Wire up ClusterNodesTableProvider with the executor
+                let cluster_nodes_provider = Arc::new(
+                    kalamdb_system::ClusterNodesTableProvider::new(executor.clone())
+                );
+                system_tables.set_cluster_nodes_provider(cluster_nodes_provider);
 
                 let app_ctx = Arc::new(AppContext {
                     node_id,
@@ -507,6 +557,9 @@ impl AppContext {
             config.manifest_cache.clone(),
         ));
 
+        // Create standalone executor for tests
+        let executor = Arc::new(crate::executor::StandaloneExecutor::new(system_tables.clone()));
+
         AppContext {
             node_id,
             config,
@@ -520,6 +573,7 @@ impl AppContext {
             connection_registry,
             storage_registry,
             system_tables,
+            executor,
             session_factory,
             base_session_context,
             system_columns_service,

@@ -304,3 +304,60 @@ max_parameters = 50
 # Prevents memory exhaustion from individual large parameters
 max_parameter_size_bytes = 524288
 
+# ============================================================================
+# CLUSTER CONFIGURATION (Raft-based Replication)
+# ============================================================================
+# Uncomment this section to enable cluster mode with Raft consensus.
+# When enabled, all metadata and data operations go through Raft for consistency.
+#
+# IMPORTANT: In cluster mode, the node_id field here is the authoritative source
+# for node identity, not server.node_id above.
+#
+# Single-node cluster (for testing):
+#   - Set node_id to 1
+#   - Leave peers empty []
+#   - The cluster will auto-initialize as leader
+#
+# Multi-node cluster:
+#   - Set unique node_id for each node (1, 2, 3, ...)
+#   - List all OTHER nodes in peers
+#   - First node to start will become leader
+
+# [cluster]
+# # Unique identifier for this cluster
+# cluster_id = "kalamdb-cluster"
+# 
+# # This node's unique ID (must be >= 1, authoritative for server identity)
+# node_id = 1
+# 
+# # RPC address for Raft inter-node communication
+# rpc_addr = "0.0.0.0:9100"
+# 
+# # API address for client HTTP requests (should match server.host:server.port)
+# api_addr = "0.0.0.0:8080"
+# 
+# # Number of user data shards (default: 32)
+# # Each shard is a separate Raft group for user table data
+# user_shards = 32
+# 
+# # Number of shared data shards (default: 1)
+# # Each shard is a separate Raft group for shared table data
+# shared_shards = 1
+# 
+# # Raft heartbeat interval in milliseconds (default: 50)
+# heartbeat_interval_ms = 50
+# 
+# # Raft election timeout range (min, max) in milliseconds
+# # Election timeout is randomly chosen from this range
+# election_timeout_ms = [150, 300]
+# 
+# # Maximum entries per Raft snapshot (default: 10000)
+# snapshot_threshold = 10000
+# 
+# # Peer nodes in the cluster (empty for single-node cluster)
+# # Each peer should have node_id, rpc_addr, and api_addr
+# peers = [
+#     # { node_id = 2, rpc_addr = "10.0.0.2:9100", api_addr = "10.0.0.2:8080" },
+#     # { node_id = 3, rpc_addr = "10.0.0.3:9100", api_addr = "10.0.0.3:8080" },
+# ]
+

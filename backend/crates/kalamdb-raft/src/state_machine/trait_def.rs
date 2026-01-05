@@ -9,7 +9,7 @@ use serde::{Deserialize, Serialize};
 use crate::{GroupId, RaftError};
 
 /// Result of applying a command to the state machine
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum ApplyResult {
     /// Command applied successfully with optional response data
     Ok(Vec<u8>),
