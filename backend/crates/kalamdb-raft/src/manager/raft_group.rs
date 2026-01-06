@@ -49,25 +49,26 @@ impl<SM: KalamStateMachine + Send + Sync + 'static> RaftGroup<SM> {
         }
     }
     
-    /// Start the Raft group with the given node ID
+    /// Start the Raft group with the given node ID and configuration
     ///
     /// This initializes the Raft instance and begins participating in consensus.
-    pub async fn start(&self, node_id: u64) -> Result<(), RaftError> {
+    pub async fn start(&self, node_id: u64, config: &crate::manager::RaftManagerConfig) -> Result<(), RaftError> {
         // Check if already started
         if self.is_started() {
             return Ok(());
         }
         
         // Create Raft configuration
-        let config = Config {
+        let raft_config = Config {
             cluster_name: format!("kalamdb-{}", self.group_id),
-            election_timeout_min: 150,
-            election_timeout_max: 300,
-            heartbeat_interval: 50,
+            election_timeout_min: config.election_timeout_ms.0,
+            election_timeout_max: config.election_timeout_ms.1,
+            heartbeat_interval: config.heartbeat_interval_ms,
+            install_snapshot_timeout: 10000, 
             ..Default::default()
         };
         
-        let config = Arc::new(config.validate().map_err(|e| RaftError::Config(e.to_string()))?);
+        let config = Arc::new(raft_config.validate().map_err(|e| RaftError::Config(e.to_string()))?);
         
         // Create adaptor from combined storage
         let (log_store, state_machine): (StorageAdaptor<SM>, StorageAdaptor<SM>) = 

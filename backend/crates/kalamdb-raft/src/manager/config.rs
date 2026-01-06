@@ -63,8 +63,8 @@ impl Default for RaftManagerConfig {
             peers: vec![],
             user_shards: DEFAULT_USER_DATA_SHARDS,
             shared_shards: DEFAULT_SHARED_DATA_SHARDS,
-            heartbeat_interval_ms: 50,
-            election_timeout_ms: (150, 300),
+            heartbeat_interval_ms: 250,
+            election_timeout_ms: (500, 1000),
             replication_mode: ReplicationMode::Quorum,
             replication_timeout: Duration::from_secs(5),
         }

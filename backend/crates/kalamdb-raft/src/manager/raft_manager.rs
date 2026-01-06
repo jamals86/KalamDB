@@ -177,24 +177,24 @@ impl RaftManager {
         
         // Start all meta groups
         log::info!("Starting meta groups...");
-        self.meta_system.start(self.node_id).await?;
+        self.meta_system.start(self.node_id, &self.config).await?;
         log::debug!("  ✓ MetaSystem group started");
-        self.meta_users.start(self.node_id).await?;
+        self.meta_users.start(self.node_id, &self.config).await?;
         log::debug!("  ✓ MetaUsers group started");
-        self.meta_jobs.start(self.node_id).await?;
+        self.meta_jobs.start(self.node_id, &self.config).await?;
         log::debug!("  ✓ MetaJobs group started");
         
         // Start all user data shards
         log::info!("Starting {} user data shards...", self.user_data_shards.len());
         for (i, shard) in self.user_data_shards.iter().enumerate() {
-            shard.start(self.node_id).await?;
+            shard.start(self.node_id, &self.config).await?;
             log::debug!("  ✓ UserDataShard[{}] started", i);
         }
         
         // Start all shared data shards
         log::info!("Starting {} shared data shards...", self.shared_data_shards.len());
         for (i, shard) in self.shared_data_shards.iter().enumerate() {
-            shard.start(self.node_id).await?;
+            shard.start(self.node_id, &self.config).await?;
             log::debug!("  ✓ SharedDataShard[{}] started", i);
         }
         

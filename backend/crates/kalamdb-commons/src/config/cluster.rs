@@ -150,11 +150,11 @@ fn default_shared_shards() -> u32 {
 }
 
 fn default_heartbeat_interval_ms() -> u64 {
-    50
+    250
 }
 
 fn default_election_timeout_ms() -> (u64, u64) {
-    (150, 300)
+    (500, 1000)
 }
 
 fn default_snapshot_threshold() -> u64 {
