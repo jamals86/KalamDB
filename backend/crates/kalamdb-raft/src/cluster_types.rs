@@ -1,62 +1,30 @@
 //! Cluster Types
 //!
-//! Type-safe enums for cluster node roles and status, derived from OpenRaft metrics.
+//! Re-export OpenRaft's ServerState and provide a NodeStatus enum for node health tracking.
 
+use openraft::ServerState;
 use serde::{Deserialize, Serialize};
 use std::fmt;
 
-/// Node role in the Raft cluster
-///
-/// Derived from OpenRaft's ServerState:
-/// - Leader: Currently leading and can accept write requests
-/// - Follower: Following a leader, can serve reads (if linearizable reads enabled)
-/// - Learner: Non-voting member, catching up with the log
-/// - Candidate: Attempting to become leader (during election)
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
-#[serde(rename_all = "lowercase")]
-pub enum NodeRole {
-    /// Currently the leader of the Raft group
-    Leader,
-    /// Following the leader
-    Follower,
-    /// Non-voting member (learner/replica catching up)
-    Learner,
-    /// Attempting to become leader
-    Candidate,
+// Re-export OpenRaft's ServerState as NodeRole for consistency
+// ServerState has: Leader, Follower, Learner, Candidate, Shutdown
+pub use openraft::ServerState as NodeRole;
+
+/// Helper trait to convert ServerState to string
+pub trait ServerStateExt {
+    /// Convert to lowercase string representation
+    fn as_str(&self) -> &'static str;
 }
 
-impl NodeRole {
-    /// Create from OpenRaft ServerState string representation
-    pub fn from_server_state_str(state: &str) -> Self {
-        match state.to_lowercase().as_str() {
-            "leader" => NodeRole::Leader,
-            "follower" => NodeRole::Follower,
-            "learner" => NodeRole::Learner,
-            "candidate" => NodeRole::Candidate,
-            _ => NodeRole::Follower, // Default to follower if unknown
-        }
-    }
-
-    /// Convert to string for display
-    pub fn as_str(&self) -> &'static str {
+impl ServerStateExt for ServerState {
+    fn as_str(&self) -> &'static str {
         match self {
-            NodeRole::Leader => "leader",
-            NodeRole::Follower => "follower",
-            NodeRole::Learner => "learner",
-            NodeRole::Candidate => "candidate",
+            ServerState::Leader => "leader",
+            ServerState::Follower => "follower",
+            ServerState::Learner => "learner",
+            ServerState::Candidate => "candidate",
+            ServerState::Shutdown => "shutdown",
         }
-    }
-}
-
-impl fmt::Display for NodeRole {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "{}", self.as_str())
-    }
-}
-
-impl Default for NodeRole {
-    fn default() -> Self {
-        NodeRole::Follower
     }
 }
 
@@ -116,21 +84,12 @@ mod tests {
     use super::*;
 
     #[test]
-    fn test_node_role_from_server_state() {
-        assert_eq!(NodeRole::from_server_state_str("leader"), NodeRole::Leader);
-        assert_eq!(NodeRole::from_server_state_str("LEADER"), NodeRole::Leader);
-        assert_eq!(NodeRole::from_server_state_str("follower"), NodeRole::Follower);
-        assert_eq!(NodeRole::from_server_state_str("learner"), NodeRole::Learner);
-        assert_eq!(NodeRole::from_server_state_str("candidate"), NodeRole::Candidate);
-        assert_eq!(NodeRole::from_server_state_str("unknown"), NodeRole::Follower);
-    }
-
-    #[test]
-    fn test_node_role_as_str() {
-        assert_eq!(NodeRole::Leader.as_str(), "leader");
-        assert_eq!(NodeRole::Follower.as_str(), "follower");
-        assert_eq!(NodeRole::Learner.as_str(), "learner");
-        assert_eq!(NodeRole::Candidate.as_str(), "candidate");
+    fn test_server_state_as_str() {
+        assert_eq!(ServerState::Leader.as_str(), "leader");
+        assert_eq!(ServerState::Follower.as_str(), "follower");
+        assert_eq!(ServerState::Learner.as_str(), "learner");
+        assert_eq!(ServerState::Candidate.as_str(), "candidate");
+        assert_eq!(ServerState::Shutdown.as_str(), "shutdown");
     }
 
     #[test]
@@ -149,12 +108,6 @@ mod tests {
         assert_eq!(NodeStatus::Offline.as_str(), "offline");
         assert_eq!(NodeStatus::Joining.as_str(), "joining");
         assert_eq!(NodeStatus::Unknown.as_str(), "unknown");
-    }
-
-    #[test]
-    fn test_node_role_display() {
-        assert_eq!(format!("{}", NodeRole::Leader), "leader");
-        assert_eq!(format!("{}", NodeRole::Follower), "follower");
     }
 
     #[test]

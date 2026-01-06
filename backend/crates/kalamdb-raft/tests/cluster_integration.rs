@@ -16,7 +16,8 @@ use chrono::Utc;
 use parking_lot::RwLock;
 use tokio::time::sleep;
 
-use kalamdb_commons::models::{JobId, NamespaceId, NodeId, TableName, UserId};
+use kalamdb_commons::models::{JobId, NamespaceId, NodeId, StorageId, TableName, UserId};
+use kalamdb_commons::models::schemas::TableType;
 use kalamdb_commons::types::User;
 use kalamdb_commons::{AuthType, Role, StorageId, StorageMode};
 use kalamdb_commons::TableId;
@@ -657,7 +658,7 @@ async fn test_meta_system_group_operations() {
     // Test CreateTable
     let cmd = SystemCommand::CreateTable {
         table_id: TableId::new(NamespaceId::from("test_ns"), TableName::from("test_table")),
-        table_type: "user".to_string(),
+        table_type: TableType::User,
         schema_json: "{}".to_string(),
     };
     let result = leader.manager.propose_system(
@@ -667,7 +668,7 @@ async fn test_meta_system_group_operations() {
     
     // Test RegisterStorage
     let cmd = SystemCommand::RegisterStorage {
-        storage_id: "storage1".to_string(),
+        storage_id: StorageId::new("storage1".to_string()),
         config_json: "{}".to_string(),
     };
     let result = leader.manager.propose_system(

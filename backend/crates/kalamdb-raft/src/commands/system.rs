@@ -1,6 +1,7 @@
 //! System group commands (metadata: namespaces, tables, storages)
 
-use kalamdb_commons::models::NamespaceId;
+use kalamdb_commons::models::{NamespaceId, StorageId};
+use kalamdb_commons::models::schemas::TableType;
 use kalamdb_commons::TableId;
 use serde::{Deserialize, Serialize};
 
@@ -21,7 +22,7 @@ pub enum SystemCommand {
     // === Table Operations ===
     CreateTable {
         table_id: TableId,
-        table_type: String,  // "user", "shared", "stream"
+        table_type: TableType,
         schema_json: String, // Serialized TableDefinition
     },
     AlterTable {
@@ -34,11 +35,11 @@ pub enum SystemCommand {
 
     // === Storage Operations ===
     RegisterStorage {
-        storage_id: String,
+        storage_id: StorageId,
         config_json: String,
     },
     UnregisterStorage {
-        storage_id: String,
+        storage_id: StorageId,
     },
 }
 

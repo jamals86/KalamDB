@@ -4,6 +4,8 @@
 //! and storage changes to the actual providers (RocksDB-backed stores).
 
 use async_trait::async_trait;
+use kalamdb_commons::models::schemas::TableType;
+use kalamdb_commons::models::{NamespaceId, StorageId, TableId, UserId};
 
 use crate::RaftError;
 
@@ -20,42 +22,39 @@ use crate::RaftError;
 #[async_trait]
 pub trait SystemApplier: Send + Sync {
     /// Create a namespace in persistent storage
-    async fn create_namespace(&self, namespace_id: &str, created_by: Option<&str>) -> Result<(), RaftError>;
+    async fn create_namespace(&self, namespace_id: &NamespaceId, created_by: Option<&UserId>) -> Result<(), RaftError>;
     
     /// Delete a namespace from persistent storage
-    async fn delete_namespace(&self, namespace_id: &str) -> Result<(), RaftError>;
+    async fn delete_namespace(&self, namespace_id: &NamespaceId) -> Result<(), RaftError>;
     
     /// Create a table in persistent storage
     ///
     /// # Arguments
-    /// * `namespace_id` - Namespace containing the table
-    /// * `table_name` - Name of the table
-    /// * `table_type` - Type of table (USER, SHARED, STREAM)
+    /// * `table_id` - TableId containing namespace and table name
+    /// * `table_type` - Type of table (User, Shared, Stream)
     /// * `schema_json` - JSON-serialized TableDefinition
     async fn create_table(
         &self,
-        namespace_id: &str,
-        table_name: &str,
-        table_type: &str,
+        table_id: &TableId,
+        table_type: TableType,
         schema_json: &str,
     ) -> Result<(), RaftError>;
     
     /// Alter a table in persistent storage
     async fn alter_table(
         &self,
-        namespace_id: &str,
-        table_name: &str,
+        table_id: &TableId,
         schema_json: &str,
     ) -> Result<(), RaftError>;
     
     /// Drop a table from persistent storage
-    async fn drop_table(&self, namespace_id: &str, table_name: &str) -> Result<(), RaftError>;
+    async fn drop_table(&self, table_id: &TableId) -> Result<(), RaftError>;
     
     /// Register storage configuration
-    async fn register_storage(&self, storage_id: &str, config_json: &str) -> Result<(), RaftError>;
+    async fn register_storage(&self, storage_id: &StorageId, config_json: &str) -> Result<(), RaftError>;
     
     /// Unregister storage configuration
-    async fn unregister_storage(&self, storage_id: &str) -> Result<(), RaftError>;
+    async fn unregister_storage(&self, storage_id: &StorageId) -> Result<(), RaftError>;
 }
 
 /// No-op applier for testing or standalone scenarios
@@ -65,19 +64,18 @@ pub struct NoOpSystemApplier;
 
 #[async_trait]
 impl SystemApplier for NoOpSystemApplier {
-    async fn create_namespace(&self, _namespace_id: &str, _created_by: Option<&str>) -> Result<(), RaftError> {
+    async fn create_namespace(&self, _namespace_id: &NamespaceId, _created_by: Option<&UserId>) -> Result<(), RaftError> {
         Ok(())
     }
     
-    async fn delete_namespace(&self, _namespace_id: &str) -> Result<(), RaftError> {
+    async fn delete_namespace(&self, _namespace_id: &NamespaceId) -> Result<(), RaftError> {
         Ok(())
     }
     
     async fn create_table(
         &self,
-        _namespace_id: &str,
-        _table_name: &str,
-        _table_type: &str,
+        _table_id: &TableId,
+        _table_type: TableType,
         _schema_json: &str,
     ) -> Result<(), RaftError> {
         Ok(())
@@ -85,22 +83,21 @@ impl SystemApplier for NoOpSystemApplier {
     
     async fn alter_table(
         &self,
-        _namespace_id: &str,
-        _table_name: &str,
+        _table_id: &TableId,
         _schema_json: &str,
     ) -> Result<(), RaftError> {
         Ok(())
     }
     
-    async fn drop_table(&self, _namespace_id: &str, _table_name: &str) -> Result<(), RaftError> {
+    async fn drop_table(&self, _table_id: &TableId) -> Result<(), RaftError> {
         Ok(())
     }
     
-    async fn register_storage(&self, _storage_id: &str, _config_json: &str) -> Result<(), RaftError> {
+    async fn register_storage(&self, _storage_id: &StorageId, _config_json: &str) -> Result<(), RaftError> {
         Ok(())
     }
     
-    async fn unregister_storage(&self, _storage_id: &str) -> Result<(), RaftError> {
+    async fn unregister_storage(&self, _storage_id: &StorageId) -> Result<(), RaftError> {
         Ok(())
     }
 }

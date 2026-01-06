@@ -54,6 +54,7 @@ struct ClusterNodeDisplay {
 #[derive(Debug, Clone)]
 struct ClusterInfoDisplay {
     is_cluster_mode: bool,
+    cluster_name: String,
     current_node: Option<ClusterNodeDisplay>,
     nodes: Vec<ClusterNodeDisplay>,
 }
@@ -113,6 +114,9 @@ pub struct CLISession {
 
     /// Instance name for credential management
     instance: Option<String>,
+
+    /// Cluster name from server (for prompt display)
+    cluster_name: Option<String>,
 
     /// Credential store for managing saved credentials
     credential_store: Option<crate::credentials::FileCredentialStore>,
@@ -225,6 +229,7 @@ impl CLISession {
             server_api_version,
             server_build_date,
             instance,
+            cluster_name: None, // Will be fetched lazily from system.cluster
             credential_store,
             credentials_loaded,
             timeouts,
@@ -443,14 +448,15 @@ impl CLISession {
             "KalamDB".to_string()
         };
 
-        let brand_with_profile = if let Some(instance) = self.instance.as_deref() {
-            if use_colors_in_prompt {
-                format!("{}{}", brand, format!("[{}]", instance).dimmed())
-            } else {
-                format!("{}[{}]", brand, instance)
-            }
+        // Use cluster_name for cluster mode, instance for saved connections, or "local" as fallback
+        let display_name = self.cluster_name.as_deref()
+            .or(self.instance.as_deref())
+            .unwrap_or("local");
+        
+        let brand_with_profile = if use_colors_in_prompt {
+            format!("{}{}", brand, format!("[{}]", display_name).dimmed())
         } else {
-            brand
+            format!("{}[{}]", brand, display_name)
         };
 
         let identity = if use_colors_in_prompt {
@@ -560,6 +566,17 @@ impl CLISession {
         }
 
         println!("{}", "✓ Connected".green());
+
+        // Fetch cluster info to populate cluster_name and node address for prompt
+        if let Some(cluster_info) = self.fetch_cluster_info().await {
+            self.cluster_name = Some(cluster_info.cluster_name);
+            // Update server_host to use the connected node's address if available
+            if let Some(node) = &cluster_info.current_node {
+                if !node.api_addr.is_empty() {
+                    self.server_host = node.api_addr.clone();
+                }
+            }
+        }
 
         // Connection and auth successful - print welcome banner
         self.print_banner();
@@ -1716,11 +1733,11 @@ impl CLISession {
 
     /// Fetch cluster information from system.cluster
     async fn fetch_cluster_info(&self) -> Option<ClusterInfoDisplay> {
-        // Query the system.cluster table
+        // Query the system.cluster table (cluster_id is now the first column)
         let result = self
             .client
             .execute_query(
-                "SELECT node_id, role, status, api_addr, is_self, is_leader FROM system.cluster",
+                "SELECT cluster_id, node_id, role, status, api_addr, is_self, is_leader FROM system.cluster",
                 None,
                 None,
             )
@@ -1731,19 +1748,24 @@ impl CLISession {
                 let mut nodes = Vec::new();
                 let mut current_node = None;
                 let mut is_cluster_mode = false;
+                let mut cluster_name = String::new();
 
                 // Get the first result set
                 if let Some(query_result) = response.results.first() {
                     if let Some(rows) = &query_result.rows {
                         for row in rows {
-                            // row is a Vec<JsonValue> with fields in order: node_id, role, status, api_addr, is_self, is_leader
-                            if row.len() >= 6 {
-                                let node_id = row[0].as_u64().unwrap_or(0);
-                                let role = row[1].as_str().unwrap_or("unknown").to_string();
-                                let status = row[2].as_str().unwrap_or("unknown").to_string();
-                                let api_addr = row[3].as_str().unwrap_or("").to_string();
-                                let is_self = row[4].as_bool().unwrap_or(false);
-                                let is_leader = row[5].as_bool().unwrap_or(false);
+                            // row is a Vec<JsonValue> with fields in order: cluster_id, node_id, role, status, api_addr, is_self, is_leader
+                            if row.len() >= 7 {
+                                // Extract cluster_id from first row only
+                                if cluster_name.is_empty() {
+                                    cluster_name = row[0].as_str().unwrap_or("standalone").to_string();
+                                }
+                                let node_id = row[1].as_u64().unwrap_or(0);
+                                let role = row[2].as_str().unwrap_or("unknown").to_string();
+                                let status = row[3].as_str().unwrap_or("unknown").to_string();
+                                let api_addr = row[4].as_str().unwrap_or("").to_string();
+                                let is_self = row[5].as_bool().unwrap_or(false);
+                                let is_leader = row[6].as_bool().unwrap_or(false);
 
                                 // Check if this looks like cluster mode (role is leader/follower)
                                 if role == "leader" || role == "follower" {
@@ -1775,6 +1797,7 @@ impl CLISession {
 
                 Some(ClusterInfoDisplay {
                     is_cluster_mode,
+                    cluster_name,
                     current_node,
                     nodes,
                 })

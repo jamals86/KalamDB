@@ -21,7 +21,7 @@ use datafusion::datasource::TableType;
 use datafusion::error::Result as DataFusionResult;
 use datafusion::logical_expr::Expr;
 use datafusion::physical_plan::ExecutionPlan;
-use kalamdb_raft::{ClusterInfo, CommandExecutor};
+use kalamdb_raft::{ClusterInfo, CommandExecutor, ServerStateExt};
 use std::sync::OnceLock;
 
 static CLUSTER_SCHEMA: OnceLock<SchemaRef> = OnceLock::new();
@@ -30,6 +30,7 @@ fn cluster_schema() -> SchemaRef {
     CLUSTER_SCHEMA
         .get_or_init(|| {
             Arc::new(Schema::new(vec![
+                Field::new("cluster_id", DataType::Utf8, false),
                 Field::new("node_id", DataType::UInt64, false),
                 Field::new("role", DataType::Utf8, false),
                 Field::new("status", DataType::Utf8, false),
@@ -85,6 +86,8 @@ impl ClusterTableProvider {
     fn build_batch(&self) -> DataFusionResult<RecordBatch> {
         let info = self.get_cluster_info();
 
+        let num_nodes = info.nodes.len();
+        let cluster_ids: Vec<&str> = vec![info.cluster_id.as_str(); num_nodes];
         let node_ids: Vec<u64> = info.nodes.iter().map(|n| n.node_id).collect();
         let roles: Vec<&str> = info.nodes.iter().map(|n| n.role.as_str()).collect();
         let statuses: Vec<&str> = info.nodes.iter().map(|n| n.status.as_str()).collect();
@@ -101,6 +104,7 @@ impl ClusterTableProvider {
         Ok(RecordBatch::try_new(
             self.schema.clone(),
             vec![
+                Arc::new(StringArray::from(cluster_ids)),
                 Arc::new(UInt64Array::from(node_ids)),
                 Arc::new(StringArray::from(roles)),
                 Arc::new(StringArray::from(statuses)),

@@ -8,6 +8,7 @@
 //! Runs in the MetaSystem Raft group.
 
 use async_trait::async_trait;
+use kalamdb_commons::models::{NamespaceId, StorageId, TableId};
 use parking_lot::RwLock;
 use serde::{Deserialize, Serialize};
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -21,11 +22,11 @@ use super::{ApplyResult, KalamStateMachine, StateMachineSnapshot, encode, decode
 #[derive(Debug, Clone, Serialize, Deserialize)]
 struct SystemSnapshot {
     /// All namespace IDs
-    namespaces: Vec<String>,
-    /// All table definitions (namespace_id, table_name, schema_json)
-    tables: Vec<(String, String, String)>,
+    namespaces: Vec<NamespaceId>,
+    /// All table definitions (table_id, schema_json)
+    tables: Vec<(TableId, String)>,
     /// All storage configs (storage_id, config_json)
-    storages: Vec<(String, String)>,
+    storages: Vec<(StorageId, String)>,
 }
 
 /// State machine for system metadata operations
@@ -109,9 +110,10 @@ impl SystemStateMachine {
                 
                 // Persist to provider if applier is set
                 if let Some(ref a) = applier {
+                    let created_by_ref = created_by.as_ref().map(|s| kalamdb_commons::models::UserId::new(s.clone()));
                     a.create_namespace(
-                        namespace_id.as_str(),
-                        created_by.as_deref(),
+                        &namespace_id,
+                        created_by_ref.as_ref(),
                     ).await?;
                 }
                 
@@ -123,7 +125,7 @@ impl SystemStateMachine {
                         tables: Vec::new(),
                         storages: Vec::new(),
                     });
-                    cache_ref.namespaces.push(namespace_id.as_str().to_string());
+                    cache_ref.namespaces.push(namespace_id.clone());
                 }
                 self.approximate_size.fetch_add(100, Ordering::Relaxed);
                 Ok(SystemResponse::NamespaceCreated { namespace_id })
@@ -133,13 +135,13 @@ impl SystemStateMachine {
                 log::debug!("SystemStateMachine: DeleteNamespace {:?}", namespace_id);
                 
                 if let Some(ref a) = applier {
-                    a.delete_namespace(namespace_id.as_str()).await?;
+                    a.delete_namespace(&namespace_id).await?;
                 }
                 
                 {
                     let mut cache = self.snapshot_cache.write();
                     if let Some(ref mut snapshot) = *cache {
-                        snapshot.namespaces.retain(|ns| ns != namespace_id.as_str());
+                        snapshot.namespaces.retain(|ns| ns != &namespace_id);
                     }
                 }
                 Ok(SystemResponse::Ok)
@@ -153,9 +155,8 @@ impl SystemStateMachine {
                 
                 if let Some(ref a) = applier {
                     a.create_table(
-                        table_id.namespace_id().as_str(),
-                        table_id.table_name().as_str(),
-                        &table_type,
+                        &table_id,
+                        table_type,
                         &schema_json,
                     ).await?;
                 }
@@ -167,11 +168,7 @@ impl SystemStateMachine {
                         tables: Vec::new(),
                         storages: Vec::new(),
                     });
-                    cache_ref.tables.push((
-                        table_id.namespace_id().as_str().to_string(),
-                        table_id.table_name().as_str().to_string(),
-                        schema_json.clone(),
-                    ));
+                    cache_ref.tables.push((table_id.clone(), schema_json.clone()));
                 }
                 self.approximate_size.fetch_add(schema_json.len() as u64 + 200, Ordering::Relaxed);
                 Ok(SystemResponse::TableCreated { table_id })
@@ -182,8 +179,7 @@ impl SystemStateMachine {
                 
                 if let Some(ref a) = applier {
                     a.alter_table(
-                        table_id.namespace_id().as_str(),
-                        table_id.table_name().as_str(),
+                        &table_id,
                         &schema_json,
                     ).await?;
                 }
@@ -192,8 +188,8 @@ impl SystemStateMachine {
                     let mut cache = self.snapshot_cache.write();
                     if let Some(ref mut snapshot) = *cache {
                         // Update existing table schema
-                        for (ns, tbl, schema) in &mut snapshot.tables {
-                            if ns == table_id.namespace_id().as_str() && tbl == table_id.table_name().as_str() {
+                        for (tid, schema) in &mut snapshot.tables {
+                            if tid == &table_id {
                                 *schema = schema_json.clone();
                                 break;
                             }
@@ -207,18 +203,13 @@ impl SystemStateMachine {
                 log::debug!("SystemStateMachine: DropTable {:?}", table_id);
                 
                 if let Some(ref a) = applier {
-                    a.drop_table(
-                        table_id.namespace_id().as_str(),
-                        table_id.table_name().as_str(),
-                    ).await?;
+                    a.drop_table(&table_id).await?;
                 }
                 
                 {
                     let mut cache = self.snapshot_cache.write();
                     if let Some(ref mut snapshot) = *cache {
-                        snapshot.tables.retain(|(ns, tbl, _)| {
-                            !(ns == table_id.namespace_id().as_str() && tbl == table_id.table_name().as_str())
-                        });
+                        snapshot.tables.retain(|(tid, _)| tid != &table_id);
                     }
                 }
                 Ok(SystemResponse::Ok)

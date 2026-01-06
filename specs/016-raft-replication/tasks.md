@@ -338,3 +338,7 @@ make sure you display them from memory and never store them it's like a view
 8) Make sure we first replicate the system changes and then the data after that when a node joins the cluster
 9) Make a separate tests for clustering as a folder so we can run them separatly
 10) Instead of rely on docker to run the cluster make another cluster-local.sh which will run the cluster internaly and not a docker containers its faster for testing and development
+11) backend\crates\kalamdb-raft\src\applier\system_applier.rs need to be type-safe, keep checking to find other str's which can be type-safe using the same types we already have, also struct SystemSnapshot can store the type-safe StorageId/TableId
+12) The cli should instead than have a prompt: ● KalamDB[local] root@localhost:8080 ❯ 
+Display the clusterName here and which node we are connecting to: ● KalamDB[{{ClusterName}}] root@{{nodeHostname and port}} ❯ 
+13) ServerState already exists in openRaft why not using it instead of implementing our own? check here: https://docs.rs/openraft/latest/openraft/metrics/struct.RaftMetrics.html

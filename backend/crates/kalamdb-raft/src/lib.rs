@@ -44,7 +44,7 @@ pub mod manager;
 
 // Re-exports
 pub use applier::{NoOpSystemApplier, NoOpUsersApplier, SystemApplier, UsersApplier};
-pub use cluster_types::{NodeRole, NodeStatus};
+pub use cluster_types::{NodeRole, NodeStatus, ServerStateExt};
 pub use config::{ClusterConfig as RaftClusterConfig, PeerConfig, ReplicationMode};
 pub use error::{RaftError, Result};
 pub use executor::{ClusterInfo, ClusterNodeInfo, CommandExecutor, DirectExecutor, RaftExecutor};

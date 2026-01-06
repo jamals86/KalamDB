@@ -92,7 +92,7 @@ impl TypedStatementHandler<CreateTableStatement> for CreateTableHandler {
             })?;
             let cmd = SystemCommand::CreateTable {
                 table_id: table_id.clone(),
-                table_type: table_type.to_string(),
+                table_type,
                 schema_json,
             };
             self.app_context

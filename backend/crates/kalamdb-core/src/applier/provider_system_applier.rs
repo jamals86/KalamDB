@@ -6,8 +6,8 @@
 use async_trait::async_trait;
 use std::sync::Arc;
 
-use kalamdb_commons::models::schemas::TableDefinition;
-use kalamdb_commons::models::{NamespaceId, TableId, TableName};
+use kalamdb_commons::models::schemas::{TableDefinition, TableType};
+use kalamdb_commons::models::{NamespaceId, StorageId, TableId, UserId};
 use kalamdb_commons::system::Namespace;
 use kalamdb_raft::{RaftError, SystemApplier};
 use kalamdb_system::SystemTablesRegistry;
@@ -29,8 +29,8 @@ impl ProviderSystemApplier {
 
 #[async_trait]
 impl SystemApplier for ProviderSystemApplier {
-    async fn create_namespace(&self, namespace_id: &str, _created_by: Option<&str>) -> Result<(), RaftError> {
-        let namespace = Namespace::new(namespace_id);
+    async fn create_namespace(&self, namespace_id: &NamespaceId, _created_by: Option<&UserId>) -> Result<(), RaftError> {
+        let namespace = Namespace::new(namespace_id.as_str());
         log::info!("ProviderSystemApplier: Creating namespace {}", namespace_id);
         
         self.system_tables
@@ -42,13 +42,12 @@ impl SystemApplier for ProviderSystemApplier {
         Ok(())
     }
     
-    async fn delete_namespace(&self, namespace_id: &str) -> Result<(), RaftError> {
-        let ns_id = NamespaceId::new(namespace_id);
+    async fn delete_namespace(&self, namespace_id: &NamespaceId) -> Result<(), RaftError> {
         log::info!("ProviderSystemApplier: Deleting namespace {}", namespace_id);
         
         self.system_tables
             .namespaces()
-            .delete_namespace_async(&ns_id)
+            .delete_namespace_async(namespace_id)
             .await
             .map_err(|e| RaftError::provider(format!("Failed to delete namespace: {}", e)))?;
         
@@ -57,24 +56,18 @@ impl SystemApplier for ProviderSystemApplier {
     
     async fn create_table(
         &self,
-        namespace_id: &str,
-        table_name: &str,
-        _table_type: &str,
+        table_id: &TableId,
+        _table_type: TableType,
         schema_json: &str,
     ) -> Result<(), RaftError> {
-        let table_id = TableId::new(
-            NamespaceId::new(namespace_id),
-            TableName::new(table_name),
-        );
-        
         let table_def: TableDefinition = serde_json::from_str(schema_json)
             .map_err(|e| RaftError::provider(format!("Invalid schema JSON: {}", e)))?;
         
-        log::info!("ProviderSystemApplier: Creating table {}.{}", namespace_id, table_name);
+        log::info!("ProviderSystemApplier: Creating table {}", table_id.full_name());
         
         self.system_tables
             .tables()
-            .create_table_async(&table_id, &table_def)
+            .create_table_async(table_id, &table_def)
             .await
             .map_err(|e| RaftError::provider(format!("Failed to create table: {}", e)))?;
         
@@ -83,47 +76,36 @@ impl SystemApplier for ProviderSystemApplier {
     
     async fn alter_table(
         &self,
-        namespace_id: &str,
-        table_name: &str,
+        table_id: &TableId,
         schema_json: &str,
     ) -> Result<(), RaftError> {
-        let table_id = TableId::new(
-            NamespaceId::new(namespace_id),
-            TableName::new(table_name),
-        );
-        
         let table_def: TableDefinition = serde_json::from_str(schema_json)
             .map_err(|e| RaftError::provider(format!("Invalid schema JSON: {}", e)))?;
         
-        log::info!("ProviderSystemApplier: Altering table {}.{}", namespace_id, table_name);
+        log::info!("ProviderSystemApplier: Altering table {}", table_id.full_name());
         
         self.system_tables
             .tables()
-            .update_table_async(&table_id, &table_def)
+            .update_table_async(table_id, &table_def)
             .await
             .map_err(|e| RaftError::provider(format!("Failed to alter table: {}", e)))?;
         
         Ok(())
     }
     
-    async fn drop_table(&self, namespace_id: &str, table_name: &str) -> Result<(), RaftError> {
-        let table_id = TableId::new(
-            NamespaceId::new(namespace_id),
-            TableName::new(table_name),
-        );
-        
-        log::info!("ProviderSystemApplier: Dropping table {}.{}", namespace_id, table_name);
+    async fn drop_table(&self, table_id: &TableId) -> Result<(), RaftError> {
+        log::info!("ProviderSystemApplier: Dropping table {}", table_id.full_name());
         
         self.system_tables
             .tables()
-            .delete_table_async(&table_id)
+            .delete_table_async(table_id)
             .await
             .map_err(|e| RaftError::provider(format!("Failed to drop table: {}", e)))?;
         
         Ok(())
     }
     
-    async fn register_storage(&self, _storage_id: &str, config_json: &str) -> Result<(), RaftError> {
+    async fn register_storage(&self, _storage_id: &StorageId, config_json: &str) -> Result<(), RaftError> {
         let storage: kalamdb_commons::system::Storage = serde_json::from_str(config_json)
             .map_err(|e| RaftError::provider(format!("Invalid storage config: {}", e)))?;
         
@@ -138,13 +120,12 @@ impl SystemApplier for ProviderSystemApplier {
         Ok(())
     }
     
-    async fn unregister_storage(&self, storage_id: &str) -> Result<(), RaftError> {
-        let sid = kalamdb_commons::models::StorageId::new(storage_id);
+    async fn unregister_storage(&self, storage_id: &StorageId) -> Result<(), RaftError> {
         log::info!("ProviderSystemApplier: Unregistering storage {}", storage_id);
         
         self.system_tables
             .storages()
-            .delete_storage_async(&sid)
+            .delete_storage_async(storage_id)
             .await
             .map_err(|e| RaftError::provider(format!("Failed to unregister storage: {}", e)))?;
         

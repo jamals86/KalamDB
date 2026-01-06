@@ -1,7 +1,7 @@
 //! Jobs group commands (background job coordination)
 
 use chrono::{DateTime, Utc};
-use kalamdb_commons::models::{JobId, NamespaceId, NodeId, TableName};
+use kalamdb_commons::models::{JobId, JobType, NamespaceId, NodeId, TableName};
 use serde::{Deserialize, Serialize};
 
 /// Commands for the jobs coordination Raft group
@@ -14,7 +14,7 @@ pub enum JobsCommand {
     /// Create a new job
     CreateJob {
         job_id: JobId,
-        job_type: String,
+        job_type: JobType,
         namespace_id: Option<NamespaceId>,
         table_name: Option<TableName>,
         config_json: Option<String>,
@@ -69,7 +69,7 @@ pub enum JobsCommand {
     /// Create a scheduled job
     CreateSchedule {
         schedule_id: String,
-        job_type: String,
+        job_type: JobType,
         cron_expression: String,
         config_json: Option<String>,
         created_at: DateTime<Utc>,

@@ -9,7 +9,7 @@
 //! Runs in the MetaJobs Raft group.
 
 use async_trait::async_trait;
-use kalamdb_commons::models::{JobId, NodeId};
+use kalamdb_commons::models::{JobId, JobType, NodeId};
 use parking_lot::RwLock;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
@@ -22,7 +22,7 @@ use super::{ApplyResult, KalamStateMachine, StateMachineSnapshot, encode, decode
 #[derive(Debug, Clone, Serialize, Deserialize)]
 struct JobState {
     job_id: JobId,
-    job_type: String,
+    job_type: JobType,
     status: String,
     claimed_by: Option<NodeId>,
     error_message: Option<String>,
@@ -32,7 +32,7 @@ struct JobState {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 struct ScheduleState {
     schedule_id: String,
-    job_type: String,
+    job_type: JobType,
     cron_expr: String,
     enabled: bool,
 }

@@ -4,8 +4,9 @@
 //! Zero overhead for standalone mode.
 
 use async_trait::async_trait;
+use openraft::ServerState;
 
-use crate::cluster_types::{NodeRole, NodeStatus};
+use crate::cluster_types::NodeStatus;
 use crate::commands::{
     DataResponse, JobsCommand, JobsResponse, SharedDataCommand, SystemCommand,
     SystemResponse, UserDataCommand, UsersCommand, UsersResponse,
@@ -257,7 +258,7 @@ impl CommandExecutor for DirectExecutor {
             is_cluster_mode: false,
             nodes: vec![ClusterNodeInfo {
                 node_id: 0,
-                role: NodeRole::Leader, // Standalone is effectively always leader
+                role: ServerState::Leader, // Standalone is effectively always leader
                 status: NodeStatus::Active,
                 rpc_addr: "".to_string(),
                 api_addr: "localhost:8080".to_string(),

@@ -8,8 +8,9 @@ use std::sync::Arc;
 
 use async_trait::async_trait;
 use bincode::config;
+use openraft::ServerState;
 
-use crate::cluster_types::{NodeRole, NodeStatus};
+use crate::cluster_types::NodeStatus;
 use crate::{
     manager::RaftManager,
     ClusterInfo, ClusterNodeInfo, CommandExecutor, DataResponse, GroupId, JobsCommand, JobsResponse, KalamNode, RaftError,
@@ -137,7 +138,6 @@ impl CommandExecutor for RaftExecutor {
                     nodes_map.insert(*node_id, node.clone());
                 }
                 
-                let state_str = format!("{:?}", metrics.state);
                 (
                     metrics.current_leader,
                     metrics.current_term,
@@ -145,7 +145,7 @@ impl CommandExecutor for RaftExecutor {
                     metrics.last_applied.map(|log_id| log_id.index),
                     metrics.millis_since_quorum_ack,
                     metrics.replication.clone(),
-                    state_str,
+                    metrics.state,
                 )
             } else {
                 // Fallback to config when metrics not available
@@ -173,7 +173,7 @@ impl CommandExecutor for RaftExecutor {
                     None,
                     None,
                     None,
-                    "Unknown".to_string(),
+                    ServerState::Follower,
                 )
             };
 
@@ -188,25 +188,25 @@ impl CommandExecutor for RaftExecutor {
             NodeStatus::Unknown
         };
 
-        // Determine self role from OpenRaft ServerState
-        let self_role = NodeRole::from_server_state_str(&self_state);
+        // Use OpenRaft ServerState directly for self role
+        let self_role = self_state;
 
         let mut nodes = Vec::with_capacity(nodes_map.len());
         for (node_id, node) in nodes_map {
             let is_self = node_id == config.node_id;
             let is_leader = leader_id == Some(node_id);
             
-            // Determine role for each node
+            // Determine role for each node using OpenRaft ServerState
             // If not a voter, it's a learner (non-voting member)
             let role = if is_self {
                 self_role
             } else if is_leader {
-                NodeRole::Leader
+                ServerState::Leader
             } else if voter_ids.contains(&node_id) {
-                NodeRole::Follower
+                ServerState::Follower
             } else {
                 // Node is in membership but not a voter = learner
-                NodeRole::Learner
+                ServerState::Learner
             };
             
             // Determine status and replication metrics for other nodes

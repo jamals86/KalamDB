@@ -1,6 +1,7 @@
 //! Node identifier type for cluster deployments
 //!
 //! Each KalamDB server instance has a unique node ID used for:
+//! - Raft consensus (matches OpenRaft's u64 NodeId)
 //! - Job assignment and tracking
 //! - Live query routing
 //! - Distributed coordination
@@ -11,33 +12,28 @@ use std::fmt;
 
 /// Node identifier for cluster deployments
 ///
-/// Configured via server.toml `[server] node_id = "node1"`
-#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize, Encode, Decode)]
-pub struct NodeId(String);
+/// Uses u64 to match OpenRaft's NodeId type for seamless integration.
+/// Configured via server.toml `[cluster] node_id = 1`
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, Encode, Decode)]
+pub struct NodeId(u64);
 
 impl NodeId {
     /// Create a new node ID
     #[inline]
-    pub fn new(id: String) -> Self {
+    pub const fn new(id: u64) -> Self {
         Self(id)
     }
 
-    /// Get the node ID as a string slice
+    /// Get the node ID as a u64
     #[inline]
-    pub fn as_str(&self) -> &str {
-        &self.0
+    pub const fn as_u64(&self) -> u64 {
+        self.0
     }
 
-    /// Create default node ID ("node1")
+    /// Create default node ID (1)
     #[inline]
-    pub fn default_node() -> Self {
-        Self("node1".to_string())
-    }
-}
-
-impl AsRef<str> for NodeId {
-    fn as_ref(&self) -> &str {
-        &self.0
+    pub const fn default_node() -> Self {
+        Self(1)
     }
 }
 
@@ -47,15 +43,15 @@ impl fmt::Display for NodeId {
     }
 }
 
-impl From<&str> for NodeId {
-    fn from(s: &str) -> Self {
-        Self(s.to_string())
+impl From<u64> for NodeId {
+    fn from(id: u64) -> Self {
+        Self(id)
     }
 }
 
-impl From<String> for NodeId {
-    fn from(s: String) -> Self {
-        Self(s)
+impl From<NodeId> for u64 {
+    fn from(id: NodeId) -> Self {
+        id.0
     }
 }
 
@@ -71,35 +67,42 @@ mod tests {
 
     #[test]
     fn test_node_id_creation() {
-        let node_id = NodeId::new("test_node".to_string());
-        assert_eq!(node_id.as_str(), "test_node");
+        let node_id = NodeId::new(42);
+        assert_eq!(node_id.as_u64(), 42);
     }
 
     #[test]
     fn test_node_id_display() {
-        let node_id = NodeId::new("node123".to_string());
-        assert_eq!(format!("{}", node_id), "node123");
+        let node_id = NodeId::new(123);
+        assert_eq!(format!("{}", node_id), "123");
     }
 
     #[test]
-    fn test_node_id_from_str() {
-        let node_id = NodeId::from("node456");
-        assert_eq!(node_id.as_str(), "node456");
+    fn test_node_id_from_u64() {
+        let node_id = NodeId::from(456u64);
+        assert_eq!(node_id.as_u64(), 456);
     }
 
     #[test]
     fn test_node_id_default() {
         let node_id = NodeId::default();
-        assert_eq!(node_id.as_str(), "node1");
+        assert_eq!(node_id.as_u64(), 1);
     }
 
     #[test]
     fn test_node_id_equality() {
-        let node1 = NodeId::new("node1".to_string());
-        let node2 = NodeId::new("node1".to_string());
-        let node3 = NodeId::new("node2".to_string());
+        let node1 = NodeId::new(1);
+        let node2 = NodeId::new(1);
+        let node3 = NodeId::new(2);
 
         assert_eq!(node1, node2);
         assert_ne!(node1, node3);
+    }
+
+    #[test]
+    fn test_node_id_to_u64() {
+        let node_id = NodeId::new(789);
+        let value: u64 = node_id.into();
+        assert_eq!(value, 789);
     }
 }
