@@ -15,7 +15,7 @@ use openraft::raft::{
 use parking_lot::RwLock;
 use tonic::transport::Channel;
 
-use crate::storage::log_store::{KalamNode, KalamTypeConfig};
+use crate::storage::{KalamNode, KalamTypeConfig};
 use crate::GroupId;
 
 /// Simple connection error wrapper for openraft compatibility

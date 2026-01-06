@@ -59,11 +59,13 @@ pub enum SystemResponse {
 }
 
 impl SystemResponse {
+    /// Create an error response with the given message
     pub fn error(msg: impl Into<String>) -> Self {
-        SystemResponse::Error { message: msg.into() }
+        Self::Error { message: msg.into() }
     }
 
+    /// Returns true if this is not an error response
     pub fn is_ok(&self) -> bool {
-        !matches!(self, SystemResponse::Error { .. })
+        !matches!(self, Self::Error { .. })
     }
 }

@@ -3,7 +3,6 @@
 //! Each Raft group has its own command and response types that define
 //! the operations it can perform.
 
-// Re-export all command types
 mod system;
 mod users;
 mod jobs;

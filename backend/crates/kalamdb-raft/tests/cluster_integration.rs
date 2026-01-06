@@ -16,7 +16,9 @@ use chrono::Utc;
 use parking_lot::RwLock;
 use tokio::time::sleep;
 
-use kalamdb_commons::models::{NamespaceId, TableName, UserId, JobId, NodeId};
+use kalamdb_commons::models::{JobId, NamespaceId, NodeId, TableName, UserId};
+use kalamdb_commons::types::User;
+use kalamdb_commons::{AuthType, Role, StorageId, StorageMode};
 use kalamdb_commons::TableId;
 use kalamdb_raft::{
     manager::{ClusterConfig, PeerConfig, RaftManager},
@@ -487,11 +489,24 @@ async fn test_all_groups_accept_proposals() {
     {
         let leader = cluster.get_leader_node(GroupId::MetaUsers).unwrap();
         let cmd = UsersCommand::CreateUser {
-            user_id: UserId::from("user1"),
-            username: "testuser".to_string(),
-            password_hash: "hash".to_string(),
-            role: "user".to_string(),
-            created_at: Utc::now(),
+            user: User {
+                id: UserId::from("user1"),
+                username: "testuser".into(),
+                password_hash: "hash".to_string(),
+                role: Role::User,
+                email: None,
+                auth_type: AuthType::Password,
+                auth_data: None,
+                storage_mode: StorageMode::Table,
+                storage_id: Some(StorageId::from("local")),
+                failed_login_attempts: 0,
+                locked_until: None,
+                last_login_at: None,
+                created_at: Utc::now().timestamp_millis(),
+                updated_at: Utc::now().timestamp_millis(),
+                last_seen: None,
+                deleted_at: None,
+            },
         };
         let encoded = kalamdb_raft::state_machine::encode(&cmd).unwrap();
         let result = leader.manager.propose_users(encoded).await;
@@ -677,11 +692,24 @@ async fn test_meta_users_group_operations() {
     
     // Test CreateUser
     let cmd = UsersCommand::CreateUser {
-        user_id: UserId::from("u1"),
-        username: "alice".to_string(),
-        password_hash: "hash123".to_string(),
-        role: "user".to_string(),
-        created_at: Utc::now(),
+        user: User {
+            id: UserId::from("u1"),
+            username: "alice".into(),
+            password_hash: "hash123".to_string(),
+            role: Role::User,
+            email: None,
+            auth_type: AuthType::Password,
+            auth_data: None,
+            storage_mode: StorageMode::Table,
+            storage_id: Some(StorageId::from("local")),
+            failed_login_attempts: 0,
+            locked_until: None,
+            last_login_at: None,
+            created_at: Utc::now().timestamp_millis(),
+            updated_at: Utc::now().timestamp_millis(),
+            last_seen: None,
+            deleted_at: None,
+        },
     };
     let result = leader.manager.propose_users(
         kalamdb_raft::state_machine::encode(&cmd).unwrap()
@@ -690,11 +718,24 @@ async fn test_meta_users_group_operations() {
     
     // Test UpdateUser
     let cmd = UsersCommand::UpdateUser {
-        user_id: UserId::from("u1"),
-        username: None,
-        password_hash: Some("newhash".to_string()),
-        role: None,
-        updated_at: Utc::now(),
+        user: User {
+            id: UserId::from("u1"),
+            username: "alice".into(),
+            password_hash: "newhash".to_string(),
+            role: Role::User,
+            email: None,
+            auth_type: AuthType::Password,
+            auth_data: None,
+            storage_mode: StorageMode::Table,
+            storage_id: Some(StorageId::from("local")),
+            failed_login_attempts: 0,
+            locked_until: None,
+            last_login_at: None,
+            created_at: Utc::now().timestamp_millis(),
+            updated_at: Utc::now().timestamp_millis(),
+            last_seen: None,
+            deleted_at: None,
+        },
     };
     let result = leader.manager.propose_users(
         kalamdb_raft::state_machine::encode(&cmd).unwrap()
@@ -714,7 +755,7 @@ async fn test_meta_users_group_operations() {
     // Test SetLocked
     let cmd = UsersCommand::SetLocked {
         user_id: UserId::from("u1"),
-        locked: true,
+        locked_until: Some(Utc::now().timestamp_millis()),
         updated_at: Utc::now(),
     };
     let result = leader.manager.propose_users(

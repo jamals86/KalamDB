@@ -326,33 +326,15 @@ impl AppContext {
                     log::info!("Shards: {} user, {} shared", cluster_config.user_shards, cluster_config.shared_shards);
                     log::info!("Heartbeat: {}ms, Election Timeout: {:?}ms", 
                         cluster_config.heartbeat_interval_ms, cluster_config.election_timeout_ms);
+                    log::info!("Replication Mode: {}", cluster_config.replication_mode);
                     log::info!("Peers: {} configured", cluster_config.peers.len());
                     for peer in &cluster_config.peers {
                         log::info!("  - Peer node_id={}: rpc={}, api={}", 
                             peer.node_id, peer.rpc_addr, peer.api_addr);
                     }
                     
-                    // Convert ClusterPeer to PeerConfig
-                    let peers: Vec<kalamdb_raft::manager::PeerConfig> = cluster_config.peers
-                        .iter()
-                        .map(|p| kalamdb_raft::manager::PeerConfig {
-                            node_id: p.node_id,
-                            rpc_addr: p.rpc_addr.clone(),
-                            api_addr: p.api_addr.clone(),
-                        })
-                        .collect();
-                    
-                    let raft_config = kalamdb_raft::manager::ClusterConfig {
-                        node_id: cluster_config.node_id,
-                        rpc_addr: cluster_config.rpc_addr.clone(),
-                        api_addr: cluster_config.api_addr.clone(),
-                        peers,
-                        user_shards: cluster_config.user_shards,
-                        shared_shards: cluster_config.shared_shards,
-                        heartbeat_interval_ms: cluster_config.heartbeat_interval_ms,
-                        election_timeout_ms: cluster_config.election_timeout_ms,
-                        min_replication_nodes: cluster_config.min_replication_nodes,
-                    };
+                    // Convert to RaftManagerConfig using From trait
+                    let raft_config = kalamdb_raft::manager::RaftManagerConfig::from(cluster_config.clone());
                     
                     log::info!("Creating RaftManager...");
                     let manager = Arc::new(kalamdb_raft::manager::RaftManager::new(raft_config));
@@ -362,6 +344,10 @@ impl AppContext {
                     log::info!("Wiring SystemApplier for metadata replication...");
                     let system_applier = Arc::new(crate::applier::ProviderSystemApplier::new(system_tables.clone()));
                     manager.set_system_applier(system_applier);
+
+                    log::info!("Wiring UsersApplier for user metadata replication...");
+                    let users_applier = Arc::new(crate::applier::ProviderUsersApplier::new(system_tables.clone()));
+                    manager.set_users_applier(users_applier);
                     
                     log::info!("Creating RaftExecutor...");
                     Arc::new(kalamdb_raft::RaftExecutor::new(manager))
@@ -370,17 +356,17 @@ impl AppContext {
                     Arc::new(crate::executor::StandaloneExecutor::new(system_tables.clone()))
                 };
 
-                // Wire up ClusterNodesTableProvider with the executor
-                let cluster_nodes_provider = Arc::new(
-                    kalamdb_system::ClusterNodesTableProvider::new(executor.clone())
+                // Wire up ClusterTableProvider with the executor
+                let cluster_provider = Arc::new(
+                    kalamdb_system::ClusterTableProvider::new(executor.clone())
                 );
-                system_tables.set_cluster_nodes_provider(cluster_nodes_provider.clone());
+                system_tables.set_cluster_provider(cluster_provider.clone());
                 
-                // Register cluster_nodes with DataFusion system schema
-                // This must happen after executor is created since ClusterNodesTableProvider needs it
+                // Register cluster with DataFusion system schema
+                // This must happen after executor is created since ClusterTableProvider needs it
                 system_schema
-                    .register_table("cluster_nodes".to_string(), cluster_nodes_provider)
-                    .expect("Failed to register system.cluster_nodes");
+                    .register_table("cluster".to_string(), cluster_provider)
+                    .expect("Failed to register system.cluster");
 
                 let app_ctx = Arc::new(AppContext {
                     node_id,

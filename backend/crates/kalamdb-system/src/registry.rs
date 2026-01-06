@@ -7,7 +7,7 @@
 //! a single struct for cleaner AppContext API.
 
 use super::providers::{
-    AuditLogsTableProvider, ClusterNodesTableProvider, JobsTableProvider, LiveQueriesTableProvider, ManifestTableProvider,
+    AuditLogsTableProvider, ClusterTableProvider, JobsTableProvider, LiveQueriesTableProvider, ManifestTableProvider,
     NamespacesTableProvider, ServerLogsTableProvider, StatsTableProvider, StoragesTableProvider,
     TablesTableProvider, UsersTableProvider,
 };
@@ -40,7 +40,7 @@ pub struct SystemTablesRegistry {
     stats: RwLock<Arc<dyn TableProvider + Send + Sync>>,
     settings: RwLock<Arc<dyn TableProvider + Send + Sync>>,
     server_logs: RwLock<Option<Arc<ServerLogsTableProvider>>>,
-    cluster_nodes: RwLock<Option<Arc<ClusterNodesTableProvider>>>,
+    cluster: RwLock<Option<Arc<ClusterTableProvider>>>,
 }
 
 impl SystemTablesRegistry {
@@ -80,7 +80,7 @@ impl SystemTablesRegistry {
             stats: RwLock::new(Arc::new(StatsTableProvider::new(None))), // Will be wired with cache later
             settings: RwLock::new(Arc::new(StatsTableProvider::new(None))), // Placeholder, will be replaced from kalamdb-core
             server_logs: RwLock::new(None), // Initialized via set_server_logs_provider()
-            cluster_nodes: RwLock::new(None), // Initialized via set_cluster_nodes_provider()
+            cluster: RwLock::new(None), // Initialized via set_cluster_provider()
         }
     }
 
@@ -159,15 +159,15 @@ impl SystemTablesRegistry {
         self.manifest.clone()
     }
 
-    /// Get the system.cluster_nodes provider (virtual table showing cluster status)
-    pub fn cluster_nodes(&self) -> Option<Arc<ClusterNodesTableProvider>> {
-        self.cluster_nodes.read().unwrap().clone()
+    /// Get the system.cluster provider (virtual table showing cluster status)
+    pub fn cluster(&self) -> Option<Arc<ClusterTableProvider>> {
+        self.cluster.read().unwrap().clone()
     }
 
-    /// Set the system.cluster_nodes provider (called from kalamdb-core with executor)
-    pub fn set_cluster_nodes_provider(&self, provider: Arc<ClusterNodesTableProvider>) {
-        log::info!("SystemTablesRegistry: Setting cluster_nodes provider");
-        *self.cluster_nodes.write().unwrap() = Some(provider);
+    /// Set the system.cluster provider (called from kalamdb-core with executor)
+    pub fn set_cluster_provider(&self, provider: Arc<ClusterTableProvider>) {
+        log::info!("SystemTablesRegistry: Setting cluster provider");
+        *self.cluster.write().unwrap() = Some(provider);
     }
 
     // ===== Convenience Methods =====
@@ -231,11 +231,11 @@ impl SystemTablesRegistry {
             ));
         }
 
-        // Add cluster_nodes if initialized
-        if let Some(cluster_nodes) = self.cluster_nodes.read().unwrap().clone() {
+        // Add cluster if initialized (virtual table showing OpenRaft metrics)
+        if let Some(cluster) = self.cluster.read().unwrap().clone() {
             providers.push((
-                "cluster_nodes",
-                cluster_nodes as Arc<dyn datafusion::datasource::TableProvider>,
+                "cluster",
+                cluster as Arc<dyn datafusion::datasource::TableProvider>,
             ));
         }
 

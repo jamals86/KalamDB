@@ -55,6 +55,14 @@ pub enum RaftError {
     #[error("Command timed out after {0:?}")]
     Timeout(std::time::Duration),
 
+    /// Replication timeout - command committed but not all nodes applied
+    #[error("Replication timeout for group {group}: committed at {committed_log_id} but not all nodes applied within {timeout_ms}ms")]
+    ReplicationTimeout {
+        group: String,
+        committed_log_id: String,
+        timeout_ms: u64,
+    },
+
     /// Raft is shutting down
     #[error("Raft is shutting down")]
     Shutdown,
@@ -103,6 +111,7 @@ impl RaftError {
             RaftError::NotLeader { .. } 
             | RaftError::Timeout(_) 
             | RaftError::Network(_)
+            | RaftError::ReplicationTimeout { .. }
         )
     }
 

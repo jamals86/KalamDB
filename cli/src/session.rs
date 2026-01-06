@@ -1714,13 +1714,13 @@ impl CLISession {
         println!();
     }
 
-    /// Fetch cluster information from system.cluster_nodes
+    /// Fetch cluster information from system.cluster
     async fn fetch_cluster_info(&self) -> Option<ClusterInfoDisplay> {
-        // Query the system.cluster_nodes table
+        // Query the system.cluster table
         let result = self
             .client
             .execute_query(
-                "SELECT node_id, role, status, api_addr, is_self, is_leader FROM system.cluster_nodes",
+                "SELECT node_id, role, status, api_addr, is_self, is_leader FROM system.cluster",
                 None,
                 None,
             )
@@ -1898,7 +1898,7 @@ impl CLISession {
         }
         println!(
             "  {}",
-            "Use 'SELECT * FROM system.cluster_nodes' for full details"
+            "Use 'SELECT * FROM system.cluster' for full details"
                 .dimmed()
         );
         println!();

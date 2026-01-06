@@ -4,5 +4,7 @@
 //! provider infrastructure, enabling replicated state across all nodes.
 
 mod provider_system_applier;
+mod provider_users_applier;
 
 pub use provider_system_applier::ProviderSystemApplier;
+pub use provider_users_applier::ProviderUsersApplier;

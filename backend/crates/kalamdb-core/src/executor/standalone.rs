@@ -9,7 +9,7 @@ use std::sync::Arc;
 use kalamdb_commons::system::Namespace;
 use kalamdb_raft::{
     ClusterInfo, ClusterNodeInfo, CommandExecutor, DataResponse, GroupId, JobsCommand, JobsResponse,
-    SharedDataCommand, SystemCommand, SystemResponse, UserDataCommand,
+    NodeRole, NodeStatus, SharedDataCommand, SystemCommand, SystemResponse, UserDataCommand,
     UsersCommand, UsersResponse,
 };
 use kalamdb_system::SystemTablesRegistry;
@@ -139,15 +139,17 @@ impl CommandExecutor for StandaloneExecutor {
         // The User struct uses i64 timestamps, Role enum, AuthType enum, etc.
         // For now, we stub these and log - full wiring requires adapter code.
         match cmd {
-            UsersCommand::CreateUser { user_id, username, .. } => {
-                log::info!("StandaloneExecutor: CreateUser {:?} ({})", user_id, username);
-                // TODO: Create User struct with proper field mapping
-                // self.system_tables.users().create_user_async(user).await?;
-                Ok(UsersResponse::UserCreated { user_id })
+            UsersCommand::CreateUser { user } => {
+                log::info!(
+                    "StandaloneExecutor: CreateUser {:?} ({})",
+                    user.id,
+                    user.username
+                );
+                Ok(UsersResponse::UserCreated { user_id: user.id })
             }
             
-            UsersCommand::UpdateUser { user_id, .. } => {
-                log::debug!("StandaloneExecutor: UpdateUser {:?}", user_id);
+            UsersCommand::UpdateUser { user } => {
+                log::debug!("StandaloneExecutor: UpdateUser {:?}", user.id);
                 Ok(UsersResponse::Ok)
             }
             
@@ -161,8 +163,8 @@ impl CommandExecutor for StandaloneExecutor {
                 Ok(UsersResponse::Ok)
             }
             
-            UsersCommand::SetLocked { user_id, locked, .. } => {
-                log::debug!("StandaloneExecutor: SetLocked {:?} = {}", user_id, locked);
+            UsersCommand::SetLocked { user_id, .. } => {
+                log::debug!("StandaloneExecutor: SetLocked {:?}", user_id);
                 Ok(UsersResponse::Ok)
             }
         }
@@ -307,18 +309,26 @@ impl CommandExecutor for StandaloneExecutor {
             is_cluster_mode: false,
             nodes: vec![ClusterNodeInfo {
                 node_id: 0,
-                role: "standalone".to_string(),
-                status: "active".to_string(),
+                role: NodeRole::Leader, // Standalone is effectively always leader
+                status: NodeStatus::Active,
                 rpc_addr: "".to_string(),
                 api_addr: "localhost:8080".to_string(),
                 is_self: true,
                 is_leader: true,
                 groups_leading: 0,
                 total_groups: 0,
+                current_term: None,
+                last_applied_log: None,
+                millis_since_last_heartbeat: None,
+                replication_lag: None,
             }],
             total_groups: 0,
             user_shards: 0,
             shared_shards: 0,
+            current_term: 0,
+            last_log_index: None,
+            last_applied: None,
+            millis_since_quorum_ack: None,
         }
     }
     

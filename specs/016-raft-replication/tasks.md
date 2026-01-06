@@ -320,3 +320,21 @@ TODOS:
 │ 2       │ follower │ unknown │ kalamdb-node2:9090 │ http://kalamdb-node2:8080 │ false   │ false     │ 0              │ 8            │
 └─────────┴──────────┴─────────┴────────────────────┴───────────────────────────┴─────────┴───────────┴────────────────┴──────────────┘
 (3 rows)
+
+2) User enums either from openraft or create our own ones for cluster: role/status, and also instead of using namespace/userid/tableid/storageid or tablename as str use the NamespaceId/StorageId/JobType/UserId/TableId/TableName everywhere in kalamdb-raft crate we should always be type-safe everywhere, start changing from: SystemApplier and UserDataCommand/JobsCommand
+    /// Node role: "leader", "follower", "learner", "candidate"
+    pub role: String,
+    /// Node status: "active", "offline", "joining"
+    pub status: String,
+
+3) instead than system.cluster_nodes it should be system.cluster
+4) We can get rid of our own NodeId and use the same one from the cluster and Openraft: backend\crates\kalamdb-commons\src\models\ids\node_id.rs and use the same one from the cluster: node_id = 1 also remove the old node_id from the server.toml file so we dont end up confused maybe we can use from: https://deepwiki.com/databendlabs/openraft/6.4-metrics-and-monitoring
+5) Make sure while we are replicating to the other nodes for example the leader is replicating to another 2 different nodes we do them in parallel so it will be faster, make sure its also safe 
+6) check other cluster info and metrics from what openraft already provides and display in the table: https://deepwiki.com/databendlabs/openraft/6.4-metrics-and-monitoring
+make sure you display them from memory and never store them it's like a view
+
+
+7) Make sure we also replicate the manifest files as well, so we have them in all replicates
+8) Make sure we first replicate the system changes and then the data after that when a node joins the cluster
+9) Make a separate tests for clustering as a folder so we can run them separatly
+10) Instead of rely on docker to run the cluster make another cluster-local.sh which will run the cluster internaly and not a docker containers its faster for testing and development

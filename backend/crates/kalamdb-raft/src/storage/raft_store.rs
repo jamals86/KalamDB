@@ -23,7 +23,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::GroupId;
 use crate::state_machine::{KalamStateMachine, encode, decode};
-use crate::storage::log_store::{KalamNode, KalamTypeConfig};
+use crate::storage::types::{KalamNode, KalamTypeConfig};
 
 /// Stored snapshot data
 #[derive(Debug, Clone)]

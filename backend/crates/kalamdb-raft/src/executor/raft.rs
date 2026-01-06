@@ -9,6 +9,7 @@ use std::sync::Arc;
 use async_trait::async_trait;
 use bincode::config;
 
+use crate::cluster_types::{NodeRole, NodeStatus};
 use crate::{
     manager::RaftManager,
     ClusterInfo, ClusterNodeInfo, CommandExecutor, DataResponse, GroupId, JobsCommand, JobsResponse, KalamNode, RaftError,
@@ -128,70 +129,121 @@ impl CommandExecutor for RaftExecutor {
         let mut voter_ids = BTreeSet::new();
         let mut nodes_map: BTreeMap<u64, KalamNode> = BTreeMap::new();
 
-        let leader_id = if let Some(metrics) = meta_metrics.as_ref() {
-            voter_ids.extend(metrics.membership_config.voter_ids());
-            for (node_id, node) in metrics.membership_config.nodes() {
-                nodes_map.insert(*node_id, node.clone());
-            }
-            metrics.current_leader
-        } else {
-            nodes_map.insert(
-                config.node_id,
-                KalamNode {
-                    rpc_addr: config.rpc_addr.clone(),
-                    api_addr: config.api_addr.clone(),
-                },
-            );
-            for peer in &config.peers {
+        // Extract metrics from OpenRaft
+        let (leader_id, current_term, last_log_index, last_applied, millis_since_quorum_ack, replication_metrics, self_state) = 
+            if let Some(metrics) = meta_metrics.as_ref() {
+                voter_ids.extend(metrics.membership_config.voter_ids());
+                for (node_id, node) in metrics.membership_config.nodes() {
+                    nodes_map.insert(*node_id, node.clone());
+                }
+                
+                let state_str = format!("{:?}", metrics.state);
+                (
+                    metrics.current_leader,
+                    metrics.current_term,
+                    metrics.last_log_index,
+                    metrics.last_applied.map(|log_id| log_id.index),
+                    metrics.millis_since_quorum_ack,
+                    metrics.replication.clone(),
+                    state_str,
+                )
+            } else {
+                // Fallback to config when metrics not available
                 nodes_map.insert(
-                    peer.node_id,
+                    config.node_id,
                     KalamNode {
-                        rpc_addr: peer.rpc_addr.clone(),
-                        api_addr: peer.api_addr.clone(),
+                        rpc_addr: config.rpc_addr.clone(),
+                        api_addr: config.api_addr.clone(),
                     },
                 );
-            }
-            voter_ids.extend(nodes_map.keys().copied());
-            if self_groups_leading > 0 {
-                Some(config.node_id)
+                for peer in &config.peers {
+                    nodes_map.insert(
+                        peer.node_id,
+                        KalamNode {
+                            rpc_addr: peer.rpc_addr.clone(),
+                            api_addr: peer.api_addr.clone(),
+                        },
+                    );
+                }
+                voter_ids.extend(nodes_map.keys().copied());
+                (
+                    if self_groups_leading > 0 { Some(config.node_id) } else { None },
+                    0,
+                    None,
+                    None,
+                    None,
+                    None,
+                    "Unknown".to_string(),
+                )
+            };
+
+        // Determine self status from OpenRaft running state
+        let self_status = if let Some(metrics) = meta_metrics.as_ref() {
+            if metrics.running_state.is_ok() {
+                NodeStatus::Active
             } else {
-                None
+                NodeStatus::Offline
             }
+        } else {
+            NodeStatus::Unknown
         };
 
-        let self_status = if meta_metrics
-            .as_ref()
-            .map(|metrics| metrics.running_state.is_ok())
-            .unwrap_or(true)
-        {
-            "active"
-        } else {
-            "offline"
-        };
+        // Determine self role from OpenRaft ServerState
+        let self_role = NodeRole::from_server_state_str(&self_state);
 
         let mut nodes = Vec::with_capacity(nodes_map.len());
         for (node_id, node) in nodes_map {
             let is_self = node_id == config.node_id;
             let is_leader = leader_id == Some(node_id);
-            let role = if is_leader {
-                "leader"
+            
+            // Determine role for each node
+            // If not a voter, it's a learner (non-voting member)
+            let role = if is_self {
+                self_role
+            } else if is_leader {
+                NodeRole::Leader
             } else if voter_ids.contains(&node_id) {
-                "follower"
+                NodeRole::Follower
             } else {
-                "learner"
+                // Node is in membership but not a voter = learner
+                NodeRole::Learner
             };
-            let status = if is_self { self_status } else { "active" };
+            
+            // Determine status and replication metrics for other nodes
+            let (status, replication_lag, last_applied_log) = if is_self {
+                (self_status, None, last_applied)
+            } else if let Some(ref repl) = replication_metrics {
+                // If we have replication metrics (leader's view), use them
+                if let Some(matching) = repl.get(&node_id) {
+                    let lag = matching.as_ref().map(|log_id| {
+                        last_log_index.unwrap_or(0).saturating_sub(log_id.index)
+                    });
+                    let applied = matching.as_ref().map(|log_id| log_id.index);
+                    // If we have replication info, node is likely active
+                    (NodeStatus::Active, lag, applied)
+                } else {
+                    // Node in membership but no replication info yet
+                    (NodeStatus::Joining, None, None)
+                }
+            } else {
+                // We're not the leader, so we don't have replication metrics for other nodes
+                (NodeStatus::Unknown, None, None)
+            };
 
             nodes.push(ClusterNodeInfo {
                 node_id,
-                role: role.to_string(),
-                status: status.to_string(),
+                role,
+                status,
                 rpc_addr: node.rpc_addr,
                 api_addr: node.api_addr,
                 is_self,
                 is_leader,
                 groups_leading: if is_self { self_groups_leading } else { 0 },
                 total_groups,
+                current_term: Some(current_term),
+                last_applied_log,
+                millis_since_last_heartbeat: None, // TODO: heartbeat metrics are in OpenRaft 0.10+
+                replication_lag,
             });
         }
         
@@ -203,6 +255,10 @@ impl CommandExecutor for RaftExecutor {
             total_groups,
             user_shards: config.user_shards,
             shared_shards: config.shared_shards,
+            current_term,
+            last_log_index,
+            last_applied,
+            millis_since_quorum_ack,
         }
     }
     

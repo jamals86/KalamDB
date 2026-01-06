@@ -14,7 +14,118 @@
 //! These smoke tests focus on single-node behavior that must work in both modes.
 
 use crate::common::*;
+use kalam_link::{AuthProvider, KalamLinkClient, KalamLinkTimeouts};
+use std::sync::OnceLock;
 use std::time::Duration;
+
+fn cluster_urls() -> Vec<String> {
+    let default_urls = "http://127.0.0.1:8081,http://127.0.0.1:8082,http://127.0.0.1:8083";
+    std::env::var("KALAMDB_CLUSTER_URLS")
+        .unwrap_or_else(|_| default_urls.to_string())
+        .split(',')
+        .map(|url| url.trim().to_string())
+        .filter(|url| !url.is_empty())
+        .collect()
+}
+
+fn cluster_runtime() -> &'static tokio::runtime::Runtime {
+    static RUNTIME: OnceLock<tokio::runtime::Runtime> = OnceLock::new();
+    RUNTIME.get_or_init(|| {
+        tokio::runtime::Builder::new_multi_thread()
+            .worker_threads(4)
+            .enable_all()
+            .build()
+            .expect("Failed to create cluster test runtime")
+    })
+}
+
+fn query_count_on_url(base_url: &str, sql: &str) -> i64 {
+    let password = root_password().to_string();
+    let sql = sql.to_string();
+    let base_url = base_url.to_string();
+
+    cluster_runtime()
+        .block_on(async move {
+            let client = KalamLinkClient::builder()
+                .base_url(&base_url)
+                .auth(AuthProvider::basic_auth("root".to_string(), password))
+                .timeouts(
+                    KalamLinkTimeouts::builder()
+                        .connection_timeout_secs(5)
+                        .receive_timeout_secs(30)
+                        .send_timeout_secs(10)
+                        .subscribe_timeout_secs(10)
+                        .auth_timeout_secs(10)
+                        .initial_data_timeout(Duration::from_secs(30))
+                        .build(),
+                )
+                .build()
+                .expect("Failed to build cluster client");
+            client.execute_query(&sql, None, None).await
+        })
+        .map(|response| {
+            let result = response
+                .results
+                .get(0)
+                .expect("Missing query result for count");
+            let rows = result
+                .rows
+                .as_ref()
+                .and_then(|rows| rows.get(0))
+                .expect("Missing count row");
+            let value = rows.get(0).expect("Missing count column");
+            let unwrapped = extract_typed_value(value);
+            match unwrapped {
+                serde_json::Value::String(s) => s.parse::<i64>().expect("Invalid count string"),
+                serde_json::Value::Number(n) => n.as_i64().expect("Invalid count number"),
+                other => panic!("Unexpected count value: {}", other),
+            }
+        })
+        .expect("Cluster count query failed")
+}
+
+#[ntest::timeout(60_000)]
+#[test]
+fn smoke_test_cluster_system_table_counts_consistent() {
+    require_server_running();
+
+    println!("\n=== TEST: Cluster System Table Count Consistency ===\n");
+
+    let urls = cluster_urls();
+    assert!(
+        urls.len() >= 3,
+        "Expected at least 3 cluster URLs, got {}",
+        urls.len()
+    );
+
+    let queries = [
+        ("system.tables", "SELECT count(*) as count FROM system.tables"),
+        ("system.users", "SELECT count(*) as count FROM system.users"),
+        ("system.namespaces", "SELECT count(*) as count FROM system.namespaces"),
+    ];
+
+    for (label, sql) in queries {
+        let mut counts = Vec::new();
+        for url in &urls {
+            let count = query_count_on_url(url, sql);
+            counts.push((url.clone(), count));
+        }
+
+        let expected = counts
+            .first()
+            .map(|(_, count)| *count)
+            .unwrap_or(0);
+        let mismatch = counts.iter().any(|(_, count)| *count != expected);
+
+        if mismatch {
+            panic!("{} counts mismatch: {:?}", label, counts);
+        }
+
+        println!("  ✓ {} count consistent across nodes: {}", label, expected);
+    }
+
+    println!("\n  ✅ System table counts consistent across cluster nodes\n");
+}
 
 /// Test 1: CommandExecutor pattern - namespace operations
 ///

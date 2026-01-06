@@ -5,5 +5,7 @@
 //! using its provider infrastructure, avoiding circular dependencies.
 
 mod system_applier;
+mod users_applier;
 
 pub use system_applier::{SystemApplier, NoOpSystemApplier};
+pub use users_applier::{NoOpUsersApplier, UsersApplier};

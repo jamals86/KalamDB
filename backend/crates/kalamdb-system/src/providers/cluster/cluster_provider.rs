@@ -1,11 +1,12 @@
-//! ClusterNodesTableProvider - Virtual table showing Raft cluster node status
+//! ClusterTableProvider - Virtual table showing Raft cluster status
 //!
-//! This is a dynamic view that fetches live data from the CommandExecutor,
+//! This is a dynamic view that fetches live data from OpenRaft metrics,
 //! not a persisted table. It shows:
-//! - Node ID, role (leader/follower), status (active/offline)
+//! - Node ID, role (leader/follower/learner/candidate), status (active/offline/joining/unknown)
 //! - RPC and API addresses
 //! - Whether this is the current node
 //! - Raft group leadership counts
+//! - OpenRaft metrics: term, log index, replication lag, heartbeat timing
 
 use std::any::Any;
 use std::sync::Arc;
@@ -23,10 +24,10 @@ use datafusion::physical_plan::ExecutionPlan;
 use kalamdb_raft::{ClusterInfo, CommandExecutor};
 use std::sync::OnceLock;
 
-static CLUSTER_NODES_SCHEMA: OnceLock<SchemaRef> = OnceLock::new();
+static CLUSTER_SCHEMA: OnceLock<SchemaRef> = OnceLock::new();
 
-fn cluster_nodes_schema() -> SchemaRef {
-    CLUSTER_NODES_SCHEMA
+fn cluster_schema() -> SchemaRef {
+    CLUSTER_SCHEMA
         .get_or_init(|| {
             Arc::new(Schema::new(vec![
                 Field::new("node_id", DataType::UInt64, false),
@@ -38,37 +39,44 @@ fn cluster_nodes_schema() -> SchemaRef {
                 Field::new("is_leader", DataType::Boolean, false),
                 Field::new("groups_leading", DataType::UInt32, false),
                 Field::new("total_groups", DataType::UInt32, false),
+                // OpenRaft metrics
+                Field::new("current_term", DataType::UInt64, true),
+                Field::new("last_applied_log", DataType::UInt64, true),
+                Field::new("replication_lag", DataType::UInt64, true),
             ]))
         })
         .clone()
 }
 
-/// Provider for the system.cluster_nodes virtual table
-pub struct ClusterNodesTableProvider {
+/// Provider for the system.cluster virtual table
+/// 
+/// This table shows live cluster status from OpenRaft metrics.
+/// The data is never stored - it's always fetched fresh from memory.
+pub struct ClusterTableProvider {
     /// Reference to the command executor (provides cluster info)
     executor: Arc<dyn CommandExecutor>,
     /// Cached schema
     schema: SchemaRef,
 }
 
-impl std::fmt::Debug for ClusterNodesTableProvider {
+impl std::fmt::Debug for ClusterTableProvider {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("ClusterNodesTableProvider")
+        f.debug_struct("ClusterTableProvider")
             .field("is_cluster_mode", &self.executor.is_cluster_mode())
             .finish()
     }
 }
 
-impl ClusterNodesTableProvider {
-    /// Create a new ClusterNodesTableProvider
+impl ClusterTableProvider {
+    /// Create a new ClusterTableProvider
     pub fn new(executor: Arc<dyn CommandExecutor>) -> Self {
         Self {
             executor,
-            schema: cluster_nodes_schema(),
+            schema: cluster_schema(),
         }
     }
 
-    /// Get cluster information
+    /// Get cluster information from OpenRaft metrics
     pub fn get_cluster_info(&self) -> ClusterInfo {
         self.executor.get_cluster_info()
     }
@@ -86,6 +94,9 @@ impl ClusterNodesTableProvider {
         let is_leaders: Vec<bool> = info.nodes.iter().map(|n| n.is_leader).collect();
         let groups_leading: Vec<u32> = info.nodes.iter().map(|n| n.groups_leading).collect();
         let total_groups: Vec<u32> = info.nodes.iter().map(|n| n.total_groups).collect();
+        let current_terms: Vec<Option<u64>> = info.nodes.iter().map(|n| n.current_term).collect();
+        let last_applied_logs: Vec<Option<u64>> = info.nodes.iter().map(|n| n.last_applied_log).collect();
+        let replication_lags: Vec<Option<u64>> = info.nodes.iter().map(|n| n.replication_lag).collect();
 
         Ok(RecordBatch::try_new(
             self.schema.clone(),
@@ -99,13 +110,16 @@ impl ClusterNodesTableProvider {
                 Arc::new(BooleanArray::from(is_leaders)),
                 Arc::new(UInt32Array::from(groups_leading)),
                 Arc::new(UInt32Array::from(total_groups)),
+                Arc::new(UInt64Array::from(current_terms)),
+                Arc::new(UInt64Array::from(last_applied_logs)),
+                Arc::new(UInt64Array::from(replication_lags)),
             ],
         )?)
     }
 }
 
 #[async_trait]
-impl TableProvider for ClusterNodesTableProvider {
+impl TableProvider for ClusterTableProvider {
     fn as_any(&self) -> &dyn Any {
         self
     }

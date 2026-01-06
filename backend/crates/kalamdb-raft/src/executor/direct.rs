@@ -5,6 +5,7 @@
 
 use async_trait::async_trait;
 
+use crate::cluster_types::{NodeRole, NodeStatus};
 use crate::commands::{
     DataResponse, JobsCommand, JobsResponse, SharedDataCommand, SystemCommand,
     SystemResponse, UserDataCommand, UsersCommand, UsersResponse,
@@ -116,12 +117,12 @@ impl CommandExecutor for DirectExecutor {
 
     async fn execute_users(&self, cmd: UsersCommand) -> Result<UsersResponse> {
         match cmd {
-            UsersCommand::CreateUser { user_id, .. } => {
-                log::debug!("DirectExecutor: CreateUser {:?}", user_id);
-                Ok(UsersResponse::UserCreated { user_id })
+            UsersCommand::CreateUser { user } => {
+                log::debug!("DirectExecutor: CreateUser {:?}", user.id);
+                Ok(UsersResponse::UserCreated { user_id: user.id })
             }
-            UsersCommand::UpdateUser { user_id, .. } => {
-                log::debug!("DirectExecutor: UpdateUser {:?}", user_id);
+            UsersCommand::UpdateUser { user } => {
+                log::debug!("DirectExecutor: UpdateUser {:?}", user.id);
                 Ok(UsersResponse::Ok)
             }
             UsersCommand::DeleteUser { user_id, .. } => {
@@ -256,18 +257,26 @@ impl CommandExecutor for DirectExecutor {
             is_cluster_mode: false,
             nodes: vec![ClusterNodeInfo {
                 node_id: 0,
-                role: "standalone".to_string(),
-                status: "active".to_string(),
+                role: NodeRole::Leader, // Standalone is effectively always leader
+                status: NodeStatus::Active,
                 rpc_addr: "".to_string(),
                 api_addr: "localhost:8080".to_string(),
                 is_self: true,
                 is_leader: true,
                 groups_leading: 0,
                 total_groups: 0,
+                current_term: None,
+                last_applied_log: None,
+                millis_since_last_heartbeat: None,
+                replication_lag: None,
             }],
             total_groups: 0,
             user_shards: 0,
             shared_shards: 0,
+            current_term: 0,
+            last_log_index: None,
+            last_applied: None,
+            millis_since_quorum_ack: None,
         }
     }
     

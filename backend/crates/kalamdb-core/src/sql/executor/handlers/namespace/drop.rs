@@ -9,6 +9,7 @@ use crate::sql::executor::handlers::typed::TypedStatementHandler;
 use crate::sql::executor::helpers::guards::require_admin;
 use crate::sql::executor::models::{ExecutionContext, ExecutionResult, ScalarValue};
 use kalamdb_commons::models::{NamespaceId, TableId};
+use kalamdb_raft::SystemCommand;
 use kalamdb_sql::ddl::DropNamespaceStatement;
 use std::sync::Arc;
 
@@ -81,7 +82,19 @@ impl TypedStatementHandler<DropNamespaceStatement> for DropNamespaceHandler {
                     let table_id = TableId::new(table.namespace_id.clone(), table.table_name.clone());
                     
                     // Delete from system.tables
-                    tables_provider.delete_table(&table_id)?;
+                    if self.app_context.executor().is_cluster_mode() {
+                        let cmd = SystemCommand::DropTable {
+                            table_id: table_id.clone(),
+                        };
+                        self.app_context.executor().execute_system(cmd).await.map_err(|e| {
+                            KalamDbError::ExecutionError(format!(
+                                "Failed to drop table via executor: {}",
+                                e
+                            ))
+                        })?;
+                    } else {
+                        tables_provider.delete_table(&table_id)?;
+                    }
                     
                     // Log table drop as part of cascade
                     use crate::sql::executor::helpers::audit;
@@ -105,7 +118,19 @@ impl TypedStatementHandler<DropNamespaceStatement> for DropNamespaceHandler {
         }
 
         // Delete namespace via provider
-        namespaces_provider.delete_namespace(&namespace_id)?;
+        if self.app_context.executor().is_cluster_mode() {
+            let cmd = SystemCommand::DeleteNamespace {
+                namespace_id: namespace_id.clone(),
+            };
+            self.app_context.executor().execute_system(cmd).await.map_err(|e| {
+                KalamDbError::ExecutionError(format!(
+                    "Failed to delete namespace via executor: {}",
+                    e
+                ))
+            })?;
+        } else {
+            namespaces_provider.delete_namespace(&namespace_id)?;
+        }
 
         // Deregister schema from DataFusion catalog
         self.deregister_namespace_schema(&namespace_id);

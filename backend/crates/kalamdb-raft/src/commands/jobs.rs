@@ -1,8 +1,7 @@
 //! Jobs group commands (background job coordination)
 
 use chrono::{DateTime, Utc};
-use kalamdb_commons::models::{JobId, NamespaceId, NodeId};
-use kalamdb_commons::models::TableName;
+use kalamdb_commons::models::{JobId, NamespaceId, NodeId, TableName};
 use serde::{Deserialize, Serialize};
 
 /// Commands for the jobs coordination Raft group
@@ -100,11 +99,13 @@ pub enum JobsResponse {
 }
 
 impl JobsResponse {
+    /// Create an error response with the given message
     pub fn error(msg: impl Into<String>) -> Self {
-        JobsResponse::Error { message: msg.into() }
+        Self::Error { message: msg.into() }
     }
 
+    /// Returns true if this is not an error response
     pub fn is_ok(&self) -> bool {
-        !matches!(self, JobsResponse::Error { .. })
+        !matches!(self, Self::Error { .. })
     }
 }

@@ -2,6 +2,7 @@
 
 use chrono::{DateTime, Utc};
 use kalamdb_commons::models::UserId;
+use kalamdb_commons::types::User;
 use serde::{Deserialize, Serialize};
 
 /// Commands for the users Raft group
@@ -11,20 +12,12 @@ use serde::{Deserialize, Serialize};
 pub enum UsersCommand {
     /// Create a new user
     CreateUser {
-        user_id: UserId,
-        username: String,
-        password_hash: String,
-        role: String,
-        created_at: DateTime<Utc>,
+        user: User,
     },
 
     /// Update user information
     UpdateUser {
-        user_id: UserId,
-        username: Option<String>,
-        password_hash: Option<String>,
-        role: Option<String>,
-        updated_at: DateTime<Utc>,
+        user: User,
     },
 
     /// Soft-delete a user
@@ -42,7 +35,7 @@ pub enum UsersCommand {
     /// Lock/unlock a user account
     SetLocked {
         user_id: UserId,
-        locked: bool,
+        locked_until: Option<i64>,
         updated_at: DateTime<Utc>,
     },
 }
@@ -61,11 +54,13 @@ pub enum UsersResponse {
 }
 
 impl UsersResponse {
+    /// Create an error response with the given message
     pub fn error(msg: impl Into<String>) -> Self {
-        UsersResponse::Error { message: msg.into() }
+        Self::Error { message: msg.into() }
     }
 
+    /// Returns true if this is not an error response
     pub fn is_ok(&self) -> bool {
-        !matches!(self, UsersResponse::Error { .. })
+        !matches!(self, Self::Error { .. })
     }
 }

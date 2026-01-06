@@ -3,6 +3,7 @@
 use async_trait::async_trait;
 use std::fmt::Debug;
 
+use crate::cluster_types::{NodeRole, NodeStatus};
 use crate::commands::{
     DataResponse, JobsCommand, JobsResponse, SharedDataCommand, SystemCommand, 
     SystemResponse, UserDataCommand, UsersCommand, UsersResponse,
@@ -15,10 +16,10 @@ use crate::group_id::GroupId;
 pub struct ClusterNodeInfo {
     /// Node ID (1, 2, 3, ...)
     pub node_id: u64,
-    /// Node role: "leader", "follower", "learner", "candidate"
-    pub role: String,
-    /// Node status: "active", "offline", "joining"
-    pub status: String,
+    /// Node role derived from OpenRaft ServerState
+    pub role: NodeRole,
+    /// Node status (active, offline, joining, unknown)
+    pub status: NodeStatus,
     /// RPC address for Raft communication
     pub rpc_addr: String,
     /// HTTP API address
@@ -31,6 +32,14 @@ pub struct ClusterNodeInfo {
     pub groups_leading: u32,
     /// Total number of Raft groups
     pub total_groups: u32,
+    /// Current Raft term (from leader's perspective, if known)
+    pub current_term: Option<u64>,
+    /// Last applied log index (for this node if is_self, otherwise from replication metrics)
+    pub last_applied_log: Option<u64>,
+    /// Milliseconds since last heartbeat response (only for leader viewing followers)
+    pub millis_since_last_heartbeat: Option<u64>,
+    /// Replication lag in log entries (only for leader viewing followers)
+    pub replication_lag: Option<u64>,
 }
 
 /// Cluster status information
@@ -50,6 +59,14 @@ pub struct ClusterInfo {
     pub user_shards: u32,
     /// Number of shared data shards  
     pub shared_shards: u32,
+    /// Current Raft term (from MetaSystem group)
+    pub current_term: u64,
+    /// Last log index (from MetaSystem group)
+    pub last_log_index: Option<u64>,
+    /// Last applied log index (from MetaSystem group)
+    pub last_applied: Option<u64>,
+    /// Milliseconds since quorum acknowledgment (leader health indicator)
+    pub millis_since_quorum_ack: Option<u64>,
 }
 
 /// Unified interface for executing commands in both standalone and cluster modes.

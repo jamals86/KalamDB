@@ -31,6 +31,7 @@
 //! ```
 
 pub mod applier;
+pub mod cluster_types;
 pub mod config;
 pub mod error;
 pub mod executor;
@@ -42,8 +43,9 @@ pub mod network;
 pub mod manager;
 
 // Re-exports
-pub use applier::{SystemApplier, NoOpSystemApplier};
-pub use config::{ClusterConfig as RaftClusterConfig, RaftConfig, ShardingConfig};
+pub use applier::{NoOpSystemApplier, NoOpUsersApplier, SystemApplier, UsersApplier};
+pub use cluster_types::{NodeRole, NodeStatus};
+pub use config::{ClusterConfig as RaftClusterConfig, PeerConfig, ReplicationMode};
 pub use error::{RaftError, Result};
 pub use executor::{ClusterInfo, ClusterNodeInfo, CommandExecutor, DirectExecutor, RaftExecutor};
 pub use group_id::{GroupId, ShardRouter};
@@ -60,4 +62,4 @@ pub use state_machine::{
 };
 pub use storage::{KalamRaftStorage, KalamTypeConfig, KalamNode};
 pub use network::{RaftNetwork, RaftNetworkFactory, RaftService, start_rpc_server};
-pub use manager::{RaftManager, RaftGroup, ClusterConfig, PeerConfig, DEFAULT_USER_DATA_SHARDS, DEFAULT_SHARED_DATA_SHARDS};
+pub use manager::{RaftManager, RaftGroup, RaftManagerConfig, PeerNode, DEFAULT_USER_DATA_SHARDS, DEFAULT_SHARED_DATA_SHARDS};

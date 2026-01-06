@@ -12,25 +12,18 @@ use parking_lot::RwLock;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::Arc;
 
+use crate::applier::UsersApplier;
 use crate::{GroupId, RaftError, UsersCommand, UsersResponse};
 use super::{ApplyResult, KalamStateMachine, StateMachineSnapshot, encode, decode};
-
-/// User state for snapshot
-#[derive(Debug, Clone, Serialize, Deserialize)]
-struct UserState {
-    user_id: String,
-    username: String,
-    role: String,
-    locked: bool,
-    deleted: bool,
-}
+use kalamdb_commons::types::User;
 
 /// Snapshot data for UsersStateMachine
 #[derive(Debug, Clone, Serialize, Deserialize)]
 struct UsersSnapshot {
     /// All users keyed by user_id
-    users: HashMap<String, UserState>,
+    users: HashMap<String, User>,
 }
 
 /// State machine for user operations
@@ -38,7 +31,6 @@ struct UsersSnapshot {
 /// Handles commands in the MetaUsers Raft group:
 /// - CreateUser, UpdateUser, DeleteUser
 /// - RecordLogin, SetLocked
-#[derive(Debug)]
 pub struct UsersStateMachine {
     /// Last applied log index (for idempotency)
     last_applied_index: AtomicU64,
@@ -47,7 +39,20 @@ pub struct UsersStateMachine {
     /// Approximate data size in bytes
     approximate_size: AtomicU64,
     /// Cached user states
-    users: RwLock<HashMap<String, UserState>>,
+    users: RwLock<HashMap<String, User>>,
+    /// Optional applier for persisting to providers
+    applier: RwLock<Option<Arc<dyn UsersApplier>>>,
+}
+
+impl std::fmt::Debug for UsersStateMachine {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("UsersStateMachine")
+            .field("last_applied_index", &self.last_applied_index.load(Ordering::Relaxed))
+            .field("last_applied_term", &self.last_applied_term.load(Ordering::Relaxed))
+            .field("approximate_size", &self.approximate_size.load(Ordering::Relaxed))
+            .field("has_applier", &self.applier.read().is_some())
+            .finish()
+    }
 }
 
 impl UsersStateMachine {
@@ -58,76 +63,105 @@ impl UsersStateMachine {
             last_applied_term: AtomicU64::new(0),
             approximate_size: AtomicU64::new(0),
             users: RwLock::new(HashMap::new()),
+            applier: RwLock::new(None),
         }
+    }
+
+    pub fn set_applier(&self, applier: Arc<dyn UsersApplier>) {
+        let mut guard = self.applier.write();
+        *guard = Some(applier);
+        log::info!("UsersStateMachine: Applier registered for persistence");
     }
     
     /// Apply a users command
     async fn apply_command(&self, cmd: UsersCommand) -> Result<UsersResponse, RaftError> {
+        let applier = {
+            let guard = self.applier.read();
+            guard.clone()
+        };
+
         match cmd {
-            UsersCommand::CreateUser { user_id, username, role, .. } => {
-                log::debug!("UsersStateMachine: CreateUser {:?} ({})", user_id, username);
-                
-                let user_state = UserState {
-                    user_id: user_id.as_str().to_string(),
-                    username: username.clone(),
-                    role,
-                    locked: false,
-                    deleted: false,
-                };
-                
+            UsersCommand::CreateUser { user } => {
+                log::debug!("UsersStateMachine: CreateUser {:?} ({})", user.id, user.username);
+
+                if let Some(ref a) = applier {
+                    a.create_user(&user).await?;
+                }
+
                 {
                     let mut users = self.users.write();
-                    users.insert(user_id.as_str().to_string(), user_state);
+                    users.insert(user.id.as_str().to_string(), user.clone());
                 }
-                
+
                 self.approximate_size.fetch_add(200, Ordering::Relaxed);
-                Ok(UsersResponse::UserCreated { user_id })
+                Ok(UsersResponse::UserCreated { user_id: user.id })
             }
             
-            UsersCommand::UpdateUser { user_id, role, .. } => {
-                log::debug!("UsersStateMachine: UpdateUser {:?}", user_id);
-                
+            UsersCommand::UpdateUser { user } => {
+                log::debug!("UsersStateMachine: UpdateUser {:?}", user.id);
+
+                if let Some(ref a) = applier {
+                    a.update_user(&user).await?;
+                }
+
                 {
                     let mut users = self.users.write();
-                    if let Some(user) = users.get_mut(user_id.as_str()) {
-                        if let Some(new_role) = role {
-                            user.role = new_role;
-                        }
-                    }
+                    users.insert(user.id.as_str().to_string(), user);
                 }
-                
+
                 Ok(UsersResponse::Ok)
             }
             
-            UsersCommand::DeleteUser { user_id, .. } => {
+            UsersCommand::DeleteUser { user_id, deleted_at } => {
                 log::debug!("UsersStateMachine: DeleteUser {:?}", user_id);
-                
+
+                if let Some(ref a) = applier {
+                    a.delete_user(&user_id, deleted_at.timestamp_millis()).await?;
+                }
+
                 {
                     let mut users = self.users.write();
                     if let Some(user) = users.get_mut(user_id.as_str()) {
-                        user.deleted = true;
+                        user.deleted_at = Some(deleted_at.timestamp_millis());
                     }
                 }
-                
+
                 Ok(UsersResponse::Ok)
             }
             
-            UsersCommand::RecordLogin { user_id, .. } => {
+            UsersCommand::RecordLogin { user_id, logged_in_at } => {
                 log::trace!("UsersStateMachine: RecordLogin {:?}", user_id);
-                // Login tracking is recorded but doesn't change user state significantly
-                Ok(UsersResponse::Ok)
-            }
-            
-            UsersCommand::SetLocked { user_id, locked, .. } => {
-                log::debug!("UsersStateMachine: SetLocked {:?} = {}", user_id, locked);
-                
+
+                if let Some(ref a) = applier {
+                    a.record_login(&user_id, logged_in_at.timestamp_millis()).await?;
+                }
+
                 {
                     let mut users = self.users.write();
                     if let Some(user) = users.get_mut(user_id.as_str()) {
-                        user.locked = locked;
+                        user.last_login_at = Some(logged_in_at.timestamp_millis());
+                        user.updated_at = logged_in_at.timestamp_millis();
                     }
                 }
-                
+
+                Ok(UsersResponse::Ok)
+            }
+            
+            UsersCommand::SetLocked { user_id, locked_until, updated_at } => {
+                log::debug!("UsersStateMachine: SetLocked {:?} = {:?}", user_id, locked_until);
+
+                if let Some(ref a) = applier {
+                    a.set_locked(&user_id, locked_until, updated_at.timestamp_millis()).await?;
+                }
+
+                {
+                    let mut users = self.users.write();
+                    if let Some(user) = users.get_mut(user_id.as_str()) {
+                        user.locked_until = locked_until;
+                        user.updated_at = updated_at.timestamp_millis();
+                    }
+                }
+
                 Ok(UsersResponse::Ok)
             }
         }
@@ -202,6 +236,19 @@ impl KalamStateMachine for UsersStateMachine {
             let mut users = self.users.write();
             *users = data.users;
         }
+
+        let applier = {
+            let guard = self.applier.read();
+            guard.clone()
+        };
+
+        if let Some(ref a) = applier {
+            // Clone the users to avoid holding the lock across await
+            let users_copy: Vec<User> = self.users.read().values().cloned().collect();
+            for user in users_copy {
+                a.update_user(&user).await?;
+            }
+        }
         
         self.last_applied_index.store(snapshot.last_applied_index, Ordering::Release);
         self.last_applied_term.store(snapshot.last_applied_term, Ordering::Release);
@@ -223,17 +270,31 @@ impl KalamStateMachine for UsersStateMachine {
 mod tests {
     use super::*;
     use kalamdb_commons::UserId;
+    use kalamdb_commons::{AuthType, Role, StorageId, StorageMode};
 
     #[tokio::test]
     async fn test_users_state_machine_create_user() {
         let sm = UsersStateMachine::new();
         
         let cmd = UsersCommand::CreateUser {
-            user_id: UserId::new("user123"),
-            username: "testuser".to_string(),
-            role: "user".to_string(),
-            password_hash: "hash".to_string(),
-            created_at: chrono::Utc::now(),
+            user: User {
+                id: UserId::new("user123"),
+                username: "testuser".into(),
+                password_hash: "hash".to_string(),
+                role: Role::User,
+                email: None,
+                auth_type: AuthType::Password,
+                auth_data: None,
+                storage_mode: StorageMode::Table,
+                storage_id: Some(StorageId::new("local")),
+                failed_login_attempts: 0,
+                locked_until: None,
+                last_login_at: None,
+                created_at: chrono::Utc::now().timestamp_millis(),
+                updated_at: chrono::Utc::now().timestamp_millis(),
+                last_seen: None,
+                deleted_at: None,
+            },
         };
         let cmd_bytes = encode(&cmd).unwrap();
         
@@ -243,7 +304,7 @@ mod tests {
         // Check user was added
         let users = sm.users.read();
         assert!(users.contains_key("user123"));
-        assert_eq!(users.get("user123").unwrap().username, "testuser");
+        assert_eq!(users.get("user123").unwrap().username.as_str(), "testuser");
     }
     
     #[tokio::test]
@@ -252,24 +313,37 @@ mod tests {
         
         // Create user first
         let create_cmd = UsersCommand::CreateUser {
-            user_id: UserId::new("user123"),
-            username: "testuser".to_string(),
-            role: "user".to_string(),
-            password_hash: "hash".to_string(),
-            created_at: chrono::Utc::now(),
+            user: User {
+                id: UserId::new("user123"),
+                username: "testuser".into(),
+                password_hash: "hash".to_string(),
+                role: Role::User,
+                email: None,
+                auth_type: AuthType::Password,
+                auth_data: None,
+                storage_mode: StorageMode::Table,
+                storage_id: Some(StorageId::new("local")),
+                failed_login_attempts: 0,
+                locked_until: None,
+                last_login_at: None,
+                created_at: chrono::Utc::now().timestamp_millis(),
+                updated_at: chrono::Utc::now().timestamp_millis(),
+                last_seen: None,
+                deleted_at: None,
+            },
         };
         sm.apply(1, 1, &encode(&create_cmd).unwrap()).await.unwrap();
         
         // Lock user
         let lock_cmd = UsersCommand::SetLocked {
             user_id: UserId::new("user123"),
-            locked: true,
+            locked_until: Some(chrono::Utc::now().timestamp_millis()),
             updated_at: chrono::Utc::now(),
         };
         sm.apply(2, 1, &encode(&lock_cmd).unwrap()).await.unwrap();
         
         // Check user is locked
         let users = sm.users.read();
-        assert!(users.get("user123").unwrap().locked);
+        assert!(users.get("user123").unwrap().locked_until.is_some());
     }
 }

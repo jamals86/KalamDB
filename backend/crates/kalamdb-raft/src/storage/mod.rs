@@ -1,7 +1,7 @@
 //! Raft Storage Layer
 //!
 //! This module provides the storage implementation for openraft,
-//! using the existing StorageBackend abstraction.
+//! using in-memory storage with the `RaftStorage` v1 API.
 //!
 //! ## Components
 //!
@@ -9,8 +9,8 @@
 //! - [`KalamTypeConfig`]: OpenRaft type configuration for KalamDB
 //! - [`KalamNode`]: Node information for cluster membership
 
-pub mod log_store;
+mod types;
 mod raft_store;
 
-pub use log_store::{KalamNode, KalamTypeConfig};
+pub use types::{KalamNode, KalamTypeConfig};
 pub use raft_store::{KalamRaftStorage, KalamLogReader, KalamSnapshotBuilder, StoredSnapshot};

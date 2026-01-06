@@ -128,14 +128,17 @@ pub enum DataResponse {
 }
 
 impl DataResponse {
+    /// Create an error response with the given message
     pub fn error(msg: impl Into<String>) -> Self {
-        DataResponse::Error { message: msg.into() }
+        Self::Error { message: msg.into() }
     }
 
+    /// Returns true if this is not an error response
     pub fn is_ok(&self) -> bool {
-        !matches!(self, DataResponse::Error { .. })
+        !matches!(self, Self::Error { .. })
     }
 
+    /// Returns the number of rows affected, or 0 if not applicable
     pub fn rows_affected(&self) -> usize {
         match self {
             DataResponse::RowsAffected(n) => *n,

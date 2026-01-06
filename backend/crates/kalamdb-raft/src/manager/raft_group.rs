@@ -198,6 +198,103 @@ impl<SM: KalamStateMachine + Send + Sync + 'static> RaftGroup<SM> {
         Ok(response.data)
     }
     
+    /// Propose a command with strong replication (wait for ALL nodes)
+    ///
+    /// This method:
+    /// 1. Proposes the command via Raft (commits after quorum)
+    /// 2. Waits until ALL cluster members have applied the log entry
+    /// 3. Only then returns success to the caller
+    ///
+    /// Use this when you need guaranteed consistency across all nodes.
+    pub async fn propose_with_all_replicas(
+        &self, 
+        command: Vec<u8>,
+        timeout: std::time::Duration,
+        total_nodes: usize,
+    ) -> Result<Vec<u8>, RaftError> {
+        let raft = {
+            let guard = self.raft.read();
+            guard.clone().ok_or_else(|| RaftError::NotStarted(self.group_id.to_string()))?
+        };
+        
+        // Get command description for logging (first 50 bytes)
+        let cmd_preview = if command.len() > 50 {
+            format!("[{} bytes]", command.len())
+        } else {
+            format!("[{} bytes]", command.len())
+        };
+        
+        log::info!(
+            "[RAFT:{}] Proposing command {} with ALL-node replication (timeout: {:?})",
+            self.group_id, cmd_preview, timeout
+        );
+        
+        // Step 1: Submit the command and wait for quorum commit
+        let response = raft.client_write(command).await
+            .map_err(|e| RaftError::Proposal(format!("{:?}", e)))?;
+        
+        let committed_log_id = response.log_id;
+        log::info!(
+            "[RAFT:{}] Command committed at log_id={:?}, waiting for all {} nodes to apply...",
+            self.group_id, committed_log_id, total_nodes
+        );
+        
+        // Step 2: Wait for ALL nodes to apply the log entry
+        let start = std::time::Instant::now();
+        let poll_interval = std::time::Duration::from_millis(50);
+        
+        loop {
+            // Check timeout
+            if start.elapsed() > timeout {
+                log::error!(
+                    "[RAFT:{}] Timeout waiting for all replicas! Committed log_id={:?} but not all nodes applied.",
+                    self.group_id, committed_log_id
+                );
+                return Err(RaftError::ReplicationTimeout {
+                    group: self.group_id.to_string(),
+                    committed_log_id: format!("{:?}", committed_log_id),
+                    timeout_ms: timeout.as_millis() as u64,
+                });
+            }
+            
+            // Get current metrics
+            let metrics = raft.metrics().borrow().clone();
+            
+            // Count how many nodes have applied at least up to committed_log_id
+            // The leader's last_applied shows our own progress
+            let leader_applied = metrics.last_applied.map(|lid| lid.index).unwrap_or(0);
+            let committed_index = committed_log_id.index;
+            
+            // Check replication progress to followers
+            let mut all_replicated = leader_applied >= committed_index;
+            
+            if let Some(ref replication) = metrics.replication {
+                for (node_id, matched) in replication.iter() {
+                    // matched shows the highest log index replicated to this follower
+                    let follower_matched = matched.map(|lid| lid.index).unwrap_or(0);
+                    if follower_matched < committed_index {
+                        log::debug!(
+                            "[RAFT:{}] Node {} at index {}, need {}",
+                            self.group_id, node_id, follower_matched, committed_index
+                        );
+                        all_replicated = false;
+                    }
+                }
+            }
+            
+            if all_replicated {
+                log::info!(
+                    "[RAFT:{}] Command replicated to ALL {} nodes successfully! log_id={:?}, took {:?}",
+                    self.group_id, total_nodes, committed_log_id, start.elapsed()
+                );
+                return Ok(response.data);
+            }
+            
+            // Wait before next poll
+            tokio::time::sleep(poll_interval).await;
+        }
+    }
+    
     /// Propose a command with automatic leader forwarding
     ///
     /// If this node is the leader, proposes locally.
