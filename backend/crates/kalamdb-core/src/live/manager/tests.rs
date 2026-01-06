@@ -144,7 +144,7 @@ async fn create_test_manager() -> (Arc<ConnectionsManager>, LiveQueryManager, Te
 
     // Create connections manager first
     let connection_registry = ConnectionsManager::new(
-        NodeId::from("test_node"),
+        NodeId::from(1u64),
         Duration::from_secs(30),
         Duration::from_secs(10),
         Duration::from_secs(5),

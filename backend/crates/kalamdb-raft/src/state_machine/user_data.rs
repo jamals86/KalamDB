@@ -316,7 +316,7 @@ mod tests {
     async fn test_user_data_state_machine_live_query() {
         let sm = UserDataStateMachine::new(5);
         
-        let node_id = NodeId::new("node-1".to_string());
+        let node_id = NodeId::new(1);
         
         let cmd = UserDataCommand::RegisterLiveQuery {
             subscription_id: "sub-001".to_string(),

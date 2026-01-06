@@ -324,7 +324,7 @@ mod tests {
         let sm = JobsStateMachine::new();
         
         let job_id = JobId::new("job-001".to_string());
-        let node_id = NodeId::new("node-1".to_string());
+        let node_id = NodeId::new(1);
         
         // Create job
         let create_cmd = JobsCommand::CreateJob {
@@ -383,7 +383,7 @@ mod tests {
         // First claim
         let claim1 = JobsCommand::ClaimJob {
             job_id: job_id.clone(),
-            node_id: NodeId::new("node-1".to_string()),
+            node_id: NodeId::new(1),
             claimed_at: chrono::Utc::now(),
         };
         sm.apply(2, 1, &encode(&claim1).unwrap()).await.unwrap();
@@ -391,7 +391,7 @@ mod tests {
         // Second claim (should return error)
         let claim2 = JobsCommand::ClaimJob {
             job_id: job_id.clone(),
-            node_id: NodeId::new("node-2".to_string()),
+            node_id: NodeId::new(2),
             claimed_at: chrono::Utc::now(),
         };
         let result = sm.apply(3, 1, &encode(&claim2).unwrap()).await.unwrap();

@@ -405,7 +405,7 @@ mod tests {
             updated_at: now,
             started_at: Some(now),
             finished_at: None,
-            node_id: NodeId::from("node1"),
+            node_id: NodeId::from(1u64),
             queue: None,
             priority: None,
         }

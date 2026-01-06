@@ -399,7 +399,7 @@ impl LiveQueryManager {
         RegistryStats {
             total_connections: self.registry.connection_count(),
             total_subscriptions: self.registry.subscription_count(),
-            node_id: self.node_id.as_str().to_string(),
+            node_id: self.node_id.to_string(),
         }
     }
 

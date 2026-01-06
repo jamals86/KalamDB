@@ -433,7 +433,7 @@ impl AppContext {
         use std::hash::{Hash, Hasher};
 
         let mut hasher = DefaultHasher::new();
-        node_id.as_str().hash(&mut hasher);
+        node_id.as_u64().hash(&mut hasher);
         let hash = hasher.finish();
 
         // Map to 10-bit range (0-1023)
@@ -898,7 +898,7 @@ impl AppContext {
         metrics.push(("manifests_max_capacity".to_string(), self.manifest_service.max_weighted_capacity().to_string()));
 
         // Node ID
-        metrics.push(("node_id".to_string(), self.node_id.as_str().to_string()));
+        metrics.push(("node_id".to_string(), self.node_id.to_string()));
 
         // Server version (from config)
         metrics.push(("server_version".to_string(), "0.1.1".to_string()));

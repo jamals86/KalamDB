@@ -72,16 +72,16 @@ pub async fn bootstrap(
     // Uses constants from kalamdb_commons for table prefixes
     let phase_start = std::time::Instant::now();
     
-    // Node ID: use cluster.node_id if cluster mode, otherwise server.node_id (string form)
-    let node_id_str = if let Some(cluster) = &config.cluster {
-        format!("node-{}", cluster.node_id)
+    // Node ID: use cluster.node_id (u64) if cluster mode, otherwise default to 1 for standalone
+    let node_id = if let Some(cluster) = &config.cluster {
+        kalamdb_commons::NodeId::new(cluster.node_id)
     } else {
-        config.server.node_id.clone()
+        kalamdb_commons::NodeId::new(1) // Standalone mode uses node ID 1
     };
     
     let app_context = kalamdb_core::app_context::AppContext::init(
         backend.clone(),
-        kalamdb_commons::NodeId::new(node_id_str),
+        node_id,
         config.storage.default_storage_path.clone(),
         config.clone(), // ServerConfig needs to be cloned for Arc storage in AppContext
     );

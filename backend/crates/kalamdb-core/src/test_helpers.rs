@@ -67,7 +67,7 @@ pub fn init_test_app_context() -> Arc<TestDb> {
         // Uses constants from kalamdb_commons for table prefixes
         AppContext::init(
             storage_backend,
-            NodeId::new("test-node".to_string()),
+            NodeId::new(1), // test node ID
             "data/storage".to_string(),
             test_config,
         );

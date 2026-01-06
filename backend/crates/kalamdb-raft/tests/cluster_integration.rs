@@ -796,7 +796,7 @@ async fn test_meta_jobs_group_operations() {
     // Test ClaimJob
     let cmd = JobsCommand::ClaimJob {
         job_id: JobId::from("j1"),
-        node_id: NodeId::from("node1"),
+        node_id: NodeId::from(1u64),
         claimed_at: Utc::now(),
     };
     let result = leader.manager.propose_jobs(
@@ -902,7 +902,7 @@ async fn test_user_data_shard_operations() {
             query_hash: "abc123".to_string(),
             table_id: table_id.clone(),
             filter_json: None,
-            node_id: NodeId::from("node1"),
+            node_id: NodeId::from(1u64),
             created_at: Utc::now(),
         };
         let result = leader.manager.propose_user_data(

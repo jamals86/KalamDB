@@ -224,7 +224,7 @@ impl TestServer {
         // All tests in the same process will share both AppContext AND RocksDB
         let app_context = AppContext::init(
             backend.clone(),
-            NodeId::new("test-node".to_string()),
+            NodeId::new(1),
             storage_base_path.clone(),
             test_config,
         );
