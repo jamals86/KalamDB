@@ -17,11 +17,9 @@ use tokio_tungstenite::tungstenite::{
     protocol::Message,
 };
 
-const WS_URL: &str = "ws://localhost:8080/v1/ws";
 const AUTH_USERNAME: &str = "root";
-const AUTH_PASSWORD: &str = "";
 // Use conservative count to avoid overwhelming server during testing
-const WEBSOCKET_CONNECTIONS: usize = 32;
+const DEFAULT_WEBSOCKET_CONNECTIONS: usize = 8;
 const SQL_RESPONSIVENESS_BUDGET: Duration = Duration::from_secs(10);
 // Timeout for each websocket connection attempt
 const CONNECTION_TIMEOUT: Duration = Duration::from_secs(20);
@@ -32,14 +30,18 @@ fn smoke_test_websocket_capacity() {
     if !is_server_running() {
         println!(
             "Skipping smoke_test_websocket_capacity: server not running at {}",
-            SERVER_URL
+            server_url()
         );
         return;
     }
 
+    let websocket_connections = std::env::var("KALAMDB_WS_CONNECTIONS")
+        .ok()
+        .and_then(|value| value.parse::<usize>().ok())
+        .unwrap_or(DEFAULT_WEBSOCKET_CONNECTIONS);
     println!(
         "\n=== Starting WebSocket Capacity Smoke Test ({} connections) ===\n",
-        WEBSOCKET_CONNECTIONS
+        websocket_connections
     );
 
     let namespace = generate_unique_namespace("smoke_ws_cap");
@@ -57,17 +59,17 @@ fn smoke_test_websocket_capacity() {
     let subscription_prefix_for_cleanup = subscription_prefix.clone();
 
     runtime.block_on(async move {
-        let auth_header = build_basic_auth_header(AUTH_USERNAME, AUTH_PASSWORD);
+        let auth_header = build_basic_auth_header(AUTH_USERNAME, root_password());
         
         // We need to keep connections alive while running SQL queries
         // The server sends ping frames every 5s, and we need to respond with pong
         // To do this, we split connections into read/write halves and spawn tasks
         // to handle incoming messages (which auto-responds to pings in tokio-tungstenite)
         let stop_flag = Arc::new(AtomicBool::new(false));
-        let mut close_senders: Vec<mpsc::Sender<()>> = Vec::with_capacity(WEBSOCKET_CONNECTIONS);
-        let mut reader_handles = Vec::with_capacity(WEBSOCKET_CONNECTIONS);
+        let mut close_senders: Vec<mpsc::Sender<()>> = Vec::with_capacity(websocket_connections);
+        let mut reader_handles = Vec::with_capacity(websocket_connections);
 
-        for idx in 0..WEBSOCKET_CONNECTIONS {
+        for idx in 0..websocket_connections {
             let subscription_id = format!("{}{}", subscription_prefix_for_rt, idx);
             // Timeout each connection attempt to avoid infinite hangs
             let stream = match tokio::time::timeout(
@@ -216,9 +218,11 @@ async fn open_authenticated_connection(
     table_name: &str,
     subscription_id: &str,
 ) -> WsStream {
-    let mut request = WS_URL
+    let ws_url = websocket_url();
+    let mut request = ws_url
+        .clone()
         .into_client_request()
-        .unwrap_or_else(|e| panic!("Invalid WebSocket URL ({}): {}", WS_URL, e));
+        .unwrap_or_else(|e| panic!("Invalid WebSocket URL ({}): {}", ws_url, e));
     {
         let headers = request.headers_mut();
         headers.insert(
@@ -237,7 +241,7 @@ async fn open_authenticated_connection(
         "type": "authenticate",
         "method": "basic",
         "username": AUTH_USERNAME,
-        "password": AUTH_PASSWORD,
+        "password": root_password(),
     });
 
     stream

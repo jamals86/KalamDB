@@ -26,7 +26,7 @@ fn smoke_queries_benchmark() {
     if !is_server_running() {
         println!(
             "Skipping smoke_queries_benchmark: server not running at {}",
-            SERVER_URL
+            server_url()
         );
         return;
     }

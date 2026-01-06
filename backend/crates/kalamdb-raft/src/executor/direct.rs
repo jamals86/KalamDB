@@ -18,6 +18,7 @@ use crate::group_id::GroupId;
 /// This allows us to avoid a direct dependency on kalamdb-system in the trait,
 /// making the crate more modular. The actual implementation is provided when
 /// constructing DirectExecutor.
+#[allow(dead_code)]
 pub trait SystemTablesAccess: Send + Sync {
     // Namespace operations
     fn create_namespace(&self, namespace_id: &str, created_by: Option<&str>) -> Result<()>;

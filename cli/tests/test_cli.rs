@@ -20,13 +20,13 @@ use std::fs;
 #[test]
 fn test_cli_connection_and_prompt() {
     if !is_server_running() {
-        eprintln!("⚠️  Server not running at {}. Skipping test.", SERVER_URL);
+        eprintln!("⚠️  Server not running at {}. Skipping test.", server_url());
         eprintln!("   Start server: cargo run --release --bin kalamdb-server");
         return;
     }
 
     let mut cmd = create_cli_command();
-    cmd.arg("-u").arg(SERVER_URL).arg("--help");
+    cmd.arg("-u").arg(server_url()).arg("--help");
 
     cmd.assert()
         .success()
@@ -59,11 +59,11 @@ fn test_cli_color_output() {
     // Test with color enabled (default behavior)
     let mut cmd = create_cli_command();
     cmd.arg("-u")
-        .arg(SERVER_URL)
+        .arg(server_url())
         .arg("--username")
         .arg("root")
         .arg("--password")
-        .arg("")
+        .arg(root_password())
         .arg("--command")
         .arg("SELECT 'color' as test");
 
@@ -76,11 +76,11 @@ fn test_cli_color_output() {
     // Test with color disabled
     let mut cmd = create_cli_command();
     cmd.arg("-u")
-        .arg(SERVER_URL)
+        .arg(server_url())
         .arg("--username")
         .arg("root")
         .arg("--password")
-        .arg("")
+        .arg(root_password())
         .arg("--no-color")
         .arg("--command")
         .arg("SELECT 'nocolor' as test");
@@ -100,11 +100,11 @@ fn test_cli_session_timeout() {
     // Note: --timeout flag not yet implemented, just test that command executes
     let mut cmd = create_cli_command();
     cmd.arg("-u")
-        .arg(SERVER_URL)
+        .arg(server_url())
         .arg("--username")
         .arg("root")
         .arg("--password")
-        .arg("")
+        .arg(root_password())
         .arg("--command")
         .arg("SELECT 1");
 
@@ -159,11 +159,11 @@ fn test_cli_verbose_output() {
 
     let mut cmd = create_cli_command();
     cmd.arg("-u")
-        .arg(SERVER_URL)
+        .arg(server_url())
         .arg("--username")
         .arg("root")
         .arg("--password")
-        .arg("")
+        .arg(root_password())
         .arg("--verbose")
         .arg("--command")
         .arg("SELECT 1 as verbose_test");
@@ -181,25 +181,25 @@ fn test_cli_config_file_creation() {
     let config_path = temp_dir.path().join("kalam.toml");
 
     // Create config file
-    fs::write(
-        &config_path,
+    let config_contents = format!(
         r#"
 [connection]
-url = "http://localhost:8080"
+url = "{}"
 timeout = 30
 
 [output]
 format = "table"
 color = true
 "#,
-    )
-    .unwrap();
+        server_url()
+    );
+    fs::write(&config_path, config_contents).unwrap();
 
     assert!(config_path.exists(), "Config file should be created");
 
     let content = fs::read_to_string(&config_path).unwrap();
     assert!(
-        content.contains("localhost:8080"),
+        content.contains(server_url()),
         "Config should contain URL"
     );
 }
@@ -223,7 +223,7 @@ fn test_cli_load_config_file() {
 url = "{}"
 timeout = 30
 "#,
-            SERVER_URL
+            server_url()
         ),
     )
     .unwrap();
@@ -231,6 +231,10 @@ timeout = 30
     let mut cmd = create_cli_command();
     cmd.arg("--config")
         .arg(config_path.to_str().unwrap())
+        .arg("--username")
+        .arg("root")
+        .arg("--password")
+        .arg(root_password())
         .arg("--command")
         .arg("SELECT 1 as test");
 
@@ -272,7 +276,11 @@ format = "csv"
     cmd.arg("--config")
         .arg(config_path.to_str().unwrap())
         .arg("-u")
-        .arg(SERVER_URL) // Override URL
+        .arg(server_url()) // Override URL
+        .arg("--username")
+        .arg("root")
+        .arg("--password")
+        .arg(root_password())
         .arg("--json") // Override format
         .arg("--command")
         .arg("SELECT 1 as test");

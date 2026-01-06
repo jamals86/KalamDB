@@ -19,13 +19,12 @@ use common::*;
 use serde_json::json;
 use std::time::Duration;
 
-const SERVER_URL: &str = "http://localhost:8080";
 const TEST_TIMEOUT: Duration = Duration::from_secs(10);
 
 /// Helper to check if server is running
 async fn is_server_running() -> bool {
     reqwest::Client::new()
-        .post(format!("{}/v1/api/sql", SERVER_URL))
+        .post(format!("{}/v1/api/sql", server_url()))
         .basic_auth("root", Some(""))
         .json(&json!({ "sql": "SELECT 1" }))
         .timeout(Duration::from_millis(500))
@@ -43,7 +42,7 @@ async fn execute_sql_as(
 ) -> Result<serde_json::Value, Box<dyn std::error::Error>> {
     let client = reqwest::Client::new();
     let response = client
-        .post(format!("{}/v1/api/sql", SERVER_URL))
+        .post(format!("{}/v1/api/sql", server_url()))
         .basic_auth(username, Some(password))
         .json(&json!({ "sql": sql }))
         .send()
@@ -63,7 +62,7 @@ async fn execute_sql_as_root(sql: &str) -> Result<serde_json::Value, Box<dyn std
 #[tokio::test]
 async fn test_root_can_create_namespace() {
     if !is_server_running().await {
-        eprintln!("⚠️  Server not running at {}. Skipping test.", SERVER_URL);
+        eprintln!("⚠️  Server not running at {}. Skipping test.", server_url());
         return;
     }
 
@@ -206,7 +205,7 @@ async fn test_cli_create_namespace_as_root() {
     // Execute CREATE NAMESPACE via CLI (auto-authenticates as root for localhost)
     let mut cmd = Command::new(env!("CARGO_BIN_EXE_kalam"));
     cmd.arg("-u")
-        .arg(SERVER_URL)
+        .arg(server_url())
         .arg("--command")
         .arg(format!("CREATE NAMESPACE {}", namespace_name))
         .timeout(TEST_TIMEOUT);
@@ -292,7 +291,7 @@ async fn test_cli_with_explicit_credentials() {
     // Execute query with explicit root credentials
     let mut cmd = Command::new(env!("CARGO_BIN_EXE_kalam"));
     cmd.arg("-u")
-        .arg(SERVER_URL)
+        .arg(server_url())
         .arg("--username")
         .arg("root")
         .arg("--password")
@@ -343,7 +342,7 @@ SELECT * FROM {}.users;
 
     let mut cmd = Command::new(env!("CARGO_BIN_EXE_kalam"));
     cmd.arg("-u")
-        .arg(SERVER_URL)
+        .arg(server_url())
         .arg("--command")
         .arg(sql_batch)
         .timeout(TEST_TIMEOUT);
@@ -378,7 +377,7 @@ async fn test_cli_show_namespaces() {
 
     let mut cmd = Command::new(env!("CARGO_BIN_EXE_kalam"));
     cmd.arg("-u")
-        .arg(SERVER_URL)
+        .arg(server_url())
         .arg("--command")
         .arg("SHOW NAMESPACES")
         .timeout(TEST_TIMEOUT);
@@ -449,7 +448,7 @@ async fn test_cli_flush_table() {
     // Execute FLUSH TABLE via CLI
     let mut cmd = Command::new(env!("CARGO_BIN_EXE_kalam"));
     cmd.arg("-u")
-        .arg(SERVER_URL)
+        .arg(server_url())
         .arg("--command")
         .arg(format!("FLUSH TABLE {}.metrics", namespace_name))
         .timeout(TEST_TIMEOUT);
@@ -740,7 +739,7 @@ async fn test_cli_flush_all_tables() {
     // Execute FLUSH ALL TABLES via CLI
     let mut cmd = Command::new(env!("CARGO_BIN_EXE_kalam"));
     cmd.arg("-u")
-        .arg(SERVER_URL)
+        .arg(server_url())
         .arg("--command")
         .arg(format!("FLUSH ALL TABLES IN {}", namespace_name))
         .timeout(TEST_TIMEOUT);

@@ -10,6 +10,7 @@
 use std::sync::Arc;
 
 use kalamdb_commons::models::TableId;
+use openraft::RaftMetrics;
 use parking_lot::RwLock;
 
 use crate::storage::log_store::KalamNode;
@@ -195,6 +196,11 @@ impl RaftManager {
     /// Get this node's ID
     pub fn node_id(&self) -> u64 {
         self.node_id
+    }
+
+    /// Get OpenRaft metrics for the MetaSystem group
+    pub fn meta_system_metrics(&self) -> Option<RaftMetrics<u64, KalamNode>> {
+        self.meta_system.metrics()
     }
     
     /// Check if the manager has been started

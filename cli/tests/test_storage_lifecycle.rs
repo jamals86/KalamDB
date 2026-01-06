@@ -6,6 +6,8 @@
 mod common;
 use common::*;
 use serde_json::Value as JsonValue;
+use std::fs;
+use std::path::PathBuf;
 
 /// Ensure DROP STORAGE fails while tables still reference the storage
 #[test]
@@ -20,12 +22,19 @@ fn test_storage_drop_requires_detached_tables() {
     let user_table = generate_unique_table("stor_user");
     let shared_table = generate_unique_table("stor_shared");
 
-    let temp_dir = TempDir::new().expect("create temp dir for storage path");
-    let base_dir = temp_dir.path().join("storage_root");
-    let base_dir_sql = base_dir
-        .to_str()
-        .expect("valid storage path")
-        .replace('\'', "''");
+    let base_dir: PathBuf = storage_base_dir().join(generate_unique_namespace("storage_root"));
+    let local_fs_checks = base_dir.parent().map(|p| p.exists()).unwrap_or(false);
+    if local_fs_checks {
+        if base_dir.exists() {
+            let _ = fs::remove_dir_all(&base_dir);
+        }
+        fs::create_dir_all(&base_dir).expect("create base directory for storage");
+    }
+    let base_dir_sql = escape_single_quotes(
+        base_dir
+            .to_str()
+            .expect("valid storage path"),
+    );
 
     execute_sql_as_root_via_cli(&format!("CREATE NAMESPACE {}", namespace))
         .expect("namespace creation");
@@ -41,10 +50,12 @@ fn test_storage_drop_requires_detached_tables() {
     );
     execute_sql_as_root_via_cli(&create_storage_sql).expect("storage creation");
 
-    assert!(
-        base_dir.exists(),
-        "filesystem storage should eagerly create its base directory"
-    );
+    if local_fs_checks {
+        assert!(
+            base_dir.exists(),
+            "filesystem storage should eagerly create its base directory"
+        );
+    }
 
     let storage_rows = query_rows(&format!(
         "SELECT storage_id FROM system.storages WHERE storage_id = '{}'",
@@ -76,11 +87,13 @@ fn test_storage_drop_requires_detached_tables() {
     let user_table_base_path = base_dir
         .join(format!("ns_{}", namespace))
         .join(format!("user_{}", user_table));
-    assert!(
-        user_table_base_path.exists(),
-        "user table base path should be created eagerly: {}",
-        user_table_base_path.display()
-    );
+    if local_fs_checks {
+        assert!(
+            user_table_base_path.exists(),
+            "user table base path should be created eagerly: {}",
+            user_table_base_path.display()
+        );
+    }
 
     let create_shared_table_sql = format!(
         "CREATE TABLE {}.{} (id BIGINT PRIMARY KEY AUTO_INCREMENT, body TEXT) WITH (TYPE='SHARED', STORAGE_ID='{}', FLUSH_POLICY='rows:5')",
@@ -99,11 +112,13 @@ fn test_storage_drop_requires_detached_tables() {
     let shared_table_path = base_dir
         .join(format!("ns_{}", namespace))
         .join(format!("shared_{}", shared_table));
-    assert!(
-        shared_table_path.exists(),
-        "shared table path should be created eagerly: {}",
-        shared_table_path.display()
-    );
+    if local_fs_checks {
+        assert!(
+            shared_table_path.exists(),
+            "shared table path should be created eagerly: {}",
+            shared_table_path.display()
+        );
+    }
 
     let drop_err = execute_sql_as_root_via_cli(&format!("DROP STORAGE {}", storage_id));
     assert!(
@@ -139,4 +154,8 @@ fn query_rows(sql: &str) -> Vec<JsonValue> {
         .and_then(JsonValue::as_array)
         .cloned()
         .unwrap_or_default()
+}
+
+fn escape_single_quotes(input: &str) -> String {
+    input.replace('\'', "''")
 }

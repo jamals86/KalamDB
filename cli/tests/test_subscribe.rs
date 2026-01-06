@@ -68,11 +68,11 @@ fn test_cli_subscription_commands() {
     // Test --list-subscriptions command
     let mut cmd = create_cli_command();
     cmd.arg("-u")
-        .arg(SERVER_URL)
+        .arg(server_url())
         .arg("--username")
         .arg("root")
         .arg("--password")
-        .arg("")
+        .arg(root_password())
         .arg("--list-subscriptions");
 
     let output = cmd.output().unwrap();
@@ -84,11 +84,11 @@ fn test_cli_subscription_commands() {
     // Test --unsubscribe command (should provide helpful message)
     let mut cmd = create_cli_command();
     cmd.arg("-u")
-        .arg(SERVER_URL)
+        .arg(server_url())
         .arg("--username")
         .arg("root")
         .arg("--password")
-        .arg("")
+        .arg(root_password())
         .arg("--unsubscribe")
         .arg("test-subscription-id");
 
@@ -166,20 +166,20 @@ fn test_cli_subscription_with_initial_data() {
     let table_name = format!("{}.events", namespace_name);
 
     // Setup: Create namespace and table, insert data via CLI
-    let _ = execute_sql_via_cli(&format!(
+    let _ = execute_sql_as_root_via_cli(&format!(
         "DROP NAMESPACE IF EXISTS {} CASCADE",
         namespace_name
     ));
     std::thread::sleep(std::time::Duration::from_millis(50));
 
-    let _ = execute_sql_via_cli(&format!("CREATE NAMESPACE {}", namespace_name));
+    let _ = execute_sql_as_root_via_cli(&format!("CREATE NAMESPACE {}", namespace_name));
     std::thread::sleep(std::time::Duration::from_millis(50));
 
     let create_table_sql = format!(
         "CREATE TABLE {} (id INT PRIMARY KEY, event_type VARCHAR, timestamp BIGINT) WITH (TYPE='USER', FLUSH_POLICY='rows:10')",
         table_name
     );
-    let _ = execute_sql_via_cli(&create_table_sql);
+    let _ = execute_sql_as_root_via_cli(&create_table_sql);
 
     // Insert some initial data via CLI
     for i in 1..=3 {
@@ -189,18 +189,18 @@ fn test_cli_subscription_with_initial_data() {
             i,
             i * 1000
         );
-        let _ = execute_sql_via_cli(&insert_sql);
+        let _ = execute_sql_as_root_via_cli(&insert_sql);
         std::thread::sleep(std::time::Duration::from_millis(50));
     }
 
     // Test that SUBSCRIBE TO command is accepted via CLI
     let mut cmd = create_cli_command();
     cmd.arg("-u")
-        .arg(SERVER_URL)
+        .arg(server_url())
         .arg("--username")
         .arg("root")
         .arg("--password")
-        .arg("")
+        .arg(root_password())
         .arg("--command")
         .arg(format!("SUBSCRIBE TO SELECT * FROM {}", table_name))
         .timeout(std::time::Duration::from_secs(2)); // Short timeout
@@ -218,7 +218,7 @@ fn test_cli_subscription_with_initial_data() {
     );
 
     // Cleanup
-    let _ = execute_sql_via_cli(&format!("DROP NAMESPACE {} CASCADE", namespace_name));
+    let _ = execute_sql_as_root_via_cli(&format!("DROP NAMESPACE {} CASCADE", namespace_name));
 }
 
 /// Test comprehensive subscription functionality with CRUD operations
@@ -234,29 +234,29 @@ fn test_cli_subscription_comprehensive_crud() {
     let table_name = format!("{}.events", namespace_name);
 
     // Setup: Create namespace and table via CLI
-    let _ = execute_sql_via_cli(&format!(
+    let _ = execute_sql_as_root_via_cli(&format!(
         "DROP NAMESPACE IF EXISTS {} CASCADE",
         namespace_name
     ));
     std::thread::sleep(std::time::Duration::from_millis(50));
 
-    let _ = execute_sql_via_cli(&format!("CREATE NAMESPACE {}", namespace_name));
+    let _ = execute_sql_as_root_via_cli(&format!("CREATE NAMESPACE {}", namespace_name));
     std::thread::sleep(std::time::Duration::from_millis(50));
 
     let create_table_sql = format!(
         "CREATE TABLE {} (id INT PRIMARY KEY, event_type VARCHAR, data VARCHAR, timestamp BIGINT) WITH (TYPE='USER', FLUSH_POLICY='rows:10')",
         table_name
     );
-    let _ = execute_sql_via_cli(&create_table_sql);
+    let _ = execute_sql_as_root_via_cli(&create_table_sql);
 
     // Test 1: Verify subscription command is accepted
     let mut cmd = create_cli_command();
     cmd.arg("-u")
-        .arg(SERVER_URL)
+        .arg(server_url())
         .arg("--username")
         .arg("root")
         .arg("--password")
-        .arg("")
+        .arg(root_password())
         .arg("--command")
         .arg(format!(
             "SUBSCRIBE TO SELECT * FROM {} LIMIT 1",
@@ -272,17 +272,17 @@ fn test_cli_subscription_comprehensive_crud() {
 
     // Test 2: Insert initial data via CLI
     let insert_sql = format!("INSERT INTO {} (id, event_type, data, timestamp) VALUES (1, 'create', 'initial_data', 1000)", table_name);
-    let _ = execute_sql_via_cli(&insert_sql);
+    let _ = execute_sql_as_root_via_cli(&insert_sql);
     std::thread::sleep(std::time::Duration::from_millis(50));
 
     // Test 3: Verify data was inserted correctly via CLI
     let mut cmd = create_cli_command();
     cmd.arg("-u")
-        .arg(SERVER_URL)
+        .arg(server_url())
         .arg("--username")
         .arg("root")
         .arg("--password")
-        .arg("")
+        .arg(root_password())
         .arg("--command")
         .arg(format!("SELECT * FROM {}", table_name));
 
@@ -298,16 +298,16 @@ fn test_cli_subscription_comprehensive_crud() {
         "INSERT INTO {} (id, event_type, data, timestamp) VALUES (2, 'insert', 'more_data', 2000)",
         table_name
     );
-    let _ = execute_sql_via_cli(&insert_sql2);
+    let _ = execute_sql_as_root_via_cli(&insert_sql2);
     std::thread::sleep(std::time::Duration::from_millis(50));
 
     let mut cmd = create_cli_command();
     cmd.arg("-u")
-        .arg(SERVER_URL)
+        .arg(server_url())
         .arg("--username")
         .arg("root")
         .arg("--password")
-        .arg("")
+        .arg(root_password())
         .arg("--command")
         .arg(format!("SELECT * FROM {} ORDER BY id", table_name));
 
@@ -323,16 +323,16 @@ fn test_cli_subscription_comprehensive_crud() {
         "UPDATE {} SET data = 'updated_data' WHERE id = 1",
         table_name
     );
-    let _ = execute_sql_via_cli(&update_sql);
+    let _ = execute_sql_as_root_via_cli(&update_sql);
     std::thread::sleep(std::time::Duration::from_millis(50));
 
     let mut cmd = create_cli_command();
     cmd.arg("-u")
-        .arg(SERVER_URL)
+        .arg(server_url())
         .arg("--username")
         .arg("root")
         .arg("--password")
-        .arg("")
+        .arg(root_password())
         .arg("--command")
         .arg(format!("SELECT * FROM {} WHERE id = 1", table_name));
 
@@ -345,16 +345,16 @@ fn test_cli_subscription_comprehensive_crud() {
 
     // Test 6: Delete operation via CLI
     let delete_sql = format!("DELETE FROM {} WHERE id = 2", table_name);
-    let _ = execute_sql_via_cli(&delete_sql);
+    let _ = execute_sql_as_root_via_cli(&delete_sql);
     std::thread::sleep(std::time::Duration::from_millis(50));
 
     let mut cmd = create_cli_command();
     cmd.arg("-u")
-        .arg(SERVER_URL)
+        .arg(server_url())
         .arg("--username")
         .arg("root")
         .arg("--password")
-        .arg("")
+        .arg(root_password())
         .arg("--command")
         .arg(format!("SELECT * FROM {} ORDER BY id", table_name));
 
@@ -368,11 +368,11 @@ fn test_cli_subscription_comprehensive_crud() {
     // Test 7: Verify subscription command still works after CRUD operations
     let mut cmd = create_cli_command();
     cmd.arg("-u")
-        .arg(SERVER_URL)
+        .arg(server_url())
         .arg("--username")
         .arg("root")
         .arg("--password")
-        .arg("")
+        .arg(root_password())
         .arg("--command")
         .arg(format!(
             "SUBSCRIBE TO SELECT * FROM {} ORDER BY id",
@@ -387,5 +387,5 @@ fn test_cli_subscription_comprehensive_crud() {
     );
 
     // Cleanup
-    let _ = execute_sql_via_cli(&format!("DROP NAMESPACE {} CASCADE", namespace_name));
+    let _ = execute_sql_as_root_via_cli(&format!("DROP NAMESPACE {} CASCADE", namespace_name));
 }

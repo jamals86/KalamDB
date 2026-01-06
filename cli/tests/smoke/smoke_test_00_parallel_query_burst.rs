@@ -25,7 +25,7 @@ fn smoke_test_00_parallel_query_burst() {
     if !is_server_running() {
         println!(
             "Skipping smoke_test_00_parallel_query_burst: server not running at {}",
-            SERVER_URL
+            server_url()
         );
         return;
     }

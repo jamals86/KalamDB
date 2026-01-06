@@ -38,6 +38,7 @@ use std::collections::HashMap;
 use std::fs;
 use std::path::{Path, PathBuf};
 
+#[cfg(target_os = "windows")]
 use crate::history::get_kalam_config_dir;
 
 /// File-based credential storage

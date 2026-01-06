@@ -3,6 +3,7 @@
 //! This executor routes commands through Raft groups for consensus
 //! before applying them to the local state machine.
 
+use std::collections::{BTreeMap, BTreeSet};
 use std::sync::Arc;
 
 use async_trait::async_trait;
@@ -10,7 +11,7 @@ use bincode::config;
 
 use crate::{
     manager::RaftManager,
-    ClusterInfo, ClusterNodeInfo, CommandExecutor, DataResponse, GroupId, JobsCommand, JobsResponse, RaftError,
+    ClusterInfo, ClusterNodeInfo, CommandExecutor, DataResponse, GroupId, JobsCommand, JobsResponse, KalamNode, RaftError,
     SharedDataCommand, SystemCommand, SystemResponse, UserDataCommand, UsersCommand,
     UsersResponse,
 };
@@ -123,35 +124,73 @@ impl CommandExecutor for RaftExecutor {
             }
         }
         
-        // Build info for this node
-        let is_any_leader = self_groups_leading > 0;
-        let self_role = if is_any_leader { "leader" } else { "follower" };
-        
-        let mut nodes = vec![ClusterNodeInfo {
-            node_id: config.node_id,
-            role: self_role.to_string(),
-            status: "active".to_string(),
-            rpc_addr: config.rpc_addr.clone(),
-            api_addr: config.api_addr.clone(),
-            is_self: true,
-            is_leader: is_any_leader,
-            groups_leading: self_groups_leading,
-            total_groups,
-        }];
-        
-        // Add peer nodes
-        for peer in &config.peers {
-            // For peers, we can't easily know their leader count without network calls
-            // So we just report them as "unknown" role/status for now
+        let meta_metrics = self.manager.meta_system_metrics();
+        let mut voter_ids = BTreeSet::new();
+        let mut nodes_map: BTreeMap<u64, KalamNode> = BTreeMap::new();
+
+        let leader_id = if let Some(metrics) = meta_metrics.as_ref() {
+            voter_ids.extend(metrics.membership_config.voter_ids());
+            for (node_id, node) in metrics.membership_config.nodes() {
+                nodes_map.insert(*node_id, node.clone());
+            }
+            metrics.current_leader
+        } else {
+            nodes_map.insert(
+                config.node_id,
+                KalamNode {
+                    rpc_addr: config.rpc_addr.clone(),
+                    api_addr: config.api_addr.clone(),
+                },
+            );
+            for peer in &config.peers {
+                nodes_map.insert(
+                    peer.node_id,
+                    KalamNode {
+                        rpc_addr: peer.rpc_addr.clone(),
+                        api_addr: peer.api_addr.clone(),
+                    },
+                );
+            }
+            voter_ids.extend(nodes_map.keys().copied());
+            if self_groups_leading > 0 {
+                Some(config.node_id)
+            } else {
+                None
+            }
+        };
+
+        let self_status = if meta_metrics
+            .as_ref()
+            .map(|metrics| metrics.running_state.is_ok())
+            .unwrap_or(true)
+        {
+            "active"
+        } else {
+            "offline"
+        };
+
+        let mut nodes = Vec::with_capacity(nodes_map.len());
+        for (node_id, node) in nodes_map {
+            let is_self = node_id == config.node_id;
+            let is_leader = leader_id == Some(node_id);
+            let role = if is_leader {
+                "leader"
+            } else if voter_ids.contains(&node_id) {
+                "follower"
+            } else {
+                "learner"
+            };
+            let status = if is_self { self_status } else { "active" };
+
             nodes.push(ClusterNodeInfo {
-                node_id: peer.node_id,
-                role: "follower".to_string(), // Assume follower unless we know otherwise
-                status: "unknown".to_string(), // Would need health check
-                rpc_addr: peer.rpc_addr.clone(),
-                api_addr: peer.api_addr.clone(),
-                is_self: false,
-                is_leader: false,
-                groups_leading: 0,
+                node_id,
+                role: role.to_string(),
+                status: status.to_string(),
+                rpc_addr: node.rpc_addr,
+                api_addr: node.api_addr,
+                is_self,
+                is_leader,
+                groups_leading: if is_self { self_groups_leading } else { 0 },
                 total_groups,
             });
         }

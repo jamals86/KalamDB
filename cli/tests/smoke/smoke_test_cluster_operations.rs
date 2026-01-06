@@ -106,8 +106,8 @@ fn smoke_test_cluster_table_type_consistency() {
     let shared_table = "shared_config";
     execute_sql_as_root_via_client(&format!(
         r#"CREATE TABLE {}.{} (
-            key TEXT PRIMARY KEY,
-            value TEXT
+            config_key TEXT PRIMARY KEY,
+            config_value TEXT
         ) WITH (TYPE = 'SHARED')"#,
         namespace, shared_table
     )).expect("Failed to create shared table");
@@ -161,7 +161,7 @@ fn smoke_test_cluster_user_operations() {
 
     // Create all users
     for user in &users {
-        let sql = format!("CREATE USER {} WITH PASSWORD 'testpass123'", user);
+        let sql = format!("CREATE USER {} WITH PASSWORD 'testpass123' ROLE 'user'", user);
         execute_sql_as_root_via_client(&sql)
             .unwrap_or_else(|e| panic!("Failed to create user {}: {}", user, e));
         println!("  ✓ Created user: {}", user);
@@ -226,11 +226,11 @@ fn smoke_test_cluster_user_data_partitioning() {
     let user2 = format!("partition_user_b_{}", rand::random::<u16>());
 
     execute_sql_as_root_via_client(&format!(
-        "CREATE USER {} WITH PASSWORD 'testpass123'", user1
+        "CREATE USER {} WITH PASSWORD 'testpass123' ROLE 'user'", user1
     )).expect("Failed to create user1");
 
     execute_sql_as_root_via_client(&format!(
-        "CREATE USER {} WITH PASSWORD 'testpass123'", user2
+        "CREATE USER {} WITH PASSWORD 'testpass123' ROLE 'user'", user2
     )).expect("Failed to create user2");
 
     println!("  ✓ Created test users: {}, {}", user1, user2);
@@ -334,7 +334,7 @@ fn smoke_test_cluster_shared_table_consistency() {
     // Create a test user
     let user = format!("shared_reader_{}", rand::random::<u16>());
     execute_sql_as_root_via_client(&format!(
-        "CREATE USER {} WITH PASSWORD 'testpass123'", user
+        "CREATE USER {} WITH PASSWORD 'testpass123' ROLE 'user'", user
     )).expect("Failed to create test user");
 
     // User should be able to read shared data
@@ -382,7 +382,7 @@ fn smoke_test_cluster_concurrent_operations() {
         r#"CREATE TABLE {}.counters (
             counter_id TEXT PRIMARY KEY,
             value BIGINT NOT NULL,
-            updated_at TIMESTAMP DEFAULT NOW()
+            updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
         ) WITH (TYPE = 'SHARED')"#,
         namespace
     )).expect("Failed to create counters table");
@@ -399,9 +399,10 @@ fn smoke_test_cluster_concurrent_operations() {
     let num_updates = 10;
     for i in 1..=num_updates {
         execute_sql_as_root_via_client(&format!(
-            "UPDATE {}.counters SET value = {}, updated_at = NOW() WHERE counter_id = 'main'",
+            "UPDATE {}.counters SET value = {} WHERE counter_id = 'main'",
             namespace, i
-        )).unwrap_or_else(|e| panic!("Failed update {}: {}", i, e));
+        ))
+        .unwrap_or_else(|e| panic!("Failed update {}: {}", i, e));
     }
 
     println!("  ✓ Performed {} sequential updates", num_updates);
@@ -649,14 +650,14 @@ fn smoke_test_cluster_live_query_tracking() {
 
     // Query current live queries
     let result = execute_sql_as_root_via_client(
-        "SELECT query_id, table_name, user_id FROM system.live_queries LIMIT 10"
+        "SELECT live_id, table_name, user_id FROM system.live_queries LIMIT 10"
     ).expect("Failed to query system.live_queries");
 
     println!("  Current live queries:\n{}", result);
 
     // System should be able to query live queries (even if empty)
     assert!(
-        result.contains("row") || result.contains("│") || result.contains("query_id"),
+        result.contains("row") || result.contains("│") || result.contains("live_id"),
         "Should be able to query live_queries table"
     );
 

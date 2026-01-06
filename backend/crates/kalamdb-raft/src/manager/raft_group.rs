@@ -5,7 +5,7 @@
 use std::sync::Arc;
 
 use openraft::storage::Adaptor;
-use openraft::{Config, Raft};
+use openraft::{Config, Raft, RaftMetrics};
 use parking_lot::RwLock;
 
 use crate::storage::{KalamRaftStorage, KalamTypeConfig, KalamNode};
@@ -172,6 +172,12 @@ impl<SM: KalamStateMachine + Send + Sync + 'static> RaftGroup<SM> {
         raft.as_ref().and_then(|r| {
             r.metrics().borrow().current_leader
         })
+    }
+
+    /// Get the latest OpenRaft metrics for this group, if started
+    pub fn metrics(&self) -> Option<RaftMetrics<u64, KalamNode>> {
+        let raft = self.raft.read();
+        raft.as_ref().map(|r| r.metrics().borrow().clone())
     }
     
     /// Propose a command to this Raft group

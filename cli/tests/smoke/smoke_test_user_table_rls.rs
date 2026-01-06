@@ -15,7 +15,7 @@ fn smoke_user_table_rls_isolation() {
     if !is_server_running() {
         eprintln!(
             "Skipping smoke_user_table_rls_isolation: server not running at {}",
-            SERVER_URL
+            server_url()
         );
         return;
     }

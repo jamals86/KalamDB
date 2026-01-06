@@ -22,7 +22,7 @@ fn smoke_test_insert_throughput_single() {
     if !is_server_running() {
         println!(
             "Skipping smoke_test_insert_throughput_single: server not running at {}",
-            SERVER_URL
+            server_url()
         );
         return;
     }
@@ -104,7 +104,7 @@ fn smoke_test_insert_throughput_batched() {
     if !is_server_running() {
         println!(
             "Skipping smoke_test_insert_throughput_batched: server not running at {}",
-            SERVER_URL
+            server_url()
         );
         return;
     }
@@ -199,7 +199,7 @@ fn smoke_test_insert_throughput_parallel() {
     if !is_server_running() {
         println!(
             "Skipping smoke_test_insert_throughput_parallel: server not running at {}",
-            SERVER_URL
+            server_url()
         );
         return;
     }
@@ -305,7 +305,7 @@ fn smoke_test_insert_throughput_summary() {
     if !is_server_running() {
         println!(
             "Skipping smoke_test_insert_throughput_summary: server not running at {}",
-            SERVER_URL
+            server_url()
         );
         return;
     }

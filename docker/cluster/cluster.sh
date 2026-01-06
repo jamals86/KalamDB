@@ -29,6 +29,7 @@ NC='\033[0m' # No Color
 NODE1_HTTP=8081
 NODE2_HTTP=8082
 NODE3_HTTP=8083
+ROOT_PASSWORD="${KALAMDB_ROOT_PASSWORD:-}"
 
 print_header() {
     echo ""
@@ -223,7 +224,7 @@ run_sql_on_node() {
     local node=$1
     local sql=$2
     docker exec "kalamdb-node${node}" curl -sS -X POST "http://localhost:8080/v1/api/sql" \
-        -u "root:" \
+        -u "root:${ROOT_PASSWORD}" \
         -H "Content-Type: application/json" \
         -d "{\"sql\": \"$sql\"}" 2>/dev/null || true
 }
