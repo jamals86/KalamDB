@@ -43,7 +43,10 @@ pub mod network;
 pub mod manager;
 
 // Re-exports
-pub use applier::{NoOpSystemApplier, NoOpUsersApplier, SystemApplier, UsersApplier};
+pub use applier::{
+    NoOpSharedDataApplier, NoOpSystemApplier, NoOpUserDataApplier, NoOpUsersApplier,
+    SharedDataApplier, SystemApplier, UserDataApplier, UsersApplier,
+};
 pub use cluster_types::{NodeRole, NodeStatus, ServerStateExt};
 pub use config::{ClusterConfig as RaftClusterConfig, PeerConfig, ReplicationMode};
 pub use error::{RaftError, Result};

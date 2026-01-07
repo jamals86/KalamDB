@@ -3,6 +3,8 @@
 use async_trait::async_trait;
 use std::fmt::Debug;
 
+use kalamdb_commons::models::{NodeId, UserId};
+
 use crate::cluster_types::{NodeRole, NodeStatus};
 use crate::commands::{
     DataResponse, JobsCommand, JobsResponse, SharedDataCommand, SystemCommand, 
@@ -15,7 +17,7 @@ use crate::group_id::GroupId;
 #[derive(Debug, Clone)]
 pub struct ClusterNodeInfo {
     /// Node ID (1, 2, 3, ...)
-    pub node_id: u64,
+    pub node_id: NodeId,
     /// Node role derived from OpenRaft ServerState
     pub role: NodeRole,
     /// Node status (active, offline, joining, unknown)
@@ -48,7 +50,7 @@ pub struct ClusterInfo {
     /// Cluster ID
     pub cluster_id: String,
     /// Current node ID
-    pub current_node_id: u64,
+    pub current_node_id: NodeId,
     /// Whether in cluster mode
     pub is_cluster_mode: bool,
     /// All nodes in the cluster
@@ -106,7 +108,7 @@ pub trait CommandExecutor: Send + Sync + Debug {
     async fn execute_jobs(&self, cmd: JobsCommand) -> Result<JobsResponse>;
 
     /// Execute a user data command (routed by user_id to correct shard)
-    async fn execute_user_data(&self, user_id: &str, cmd: UserDataCommand) -> Result<DataResponse>;
+    async fn execute_user_data(&self, user_id: &UserId, cmd: UserDataCommand) -> Result<DataResponse>;
 
     /// Execute a shared data command (routed to shared shard)
     async fn execute_shared_data(&self, cmd: SharedDataCommand) -> Result<DataResponse>;
@@ -121,13 +123,13 @@ pub trait CommandExecutor: Send + Sync + Debug {
     ///
     /// In standalone mode, returns None (there's only one node).
     /// In cluster mode, returns the leader's node_id.
-    async fn get_leader(&self, group: GroupId) -> Option<u64>;
+    async fn get_leader(&self, group: GroupId) -> Option<NodeId>;
 
     /// Returns true if running in cluster mode
     fn is_cluster_mode(&self) -> bool;
 
-    /// Get the current node's ID (0 for standalone)
-    fn node_id(&self) -> u64;
+    /// Get the current node's ID (NodeId::default() for standalone)
+    fn node_id(&self) -> NodeId;
     
     /// Get cluster information including all nodes, their roles, and status
     ///

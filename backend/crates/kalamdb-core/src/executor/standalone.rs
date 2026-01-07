@@ -6,6 +6,7 @@
 use async_trait::async_trait;
 use std::sync::Arc;
 
+use kalamdb_commons::models::{NodeId, UserId};
 use kalamdb_commons::system::Namespace;
 use kalamdb_raft::{
     ClusterInfo, ClusterNodeInfo, CommandExecutor, DataResponse, GroupId, JobsCommand, JobsResponse,
@@ -219,7 +220,7 @@ impl CommandExecutor for StandaloneExecutor {
         }
     }
 
-    async fn execute_user_data(&self, user_id: &str, cmd: UserDataCommand) -> Result<DataResponse> {
+    async fn execute_user_data(&self, user_id: &UserId, cmd: UserDataCommand) -> Result<DataResponse> {
         match cmd {
             UserDataCommand::Insert { table_id, rows_data, .. } => {
                 log::debug!("StandaloneExecutor: Insert into {:?} for user {} ({} bytes)", 
@@ -288,7 +289,7 @@ impl CommandExecutor for StandaloneExecutor {
         true
     }
 
-    async fn get_leader(&self, _group: GroupId) -> Option<u64> {
+    async fn get_leader(&self, _group: GroupId) -> Option<NodeId> {
         // In standalone mode, there's no leader node_id
         None
     }
@@ -297,18 +298,18 @@ impl CommandExecutor for StandaloneExecutor {
         false
     }
 
-    fn node_id(&self) -> u64 {
-        0 // Standalone mode has no node_id
+    fn node_id(&self) -> NodeId {
+        NodeId::default() // Standalone mode uses default node_id
     }
     
     fn get_cluster_info(&self) -> ClusterInfo {
         // Standalone mode - single node, always leader
         ClusterInfo {
             cluster_id: "standalone".to_string(),
-            current_node_id: 0,
+            current_node_id: NodeId::default(),
             is_cluster_mode: false,
             nodes: vec![ClusterNodeInfo {
-                node_id: 0,
+                node_id: NodeId::default(),
                 role: NodeRole::Leader, // Standalone is effectively always leader
                 status: NodeStatus::Active,
                 rpc_addr: "".to_string(),

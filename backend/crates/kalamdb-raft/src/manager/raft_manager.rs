@@ -10,7 +10,7 @@
 use std::sync::Arc;
 use std::time::Duration;
 
-use kalamdb_commons::models::TableId;
+use kalamdb_commons::models::{NodeId, TableId};
 use openraft::RaftMetrics;
 use parking_lot::RwLock;
 
@@ -32,7 +32,7 @@ use crate::{GroupId, RaftError};
 /// - Leader tracking and forwarding
 pub struct RaftManager {
     /// This node's ID
-    node_id: u64,
+    node_id: NodeId,
     
     /// System metadata group
     meta_system: Arc<RaftGroup<SystemStateMachine>>,
@@ -130,8 +130,13 @@ impl RaftManager {
     }
     
     /// Get this node's ID
-    pub fn node_id(&self) -> u64 {
+    pub fn node_id(&self) -> NodeId {
         self.node_id
+    }
+    
+    /// Get this node's ID as u64 (for OpenRaft API compatibility)
+    pub fn node_id_u64(&self) -> u64 {
+        self.node_id.as_u64()
     }
 
     /// Get OpenRaft metrics for the MetaSystem group
@@ -177,24 +182,24 @@ impl RaftManager {
         
         // Start all meta groups
         log::info!("Starting meta groups...");
-        self.meta_system.start(self.node_id, &self.config).await?;
+        self.meta_system.start(self.node_id.as_u64(), &self.config).await?;
         log::debug!("  ✓ MetaSystem group started");
-        self.meta_users.start(self.node_id, &self.config).await?;
+        self.meta_users.start(self.node_id.as_u64(), &self.config).await?;
         log::debug!("  ✓ MetaUsers group started");
-        self.meta_jobs.start(self.node_id, &self.config).await?;
+        self.meta_jobs.start(self.node_id.as_u64(), &self.config).await?;
         log::debug!("  ✓ MetaJobs group started");
         
         // Start all user data shards
         log::info!("Starting {} user data shards...", self.user_data_shards.len());
         for (i, shard) in self.user_data_shards.iter().enumerate() {
-            shard.start(self.node_id, &self.config).await?;
+            shard.start(self.node_id.as_u64(), &self.config).await?;
             log::debug!("  ✓ UserDataShard[{}] started", i);
         }
         
         // Start all shared data shards
         log::info!("Starting {} shared data shards...", self.shared_data_shards.len());
         for (i, shard) in self.shared_data_shards.iter().enumerate() {
-            shard.start(self.node_id, &self.config).await?;
+            shard.start(self.node_id.as_u64(), &self.config).await?;
             log::debug!("  ✓ SharedDataShard[{}] started", i);
         }
         
@@ -233,22 +238,22 @@ impl RaftManager {
         
         // Initialize all groups
         log::info!("Initializing meta groups...");
-        self.meta_system.initialize(self.node_id, self_node.clone()).await?;
+        self.meta_system.initialize(self.node_id.as_u64(), self_node.clone()).await?;
         log::debug!("  ✓ MetaSystem initialized");
-        self.meta_users.initialize(self.node_id, self_node.clone()).await?;
+        self.meta_users.initialize(self.node_id.as_u64(), self_node.clone()).await?;
         log::debug!("  ✓ MetaUsers initialized");
-        self.meta_jobs.initialize(self.node_id, self_node.clone()).await?;
+        self.meta_jobs.initialize(self.node_id.as_u64(), self_node.clone()).await?;
         log::debug!("  ✓ MetaJobs initialized");
         
         log::info!("Initializing user data shards...");
         for (i, shard) in self.user_data_shards.iter().enumerate() {
-            shard.initialize(self.node_id, self_node.clone()).await?;
+            shard.initialize(self.node_id.as_u64(), self_node.clone()).await?;
             log::debug!("  ✓ UserDataShard[{}] initialized", i);
         }
         
         log::info!("Initializing shared data shards...");
         for (i, shard) in self.shared_data_shards.iter().enumerate() {
-            shard.initialize(self.node_id, self_node.clone()).await?;
+            shard.initialize(self.node_id.as_u64(), self_node.clone()).await?;
             log::debug!("  ✓ SharedDataShard[{}] initialized", i);
         }
         
@@ -275,22 +280,23 @@ impl RaftManager {
     }
     
     /// Add a new node to the cluster
-    pub async fn add_node(&self, node_id: u64, rpc_addr: String, api_addr: String) -> Result<(), RaftError> {
+    pub async fn add_node(&self, node_id: NodeId, rpc_addr: String, api_addr: String) -> Result<(), RaftError> {
+        let node_id_u64 = node_id.as_u64();
         log::info!("[CLUSTER] Node {} joining cluster (rpc={}, api={})", node_id, rpc_addr, api_addr);
         let node = KalamNode { rpc_addr: rpc_addr.clone(), api_addr: api_addr.clone() };
         
         // Add to all groups as learner first
         log::info!("[CLUSTER] Adding node {} as learner to all {} Raft groups...", node_id, self.group_count());
-        self.meta_system.add_learner(node_id, node.clone()).await?;
-        self.meta_users.add_learner(node_id, node.clone()).await?;
-        self.meta_jobs.add_learner(node_id, node.clone()).await?;
+        self.meta_system.add_learner(node_id_u64, node.clone()).await?;
+        self.meta_users.add_learner(node_id_u64, node.clone()).await?;
+        self.meta_jobs.add_learner(node_id_u64, node.clone()).await?;
         
         for shard in &self.user_data_shards {
-            shard.add_learner(node_id, node.clone()).await?;
+            shard.add_learner(node_id_u64, node.clone()).await?;
         }
         
         for shard in &self.shared_data_shards {
-            shard.add_learner(node_id, node.clone()).await?;
+            shard.add_learner(node_id_u64, node.clone()).await?;
         }
         
         log::info!("[CLUSTER] ✓ Node {} joined cluster successfully (added to {} groups)", 
@@ -332,8 +338,8 @@ impl RaftManager {
     }
     
     /// Get the current leader for a group
-    pub fn current_leader(&self, group_id: GroupId) -> Option<u64> {
-        match group_id {
+    pub fn current_leader(&self, group_id: GroupId) -> Option<NodeId> {
+        let leader_u64 = match group_id {
             GroupId::MetaSystem => self.meta_system.current_leader(),
             GroupId::MetaUsers => self.meta_users.current_leader(),
             GroupId::MetaJobs => self.meta_jobs.current_leader(),
@@ -344,7 +350,8 @@ impl RaftManager {
                 self.shared_data_shards[shard as usize].current_leader()
             }
             _ => None,
-        }
+        };
+        leader_u64.map(NodeId::from)
     }
     
     /// Internal helper to propose with replication mode awareness
@@ -486,20 +493,21 @@ impl RaftManager {
     }
     
     /// Register a peer node with all groups
-    pub fn register_peer(&self, node_id: u64, rpc_addr: String, api_addr: String) {
+    pub fn register_peer(&self, node_id: NodeId, rpc_addr: String, api_addr: String) {
+        let node_id_u64 = node_id.as_u64();
         let node = KalamNode { rpc_addr, api_addr };
         
         // Register with all meta groups
-        self.meta_system.register_peer(node_id, node.clone());
-        self.meta_users.register_peer(node_id, node.clone());
-        self.meta_jobs.register_peer(node_id, node.clone());
+        self.meta_system.register_peer(node_id_u64, node.clone());
+        self.meta_users.register_peer(node_id_u64, node.clone());
+        self.meta_jobs.register_peer(node_id_u64, node.clone());
         
         // Register with all data shards
         for shard in &self.user_data_shards {
-            shard.register_peer(node_id, node.clone());
+            shard.register_peer(node_id_u64, node.clone());
         }
         for shard in &self.shared_data_shards {
-            shard.register_peer(node_id, node.clone());
+            shard.register_peer(node_id_u64, node.clone());
         }
     }
     
@@ -578,6 +586,38 @@ impl RaftManager {
         let sm = self.meta_users.storage().state_machine();
         sm.set_applier(applier);
         log::info!("RaftManager: Users applier registered for metadata replication");
+    }
+
+    /// Set the user data applier for persisting per-user data to providers
+    ///
+    /// This should be called after RaftManager creation once providers are available.
+    /// The same applier is used for all user data shards.
+    pub fn set_user_data_applier(&self, applier: std::sync::Arc<dyn crate::applier::UserDataApplier>) {
+        for (shard_id, shard) in self.user_data_shards.iter().enumerate() {
+            let sm = shard.storage().state_machine();
+            sm.set_applier(applier.clone());
+            log::debug!("RaftManager: User data applier set for shard {}", shard_id);
+        }
+        log::info!(
+            "RaftManager: User data applier registered for {} shards",
+            self.user_data_shards.len()
+        );
+    }
+
+    /// Set the shared data applier for persisting shared data to providers
+    ///
+    /// This should be called after RaftManager creation once providers are available.
+    /// The same applier is used for all shared data shards.
+    pub fn set_shared_data_applier(&self, applier: std::sync::Arc<dyn crate::applier::SharedDataApplier>) {
+        for (shard_id, shard) in self.shared_data_shards.iter().enumerate() {
+            let sm = shard.storage().state_machine();
+            sm.set_applier(applier.clone());
+            log::debug!("RaftManager: Shared data applier set for shard {}", shard_id);
+        }
+        log::info!(
+            "RaftManager: Shared data applier registered for {} shards",
+            self.shared_data_shards.len()
+        );
     }
     
     // === Raft RPC Handlers (for receiving RPCs from other nodes) ===
@@ -681,11 +721,12 @@ impl RaftManager {
             // Attempt leadership transfer for each group where we're leader
             // Find the first available peer to transfer leadership to
             if let Some(target_node) = self.config.peers.first() {
+                let target_node_id = target_node.node_id.as_u64();
                 log::info!("[CLUSTER] Transferring leadership to node {}...", target_node.node_id);
                 
                 // Transfer leadership for MetaSystem
                 if self.meta_system.is_leader() {
-                    match self.meta_system.transfer_leadership(target_node.node_id).await {
+                    match self.meta_system.transfer_leadership(target_node_id).await {
                         Ok(_) => log::info!("[CLUSTER] ✓ MetaSystem leadership transferred to node {}", target_node.node_id),
                         Err(e) => log::warn!("[CLUSTER] ⚠ Failed to transfer MetaSystem leadership: {}", e),
                     }
@@ -693,7 +734,7 @@ impl RaftManager {
                 
                 // Transfer leadership for MetaUsers
                 if self.meta_users.is_leader() {
-                    match self.meta_users.transfer_leadership(target_node.node_id).await {
+                    match self.meta_users.transfer_leadership(target_node_id).await {
                         Ok(_) => log::info!("[CLUSTER] ✓ MetaUsers leadership transferred to node {}", target_node.node_id),
                         Err(e) => log::warn!("[CLUSTER] ⚠ Failed to transfer MetaUsers leadership: {}", e),
                     }
@@ -701,7 +742,7 @@ impl RaftManager {
                 
                 // Transfer leadership for MetaJobs
                 if self.meta_jobs.is_leader() {
-                    match self.meta_jobs.transfer_leadership(target_node.node_id).await {
+                    match self.meta_jobs.transfer_leadership(target_node_id).await {
                         Ok(_) => log::info!("[CLUSTER] ✓ MetaJobs leadership transferred to node {}", target_node.node_id),
                         Err(e) => log::warn!("[CLUSTER] ⚠ Failed to transfer MetaJobs leadership: {}", e),
                     }
@@ -710,7 +751,7 @@ impl RaftManager {
                 // Transfer leadership for user data shards
                 for (i, shard) in self.user_data_shards.iter().enumerate() {
                     if shard.is_leader() {
-                        match shard.transfer_leadership(target_node.node_id).await {
+                        match shard.transfer_leadership(target_node_id).await {
                             Ok(_) => log::debug!("[CLUSTER] ✓ UserDataShard[{}] leadership transferred", i),
                             Err(e) => log::warn!("[CLUSTER] ⚠ Failed to transfer UserDataShard[{}] leadership: {}", i, e),
                         }
@@ -720,7 +761,7 @@ impl RaftManager {
                 // Transfer leadership for shared data shards
                 for (i, shard) in self.shared_data_shards.iter().enumerate() {
                     if shard.is_leader() {
-                        match shard.transfer_leadership(target_node.node_id).await {
+                        match shard.transfer_leadership(target_node_id).await {
                             Ok(_) => log::debug!("[CLUSTER] ✓ SharedDataShard[{}] leadership transferred", i),
                             Err(e) => log::warn!("[CLUSTER] ⚠ Failed to transfer SharedDataShard[{}] leadership: {}", i, e),
                         }
@@ -771,7 +812,7 @@ mod tests {
 
     fn test_config() -> RaftManagerConfig {
         RaftManagerConfig {
-            node_id: 1,
+            node_id: NodeId::new(1),
             rpc_addr: "127.0.0.1:5001".to_string(),
             api_addr: "127.0.0.1:3001".to_string(),
             peers: vec![],
@@ -783,7 +824,7 @@ mod tests {
     fn test_raft_manager_creation() {
         let manager = RaftManager::new(test_config());
         
-        assert_eq!(manager.node_id(), 1);
+        assert_eq!(manager.node_id(), NodeId::new(1));
         assert!(!manager.is_started());
         
         // Should have 36 groups total by default: 3 meta + 32 user data + 1 shared
@@ -834,7 +875,7 @@ mod tests {
         
         // Should not panic
         manager.register_peer(
-            2,
+            NodeId::new(2),
             "127.0.0.1:5002".to_string(),
             "127.0.0.1:3002".to_string(),
         );

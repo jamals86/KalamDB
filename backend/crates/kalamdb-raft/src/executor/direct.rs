@@ -6,6 +6,8 @@
 use async_trait::async_trait;
 use openraft::ServerState;
 
+use kalamdb_commons::models::{NodeId, UserId};
+
 use crate::cluster_types::NodeStatus;
 use crate::commands::{
     DataResponse, JobsCommand, JobsResponse, SharedDataCommand, SystemCommand,
@@ -42,7 +44,7 @@ pub trait SystemTablesAccess: Send + Sync {
     
     // Job operations
     fn create_job(&self, job_id: &str, job_type: &str, namespace_id: Option<&str>, table_name: Option<&str>) -> Result<()>;
-    fn claim_job(&self, job_id: &str, node_id: u64) -> Result<()>;
+    fn claim_job(&self, job_id: &str, node_id: NodeId) -> Result<()>;
     fn update_job_status(&self, job_id: &str, status: &str) -> Result<()>;
     fn complete_job(&self, job_id: &str, result_json: Option<&str>) -> Result<()>;
     fn fail_job(&self, job_id: &str, error_message: &str) -> Result<()>;
@@ -182,7 +184,7 @@ impl CommandExecutor for DirectExecutor {
         }
     }
 
-    async fn execute_user_data(&self, user_id: &str, cmd: UserDataCommand) -> Result<DataResponse> {
+    async fn execute_user_data(&self, user_id: &UserId, cmd: UserDataCommand) -> Result<DataResponse> {
         match cmd {
             UserDataCommand::Insert { table_id, .. } => {
                 log::debug!("DirectExecutor: Insert into {:?} for user {}", table_id, user_id);
@@ -237,7 +239,7 @@ impl CommandExecutor for DirectExecutor {
         true
     }
 
-    async fn get_leader(&self, _group: GroupId) -> Option<u64> {
+    async fn get_leader(&self, _group: GroupId) -> Option<NodeId> {
         // In standalone mode, there's no leader node_id
         None
     }
@@ -246,18 +248,18 @@ impl CommandExecutor for DirectExecutor {
         false
     }
 
-    fn node_id(&self) -> u64 {
-        0 // Standalone mode has no node_id
+    fn node_id(&self) -> NodeId {
+        NodeId::default() // Standalone mode uses default node_id
     }
     
     fn get_cluster_info(&self) -> ClusterInfo {
         // Standalone mode - single node, always leader
         ClusterInfo {
             cluster_id: "standalone".to_string(),
-            current_node_id: 0,
+            current_node_id: NodeId::default(),
             is_cluster_mode: false,
             nodes: vec![ClusterNodeInfo {
-                node_id: 0,
+                node_id: NodeId::default(),
                 role: ServerState::Leader, // Standalone is effectively always leader
                 status: NodeStatus::Active,
                 rpc_addr: "".to_string(),
@@ -306,7 +308,7 @@ mod tests {
         let executor = DirectExecutor::new();
         
         assert!(!executor.is_cluster_mode());
-        assert_eq!(executor.node_id(), 0);
+        assert_eq!(executor.node_id(), NodeId::default());
         assert!(executor.is_leader(GroupId::MetaSystem).await);
         assert!(executor.get_leader(GroupId::MetaSystem).await.is_none());
     }
@@ -327,13 +329,13 @@ mod tests {
 
     #[tokio::test]
     async fn test_execute_jobs_create() {
-        use kalamdb_commons::models::{NamespaceId, TableName};
+        use kalamdb_commons::models::{JobType, NamespaceId, TableName};
         use kalamdb_commons::JobId;
         
         let executor = DirectExecutor::new();
         let cmd = JobsCommand::CreateJob {
             job_id: JobId::from("job_123"),
-            job_type: "flush".to_string(),
+            job_type: JobType::Flush,
             namespace_id: Some(NamespaceId::from("ns")),
             table_name: Some(TableName::from("table")),
             config_json: None,

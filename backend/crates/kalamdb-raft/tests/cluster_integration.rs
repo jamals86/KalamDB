@@ -16,13 +16,13 @@ use chrono::Utc;
 use parking_lot::RwLock;
 use tokio::time::sleep;
 
-use kalamdb_commons::models::{JobId, NamespaceId, NodeId, StorageId, TableName, UserId};
+use kalamdb_commons::models::{JobId, JobType, NamespaceId, NodeId, StorageId, TableName, UserId};
 use kalamdb_commons::models::schemas::TableType;
 use kalamdb_commons::types::User;
-use kalamdb_commons::{AuthType, Role, StorageId, StorageMode};
+use kalamdb_commons::{AuthType, Role, StorageMode};
 use kalamdb_commons::TableId;
 use kalamdb_raft::{
-    manager::{ClusterConfig, PeerConfig, RaftManager},
+    manager::{RaftManager, RaftManagerConfig, PeerNode},
     executor::RaftExecutor,
     CommandExecutor, GroupId,
     commands::{SystemCommand, UsersCommand, JobsCommand, UserDataCommand, SharedDataCommand},
@@ -95,9 +95,9 @@ struct TestNode {
 }
 
 impl TestNode {
-    fn new(node_id: u64, rpc_port: u16, api_port: u16, peers: Vec<PeerConfig>, shards: u32) -> Self {
-        let config = ClusterConfig {
-            node_id,
+    fn new(node_id: u64, rpc_port: u16, api_port: u16, peers: Vec<PeerNode>, shards: u32) -> Self {
+        let config = RaftManagerConfig {
+            node_id: NodeId::new(node_id),
             rpc_addr: format!("127.0.0.1:{}", rpc_port),
             api_addr: format!("127.0.0.1:{}", api_port),
             peers,
@@ -105,7 +105,7 @@ impl TestNode {
             shared_shards: 1,
             heartbeat_interval_ms: 50,
             election_timeout_ms: (150, 300),
-            min_replication_nodes: 1,
+            ..Default::default()
         };
         
         let manager = Arc::new(RaftManager::new(config));
@@ -139,7 +139,7 @@ impl TestNode {
     }
     
     fn current_leader(&self, group: GroupId) -> Option<u64> {
-        self.manager.current_leader(group)
+        self.manager.current_leader(group).map(|n| n.as_u64())
     }
 }
 
@@ -157,9 +157,9 @@ impl TestCluster {
         let mut nodes = Vec::with_capacity(node_count);
         
         // Build peer configs for all nodes
-        let all_peers: Vec<PeerConfig> = (1..=node_count as u64)
-            .map(|id| PeerConfig {
-                node_id: id,
+        let all_peers: Vec<PeerNode> = (1..=node_count as u64)
+            .map(|id| PeerNode {
+                node_id: NodeId::new(id),
                 rpc_addr: format!("127.0.0.1:{}", base_rpc_port + id as u16 - 1),
                 api_addr: format!("127.0.0.1:{}", base_api_port + id as u16 - 1),
             })
@@ -168,9 +168,9 @@ impl TestCluster {
         // Create each node with peers (excluding itself)
         for i in 0..node_count {
             let node_id = (i + 1) as u64;
-            let peers: Vec<PeerConfig> = all_peers
+            let peers: Vec<PeerNode> = all_peers
                 .iter()
-                .filter(|p| p.node_id != node_id)
+                .filter(|p| p.node_id.as_u64() != node_id)
                 .cloned()
                 .collect();
             
@@ -519,7 +519,7 @@ async fn test_all_groups_accept_proposals() {
         let leader = cluster.get_leader_node(GroupId::MetaJobs).unwrap();
         let cmd = JobsCommand::CreateJob {
             job_id: JobId::from("job1"),
-            job_type: "flush".to_string(),
+            job_type: JobType::Flush,
             namespace_id: Some(NamespaceId::from("ns1")),
             table_name: Some(TableName::from("t1")),
             config_json: None,
@@ -782,7 +782,7 @@ async fn test_meta_jobs_group_operations() {
     // Test CreateJob
     let cmd = JobsCommand::CreateJob {
         job_id: JobId::from("j1"),
-        job_type: "flush".to_string(),
+        job_type: JobType::Flush,
         namespace_id: Some(NamespaceId::from("ns1")),
         table_name: Some(TableName::from("t1")),
         config_json: None,
@@ -829,7 +829,7 @@ async fn test_meta_jobs_group_operations() {
     // Test CreateSchedule
     let cmd = JobsCommand::CreateSchedule {
         schedule_id: "s1".to_string(),
-        job_type: "compaction".to_string(),
+        job_type: JobType::Compact,
         cron_expression: "0 0 * * *".to_string(),
         config_json: None,
         created_at: Utc::now(),
@@ -1174,8 +1174,8 @@ async fn test_invalid_shard_error() {
 /// Test proposal on unstarted group
 #[tokio::test]
 async fn test_proposal_before_start_error() {
-    let config = ClusterConfig {
-        node_id: 1,
+    let config = RaftManagerConfig {
+        node_id: NodeId::new(1),
         rpc_addr: "127.0.0.1:11800".to_string(),
         api_addr: "127.0.0.1:12800".to_string(),
         peers: vec![],

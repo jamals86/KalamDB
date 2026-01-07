@@ -12,6 +12,11 @@
 #   ./scripts/cluster-local.sh logs N   - View logs from node N (1, 2, or 3)
 #   ./scripts/cluster-local.sh clean    - Stop and remove all data
 #   ./scripts/cluster-local.sh build    - Build the server binary
+#   ./scripts/cluster-local.sh test     - Run cluster tests (cli/tests/cluster)
+#   ./scripts/cluster-local.sh smoke    - Run smoke tests against leader
+#   ./scripts/cluster-local.sh smoke-all - Run smoke tests against all nodes
+#   ./scripts/cluster-local.sh verify   - Run consistency verification tests
+#   ./scripts/cluster-local.sh full     - Run complete test suite (test + smoke-all + verify)
 #
 # Prerequisites:
 #   - Rust toolchain installed (cargo, rustc)
@@ -43,6 +48,9 @@ NODE2_ID=2
 NODE3_HTTP=8083
 NODE3_RPC=9083
 NODE3_ID=3
+
+ROOT_PASSWORD="kalamdb123"
+CLUSTER_URLS="http://127.0.0.1:$NODE1_HTTP,http://127.0.0.1:$NODE2_HTTP,http://127.0.0.1:$NODE3_HTTP"
 
 print_header() {
     echo ""
@@ -84,19 +92,32 @@ create_node_config() {
     mkdir -p "$data_dir/data"
     mkdir -p "$data_dir/logs"
 
-    # Get peer addresses (all nodes except self)
-    local peers=""
+    # Build peer list (all nodes except self)
+    local peer_blocks=""
     if [ "$node_id" != "1" ]; then
-        peers="${peers}\"127.0.0.1:$NODE1_RPC\","
+        peer_blocks="${peer_blocks}
+[[cluster.peers]]
+node_id = 1
+rpc_addr = \"127.0.0.1:$NODE1_RPC\"
+api_addr = \"http://127.0.0.1:$NODE1_HTTP\"
+"
     fi
     if [ "$node_id" != "2" ]; then
-        peers="${peers}\"127.0.0.1:$NODE2_RPC\","
+        peer_blocks="${peer_blocks}
+[[cluster.peers]]
+node_id = 2
+rpc_addr = \"127.0.0.1:$NODE2_RPC\"
+api_addr = \"http://127.0.0.1:$NODE2_HTTP\"
+"
     fi
     if [ "$node_id" != "3" ]; then
-        peers="${peers}\"127.0.0.1:$NODE3_RPC\","
+        peer_blocks="${peer_blocks}
+[[cluster.peers]]
+node_id = 3
+rpc_addr = \"127.0.0.1:$NODE3_RPC\"
+api_addr = \"http://127.0.0.1:$NODE3_HTTP\"
+"
     fi
-    # Remove trailing comma
-    peers="${peers%,}"
 
     cat > "$config_file" << EOF
 # KalamDB Node $node_id Configuration
@@ -105,28 +126,58 @@ create_node_config() {
 [server]
 host = "127.0.0.1"
 port = $http_port
-data_path = "$data_dir/data"
-storage_path = "$data_dir/data/storage"
+workers = 0
+api_version = "v1"
+node_id = "node-$node_id"
+
+[storage]
+rocksdb_path = "$data_dir/data/rocksdb"
+default_storage_path = "$data_dir/data/storage"
+shared_tables_template = "{namespace}/{tableName}"
+user_tables_template = "{namespace}/{tableName}/{userId}"
+
+[limits]
+max_message_size = 1048576
+max_query_limit = 1000
+default_query_limit = 50
 
 [logging]
 level = "info"
+logs_path = "$data_dir/logs"
 format = "json"
-file = "$data_dir/logs/server.jsonl"
+
+[performance]
+request_timeout = 30
+keepalive_timeout = 75
+max_connections = 25000
+backlog = 2048
+worker_max_blocking_threads = 512
+client_request_timeout = 5
+client_disconnect_timeout = 2
+max_header_size = 16384
+
+[rate_limit]
+max_queries_per_sec = 10000
+max_messages_per_sec = 1000
+max_subscriptions_per_user = 1000
 
 [cluster]
 enabled = true
 cluster_id = "kalamdb-local-cluster"
 node_id = $node_id
-rpc_host = "127.0.0.1"
-rpc_port = $rpc_port
-peers = [$peers]
+rpc_addr = "127.0.0.1:$rpc_port"
+api_addr = "http://127.0.0.1:$http_port"
 heartbeat_interval_ms = 150
-election_timeout_min_ms = 300
-election_timeout_max_ms = 500
+election_timeout_ms = [300, 500]
+replication_mode = "quorum"
+replication_timeout_ms = 5000
+min_replication_nodes = 3
+
+$peer_blocks
 
 [auth]
 enabled = true
-root_password = "kalamdb123"
+root_password = "$ROOT_PASSWORD"
 jwt_secret = "local-cluster-jwt-secret-key-for-testing-only"
 jwt_expiry_hours = 24
 EOF
@@ -167,7 +218,7 @@ start_node() {
         exit 1
     fi
 
-    KALAMDB_CONFIG="$config_file" nohup "$binary" > "$log_file" 2>&1 &
+    (cd "$data_dir" && nohup "$binary" > "$log_file" 2>&1) &
     local pid=$!
     echo $pid > "$pid_file"
 
@@ -261,7 +312,7 @@ start_cluster() {
         echo "Node 2: http://127.0.0.1:$NODE2_HTTP"
         echo "Node 3: http://127.0.0.1:$NODE3_HTTP"
         echo ""
-        echo "Root password: kalamdb123"
+        echo "Root password: $ROOT_PASSWORD"
         echo ""
         echo "Connect with CLI:"
         echo "  kalam --server http://127.0.0.1:$NODE1_HTTP --username root --password kalamdb123"
@@ -347,6 +398,226 @@ clean_cluster() {
     echo -e "${GREEN}Cleanup complete.${NC}"
 }
 
+ensure_cluster_healthy() {
+    local count=0
+    check_node_health $NODE1_HTTP && ((count++)) || true
+    check_node_health $NODE2_HTTP && ((count++)) || true
+    check_node_health $NODE3_HTTP && ((count++)) || true
+
+    if [ "$count" -lt 3 ]; then
+        echo -e "${RED}Cluster is not healthy (healthy nodes: $count). Start the cluster first.${NC}"
+        exit 1
+    fi
+}
+
+run_cluster_tests() {
+    print_header
+    ensure_cluster_healthy
+    echo -e "${YELLOW}Running cluster tests...${NC}"
+    echo ""
+
+    cd "$PROJECT_ROOT/cli"
+    KALAMDB_CLUSTER_URLS="$CLUSTER_URLS" \
+    KALAMDB_ROOT_PASSWORD="$ROOT_PASSWORD" \
+    RUST_TEST_THREADS=1 \
+        cargo test --test cluster -- --nocapture
+}
+
+run_smoke_tests() {
+    print_header
+    ensure_cluster_healthy
+    echo -e "${YELLOW}Detecting cluster leader for smoke tests...${NC}"
+    echo ""
+
+    cd "$PROJECT_ROOT/cli"
+
+    local leader_url
+    leader_url=$(detect_leader_url || true)
+    if [ -z "$leader_url" ]; then
+        leader_url="http://127.0.0.1:$NODE1_HTTP"
+        echo -e "${YELLOW}⚠️  Could not detect leader. Falling back to node 1: $leader_url${NC}"
+    else
+        echo -e "${GREEN}✓ Leader detected: $leader_url${NC}"
+    fi
+
+    KALAMDB_SERVER_URL="$leader_url" \
+    KALAMDB_ROOT_PASSWORD="$ROOT_PASSWORD" \
+    RUST_TEST_THREADS=1 \
+        cargo test --test smoke -- --nocapture
+}
+
+run_smoke_tests_all_nodes() {
+    print_header
+    ensure_cluster_healthy
+    echo -e "${YELLOW}Running smoke tests against ALL nodes...${NC}"
+    echo ""
+
+    cd "$PROJECT_ROOT/cli"
+
+    local nodes=("http://127.0.0.1:$NODE1_HTTP" "http://127.0.0.1:$NODE2_HTTP" "http://127.0.0.1:$NODE3_HTTP")
+    local passed=0
+    local failed=0
+
+    for node_url in "${nodes[@]}"; do
+        echo ""
+        echo -e "${BLUE}════════════════════════════════════════════════════════════════${NC}"
+        echo -e "${BLUE}Testing node: $node_url${NC}"
+        echo -e "${BLUE}════════════════════════════════════════════════════════════════${NC}"
+        echo ""
+
+        if KALAMDB_SERVER_URL="$node_url" \
+           KALAMDB_ROOT_PASSWORD="$ROOT_PASSWORD" \
+           RUST_TEST_THREADS=1 \
+           cargo test --test smoke smoke_test_core_operations -- --nocapture; then
+            echo -e "${GREEN}✓ Core operations passed on $node_url${NC}"
+            ((passed++))
+        else
+            echo -e "${RED}✗ Core operations failed on $node_url${NC}"
+            ((failed++))
+        fi
+    done
+
+    echo ""
+    echo -e "${GREEN}╔═══════════════════════════════════════════════════════════════════╗${NC}"
+    echo -e "${GREEN}║                    Smoke Tests Complete                           ║${NC}"
+    echo -e "${GREEN}╚═══════════════════════════════════════════════════════════════════╝${NC}"
+    echo ""
+    echo "Passed: $passed / ${#nodes[@]}"
+    echo "Failed: $failed / ${#nodes[@]}"
+
+    if [ "$failed" -gt 0 ]; then
+        exit 1
+    fi
+}
+
+run_verification_tests() {
+    print_header
+    ensure_cluster_healthy
+    echo -e "${YELLOW}Running consistency verification tests...${NC}"
+    echo ""
+
+    cd "$PROJECT_ROOT/cli"
+
+    echo -e "${BLUE}Running system tables replication tests...${NC}"
+    KALAMDB_CLUSTER_URLS="$CLUSTER_URLS" \
+    KALAMDB_ROOT_PASSWORD="$ROOT_PASSWORD" \
+    RUST_TEST_THREADS=1 \
+        cargo test --test cluster cluster_test_system_tables -- --nocapture
+
+    echo ""
+    echo -e "${BLUE}Running subscription tests...${NC}"
+    KALAMDB_CLUSTER_URLS="$CLUSTER_URLS" \
+    KALAMDB_ROOT_PASSWORD="$ROOT_PASSWORD" \
+    RUST_TEST_THREADS=1 \
+        cargo test --test cluster cluster_test_subscription -- --nocapture
+
+    echo ""
+    echo -e "${BLUE}Running table identity tests...${NC}"
+    KALAMDB_CLUSTER_URLS="$CLUSTER_URLS" \
+    KALAMDB_ROOT_PASSWORD="$ROOT_PASSWORD" \
+    RUST_TEST_THREADS=1 \
+        cargo test --test cluster cluster_test_table_identity -- --nocapture
+
+    echo ""
+    echo -e "${BLUE}Running final consistency tests...${NC}"
+    KALAMDB_CLUSTER_URLS="$CLUSTER_URLS" \
+    KALAMDB_ROOT_PASSWORD="$ROOT_PASSWORD" \
+    RUST_TEST_THREADS=1 \
+        cargo test --test cluster cluster_test_final -- --nocapture
+
+    echo ""
+    echo -e "${GREEN}╔═══════════════════════════════════════════════════════════════════╗${NC}"
+    echo -e "${GREEN}║               Verification Tests Complete                         ║${NC}"
+    echo -e "${GREEN}╚═══════════════════════════════════════════════════════════════════╝${NC}"
+}
+
+run_full_test_suite() {
+    print_header
+    ensure_cluster_healthy
+    echo -e "${YELLOW}Running FULL cluster test suite...${NC}"
+    echo ""
+    echo "This includes:"
+    echo "  1. All cluster replication tests"
+    echo "  2. Smoke tests on all nodes"
+    echo "  3. Consistency verification"
+    echo ""
+
+    local start_time=$(date +%s)
+
+    # Run cluster tests
+    echo -e "${BLUE}═══════════════════════════════════════════════════════════════════${NC}"
+    echo -e "${BLUE}PHASE 1: Cluster Tests${NC}"
+    echo -e "${BLUE}═══════════════════════════════════════════════════════════════════${NC}"
+    run_cluster_tests
+
+    # Run smoke tests on all nodes
+    echo -e "${BLUE}═══════════════════════════════════════════════════════════════════${NC}"
+    echo -e "${BLUE}PHASE 2: Multi-Node Smoke Tests${NC}"
+    echo -e "${BLUE}═══════════════════════════════════════════════════════════════════${NC}"
+    run_smoke_tests_all_nodes
+
+    # Run verification tests
+    echo -e "${BLUE}═══════════════════════════════════════════════════════════════════${NC}"
+    echo -e "${BLUE}PHASE 3: Consistency Verification${NC}"
+    echo -e "${BLUE}═══════════════════════════════════════════════════════════════════${NC}"
+    run_verification_tests
+
+    local end_time=$(date +%s)
+    local duration=$((end_time - start_time))
+
+    echo ""
+    echo -e "${GREEN}╔═══════════════════════════════════════════════════════════════════╗${NC}"
+    echo -e "${GREEN}║                 FULL TEST SUITE COMPLETE                          ║${NC}"
+    echo -e "${GREEN}╠═══════════════════════════════════════════════════════════════════╣${NC}"
+    echo -e "${GREEN}║  Duration: ${duration}s                                                     ${NC}"
+    echo -e "${GREEN}║  All tests passed!                                                ║${NC}"
+    echo -e "${GREEN}╚═══════════════════════════════════════════════════════════════════╝${NC}"
+}
+
+detect_leader_url() {
+    local query="SELECT api_addr, is_leader FROM system.cluster"
+    local response
+
+    response=$(
+        curl -s \
+            -u "root:$ROOT_PASSWORD" \
+            -H "Content-Type: application/json" \
+            -d "{\"sql\":\"$query\"}" \
+            "http://127.0.0.1:$NODE1_HTTP/v1/api/sql"
+    )
+
+    if [ -z "$response" ]; then
+        return 1
+    fi
+
+    python3 - "$response" << 'PY'
+import json
+import sys
+
+if len(sys.argv) < 2:
+    sys.exit(1)
+
+try:
+    data = json.loads(sys.argv[1])
+except json.JSONDecodeError:
+    sys.exit(1)
+
+results = data.get("results") or []
+if not results:
+    sys.exit(1)
+
+rows = results[0].get("rows") or []
+for row in rows:
+    if len(row) >= 2 and row[1] is True:
+        api_addr = row[0]
+        if api_addr:
+            print(api_addr)
+            sys.exit(0)
+
+sys.exit(1)
+PY
+}
+
 # Main command handler
 case "${1:-}" in
     start)
@@ -377,19 +648,39 @@ case "${1:-}" in
     build)
         build_server
         ;;
+    test)
+        run_cluster_tests
+        ;;
+    smoke)
+        run_smoke_tests
+        ;;
+    smoke-all)
+        run_smoke_tests_all_nodes
+        ;;
+    verify)
+        run_verification_tests
+        ;;
+    full)
+        run_full_test_suite
+        ;;
     *)
         echo "KalamDB Local Cluster Script"
         echo ""
         echo "Usage: $0 <command>"
         echo ""
         echo "Commands:"
-        echo "  start     Start the 3-node cluster"
-        echo "  stop      Stop all nodes"
-        echo "  restart   Restart the cluster"
-        echo "  status    Show cluster status"
-        echo "  logs N    Show logs for node N (1, 2, or 3)"
-        echo "  clean     Stop cluster and remove all data"
-        echo "  build     Build the server binary"
+        echo "  start      Start the 3-node cluster"
+        echo "  stop       Stop all nodes"
+        echo "  restart    Restart the cluster"
+        echo "  status     Show cluster status"
+        echo "  logs N     Show logs for node N (1, 2, or 3)"
+        echo "  clean      Stop cluster and remove all data"
+        echo "  build      Build the server binary"
+        echo "  test       Run cluster tests (cli/tests/cluster)"
+        echo "  smoke      Run smoke tests against leader"
+        echo "  smoke-all  Run smoke tests against all nodes"
+        echo "  verify     Run consistency verification tests"
+        echo "  full       Run complete test suite (test + smoke-all + verify)"
         echo ""
         exit 1
         ;;

@@ -323,7 +323,7 @@ impl raft_server::Raft for RaftService {
                 success: false,
                 payload: Vec::new(),
                 error: format!("Not leader for group {}", group_id),
-                leader_hint: leader,
+                leader_hint: leader.map(|n| n.as_u64()),
             }));
         }
         
@@ -341,7 +341,7 @@ impl raft_server::Raft for RaftService {
                 success: false,
                 payload: Vec::new(),
                 error: e.to_string(),
-                leader_hint: self.manager.current_leader(group_id),
+                leader_hint: self.manager.current_leader(group_id).map(|n| n.as_u64()),
             })),
         }
     }

@@ -28,20 +28,32 @@ fn cluster_test_system_table_consistency() {
     ];
 
     for (label, sql) in queries {
-        let mut counts = Vec::new();
-        for url in &urls {
-            let count = query_count_on_url(url, sql);
-            counts.push((url.clone(), count));
+        let mut consistent = false;
+        let mut last_counts = Vec::new();
+
+        for _ in 0..10 {
+            let mut counts = Vec::new();
+            for url in &urls {
+                let count = query_count_on_url(url, sql);
+                counts.push((url.clone(), count));
+            }
+
+            let expected = counts.first().map(|(_, count)| *count).unwrap_or(0);
+            let mismatch = counts.iter().any(|(_, count)| *count != expected);
+
+            if !mismatch {
+                consistent = true;
+                println!("  ✓ {} count consistent across nodes: {}", label, expected);
+                break;
+            }
+
+            last_counts = counts;
+            std::thread::sleep(Duration::from_millis(200));
         }
 
-        let expected = counts.first().map(|(_, count)| *count).unwrap_or(0);
-        let mismatch = counts.iter().any(|(_, count)| *count != expected);
-
-        if mismatch {
-            panic!("{} counts mismatch: {:?}", label, counts);
+        if !consistent {
+            panic!("{} counts mismatch: {:?}", label, last_counts);
         }
-
-        println!("  ✓ {} count consistent across nodes: {}", label, expected);
     }
 
     println!("\n  ✅ System table counts consistent across cluster nodes\n");
@@ -118,21 +130,21 @@ fn cluster_test_table_replication() {
         (
             "users_tbl",
             format!(
-                "CREATE USER TABLE {}.users_tbl (id INT64 PRIMARY KEY, name STRING)",
+                "CREATE USER TABLE {}.users_tbl (id BIGINT PRIMARY KEY, name STRING)",
                 namespace
             ),
         ),
         (
             "shared_tbl",
             format!(
-                "CREATE SHARED TABLE {}.shared_tbl (id INT64 PRIMARY KEY, data STRING)",
+                "CREATE SHARED TABLE {}.shared_tbl (id BIGINT PRIMARY KEY, data STRING)",
                 namespace
             ),
         ),
         (
             "stream_tbl",
             format!(
-                "CREATE STREAM TABLE {}.stream_tbl (id INT64 PRIMARY KEY, event STRING) WITH (ttl = 3600)",
+                "CREATE STREAM TABLE {}.stream_tbl (id BIGINT PRIMARY KEY, event STRING) WITH (TTL_SECONDS = 3600)",
                 namespace
             ),
         ),
@@ -199,23 +211,36 @@ fn cluster_test_data_consistency() {
     execute_on_node(
         &urls[0],
         &format!(
-            "CREATE SHARED TABLE {}.data_test (id INT64 PRIMARY KEY, value STRING)",
+            "CREATE SHARED TABLE {}.data_test (id BIGINT PRIMARY KEY, value STRING)",
             namespace
         ),
     )
     .expect("Failed to create table");
 
+    // Wait for table to replicate to all nodes
+    if !wait_for_table_on_all_nodes(&namespace, "data_test", 10000) {
+        panic!("Table data_test did not replicate to all nodes");
+    }
+
     // Insert data on node 0
     println!("Inserting 100 rows on node 0...");
+    let mut values = Vec::new();
     for i in 0..100 {
-        execute_on_node(
-            &urls[0],
-            &format!(
-                "INSERT INTO {}.data_test (id, value) VALUES ({}, 'value_{}')",
-                namespace, i, i
-            ),
-        )
-        .expect("Insert failed");
+        values.push(format!("({}, 'value_{}')", i, i));
+
+        if values.len() == 20 || i == 99 {
+            execute_on_node(
+                &urls[0],
+                &format!(
+                    "INSERT INTO {}.data_test (id, value) VALUES {}",
+                    namespace,
+                    values.join(", ")
+                ),
+            )
+            .expect("Insert failed");
+            values.clear();
+            std::thread::sleep(Duration::from_millis(50));
+        }
     }
 
     std::thread::sleep(Duration::from_millis(1000));
@@ -223,16 +248,19 @@ fn cluster_test_data_consistency() {
     // Verify data on all nodes
     println!("Verifying data on all nodes...");
     for (i, url) in urls.iter().enumerate() {
-        let count = query_count_on_url(
-            url,
-            &format!("SELECT count(*) as count FROM {}.data_test", namespace),
-        );
+        let mut count = 0;
+        for _ in 0..10 {
+            count = query_count_on_url(
+                url,
+                &format!("SELECT count(*) as count FROM {}.data_test", namespace),
+            );
+            if count == 100 {
+                break;
+            }
+            std::thread::sleep(Duration::from_millis(200));
+        }
 
-        assert_eq!(
-            count, 100,
-            "Node {} has {} rows, expected 100",
-            i, count
-        );
+        assert_eq!(count, 100, "Node {} has {} rows, expected 100", i, count);
         println!("  ✓ Node {} has 100 rows", i);
     }
 

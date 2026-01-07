@@ -5,6 +5,8 @@
 //! - 32 user data shards (user tables + live_queries)
 //! - 1 shared data shard (shared tables)
 
+use kalamdb_commons::models::UserId;
+use kalamdb_commons::TableId;
 use serde::{Deserialize, Serialize};
 use std::fmt;
 use std::hash::{Hash, Hasher};
@@ -183,8 +185,8 @@ impl ShardRouter {
     /// Route a user operation to the appropriate shard
     ///
     /// Uses a simple hash of the user_id to determine shard assignment.
-    pub fn route_user(&self, user_id: &str) -> GroupId {
-        let shard = self.hash_to_shard(user_id, self.num_user_shards);
+    pub fn route_user(&self, user_id: &UserId) -> GroupId {
+        let shard = self.hash_to_shard(user_id.as_str(), self.num_user_shards);
         GroupId::DataUserShard(shard)
     }
 
@@ -192,7 +194,7 @@ impl ShardRouter {
     ///
     /// Phase 1: All shared tables go to shard 0
     /// Future: Could shard by table_id or row key
-    pub fn route_shared(&self, _table_id: &str) -> GroupId {
+    pub fn route_shared(&self, _table_id: &TableId) -> GroupId {
         // Phase 1: Single shared shard
         GroupId::DataSharedShard(0)
     }
@@ -267,8 +269,9 @@ mod tests {
         let router = ShardRouter::default_config();
         
         // Same user_id should always route to same shard
-        let shard1 = router.route_user("user_123");
-        let shard2 = router.route_user("user_123");
+        let user_id = UserId::new("user_123".to_string());
+        let shard1 = router.route_user(&user_id);
+        let shard2 = router.route_user(&user_id);
         assert_eq!(shard1, shard2);
     }
 
@@ -279,7 +282,7 @@ mod tests {
         // Different users should distribute across shards
         let mut shards = std::collections::HashSet::new();
         for i in 0..100 {
-            let user_id = format!("user_{}", i);
+            let user_id = UserId::new(format!("user_{}", i));
             if let GroupId::DataUserShard(shard) = router.route_user(&user_id) {
                 shards.insert(shard);
             }

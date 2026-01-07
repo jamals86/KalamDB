@@ -10,9 +10,12 @@ use async_trait::async_trait;
 use parking_lot::RwLock;
 use serde::{Deserialize, Serialize};
 use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::Arc;
 
-use crate::{GroupId, RaftError, SharedDataCommand, DataResponse};
-use super::{ApplyResult, KalamStateMachine, StateMachineSnapshot, encode, decode};
+use crate::applier::SharedDataApplier;
+use crate::{DataResponse, GroupId, RaftError, SharedDataCommand};
+
+use super::{decode, encode, ApplyResult, KalamStateMachine, StateMachineSnapshot};
 
 /// Row operation tracking (for metrics)
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -37,9 +40,8 @@ struct SharedDataSnapshot {
 /// Handles commands in DataSharedShard(0) Raft group:
 /// - Insert, Update, Delete (shared table data)
 ///
-/// Note: Actual row data is stored in RocksDB/Parquet via the storage layer.
-/// The Raft log ensures ordering and consistency of operations.
-#[derive(Debug)]
+/// Note: Row data is persisted via the SharedDataApplier after Raft consensus.
+/// All nodes (leader and followers) call the applier, ensuring consistent data.
 pub struct SharedDataStateMachine {
     /// Shard number (always 0 for shared tables in Phase 1)
     shard: u32,
@@ -53,6 +55,21 @@ pub struct SharedDataStateMachine {
     total_operations: AtomicU64,
     /// Recent operations for metrics
     recent_operations: RwLock<Vec<SharedOperation>>,
+    /// Optional applier for persisting data to providers
+    applier: RwLock<Option<Arc<dyn SharedDataApplier>>>,
+}
+
+impl std::fmt::Debug for SharedDataStateMachine {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("SharedDataStateMachine")
+            .field("shard", &self.shard)
+            .field(
+                "last_applied_index",
+                &self.last_applied_index.load(Ordering::Relaxed),
+            )
+            .field("has_applier", &self.applier.read().is_some())
+            .finish()
+    }
 }
 
 impl SharedDataStateMachine {
@@ -65,31 +82,76 @@ impl SharedDataStateMachine {
             approximate_size: AtomicU64::new(0),
             total_operations: AtomicU64::new(0),
             recent_operations: RwLock::new(Vec::new()),
+            applier: RwLock::new(None),
         }
     }
-    
+
+    /// Create a new SharedDataStateMachine with an applier
+    pub fn with_applier(shard: u32, applier: Arc<dyn SharedDataApplier>) -> Self {
+        Self {
+            shard,
+            last_applied_index: AtomicU64::new(0),
+            last_applied_term: AtomicU64::new(0),
+            approximate_size: AtomicU64::new(0),
+            total_operations: AtomicU64::new(0),
+            recent_operations: RwLock::new(Vec::new()),
+            applier: RwLock::new(Some(applier)),
+        }
+    }
+
     /// Create the default shared shard (shard 0)
     pub fn default_shard() -> Self {
         Self::new(0)
     }
-    
+
+    /// Set the applier for persisting data to providers
+    ///
+    /// This is called after RaftManager creation once providers are available.
+    pub fn set_applier(&self, applier: Arc<dyn SharedDataApplier>) {
+        let mut guard = self.applier.write();
+        *guard = Some(applier);
+        log::info!(
+            "SharedDataStateMachine[{}]: Applier registered for data persistence",
+            self.shard
+        );
+    }
+
     /// Apply a shared data command
     async fn apply_command(&self, cmd: SharedDataCommand) -> Result<DataResponse, RaftError> {
+        // Get applier reference
+        let applier = {
+            let guard = self.applier.read();
+            guard.clone()
+        };
+
         match cmd {
             SharedDataCommand::Insert { table_id, rows_data } => {
                 log::debug!(
                     "SharedDataStateMachine[{}]: Insert into {:?} ({} bytes)",
-                    self.shard, table_id, rows_data.len()
+                    self.shard,
+                    table_id,
+                    rows_data.len()
                 );
-                
+
+                // Persist data via applier if available
+                let rows_affected = if let Some(ref a) = applier {
+                    a.insert(&table_id, &rows_data).await?
+                } else {
+                    log::warn!(
+                        "SharedDataStateMachine[{}]: No applier set, data not persisted!",
+                        self.shard
+                    );
+                    0
+                };
+
                 // Track operation
                 let op = SharedOperation {
                     table_namespace: table_id.namespace_id().as_str().to_string(),
                     table_name: table_id.table_name().as_str().to_string(),
                     operation: "insert".to_string(),
-                    row_count: 0, // Actual count from storage layer
+                    row_count: rows_affected as u64,
                 };
-                
+
                 {
                     let mut ops = self.recent_operations.write();
                     ops.push(op);
@@ -100,21 +162,41 @@ impl SharedDataStateMachine {
                 }
                 
                 self.total_operations.fetch_add(1, Ordering::Relaxed);
-                self.approximate_size.fetch_add(rows_data.len() as u64, Ordering::Relaxed);
-                
-                Ok(DataResponse::RowsAffected(0))
+                self.approximate_size
+                    .fetch_add(rows_data.len() as u64, Ordering::Relaxed);
+
+                Ok(DataResponse::RowsAffected(rows_affected))
             }
-            
-            SharedDataCommand::Update { table_id, .. } => {
-                log::debug!("SharedDataStateMachine[{}]: Update {:?}", self.shard, table_id);
-                
+
+            SharedDataCommand::Update {
+                table_id,
+                updates_data,
+                filter_data,
+            } => {
+                log::debug!(
+                    "SharedDataStateMachine[{}]: Update {:?}",
+                    self.shard,
+                    table_id
+                );
+
+                let rows_affected = if let Some(ref a) = applier {
+                    a.update(&table_id, &updates_data, filter_data.as_deref())
+                        .await?
+                } else {
+                    log::warn!(
+                        "SharedDataStateMachine[{}]: No applier set, update not persisted!",
+                        self.shard
+                    );
+                    0
+                };
+
                 let op = SharedOperation {
                     table_namespace: table_id.namespace_id().as_str().to_string(),
                     table_name: table_id.table_name().as_str().to_string(),
                     operation: "update".to_string(),
-                    row_count: 0,
+                    row_count: rows_affected as u64,
                 };
-                
+
                 {
                     let mut ops = self.recent_operations.write();
                     ops.push(op);
@@ -122,21 +204,38 @@ impl SharedDataStateMachine {
                         ops.remove(0);
                     }
                 }
-                
+
                 self.total_operations.fetch_add(1, Ordering::Relaxed);
-                Ok(DataResponse::RowsAffected(0))
+                Ok(DataResponse::RowsAffected(rows_affected))
             }
-            
-            SharedDataCommand::Delete { table_id, .. } => {
-                log::debug!("SharedDataStateMachine[{}]: Delete from {:?}", self.shard, table_id);
-                
+
+            SharedDataCommand::Delete {
+                table_id,
+                filter_data,
+            } => {
+                log::debug!(
+                    "SharedDataStateMachine[{}]: Delete from {:?}",
+                    self.shard,
+                    table_id
+                );
+
+                let rows_affected = if let Some(ref a) = applier {
+                    a.delete(&table_id, filter_data.as_deref()).await?
+                } else {
+                    log::warn!(
+                        "SharedDataStateMachine[{}]: No applier set, delete not persisted!",
+                        self.shard
+                    );
+                    0
+                };
+
                 let op = SharedOperation {
                     table_namespace: table_id.namespace_id().as_str().to_string(),
                     table_name: table_id.table_name().as_str().to_string(),
                     operation: "delete".to_string(),
-                    row_count: 0,
+                    row_count: rows_affected as u64,
                 };
-                
+
                 {
                     let mut ops = self.recent_operations.write();
                     ops.push(op);
@@ -144,9 +243,9 @@ impl SharedDataStateMachine {
                         ops.remove(0);
                     }
                 }
-                
+
                 self.total_operations.fetch_add(1, Ordering::Relaxed);
-                Ok(DataResponse::RowsAffected(0))
+                Ok(DataResponse::RowsAffected(rows_affected))
             }
         }
     }

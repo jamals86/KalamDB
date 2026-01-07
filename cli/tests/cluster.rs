@@ -18,7 +18,7 @@ mod common;
 /// Cluster-specific common utilities
 mod cluster_common {
     use crate::common::*;
-    use kalam_link::{AuthProvider, KalamLinkClient, KalamLinkTimeouts};
+    use kalam_link::{AuthProvider, KalamLinkClient, KalamLinkTimeouts, QueryResponse};
     use std::sync::OnceLock;
     use std::time::Duration;
 
@@ -107,6 +107,16 @@ mod cluster_common {
             .map_err(|e| e.to_string())
     }
 
+    /// Execute SQL on a specific cluster node and return the structured response
+    pub fn execute_on_node_response(base_url: &str, sql: &str) -> Result<QueryResponse, String> {
+        let client = create_cluster_client(base_url);
+        let sql = sql.to_string();
+
+        cluster_runtime()
+            .block_on(async move { client.execute_query(&sql, None, None).await })
+            .map_err(|e| e.to_string())
+    }
+
     /// Check if a cluster node is healthy
     pub fn is_node_healthy(base_url: &str) -> bool {
         let client = create_cluster_client(base_url);
@@ -134,11 +144,111 @@ mod cluster_common {
             );
         }
     }
+
+    /// Wait for a table to be visible on all cluster nodes
+    /// Returns true if table is visible on all nodes within timeout, false otherwise
+    pub fn wait_for_table_on_all_nodes(namespace: &str, table_name: &str, timeout_ms: u64) -> bool {
+        let urls = cluster_urls();
+        let query = format!(
+            "SELECT table_name FROM system.tables WHERE namespace_id = '{}' AND table_name = '{}'",
+            namespace, table_name
+        );
+        
+        let start = std::time::Instant::now();
+        let timeout = Duration::from_millis(timeout_ms);
+        
+        while start.elapsed() < timeout {
+            let mut all_visible = true;
+            for url in &urls {
+                match execute_on_node(url, &query) {
+                    Ok(result) if result.contains(table_name) => {}
+                    _ => {
+                        all_visible = false;
+                        break;
+                    }
+                }
+            }
+            if all_visible {
+                return true;
+            }
+            std::thread::sleep(Duration::from_millis(200));
+        }
+        false
+    }
+
+    /// Wait for a namespace to be visible on all cluster nodes
+    pub fn wait_for_namespace_on_all_nodes(namespace: &str, timeout_ms: u64) -> bool {
+        let urls = cluster_urls();
+        let query = format!(
+            "SELECT namespace_id FROM system.namespaces WHERE namespace_id = '{}'",
+            namespace
+        );
+        
+        let start = std::time::Instant::now();
+        let timeout = Duration::from_millis(timeout_ms);
+        
+        while start.elapsed() < timeout {
+            let mut all_visible = true;
+            for url in &urls {
+                match execute_on_node(url, &query) {
+                    Ok(result) if result.contains(namespace) => {}
+                    _ => {
+                        all_visible = false;
+                        break;
+                    }
+                }
+            }
+            if all_visible {
+                return true;
+            }
+            std::thread::sleep(Duration::from_millis(200));
+        }
+        false
+    }
+
+    /// Wait for row count to reach expected value on all nodes
+    pub fn wait_for_row_count_on_all_nodes(full_table: &str, expected: i64, timeout_ms: u64) -> bool {
+        let urls = cluster_urls();
+        let query = format!("SELECT count(*) as count FROM {}", full_table);
+        
+        let start = std::time::Instant::now();
+        let timeout = Duration::from_millis(timeout_ms);
+        
+        while start.elapsed() < timeout {
+            let mut all_match = true;
+            for url in &urls {
+                let count = query_count_on_url(url, &query);
+                if count != expected {
+                    all_match = false;
+                    break;
+                }
+            }
+            if all_match {
+                return true;
+            }
+            std::thread::sleep(Duration::from_millis(300));
+        }
+        false
+    }
 }
 
 #[path = "cluster/cluster_test_consistency.rs"]
 mod cluster_test_consistency;
 #[path = "cluster/cluster_test_failover.rs"]
 mod cluster_test_failover;
+#[path = "cluster/cluster_test_data_digest.rs"]
+mod cluster_test_data_digest;
 #[path = "cluster/cluster_test_replication.rs"]
 mod cluster_test_replication;
+#[path = "cluster/cluster_test_ws_follower.rs"]
+mod cluster_test_ws_follower;
+#[path = "cluster/cluster_test_system_tables_replication.rs"]
+mod cluster_test_system_tables_replication;
+#[path = "cluster/cluster_test_subscription_nodes.rs"]
+mod cluster_test_subscription_nodes;
+#[path = "cluster/cluster_test_table_identity.rs"]
+mod cluster_test_table_identity;
+#[path = "cluster/cluster_test_multi_node_smoke.rs"]
+mod cluster_test_multi_node_smoke;
+#[path = "cluster/cluster_test_final_consistency.rs"]
+mod cluster_test_final_consistency;

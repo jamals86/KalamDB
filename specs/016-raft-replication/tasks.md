@@ -346,3 +346,25 @@ Display the clusterName here and which node we are connecting to: ● KalamDB[{{
 
 7) Make sure we also replicate the manifest files as well, so we have them in all replicates
 8) Make sure we first replicate the system changes and then the data after that when a node joins the cluster
+9) instead of using u64 use NodeId, like in target: u64,
+
+10) change job_id: &str to JobId, namespace_id: &str to NamespaceId, table_id: &str to TableId, storage_id: &str to StorageId, table_type: &str to TableType, user_id: &str to UserId everywhere in kalamdb-raft crate, node_id: u64 to NodeId
+
+11) make sure we are not parsing the sql statement multiple time to know where to forward it to, even when forwarding we need to create another grpc endpoint which takes the parsed one already when forwarded so we dont parse it multiple times
+
+12) \info is returning empoty version and build:
+Connection:
+  Server URL:     http://localhost:8080
+  Username:       root
+  Connected:      Yes
+  Session time:   47s
+
+Server:
+  Version:        
+  API Version:    v1
+  Build Date:     Unknown
+
+13) why we ever need to wait for all nodes to have the change? dont we make sure we dont return an ack until the change is replicated to min_replication_nodes? so waiting for all nodes is not needed right?
+
+14) do we still need: backend/crates/kalamdb-commons/src/cluster/live_query_broadcast.rs
+and backend/crates/kalamdb-core/src/live/cluster_broadcast.rs

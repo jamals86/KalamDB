@@ -11,7 +11,8 @@ use crate::sql::executor::models::{ExecutionContext, ExecutionResult, ScalarValu
 use crate::sql::executor::parameter_validation::{validate_parameters, ParameterLimits};
 use async_trait::async_trait;
 use kalamdb_commons::models::datatypes::KalamDataType;
-use kalamdb_commons::models::{NamespaceId, Row, TableName};
+use kalamdb_commons::models::{NamespaceId, Row, TableId, TableName};
+use kalamdb_raft::{DataResponse, SharedDataCommand};
 use kalamdb_sql::statement_classifier::{SqlStatement, SqlStatementKind};
 use std::collections::BTreeMap;
 use sqlparser::ast::{
@@ -260,25 +261,34 @@ impl StatementHandler for UpdateHandler {
                     if let Some(id_value) =
                         self.extract_row_id_for_column(&where_pair, pk_column, &params)?
                     {
-                        // SharedTableProvider ignores user_id parameter (no RLS)
-                        match provider.update_by_id_field(
-                            effective_user_id,
-                            &id_value,
-                            updates.clone(),
-                        ) {
-                            Ok(_) => Ok(ExecutionResult::Updated { rows_affected: 1 }),
-                            Err(crate::error::KalamDbError::NotFound(_)) => {
-                                // Same fallback as USER tables: allow non-string PKs.
-                                if let Some(key) = provider
-                                    .find_row_key_by_id_field(effective_user_id, &id_value)?
-                                {
-                                    provider.update(effective_user_id, &key, updates)?;
-                                    Ok(ExecutionResult::Updated { rows_affected: 1 })
-                                } else {
-                                    Ok(ExecutionResult::Updated { rows_affected: 0 })
+                        // In cluster mode, route through Raft for replication
+                        if app_context.is_cluster_mode() {
+                            let rows_affected = self.execute_update_via_raft(
+                                &table_id,
+                                updates,
+                            ).await?;
+                            Ok(ExecutionResult::Updated { rows_affected })
+                        } else {
+                            // Standalone mode: update directly
+                            match provider.update_by_id_field(
+                                effective_user_id,
+                                &id_value,
+                                updates.clone(),
+                            ) {
+                                Ok(_) => Ok(ExecutionResult::Updated { rows_affected: 1 }),
+                                Err(crate::error::KalamDbError::NotFound(_)) => {
+                                    // Same fallback as USER tables: allow non-string PKs.
+                                    if let Some(key) = provider
+                                        .find_row_key_by_id_field(effective_user_id, &id_value)?
+                                    {
+                                        provider.update(effective_user_id, &key, updates)?;
+                                        Ok(ExecutionResult::Updated { rows_affected: 1 })
+                                    } else {
+                                        Ok(ExecutionResult::Updated { rows_affected: 0 })
+                                    }
                                 }
+                                Err(e) => Err(e),
                             }
-                            Err(e) => Err(e),
                         }
                     } else {
                         Err(KalamDbError::InvalidOperation(format!(
@@ -566,6 +576,38 @@ impl UpdateHandler {
             return self.coerce_scalar_value(val, target);
         }
         Ok(val)
+    }
+
+    /// Execute UPDATE via Raft consensus for cluster replication
+    async fn execute_update_via_raft(
+        &self,
+        table_id: &TableId,
+        updates: Row,
+    ) -> Result<usize, KalamDbError> {
+        let app_context = AppContext::get();
+        let executor = app_context.executor();
+
+        // Serialize the row updates
+        let updates_data = bincode::serde::encode_to_vec(&vec![updates], bincode::config::standard())
+            .map_err(|e| KalamDbError::InvalidOperation(format!("Failed to serialize updates: {}", e)))?;
+
+        let cmd = SharedDataCommand::Update {
+            table_id: table_id.clone(),
+            updates_data,
+            filter_data: None,
+        };
+
+        let response = executor
+            .execute_shared_data(cmd)
+            .await
+            .map_err(|e| KalamDbError::InvalidOperation(format!("Raft update failed: {}", e)))?;
+
+        match response {
+            DataResponse::RowsAffected(n) => Ok(n),
+            DataResponse::Ok => Ok(1),
+            DataResponse::Error { message } => Err(KalamDbError::InvalidOperation(message)),
+            _ => Ok(1),
+        }
     }
 }
 

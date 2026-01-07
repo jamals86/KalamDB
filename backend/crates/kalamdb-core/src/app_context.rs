@@ -9,7 +9,7 @@ use crate::jobs::executors::{
     JobRegistry, RestoreExecutor, RetentionExecutor, StreamEvictionExecutor, UserCleanupExecutor,
 };
 use crate::live::ConnectionsManager;
-use crate::live_query::LiveQueryManager;
+use crate::live_query::{ClusterLiveNotifier, LiveQueryManager};
 use crate::schema_registry::settings::{SettingsTableProvider, SettingsView};
 use crate::schema_registry::stats::StatsTableProvider;
 use crate::schema_registry::views::datatypes::{DatatypesTableProvider, DatatypesView};
@@ -349,12 +349,29 @@ impl AppContext {
                     let users_applier = Arc::new(crate::applier::ProviderUsersApplier::new(system_tables.clone()));
                     manager.set_users_applier(users_applier);
                     
+                    // Wire up data appliers for user/shared table replication
+                    // These ensure INSERT/UPDATE/DELETE data is replicated to all nodes
+                    log::info!("Wiring UserDataApplier for user table data replication...");
+                    let user_data_applier = Arc::new(crate::applier::ProviderUserDataApplier::new());
+                    manager.set_user_data_applier(user_data_applier);
+                    
+                    log::info!("Wiring SharedDataApplier for shared table data replication...");
+                    let shared_data_applier = Arc::new(crate::applier::ProviderSharedDataApplier::new());
+                    manager.set_shared_data_applier(shared_data_applier);
+                    
                     log::info!("Creating RaftExecutor...");
                     Arc::new(kalamdb_raft::RaftExecutor::new(manager))
                 } else {
                     log::info!("Standalone mode (no [cluster] config), using StandaloneExecutor");
                     Arc::new(crate::executor::StandaloneExecutor::new(system_tables.clone()))
                 };
+
+                if let Some(cluster_config) = &config.cluster {
+                    live_query_manager.set_cluster_notifier(Arc::new(ClusterLiveNotifier::new(
+                        executor.clone(),
+                        cluster_config.cluster_id.clone(),
+                    )));
+                }
 
                 // Wire up ClusterTableProvider with the executor
                 let cluster_provider = Arc::new(
@@ -516,7 +533,7 @@ impl AppContext {
         let job_manager = Arc::new(crate::jobs::JobsManager::new(jobs_provider, job_registry));
 
         // Create test NodeId
-        let node_id = Arc::new(NodeId::new("test-node".to_string()));
+        let node_id = Arc::new(NodeId::new(22));
 
         // Create connections manager for tests
         let connection_registry = ConnectionsManager::new(

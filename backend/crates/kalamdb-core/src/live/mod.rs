@@ -6,6 +6,7 @@
 //! Moved from kalamdb-live crate to kalamdb-core to avoid circular dependencies.
 
 pub mod connections_manager;
+pub mod cluster_broadcast;
 pub mod error;
 pub mod filter_eval;
 pub mod initial_data;
@@ -25,6 +26,7 @@ pub use connections_manager::{
     NotificationSender, SharedConnectionState, SubscriptionState,
 };
 
+pub use cluster_broadcast::ClusterLiveNotifier;
 pub use filter_eval::{matches as filter_matches, parse_where_clause};
 pub use initial_data::{InitialDataFetcher, InitialDataOptions, InitialDataResult};
 pub use manager::LiveQueryManager;
@@ -32,4 +34,3 @@ pub use notification::NotificationService;
 pub use query_parser::QueryParser;
 pub use subscription::{RegisteredSubscription, SubscriptionService};
 pub use types::{ChangeNotification, ChangeType, RegistryStats, SubscriptionResult};
-

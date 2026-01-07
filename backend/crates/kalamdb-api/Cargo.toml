@@ -43,6 +43,7 @@ log = { workspace = true }
 # Async runtime
 tokio = { workspace = true }
 futures-util = { workspace = true }
+reqwest = { workspace = true }
 
 # Async trait support
 async-trait = { workspace = true }

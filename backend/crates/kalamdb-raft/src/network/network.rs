@@ -34,52 +34,25 @@ impl std::error::Error for ConnectionError {}
 pub struct RaftNetwork {
     /// Target node ID
     target: u64,
-    /// Target node info
-    target_node: KalamNode,
     /// Group ID for this network
     group_id: GroupId,
-    /// Cached gRPC channel
-    channel: RwLock<Option<Channel>>,
+    /// Connect channel
+    channel: Channel,
 }
 
 impl RaftNetwork {
-    /// Create a new network instance for communicating with a specific node
-    pub fn new(target: u64, target_node: KalamNode, group_id: GroupId) -> Self {
+    /// Create a new network instance
+    pub fn new(target: u64, _target_node: KalamNode, group_id: GroupId, channel: Channel) -> Self {
         Self {
             target,
-            target_node,
             group_id,
-            channel: RwLock::new(None),
+            channel,
         }
     }
     
-    /// Get or create a gRPC channel to the target node
-    async fn get_channel(&self) -> Result<Channel, ConnectionError> {
-        // Check if we have a cached channel
-        {
-            let channel = self.channel.read();
-            if let Some(ch) = channel.as_ref() {
-                return Ok(ch.clone());
-            }
-        }
-        
-        // Create a new channel
-        let endpoint = format!("http://{}", self.target_node.rpc_addr);
-        let channel = Channel::from_shared(endpoint)
-            .map_err(|e| ConnectionError(format!("Invalid URI: {}", e)))?
-            .connect_timeout(std::time::Duration::from_secs(5))
-            .timeout(std::time::Duration::from_secs(30))
-            .connect()
-            .await
-            .map_err(|e| ConnectionError(format!("Connection failed: {}", e)))?;
-        
-        // Cache the channel
-        {
-            let mut cached = self.channel.write();
-            *cached = Some(channel.clone());
-        }
-        
-        Ok(channel)
+    /// Get the gRPC channel
+    fn get_channel(&self) -> Result<Channel, ConnectionError> {
+        Ok(self.channel.clone())
     }
 }
 
@@ -90,7 +63,7 @@ impl OpenRaftNetwork<KalamTypeConfig> for RaftNetwork {
         _option: RPCOption,
     ) -> Result<AppendEntriesResponse<u64>, RPCError<u64, KalamNode, RaftError<u64>>> {
         // Get channel
-        let channel = self.get_channel().await
+        let channel = self.get_channel()
             .map_err(|e| RPCError::Unreachable(Unreachable::new(&e)))?;
         
         // Serialize request
@@ -131,7 +104,7 @@ impl OpenRaftNetwork<KalamTypeConfig> for RaftNetwork {
         _option: RPCOption,
     ) -> Result<InstallSnapshotResponse<u64>, RPCError<u64, KalamNode, RaftError<u64, InstallSnapshotError>>> {
         // Get channel
-        let channel = self.get_channel().await
+        let channel = self.get_channel()
             .map_err(|e| RPCError::Unreachable(Unreachable::new(&e)))?;
         
         // Serialize request
@@ -172,7 +145,7 @@ impl OpenRaftNetwork<KalamTypeConfig> for RaftNetwork {
         _option: RPCOption,
     ) -> Result<VoteResponse<u64>, RPCError<u64, KalamNode, RaftError<u64>>> {
         // Get channel
-        let channel = self.get_channel().await
+        let channel = self.get_channel()
             .map_err(|e| RPCError::Unreachable(Unreachable::new(&e)))?;
         
         // Serialize request
@@ -215,6 +188,8 @@ pub struct RaftNetworkFactory {
     group_id: GroupId,
     /// Known nodes in the cluster
     nodes: Arc<RwLock<HashMap<u64, KalamNode>>>,
+    /// Cached gRPC channels (node_id -> channel)
+    channels: Arc<dashmap::DashMap<u64, Channel>>,
 }
 
 impl RaftNetworkFactory {
@@ -223,6 +198,7 @@ impl RaftNetworkFactory {
         Self {
             group_id,
             nodes: Arc::new(RwLock::new(HashMap::new())),
+            channels: Arc::new(dashmap::DashMap::new()),
         }
     }
     
@@ -252,7 +228,30 @@ impl OpenRaftNetworkFactory<KalamTypeConfig> for RaftNetworkFactory {
         // Register the node if not already known
         self.register_node(target, node.clone());
         
-        RaftNetwork::new(target, node.clone(), self.group_id)
+        // Get or create channel
+        let channel = if let Some(ch) = self.channels.get(&target) {
+            ch.clone()
+        } else {
+            // Need to create a new channel
+            // Note: Tonic's connect is async, but we can't easily do async inside dashmap entry
+            // So we do it outside. This might race but it's fine (last one wins)
+            
+            // Note: We use the endpoint from the provided node info
+            let endpoint = format!("http://{}", node.rpc_addr);
+            
+            // Create a channel that lazily connects
+            // This avoids making a connection just to check if it works
+            let ch = Channel::from_shared(endpoint)
+                .expect("Invalid URI")
+                .connect_timeout(std::time::Duration::from_secs(5))
+                .timeout(std::time::Duration::from_secs(30))
+                .connect_lazy();
+                
+            self.channels.insert(target, ch.clone());
+            ch
+        };
+        
+        RaftNetwork::new(target, node.clone(), self.group_id, channel)
     }
 }
 

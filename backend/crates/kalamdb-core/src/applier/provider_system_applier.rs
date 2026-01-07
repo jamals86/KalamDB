@@ -4,9 +4,14 @@
 //! that persists system metadata to the actual providers (RocksDB-backed stores).
 
 use async_trait::async_trait;
+use datafusion::catalog::MemorySchemaProvider;
 use std::sync::Arc;
 
-use kalamdb_commons::models::schemas::{TableDefinition, TableType};
+use crate::app_context::AppContext;
+use crate::sql::executor::helpers::table_registration::{
+    register_shared_table_provider, register_stream_table_provider, register_user_table_provider,
+};
+use kalamdb_commons::models::schemas::{TableDefinition, TableOptions, TableType};
 use kalamdb_commons::models::{NamespaceId, StorageId, TableId, UserId};
 use kalamdb_commons::system::Namespace;
 use kalamdb_raft::{RaftError, SystemApplier};
@@ -25,6 +30,84 @@ impl ProviderSystemApplier {
     pub fn new(system_tables: Arc<SystemTablesRegistry>) -> Self {
         Self { system_tables }
     }
+
+    fn register_namespace_schema(&self, namespace_id: &NamespaceId) -> Result<(), RaftError> {
+        let app_ctx = AppContext::get();
+        let base_session = app_ctx.base_session_context();
+        let catalog = base_session.catalog("kalam").ok_or_else(|| {
+            RaftError::provider("Catalog 'kalam' not found in session".to_string())
+        })?;
+
+        if catalog.schema(namespace_id.as_str()).is_some() {
+            return Ok(());
+        }
+
+        let schema_provider = Arc::new(MemorySchemaProvider::new());
+        catalog
+            .register_schema(namespace_id.as_str(), schema_provider)
+            .map_err(|e| {
+                RaftError::provider(format!(
+                    "Failed to register namespace schema '{}': {}",
+                    namespace_id.as_str(),
+                    e
+                ))
+            })?;
+
+        log::info!(
+            "ProviderSystemApplier: Registered DataFusion schema for namespace {}",
+            namespace_id
+        );
+
+        Ok(())
+    }
+
+    fn register_table_provider(
+        &self,
+        table_id: &TableId,
+        table_type: TableType,
+        table_def: &TableDefinition,
+    ) -> Result<(), RaftError> {
+        let app_ctx = AppContext::get();
+        let schema_registry = app_ctx.schema_registry();
+
+        if let Some(existing_provider) = schema_registry.get_provider(table_id) {
+            schema_registry
+                .insert_provider(table_id.clone(), existing_provider)
+                .map_err(|e| {
+                    RaftError::provider(format!(
+                        "Failed to re-register existing provider: {}",
+                        e
+                    ))
+                })?;
+            return Ok(());
+        }
+
+        let arrow_schema = table_def
+            .to_arrow_schema()
+            .map_err(|e| RaftError::provider(format!("Failed to build Arrow schema: {}", e)))?;
+
+        match table_type {
+            TableType::User => {
+                register_user_table_provider(&app_ctx, table_id, arrow_schema)
+                    .map_err(|e| RaftError::provider(format!("Failed to register USER table: {}", e)))
+            }
+            TableType::Shared => {
+                register_shared_table_provider(&app_ctx, table_id, arrow_schema)
+                    .map_err(|e| RaftError::provider(format!("Failed to register SHARED table: {}", e)))
+            }
+            TableType::Stream => {
+                let ttl_seconds = match &table_def.table_options {
+                    TableOptions::Stream(opts) => Some(opts.ttl_seconds),
+                    _ => None,
+                };
+                register_stream_table_provider(&app_ctx, table_id, arrow_schema, ttl_seconds)
+                    .map_err(|e| RaftError::provider(format!("Failed to register STREAM table: {}", e)))
+            }
+            TableType::System => Ok(()),
+        }?;
+
+        Ok(())
+    }
 }
 
 #[async_trait]
@@ -38,6 +121,8 @@ impl SystemApplier for ProviderSystemApplier {
             .create_namespace_async(namespace)
             .await
             .map_err(|e| RaftError::provider(format!("Failed to create namespace: {}", e)))?;
+
+        self.register_namespace_schema(namespace_id)?;
         
         Ok(())
     }
@@ -70,6 +155,8 @@ impl SystemApplier for ProviderSystemApplier {
             .create_table_async(table_id, &table_def)
             .await
             .map_err(|e| RaftError::provider(format!("Failed to create table: {}", e)))?;
+
+        self.register_table_provider(table_id, table_def.table_type, &table_def)?;
         
         Ok(())
     }
@@ -101,6 +188,9 @@ impl SystemApplier for ProviderSystemApplier {
             .delete_table_async(table_id)
             .await
             .map_err(|e| RaftError::provider(format!("Failed to drop table: {}", e)))?;
+
+        let app_ctx = AppContext::get();
+        let _ = app_ctx.schema_registry().remove_provider(table_id);
         
         Ok(())
     }

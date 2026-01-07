@@ -329,7 +329,7 @@ mod tests {
         // Create job
         let create_cmd = JobsCommand::CreateJob {
             job_id: job_id.clone(),
-            job_type: "flush".to_string(),
+            job_type: JobType::Flush,
             namespace_id: Some(NamespaceId::new("default")),
             table_name: Some(TableName::new("users")),
             config_json: None,
@@ -372,7 +372,7 @@ mod tests {
         // Create job
         let create_cmd = JobsCommand::CreateJob {
             job_id: job_id.clone(),
-            job_type: "flush".to_string(),
+            job_type: JobType::Flush,
             namespace_id: None,
             table_name: None,
             config_json: None,

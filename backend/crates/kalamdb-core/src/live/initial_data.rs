@@ -433,7 +433,7 @@ mod tests {
         let _guard = INITIAL_DATA_TEST_GUARD.lock().await;
         // Initialize global AppContext for the test (idempotent)
         let backend: Arc<dyn kalamdb_store::StorageBackend> = Arc::new(InMemoryBackend::new());
-        let node_id = kalamdb_commons::NodeId::new("test-node".to_string());
+        let node_id = kalamdb_commons::NodeId::new(1);
         let config = kalamdb_commons::ServerConfig::default();
 
         // We use init() which uses get_or_init() internally, so it's safe to call multiple times
@@ -577,7 +577,7 @@ mod tests {
         let _guard = INITIAL_DATA_TEST_GUARD.lock().await;
         // Initialize global AppContext for the test (idempotent)
         let backend: Arc<dyn kalamdb_store::StorageBackend> = Arc::new(InMemoryBackend::new());
-        let node_id = kalamdb_commons::NodeId::new("test-node-batch".to_string());
+        let node_id = kalamdb_commons::NodeId::new(2);
         let config = kalamdb_commons::ServerConfig::default();
 
         let app_context = crate::app_context::AppContext::init(
@@ -759,7 +759,7 @@ mod tests {
         let _guard = INITIAL_DATA_TEST_GUARD.lock().await;
         // Initialize global AppContext for the test (idempotent)
         let backend: Arc<dyn kalamdb_store::StorageBackend> = Arc::new(InMemoryBackend::new());
-        let node_id = kalamdb_commons::NodeId::new("test-node-last".to_string());
+        let node_id = kalamdb_commons::NodeId::new(3);
         let config = kalamdb_commons::ServerConfig::default();
 
         let app_context = crate::app_context::AppContext::init(

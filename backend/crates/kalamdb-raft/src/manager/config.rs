@@ -5,6 +5,8 @@
 
 use std::time::Duration;
 
+use kalamdb_commons::models::NodeId;
+
 use crate::config::ReplicationMode;
 
 /// Default number of user data shards
@@ -24,7 +26,7 @@ pub const DEFAULT_SHARED_DATA_SHARDS: u32 = 1;
 #[derive(Debug, Clone)]
 pub struct RaftManagerConfig {
     /// This node's ID (must be >= 1)
-    pub node_id: u64,
+    pub node_id: NodeId,
     
     /// This node's RPC address for Raft communication
     pub rpc_addr: String,
@@ -57,7 +59,7 @@ pub struct RaftManagerConfig {
 impl Default for RaftManagerConfig {
     fn default() -> Self {
         Self {
-            node_id: 1,
+            node_id: NodeId::new(1),
             rpc_addr: "127.0.0.1:9100".to_string(),
             api_addr: "127.0.0.1:8080".to_string(),
             peers: vec![],
@@ -80,7 +82,7 @@ impl From<kalamdb_commons::config::ClusterConfig> for RaftManagerConfig {
         };
         
         Self {
-            node_id: config.node_id,
+            node_id: NodeId::new(config.node_id),
             rpc_addr: config.rpc_addr,
             api_addr: config.api_addr,
             peers: config.peers.into_iter().map(PeerNode::from).collect(),
@@ -98,7 +100,7 @@ impl From<kalamdb_commons::config::ClusterConfig> for RaftManagerConfig {
 #[derive(Debug, Clone)]
 pub struct PeerNode {
     /// Peer's node ID
-    pub node_id: u64,
+    pub node_id: NodeId,
     
     /// Peer's RPC address for Raft communication
     pub rpc_addr: String,
@@ -110,7 +112,7 @@ pub struct PeerNode {
 impl From<kalamdb_commons::config::PeerConfig> for PeerNode {
     fn from(peer: kalamdb_commons::config::PeerConfig) -> Self {
         Self {
-            node_id: peer.node_id,
+            node_id: NodeId::new(peer.node_id),
             rpc_addr: peer.rpc_addr,
             api_addr: peer.api_addr,
         }
@@ -125,7 +127,7 @@ mod tests {
     fn test_default_config() {
         let config = RaftManagerConfig::default();
         
-        assert_eq!(config.node_id, 1);
+        assert_eq!(config.node_id, NodeId::new(1));
         assert_eq!(config.user_shards, DEFAULT_USER_DATA_SHARDS);
         assert_eq!(config.shared_shards, DEFAULT_SHARED_DATA_SHARDS);
         assert!(config.peers.is_empty());
@@ -141,7 +143,7 @@ mod tests {
         
         let peer = PeerNode::from(peer_config);
         
-        assert_eq!(peer.node_id, 2);
+        assert_eq!(peer.node_id, NodeId::new(2));
         assert_eq!(peer.rpc_addr, "127.0.0.1:9101");
         assert_eq!(peer.api_addr, "127.0.0.1:8081");
     }

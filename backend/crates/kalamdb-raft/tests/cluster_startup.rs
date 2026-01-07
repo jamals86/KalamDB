@@ -7,8 +7,9 @@
 
 use std::sync::Arc;
 
+use kalamdb_commons::models::NodeId;
 use kalamdb_raft::{
-    manager::{ClusterConfig, PeerConfig, RaftManager},
+    manager::{RaftManager, RaftManagerConfig, PeerNode},
     executor::RaftExecutor,
     CommandExecutor, GroupId,
 };
@@ -17,8 +18,8 @@ use kalamdb_raft::{
 #[tokio::test]
 async fn test_single_node_cluster_startup() {
     // Create cluster configuration for single-node mode
-    let config = ClusterConfig {
-        node_id: 1,
+    let config = RaftManagerConfig {
+        node_id: NodeId::new(1),
         rpc_addr: "127.0.0.1:9000".to_string(),
         api_addr: "127.0.0.1:8080".to_string(),
         peers: vec![],
@@ -30,7 +31,7 @@ async fn test_single_node_cluster_startup() {
     
     // Verify initial state
     assert!(!manager.is_started());
-    assert_eq!(manager.node_id(), 1);
+    assert_eq!(manager.node_id(), NodeId::new(1));
     assert_eq!(manager.group_count(), 36); // 3 meta + 32 user + 1 shared (defaults)
     
     // Start all Raft groups
@@ -59,8 +60,8 @@ async fn test_single_node_cluster_startup() {
 /// Test RaftExecutor with running cluster
 #[tokio::test]
 async fn test_raft_executor_with_cluster() {
-    let config = ClusterConfig {
-        node_id: 1,
+    let config = RaftManagerConfig {
+        node_id: NodeId::new(1),
         rpc_addr: "127.0.0.1:9001".to_string(),
         api_addr: "127.0.0.1:8081".to_string(),
         peers: vec![],
@@ -79,7 +80,7 @@ async fn test_raft_executor_with_cluster() {
     
     // Verify executor state
     assert!(executor.is_cluster_mode());
-    assert_eq!(executor.node_id(), 1);
+    assert_eq!(executor.node_id(), NodeId::new(1));
     assert!(executor.is_leader(GroupId::MetaSystem).await);
     
     println!("✅ RaftExecutor ready for cluster operations");
@@ -89,18 +90,18 @@ async fn test_raft_executor_with_cluster() {
 #[tokio::test] 
 async fn test_three_node_cluster_config() {
     // Create configuration for node 1 in a 3-node cluster
-    let config = ClusterConfig {
-        node_id: 1,
+    let config = RaftManagerConfig {
+        node_id: NodeId::new(1),
         rpc_addr: "127.0.0.1:9010".to_string(),
         api_addr: "127.0.0.1:8090".to_string(),
         peers: vec![
-            PeerConfig {
-                node_id: 2,
+            PeerNode {
+                node_id: NodeId::new(2),
                 rpc_addr: "127.0.0.1:9011".to_string(),
                 api_addr: "127.0.0.1:8091".to_string(),
             },
-            PeerConfig {
-                node_id: 3,
+            PeerNode {
+                node_id: NodeId::new(3),
                 rpc_addr: "127.0.0.1:9012".to_string(),
                 api_addr: "127.0.0.1:8092".to_string(),
             },
@@ -115,7 +116,7 @@ async fn test_three_node_cluster_config() {
     
     // Verify peer registration
     assert!(manager.is_started());
-    assert_eq!(manager.node_id(), 1);
+    assert_eq!(manager.node_id(), NodeId::new(1));
     
     println!("✅ Three-node cluster configuration validated");
     println!("   - Node 1: 127.0.0.1:9010 (this node)");
@@ -127,8 +128,8 @@ async fn test_three_node_cluster_config() {
 #[tokio::test]
 async fn test_configurable_shards() {
     // Create configuration with custom shard counts
-    let config = ClusterConfig {
-        node_id: 1,
+    let config = RaftManagerConfig {
+        node_id: NodeId::new(1),
         rpc_addr: "127.0.0.1:9020".to_string(),
         api_addr: "127.0.0.1:8095".to_string(),
         peers: vec![],

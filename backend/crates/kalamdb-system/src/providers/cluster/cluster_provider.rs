@@ -88,7 +88,7 @@ impl ClusterTableProvider {
 
         let num_nodes = info.nodes.len();
         let cluster_ids: Vec<&str> = vec![info.cluster_id.as_str(); num_nodes];
-        let node_ids: Vec<u64> = info.nodes.iter().map(|n| n.node_id).collect();
+        let node_ids: Vec<u64> = info.nodes.iter().map(|n| n.node_id.as_u64()).collect();
         let roles: Vec<&str> = info.nodes.iter().map(|n| n.role.as_str()).collect();
         let statuses: Vec<&str> = info.nodes.iter().map(|n| n.status.as_str()).collect();
         let rpc_addrs: Vec<&str> = info.nodes.iter().map(|n| n.rpc_addr.as_str()).collect();

@@ -203,6 +203,57 @@ impl SqlStatement {
         )
     }
 
+    /// Check if this statement is a write operation (modifies data or schema)
+    ///
+    /// Returns true for INSERT, UPDATE, DELETE, DDL (CREATE/ALTER/DROP),
+    /// and other operations that modify the database state.
+    /// Returns false for SELECT and read-only SHOW commands.
+    ///
+    /// Used for cluster mode to determine if request should be forwarded to leader.
+    pub fn is_write_operation(&self) -> bool {
+        match &self.kind {
+            // Read-only operations - can be served by any node
+            SqlStatementKind::Select
+            | SqlStatementKind::ShowNamespaces(_)
+            | SqlStatementKind::ShowStorages(_)
+            | SqlStatementKind::ShowTables(_)
+            | SqlStatementKind::DescribeTable(_)
+            | SqlStatementKind::ShowStats(_)
+            | SqlStatementKind::ShowManifest(_)
+            | SqlStatementKind::DataFusionMetaCommand
+            | SqlStatementKind::Unknown => false,
+
+            // USE NAMESPACE only affects session state, not cluster state
+            SqlStatementKind::UseNamespace(_) => false,
+
+            // All other operations modify data or schema - must go to leader
+            SqlStatementKind::CreateNamespace(_)
+            | SqlStatementKind::AlterNamespace(_)
+            | SqlStatementKind::DropNamespace(_)
+            | SqlStatementKind::CreateStorage(_)
+            | SqlStatementKind::AlterStorage(_)
+            | SqlStatementKind::DropStorage(_)
+            | SqlStatementKind::CreateTable(_)
+            | SqlStatementKind::CreateView(_)
+            | SqlStatementKind::AlterTable(_)
+            | SqlStatementKind::DropTable(_)
+            | SqlStatementKind::Insert(_)
+            | SqlStatementKind::Update(_)
+            | SqlStatementKind::Delete(_)
+            | SqlStatementKind::FlushTable(_)
+            | SqlStatementKind::FlushAllTables(_)
+            | SqlStatementKind::KillJob(_)
+            | SqlStatementKind::KillLiveQuery(_)
+            | SqlStatementKind::Subscribe(_)
+            | SqlStatementKind::CreateUser(_)
+            | SqlStatementKind::AlterUser(_)
+            | SqlStatementKind::DropUser(_)
+            | SqlStatementKind::BeginTransaction
+            | SqlStatementKind::CommitTransaction
+            | SqlStatementKind::RollbackTransaction => true,
+        }
+    }
+
     /// Get a human-readable name for this statement type
     pub fn name(&self) -> &'static str {
         match &self.kind {

@@ -10,6 +10,8 @@ use async_trait::async_trait;
 use bincode::config;
 use openraft::ServerState;
 
+use kalamdb_commons::models::{NodeId, UserId};
+
 use crate::cluster_types::NodeStatus;
 use crate::{
     manager::RaftManager,
@@ -53,12 +55,12 @@ impl RaftExecutor {
     }
     
     /// Compute the shard for a user based on their ID
-    fn user_shard(&self, user_id: &str) -> u32 {
+    fn user_shard(&self, user_id: &UserId) -> u32 {
         use std::hash::{Hash, Hasher};
         use std::collections::hash_map::DefaultHasher;
         
         let mut hasher = DefaultHasher::new();
-        user_id.hash(&mut hasher);
+        user_id.as_str().hash(&mut hasher);
         (hasher.finish() % 32) as u32
     }
 }
@@ -83,7 +85,7 @@ impl CommandExecutor for RaftExecutor {
         Self::deserialize(&result)
     }
 
-    async fn execute_user_data(&self, user_id: &str, cmd: UserDataCommand) -> Result<DataResponse> {
+    async fn execute_user_data(&self, user_id: &UserId, cmd: UserDataCommand) -> Result<DataResponse> {
         let shard = self.user_shard(user_id);
         let bytes = Self::serialize(&cmd)?;
         let result = self.manager.propose_user_data(shard, bytes).await?;
@@ -101,7 +103,7 @@ impl CommandExecutor for RaftExecutor {
         self.manager.is_leader(group)
     }
 
-    async fn get_leader(&self, group: GroupId) -> Option<u64> {
+    async fn get_leader(&self, group: GroupId) -> Option<NodeId> {
         self.manager.current_leader(group)
     }
 
@@ -109,7 +111,7 @@ impl CommandExecutor for RaftExecutor {
         true
     }
 
-    fn node_id(&self) -> u64 {
+    fn node_id(&self) -> NodeId {
         self.manager.node_id()
     }
     
@@ -150,7 +152,7 @@ impl CommandExecutor for RaftExecutor {
             } else {
                 // Fallback to config when metrics not available
                 nodes_map.insert(
-                    config.node_id,
+                    config.node_id.as_u64(),
                     KalamNode {
                         rpc_addr: config.rpc_addr.clone(),
                         api_addr: config.api_addr.clone(),
@@ -158,7 +160,7 @@ impl CommandExecutor for RaftExecutor {
                 );
                 for peer in &config.peers {
                     nodes_map.insert(
-                        peer.node_id,
+                        peer.node_id.as_u64(),
                         KalamNode {
                             rpc_addr: peer.rpc_addr.clone(),
                             api_addr: peer.api_addr.clone(),
@@ -167,7 +169,7 @@ impl CommandExecutor for RaftExecutor {
                 }
                 voter_ids.extend(nodes_map.keys().copied());
                 (
-                    if self_groups_leading > 0 { Some(config.node_id) } else { None },
+                    if self_groups_leading > 0 { Some(config.node_id.as_u64()) } else { None },
                     0,
                     None,
                     None,
@@ -193,7 +195,7 @@ impl CommandExecutor for RaftExecutor {
 
         let mut nodes = Vec::with_capacity(nodes_map.len());
         for (node_id, node) in nodes_map {
-            let is_self = node_id == config.node_id;
+            let is_self = node_id == config.node_id.as_u64();
             let is_leader = leader_id == Some(node_id);
             
             // Determine role for each node using OpenRaft ServerState
@@ -231,7 +233,7 @@ impl CommandExecutor for RaftExecutor {
             };
 
             nodes.push(ClusterNodeInfo {
-                node_id,
+                node_id: NodeId::from(node_id),
                 role,
                 status,
                 rpc_addr: node.rpc_addr,

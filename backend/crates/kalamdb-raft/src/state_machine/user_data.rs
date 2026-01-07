@@ -7,14 +7,17 @@
 //! Runs in DataUserShard(N) Raft groups where N = user_id % 32.
 
 use async_trait::async_trait;
-use kalamdb_commons::models::NodeId;
+use kalamdb_commons::models::{NodeId, UserId};
 use parking_lot::RwLock;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::Arc;
 
-use crate::{GroupId, RaftError, UserDataCommand, DataResponse};
-use super::{ApplyResult, KalamStateMachine, StateMachineSnapshot, encode, decode};
+use crate::applier::UserDataApplier;
+use crate::{DataResponse, GroupId, RaftError, UserDataCommand};
+
+use super::{decode, encode, ApplyResult, KalamStateMachine, StateMachineSnapshot};
 
 /// Live query state for this shard
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -57,10 +60,8 @@ struct UserDataSnapshot {
 /// - RegisterLiveQuery, UnregisterLiveQuery
 /// - CleanupNodeSubscriptions, PingLiveQuery
 ///
-/// Note: Actual row data is stored in RocksDB/Parquet via the storage layer.
-/// The Raft log ensures ordering and consistency of operations, but the
-/// state machine delegates actual writes to the storage backend.
-#[derive(Debug)]
+/// Note: Row data is persisted via the UserDataApplier after Raft consensus.
+/// All nodes (leader and followers) call the applier, ensuring consistent data.
 pub struct UserDataStateMachine {
     /// Which shard this state machine handles (0-31)
     shard: u32,
@@ -74,6 +75,21 @@ pub struct UserDataStateMachine {
     total_operations: AtomicU64,
     /// Active live queries
     live_queries: RwLock<HashMap<String, LiveQueryState>>,
+    /// Optional applier for persisting data to providers
+    applier: RwLock<Option<Arc<dyn UserDataApplier>>>,
+}
+
+impl std::fmt::Debug for UserDataStateMachine {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("UserDataStateMachine")
+            .field("shard", &self.shard)
+            .field(
+                "last_applied_index",
+                &self.last_applied_index.load(Ordering::Relaxed),
+            )
+            .field("has_applier", &self.applier.read().is_some())
+            .finish()
+    }
 }
 
 impl UserDataStateMachine {
@@ -87,39 +103,134 @@ impl UserDataStateMachine {
             approximate_size: AtomicU64::new(0),
             total_operations: AtomicU64::new(0),
             live_queries: RwLock::new(HashMap::new()),
+            applier: RwLock::new(None),
         }
+    }
+
+    /// Create a new UserDataStateMachine with an applier
+    pub fn with_applier(shard: u32, applier: Arc<dyn UserDataApplier>) -> Self {
+        assert!(shard < 32, "Shard must be 0-31");
+        Self {
+            shard,
+            last_applied_index: AtomicU64::new(0),
+            last_applied_term: AtomicU64::new(0),
+            approximate_size: AtomicU64::new(0),
+            total_operations: AtomicU64::new(0),
+            live_queries: RwLock::new(HashMap::new()),
+            applier: RwLock::new(Some(applier)),
+        }
+    }
+
+    /// Set the applier for persisting data to providers
+    ///
+    /// This is called after RaftManager creation once providers are available.
+    pub fn set_applier(&self, applier: Arc<dyn UserDataApplier>) {
+        let mut guard = self.applier.write();
+        *guard = Some(applier);
+        log::info!(
+            "UserDataStateMachine[{}]: Applier registered for data persistence",
+            self.shard
+        );
     }
     
     /// Apply a user data command
-    async fn apply_command(&self, _user_id: &str, cmd: UserDataCommand) -> Result<DataResponse, RaftError> {
+    async fn apply_command(
+        &self,
+        _user_id: &UserId,
+        cmd: UserDataCommand,
+    ) -> Result<DataResponse, RaftError> {
+        // Get applier reference
+        let applier = {
+            let guard = self.applier.read();
+            guard.clone()
+        };
+
         match cmd {
-            UserDataCommand::Insert { table_id, rows_data, .. } => {
+            UserDataCommand::Insert {
+                table_id,
+                user_id,
+                rows_data,
+            } => {
                 log::debug!(
                     "UserDataStateMachine[{}]: Insert into {:?} ({} bytes)",
-                    self.shard, table_id, rows_data.len()
+                    self.shard,
+                    table_id,
+                    rows_data.len()
                 );
-                
-                // NOTE: Actual insert is delegated to the storage layer
-                // The Raft log entry ensures this operation is ordered consistently
-                // The executor will call the actual UserTableStore after consensus
-                
+
+                // Persist data via applier if available
+                let rows_affected = if let Some(ref a) = applier {
+                    a.insert(&table_id, &user_id, &rows_data).await?
+                } else {
+                    log::warn!(
+                        "UserDataStateMachine[{}]: No applier set, data not persisted!",
+                        self.shard
+                    );
+                    0
+                };
+
                 self.total_operations.fetch_add(1, Ordering::Relaxed);
-                self.approximate_size.fetch_add(rows_data.len() as u64, Ordering::Relaxed);
-                
-                // Return placeholder - actual row count comes from storage layer
-                Ok(DataResponse::RowsAffected(0))
+                self.approximate_size
+                    .fetch_add(rows_data.len() as u64, Ordering::Relaxed);
+
+                Ok(DataResponse::RowsAffected(rows_affected))
             }
-            
-            UserDataCommand::Update { table_id, .. } => {
-                log::debug!("UserDataStateMachine[{}]: Update {:?}", self.shard, table_id);
+
+            UserDataCommand::Update {
+                table_id,
+                user_id,
+                updates_data,
+                filter_data,
+            } => {
+                log::debug!(
+                    "UserDataStateMachine[{}]: Update {:?}",
+                    self.shard,
+                    table_id
+                );
+
+                let rows_affected = if let Some(ref a) = applier {
+                    a.update(
+                        &table_id,
+                        &user_id,
+                        &updates_data,
+                        filter_data.as_deref(),
+                    )
+                    .await?
+                } else {
+                    log::warn!(
+                        "UserDataStateMachine[{}]: No applier set, update not persisted!",
+                        self.shard
+                    );
+                    0
+                };
+
                 self.total_operations.fetch_add(1, Ordering::Relaxed);
-                Ok(DataResponse::RowsAffected(0))
+                Ok(DataResponse::RowsAffected(rows_affected))
             }
-            
-            UserDataCommand::Delete { table_id, .. } => {
-                log::debug!("UserDataStateMachine[{}]: Delete from {:?}", self.shard, table_id);
+
+            UserDataCommand::Delete {
+                table_id,
+                user_id,
+                filter_data,
+            } => {
+                log::debug!(
+                    "UserDataStateMachine[{}]: Delete from {:?}",
+                    self.shard,
+                    table_id
+                );
+
+                let rows_affected = if let Some(ref a) = applier {
+                    a.delete(&table_id, &user_id, filter_data.as_deref()).await?
+                } else {
+                    log::warn!(
+                        "UserDataStateMachine[{}]: No applier set, delete not persisted!",
+                        self.shard
+                    );
+                    0
+                };
+
                 self.total_operations.fetch_add(1, Ordering::Relaxed);
-                Ok(DataResponse::RowsAffected(0))
+                Ok(DataResponse::RowsAffected(rows_affected))
             }
             
             UserDataCommand::RegisterLiveQuery { 
@@ -213,7 +324,8 @@ impl KalamStateMachine for UserDataStateMachine {
         }
         
         // Deserialize: (user_id, command)
-        let (user_id, cmd): (String, UserDataCommand) = decode(command)?;
+        let (user_id_str, cmd): (String, UserDataCommand) = decode(command)?;
+        let user_id = UserId::new(user_id_str);
         
         // Apply command
         let response = self.apply_command(&user_id, cmd).await?;
