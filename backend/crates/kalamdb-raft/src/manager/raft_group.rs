@@ -5,13 +5,14 @@
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
+use kalamdb_store::StorageBackend;
 use openraft::storage::Adaptor;
 use openraft::{Config, Raft, RaftMetrics};
 use parking_lot::RwLock;
 
-use crate::storage::{KalamRaftStorage, KalamTypeConfig, KalamNode};
 use crate::network::RaftNetworkFactory;
 use crate::state_machine::KalamStateMachine;
+use crate::storage::{KalamNode, KalamRaftStorage, KalamTypeConfig};
 use crate::{GroupId, RaftError};
 
 /// Type alias for the openraft Raft instance
@@ -28,19 +29,19 @@ pub type StorageAdaptor<SM> = Adaptor<KalamTypeConfig, Arc<KalamRaftStorage<SM>>
 pub struct RaftGroup<SM: KalamStateMachine + Send + Sync + 'static> {
     /// Group identifier
     group_id: GroupId,
-    
+
     /// The Raft instance
     raft: RwLock<Option<RaftInstance>>,
-    
+
     /// Combined storage for this group
     storage: Arc<KalamRaftStorage<SM>>,
-    
+
     /// Network factory for this group
     network_factory: RaftNetworkFactory,
 }
 
 impl<SM: KalamStateMachine + Send + Sync + 'static> RaftGroup<SM> {
-    /// Create a new Raft group (not yet started)
+    /// Create a new Raft group with in-memory storage (not yet started)
     pub fn new(group_id: GroupId, state_machine: SM) -> Self {
         Self {
             group_id,
@@ -49,7 +50,32 @@ impl<SM: KalamStateMachine + Send + Sync + 'static> RaftGroup<SM> {
             network_factory: RaftNetworkFactory::new(group_id),
         }
     }
-    
+
+    /// Create a new Raft group with persistent storage (not yet started)
+    ///
+    /// This mode persists Raft log entries, votes, and metadata to durable storage.
+    /// On restart, state is recovered from the persistent store.
+    pub fn new_persistent(
+        group_id: GroupId,
+        state_machine: SM,
+        backend: Arc<dyn StorageBackend>,
+    ) -> Result<Self, RaftError> {
+        let storage = KalamRaftStorage::new_persistent(group_id, state_machine, backend)
+            .map_err(|e| RaftError::Storage(format!("Failed to create persistent storage: {}", e)))?;
+
+        Ok(Self {
+            group_id,
+            raft: RwLock::new(None),
+            storage: Arc::new(storage),
+            network_factory: RaftNetworkFactory::new(group_id),
+        })
+    }
+
+    /// Check if this group is using persistent storage
+    pub fn is_persistent(&self) -> bool {
+        self.storage.is_persistent()
+    }
+
     /// Start the Raft group with the given node ID and configuration
     ///
     /// This initializes the Raft instance and begins participating in consensus.

@@ -135,7 +135,17 @@ impl SharedDataStateMachine {
 
                 // Persist data via applier if available
                 let rows_affected = if let Some(ref a) = applier {
-                    a.insert(&table_id, &rows_data).await?
+                    match a.insert(&table_id, &rows_data).await {
+                        Ok(count) => count,
+                        Err(e) => {
+                            log::warn!(
+                                "SharedDataStateMachine[{}]: Insert failed: {}",
+                                self.shard,
+                                e
+                            );
+                            return Ok(DataResponse::error(e.to_string()));
+                        }
+                    }
                 } else {
                     log::warn!(
                         "SharedDataStateMachine[{}]: No applier set, data not persisted!",
@@ -180,8 +190,18 @@ impl SharedDataStateMachine {
                 );
 
                 let rows_affected = if let Some(ref a) = applier {
-                    a.update(&table_id, &updates_data, filter_data.as_deref())
-                        .await?
+                    match a.update(&table_id, &updates_data, filter_data.as_deref())
+                        .await {
+                        Ok(count) => count,
+                        Err(e) => {
+                            log::warn!(
+                                "SharedDataStateMachine[{}]: Update failed: {}",
+                                self.shard,
+                                e
+                            );
+                            return Ok(DataResponse::error(e.to_string()));
+                        }
+                    }
                 } else {
                     log::warn!(
                         "SharedDataStateMachine[{}]: No applier set, update not persisted!",
@@ -220,7 +240,17 @@ impl SharedDataStateMachine {
                 );
 
                 let rows_affected = if let Some(ref a) = applier {
-                    a.delete(&table_id, filter_data.as_deref()).await?
+                    match a.delete(&table_id, filter_data.as_deref()).await {
+                        Ok(count) => count,
+                        Err(e) => {
+                            log::warn!(
+                                "SharedDataStateMachine[{}]: Delete failed: {}",
+                                self.shard,
+                                e
+                            );
+                            return Ok(DataResponse::error(e.to_string()));
+                        }
+                    }
                 } else {
                     log::warn!(
                         "SharedDataStateMachine[{}]: No applier set, delete not persisted!",

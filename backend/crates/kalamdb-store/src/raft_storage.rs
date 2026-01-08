@@ -1,0 +1,777 @@
+//! Raft log and metadata persistence via StorageBackend.
+//!
+//! This module provides durable storage for Raft consensus state using the
+//! generic `StorageBackend` abstraction. All Raft groups share a single partition
+//! (`raft_data`) with keys prefixed by group ID to avoid Column Family explosion.
+//!
+//! ## Key Layout
+//!
+//! ```text
+//! [GroupPrefix]:[KeyType]:[Suffix]
+//!
+//! Group Prefixes:
+//!   - MetaSystem:       "sys"
+//!   - MetaUsers:        "users"
+//!   - MetaJobs:         "jobs"
+//!   - DataUserShard(N): "u:{N:05}"
+//!   - DataSharedShard(N): "s:{N:05}"
+//!
+//! Key Types:
+//!   - log:{index:020}  → RaftLogEntry (bincode)
+//!   - meta:vote        → Vote<u64> (bincode)
+//!   - meta:commit      → Option<LogId<u64>> (bincode)
+//!   - meta:purge       → Option<LogId<u64>> (bincode)
+//!   - snap:meta        → SnapshotMeta (bincode)
+//!   - snap:data        → Snapshot file path (string) or inline bytes if small
+//! ```
+//!
+//! ## Usage
+//!
+//! ```rust,ignore
+//! use kalamdb_store::raft_storage::{RaftPartitionStore, RaftGroupId};
+//! use kalamdb_store::StorageBackend;
+//! use std::sync::Arc;
+//!
+//! let backend: Arc<dyn StorageBackend> = /* ... */;
+//! let store = RaftPartitionStore::new(backend, RaftGroupId::MetaSystem);
+//!
+//! // Append log entries
+//! store.append_logs(&entries)?;
+//!
+//! // Save vote
+//! store.save_vote(&vote)?;
+//! ```
+
+use crate::entity_store::KSerializable;
+use crate::storage_trait::{Operation, Partition, Result, StorageBackend};
+use serde::{Deserialize, Serialize};
+use std::sync::Arc;
+
+/// The single partition name for all Raft data.
+pub const RAFT_PARTITION_NAME: &str = "raft_data";
+
+// ============================================================================
+// Types
+// ============================================================================
+
+/// Raft group identifier for storage purposes.
+///
+/// This is a simplified version of `kalamdb_raft::GroupId` to avoid circular
+/// dependencies. The conversion is done at the boundary.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub enum RaftGroupId {
+    /// System metadata (namespaces, tables, storages)
+    MetaSystem,
+    /// User accounts and authentication
+    MetaUsers,
+    /// Background jobs coordination
+    MetaJobs,
+    /// User table data shard
+    DataUserShard(u32),
+    /// Shared table data shard
+    DataSharedShard(u32),
+}
+
+impl RaftGroupId {
+    /// Returns the key prefix for this group.
+    ///
+    /// All keys in `raft_data` partition are prefixed with this string.
+    pub fn key_prefix(&self) -> String {
+        match self {
+            RaftGroupId::MetaSystem => "sys".to_string(),
+            RaftGroupId::MetaUsers => "users".to_string(),
+            RaftGroupId::MetaJobs => "jobs".to_string(),
+            RaftGroupId::DataUserShard(n) => format!("u:{:05}", n),
+            RaftGroupId::DataSharedShard(n) => format!("s:{:05}", n),
+        }
+    }
+}
+
+/// A single Raft log entry for persistent storage.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct RaftLogEntry {
+    /// Log index (1-based, monotonically increasing)
+    pub index: u64,
+    /// Raft term when this entry was created
+    pub term: u64,
+    /// Serialized entry payload (command bytes)
+    pub payload: Vec<u8>,
+}
+
+impl KSerializable for RaftLogEntry {}
+
+/// Raft vote state for leader election.
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct RaftVote {
+    /// The term in which the vote was cast
+    pub term: u64,
+    /// Node ID that received the vote (None if no vote cast)
+    pub voted_for: Option<u64>,
+    /// Whether this node is the leader for this term
+    pub committed: bool,
+}
+
+impl KSerializable for RaftVote {}
+
+/// Raft log ID (term + index pair).
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+pub struct RaftLogId {
+    /// Leader term
+    pub term: u64,
+    /// Log index
+    pub index: u64,
+}
+
+impl KSerializable for RaftLogId {}
+
+/// Snapshot metadata (stored separately from snapshot data).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct RaftSnapshotMeta {
+    /// Last log ID included in the snapshot
+    pub last_log_id: Option<RaftLogId>,
+    /// Snapshot ID (unique identifier)
+    pub snapshot_id: String,
+    /// Size of the snapshot data in bytes
+    pub size_bytes: u64,
+}
+
+impl KSerializable for RaftSnapshotMeta {}
+
+/// Reference to snapshot data (path or inline bytes).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub enum RaftSnapshotData {
+    /// Snapshot data stored inline (for small snapshots)
+    Inline(Vec<u8>),
+    /// Snapshot data stored in external file (path)
+    FilePath(String),
+}
+
+impl KSerializable for RaftSnapshotData {}
+
+// ============================================================================
+// RaftPartitionStore
+// ============================================================================
+
+/// Persistent storage for a single Raft group's log and metadata.
+///
+/// All operations are synchronous and use the `StorageBackend` trait.
+/// Thread-safe via internal `Arc<dyn StorageBackend>`.
+pub struct RaftPartitionStore {
+    backend: Arc<dyn StorageBackend>,
+    group_id: RaftGroupId,
+    partition: Partition,
+}
+
+impl RaftPartitionStore {
+    /// Creates a new store for the given Raft group.
+    ///
+    /// The partition `raft_data` must already exist in the backend.
+    pub fn new(backend: Arc<dyn StorageBackend>, group_id: RaftGroupId) -> Self {
+        Self {
+            backend,
+            group_id,
+            partition: Partition::new(RAFT_PARTITION_NAME),
+        }
+    }
+
+    /// Returns the group ID this store is for.
+    pub fn group_id(&self) -> RaftGroupId {
+        self.group_id
+    }
+
+    // ------------------------------------------------------------------------
+    // Key construction helpers
+    // ------------------------------------------------------------------------
+
+    fn make_key(&self, suffix: &str) -> Vec<u8> {
+        format!("{}:{}", self.group_id.key_prefix(), suffix).into_bytes()
+    }
+
+    fn log_key(&self, index: u64) -> Vec<u8> {
+        self.make_key(&format!("log:{:020}", index))
+    }
+
+    fn vote_key(&self) -> Vec<u8> {
+        self.make_key("meta:vote")
+    }
+
+    fn commit_key(&self) -> Vec<u8> {
+        self.make_key("meta:commit")
+    }
+
+    fn purge_key(&self) -> Vec<u8> {
+        self.make_key("meta:purge")
+    }
+
+    fn snap_meta_key(&self) -> Vec<u8> {
+        self.make_key("snap:meta")
+    }
+
+    fn snap_data_key(&self) -> Vec<u8> {
+        self.make_key("snap:data")
+    }
+
+    // ------------------------------------------------------------------------
+    // Log operations
+    // ------------------------------------------------------------------------
+
+    /// Appends log entries to storage.
+    ///
+    /// Entries must have consecutive indices. Uses batch write for atomicity.
+    pub fn append_logs(&self, entries: &[RaftLogEntry]) -> Result<()> {
+        if entries.is_empty() {
+            return Ok(());
+        }
+
+        let ops: Vec<Operation> = entries
+            .iter()
+            .map(|entry| {
+                let key = self.log_key(entry.index);
+                let value = entry.encode()?;
+                Ok(Operation::Put {
+                    partition: self.partition.clone(),
+                    key,
+                    value,
+                })
+            })
+            .collect::<Result<Vec<_>>>()?;
+
+        self.backend.batch(ops)
+    }
+
+    /// Retrieves a single log entry by index.
+    pub fn get_log(&self, index: u64) -> Result<Option<RaftLogEntry>> {
+        let key = self.log_key(index);
+        match self.backend.get(&self.partition, &key)? {
+            Some(bytes) => Ok(Some(RaftLogEntry::decode(&bytes)?)),
+            None => Ok(None),
+        }
+    }
+
+    /// Scans log entries in the range [start, end).
+    pub fn scan_logs(&self, start: u64, end: u64) -> Result<Vec<RaftLogEntry>> {
+        if start >= end {
+            return Ok(Vec::new());
+        }
+
+        let prefix = self.make_key("log:");
+        let start_key = self.log_key(start);
+
+        let iter = self
+            .backend
+            .scan(&self.partition, Some(&prefix), Some(&start_key), None)?;
+
+        let mut entries = Vec::with_capacity((end - start) as usize);
+        for (key, value) in iter {
+            // Parse index and check if < end
+            if let Some(index) = Self::parse_log_index_from_key(&key) {
+                if index >= end {
+                    break; // Keys are sorted, so we can stop
+                }
+                entries.push(RaftLogEntry::decode(&value)?);
+            }
+        }
+
+        Ok(entries)
+    }
+
+    /// Deletes all log entries with index < `before_index`.
+    ///
+    /// Used for log compaction after a snapshot is taken.
+    pub fn delete_logs_before(&self, before_index: u64) -> Result<()> {
+        if before_index == 0 {
+            return Ok(());
+        }
+
+        // Scan all log keys with log prefix
+        let prefix = self.make_key("log:");
+
+        let iter = self
+            .backend
+            .scan(&self.partition, Some(&prefix), None, None)?;
+
+        let ops: Vec<Operation> = iter
+            .filter_map(|(key, _)| {
+                // Parse index and check if < before_index
+                if let Some(index) = Self::parse_log_index_from_key(&key) {
+                    if index < before_index {
+                        return Some(Operation::Delete {
+                            partition: self.partition.clone(),
+                            key,
+                        });
+                    }
+                }
+                None
+            })
+            .collect();
+
+        if !ops.is_empty() {
+            self.backend.batch(ops)?;
+        }
+
+        Ok(())
+    }
+
+    /// Returns the last (highest) log index, or None if log is empty.
+    pub fn last_log_index(&self) -> Result<Option<u64>> {
+        // Scan all log entries and find the max index
+        let prefix = self.make_key("log:");
+
+        let iter = self
+            .backend
+            .scan(&self.partition, Some(&prefix), None, None)?;
+
+        // Get the last entry (keys are sorted, so last is highest)
+        let mut last_index: Option<u64> = None;
+        for (key, _) in iter {
+            if let Some(index) = Self::parse_log_index_from_key(&key) {
+                last_index = Some(index);
+            }
+        }
+
+        Ok(last_index)
+    }
+
+    /// Returns the first (lowest) log index, or None if log is empty.
+    pub fn first_log_index(&self) -> Result<Option<u64>> {
+        let prefix = self.make_key("log:");
+
+        let iter = self
+            .backend
+            .scan(&self.partition, Some(&prefix), None, Some(1))?;
+
+        for (key, _) in iter {
+            if let Some(index) = Self::parse_log_index_from_key(&key) {
+                return Ok(Some(index));
+            }
+        }
+
+        Ok(None)
+    }
+
+    fn parse_log_index_from_key(key: &[u8]) -> Option<u64> {
+        let key_str = std::str::from_utf8(key).ok()?;
+        // Key format: "{prefix}:log:{index:020}"
+        let parts: Vec<&str> = key_str.split(':').collect();
+        if parts.len() >= 2 && parts[parts.len() - 2] == "log" {
+            parts.last()?.parse().ok()
+        } else {
+            None
+        }
+    }
+
+    // ------------------------------------------------------------------------
+    // Vote operations
+    // ------------------------------------------------------------------------
+
+    /// Saves the current vote state.
+    pub fn save_vote(&self, vote: &RaftVote) -> Result<()> {
+        let key = self.vote_key();
+        let value = vote.encode()?;
+        self.backend.put(&self.partition, &key, &value)
+    }
+
+    /// Reads the current vote state.
+    pub fn read_vote(&self) -> Result<Option<RaftVote>> {
+        let key = self.vote_key();
+        match self.backend.get(&self.partition, &key)? {
+            Some(bytes) => Ok(Some(RaftVote::decode(&bytes)?)),
+            None => Ok(None),
+        }
+    }
+
+    // ------------------------------------------------------------------------
+    // Commit/Purge operations
+    // ------------------------------------------------------------------------
+
+    /// Saves the committed log ID.
+    pub fn save_commit(&self, commit: Option<RaftLogId>) -> Result<()> {
+        let key = self.commit_key();
+        match commit {
+            Some(log_id) => {
+                let value = log_id.encode()?;
+                self.backend.put(&self.partition, &key, &value)
+            }
+            None => self.backend.delete(&self.partition, &key),
+        }
+    }
+
+    /// Reads the committed log ID.
+    pub fn read_commit(&self) -> Result<Option<RaftLogId>> {
+        let key = self.commit_key();
+        match self.backend.get(&self.partition, &key)? {
+            Some(bytes) => Ok(Some(RaftLogId::decode(&bytes)?)),
+            None => Ok(None),
+        }
+    }
+
+    /// Saves the last purged log ID.
+    pub fn save_purge(&self, purge: Option<RaftLogId>) -> Result<()> {
+        let key = self.purge_key();
+        match purge {
+            Some(log_id) => {
+                let value = log_id.encode()?;
+                self.backend.put(&self.partition, &key, &value)
+            }
+            None => self.backend.delete(&self.partition, &key),
+        }
+    }
+
+    /// Reads the last purged log ID.
+    pub fn read_purge(&self) -> Result<Option<RaftLogId>> {
+        let key = self.purge_key();
+        match self.backend.get(&self.partition, &key)? {
+            Some(bytes) => Ok(Some(RaftLogId::decode(&bytes)?)),
+            None => Ok(None),
+        }
+    }
+
+    // ------------------------------------------------------------------------
+    // Snapshot operations
+    // ------------------------------------------------------------------------
+
+    /// Saves snapshot metadata.
+    pub fn save_snapshot_meta(&self, meta: &RaftSnapshotMeta) -> Result<()> {
+        let key = self.snap_meta_key();
+        let value = meta.encode()?;
+        self.backend.put(&self.partition, &key, &value)
+    }
+
+    /// Reads snapshot metadata.
+    pub fn read_snapshot_meta(&self) -> Result<Option<RaftSnapshotMeta>> {
+        let key = self.snap_meta_key();
+        match self.backend.get(&self.partition, &key)? {
+            Some(bytes) => Ok(Some(RaftSnapshotMeta::decode(&bytes)?)),
+            None => Ok(None),
+        }
+    }
+
+    /// Saves snapshot data reference (inline or file path).
+    pub fn save_snapshot_data(&self, data: &RaftSnapshotData) -> Result<()> {
+        let key = self.snap_data_key();
+        let value = data.encode()?;
+        self.backend.put(&self.partition, &key, &value)
+    }
+
+    /// Reads snapshot data reference.
+    pub fn read_snapshot_data(&self) -> Result<Option<RaftSnapshotData>> {
+        let key = self.snap_data_key();
+        match self.backend.get(&self.partition, &key)? {
+            Some(bytes) => Ok(Some(RaftSnapshotData::decode(&bytes)?)),
+            None => Ok(None),
+        }
+    }
+
+    /// Clears all snapshot data (meta and data reference).
+    pub fn clear_snapshot(&self) -> Result<()> {
+        let ops = vec![
+            Operation::Delete {
+                partition: self.partition.clone(),
+                key: self.snap_meta_key(),
+            },
+            Operation::Delete {
+                partition: self.partition.clone(),
+                key: self.snap_data_key(),
+            },
+        ];
+        self.backend.batch(ops)
+    }
+}
+
+// ============================================================================
+// Tests
+// ============================================================================
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::test_utils::InMemoryBackend;
+
+    fn create_test_store(group_id: RaftGroupId) -> RaftPartitionStore {
+        let backend = Arc::new(InMemoryBackend::new());
+        // Create the raft_data partition
+        backend
+            .create_partition(&Partition::new(RAFT_PARTITION_NAME))
+            .unwrap();
+        RaftPartitionStore::new(backend, group_id)
+    }
+
+    #[test]
+    fn test_append_and_get_log() {
+        let store = create_test_store(RaftGroupId::MetaSystem);
+
+        let entries = vec![
+            RaftLogEntry {
+                index: 1,
+                term: 1,
+                payload: b"cmd1".to_vec(),
+            },
+            RaftLogEntry {
+                index: 2,
+                term: 1,
+                payload: b"cmd2".to_vec(),
+            },
+            RaftLogEntry {
+                index: 3,
+                term: 2,
+                payload: b"cmd3".to_vec(),
+            },
+        ];
+
+        store.append_logs(&entries).unwrap();
+
+        // Get individual entries
+        let entry1 = store.get_log(1).unwrap().unwrap();
+        assert_eq!(entry1.index, 1);
+        assert_eq!(entry1.term, 1);
+        assert_eq!(entry1.payload, b"cmd1");
+
+        let entry3 = store.get_log(3).unwrap().unwrap();
+        assert_eq!(entry3.term, 2);
+
+        // Non-existent entry
+        assert!(store.get_log(99).unwrap().is_none());
+    }
+
+    #[test]
+    fn test_scan_logs() {
+        let store = create_test_store(RaftGroupId::MetaUsers);
+
+        let entries: Vec<RaftLogEntry> = (1..=10)
+            .map(|i| RaftLogEntry {
+                index: i,
+                term: 1,
+                payload: format!("cmd{}", i).into_bytes(),
+            })
+            .collect();
+
+        store.append_logs(&entries).unwrap();
+
+        // Scan range [3, 7)
+        let scanned = store.scan_logs(3, 7).unwrap();
+        assert_eq!(scanned.len(), 4);
+        assert_eq!(scanned[0].index, 3);
+        assert_eq!(scanned[3].index, 6);
+
+        // Empty range
+        assert!(store.scan_logs(5, 5).unwrap().is_empty());
+        assert!(store.scan_logs(10, 5).unwrap().is_empty());
+    }
+
+    #[test]
+    fn test_first_last_log_index() {
+        let store = create_test_store(RaftGroupId::MetaJobs);
+
+        // Empty log
+        assert!(store.first_log_index().unwrap().is_none());
+        assert!(store.last_log_index().unwrap().is_none());
+
+        // Add some entries
+        let entries = vec![
+            RaftLogEntry {
+                index: 5,
+                term: 1,
+                payload: vec![],
+            },
+            RaftLogEntry {
+                index: 6,
+                term: 1,
+                payload: vec![],
+            },
+            RaftLogEntry {
+                index: 7,
+                term: 1,
+                payload: vec![],
+            },
+        ];
+        store.append_logs(&entries).unwrap();
+
+        assert_eq!(store.first_log_index().unwrap(), Some(5));
+        assert_eq!(store.last_log_index().unwrap(), Some(7));
+    }
+
+    #[test]
+    fn test_delete_logs_before() {
+        let store = create_test_store(RaftGroupId::DataUserShard(5));
+
+        let entries: Vec<RaftLogEntry> = (1..=10)
+            .map(|i| RaftLogEntry {
+                index: i,
+                term: 1,
+                payload: vec![],
+            })
+            .collect();
+
+        store.append_logs(&entries).unwrap();
+
+        // Delete logs before index 5
+        store.delete_logs_before(5).unwrap();
+
+        // Entries 1-4 should be gone
+        for i in 1..5 {
+            assert!(store.get_log(i).unwrap().is_none());
+        }
+
+        // Entries 5-10 should still exist
+        for i in 5..=10 {
+            assert!(store.get_log(i).unwrap().is_some());
+        }
+
+        assert_eq!(store.first_log_index().unwrap(), Some(5));
+    }
+
+    #[test]
+    fn test_vote_operations() {
+        let store = create_test_store(RaftGroupId::MetaSystem);
+
+        // No vote initially
+        assert!(store.read_vote().unwrap().is_none());
+
+        // Save a vote
+        let vote = RaftVote {
+            term: 5,
+            voted_for: Some(2),
+            committed: false,
+        };
+        store.save_vote(&vote).unwrap();
+
+        let read_vote = store.read_vote().unwrap().unwrap();
+        assert_eq!(read_vote.term, 5);
+        assert_eq!(read_vote.voted_for, Some(2));
+        assert!(!read_vote.committed);
+
+        // Update vote
+        let vote2 = RaftVote {
+            term: 6,
+            voted_for: Some(3),
+            committed: true,
+        };
+        store.save_vote(&vote2).unwrap();
+
+        let read_vote2 = store.read_vote().unwrap().unwrap();
+        assert_eq!(read_vote2.term, 6);
+        assert!(read_vote2.committed);
+    }
+
+    #[test]
+    fn test_commit_purge_operations() {
+        let store = create_test_store(RaftGroupId::DataSharedShard(0));
+
+        // No commit/purge initially
+        assert!(store.read_commit().unwrap().is_none());
+        assert!(store.read_purge().unwrap().is_none());
+
+        // Save commit
+        let commit = RaftLogId { term: 3, index: 42 };
+        store.save_commit(Some(commit)).unwrap();
+
+        let read_commit = store.read_commit().unwrap().unwrap();
+        assert_eq!(read_commit.term, 3);
+        assert_eq!(read_commit.index, 42);
+
+        // Save purge
+        let purge = RaftLogId { term: 2, index: 30 };
+        store.save_purge(Some(purge)).unwrap();
+
+        let read_purge = store.read_purge().unwrap().unwrap();
+        assert_eq!(read_purge.index, 30);
+
+        // Clear commit
+        store.save_commit(None).unwrap();
+        assert!(store.read_commit().unwrap().is_none());
+    }
+
+    #[test]
+    fn test_snapshot_operations() {
+        let store = create_test_store(RaftGroupId::MetaSystem);
+
+        // No snapshot initially
+        assert!(store.read_snapshot_meta().unwrap().is_none());
+        assert!(store.read_snapshot_data().unwrap().is_none());
+
+        // Save snapshot meta
+        let meta = RaftSnapshotMeta {
+            last_log_id: Some(RaftLogId { term: 5, index: 100 }),
+            snapshot_id: "snap-001".to_string(),
+            size_bytes: 1024,
+        };
+        store.save_snapshot_meta(&meta).unwrap();
+
+        let read_meta = store.read_snapshot_meta().unwrap().unwrap();
+        assert_eq!(read_meta.snapshot_id, "snap-001");
+        assert_eq!(read_meta.size_bytes, 1024);
+
+        // Save inline snapshot data
+        let data = RaftSnapshotData::Inline(b"state data".to_vec());
+        store.save_snapshot_data(&data).unwrap();
+
+        let read_data = store.read_snapshot_data().unwrap().unwrap();
+        match read_data {
+            RaftSnapshotData::Inline(bytes) => assert_eq!(bytes, b"state data"),
+            _ => panic!("Expected inline data"),
+        }
+
+        // Save file path snapshot data
+        let data_path = RaftSnapshotData::FilePath("/var/data/snap-001.bin".to_string());
+        store.save_snapshot_data(&data_path).unwrap();
+
+        let read_data2 = store.read_snapshot_data().unwrap().unwrap();
+        match read_data2 {
+            RaftSnapshotData::FilePath(path) => assert_eq!(path, "/var/data/snap-001.bin"),
+            _ => panic!("Expected file path"),
+        }
+
+        // Clear snapshot
+        store.clear_snapshot().unwrap();
+        assert!(store.read_snapshot_meta().unwrap().is_none());
+        assert!(store.read_snapshot_data().unwrap().is_none());
+    }
+
+    #[test]
+    fn test_different_groups_isolated() {
+        let backend = Arc::new(InMemoryBackend::new());
+        backend
+            .create_partition(&Partition::new(RAFT_PARTITION_NAME))
+            .unwrap();
+
+        let store1 = RaftPartitionStore::new(backend.clone(), RaftGroupId::MetaSystem);
+        let store2 = RaftPartitionStore::new(backend.clone(), RaftGroupId::MetaUsers);
+
+        // Add entries to store1
+        store1
+            .append_logs(&[RaftLogEntry {
+                index: 1,
+                term: 1,
+                payload: b"sys".to_vec(),
+            }])
+            .unwrap();
+
+        // Add entries to store2
+        store2
+            .append_logs(&[RaftLogEntry {
+                index: 1,
+                term: 2,
+                payload: b"users".to_vec(),
+            }])
+            .unwrap();
+
+        // Each store should see only its own entries
+        let entry1 = store1.get_log(1).unwrap().unwrap();
+        assert_eq!(entry1.term, 1);
+        assert_eq!(entry1.payload, b"sys");
+
+        let entry2 = store2.get_log(1).unwrap().unwrap();
+        assert_eq!(entry2.term, 2);
+        assert_eq!(entry2.payload, b"users");
+    }
+
+    #[test]
+    fn test_group_id_key_prefixes() {
+        assert_eq!(RaftGroupId::MetaSystem.key_prefix(), "sys");
+        assert_eq!(RaftGroupId::MetaUsers.key_prefix(), "users");
+        assert_eq!(RaftGroupId::MetaJobs.key_prefix(), "jobs");
+        assert_eq!(RaftGroupId::DataUserShard(0).key_prefix(), "u:00000");
+        assert_eq!(RaftGroupId::DataUserShard(31).key_prefix(), "u:00031");
+        assert_eq!(RaftGroupId::DataSharedShard(0).key_prefix(), "s:00000");
+    }
+}

@@ -160,7 +160,19 @@ impl UserDataStateMachine {
 
                 // Persist data via applier if available
                 let rows_affected = if let Some(ref a) = applier {
-                    a.insert(&table_id, &user_id, &rows_data).await?
+                    match a.insert(&table_id, &user_id, &rows_data).await {
+                        Ok(count) => count,
+                        Err(e) => {
+                            // Convert applier errors to DataResponse::Error
+                            // This is required because RaftError cannot be serialized
+                            log::warn!(
+                                "UserDataStateMachine[{}]: Insert failed: {}",
+                                self.shard,
+                                e
+                            );
+                            return Ok(DataResponse::error(e.to_string()));
+                        }
+                    }
                 } else {
                     log::warn!(
                         "UserDataStateMachine[{}]: No applier set, data not persisted!",
@@ -189,13 +201,23 @@ impl UserDataStateMachine {
                 );
 
                 let rows_affected = if let Some(ref a) = applier {
-                    a.update(
+                    match a.update(
                         &table_id,
                         &user_id,
                         &updates_data,
                         filter_data.as_deref(),
                     )
-                    .await?
+                    .await {
+                        Ok(count) => count,
+                        Err(e) => {
+                            log::warn!(
+                                "UserDataStateMachine[{}]: Update failed: {}",
+                                self.shard,
+                                e
+                            );
+                            return Ok(DataResponse::error(e.to_string()));
+                        }
+                    }
                 } else {
                     log::warn!(
                         "UserDataStateMachine[{}]: No applier set, update not persisted!",
@@ -220,7 +242,17 @@ impl UserDataStateMachine {
                 );
 
                 let rows_affected = if let Some(ref a) = applier {
-                    a.delete(&table_id, &user_id, filter_data.as_deref()).await?
+                    match a.delete(&table_id, &user_id, filter_data.as_deref()).await {
+                        Ok(count) => count,
+                        Err(e) => {
+                            log::warn!(
+                                "UserDataStateMachine[{}]: Delete failed: {}",
+                                self.shard,
+                                e
+                            );
+                            return Ok(DataResponse::error(e.to_string()));
+                        }
+                    }
                 } else {
                     log::warn!(
                         "UserDataStateMachine[{}]: No applier set, delete not persisted!",

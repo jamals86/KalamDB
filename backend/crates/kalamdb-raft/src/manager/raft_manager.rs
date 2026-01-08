@@ -11,18 +11,20 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use kalamdb_commons::models::{NodeId, TableId};
+use kalamdb_store::raft_storage::RAFT_PARTITION_NAME;
+use kalamdb_store::{Partition, StorageBackend};
 use openraft::RaftMetrics;
 use parking_lot::RwLock;
 
 use crate::config::ReplicationMode;
-use crate::storage::KalamNode;
-use crate::state_machine::{
-    SystemStateMachine, UsersStateMachine, JobsStateMachine,
-    UserDataStateMachine, SharedDataStateMachine,
-};
-use crate::manager::RaftGroup;
 use crate::manager::config::RaftManagerConfig;
+use crate::manager::RaftGroup;
+use crate::state_machine::{
+    JobsStateMachine, SharedDataStateMachine, SystemStateMachine, UserDataStateMachine,
+    UsersStateMachine,
+};
 use crate::state_machine::KalamStateMachine;
+use crate::storage::KalamNode;
 use crate::{GroupId, RaftError};
 
 /// Central manager for all Raft groups
@@ -75,27 +77,27 @@ impl std::fmt::Debug for RaftManager {
 }
 
 impl RaftManager {
-    /// Create a new Raft manager
+    /// Create a new Raft manager with in-memory storage (for testing or standalone mode)
     pub fn new(config: RaftManagerConfig) -> Self {
         let user_shards_count = config.user_shards;
         let shared_shards_count = config.shared_shards;
-        
+
         // Create meta groups
         let meta_system = Arc::new(RaftGroup::new(
             GroupId::MetaSystem,
             SystemStateMachine::new(),
         ));
-        
+
         let meta_users = Arc::new(RaftGroup::new(
             GroupId::MetaUsers,
             UsersStateMachine::new(),
         ));
-        
+
         let meta_jobs = Arc::new(RaftGroup::new(
             GroupId::MetaJobs,
             JobsStateMachine::new(),
         ));
-        
+
         // Create user data shards (configurable)
         let user_data_shards: Vec<_> = (0..user_shards_count)
             .map(|shard_id| {
@@ -105,7 +107,7 @@ impl RaftManager {
                 ))
             })
             .collect();
-        
+
         // Create shared data shards (configurable)
         let shared_data_shards: Vec<_> = (0..shared_shards_count)
             .map(|shard_id| {
@@ -115,7 +117,7 @@ impl RaftManager {
                 ))
             })
             .collect();
-        
+
         Self {
             node_id: config.node_id,
             meta_system,
@@ -128,6 +130,90 @@ impl RaftManager {
             user_shards_count,
             shared_shards_count,
         }
+    }
+
+    /// Create a new Raft manager with persistent storage
+    ///
+    /// This mode persists Raft log entries, votes, and metadata to durable storage.
+    /// On restart, state is recovered from the persistent store.
+    ///
+    /// The `raft_data` partition will be created if it doesn't exist.
+    pub fn new_persistent(
+        config: RaftManagerConfig,
+        backend: Arc<dyn StorageBackend>,
+    ) -> Result<Self, RaftError> {
+        let user_shards_count = config.user_shards;
+        let shared_shards_count = config.shared_shards;
+
+        // Ensure the raft_data partition exists
+        let partition = Partition::new(RAFT_PARTITION_NAME);
+        if !backend.partition_exists(&partition) {
+            backend
+                .create_partition(&partition)
+                .map_err(|e| RaftError::Storage(format!("Failed to create raft partition: {}", e)))?;
+        }
+
+        // Create meta groups with persistent storage
+        let meta_system = Arc::new(RaftGroup::new_persistent(
+            GroupId::MetaSystem,
+            SystemStateMachine::new(),
+            backend.clone(),
+        )?);
+
+        let meta_users = Arc::new(RaftGroup::new_persistent(
+            GroupId::MetaUsers,
+            UsersStateMachine::new(),
+            backend.clone(),
+        )?);
+
+        let meta_jobs = Arc::new(RaftGroup::new_persistent(
+            GroupId::MetaJobs,
+            JobsStateMachine::new(),
+            backend.clone(),
+        )?);
+
+        // Create user data shards with persistent storage
+        let user_data_shards: Vec<_> = (0..user_shards_count)
+            .map(|shard_id| {
+                RaftGroup::new_persistent(
+                    GroupId::DataUserShard(shard_id),
+                    UserDataStateMachine::new(shard_id),
+                    backend.clone(),
+                )
+                .map(Arc::new)
+            })
+            .collect::<Result<Vec<_>, _>>()?;
+
+        // Create shared data shards with persistent storage
+        let shared_data_shards: Vec<_> = (0..shared_shards_count)
+            .map(|shard_id| {
+                RaftGroup::new_persistent(
+                    GroupId::DataSharedShard(shard_id),
+                    SharedDataStateMachine::new(shard_id),
+                    backend.clone(),
+                )
+                .map(Arc::new)
+            })
+            .collect::<Result<Vec<_>, _>>()?;
+
+        log::info!(
+            "Created RaftManager with persistent storage: {} user shards, {} shared shards",
+            user_shards_count,
+            shared_shards_count
+        );
+
+        Ok(Self {
+            node_id: config.node_id,
+            meta_system,
+            meta_users,
+            meta_jobs,
+            user_data_shards,
+            shared_data_shards,
+            started: RwLock::new(false),
+            config,
+            user_shards_count,
+            shared_shards_count,
+        })
     }
     
     /// Get this node's ID

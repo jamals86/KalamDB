@@ -89,14 +89,28 @@ impl CommandExecutor for RaftExecutor {
         let shard = self.user_shard(user_id);
         let bytes = Self::serialize(&cmd)?;
         let result = self.manager.propose_user_data(shard, bytes).await?;
-        Self::deserialize(&result)
+        let response: DataResponse = Self::deserialize(&result)?;
+        
+        // Check if the response is an error and convert to RaftError
+        if let DataResponse::Error { message } = response {
+            return Err(RaftError::Provider(message));
+        }
+        
+        Ok(response)
     }
 
     async fn execute_shared_data(&self, cmd: SharedDataCommand) -> Result<DataResponse> {
         let bytes = Self::serialize(&cmd)?;
         // All shared data goes to shard 0
         let result = self.manager.propose_shared_data(0, bytes).await?;
-        Self::deserialize(&result)
+        let response: DataResponse = Self::deserialize(&result)?;
+        
+        // Check if the response is an error and convert to RaftError
+        if let DataResponse::Error { message } = response {
+            return Err(RaftError::Provider(message));
+        }
+        
+        Ok(response)
     }
 
     async fn is_leader(&self, group: GroupId) -> bool {

@@ -24,6 +24,7 @@ pub mod entity_store; // Phase 14: Type-safe EntityStore<K, V> with generic keys
 pub mod index; // Generic secondary index support
 pub mod indexed_store; // Phase 15: Automatic secondary index management
 pub mod key_encoding;
+pub mod raft_storage; // Phase 17: Raft log/meta persistence
 pub mod rocksdb_impl;
 pub mod rocksdb_init;
 pub mod sharding;
@@ -55,6 +56,12 @@ pub use indexed_store::{IndexDefinition, IndexedEntityStore};
 
 #[cfg(feature = "datafusion")]
 pub use indexed_store::{extract_i64_equality, extract_string_equality};
+
+// Phase 17: Export Raft storage types
+pub use raft_storage::{
+    RaftGroupId, RaftLogEntry, RaftLogId, RaftPartitionStore, RaftSnapshotData, RaftSnapshotMeta,
+    RaftVote, RAFT_PARTITION_NAME,
+};
 
 // Make test_utils available for testing in dependent crates
 pub mod test_utils;
