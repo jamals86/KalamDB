@@ -368,3 +368,4 @@ Server:
 
 14) do we still need: backend/crates/kalamdb-commons/src/cluster/live_query_broadcast.rs
 and backend/crates/kalamdb-core/src/live/cluster_broadcast.rs since now the usertdata replicated the same way as all the other data: shared/user tables? then no need for this specific code, whenever a data is coming we check if this subscription is there and send it right?
+

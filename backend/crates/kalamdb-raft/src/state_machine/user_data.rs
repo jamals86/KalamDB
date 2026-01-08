@@ -415,8 +415,7 @@ mod tests {
             rows_data: vec![1, 2, 3, 4],
         };
         
-        // Serialize with user_id
-        let payload = encode(&("user123".to_string(), cmd)).unwrap();
+        let payload = encode(&cmd).unwrap();
         
         let result = sm.apply(1, 1, &payload).await.unwrap();
         assert!(result.is_ok());
@@ -439,7 +438,7 @@ mod tests {
             created_at: chrono::Utc::now(),
         };
         
-        let payload = encode(&("user456".to_string(), cmd)).unwrap();
+        let payload = encode(&cmd).unwrap();
         sm.apply(1, 1, &payload).await.unwrap();
         
         // Check live query registered
@@ -454,7 +453,7 @@ mod tests {
             user_id: UserId::new("user456"),
             failed_node_id: node_id.clone(),
         };
-        let payload2 = encode(&("user456".to_string(), cleanup_cmd)).unwrap();
+        let payload2 = encode(&cleanup_cmd).unwrap();
         sm.apply(2, 1, &payload2).await.unwrap();
         
         // Check live query removed

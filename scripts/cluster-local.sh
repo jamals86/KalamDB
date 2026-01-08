@@ -169,7 +169,7 @@ rpc_addr = "127.0.0.1:$rpc_port"
 api_addr = "http://127.0.0.1:$http_port"
 heartbeat_interval_ms = 150
 election_timeout_ms = [300, 500]
-replication_mode = "quorum"
+replication_mode = "all"
 replication_timeout_ms = 5000
 min_replication_nodes = 3
 

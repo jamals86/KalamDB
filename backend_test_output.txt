@@ -1,0 +1,2064 @@
+    Finished `test` profile [unoptimized] target(s) in 1.27s
+warning: the following packages contain code that will be rejected by a future version of Rust: num-bigint-dig v0.8.4
+note: to see what the problems were, use the option `--future-incompat-report`, or run `cargo report future-incompatibilities --id 1`
+     Running unittests src/lib.rs (/Users/jamal/git/KalamDB/target/debug/deps/kalamdb_server-a166a90da82782f8)
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running unittests src/main.rs (/Users/jamal/git/KalamDB/target/debug/deps/kalamdb_server-f4ce6cc725cd9035)
+
+running 4 tests
+test logging::tests::test_parse_log_level ... ok
+test logging::tests::test_parse_log_level_case_insensitive ... ok
+test logging::tests::test_redact_sensitive_sql_passwords ... ok
+test logging::tests::test_redact_sensitive_sql_preserves_safe_queries ... ok
+
+test result: ok. 4 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests/test_alter_table.rs (/Users/jamal/git/KalamDB/target/debug/deps/test_alter_table-8bfd3c395afa36d9)
+
+running 29 tests
+test common::auth_helper::tests::test_authenticate_basic ... ok
+test common::auth_helper::tests::test_create_basic_auth_header ... ok
+test common::fixtures::tests::test_create_messages_table ... ok
+test common::fixtures::tests::test_create_namespace ... ok
+test common::fixtures::tests::test_generate_user_data ... ok
+test common::fixtures::tests::test_insert_sample_messages ... ok
+test common::fixtures::tests::test_setup_complete_environment ... ok
+test common::flush_helpers::tests::test_extract_job_id_missing ... ok
+test common::flush_helpers::tests::test_extract_job_id_multiple ... ok
+test common::flush_helpers::tests::test_extract_job_id_single ... ok
+test common::stress_utils::tests::test_concurrent_writers_basic ... ok
+test common::stress_utils::tests::test_cpu_monitor_basic ... ok
+test common::stress_utils::tests::test_memory_growth_calculation ... ok
+test common::stress_utils::tests::test_memory_monitor_basic ... ok
+test common::tests::test_cleanup ... ok
+test common::tests::test_execute_sql ... ok
+test common::tests::test_namespace_exists ... ok
+test common::tests::test_server_creation ... ok
+test common::websocket::tests::test_assert_insert_notification ... ok
+test common::websocket::tests::test_assert_notification_field ... ok
+test common::websocket::tests::test_assert_update_notification ... ok
+test common::websocket::tests::test_create_subscription_message ... ok
+test common::websocket::tests::test_subscribe ... ok
+test common::websocket::tests::test_websocket_client_connect ... ok
+test test_alter_table_add_column ... ok
+test test_alter_table_drop_column ... ok
+test test_alter_table_modify_column ... ok
+test test_alter_table_rename_column ... ok
+test test_alter_table_schema_versioning ... ok
+
+test result: ok. 29 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 6.13s
+
+     Running tests/test_alter_table_after_flush.rs (/Users/jamal/git/KalamDB/target/debug/deps/test_alter_table_after_flush-46fa0c4874a14928)
+
+running 26 tests
+test common::auth_helper::tests::test_authenticate_basic ... ok
+test common::auth_helper::tests::test_create_basic_auth_header ... ok
+test common::fixtures::tests::test_create_messages_table ... ok
+test common::fixtures::tests::test_create_namespace ... ok
+test common::fixtures::tests::test_generate_user_data ... ok
+test common::fixtures::tests::test_insert_sample_messages ... ok
+test common::fixtures::tests::test_setup_complete_environment ... ok
+test common::flush_helpers::tests::test_extract_job_id_missing ... ok
+test common::flush_helpers::tests::test_extract_job_id_multiple ... ok
+test common::flush_helpers::tests::test_extract_job_id_single ... ok
+test common::stress_utils::tests::test_concurrent_writers_basic ... ok
+test common::stress_utils::tests::test_cpu_monitor_basic ... ok
+test common::stress_utils::tests::test_memory_growth_calculation ... ok
+test common::stress_utils::tests::test_memory_monitor_basic ... ok
+test common::tests::test_cleanup ... ok
+test common::tests::test_execute_sql ... ok
+test common::tests::test_namespace_exists ... ok
+test common::tests::test_server_creation ... ok
+test common::websocket::tests::test_assert_insert_notification ... ok
+test common::websocket::tests::test_assert_notification_field ... ok
+test common::websocket::tests::test_assert_update_notification ... ok
+test common::websocket::tests::test_create_subscription_message ... ok
+test common::websocket::tests::test_subscribe ... ok
+test common::websocket::tests::test_websocket_client_connect ... ok
+test test_alter_table_add_column_after_flush ... ok
+test test_multiple_alter_operations_with_flushes ... ok
+
+test result: ok. 26 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 6.00s
+
+     Running tests/test_as_user_impersonation.rs (/Users/jamal/git/KalamDB/target/debug/deps/test_as_user_impersonation-5e4a64db90c39798)
+
+running 33 tests
+test common::auth_helper::tests::test_authenticate_basic ... ok
+test common::auth_helper::tests::test_create_basic_auth_header ... ok
+test common::fixtures::tests::test_create_messages_table ... ok
+test common::fixtures::tests::test_create_namespace ... ok
+test common::fixtures::tests::test_generate_user_data ... ok
+test common::fixtures::tests::test_insert_sample_messages ... ok
+test common::fixtures::tests::test_setup_complete_environment ... ok
+test common::flush_helpers::tests::test_extract_job_id_missing ... ok
+test common::flush_helpers::tests::test_extract_job_id_multiple ... ok
+test common::flush_helpers::tests::test_extract_job_id_single ... ok
+test common::stress_utils::tests::test_concurrent_writers_basic ... ok
+test common::stress_utils::tests::test_cpu_monitor_basic ... ok
+test common::stress_utils::tests::test_memory_growth_calculation ... ok
+test common::stress_utils::tests::test_memory_monitor_basic ... ok
+test common::tests::test_cleanup ... ok
+test common::tests::test_execute_sql ... ok
+test common::tests::test_namespace_exists ... ok
+test common::tests::test_server_creation ... ok
+test common::websocket::tests::test_assert_insert_notification ... ok
+test common::websocket::tests::test_assert_notification_field ... ok
+test common::websocket::tests::test_assert_update_notification ... ok
+test common::websocket::tests::test_create_subscription_message ... ok
+test common::websocket::tests::test_subscribe ... ok
+test common::websocket::tests::test_websocket_client_connect ... ok
+test test_as_user_blocked_for_regular_user ... ok
+test test_as_user_nonexistent_user ... ok
+test test_as_user_on_shared_table_rejected ... ok
+test test_as_user_performance ... ok
+test test_as_user_with_dba_role ... ok
+test test_as_user_with_service_role ... ok
+test test_delete_as_user ... ok
+test test_insert_as_user_ownership ... ok
+test test_update_as_user ... ok
+
+test result: ok. 33 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 6.35s
+
+     Running tests/test_audit_logging.rs (/Users/jamal/git/KalamDB/target/debug/deps/test_audit_logging-ad63e419d8d59a95)
+
+running 27 tests
+test common::auth_helper::tests::test_authenticate_basic ... ok
+test common::auth_helper::tests::test_create_basic_auth_header ... ok
+test common::fixtures::tests::test_create_messages_table ... ok
+test common::fixtures::tests::test_create_namespace ... ok
+test common::fixtures::tests::test_generate_user_data ... ok
+test common::fixtures::tests::test_insert_sample_messages ... ok
+test common::fixtures::tests::test_setup_complete_environment ... ok
+test common::flush_helpers::tests::test_extract_job_id_missing ... ok
+test common::flush_helpers::tests::test_extract_job_id_multiple ... ok
+test common::flush_helpers::tests::test_extract_job_id_single ... ok
+test common::stress_utils::tests::test_concurrent_writers_basic ... ok
+test common::stress_utils::tests::test_cpu_monitor_basic ... ok
+test common::stress_utils::tests::test_memory_growth_calculation ... ok
+test common::stress_utils::tests::test_memory_monitor_basic ... ok
+test common::tests::test_cleanup ... ok
+test common::tests::test_execute_sql ... ok
+test common::tests::test_namespace_exists ... ok
+test common::tests::test_server_creation ... ok
+test common::websocket::tests::test_assert_insert_notification ... ok
+test common::websocket::tests::test_assert_notification_field ... ok
+test common::websocket::tests::test_assert_update_notification ... ok
+test common::websocket::tests::test_create_subscription_message ... ok
+test common::websocket::tests::test_subscribe ... ok
+test common::websocket::tests::test_websocket_client_connect ... ok
+test test_audit_log_for_table_access_change ... ok
+test test_audit_log_for_user_management ... ok
+test test_audit_log_password_masking ... ok
+
+test result: ok. 27 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 8.50s
+
+     Running tests/test_auth_performance.rs (/Users/jamal/git/KalamDB/target/debug/deps/test_auth_performance-c3d7d11d4a289c20)
+
+running 28 tests
+test benchmark_basic_auth_performance ... ignored, Known actix-web test framework limitation with connection_info()
+test benchmark_jwt_auth_performance ... ok
+test common::auth_helper::tests::test_authenticate_basic ... ok
+test common::auth_helper::tests::test_create_basic_auth_header ... ok
+test common::fixtures::tests::test_create_messages_table ... ok
+test common::fixtures::tests::test_create_namespace ... ok
+test common::fixtures::tests::test_generate_user_data ... ok
+test common::fixtures::tests::test_insert_sample_messages ... ok
+test common::fixtures::tests::test_setup_complete_environment ... ok
+test common::flush_helpers::tests::test_extract_job_id_missing ... ok
+test common::flush_helpers::tests::test_extract_job_id_multiple ... ok
+test common::flush_helpers::tests::test_extract_job_id_single ... ok
+test common::stress_utils::tests::test_concurrent_writers_basic ... ok
+test common::stress_utils::tests::test_cpu_monitor_basic ... ok
+test common::stress_utils::tests::test_memory_growth_calculation ... ok
+test common::stress_utils::tests::test_memory_monitor_basic ... ok
+test common::tests::test_cleanup ... ok
+test common::tests::test_execute_sql ... ok
+test common::tests::test_namespace_exists ... ok
+test common::tests::test_server_creation ... ok
+test common::websocket::tests::test_assert_insert_notification ... ok
+test common::websocket::tests::test_assert_notification_field ... ok
+test common::websocket::tests::test_assert_update_notification ... ok
+test common::websocket::tests::test_create_subscription_message ... ok
+test common::websocket::tests::test_subscribe ... ok
+test common::websocket::tests::test_websocket_client_connect ... ok
+test test_auth_cache_effectiveness ... ignored, Known actix-web test framework limitation with connection_info()
+test test_concurrent_auth_load ... ok
+
+test result: ok. 26 passed; 0 failed; 2 ignored; 0 measured; 0 filtered out; finished in 22.16s
+
+     Running tests/integration/flush/test_automatic_flushing.rs (/Users/jamal/git/KalamDB/target/debug/deps/test_automatic_flushing-1e8dba532ce2f7d6)
+
+running 26 tests
+test common::auth_helper::tests::test_authenticate_basic ... ok
+test common::auth_helper::tests::test_create_basic_auth_header ... ok
+test common::fixtures::tests::test_create_messages_table ... ok
+test common::fixtures::tests::test_create_namespace ... ok
+test common::fixtures::tests::test_generate_user_data ... ok
+test common::fixtures::tests::test_insert_sample_messages ... ok
+test common::fixtures::tests::test_setup_complete_environment ... ok
+test common::flush_helpers::tests::test_extract_job_id_missing ... ok
+test common::flush_helpers::tests::test_extract_job_id_multiple ... ok
+test common::flush_helpers::tests::test_extract_job_id_single ... ok
+test common::stress_utils::tests::test_concurrent_writers_basic ... ok
+test common::stress_utils::tests::test_cpu_monitor_basic ... ok
+test common::stress_utils::tests::test_memory_growth_calculation ... ok
+test common::stress_utils::tests::test_memory_monitor_basic ... ok
+test common::tests::test_cleanup ... ok
+test common::tests::test_execute_sql ... ok
+test common::tests::test_namespace_exists ... ok
+test common::tests::test_server_creation ... ok
+test common::websocket::tests::test_assert_insert_notification ... ok
+test common::websocket::tests::test_assert_notification_field ... ok
+test common::websocket::tests::test_assert_update_notification ... ok
+test common::websocket::tests::test_create_subscription_message ... ok
+test common::websocket::tests::test_subscribe ... ok
+test common::websocket::tests::test_websocket_client_connect ... ok
+test test_manual_flush_multiple_batches ... ok
+test test_manual_flush_respects_row_threshold ... ok
+
+test result: ok. 26 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 5.98s
+
+     Running tests/integration/flush/test_automatic_flushing_comprehensive.rs (/Users/jamal/git/KalamDB/target/debug/deps/test_automatic_flushing_comprehensive-1a5f029d192e5cda)
+
+running 26 tests
+test common::auth_helper::tests::test_authenticate_basic ... ok
+test common::auth_helper::tests::test_create_basic_auth_header ... ok
+test common::fixtures::tests::test_create_messages_table ... ok
+test common::fixtures::tests::test_create_namespace ... ok
+test common::fixtures::tests::test_generate_user_data ... ok
+test common::fixtures::tests::test_insert_sample_messages ... ok
+test common::fixtures::tests::test_setup_complete_environment ... ok
+test common::flush_helpers::tests::test_extract_job_id_missing ... ok
+test common::flush_helpers::tests::test_extract_job_id_multiple ... ok
+test common::flush_helpers::tests::test_extract_job_id_single ... ok
+test common::stress_utils::tests::test_concurrent_writers_basic ... ok
+test common::stress_utils::tests::test_cpu_monitor_basic ... ok
+test common::stress_utils::tests::test_memory_growth_calculation ... ok
+test common::stress_utils::tests::test_memory_monitor_basic ... ok
+test common::tests::test_cleanup ... ok
+test common::tests::test_execute_sql ... ok
+test common::tests::test_namespace_exists ... ok
+test common::tests::test_server_creation ... ok
+test common::websocket::tests::test_assert_insert_notification ... ok
+test common::websocket::tests::test_assert_notification_field ... ok
+test common::websocket::tests::test_assert_update_notification ... ok
+test common::websocket::tests::test_create_subscription_message ... ok
+test common::websocket::tests::test_subscribe ... ok
+test common::websocket::tests::test_websocket_client_connect ... ok
+test test_flush_table_sql_job_and_files ... ok
+test test_manual_flush_multi_user_partitions ... ok
+
+test result: ok. 26 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 6.27s
+
+     Running tests/test_basic_auth.rs (/Users/jamal/git/KalamDB/target/debug/deps/test_basic_auth-9ecb33f10a51e864)
+
+running 29 tests
+test common::auth_helper::tests::test_authenticate_basic ... ok
+test common::auth_helper::tests::test_create_basic_auth_header ... ok
+test common::fixtures::tests::test_create_messages_table ... ok
+test common::fixtures::tests::test_create_namespace ... ok
+test common::fixtures::tests::test_generate_user_data ... ok
+test common::fixtures::tests::test_insert_sample_messages ... ok
+test common::fixtures::tests::test_setup_complete_environment ... ok
+test common::flush_helpers::tests::test_extract_job_id_missing ... ok
+test common::flush_helpers::tests::test_extract_job_id_multiple ... ok
+test common::flush_helpers::tests::test_extract_job_id_single ... ok
+test common::stress_utils::tests::test_concurrent_writers_basic ... ok
+test common::stress_utils::tests::test_cpu_monitor_basic ... ok
+test common::stress_utils::tests::test_memory_growth_calculation ... ok
+test common::stress_utils::tests::test_memory_monitor_basic ... ok
+test common::tests::test_cleanup ... ok
+test common::tests::test_execute_sql ... ok
+test common::tests::test_namespace_exists ... ok
+test common::tests::test_server_creation ... ok
+test common::websocket::tests::test_assert_insert_notification ... ok
+test common::websocket::tests::test_assert_notification_field ... ok
+test common::websocket::tests::test_assert_update_notification ... ok
+test common::websocket::tests::test_create_subscription_message ... ok
+test common::websocket::tests::test_subscribe ... ok
+test common::websocket::tests::test_websocket_client_connect ... ok
+test test_basic_auth_invalid_credentials ... ok
+test test_basic_auth_malformed_header ... ok
+test test_basic_auth_missing_header ... ok
+test test_basic_auth_nonexistent_user ... ok
+test test_basic_auth_success ... ok
+
+test result: ok. 29 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 9.27s
+
+     Running tests/test_cli_auth.rs (/Users/jamal/git/KalamDB/target/debug/deps/test_cli_auth-8e8c586babc2f85f)
+
+running 27 tests
+test common::auth_helper::tests::test_authenticate_basic ... ok
+test common::auth_helper::tests::test_create_basic_auth_header ... ok
+test common::fixtures::tests::test_create_messages_table ... ok
+test common::fixtures::tests::test_create_namespace ... ok
+test common::fixtures::tests::test_generate_user_data ... ok
+test common::fixtures::tests::test_insert_sample_messages ... ok
+test common::fixtures::tests::test_setup_complete_environment ... ok
+test common::flush_helpers::tests::test_extract_job_id_missing ... ok
+test common::flush_helpers::tests::test_extract_job_id_multiple ... ok
+test common::flush_helpers::tests::test_extract_job_id_single ... ok
+test common::stress_utils::tests::test_concurrent_writers_basic ... ok
+test common::stress_utils::tests::test_cpu_monitor_basic ... ok
+test common::stress_utils::tests::test_memory_growth_calculation ... ok
+test common::stress_utils::tests::test_memory_monitor_basic ... ok
+test common::tests::test_cleanup ... ok
+test common::tests::test_execute_sql ... ok
+test common::tests::test_namespace_exists ... ok
+test common::tests::test_server_creation ... ok
+test common::websocket::tests::test_assert_insert_notification ... ok
+test common::websocket::tests::test_assert_notification_field ... ok
+test common::websocket::tests::test_assert_update_notification ... ok
+test common::websocket::tests::test_create_subscription_message ... ok
+test common::websocket::tests::test_subscribe ... ok
+test common::websocket::tests::test_websocket_client_connect ... ok
+test test_init_creates_system_user ... ok
+test test_system_user_has_metadata ... ok
+test test_system_user_password_is_hashed ... ok
+
+test result: ok. 27 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 5.76s
+
+     Running tests/test_cold_storage_manifest.rs (/Users/jamal/git/KalamDB/target/debug/deps/test_cold_storage_manifest-0e87bf561327a487)
+
+running 30 tests
+test common::auth_helper::tests::test_authenticate_basic ... ok
+test common::auth_helper::tests::test_create_basic_auth_header ... ok
+test common::fixtures::tests::test_create_messages_table ... ok
+test common::fixtures::tests::test_create_namespace ... ok
+test common::fixtures::tests::test_generate_user_data ... ok
+test common::fixtures::tests::test_insert_sample_messages ... ok
+test common::fixtures::tests::test_setup_complete_environment ... ok
+test common::flush_helpers::tests::test_extract_job_id_missing ... ok
+test common::flush_helpers::tests::test_extract_job_id_multiple ... ok
+test common::flush_helpers::tests::test_extract_job_id_single ... ok
+test common::stress_utils::tests::test_concurrent_writers_basic ... ok
+test common::stress_utils::tests::test_cpu_monitor_basic ... ok
+test common::stress_utils::tests::test_memory_growth_calculation ... ok
+test common::stress_utils::tests::test_memory_monitor_basic ... ok
+test common::tests::test_cleanup ... ok
+test common::tests::test_execute_sql ... ok
+test common::tests::test_namespace_exists ... ok
+test common::tests::test_server_creation ... ok
+test common::websocket::tests::test_assert_insert_notification ... ok
+test common::websocket::tests::test_assert_notification_field ... ok
+test common::websocket::tests::test_assert_update_notification ... ok
+test common::websocket::tests::test_create_subscription_message ... ok
+test common::websocket::tests::test_subscribe ... ok
+test common::websocket::tests::test_websocket_client_connect ... ok
+test test_cold_storage_delete_creates_tombstone ... ok
+test test_cold_storage_version_resolution_after_update ... ok
+test test_manifest_tracks_multiple_flush_segments ... ok
+test test_shared_table_cold_storage_uses_manifest ... ok
+test test_shared_table_manifest_isolation ... ok
+test test_user_table_cold_storage_uses_manifest ... ok
+
+test result: ok. 30 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 6.49s
+
+     Running tests/test_column_id_stability.rs (/Users/jamal/git/KalamDB/target/debug/deps/test_column_id_stability-4fa24ac8c44aeaf7)
+
+running 27 tests
+test common::auth_helper::tests::test_authenticate_basic ... ok
+test common::auth_helper::tests::test_create_basic_auth_header ... ok
+test common::fixtures::tests::test_create_messages_table ... ok
+test common::fixtures::tests::test_create_namespace ... ok
+test common::fixtures::tests::test_generate_user_data ... ok
+test common::fixtures::tests::test_insert_sample_messages ... ok
+test common::fixtures::tests::test_setup_complete_environment ... ok
+test common::flush_helpers::tests::test_extract_job_id_missing ... ok
+test common::flush_helpers::tests::test_extract_job_id_multiple ... ok
+test common::flush_helpers::tests::test_extract_job_id_single ... ok
+test common::stress_utils::tests::test_concurrent_writers_basic ... ok
+test common::stress_utils::tests::test_cpu_monitor_basic ... ok
+test common::stress_utils::tests::test_memory_growth_calculation ... ok
+test common::stress_utils::tests::test_memory_monitor_basic ... ok
+test common::tests::test_cleanup ... ok
+test common::tests::test_execute_sql ... ok
+test common::tests::test_namespace_exists ... ok
+test common::tests::test_server_creation ... ok
+test common::websocket::tests::test_assert_insert_notification ... ok
+test common::websocket::tests::test_assert_notification_field ... ok
+test common::websocket::tests::test_assert_update_notification ... ok
+test common::websocket::tests::test_create_subscription_message ... ok
+test common::websocket::tests::test_subscribe ... ok
+test common::websocket::tests::test_websocket_client_connect ... ok
+test test_column_id_stability_across_schema_changes ... ok
+test test_column_stats_use_column_id ... ok
+test test_full_lifecycle_with_alter_and_flush ... ok
+
+test result: ok. 27 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 6.21s
+
+     Running tests/test_column_ordering.rs (/Users/jamal/git/KalamDB/target/debug/deps/test_column_ordering-1e5d448cf1fd2f1d)
+
+running 28 tests
+test common::auth_helper::tests::test_authenticate_basic ... ok
+test common::auth_helper::tests::test_create_basic_auth_header ... ok
+test common::fixtures::tests::test_create_messages_table ... ok
+test common::fixtures::tests::test_create_namespace ... ok
+test common::fixtures::tests::test_generate_user_data ... ok
+test common::fixtures::tests::test_insert_sample_messages ... ok
+test common::fixtures::tests::test_setup_complete_environment ... ok
+test common::flush_helpers::tests::test_extract_job_id_missing ... ok
+test common::flush_helpers::tests::test_extract_job_id_multiple ... ok
+test common::flush_helpers::tests::test_extract_job_id_single ... ok
+test common::stress_utils::tests::test_concurrent_writers_basic ... ok
+test common::stress_utils::tests::test_cpu_monitor_basic ... ok
+test common::stress_utils::tests::test_memory_growth_calculation ... ok
+test common::stress_utils::tests::test_memory_monitor_basic ... ok
+test common::tests::test_cleanup ... ok
+test common::tests::test_execute_sql ... ok
+test common::tests::test_namespace_exists ... ok
+test common::tests::test_server_creation ... ok
+test common::websocket::tests::test_assert_insert_notification ... ok
+test common::websocket::tests::test_assert_notification_field ... ok
+test common::websocket::tests::test_assert_update_notification ... ok
+test common::websocket::tests::test_create_subscription_message ... ok
+test common::websocket::tests::test_subscribe ... ok
+test common::websocket::tests::test_websocket_client_connect ... ok
+test test_alter_table_add_column_assigns_next_ordinal ... ok
+test test_alter_table_drop_column_preserves_ordinals ... ok
+test test_select_star_returns_columns_in_ordinal_order ... ok
+test test_system_tables_have_correct_column_ordering ... ok
+
+test result: ok. 28 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 5.85s
+
+     Running tests/test_combined_data_integrity.rs (/Users/jamal/git/KalamDB/target/debug/deps/test_combined_data_integrity-f92ab39d09f915cb)
+
+running 30 tests
+test common::auth_helper::tests::test_authenticate_basic ... ok
+test common::auth_helper::tests::test_create_basic_auth_header ... ok
+test common::fixtures::tests::test_create_messages_table ... ok
+test common::fixtures::tests::test_create_namespace ... ok
+test common::fixtures::tests::test_generate_user_data ... ok
+test common::fixtures::tests::test_insert_sample_messages ... ok
+test common::fixtures::tests::test_setup_complete_environment ... ok
+test common::flush_helpers::tests::test_extract_job_id_missing ... ok
+test common::flush_helpers::tests::test_extract_job_id_multiple ... ok
+test common::flush_helpers::tests::test_extract_job_id_single ... ok
+test common::stress_utils::tests::test_concurrent_writers_basic ... ok
+test common::stress_utils::tests::test_cpu_monitor_basic ... ok
+test common::stress_utils::tests::test_memory_growth_calculation ... ok
+test common::stress_utils::tests::test_memory_monitor_basic ... ok
+test common::tests::test_cleanup ... ok
+test common::tests::test_execute_sql ... ok
+test common::tests::test_namespace_exists ... ok
+test common::tests::test_server_creation ... ok
+test common::websocket::tests::test_assert_insert_notification ... ok
+test common::websocket::tests::test_assert_notification_field ... ok
+test common::websocket::tests::test_assert_update_notification ... ok
+test common::websocket::tests::test_create_subscription_message ... ok
+test common::websocket::tests::test_subscribe ... ok
+test common::websocket::tests::test_websocket_client_connect ... ok
+test test_01_combined_data_count_and_select ... ok
+test test_02_combined_data_aggregations ... ok
+test test_03_combined_data_filtering ... ok
+test test_04_combined_data_integrity_verification ... ok
+test test_05_multiple_flush_cycles ... ok
+test test_06_soft_delete_operations ... ok
+
+test result: ok. 30 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 6.50s
+
+     Running tests/test_config_access.rs (/Users/jamal/git/KalamDB/target/debug/deps/test_config_access-c3e39b04ee22cd58)
+
+running 2 tests
+test test_config_accessible_from_app_context ... ok
+test test_parameter_limits_from_config ... ok
+
+test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.19s
+
+     Running tests/test_datafusion_commands.rs (/Users/jamal/git/KalamDB/target/debug/deps/test_datafusion_commands-634cf64acc5c8959)
+
+running 36 tests
+test common::auth_helper::tests::test_authenticate_basic ... ok
+test common::auth_helper::tests::test_create_basic_auth_header ... ok
+test common::fixtures::tests::test_create_messages_table ... ok
+test common::fixtures::tests::test_create_namespace ... ok
+test common::fixtures::tests::test_generate_user_data ... ok
+test common::fixtures::tests::test_insert_sample_messages ... ok
+test common::fixtures::tests::test_setup_complete_environment ... ok
+test common::flush_helpers::tests::test_extract_job_id_missing ... ok
+test common::flush_helpers::tests::test_extract_job_id_multiple ... ok
+test common::flush_helpers::tests::test_extract_job_id_single ... ok
+test common::stress_utils::tests::test_concurrent_writers_basic ... ok
+test common::stress_utils::tests::test_cpu_monitor_basic ... ok
+test common::stress_utils::tests::test_memory_growth_calculation ... ok
+test common::stress_utils::tests::test_memory_monitor_basic ... ok
+test common::tests::test_cleanup ... ok
+test common::tests::test_execute_sql ... ok
+test common::tests::test_namespace_exists ... ok
+test common::tests::test_server_creation ... ok
+test common::websocket::tests::test_assert_insert_notification ... ok
+test common::websocket::tests::test_assert_notification_field ... ok
+test common::websocket::tests::test_assert_update_notification ... ok
+test common::websocket::tests::test_create_subscription_message ... ok
+test common::websocket::tests::test_subscribe ... ok
+test common::websocket::tests::test_websocket_client_connect ... ok
+test test_describe_datafusion_style_admin_allowed ... ok
+test test_describe_datafusion_style_user_denied ... ok
+test test_explain_command_admin_allowed ... ok
+test test_explain_command_user_denied ... ok
+test test_service_role_datafusion_commands_denied ... ok
+test test_set_command_admin_allowed ... ok
+test test_set_command_user_denied ... ok
+test test_show_all_admin_allowed ... ok
+test test_show_all_user_denied ... ok
+test test_show_columns_admin_allowed ... ok
+test test_show_columns_user_denied ... ok
+test test_system_role_datafusion_commands ... ok
+
+test result: ok. 36 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 6.38s
+
+     Running tests/test_datatypes_preservation.rs (/Users/jamal/git/KalamDB/target/debug/deps/test_datatypes_preservation-f62d3043532730ed)
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests/test_datetime_timezone_storage.rs (/Users/jamal/git/KalamDB/target/debug/deps/test_datetime_timezone_storage-cbeac7656c721520)
+
+running 2 tests
+test test_datetime_with_timezone_offset_parsing ... ok
+test test_timezone_conversion_examples ... ok
+
+test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests/test_dml_complex.rs (/Users/jamal/git/KalamDB/target/debug/deps/test_dml_complex-9f66e3c3759c6e22)
+
+running 29 tests
+test common::auth_helper::tests::test_authenticate_basic ... ok
+test common::auth_helper::tests::test_create_basic_auth_header ... ok
+test common::fixtures::tests::test_create_messages_table ... ok
+test common::fixtures::tests::test_create_namespace ... ok
+test common::fixtures::tests::test_generate_user_data ... ok
+test common::fixtures::tests::test_insert_sample_messages ... ok
+test common::fixtures::tests::test_setup_complete_environment ... ok
+test common::flush_helpers::tests::test_extract_job_id_missing ... ok
+test common::flush_helpers::tests::test_extract_job_id_multiple ... ok
+test common::flush_helpers::tests::test_extract_job_id_single ... ok
+test common::stress_utils::tests::test_concurrent_writers_basic ... ok
+test common::stress_utils::tests::test_cpu_monitor_basic ... ok
+test common::stress_utils::tests::test_memory_growth_calculation ... ok
+test common::stress_utils::tests::test_memory_monitor_basic ... ok
+test common::tests::test_cleanup ... ok
+test common::tests::test_execute_sql ... ok
+test common::tests::test_namespace_exists ... ok
+test common::tests::test_server_creation ... ok
+test common::websocket::tests::test_assert_insert_notification ... ok
+test common::websocket::tests::test_assert_notification_field ... ok
+test common::websocket::tests::test_assert_update_notification ... ok
+test common::websocket::tests::test_create_subscription_message ... ok
+test common::websocket::tests::test_subscribe ... ok
+test common::websocket::tests::test_websocket_client_connect ... ok
+test test_delete_across_flush_boundary ... ok
+test test_delete_complex_predicate ... ok
+test test_update_across_flush_boundary ... ok
+test test_update_complex_predicate_and ... ok
+test test_update_complex_predicate_or ... ok
+
+test result: ok. 29 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 6.21s
+
+     Running tests/test_e2e_auth_flow.rs (/Users/jamal/git/KalamDB/target/debug/deps/test_e2e_auth_flow-1a071cf547e627e5)
+
+running 27 tests
+test common::auth_helper::tests::test_authenticate_basic ... ok
+test common::auth_helper::tests::test_create_basic_auth_header ... ok
+test common::fixtures::tests::test_create_messages_table ... ok
+test common::fixtures::tests::test_create_namespace ... ok
+test common::fixtures::tests::test_generate_user_data ... ok
+test common::fixtures::tests::test_insert_sample_messages ... ok
+test common::fixtures::tests::test_setup_complete_environment ... ok
+test common::flush_helpers::tests::test_extract_job_id_missing ... ok
+test common::flush_helpers::tests::test_extract_job_id_multiple ... ok
+test common::flush_helpers::tests::test_extract_job_id_single ... ok
+test common::stress_utils::tests::test_concurrent_writers_basic ... ok
+test common::stress_utils::tests::test_cpu_monitor_basic ... ok
+test common::stress_utils::tests::test_memory_growth_calculation ... ok
+test common::stress_utils::tests::test_memory_monitor_basic ... ok
+test common::tests::test_cleanup ... ok
+test common::tests::test_execute_sql ... ok
+test common::tests::test_namespace_exists ... ok
+test common::tests::test_server_creation ... ok
+test common::websocket::tests::test_assert_insert_notification ... ok
+test common::websocket::tests::test_assert_notification_field ... ok
+test common::websocket::tests::test_assert_update_notification ... ok
+test common::websocket::tests::test_create_subscription_message ... ok
+test common::websocket::tests::test_subscribe ... ok
+test common::websocket::tests::test_websocket_client_connect ... ok
+test test_e2e_auth_flow ... ok
+test test_password_security_e2e ... ok
+test test_role_based_auth_e2e ... ok
+
+test result: ok. 27 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 11.43s
+
+     Running tests/test_edge_cases.rs (/Users/jamal/git/KalamDB/target/debug/deps/test_edge_cases-8c5a55ebf3cf0e37)
+
+running 30 tests
+test common::auth_helper::tests::test_authenticate_basic ... ok
+test common::auth_helper::tests::test_create_basic_auth_header ... ok
+test common::fixtures::tests::test_create_messages_table ... ok
+test common::fixtures::tests::test_create_namespace ... ok
+test common::fixtures::tests::test_generate_user_data ... ok
+test common::fixtures::tests::test_insert_sample_messages ... ok
+test common::fixtures::tests::test_setup_complete_environment ... ok
+test common::flush_helpers::tests::test_extract_job_id_missing ... ok
+test common::flush_helpers::tests::test_extract_job_id_multiple ... ok
+test common::flush_helpers::tests::test_extract_job_id_single ... ok
+test common::stress_utils::tests::test_concurrent_writers_basic ... ok
+test common::stress_utils::tests::test_cpu_monitor_basic ... ok
+test common::stress_utils::tests::test_memory_growth_calculation ... ok
+test common::stress_utils::tests::test_memory_monitor_basic ... ok
+test common::tests::test_cleanup ... ok
+test common::tests::test_execute_sql ... ok
+test common::tests::test_namespace_exists ... ok
+test common::tests::test_server_creation ... ok
+test common::websocket::tests::test_assert_insert_notification ... ok
+test common::websocket::tests::test_assert_notification_field ... ok
+test common::websocket::tests::test_assert_update_notification ... ok
+test common::websocket::tests::test_create_subscription_message ... ok
+test common::websocket::tests::test_subscribe ... ok
+test common::websocket::tests::test_websocket_client_connect ... ok
+test test_concurrent_auth_no_race_conditions ... ok
+test test_deleted_user_denied ... ok
+test test_empty_credentials_401 ... ok
+test test_malformed_basic_auth_400 ... ok
+test test_maximum_password_length ... ok
+test test_role_change_applies_next_request ... ok
+
+test result: ok. 30 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 14.23s
+
+     Running tests/test_flush_job_persistence.rs (/Users/jamal/git/KalamDB/target/debug/deps/test_flush_job_persistence-e1986e11a251f384)
+
+running 26 tests
+test common::auth_helper::tests::test_authenticate_basic ... ok
+test common::auth_helper::tests::test_create_basic_auth_header ... ok
+test common::fixtures::tests::test_create_messages_table ... ok
+test common::fixtures::tests::test_create_namespace ... ok
+test common::fixtures::tests::test_generate_user_data ... ok
+test common::fixtures::tests::test_insert_sample_messages ... ok
+test common::fixtures::tests::test_setup_complete_environment ... ok
+test common::flush_helpers::tests::test_extract_job_id_missing ... ok
+test common::flush_helpers::tests::test_extract_job_id_multiple ... ok
+test common::flush_helpers::tests::test_extract_job_id_single ... ok
+test common::stress_utils::tests::test_concurrent_writers_basic ... ok
+test common::stress_utils::tests::test_cpu_monitor_basic ... ok
+test common::stress_utils::tests::test_memory_growth_calculation ... ok
+test common::stress_utils::tests::test_memory_monitor_basic ... ok
+test common::tests::test_cleanup ... ok
+test common::tests::test_execute_sql ... ok
+test common::tests::test_namespace_exists ... ok
+test common::tests::test_server_creation ... ok
+test common::websocket::tests::test_assert_insert_notification ... ok
+test common::websocket::tests::test_assert_notification_field ... ok
+test common::websocket::tests::test_assert_update_notification ... ok
+test common::websocket::tests::test_create_subscription_message ... ok
+test common::websocket::tests::test_subscribe ... ok
+test common::websocket::tests::test_websocket_client_connect ... ok
+test test_flush_all_tables_persists_jobs ... ok
+test test_flush_table_persists_job ... ok
+
+test result: ok. 26 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 6.77s
+
+     Running tests/integration/flush/test_flush_operations.rs (/Users/jamal/git/KalamDB/target/debug/deps/test_flush_operations-45a45402dbdbf74e)
+
+running 26 tests
+test common::auth_helper::tests::test_authenticate_basic ... ok
+test common::auth_helper::tests::test_create_basic_auth_header ... ok
+test common::fixtures::tests::test_create_messages_table ... ok
+test common::fixtures::tests::test_create_namespace ... ok
+test common::fixtures::tests::test_generate_user_data ... ok
+test common::fixtures::tests::test_insert_sample_messages ... ok
+test common::fixtures::tests::test_setup_complete_environment ... ok
+test common::flush_helpers::tests::test_extract_job_id_missing ... ok
+test common::flush_helpers::tests::test_extract_job_id_multiple ... ok
+test common::flush_helpers::tests::test_extract_job_id_single ... ok
+test common::stress_utils::tests::test_concurrent_writers_basic ... ok
+test common::stress_utils::tests::test_cpu_monitor_basic ... ok
+test common::stress_utils::tests::test_memory_growth_calculation ... ok
+test common::stress_utils::tests::test_memory_monitor_basic ... ok
+test common::tests::test_cleanup ... ok
+test common::tests::test_execute_sql ... ok
+test common::tests::test_namespace_exists ... ok
+test common::tests::test_server_creation ... ok
+test common::websocket::tests::test_assert_insert_notification ... ok
+test common::websocket::tests::test_assert_notification_field ... ok
+test common::websocket::tests::test_assert_update_notification ... ok
+test common::websocket::tests::test_create_subscription_message ... ok
+test common::websocket::tests::test_subscribe ... ok
+test common::websocket::tests::test_websocket_client_connect ... ok
+test test_shared_table_manual_flush_creates_parquet ... ok
+test test_user_table_manual_flush_creates_parquet ... ok
+
+test result: ok. 26 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 6.34s
+
+     Running tests/test_jwt_auth.rs (/Users/jamal/git/KalamDB/target/debug/deps/test_jwt_auth-8524a4dbb53b114e)
+
+running 30 tests
+test common::auth_helper::tests::test_authenticate_basic ... ok
+test common::auth_helper::tests::test_create_basic_auth_header ... ok
+test common::fixtures::tests::test_create_messages_table ... ok
+test common::fixtures::tests::test_create_namespace ... ok
+test common::fixtures::tests::test_generate_user_data ... ok
+test common::fixtures::tests::test_insert_sample_messages ... ok
+test common::fixtures::tests::test_setup_complete_environment ... ok
+test common::flush_helpers::tests::test_extract_job_id_missing ... ok
+test common::flush_helpers::tests::test_extract_job_id_multiple ... ok
+test common::flush_helpers::tests::test_extract_job_id_single ... ok
+test common::stress_utils::tests::test_concurrent_writers_basic ... ok
+test common::stress_utils::tests::test_cpu_monitor_basic ... ok
+test common::stress_utils::tests::test_memory_growth_calculation ... ok
+test common::stress_utils::tests::test_memory_monitor_basic ... ok
+test common::tests::test_cleanup ... ok
+test common::tests::test_execute_sql ... ok
+test common::tests::test_namespace_exists ... ok
+test common::tests::test_server_creation ... ok
+test common::websocket::tests::test_assert_insert_notification ... ok
+test common::websocket::tests::test_assert_notification_field ... ok
+test common::websocket::tests::test_assert_update_notification ... ok
+test common::websocket::tests::test_create_subscription_message ... ok
+test common::websocket::tests::test_subscribe ... ok
+test common::websocket::tests::test_websocket_client_connect ... ok
+test test_jwt_auth_expired_token ... ok
+test test_jwt_auth_invalid_signature ... ok
+test test_jwt_auth_malformed_header ... ok
+test test_jwt_auth_missing_sub_claim ... ok
+test test_jwt_auth_success ... ok
+test test_jwt_auth_untrusted_issuer ... ok
+
+test result: ok. 30 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 9.62s
+
+     Running tests/test_last_seen.rs (/Users/jamal/git/KalamDB/target/debug/deps/test_last_seen-505ccd1b7c671ebc)
+
+running 26 tests
+test common::auth_helper::tests::test_authenticate_basic ... ok
+test common::auth_helper::tests::test_create_basic_auth_header ... ok
+test common::fixtures::tests::test_create_messages_table ... ok
+test common::fixtures::tests::test_create_namespace ... ok
+test common::fixtures::tests::test_generate_user_data ... ok
+test common::fixtures::tests::test_insert_sample_messages ... ok
+test common::fixtures::tests::test_setup_complete_environment ... ok
+test common::flush_helpers::tests::test_extract_job_id_missing ... ok
+test common::flush_helpers::tests::test_extract_job_id_multiple ... ok
+test common::flush_helpers::tests::test_extract_job_id_single ... ok
+test common::stress_utils::tests::test_concurrent_writers_basic ... ok
+test common::stress_utils::tests::test_cpu_monitor_basic ... ok
+test common::stress_utils::tests::test_memory_growth_calculation ... ok
+test common::stress_utils::tests::test_memory_monitor_basic ... ok
+test common::tests::test_cleanup ... ok
+test common::tests::test_execute_sql ... ok
+test common::tests::test_namespace_exists ... ok
+test common::tests::test_server_creation ... ok
+test common::websocket::tests::test_assert_insert_notification ... ok
+test common::websocket::tests::test_assert_notification_field ... ok
+test common::websocket::tests::test_assert_update_notification ... ok
+test common::websocket::tests::test_create_subscription_message ... ok
+test common::websocket::tests::test_subscribe ... ok
+test common::websocket::tests::test_websocket_client_connect ... ok
+test test_authentication_returns_user ... ok
+test test_multiple_authentications_succeed ... ok
+
+test result: ok. 26 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 10.25s
+
+     Running tests/test_live_queries_auth_expiry.rs (/Users/jamal/git/KalamDB/target/debug/deps/test_live_queries_auth_expiry-ce4c4ff78ecb5551)
+
+running 25 tests
+test common::auth_helper::tests::test_authenticate_basic ... ok
+test common::auth_helper::tests::test_create_basic_auth_header ... ok
+test common::fixtures::tests::test_create_messages_table ... ok
+test common::fixtures::tests::test_create_namespace ... ok
+test common::fixtures::tests::test_generate_user_data ... ok
+test common::fixtures::tests::test_insert_sample_messages ... ok
+test common::fixtures::tests::test_setup_complete_environment ... ok
+test common::flush_helpers::tests::test_extract_job_id_missing ... ok
+test common::flush_helpers::tests::test_extract_job_id_multiple ... ok
+test common::flush_helpers::tests::test_extract_job_id_single ... ok
+test common::stress_utils::tests::test_concurrent_writers_basic ... ok
+test common::stress_utils::tests::test_cpu_monitor_basic ... ok
+test common::stress_utils::tests::test_memory_growth_calculation ... ok
+test common::stress_utils::tests::test_memory_monitor_basic ... ok
+test common::tests::test_cleanup ... ok
+test common::tests::test_execute_sql ... ok
+test common::tests::test_namespace_exists ... ok
+test common::tests::test_server_creation ... ok
+test common::websocket::tests::test_assert_insert_notification ... ok
+test common::websocket::tests::test_assert_notification_field ... ok
+test common::websocket::tests::test_assert_update_notification ... ok
+test common::websocket::tests::test_create_subscription_message ... ok
+test common::websocket::tests::test_subscribe ... ok
+test common::websocket::tests::test_websocket_client_connect ... ok
+test test_live_query_auth_expiry ... ok
+
+test result: ok. 25 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 6.30s
+
+     Running tests/test_live_queries_metadata.rs (/Users/jamal/git/KalamDB/target/debug/deps/test_live_queries_metadata-c58cd28c2f92b262)
+
+running 25 tests
+test common::auth_helper::tests::test_authenticate_basic ... ok
+test common::auth_helper::tests::test_create_basic_auth_header ... ok
+test common::fixtures::tests::test_create_messages_table ... ok
+test common::fixtures::tests::test_create_namespace ... ok
+test common::fixtures::tests::test_generate_user_data ... ok
+test common::fixtures::tests::test_insert_sample_messages ... ok
+test common::fixtures::tests::test_setup_complete_environment ... ok
+test common::flush_helpers::tests::test_extract_job_id_missing ... ok
+test common::flush_helpers::tests::test_extract_job_id_multiple ... ok
+test common::flush_helpers::tests::test_extract_job_id_single ... ok
+test common::stress_utils::tests::test_concurrent_writers_basic ... ok
+test common::stress_utils::tests::test_cpu_monitor_basic ... ok
+test common::stress_utils::tests::test_memory_growth_calculation ... ok
+test common::stress_utils::tests::test_memory_monitor_basic ... ok
+test common::tests::test_cleanup ... ok
+test common::tests::test_execute_sql ... ok
+test common::tests::test_namespace_exists ... ok
+test common::tests::test_server_creation ... ok
+test common::websocket::tests::test_assert_insert_notification ... ok
+test common::websocket::tests::test_assert_notification_field ... ok
+test common::websocket::tests::test_assert_update_notification ... ok
+test common::websocket::tests::test_create_subscription_message ... ok
+test common::websocket::tests::test_subscribe ... ok
+test common::websocket::tests::test_websocket_client_connect ... ok
+test test_live_queries_metadata ... ok
+
+test result: ok. 25 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 5.89s
+
+     Running tests/test_manifest_cache.rs (/Users/jamal/git/KalamDB/target/debug/deps/test_manifest_cache-c5cf7210c6627774)
+
+running 14 tests
+test test_cache_eviction_and_repopulation ... ok
+test test_cache_stats ... ok
+test test_clear_all_entries ... ok
+test test_equal_weight_factor ... ok
+test test_get_or_load_cache_hit ... ok
+test test_get_or_load_cache_miss ... ok
+test test_invalidate_table_preserves_other_tables ... ok
+test test_invalidate_table_removes_all_user_entries ... ok
+test test_invalidate_table_shared ... ok
+test test_multiple_updates_same_key ... ok
+test test_show_manifest_returns_all_entries ... ok
+test test_tiered_eviction_shared_tables_stay_longer ... ok
+test test_update_after_flush_atomic_write ... ok
+test test_validate_freshness_stale ... ok
+
+test result: ok. 14 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s
+
+     Running tests/test_manifest_flush_integration.rs (/Users/jamal/git/KalamDB/target/debug/deps/test_manifest_flush-0dd9c48ef7901448)
+
+running 7 tests
+test test_batch_entry_metadata_preservation ... ok
+test test_create_manifest_generates_valid_json ... ok
+test test_flush_five_batches_manifest_tracking ... ok
+test test_manifest_persistence_across_reads ... ok
+test test_manifest_validation_detects_corruption ... ok
+test test_segment_metadata_creation ... ok
+test test_update_manifest_increments_version ... ok
+
+test result: ok. 7 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.28s
+
+     Running tests/test_manifest_flush_new.rs (/Users/jamal/git/KalamDB/target/debug/deps/test_manifest_flush_new-30d32bdd24d9eea7)
+
+running 26 tests
+test common::auth_helper::tests::test_authenticate_basic ... ok
+test common::auth_helper::tests::test_create_basic_auth_header ... ok
+test common::fixtures::tests::test_create_messages_table ... ok
+test common::fixtures::tests::test_create_namespace ... ok
+test common::fixtures::tests::test_generate_user_data ... ok
+test common::fixtures::tests::test_insert_sample_messages ... ok
+test common::fixtures::tests::test_setup_complete_environment ... ok
+test common::flush_helpers::tests::test_extract_job_id_missing ... ok
+test common::flush_helpers::tests::test_extract_job_id_multiple ... ok
+test common::flush_helpers::tests::test_extract_job_id_single ... ok
+test common::stress_utils::tests::test_concurrent_writers_basic ... ok
+test common::stress_utils::tests::test_cpu_monitor_basic ... ok
+test common::stress_utils::tests::test_memory_growth_calculation ... ok
+test common::stress_utils::tests::test_memory_monitor_basic ... ok
+test common::tests::test_cleanup ... ok
+test common::tests::test_execute_sql ... ok
+test common::tests::test_namespace_exists ... ok
+test common::tests::test_server_creation ... ok
+test common::websocket::tests::test_assert_insert_notification ... ok
+test common::websocket::tests::test_assert_notification_field ... ok
+test common::websocket::tests::test_assert_update_notification ... ok
+test common::websocket::tests::test_create_subscription_message ... ok
+test common::websocket::tests::test_subscribe ... ok
+test common::websocket::tests::test_websocket_client_connect ... ok
+test test_manifest_cache_works ... ok
+test test_shared_table_flush_creates_manifest ... ok
+
+test result: ok. 26 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 6.63s
+
+     Running tests/test_manifest_persistence.rs (/Users/jamal/git/KalamDB/target/debug/deps/test_manifest_persistence-18e8df8cacb271cf)
+
+running 26 tests
+test common::auth_helper::tests::test_authenticate_basic ... ok
+test common::auth_helper::tests::test_create_basic_auth_header ... ok
+test common::fixtures::tests::test_create_messages_table ... ok
+test common::fixtures::tests::test_create_namespace ... ok
+test common::fixtures::tests::test_generate_user_data ... ok
+test common::fixtures::tests::test_insert_sample_messages ... ok
+test common::fixtures::tests::test_setup_complete_environment ... ok
+test common::flush_helpers::tests::test_extract_job_id_missing ... ok
+test common::flush_helpers::tests::test_extract_job_id_multiple ... ok
+test common::flush_helpers::tests::test_extract_job_id_single ... ok
+test common::stress_utils::tests::test_concurrent_writers_basic ... ok
+test common::stress_utils::tests::test_cpu_monitor_basic ... ok
+test common::stress_utils::tests::test_memory_growth_calculation ... ok
+test common::stress_utils::tests::test_memory_monitor_basic ... ok
+test common::tests::test_cleanup ... ok
+test common::tests::test_execute_sql ... ok
+test common::tests::test_namespace_exists ... ok
+test common::tests::test_server_creation ... ok
+test common::websocket::tests::test_assert_insert_notification ... ok
+test common::websocket::tests::test_assert_notification_field ... ok
+test common::websocket::tests::test_assert_update_notification ... ok
+test common::websocket::tests::test_create_subscription_message ... ok
+test common::websocket::tests::test_subscribe ... ok
+test common::websocket::tests::test_websocket_client_connect ... ok
+test test_manifest_persistence_lifecycle ... ok
+test test_manifest_reload_from_disk ... ok
+
+test result: ok. 26 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 6.03s
+
+     Running tests/integration/flush/test_manual_flush_verification.rs (/Users/jamal/git/KalamDB/target/debug/deps/test_manual_flush_verification-31fef953379ff70e)
+
+running 25 tests
+test common::auth_helper::tests::test_authenticate_basic ... ok
+test common::auth_helper::tests::test_create_basic_auth_header ... ok
+test common::fixtures::tests::test_create_messages_table ... ok
+test common::fixtures::tests::test_create_namespace ... ok
+test common::fixtures::tests::test_generate_user_data ... ok
+test common::fixtures::tests::test_insert_sample_messages ... ok
+test common::fixtures::tests::test_setup_complete_environment ... ok
+test common::flush_helpers::tests::test_extract_job_id_missing ... ok
+test common::flush_helpers::tests::test_extract_job_id_multiple ... ok
+test common::flush_helpers::tests::test_extract_job_id_single ... ok
+test common::stress_utils::tests::test_concurrent_writers_basic ... ok
+test common::stress_utils::tests::test_cpu_monitor_basic ... ok
+test common::stress_utils::tests::test_memory_growth_calculation ... ok
+test common::stress_utils::tests::test_memory_monitor_basic ... ok
+test common::tests::test_cleanup ... ok
+test common::tests::test_execute_sql ... ok
+test common::tests::test_namespace_exists ... ok
+test common::tests::test_server_creation ... ok
+test common::websocket::tests::test_assert_insert_notification ... ok
+test common::websocket::tests::test_assert_notification_field ... ok
+test common::websocket::tests::test_assert_update_notification ... ok
+test common::websocket::tests::test_create_subscription_message ... ok
+test common::websocket::tests::test_subscribe ... ok
+test common::websocket::tests::test_websocket_client_connect ... ok
+test test_flush_table_command_creates_parquet ... ok
+
+test result: ok. 25 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 6.12s
+
+     Running tests/test_mvcc_phase2.rs (/Users/jamal/git/KalamDB/target/debug/deps/test_mvcc_phase2-61e5092c38bfa476)
+
+running 33 tests
+test common::auth_helper::tests::test_authenticate_basic ... ok
+test common::auth_helper::tests::test_create_basic_auth_header ... ok
+test common::fixtures::tests::test_create_messages_table ... ok
+test common::fixtures::tests::test_create_namespace ... ok
+test common::fixtures::tests::test_generate_user_data ... ok
+test common::fixtures::tests::test_insert_sample_messages ... ok
+test common::fixtures::tests::test_setup_complete_environment ... ok
+test common::flush_helpers::tests::test_extract_job_id_missing ... ok
+test common::flush_helpers::tests::test_extract_job_id_multiple ... ok
+test common::flush_helpers::tests::test_extract_job_id_single ... ok
+test common::stress_utils::tests::test_concurrent_writers_basic ... ok
+test common::stress_utils::tests::test_cpu_monitor_basic ... ok
+test common::stress_utils::tests::test_memory_growth_calculation ... ok
+test common::stress_utils::tests::test_memory_monitor_basic ... ok
+test common::tests::test_cleanup ... ok
+test common::tests::test_execute_sql ... ok
+test common::tests::test_namespace_exists ... ok
+test common::tests::test_server_creation ... ok
+test common::websocket::tests::test_assert_insert_notification ... ok
+test common::websocket::tests::test_assert_notification_field ... ok
+test common::websocket::tests::test_assert_update_notification ... ok
+test common::websocket::tests::test_create_subscription_message ... ok
+test common::websocket::tests::test_subscribe ... ok
+test common::websocket::tests::test_websocket_client_connect ... ok
+test test_create_table_auto_adds_system_columns ... ok
+test test_create_table_without_pk_rejected ... ok
+test test_incremental_sync_seq_threshold ... ok
+test test_insert_duplicate_pk_rejected ... ok
+test test_insert_storage_key_format ... ok
+test test_rocksdb_prefix_scan_user_isolation ... ok
+test test_rocksdb_range_scan_efficiency ... ok
+test test_shared_table_row_structure ... ok
+test test_user_table_row_structure ... ok
+
+test result: ok. 33 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 6.39s
+
+     Running tests/integration/combined/test_namespace_validation.rs (/Users/jamal/git/KalamDB/target/debug/deps/test_namespace_validation-999eca668f3d3934)
+
+running 31 tests
+test common::auth_helper::tests::test_authenticate_basic ... ok
+test common::auth_helper::tests::test_create_basic_auth_header ... ok
+test common::fixtures::tests::test_create_messages_table ... ok
+test common::fixtures::tests::test_create_namespace ... ok
+test common::fixtures::tests::test_generate_user_data ... ok
+test common::fixtures::tests::test_insert_sample_messages ... ok
+test common::fixtures::tests::test_setup_complete_environment ... ok
+test common::flush_helpers::tests::test_extract_job_id_missing ... ok
+test common::flush_helpers::tests::test_extract_job_id_multiple ... ok
+test common::flush_helpers::tests::test_extract_job_id_single ... ok
+test common::stress_utils::tests::test_concurrent_writers_basic ... ok
+test common::stress_utils::tests::test_cpu_monitor_basic ... ok
+test common::stress_utils::tests::test_memory_growth_calculation ... ok
+test common::stress_utils::tests::test_memory_monitor_basic ... ok
+test common::tests::test_cleanup ... ok
+test common::tests::test_execute_sql ... ok
+test common::tests::test_namespace_exists ... ok
+test common::tests::test_server_creation ... ok
+test common::websocket::tests::test_assert_insert_notification ... ok
+test common::websocket::tests::test_assert_notification_field ... ok
+test common::websocket::tests::test_assert_update_notification ... ok
+test common::websocket::tests::test_create_subscription_message ... ok
+test common::websocket::tests::test_subscribe ... ok
+test common::websocket::tests::test_websocket_client_connect ... ok
+test test_create_table_after_namespace_creation ... ok
+test test_create_table_nonexistent_namespace_error ... ok
+test test_error_message_includes_guidance ... ok
+test test_namespace_validation_race_condition ... ok
+test test_shared_table_namespace_validation ... ok
+test test_stream_table_namespace_validation ... ok
+test test_user_table_namespace_validation ... ok
+
+test result: ok. 31 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 5.97s
+
+     Running tests/test_naming_validation.rs (/Users/jamal/git/KalamDB/target/debug/deps/test_naming_validation-f2021f531722dfc4)
+
+running 30 tests
+test common::auth_helper::tests::test_authenticate_basic ... ok
+test common::auth_helper::tests::test_create_basic_auth_header ... ok
+test common::fixtures::tests::test_create_messages_table ... ok
+test common::fixtures::tests::test_create_namespace ... ok
+test common::fixtures::tests::test_generate_user_data ... ok
+test common::fixtures::tests::test_insert_sample_messages ... ok
+test common::fixtures::tests::test_setup_complete_environment ... ok
+test common::flush_helpers::tests::test_extract_job_id_missing ... ok
+test common::flush_helpers::tests::test_extract_job_id_multiple ... ok
+test common::flush_helpers::tests::test_extract_job_id_single ... ok
+test common::stress_utils::tests::test_concurrent_writers_basic ... ok
+test common::stress_utils::tests::test_cpu_monitor_basic ... ok
+test common::stress_utils::tests::test_memory_growth_calculation ... ok
+test common::stress_utils::tests::test_memory_monitor_basic ... ok
+test common::tests::test_cleanup ... ok
+test common::tests::test_execute_sql ... ok
+test common::tests::test_namespace_exists ... ok
+test common::tests::test_server_creation ... ok
+test common::websocket::tests::test_assert_insert_notification ... ok
+test common::websocket::tests::test_assert_notification_field ... ok
+test common::websocket::tests::test_assert_update_notification ... ok
+test common::websocket::tests::test_create_subscription_message ... ok
+test common::websocket::tests::test_subscribe ... ok
+test common::websocket::tests::test_websocket_client_connect ... ok
+test test_no_auto_id_column_injection ... ok
+test test_reserved_column_names ... ok
+test test_reserved_namespace_names ... ok
+test test_user_can_use_id_as_column_name ... ok
+test test_valid_column_names ... ok
+test test_valid_namespace_names ... ok
+
+test result: ok. 30 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 6.02s
+
+     Running tests/test_oauth.rs (/Users/jamal/git/KalamDB/target/debug/deps/test_oauth-435cefec90509a0c)
+
+running 30 tests
+test common::auth_helper::tests::test_authenticate_basic ... ok
+test common::auth_helper::tests::test_create_basic_auth_header ... ok
+test common::fixtures::tests::test_create_messages_table ... ok
+test common::fixtures::tests::test_create_namespace ... ok
+test common::fixtures::tests::test_generate_user_data ... ok
+test common::fixtures::tests::test_insert_sample_messages ... ok
+test common::fixtures::tests::test_setup_complete_environment ... ok
+test common::flush_helpers::tests::test_extract_job_id_missing ... ok
+test common::flush_helpers::tests::test_extract_job_id_multiple ... ok
+test common::flush_helpers::tests::test_extract_job_id_single ... ok
+test common::stress_utils::tests::test_concurrent_writers_basic ... ok
+test common::stress_utils::tests::test_cpu_monitor_basic ... ok
+test common::stress_utils::tests::test_memory_growth_calculation ... ok
+test common::stress_utils::tests::test_memory_monitor_basic ... ok
+test common::tests::test_cleanup ... ok
+test common::tests::test_execute_sql ... ok
+test common::tests::test_namespace_exists ... ok
+test common::tests::test_server_creation ... ok
+test common::websocket::tests::test_assert_insert_notification ... ok
+test common::websocket::tests::test_assert_notification_field ... ok
+test common::websocket::tests::test_assert_update_notification ... ok
+test common::websocket::tests::test_create_subscription_message ... ok
+test common::websocket::tests::test_subscribe ... ok
+test common::websocket::tests::test_websocket_client_connect ... ok
+test test_oauth_auto_provision_disabled_by_default ... ok
+test test_oauth_azure_provider ... ok
+test test_oauth_google_success ... ok
+test test_oauth_subject_matching ... ok
+test test_oauth_user_missing_fields ... ok
+test test_oauth_user_password_rejected ... ok
+
+test result: ok. 30 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 10.32s
+
+     Running tests/test_password_complexity.rs (/Users/jamal/git/KalamDB/target/debug/deps/test_password_complexity-74358b86c0ce0ab0)
+
+running 32 tests
+test common::auth_helper::tests::test_authenticate_basic ... ok
+test common::auth_helper::tests::test_create_basic_auth_header ... ok
+test common::fixtures::tests::test_create_messages_table ... ok
+test common::fixtures::tests::test_create_namespace ... ok
+test common::fixtures::tests::test_generate_user_data ... ok
+test common::fixtures::tests::test_insert_sample_messages ... ok
+test common::fixtures::tests::test_setup_complete_environment ... ok
+test common::flush_helpers::tests::test_extract_job_id_missing ... ok
+test common::flush_helpers::tests::test_extract_job_id_multiple ... ok
+test common::flush_helpers::tests::test_extract_job_id_single ... ok
+test common::stress_utils::tests::test_concurrent_writers_basic ... ok
+test common::stress_utils::tests::test_cpu_monitor_basic ... ok
+test common::stress_utils::tests::test_memory_growth_calculation ... ok
+test common::stress_utils::tests::test_memory_monitor_basic ... ok
+test common::tests::test_cleanup ... ok
+test common::tests::test_execute_sql ... ok
+test common::tests::test_namespace_exists ... ok
+test common::tests::test_server_creation ... ok
+test common::websocket::tests::test_assert_insert_notification ... ok
+test common::websocket::tests::test_assert_notification_field ... ok
+test common::websocket::tests::test_assert_update_notification ... ok
+test common::websocket::tests::test_create_subscription_message ... ok
+test common::websocket::tests::test_subscribe ... ok
+test common::websocket::tests::test_websocket_client_connect ... ok
+test test_complexity_alter_user_requires_special_character ... ok
+test test_complexity_alter_user_valid_password_succeeds ... ok
+test test_complexity_digit_required ... ok
+test test_complexity_disabled_allows_simple_password ... ok
+test test_complexity_lowercase_required ... ok
+test test_complexity_special_required ... ok
+test test_complexity_uppercase_required ... ok
+test test_complexity_valid_password_succeeds ... ok
+
+test result: ok. 32 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 10.23s
+
+     Running tests/test_password_security.rs (/Users/jamal/git/KalamDB/target/debug/deps/test_password_security-2b5e1347efd0af0e)
+
+running 7 tests
+test test_concurrent_bcrypt_non_blocking ... ok
+test test_max_password_length_72 ... ok
+test test_min_password_length_8 ... ok
+test test_password_never_logged ... ok
+test test_password_never_plaintext ... ok
+test test_password_not_in_error_messages ... ok
+test test_weak_password_rejected ... ok
+
+test result: ok. 7 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s
+
+     Running tests/test_pk_index_efficiency.rs (/Users/jamal/git/KalamDB/target/debug/deps/test_pk_index_efficiency-9273bd0600116fbc)
+
+running 31 tests
+test common::auth_helper::tests::test_authenticate_basic ... ok
+test common::auth_helper::tests::test_create_basic_auth_header ... ok
+test common::fixtures::tests::test_create_messages_table ... ok
+test common::fixtures::tests::test_create_namespace ... ok
+test common::fixtures::tests::test_generate_user_data ... ok
+test common::fixtures::tests::test_insert_sample_messages ... ok
+test common::fixtures::tests::test_setup_complete_environment ... ok
+test common::flush_helpers::tests::test_extract_job_id_missing ... ok
+test common::flush_helpers::tests::test_extract_job_id_multiple ... ok
+test common::flush_helpers::tests::test_extract_job_id_single ... ok
+test common::stress_utils::tests::test_concurrent_writers_basic ... ok
+test common::stress_utils::tests::test_cpu_monitor_basic ... ok
+test common::stress_utils::tests::test_memory_growth_calculation ... ok
+test common::stress_utils::tests::test_memory_monitor_basic ... ok
+test common::tests::test_cleanup ... ok
+test common::tests::test_execute_sql ... ok
+test common::tests::test_namespace_exists ... ok
+test common::tests::test_server_creation ... ok
+test common::websocket::tests::test_assert_insert_notification ... ok
+test common::websocket::tests::test_assert_notification_field ... ok
+test common::websocket::tests::test_assert_update_notification ... ok
+test common::websocket::tests::test_create_subscription_message ... ok
+test common::websocket::tests::test_subscribe ... ok
+test common::websocket::tests::test_websocket_client_connect ... ok
+test test_shared_table_pk_index_update ... ok
+test test_shared_table_pk_index_update_after_flush ... ok
+test test_user_table_pk_index_delete ... ok
+test test_user_table_pk_index_isolation ... ok
+test test_user_table_pk_index_select ... ok
+test test_user_table_pk_index_update ... ok
+test test_user_table_pk_index_update_after_flush ... ok
+
+test result: ok. 31 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 8.70s
+
+     Running tests/integration/flush/test_pk_uniqueness_hot_cold.rs (/Users/jamal/git/KalamDB/target/debug/deps/test_pk_uniqueness_hot_cold-1f8f0190a07b9b4b)
+
+running 34 tests
+test common::auth_helper::tests::test_authenticate_basic ... ok
+test common::auth_helper::tests::test_create_basic_auth_header ... ok
+test common::fixtures::tests::test_create_messages_table ... ok
+test common::fixtures::tests::test_create_namespace ... ok
+test common::fixtures::tests::test_generate_user_data ... ok
+test common::fixtures::tests::test_insert_sample_messages ... ok
+test common::fixtures::tests::test_setup_complete_environment ... ok
+test common::flush_helpers::tests::test_extract_job_id_missing ... ok
+test common::flush_helpers::tests::test_extract_job_id_multiple ... ok
+test common::flush_helpers::tests::test_extract_job_id_single ... ok
+test common::stress_utils::tests::test_concurrent_writers_basic ... ok
+test common::stress_utils::tests::test_cpu_monitor_basic ... ok
+test common::stress_utils::tests::test_memory_growth_calculation ... ok
+test common::stress_utils::tests::test_memory_monitor_basic ... ok
+test common::tests::test_cleanup ... ok
+test common::tests::test_execute_sql ... ok
+test common::tests::test_namespace_exists ... ok
+test common::tests::test_server_creation ... ok
+test common::websocket::tests::test_assert_insert_notification ... ok
+test common::websocket::tests::test_assert_notification_field ... ok
+test common::websocket::tests::test_assert_update_notification ... ok
+test common::websocket::tests::test_create_subscription_message ... ok
+test common::websocket::tests::test_subscribe ... ok
+test common::websocket::tests::test_websocket_client_connect ... ok
+test test_auto_increment_pk_allows_multiple_inserts ... ok
+test test_insert_duplicate_pk_across_multiple_cold_segments ... ok
+test test_insert_duplicate_pk_in_cold_storage_shared_table ... ok
+test test_insert_duplicate_pk_in_cold_storage_user_table ... ok
+test test_insert_duplicate_pk_in_hot_storage_shared_table ... ok
+test test_insert_duplicate_pk_in_hot_storage_user_table ... ok
+test test_insert_unique_pk_after_partial_flush ... ok
+test test_update_pk_to_duplicate_in_cold_storage ... ok
+test test_update_pk_to_duplicate_in_hot_storage ... ok
+test test_user_isolation_for_pk_uniqueness ... ok
+
+test result: ok. 34 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 6.64s
+
+     Running tests/test_production_concurrency.rs (/Users/jamal/git/KalamDB/target/debug/deps/test_production_concurrency-ed9091969fd17dfa)
+
+running 29 tests
+test common::auth_helper::tests::test_authenticate_basic ... ok
+test common::auth_helper::tests::test_create_basic_auth_header ... ok
+test common::fixtures::tests::test_create_messages_table ... ok
+test common::fixtures::tests::test_create_namespace ... ok
+test common::fixtures::tests::test_generate_user_data ... ok
+test common::fixtures::tests::test_insert_sample_messages ... ok
+test common::fixtures::tests::test_setup_complete_environment ... ok
+test common::flush_helpers::tests::test_extract_job_id_missing ... ok
+test common::flush_helpers::tests::test_extract_job_id_multiple ... ok
+test common::flush_helpers::tests::test_extract_job_id_single ... ok
+test common::stress_utils::tests::test_concurrent_writers_basic ... ok
+test common::stress_utils::tests::test_cpu_monitor_basic ... ok
+test common::stress_utils::tests::test_memory_growth_calculation ... ok
+test common::stress_utils::tests::test_memory_monitor_basic ... ok
+test common::tests::test_cleanup ... ok
+test common::tests::test_execute_sql ... ok
+test common::tests::test_namespace_exists ... ok
+test common::tests::test_server_creation ... ok
+test common::websocket::tests::test_assert_insert_notification ... ok
+test common::websocket::tests::test_assert_notification_field ... ok
+test common::websocket::tests::test_assert_update_notification ... ok
+test common::websocket::tests::test_create_subscription_message ... ok
+test common::websocket::tests::test_subscribe ... ok
+test common::websocket::tests::test_websocket_client_connect ... ok
+test concurrent_deletes ... ok
+test concurrent_duplicate_primary_key_handling ... ignored, Requires atomic PK constraint enforcement - future implementation
+test concurrent_inserts_same_user_table ... ok
+test concurrent_select_queries ... ok
+test concurrent_updates_same_row ... ok
+
+test result: ok. 28 passed; 0 failed; 1 ignored; 0 measured; 0 filtered out; finished in 10.07s
+
+     Running tests/test_production_observability.rs (/Users/jamal/git/KalamDB/target/debug/deps/test_production_observability-aaaf8e20c02cfa90)
+
+running 32 tests
+test common::auth_helper::tests::test_authenticate_basic ... ok
+test common::auth_helper::tests::test_create_basic_auth_header ... ok
+test common::fixtures::tests::test_create_messages_table ... ok
+test common::fixtures::tests::test_create_namespace ... ok
+test common::fixtures::tests::test_generate_user_data ... ok
+test common::fixtures::tests::test_insert_sample_messages ... ok
+test common::fixtures::tests::test_setup_complete_environment ... ok
+test common::flush_helpers::tests::test_extract_job_id_missing ... ok
+test common::flush_helpers::tests::test_extract_job_id_multiple ... ok
+test common::flush_helpers::tests::test_extract_job_id_single ... ok
+test common::stress_utils::tests::test_concurrent_writers_basic ... ok
+test common::stress_utils::tests::test_cpu_monitor_basic ... ok
+test common::stress_utils::tests::test_memory_growth_calculation ... ok
+test common::stress_utils::tests::test_memory_monitor_basic ... ok
+test common::tests::test_cleanup ... ok
+test common::tests::test_execute_sql ... ok
+test common::tests::test_namespace_exists ... ok
+test common::tests::test_server_creation ... ok
+test common::websocket::tests::test_assert_insert_notification ... ok
+test common::websocket::tests::test_assert_notification_field ... ok
+test common::websocket::tests::test_assert_update_notification ... ok
+test common::websocket::tests::test_create_subscription_message ... ok
+test common::websocket::tests::test_subscribe ... ok
+test common::websocket::tests::test_websocket_client_connect ... ok
+test system_jobs_tracks_flush_operations ... ok
+test system_namespaces_tracks_table_count ... ok
+test system_storages_shows_default_storage ... ok
+test system_tables_includes_column_metadata ... ok
+test system_tables_queryable_on_startup ... ok
+test system_tables_row_counts_are_consistent ... ok
+test system_tables_shows_created_tables ... ok
+test system_users_shows_created_users ... ok
+
+test result: ok. 32 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 10.86s
+
+     Running tests/test_production_validation.rs (/Users/jamal/git/KalamDB/target/debug/deps/test_production_validation-2dc843d7f6054d59)
+
+running 36 tests
+test common::auth_helper::tests::test_authenticate_basic ... ok
+test common::auth_helper::tests::test_create_basic_auth_header ... ok
+test common::fixtures::tests::test_create_messages_table ... ok
+test common::fixtures::tests::test_create_namespace ... ok
+test common::fixtures::tests::test_generate_user_data ... ok
+test common::fixtures::tests::test_insert_sample_messages ... ok
+test common::fixtures::tests::test_setup_complete_environment ... ok
+test common::flush_helpers::tests::test_extract_job_id_missing ... ok
+test common::flush_helpers::tests::test_extract_job_id_multiple ... ok
+test common::flush_helpers::tests::test_extract_job_id_single ... ok
+test common::stress_utils::tests::test_concurrent_writers_basic ... ok
+test common::stress_utils::tests::test_cpu_monitor_basic ... ok
+test common::stress_utils::tests::test_memory_growth_calculation ... ok
+test common::stress_utils::tests::test_memory_monitor_basic ... ok
+test common::tests::test_cleanup ... ok
+test common::tests::test_execute_sql ... ok
+test common::tests::test_namespace_exists ... ok
+test common::tests::test_server_creation ... ok
+test common::websocket::tests::test_assert_insert_notification ... ok
+test common::websocket::tests::test_assert_notification_field ... ok
+test common::websocket::tests::test_assert_update_notification ... ok
+test common::websocket::tests::test_create_subscription_message ... ok
+test common::websocket::tests::test_subscribe ... ok
+test common::websocket::tests::test_websocket_client_connect ... ok
+test drop_nonexistent_table_error_is_clear ... ok
+test duplicate_primary_key_rejected ... ok
+test flush_on_stream_table_rejected ... ignored, STREAM table type not yet implemented
+test invalid_data_type_in_insert_rejected ... ok
+test invalid_namespace_name_rejected ... ok
+test null_constraint_violation_detected ... ignored, NOT NULL constraint enforcement not yet implemented
+test permission_denied_error_is_clear ... ok
+test select_invalid_column_error_is_clear ... ok
+test syntax_error_messages_are_clear ... ok
+test table_not_found_error_is_clear ... ok
+test table_without_primary_key_rejected ... ok
+test user_isolation_in_user_tables ... ok
+
+test result: ok. 34 passed; 0 failed; 2 ignored; 0 measured; 0 filtered out; finished in 11.37s
+
+     Running tests/integration/combined/test_quickstart.rs (/Users/jamal/git/KalamDB/target/debug/deps/test_quickstart-f11c56ab0e9b76da)
+
+running 44 tests
+test common::auth_helper::tests::test_authenticate_basic ... ok
+test common::auth_helper::tests::test_create_basic_auth_header ... ok
+test common::fixtures::tests::test_create_messages_table ... ok
+test common::fixtures::tests::test_create_namespace ... ok
+test common::fixtures::tests::test_generate_user_data ... ok
+test common::fixtures::tests::test_insert_sample_messages ... ok
+test common::fixtures::tests::test_setup_complete_environment ... ok
+test common::flush_helpers::tests::test_extract_job_id_missing ... ok
+test common::flush_helpers::tests::test_extract_job_id_multiple ... ok
+test common::flush_helpers::tests::test_extract_job_id_single ... ok
+test common::stress_utils::tests::test_concurrent_writers_basic ... ok
+test common::stress_utils::tests::test_cpu_monitor_basic ... ok
+test common::stress_utils::tests::test_memory_growth_calculation ... ok
+test common::stress_utils::tests::test_memory_monitor_basic ... ok
+test common::tests::test_cleanup ... ok
+test common::tests::test_execute_sql ... ok
+test common::tests::test_namespace_exists ... ok
+test common::tests::test_server_creation ... ok
+test common::websocket::tests::test_assert_insert_notification ... ok
+test common::websocket::tests::test_assert_notification_field ... ok
+test common::websocket::tests::test_assert_update_notification ... ok
+test common::websocket::tests::test_create_subscription_message ... ok
+test common::websocket::tests::test_subscribe ... ok
+test common::websocket::tests::test_websocket_client_connect ... ok
+test test_01_create_namespace ... ok
+test test_02_create_user_table ... ok
+test test_03_insert_data ... ok
+test test_04_query_data ... ok
+test test_05_update_data ... ok
+test test_06_delete_data ... ok
+test test_07_create_shared_table ... ok
+test test_08_insert_into_shared_table ... ok
+test test_09_create_stream_table ... ok
+test test_10_insert_into_stream_table ... ok
+test test_11_list_namespaces ... ok
+test test_12_list_tables ... ok
+test test_13_query_system_users ... ok
+test test_14_drop_table ... ok
+test test_15_drop_namespace ... ok
+test test_16_complete_workflow ... ok
+test test_17_performance_write_latency ... ok
+test test_18_performance_query_latency ... ok
+test test_19_multiple_namespaces ... ok
+test test_20_complete_environment_setup ... ok
+
+test result: ok. 44 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 7.15s
+
+     Running tests/test_rbac.rs (/Users/jamal/git/KalamDB/target/debug/deps/test_rbac-ccd9eeef3e3b518e)
+
+running 31 tests
+test common::auth_helper::tests::test_authenticate_basic ... ok
+test common::auth_helper::tests::test_create_basic_auth_header ... ok
+test common::fixtures::tests::test_create_messages_table ... ok
+test common::fixtures::tests::test_create_namespace ... ok
+test common::fixtures::tests::test_generate_user_data ... ok
+test common::fixtures::tests::test_insert_sample_messages ... ok
+test common::fixtures::tests::test_setup_complete_environment ... ok
+test common::flush_helpers::tests::test_extract_job_id_missing ... ok
+test common::flush_helpers::tests::test_extract_job_id_multiple ... ok
+test common::flush_helpers::tests::test_extract_job_id_single ... ok
+test common::stress_utils::tests::test_concurrent_writers_basic ... ok
+test common::stress_utils::tests::test_cpu_monitor_basic ... ok
+test common::stress_utils::tests::test_memory_growth_calculation ... ok
+test common::stress_utils::tests::test_memory_monitor_basic ... ok
+test common::tests::test_cleanup ... ok
+test common::tests::test_execute_sql ... ok
+test common::tests::test_namespace_exists ... ok
+test common::tests::test_server_creation ... ok
+test common::websocket::tests::test_assert_insert_notification ... ok
+test common::websocket::tests::test_assert_notification_field ... ok
+test common::websocket::tests::test_assert_update_notification ... ok
+test common::websocket::tests::test_create_subscription_message ... ok
+test common::websocket::tests::test_subscribe ... ok
+test common::websocket::tests::test_websocket_client_connect ... ok
+test test_dba_can_manage_users ... ok
+test test_service_role_cannot_manage_users ... ok
+test test_service_role_cross_user_access ... ignored, Service role cross-user access not yet implemented correctly
+test test_service_role_flush_operations ... ok
+test test_system_role_all_access_smoke ... ok
+test test_user_cannot_manage_users ... ok
+test test_user_role_own_tables_access_and_isolation ... ok
+
+test result: ok. 30 passed; 0 failed; 1 ignored; 0 measured; 0 filtered out; finished in 7.77s
+
+     Running tests/test_row_count_behavior.rs (/Users/jamal/git/KalamDB/target/debug/deps/test_row_count_behavior-0b771c4b62ae4730)
+
+running 29 tests
+test common::auth_helper::tests::test_authenticate_basic ... ok
+test common::auth_helper::tests::test_create_basic_auth_header ... ok
+test common::fixtures::tests::test_create_messages_table ... ok
+test common::fixtures::tests::test_create_namespace ... ok
+test common::fixtures::tests::test_generate_user_data ... ok
+test common::fixtures::tests::test_insert_sample_messages ... ok
+test common::fixtures::tests::test_setup_complete_environment ... ok
+test common::flush_helpers::tests::test_extract_job_id_missing ... ok
+test common::flush_helpers::tests::test_extract_job_id_multiple ... ok
+test common::flush_helpers::tests::test_extract_job_id_single ... ok
+test common::stress_utils::tests::test_concurrent_writers_basic ... ok
+test common::stress_utils::tests::test_cpu_monitor_basic ... ok
+test common::stress_utils::tests::test_memory_growth_calculation ... ok
+test common::stress_utils::tests::test_memory_monitor_basic ... ok
+test common::tests::test_cleanup ... ok
+test common::tests::test_execute_sql ... ok
+test common::tests::test_namespace_exists ... ok
+test common::tests::test_server_creation ... ok
+test common::websocket::tests::test_assert_insert_notification ... ok
+test common::websocket::tests::test_assert_notification_field ... ok
+test common::websocket::tests::test_assert_update_notification ... ok
+test common::websocket::tests::test_create_subscription_message ... ok
+test common::websocket::tests::test_subscribe ... ok
+test common::websocket::tests::test_websocket_client_connect ... ok
+test test_delete_already_deleted_returns_zero ... ok
+test test_delete_multiple_rows_count ... ok
+test test_delete_returns_correct_row_count ... ok
+test test_update_returns_correct_row_count ... ok
+test test_update_same_values_still_counts ... ok
+
+test result: ok. 29 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 6.19s
+
+     Running tests/test_schema_cache_invalidation.rs (/Users/jamal/git/KalamDB/target/debug/deps/test_schema_cache_invalidation-2fea85c8ab9c115b)
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests/test_schema_consolidation.rs (/Users/jamal/git/KalamDB/target/debug/deps/test_schema_consolidation-0a9e255548fd2d86)
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests/test_shared_access.rs (/Users/jamal/git/KalamDB/target/debug/deps/test_shared_access-823deb9ecc7b4914)
+
+running 31 tests
+test common::auth_helper::tests::test_authenticate_basic ... ok
+test common::auth_helper::tests::test_create_basic_auth_header ... ok
+test common::fixtures::tests::test_create_messages_table ... ok
+test common::fixtures::tests::test_create_namespace ... ok
+test common::fixtures::tests::test_generate_user_data ... ok
+test common::fixtures::tests::test_insert_sample_messages ... ok
+test common::fixtures::tests::test_setup_complete_environment ... ok
+test common::flush_helpers::tests::test_extract_job_id_missing ... ok
+test common::flush_helpers::tests::test_extract_job_id_multiple ... ok
+test common::flush_helpers::tests::test_extract_job_id_single ... ok
+test common::stress_utils::tests::test_concurrent_writers_basic ... ok
+test common::stress_utils::tests::test_cpu_monitor_basic ... ok
+test common::stress_utils::tests::test_memory_growth_calculation ... ok
+test common::stress_utils::tests::test_memory_monitor_basic ... ok
+test common::tests::test_cleanup ... ok
+test common::tests::test_execute_sql ... ok
+test common::tests::test_namespace_exists ... ok
+test common::tests::test_server_creation ... ok
+test common::websocket::tests::test_assert_insert_notification ... ok
+test common::websocket::tests::test_assert_notification_field ... ok
+test common::websocket::tests::test_assert_update_notification ... ok
+test common::websocket::tests::test_create_subscription_message ... ok
+test common::websocket::tests::test_subscribe ... ok
+test common::websocket::tests::test_websocket_client_connect ... ok
+test test_access_level_only_on_shared_tables ... ok
+test test_alter_access_level_only_on_shared_tables ... ok
+test test_change_access_level_requires_privileges ... ok
+test test_private_table_service_dba_only ... ok
+test test_public_table_read_only_for_users ... ok
+test test_shared_table_defaults_to_private ... ok
+test test_user_cannot_modify_public_table ... ok
+
+test result: ok. 31 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 25.32s
+
+     Running tests/integration/tables/shared/test_shared_drop_cleanup.rs (/Users/jamal/git/KalamDB/target/debug/deps/test_shared_drop_cleanup-805e8e8fab55b0c0)
+
+running 25 tests
+test common::auth_helper::tests::test_authenticate_basic ... ok
+test common::auth_helper::tests::test_create_basic_auth_header ... ok
+test common::fixtures::tests::test_create_messages_table ... ok
+test common::fixtures::tests::test_create_namespace ... ok
+test common::fixtures::tests::test_generate_user_data ... ok
+test common::fixtures::tests::test_insert_sample_messages ... ok
+test common::fixtures::tests::test_setup_complete_environment ... ok
+test common::flush_helpers::tests::test_extract_job_id_missing ... ok
+test common::flush_helpers::tests::test_extract_job_id_multiple ... ok
+test common::flush_helpers::tests::test_extract_job_id_single ... ok
+test common::stress_utils::tests::test_concurrent_writers_basic ... ok
+test common::stress_utils::tests::test_cpu_monitor_basic ... ok
+test common::stress_utils::tests::test_memory_growth_calculation ... ok
+test common::stress_utils::tests::test_memory_monitor_basic ... ok
+test common::tests::test_cleanup ... ok
+test common::tests::test_execute_sql ... ok
+test common::tests::test_namespace_exists ... ok
+test common::tests::test_server_creation ... ok
+test common::websocket::tests::test_assert_insert_notification ... ok
+test common::websocket::tests::test_assert_notification_field ... ok
+test common::websocket::tests::test_assert_update_notification ... ok
+test common::websocket::tests::test_create_subscription_message ... ok
+test common::websocket::tests::test_subscribe ... ok
+test common::websocket::tests::test_websocket_client_connect ... ok
+test test_drop_shared_table_deletes_partitions_and_parquet ... ok
+
+test result: ok. 25 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 5.99s
+
+     Running tests/integration/tables/shared/test_shared_tables.rs (/Users/jamal/git/KalamDB/target/debug/deps/test_shared_tables-78579f6b85c54169)
+
+running 38 tests
+test common::auth_helper::tests::test_authenticate_basic ... ok
+test common::auth_helper::tests::test_create_basic_auth_header ... ok
+test common::fixtures::tests::test_create_messages_table ... ok
+test common::fixtures::tests::test_create_namespace ... ok
+test common::fixtures::tests::test_generate_user_data ... ok
+test common::fixtures::tests::test_insert_sample_messages ... ok
+test common::fixtures::tests::test_setup_complete_environment ... ok
+test common::flush_helpers::tests::test_extract_job_id_missing ... ok
+test common::flush_helpers::tests::test_extract_job_id_multiple ... ok
+test common::flush_helpers::tests::test_extract_job_id_single ... ok
+test common::stress_utils::tests::test_concurrent_writers_basic ... ok
+test common::stress_utils::tests::test_cpu_monitor_basic ... ok
+test common::stress_utils::tests::test_memory_growth_calculation ... ok
+test common::stress_utils::tests::test_memory_monitor_basic ... ok
+test common::tests::test_cleanup ... ok
+test common::tests::test_execute_sql ... ok
+test common::tests::test_namespace_exists ... ok
+test common::tests::test_server_creation ... ok
+test common::websocket::tests::test_assert_insert_notification ... ok
+test common::websocket::tests::test_assert_notification_field ... ok
+test common::websocket::tests::test_assert_update_notification ... ok
+test common::websocket::tests::test_create_subscription_message ... ok
+test common::websocket::tests::test_subscribe ... ok
+test common::websocket::tests::test_websocket_client_connect ... ok
+test test_shared_table_complete_lifecycle ... ok
+test test_shared_table_create_and_drop ... ok
+test test_shared_table_delete ... ok
+test test_shared_table_drop_with_data ... ok
+test test_shared_table_flush_policy_rows ... ok
+test test_shared_table_if_not_exists ... ok
+test test_shared_table_insert_and_select ... ok
+test test_shared_table_multiple_inserts ... ok
+test test_shared_table_multiple_tables_same_namespace ... ok
+test test_shared_table_ordering ... ok
+test test_shared_table_query_filtering ... ok
+test test_shared_table_select ... ok
+test test_shared_table_system_columns ... ok
+test test_shared_table_update ... ok
+
+test result: ok. 38 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 7.04s
+
+     Running tests/test_soft_delete.rs (/Users/jamal/git/KalamDB/target/debug/deps/test_soft_delete-0a8cf1d781be9021)
+
+running 30 tests
+test common::auth_helper::tests::test_authenticate_basic ... ok
+test common::auth_helper::tests::test_create_basic_auth_header ... ok
+test common::fixtures::tests::test_create_messages_table ... ok
+test common::fixtures::tests::test_create_namespace ... ok
+test common::fixtures::tests::test_generate_user_data ... ok
+test common::fixtures::tests::test_insert_sample_messages ... ok
+test common::fixtures::tests::test_setup_complete_environment ... ok
+test common::flush_helpers::tests::test_extract_job_id_missing ... ok
+test common::flush_helpers::tests::test_extract_job_id_multiple ... ok
+test common::flush_helpers::tests::test_extract_job_id_single ... ok
+test common::stress_utils::tests::test_concurrent_writers_basic ... ok
+test common::stress_utils::tests::test_cpu_monitor_basic ... ok
+test common::stress_utils::tests::test_memory_growth_calculation ... ok
+test common::stress_utils::tests::test_memory_monitor_basic ... ok
+test common::tests::test_cleanup ... ok
+test common::tests::test_execute_sql ... ok
+test common::tests::test_namespace_exists ... ok
+test common::tests::test_server_creation ... ok
+test common::websocket::tests::test_assert_insert_notification ... ok
+test common::websocket::tests::test_assert_notification_field ... ok
+test common::websocket::tests::test_assert_update_notification ... ok
+test common::websocket::tests::test_create_subscription_message ... ok
+test common::websocket::tests::test_subscribe ... ok
+test common::websocket::tests::test_websocket_client_connect ... ok
+test test_count_excludes_deleted_rows ... ok
+test test_delete_with_where_clause ... ok
+test test_deleted_field_default_false ... ok
+test test_multiple_deletes ... ok
+test test_soft_delete_hides_rows ... ok
+test test_soft_delete_preserves_data ... ok
+
+test result: ok. 30 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 6.29s
+
+     Running tests/integration/storage_management/test_storage_management.rs (/Users/jamal/git/KalamDB/target/debug/deps/test_storage_management-d9912acaee809f24)
+
+running 64 tests
+test common::auth_helper::tests::test_authenticate_basic ... ok
+test common::auth_helper::tests::test_create_basic_auth_header ... ok
+test common::fixtures::tests::test_create_messages_table ... ok
+test common::fixtures::tests::test_create_namespace ... ok
+test common::fixtures::tests::test_generate_user_data ... ok
+test common::fixtures::tests::test_insert_sample_messages ... ok
+test common::fixtures::tests::test_setup_complete_environment ... ok
+test common::flush_helpers::tests::test_extract_job_id_missing ... ok
+test common::flush_helpers::tests::test_extract_job_id_multiple ... ok
+test common::flush_helpers::tests::test_extract_job_id_single ... ok
+test common::stress_utils::tests::test_concurrent_writers_basic ... ok
+test common::stress_utils::tests::test_cpu_monitor_basic ... ok
+test common::stress_utils::tests::test_memory_growth_calculation ... ok
+test common::stress_utils::tests::test_memory_monitor_basic ... ok
+test common::tests::test_cleanup ... ok
+test common::tests::test_execute_sql ... ok
+test common::tests::test_namespace_exists ... ok
+test common::tests::test_server_creation ... ok
+test common::websocket::tests::test_assert_insert_notification ... ok
+test common::websocket::tests::test_assert_notification_field ... ok
+test common::websocket::tests::test_assert_update_notification ... ok
+test common::websocket::tests::test_create_subscription_message ... ok
+test common::websocket::tests::test_subscribe ... ok
+test common::websocket::tests::test_websocket_client_connect ... ok
+test test_01_default_storage_exists ... ok
+test test_02_show_storages_basic ... ok
+test test_03_create_storage_filesystem ... ok
+test test_04_create_storage_s3 ... ok
+test test_05_create_storage_duplicate_error ... ok
+test test_06_create_storage_invalid_template ... ok
+test test_07_alter_storage_all_fields ... ok
+test test_08_alter_storage_partial ... ok
+test test_09_alter_storage_invalid_template ... ok
+test test_10_drop_storage_basic ... ok
+test test_11_drop_storage_referential_integrity ... ok
+test test_12_drop_storage_not_exists ... ok
+test test_13_template_validation_correct_order ... ok
+test test_14_template_validation_invalid_order ... ok
+test test_15_storage_lookup_table_level ... ok
+test test_16_show_storages_ordered ... ok
+test test_17_concurrent_storage_operations ... ok
+test test_18_invalid_storage_type ... ok
+test test_19_minimal_storage_config ... ok
+test test_20_storage_with_namespace ... ok
+test test_22_credentials_column_exists ... ok
+test test_23_storage_with_credentials ... ok
+test test_24_credentials_masked_in_query ... ok
+test test_25_create_table_with_storage ... ok
+test test_26_create_table_default_storage ... ok
+test test_27_create_table_invalid_storage ... ok
+test test_28_table_storage_assignment ... ok
+test test_29_delete_storage_with_tables ... ok
+test test_30_delete_storage_local_protected ... ok
+test test_31_delete_storage_no_dependencies ... ok
+test test_32_show_storages_ordering ... ok
+test test_33_storage_template_validation ... ok
+test test_34_shared_table_template_ordering ... ok
+test test_35_user_table_template_ordering ... ok
+test test_36_user_table_template_requires_userId ... ok
+test test_37_flush_with_use_user_storage ... ok
+test test_38_user_storage_mode_region ... ok
+test test_39_user_storage_mode_table ... ok
+test test_40_flush_resolves_s3_storage ... ok
+test test_41_multi_storage_flush ... ok
+
+test result: ok. 64 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 6.81s
+
+     Running tests/test_storage_path_resolution.rs (/Users/jamal/git/KalamDB/target/debug/deps/test_storage_path_resolution-4b52ee79bb77fab6)
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests/integration/tables/stream/test_stream_tables.rs (/Users/jamal/git/KalamDB/target/debug/deps/test_stream_tables-17e083f1dc911659)
+
+running 27 tests
+test common::auth_helper::tests::test_authenticate_basic ... ok
+test common::auth_helper::tests::test_create_basic_auth_header ... ok
+test common::fixtures::tests::test_create_messages_table ... ok
+test common::fixtures::tests::test_create_namespace ... ok
+test common::fixtures::tests::test_generate_user_data ... ok
+test common::fixtures::tests::test_insert_sample_messages ... ok
+test common::fixtures::tests::test_setup_complete_environment ... ok
+test common::flush_helpers::tests::test_extract_job_id_missing ... ok
+test common::flush_helpers::tests::test_extract_job_id_multiple ... ok
+test common::flush_helpers::tests::test_extract_job_id_single ... ok
+test common::stress_utils::tests::test_concurrent_writers_basic ... ok
+test common::stress_utils::tests::test_cpu_monitor_basic ... ok
+test common::stress_utils::tests::test_memory_growth_calculation ... ok
+test common::stress_utils::tests::test_memory_monitor_basic ... ok
+test common::tests::test_cleanup ... ok
+test common::tests::test_execute_sql ... ok
+test common::tests::test_namespace_exists ... ok
+test common::tests::test_server_creation ... ok
+test common::websocket::tests::test_assert_insert_notification ... ok
+test common::websocket::tests::test_assert_notification_field ... ok
+test common::websocket::tests::test_assert_update_notification ... ok
+test common::websocket::tests::test_create_subscription_message ... ok
+test common::websocket::tests::test_subscribe ... ok
+test common::websocket::tests::test_websocket_client_connect ... ok
+test test_stream_table_create_and_basic_insert ... ok
+test test_stream_table_multiple_inserts ... ok
+test test_stream_table_no_system_columns ... ok
+
+test result: ok. 27 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 5.59s
+
+     Running tests/test_stream_ttl_eviction.rs (/Users/jamal/git/KalamDB/target/debug/deps/test_stream_ttl_eviction-b0e07788b34c8048)
+
+running 3 tests
+test test_stream_table_select_with_limit ... ok
+test test_stream_table_select_with_projection ... ok
+test test_stream_table_ttl_eviction_with_select ... ok
+
+test result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 1.32s
+
+     Running tests/integration/combined/test_stress_and_memory.rs (/Users/jamal/git/KalamDB/target/debug/deps/test_stress_and_memory-80db54648837f47d)
+
+running 33 tests
+test common::auth_helper::tests::test_authenticate_basic ... ok
+test common::auth_helper::tests::test_create_basic_auth_header ... ok
+test common::fixtures::tests::test_create_messages_table ... ok
+test common::fixtures::tests::test_create_namespace ... ok
+test common::fixtures::tests::test_generate_user_data ... ok
+test common::fixtures::tests::test_insert_sample_messages ... ok
+test common::fixtures::tests::test_setup_complete_environment ... ok
+test common::flush_helpers::tests::test_extract_job_id_missing ... ok
+test common::flush_helpers::tests::test_extract_job_id_multiple ... ok
+test common::flush_helpers::tests::test_extract_job_id_single ... ok
+test common::stress_utils::tests::test_concurrent_writers_basic ... ok
+test common::stress_utils::tests::test_cpu_monitor_basic ... ok
+test common::stress_utils::tests::test_memory_growth_calculation ... ok
+test common::stress_utils::tests::test_memory_monitor_basic ... ok
+test common::tests::test_cleanup ... ok
+test common::tests::test_execute_sql ... ok
+test common::tests::test_namespace_exists ... ok
+test common::tests::test_server_creation ... ok
+test common::websocket::tests::test_assert_insert_notification ... ok
+test common::websocket::tests::test_assert_notification_field ... ok
+test common::websocket::tests::test_assert_update_notification ... ok
+test common::websocket::tests::test_create_subscription_message ... ok
+test common::websocket::tests::test_subscribe ... ok
+test common::websocket::tests::test_websocket_client_connect ... ok
+test test_actor_system_stability ... ok
+test test_concurrent_writers_and_listeners ... ok
+test test_cpu_usage_under_load ... ok
+test test_flush_operations_during_stress ... ok
+test test_graceful_degradation ... ok
+test test_memory_release_after_stress ... ok
+test test_memory_stability_under_write_load ... ok
+test test_query_performance_under_stress ... ok
+test test_websocket_connection_leak_detection ... ok
+
+test result: ok. 33 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 6.23s
+
+     Running tests/integration/tables/system/test_system_tables.rs (/Users/jamal/git/KalamDB/target/debug/deps/test_system_tables-8115604e6640ab88)
+
+running 40 tests
+test common::auth_helper::tests::test_authenticate_basic ... ok
+test common::auth_helper::tests::test_create_basic_auth_header ... ok
+test common::fixtures::tests::test_create_messages_table ... ok
+test common::fixtures::tests::test_create_namespace ... ok
+test common::fixtures::tests::test_generate_user_data ... ok
+test common::fixtures::tests::test_insert_sample_messages ... ok
+test common::fixtures::tests::test_setup_complete_environment ... ok
+test common::flush_helpers::tests::test_extract_job_id_missing ... ok
+test common::flush_helpers::tests::test_extract_job_id_multiple ... ok
+test common::flush_helpers::tests::test_extract_job_id_single ... ok
+test common::stress_utils::tests::test_concurrent_writers_basic ... ok
+test common::stress_utils::tests::test_cpu_monitor_basic ... ok
+test common::stress_utils::tests::test_memory_growth_calculation ... ok
+test common::stress_utils::tests::test_memory_monitor_basic ... ok
+test common::tests::test_cleanup ... ok
+test common::tests::test_execute_sql ... ok
+test common::tests::test_namespace_exists ... ok
+test common::tests::test_server_creation ... ok
+test common::websocket::tests::test_assert_insert_notification ... ok
+test common::websocket::tests::test_assert_notification_field ... ok
+test common::websocket::tests::test_assert_update_notification ... ok
+test common::websocket::tests::test_create_subscription_message ... ok
+test common::websocket::tests::test_subscribe ... ok
+test common::websocket::tests::test_websocket_client_connect ... ok
+test test_01_list_system_tables ... ok
+test test_02_query_system_table_schemas ... ok
+test test_03_query_system_users_basic ... ok
+test test_04_query_system_namespaces ... ok
+test test_05_query_system_tables ... ok
+test test_06_query_system_users_with_filters ... ok
+test test_07_insert_users_into_system_table ... ok
+test test_08_insert_storage_locations ... ok
+test test_09_query_table_schemas ... ok
+test test_10_query_table_metadata ... ok
+test test_11_drop_table_and_verify_cleanup ... ok
+test test_12_view_table_types_from_system_tables ... ok
+test test_13_filter_tables_by_type ... ok
+test test_14_update_system_users ... ok
+test test_15_update_multiple_users ... ok
+test test_20_complex_system_queries ... ok
+
+test result: ok. 40 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 6.72s
+
+     Running tests/test_system_user_init.rs (/Users/jamal/git/KalamDB/target/debug/deps/test_system_user_init-d8bf473f0ee404e0)
+
+running 26 tests
+test common::auth_helper::tests::test_authenticate_basic ... ok
+test common::auth_helper::tests::test_create_basic_auth_header ... ok
+test common::fixtures::tests::test_create_messages_table ... ok
+test common::fixtures::tests::test_create_namespace ... ok
+test common::fixtures::tests::test_generate_user_data ... ok
+test common::fixtures::tests::test_insert_sample_messages ... ok
+test common::fixtures::tests::test_setup_complete_environment ... ok
+test common::flush_helpers::tests::test_extract_job_id_missing ... ok
+test common::flush_helpers::tests::test_extract_job_id_multiple ... ok
+test common::flush_helpers::tests::test_extract_job_id_single ... ok
+test common::stress_utils::tests::test_concurrent_writers_basic ... ok
+test common::stress_utils::tests::test_cpu_monitor_basic ... ok
+test common::stress_utils::tests::test_memory_growth_calculation ... ok
+test common::stress_utils::tests::test_memory_monitor_basic ... ok
+test common::tests::test_cleanup ... ok
+test common::tests::test_execute_sql ... ok
+test common::tests::test_namespace_exists ... ok
+test common::tests::test_server_creation ... ok
+test common::websocket::tests::test_assert_insert_notification ... ok
+test common::websocket::tests::test_assert_notification_field ... ok
+test common::websocket::tests::test_assert_update_notification ... ok
+test common::websocket::tests::test_create_subscription_message ... ok
+test common::websocket::tests::test_subscribe ... ok
+test common::websocket::tests::test_websocket_client_connect ... ok
+test test_system_user_created_on_init ... ok
+test test_system_user_initialization_idempotent ... ok
+
+test result: ok. 26 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 5.63s
+
+     Running tests/test_system_users.rs (/Users/jamal/git/KalamDB/target/debug/deps/test_system_users-ba3a4bbff4967d4b)
+
+running 29 tests
+test common::auth_helper::tests::test_authenticate_basic ... ok
+test common::auth_helper::tests::test_create_basic_auth_header ... ok
+test common::fixtures::tests::test_create_messages_table ... ok
+test common::fixtures::tests::test_create_namespace ... ok
+test common::fixtures::tests::test_generate_user_data ... ok
+test common::fixtures::tests::test_insert_sample_messages ... ok
+test common::fixtures::tests::test_setup_complete_environment ... ok
+test common::flush_helpers::tests::test_extract_job_id_missing ... ok
+test common::flush_helpers::tests::test_extract_job_id_multiple ... ok
+test common::flush_helpers::tests::test_extract_job_id_single ... ok
+test common::stress_utils::tests::test_concurrent_writers_basic ... ok
+test common::stress_utils::tests::test_cpu_monitor_basic ... ok
+test common::stress_utils::tests::test_memory_growth_calculation ... ok
+test common::stress_utils::tests::test_memory_monitor_basic ... ok
+test common::tests::test_cleanup ... ok
+test common::tests::test_execute_sql ... ok
+test common::tests::test_namespace_exists ... ok
+test common::tests::test_server_creation ... ok
+test common::websocket::tests::test_assert_insert_notification ... ok
+test common::websocket::tests::test_assert_notification_field ... ok
+test common::websocket::tests::test_assert_update_notification ... ok
+test common::websocket::tests::test_create_subscription_message ... ok
+test common::websocket::tests::test_subscribe ... ok
+test common::websocket::tests::test_websocket_client_connect ... ok
+test test_global_remote_access_flag ... ok
+test test_system_user_localhost_no_password ... ok
+test test_system_user_remote_denied_by_default ... ok
+test test_system_user_remote_no_password_denied ... ok
+test test_system_user_remote_with_password ... ok
+
+test result: ok. 29 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 8.30s
+
+     Running tests/test_unified_types.rs (/Users/jamal/git/KalamDB/target/debug/deps/test_unified_types-47a06ae827db9876)
+
+running 3 tests
+test test_all_kalambdata_types_convert_to_arrow_losslessly ... ok
+test test_embedding_dimensions_work_correctly ... ok
+test test_type_conversion_performance ... ok
+
+test result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests/test_update_delete_version_resolution.rs (/Users/jamal/git/KalamDB/target/debug/deps/test_update_delete_version_resolution-31f853b1dff89830)
+
+running 33 tests
+test common::auth_helper::tests::test_authenticate_basic ... ok
+test common::auth_helper::tests::test_create_basic_auth_header ... ok
+test common::fixtures::tests::test_create_messages_table ... ok
+test common::fixtures::tests::test_create_namespace ... ok
+test common::fixtures::tests::test_generate_user_data ... ok
+test common::fixtures::tests::test_insert_sample_messages ... ok
+test common::fixtures::tests::test_setup_complete_environment ... ok
+test common::flush_helpers::tests::test_extract_job_id_missing ... ok
+test common::flush_helpers::tests::test_extract_job_id_multiple ... ok
+test common::flush_helpers::tests::test_extract_job_id_single ... ok
+test common::stress_utils::tests::test_concurrent_writers_basic ... ok
+test common::stress_utils::tests::test_cpu_monitor_basic ... ok
+test common::stress_utils::tests::test_memory_growth_calculation ... ok
+test common::stress_utils::tests::test_memory_monitor_basic ... ok
+test common::tests::test_cleanup ... ok
+test common::tests::test_execute_sql ... ok
+test common::tests::test_namespace_exists ... ok
+test common::tests::test_server_creation ... ok
+test common::websocket::tests::test_assert_insert_notification ... ok
+test common::websocket::tests::test_assert_notification_field ... ok
+test common::websocket::tests::test_assert_update_notification ... ok
+test common::websocket::tests::test_create_subscription_message ... ok
+test common::websocket::tests::test_subscribe ... ok
+test common::websocket::tests::test_websocket_client_connect ... ok
+test test_concurrent_updates ... ok
+test test_delete_excludes_record ... ok
+test test_delete_in_parquet ... ok
+test test_full_workflow_insert_flush_update ... ok
+test test_multi_version_query ... ok
+test test_nanosecond_collision_handling ... ok
+test test_query_performance_with_multiple_versions ... ok
+test test_update_in_fast_storage ... ok
+test test_update_in_parquet ... ok
+
+test result: ok. 33 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 8.68s
+
+     Running tests/test_user_cleanup.rs (/Users/jamal/git/KalamDB/target/debug/deps/test_user_cleanup-d5bd693fa2e71dda)
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests/integration/tables/user/test_user_drop_cleanup.rs (/Users/jamal/git/KalamDB/target/debug/deps/test_user_drop_cleanup-2524f7a621e355d5)
+
+running 25 tests
+test common::auth_helper::tests::test_authenticate_basic ... ok
+test common::auth_helper::tests::test_create_basic_auth_header ... ok
+test common::fixtures::tests::test_create_messages_table ... ok
+test common::fixtures::tests::test_create_namespace ... ok
+test common::fixtures::tests::test_generate_user_data ... ok
+test common::fixtures::tests::test_insert_sample_messages ... ok
+test common::fixtures::tests::test_setup_complete_environment ... ok
+test common::flush_helpers::tests::test_extract_job_id_missing ... ok
+test common::flush_helpers::tests::test_extract_job_id_multiple ... ok
+test common::flush_helpers::tests::test_extract_job_id_single ... ok
+test common::stress_utils::tests::test_concurrent_writers_basic ... ok
+test common::stress_utils::tests::test_cpu_monitor_basic ... ok
+test common::stress_utils::tests::test_memory_growth_calculation ... ok
+test common::stress_utils::tests::test_memory_monitor_basic ... ok
+test common::tests::test_cleanup ... ok
+test common::tests::test_execute_sql ... ok
+test common::tests::test_namespace_exists ... ok
+test common::tests::test_server_creation ... ok
+test common::websocket::tests::test_assert_insert_notification ... ok
+test common::websocket::tests::test_assert_notification_field ... ok
+test common::websocket::tests::test_assert_update_notification ... ok
+test common::websocket::tests::test_create_subscription_message ... ok
+test common::websocket::tests::test_subscribe ... ok
+test common::websocket::tests::test_websocket_client_connect ... ok
+test test_drop_user_table_deletes_partitions_and_parquet ... ok
+
+test result: ok. 25 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 5.97s
+
+     Running tests/test_user_sql_commands.rs (/Users/jamal/git/KalamDB/target/debug/deps/test_user_sql_commands-581ff09615c10a75)
+
+running 34 tests
+test common::auth_helper::tests::test_authenticate_basic ... ok
+test common::auth_helper::tests::test_create_basic_auth_header ... ok
+test common::fixtures::tests::test_create_messages_table ... ok
+test common::fixtures::tests::test_create_namespace ... ok
+test common::fixtures::tests::test_generate_user_data ... ok
+test common::fixtures::tests::test_insert_sample_messages ... ok
+test common::fixtures::tests::test_setup_complete_environment ... ok
+test common::flush_helpers::tests::test_extract_job_id_missing ... ok
+test common::flush_helpers::tests::test_extract_job_id_multiple ... ok
+test common::flush_helpers::tests::test_extract_job_id_single ... ok
+test common::stress_utils::tests::test_concurrent_writers_basic ... ok
+test common::stress_utils::tests::test_cpu_monitor_basic ... ok
+test common::stress_utils::tests::test_memory_growth_calculation ... ok
+test common::stress_utils::tests::test_memory_monitor_basic ... ok
+test common::tests::test_cleanup ... ok
+test common::tests::test_execute_sql ... ok
+test common::tests::test_namespace_exists ... ok
+test common::tests::test_server_creation ... ok
+test common::websocket::tests::test_assert_insert_notification ... ok
+test common::websocket::tests::test_assert_notification_field ... ok
+test common::websocket::tests::test_assert_update_notification ... ok
+test common::websocket::tests::test_create_subscription_message ... ok
+test common::websocket::tests::test_subscribe ... ok
+test common::websocket::tests::test_websocket_client_connect ... ok
+test test_alter_user_not_found ... ok
+test test_alter_user_set_password ... ok
+test test_alter_user_set_role ... ok
+test test_create_user_duplicate_error ... ok
+test test_create_user_weak_password_rejected ... ok
+test test_create_user_with_oauth_success ... ok
+test test_create_user_with_password_success ... ok
+test test_create_user_without_authorization_fails ... ok
+test test_drop_user_if_exists ... ok
+test test_drop_user_soft_delete ... ok
+
+test result: ok. 34 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 11.93s
+
+     Running tests/integration/tables/user/test_user_tables.rs (/Users/jamal/git/KalamDB/target/debug/deps/test_user_tables-671b5b5b042c91fb)
+
+running 31 tests
+test common::auth_helper::tests::test_authenticate_basic ... ok
+test common::auth_helper::tests::test_create_basic_auth_header ... ok
+test common::fixtures::tests::test_create_messages_table ... ok
+test common::fixtures::tests::test_create_namespace ... ok
+test common::fixtures::tests::test_generate_user_data ... ok
+test common::fixtures::tests::test_insert_sample_messages ... ok
+test common::fixtures::tests::test_setup_complete_environment ... ok
+test common::flush_helpers::tests::test_extract_job_id_missing ... ok
+test common::flush_helpers::tests::test_extract_job_id_multiple ... ok
+test common::flush_helpers::tests::test_extract_job_id_single ... ok
+test common::stress_utils::tests::test_concurrent_writers_basic ... ok
+test common::stress_utils::tests::test_cpu_monitor_basic ... ok
+test common::stress_utils::tests::test_memory_growth_calculation ... ok
+test common::stress_utils::tests::test_memory_monitor_basic ... ok
+test common::tests::test_cleanup ... ok
+test common::tests::test_execute_sql ... ok
+test common::tests::test_namespace_exists ... ok
+test common::tests::test_server_creation ... ok
+test common::websocket::tests::test_assert_insert_notification ... ok
+test common::websocket::tests::test_assert_notification_field ... ok
+test common::websocket::tests::test_assert_update_notification ... ok
+test common::websocket::tests::test_create_subscription_message ... ok
+test common::websocket::tests::test_subscribe ... ok
+test common::websocket::tests::test_websocket_client_connect ... ok
+test test_user_table_create_and_basic_insert ... ok
+test test_user_table_data_isolation ... ok
+test test_user_table_delete_with_isolation ... ok
+test test_user_table_multiple_inserts ... ok
+test test_user_table_system_columns ... ok
+test test_user_table_update_with_isolation ... ok
+test test_user_table_user_cannot_access_other_users_data ... ok
+
+test result: ok. 31 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 6.11s
+
+   Doc-tests kalamdb_server
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+

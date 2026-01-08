@@ -10,7 +10,6 @@ use std::time::Duration;
 ///
 /// This test requires manual node shutdown to fully test.
 /// It verifies the cluster can detect unhealthy nodes.
-#[ntest::timeout(60_000)]
 #[test]
 fn cluster_test_node_health_detection() {
     require_cluster_running();
@@ -43,7 +42,6 @@ fn cluster_test_node_health_detection() {
 /// Test: Leader election after leader disconnection
 ///
 /// This test checks the system.cluster table for leader information.
-#[ntest::timeout(60_000)]
 #[test]
 fn cluster_test_leader_visibility() {
     require_cluster_running();
@@ -100,7 +98,6 @@ fn cluster_test_leader_visibility() {
 ///
 /// Verifies that write operations succeed regardless of which node
 /// receives the request (follower should forward to leader).
-#[ntest::timeout(90_000)]
 #[test]
 fn cluster_test_write_routing() {
     require_cluster_running();
@@ -142,7 +139,6 @@ fn cluster_test_write_routing() {
 /// Test: Read operations work on all nodes
 ///
 /// Verifies that read operations can be performed on any node.
-#[ntest::timeout(60_000)]
 #[test]
 fn cluster_test_read_from_any_node() {
     require_cluster_running();

@@ -10,7 +10,6 @@ use serde_json::Value;
 use std::time::Duration;
 
 /// Test: Basic CRUD operations work from any node
-#[ntest::timeout(180_000)]
 #[test]
 fn cluster_test_smoke_crud_any_node() {
     require_cluster_running();
@@ -107,7 +106,6 @@ fn cluster_test_smoke_crud_any_node() {
 }
 
 /// Test: System table queries work from any node
-#[ntest::timeout(90_000)]
 #[test]
 fn cluster_test_smoke_system_tables_any_node() {
     require_cluster_running();
@@ -142,7 +140,6 @@ fn cluster_test_smoke_system_tables_any_node() {
 }
 
 /// Test: Table types work from any node
-#[ntest::timeout(180_000)]
 #[test]
 fn cluster_test_smoke_table_types_any_node() {
     require_cluster_running();
@@ -228,7 +225,6 @@ fn cluster_test_smoke_table_types_any_node() {
 }
 
 /// Test: User authentication works from any node
-#[ntest::timeout(120_000)]
 #[test]
 fn cluster_test_smoke_auth_any_node() {
     require_cluster_running();
@@ -288,7 +284,6 @@ fn cluster_test_smoke_auth_any_node() {
 }
 
 /// Test: Complex queries work from any node
-#[ntest::timeout(180_000)]
 #[test]
 fn cluster_test_smoke_complex_queries_any_node() {
     require_cluster_running();
@@ -373,7 +368,6 @@ fn cluster_test_smoke_complex_queries_any_node() {
 }
 
 /// Test: Writes succeed from leader only (or routing works)
-#[ntest::timeout(120_000)]
 #[test]
 fn cluster_test_smoke_write_routing() {
     require_cluster_running();

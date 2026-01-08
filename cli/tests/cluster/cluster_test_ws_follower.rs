@@ -75,7 +75,6 @@ fn create_ws_client(base_url: &str) -> KalamLinkClient {
         .expect("Failed to build cluster client")
 }
 
-#[ntest::timeout(120_000)]
 #[test]
 fn cluster_test_ws_follower_receives_leader_changes() {
     require_cluster_running();

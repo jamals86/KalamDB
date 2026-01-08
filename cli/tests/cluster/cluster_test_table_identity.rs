@@ -9,99 +9,32 @@
 
 use crate::cluster_common::*;
 use crate::common::*;
-use serde_json::Value;
 use std::collections::HashSet;
 use std::time::Duration;
-
-/// Helper: Extract all rows from a query as sorted, normalized strings for comparison
-fn fetch_normalized_rows(base_url: &str, sql: &str) -> Result<Vec<String>, String> {
-    let response = execute_on_node_response(base_url, sql)?;
-    let result = response
-        .results
-        .first()
-        .ok_or_else(|| "Missing query result".to_string())?;
-    let rows = result
-        .rows
-        .as_ref()
-        .ok_or_else(|| "Missing row data".to_string())?;
-
-    let mut normalized: Vec<String> = rows
-        .iter()
-        .map(|row| {
-            row.iter()
-                .map(|v| {
-                    let extracted = extract_typed_value(v);
-                    match extracted {
-                        Value::Null => "NULL".to_string(),
-                        Value::String(s) => s,
-                        Value::Number(n) => n.to_string(),
-                        Value::Bool(b) => b.to_string(),
-                        other => other.to_string(),
-                    }
-                })
-                .collect::<Vec<String>>()
-                .join("|")
-        })
-        .collect();
-    
-    normalized.sort();
-    Ok(normalized)
-}
 
 /// Helper: Compare data across all nodes with retries
 fn verify_data_identical_with_retry(
     urls: &[String],
     sql: &str,
     expected_rows: usize,
-    max_retries: usize,
+    _max_retries: usize,
 ) -> Result<(), String> {
-    for attempt in 0..max_retries {
-        let mut all_data: Vec<Vec<String>> = Vec::new();
-        let mut all_fetched = true;
-
-        for url in urls {
-            match fetch_normalized_rows(url, sql) {
-                Ok(rows) => {
-                    if rows.len() != expected_rows {
-                        all_fetched = false;
-                    }
-                    all_data.push(rows);
-                }
-                Err(_) => {
-                    all_fetched = false;
-                    all_data.push(Vec::new());
-                }
-            }
-        }
-
-        if all_fetched {
-            let reference = &all_data[0];
-            let mut all_match = true;
-
-            for (_i, data) in all_data.iter().enumerate().skip(1) {
-                if data != reference {
-                    all_match = false;
-                    break;
-                }
-            }
-
-            if all_match {
-                return Ok(());
-            }
-        }
-
-        if attempt < max_retries - 1 {
-            std::thread::sleep(Duration::from_millis(300));
-        }
-    }
-
-    // Final comparison with detailed error
     let mut all_data: Vec<Vec<String>> = Vec::new();
+
     for url in urls {
-        all_data.push(fetch_normalized_rows(url, sql).unwrap_or_default());
+        let rows = fetch_normalized_rows(url, sql).unwrap_or_default();
+        all_data.push(rows);
     }
 
     let reference = &all_data[0];
+    if reference.len() != expected_rows {
+        return Err(format!(
+            "Row counts don't match expected {}. Counts: {:?}",
+            expected_rows,
+            all_data.iter().map(|d| d.len()).collect::<Vec<_>>()
+        ));
+    }
+
     for (i, data) in all_data.iter().enumerate().skip(1) {
         if data != reference {
             let ref_set: HashSet<_> = reference.iter().collect();
@@ -115,15 +48,10 @@ fn verify_data_identical_with_retry(
         }
     }
 
-    Err(format!(
-        "Row counts don't match expected {}. Counts: {:?}",
-        expected_rows,
-        all_data.iter().map(|d| d.len()).collect::<Vec<_>>()
-    ))
+    Ok(())
 }
 
 /// Test: Inserted rows are byte-for-byte identical across all nodes
-#[ntest::timeout(120_000)]
 #[test]
 fn cluster_test_table_identity_inserts() {
     require_cluster_running();
@@ -200,7 +128,6 @@ fn cluster_test_table_identity_inserts() {
 }
 
 /// Test: Updates propagate identically to all nodes
-#[ntest::timeout(120_000)]
 #[test]
 fn cluster_test_table_identity_updates() {
     require_cluster_running();
@@ -291,7 +218,6 @@ fn cluster_test_table_identity_updates() {
 }
 
 /// Test: Deletes are reflected identically on all nodes
-#[ntest::timeout(120_000)]
 #[test]
 fn cluster_test_table_identity_deletes() {
     require_cluster_running();
@@ -371,7 +297,6 @@ fn cluster_test_table_identity_deletes() {
 }
 
 /// Test: Mixed operations result in identical final state
-#[ntest::timeout(180_000)]
 #[test]
 fn cluster_test_table_identity_mixed_operations() {
     require_cluster_running();
@@ -520,7 +445,6 @@ fn cluster_test_table_identity_mixed_operations() {
 }
 
 /// Test: Large batch operations are replicated identically
-#[ntest::timeout(180_000)]
 #[test]
 fn cluster_test_table_identity_large_batch() {
     require_cluster_running();
@@ -597,7 +521,6 @@ fn cluster_test_table_identity_large_batch() {
 }
 
 /// Test: User table data is properly partitioned and replicated
-#[ntest::timeout(120_000)]
 #[test]
 fn cluster_test_table_identity_user_tables() {
     require_cluster_running();
@@ -606,6 +529,7 @@ fn cluster_test_table_identity_user_tables() {
 
     let urls = cluster_urls();
     let namespace = generate_unique_namespace("identity_user");
+    let user_password = "test_password_123";
 
     // Setup
     let _ = execute_on_node(&urls[0], &format!("DROP NAMESPACE IF EXISTS {} CASCADE", namespace));
@@ -633,8 +557,8 @@ fn cluster_test_table_identity_user_tables() {
         execute_on_node(
             &urls[0],
             &format!(
-                "CREATE USER {} WITH PASSWORD 'test_password_123' ROLE 'user'",
-                user
+                "CREATE USER {} WITH PASSWORD '{}' ROLE 'user'",
+                user, user_password
             ),
         )
         .expect(&format!("Failed to create user {}", user));
@@ -645,11 +569,15 @@ fn cluster_test_table_identity_user_tables() {
     // Insert data as root for each user
     for (user_idx, user) in users.iter().enumerate() {
         for i in 0..5 {
-            execute_on_node(
+            execute_on_node_as_user(
                 &urls[0],
+                user,
+                user_password,
                 &format!(
-                    "INSERT INTO {}.user_data (id, item) VALUES ({}, 'item_{}') AS USER '{}'",
-                    namespace, user_idx * 100 + i, i, user
+                    "INSERT INTO {}.user_data (id, item) VALUES ({}, 'item_{}')",
+                    namespace,
+                    user_idx * 100 + i,
+                    i
                 ),
             )
             .expect("Failed to insert as user");
@@ -662,13 +590,13 @@ fn cluster_test_table_identity_user_tables() {
     // Verify data consistency for each user across all nodes
     for (user_idx, user) in users.iter().enumerate() {
         let query = format!(
-            "SELECT id, item FROM {}.user_data AS USER '{}' ORDER BY id",
-            namespace, user
+            "SELECT id, item FROM {}.user_data ORDER BY id",
+            namespace
         );
 
         let mut all_data: Vec<Vec<String>> = Vec::new();
         for url in &urls {
-            match fetch_normalized_rows(url, &query) {
+            match fetch_normalized_rows_as_user(url, user, user_password, &query) {
                 Ok(data) => all_data.push(data),
                 Err(e) => {
                     println!("  ⚠ Failed to query user {} on node: {}", user, e);

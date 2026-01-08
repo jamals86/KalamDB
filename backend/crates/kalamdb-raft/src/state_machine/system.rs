@@ -9,6 +9,7 @@
 
 use async_trait::async_trait;
 use kalamdb_commons::models::{NamespaceId, StorageId, TableId};
+use kalamdb_commons::models::schemas::TableType;
 use parking_lot::RwLock;
 use serde::{Deserialize, Serialize};
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -23,8 +24,8 @@ use super::{ApplyResult, KalamStateMachine, StateMachineSnapshot, encode, decode
 struct SystemSnapshot {
     /// All namespace IDs
     namespaces: Vec<NamespaceId>,
-    /// All table definitions (table_id, schema_json)
-    tables: Vec<(TableId, String)>,
+    /// All table definitions (table_id, table_type, schema_json)
+    tables: Vec<(TableId, TableType, String)>,
     /// All storage configs (storage_id, config_json)
     storages: Vec<(StorageId, String)>,
 }
@@ -168,7 +169,9 @@ impl SystemStateMachine {
                         tables: Vec::new(),
                         storages: Vec::new(),
                     });
-                    cache_ref.tables.push((table_id.clone(), schema_json.clone()));
+                    cache_ref
+                        .tables
+                        .push((table_id.clone(), table_type, schema_json.clone()));
                 }
                 self.approximate_size.fetch_add(schema_json.len() as u64 + 200, Ordering::Relaxed);
                 Ok(SystemResponse::TableCreated { table_id })
@@ -188,7 +191,7 @@ impl SystemStateMachine {
                     let mut cache = self.snapshot_cache.write();
                     if let Some(ref mut snapshot) = *cache {
                         // Update existing table schema
-                        for (tid, schema) in &mut snapshot.tables {
+                        for (tid, _, schema) in &mut snapshot.tables {
                             if tid == &table_id {
                                 *schema = schema_json.clone();
                                 break;
@@ -209,7 +212,7 @@ impl SystemStateMachine {
                 {
                     let mut cache = self.snapshot_cache.write();
                     if let Some(ref mut snapshot) = *cache {
-                        snapshot.tables.retain(|(tid, _)| tid != &table_id);
+                        snapshot.tables.retain(|(tid, _, _)| tid != &table_id);
                     }
                 }
                 Ok(SystemResponse::Ok)
@@ -331,7 +334,44 @@ impl KalamStateMachine for SystemStateMachine {
         // Update state
         {
             let mut cache = self.snapshot_cache.write();
-            *cache = Some(data);
+            *cache = Some(data.clone());
+        }
+
+        let applier = {
+            let guard = self.applier.read();
+            guard.clone()
+        };
+        
+        if let Some(ref a) = applier {
+            for namespace_id in &data.namespaces {
+                if let Err(e) = a.create_namespace(namespace_id, None).await {
+                    log::warn!(
+                        "SystemStateMachine: Snapshot restore create_namespace failed for {:?}: {}",
+                        namespace_id, e
+                    );
+                }
+            }
+            
+            for (table_id, table_type, schema_json) in &data.tables {
+                if let Err(e) = a
+                    .create_table(table_id, table_type.clone(), schema_json)
+                    .await
+                {
+                    log::warn!(
+                        "SystemStateMachine: Snapshot restore create_table failed for {:?}: {}",
+                        table_id, e
+                    );
+                }
+            }
+            
+            for (storage_id, config_json) in &data.storages {
+                if let Err(e) = a.register_storage(storage_id, config_json).await {
+                    log::warn!(
+                        "SystemStateMachine: Snapshot restore register_storage failed for {:?}: {}",
+                        storage_id, e
+                    );
+                }
+            }
         }
         
         // Update indices

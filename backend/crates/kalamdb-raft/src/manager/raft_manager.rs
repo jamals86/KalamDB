@@ -22,6 +22,7 @@ use crate::state_machine::{
 };
 use crate::manager::RaftGroup;
 use crate::manager::config::RaftManagerConfig;
+use crate::state_machine::KalamStateMachine;
 use crate::{GroupId, RaftError};
 
 /// Central manager for all Raft groups
@@ -284,19 +285,58 @@ impl RaftManager {
         let node_id_u64 = node_id.as_u64();
         log::info!("[CLUSTER] Node {} joining cluster (rpc={}, api={})", node_id, rpc_addr, api_addr);
         let node = KalamNode { rpc_addr: rpc_addr.clone(), api_addr: api_addr.clone() };
+
+        async fn add_learner_and_wait<SM: KalamStateMachine + Send + Sync + 'static>(
+            group: &Arc<RaftGroup<SM>>,
+            node_id_u64: u64,
+            node: &KalamNode,
+            timeout: Duration,
+        ) -> Result<(), RaftError> {
+            if !group.is_leader() {
+                return Err(RaftError::not_leader(
+                    group.group_id().to_string(),
+                    group.current_leader(),
+                ));
+            }
+            group.add_learner(node_id_u64, node.clone()).await?;
+            group.wait_for_learner_catchup(node_id_u64, timeout).await?;
+            Ok(())
+        }
+
+        async fn promote_learner<SM: KalamStateMachine + Send + Sync + 'static>(
+            group: &Arc<RaftGroup<SM>>,
+            node_id_u64: u64,
+        ) -> Result<(), RaftError> {
+            group.promote_learner(node_id_u64).await
+        }
         
         // Add to all groups as learner first
         log::info!("[CLUSTER] Adding node {} as learner to all {} Raft groups...", node_id, self.group_count());
-        self.meta_system.add_learner(node_id_u64, node.clone()).await?;
-        self.meta_users.add_learner(node_id_u64, node.clone()).await?;
-        self.meta_jobs.add_learner(node_id_u64, node.clone()).await?;
+        add_learner_and_wait(&self.meta_system, node_id_u64, &node, self.config.replication_timeout).await?;
+        add_learner_and_wait(&self.meta_users, node_id_u64, &node, self.config.replication_timeout).await?;
+        add_learner_and_wait(&self.meta_jobs, node_id_u64, &node, self.config.replication_timeout).await?;
         
         for shard in &self.user_data_shards {
-            shard.add_learner(node_id_u64, node.clone()).await?;
+            add_learner_and_wait(shard, node_id_u64, &node, self.config.replication_timeout).await?;
         }
         
         for shard in &self.shared_data_shards {
-            shard.add_learner(node_id_u64, node.clone()).await?;
+            add_learner_and_wait(shard, node_id_u64, &node, self.config.replication_timeout).await?;
+        }
+
+        log::info!(
+            "[CLUSTER] Promoting node {} to voter on all groups...",
+            node_id
+        );
+        promote_learner(&self.meta_system, node_id_u64).await?;
+        promote_learner(&self.meta_users, node_id_u64).await?;
+        promote_learner(&self.meta_jobs, node_id_u64).await?;
+
+        for shard in &self.user_data_shards {
+            promote_learner(shard, node_id_u64).await?;
+        }
+        for shard in &self.shared_data_shards {
+            promote_learner(shard, node_id_u64).await?;
         }
         
         log::info!("[CLUSTER] ✓ Node {} joined cluster successfully (added to {} groups)", 

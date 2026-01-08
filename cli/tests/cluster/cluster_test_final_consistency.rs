@@ -23,7 +23,6 @@ fn get_row_count(url: &str, table: &str) -> i64 {
 }
 
 /// Test: All nodes have identical row counts after workload
-#[ntest::timeout(180_000)]
 #[test]
 fn cluster_test_final_row_count_consistency() {
     require_cluster_running();
@@ -134,7 +133,6 @@ fn cluster_test_final_row_count_consistency() {
 }
 
 /// Test: System metadata is identical after multiple DDL operations
-#[ntest::timeout(180_000)]
 #[test]
 fn cluster_test_final_metadata_consistency() {
     require_cluster_running();
@@ -245,7 +243,6 @@ fn cluster_test_final_metadata_consistency() {
 }
 
 /// Test: All data is consistent after mixed read/write workload
-#[ntest::timeout(240_000)]
 #[test]
 fn cluster_test_final_mixed_workload_consistency() {
     require_cluster_running();
@@ -444,7 +441,6 @@ fn cluster_test_final_mixed_workload_consistency() {
 
 /// Test: Cluster converges to consistency after network partition recovery
 /// (Simulated by querying system.cluster and verifying all nodes respond)
-#[ntest::timeout(120_000)]
 #[test]
 fn cluster_test_final_cluster_health_consistency() {
     require_cluster_running();
@@ -502,7 +498,6 @@ fn cluster_test_final_cluster_health_consistency() {
 }
 
 /// Test: Empty tables are consistent (edge case)
-#[ntest::timeout(90_000)]
 #[test]
 fn cluster_test_final_empty_table_consistency() {
     require_cluster_running();

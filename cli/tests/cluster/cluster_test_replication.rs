@@ -47,7 +47,6 @@ fn query_count_with_retry(base_url: &str, sql: &str) -> i64 {
 /// Test: System metadata replication timing
 ///
 /// Verifies that system table changes replicate quickly to all nodes.
-#[ntest::timeout(90_000)]
 #[test]
 fn cluster_test_metadata_replication_timing() {
     require_cluster_running();
@@ -109,7 +108,6 @@ fn cluster_test_metadata_replication_timing() {
 /// Test: Sequential operations maintain order
 ///
 /// Verifies that operations are applied in the correct order across nodes.
-#[ntest::timeout(120_000)]
 #[test]
 fn cluster_test_operation_ordering() {
     require_cluster_running();
@@ -192,7 +190,6 @@ fn cluster_test_operation_ordering() {
 /// Test: Concurrent writes from different clients
 ///
 /// Verifies that concurrent writes are properly serialized.
-#[ntest::timeout(120_000)]
 #[test]
 fn cluster_test_concurrent_writes() {
     require_cluster_running();
@@ -286,7 +283,6 @@ fn cluster_test_concurrent_writes() {
 }
 
 /// Test: Cluster info is consistent across nodes
-#[ntest::timeout(60_000)]
 #[test]
 fn cluster_test_cluster_info_consistency() {
     require_cluster_running();

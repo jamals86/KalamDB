@@ -19,6 +19,7 @@ mod common;
 mod cluster_common {
     use crate::common::*;
     use kalam_link::{AuthProvider, KalamLinkClient, KalamLinkTimeouts, QueryResponse};
+    use serde_json::Value;
     use std::sync::OnceLock;
     use std::time::Duration;
 
@@ -51,6 +52,32 @@ mod cluster_common {
         KalamLinkClient::builder()
             .base_url(base_url)
             .auth(AuthProvider::basic_auth("root".to_string(), password))
+            .timeouts(
+                KalamLinkTimeouts::builder()
+                    .connection_timeout_secs(5)
+                    .receive_timeout_secs(30)
+                    .send_timeout_secs(10)
+                    .subscribe_timeout_secs(10)
+                    .auth_timeout_secs(10)
+                    .initial_data_timeout(Duration::from_secs(30))
+                    .build(),
+            )
+            .build()
+            .expect("Failed to build cluster client")
+    }
+
+    /// Create a client connected to a specific cluster node with custom credentials
+    pub fn create_cluster_client_with_auth(
+        base_url: &str,
+        username: &str,
+        password: &str,
+    ) -> KalamLinkClient {
+        KalamLinkClient::builder()
+            .base_url(base_url)
+            .auth(AuthProvider::basic_auth(
+                username.to_string(),
+                password.to_string(),
+            ))
             .timeouts(
                 KalamLinkTimeouts::builder()
                     .connection_timeout_secs(5)
@@ -117,6 +144,99 @@ mod cluster_common {
             .map_err(|e| e.to_string())
     }
 
+    /// Execute SQL on a specific cluster node as a custom user
+    pub fn execute_on_node_as_user(
+        base_url: &str,
+        username: &str,
+        password: &str,
+        sql: &str,
+    ) -> Result<String, String> {
+        let client = create_cluster_client_with_auth(base_url, username, password);
+        let sql = sql.to_string();
+
+        cluster_runtime()
+            .block_on(async move { client.execute_query(&sql, None, None).await })
+            .map(|response| {
+                serde_json::to_string_pretty(&response)
+                    .unwrap_or_else(|_| format!("{:?}", response))
+            })
+            .map_err(|e| e.to_string())
+    }
+
+    /// Execute SQL on a specific cluster node as a custom user and return the response
+    pub fn execute_on_node_as_user_response(
+        base_url: &str,
+        username: &str,
+        password: &str,
+        sql: &str,
+    ) -> Result<QueryResponse, String> {
+        let client = create_cluster_client_with_auth(base_url, username, password);
+        let sql = sql.to_string();
+
+        cluster_runtime()
+            .block_on(async move { client.execute_query(&sql, None, None).await })
+            .map_err(|e| e.to_string())
+    }
+
+    fn normalize_rows(rows: &[Vec<Value>]) -> Vec<String> {
+        let mut normalized: Vec<String> = rows
+            .iter()
+            .map(|row| {
+                row.iter()
+                    .map(|v| {
+                        let extracted = extract_typed_value(v);
+                        match extracted {
+                            Value::Null => "NULL".to_string(),
+                            Value::String(s) => s,
+                            Value::Number(n) => n.to_string(),
+                            Value::Bool(b) => b.to_string(),
+                            other => other.to_string(),
+                        }
+                    })
+                    .collect::<Vec<String>>()
+                    .join("|")
+            })
+            .collect();
+
+        normalized.sort();
+        normalized
+    }
+
+    /// Fetch normalized row strings from a root-authenticated query
+    pub fn fetch_normalized_rows(base_url: &str, sql: &str) -> Result<Vec<String>, String> {
+        let response = execute_on_node_response(base_url, sql)?;
+        let result = response
+            .results
+            .first()
+            .ok_or_else(|| "Missing query result".to_string())?;
+        let rows = result
+            .rows
+            .as_ref()
+            .ok_or_else(|| "Missing row data".to_string())?;
+
+        Ok(normalize_rows(rows))
+    }
+
+    /// Fetch normalized row strings from a user-authenticated query
+    pub fn fetch_normalized_rows_as_user(
+        base_url: &str,
+        username: &str,
+        password: &str,
+        sql: &str,
+    ) -> Result<Vec<String>, String> {
+        let response = execute_on_node_as_user_response(base_url, username, password, sql)?;
+        let result = response
+            .results
+            .first()
+            .ok_or_else(|| "Missing query result".to_string())?;
+        let rows = result
+            .rows
+            .as_ref()
+            .ok_or_else(|| "Missing row data".to_string())?;
+
+        Ok(normalize_rows(rows))
+    }
+
     /// Check if a cluster node is healthy
     pub fn is_node_healthy(base_url: &str) -> bool {
         let client = create_cluster_client(base_url);
@@ -147,96 +267,48 @@ mod cluster_common {
 
     /// Wait for a table to be visible on all cluster nodes
     /// Returns true if table is visible on all nodes within timeout, false otherwise
-    pub fn wait_for_table_on_all_nodes(namespace: &str, table_name: &str, timeout_ms: u64) -> bool {
+    pub fn wait_for_table_on_all_nodes(
+        namespace: &str,
+        table_name: &str,
+        _timeout_ms: u64,
+    ) -> bool {
         let urls = cluster_urls();
         let query = format!(
             "SELECT table_name FROM system.tables WHERE namespace_id = '{}' AND table_name = '{}'",
             namespace, table_name
         );
-        
-        let start = std::time::Instant::now();
-        let timeout = Duration::from_millis(timeout_ms);
-        
-        while start.elapsed() < timeout {
-            let mut all_visible = true;
-            for url in &urls {
-                match execute_on_node(url, &query) {
-                    Ok(result) if result.contains(table_name) => {}
-                    _ => {
-                        all_visible = false;
-                        break;
-                    }
-                }
-            }
-            if all_visible {
-                return true;
-            }
-            std::thread::sleep(Duration::from_millis(200));
-        }
-        false
+
+        urls.iter().all(|url| {
+            matches!(execute_on_node(url, &query), Ok(result) if result.contains(table_name))
+        })
     }
 
     /// Wait for a namespace to be visible on all cluster nodes
-    pub fn wait_for_namespace_on_all_nodes(namespace: &str, timeout_ms: u64) -> bool {
+    pub fn wait_for_namespace_on_all_nodes(namespace: &str, _timeout_ms: u64) -> bool {
         let urls = cluster_urls();
         let query = format!(
             "SELECT namespace_id FROM system.namespaces WHERE namespace_id = '{}'",
             namespace
         );
-        
-        let start = std::time::Instant::now();
-        let timeout = Duration::from_millis(timeout_ms);
-        
-        while start.elapsed() < timeout {
-            let mut all_visible = true;
-            for url in &urls {
-                match execute_on_node(url, &query) {
-                    Ok(result) if result.contains(namespace) => {}
-                    _ => {
-                        all_visible = false;
-                        break;
-                    }
-                }
-            }
-            if all_visible {
-                return true;
-            }
-            std::thread::sleep(Duration::from_millis(200));
-        }
-        false
+
+        urls.iter().all(|url| {
+            matches!(execute_on_node(url, &query), Ok(result) if result.contains(namespace))
+        })
     }
 
     /// Wait for row count to reach expected value on all nodes
-    pub fn wait_for_row_count_on_all_nodes(full_table: &str, expected: i64, timeout_ms: u64) -> bool {
+    pub fn wait_for_row_count_on_all_nodes(
+        full_table: &str,
+        expected: i64,
+        _timeout_ms: u64,
+    ) -> bool {
         let urls = cluster_urls();
         let query = format!("SELECT count(*) as count FROM {}", full_table);
-        
-        let start = std::time::Instant::now();
-        let timeout = Duration::from_millis(timeout_ms);
-        let mut last_counts: Vec<i64> = Vec::new();
-        
-        while start.elapsed() < timeout {
-            let mut all_match = true;
-            let mut counts: Vec<i64> = Vec::new();
-            for url in &urls {
-                let count = query_count_on_url(url, &query);
-                counts.push(count);
-                if count != expected {
-                    all_match = false;
-                }
-            }
-            if all_match {
-                return true;
-            }
-            // Only print if counts changed to reduce noise
-            if counts != last_counts {
-                println!("    Counts: {:?} (expected {})", counts, expected);
-                last_counts = counts;
-            }
-            std::thread::sleep(Duration::from_millis(300));
-        }
-        println!("    Final counts after timeout: {:?} (expected {})", last_counts, expected);
-        false
+
+        urls
+            .iter()
+            .map(|url| query_count_on_url(url, &query))
+            .all(|count| count == expected)
     }
 }
 
@@ -256,6 +328,8 @@ mod cluster_test_system_tables_replication;
 mod cluster_test_subscription_nodes;
 #[path = "cluster/cluster_test_table_identity.rs"]
 mod cluster_test_table_identity;
+#[path = "cluster/cluster_test_table_crud_consistency.rs"]
+mod cluster_test_table_crud_consistency;
 #[path = "cluster/cluster_test_multi_node_smoke.rs"]
 mod cluster_test_multi_node_smoke;
 #[path = "cluster/cluster_test_final_consistency.rs"]

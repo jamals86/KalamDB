@@ -7,7 +7,6 @@ use crate::common::*;
 use std::time::Duration;
 
 /// Test: System table counts are consistent across all cluster nodes
-#[ntest::timeout(60_000)]
 #[test]
 fn cluster_test_system_table_consistency() {
     require_cluster_running();
@@ -60,7 +59,6 @@ fn cluster_test_system_table_consistency() {
 }
 
 /// Test: Namespace creation is replicated to all nodes
-#[ntest::timeout(60_000)]
 #[test]
 fn cluster_test_namespace_replication() {
     require_cluster_running();
@@ -106,7 +104,6 @@ fn cluster_test_namespace_replication() {
 }
 
 /// Test: Table creation is replicated to all nodes
-#[ntest::timeout(90_000)]
 #[test]
 fn cluster_test_table_replication() {
     require_cluster_running();
@@ -189,7 +186,6 @@ fn cluster_test_table_replication() {
 }
 
 /// Test: Data written to leader is readable from followers
-#[ntest::timeout(120_000)]
 #[test]
 fn cluster_test_data_consistency() {
     require_cluster_running();

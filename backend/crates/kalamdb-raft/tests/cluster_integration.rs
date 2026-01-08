@@ -27,6 +27,10 @@ use kalamdb_raft::{
     CommandExecutor, GroupId,
     commands::{SystemCommand, UsersCommand, JobsCommand, UserDataCommand, SharedDataCommand},
 };
+use kalamdb_raft::{KalamRaftStorage, KalamStateMachine, StateMachineSnapshot, ApplyResult, RaftError};
+use openraft::{Entry, EntryPayload, LogId, RaftSnapshotBuilder, RaftStorage};
+use async_trait::async_trait;
+use std::sync::atomic::{AtomicU64, Ordering};
 
 // =============================================================================
 // Test Cluster Infrastructure
@@ -149,6 +153,138 @@ struct TestCluster {
     base_rpc_port: u16,
     base_api_port: u16,
     user_shards: u32,
+}
+
+// =============================================================================
+// Snapshot/Install Snapshot Coverage
+// =============================================================================
+
+#[derive(Debug)]
+struct SnapshotTestStateMachine {
+    state: std::sync::Arc<AtomicU64>,
+    last_applied_index: AtomicU64,
+    last_applied_term: AtomicU64,
+}
+
+impl SnapshotTestStateMachine {
+    fn new(state: std::sync::Arc<AtomicU64>) -> Self {
+        Self {
+            state,
+            last_applied_index: AtomicU64::new(0),
+            last_applied_term: AtomicU64::new(0),
+        }
+    }
+}
+
+#[async_trait]
+impl KalamStateMachine for SnapshotTestStateMachine {
+    fn group_id(&self) -> GroupId {
+        GroupId::MetaSystem
+    }
+
+    async fn apply(&self, index: u64, term: u64, command: &[u8]) -> Result<ApplyResult, RaftError> {
+        if index <= self.last_applied_index.load(Ordering::Acquire) {
+            return Ok(ApplyResult::NoOp);
+        }
+
+        if command.len() != 8 {
+            return Err(RaftError::InvalidState("Invalid command length".to_string()));
+        }
+
+        let mut bytes = [0u8; 8];
+        bytes.copy_from_slice(command);
+        let delta = u64::from_le_bytes(bytes);
+
+        self.state.fetch_add(delta, Ordering::Relaxed);
+        self.last_applied_index.store(index, Ordering::Release);
+        self.last_applied_term.store(term, Ordering::Release);
+
+        Ok(ApplyResult::ok())
+    }
+
+    fn last_applied_index(&self) -> u64 {
+        self.last_applied_index.load(Ordering::Acquire)
+    }
+
+    fn last_applied_term(&self) -> u64 {
+        self.last_applied_term.load(Ordering::Acquire)
+    }
+
+    async fn snapshot(&self) -> Result<StateMachineSnapshot, RaftError> {
+        let value = self.state.load(Ordering::Acquire);
+        Ok(StateMachineSnapshot::new(
+            self.group_id(),
+            self.last_applied_index(),
+            self.last_applied_term(),
+            value.to_le_bytes().to_vec(),
+        ))
+    }
+
+    async fn restore(&self, snapshot: StateMachineSnapshot) -> Result<(), RaftError> {
+        if snapshot.data.len() != 8 {
+            return Err(RaftError::InvalidState("Invalid snapshot data".to_string()));
+        }
+
+        let mut bytes = [0u8; 8];
+        bytes.copy_from_slice(&snapshot.data);
+        let value = u64::from_le_bytes(bytes);
+
+        self.state.store(value, Ordering::Release);
+        self.last_applied_index
+            .store(snapshot.last_applied_index, Ordering::Release);
+        self.last_applied_term
+            .store(snapshot.last_applied_term, Ordering::Release);
+        Ok(())
+    }
+
+    fn approximate_size(&self) -> usize {
+        8
+    }
+}
+
+#[tokio::test]
+async fn test_snapshot_restore_via_storage_install_snapshot() {
+    let leader_state = std::sync::Arc::new(AtomicU64::new(0));
+    let leader_sm = SnapshotTestStateMachine::new(leader_state.clone());
+    let leader_storage = std::sync::Arc::new(KalamRaftStorage::new(GroupId::MetaSystem, leader_sm));
+
+    let entries = vec![
+        Entry {
+            log_id: LogId::new(openraft::CommittedLeaderId::new(1, 1), 1),
+            payload: EntryPayload::Normal(4u64.to_le_bytes().to_vec()),
+        },
+        Entry {
+            log_id: LogId::new(openraft::CommittedLeaderId::new(1, 1), 2),
+            payload: EntryPayload::Normal(6u64.to_le_bytes().to_vec()),
+        },
+    ];
+
+    let mut leader_storage_clone = leader_storage.clone();
+    leader_storage_clone
+        .apply_to_state_machine(&entries)
+        .await
+        .unwrap();
+
+    let mut builder = leader_storage_clone.get_snapshot_builder().await;
+    let snapshot = builder.build_snapshot().await.unwrap();
+
+    let follower_state = std::sync::Arc::new(AtomicU64::new(0));
+    let follower_sm = SnapshotTestStateMachine::new(follower_state.clone());
+    let mut follower_storage =
+        std::sync::Arc::new(KalamRaftStorage::new(GroupId::MetaSystem, follower_sm));
+
+    let snapshot_meta = snapshot.meta.clone();
+    let snapshot_data = snapshot.snapshot;
+
+    follower_storage
+        .install_snapshot(&snapshot_meta, snapshot_data)
+        .await
+        .unwrap();
+
+    assert_eq!(leader_state.load(Ordering::Acquire), 10);
+    assert_eq!(follower_state.load(Ordering::Acquire), 10);
+    let (last_applied, _) = follower_storage.last_applied_state().await.unwrap();
+    assert_eq!(last_applied, snapshot_meta.last_log_id);
 }
 
 impl TestCluster {

@@ -3,6 +3,7 @@
 //! Represents a single Raft consensus group with its own log, state machine, and network.
 
 use std::sync::Arc;
+use std::time::{Duration, Instant};
 
 use openraft::storage::Adaptor;
 use openraft::{Config, Raft, RaftMetrics};
@@ -130,6 +131,59 @@ impl<SM: KalamStateMachine + Send + Sync + 'static> RaftGroup<SM> {
         
         Ok(())
     }
+
+    /// Wait for a learner to catch up to the leader's commit index
+    pub async fn wait_for_learner_catchup(
+        &self,
+        node_id: u64,
+        timeout: Duration,
+    ) -> Result<(), RaftError> {
+        let raft = {
+            let guard = self.raft.read();
+            guard.clone().ok_or_else(|| RaftError::NotStarted(self.group_id.to_string()))?
+        };
+
+        let start = Instant::now();
+        let poll_interval = Duration::from_millis(50);
+
+        loop {
+            if start.elapsed() > timeout {
+                return Err(RaftError::ReplicationTimeout {
+                    group: self.group_id.to_string(),
+                    committed_log_id: "catchup".to_string(),
+                    timeout_ms: timeout.as_millis() as u64,
+                });
+            }
+
+            let metrics = raft.metrics().borrow().clone();
+            if metrics.current_leader != Some(metrics.id) {
+                return Err(RaftError::not_leader(
+                    self.group_id.to_string(),
+                    metrics.current_leader,
+                ));
+            }
+
+            let last_log_index = metrics.last_log_index.unwrap_or(0);
+            let snapshot_index = metrics.snapshot.map(|log_id| log_id.index).unwrap_or(0);
+            let applied_index = metrics.last_applied.map(|log_id| log_id.index).unwrap_or(0);
+            let target_index = last_log_index.max(snapshot_index).max(applied_index);
+
+            if target_index == 0 {
+                return Ok(());
+            }
+
+            if let Some(ref replication) = metrics.replication {
+                if let Some(matched) = replication.get(&node_id) {
+                    let matched_index = matched.map(|log_id| log_id.index).unwrap_or(0);
+                    if matched_index >= target_index {
+                        return Ok(());
+                    }
+                }
+            }
+
+            tokio::time::sleep(poll_interval).await;
+        }
+    }
     
     /// Change membership to include the given voters
     pub async fn change_membership(&self, members: Vec<u64>) -> Result<(), RaftError> {
@@ -142,6 +196,34 @@ impl<SM: KalamStateMachine + Send + Sync + 'static> RaftGroup<SM> {
         raft.change_membership(member_set, false).await
             .map_err(|e| RaftError::Internal(format!("Failed to change membership: {:?}", e)))?;
         
+        Ok(())
+    }
+
+    /// Promote a learner to a voter using the current membership configuration
+    pub async fn promote_learner(&self, node_id: u64) -> Result<(), RaftError> {
+        let raft = {
+            let guard = self.raft.read();
+            guard.clone().ok_or_else(|| RaftError::NotStarted(self.group_id.to_string()))?
+        };
+
+        let metrics = raft.metrics().borrow().clone();
+        if metrics.current_leader != Some(metrics.id) {
+            return Err(RaftError::not_leader(
+                self.group_id.to_string(),
+                metrics.current_leader,
+            ));
+        }
+
+        let mut voters: std::collections::BTreeSet<u64> =
+            metrics.membership_config.voter_ids().collect();
+        if voters.contains(&node_id) {
+            return Ok(());
+        }
+
+        voters.insert(node_id);
+        raft.change_membership(voters, false).await
+            .map_err(|e| RaftError::Internal(format!("Failed to change membership: {:?}", e)))?;
+
         Ok(())
     }
     
@@ -270,22 +352,42 @@ impl<SM: KalamStateMachine + Send + Sync + 'static> RaftGroup<SM> {
             // The leader's last_applied shows our own progress
             let leader_applied = metrics.last_applied.map(|lid| lid.index).unwrap_or(0);
             let committed_index = committed_log_id.index;
+            let expected_nodes: Vec<u64> = metrics
+                .membership_config
+                .nodes()
+                .map(|(node_id, _)| *node_id)
+                .collect();
             
-            // Check replication progress to followers
-            let mut all_replicated = leader_applied >= committed_index;
-            
-            if let Some(ref replication) = metrics.replication {
-                for (node_id, matched) in replication.iter() {
-                    // matched shows the highest log index replicated to this follower
-                    let follower_matched = matched.map(|lid| lid.index).unwrap_or(0);
-                    if follower_matched < committed_index {
-                        log::debug!(
-                            "[RAFT:{}] Node {} at index {}, need {}",
-                            self.group_id, node_id, follower_matched, committed_index
-                        );
-                        all_replicated = false;
+            let mut all_replicated = false;
+            if expected_nodes.len() != total_nodes {
+                log::debug!(
+                    "[RAFT:{}] Membership size {} does not match expected {}, waiting...",
+                    self.group_id,
+                    expected_nodes.len(),
+                    total_nodes
+                );
+            } else if let (Some(leader_id), Some(ref replication)) =
+                (metrics.current_leader, metrics.replication.as_ref())
+            {
+                all_replicated = expected_nodes.iter().all(|node_id| {
+                    if *node_id == leader_id {
+                        leader_applied >= committed_index
+                    } else {
+                        replication
+                            .get(node_id)
+                            .and_then(|matched| matched.map(|lid| lid.index))
+                            .map(|idx| {
+                                if idx < committed_index {
+                                    log::debug!(
+                                        "[RAFT:{}] Node {} at index {}, need {}",
+                                        self.group_id, node_id, idx, committed_index
+                                    );
+                                }
+                                idx >= committed_index
+                            })
+                            .unwrap_or(false)
                     }
-                }
+                });
             }
             
             if all_replicated {

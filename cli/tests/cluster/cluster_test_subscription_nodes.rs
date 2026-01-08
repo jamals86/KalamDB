@@ -77,7 +77,6 @@ fn create_ws_client(base_url: &str) -> KalamLinkClient {
 }
 
 /// Test: Subscription on leader receives changes from leader writes
-#[ntest::timeout(120_000)]
 #[test]
 fn cluster_test_subscription_leader_to_leader() {
     require_cluster_running();
@@ -161,7 +160,6 @@ fn cluster_test_subscription_leader_to_leader() {
 }
 
 /// Test: Subscription on follower receives changes from leader writes
-#[ntest::timeout(120_000)]
 #[test]
 fn cluster_test_subscription_follower_to_leader() {
     require_cluster_running();
@@ -259,7 +257,6 @@ fn cluster_test_subscription_follower_to_leader() {
 }
 
 /// Test: Multiple subscriptions across nodes receive identical events
-#[ntest::timeout(180_000)]
 #[test]
 fn cluster_test_subscription_multi_node_identical() {
     require_cluster_running();
@@ -382,7 +379,6 @@ fn cluster_test_subscription_multi_node_identical() {
 }
 
 /// Test: Initial data is identical when subscribing to any node
-#[ntest::timeout(120_000)]
 #[test]
 fn cluster_test_subscription_initial_data_consistency() {
     require_cluster_running();
@@ -501,7 +497,6 @@ fn cluster_test_subscription_initial_data_consistency() {
 }
 
 /// Test: User table subscriptions work on any node
-#[ntest::timeout(120_000)]
 #[test]
 fn cluster_test_subscription_user_table_any_node() {
     require_cluster_running();

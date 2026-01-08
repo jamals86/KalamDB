@@ -44,6 +44,8 @@ struct LogEntryData {
 struct StateMachineData {
     last_applied_log: Option<LogId<u64>>,
     last_membership: StoredMembership<u64, KalamNode>,
+    state_applied_index: u64,
+    state_applied_term: u64,
     state: Vec<u8>,
 }
 
@@ -180,13 +182,19 @@ impl<SM: KalamStateMachine + Send + Sync + 'static> RaftSnapshotBuilder<KalamTyp
         let last_applied = self.storage.last_applied.read().clone();
         let last_membership = self.storage.last_membership.read().clone();
         
-        // For now, we only serialize the metadata (last_applied, membership).
-        // The actual state machine state can be rebuilt by replaying logs.
-        // A full implementation would serialize the state machine state here.
+        let sm_snapshot = self
+            .storage
+            .state_machine
+            .snapshot()
+            .await
+            .map_err(|e| StorageIOError::read_state_machine(&e))?;
+        
         let data = StateMachineData {
             last_applied_log: last_applied,
             last_membership: last_membership.clone(),
-            state: Vec::new(), // State machine state would go here
+            state_applied_index: sm_snapshot.last_applied_index,
+            state_applied_term: sm_snapshot.last_applied_term,
+            state: sm_snapshot.data,
         };
         
         let serialized = encode(&data).map_err(|e| StorageIOError::read_state_machine(&e))?;
@@ -407,7 +415,19 @@ impl<SM: KalamStateMachine + Send + Sync + 'static> RaftStorage<KalamTypeConfig>
         let data = snapshot.into_inner();
         
         // Deserialize
-        let _sm_data: StateMachineData = decode(&data)
+        let sm_data: StateMachineData = decode(&data)
+            .map_err(|e| StorageIOError::read_snapshot(Some(meta.signature()), &e))?;
+        
+        // Restore state machine from snapshot data
+        let sm_snapshot = crate::state_machine::StateMachineSnapshot::new(
+            self.group_id.clone(),
+            sm_data.state_applied_index,
+            sm_data.state_applied_term,
+            sm_data.state,
+        );
+        self.state_machine
+            .restore(sm_snapshot)
+            .await
             .map_err(|e| StorageIOError::read_snapshot(Some(meta.signature()), &e))?;
         
         // Update metadata
@@ -469,7 +489,12 @@ impl<SM: KalamStateMachine + Send + Sync + 'static> RaftLogReader<KalamTypeConfi
 #[cfg(test)]
 mod tests {
     use super::*;
+    use async_trait::async_trait;
+    use std::sync::atomic::{AtomicU64, Ordering};
     use crate::state_machine::SystemStateMachine;
+    use crate::state_machine::{ApplyResult, KalamStateMachine, StateMachineSnapshot};
+    use crate::RaftError;
+    use openraft::EntryPayload;
 
     #[tokio::test]
     async fn test_storage_creation() {
@@ -511,5 +536,167 @@ mod tests {
         
         let state = storage.get_log_state().await.unwrap();
         assert!(state.last_log_id.is_some());
+    }
+
+    #[derive(Debug)]
+    struct TestStateMachine {
+        state: std::sync::Arc<AtomicU64>,
+        last_applied_index: AtomicU64,
+        last_applied_term: AtomicU64,
+    }
+
+    impl TestStateMachine {
+        fn new(state: std::sync::Arc<AtomicU64>) -> Self {
+            Self {
+                state,
+                last_applied_index: AtomicU64::new(0),
+                last_applied_term: AtomicU64::new(0),
+            }
+        }
+    }
+
+    #[async_trait]
+    impl KalamStateMachine for TestStateMachine {
+        fn group_id(&self) -> GroupId {
+            GroupId::MetaSystem
+        }
+
+        async fn apply(&self, index: u64, term: u64, command: &[u8]) -> Result<ApplyResult, RaftError> {
+            if index <= self.last_applied_index.load(Ordering::Acquire) {
+                return Ok(ApplyResult::NoOp);
+            }
+
+            if command.len() != 8 {
+                return Err(RaftError::InvalidState("Invalid command length".to_string()));
+            }
+
+            let mut bytes = [0u8; 8];
+            bytes.copy_from_slice(command);
+            let delta = u64::from_le_bytes(bytes);
+
+            self.state.fetch_add(delta, Ordering::Relaxed);
+            self.last_applied_index.store(index, Ordering::Release);
+            self.last_applied_term.store(term, Ordering::Release);
+
+            Ok(ApplyResult::ok())
+        }
+
+        fn last_applied_index(&self) -> u64 {
+            self.last_applied_index.load(Ordering::Acquire)
+        }
+
+        fn last_applied_term(&self) -> u64 {
+            self.last_applied_term.load(Ordering::Acquire)
+        }
+
+        async fn snapshot(&self) -> Result<StateMachineSnapshot, RaftError> {
+            let value = self.state.load(Ordering::Acquire);
+            Ok(StateMachineSnapshot::new(
+                self.group_id(),
+                self.last_applied_index(),
+                self.last_applied_term(),
+                value.to_le_bytes().to_vec(),
+            ))
+        }
+
+        async fn restore(&self, snapshot: StateMachineSnapshot) -> Result<(), RaftError> {
+            if snapshot.data.len() != 8 {
+                return Err(RaftError::InvalidState("Invalid snapshot data".to_string()));
+            }
+
+            let mut bytes = [0u8; 8];
+            bytes.copy_from_slice(&snapshot.data);
+            let value = u64::from_le_bytes(bytes);
+
+            self.state.store(value, Ordering::Release);
+            self.last_applied_index
+                .store(snapshot.last_applied_index, Ordering::Release);
+            self.last_applied_term
+                .store(snapshot.last_applied_term, Ordering::Release);
+            Ok(())
+        }
+
+        fn approximate_size(&self) -> usize {
+            8
+        }
+    }
+
+    #[tokio::test]
+    async fn test_snapshot_build_and_install_restores_state() {
+        let state = std::sync::Arc::new(AtomicU64::new(0));
+        let sm = TestStateMachine::new(state.clone());
+        let storage = std::sync::Arc::new(KalamRaftStorage::new(GroupId::MetaSystem, sm));
+
+        let entries = vec![
+            Entry {
+                log_id: LogId::new(openraft::CommittedLeaderId::new(1, 1), 1),
+                payload: EntryPayload::Normal(1u64.to_le_bytes().to_vec()),
+            },
+            Entry {
+                log_id: LogId::new(openraft::CommittedLeaderId::new(1, 1), 2),
+                payload: EntryPayload::Normal(2u64.to_le_bytes().to_vec()),
+            },
+        ];
+
+        let mut storage_clone = storage.clone();
+        storage_clone
+            .apply_to_state_machine(&entries)
+            .await
+            .unwrap();
+
+        let mut builder = storage_clone.get_snapshot_builder().await;
+        let snapshot = builder.build_snapshot().await.unwrap();
+
+        let restored_state = std::sync::Arc::new(AtomicU64::new(0));
+        let restored_sm = TestStateMachine::new(restored_state.clone());
+        let mut restored_storage =
+            std::sync::Arc::new(KalamRaftStorage::new(GroupId::MetaSystem, restored_sm));
+
+        let snapshot_meta = snapshot.meta.clone();
+        let snapshot_data = snapshot.snapshot;
+
+        restored_storage
+            .install_snapshot(&snapshot_meta, snapshot_data)
+            .await
+            .unwrap();
+
+        assert_eq!(restored_state.load(Ordering::Acquire), 3);
+    }
+
+    #[tokio::test]
+    async fn test_snapshot_install_updates_last_applied() {
+        let state = std::sync::Arc::new(AtomicU64::new(0));
+        let sm = TestStateMachine::new(state.clone());
+        let storage = std::sync::Arc::new(KalamRaftStorage::new(GroupId::MetaSystem, sm));
+
+        let entry = Entry {
+            log_id: LogId::new(openraft::CommittedLeaderId::new(1, 1), 4),
+            payload: EntryPayload::Normal(5u64.to_le_bytes().to_vec()),
+        };
+
+        let mut storage_clone = storage.clone();
+        storage_clone
+            .apply_to_state_machine(&[entry])
+            .await
+            .unwrap();
+
+        let mut builder = storage_clone.get_snapshot_builder().await;
+        let snapshot = builder.build_snapshot().await.unwrap();
+
+        let restored_state = std::sync::Arc::new(AtomicU64::new(0));
+        let restored_sm = TestStateMachine::new(restored_state);
+        let mut restored_storage =
+            std::sync::Arc::new(KalamRaftStorage::new(GroupId::MetaSystem, restored_sm));
+
+        let snapshot_meta = snapshot.meta.clone();
+        let snapshot_data = snapshot.snapshot;
+
+        restored_storage
+            .install_snapshot(&snapshot_meta, snapshot_data)
+            .await
+            .unwrap();
+
+        let (last_applied, _) = restored_storage.last_applied_state().await.unwrap();
+        assert_eq!(last_applied, snapshot_meta.last_log_id);
     }
 }

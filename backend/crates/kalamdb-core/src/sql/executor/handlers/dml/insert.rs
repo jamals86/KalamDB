@@ -569,7 +569,7 @@ impl InsertHandler {
 
         // Check if we're in cluster mode - route shared/user inserts through Raft for replication
         if self.app_context.is_cluster_mode()
-            && matches!(table_type, TableType::User | TableType::Shared)
+            && matches!(table_type, TableType::User | TableType::Shared | TableType::Stream)
         {
             return self.execute_insert_via_raft(
                 table_id,
@@ -698,16 +698,17 @@ impl InsertHandler {
                 }
             }
             TableType::Stream => {
-                // Streams also go through shared data path (no per-user isolation)
-                let cmd = SharedDataCommand::Insert {
+                let cmd = UserDataCommand::Insert {
                     table_id: table_id.clone(),
+                    user_id: user_id.clone(),
                     rows_data,
                 };
-                
-                let response = executor.execute_shared_data(cmd)
+
+                let response = executor
+                    .execute_user_data(&user_id, cmd)
                     .await
                     .map_err(|e| KalamDbError::InvalidOperation(format!("Raft insert failed: {}", e)))?;
-                
+
                 match response {
                     DataResponse::RowsAffected(n) => Ok(n),
                     DataResponse::Ok => Ok(row_count),

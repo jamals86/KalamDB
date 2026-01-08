@@ -212,6 +212,7 @@ impl RaftNetworkFactory {
     pub fn unregister_node(&self, node_id: u64) {
         let mut nodes = self.nodes.write();
         nodes.remove(&node_id);
+        self.channels.remove(&node_id);
     }
     
     /// Get node info by node ID (for leader forwarding)
