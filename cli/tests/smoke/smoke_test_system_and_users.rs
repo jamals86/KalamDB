@@ -9,7 +9,7 @@ fn smoke_system_tables_and_user_lifecycle() {
     if !is_server_running() {
         println!(
             "Skipping smoke_system_tables_and_user_lifecycle: server not running at {}",
-            SERVER_URL
+            server_url()
         );
         return;
     }

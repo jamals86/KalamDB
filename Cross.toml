@@ -20,4 +20,10 @@ dockerfile = "./tools/Dockerfile.cross-aarch64"
 # Use custom Dockerfile for Windows with proper LLVM for RocksDB bindgen
 [target.x86_64-pc-windows-gnu]
 dockerfile = "./tools/Dockerfile.cross-windows"
+# Static linking to avoid libstdc++-6.dll and libgcc_s_seh-1.dll dependencies
+[target.x86_64-pc-windows-gnu.env]
+passthrough = []
+
+[target.x86_64-pc-windows-gnu.build]
+default-target = "x86_64-pc-windows-gnu"
 

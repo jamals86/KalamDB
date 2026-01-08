@@ -59,7 +59,7 @@ fn test_basic_table_creation_and_access() {
 
     // Query the data
     let select_sql = format!("SELECT content FROM {}.{}", namespace, table_name);
-    let result = common::execute_sql_via_cli(&select_sql);
+    let result = common::execute_sql_as_root_via_cli(&select_sql);
     assert!(
         result.is_ok(),
         "Should query data successfully: {:?}",

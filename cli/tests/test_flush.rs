@@ -43,11 +43,11 @@ fn test_cli_explicit_flush() {
 
     let mut cmd = create_cli_command();
     cmd.arg("-u")
-        .arg(SERVER_URL)
+        .arg(server_url())
         .arg("--username")
         .arg("root")
         .arg("--password")
-        .arg("")
+        .arg(root_password())
         .arg("--command")
         .arg(format!("FLUSH TABLE {}", full_table_name));
 
@@ -73,5 +73,5 @@ fn test_cli_explicit_flush() {
     );
 
     // Cleanup
-    let _ = execute_sql_via_cli(&format!("DROP TABLE IF EXISTS {}", full_table_name));
+    let _ = execute_sql_as_root_via_cli(&format!("DROP TABLE IF EXISTS {}", full_table_name));
 }

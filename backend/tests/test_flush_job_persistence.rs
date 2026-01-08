@@ -38,7 +38,7 @@ async fn test_flush_table_persists_job() {
         updated_at: now,
         started_at: None,
         finished_at: None,
-        node_id: NodeId::new("node-1".to_string()),
+        node_id: NodeId::new(1),
         queue: None,
         priority: None,
     };

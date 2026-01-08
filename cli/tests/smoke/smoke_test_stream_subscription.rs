@@ -9,7 +9,7 @@ fn smoke_stream_table_subscription() {
     if !is_server_running() {
         println!(
             "Skipping smoke_stream_table_subscription: server not running at {}",
-            SERVER_URL
+            server_url()
         );
         return;
     }

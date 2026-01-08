@@ -119,7 +119,7 @@ impl SubscriptionService {
             created_at: timestamp,
             last_update: timestamp,
             changes: 0,
-            node: self.node_id.as_str().to_string(),
+            node: self.node_id.to_string(),
             subscription_id: request.id.clone(),
             status: kalamdb_commons::types::LiveQueryStatus::Active,
         };

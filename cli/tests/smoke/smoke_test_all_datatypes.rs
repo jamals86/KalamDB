@@ -12,7 +12,7 @@ fn smoke_all_datatypes_user_shared_stream() {
     if !is_server_running() {
         println!(
             "Skipping smoke_all_datatypes_user_shared_stream: server not running at {}",
-            SERVER_URL
+            server_url()
         );
         return;
     }

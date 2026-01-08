@@ -46,7 +46,7 @@ fn test_cli_invalid_token() {
 
     let mut cmd = create_cli_command();
     cmd.arg("-u")
-        .arg("http://localhost:8080")
+        .arg(server_url())
         .arg("--username")
         .arg("test_user")
         .arg("--token")
@@ -102,7 +102,7 @@ fn test_cli_localhost_auth_bypass() {
 #[test]
 fn test_cli_authenticate_unauthorized_user() {
     if !is_server_running() {
-        eprintln!("⚠️  Server not running at http://localhost:8080. Skipping test.");
+        eprintln!("⚠️  Server not running at {}. Skipping test.", server_url());
         return;
     }
 
@@ -125,7 +125,7 @@ fn test_cli_authenticate_unauthorized_user() {
 #[test]
 fn test_cli_authenticate_and_check_info() {
     if !is_server_running() {
-        eprintln!("⚠️  Server not running at http://localhost:8080. Skipping test.");
+        eprintln!("⚠️  Server not running at {}. Skipping test.", server_url());
         return;
     }
 

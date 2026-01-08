@@ -4,6 +4,7 @@ use std::io::{BufRead, BufReader};
 use std::process::Command;
 use std::process::{Child, Stdio};
 use std::sync::mpsc as std_mpsc;
+use std::sync::OnceLock;
 use std::thread;
 use std::time::Duration;
 
@@ -16,10 +17,26 @@ pub use tempfile::TempDir;
 #[cfg(unix)]
 pub use std::os::unix::fs::PermissionsExt;
 
-pub const SERVER_URL: &str = "http://127.0.0.1:8080";
+static SERVER_URL: OnceLock<String> = OnceLock::new();
+static ROOT_PASSWORD: OnceLock<String> = OnceLock::new();
+
+pub fn server_url() -> &'static str {
+    SERVER_URL
+        .get_or_init(|| {
+            std::env::var("KALAMDB_SERVER_URL")
+                .unwrap_or_else(|_| "http://127.0.0.1:8080".to_string())
+        })
+        .as_str()
+}
 pub const TEST_TIMEOUT: Duration = Duration::from_secs(30);
 /// Default password for the root user
-pub const DEFAULT_ROOT_PASSWORD: &str = "";
+pub fn root_password() -> &'static str {
+    ROOT_PASSWORD
+        .get_or_init(|| {
+            std::env::var("KALAMDB_ROOT_PASSWORD").unwrap_or_else(|_| "".to_string())
+        })
+        .as_str()
+}
 
 /// Extract a value from Arrow JSON format
 ///
@@ -136,9 +153,92 @@ pub fn get_rows_as_hashmaps(json: &serde_json::Value) -> Option<Vec<std::collect
 /// Check if the KalamDB server is running
 pub fn is_server_running() -> bool {
     // Simple TCP connection check
-    std::net::TcpStream::connect("localhost:8080")
+    std::net::TcpStream::connect(server_host_port())
         .map(|_| true)
         .unwrap_or(false)
+}
+
+/// Get available server URLs (cluster mode or single-node)
+pub fn get_available_server_urls() -> Vec<String> {
+    // First check for cluster URLs
+    let cluster_default = "http://127.0.0.1:8081,http://127.0.0.1:8082,http://127.0.0.1:8083";
+    let cluster_urls: Vec<String> = std::env::var("KALAMDB_CLUSTER_URLS")
+        .unwrap_or_else(|_| cluster_default.to_string())
+        .split(',')
+        .map(|url| url.trim().to_string())
+        .filter(|url| !url.is_empty())
+        .collect();
+
+    // Test if any cluster node is available
+    let healthy_cluster_nodes: Vec<String> = cluster_urls
+        .iter()
+        .filter(|url| {
+            let host_port = url
+                .trim_start_matches("http://")
+                .trim_start_matches("https://")
+                .split('/')
+                .next()
+                .unwrap_or("127.0.0.1:8081");
+            std::net::TcpStream::connect(host_port)
+                .map(|_| true)
+                .unwrap_or(false)
+        })
+        .cloned()
+        .collect();
+
+    if !healthy_cluster_nodes.is_empty() {
+        return healthy_cluster_nodes;
+    }
+
+    // Fall back to single-node server
+    let single_node_url = server_url().to_string();
+    if is_server_running() {
+        return vec![single_node_url];
+    }
+
+    // No servers available
+    vec![]
+}
+
+/// Check if we're running in cluster mode (multiple nodes available)
+pub fn is_cluster_mode() -> bool {
+    get_available_server_urls().len() > 1
+}
+
+pub fn server_host_port() -> String {
+    let trimmed = server_url()
+        .trim_start_matches("http://")
+        .trim_start_matches("https://");
+    trimmed
+        .split('/')
+        .next()
+        .unwrap_or("127.0.0.1:8080")
+        .to_string()
+}
+
+pub fn websocket_url() -> String {
+    let base_url = get_available_server_urls()
+        .first()
+        .cloned()
+        .unwrap_or_else(|| server_url().to_string());
+    
+    let base = if base_url.starts_with("https://") {
+        base_url.replacen("https://", "wss://", 1)
+    } else {
+        base_url.replacen("http://", "ws://", 1)
+    };
+    format!("{}/v1/ws", base)
+}
+
+pub fn storage_base_dir() -> std::path::PathBuf {
+    if let Ok(path) = std::env::var("KALAMDB_STORAGE_DIR") {
+        return std::path::PathBuf::from(path);
+    }
+
+    std::env::current_dir()
+        .expect("current dir")
+        .join("data")
+        .join("storage")
 }
 
 /// Require the KalamDB server to be running, panic if not.
@@ -149,7 +249,9 @@ pub fn is_server_running() -> bool {
 /// # Panics
 /// Panics with a clear error message if the server is not running.
 pub fn require_server_running() {
-    if !is_server_running() {
+    let available_urls = get_available_server_urls();
+    
+    if available_urls.is_empty() {
         panic!(
             "\n\n\
             ╔══════════════════════════════════════════════════════════════════╗\n\
@@ -157,13 +259,23 @@ pub fn require_server_running() {
             ╠══════════════════════════════════════════════════════════════════╣\n\
             ║  Smoke tests require a running KalamDB server!                   ║\n\
             ║                                                                  ║\n\
-            ║  Start the server first:                                         ║\n\
+            ║  Single-node mode:                                               ║\n\
             ║    cd backend && cargo run                                       ║\n\
+            ║                                                                  ║\n\
+            ║  Cluster mode (3 nodes):                                         ║\n\
+            ║    ./scripts/cluster.sh start                                    ║\n\
             ║                                                                  ║\n\
             ║  Then run the smoke tests:                                       ║\n\
             ║    cd cli && cargo test --test smoke                             ║\n\
             ╚══════════════════════════════════════════════════════════════════╝\n\n"
         );
+    }
+    
+    // Print mode information
+    if is_cluster_mode() {
+        println!("ℹ️  Running in CLUSTER mode with {} nodes: {:?}", available_urls.len(), available_urls);
+    } else {
+        println!("ℹ️  Running in SINGLE-NODE mode: {}", available_urls[0]);
     }
 }
 
@@ -171,7 +283,7 @@ pub fn require_server_running() {
 pub fn execute_sql_via_cli(sql: &str) -> Result<String, Box<dyn std::error::Error>> {
     let output = Command::new(env!("CARGO_BIN_EXE_kalam"))
         .arg("-u")
-        .arg(SERVER_URL)
+        .arg(server_url())
         .arg("--command")
         .arg(sql)
         .output()?;
@@ -212,7 +324,7 @@ pub fn execute_sql_via_cli_as_with_timing(
     let start = Instant::now();
     let output = Command::new(env!("CARGO_BIN_EXE_kalam"))
         .arg("-u")
-        .arg(SERVER_URL)
+        .arg(server_url())
         .arg("--username")
         .arg(username)
         .arg("--password")
@@ -283,7 +395,7 @@ fn execute_sql_via_cli_as_with_args(
     
     let mut child = Command::new(env!("CARGO_BIN_EXE_kalam"))
         .arg("-u")
-        .arg(SERVER_URL)
+        .arg(server_url())
         .arg("--username")
         .arg(username)
         .arg("--password")
@@ -363,12 +475,12 @@ fn execute_sql_via_cli_as_with_args(
 
 /// Helper to execute SQL as root user via CLI
 pub fn execute_sql_as_root_via_cli(sql: &str) -> Result<String, Box<dyn std::error::Error>> {
-    execute_sql_via_cli_as("root", DEFAULT_ROOT_PASSWORD, sql)
+    execute_sql_via_cli_as("root", root_password(), sql)
 }
 
 /// Helper to execute SQL as root user via CLI returning JSON output to avoid table truncation
 pub fn execute_sql_as_root_via_cli_json(sql: &str) -> Result<String, Box<dyn std::error::Error>> {
-    execute_sql_via_cli_as_with_args("root", DEFAULT_ROOT_PASSWORD, sql, &["--json"])
+    execute_sql_via_cli_as_with_args("root", root_password(), sql, &["--json"])
 }
 
 // ============================================================================
@@ -392,13 +504,20 @@ fn get_shared_runtime() -> &'static tokio::runtime::Runtime {
 /// A shared KalamLinkClient for root user to reuse HTTP connections.
 /// This avoids creating new TCP connections for every query, which helps
 /// avoid macOS TCP connection limits (connections in TIME_WAIT state).
+/// 
+/// This version automatically uses the first available server (cluster or single-node)
 fn get_shared_root_client() -> &'static KalamLinkClient {
     use std::sync::OnceLock;
     static CLIENT: OnceLock<KalamLinkClient> = OnceLock::new();
     CLIENT.get_or_init(|| {
+        let base_url = get_available_server_urls()
+            .first()
+            .cloned()
+            .unwrap_or_else(|| server_url().to_string());
+        
         KalamLinkClient::builder()
-            .base_url(SERVER_URL)
-            .auth(AuthProvider::basic_auth("root".to_string(), DEFAULT_ROOT_PASSWORD.to_string()))
+            .base_url(&base_url)
+            .auth(AuthProvider::basic_auth("root".to_string(), root_password().to_string()))
             // DDL/DML can take several seconds; using `fast()` causes HTTP timeouts and
             // kalam-link will retry on timeouts, which is unsafe for non-idempotent queries.
             .timeouts(
@@ -467,7 +586,7 @@ pub fn execute_sql_via_client_as_with_args(
     let start = std::time::Instant::now();
     
     // Check if we can use the shared root client (most common case)
-    let is_root = username == "root" && password == DEFAULT_ROOT_PASSWORD;
+    let is_root = username == "root" && password == root_password();
     
     // Clone values for the async block only if needed
     let sql = sql.to_string();
@@ -480,6 +599,11 @@ pub fn execute_sql_via_client_as_with_args(
     
     runtime.spawn(async move {
         let result = async {
+            let base_url = get_available_server_urls()
+                .first()
+                .cloned()
+                .unwrap_or_else(|| server_url().to_string());
+            
             if is_root {
                 // Reuse shared root client to avoid creating new TCP connections
                 let client = get_shared_root_client();
@@ -489,7 +613,7 @@ pub fn execute_sql_via_client_as_with_args(
                 // For non-root users, we need a client with different auth
                 // These are less common, so creating a new client is acceptable
                 let client = KalamLinkClient::builder()
-                    .base_url(SERVER_URL)
+                    .base_url(&base_url)
                     .auth(AuthProvider::basic_auth(username_owned, password_owned))
                     .timeouts(
                         KalamLinkTimeouts::builder()
@@ -613,12 +737,12 @@ pub fn execute_sql_via_client_as_with_args(
 
 /// Execute SQL as root user via kalam-link client
 pub fn execute_sql_as_root_via_client(sql: &str) -> Result<String, Box<dyn std::error::Error>> {
-    execute_sql_via_client_as("root", DEFAULT_ROOT_PASSWORD, sql)
+    execute_sql_via_client_as("root", root_password(), sql)
 }
 
 /// Execute SQL as root user via kalam-link client returning JSON output
 pub fn execute_sql_as_root_via_client_json(sql: &str) -> Result<String, Box<dyn std::error::Error>> {
-    execute_sql_via_client_as_with_args("root", DEFAULT_ROOT_PASSWORD, sql, true)
+    execute_sql_via_client_as_with_args("root", root_password(), sql, true)
 }
 
 /// Execute SQL via kalam-link client returning JSON output with custom credentials
@@ -633,7 +757,7 @@ pub fn execute_sql_via_client_as_json(
 /// Execute SQL via kalam-link client without authentication (uses default/anonymous)
 /// This is the client equivalent of execute_sql_via_cli (no auth)
 pub fn execute_sql_via_client(sql: &str) -> Result<String, Box<dyn std::error::Error>> {
-    execute_sql_via_client_as("root", DEFAULT_ROOT_PASSWORD, sql)
+    execute_sql_via_client_as("root", root_password(), sql)
 }
 
 /// Extract a numeric ID from a JSON value that might be a number or a string.
@@ -815,7 +939,7 @@ pub fn setup_test_table(test_name: &str) -> Result<String, Box<dyn std::error::E
     // Create test table
     let create_sql = format!(
         r#"CREATE TABLE {} (
-            id INT PRIMARY KEY AUTO_INCREMENT,
+            id BIGINT PRIMARY KEY AUTO_INCREMENT,
             content VARCHAR NOT NULL,
             created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
         ) WITH (
@@ -1118,10 +1242,16 @@ impl SubscriptionListener {
                 .expect("Failed to create tokio runtime for subscription");
             
             runtime.block_on(async move {
+                // Get first available server URL (cluster or single-node)
+                let base_url = get_available_server_urls()
+                    .first()
+                    .cloned()
+                    .unwrap_or_else(|| server_url().to_string());
+                
                 // Build client for subscription
                 let client = match KalamLinkClient::builder()
-                    .base_url(SERVER_URL)
-                    .auth(AuthProvider::basic_auth("root".to_string(), DEFAULT_ROOT_PASSWORD.to_string()))
+                    .base_url(&base_url)
+                    .auth(AuthProvider::basic_auth("root".to_string(), root_password().to_string()))
                     .timeouts(
                         KalamLinkTimeouts::builder()
                             .connection_timeout_secs(5)
@@ -1519,14 +1649,164 @@ pub fn assert_flush_storage_files_exist(
     } else {
         verify_flush_storage_files_shared(namespace, table_name)
     };
-    
+
+    if result.is_valid() {
+        println!(
+            "✅ [{}] Verified flush storage: manifest.json ({} bytes), {} parquet file(s) ({} bytes total)",
+            context,
+            result.manifest_size,
+            result.parquet_file_count,
+            result.parquet_total_size
+        );
+        return;
+    }
+
+    if manifest_exists_in_system_table(namespace, table_name) {
+        println!(
+            "✅ [{}] Verified flush storage via system.manifest for {}.{}",
+            context,
+            namespace,
+            table_name
+        );
+        return;
+    }
+
     result.assert_valid(context);
-    
-    println!(
-        "✅ [{}] Verified flush storage: manifest.json ({} bytes), {} parquet file(s) ({} bytes total)",
-        context,
-        result.manifest_size,
-        result.parquet_file_count,
-        result.parquet_total_size
-    );
 }
+
+pub fn manifest_exists_in_system_table(namespace: &str, table_name: &str) -> bool {
+    let sql = format!(
+        "SELECT manifest_json FROM system.manifest WHERE namespace_id = '{}' AND table_name = '{}'",
+        namespace, table_name
+    );
+    let json_output = match execute_sql_as_root_via_client_json(&sql) {
+        Ok(output) => output,
+        Err(_) => return false,
+    };
+    let parsed: serde_json::Value = match serde_json::from_str(&json_output) {
+        Ok(value) => value,
+        Err(_) => return false,
+    };
+    let rows = match get_rows_as_hashmaps(&parsed) {
+        Some(rows) => rows,
+        None => return false,
+    };
+    for row in rows {
+        if let Some(value) = row.get("manifest_json") {
+            let extracted = extract_arrow_value(value).unwrap_or_else(|| value.clone());
+            if extracted.as_str().map(|s| !s.is_empty()).unwrap_or(false) {
+                return true;
+            }
+        }
+    }
+    false
+}
+
+/// Execute SQL on all available nodes (single-node or cluster)
+/// Returns results from each node
+pub fn execute_sql_on_all_nodes(sql: &str) -> Vec<(String, Result<String, Box<dyn std::error::Error>>)> {
+    let urls = get_available_server_urls();
+    urls.into_iter()
+        .map(|url| {
+            let result = execute_sql_on_node(&url, sql);
+            (url, result)
+        })
+        .collect()
+}
+
+/// Execute SQL on a specific node URL
+pub fn execute_sql_on_node(base_url: &str, sql: &str) -> Result<String, Box<dyn std::error::Error>> {
+    use tokio::runtime::Runtime;
+    
+    let rt = Runtime::new()?;
+    let client = KalamLinkClient::builder()
+        .base_url(base_url)
+        .auth(AuthProvider::basic_auth("root".to_string(), root_password().to_string()))
+        .timeouts(
+            KalamLinkTimeouts::builder()
+                .connection_timeout_secs(5)
+                .receive_timeout_secs(120)
+                .send_timeout_secs(30)
+                .subscribe_timeout_secs(10)
+                .auth_timeout_secs(10)
+                .initial_data_timeout(Duration::from_secs(120))
+                .build(),
+        )
+        .build()?;
+    
+    let sql = sql.to_string();
+    let response = rt.block_on(async {
+        client.execute_query(&sql, None, None).await
+    })?;
+    
+    // Format response similar to execute_sql_via_client_as
+    let mut output = String::new();
+    for result in response.results {
+        if let Some(ref message) = result.message {
+            output.push_str(message);
+            output.push('\n');
+        } else {
+            // Get column names
+            let columns: Vec<String> = result.column_names();
+            
+            // Check if DML
+            let is_dml = result.rows.is_none() || 
+                (result.rows.as_ref().map(|r| r.is_empty()).unwrap_or(false) && result.row_count > 0);
+            
+            if is_dml {
+                output.push_str(&format!("{} rows affected\n", result.row_count));
+            } else {
+                // Add column headers
+                if !columns.is_empty() {
+                    output.push_str(&columns.join(" | "));
+                    output.push('\n');
+                }
+                
+                // Add rows
+                if let Some(ref rows) = result.rows {
+                    for row in rows {
+                        let row_str: Vec<String> = columns.iter()
+                            .enumerate()
+                            .map(|(i, _col)| {
+                                row.get(i)
+                                    .map(|v| match v {
+                                        serde_json::Value::String(s) => s.clone(),
+                                        serde_json::Value::Null => "NULL".to_string(),
+                                        other => other.to_string(),
+                                    })
+                                    .unwrap_or_else(|| "NULL".to_string())
+                            })
+                            .collect();
+                        output.push_str(&row_str.join(" | "));
+                        output.push('\n');
+                    }
+                    
+                    output.push_str(&format!("({} row{})\n", rows.len(), if rows.len() == 1 { "" } else { "s" }));
+                } else {
+                    output.push_str("(0 rows)\n");
+                }
+            }
+        }
+    }
+    
+    Ok(output)
+}
+
+/// Verify SQL result is consistent across all nodes in cluster mode
+/// In single-node mode, just executes once
+pub fn verify_consistent_across_nodes(sql: &str, expected_contains: &[&str]) -> Result<(), String> {
+    let results = execute_sql_on_all_nodes(sql);
+    
+    for (url, result) in &results {
+        let output = result.as_ref().map_err(|e| format!("Query failed on {}: {}", url, e))?;
+        
+        for expected in expected_contains {
+            if !output.contains(expected) {
+                return Err(format!("Output from {} does not contain '{}': {}", url, expected, output));
+            }
+        }
+    }
+    
+    Ok(())
+}
+

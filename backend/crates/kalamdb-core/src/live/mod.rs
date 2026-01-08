@@ -3,7 +3,9 @@
 //! This module handles WebSocket-based live query subscriptions and
 //! real-time change notifications.
 //!
-//! Moved from kalamdb-live crate to kalamdb-core to avoid circular dependencies.
+//! Live query notifications are now handled through Raft-replicated data appliers.
+//! When data is applied on any node (leader or follower), the provider's insert/update/delete
+//! methods fire local notifications to connected WebSocket clients.
 
 pub mod connections_manager;
 pub mod error;
@@ -32,4 +34,3 @@ pub use notification::NotificationService;
 pub use query_parser::QueryParser;
 pub use subscription::{RegisteredSubscription, SubscriptionService};
 pub use types::{ChangeNotification, ChangeType, RegistryStats, SubscriptionResult};
-

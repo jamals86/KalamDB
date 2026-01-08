@@ -113,7 +113,7 @@ fn test_update_all_types_user_table() {
     let full_table_name = format!("{}.{}", namespace, table_name);
 
     // Setup namespace
-    let _ = execute_sql_via_cli(&format!("CREATE NAMESPACE IF NOT EXISTS {}", namespace));
+    let _ = execute_sql_as_root_via_cli(&format!("CREATE NAMESPACE IF NOT EXISTS {}", namespace));
 
     // Create table with all supported types
     // Note: Skipping EMBEDDING and BYTES for simplicity in SQL literals for now,
@@ -277,7 +277,7 @@ fn test_update_all_types_user_table() {
     assert_decimal_column_eq(&row, "col_decimal", 200.75, &output);
 
     // Cleanup
-    let _ = execute_sql_via_cli(&format!("DROP TABLE IF EXISTS {}", full_table_name));
+    let _ = execute_sql_as_root_via_cli(&format!("DROP TABLE IF EXISTS {}", full_table_name));
 }
 
 /// Test updating all data types in a SHARED table
@@ -293,7 +293,7 @@ fn test_update_all_types_shared_table() {
     let full_table_name = format!("{}.{}", namespace, table_name);
 
     // Setup namespace
-    let _ = execute_sql_via_cli(&format!("CREATE NAMESPACE IF NOT EXISTS {}", namespace));
+    let _ = execute_sql_as_root_via_cli(&format!("CREATE NAMESPACE IF NOT EXISTS {}", namespace));
 
     // Create table with all supported types
     let create_sql = format!(
@@ -452,5 +452,5 @@ fn test_update_all_types_shared_table() {
     assert_decimal_column_eq(&row, "col_decimal", 200.75, &output);
 
     // Cleanup
-    let _ = execute_sql_via_cli(&format!("DROP TABLE IF EXISTS {}", full_table_name));
+    let _ = execute_sql_as_root_via_cli(&format!("DROP TABLE IF EXISTS {}", full_table_name));
 }

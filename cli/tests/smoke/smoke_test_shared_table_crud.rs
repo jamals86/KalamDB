@@ -9,7 +9,7 @@ fn smoke_shared_table_crud() {
     if !is_server_running() {
         println!(
             "Skipping smoke_shared_table_crud: server not running at {}",
-            SERVER_URL
+            server_url()
         );
         return;
     }

@@ -186,10 +186,10 @@ impl BatchSubscriptionListener {
 
             runtime.block_on(async move {
                 let client = match KalamLinkClient::builder()
-                    .base_url(SERVER_URL)
+                    .base_url(server_url())
                     .auth(AuthProvider::basic_auth(
                         "root".to_string(),
-                        DEFAULT_ROOT_PASSWORD.to_string(),
+                        root_password().to_string(),
                     ))
                     .timeouts(
                         KalamLinkTimeouts::builder()

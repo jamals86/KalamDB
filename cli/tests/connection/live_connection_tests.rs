@@ -4,7 +4,7 @@
 //! - ConnectionOptions: auto_reconnect, reconnect_delay_ms, max_reconnect_attempts
 //! - SubscriptionOptions: batch_size, last_rows, from_seq_id
 //!
-//! REQUIRES: A running KalamDB server at http://127.0.0.1:8080
+//! REQUIRES: A running KalamDB server at SERVER_URL (see tests/common/mod.rs)
 //!
 //! Run with:
 //!   cargo test --test connection live_connection_tests -- --test-threads=1
@@ -492,8 +492,8 @@ fn test_live_http2_query_execution() {
     // Build client with Auto HTTP version (will negotiate or fall back)
     // Note: HTTP/2 prior knowledge doesn't work with servers that don't support h2c
     let client = KalamLinkClient::builder()
-        .base_url(SERVER_URL)
-        .auth(AuthProvider::basic_auth("root".to_string(), DEFAULT_ROOT_PASSWORD.to_string()))
+        .base_url(server_url())
+        .auth(AuthProvider::basic_auth("root".to_string(), root_password().to_string()))
         .http_version(HttpVersion::Auto) // Auto-negotiate, falls back to HTTP/1.1
         .timeouts(KalamLinkTimeouts::fast())
         .build()
@@ -527,28 +527,28 @@ fn test_live_http2_query_execution() {
 fn test_client_builder_http_versions() {
     // HTTP/1.1 (default)
     let client1 = KalamLinkClient::builder()
-        .base_url("http://localhost:8080")
+        .base_url(server_url())
         .http_version(HttpVersion::Http1)
         .build();
     assert!(client1.is_ok(), "Client with HTTP/1.1 should build");
     
     // HTTP/2
     let client2 = KalamLinkClient::builder()
-        .base_url("http://localhost:8080")
+        .base_url(server_url())
         .http_version(HttpVersion::Http2)
         .build();
     assert!(client2.is_ok(), "Client with HTTP/2 should build");
     
     // Auto
     let client3 = KalamLinkClient::builder()
-        .base_url("http://localhost:8080")
+        .base_url(server_url())
         .http_version(HttpVersion::Auto)
         .build();
     assert!(client3.is_ok(), "Client with Auto HTTP version should build");
     
     // Using connection_options
     let client4 = KalamLinkClient::builder()
-        .base_url("http://localhost:8080")
+        .base_url(server_url())
         .connection_options(
             ConnectionOptions::new()
                 .with_http_version(HttpVersion::Http2)

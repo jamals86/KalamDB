@@ -36,7 +36,7 @@ impl JobsManager {
         Self {
             jobs_provider,
             job_registry,
-            node_id: NodeId::new("node_default".to_string()), // TODO: Get from config
+            node_id: NodeId::new(0), // TODO: Get from config - 0 means uninitialized
             shutdown: AtomicBool::new(false),
             app_context: Arc::new(RwLock::new(None)),
         }

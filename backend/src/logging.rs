@@ -76,7 +76,12 @@ pub fn init_logging(
             .level_for("datafusion_datasource", LevelFilter::Warn)
             .level_for("arrow", LevelFilter::Warn)
             .level_for("parquet", LevelFilter::Warn)
-            .level_for("object_store", LevelFilter::Info);
+            .level_for("object_store", LevelFilter::Info)
+            // OpenRaft generates frequent timeout warnings during normal operation
+            // These are expected in clustered environments and fill up logs quickly
+            .level_for("openraft", LevelFilter::Error)
+            //.level_for("openraft::replication", LevelFilter::Off) // Disable replication spam entirely
+            .level_for("tracing", LevelFilter::Warn);
 
         // Apply per-target overrides from configuration (if any)
         if let Some(map) = target_levels {
@@ -164,6 +169,20 @@ pub fn init_logging(
         let mut file_only = if log_format == LogFormat::Json {
             fern::Dispatch::new()
                 .level(level_filter)
+                // Filter out noisy third-party logs
+                .level_for("actix_server", LevelFilter::Warn)
+                .level_for("actix_web", LevelFilter::Warn)
+                .level_for("h2", LevelFilter::Warn)
+                .level_for("sqlparser", LevelFilter::Warn)
+                .level_for("datafusion", LevelFilter::Warn)
+                .level_for("datafusion_optimizer", LevelFilter::Warn)
+                .level_for("datafusion_datasource", LevelFilter::Warn)
+                .level_for("arrow", LevelFilter::Warn)
+                .level_for("parquet", LevelFilter::Warn)
+                .level_for("object_store", LevelFilter::Info)
+                .level_for("openraft", LevelFilter::Error)
+                .level_for("openraft::replication", LevelFilter::Off)
+                .level_for("tracing", LevelFilter::Warn)
                 .format(|out, message, record| {
                     let json = serde_json::json!({
                         "timestamp": chrono::Local::now().format("%Y-%m-%dT%H:%M:%S%.3f%:z").to_string(),
@@ -178,6 +197,20 @@ pub fn init_logging(
         } else {
             fern::Dispatch::new()
                 .level(level_filter)
+                // Filter out noisy third-party logs
+                .level_for("actix_server", LevelFilter::Warn)
+                .level_for("actix_web", LevelFilter::Warn)
+                .level_for("h2", LevelFilter::Warn)
+                .level_for("sqlparser", LevelFilter::Warn)
+                .level_for("datafusion", LevelFilter::Warn)
+                .level_for("datafusion_optimizer", LevelFilter::Warn)
+                .level_for("datafusion_datasource", LevelFilter::Warn)
+                .level_for("arrow", LevelFilter::Warn)
+                .level_for("parquet", LevelFilter::Warn)
+                .level_for("object_store", LevelFilter::Info)
+                .level_for("openraft", LevelFilter::Error)
+                .level_for("openraft::replication", LevelFilter::Off)
+                .level_for("tracing", LevelFilter::Warn)
                 .format(|out, message, record| {
                     out.finish(format_args!(
                         "[{}] [{:5}] [{} - {}:{}] - {}",

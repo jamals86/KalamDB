@@ -1,0 +1,50 @@
+[package]
+name = "kalamdb-raft"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+authors.workspace = true
+license.workspace = true
+description = "Raft consensus layer for KalamDB multi-node clustering"
+
+[dependencies]
+# Workspace dependencies
+kalamdb-commons = { path = "../kalamdb-commons" }
+kalamdb-store = { path = "../kalamdb-store" }
+
+# Raft consensus
+openraft = { workspace = true }
+
+# gRPC network layer
+tonic = { workspace = true }
+prost = { workspace = true }
+
+# Serialization
+serde = { workspace = true }
+bincode = { workspace = true }
+
+# Async
+tokio = { workspace = true }
+async-trait = { workspace = true }
+tokio-stream = { workspace = true }
+
+# Error handling
+thiserror = { workspace = true }
+anyhow = { workspace = true }
+
+# Logging
+log = { workspace = true }
+
+# Time
+chrono = { workspace = true }
+
+# Utilities
+dashmap = { workspace = true }
+parking_lot = { workspace = true }
+
+[build-dependencies]
+tonic-build = "0.12"
+
+[dev-dependencies]
+tempfile = { workspace = true }
+tokio = { workspace = true, features = ["rt-multi-thread", "macros"] }

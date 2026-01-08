@@ -38,6 +38,8 @@ pub struct ServerConfig {
     pub execution: ExecutionSettings,
     #[serde(default)]
     pub security: SecuritySettings,
+    #[serde(default)]
+    pub cluster: Option<super::cluster::ClusterConfig>,
 }
 
 /// CORS configuration that maps directly to actix-cors options
@@ -831,6 +833,8 @@ impl Default for ServerConfig {
             jobs: JobsSettings::default(),
             execution: ExecutionSettings::default(),
             security: SecuritySettings::default(),
+            cluster: None, // Standalone mode by default
         }
     }
 }
+

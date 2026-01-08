@@ -54,3 +54,5 @@ mod smoke_test_batch_control;
 mod smoke_test_as_user_impersonation;
 #[path = "smoke/smoke_test_cli_commands.rs"]
 mod smoke_test_cli_commands;
+#[path = "smoke/smoke_test_cluster_operations.rs"]
+mod smoke_test_cluster_operations;

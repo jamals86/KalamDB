@@ -47,7 +47,7 @@ fn test_cli_list_tables() {
 
     // Query system tables
     let query_sql = "SELECT table_name FROM system.tables WHERE namespace_id = 'test_cli'";
-    let result = execute_sql_via_cli(query_sql);
+    let result = execute_sql_as_root_via_cli(query_sql);
 
     // Should list tables
     assert!(result.is_ok(), "Should list tables: {:?}", result.err());
@@ -93,7 +93,7 @@ fn test_cli_describe_table() {
     // Query table info
     let table_full_name = format!("{}.{}", namespace, table_name);
     let query_sql = format!("SELECT '{}' as table_info", table_full_name);
-    let result = execute_sql_via_cli(&query_sql);
+    let result = execute_sql_as_root_via_cli(&query_sql);
 
     // Should execute successfully and show table info
     assert!(result.is_ok(), "Should describe table: {:?}", result.err());
@@ -150,7 +150,11 @@ SELECT * FROM {};"#,
     // Execute batch file
     let mut cmd = create_cli_command();
     cmd.arg("-u")
-        .arg("http://localhost:8080")
+        .arg(server_url())
+        .arg("--username")
+        .arg("root")
+        .arg("--password")
+        .arg(root_password())
         .arg("--file")
         .arg(sql_file.to_str().unwrap())
         .timeout(TEST_TIMEOUT);
@@ -178,7 +182,7 @@ fn test_cli_syntax_error_handling() {
         return;
     }
 
-    let result = execute_sql_via_cli("INVALID SQL SYNTAX HERE");
+    let result = execute_sql_as_root_via_cli("INVALID SQL SYNTAX HERE");
 
     // Should contain error message
     assert!(result.is_err(), "Should fail with syntax error");
@@ -227,7 +231,7 @@ fn test_cli_health_check() {
     }
 
     // Test server health via SQL query
-    let result = execute_sql_via_cli("SELECT 1 as health_check");
+    let result = execute_sql_as_root_via_cli("SELECT 1 as health_check");
 
     assert!(
         result.is_ok(),
@@ -247,13 +251,13 @@ fn test_cli_health_check() {
 #[test]
 fn test_server_health_check() {
     if !is_server_running() {
-        eprintln!("⚠️  Server not running at http://localhost:8080.");
+        eprintln!("⚠️  Server not running at {}.", server_url());
         eprintln!("   Start server: cargo run --release --bin kalamdb-server");
         eprintln!("   Then run: cargo test --test test_cli_integration");
         return;
     }
 
-    let result = execute_sql_via_cli("SELECT 1");
+    let result = execute_sql_as_root_via_cli("SELECT 1");
 
     assert!(
         result.is_ok(),

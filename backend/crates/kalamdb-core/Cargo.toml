@@ -12,6 +12,7 @@ repository.workspace = true
 # Internal crates
 kalamdb-commons = { path = "../kalamdb-commons", features = ["serde"] }
 kalamdb-filestore = { path = "../kalamdb-filestore" }
+kalamdb-raft = { path = "../kalamdb-raft" }
 kalamdb-sql = { path = "../kalamdb-sql" }
 kalamdb-store = { path = "../kalamdb-store" }
 kalamdb-auth = { path = "../kalamdb-auth" }
@@ -74,6 +75,9 @@ num_cpus = { workspace = true }
 
 # Regular expressions
 regex = { workspace = true }
+
+# HTTP client for cluster notifications
+reqwest = { workspace = true }
 
 # Binary encoding helpers
 base64 = { workspace = true }

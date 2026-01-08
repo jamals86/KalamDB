@@ -1,0 +1,127 @@
+# KalamDB 3-Node Cluster Configuration
+# 
+# This compose file runs a 3-node KalamDB cluster with Raft consensus.
+# All nodes share the same network and can communicate via their container names.
+#
+# Usage:
+#   ./cluster.sh start     # Build and start the cluster
+#   ./cluster.sh stop      # Stop the cluster
+#   ./cluster.sh status    # Check cluster status
+#   ./cluster.sh logs      # View all logs
+#   ./cluster.sh clean     # Stop and remove all data
+#
+# Port Mapping:
+#   Node 1: HTTP 8081, Raft 9091
+#   Node 2: HTTP 8082, Raft 9092
+#   Node 3: HTTP 8083, Raft 9093
+
+services:
+  # ============================================================================
+  # Node 1 - Initial leader candidate
+  # ============================================================================
+  kalamdb-node1:
+    image: jamals86/kalamdb:latest
+    container_name: kalamdb-node1
+    hostname: kalamdb-node1
+    ports:
+      - "8081:8080"    # HTTP API
+      - "9091:9090"    # Raft gRPC
+    volumes:
+      - node1_data:/data
+      - shared_storage:/data/storage
+      - ./server1.toml:/data/server.toml:ro
+    environment:
+      RUST_LOG: "${RUST_LOG:-info,kalamdb_raft=info,openraft=warn,tracing=warn}"
+      KALAMDB_NODE_ID: "1"
+    networks:
+      - kalamdb-cluster
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-sf", "http://localhost:8080/v1/api/healthcheck"]
+      interval: 10s
+      timeout: 5s
+      start_period: 30s
+      retries: 3
+
+  # ============================================================================
+  # Node 2
+  # ============================================================================
+  kalamdb-node2:
+    image: jamals86/kalamdb:latest
+    container_name: kalamdb-node2
+    hostname: kalamdb-node2
+    ports:
+      - "8082:8080"    # HTTP API
+      - "9092:9090"    # Raft gRPC
+    volumes:
+      - node2_data:/data
+      - shared_storage:/data/storage
+      - ./server2.toml:/data/server.toml:ro
+    environment:
+      RUST_LOG: "${RUST_LOG:-info,kalamdb_raft=info,openraft=warn,tracing=warn}"
+      KALAMDB_NODE_ID: "2"
+    networks:
+      - kalamdb-cluster
+    depends_on:
+      kalamdb-node1:
+        condition: service_started
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-sf", "http://localhost:8080/v1/api/healthcheck"]
+      interval: 10s
+      timeout: 5s
+      start_period: 30s
+      retries: 3
+
+  # ============================================================================
+  # Node 3
+  # ============================================================================
+  kalamdb-node3:
+    image: jamals86/kalamdb:latest
+    container_name: kalamdb-node3
+    hostname: kalamdb-node3
+    ports:
+      - "8083:8080"    # HTTP API
+      - "9093:9090"    # Raft gRPC
+    volumes:
+      - node3_data:/data
+      - shared_storage:/data/storage
+      - ./server3.toml:/data/server.toml:ro
+    environment:
+      RUST_LOG: "${RUST_LOG:-info,kalamdb_raft=info,openraft=warn,tracing=warn}"
+      KALAMDB_NODE_ID: "3"
+    networks:
+      - kalamdb-cluster
+    depends_on:
+      kalamdb-node1:
+        condition: service_started
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-sf", "http://localhost:8080/v1/api/healthcheck"]
+      interval: 10s
+      timeout: 5s
+      start_period: 30s
+      retries: 3
+
+# ============================================================================
+# Cluster Network
+# ============================================================================
+networks:
+  kalamdb-cluster:
+    driver: bridge
+    ipam:
+      config:
+        - subnet: 172.28.0.0/16
+
+# ============================================================================
+# Persistent Volumes
+# ============================================================================
+volumes:
+  node1_data:
+    driver: local
+  node2_data:
+    driver: local
+  node3_data:
+    driver: local
+  shared_storage:
+    driver: local

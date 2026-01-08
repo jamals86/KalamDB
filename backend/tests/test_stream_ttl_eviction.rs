@@ -45,7 +45,7 @@ async fn test_stream_table_ttl_eviction_with_select() {
 
     // Create stream table provider with 1-second TTL
     // Initialize AppContext and TableProviderCore
-    let node_id = kalamdb_commons::NodeId::new("test-node".to_string());
+    let node_id = kalamdb_commons::NodeId::new(1);
     let config = kalamdb_commons::ServerConfig::default();
     let app_ctx = AppContext::init(
         backend.clone(),
@@ -202,7 +202,7 @@ async fn test_stream_table_select_with_projection() {
 
     // Create stream table provider
     // Initialize AppContext and TableProviderCore
-    let node_id = kalamdb_commons::NodeId::new("test-node".to_string());
+    let node_id = kalamdb_commons::NodeId::new(1);
     let config = kalamdb_commons::ServerConfig::default();
     let app_ctx = AppContext::init(
         backend.clone(),
@@ -325,7 +325,7 @@ async fn test_stream_table_select_with_limit() {
 
     // Create stream table provider
     // Initialize AppContext and TableProviderCore
-    let node_id = kalamdb_commons::NodeId::new("test-node".to_string());
+    let node_id = kalamdb_commons::NodeId::new(1);
     let config = kalamdb_commons::ServerConfig::default();
     let app_ctx = AppContext::init(
         backend.clone(),

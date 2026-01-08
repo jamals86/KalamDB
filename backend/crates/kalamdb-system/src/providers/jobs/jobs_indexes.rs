@@ -154,7 +154,7 @@ mod tests {
             } else {
                 None
             },
-            node_id: NodeId::from("test-node"),
+            node_id: NodeId::from(1u64),
             queue: None,
             priority: None,
         }

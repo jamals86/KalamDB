@@ -4,6 +4,7 @@
 //! Authentication is handled automatically by the `AuthSession` extractor.
 
 use actix_web::{post, web, HttpRequest, HttpResponse, Responder};
+use reqwest::Client;
 use kalamdb_auth::AuthSession;
 use kalamdb_commons::models::datatypes::{FromArrowType, KalamDataType};
 use kalamdb_commons::schemas::SchemaField;
@@ -78,6 +79,10 @@ pub async fn execute_sql_v1(
                 took,
             ));
         }
+    }
+
+    if let Some(response) = forward_sql_if_follower(&http_req, &req, app_context.get_ref()).await {
+        return response;
     }
 
     // Extract request_id for ExecutionContext
@@ -248,6 +253,123 @@ pub async fn execute_sql_v1(
 
     let took = start_time.elapsed().as_secs_f64() * 1000.0;
     HttpResponse::Ok().json(SqlResponse::success(results, took))
+}
+
+/// Forwards write operations to the leader node in cluster mode.
+///
+/// This function checks if we're running in cluster mode and if so, determines
+/// whether the SQL statement is a write operation that needs to go to the leader.
+///
+/// # SQL Parsing Strategy
+///
+/// Currently, SQL is parsed in two places:
+/// 1. Here for read/write classification (lightweight, no full AST)
+/// 2. By the execution handler for full parsing and execution
+///
+/// When forwarding to the leader, the leader will re-parse the SQL. This is
+/// acceptable because:
+/// - HTTP forwarding requires the raw SQL anyway
+/// - The classification parse is very lightweight (just statement type detection)
+///
+/// A future optimization could add a gRPC endpoint that accepts pre-classified
+/// statements, but this is not currently needed as the classification is fast.
+async fn forward_sql_if_follower(
+    http_req: &HttpRequest,
+    req: &QueryRequest,
+    app_context: &Arc<kalamdb_core::app_context::AppContext>,
+) -> Option<HttpResponse> {
+    // Not in cluster mode - no forwarding needed
+    if !app_context.is_cluster_mode() {
+        return None;
+    }
+
+    let cluster_info = app_context.executor().get_cluster_info();
+    let leader = cluster_info.nodes.iter().find(|node| node.is_leader)?;
+
+    // We are the leader - execute locally
+    if leader.node_id == cluster_info.current_node_id {
+        return None;
+    }
+
+    // We are a follower - check if this is a write operation
+    // This is a lightweight classification parse, not full AST parsing
+    let statements = match kalamdb_sql::split_statements(&req.sql) {
+        Ok(stmts) => stmts,
+        Err(_) => {
+            // If we can't parse, forward to leader to let it handle the error
+            return forward_to_leader(http_req, req, &leader.api_addr).await;
+        }
+    };
+
+    // Classify each statement to check if any are writes
+    // SqlStatement::classify uses default namespace and System role for classification
+    let has_write = statements.iter().any(|sql| {
+        let stmt = kalamdb_sql::statement_classifier::SqlStatement::classify(sql);
+        stmt.is_write_operation()
+    });
+
+    if has_write {
+        // Write operations must go to the leader
+        log::debug!(
+            "Forwarding write operation to leader {}: {}...",
+            leader.api_addr,
+            req.sql.chars().take(50).collect::<String>()
+        );
+        return forward_to_leader(http_req, req, &leader.api_addr).await;
+    }
+
+    // Read-only operations can be served locally on the follower
+    log::debug!(
+        "Serving read operation locally on follower: {}...",
+        req.sql.chars().take(50).collect::<String>()
+    );
+    None
+}
+
+/// Forward the request to the leader node
+async fn forward_to_leader(
+    http_req: &HttpRequest,
+    req: &QueryRequest,
+    leader_api_addr: &str,
+) -> Option<HttpResponse> {
+    let leader_url = format!("{}/v1/api/sql", leader_api_addr.trim_end_matches('/'));
+    let client = Client::new();
+    let mut request = client.post(&leader_url).json(req);
+
+    if let Some(auth_header) = http_req.headers().get("Authorization") {
+        if let Ok(value) = auth_header.to_str() {
+            request = request.header("Authorization", value);
+        }
+    }
+    if let Some(request_id) = http_req.headers().get("X-Request-ID") {
+        if let Ok(value) = request_id.to_str() {
+            request = request.header("X-Request-ID", value);
+        }
+    }
+
+    let response = match request.send().await {
+        Ok(resp) => resp,
+        Err(err) => {
+            log::warn!("Failed to forward SQL request to leader {}: {}", leader_url, err);
+            return Some(
+                HttpResponse::ServiceUnavailable().json(SqlResponse::error(
+                    "CLUSTER_FORWARD_FAILED",
+                    "Failed to forward request to cluster leader",
+                    0.0,
+                )),
+            );
+        }
+    };
+
+    let status = actix_web::http::StatusCode::from_u16(response.status().as_u16())
+        .unwrap_or(actix_web::http::StatusCode::BAD_GATEWAY);
+    let body = response.bytes().await.unwrap_or_default();
+
+    Some(
+        HttpResponse::build(status)
+            .content_type("application/json")
+            .body(body),
+    )
 }
 
 /// Execute a single SQL statement

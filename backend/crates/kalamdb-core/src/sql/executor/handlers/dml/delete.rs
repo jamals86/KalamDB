@@ -9,7 +9,8 @@ use crate::sql::executor::handlers::StatementHandler;
 use crate::sql::executor::models::{ExecutionContext, ExecutionResult, ScalarValue};
 use crate::sql::executor::parameter_validation::{validate_parameters, ParameterLimits};
 use async_trait::async_trait;
-use kalamdb_commons::models::{NamespaceId, TableName};
+use kalamdb_commons::models::{NamespaceId, TableName, TableId, UserId};
+use kalamdb_raft::{DataResponse, SharedDataCommand, UserDataCommand};
 use kalamdb_sql::statement_classifier::{SqlStatement, SqlStatementKind};
 
 /// Handler for DELETE statements
@@ -94,28 +95,48 @@ impl StatementHandler for DeleteHandler {
                     let pk_column = provider.primary_key_field_name();
 
                     // Try to extract simple WHERE pk = value first (fast path)
-                    if let Some(row_id) = self.extract_row_id_for_column(&where_pair, pk_column)? {
-                        let deleted =
-                            provider.delete_by_id_field(effective_user_id, &row_id)?;
-                        Ok(ExecutionResult::Deleted {
-                            rows_affected: if deleted { 1 } else { 0 },
-                        })
+                    let pks_to_delete = if let Some(row_id) =
+                        self.extract_row_id_for_column(&where_pair, pk_column)?
+                    {
+                        vec![row_id]
                     } else if has_where_clause {
-                        // Complex WHERE clause - use DataFusion to find matching rows
+                        self.collect_pks_with_datafusion(
+                            sql,
+                            &table_id,
+                            effective_user_id,
+                            provider_arc.clone(),
+                            context,
+                        )
+                        .await?
+                    } else {
+                        return Err(KalamDbError::InvalidOperation(
+                            "DELETE requires a WHERE clause".to_string(),
+                        ));
+                    };
+
+                    if pks_to_delete.is_empty() {
+                        return Ok(ExecutionResult::Deleted { rows_affected: 0 });
+                    }
+
+                    if app_context.is_cluster_mode() {
                         let rows_affected = self
-                            .delete_with_datafusion(
-                                sql,
+                            .execute_user_delete_via_raft(
                                 &table_id,
                                 effective_user_id,
-                                provider_arc.clone(),
-                                context,
+                                pks_to_delete,
                             )
                             .await?;
                         Ok(ExecutionResult::Deleted { rows_affected })
                     } else {
-                        Err(KalamDbError::InvalidOperation(
-                            "DELETE requires a WHERE clause".to_string(),
-                        ))
+                        let mut deleted_count = 0;
+                        for pk in pks_to_delete {
+                            if provider.delete_by_id_field(effective_user_id, &pk)? {
+                                deleted_count += 1;
+                            }
+                        }
+                        Ok(ExecutionResult::Deleted {
+                            rows_affected: deleted_count,
+                        })
                     }
                 } else {
                     Err(KalamDbError::InvalidOperation(
@@ -154,29 +175,45 @@ impl StatementHandler for DeleteHandler {
                 {
                     let pk_column = provider.primary_key_field_name();
 
-                    // Try to extract simple WHERE pk = value first (fast path)
-                    if let Some(row_id) = self.extract_row_id_for_column(&where_pair, pk_column)? {
-                        let deleted =
-                            provider.delete_by_id_field(effective_user_id, &row_id)?;
-                        Ok(ExecutionResult::Deleted {
-                            rows_affected: if deleted { 1 } else { 0 },
-                        })
+                    // Collect PKs to delete
+                    let pks_to_delete: Vec<String> = if let Some(row_id) = self.extract_row_id_for_column(&where_pair, pk_column)? {
+                        // Single PK from simple WHERE clause
+                        vec![row_id]
                     } else if has_where_clause {
-                        // Complex WHERE clause - use DataFusion to find matching rows
-                        let rows_affected = self
-                            .delete_with_datafusion(
-                                sql,
-                                &table_id,
-                                effective_user_id,
-                                provider_arc.clone(),
-                                context,
-                            )
-                            .await?;
+                        // Complex WHERE clause - use DataFusion to find matching PKs
+                        self.collect_pks_with_datafusion(
+                            sql,
+                            &table_id,
+                            effective_user_id,
+                            provider_arc.clone(),
+                            context,
+                        ).await?
+                    } else {
+                        return Err(KalamDbError::InvalidOperation(
+                            "DELETE requires a WHERE clause".to_string(),
+                        ));
+                    };
+
+                    if pks_to_delete.is_empty() {
+                        return Ok(ExecutionResult::Deleted { rows_affected: 0 });
+                    }
+
+                    // In cluster mode, route through Raft for replication
+                    if app_context.is_cluster_mode() {
+                        let rows_affected = self.execute_delete_via_raft(
+                            &table_id,
+                            pks_to_delete,
+                        ).await?;
                         Ok(ExecutionResult::Deleted { rows_affected })
                     } else {
-                        Err(KalamDbError::InvalidOperation(
-                            "DELETE requires a WHERE clause".to_string(),
-                        ))
+                        // Standalone mode: delete directly
+                        let mut deleted_count = 0;
+                        for pk in pks_to_delete {
+                            if provider.delete_by_id_field(effective_user_id, &pk)? {
+                                deleted_count += 1;
+                            }
+                        }
+                        Ok(ExecutionResult::Deleted { rows_affected: deleted_count })
                     }
                 } else {
                     Err(KalamDbError::InvalidOperation(
@@ -190,22 +227,60 @@ impl StatementHandler for DeleteHandler {
                     KalamDbError::InvalidOperation("Stream table provider not found".into())
                 })?;
 
-                if has_where_clause {
-                    // Use DataFusion to find matching rows for deletion
+                let provider = provider_arc
+                    .as_any()
+                    .downcast_ref::<crate::providers::StreamTableProvider>()
+                    .ok_or_else(|| {
+                        KalamDbError::InvalidOperation(
+                            "Cached provider type mismatch for stream table".into(),
+                        )
+                    })?;
+
+                if !has_where_clause {
+                    return Err(KalamDbError::InvalidOperation(
+                        "DELETE on STREAM tables requires a WHERE clause".to_string(),
+                    ));
+                }
+
+                let pk_column = provider.primary_key_field_name();
+                let pks_to_delete = if let Some(row_id) =
+                    self.extract_row_id_for_column(&where_pair, pk_column)?
+                {
+                    vec![row_id]
+                } else {
+                    self.collect_pks_with_datafusion(
+                        sql,
+                        &table_id,
+                        effective_user_id,
+                        provider_arc.clone(),
+                        context,
+                    )
+                    .await?
+                };
+
+                if pks_to_delete.is_empty() {
+                    return Ok(ExecutionResult::Deleted { rows_affected: 0 });
+                }
+
+                if app_context.is_cluster_mode() {
                     let rows_affected = self
-                        .delete_with_datafusion(
-                            sql,
+                        .execute_user_delete_via_raft(
                             &table_id,
                             effective_user_id,
-                            provider_arc.clone(),
-                            context,
+                            pks_to_delete,
                         )
                         .await?;
                     Ok(ExecutionResult::Deleted { rows_affected })
                 } else {
-                    Err(KalamDbError::InvalidOperation(
-                        "DELETE on STREAM tables requires a WHERE clause".to_string(),
-                    ))
+                    let mut deleted_count = 0;
+                    for pk in pks_to_delete {
+                        if provider.delete_by_id_field(effective_user_id, &pk)? {
+                            deleted_count += 1;
+                        }
+                    }
+                    Ok(ExecutionResult::Deleted {
+                        rows_affected: deleted_count,
+                    })
                 }
             }
             TableType::System => Err(KalamDbError::InvalidOperation(
@@ -248,125 +323,6 @@ impl StatementHandler for DeleteHandler {
 }
 
 impl DeleteHandler {
-    /// Delete rows using DataFusion to evaluate complex WHERE clauses
-    ///
-    /// This method:
-    /// 1. Converts DELETE to SELECT to find matching rows using DataFusion
-    /// 2. Extracts primary keys from results
-    /// 3. Deletes each matching row individually
-    async fn delete_with_datafusion(
-        &self,
-        sql: &str,
-        table_id: &kalamdb_commons::models::TableId,
-        user_id: &kalamdb_commons::models::UserId,
-        provider: std::sync::Arc<dyn datafusion::datasource::TableProvider>,
-        context: &ExecutionContext,
-    ) -> Result<usize, KalamDbError> {
-        // Convert DELETE to SELECT to find matching PKs
-        // DELETE FROM ns.table WHERE condition -> SELECT * FROM ns.table WHERE condition
-        let select_sql = sql.replace("DELETE FROM", "SELECT * FROM");
-
-        // Create per-user session and register table
-        let df_ctx = context.create_session_with_user();
-        let table_name = table_id.full_name(); // "namespace.table"
-
-        // Register table if not exists (ignore if already exists)
-        match df_ctx.register_table(&table_name, provider.clone()) {
-            Ok(_) => {}
-            Err(e) => {
-                let msg = e.to_string();
-                if !msg.to_lowercase().contains("already exists")
-                    && !msg.to_lowercase().contains("exists")
-                {
-                    return Err(KalamDbError::InvalidOperation(format!(
-                        "Failed to register table: {}",
-                        e
-                    )));
-                }
-            }
-        }
-
-        let df = df_ctx.sql(&select_sql).await?;
-        let batches = df.collect().await?;
-
-        if batches.is_empty() {
-            return Ok(0);
-        }
-
-        // Get PK column name from provider
-        let pk_column = if let Some(user_provider) = provider
-            .as_any()
-            .downcast_ref::<crate::providers::UserTableProvider>(
-        ) {
-            user_provider.primary_key_field_name()
-        } else if let Some(shared_provider) = provider
-            .as_any()
-            .downcast_ref::<crate::providers::SharedTableProvider>()
-        {
-            shared_provider.primary_key_field_name()
-        } else if let Some(stream_provider) = provider
-            .as_any()
-            .downcast_ref::<crate::providers::StreamTableProvider>()
-        {
-            stream_provider.primary_key_field_name()
-        } else {
-            return Err(KalamDbError::InvalidOperation(
-                "Unknown provider type".into(),
-            ));
-        };
-
-        // Extract PKs from results and delete each row
-        let mut deleted_count = 0;
-        for batch in batches {
-            if batch.num_rows() == 0 {
-                continue;
-            }
-
-            // Find PK column index
-            let schema = batch.schema();
-            let pk_idx = schema
-                .fields()
-                .iter()
-                .position(|f| f.name() == pk_column)
-                .ok_or_else(|| {
-                    KalamDbError::InvalidOperation(format!(
-                        "PK column '{}' not found in result",
-                        pk_column
-                    ))
-                })?;
-
-            let pk_array = batch.column(pk_idx);
-
-            // Delete each row by PK
-            for row_idx in 0..batch.num_rows() {
-                let pk_value = self.extract_pk_value_from_array(pk_array, row_idx)?;
-
-                // Call delete method based on provider type
-                if let Some(user_provider) = provider
-                    .as_any()
-                    .downcast_ref::<crate::providers::UserTableProvider>()
-                {
-                    user_provider.delete_by_id_field(user_id, &pk_value)?;
-                    deleted_count += 1;
-                } else if let Some(shared_provider) = provider
-                    .as_any()
-                    .downcast_ref::<crate::providers::SharedTableProvider>(
-                ) {
-                    shared_provider.delete_by_id_field(user_id, &pk_value)?;
-                    deleted_count += 1;
-                } else if let Some(stream_provider) = provider
-                    .as_any()
-                    .downcast_ref::<crate::providers::StreamTableProvider>(
-                ) {
-                    stream_provider.delete_by_id_field(user_id, &pk_value)?;
-                    deleted_count += 1;
-                }
-            }
-        }
-
-        Ok(deleted_count)
-    }
-
     /// Extract PK value from Arrow array
     fn extract_pk_value_from_array(
         &self,
@@ -487,6 +443,159 @@ impl DeleteHandler {
             return Ok(Some(unquoted.to_string()));
         }
         Ok(None)
+    }
+
+    /// Collect primary keys to delete using DataFusion to evaluate complex WHERE clauses
+    async fn collect_pks_with_datafusion(
+        &self,
+        sql: &str,
+        table_id: &TableId,
+        _user_id: &kalamdb_commons::models::UserId,
+        provider: std::sync::Arc<dyn datafusion::datasource::TableProvider>,
+        context: &ExecutionContext,
+    ) -> Result<Vec<String>, KalamDbError> {
+        // Convert DELETE to SELECT to find matching PKs
+        let select_sql = sql.replace("DELETE FROM", "SELECT * FROM");
+
+        let df_ctx = context.create_session_with_user();
+        let table_name = table_id.full_name();
+
+        match df_ctx.register_table(&table_name, provider.clone()) {
+            Ok(_) => {}
+            Err(e) => {
+                let msg = e.to_string();
+                if !msg.to_lowercase().contains("already exists")
+                    && !msg.to_lowercase().contains("exists")
+                {
+                    return Err(KalamDbError::InvalidOperation(format!(
+                        "Failed to register table: {}",
+                        e
+                    )));
+                }
+            }
+        }
+
+        let df = df_ctx.sql(&select_sql).await?;
+        let batches = df.collect().await?;
+
+        if batches.is_empty() {
+            return Ok(vec![]);
+        }
+
+        // Get PK column name from provider
+        let pk_column = if let Some(shared_provider) = provider
+            .as_any()
+            .downcast_ref::<crate::providers::SharedTableProvider>()
+        {
+            shared_provider.primary_key_field_name()
+        } else if let Some(user_provider) = provider
+            .as_any()
+            .downcast_ref::<crate::providers::UserTableProvider>()
+        {
+            user_provider.primary_key_field_name()
+        } else if let Some(stream_provider) = provider
+            .as_any()
+            .downcast_ref::<crate::providers::StreamTableProvider>()
+        {
+            stream_provider.primary_key_field_name()
+        } else {
+            return Err(KalamDbError::InvalidOperation(
+                "Unknown provider type".into(),
+            ));
+        };
+
+        let mut pks = Vec::new();
+        for batch in batches {
+            if batch.num_rows() == 0 {
+                continue;
+            }
+
+            let schema = batch.schema();
+            let pk_idx = schema
+                .fields()
+                .iter()
+                .position(|f| f.name() == pk_column)
+                .ok_or_else(|| {
+                    KalamDbError::InvalidOperation(format!(
+                        "PK column '{}' not found in result",
+                        pk_column
+                    ))
+                })?;
+
+            let pk_array = batch.column(pk_idx);
+
+            for row_idx in 0..batch.num_rows() {
+                let pk_value = self.extract_pk_value_from_array(pk_array, row_idx)?;
+                pks.push(pk_value);
+            }
+        }
+
+        Ok(pks)
+    }
+
+    /// Execute DELETE via Raft consensus for cluster replication
+    async fn execute_delete_via_raft(
+        &self,
+        table_id: &TableId,
+        pk_values: Vec<String>,
+    ) -> Result<usize, KalamDbError> {
+        let app_context = AppContext::get();
+        let executor = app_context.executor();
+        let pk_count = pk_values.len();
+
+        // Serialize the list of PKs to delete
+        let filter_data = bincode::serde::encode_to_vec(&pk_values, bincode::config::standard())
+            .map_err(|e| KalamDbError::InvalidOperation(format!("Failed to serialize PKs: {}", e)))?;
+
+        let cmd = SharedDataCommand::Delete {
+            table_id: table_id.clone(),
+            filter_data: Some(filter_data),
+        };
+
+        let response = executor
+            .execute_shared_data(cmd)
+            .await
+            .map_err(|e| KalamDbError::InvalidOperation(format!("Raft delete failed: {}", e)))?;
+
+        match response {
+            DataResponse::RowsAffected(n) => Ok(n),
+            DataResponse::Ok => Ok(pk_count),
+            DataResponse::Error { message } => Err(KalamDbError::InvalidOperation(message)),
+            _ => Ok(pk_count),
+        }
+    }
+
+    /// Execute DELETE via Raft consensus for user tables
+    async fn execute_user_delete_via_raft(
+        &self,
+        table_id: &TableId,
+        user_id: &UserId,
+        pk_values: Vec<String>,
+    ) -> Result<usize, KalamDbError> {
+        let app_context = AppContext::get();
+        let executor = app_context.executor();
+        let pk_count = pk_values.len();
+
+        let filter_data = bincode::serde::encode_to_vec(&pk_values, bincode::config::standard())
+            .map_err(|e| KalamDbError::InvalidOperation(format!("Failed to serialize PKs: {}", e)))?;
+
+        let cmd = UserDataCommand::Delete {
+            table_id: table_id.clone(),
+            user_id: user_id.clone(),
+            filter_data: Some(filter_data),
+        };
+
+        let response = executor
+            .execute_user_data(user_id, cmd)
+            .await
+            .map_err(|e| KalamDbError::InvalidOperation(format!("Raft user delete failed: {}", e)))?;
+
+        match response {
+            DataResponse::RowsAffected(n) => Ok(n),
+            DataResponse::Ok => Ok(pk_count),
+            DataResponse::Error { message } => Err(KalamDbError::InvalidOperation(message)),
+            _ => Ok(pk_count),
+        }
     }
 }
 

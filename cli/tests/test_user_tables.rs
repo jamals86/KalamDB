@@ -26,8 +26,8 @@ fn test_cli_basic_query_execution() {
     let full_table_name = format!("{}.{}", namespace, table_name);
 
     // Create namespace and table via CLI
-    let _ = execute_sql_via_cli(&format!("CREATE NAMESPACE IF NOT EXISTS {}", namespace));
-    let _ = execute_sql_via_cli(&format!(
+    let _ = execute_sql_as_root_via_cli(&format!("CREATE NAMESPACE IF NOT EXISTS {}", namespace));
+    let _ = execute_sql_as_root_via_cli(&format!(
         r#"CREATE TABLE {} (
             id BIGINT PRIMARY KEY AUTO_INCREMENT,
             content VARCHAR NOT NULL,
@@ -37,7 +37,7 @@ fn test_cli_basic_query_execution() {
     ));
 
     // Insert test data via CLI
-    let _ = execute_sql_via_cli(&format!(
+    let _ = execute_sql_as_root_via_cli(&format!(
         "INSERT INTO {} (content) VALUES ('Test Message')",
         full_table_name
     ));
@@ -45,11 +45,11 @@ fn test_cli_basic_query_execution() {
     // Execute query via CLI
     let mut cmd = create_cli_command();
     cmd.arg("-u")
-        .arg(SERVER_URL)
+        .arg(server_url())
         .arg("--username")
         .arg("root")
         .arg("--password")
-        .arg("")
+        .arg(root_password())
         .arg("--command")
         .arg(format!("SELECT * FROM {}", full_table_name));
 
@@ -66,7 +66,7 @@ fn test_cli_basic_query_execution() {
     );
 
     // Cleanup
-    let _ = execute_sql_via_cli(&format!("DROP TABLE IF EXISTS {}", full_table_name));
+    let _ = execute_sql_as_root_via_cli(&format!("DROP TABLE IF EXISTS {}", full_table_name));
 }
 
 /// T038: Test table output formatting
@@ -82,8 +82,8 @@ fn test_cli_table_output_formatting() {
     let full_table_name = format!("{}.{}", namespace, table_name);
 
     // Setup table and data via CLI
-    let _ = execute_sql_via_cli(&format!("CREATE NAMESPACE IF NOT EXISTS {}", namespace));
-    let _ = execute_sql_via_cli(&format!(
+    let _ = execute_sql_as_root_via_cli(&format!("CREATE NAMESPACE IF NOT EXISTS {}", namespace));
+    let _ = execute_sql_as_root_via_cli(&format!(
         r#"CREATE TABLE {} (
             id BIGINT PRIMARY KEY AUTO_INCREMENT,
             content VARCHAR NOT NULL
@@ -91,7 +91,7 @@ fn test_cli_table_output_formatting() {
         full_table_name
     ));
 
-    let _ = execute_sql_via_cli(&format!(
+    let _ = execute_sql_as_root_via_cli(&format!(
         "INSERT INTO {} (content) VALUES ('Hello World'), ('Test Message')",
         full_table_name
     ));
@@ -99,11 +99,11 @@ fn test_cli_table_output_formatting() {
     // Query with table format (default)
     let mut cmd = create_cli_command();
     cmd.arg("-u")
-        .arg(SERVER_URL)
+        .arg(server_url())
         .arg("--username")
         .arg("root")
         .arg("--password")
-        .arg("")
+        .arg(root_password())
         .arg("--command")
         .arg(format!("SELECT * FROM {}", full_table_name));
 
@@ -120,7 +120,7 @@ fn test_cli_table_output_formatting() {
     );
 
     // Cleanup
-    let _ = execute_sql_via_cli(&format!("DROP TABLE IF EXISTS {}", full_table_name));
+    let _ = execute_sql_as_root_via_cli(&format!("DROP TABLE IF EXISTS {}", full_table_name));
 }
 
 /// T039: Test JSON output format
@@ -136,8 +136,8 @@ fn test_cli_json_output_format() {
     let full_table_name = format!("{}.{}", namespace, table_name);
 
     // Setup table and data via CLI
-    let _ = execute_sql_via_cli(&format!("CREATE NAMESPACE IF NOT EXISTS {}", namespace));
-    let _ = execute_sql_via_cli(&format!(
+    let _ = execute_sql_as_root_via_cli(&format!("CREATE NAMESPACE IF NOT EXISTS {}", namespace));
+    let _ = execute_sql_as_root_via_cli(&format!(
         r#"CREATE TABLE {} (
             id BIGINT PRIMARY KEY AUTO_INCREMENT,
             content VARCHAR NOT NULL
@@ -145,7 +145,7 @@ fn test_cli_json_output_format() {
         full_table_name
     ));
 
-    let _ = execute_sql_via_cli(&format!(
+    let _ = execute_sql_as_root_via_cli(&format!(
         "INSERT INTO {} (content) VALUES ('JSON Test')",
         full_table_name
     ));
@@ -153,11 +153,11 @@ fn test_cli_json_output_format() {
     // Query with JSON format
     let mut cmd = create_cli_command();
     cmd.arg("-u")
-        .arg(SERVER_URL)
+        .arg(server_url())
         .arg("--username")
         .arg("root")
         .arg("--password")
-        .arg("")
+        .arg(root_password())
         .arg("--json")
         .arg("--command")
         .arg(format!(
@@ -176,7 +176,7 @@ fn test_cli_json_output_format() {
     );
 
     // Cleanup
-    let _ = execute_sql_via_cli(&format!("DROP TABLE IF EXISTS {}", full_table_name));
+    let _ = execute_sql_as_root_via_cli(&format!("DROP TABLE IF EXISTS {}", full_table_name));
 }
 
 /// T040: Test CSV output format
@@ -193,8 +193,8 @@ fn test_cli_csv_output_format() {
     let full_table_name = format!("{}.{}", namespace, table_name);
 
     // Setup table and data via CLI
-    let _ = execute_sql_via_cli(&format!("CREATE NAMESPACE IF NOT EXISTS {}", namespace));
-    let _ = execute_sql_via_cli(&format!(
+    let _ = execute_sql_as_root_via_cli(&format!("CREATE NAMESPACE IF NOT EXISTS {}", namespace));
+    let _ = execute_sql_as_root_via_cli(&format!(
         r#"CREATE TABLE {} (
             id BIGINT PRIMARY KEY AUTO_INCREMENT,
             content VARCHAR NOT NULL
@@ -202,7 +202,7 @@ fn test_cli_csv_output_format() {
         full_table_name
     ));
 
-    let _ = execute_sql_via_cli(&format!(
+    let _ = execute_sql_as_root_via_cli(&format!(
         "INSERT INTO {} (content) VALUES ('CSV,Test')",
         full_table_name
     ));
@@ -210,11 +210,11 @@ fn test_cli_csv_output_format() {
     // Query with CSV format
     let mut cmd = create_cli_command();
     cmd.arg("-u")
-        .arg(SERVER_URL)
+        .arg(server_url())
         .arg("--username")
         .arg("root")
         .arg("--password")
-        .arg("")
+        .arg(root_password())
         .arg("--csv")
         .arg("--command")
         .arg(format!(
@@ -233,7 +233,7 @@ fn test_cli_csv_output_format() {
     );
 
     // Cleanup
-    let _ = execute_sql_via_cli(&format!("DROP TABLE IF EXISTS {}", full_table_name));
+    let _ = execute_sql_as_root_via_cli(&format!("DROP TABLE IF EXISTS {}", full_table_name));
 }
 
 /// T064: Test multi-line query input
@@ -249,8 +249,8 @@ fn test_cli_multiline_query() {
     let full_table_name = format!("{}.{}", namespace, table_name);
 
     // Setup table via CLI
-    let _ = execute_sql_via_cli(&format!("CREATE NAMESPACE IF NOT EXISTS {}", namespace));
-    let _ = execute_sql_via_cli(&format!(
+    let _ = execute_sql_as_root_via_cli(&format!("CREATE NAMESPACE IF NOT EXISTS {}", namespace));
+    let _ = execute_sql_as_root_via_cli(&format!(
         r#"CREATE TABLE {} (
             id BIGINT PRIMARY KEY AUTO_INCREMENT,
             content VARCHAR NOT NULL
@@ -266,11 +266,11 @@ fn test_cli_multiline_query() {
 
     let mut cmd = create_cli_command();
     cmd.arg("-u")
-        .arg(SERVER_URL)
+        .arg(server_url())
         .arg("--username")
         .arg("root")
         .arg("--password")
-        .arg("")
+        .arg(root_password())
         .arg("--command")
         .arg(&multi_line_query);
 
@@ -279,7 +279,7 @@ fn test_cli_multiline_query() {
     assert!(output.status.success(), "Should handle multi-line queries");
 
     // Cleanup
-    let _ = execute_sql_via_cli(&format!("DROP TABLE IF EXISTS {}", full_table_name));
+    let _ = execute_sql_as_root_via_cli(&format!("DROP TABLE IF EXISTS {}", full_table_name));
 }
 
 /// T065: Test query with comments
@@ -295,11 +295,11 @@ fn test_cli_query_with_comments() {
 
     let mut cmd = create_cli_command();
     cmd.arg("-u")
-        .arg(SERVER_URL)
+        .arg(server_url())
         .arg("--username")
         .arg("root")
         .arg("--password")
-        .arg("")
+        .arg(root_password())
         .arg("--command")
         .arg(query_simple);
 
@@ -321,11 +321,11 @@ fn test_cli_empty_query() {
 
     let mut cmd = create_cli_command();
     cmd.arg("-u")
-        .arg(SERVER_URL)
+        .arg(server_url())
         .arg("--username")
         .arg("root")
         .arg("--password")
-        .arg("")
+        .arg(root_password())
         .arg("--command")
         .arg("   ");
 
@@ -351,8 +351,8 @@ fn test_cli_result_pagination() {
     let full_table_name = format!("{}.{}", namespace, table_name);
 
     // Setup table via CLI
-    let _ = execute_sql_via_cli(&format!("CREATE NAMESPACE IF NOT EXISTS {}", namespace));
-    let _ = execute_sql_via_cli(&format!(
+    let _ = execute_sql_as_root_via_cli(&format!("CREATE NAMESPACE IF NOT EXISTS {}", namespace));
+    let _ = execute_sql_as_root_via_cli(&format!(
         r#"CREATE TABLE {} (
             id BIGINT PRIMARY KEY AUTO_INCREMENT,
             content VARCHAR NOT NULL
@@ -362,7 +362,7 @@ fn test_cli_result_pagination() {
 
     // Insert multiple rows via CLI
     for i in 1..=20 {
-        let _ = execute_sql_via_cli(&format!(
+        let _ = execute_sql_as_root_via_cli(&format!(
             "INSERT INTO {} (content) VALUES ('Message {}')",
             full_table_name, i
         ));
@@ -371,11 +371,11 @@ fn test_cli_result_pagination() {
     // Query all rows via CLI
     let mut cmd = create_cli_command();
     cmd.arg("-u")
-        .arg(SERVER_URL)
+        .arg(server_url())
         .arg("--username")
         .arg("root")
         .arg("--password")
-        .arg("")
+        .arg(root_password())
         .arg("--command")
         .arg(format!("SELECT * FROM {}", full_table_name));
 
@@ -389,5 +389,5 @@ fn test_cli_result_pagination() {
     );
 
     // Cleanup
-    let _ = execute_sql_via_cli(&format!("DROP TABLE IF EXISTS {}", full_table_name));
+    let _ = execute_sql_as_root_via_cli(&format!("DROP TABLE IF EXISTS {}", full_table_name));
 }

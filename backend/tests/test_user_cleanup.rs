@@ -161,7 +161,7 @@ async fn test_cleanup_job_logging() {
     let jobs_provider = Arc::new(JobsTableProvider::new(backend));
     let job_executor = JobExecutor::new(
         jobs_provider,
-        kalamdb_commons::NodeId::new("test-node".to_string()),
+        kalamdb_commons::NodeId::new(1),
     );
 
     let job_id = "user-cleanup-test-job".to_string();

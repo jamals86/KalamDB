@@ -16,7 +16,7 @@ fn smoke_int64_precision_preserved_as_string() {
     if !is_server_running() {
         println!(
             "Skipping smoke_int64_precision_preserved_as_string: server not running at {}",
-            SERVER_URL
+            server_url()
         );
         return;
     }
@@ -133,7 +133,7 @@ fn smoke_int64_small_values_remain_numbers() {
     if !is_server_running() {
         println!(
             "Skipping smoke_int64_small_values_remain_numbers: server not running at {}",
-            SERVER_URL
+            server_url()
         );
         return;
     }
@@ -216,7 +216,7 @@ fn smoke_int64_edge_case_exactly_max_safe() {
     if !is_server_running() {
         println!(
             "Skipping smoke_int64_edge_case_exactly_max_safe: server not running at {}",
-            SERVER_URL
+            server_url()
         );
         return;
     }
@@ -317,7 +317,7 @@ fn smoke_int64_negative_large_values() {
     if !is_server_running() {
         println!(
             "Skipping smoke_int64_negative_large_values: server not running at {}",
-            SERVER_URL
+            server_url()
         );
         return;
     }

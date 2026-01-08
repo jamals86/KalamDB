@@ -720,7 +720,7 @@ mod tests {
 
     fn create_test_registry() -> Arc<ConnectionsManager> {
         ConnectionsManager::new(
-            NodeId::new("test-node".to_string()),
+            NodeId::new(1),
             Duration::from_secs(10),
             Duration::from_secs(3),
             Duration::from_secs(5),

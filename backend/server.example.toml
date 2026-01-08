@@ -315,3 +315,105 @@ max_parameters = 50
 # Prevents memory exhaustion from individual large parameters
 max_parameter_size_bytes = 524288
 
+# ============================================================================
+# Cluster Configuration (Multi-Node Raft Replication)
+# ============================================================================
+# Enable distributed clustering with Raft consensus for strong consistency.
+# When enabled, the server runs as part of a multi-node cluster.
+# When disabled (default), the server runs in standalone mode with no overhead.
+
+# IMPORTANT: All nodes in a cluster MUST have:
+# - Matching cluster_id values
+# - The same members list
+# - Matching sharding configuration
+# - Unique node_id values
+
+# ============================================================================
+# Cluster Configuration - Multi-Node Raft Replication (v0.2.0)
+# ============================================================================
+# Enable distributed clustering with Raft consensus for strong consistency.
+# When [cluster] section is present, the server runs as part of a multi-node cluster.
+# When absent (default), the server runs in standalone mode with no overhead.
+#
+# IMPORTANT: All nodes in a cluster MUST have:
+# - Matching cluster_id values
+# - The same peers list (with this node's entry removed)
+# - Matching sharding configuration (user_shards, shared_shards)
+# - Unique node_id values
+#
+# Node with node_id=1 automatically becomes the bootstrap node.
+# No explicit bootstrap flag needed - cluster auto-initializes.
+
+# [cluster]
+# # Unique cluster identifier - all nodes must share this
+# cluster_id = "kalamdb-prod-cluster"
+# 
+# # This node's unique ID within the cluster (must be >= 1)
+# # Node with node_id=1 is the designated bootstrap node
+# node_id = 1
+# 
+# # RPC address for Raft inter-node communication
+# rpc_addr = "0.0.0.0:9090"
+# 
+# # API address for client HTTP requests (should match server.host:server.port)
+# api_addr = "http://192.168.1.10:8080"
+# 
+# # Number of user data shards (default: 32)
+# # Each shard is a separate Raft group for user table data
+# user_shards = 32
+# 
+# # Number of shared data shards (default: 1)
+# # Each shard is a separate Raft group for shared table data
+# shared_shards = 1
+# 
+# # Raft heartbeat interval in milliseconds (default: 50)
+# heartbeat_interval_ms = 50
+# 
+# # Raft election timeout range [min, max] in milliseconds (default: [150, 300])
+# election_timeout_ms = [150, 300]
+# 
+# # Maximum entries per Raft snapshot (default: 10000)
+# snapshot_threshold = 10000
+# 
+# # Minimum number of nodes that must acknowledge writes (default: 1)
+# # Set to 2 or 3 for strong consistency in a 3-node cluster
+# # This ensures data is replicated to multiple nodes before acknowledging success
+# min_replication_nodes = 3
+# 
+# # Peer nodes (list all OTHER nodes in the cluster)
+# [[cluster.peers]]
+# node_id = 2
+# rpc_addr = "192.168.1.11:9090"
+# api_addr = "http://192.168.1.11:8080"
+# 
+# [[cluster.peers]]
+# node_id = 3
+# rpc_addr = "192.168.1.12:9090"
+# api_addr = "http://192.168.1.12:8080"
+
+# ============================================================================
+# Example: 3-Node Production Cluster Configuration
+# ============================================================================
+# For production, use an odd number of nodes (3 or 5) for optimal fault tolerance:
+# - 3 nodes: tolerates 1 node failure
+# - 5 nodes: tolerates 2 node failures
+#
+# Node 1 configuration (server1.toml):
+# [cluster]
+# cluster_id = "kalamdb-prod"
+# node_id = 1
+# rpc_addr = "node1.example.com:9090"
+# api_addr = "http://node1.example.com:8080"
+# user_shards = 32
+# shared_shards = 1
+# min_replication_nodes = 3
+# 
+# [[cluster.peers]]
+# node_id = 2
+# rpc_addr = "node2.example.com:9090"
+# api_addr = "http://node2.example.com:8080"
+# 
+# [[cluster.peers]]
+# node_id = 3
+# rpc_addr = "node3.example.com:9090"
+# api_addr = "http://node3.example.com:8080"

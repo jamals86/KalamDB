@@ -2,6 +2,10 @@
 //!
 //! Orchestrates subscription lifecycle, initial data fetching, and notifications.
 //! Uses SharedConnectionState pattern for efficient state access.
+//!
+//! Live query notifications are now handled through Raft-replicated data appliers.
+//! When data is applied on any node (leader or follower), the provider's methods
+//! fire local notifications - no need for separate HTTP cluster broadcast.
 
 use crate::error::KalamDbError;
 use crate::error_extensions::KalamDbResultExt;
@@ -399,7 +403,7 @@ impl LiveQueryManager {
         RegistryStats {
             total_connections: self.registry.connection_count(),
             total_subscriptions: self.registry.subscription_count(),
-            node_id: self.node_id.as_str().to_string(),
+            node_id: self.node_id.to_string(),
         }
     }
 
@@ -409,6 +413,9 @@ impl LiveQueryManager {
     }
 
     /// Notify subscribers about a table change (fire-and-forget async)
+    ///
+    /// With Raft replication, each node handles its own live query notifications locally.
+    /// When data is applied via Raft on followers, the providers call this method directly.
     pub fn notify_table_change_async(
         self: &Arc<Self>,
         user_id: UserId,

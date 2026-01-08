@@ -539,7 +539,7 @@ impl JobsTableProvider {
             created_ats.push(Some(job.created_at));
             started_ats.push(job.started_at);
             finished_ats.push(job.finished_at);
-            node_ids.push(Some(job.node_id.as_str().to_string()));
+            node_ids.push(Some(job.node_id.to_string()));
             error_messages.push(job.message); // message field contains error messages for failed jobs
         }
 
@@ -757,7 +757,7 @@ mod tests {
             updated_at: now,
             started_at: Some(now),
             finished_at: None,
-            node_id: NodeId::from("server-01"),
+            node_id: NodeId::from(1u64),
             queue: None,
             priority: None,
         }

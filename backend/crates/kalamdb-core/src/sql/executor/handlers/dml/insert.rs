@@ -13,7 +13,7 @@ use crate::app_context::AppContext;
 use crate::error::KalamDbError;
 use crate::error_extensions::KalamDbResultExt;
 use crate::providers::arrow_json_conversion::scalar_value_to_json;
-use crate::providers::base::BaseTableProvider; // bring trait into scope for insert_batch
+use crate::providers::base::BaseTableProvider;
 use crate::sql::executor::default_evaluator::evaluate_default;
 use crate::sql::executor::handlers::StatementHandler;
 use crate::sql::executor::models::{ExecutionContext, ExecutionResult, ScalarValue};
@@ -22,6 +22,7 @@ use async_trait::async_trait;
 use kalamdb_commons::models::datatypes::KalamDataType;
 use kalamdb_commons::models::{NamespaceId, Row, TableName};
 use kalamdb_commons::schemas::{ColumnDefault, TableType};
+use kalamdb_commons::TableId;
 use kalamdb_sql::statement_classifier::{SqlStatement, SqlStatementKind};
 use serde_json::Value as JsonValue;
 use sqlparser::ast::{Expr, Statement, Values as SqlValues};
@@ -80,7 +81,6 @@ impl StatementHandler for InsertHandler {
             self.parse_insert_with_sqlparser(sql, &default_namespace)?;
 
         // Get table definition (validates existence and uses cached value if available)
-        use kalamdb_commons::models::TableId;
         let namespace_owned = namespace.clone();
         let table_name_owned = table_name.clone();
         let table_id = TableId::new(namespace_owned.clone(), table_name_owned.clone());
@@ -98,7 +98,6 @@ impl StatementHandler for InsertHandler {
             })?;
 
         // T163: Reject AS USER on Shared tables (Phase 7)
-        use kalamdb_commons::schemas::TableType;
         if statement.as_user_id().is_some() && matches!(table_def.table_type, TableType::Shared) {
             return Err(KalamDbError::InvalidOperation(
                 "AS USER impersonation is not supported for SHARED tables".to_string(),
@@ -552,27 +551,40 @@ impl InsertHandler {
 
     /// Execute native INSERT using UserTableInsertHandler
     ///
-    /// **Performance Optimization**: For small batches (≤3 rows), executes inline
-    /// to avoid spawn_blocking overhead. Larger batches use spawn_blocking to
-    /// prevent blocking the async runtime with RocksDB I/O.
+    /// **Cluster Mode**: Routes inserts through Raft consensus for replication
+    /// **Standalone Mode**: Executes directly on local providers
+    ///
+    /// **Performance Optimization** (standalone): For small batches (≤3 rows), 
+    /// executes inline to avoid spawn_blocking overhead.
     async fn execute_native_insert(
         &self,
         table_id: &kalamdb_commons::models::TableId,
         user_id: &kalamdb_commons::models::UserId,
         role: kalamdb_commons::Role,
         rows: Vec<Row>,
-        table_def: std::sync::Arc<kalamdb_commons::models::schemas::TableDefinition>, // Reuse already-fetched definition
+        table_def: std::sync::Arc<kalamdb_commons::models::schemas::TableDefinition>,
     ) -> Result<usize, KalamDbError> {
-        // Use already-fetched table definition (no redundant lookup)
         let table_type = table_def.table_type;
         let table_options = table_def.table_options.clone();
 
-        // OPTIMIZATION: For small batches, execute inline to avoid spawn_blocking overhead
-        // spawn_blocking has ~10-20µs overhead which is significant for single-row inserts
+        // Check if we're in cluster mode - route shared/user inserts through Raft for replication
+        if self.app_context.is_cluster_mode()
+            && matches!(table_type, TableType::User | TableType::Shared | TableType::Stream)
+        {
+            return self.execute_insert_via_raft(
+                table_id,
+                table_type,
+                &table_options,
+                user_id,
+                role,
+                rows,
+            ).await;
+        }
+
+        // Standalone mode: execute directly on local providers
         const INLINE_THRESHOLD: usize = 3;
 
         if rows.len() <= INLINE_THRESHOLD {
-            // Inline execution for small batches
             return self.execute_insert_sync(
                 table_id,
                 table_type,
@@ -604,6 +616,114 @@ impl InsertHandler {
         .into_kalamdb_error("spawn_blocking join error")??;
 
         Ok(rows_affected)
+    }
+
+    /// Execute INSERT via Raft consensus for cluster replication
+    ///
+    /// Serializes rows to bincode and submits through the appropriate data shard.
+    /// All nodes (leader and followers) will apply the insert via their appliers.
+    async fn execute_insert_via_raft(
+        &self,
+        table_id: &kalamdb_commons::models::TableId,
+        table_type: TableType,
+        table_options: &kalamdb_commons::schemas::TableOptions,
+        user_id: &kalamdb_commons::models::UserId,
+        role: kalamdb_commons::Role,
+        rows: Vec<Row>,
+    ) -> Result<usize, KalamDbError> {
+        use kalamdb_raft::{UserDataCommand, SharedDataCommand, DataResponse};
+        
+        let row_count = rows.len();
+        
+        // Serialize rows to bincode
+        let rows_data = bincode::serde::encode_to_vec(&rows, bincode::config::standard())
+            .map_err(|e| KalamDbError::InvalidOperation(format!("Failed to serialize rows: {}", e)))?;
+
+        let executor = self.app_context.executor();
+
+        match table_type {
+            TableType::User => {
+                let cmd = UserDataCommand::Insert {
+                    table_id: table_id.clone(),
+                    user_id: user_id.clone(),
+                    rows_data,
+                };
+                
+                let response = executor.execute_user_data(&user_id, cmd)
+                    .await
+                    .map_err(|e| KalamDbError::InvalidOperation(format!("Raft insert failed: {}", e)))?;
+                
+                // Response contains the number of affected rows
+                match response {
+                    DataResponse::RowsAffected(n) => Ok(n),
+                    DataResponse::Ok => Ok(row_count),
+                    DataResponse::Error { message } => Err(KalamDbError::InvalidOperation(message)),
+                    _ => Ok(row_count),
+                }
+            }
+            TableType::Shared => {
+                // Validate write permissions for shared tables
+                use kalamdb_auth::rbac::can_write_shared_table;
+                use kalamdb_commons::schemas::TableOptions;
+                use kalamdb_commons::TableAccess;
+
+                let access_level = if let TableOptions::Shared(opts) = table_options {
+                    opts.access_level.unwrap_or(TableAccess::Private)
+                } else {
+                    TableAccess::Private
+                };
+
+                if !can_write_shared_table(access_level, false, role) {
+                    return Err(KalamDbError::Unauthorized(format!(
+                        "Insufficient privileges to write to shared table '{}' (Access Level: {:?})",
+                        table_id,
+                        access_level
+                    )));
+                }
+
+                let cmd = SharedDataCommand::Insert {
+                    table_id: table_id.clone(),
+                    rows_data,
+                };
+                
+                let response = executor.execute_shared_data(cmd)
+                    .await
+                    .map_err(|e| KalamDbError::InvalidOperation(format!("Raft insert failed: {}", e)))?;
+                
+                match response {
+                    DataResponse::RowsAffected(n) => Ok(n),
+                    DataResponse::Ok => Ok(row_count),
+                    DataResponse::Error { message } => Err(KalamDbError::InvalidOperation(message)),
+                    _ => Ok(row_count),
+                }
+            }
+            TableType::Stream => {
+                let cmd = UserDataCommand::Insert {
+                    table_id: table_id.clone(),
+                    user_id: user_id.clone(),
+                    rows_data,
+                };
+
+                let response = executor
+                    .execute_user_data(&user_id, cmd)
+                    .await
+                    .map_err(|e| KalamDbError::InvalidOperation(format!("Raft insert failed: {}", e)))?;
+
+                match response {
+                    DataResponse::RowsAffected(n) => Ok(n),
+                    DataResponse::Ok => Ok(row_count),
+                    DataResponse::Error { message } => Err(KalamDbError::InvalidOperation(message)),
+                    _ => Ok(row_count),
+                }
+            }
+            TableType::System => {
+                // System tables should not be written to through normal INSERT
+                Err(KalamDbError::Unauthorized(format!(
+                    "Cannot INSERT into system table '{}'",
+                    table_id
+                )))
+            }
+        }
     }
 
     /// Execute insert synchronously (used for inline small batches)

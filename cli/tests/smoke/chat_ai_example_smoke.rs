@@ -11,7 +11,7 @@ fn smoke_chat_ai_example_from_readme() {
     if !is_server_running() {
         println!(
             "Skipping smoke_chat_ai_example_from_readme: server not running at {}",
-            SERVER_URL
+            server_url()
         );
         return;
     }

@@ -20,6 +20,7 @@ use crate::storage::storage_registry::StorageRegistry;
 use datafusion::catalog::SchemaProvider;
 use datafusion::prelude::SessionContext;
 use kalamdb_commons::{constants::ColumnFamilyNames, NodeId, ServerConfig};
+use kalamdb_raft::CommandExecutor;
 use kalamdb_store::StorageBackend;
 use kalamdb_system::SystemTablesRegistry;
 use kalamdb_tables::{SharedTableStore, StreamTableStore, UserTableStore};
@@ -74,6 +75,12 @@ pub struct AppContext {
     // ===== System Tables Registry =====
     system_tables: Arc<SystemTablesRegistry>,
 
+    // ===== Command Executor (Standalone or Raft-based) =====
+    /// Command executor abstraction for standalone/cluster mode
+    /// In standalone mode: StandaloneExecutor (direct provider calls)
+    /// In cluster mode: RaftExecutor (commands go through Raft consensus)
+    executor: Arc<dyn CommandExecutor>,
+
     // ===== System Columns Service =====
     system_columns_service: Arc<crate::system_columns::SystemColumnsService>,
 
@@ -105,6 +112,7 @@ impl std::fmt::Debug for AppContext {
             .field("session_factory", &"Arc<DataFusionSessionFactory>")
             .field("base_session_context", &"Arc<SessionContext>")
             .field("system_tables", &"Arc<SystemTablesRegistry>")
+            .field("executor", &"Arc<dyn CommandExecutor>")
             .field("system_columns_service", &"Arc<SystemColumnsService>")
             .field("slow_query_logger", &"Arc<SlowQueryLogger>")
             .field("manifest_service", &"Arc<ManifestService>")
@@ -304,6 +312,76 @@ impl AppContext {
                     config.manifest_cache.clone(),
                 ));
 
+                // Create command executor (Phase 16 - Raft replication foundation)
+                // In standalone mode (no [cluster] config), use StandaloneExecutor
+                // In cluster mode, use RaftExecutor with RaftManager
+                let executor: Arc<dyn CommandExecutor> = if let Some(cluster_config) = &config.cluster {
+                    log::info!("╔═══════════════════════════════════════════════════════════════════╗");
+                    log::info!("║               Cluster Mode Detected                               ║");
+                    log::info!("╚═══════════════════════════════════════════════════════════════════╝");
+                    log::info!("Cluster ID: {}", cluster_config.cluster_id);
+                    log::info!("This Node: node_id={}", cluster_config.node_id);
+                    log::info!("RPC Address: {}", cluster_config.rpc_addr);
+                    log::info!("API Address: {}", cluster_config.api_addr);
+                    log::info!("Shards: {} user, {} shared", cluster_config.user_shards, cluster_config.shared_shards);
+                    log::info!("Heartbeat: {}ms, Election Timeout: {:?}ms", 
+                        cluster_config.heartbeat_interval_ms, cluster_config.election_timeout_ms);
+                    log::info!("Replication Mode: {}", cluster_config.replication_mode);
+                    log::info!("Peers: {} configured", cluster_config.peers.len());
+                    for peer in &cluster_config.peers {
+                        log::info!("  - Peer node_id={}: rpc={}, api={}", 
+                            peer.node_id, peer.rpc_addr, peer.api_addr);
+                    }
+                    
+                    // Convert to RaftManagerConfig using From trait
+                    let raft_config = kalamdb_raft::manager::RaftManagerConfig::from(cluster_config.clone());
+                    
+                    log::info!("Creating RaftManager...");
+                    let manager = Arc::new(kalamdb_raft::manager::RaftManager::new(raft_config));
+                    
+                    // Wire up the system applier for metadata replication
+                    // This ensures namespaces/tables/storages are persisted on all nodes
+                    log::info!("Wiring SystemApplier for metadata replication...");
+                    let system_applier = Arc::new(crate::applier::ProviderSystemApplier::new(system_tables.clone()));
+                    manager.set_system_applier(system_applier);
+
+                    log::info!("Wiring UsersApplier for user metadata replication...");
+                    let users_applier = Arc::new(crate::applier::ProviderUsersApplier::new(system_tables.clone()));
+                    manager.set_users_applier(users_applier);
+                    
+                    // Wire up data appliers for user/shared table replication
+                    // These ensure INSERT/UPDATE/DELETE data is replicated to all nodes
+                    log::info!("Wiring UserDataApplier for user table data replication...");
+                    let user_data_applier = Arc::new(crate::applier::ProviderUserDataApplier::new());
+                    manager.set_user_data_applier(user_data_applier);
+                    
+                    log::info!("Wiring SharedDataApplier for shared table data replication...");
+                    let shared_data_applier = Arc::new(crate::applier::ProviderSharedDataApplier::new());
+                    manager.set_shared_data_applier(shared_data_applier);
+                    
+                    log::info!("Creating RaftExecutor...");
+                    Arc::new(kalamdb_raft::RaftExecutor::new(manager))
+                } else {
+                    log::info!("Standalone mode (no [cluster] config), using StandaloneExecutor");
+                    Arc::new(crate::executor::StandaloneExecutor::new(system_tables.clone()))
+                };
+
+                // Note: ClusterLiveNotifier removed - Raft replication now handles
+                // data consistency across nodes, and each node notifies its own
+                // live query subscribers locally when data is applied.
+
+                // Wire up ClusterTableProvider with the executor
+                let cluster_provider = Arc::new(
+                    kalamdb_system::ClusterTableProvider::new(executor.clone())
+                );
+                system_tables.set_cluster_provider(cluster_provider.clone());
+                
+                // Register cluster with DataFusion system schema
+                // This must happen after executor is created since ClusterTableProvider needs it
+                system_schema
+                    .register_table("cluster".to_string(), cluster_provider)
+                    .expect("Failed to register system.cluster");
+
                 let app_ctx = Arc::new(AppContext {
                     node_id,
                     config,
@@ -317,6 +395,7 @@ impl AppContext {
                     connection_registry,
                     storage_registry,
                     system_tables,
+                    executor,
                     session_factory,
                     base_session_context,
                     system_columns_service,
@@ -368,7 +447,7 @@ impl AppContext {
         use std::hash::{Hash, Hasher};
 
         let mut hasher = DefaultHasher::new();
-        node_id.as_str().hash(&mut hasher);
+        node_id.as_u64().hash(&mut hasher);
         let hash = hasher.finish();
 
         // Map to 10-bit range (0-1023)
@@ -451,7 +530,7 @@ impl AppContext {
         let job_manager = Arc::new(crate::jobs::JobsManager::new(jobs_provider, job_registry));
 
         // Create test NodeId
-        let node_id = Arc::new(NodeId::new("test-node".to_string()));
+        let node_id = Arc::new(NodeId::new(22));
 
         // Create connections manager for tests
         let connection_registry = ConnectionsManager::new(
@@ -485,6 +564,9 @@ impl AppContext {
             config.manifest_cache.clone(),
         ));
 
+        // Create standalone executor for tests
+        let executor = Arc::new(crate::executor::StandaloneExecutor::new(system_tables.clone()));
+
         AppContext {
             node_id,
             config,
@@ -498,6 +580,7 @@ impl AppContext {
             connection_registry,
             storage_registry,
             system_tables,
+            executor,
             session_factory,
             base_session_context,
             system_columns_service,
@@ -589,6 +672,23 @@ impl AppContext {
 
     pub fn system_tables(&self) -> Arc<SystemTablesRegistry> {
         self.system_tables.clone()
+    }
+
+    /// Get the command executor (Phase 16 - Raft replication foundation)
+    ///
+    /// Returns the appropriate executor based on server mode:
+    /// - Standalone: StandaloneExecutor (direct provider calls, zero overhead)
+    /// - Cluster: RaftExecutor (commands go through Raft consensus)
+    ///
+    /// Handlers should use this instead of directly calling providers to enable
+    /// transparent clustering support.
+    pub fn executor(&self) -> Arc<dyn CommandExecutor> {
+        self.executor.clone()
+    }
+
+    /// Check if this node is running in cluster mode
+    pub fn is_cluster_mode(&self) -> bool {
+        self.executor.is_cluster_mode()
     }
 
     /// Get the system columns service (Phase 12, US5, T027)
@@ -812,7 +912,7 @@ impl AppContext {
         metrics.push(("manifests_max_capacity".to_string(), self.manifest_service.max_weighted_capacity().to_string()));
 
         // Node ID
-        metrics.push(("node_id".to_string(), self.node_id.as_str().to_string()));
+        metrics.push(("node_id".to_string(), self.node_id.to_string()));
 
         // Server version (from config)
         metrics.push(("server_version".to_string(), "0.1.1".to_string()));

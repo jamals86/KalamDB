@@ -30,7 +30,7 @@ fn test_cli_jwt_credentials_stored_securely() {
         "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.test_token".to_string(),
         "alice".to_string(),
         "2025-12-31T23:59:59Z".to_string(),
-        Some("http://localhost:8080".to_string()),
+        Some(server_url().to_string()),
     );
 
     store
@@ -84,7 +84,7 @@ fn test_cli_multiple_instances() {
 
     // Store JWT credentials for multiple instances
     let instances = vec![
-        ("local", "alice", "http://localhost:8080"),
+        ("local", "alice", server_url()),
         ("cloud", "bob", "https://cloud.example.com"),
         ("testing", "charlie", "http://test.internal:3000"),
     ];
@@ -289,7 +289,7 @@ fn test_cli_credential_expiry_check() {
         "expired_jwt_token".to_string(),
         "user".to_string(),
         "2020-01-01T00:00:00Z".to_string(), // Expired date
-        Some("http://localhost:8080".to_string()),
+        Some(server_url().to_string()),
     );
 
     store
@@ -310,7 +310,7 @@ fn test_cli_credential_expiry_check() {
         "valid_jwt_token".to_string(),
         "user".to_string(),
         "2099-12-31T23:59:59Z".to_string(), // Far future date
-        Some("http://localhost:8080".to_string()),
+        Some(server_url().to_string()),
     );
 
     store
@@ -572,7 +572,7 @@ fn test_cli_multiple_instance_selection() {
 
     // Create credentials for different instances
     let instances = vec![
-        ("local", "user1", "http://localhost:8080", "token_local"),
+        ("local", "user1", server_url(), "token_local"),
         ("cloud", "user2", "https://cloud.db.com", "token_cloud"),
         ("testing", "tester", "http://test:3000", "token_test"),
     ];
@@ -591,7 +591,7 @@ fn test_cli_multiple_instance_selection() {
     // Verify we can retrieve each instance's credentials independently
     let local_creds = store.get_credentials("local").unwrap().unwrap();
     assert_eq!(local_creds.jwt_token, "token_local");
-    assert_eq!(local_creds.get_server_url(), "http://localhost:8080");
+    assert_eq!(local_creds.get_server_url(), server_url());
 
     let cloud_creds = store.get_credentials("cloud").unwrap().unwrap();
     assert_eq!(cloud_creds.jwt_token, "token_cloud");

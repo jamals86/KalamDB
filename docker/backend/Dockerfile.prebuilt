@@ -1,6 +1,9 @@
 # Lightweight Docker image for KalamDB using pre-built binaries
-# This Dockerfile is used in the release workflow with pre-compiled binaries
-# Supports multi-architecture via separate build artifacts
+#
+# Option 1: Build with local binaries (after `cargo build --release`):
+#   docker build -f docker/backend/Dockerfile.prebuilt -t jamals86/kalamdb:latest .
+#
+# Option 2: Used in release workflow with pre-compiled binaries
 
 # Runtime image only (no build stage needed)
 FROM debian:bookworm-slim
@@ -17,10 +20,9 @@ RUN apt-get update && \
     mkdir -p /data/rocksdb /data/storage /data/logs /config && \
     chown -R kalamdb:kalamdb /data /config
 
-# Copy pre-built binaries from the "binaries" build context
-# These are already compiled for the target architecture
-COPY --from=binaries --chmod=755 kalamdb-server /usr/local/bin/kalamdb-server
-COPY --from=binaries --chmod=755 kalam /usr/local/bin/kalam-cli
+# Copy pre-built binaries from local release build
+COPY --chmod=755 target/release/kalamdb-server /usr/local/bin/kalamdb-server
+COPY --chmod=755 target/release/kalam /usr/local/bin/kalam-cli
 
 # Create symlink so 'kalam' command works (docs reference this name)
 RUN ln -s /usr/local/bin/kalam-cli /usr/local/bin/kalam

@@ -7,6 +7,7 @@ use crate::sql::executor::models::{ExecutionContext, ExecutionResult, ScalarValu
 use kalamdb_commons::models::TableId;
 use kalamdb_commons::schemas::TableType;
 use kalamdb_commons::Role;
+use kalamdb_raft::SystemCommand;
 use kalamdb_sql::ddl::CreateTableStatement;
 use std::sync::Arc;
 
@@ -74,6 +75,37 @@ impl TypedStatementHandler<CreateTableStatement> for CreateTableHandler {
 
         // Create TableId for audit logging
         let table_id = TableId::new(namespace_id.clone(), table_name.clone());
+
+        if self.app_context.executor().is_cluster_mode() {
+            let table_def = self
+                .app_context
+                .schema_registry()
+                .get_table_definition(&table_id)?
+                .ok_or_else(|| {
+                    KalamDbError::Other(format!(
+                        "Table definition missing for {} after creation",
+                        table_id
+                    ))
+                })?;
+            let schema_json = serde_json::to_string(table_def.as_ref()).map_err(|e| {
+                KalamDbError::Other(format!("Failed to serialize table definition: {}", e))
+            })?;
+            let cmd = SystemCommand::CreateTable {
+                table_id: table_id.clone(),
+                table_type,
+                schema_json,
+            };
+            self.app_context
+                .executor()
+                .execute_system(cmd)
+                .await
+                .map_err(|e| {
+                    KalamDbError::ExecutionError(format!(
+                        "Failed to replicate table metadata via executor: {}",
+                        e
+                    ))
+                })?;
+        }
         
         // Log DDL operation
         let audit_entry = audit::log_ddl_operation(

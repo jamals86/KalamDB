@@ -54,7 +54,7 @@ use serde::{Deserialize, Serialize};
 ///     updated_at: 1730000000000,
 ///     started_at: Some(1730000000000),
 ///     finished_at: None,
-///     node_id: NodeId::from("server-01"),
+///     node_id: NodeId::from(1u64),
 ///     queue: None,
 ///     priority: None,
 /// };
@@ -293,7 +293,7 @@ mod tests {
             updated_at: 1730000300000,
             started_at: Some(1730000000000),
             finished_at: Some(1730000300000),
-            node_id: NodeId::from("server-01"),
+            node_id: NodeId::from(1u64),
             queue: None,
             priority: None,
         };
@@ -323,7 +323,7 @@ mod tests {
             updated_at: 1730000000000,
             started_at: Some(1730000000000),
             finished_at: None,
-            node_id: NodeId::from("server-01"),
+            node_id: NodeId::from(1u64),
             queue: None,
             priority: None,
         };
