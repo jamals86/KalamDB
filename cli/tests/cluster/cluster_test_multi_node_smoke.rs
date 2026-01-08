@@ -338,8 +338,8 @@ fn cluster_test_smoke_complex_queries_any_node() {
     }
 
     // Wait for data to replicate to all nodes
-    let count_query = format!("SELECT count(*) as count FROM {}.products", namespace);
-    if !wait_for_row_count_on_all_nodes(&count_query, 5, 15000) {
+    let full_table = format!("{}.products", namespace);
+    if !wait_for_row_count_on_all_nodes(&full_table, 5, 15000) {
         println!("  ⚠ Data may not have fully replicated to all nodes");
     }
 

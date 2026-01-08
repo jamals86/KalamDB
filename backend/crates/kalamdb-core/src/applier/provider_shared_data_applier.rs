@@ -99,7 +99,7 @@ impl SharedDataApplier for ProviderSharedDataApplier {
         &self,
         table_id: &TableId,
         updates_data: &[u8],
-        _filter_data: Option<&[u8]>,
+        filter_data: Option<&[u8]>,
     ) -> Result<usize, RaftError> {
         log::debug!(
             "ProviderSharedDataApplier: Updating {} ({} bytes)",
@@ -107,7 +107,7 @@ impl SharedDataApplier for ProviderSharedDataApplier {
             updates_data.len()
         );
 
-        // For now, updates use the same Row format
+        // Deserialize the updates (Row with new field values)
         let rows: Vec<Row> = bincode::serde::decode_from_slice(updates_data, bincode::config::standard())
             .map(|(rows, _)| rows)
             .map_err(|e| RaftError::provider(format!("Failed to deserialize updates: {}", e)))?;
@@ -115,6 +115,15 @@ impl SharedDataApplier for ProviderSharedDataApplier {
         if rows.is_empty() {
             return Ok(0);
         }
+
+        // Deserialize the PK value from filter_data
+        let pk_value: String = filter_data
+            .ok_or_else(|| RaftError::provider("Update requires filter_data with PK value".to_string()))
+            .and_then(|data| {
+                bincode::serde::decode_from_slice(data, bincode::config::standard())
+                    .map(|(v, _)| v)
+                    .map_err(|e| RaftError::provider(format!("Failed to deserialize PK value: {}", e)))
+            })?;
 
         // Get AppContext at runtime
         let app_context = AppContext::get();
@@ -132,17 +141,22 @@ impl SharedDataApplier for ProviderSharedDataApplier {
             .downcast_ref::<SharedTableProvider>()
         {
             let system_user = UserId::from("system");
-            let row_ids = provider.insert_batch(&system_user, rows).map_err(|e| {
-                RaftError::provider(format!("Failed to update batch: {}", e))
+            
+            // Update each row using the PK value
+            // Note: Currently we only support single-row updates per Raft command
+            let updates = rows.into_iter().next().unwrap();
+            
+            provider.update_by_id_field(&system_user, &pk_value, updates).map_err(|e| {
+                RaftError::provider(format!("Failed to update row: {}", e))
             })?;
 
             log::info!(
-                "ProviderSharedDataApplier: Updated {} rows in {}",
-                row_ids.len(),
-                table_id
+                "ProviderSharedDataApplier: Updated 1 row in {} (pk={})",
+                table_id,
+                pk_value
             );
 
-            Ok(row_ids.len())
+            Ok(1)
         } else {
             Err(RaftError::provider(format!(
                 "Provider type mismatch for shared table {}",

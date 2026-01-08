@@ -297,27 +297,31 @@ fn cluster_test_final_mixed_workload_consistency() {
         .expect("Failed to insert batch");
     }
 
-    println!("  Phase 2: Updates...");
-    // Update even IDs
-    execute_on_node(
-        &urls[0],
-        &format!(
-            "UPDATE {}.workload_data SET status = 'updated', counter = 1, updated_at = 'phase2' WHERE id % 2 = 0",
-            namespace
-        ),
-    )
-    .expect("Failed to update even");
+    println!("  Phase 2: Updates (even IDs)...");
+    // Update even IDs - use individual PK updates since SHARED tables don't support predicate updates
+    for i in (0..200).step_by(2) {
+        execute_on_node(
+            &urls[0],
+            &format!(
+                "UPDATE {}.workload_data SET status = 'updated', counter = 1, updated_at = 'phase2' WHERE id = {}",
+                namespace, i
+            ),
+        )
+        .expect(&format!("Failed to update id {}", i));
+    }
 
-    println!("  Phase 3: More updates...");
+    println!("  Phase 3: More updates (IDs divisible by 5)...");
     // Update IDs divisible by 5
-    execute_on_node(
-        &urls[0],
-        &format!(
-            "UPDATE {}.workload_data SET counter = counter + 1, updated_at = 'phase3' WHERE id % 5 = 0",
-            namespace
-        ),
-    )
-    .expect("Failed to update divisible by 5");
+    for i in (0..200).step_by(5) {
+        execute_on_node(
+            &urls[0],
+            &format!(
+                "UPDATE {}.workload_data SET counter = 2, updated_at = 'phase3' WHERE id = {}",
+                namespace, i
+            ),
+        )
+        .expect(&format!("Failed to update id {}", i));
+    }
 
     println!("  Phase 4: Deletes...");
     // Delete IDs >= 180

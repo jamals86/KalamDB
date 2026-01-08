@@ -4,7 +4,6 @@
 
 use crate::cluster_common::*;
 use crate::common::*;
-use futures_util::StreamExt;
 use kalam_link::{AuthProvider, KalamLinkClient, KalamLinkTimeouts, ChangeEvent};
 use serde_json::Value;
 use std::time::Duration;

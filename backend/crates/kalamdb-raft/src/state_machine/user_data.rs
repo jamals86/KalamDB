@@ -7,7 +7,7 @@
 //! Runs in DataUserShard(N) Raft groups where N = user_id % 32.
 
 use async_trait::async_trait;
-use kalamdb_commons::models::{NodeId, UserId};
+use kalamdb_commons::models::NodeId;
 use parking_lot::RwLock;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
@@ -134,9 +134,9 @@ impl UserDataStateMachine {
     }
     
     /// Apply a user data command
+    /// Note: user_id is extracted from inside each command variant
     async fn apply_command(
         &self,
-        _user_id: &UserId,
         cmd: UserDataCommand,
     ) -> Result<DataResponse, RaftError> {
         // Get applier reference
@@ -323,12 +323,11 @@ impl KalamStateMachine for UserDataStateMachine {
             return Ok(ApplyResult::NoOp);
         }
         
-        // Deserialize: (user_id, command)
-        let (user_id_str, cmd): (String, UserDataCommand) = decode(command)?;
-        let user_id = UserId::new(user_id_str);
+        // Deserialize command directly (user_id is inside each command variant)
+        let cmd: UserDataCommand = decode(command)?;
         
         // Apply command
-        let response = self.apply_command(&user_id, cmd).await?;
+        let response = self.apply_command(cmd).await?;
         
         // Update last applied
         self.last_applied_index.store(index, Ordering::Release);

@@ -265,6 +265,7 @@ impl StatementHandler for UpdateHandler {
                         if app_context.is_cluster_mode() {
                             let rows_affected = self.execute_update_via_raft(
                                 &table_id,
+                                &id_value,
                                 updates,
                             ).await?;
                             Ok(ExecutionResult::Updated { rows_affected })
@@ -582,6 +583,7 @@ impl UpdateHandler {
     async fn execute_update_via_raft(
         &self,
         table_id: &TableId,
+        pk_value: &str,
         updates: Row,
     ) -> Result<usize, KalamDbError> {
         let app_context = AppContext::get();
@@ -591,10 +593,14 @@ impl UpdateHandler {
         let updates_data = bincode::serde::encode_to_vec(&vec![updates], bincode::config::standard())
             .map_err(|e| KalamDbError::InvalidOperation(format!("Failed to serialize updates: {}", e)))?;
 
+        // Serialize the PK value for the filter
+        let filter_data = bincode::serde::encode_to_vec(&pk_value.to_string(), bincode::config::standard())
+            .map_err(|e| KalamDbError::InvalidOperation(format!("Failed to serialize filter: {}", e)))?;
+
         let cmd = SharedDataCommand::Update {
             table_id: table_id.clone(),
             updates_data,
-            filter_data: None,
+            filter_data: Some(filter_data),
         };
 
         let response = executor

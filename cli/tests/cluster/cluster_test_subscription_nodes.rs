@@ -9,7 +9,6 @@
 
 use crate::cluster_common::*;
 use crate::common::*;
-use futures_util::StreamExt;
 use kalam_link::{AuthProvider, ChangeEvent, KalamLinkClient, KalamLinkTimeouts};
 use serde_json::Value;
 use std::sync::atomic::Ordering;
@@ -408,6 +407,14 @@ fn cluster_test_subscription_initial_data_consistency() {
     )
     .expect("Failed to create table");
 
+    // IMPORTANT: Wait for table to replicate BEFORE inserting data
+    // Otherwise, the INSERT command may be applied on followers before
+    // the CREATE TABLE command, causing provider not found errors.
+    if !wait_for_table_on_all_nodes(&namespace, table, 15000) {
+        panic!("Table {} did not replicate to all nodes", full);
+    }
+    println!("  ✓ Table replicated to all nodes");
+
     // Insert initial data
     let mut values = Vec::new();
     for i in 0..20 {
@@ -418,14 +425,23 @@ fn cluster_test_subscription_initial_data_consistency() {
         &format!("INSERT INTO {} (id, value) VALUES {}", full, values.join(", ")),
     )
     .expect("Failed to insert initial data");
-
-    // Wait for table and data to replicate
-    if !wait_for_table_on_all_nodes(&namespace, table, 10000) {
-        panic!("Table {} did not replicate to all nodes", full);
+    
+    // Wait for data replication - USER tables may take more time especially 
+    // when the cluster is under load from other parallel tests
+    let mut data_replicated = false;
+    for attempt in 1..=5 {
+        if wait_for_row_count_on_all_nodes(&full, 20, 15000) {
+            data_replicated = true;
+            break;
+        }
+        println!("  ⏳ Attempt {}/5: Data not fully replicated, retrying...", attempt);
+        std::thread::sleep(Duration::from_millis(1000));
     }
-    if !wait_for_row_count_on_all_nodes(&full, 20, 10000) {
-        println!("  ⚠ Data may not be fully replicated yet, continuing anyway");
+    
+    if !data_replicated {
+        panic!("Data did not replicate to all nodes within timeout (USER table replication may be slow under load)");
     }
+    println!("  ✓ Data replicated to all nodes");
 
     let query = format!("SELECT * FROM {} ORDER BY id", full);
 

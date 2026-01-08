@@ -171,11 +171,72 @@ impl SystemApplier for ProviderSystemApplier {
         
         log::info!("ProviderSystemApplier: Altering table {}", table_id.full_name());
         
+        // Update persistent store
         self.system_tables
             .tables()
             .update_table_async(table_id, &table_def)
             .await
             .map_err(|e| RaftError::provider(format!("Failed to alter table: {}", e)))?;
+        
+        // Also update schema registry and DataFusion catalog on this node
+        // This ensures followers have the updated schema in memory
+        let app_ctx = AppContext::get();
+        let registry = app_ctx.schema_registry();
+        
+        // Update registry cache with new table definition
+        registry.put_table_definition(table_id, &table_def)
+            .map_err(|e| RaftError::provider(format!("Failed to update registry: {}", e)))?;
+        
+        // Update cached data (preserving storage config)
+        {
+            use crate::schema_registry::CachedTableData;
+            
+            let old_entry = registry.get(table_id);
+            let new_data = CachedTableData::from_altered_table(
+                table_id,
+                std::sync::Arc::new(table_def.clone()),
+                old_entry.as_deref(),
+            ).map_err(|e| RaftError::provider(format!("Failed to create cached data: {}", e)))?;
+            
+            registry.insert(table_id.clone(), std::sync::Arc::new(new_data));
+        }
+        
+        // Get arrow schema for provider registration
+        let arrow_schema = registry.get_arrow_schema(table_id)
+            .map_err(|e| RaftError::provider(format!("Failed to get arrow schema: {}", e)))?;
+        
+        // Unregister old provider and re-register with new schema
+        use crate::sql::executor::helpers::table_registration::{
+            unregister_table_provider, register_user_table_provider,
+            register_shared_table_provider, register_stream_table_provider,
+        };
+        
+        let _ = unregister_table_provider(&app_ctx, table_id);
+        
+        match table_def.table_type {
+            kalamdb_commons::TableType::User => {
+                register_user_table_provider(&app_ctx, table_id, arrow_schema)
+                    .map_err(|e| RaftError::provider(format!("Failed to re-register user table: {}", e)))?;
+            }
+            kalamdb_commons::TableType::Shared => {
+                register_shared_table_provider(&app_ctx, table_id, arrow_schema)
+                    .map_err(|e| RaftError::provider(format!("Failed to re-register shared table: {}", e)))?;
+            }
+            kalamdb_commons::TableType::Stream => {
+                let ttl_seconds = if let kalamdb_commons::schemas::TableOptions::Stream(opts) = &table_def.table_options {
+                    Some(opts.ttl_seconds)
+                } else {
+                    None
+                };
+                register_stream_table_provider(&app_ctx, table_id, arrow_schema, ttl_seconds)
+                    .map_err(|e| RaftError::provider(format!("Failed to re-register stream table: {}", e)))?;
+            }
+            kalamdb_commons::TableType::System => {
+                // System tables are not altered this way
+            }
+        }
+        
+        log::info!("ProviderSystemApplier: Altered table {} and updated schema registry", table_id.full_name());
         
         Ok(())
     }

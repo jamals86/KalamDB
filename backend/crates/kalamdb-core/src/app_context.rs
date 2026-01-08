@@ -9,7 +9,7 @@ use crate::jobs::executors::{
     JobRegistry, RestoreExecutor, RetentionExecutor, StreamEvictionExecutor, UserCleanupExecutor,
 };
 use crate::live::ConnectionsManager;
-use crate::live_query::{ClusterLiveNotifier, LiveQueryManager};
+use crate::live_query::LiveQueryManager;
 use crate::schema_registry::settings::{SettingsTableProvider, SettingsView};
 use crate::schema_registry::stats::StatsTableProvider;
 use crate::schema_registry::views::datatypes::{DatatypesTableProvider, DatatypesView};
@@ -366,12 +366,9 @@ impl AppContext {
                     Arc::new(crate::executor::StandaloneExecutor::new(system_tables.clone()))
                 };
 
-                if let Some(cluster_config) = &config.cluster {
-                    live_query_manager.set_cluster_notifier(Arc::new(ClusterLiveNotifier::new(
-                        executor.clone(),
-                        cluster_config.cluster_id.clone(),
-                    )));
-                }
+                // Note: ClusterLiveNotifier removed - Raft replication now handles
+                // data consistency across nodes, and each node notifies its own
+                // live query subscribers locally when data is applied.
 
                 // Wire up ClusterTableProvider with the executor
                 let cluster_provider = Arc::new(

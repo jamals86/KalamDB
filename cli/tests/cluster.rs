@@ -213,21 +213,29 @@ mod cluster_common {
         
         let start = std::time::Instant::now();
         let timeout = Duration::from_millis(timeout_ms);
+        let mut last_counts: Vec<i64> = Vec::new();
         
         while start.elapsed() < timeout {
             let mut all_match = true;
+            let mut counts: Vec<i64> = Vec::new();
             for url in &urls {
                 let count = query_count_on_url(url, &query);
+                counts.push(count);
                 if count != expected {
                     all_match = false;
-                    break;
                 }
             }
             if all_match {
                 return true;
             }
+            // Only print if counts changed to reduce noise
+            if counts != last_counts {
+                println!("    Counts: {:?} (expected {})", counts, expected);
+                last_counts = counts;
+            }
             std::thread::sleep(Duration::from_millis(300));
         }
+        println!("    Final counts after timeout: {:?} (expected {})", last_counts, expected);
         false
     }
 }

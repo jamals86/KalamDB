@@ -58,13 +58,18 @@ impl<SM: KalamStateMachine + Send + Sync + 'static> RaftGroup<SM> {
             return Ok(());
         }
         
-        // Create Raft configuration
+        // Create Raft configuration with tuned timeouts for reliability
+        // - Increased heartbeat_interval to reduce replication frequency and timeout errors
+        // - replication_lag_threshold: After 5 heartbeat intervals, consider node lagging
+        // Note: OpenRaft's internal replication timeout is based on heartbeat_interval
         let raft_config = Config {
             cluster_name: format!("kalamdb-{}", self.group_id),
             election_timeout_min: config.election_timeout_ms.0,
             election_timeout_max: config.election_timeout_ms.1,
             heartbeat_interval: config.heartbeat_interval_ms,
-            install_snapshot_timeout: 10000, 
+            install_snapshot_timeout: 10000,
+            max_in_snapshot_log_to_keep: 100,
+            purge_batch_size: 256,
             ..Default::default()
         };
         

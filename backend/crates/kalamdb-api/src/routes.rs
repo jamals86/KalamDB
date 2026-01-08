@@ -30,7 +30,6 @@ pub fn configure_routes(cfg: &mut web::ServiceConfig) {
                 .service(
                     web::scope("/api")
                         .service(handlers::execute_sql_v1)
-                        .service(handlers::live_query_notify)
                         // Also support health check at versioned path
                         .route("/healthcheck", web::get().to(healthcheck_handler))
                         // Auth routes for Admin UI

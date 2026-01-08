@@ -218,13 +218,13 @@ fn cluster_test_system_users_replication() {
         panic!("Namespace {} did not replicate to all nodes", namespace);
     }
 
-    // Create test users
+    // Create test users with correct syntax (no quotes around username, no NAMESPACE clause)
     let users: Vec<String> = (0..3).map(|i| format!("test_user_{}_{}", namespace, i)).collect();
 
     for user in &users {
         let sql = format!(
-            "CREATE USER '{}' WITH PASSWORD 'test_password_123' NAMESPACE {}",
-            user, namespace
+            "CREATE USER {} WITH PASSWORD 'test_password_123' ROLE 'user'",
+            user
         );
         execute_on_node(&urls[0], &sql)
             .unwrap_or_else(|e| panic!("Failed to create user {}: {}", user, e));
@@ -237,8 +237,8 @@ fn cluster_test_system_users_replication() {
     for (i, url) in urls.iter().enumerate() {
         for user in &users {
             let query = format!(
-                "SELECT username FROM system.users WHERE username = '{}' AND namespace_id = '{}'",
-                user, namespace
+                "SELECT username FROM system.users WHERE username = '{}'",
+                user
             );
             
             let mut found = false;
@@ -357,22 +357,36 @@ fn cluster_test_alter_table_replication() {
     // Wait for replication
     std::thread::sleep(Duration::from_millis(1500));
 
-    // Verify new column exists on all nodes
-    let schema_query = format!(
-        "SELECT column_name FROM system.columns WHERE table_name = 'alter_test' AND namespace_id = '{}' ORDER BY column_name",
+    // Verify new column exists on all nodes by attempting to use it
+    // Note: information_schema.columns may not reflect dynamically added columns,
+    // so we verify by actually querying the column in a SELECT statement
+    let verify_query = format!(
+        "SELECT id, name, age FROM {}.alter_test LIMIT 1",
         namespace
     );
 
     for (i, url) in urls.iter().enumerate() {
         let mut found_age = false;
-        for _ in 0..10 {
-            match execute_on_node(url, &schema_query) {
-                Ok(result) if result.contains("age") => {
-                    found_age = true;
-                    break;
+        for _ in 0..15 {
+            match execute_on_node(url, &verify_query) {
+                Ok(result) => {
+                    // If the query succeeds, the column exists
+                    // (query would fail with "column not found" if age doesn't exist)
+                    if !result.contains("column not found") && !result.contains("Unknown column") {
+                        found_age = true;
+                        break;
+                    }
                 }
-                _ => std::thread::sleep(Duration::from_millis(200)),
+                Err(e) => {
+                    let err_str = e.to_string();
+                    // If error contains "not found" or "unknown column", column doesn't exist yet
+                    if !err_str.contains("not found") && !err_str.contains("nknown column") {
+                        // Some other error - might be worth investigating
+                        println!("  Query error on node {}: {}", i, err_str);
+                    }
+                }
             }
+            std::thread::sleep(Duration::from_millis(300));
         }
         assert!(found_age, "Node {} does not have 'age' column", i);
         println!("  ✓ Node {} has updated schema", i);

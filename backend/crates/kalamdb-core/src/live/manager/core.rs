@@ -2,6 +2,10 @@
 //!
 //! Orchestrates subscription lifecycle, initial data fetching, and notifications.
 //! Uses SharedConnectionState pattern for efficient state access.
+//!
+//! Live query notifications are now handled through Raft-replicated data appliers.
+//! When data is applied on any node (leader or follower), the provider's methods
+//! fire local notifications - no need for separate HTTP cluster broadcast.
 
 use crate::error::KalamDbError;
 use crate::error_extensions::KalamDbResultExt;
@@ -9,7 +13,6 @@ use crate::live::filter_eval::parse_where_clause;
 use crate::live::initial_data::{InitialDataFetcher, InitialDataOptions, InitialDataResult};
 use crate::live::notification::NotificationService;
 use crate::live::query_parser::QueryParser;
-use crate::live::ClusterLiveNotifier;
 use crate::live::connections_manager::{ConnectionsManager, SharedConnectionState};
 use crate::live::subscription::SubscriptionService;
 use crate::live::types::{ChangeNotification, RegistryStats, SubscriptionResult};
@@ -23,7 +26,6 @@ use kalamdb_commons::system::LiveQuery as SystemLiveQuery;
 use kalamdb_commons::websocket::SubscriptionRequest;
 use kalamdb_commons::NodeId;
 use kalamdb_system::LiveQueriesTableProvider;
-use once_cell::sync::OnceCell;
 use std::sync::Arc;
 
 /// Live query manager
@@ -34,7 +36,6 @@ pub struct LiveQueryManager {
     initial_data_fetcher: Arc<InitialDataFetcher>,
     schema_registry: Arc<crate::schema_registry::SchemaRegistry>,
     node_id: NodeId,
-    cluster_notifier: OnceCell<Arc<ClusterLiveNotifier>>,
 
     // Delegated services
     subscription_service: Arc<SubscriptionService>,
@@ -75,7 +76,6 @@ impl LiveQueryManager {
             initial_data_fetcher,
             schema_registry,
             node_id,
-            cluster_notifier: OnceCell::new(),
             subscription_service,
             notification_service,
         }
@@ -89,12 +89,6 @@ impl LiveQueryManager {
     /// Provide shared SqlExecutor so initial data fetches reuse common execution path
     pub fn set_sql_executor(&self, executor: Arc<SqlExecutor>) {
         self.initial_data_fetcher.set_sql_executor(executor);
-    }
-
-    pub fn set_cluster_notifier(&self, notifier: Arc<ClusterLiveNotifier>) {
-        if self.cluster_notifier.set(notifier).is_err() {
-            log::warn!("ClusterLiveNotifier already set; ignoring duplicate assignment");
-        }
     }
 
     /// Register a live query subscription
@@ -419,23 +413,10 @@ impl LiveQueryManager {
     }
 
     /// Notify subscribers about a table change (fire-and-forget async)
-    pub fn notify_table_change_async(
-        self: &Arc<Self>,
-        user_id: UserId,
-        table_id: TableId,
-        notification: ChangeNotification,
-    ) {
-        if let Some(notifier) = self.cluster_notifier.get() {
-            notifier.broadcast_change_async(&user_id, &table_id, &notification);
-        }
-        self.notification_service
-            .notify_async(user_id, table_id, notification)
-    }
-
-    /// Notify subscribers about a table change on this node only
     ///
-    /// Used for cluster fan-out to avoid re-broadcasting.
-    pub fn notify_table_change_local_async(
+    /// With Raft replication, each node handles its own live query notifications locally.
+    /// When data is applied via Raft on followers, the providers call this method directly.
+    pub fn notify_table_change_async(
         self: &Arc<Self>,
         user_id: UserId,
         table_id: TableId,
@@ -452,9 +433,6 @@ impl LiveQueryManager {
         table_id: &TableId,
         change_notification: ChangeNotification,
     ) -> Result<usize, KalamDbError> {
-        if let Some(notifier) = self.cluster_notifier.get() {
-            notifier.broadcast_change_async(user_id, table_id, &change_notification);
-        }
         self.notification_service
             .notify_table_change(user_id, table_id, change_notification)
             .await
