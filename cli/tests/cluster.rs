@@ -259,7 +259,7 @@ mod cluster_common {
                 "No cluster nodes are reachable. Start the cluster first.\n\
                  Expected nodes at: {:?}\n\
                  Use: ./docker/cluster/cluster.sh start  (Docker)\n\
-                 Or:  ./scripts/cluster-local.sh start   (local)",
+                 Or:  ./scripts/cluster.sh start   (local)",
                 urls
             );
         }

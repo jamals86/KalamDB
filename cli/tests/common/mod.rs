@@ -263,7 +263,7 @@ pub fn require_server_running() {
             ║    cd backend && cargo run                                       ║\n\
             ║                                                                  ║\n\
             ║  Cluster mode (3 nodes):                                         ║\n\
-            ║    ./scripts/cluster-local.sh start                              ║\n\
+            ║    ./scripts/cluster.sh start                                    ║\n\
             ║                                                                  ║\n\
             ║  Then run the smoke tests:                                       ║\n\
             ║    cd cli && cargo test --test smoke                             ║\n\

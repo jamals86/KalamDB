@@ -5,23 +5,23 @@ This directory contains Docker Compose configuration for running a 3-node KalamD
 ## Quick Start
 
 ```bash
-# Build from local source (optional - for development)
-./cluster.sh build
-
-# Start the cluster
-./cluster.sh start
+# Start the Docker cluster (from project root)
+./scripts/cluster.sh --docker start
 
 # Check status
-./cluster.sh status
-
-# Run consistency test
-./cluster.sh test
+./scripts/cluster.sh --docker status
 
 # View logs
-./cluster.sh logs
+./scripts/cluster.sh --docker logs
+
+# Open shell in a node
+./scripts/cluster.sh --docker shell 1
 
 # Stop cluster
-./cluster.sh stop
+./scripts/cluster.sh --docker stop
+
+# Clean (removes all data)
+./scripts/cluster.sh --docker clean
 ```
 
 ## Building from Local Source
@@ -29,14 +29,11 @@ This directory contains Docker Compose configuration for running a 3-node KalamD
 To test local code changes in the cluster:
 
 ```bash
-# From the docker/cluster directory:
-./cluster.sh build
+# From the project root:
+./scripts/cluster.sh --docker build
 
-# Or manually from the project root:
-docker build -f docker/backend/Dockerfile -t jamals86/kalamdb:latest .
+# This builds a Docker image from your local code and tags it as jamals86/kalamdb:latest
 ```
-
-This builds a Docker image from your local code and tags it as `jamals86/kalamdb:latest`.
 
 ## Architecture
 
