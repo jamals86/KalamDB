@@ -90,6 +90,7 @@ disable_common_password_check = false
 jwt_secret = "cluster-dev-secret-change-in-production-minimum-32-chars"
 jwt_trusted_issuers = ""
 allow_remote_access = true
+root_password = "kalamdb123"
 
 [shutdown]
 [shutdown.flush]

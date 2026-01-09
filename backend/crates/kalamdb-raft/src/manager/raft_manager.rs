@@ -349,18 +349,44 @@ impl RaftManager {
         log::info!("║         This node is now the leader of all {} groups              ║", self.group_count());
         log::info!("╚═══════════════════════════════════════════════════════════════════╝");
         
-        // After initialization, add peer nodes to the cluster
+        // After initialization, add peer nodes to the cluster with retry logic
+        // Peers may not be ready immediately (RPC server starting up), so we retry with backoff
         if !self.config.peers.is_empty() {
-            log::info!("Adding {} peer nodes to cluster...", self.config.peers.len());
+            log::info!("Adding {} peer nodes to cluster (with retry)...", self.config.peers.len());
+            
+            const MAX_RETRIES: u32 = 30;
+            const INITIAL_DELAY_MS: u64 = 500;
+            const MAX_DELAY_MS: u64 = 5000;
+            
             for peer in &self.config.peers {
                 log::info!("  Adding peer node_id={} (rpc={}, api={})...", 
                     peer.node_id, peer.rpc_addr, peer.api_addr);
-                match self.add_node(peer.node_id, peer.rpc_addr.clone(), peer.api_addr.clone()).await {
-                    Ok(_) => log::info!("    ✓ Peer {} added successfully", peer.node_id),
-                    Err(e) => log::error!("    ✗ Failed to add peer {}: {}", peer.node_id, e),
+                
+                let mut attempt = 0;
+                let mut delay_ms = INITIAL_DELAY_MS;
+                
+                loop {
+                    attempt += 1;
+                    match self.add_node(peer.node_id, peer.rpc_addr.clone(), peer.api_addr.clone()).await {
+                        Ok(_) => {
+                            log::info!("    ✓ Peer {} added successfully (attempt {})", peer.node_id, attempt);
+                            break;
+                        }
+                        Err(e) => {
+                            if attempt >= MAX_RETRIES {
+                                log::error!("    ✗ Failed to add peer {} after {} attempts: {}", 
+                                    peer.node_id, MAX_RETRIES, e);
+                                break;
+                            }
+                            log::warn!("    ⏳ Peer {} not ready (attempt {}/{}): {} - retrying in {}ms", 
+                                peer.node_id, attempt, MAX_RETRIES, e, delay_ms);
+                            tokio::time::sleep(Duration::from_millis(delay_ms)).await;
+                            delay_ms = (delay_ms * 2).min(MAX_DELAY_MS);
+                        }
+                    }
                 }
             }
-            log::info!("Peer nodes added to cluster");
+            log::info!("Peer nodes processing complete");
         }
         
         Ok(())

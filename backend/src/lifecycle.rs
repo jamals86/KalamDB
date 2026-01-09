@@ -554,10 +554,30 @@ async fn create_default_system_user(
             let role = Role::System; // Highest privilege level
             let created_at = chrono::Utc::now().timestamp_millis();
 
-            // T126: Create with EMPTY password hash for localhost-only access
-            // This allows passwordless authentication from localhost (127.0.0.1, ::1)
-            // For remote access, set a password using: ALTER USER root SET PASSWORD '...'
-            let password_hash = String::new(); // Empty = localhost-only, no password required
+            // Check for KALAMDB_ROOT_PASSWORD environment variable
+            // If set, hash the password for remote access support
+            // Otherwise, create with empty password for localhost-only access
+            let password_hash = match std::env::var("KALAMDB_ROOT_PASSWORD") {
+                Ok(password) if !password.is_empty() => {
+                    // Hash the provided password for remote access
+                    bcrypt::hash(&password, bcrypt::DEFAULT_COST)
+                        .map_err(|e| anyhow::anyhow!("Failed to hash root password: {}", e))?
+                }
+                _ => {
+                    // T126: Create with EMPTY password hash for localhost-only access
+                    // This allows passwordless authentication from localhost (127.0.0.1, ::1)
+                    // For remote access, set a password using: ALTER USER root SET PASSWORD '...'
+                    String::new() // Empty = localhost-only, no password required
+                }
+            };
+            let has_password = !password_hash.is_empty();
+            
+            // If password is set via env var, enable remote access
+            let auth_data = if has_password {
+                Some(r#"{"allow_remote":true}"#.to_string())
+            } else {
+                None
+            };
 
             let user = User {
                 id: user_id,
@@ -566,7 +586,7 @@ async fn create_default_system_user(
                 role,
                 email: Some(email),
                 auth_type: AuthType::Internal, // System user uses Internal auth
-                auth_data: None,               // No allow_remote flag = localhost-only by default
+                auth_data,                     // allow_remote flag if password is set
                 storage_mode: StorageMode::Table,
                 storage_id: Some(StorageId::local()),
                 failed_login_attempts: 0,
@@ -581,11 +601,19 @@ async fn create_default_system_user(
             users_provider.create_user(user)?;
 
             // T127: Log system user information to stdout
-            info!(
-                "✓ Created system user '{}' (localhost-only access, no password required)",
-                username
-            );
-            info!("  To enable remote access, set a password: ALTER USER root SET PASSWORD '...'",);
+            if has_password {
+                info!(
+                    "✓ Created system user '{}' (remote access enabled via KALAMDB_ROOT_PASSWORD)",
+                    username
+                );
+            } else {
+                info!(
+                    "✓ Created system user '{}' (localhost-only access, no password required)",
+                    username
+                );
+                info!("  To enable remote access, set a password: ALTER USER root SET PASSWORD '...'");
+                info!("  Or set KALAMDB_ROOT_PASSWORD environment variable before startup");
+            }
 
             Ok(())
         }
