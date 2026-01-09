@@ -375,3 +375,12 @@ Server:
 18) Make sure kalamdb-raft crate doesnt use rocksdb at all, only rely on kalamdb-store crate for storage
 
 19) remove all deprecated meta raft groups and also use the GroupId instead of using a strings everywhere also created_by: Option<String>, use UserId or maybe UserName
+
+20) rely on the crate sysinfo for adding metrics for cpu/threads/memory/pid usages and whatever sysinfo gives us, currently we print them into console/log for memory/cu usages and threads i want to make the same code which output to metrics also output to the console so we dont duplicate the code, make the metrics generator in a different file which responsible for this instead of adding the code inside app_context.rs
+
+21) why we have this: backend\crates\kalamdb-core\src\schema_registry\views\settings.rs can't we do a code which loop over all the settings and print them? no need for description or category for the UI we can add these in a separate file
+
+
+22) move pub fn compute_metrics(&self) -> Vec<(String, String)> to the other metrics file code: backend\crates\kalamdb-core\src\metrics
+
+23) WHEN BUILDING ON WINDOWS OR MAYBE LINUX ADD TO THE BINARY properties details like verison and other things

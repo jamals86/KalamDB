@@ -90,6 +90,9 @@ pub async fn bootstrap(
         phase_start.elapsed().as_secs_f64() * 1000.0
     );
 
+    // Log runtime snapshot (CPU/memory/threads) using shared sysinfo helper
+    app_context.log_runtime_metrics();
+
     // Start the executor (Raft cluster in cluster mode, no-op in standalone)
     let phase_start = std::time::Instant::now();
     if app_context.executor().is_cluster_mode() {

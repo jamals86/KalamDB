@@ -28,10 +28,21 @@ use once_cell::sync::OnceCell;
 use std::sync::{Arc, OnceLock};
 use std::time::{Duration, Instant};
 
+use crate::metrics::runtime::{collect_runtime_metrics, RuntimeMetrics};
+
 const SERVER_VERSION: &str = env!("CARGO_PKG_VERSION");
-const BUILD_DATE: &str = option_env!("BUILD_DATE").unwrap_or("unknown");
-const GIT_BRANCH: &str = option_env!("GIT_BRANCH").unwrap_or("unknown");
-const GIT_COMMIT_HASH: &str = option_env!("GIT_COMMIT_HASH").unwrap_or("unknown");
+const BUILD_DATE: &str = match option_env!("BUILD_DATE") {
+    Some(v) => v,
+    None => "unknown",
+};
+const GIT_BRANCH: &str = match option_env!("GIT_BRANCH") {
+    Some(v) => v,
+    None => "unknown",
+};
+const GIT_COMMIT_HASH: &str = match option_env!("GIT_COMMIT_HASH") {
+    Some(v) => v,
+    None => "unknown",
+};
 
 static APP_CONTEXT: OnceLock<Arc<AppContext>> = OnceLock::new();
 
@@ -775,62 +786,11 @@ impl AppContext {
     /// Returns a vector of (metric_name, metric_value) tuples for display
     /// in system.stats virtual view.
     pub fn compute_metrics(&self) -> Vec<(String, String)> {
-        use sysinfo::System;
-        
         let mut metrics = Vec::new();
 
-        // Server uptime
-        let uptime = self.uptime_seconds();
-        metrics.push(("server_uptime_seconds".to_string(), uptime.to_string()));
-
-        // Format uptime as human-readable
-        let days = uptime / 86400;
-        let hours = (uptime % 86400) / 3600;
-        let minutes = (uptime % 3600) / 60;
-        let uptime_human = if days > 0 {
-            format!("{}d {}h {}m", days, hours, minutes)
-        } else if hours > 0 {
-            format!("{}h {}m", hours, minutes)
-        } else {
-            format!("{}m", minutes)
-        };
-        metrics.push(("server_uptime_human".to_string(), uptime_human));
-
-        // === Memory and System Metrics ===
-        let mut sys = System::new_all();
-        sys.refresh_all();
-        
-        if let Ok(pid) = sysinfo::get_current_pid() {
-            if let Some(proc) = sys.process(pid) {
-                // Memory usage
-                let memory_bytes = proc.memory();
-                let memory_mb = memory_bytes / 1024 / 1024;
-                metrics.push(("memory_usage_bytes".to_string(), memory_bytes.to_string()));
-                metrics.push(("memory_usage_mb".to_string(), memory_mb.to_string()));
-                
-                // CPU usage
-                let cpu_usage = proc.cpu_usage();
-                metrics.push(("cpu_usage_percent".to_string(), format!("{:.2}", cpu_usage)));
-            }
-        }
-        
-        // Total system memory
-        metrics.push(("system_total_memory_mb".to_string(), (sys.total_memory() / 1024 / 1024).to_string()));
-        metrics.push(("system_used_memory_mb".to_string(), (sys.used_memory() / 1024 / 1024).to_string()));
-        
-        // Thread count (via /proc on Linux, approximation elsewhere)
-        #[cfg(unix)]
-        {
-            if let Ok(entries) = std::fs::read_dir("/proc/self/task") {
-                let thread_count = entries.count();
-                metrics.push(("thread_count".to_string(), thread_count.to_string()));
-            }
-        }
-        #[cfg(not(unix))]
-        {
-            // On non-Unix, use sysinfo's thread count if available
-            metrics.push(("thread_count".to_string(), "N/A".to_string()));
-        }
+        // Runtime metrics from sysinfo (shared with console logging)
+        let runtime: RuntimeMetrics = collect_runtime_metrics(self.server_start_time);
+        metrics.extend(runtime.as_pairs());
 
         // Count entities from system tables
         // Users count
@@ -927,9 +887,17 @@ impl AppContext {
             self.config.cluster.is_some().to_string(),
         ));
         if let Some(cluster) = &self.config.cluster {
-            metrics.push(("cluster_name".to_string(), cluster.name.clone()))
+            metrics.push(("cluster_id".to_string(), cluster.cluster_id.clone()));
+            metrics.push(("cluster_rpc_addr".to_string(), cluster.rpc_addr.clone()));
+            metrics.push(("cluster_api_addr".to_string(), cluster.api_addr.clone()));
         }
 
         metrics
+    }
+
+    /// Log a concise snapshot of runtime metrics to the console.
+    pub fn log_runtime_metrics(&self) {
+        let runtime = collect_runtime_metrics(self.server_start_time);
+        log::info!("Runtime metrics: {}", runtime.to_log_string());
     }
 }
