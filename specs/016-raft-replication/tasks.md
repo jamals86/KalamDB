@@ -352,17 +352,6 @@ Display the clusterName here and which node we are connecting to: ● KalamDB[{{
 
 11) make sure we are not parsing the sql statement multiple time to know where to forward it to, even when forwarding we need to create another grpc endpoint which takes the parsed one already when forwarded so we dont parse it multiple times
 
-12) \info is returning empoty version and build:
-Connection:
-  Server URL:     http://localhost:8080
-  Username:       root
-  Connected:      Yes
-  Session time:   47s
-
-Server:
-  Version:        
-  API Version:    v1
-  Build Date:     Unknown
 
 13) why we ever need to wait for all nodes to have the change? dont we make sure we dont return an ack until the change is replicated to min_replication_nodes? so waiting for all nodes is not needed right?
 
@@ -376,10 +365,7 @@ Server:
 
 19) remove all deprecated meta raft groups and also use the GroupId instead of using a strings everywhere also created_by: Option<String>, use UserId or maybe UserName
 
-20) rely on the crate sysinfo for adding metrics for cpu/threads/memory/pid usages and whatever sysinfo gives us, currently we print them into console/log for memory/cu usages and threads i want to make the same code which output to metrics also output to the console so we dont duplicate the code, make the metrics generator in a different file which responsible for this instead of adding the code inside app_context.rs
-
 21) why we have this: backend\crates\kalamdb-core\src\schema_registry\views\settings.rs can't we do a code which loop over all the settings and print them? no need for description or category for the UI we can add these in a separate file
-
 
 22) move pub fn compute_metrics(&self) -> Vec<(String, String)> to the other metrics file code: backend\crates\kalamdb-core\src\metrics
 
