@@ -9,10 +9,6 @@ pub fn default_api_version() -> String {
     "v1".to_string()
 }
 
-pub fn default_node_id() -> String {
-    "node1".to_string()
-}
-
 pub fn default_enable_http2() -> bool {
     true // HTTP/2 enabled by default for better performance
 }

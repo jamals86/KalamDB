@@ -48,3 +48,4 @@ tonic-build = "0.12"
 [dev-dependencies]
 tempfile = { workspace = true }
 tokio = { workspace = true, features = ["rt-multi-thread", "macros"] }
+serial_test = { workspace = true }

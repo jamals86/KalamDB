@@ -65,7 +65,7 @@ impl DataFusionSessionFactory {
         // Cap at max_partitions to prevent over-parallelization
         let target_partitions = target_partitions.min(settings.max_partitions);
 
-        log::info!(
+        log::debug!(
             "DataFusion configured: target_partitions={}, batch_size={}",
             target_partitions,
             settings.batch_size

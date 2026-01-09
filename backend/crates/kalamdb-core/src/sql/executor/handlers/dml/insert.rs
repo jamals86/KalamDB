@@ -644,6 +644,7 @@ impl InsertHandler {
         match table_type {
             TableType::User => {
                 let cmd = UserDataCommand::Insert {
+                    required_meta_index: 0, // Stamped by executor
                     table_id: table_id.clone(),
                     user_id: user_id.clone(),
                     rows_data,
@@ -682,6 +683,7 @@ impl InsertHandler {
                 }
 
                 let cmd = SharedDataCommand::Insert {
+                    required_meta_index: 0, // Stamped by executor
                     table_id: table_id.clone(),
                     rows_data,
                 };
@@ -699,6 +701,7 @@ impl InsertHandler {
             }
             TableType::Stream => {
                 let cmd = UserDataCommand::Insert {
+                    required_meta_index: 0, // Stamped by executor
                     table_id: table_id.clone(),
                     user_id: user_id.clone(),
                     rows_data,

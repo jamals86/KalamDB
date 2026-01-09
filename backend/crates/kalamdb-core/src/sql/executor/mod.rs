@@ -424,7 +424,7 @@ impl SqlExecutor {
         let all_table_defs = schema_registry.scan_all_table_definitions()?;
 
         if all_table_defs.is_empty() {
-            log::info!("No existing tables to load");
+            log::debug!("No existing tables to load");
             return Ok(());
         }
 

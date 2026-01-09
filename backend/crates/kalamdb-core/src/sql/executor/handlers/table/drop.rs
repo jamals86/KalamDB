@@ -14,7 +14,7 @@ use crate::sql::executor::models::{ExecutionContext, ExecutionResult, ScalarValu
 use kalamdb_commons::models::{StorageId, TableId};
 use kalamdb_commons::schemas::TableType;
 use kalamdb_commons::JobType;
-use kalamdb_raft::SystemCommand;
+use kalamdb_raft::MetaCommand;
 use kalamdb_sql::ddl::DropTableStatement;
 use std::sync::Arc;
 
@@ -502,12 +502,12 @@ impl TypedStatementHandler<DropTableStatement> for DropTableHandler {
         registry.delete_table_definition(&table_id)?;
 
         if self.app_context.executor().is_cluster_mode() {
-            let cmd = SystemCommand::DropTable {
+            let cmd = MetaCommand::DropTable {
                 table_id: table_id.clone(),
             };
             self.app_context
                 .executor()
-                .execute_system(cmd)
+                .execute_meta(cmd)
                 .await
                 .map_err(|e| {
                     KalamDbError::ExecutionError(format!(

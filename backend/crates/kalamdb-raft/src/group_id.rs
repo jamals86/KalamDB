@@ -1,9 +1,16 @@
 //! Raft Group ID definitions
 //!
-//! KalamDB uses Multi-Raft with 36 groups:
-//! - 3 metadata groups (system, users, jobs)
+//! KalamDB uses Multi-Raft with 34 groups (post-018 consolidation):
+//! - 1 unified metadata group (Meta)
 //! - 32 user data shards (user tables + live_queries)
 //! - 1 shared data shard (shared tables)
+//!
+//! ## Legacy Groups (deprecated, kept for migration)
+//!
+//! Previously there were 3 separate metadata groups:
+//! - MetaSystem, MetaUsers, MetaJobs
+//!
+//! These are now consolidated into a single `Meta` group.
 
 use kalamdb_commons::models::UserId;
 use kalamdb_commons::TableId;
@@ -21,15 +28,23 @@ pub const DEFAULT_SHARED_SHARDS: u32 = 1;
 /// Identifies a Raft group in the Multi-Raft architecture.
 ///
 /// Each group has its own Raft instance with independent leader election.
+///
+/// ## Post-018 Structure
+///
+/// - **Meta**: Unified metadata group (namespaces, tables, storages, users, jobs)
+/// - **DataUserShard(0..31)**: User table data shards
+/// - **DataSharedShard(0)**: Shared table data shard
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub enum GroupId {
-    // === Metadata Groups (3) ===
-    /// System metadata: namespaces, tables, storages
-    MetaSystem,
-    /// User accounts and authentication
-    MetaUsers,
-    /// Background jobs coordination
-    MetaJobs,
+    // === Unified Metadata Group (1) - Post-018 ===
+    /// Unified metadata: namespaces, tables, storages, users, jobs
+    /// 
+    /// This replaces the three separate groups (MetaSystem, MetaUsers, MetaJobs).
+    /// Benefits:
+    /// - Single watermark (`meta_index`) for data group ordering
+    /// - No cross-metadata race conditions  
+    /// - Simpler catch-up coordination
+    Meta,
 
     // === Data Groups (33) ===
     /// User table data shard (0..31)
@@ -41,12 +56,17 @@ pub enum GroupId {
 }
 
 impl GroupId {
-    /// Total number of metadata groups
-    pub const METADATA_GROUP_COUNT: usize = 3;
+    /// Total number of metadata groups (post-018: just 1)
+    pub const METADATA_GROUP_COUNT: usize = 1;
 
     /// Returns true if this is a metadata group
     pub fn is_metadata(&self) -> bool {
-        matches!(self, GroupId::MetaSystem | GroupId::MetaUsers | GroupId::MetaJobs)
+        matches!(self, GroupId::Meta)
+    }
+
+    /// Returns true if this is the unified Meta group
+    pub fn is_unified_meta(&self) -> bool {
+        matches!(self, GroupId::Meta)
     }
 
     /// Returns true if this is a data group
@@ -57,9 +77,7 @@ impl GroupId {
     /// Returns the partition prefix for RocksDB column family naming
     pub fn partition_prefix(&self) -> String {
         match self {
-            GroupId::MetaSystem => "raft_meta_system".to_string(),
-            GroupId::MetaUsers => "raft_meta_users".to_string(),
-            GroupId::MetaJobs => "raft_meta_jobs".to_string(),
+            GroupId::Meta => "raft_meta".to_string(),
             GroupId::DataUserShard(id) => format!("raft_data_user_{:02}", id),
             GroupId::DataSharedShard(id) => format!("raft_data_shared_{:02}", id),
         }
@@ -68,9 +86,7 @@ impl GroupId {
     /// Returns a numeric ID for openraft (must be unique across all groups)
     pub fn as_u64(&self) -> u64 {
         match self {
-            GroupId::MetaSystem => 0,
-            GroupId::MetaUsers => 1,
-            GroupId::MetaJobs => 2,
+            GroupId::Meta => 10,  // New ID for unified Meta
             GroupId::DataUserShard(id) => 100 + (*id as u64),
             GroupId::DataSharedShard(id) => 200 + (*id as u64),
         }
@@ -79,18 +95,21 @@ impl GroupId {
     /// Create from numeric ID
     pub fn from_u64(id: u64) -> Option<Self> {
         match id {
-            0 => Some(GroupId::MetaSystem),
-            1 => Some(GroupId::MetaUsers),
-            2 => Some(GroupId::MetaJobs),
+            10 => Some(GroupId::Meta),
             100..=131 => Some(GroupId::DataUserShard((id - 100) as u32)),
             200..=231 => Some(GroupId::DataSharedShard((id - 200) as u32)),
             _ => None,
         }
     }
 
-    /// Returns all metadata group IDs
+    /// Returns the unified metadata group ID
+    pub fn meta() -> GroupId {
+        GroupId::Meta
+    }
+
+    /// Returns all metadata group IDs (post-018: just Meta)
     pub fn all_metadata() -> Vec<GroupId> {
-        vec![GroupId::MetaSystem, GroupId::MetaUsers, GroupId::MetaJobs]
+        vec![GroupId::Meta]
     }
 
     /// Returns all user data shard IDs for given shard count
@@ -103,7 +122,7 @@ impl GroupId {
         (0..num_shards).map(GroupId::DataSharedShard).collect()
     }
 
-    /// Returns all group IDs for given configuration
+    /// Returns all group IDs for given configuration (post-018)
     pub fn all_groups(num_user_shards: u32, num_shared_shards: u32) -> Vec<GroupId> {
         let mut groups = Self::all_metadata();
         groups.extend(Self::all_user_shards(num_user_shards));
@@ -115,9 +134,7 @@ impl GroupId {
 impl fmt::Display for GroupId {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            GroupId::MetaSystem => write!(f, "meta:system"),
-            GroupId::MetaUsers => write!(f, "meta:users"),
-            GroupId::MetaJobs => write!(f, "meta:jobs"),
+            GroupId::Meta => write!(f, "meta"),
             GroupId::DataUserShard(id) => write!(f, "data:user:{:02}", id),
             GroupId::DataSharedShard(id) => write!(f, "data:shared:{:02}", id),
         }
@@ -129,9 +146,7 @@ impl FromStr for GroupId {
 
     fn from_str(s: &str) -> Result<Self, Self::Err> {
         match s {
-            "meta:system" => Ok(GroupId::MetaSystem),
-            "meta:users" => Ok(GroupId::MetaUsers),
-            "meta:jobs" => Ok(GroupId::MetaJobs),
+            "meta" => Ok(GroupId::Meta),
             _ if s.starts_with("data:user:") => {
                 let id_str = s.strip_prefix("data:user:").unwrap();
                 id_str.parse::<u32>()
@@ -243,16 +258,14 @@ mod tests {
 
     #[test]
     fn test_group_id_display() {
-        assert_eq!(GroupId::MetaSystem.to_string(), "meta:system");
-        assert_eq!(GroupId::MetaUsers.to_string(), "meta:users");
-        assert_eq!(GroupId::MetaJobs.to_string(), "meta:jobs");
+        assert_eq!(GroupId::Meta.to_string(), "meta");
         assert_eq!(GroupId::DataUserShard(5).to_string(), "data:user:05");
         assert_eq!(GroupId::DataSharedShard(0).to_string(), "data:shared:00");
     }
 
     #[test]
     fn test_group_id_roundtrip() {
-        for id in [0u64, 1, 2, 100, 115, 131, 200] {
+        for id in [10u64, 100, 115, 131, 200] {
             let group = GroupId::from_u64(id).unwrap();
             assert_eq!(group.as_u64(), id);
         }
@@ -261,7 +274,15 @@ mod tests {
     #[test]
     fn test_all_groups_count() {
         let groups = GroupId::all_groups(32, 1);
-        assert_eq!(groups.len(), 36); // 3 metadata + 32 user + 1 shared
+        // 1 metadata (Meta) + 32 user + 1 shared = 34
+        assert_eq!(groups.len(), 34);
+    }
+
+    #[test]
+    fn test_meta_group() {
+        assert!(GroupId::Meta.is_metadata());
+        assert!(GroupId::Meta.is_unified_meta());
+        assert!(!GroupId::Meta.is_data());
     }
 
     #[test]
@@ -294,7 +315,7 @@ mod tests {
 
     #[test]
     fn test_partition_prefix() {
-        assert_eq!(GroupId::MetaSystem.partition_prefix(), "raft_meta_system");
+        assert_eq!(GroupId::Meta.partition_prefix(), "raft_meta");
         assert_eq!(GroupId::DataUserShard(5).partition_prefix(), "raft_data_user_05");
         assert_eq!(GroupId::DataSharedShard(0).partition_prefix(), "raft_data_shared_00");
     }

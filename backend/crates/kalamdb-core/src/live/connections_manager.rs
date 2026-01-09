@@ -336,7 +336,7 @@ impl ConnectionsManager {
             registry_clone.run_heartbeat_checker().await;
         });
 
-        info!(
+        debug!(
             "ConnectionsManager initialized (node={}, client_timeout={}s, auth_timeout={}s)",
             registry.node_id,
             client_timeout.as_secs(),

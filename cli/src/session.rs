@@ -23,6 +23,9 @@ use std::collections::{HashMap, HashSet};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
+// Fallback system tables for autocomplete when the server does not return them
+const SYSTEM_TABLES: &[&str] = &["users", "jobs", "namespaces", "storages", "live_queries", "tables", "audit_logs", "manifest", "stats", "settings", "server_logs", "cluster"];
+
 use crate::{
     completer::{AutoCompleter, SQL_KEYWORDS, SQL_TYPES},
     error::{CLIError, Result},
@@ -182,20 +185,32 @@ impl CLISession {
         
         let client = builder.build()?;
 
-        // Try to fetch server info from health check
+        // Try to fetch server info from health check (sanitize empty strings to None)
+        fn normalize_opt_string(s: String) -> Option<String> {
+            let trimmed = s.trim();
+            if trimmed.is_empty() {
+                None
+            } else {
+                Some(trimmed.to_string())
+            }
+        }
+
         let (server_version, server_api_version, server_build_date, connected) =
             match client.health_check().await {
-                Ok(health) => {
-                    (
-                    Some(health.version),
-                    Some(health.api_version),
-                    health.build_date,
+                Ok(health) => (
+                    normalize_opt_string(health.version),
+                    normalize_opt_string(health.api_version),
+                    health.build_date.and_then(|s| {
+                        let trimmed = s.trim();
+                        if trimmed.is_empty() {
+                            None
+                        } else {
+                            Some(trimmed.to_string())
+                        }
+                    }),
                     true,
-                )
-                },
-                Err(_e) => {
-                    (None, None, None, false)
-                },
+                ),
+                Err(_e) => (None, None, None, false),
             };
 
         // Use provided username or extract from auth provider
@@ -783,7 +798,7 @@ impl CLISession {
 
     /// Fetch namespaces, table names, and column names from server and update completer
     async fn refresh_tables(&mut self, completer: &mut AutoCompleter) -> Result<()> {
-        // Query namespaces first
+        // Query namespaces first from system.namespaces
         let namespaces_res = if self.animations {
             let pb = ProgressBar::new_spinner();
             pb.set_style(
@@ -805,11 +820,10 @@ impl CLISession {
                 .await
         };
 
+        let mut namespaces: Vec<String> = Vec::new();
         if let Ok(ns_resp) = namespaces_res {
-            let mut namespaces = Vec::new();
             if let Some(result) = ns_resp.results.first() {
                 if let Some(rows) = &result.rows {
-                    // Find the index of "name" column in schema
                     let name_idx = result.schema.iter().position(|f| f.name == "name");
                     for row in rows {
                         if let Some(idx) = name_idx {
@@ -820,10 +834,9 @@ impl CLISession {
                     }
                 }
             }
-            completer.set_namespaces(namespaces);
         }
 
-        // Query system.tables to get table names and namespace mapping
+        // Query system.tables to get user table names and namespace mapping
         let response = if self.animations {
             let pb = ProgressBar::new_spinner();
             pb.set_style(
@@ -851,10 +864,9 @@ impl CLISession {
             std::collections::HashMap::new();
         if let Some(result) = response.results.first() {
             if let Some(rows) = &result.rows {
-                // Find column indices in schema
                 let table_name_idx = result.schema.iter().position(|f| f.name == "table_name");
                 let ns_idx = result.schema.iter().position(|f| f.name == "namespace_id");
-                
+
                 for row in rows {
                     let name_opt = table_name_idx
                         .and_then(|idx| row.get(idx))
@@ -875,8 +887,75 @@ impl CLISession {
             }
         }
 
+        // Also fetch system/information_schema tables from information_schema.tables for autocomplete
+        let sys_tables_res = self
+            .client
+            .execute_query(
+                "SELECT table_schema, table_name FROM information_schema.tables WHERE table_schema IN ('system', 'information_schema') ORDER BY table_schema, table_name",
+                None,
+                None,
+            )
+            .await;
+
+        if let Ok(sys_resp) = sys_tables_res {
+            if let Some(result) = sys_resp.results.first() {
+                if let Some(rows) = &result.rows {
+                    let table_name_idx = result.schema.iter().position(|f| f.name == "table_name");
+                    let schema_idx = result.schema.iter().position(|f| f.name == "table_schema");
+
+                    for row in rows {
+                        let name_opt = table_name_idx
+                            .and_then(|idx| row.get(idx))
+                            .and_then(|v| v.as_str());
+                        let schema_opt = schema_idx
+                            .and_then(|idx| row.get(idx))
+                            .and_then(|v| v.as_str());
+                        if let (Some(name), Some(schema)) = (name_opt, schema_opt) {
+                            // Add to table_names if not already present
+                            if !table_names.contains(&name.to_string()) {
+                                table_names.push(name.to_string());
+                            }
+                            // Add to ns_map for namespace.table autocomplete
+                            ns_map
+                                .entry(schema.to_string())
+                                .or_default()
+                                .push(name.to_string());
+                            // Add namespace if not already present
+                            if !namespaces.contains(&schema.to_string()) {
+                                namespaces.push(schema.to_string());
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        // Always ensure system namespace and known system tables are present for autocomplete
+        {
+            let sys_ns = "system".to_string();
+            if !namespaces.contains(&sys_ns) {
+                namespaces.push(sys_ns.clone());
+            }
+
+            for tbl in SYSTEM_TABLES {
+                // Add to global table list
+                if !table_names.contains(&tbl.to_string()) {
+                    table_names.push(tbl.to_string());
+                }
+                // Add to namespace map
+                ns_map.entry(sys_ns.clone()).or_default().push(tbl.to_string());
+            }
+        }
+
+        // Sort namespaces
+        namespaces.sort();
+        namespaces.dedup();
+
+        completer.set_namespaces(namespaces);
         completer.set_tables(table_names);
-        for (ns, tables) in ns_map {
+        for (ns, mut tables) in ns_map {
+            tables.sort();
+            tables.dedup();
             completer.set_namespace_tables(ns, tables);
         }
         completer.clear_columns();

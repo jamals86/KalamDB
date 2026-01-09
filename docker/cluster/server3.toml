@@ -8,7 +8,6 @@ port = 8080
 workers = 0
 enable_http2 = true
 api_version = "v1"
-node_id = "node3"
 
 [storage]
 rocksdb_path = "/data/rocksdb"
@@ -90,6 +89,7 @@ disable_common_password_check = false
 jwt_secret = "cluster-dev-secret-change-in-production-minimum-32-chars"
 jwt_trusted_issuers = ""
 allow_remote_access = true
+root_password = "kalamdb123"
 
 [shutdown]
 [shutdown.flush]

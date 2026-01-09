@@ -10,8 +10,7 @@ use kalamdb_commons::models::{NodeId, UserId};
 
 use crate::cluster_types::NodeStatus;
 use crate::commands::{
-    DataResponse, JobsCommand, JobsResponse, SharedDataCommand, SystemCommand,
-    SystemResponse, UserDataCommand, UsersCommand, UsersResponse,
+    DataResponse, MetaCommand, MetaResponse, SharedDataCommand, UserDataCommand,
 };
 use crate::error::Result;
 use crate::executor::{ClusterInfo, ClusterNodeInfo, CommandExecutor};
@@ -82,104 +81,103 @@ impl Default for DirectExecutor {
 
 #[async_trait]
 impl CommandExecutor for DirectExecutor {
-    async fn execute_system(&self, cmd: SystemCommand) -> Result<SystemResponse> {
-        // In standalone mode, we would call the providers directly here.
-        // For now, return a stub response until wiring is complete.
+    async fn execute_meta(&self, cmd: MetaCommand) -> Result<MetaResponse> {
+        // In standalone mode, commands are executed directly without Raft consensus.
+        // For now, return a stub response until full wiring is complete.
+        
         match cmd {
-            SystemCommand::CreateNamespace { namespace_id, .. } => {
-                // TODO: Call self.registry.namespaces().create_namespace_async(...)
+            // Namespace operations
+            MetaCommand::CreateNamespace { namespace_id, .. } => {
                 log::debug!("DirectExecutor: CreateNamespace {:?}", namespace_id);
-                Ok(SystemResponse::NamespaceCreated { namespace_id })
+                std::result::Result::Ok(MetaResponse::NamespaceCreated { namespace_id })
             }
-            SystemCommand::DeleteNamespace { namespace_id } => {
+            MetaCommand::DeleteNamespace { namespace_id } => {
                 log::debug!("DirectExecutor: DeleteNamespace {:?}", namespace_id);
-                Ok(SystemResponse::Ok)
+                std::result::Result::Ok(MetaResponse::Ok)
             }
-            SystemCommand::CreateTable { table_id, .. } => {
+            
+            // Table operations
+            MetaCommand::CreateTable { table_id, .. } => {
                 log::debug!("DirectExecutor: CreateTable {:?}", table_id);
-                Ok(SystemResponse::TableCreated { table_id })
+                std::result::Result::Ok(MetaResponse::TableCreated { table_id })
             }
-            SystemCommand::AlterTable { table_id, .. } => {
+            MetaCommand::AlterTable { table_id, .. } => {
                 log::debug!("DirectExecutor: AlterTable {:?}", table_id);
-                Ok(SystemResponse::Ok)
+                std::result::Result::Ok(MetaResponse::Ok)
             }
-            SystemCommand::DropTable { table_id } => {
+            MetaCommand::DropTable { table_id } => {
                 log::debug!("DirectExecutor: DropTable {:?}", table_id);
-                Ok(SystemResponse::Ok)
+                std::result::Result::Ok(MetaResponse::Ok)
             }
-            SystemCommand::RegisterStorage { storage_id, .. } => {
+            
+            // Storage operations
+            MetaCommand::RegisterStorage { storage_id, .. } => {
                 log::debug!("DirectExecutor: RegisterStorage {}", storage_id);
-                Ok(SystemResponse::Ok)
+                std::result::Result::Ok(MetaResponse::Ok)
             }
-            SystemCommand::UnregisterStorage { storage_id } => {
+            MetaCommand::UnregisterStorage { storage_id } => {
                 log::debug!("DirectExecutor: UnregisterStorage {}", storage_id);
-                Ok(SystemResponse::Ok)
+                std::result::Result::Ok(MetaResponse::Ok)
             }
-        }
-    }
-
-    async fn execute_users(&self, cmd: UsersCommand) -> Result<UsersResponse> {
-        match cmd {
-            UsersCommand::CreateUser { user } => {
+            
+            // User operations
+            MetaCommand::CreateUser { user, .. } => {
                 log::debug!("DirectExecutor: CreateUser {:?}", user.id);
-                Ok(UsersResponse::UserCreated { user_id: user.id })
+                std::result::Result::Ok(MetaResponse::UserCreated { user_id: user.id })
             }
-            UsersCommand::UpdateUser { user } => {
+            MetaCommand::UpdateUser { user } => {
                 log::debug!("DirectExecutor: UpdateUser {:?}", user.id);
-                Ok(UsersResponse::Ok)
+                std::result::Result::Ok(MetaResponse::Ok)
             }
-            UsersCommand::DeleteUser { user_id, .. } => {
+            MetaCommand::DeleteUser { user_id, .. } => {
                 log::debug!("DirectExecutor: DeleteUser {:?}", user_id);
-                Ok(UsersResponse::Ok)
+                std::result::Result::Ok(MetaResponse::Ok)
             }
-            UsersCommand::RecordLogin { user_id, .. } => {
+            MetaCommand::RecordLogin { user_id, .. } => {
                 log::debug!("DirectExecutor: RecordLogin {:?}", user_id);
-                Ok(UsersResponse::Ok)
+                std::result::Result::Ok(MetaResponse::Ok)
             }
-            UsersCommand::SetLocked { user_id, .. } => {
-                log::debug!("DirectExecutor: SetLocked {:?}", user_id);
-                Ok(UsersResponse::Ok)
+            MetaCommand::SetUserLocked { user_id, .. } => {
+                log::debug!("DirectExecutor: SetUserLocked {:?}", user_id);
+                std::result::Result::Ok(MetaResponse::Ok)
             }
-        }
-    }
-
-    async fn execute_jobs(&self, cmd: JobsCommand) -> Result<JobsResponse> {
-        match cmd {
-            JobsCommand::CreateJob { job_id, .. } => {
+            
+            // Job operations
+            MetaCommand::CreateJob { job_id, .. } => {
                 log::debug!("DirectExecutor: CreateJob {}", job_id);
-                Ok(JobsResponse::JobCreated { job_id })
+                std::result::Result::Ok(MetaResponse::JobCreated { job_id })
             }
-            JobsCommand::ClaimJob { job_id, node_id, .. } => {
+            MetaCommand::ClaimJob { job_id, node_id, .. } => {
                 log::debug!("DirectExecutor: ClaimJob {} by node {}", job_id, node_id);
-                Ok(JobsResponse::JobClaimed { job_id, node_id })
+                std::result::Result::Ok(MetaResponse::JobClaimed { job_id, node_id })
             }
-            JobsCommand::UpdateJobStatus { job_id, .. } => {
+            MetaCommand::UpdateJobStatus { job_id, .. } => {
                 log::debug!("DirectExecutor: UpdateJobStatus {}", job_id);
-                Ok(JobsResponse::Ok)
+                std::result::Result::Ok(MetaResponse::Ok)
             }
-            JobsCommand::CompleteJob { job_id, .. } => {
+            MetaCommand::CompleteJob { job_id, .. } => {
                 log::debug!("DirectExecutor: CompleteJob {}", job_id);
-                Ok(JobsResponse::Ok)
+                std::result::Result::Ok(MetaResponse::Ok)
             }
-            JobsCommand::FailJob { job_id, .. } => {
+            MetaCommand::FailJob { job_id, .. } => {
                 log::debug!("DirectExecutor: FailJob {}", job_id);
-                Ok(JobsResponse::Ok)
+                std::result::Result::Ok(MetaResponse::Ok)
             }
-            JobsCommand::ReleaseJob { job_id, .. } => {
+            MetaCommand::ReleaseJob { job_id, .. } => {
                 log::debug!("DirectExecutor: ReleaseJob {}", job_id);
-                Ok(JobsResponse::Ok)
+                std::result::Result::Ok(MetaResponse::Ok)
             }
-            JobsCommand::CancelJob { job_id, .. } => {
+            MetaCommand::CancelJob { job_id, .. } => {
                 log::debug!("DirectExecutor: CancelJob {}", job_id);
-                Ok(JobsResponse::Ok)
+                std::result::Result::Ok(MetaResponse::Ok)
             }
-            JobsCommand::CreateSchedule { schedule_id, .. } => {
+            MetaCommand::CreateSchedule { schedule_id, .. } => {
                 log::debug!("DirectExecutor: CreateSchedule {}", schedule_id);
-                Ok(JobsResponse::Ok)
+                std::result::Result::Ok(MetaResponse::Ok)
             }
-            JobsCommand::DeleteSchedule { schedule_id } => {
+            MetaCommand::DeleteSchedule { schedule_id } => {
                 log::debug!("DirectExecutor: DeleteSchedule {}", schedule_id);
-                Ok(JobsResponse::Ok)
+                std::result::Result::Ok(MetaResponse::Ok)
             }
         }
     }

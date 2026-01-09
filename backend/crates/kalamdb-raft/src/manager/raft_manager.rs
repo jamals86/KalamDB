@@ -1,9 +1,7 @@
 //! Raft Manager - Central orchestration for all Raft groups
 //!
 //! Manages N Raft groups (configurable shards):
-//! - MetaSystem: System-wide metadata (namespaces, tables, storages)
-//! - MetaUsers: User/auth metadata
-//! - MetaJobs: Job queue and scheduling
+//! - Meta: Unified metadata (namespaces, tables, storages, users, jobs)
 //! - DataUserShard(0..N): User table data shards (default 32)
 //! - DataSharedShard(0..M): Shared table data shards (default 1)
 
@@ -20,8 +18,7 @@ use crate::config::ReplicationMode;
 use crate::manager::config::RaftManagerConfig;
 use crate::manager::RaftGroup;
 use crate::state_machine::{
-    JobsStateMachine, SharedDataStateMachine, SystemStateMachine, UserDataStateMachine,
-    UsersStateMachine,
+    MetaStateMachine, SharedDataStateMachine, UserDataStateMachine,
 };
 use crate::state_machine::KalamStateMachine;
 use crate::storage::KalamNode;
@@ -37,14 +34,8 @@ pub struct RaftManager {
     /// This node's ID
     node_id: NodeId,
     
-    /// System metadata group
-    meta_system: Arc<RaftGroup<SystemStateMachine>>,
-    
-    /// Users metadata group
-    meta_users: Arc<RaftGroup<UsersStateMachine>>,
-    
-    /// Jobs metadata group
-    meta_jobs: Arc<RaftGroup<JobsStateMachine>>,
+    /// Unified metadata group (namespaces, tables, storages, users, jobs)
+    meta: Arc<RaftGroup<MetaStateMachine>>,
     
     /// User data shards (configurable, default 32)
     user_data_shards: Vec<Arc<RaftGroup<UserDataStateMachine>>>,
@@ -82,20 +73,10 @@ impl RaftManager {
         let user_shards_count = config.user_shards;
         let shared_shards_count = config.shared_shards;
 
-        // Create meta groups
-        let meta_system = Arc::new(RaftGroup::new(
-            GroupId::MetaSystem,
-            SystemStateMachine::new(),
-        ));
-
-        let meta_users = Arc::new(RaftGroup::new(
-            GroupId::MetaUsers,
-            UsersStateMachine::new(),
-        ));
-
-        let meta_jobs = Arc::new(RaftGroup::new(
-            GroupId::MetaJobs,
-            JobsStateMachine::new(),
+        // Create unified meta group
+        let meta = Arc::new(RaftGroup::new(
+            GroupId::Meta,
+            MetaStateMachine::new(),
         ));
 
         // Create user data shards (configurable)
@@ -120,9 +101,7 @@ impl RaftManager {
 
         Self {
             node_id: config.node_id,
-            meta_system,
-            meta_users,
-            meta_jobs,
+            meta,
             user_data_shards,
             shared_data_shards,
             started: RwLock::new(false),
@@ -153,22 +132,10 @@ impl RaftManager {
                 .map_err(|e| RaftError::Storage(format!("Failed to create raft partition: {}", e)))?;
         }
 
-        // Create meta groups with persistent storage
-        let meta_system = Arc::new(RaftGroup::new_persistent(
-            GroupId::MetaSystem,
-            SystemStateMachine::new(),
-            backend.clone(),
-        )?);
-
-        let meta_users = Arc::new(RaftGroup::new_persistent(
-            GroupId::MetaUsers,
-            UsersStateMachine::new(),
-            backend.clone(),
-        )?);
-
-        let meta_jobs = Arc::new(RaftGroup::new_persistent(
-            GroupId::MetaJobs,
-            JobsStateMachine::new(),
+        // Create unified meta group with persistent storage
+        let meta = Arc::new(RaftGroup::new_persistent(
+            GroupId::Meta,
+            MetaStateMachine::new(),
             backend.clone(),
         )?);
 
@@ -203,10 +170,8 @@ impl RaftManager {
         );
 
         Ok(Self {
+            meta,
             node_id: config.node_id,
-            meta_system,
-            meta_users,
-            meta_jobs,
             user_data_shards,
             shared_data_shards,
             started: RwLock::new(false),
@@ -226,9 +191,9 @@ impl RaftManager {
         self.node_id.as_u64()
     }
 
-    /// Get OpenRaft metrics for the MetaSystem group
-    pub fn meta_system_metrics(&self) -> Option<RaftMetrics<u64, KalamNode>> {
-        self.meta_system.metrics()
+    /// Get OpenRaft metrics for the Meta group
+    pub fn meta_metrics(&self) -> Option<RaftMetrics<u64, KalamNode>> {
+        self.meta.metrics()
     }
     
     /// Check if the manager has been started
@@ -238,7 +203,7 @@ impl RaftManager {
     
     /// Start all Raft groups
     ///
-    /// This initializes all 36 Raft groups and begins participating in consensus.
+    /// This initializes all Raft groups and begins participating in consensus.
     pub async fn start(&self) -> Result<(), RaftError> {
         if self.is_started() {
             log::warn!("RaftManager already started, skipping");
@@ -253,7 +218,7 @@ impl RaftManager {
         log::info!("[CLUSTER] API Address: {}", self.config.api_addr);
         log::info!("[CLUSTER] Replication Mode: {} (timeout: {:?})", 
             self.config.replication_mode, self.config.replication_timeout);
-        log::info!("[CLUSTER] Total Raft Groups: {} (3 meta + {} user shards + {} shared shards)", 
+        log::info!("[CLUSTER] Total Raft Groups: {} (1 meta + {} user shards + {} shared shards)", 
             self.group_count(), self.user_shards_count, self.shared_shards_count);
         log::info!("[CLUSTER] Peers configured: {}", self.config.peers.len());
         for peer in &self.config.peers {
@@ -267,14 +232,10 @@ impl RaftManager {
             self.register_peer(peer.node_id, peer.rpc_addr.clone(), peer.api_addr.clone());
         }
         
-        // Start all meta groups
-        log::info!("Starting meta groups...");
-        self.meta_system.start(self.node_id.as_u64(), &self.config).await?;
-        log::debug!("  ✓ MetaSystem group started");
-        self.meta_users.start(self.node_id.as_u64(), &self.config).await?;
-        log::debug!("  ✓ MetaUsers group started");
-        self.meta_jobs.start(self.node_id.as_u64(), &self.config).await?;
-        log::debug!("  ✓ MetaJobs group started");
+        // Start unified meta group
+        log::info!("Starting unified meta group...");
+        self.meta.start(self.node_id.as_u64(), &self.config).await?;
+        log::debug!("  ✓ Meta group started");
         
         // Start all user data shards
         log::info!("Starting {} user data shards...", self.user_data_shards.len());
@@ -323,14 +284,10 @@ impl RaftManager {
         log::info!("[CLUSTER] Node {} elected as LEADER for all {} groups (bootstrap)", 
             self.node_id, self.group_count());
         
-        // Initialize all groups
-        log::info!("Initializing meta groups...");
-        self.meta_system.initialize(self.node_id.as_u64(), self_node.clone()).await?;
-        log::debug!("  ✓ MetaSystem initialized");
-        self.meta_users.initialize(self.node_id.as_u64(), self_node.clone()).await?;
-        log::debug!("  ✓ MetaUsers initialized");
-        self.meta_jobs.initialize(self.node_id.as_u64(), self_node.clone()).await?;
-        log::debug!("  ✓ MetaJobs initialized");
+        // Initialize unified meta group
+        log::info!("Initializing unified meta group...");
+        self.meta.initialize(self.node_id.as_u64(), self_node.clone()).await?;
+        log::debug!("  ✓ Meta initialized");
         
         log::info!("Initializing user data shards...");
         for (i, shard) in self.user_data_shards.iter().enumerate() {
@@ -349,18 +306,44 @@ impl RaftManager {
         log::info!("║         This node is now the leader of all {} groups              ║", self.group_count());
         log::info!("╚═══════════════════════════════════════════════════════════════════╝");
         
-        // After initialization, add peer nodes to the cluster
+        // After initialization, add peer nodes to the cluster with retry logic
+        // Peers may not be ready immediately (RPC server starting up), so we retry with backoff
         if !self.config.peers.is_empty() {
-            log::info!("Adding {} peer nodes to cluster...", self.config.peers.len());
+            log::info!("Adding {} peer nodes to cluster (with retry)...", self.config.peers.len());
+            
+            const MAX_RETRIES: u32 = 30;
+            const INITIAL_DELAY_MS: u64 = 500;
+            const MAX_DELAY_MS: u64 = 5000;
+            
             for peer in &self.config.peers {
                 log::info!("  Adding peer node_id={} (rpc={}, api={})...", 
                     peer.node_id, peer.rpc_addr, peer.api_addr);
-                match self.add_node(peer.node_id, peer.rpc_addr.clone(), peer.api_addr.clone()).await {
-                    Ok(_) => log::info!("    ✓ Peer {} added successfully", peer.node_id),
-                    Err(e) => log::error!("    ✗ Failed to add peer {}: {}", peer.node_id, e),
+                
+                let mut attempt = 0;
+                let mut delay_ms = INITIAL_DELAY_MS;
+                
+                loop {
+                    attempt += 1;
+                    match self.add_node(peer.node_id, peer.rpc_addr.clone(), peer.api_addr.clone()).await {
+                        Ok(_) => {
+                            log::info!("    ✓ Peer {} added successfully (attempt {})", peer.node_id, attempt);
+                            break;
+                        }
+                        Err(e) => {
+                            if attempt >= MAX_RETRIES {
+                                log::error!("    ✗ Failed to add peer {} after {} attempts: {}", 
+                                    peer.node_id, MAX_RETRIES, e);
+                                break;
+                            }
+                            log::warn!("    ⏳ Peer {} not ready (attempt {}/{}): {} - retrying in {}ms", 
+                                peer.node_id, attempt, MAX_RETRIES, e, delay_ms);
+                            tokio::time::sleep(Duration::from_millis(delay_ms)).await;
+                            delay_ms = (delay_ms * 2).min(MAX_DELAY_MS);
+                        }
+                    }
                 }
             }
-            log::info!("Peer nodes added to cluster");
+            log::info!("Peer nodes processing complete");
         }
         
         Ok(())
@@ -398,9 +381,9 @@ impl RaftManager {
         
         // Add to all groups as learner first
         log::info!("[CLUSTER] Adding node {} as learner to all {} Raft groups...", node_id, self.group_count());
-        add_learner_and_wait(&self.meta_system, node_id_u64, &node, self.config.replication_timeout).await?;
-        add_learner_and_wait(&self.meta_users, node_id_u64, &node, self.config.replication_timeout).await?;
-        add_learner_and_wait(&self.meta_jobs, node_id_u64, &node, self.config.replication_timeout).await?;
+        
+        // Add to unified meta group
+        add_learner_and_wait(&self.meta, node_id_u64, &node, self.config.replication_timeout).await?;
         
         for shard in &self.user_data_shards {
             add_learner_and_wait(shard, node_id_u64, &node, self.config.replication_timeout).await?;
@@ -414,9 +397,9 @@ impl RaftManager {
             "[CLUSTER] Promoting node {} to voter on all groups...",
             node_id
         );
-        promote_learner(&self.meta_system, node_id_u64).await?;
-        promote_learner(&self.meta_users, node_id_u64).await?;
-        promote_learner(&self.meta_jobs, node_id_u64).await?;
+        
+        // Promote on unified meta group
+        promote_learner(&self.meta, node_id_u64).await?;
 
         for shard in &self.user_data_shards {
             promote_learner(shard, node_id_u64).await?;
@@ -438,9 +421,7 @@ impl RaftManager {
     /// Get the group for a given GroupId
     fn _get_group_id(&self, group_id: GroupId) -> Result<(), RaftError> {
         match group_id {
-            GroupId::MetaSystem => Ok(()),
-            GroupId::MetaUsers => Ok(()),
-            GroupId::MetaJobs => Ok(()),
+            GroupId::Meta => Ok(()),
             GroupId::DataUserShard(shard) if shard < self.user_shards_count => Ok(()),
             GroupId::DataSharedShard(shard) if shard < self.shared_shards_count => Ok(()),
             _ => Err(RaftError::InvalidGroup(group_id.to_string())),
@@ -450,9 +431,7 @@ impl RaftManager {
     /// Check if this node is leader for a given group
     pub fn is_leader(&self, group_id: GroupId) -> bool {
         match group_id {
-            GroupId::MetaSystem => self.meta_system.is_leader(),
-            GroupId::MetaUsers => self.meta_users.is_leader(),
-            GroupId::MetaJobs => self.meta_jobs.is_leader(),
+            GroupId::Meta => self.meta.is_leader(),
             GroupId::DataUserShard(shard) if shard < self.user_shards_count => {
                 self.user_data_shards[shard as usize].is_leader()
             }
@@ -466,9 +445,7 @@ impl RaftManager {
     /// Get the current leader for a group
     pub fn current_leader(&self, group_id: GroupId) -> Option<NodeId> {
         let leader_u64 = match group_id {
-            GroupId::MetaSystem => self.meta_system.current_leader(),
-            GroupId::MetaUsers => self.meta_users.current_leader(),
-            GroupId::MetaJobs => self.meta_jobs.current_leader(),
+            GroupId::Meta => self.meta.current_leader(),
             GroupId::DataUserShard(shard) if shard < self.user_shards_count => {
                 self.user_data_shards[shard as usize].current_leader()
             }
@@ -478,6 +455,15 @@ impl RaftManager {
             _ => None,
         };
         leader_u64.map(NodeId::from)
+    }
+    
+    /// Get the current Meta group's last applied index
+    /// 
+    /// This is the watermark used for Meta→Data ordering:
+    /// - Leaders stamp data commands with this index at proposal time
+    /// - Followers buffer data commands until their local meta catches up
+    pub fn current_meta_index(&self) -> u64 {
+        self.meta.storage().state_machine().last_applied_index()
     }
     
     /// Internal helper to propose with replication mode awareness
@@ -507,30 +493,17 @@ impl RaftManager {
         }
     }
     
+    /// Propose a command to the unified Meta group (with leader forwarding)
+    ///
+    /// If this node is a follower, the request is automatically forwarded to the leader.
+    /// Respects the configured replication_mode (Quorum or All).
+    pub async fn propose_meta(&self, command: Vec<u8>) -> Result<Vec<u8>, RaftError> {
+        self.propose_to_group(&self.meta, command).await
+    }
+    
     /// Propose a command to the MetaSystem group (with leader forwarding)
     ///
     /// If this node is a follower, the request is automatically forwarded to the leader.
-    /// Respects the configured replication_mode (Quorum or All).
-    pub async fn propose_system(&self, command: Vec<u8>) -> Result<Vec<u8>, RaftError> {
-        self.propose_to_group(&self.meta_system, command).await
-    }
-    
-    /// Propose a command to the MetaUsers group (with leader forwarding)
-    ///
-    /// If this node is a follower, the request is automatically forwarded to the leader.
-    /// Respects the configured replication_mode (Quorum or All).
-    pub async fn propose_users(&self, command: Vec<u8>) -> Result<Vec<u8>, RaftError> {
-        self.propose_to_group(&self.meta_users, command).await
-    }
-    
-    /// Propose a command to the MetaJobs group (with leader forwarding)
-    ///
-    /// If this node is a follower, the request is automatically forwarded to the leader.
-    /// Respects the configured replication_mode (Quorum or All).
-    pub async fn propose_jobs(&self, command: Vec<u8>) -> Result<Vec<u8>, RaftError> {
-        self.propose_to_group(&self.meta_jobs, command).await
-    }
-    
     /// Propose a command to a user data shard (with leader forwarding)
     ///
     /// If this node is a follower, the request is automatically forwarded to the leader.
@@ -563,9 +536,7 @@ impl RaftManager {
             ReplicationMode::Quorum => {
                 // Standard quorum-based replication
                 match group_id {
-                    GroupId::MetaSystem => self.meta_system.propose(command).await,
-                    GroupId::MetaUsers => self.meta_users.propose(command).await,
-                    GroupId::MetaJobs => self.meta_jobs.propose(command).await,
+                    GroupId::Meta => self.meta.propose(command).await,
                     GroupId::DataUserShard(shard) => {
                         if shard >= self.user_shards_count {
                             return Err(RaftError::InvalidGroup(format!("DataUserShard({})", shard)));
@@ -585,9 +556,7 @@ impl RaftManager {
                 let total = self.total_nodes();
                 let timeout = self.config.replication_timeout;
                 match group_id {
-                    GroupId::MetaSystem => self.meta_system.propose_with_all_replicas(command, timeout, total).await,
-                    GroupId::MetaUsers => self.meta_users.propose_with_all_replicas(command, timeout, total).await,
-                    GroupId::MetaJobs => self.meta_jobs.propose_with_all_replicas(command, timeout, total).await,
+                    GroupId::Meta => self.meta.propose_with_all_replicas(command, timeout, total).await,
                     GroupId::DataUserShard(shard) => {
                         if shard >= self.user_shards_count {
                             return Err(RaftError::InvalidGroup(format!("DataUserShard({})", shard)));
@@ -623,10 +592,8 @@ impl RaftManager {
         let node_id_u64 = node_id.as_u64();
         let node = KalamNode { rpc_addr, api_addr };
         
-        // Register with all meta groups
-        self.meta_system.register_peer(node_id_u64, node.clone());
-        self.meta_users.register_peer(node_id_u64, node.clone());
-        self.meta_jobs.register_peer(node_id_u64, node.clone());
+        // Register with unified meta group
+        self.meta.register_peer(node_id_u64, node.clone());
         
         // Register with all data shards
         for shard in &self.user_data_shards {
@@ -639,11 +606,7 @@ impl RaftManager {
     
     /// Get all group IDs
     pub fn all_group_ids(&self) -> Vec<GroupId> {
-        let mut groups = vec![
-            GroupId::MetaSystem,
-            GroupId::MetaUsers,
-            GroupId::MetaJobs,
-        ];
+        let mut groups = vec![GroupId::Meta];
         
         for shard in 0..self.user_shards_count {
             groups.push(GroupId::DataUserShard(shard));
@@ -656,9 +619,9 @@ impl RaftManager {
         groups
     }
     
-    /// Get the total number of groups
+    /// Get the total number of groups (1 meta + user shards + shared shards)
     pub fn group_count(&self) -> usize {
-        3 + self.user_shards_count as usize + self.shared_shards_count as usize
+        1 + self.user_shards_count as usize + self.shared_shards_count as usize
     }
     
     /// Get the number of user data shards
@@ -671,19 +634,9 @@ impl RaftManager {
         self.shared_shards_count
     }
     
-    /// Get the MetaSystem group
-    pub fn meta_system(&self) -> &Arc<RaftGroup<SystemStateMachine>> {
-        &self.meta_system
-    }
-    
-    /// Get the MetaUsers group
-    pub fn meta_users(&self) -> &Arc<RaftGroup<UsersStateMachine>> {
-        &self.meta_users
-    }
-    
-    /// Get the MetaJobs group
-    pub fn meta_jobs(&self) -> &Arc<RaftGroup<JobsStateMachine>> {
-        &self.meta_jobs
+    /// Get the unified Meta group
+    pub fn meta(&self) -> &Arc<RaftGroup<MetaStateMachine>> {
+        &self.meta
     }
     
     /// Get a user data shard
@@ -696,22 +649,15 @@ impl RaftManager {
         self.shared_data_shards.get(shard as usize)
     }
     
-    /// Set the system applier for persisting metadata to providers
+    /// Set the meta applier for persisting unified metadata to providers
     ///
     /// This should be called after RaftManager creation once providers are available.
     /// The applier will be called on all nodes (leader and followers) when commands
     /// are applied, ensuring consistent state across the cluster.
-    pub fn set_system_applier(&self, applier: std::sync::Arc<dyn crate::applier::SystemApplier>) {
-        // Get the state machine from the MetaSystem group's storage
-        let sm = self.meta_system.storage().state_machine();
+    pub fn set_meta_applier(&self, applier: std::sync::Arc<dyn crate::applier::MetaApplier>) {
+        let sm = self.meta.storage().state_machine();
         sm.set_applier(applier);
-        log::info!("RaftManager: System applier registered for metadata replication");
-    }
-
-    pub fn set_users_applier(&self, applier: std::sync::Arc<dyn crate::applier::UsersApplier>) {
-        let sm = self.meta_users.storage().state_machine();
-        sm.set_applier(applier);
-        log::info!("RaftManager: Users applier registered for metadata replication");
+        log::info!("RaftManager: Meta applier registered for metadata replication");
     }
 
     /// Set the user data applier for persisting per-user data to providers
@@ -751,11 +697,7 @@ impl RaftManager {
     /// Get the Raft instance for a specific group
     fn get_raft_instance(&self, group_id: GroupId) -> Result<crate::manager::raft_group::RaftInstance, RaftError> {
         match group_id {
-            GroupId::MetaSystem => self.meta_system.raft()
-                .ok_or_else(|| RaftError::NotStarted(format!("Group {:?} not started", group_id))),
-            GroupId::MetaUsers => self.meta_users.raft()
-                .ok_or_else(|| RaftError::NotStarted(format!("Group {:?} not started", group_id))),
-            GroupId::MetaJobs => self.meta_jobs.raft()
+            GroupId::Meta => self.meta.raft()
                 .ok_or_else(|| RaftError::NotStarted(format!("Group {:?} not started", group_id))),
             GroupId::DataUserShard(shard) => {
                 let group = self.user_data_shards.get(shard as usize)
@@ -850,27 +792,11 @@ impl RaftManager {
                 let target_node_id = target_node.node_id.as_u64();
                 log::info!("[CLUSTER] Transferring leadership to node {}...", target_node.node_id);
                 
-                // Transfer leadership for MetaSystem
-                if self.meta_system.is_leader() {
-                    match self.meta_system.transfer_leadership(target_node_id).await {
-                        Ok(_) => log::info!("[CLUSTER] ✓ MetaSystem leadership transferred to node {}", target_node.node_id),
-                        Err(e) => log::warn!("[CLUSTER] ⚠ Failed to transfer MetaSystem leadership: {}", e),
-                    }
-                }
-                
-                // Transfer leadership for MetaUsers
-                if self.meta_users.is_leader() {
-                    match self.meta_users.transfer_leadership(target_node_id).await {
-                        Ok(_) => log::info!("[CLUSTER] ✓ MetaUsers leadership transferred to node {}", target_node.node_id),
-                        Err(e) => log::warn!("[CLUSTER] ⚠ Failed to transfer MetaUsers leadership: {}", e),
-                    }
-                }
-                
-                // Transfer leadership for MetaJobs
-                if self.meta_jobs.is_leader() {
-                    match self.meta_jobs.transfer_leadership(target_node_id).await {
-                        Ok(_) => log::info!("[CLUSTER] ✓ MetaJobs leadership transferred to node {}", target_node.node_id),
-                        Err(e) => log::warn!("[CLUSTER] ⚠ Failed to transfer MetaJobs leadership: {}", e),
+                // Transfer leadership for Meta group
+                if self.meta.is_leader() {
+                    match self.meta.transfer_leadership(target_node_id).await {
+                        Ok(_) => log::info!("[CLUSTER] ✓ Meta leadership transferred to node {}", target_node.node_id),
+                        Err(e) => log::warn!("[CLUSTER] ⚠ Failed to transfer Meta leadership: {}", e),
                     }
                 }
                 
@@ -953,8 +879,8 @@ mod tests {
         assert_eq!(manager.node_id(), NodeId::new(1));
         assert!(!manager.is_started());
         
-        // Should have 36 groups total by default: 3 meta + 32 user data + 1 shared
-        assert_eq!(manager.group_count(), 36);
+        // Should have 34 groups total by default: 1 meta + 32 user data + 1 shared
+        assert_eq!(manager.group_count(), 34);
     }
 
     #[test]
@@ -962,10 +888,8 @@ mod tests {
         let manager = RaftManager::new(test_config());
         let groups = manager.all_group_ids();
         
-        assert_eq!(groups.len(), 36);
-        assert!(groups.contains(&GroupId::MetaSystem));
-        assert!(groups.contains(&GroupId::MetaUsers));
-        assert!(groups.contains(&GroupId::MetaJobs));
+        assert_eq!(groups.len(), 34);
+        assert!(groups.contains(&GroupId::Meta));
         assert!(groups.contains(&GroupId::DataUserShard(0)));
         assert!(groups.contains(&GroupId::DataUserShard(31)));
         assert!(groups.contains(&GroupId::DataSharedShard(0)));

@@ -43,6 +43,7 @@ pub mod executor;
 pub mod jobs;
 pub mod live;
 pub mod manifest;
+pub mod metrics;
 pub mod pk;
 pub mod providers;
 pub mod schema_registry;

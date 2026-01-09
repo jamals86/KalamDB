@@ -85,10 +85,13 @@ pub async fn bootstrap(
         config.storage.default_storage_path.clone(),
         config.clone(), // ServerConfig needs to be cloned for Arc storage in AppContext
     );
-    info!(
+    debug!(
         "AppContext initialized with all stores, managers, registries, and providers ({:.2}ms)",
         phase_start.elapsed().as_secs_f64() * 1000.0
     );
+
+    // Log runtime snapshot (CPU/memory/threads) using shared sysinfo helper
+    app_context.log_runtime_metrics();
 
     // Start the executor (Raft cluster in cluster mode, no-op in standalone)
     let phase_start = std::time::Instant::now();
@@ -146,7 +149,7 @@ pub async fn bootstrap(
     // Initialize system tables and verify schema version (Phase 10 Phase 7, T075-T079)
     let phase_start = std::time::Instant::now();
     kalamdb_system::initialize_system_tables(backend.clone()).await?;
-    info!(
+    debug!(
         "System tables initialized with schema version tracking ({:.2}ms)",
         phase_start.elapsed().as_secs_f64() * 1000.0
     );
@@ -155,7 +158,7 @@ pub async fn bootstrap(
     let job_manager = app_context.job_manager();
     let max_concurrent = config.jobs.max_concurrent;
     tokio::spawn(async move {
-        info!(
+        debug!(
             "Starting JobsManager run loop with max {} concurrent jobs",
             max_concurrent
         );
@@ -163,7 +166,7 @@ pub async fn bootstrap(
             log::error!("JobsManager run loop failed: {}", e);
         }
     });
-    info!("JobsManager background task spawned");
+    debug!("JobsManager background task spawned");
 
     // Seed default storage if necessary (using SystemTablesRegistry)
     let phase_start = std::time::Instant::now();
@@ -191,9 +194,9 @@ pub async fn bootstrap(
         storages_provider.insert_storage(default_storage)?;
         info!("Default 'local' storage created successfully");
     } else {
-        info!("Found {} existing storage(s)", storage_count);
+        debug!("Found {} existing storage(s)", storage_count);
     }
-    info!(
+    debug!(
         "Storage initialization completed ({:.2}ms)",
         phase_start.elapsed().as_secs_f64() * 1000.0
     );
@@ -219,12 +222,12 @@ pub async fn bootstrap(
     app_context.set_sql_executor(sql_executor.clone());
     live_query_manager.set_sql_executor(sql_executor.clone());
 
-    info!(
+    debug!(
         "SqlExecutor initialized with DROP TABLE support, storage registry, job manager, and table registration"
     );
 
     sql_executor.load_existing_tables().await?;
-    info!(
+    debug!(
         "Existing tables loaded and registered with DataFusion ({:.2}ms)",
         phase_start.elapsed().as_secs_f64() * 1000.0
     );
@@ -237,7 +240,7 @@ pub async fn bootstrap(
         window: std::time::Duration::from_secs(1),
     };
     let rate_limiter = Arc::new(RateLimiter::with_config(rate_limit_config));
-    info!(
+    debug!(
         "Rate limiter initialized ({} queries/sec, {} messages/sec, {} max subscriptions)",
         config.rate_limit.max_queries_per_sec,
         config.rate_limit.max_messages_per_sec,
@@ -256,7 +259,7 @@ pub async fn bootstrap(
     let client_timeout = config.websocket.client_timeout_secs.unwrap_or(10);
     let auth_timeout = config.websocket.auth_timeout_secs.unwrap_or(3);
     let heartbeat_interval = 5; // Fixed at 5s in AppContext
-    info!(
+    debug!(
         "ConnectionsManager initialized (client_timeout={}s, auth_timeout={}s, heartbeat_interval={}s)",
         client_timeout,
         auth_timeout,
@@ -269,7 +272,7 @@ pub async fn bootstrap(
     // Crash recovery handled by JobsManager.recover_incomplete_jobs() in run_loop
     // Flush scheduling via FLUSH TABLE/FLUSH ALL TABLES commands
 
-    info!("Job management delegated to JobsManager (already running in background, handles stream eviction)");
+    debug!("Job management delegated to JobsManager (already running in background, handles stream eviction)");
 
     // Get users provider for system user initialization
     let phase_start = std::time::Instant::now();
@@ -280,7 +283,7 @@ pub async fn bootstrap(
 
     // Security warning: Check if remote access is enabled with empty root password
     check_remote_access_security(config, users_provider_for_init).await?;
-    info!(
+    debug!(
         "User initialization completed ({:.2}ms)",
         phase_start.elapsed().as_secs_f64() * 1000.0
     );
@@ -310,7 +313,7 @@ pub async fn run(
 ) -> Result<()> {
     let bind_addr = format!("{}:{}", config.server.host, config.server.port);
     info!("Starting HTTP server on {}", bind_addr);
-    info!("Endpoints: POST /v1/api/sql, GET /v1/ws");
+    debug!("Endpoints: POST /v1/api/sql, GET /v1/ws");
 
     // Log server configuration for debugging
     info!(
@@ -327,7 +330,7 @@ pub async fn run(
     );
 
     if config.rate_limit.enable_connection_protection {
-        info!(
+        debug!(
             "Connection protection: max_conn_per_ip={}, max_req_per_ip_per_sec={}, ban_duration={}s",
             config.rate_limit.max_connections_per_ip,
             config.rate_limit.max_requests_per_ip_per_sec,
@@ -407,7 +410,7 @@ pub async fn run(
         info!("HTTP/2 support enabled (h2c - HTTP/2 cleartext)");
         server.bind_auto_h2c(&bind_addr)?
     } else {
-        info!("HTTP/1.1 only mode");
+        debug!("HTTP/1.1 only mode");
         server.bind(&bind_addr)?
     };
     
@@ -554,10 +557,30 @@ async fn create_default_system_user(
             let role = Role::System; // Highest privilege level
             let created_at = chrono::Utc::now().timestamp_millis();
 
-            // T126: Create with EMPTY password hash for localhost-only access
-            // This allows passwordless authentication from localhost (127.0.0.1, ::1)
-            // For remote access, set a password using: ALTER USER root SET PASSWORD '...'
-            let password_hash = String::new(); // Empty = localhost-only, no password required
+            // Check for KALAMDB_ROOT_PASSWORD environment variable
+            // If set, hash the password for remote access support
+            // Otherwise, create with empty password for localhost-only access
+            let password_hash = match std::env::var("KALAMDB_ROOT_PASSWORD") {
+                Ok(password) if !password.is_empty() => {
+                    // Hash the provided password for remote access
+                    bcrypt::hash(&password, bcrypt::DEFAULT_COST)
+                        .map_err(|e| anyhow::anyhow!("Failed to hash root password: {}", e))?
+                }
+                _ => {
+                    // T126: Create with EMPTY password hash for localhost-only access
+                    // This allows passwordless authentication from localhost (127.0.0.1, ::1)
+                    // For remote access, set a password using: ALTER USER root SET PASSWORD '...'
+                    String::new() // Empty = localhost-only, no password required
+                }
+            };
+            let has_password = !password_hash.is_empty();
+            
+            // If password is set via env var, enable remote access
+            let auth_data = if has_password {
+                Some(r#"{"allow_remote":true}"#.to_string())
+            } else {
+                None
+            };
 
             let user = User {
                 id: user_id,
@@ -566,7 +589,7 @@ async fn create_default_system_user(
                 role,
                 email: Some(email),
                 auth_type: AuthType::Internal, // System user uses Internal auth
-                auth_data: None,               // No allow_remote flag = localhost-only by default
+                auth_data,                     // allow_remote flag if password is set
                 storage_mode: StorageMode::Table,
                 storage_id: Some(StorageId::local()),
                 failed_login_attempts: 0,
@@ -581,11 +604,19 @@ async fn create_default_system_user(
             users_provider.create_user(user)?;
 
             // T127: Log system user information to stdout
-            info!(
-                "✓ Created system user '{}' (localhost-only access, no password required)",
-                username
-            );
-            info!("  To enable remote access, set a password: ALTER USER root SET PASSWORD '...'",);
+            if has_password {
+                info!(
+                    "✓ Created system user '{}' (remote access enabled via KALAMDB_ROOT_PASSWORD)",
+                    username
+                );
+            } else {
+                info!(
+                    "✓ Created system user '{}' (localhost-only access, no password required)",
+                    username
+                );
+                info!("  To enable remote access, set a password: ALTER USER root SET PASSWORD '...'");
+                info!("  Or set KALAMDB_ROOT_PASSWORD environment variable before startup");
+            }
 
             Ok(())
         }

@@ -62,7 +62,7 @@ impl SystemColumnsService {
     /// Create a new SystemColumnsService
     ///
     /// # Arguments
-    /// * `worker_id` - Node identifier from server.toml [server.node_id]
+    /// * `worker_id` - Node identifier from server.toml [cluster.node_id] (or 1 for standalone)
     ///
     /// # Returns
     /// A new SystemColumnsService instance

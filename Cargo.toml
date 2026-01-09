@@ -29,7 +29,7 @@ repository = "https://github.com/jamals86/KalamDB"
 [workspace.dependencies]
 # Serialization
 serde = { version = "1.0", features = ["derive"] }
-serde_json = "1.0.148"
+serde_json = "1.0.149"
 
 # Error handling
 thiserror = "2.0"
@@ -83,7 +83,7 @@ jsonwebtoken = { version = "10.2.0", default-features = false, features = ["use_
 toml = "0.9.8"
 
 # CLI tools
-clap = { version = "4.5.53", features = ["derive", "color"] }
+clap = { version = "4.5.54", features = ["derive", "color"] }
 rustyline = { version = "17.0.2" }
 
 # System
@@ -93,7 +93,7 @@ sysinfo = "0.37.2"
 # Testing
 tempfile = "3.24.0"
 wait-timeout = "0.2"
-serial_test = "3.2"
+serial_test = "3.3.1"
 
 # Benchmarking
 criterion = { version = "0.8.1", features = ["html_reports"] }
@@ -139,7 +139,7 @@ ntest = "0.9.5"
 wasm-bindgen = { version = "0.2.105" }
 wasm-bindgen-futures = { version = "0.4" }
 js-sys = { version = "0.3" }
-libc = "0.2.178"
+libc = "0.2.180"
 web-sys = { version = "0.3.83" }
 getrandom = { version = "0.2.15" }
 flate2 = "1.0"

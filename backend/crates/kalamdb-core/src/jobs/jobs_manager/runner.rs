@@ -33,7 +33,7 @@ impl JobsManager {
     /// job_manager.run_loop(5).await?;
     /// ```
     pub async fn run_loop(&self, max_concurrent: usize) -> Result<(), KalamDbError> {
-        log::info!(
+        log::debug!(
             "Starting job processing loop (max {} concurrent)",
             max_concurrent
         );

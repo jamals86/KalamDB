@@ -9,7 +9,7 @@ use crate::sql::executor::handlers::typed::TypedStatementHandler;
 use crate::sql::executor::helpers::guards::require_admin;
 use crate::sql::executor::models::{ExecutionContext, ExecutionResult, ScalarValue};
 use kalamdb_commons::models::{NamespaceId, TableId};
-use kalamdb_raft::SystemCommand;
+use kalamdb_raft::MetaCommand;
 use kalamdb_sql::ddl::DropNamespaceStatement;
 use std::sync::Arc;
 
@@ -83,10 +83,10 @@ impl TypedStatementHandler<DropNamespaceStatement> for DropNamespaceHandler {
                     
                     // Delete from system.tables
                     if self.app_context.executor().is_cluster_mode() {
-                        let cmd = SystemCommand::DropTable {
+                        let cmd = MetaCommand::DropTable {
                             table_id: table_id.clone(),
                         };
-                        self.app_context.executor().execute_system(cmd).await.map_err(|e| {
+                        self.app_context.executor().execute_meta(cmd).await.map_err(|e| {
                             KalamDbError::ExecutionError(format!(
                                 "Failed to drop table via executor: {}",
                                 e
@@ -119,10 +119,10 @@ impl TypedStatementHandler<DropNamespaceStatement> for DropNamespaceHandler {
 
         // Delete namespace via provider
         if self.app_context.executor().is_cluster_mode() {
-            let cmd = SystemCommand::DeleteNamespace {
+            let cmd = MetaCommand::DeleteNamespace {
                 namespace_id: namespace_id.clone(),
             };
-            self.app_context.executor().execute_system(cmd).await.map_err(|e| {
+            self.app_context.executor().execute_meta(cmd).await.map_err(|e| {
                 KalamDbError::ExecutionError(format!(
                     "Failed to delete namespace via executor: {}",
                     e

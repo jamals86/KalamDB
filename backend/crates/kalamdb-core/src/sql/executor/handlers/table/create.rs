@@ -7,7 +7,7 @@ use crate::sql::executor::models::{ExecutionContext, ExecutionResult, ScalarValu
 use kalamdb_commons::models::TableId;
 use kalamdb_commons::schemas::TableType;
 use kalamdb_commons::Role;
-use kalamdb_raft::SystemCommand;
+use kalamdb_raft::MetaCommand;
 use kalamdb_sql::ddl::CreateTableStatement;
 use std::sync::Arc;
 
@@ -90,14 +90,14 @@ impl TypedStatementHandler<CreateTableStatement> for CreateTableHandler {
             let schema_json = serde_json::to_string(table_def.as_ref()).map_err(|e| {
                 KalamDbError::Other(format!("Failed to serialize table definition: {}", e))
             })?;
-            let cmd = SystemCommand::CreateTable {
+            let cmd = MetaCommand::CreateTable {
                 table_id: table_id.clone(),
                 table_type,
                 schema_json,
             };
             self.app_context
                 .executor()
-                .execute_system(cmd)
+                .execute_meta(cmd)
                 .await
                 .map_err(|e| {
                     KalamDbError::ExecutionError(format!(

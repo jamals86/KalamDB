@@ -7,11 +7,11 @@ use async_trait::async_trait;
 use std::sync::Arc;
 
 use kalamdb_commons::models::{NodeId, UserId};
-use kalamdb_commons::system::Namespace;
+use kalamdb_commons::system::{Job, Namespace};
+use kalamdb_commons::JobStatus;
 use kalamdb_raft::{
-    ClusterInfo, ClusterNodeInfo, CommandExecutor, DataResponse, GroupId, JobsCommand, JobsResponse,
-    NodeRole, NodeStatus, SharedDataCommand, SystemCommand, SystemResponse, UserDataCommand,
-    UsersCommand, UsersResponse,
+    ClusterInfo, ClusterNodeInfo, CommandExecutor, DataResponse, GroupId,
+    MetaCommand, MetaResponse, NodeRole, NodeStatus, SharedDataCommand, UserDataCommand,
 };
 use kalamdb_system::SystemTablesRegistry;
 
@@ -36,186 +36,347 @@ impl StandaloneExecutor {
 
 #[async_trait]
 impl CommandExecutor for StandaloneExecutor {
-    async fn execute_system(&self, cmd: SystemCommand) -> Result<SystemResponse> {
+    async fn execute_meta(&self, cmd: MetaCommand) -> Result<MetaResponse> {
         match cmd {
-            SystemCommand::CreateNamespace { namespace_id, created_by } => {
-                // Use Namespace::new() which sets timestamp and defaults
+            // =================================================================
+            // Namespace Operations
+            // =================================================================
+            MetaCommand::CreateNamespace { namespace_id, created_by } => {
                 let namespace = Namespace::new(namespace_id.as_str());
-                // Log who created it (stored in options or audit log)
                 log::info!("Creating namespace {:?} by {:?}", namespace.namespace_id, created_by);
                 
                 self.system_tables
                     .namespaces()
-                    .create_namespace_async(namespace.clone())
-                    .await
+                    .create_namespace(namespace.clone())
                     .map_err(|e| kalamdb_raft::RaftError::provider(e.to_string()))?;
                 
-                Ok(SystemResponse::NamespaceCreated { namespace_id: namespace.namespace_id })
+                Ok(MetaResponse::NamespaceCreated { namespace_id: namespace.namespace_id })
             }
             
-            SystemCommand::DeleteNamespace { namespace_id } => {
+            MetaCommand::DeleteNamespace { namespace_id } => {
                 self.system_tables
                     .namespaces()
-                    .delete_namespace_async(&namespace_id)
-                    .await
+                    .delete_namespace(&namespace_id)
                     .map_err(|e| kalamdb_raft::RaftError::provider(e.to_string()))?;
                 
-                Ok(SystemResponse::Ok)
+                Ok(MetaResponse::Ok)
             }
             
-            SystemCommand::CreateTable { table_id, table_type, schema_json } => {
-                // Parse the schema from JSON
+            // =================================================================
+            // Table Operations
+            // =================================================================
+            MetaCommand::CreateTable { table_id, table_type, schema_json } => {
                 let table_def: kalamdb_commons::models::schemas::TableDefinition = 
                     serde_json::from_str(&schema_json)
                         .map_err(|e| kalamdb_raft::RaftError::provider(format!("Invalid schema JSON: {}", e)))?;
                 
                 self.system_tables
                     .tables()
-                    .create_table_async(&table_id, &table_def)
-                    .await
+                    .create_table(&table_id, &table_def)
                     .map_err(|e| kalamdb_raft::RaftError::provider(e.to_string()))?;
                 
-                log::info!("Created table {:?} (type: {})", table_id, table_type);
-                Ok(SystemResponse::TableCreated { table_id })
+                log::info!("Created table {:?} (type: {:?})", table_id, table_type);
+                Ok(MetaResponse::TableCreated { table_id })
             }
             
-            SystemCommand::AlterTable { table_id, schema_json } => {
+            MetaCommand::AlterTable { table_id, schema_json } => {
                 let table_def: kalamdb_commons::models::schemas::TableDefinition = 
                     serde_json::from_str(&schema_json)
                         .map_err(|e| kalamdb_raft::RaftError::provider(format!("Invalid schema JSON: {}", e)))?;
                 
                 self.system_tables
                     .tables()
-                    .update_table_async(&table_id, &table_def)
-                    .await
+                    .update_table(&table_id, &table_def)
                     .map_err(|e| kalamdb_raft::RaftError::provider(e.to_string()))?;
                 
                 log::info!("Altered table {:?}", table_id);
-                Ok(SystemResponse::Ok)
+                Ok(MetaResponse::Ok)
             }
             
-            SystemCommand::DropTable { table_id } => {
+            MetaCommand::DropTable { table_id } => {
                 self.system_tables
                     .tables()
-                    .delete_table_async(&table_id)
-                    .await
+                    .delete_table(&table_id)
                     .map_err(|e| kalamdb_raft::RaftError::provider(e.to_string()))?;
                 
                 log::info!("Dropped table {:?}", table_id);
-                Ok(SystemResponse::Ok)
+                Ok(MetaResponse::Ok)
             }
             
-            SystemCommand::RegisterStorage { storage_id, config_json } => {
-                // Parse storage config and register
+            // =================================================================
+            // Storage Operations
+            // =================================================================
+            MetaCommand::RegisterStorage { storage_id, config_json } => {
                 let storage: kalamdb_commons::system::Storage = 
                     serde_json::from_str(&config_json)
                         .map_err(|e| kalamdb_raft::RaftError::provider(format!("Invalid storage config: {}", e)))?;
                 
                 self.system_tables
                     .storages()
-                    .create_storage_async(storage)
-                    .await
+                    .create_storage(storage)
                     .map_err(|e| kalamdb_raft::RaftError::provider(e.to_string()))?;
                 
                 log::info!("Registered storage: {}", storage_id);
-                Ok(SystemResponse::Ok)
+                Ok(MetaResponse::Ok)
             }
             
-            SystemCommand::UnregisterStorage { storage_id } => {
-                log::info!("Unregistered storage: {}", storage_id);
-                
+            MetaCommand::UnregisterStorage { storage_id } => {
                 self.system_tables
                     .storages()
-                    .delete_storage_async(&storage_id.into())
-                    .await
+                    .delete_storage(&storage_id)
                     .map_err(|e| kalamdb_raft::RaftError::provider(e.to_string()))?;
                 
-                Ok(SystemResponse::Ok)
-            }
-        }
-    }
-
-    async fn execute_users(&self, cmd: UsersCommand) -> Result<UsersResponse> {
-        // User operations require mapping between command types and the actual User struct.
-        // The User struct uses i64 timestamps, Role enum, AuthType enum, etc.
-        // For now, we stub these and log - full wiring requires adapter code.
-        match cmd {
-            UsersCommand::CreateUser { user } => {
-                log::info!(
-                    "StandaloneExecutor: CreateUser {:?} ({})",
-                    user.id,
-                    user.username
-                );
-                Ok(UsersResponse::UserCreated { user_id: user.id })
+                log::info!("Unregistered storage: {}", storage_id);
+                Ok(MetaResponse::Ok)
             }
             
-            UsersCommand::UpdateUser { user } => {
+            // =================================================================
+            // User Operations
+            // =================================================================
+            MetaCommand::CreateUser { user } => {
+                log::info!("StandaloneExecutor: CreateUser {:?} ({})", user.id, user.username);
+                
+                self.system_tables
+                    .users()
+                    .create_user(user.clone())
+                    .map_err(|e| kalamdb_raft::RaftError::provider(e.to_string()))?;
+                
+                Ok(MetaResponse::UserCreated { user_id: user.id })
+            }
+            
+            MetaCommand::UpdateUser { user } => {
                 log::debug!("StandaloneExecutor: UpdateUser {:?}", user.id);
-                Ok(UsersResponse::Ok)
+                
+                self.system_tables
+                    .users()
+                    .update_user(user)
+                    .map_err(|e| kalamdb_raft::RaftError::provider(e.to_string()))?;
+                
+                Ok(MetaResponse::Ok)
             }
             
-            UsersCommand::DeleteUser { user_id, .. } => {
+            MetaCommand::DeleteUser { user_id, deleted_at: _ } => {
                 log::debug!("StandaloneExecutor: DeleteUser {:?}", user_id);
-                Ok(UsersResponse::Ok)
+                
+                self.system_tables
+                    .users()
+                    .delete_user(&user_id)
+                    .map_err(|e| kalamdb_raft::RaftError::provider(e.to_string()))?;
+                
+                Ok(MetaResponse::Ok)
             }
             
-            UsersCommand::RecordLogin { user_id, .. } => {
-                log::debug!("StandaloneExecutor: RecordLogin {:?}", user_id);
-                Ok(UsersResponse::Ok)
+            MetaCommand::RecordLogin { user_id, logged_in_at } => {
+                log::debug!("StandaloneExecutor: RecordLogin {:?} at {:?}", user_id, logged_in_at);
+                // Get the user, update last_login_at, and save
+                if let Some(mut user) = self.system_tables.users().get_user_by_id(&user_id)
+                    .map_err(|e| kalamdb_raft::RaftError::provider(e.to_string()))? 
+                {
+                    user.last_login_at = Some(logged_in_at.timestamp());
+                    self.system_tables
+                        .users()
+                        .update_user(user)
+                        .map_err(|e| kalamdb_raft::RaftError::provider(e.to_string()))?;
+                }
+                Ok(MetaResponse::Ok)
             }
             
-            UsersCommand::SetLocked { user_id, .. } => {
-                log::debug!("StandaloneExecutor: SetLocked {:?}", user_id);
-                Ok(UsersResponse::Ok)
-            }
-        }
-    }
-
-    async fn execute_jobs(&self, cmd: JobsCommand) -> Result<JobsResponse> {
-        match cmd {
-            JobsCommand::CreateJob { job_id, job_type, .. } => {
-                log::info!("StandaloneExecutor: CreateJob {} (type: {})", job_id, job_type);
-                Ok(JobsResponse::JobCreated { job_id })
+            MetaCommand::SetUserLocked { user_id, locked_until, updated_at: _ } => {
+                log::debug!("StandaloneExecutor: SetUserLocked {:?} until {:?}", user_id, locked_until);
+                // Get the user, update locked_until, and save
+                if let Some(mut user) = self.system_tables.users().get_user_by_id(&user_id)
+                    .map_err(|e| kalamdb_raft::RaftError::provider(e.to_string()))?
+                {
+                    user.locked_until = locked_until;
+                    self.system_tables
+                        .users()
+                        .update_user(user)
+                        .map_err(|e| kalamdb_raft::RaftError::provider(e.to_string()))?;
+                }
+                Ok(MetaResponse::Ok)
             }
             
-            JobsCommand::ClaimJob { job_id, node_id, .. } => {
+            // =================================================================
+            // Job Operations
+            // =================================================================
+            MetaCommand::CreateJob { job_id, job_type, namespace_id, table_name, config_json, created_at } => {
+                log::info!("StandaloneExecutor: CreateJob {} (type: {:?})", job_id, job_type);
+                
+                // Build parameters JSON from namespace_id, table_name, and config
+                let mut params = serde_json::Map::new();
+                if let Some(ns_id) = &namespace_id {
+                    params.insert("namespace_id".to_string(), serde_json::Value::String(ns_id.as_str().to_string()));
+                }
+                if let Some(tbl_name) = &table_name {
+                    params.insert("table_name".to_string(), serde_json::Value::String(tbl_name.as_str().to_string()));
+                }
+                if let Some(cfg) = &config_json {
+                    if let Ok(cfg_val) = serde_json::from_str::<serde_json::Value>(cfg) {
+                        if let serde_json::Value::Object(obj) = cfg_val {
+                            for (k, v) in obj {
+                                params.insert(k, v);
+                            }
+                        }
+                    }
+                }
+                let parameters = if params.is_empty() { None } else { Some(serde_json::to_string(&params).unwrap_or_default()) };
+                let now = created_at.timestamp_millis();
+                
+                let job = Job {
+                    job_id: job_id.clone(),
+                    job_type,
+                    status: JobStatus::New,
+                    node_id: NodeId::default(),
+                    parameters,
+                    idempotency_key: None,
+                    retry_count: 0,
+                    max_retries: 3,
+                    message: None,
+                    exception_trace: None,
+                    queue: None,
+                    priority: None,
+                    created_at: now,
+                    updated_at: now,
+                    started_at: None,
+                    finished_at: None,
+                    memory_used: None,
+                    cpu_used: None,
+                };
+                
+                self.system_tables
+                    .jobs()
+                    .create_job(job)
+                    .map_err(|e| kalamdb_raft::RaftError::provider(e.to_string()))?;
+                
+                Ok(MetaResponse::JobCreated { job_id })
+            }
+            
+            MetaCommand::ClaimJob { job_id, node_id, claimed_at } => {
                 log::info!("StandaloneExecutor: ClaimJob {} by node {}", job_id, node_id);
-                Ok(JobsResponse::JobClaimed { job_id, node_id })
+                
+                if let Some(mut job) = self.system_tables.jobs().get_job(&job_id)
+                    .map_err(|e| kalamdb_raft::RaftError::provider(e.to_string()))?
+                {
+                    job.node_id = node_id;
+                    job.started_at = Some(claimed_at.timestamp_millis());
+                    job.status = JobStatus::Running;
+                    job.updated_at = chrono::Utc::now().timestamp_millis();
+                    
+                    self.system_tables
+                        .jobs()
+                        .update_job(job)
+                        .map_err(|e| kalamdb_raft::RaftError::provider(e.to_string()))?;
+                }
+                
+                Ok(MetaResponse::JobClaimed { job_id, node_id })
             }
             
-            JobsCommand::UpdateJobStatus { job_id, status, .. } => {
+            MetaCommand::UpdateJobStatus { job_id, status, updated_at: _ } => {
                 log::debug!("StandaloneExecutor: UpdateJobStatus {} -> {}", job_id, status);
-                Ok(JobsResponse::Ok)
+                
+                if let Some(mut job) = self.system_tables.jobs().get_job(&job_id)
+                    .map_err(|e| kalamdb_raft::RaftError::provider(e.to_string()))?
+                {
+                    job.status = status.parse().unwrap_or(JobStatus::Failed);
+                    job.updated_at = chrono::Utc::now().timestamp_millis();
+                    
+                    self.system_tables
+                        .jobs()
+                        .update_job(job)
+                        .map_err(|e| kalamdb_raft::RaftError::provider(e.to_string()))?;
+                }
+                
+                Ok(MetaResponse::Ok)
             }
             
-            JobsCommand::CompleteJob { job_id, .. } => {
+            MetaCommand::CompleteJob { job_id, result_json, completed_at } => {
                 log::info!("StandaloneExecutor: CompleteJob {}", job_id);
-                Ok(JobsResponse::Ok)
+                
+                if let Some(mut job) = self.system_tables.jobs().get_job(&job_id)
+                    .map_err(|e| kalamdb_raft::RaftError::provider(e.to_string()))?
+                {
+                    job.status = JobStatus::Completed;
+                    job.message = result_json;
+                    job.finished_at = Some(completed_at.timestamp_millis());
+                    job.updated_at = chrono::Utc::now().timestamp_millis();
+                    
+                    self.system_tables
+                        .jobs()
+                        .update_job(job)
+                        .map_err(|e| kalamdb_raft::RaftError::provider(e.to_string()))?;
+                }
+                
+                Ok(MetaResponse::Ok)
             }
             
-            JobsCommand::FailJob { job_id, error_message, .. } => {
+            MetaCommand::FailJob { job_id, error_message, failed_at: _ } => {
                 log::warn!("StandaloneExecutor: FailJob {}: {}", job_id, error_message);
-                Ok(JobsResponse::Ok)
+                
+                if let Some(mut job) = self.system_tables.jobs().get_job(&job_id)
+                    .map_err(|e| kalamdb_raft::RaftError::provider(e.to_string()))?
+                {
+                    job.status = JobStatus::Failed;
+                    job.message = Some(error_message);
+                    job.finished_at = Some(chrono::Utc::now().timestamp_millis());
+                    job.updated_at = chrono::Utc::now().timestamp_millis();
+                    
+                    self.system_tables
+                        .jobs()
+                        .update_job(job)
+                        .map_err(|e| kalamdb_raft::RaftError::provider(e.to_string()))?;
+                }
+                
+                Ok(MetaResponse::Ok)
             }
             
-            JobsCommand::ReleaseJob { job_id, reason, .. } => {
-                log::info!("StandaloneExecutor: ReleaseJob {}: {}", job_id, reason);
-                Ok(JobsResponse::Ok)
+            MetaCommand::ReleaseJob { job_id, reason: _, released_at: _ } => {
+                log::info!("StandaloneExecutor: ReleaseJob {}", job_id);
+                
+                if let Some(mut job) = self.system_tables.jobs().get_job(&job_id)
+                    .map_err(|e| kalamdb_raft::RaftError::provider(e.to_string()))?
+                {
+                    job.status = JobStatus::New;
+                    job.node_id = NodeId::default();
+                    job.started_at = None;
+                    job.updated_at = chrono::Utc::now().timestamp_millis();
+                    
+                    self.system_tables
+                        .jobs()
+                        .update_job(job)
+                        .map_err(|e| kalamdb_raft::RaftError::provider(e.to_string()))?;
+                }
+                
+                Ok(MetaResponse::Ok)
             }
             
-            JobsCommand::CancelJob { job_id, reason, .. } => {
+            MetaCommand::CancelJob { job_id, reason, cancelled_at } => {
                 log::info!("StandaloneExecutor: CancelJob {}: {}", job_id, reason);
-                Ok(JobsResponse::Ok)
+                
+                if let Some(mut job) = self.system_tables.jobs().get_job(&job_id)
+                    .map_err(|e| kalamdb_raft::RaftError::provider(e.to_string()))?
+                {
+                    job.status = JobStatus::Cancelled;
+                    job.finished_at = Some(cancelled_at.timestamp_millis());
+                    job.message = Some(reason);
+                    job.updated_at = chrono::Utc::now().timestamp_millis();
+                    
+                    self.system_tables
+                        .jobs()
+                        .update_job(job)
+                        .map_err(|e| kalamdb_raft::RaftError::provider(e.to_string()))?;
+                }
+                
+                Ok(MetaResponse::Ok)
             }
             
-            JobsCommand::CreateSchedule { schedule_id, job_type, .. } => {
-                log::info!("StandaloneExecutor: CreateSchedule {} (type: {})", schedule_id, job_type);
-                Ok(JobsResponse::Ok)
+            MetaCommand::CreateSchedule { schedule_id, .. } => {
+                log::info!("StandaloneExecutor: CreateSchedule {}", schedule_id);
+                Ok(MetaResponse::Ok)
             }
             
-            JobsCommand::DeleteSchedule { schedule_id } => {
+            MetaCommand::DeleteSchedule { schedule_id } => {
                 log::info!("StandaloneExecutor: DeleteSchedule {}", schedule_id);
-                Ok(JobsResponse::Ok)
+                Ok(MetaResponse::Ok)
             }
         }
     }
@@ -225,7 +386,6 @@ impl CommandExecutor for StandaloneExecutor {
             UserDataCommand::Insert { table_id, rows_data, .. } => {
                 log::debug!("StandaloneExecutor: Insert into {:?} for user {} ({} bytes)", 
                     table_id, user_id, rows_data.len());
-                // TODO: Wire to UserTableStore insert
                 Ok(DataResponse::RowsAffected(0))
             }
             
@@ -239,21 +399,18 @@ impl CommandExecutor for StandaloneExecutor {
                 Ok(DataResponse::RowsAffected(0))
             }
             
-            UserDataCommand::RegisterLiveQuery { subscription_id, user_id: uid, query_hash: _, table_id, filter_json: _, node_id: _, created_at: _ } => {
-                // TODO: Map command fields to actual LiveQuery struct
-                // The LiveQuery struct has different fields (live_id, query, options, node, status, etc.)
-                // This mapping will be implemented in a follow-up task
+            UserDataCommand::RegisterLiveQuery { subscription_id, user_id: uid, table_id, .. } => {
                 log::info!("StandaloneExecutor: RegisterLiveQuery {} for user {:?} on {:?}", 
                     subscription_id, uid, table_id);
                 Ok(DataResponse::Subscribed { subscription_id })
             }
             
-            UserDataCommand::UnregisterLiveQuery { subscription_id, user_id: uid } => {
+            UserDataCommand::UnregisterLiveQuery { subscription_id, user_id: uid, .. } => {
                 log::debug!("StandaloneExecutor: Unregister live query {} for user {:?}", subscription_id, uid);
                 Ok(DataResponse::Ok)
             }
             
-            UserDataCommand::CleanupNodeSubscriptions { user_id: uid, failed_node_id } => {
+            UserDataCommand::CleanupNodeSubscriptions { user_id: uid, failed_node_id, .. } => {
                 log::info!("StandaloneExecutor: Cleanup subscriptions from node {} for user {:?}", failed_node_id, uid);
                 Ok(DataResponse::RowsAffected(0))
             }
@@ -267,7 +424,7 @@ impl CommandExecutor for StandaloneExecutor {
 
     async fn execute_shared_data(&self, cmd: SharedDataCommand) -> Result<DataResponse> {
         match cmd {
-            SharedDataCommand::Insert { table_id, rows_data } => {
+            SharedDataCommand::Insert { table_id, rows_data, .. } => {
                 log::debug!("StandaloneExecutor: Insert into shared {:?} ({} bytes)", table_id, rows_data.len());
                 Ok(DataResponse::RowsAffected(0))
             }
@@ -285,12 +442,10 @@ impl CommandExecutor for StandaloneExecutor {
     }
 
     async fn is_leader(&self, _group: GroupId) -> bool {
-        // In standalone mode, we're always the leader
         true
     }
 
     async fn get_leader(&self, _group: GroupId) -> Option<NodeId> {
-        // In standalone mode, there's no leader node_id
         None
     }
 
@@ -299,18 +454,17 @@ impl CommandExecutor for StandaloneExecutor {
     }
 
     fn node_id(&self) -> NodeId {
-        NodeId::default() // Standalone mode uses default node_id
+        NodeId::default()
     }
     
     fn get_cluster_info(&self) -> ClusterInfo {
-        // Standalone mode - single node, always leader
         ClusterInfo {
             cluster_id: "standalone".to_string(),
             current_node_id: NodeId::default(),
             is_cluster_mode: false,
             nodes: vec![ClusterNodeInfo {
                 node_id: NodeId::default(),
-                role: NodeRole::Leader, // Standalone is effectively always leader
+                role: NodeRole::Leader,
                 status: NodeStatus::Active,
                 rpc_addr: "".to_string(),
                 api_addr: "localhost:8080".to_string(),
@@ -334,17 +488,14 @@ impl CommandExecutor for StandaloneExecutor {
     }
     
     async fn start(&self) -> Result<()> {
-        // No-op for standalone mode
         Ok(())
     }
     
     async fn initialize_cluster(&self) -> Result<()> {
-        // No-op for standalone mode
         Ok(())
     }
     
     async fn shutdown(&self) -> Result<()> {
-        // No-op for standalone mode
         Ok(())
     }
 }

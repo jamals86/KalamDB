@@ -334,3 +334,5 @@ mod cluster_test_table_crud_consistency;
 mod cluster_test_multi_node_smoke;
 #[path = "cluster/cluster_test_final_consistency.rs"]
 mod cluster_test_final_consistency;
+#[path = "cluster/cluster_test_node_rejoin.rs"]
+mod cluster_test_node_rejoin;

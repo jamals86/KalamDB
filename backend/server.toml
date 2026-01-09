@@ -30,18 +30,6 @@ enable_http2 = true
 # Controls the versioned endpoint prefix (e.g., /v1/api/sql)
 api_version = "v1"
 
-# Unique node identifier for this server instance (Phase 10, US0, FR-000)
-# Used for:
-# - Distributed coordination in multi-node deployments
-# - Logging context (appears in all log entries)
-# - Live query routing (WebSocket connection tracking)
-# - Job execution tracking (which node executed which job)
-#
-# **IMPORTANT**: Each server instance MUST have a unique node_id in distributed setups
-# Format: alphanumeric string with hyphens (e.g., "node-prod-01", "us-west-2-node-3")
-# Default: "node1"
-node_id = "node1"
-
 [storage]
 # RocksDB data directory path (relative or absolute)
 rocksdb_path = "./data/rocksdb"
@@ -312,9 +300,6 @@ max_parameter_size_bytes = 524288
 # ============================================================================
 # Uncomment this section to enable cluster mode with Raft consensus.
 # When enabled, all metadata and data operations go through Raft for consistency.
-#
-# IMPORTANT: In cluster mode, the node_id field here is the authoritative source
-# for node identity, not server.node_id above.
 #
 # Single-node cluster (for testing):
 #   - Set node_id to 1

@@ -115,10 +115,10 @@ impl TypedStatementHandler<CreateUserStatement> for CreateUserHandler {
         };
 
         if self.app_context.executor().is_cluster_mode() {
-            let cmd = kalamdb_raft::UsersCommand::CreateUser { user: user.clone() };
+            let cmd = kalamdb_raft::MetaCommand::CreateUser { user: user.clone() };
             self.app_context
                 .executor()
-                .execute_users(cmd)
+                .execute_meta(cmd)
                 .await
                 .map_err(|e| {
                     KalamDbError::ExecutionError(format!("Failed to create user via executor: {}", e))

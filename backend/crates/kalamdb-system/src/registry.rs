@@ -128,7 +128,7 @@ impl SystemTablesRegistry {
 
     /// Set the system.stats provider (called from kalamdb-core)
     pub fn set_stats_provider(&self, provider: Arc<dyn TableProvider + Send + Sync>) {
-        log::info!("SystemTablesRegistry: Setting stats provider");
+        log::debug!("SystemTablesRegistry: Setting stats provider");
         *self.stats.write().unwrap() = provider;
     }
 
@@ -139,7 +139,7 @@ impl SystemTablesRegistry {
 
     /// Set the system.settings provider (called from kalamdb-core)
     pub fn set_settings_provider(&self, provider: Arc<dyn TableProvider + Send + Sync>) {
-        log::info!("SystemTablesRegistry: Setting settings provider");
+        log::debug!("SystemTablesRegistry: Setting settings provider");
         *self.settings.write().unwrap() = provider;
     }
 
@@ -150,7 +150,7 @@ impl SystemTablesRegistry {
 
     /// Set the system.server_logs provider (called from kalamdb-core with logs path)
     pub fn set_server_logs_provider(&self, provider: Arc<ServerLogsTableProvider>) {
-        log::info!("SystemTablesRegistry: Setting server_logs provider");
+        log::debug!("SystemTablesRegistry: Setting server_logs provider");
         *self.server_logs.write().unwrap() = Some(provider);
     }
 
@@ -166,7 +166,7 @@ impl SystemTablesRegistry {
 
     /// Set the system.cluster provider (called from kalamdb-core with executor)
     pub fn set_cluster_provider(&self, provider: Arc<ClusterTableProvider>) {
-        log::info!("SystemTablesRegistry: Setting cluster provider");
+        log::debug!("SystemTablesRegistry: Setting cluster provider");
         *self.cluster.write().unwrap() = Some(provider);
     }
 
